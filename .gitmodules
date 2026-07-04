@@ -1,0 +1,3 @@
+[submodule "packages/brain"]
+	path = packages/brain
+	url = https://github.com/adampr/xldev.git
