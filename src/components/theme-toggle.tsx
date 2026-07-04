@@ -45,6 +45,14 @@ function applyTheme(theme: Theme) {
     root.classList.remove("dark");
     root.classList.add("light");
   }
+  // The futurism design system (futurism.css) is dark by default and keys
+  // light mode off data-theme="light"; keep it in sync with the .dark class
+  // that drives Tailwind's dark: variants.
+  if (root.classList.contains("dark")) {
+    root.removeAttribute("data-theme");
+  } else {
+    root.setAttribute("data-theme", "light");
+  }
 }
 
 let themeListeners: Array<() => void> = [];

@@ -1,16 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Poppins } from "next/font/google";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { TronNetterChat } from "@/components/tron-netter-chat";
 import "./globals.css";
-
-const poppins = Poppins({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-  display: "swap",
-  variable: "--font-poppins",
-});
 
 export const metadata: Metadata = {
   title: {
@@ -46,9 +38,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={poppins.variable} suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: `(function(){try{var t=localStorage.getItem('theme');if(t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.classList.add('dark')}catch(e){}})()` }} />
+        <script dangerouslySetInnerHTML={{ __html: `(function(){try{var e=document.documentElement,t=localStorage.getItem('theme'),d=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches);if(d){e.classList.add('dark')}else{e.setAttribute('data-theme','light')}}catch(e){}})()` }} />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
@@ -68,7 +60,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="min-h-screen bg-white text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100">
+      <body className="min-h-screen antialiased">
         <a href="#main-content" className="skip-to-content">
           Skip to content
         </a>
