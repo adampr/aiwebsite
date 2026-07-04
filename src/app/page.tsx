@@ -2,129 +2,141 @@ import Link from "next/link";
 
 export default function HomePage() {
   return (
-    <div className="space-y-16">
-      {/* Hero */}
-      <section className="mx-auto max-w-3xl pt-12 text-center">
-        <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-          Artificial Intelligence at{" "}
-          <span className="text-[var(--xl-primary)]">XL.net</span>
-        </h1>
-        <p className="mt-6 text-lg text-neutral-600 dark:text-neutral-400">
-          Discover how XL.net harnesses AI to transform managed IT services,
-          automate operations, and deliver smarter outcomes for small and
-          mid-size businesses across Chicago.
-        </p>
-        <div className="mt-8 flex justify-center gap-4">
-          <Link href="/contact" className="btn-primary inline-block no-underline">
-            Get in Touch
-          </Link>
-          <a
-            href="https://xl.net"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-secondary inline-block no-underline"
-          >
-            Visit XL.net
-          </a>
-        </div>
-      </section>
-
-      {/* Stats */}
-      <section className="mx-auto max-w-4xl">
-        <div className="grid gap-6 sm:grid-cols-3">
-          <div className="card p-6 text-center">
-            <p className="text-3xl font-bold text-[var(--xl-primary)]">79.8%</p>
-            <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-              Reduction in IT issues
-            </p>
-          </div>
-          <div className="card p-6 text-center">
-            <p className="text-3xl font-bold text-[var(--xl-primary)]">24/7</p>
-            <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-              AI-powered support
-            </p>
-          </div>
-          <div className="card p-6 text-center">
-            <p className="text-3xl font-bold text-[var(--xl-primary)]">99.3%</p>
-            <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-              Customer satisfaction
-            </p>
+    <div className="space-y-24">
+      {/* Hero — aurora sky, drifting dust, monumental caps */}
+      <section className="aurora horizon relative overflow-hidden px-6 py-28 text-center">
+        <xl-dust
+          density="36"
+          style={{ position: "absolute", inset: 0 }}
+          aria-hidden="true"
+        />
+        <div className="relative z-10 mx-auto max-w-3xl">
+          <span className="sys-label">XL.net / Artificial Intelligence</span>
+          <h1 className="mt-8">
+            Intelligence at{" "}
+            <span className="glitch glow" data-text="XL.NET">
+              XL.NET
+            </span>
+          </h1>
+          <p className="mx-auto mt-8 text-lg">
+            Discover how XL.net harnesses AI to transform managed IT services,
+            automate operations, and deliver smarter outcomes for small and
+            mid-size businesses across Chicago.
+          </p>
+          <div className="mt-12 flex flex-wrap justify-center gap-6">
+            <Link href="/contact" className="btn btn--primary no-underline">
+              Get in Touch
+            </Link>
+            <a
+              href="https://xl.net"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn no-underline"
+            >
+              Visit XL.net
+            </a>
           </div>
         </div>
       </section>
 
-      {/* AI Showcase Placeholder */}
-      <section className="mx-auto max-w-4xl">
-        <h2 className="mb-6 text-center text-2xl font-bold">
-          Our AI Capabilities
-        </h2>
-        <div className="grid gap-6 sm:grid-cols-2">
-          <div className="card p-6">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--xl-primary)] text-white">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 2a4 4 0 0 1 4 4v1a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2V6a4 4 0 0 1 4-4z" />
-                <path d="M9 18h6M12 14v4" />
-              </svg>
+      {/* Stats — monumental numerals over whisper labels */}
+      <section className="mx-auto max-w-4xl px-6">
+        <div className="grid gap-12 text-center sm:grid-cols-3">
+          <div className="stat rise">
+            <div className="stat-value">
+              79.8<em>%</em>
             </div>
-            <h3 className="text-lg font-semibold">AI Service Desk</h3>
-            <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+            <div className="stat-label">Reduction in IT issues</div>
+          </div>
+          <div className="stat rise" style={{ transitionDelay: "120ms" }}>
+            <div className="stat-value">
+              24<em>/7</em>
+            </div>
+            <div className="stat-label">AI-powered support</div>
+          </div>
+          <div className="stat rise" style={{ transitionDelay: "240ms" }}>
+            <div className="stat-value">
+              99.3<em>%</em>
+            </div>
+            <div className="stat-label">Customer satisfaction</div>
+          </div>
+        </div>
+      </section>
+
+      <hr className="rule rule--glow mx-auto max-w-5xl" />
+
+      {/* Capabilities — hairline panels with a lightline lead */}
+      <section className="mx-auto max-w-5xl px-6">
+        <div className="mb-12 text-center">
+          <span className="sys-label">Capabilities</span>
+          <h2 className="mt-6">Our AI Systems</h2>
+        </div>
+        <div className="grid gap-6 sm:grid-cols-2">
+          <div className="panel panel--lightline rise">
+            <span className="badge badge--light mb-4">
+              <span className="dot" /> Online
+            </span>
+            <h3 className="mt-4">AI Service Desk</h3>
+            <p className="mt-4 text-sm">
               Intelligent ticket triage, automated resolution, and proactive
               issue detection powered by machine learning.
             </p>
           </div>
-          <div className="card p-6">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--xl-primary)] text-white">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-              </svg>
-            </div>
-            <h3 className="text-lg font-semibold">AI-Driven Security</h3>
-            <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+          <div className="panel rise" style={{ transitionDelay: "100ms" }}>
+            <span className="badge badge--ok mb-4">
+              <span className="dot" /> Monitoring
+            </span>
+            <h3 className="mt-4">AI-Driven Security</h3>
+            <p className="mt-4 text-sm">
               Continuous threat monitoring, anomaly detection, and automated
               incident response safeguarding your infrastructure.
             </p>
           </div>
-          <div className="card p-6">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--xl-primary)] text-white">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-                <line x1="12" y1="22.08" x2="12" y2="12" />
-              </svg>
-            </div>
-            <h3 className="text-lg font-semibold">Predictive Analytics</h3>
-            <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+          <div className="panel rise" style={{ transitionDelay: "200ms" }}>
+            <span className="badge mb-4">
+              <span className="dot" /> Forecasting
+            </span>
+            <h3 className="mt-4">Predictive Analytics</h3>
+            <p className="mt-4 text-sm">
               Data-driven insights that anticipate system failures, optimize
               performance, and reduce downtime before it impacts your business.
             </p>
           </div>
-          <div className="card p-6">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--xl-primary)] text-white">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-            </div>
-            <h3 className="text-lg font-semibold">Conversational AI</h3>
-            <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-              Meet Tron Netter — our AI assistant. Try the chat widget in the
-              bottom right to see conversational AI in action.
+          <div className="panel rise" style={{ transitionDelay: "300ms" }}>
+            <span className="badge badge--light mb-4">
+              <span className="dot" /> Live 24/7
+            </span>
+            <h3 className="mt-4">Conversational AI</h3>
+            <p className="mt-4 text-sm">
+              Meet <strong>Tron Netter</strong> — our AI assistant. Try the
+              chat in the corner, or call{" "}
+              <a href="tel:+18723504325" className="mono">
+                (872) 350-4325
+              </a>{" "}
+              to speak with it directly.
             </p>
           </div>
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="mx-auto max-w-3xl rounded-xl border border-[var(--xl-primary)] bg-[var(--xl-primary)]/5 p-8 text-center dark:bg-[var(--xl-primary)]/10">
-        <h2 className="text-2xl font-bold">
-          Ready to see what AI can do for your business?
-        </h2>
-        <p className="mt-3 text-neutral-600 dark:text-neutral-400">
-          Get in touch to learn how XL.net&apos;s AI-powered solutions can
-          transform your IT operations.
-        </p>
-        <Link href="/contact" className="btn-cta mt-6 inline-block no-underline">
-          Contact Us
-        </Link>
+      {/* CTA — void panel under light beams, the one warm action */}
+      <section className="beams panel--void relative overflow-hidden text-center">
+        <div className="relative z-10 mx-auto max-w-2xl px-6">
+          <span className="sys-label sys-label--sand">Transmission</span>
+          <h2 className="mt-8">
+            Ready to see what AI can do for your business?
+          </h2>
+          <p className="mx-auto mt-6">
+            Get in touch to learn how XL.net&apos;s AI-powered solutions can
+            transform your IT operations.
+          </p>
+          <Link
+            href="/contact"
+            className="btn btn--sand mt-10 no-underline"
+          >
+            Contact Us
+          </Link>
+        </div>
       </section>
     </div>
   );

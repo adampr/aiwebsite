@@ -1,117 +1,15 @@
 @import "tailwindcss";
-/* Elegant Futurism design system (tokens, themes, type, motion).
-   Imported into the base layer so Tailwind utilities in components
-   still win when they set something explicitly. Light mode is driven
-   by data-theme="light" on <html>, kept in sync with the .dark class
-   by theme-toggle.tsx. */
+/* Elegant Futurism design system (tokens, themes, type, components, motion).
+   Imported into the base layer so Tailwind utilities in components still win
+   when they set something explicitly. Light mode is driven by
+   data-theme="light" on <html>, kept in sync with the .dark class by
+   theme-toggle.tsx and the pre-paint script in layout.tsx. */
 @import "./futurism.css" layer(base);
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
   color-scheme: light dark;
-  /* Legacy brand tokens still referenced by components */
-  --xl-primary: #3333cc;
-  --xl-primary-light: #4747e0;
-  --xl-primary-dark: #2828a3;
-  --xl-cta: #c31130;
-  --xl-cta-hover: #ae0b27;
-}
-
-/* ── Site component classes, re-skinned onto the futurism tokens.
-      The tokens flip automatically under data-theme="light", so no
-      .dark variants are needed here. ── */
-@layer components {
-  .link-accent {
-    color: var(--xl-light-dim);
-  }
-  .link-accent:hover {
-    color: var(--xl-light);
-    text-decoration: underline;
-  }
-
-  .card {
-    border-radius: 4px;
-    border: 1px solid var(--xl-line);
-    background-color: var(--xl-bg-1);
-  }
-
-  .btn-primary {
-    border-radius: 4px;
-    border: 1px solid var(--xl-line-bright);
-    background-color: transparent;
-    color: var(--xl-light);
-    padding: 0.75rem 1.5rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    transition: all var(--dur-fast) var(--ease-drift);
-  }
-  .btn-primary:hover {
-    background-color: var(--xl-light-glow);
-    border-color: var(--xl-light);
-  }
-  .btn-primary:disabled {
-    opacity: 0.5;
-  }
-
-  .btn-cta {
-    border-radius: 4px;
-    border: 1px solid var(--xl-sand);
-    background-color: transparent;
-    color: var(--xl-sand);
-    padding: 0.75rem 1.5rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    transition: all var(--dur-fast) var(--ease-drift);
-    &:hover {
-      background-color: var(--xl-sand-glow);
-    }
-    &:disabled {
-      opacity: 0.6;
-    }
-  }
-
-  .btn-secondary {
-    border-radius: 4px;
-    border: 1px solid var(--xl-line);
-    padding: 0.75rem 1rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--xl-text-dim);
-    transition: all var(--dur-fast) var(--ease-drift);
-  }
-  .btn-secondary:hover {
-    color: var(--xl-text);
-    border-color: var(--xl-line-bright);
-  }
-
-  .input {
-    width: 100%;
-    border-radius: 4px;
-    border: 1px solid var(--xl-line);
-    background-color: var(--xl-bg-1);
-    padding: 0.75rem 1rem;
-    font-size: 0.875rem;
-    color: var(--xl-text);
-  }
-  .input::placeholder {
-    color: var(--xl-text-faint);
-  }
-  .input:focus {
-    border-color: var(--xl-light-dim);
-    outline: none;
-  }
-
-  .header-tint {
-    background-color: var(--xl-bg-1);
-  }
-  .footer-tint {
-    background-color: var(--xl-bg-1);
-  }
 }
 
 :focus-visible {

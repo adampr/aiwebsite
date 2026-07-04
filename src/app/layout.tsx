@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Script from "next/script";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { TronNetterChat } from "@/components/tron-netter-chat";
+import { FuturismFx } from "@/components/futurism-fx";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -65,87 +67,96 @@ export default function RootLayout({
           Skip to content
         </a>
 
-        <header className="header-tint border-b border-neutral-200 dark:border-neutral-800">
-          <nav
-            className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 py-4"
-            aria-label="Main navigation"
-          >
-            <Link href="/" className="flex items-center gap-2 text-lg font-bold no-underline">
-              <span className="text-[var(--xl-primary)]">XL.net</span>
-              <span className="rounded bg-[var(--xl-primary)] px-1.5 py-0.5 text-xs font-semibold text-white">AI</span>
+        <header className="sticky top-0 z-40">
+          <nav className="nav" aria-label="Main navigation">
+            <Link href="/" className="logo no-underline">
+              XL<em>.NET</em>
             </Link>
-            <div className="flex flex-wrap items-center gap-4 text-sm sm:gap-6">
-              <Link
-                href="/"
-                className="text-neutral-600 hover:text-[#010205] dark:text-neutral-400 dark:hover:text-white"
-              >
-                Home
-              </Link>
-              <Link
-                href="/contact"
-                className="text-neutral-600 hover:text-[#010205] dark:text-neutral-400 dark:hover:text-white"
-              >
-                Contact
-              </Link>
+            <span className="badge badge--light">AI</span>
+            <div className="ml-auto flex flex-wrap items-center gap-8">
+              <Link href="/">Home</Link>
+              <Link href="/contact">Contact</Link>
               <ThemeToggle />
             </div>
           </nav>
         </header>
 
-        <main id="main-content" className="mx-auto max-w-7xl px-6 py-8">
+        <main id="main-content" className="mx-auto max-w-7xl px-6 py-12">
           {children}
         </main>
 
-        <footer className="border-t border-neutral-200 dark:border-neutral-800">
-          <div className="footer-tint">
-            <div className="mx-auto max-w-7xl px-6 py-8">
-              <div className="grid gap-8 sm:grid-cols-3">
-                <div>
-                  <h3 className="font-semibold">
-                    XL.net AI
-                  </h3>
-                  <p className="mt-2 text-sm">
-                    Showcasing how XL.net leverages artificial intelligence to
-                    transform managed IT services for SMBs.
-                  </p>
+        <footer className="mt-24">
+          <div className="mx-auto max-w-7xl px-6">
+            <hr className="rule" />
+            <div className="grid gap-12 pb-12 sm:grid-cols-3">
+              <div>
+                <div className="logo">
+                  XL<em>.NET</em> AI
                 </div>
-                <div>
-                  <h3 className="font-semibold">Links</h3>
-                  <ul className="mt-2 space-y-1 text-sm">
-                    <li>
-                      <Link href="/" className="text-neutral-600 hover:text-[#010205] dark:text-neutral-400 dark:hover:text-white">Home</Link>
-                    </li>
-                    <li>
-                      <Link href="/contact" className="text-neutral-600 hover:text-[#010205] dark:text-neutral-400 dark:hover:text-white">Contact</Link>
-                    </li>
-                    <li>
-                      <a href="https://xl.net" target="_blank" rel="noopener noreferrer" className="text-neutral-600 hover:text-[#010205] dark:text-neutral-400 dark:hover:text-white">XL.net Main Site</a>
-                    </li>
-                  </ul>
-                </div>
-                <div>
-                  <h3 className="font-semibold">
-                    Contact
-                  </h3>
-                  <p className="mt-2 text-sm">
-                    <a href="mailto:ai@xl.net" className="link-accent">
+                <p className="mt-4 text-sm">
+                  Showcasing how XL.net leverages artificial intelligence to
+                  transform managed IT services for SMBs.
+                </p>
+              </div>
+              <div>
+                <span className="sys-label">Links</span>
+                <ul className="mt-4 space-y-2 text-sm">
+                  <li>
+                    <Link href="/">Home</Link>
+                  </li>
+                  <li>
+                    <Link href="/contact">Contact</Link>
+                  </li>
+                  <li>
+                    <a
+                      href="https://xl.net"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      XL.net Main Site
+                    </a>
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <span className="sys-label">Contact</span>
+                <ul className="mt-4 space-y-2 text-sm">
+                  <li>
+                    <a href="mailto:ai@xl.net" className="mono">
                       ai@xl.net
                     </a>
-                  </p>
-                  <p className="mt-1 text-sm">
-                    <a href="https://xl.net" target="_blank" rel="noopener noreferrer" className="link-accent">
+                  </li>
+                  <li>
+                    <a href="tel:+18723504325" className="mono">
+                      (872) 350-4325
+                    </a>
+                  </li>
+                  <li>
+                    <a
+                      href="https://xl.net"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mono"
+                    >
                       xl.net
                     </a>
-                  </p>
-                </div>
+                  </li>
+                </ul>
               </div>
             </div>
-          </div>
-          <div className="mx-auto max-w-7xl px-6 py-4 text-center text-xs text-neutral-500 dark:text-neutral-400">
-            &copy; <span suppressHydrationWarning>{new Date().getFullYear()}</span> XL.net. All rights reserved.
+            <div
+              className="pb-8 text-center text-xs"
+              style={{ color: "var(--xl-text-faint)" }}
+            >
+              &copy;{" "}
+              <span suppressHydrationWarning>{new Date().getFullYear()}</span>{" "}
+              XL.net. All rights reserved.
+            </div>
           </div>
         </footer>
         <TronNetterChat />
+        <FuturismFx />
+        <Script src="/fx.js" strategy="afterInteractive" />
       </body>
     </html>
   );

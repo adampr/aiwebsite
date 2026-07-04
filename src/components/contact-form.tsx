@@ -47,13 +47,14 @@ export function ContactForm() {
 
   if (state.status === "success") {
     return (
-      <div className="rounded-lg border border-green-200 bg-green-50 p-6 text-center dark:border-green-800 dark:bg-green-950/20">
-        <p className="font-semibold text-green-800 dark:text-green-300">
-          {state.message}
-        </p>
+      <div className="panel panel--lightline text-center">
+        <span className="badge badge--ok">
+          <span className="dot" /> Message received
+        </span>
+        <p className="mx-auto mt-4">{state.message}</p>
         <button
           onClick={() => setState({ status: "idle" })}
-          className="mt-3 text-sm text-green-600 underline hover:text-green-800 dark:text-green-400 dark:hover:text-green-300"
+          className="btn btn--text mt-6"
         >
           Send another message
         </button>
@@ -62,11 +63,11 @@ export function ContactForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label htmlFor="name" className="mb-1 block text-sm font-medium">
-            Name <span className="text-[var(--xl-cta)]">*</span>
+    <form onSubmit={handleSubmit} className="space-y-8">
+      <div className="grid gap-8 sm:grid-cols-2">
+        <div className="field">
+          <label htmlFor="name">
+            Name <span className="glow--sand">*</span>
           </label>
           <input
             id="name"
@@ -77,9 +78,9 @@ export function ContactForm() {
             placeholder="Your name"
           />
         </div>
-        <div>
-          <label htmlFor="email" className="mb-1 block text-sm font-medium">
-            Email <span className="text-[var(--xl-cta)]">*</span>
+        <div className="field">
+          <label htmlFor="email">
+            Email <span className="glow--sand">*</span>
           </label>
           <input
             id="email"
@@ -91,11 +92,9 @@ export function ContactForm() {
           />
         </div>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label htmlFor="company" className="mb-1 block text-sm font-medium">
-            Company
-          </label>
+      <div className="grid gap-8 sm:grid-cols-2">
+        <div className="field">
+          <label htmlFor="company">Company</label>
           <input
             id="company"
             name="company"
@@ -104,10 +103,8 @@ export function ContactForm() {
             placeholder="Company name"
           />
         </div>
-        <div>
-          <label htmlFor="phone" className="mb-1 block text-sm font-medium">
-            Phone
-          </label>
+        <div className="field">
+          <label htmlFor="phone">Phone</label>
           <input
             id="phone"
             name="phone"
@@ -117,9 +114,9 @@ export function ContactForm() {
           />
         </div>
       </div>
-      <div>
-        <label htmlFor="message" className="mb-1 block text-sm font-medium">
-          Message <span className="text-[var(--xl-cta)]">*</span>
+      <div className="field">
+        <label htmlFor="message">
+          Message <span className="glow--sand">*</span>
         </label>
         <textarea
           id="message"
@@ -132,15 +129,17 @@ export function ContactForm() {
       </div>
 
       {state.status === "error" && (
-        <p className="text-sm text-[var(--xl-cta)]">{state.message}</p>
+        <p className="text-sm" style={{ color: "var(--xl-danger)" }}>
+          {state.message}
+        </p>
       )}
 
       <button
         type="submit"
         disabled={state.status === "submitting"}
-        className="btn-cta w-full sm:w-auto"
+        className="btn btn--sand w-full sm:w-auto"
       >
-        {state.status === "submitting" ? "Sending..." : "Send Message"}
+        {state.status === "submitting" ? "Transmitting..." : "Send Message"}
       </button>
     </form>
   );

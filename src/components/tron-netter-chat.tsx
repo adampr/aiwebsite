@@ -140,7 +140,7 @@ export function TronNetterChat() {
             return !o;
           });
         }}
-        className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--xl-primary)] text-white shadow-lg transition-transform hover:scale-105 hover:bg-[var(--xl-primary-light)] focus:outline-none focus:ring-2 focus:ring-[var(--xl-primary)] focus:ring-offset-2"
+        className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full border border-[var(--xl-line-bright)] bg-[var(--xl-bg-2)] text-[var(--xl-light)] shadow-[0_0_20px_var(--xl-light-glow)] transition-transform hover:scale-105 hover:border-[var(--xl-light)] focus:outline-none focus:ring-2 focus:ring-[var(--xl-light-dim)] focus:ring-offset-2"
         aria-label={isOpen ? "Minimize Tron Netter chat" : "Open Tron Netter chat"}
       >
         {isOpen ? (
@@ -153,25 +153,29 @@ export function TronNetterChat() {
           </svg>
         )}
         {hasUnread && !isOpen && (
-          <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-[var(--xl-cta)] ring-2 ring-white dark:ring-neutral-950" />
+          <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-[var(--xl-sand)] shadow-[0_0_8px_var(--xl-sand-glow)]" />
         )}
       </button>
 
       {/* Chat panel */}
       {hydrated && isOpen && (
-        <div className="fixed bottom-24 right-6 z-50 flex h-[28rem] w-[22rem] flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-2xl dark:border-neutral-700 dark:bg-neutral-900 sm:w-96">
+        <div className="fixed bottom-24 right-6 z-50 flex h-[28rem] w-[22rem] flex-col overflow-hidden border border-[var(--xl-line-bright)] bg-[var(--xl-bg-1)] shadow-[0_0_40px_var(--xl-light-glow)] sm:w-96">
           {/* Header */}
-          <div className="flex items-center gap-3 border-b border-neutral-200 bg-[var(--xl-primary)] px-4 py-3 dark:border-neutral-700">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">
+          <div className="flex items-center gap-3 border-b border-[var(--xl-line-bright)] bg-[var(--xl-bg-2)] px-4 py-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--xl-light-dim)] text-sm text-[var(--xl-light)]">
               T
             </div>
             <div className="flex-1">
-              <p className="text-sm font-semibold text-white">Tron Netter</p>
-              <p className="text-xs text-white/70">XL.net AI Assistant</p>
+              <p className="text-sm font-medium tracking-[0.2em] text-[var(--xl-text)]">
+                TRON NETTER
+              </p>
+              <p className="text-xs text-[var(--xl-text-faint)]">
+                XL.net AI Assistant
+              </p>
             </div>
             <button
               onClick={() => setIsOpen(false)}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-white/70 transition-colors hover:bg-white/20 hover:text-white"
+              className="flex h-7 w-7 items-center justify-center text-[var(--xl-text-dim)] transition-colors hover:text-[var(--xl-light)]"
               aria-label="Minimize chat"
             >
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.5}>
@@ -184,10 +188,10 @@ export function TronNetterChat() {
           <div className="flex-1 overflow-y-auto p-4">
             {messages.length === 0 && (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-                <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
+                <p className="text-sm font-medium text-[var(--xl-text-dim)]">
                   Hi! I&apos;m Tron Netter.
                 </p>
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                <p className="text-xs text-[var(--xl-text-faint)]">
                   Ask me about XL.net&apos;s AI capabilities, services, or how we leverage AI for managed IT.
                 </p>
               </div>
@@ -200,8 +204,8 @@ export function TronNetterChat() {
                 <div
                   className={`max-w-[80%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${
                     msg.role === "user"
-                      ? "bg-[var(--xl-primary)] text-white"
-                      : "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100"
+                      ? "bg-[var(--xl-light)] text-[var(--xl-bg-0)]"
+                      : "border border-[var(--xl-line)] bg-[var(--xl-bg-2)] text-[var(--xl-text)]"
                   }`}
                 >
                   {msg.content}
@@ -210,11 +214,11 @@ export function TronNetterChat() {
             ))}
             {isLoading && (
               <div className="mb-3 flex justify-start">
-                <div className="rounded-lg bg-neutral-100 px-3 py-2 dark:bg-neutral-800">
+                <div className="border border-[var(--xl-line)] bg-[var(--xl-bg-2)] px-3 py-2">
                   <div className="flex gap-1">
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400 [animation-delay:-0.3s]" />
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400 [animation-delay:-0.15s]" />
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--xl-light-dim)] [animation-delay:-0.3s]" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--xl-light-dim)] [animation-delay:-0.15s]" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--xl-light-dim)]" />
                   </div>
                 </div>
               </div>
@@ -223,7 +227,7 @@ export function TronNetterChat() {
           </div>
 
           {/* Input */}
-          <div className="border-t border-neutral-200 p-3 dark:border-neutral-700">
+          <div className="border-t border-[var(--xl-line)] p-3">
             <div className="flex items-end gap-2">
               <textarea
                 ref={inputRef}
@@ -232,13 +236,13 @@ export function TronNetterChat() {
                 onKeyDown={handleKeyDown}
                 placeholder="Ask Tron Netter..."
                 rows={1}
-                className="flex-1 resize-none rounded-lg border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-[var(--xl-primary)] dark:border-neutral-600 dark:placeholder:text-neutral-500 dark:focus:border-[#7b7bff]"
+                className="flex-1 resize-none border-b border-[var(--xl-line-bright)] bg-transparent px-1 py-2 text-sm text-[var(--xl-text)] outline-none placeholder:text-[var(--xl-text-faint)] focus:border-[var(--xl-light)]"
                 disabled={isLoading}
               />
               <button
                 onClick={sendMessage}
                 disabled={!input.trim() || isLoading}
-                className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--xl-primary)] text-white transition-colors hover:bg-[var(--xl-primary-light)] disabled:opacity-50"
+                className="flex h-9 w-9 items-center justify-center bg-[var(--xl-light)] text-[var(--xl-bg-0)] transition-shadow hover:shadow-[0_0_16px_var(--xl-light-glow)] disabled:opacity-50"
                 aria-label="Send message"
               >
                 <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2}>
