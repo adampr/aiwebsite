@@ -4,14 +4,16 @@ export default function HomePage() {
   return (
     <div className="space-y-24">
       {/* Hero — aurora sky, drifting dust, monumental caps */}
-      <section className="aurora horizon relative overflow-hidden px-6 py-28 text-center">
+      <section className="aurora relative overflow-hidden px-6 pb-36 pt-28 text-center">
         <xl-dust
           density="36"
           style={{ position: "absolute", inset: 0 }}
           aria-hidden="true"
         />
         <div className="relative z-10 mx-auto max-w-3xl">
-          <span className="sys-label">XL.net / Artificial Intelligence</span>
+          <span className="sys-label sys-label--center">
+            XL.net / Artificial Intelligence
+          </span>
           <h1 className="mt-8">
             Intelligence at{" "}
             <span className="glitch glow" data-text="XL.NET">
@@ -38,6 +40,9 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* Horizon — glowing line with the traveling light sweep */}
+      <hr className="horizon mx-auto max-w-6xl" />
 
       {/* Stats — monumental numerals over whisper labels */}
       <section className="mx-auto max-w-4xl px-6">
@@ -68,8 +73,8 @@ export default function HomePage() {
       {/* Capabilities — hairline panels with a lightline lead */}
       <section className="mx-auto max-w-5xl px-6">
         <div className="mb-12 text-center">
-          <span className="sys-label">Capabilities</span>
-          <h2 className="mt-6">Our AI Systems</h2>
+          <span className="sys-label sys-label--center">Capabilities</span>
+          <h2 className="shimmer mt-6">Our AI Systems</h2>
         </div>
         <div className="grid gap-6 sm:grid-cols-2">
           <div className="panel panel--lightline rise">
@@ -91,6 +96,17 @@ export default function HomePage() {
               Continuous threat monitoring, anomaly detection, and automated
               incident response safeguarding your infrastructure.
             </p>
+            <div
+              className="radar mx-auto mt-6"
+              style={{ width: 150 }}
+              aria-hidden="true"
+            >
+              <i className="radar-blip" style={{ left: "62%", top: "34%" }} />
+              <i
+                className="radar-blip radar-blip--sand"
+                style={{ left: "30%", top: "58%", animationDelay: "2s" }}
+              />
+            </div>
           </div>
           <div className="panel rise" style={{ transitionDelay: "200ms" }}>
             <span className="badge mb-4">
@@ -122,7 +138,19 @@ export default function HomePage() {
       {/* CTA — void panel under light beams, the one warm action */}
       <section className="beams panel--void relative overflow-hidden text-center">
         <div className="relative z-10 mx-auto max-w-2xl px-6">
-          <span className="sys-label sys-label--sand">Transmission</span>
+          <div
+            className="orbit float mx-auto mb-10"
+            style={{ width: 180 }}
+            aria-hidden="true"
+          >
+            <i className="orbit-core" />
+            <i className="orbit-ring" />
+            <i className="orbit-ring orbit-ring--2" />
+            <i className="orbit-ring orbit-ring--3" />
+          </div>
+          <span className="sys-label sys-label--sand sys-label--center">
+            Transmission
+          </span>
           <h2 className="mt-8">
             Ready to see what AI can do for your business?
           </h2>

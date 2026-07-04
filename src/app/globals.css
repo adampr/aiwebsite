@@ -12,6 +12,18 @@
   color-scheme: light dark;
 }
 
+/* Symmetric variant of the design system's .sys-label for centered
+   headings: mirror the 40px leading dash on the trailing side so the
+   text itself sits visually centered. */
+.sys-label--center::after {
+  content: "";
+  width: 40px;
+  height: 1px;
+  background: currentColor;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
 :focus-visible {
   outline: 2px solid var(--xl-light-dim);
   outline-offset: 2px;

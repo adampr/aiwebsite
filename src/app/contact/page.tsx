@@ -70,7 +70,9 @@ export default function ContactPage() {
       {/* Tron Netter callout */}
       <section className="panel--void beams relative text-center">
         <div className="relative z-10 mx-auto max-w-xl px-6">
-          <span className="sys-label sys-label--sand">Live Channel</span>
+          <span className="sys-label sys-label--sand sys-label--center">
+            Live Channel
+          </span>
           <h2 className="mt-6">Chat with Tron Netter</h2>
           <p className="mx-auto mt-4 text-sm">
             Have a quick question? Chat with Tron Netter, our AI assistant,
