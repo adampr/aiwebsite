@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import Script from "next/script";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { UserMenu } from "@/components/user-menu";
 import { TronNetterChat } from "@/components/tron-netter-chat";
 import { FuturismFx } from "@/components/futurism-fx";
 import "./globals.css";
@@ -106,6 +107,7 @@ export default function RootLayout({
               <Link href="/">Home</Link>
               <Link href="/contact">Contact</Link>
               <ThemeToggle />
+              <UserMenu />
             </div>
           </nav>
         </header>
