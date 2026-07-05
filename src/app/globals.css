@@ -24,6 +24,18 @@
   opacity: 0.7;
 }
 
+/* Theme-conditional brand assets: dark variants show by default (the
+   design system is dark-first); data-theme="light" swaps them. */
+.theme-light-only {
+  display: none !important;
+}
+[data-theme="light"] .theme-light-only {
+  display: block !important;
+}
+[data-theme="light"] .theme-dark-only {
+  display: none !important;
+}
+
 :focus-visible {
   outline: 2px solid var(--xl-light-dim);
   outline-offset: 2px;

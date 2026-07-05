@@ -23,6 +23,7 @@ export const metadata: Metadata = {
     type: "website",
     locale: "en_US",
     siteName: "XL.net AI",
+    images: ["/xl-icon-512.png"],
   },
   twitter: {
     card: "summary_large_image",
@@ -31,6 +32,14 @@ export const metadata: Metadata = {
     index: true,
     follow: true,
     googleBot: { index: true, follow: true },
+  },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "48x48" },
+      { url: "/xl-icon-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/xl-icon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/xl-icon-180.png",
   },
 };
 
@@ -72,8 +81,25 @@ export default function RootLayout({
 
         <header className="sticky top-0 z-40">
           <nav className="nav" aria-label="Main navigation">
-            <Link href="/" className="logo no-underline">
-              XL<em>.NET</em>
+            <Link
+              href="/"
+              className="flex items-center gap-3 no-underline"
+              aria-label="XL.net AI home"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/xl-icon.svg" alt="" className="h-8 w-8" />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/xl-wordmark-dark.png"
+                alt="XL.net"
+                className="theme-dark-only h-5 w-auto"
+              />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/xl-wordmark-light.png"
+                alt="XL.net"
+                className="theme-light-only h-5 w-auto"
+              />
             </Link>
             <span className="badge badge--light">AI</span>
             <div className="ml-auto flex flex-wrap items-center gap-8">
@@ -93,9 +119,18 @@ export default function RootLayout({
             <hr className="rule" />
             <div className="grid gap-12 pb-12 sm:grid-cols-3">
               <div>
-                <div className="logo">
-                  XL<em>.NET</em> AI
-                </div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/brand/xl-wordmark-dark.png"
+                  alt="XL.net AI"
+                  className="theme-dark-only h-6 w-auto"
+                />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/brand/xl-wordmark-light.png"
+                  alt="XL.net AI"
+                  className="theme-light-only h-6 w-auto"
+                />
                 <p className="mt-4 text-sm">
                   Showcasing how XL.net leverages artificial intelligence to
                   transform managed IT services for SMBs.

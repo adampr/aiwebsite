@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  
+  <defs>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#A5DBEC" stop-opacity="0"></stop>
+      <stop offset="0.5" stop-color="#A5DBEC"></stop>
+      <stop offset="1" stop-color="#D7BA8C" stop-opacity="0.85"></stop>
+    </linearGradient>
+    <linearGradient id="swoosh" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#A5DBEC" stop-opacity="0.15"></stop>
+      <stop offset="0.6" stop-color="#A5DBEC"></stop>
+      <stop offset="1" stop-color="#FFFFFF"></stop>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="3"></feGaussianBlur>
+    </filter>
+    <clipPath id="sphere"><circle cx="60" cy="62" r="30"></circle></clipPath>
+  </defs>
+
+  <rect width="120" height="120" rx="26" fill="#0D0F14"></rect>
+  <circle cx="60" cy="62" r="30" stroke="#46525C" stroke-width="1.5"></circle>
+  <circle cx="60" cy="62" r="30" fill="#A5DBEC" fill-opacity="0.05"></circle>
+  <g clip-path="url(#sphere)">
+    <path d="M 34 78 Q 55 28 87 57" stroke="url(#swoosh)" stroke-width="8" filter="url(#glow)" opacity="0.55" stroke-linecap="round"></path>
+    <path d="M 34 78 Q 55 28 87 57" stroke="url(#swoosh)" stroke-width="3.5" stroke-linecap="round"></path>
+  </g>
+  <g transform="rotate(-20 60 62)">
+    <path d="M 12 62 A 48 15 0 0 1 108 62" stroke="#46525C" stroke-width="1"></path>
+    <path d="M 12 62 A 48 15 0 0 0 108 62" stroke="url(#ring)" stroke-width="5" filter="url(#glow)" opacity="0.5"></path>
+    <path d="M 12 62 A 48 15 0 0 0 108 62" stroke="url(#ring)" stroke-width="2.2"></path>
+  </g>
+</svg>

@@ -11,8 +11,27 @@ export default function HomePage() {
           aria-hidden="true"
         />
         <div className="relative z-10 mx-auto max-w-3xl">
-          <span className="sys-label sys-label--center">
-            XL.net / Artificial Intelligence
+          {/* Animated brand lockup — self-contained embeds, theme-aware */}
+          <iframe
+            src="/brand/xl-logo-animated-dark.html"
+            title="XL.net animated logo"
+            aria-hidden="true"
+            tabIndex={-1}
+            scrolling="no"
+            style={{ colorScheme: "dark" }}
+            className="theme-dark-only pointer-events-none mx-auto h-[190px] w-full max-w-[640px] border-0"
+          />
+          <iframe
+            src="/brand/xl-logo-animated-light.html"
+            title="XL.net animated logo"
+            aria-hidden="true"
+            tabIndex={-1}
+            scrolling="no"
+            style={{ colorScheme: "light" }}
+            className="theme-light-only pointer-events-none mx-auto h-[190px] w-full max-w-[640px] border-0"
+          />
+          <span className="sys-label sys-label--center mt-4">
+            Artificial Intelligence
           </span>
           <h1 className="mt-8">
             Intelligence at{" "}
