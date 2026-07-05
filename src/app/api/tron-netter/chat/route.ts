@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  BRAIN_INTERNAL_TOOLS_FALLBACK,
   TRON_NETTER_IDENTITY,
   TRON_NETTER_SYSTEM_PROMPT,
 } from "@/lib/tron-netter/persona";
@@ -10,6 +11,33 @@ import { BRAIN_AUTH_HEADERS } from "@/lib/brain-client";
 // src/lib/brain-client.ts for details).
 const BRAIN_BASE_URL =
   process.env.BRAIN_BASE_URL || "http://127.0.0.1:3211";
+
+// Every internal brain tool is disabled for the public chat (see persona.ts).
+// The live list from GET /v1/tools covers tools added by future brain
+// upgrades; cached per process, falling back to the v1.91 snapshot.
+let disabledToolsCache: string[] | null = null;
+async function getDisabledBrainTools(): Promise<string[]> {
+  if (disabledToolsCache) return disabledToolsCache;
+  try {
+    const res = await fetch(`${BRAIN_BASE_URL}/v1/tools`, {
+      headers: BRAIN_AUTH_HEADERS,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const names = (data.tools ?? [])
+        .map((t: { name?: string }) => t.name)
+        .filter((n: unknown): n is string => typeof n === "string");
+      if (names.length) {
+        disabledToolsCache = names;
+        return names;
+      }
+    }
+  } catch {
+    // fall through to the static snapshot
+  }
+  return BRAIN_INTERNAL_TOOLS_FALLBACK;
+}
 
 // Tron Netter has no tools by design: his knowledge is the public content of
 // xl.net / ai.xl.net baked into the system prompt, and visitors must not be
@@ -40,7 +68,12 @@ export async function POST(request: NextRequest) {
       { role: "system", content: TRON_NETTER_SYSTEM_PROMPT },
       ...messages,
     ],
-    memoryMode: "store_persistent",
+    // do_not_store: the persona's knowledge is only the public site content
+    // baked into the system prompt — visitor conversations must not teach it
+    // new "facts" that get recalled over the prompt (known self-reinforcement
+    // gotcha in the brain's memory extraction).
+    memoryMode: "do_not_store",
+    disabledTools: await getDisabledBrainTools(),
     markdownMode: "html",
     brainIdentity: TRON_NETTER_IDENTITY,
     groupName: "aiwebsite",

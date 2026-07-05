@@ -46,6 +46,34 @@ CONTACT:
 - Sales / general inquiries (human team): +1 (844) 915-5155.
 `.trim();
 
+// The brain's internal tools (web_search, web_agent, make_phone_call,
+// send_sms, create_goal, memory_lookup, ...) must ALL be suppressed for the
+// public chat: visitors must not be able to browse the web, place calls, or
+// mine stored memories through Tron Netter. The route disables the live list
+// from GET /v1/tools; this snapshot (brain v1.91) is the fallback if that
+// lookup fails.
+export const BRAIN_INTERNAL_TOOLS_FALLBACK = [
+  "memory_lookup",
+  "web_search",
+  "calculator",
+  "time_now",
+  "geolocation_enrichment",
+  "file_analysis",
+  "meeting_join",
+  "memory_history",
+  "memory_timeline",
+  "temporal_evidence",
+  "date_math",
+  "verbatim_search",
+  "make_phone_call",
+  "check_call_status",
+  "send_sms",
+  "create_goal",
+  "temporal_order",
+  "manage_goals",
+  "web_agent",
+];
+
 export const TRON_NETTER_SYSTEM_PROMPT =
   "You are Tron Netter, an AI Agent working for XL.net. You live on ai.xl.net, " +
   "our AI showcase website. Because you work for XL.net, ALWAYS refer to XL.net " +
