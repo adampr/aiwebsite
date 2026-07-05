@@ -1,9 +1,16 @@
 // The Brain runs from the packages/brain submodule as a local PM2 process
-// (see deploy/ecosystem.config.cjs). It is reached over loopback only and
-// runs in open-gate mode (no BRAIN_API_KEYS configured), so no Authorization
-// header is needed. Only /twilio/* webhook paths are exposed publicly via
-// nginx + the Cloudflare tunnel, and those validate Twilio signatures.
+// (see deploy/ecosystem.config.cjs). It is reached over loopback only. Since
+// brain v1.91 the API is fail-closed: every non-Twilio, non-/health endpoint
+// requires a Bearer token from BRAIN_API_KEYS (shared via the same .env).
+// Only /twilio/* webhook paths are exposed publicly via nginx + the
+// Cloudflare tunnel, and those validate Twilio signatures.
 const BRAIN_BASE_URL = process.env.BRAIN_BASE_URL || "http://127.0.0.1:3211";
+// BRAIN_API_KEYS may hold several comma-separated keys; send the first.
+const BRAIN_API_KEY = (process.env.BRAIN_API_KEYS || "").split(",")[0]!.trim();
+/** Spread into fetch headers for any brain-api call. Empty when no key is configured. */
+export const BRAIN_AUTH_HEADERS: Record<string, string> = BRAIN_API_KEY
+  ? { Authorization: `Bearer ${BRAIN_API_KEY}` }
+  : {};
 
 interface BrainRequestOptions {
   sessionId: string;
@@ -25,7 +32,10 @@ export async function callBrainWithRetry(opts: BrainRequestOptions): Promise<str
   const { maxAttempts = 3, timeoutMs } = opts;
   const delays = [0, 5_000, 15_000];
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...BRAIN_AUTH_HEADERS,
+  };
 
   const body = JSON.stringify({
     sessionId: opts.sessionId,

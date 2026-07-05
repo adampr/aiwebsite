@@ -36,6 +36,7 @@ echo ">>> Syncing repo..."
 sshpass -e rsync -az --delete \
   --exclude .git --exclude node_modules --exclude .next \
   --exclude packages/brain/node_modules \
+  --exclude packages/brain/scripts/benchmark/cache \
   --exclude .env \
   "$REPO_DIR/" "$HOST:$APP_DIR/"
 

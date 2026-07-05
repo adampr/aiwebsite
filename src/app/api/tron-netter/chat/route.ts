@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { CALLER_TOOLS, executeCallerTool } from "@/lib/tron-netter/tools";
+import { BRAIN_AUTH_HEADERS } from "@/lib/brain-client";
 
-// Brain runs locally from the packages/brain submodule (loopback, open-gate —
-// no API key; see src/lib/brain-client.ts for details).
+// Brain runs locally from the packages/brain submodule (loopback; since brain
+// v1.91 it is fail-closed and requires the BRAIN_API_KEYS Bearer token — see
+// src/lib/brain-client.ts for details).
 const BRAIN_BASE_URL =
   process.env.BRAIN_BASE_URL || "http://127.0.0.1:3211";
 
@@ -37,6 +39,7 @@ export async function POST(request: NextRequest) {
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...BRAIN_AUTH_HEADERS,
   };
 
   const maxRounds = 5;
