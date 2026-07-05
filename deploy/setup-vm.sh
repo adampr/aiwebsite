@@ -80,6 +80,18 @@ pm2 startOrReload deploy/ecosystem.config.cjs
 pm2 save
 pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null || true
 
+# ── Tron Netter shared persona memories ──────────────────────────
+# Public-scope brain memories that keep the persona identical across webchat,
+# SMS, and phone calls (the voice path has no system-prompt injection point —
+# these rows are its knowledge base). brain-api creates its tables on first
+# boot, so wait for it before seeding. Idempotent upsert; safe on every deploy.
+echo ">>> Seeding Tron Netter persona memories..."
+for i in $(seq 1 12); do
+  curl -fsS -o /dev/null http://127.0.0.1:3211/health && break
+  sleep 5
+done
+sudo -u postgres psql -d aiwebsite -v ON_ERROR_STOP=1 -f "$APP_DIR/deploy/seed-tron-memories.sql"
+
 # ── Cloudflare tunnel ────────────────────────────────────────────
 sudo bash "$APP_DIR/deploy/setup-cloudflared.sh"
 

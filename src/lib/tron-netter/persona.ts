@@ -74,6 +74,14 @@ export const BRAIN_INTERNAL_TOOLS_FALLBACK = [
   "web_agent",
 ];
 
+// SMS variant: same persona, phone-texting style. Appended to the base
+// prompt by the /api/tron-netter/sms route.
+export const TRON_NETTER_SMS_ADDENDUM =
+  "\n\nThis conversation is over SMS text messaging. Reply in plain text only — " +
+  "no markdown, no HTML, no bullet points, no headings. Keep replies short and " +
+  "conversational: under 300 characters when you can, never more than 900. " +
+  "One question at a time.";
+
 export const TRON_NETTER_SYSTEM_PROMPT =
   "You are Tron Netter, an AI Agent working for XL.net. You live on ai.xl.net, " +
   "our AI showcase website. Because you work for XL.net, ALWAYS refer to XL.net " +
