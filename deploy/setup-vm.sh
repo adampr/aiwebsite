@@ -83,6 +83,23 @@ pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null || true
 # ── Cloudflare tunnel ────────────────────────────────────────────
 sudo bash "$APP_DIR/deploy/setup-cloudflared.sh"
 
+# ── Watchdog (self-healing service checks + email alerts) ────────
+# watchdog-cron.sh expects the watchdog at /usr/local/bin/aiwebsite-watchdog.sh
+echo ">>> Installing watchdog + cron supervisor..."
+sudo cp "$APP_DIR/deploy/watchdog.sh" /usr/local/bin/aiwebsite-watchdog.sh
+sudo cp "$APP_DIR/deploy/watchdog-cron.sh" /usr/local/bin/aiwebsite-watchdog-cron.sh
+sudo chmod +x /usr/local/bin/aiwebsite-watchdog.sh /usr/local/bin/aiwebsite-watchdog-cron.sh
+( sudo crontab -l 2>/dev/null; echo "*/5 * * * * /usr/local/bin/aiwebsite-watchdog-cron.sh" ) | sort -u | sudo crontab -
+# Restart the watchdog so it picks up the freshly installed version, then
+# start immediately instead of waiting up to 5 minutes for cron.
+# Kill via PID file, not pkill -f: the script path may appear in an SSH
+# wrapper's command line, and pkill -f would kill that session too.
+if sudo test -f /var/run/aiwebsite-watchdog.pid; then
+  sudo kill "$(sudo cat /var/run/aiwebsite-watchdog.pid)" 2>/dev/null || true
+fi
+sudo rm -f /var/run/aiwebsite-watchdog.pid
+sudo /usr/local/bin/aiwebsite-watchdog-cron.sh || true
+
 echo ""
 echo "=== Setup complete ==="
 echo "Local checks:"
