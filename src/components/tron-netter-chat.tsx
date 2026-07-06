@@ -96,27 +96,84 @@ export function TronNetterChat() {
     setInput("");
     setIsLoading(true);
 
+    // Tracks whether the streaming path already appended the assistant
+    // bubble, so the catch block replaces it instead of adding a second one.
+    let assistantAppended = false;
+    const setAssistantContent = (content: string) => {
+      setMessages((prev) => {
+        if (!assistantAppended) return [...prev, { role: "assistant", content }];
+        const copy = [...prev];
+        copy[copy.length - 1] = { role: "assistant", content };
+        return copy;
+      });
+      assistantAppended = true;
+    };
+
     try {
+      // The route streams NDJSON (token / answer / done / error events) when
+      // asked; the first tokens arrive in ~1s instead of after the brain's
+      // full pass. Falls back to the buffered JSON shape transparently.
       const res = await fetch("/api/tron-netter/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson",
+        },
         body: JSON.stringify({ messages: updatedMessages, sessionId }),
       });
       if (!res.ok) throw new Error("Chat request failed");
-      const data = await res.json();
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: data.answer },
-      ]);
+
+      if (res.headers.get("content-type")?.includes("ndjson") && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let answer = "";
+        let failed = false;
+
+        const handleLine = (line: string) => {
+          if (!line.trim()) return;
+          let evt: { type?: string; text?: string; answer?: string };
+          try {
+            evt = JSON.parse(line);
+          } catch {
+            return;
+          }
+          if (evt.type === "token" && typeof evt.text === "string") {
+            answer += evt.text;
+            setAssistantContent(answer);
+          } else if (evt.type === "answer" && typeof evt.text === "string") {
+            answer = evt.text;
+            setAssistantContent(answer);
+          } else if (evt.type === "done") {
+            if (typeof evt.answer === "string" && evt.answer) answer = evt.answer;
+            setAssistantContent(
+              answer || "Sorry, I could not generate a response."
+            );
+          } else if (evt.type === "error") {
+            failed = true;
+          }
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          lines.forEach(handleLine);
+        }
+        handleLine(buffer);
+        if (failed) throw new Error("Chat stream failed");
+        if (!answer) {
+          setAssistantContent("Sorry, I could not generate a response.");
+        }
+      } else {
+        const data = await res.json();
+        setAssistantContent(data.answer);
+      }
       if (!isOpenRef.current) setHasUnread(true);
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Sorry, I encountered an error. Please try again.",
-        },
-      ]);
+      setAssistantContent("Sorry, I encountered an error. Please try again.");
       if (!isOpenRef.current) setHasUnread(true);
     } finally {
       setIsLoading(false);

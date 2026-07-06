@@ -14,6 +14,65 @@ import {
 const BRAIN_BASE_URL =
   process.env.BRAIN_BASE_URL || "http://127.0.0.1:3211";
 
+const FALLBACK_ANSWER = "Sorry, I could not generate a response.";
+
+// Brain v1.90+ streams the first-pass answer as NDJSON when asked via
+// `Accept: application/x-ndjson`. We re-emit a reduced NDJSON stream to the
+// widget — only `token` / `answer` / `done` / `error` — so internal events
+// (phase_progress timings, model names) never reach the public site.
+function makeWidgetStream(brainBody: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  let sawDone = false;
+
+  const emit = (
+    controller: TransformStreamDefaultController<Uint8Array>,
+    event: Record<string, unknown>
+  ) => controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+
+  const handleLine = (
+    controller: TransformStreamDefaultController<Uint8Array>,
+    line: string
+  ) => {
+    if (!line.trim()) return;
+    let evt: { type?: string; text?: string; error?: string; choices?: Array<{ message?: { content?: string | null } }> };
+    try {
+      evt = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (evt.type === "token" && typeof evt.text === "string") {
+      emit(controller, { type: "token", text: evt.text });
+    } else if (evt.type === "answer_revised" && typeof evt.text === "string") {
+      // The finalized answer diverged from the streamed draft — replace it.
+      emit(controller, { type: "answer", text: evt.text });
+    } else if (evt.type === "result") {
+      const answer = evt.choices?.[0]?.message?.content;
+      emit(controller, { type: "done", ...(typeof answer === "string" ? { answer } : {}) });
+      sawDone = true;
+    } else if (evt.type === "error") {
+      emit(controller, { type: "error" });
+      sawDone = true;
+    }
+  };
+
+  const transform = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) handleLine(controller, line);
+    },
+    flush(controller) {
+      handleLine(controller, buffer);
+      if (!sawDone) emit(controller, { type: "done" });
+    },
+  });
+
+  return brainBody.pipeThrough(transform);
+}
+
 // Tron Netter has no tools by design: his knowledge is the public content of
 // xl.net / ai.xl.net injected into the system prompt (refreshed nightly by
 // scripts/refresh-tron-knowledge.mjs), and visitors must not be able to use
@@ -32,9 +91,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const wantsStream = request.headers.get("accept") === "application/x-ndjson";
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...BRAIN_AUTH_HEADERS,
+    ...(wantsStream ? { Accept: "application/x-ndjson" } : {}),
   };
 
   const envelope = {
@@ -71,11 +133,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (
+    wantsStream &&
+    brainRes.headers.get("content-type")?.includes("ndjson") &&
+    brainRes.body
+  ) {
+    return new Response(makeWidgetStream(brainRes.body), {
+      headers: {
+        "Content-Type": "application/x-ndjson",
+        "Cache-Control": "no-cache",
+      },
+    });
+  }
+
   const data = await brainRes.json();
   return NextResponse.json({
-    answer:
-      data.choices?.[0]?.message?.content ||
-      "Sorry, I could not generate a response.",
+    answer: data.choices?.[0]?.message?.content || FALLBACK_ANSWER,
     sessionId,
   });
 }
