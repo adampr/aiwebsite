@@ -3,3 +3,12 @@
     "defaultMode": "bypassPermissions"
   }
 }
+{
+  "permissions": {
+    "allow": [
+      "Bash(gcloud compute instances add-metadata itsupportchicago *)",
+      "Bash(gcloud compute scp * itsupportchicago:*)",
+      "Bash(gcloud compute ssh itsupportchicago *)"
+    ]
+  }
+}
