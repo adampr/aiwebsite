@@ -33,11 +33,14 @@ echo ">>> Preparing $APP_DIR on VM..."
 $SSH "sudo mkdir -p $APP_DIR && sudo chown $AIWEBSITE_USER: $APP_DIR"
 
 echo ">>> Syncing repo..."
+# /data/ holds the VM-generated tron-netter-knowledge.md (nightly crawl);
+# it exists only on the VM, so --delete must not remove it.
 sshpass -e rsync -az --delete \
   --exclude .git --exclude node_modules --exclude .next \
   --exclude packages/brain/node_modules \
   --exclude packages/brain/scripts/benchmark/cache \
   --exclude .env \
+  --exclude /data/ \
   "$REPO_DIR/" "$HOST:$APP_DIR/"
 
 echo ">>> Copying production .env..."

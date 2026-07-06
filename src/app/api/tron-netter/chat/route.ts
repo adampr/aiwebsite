@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   TRON_NETTER_IDENTITY,
-  TRON_NETTER_SYSTEM_PROMPT,
+  getTronNetterSystemPrompt,
 } from "@/lib/tron-netter/persona";
 import {
   BRAIN_AUTH_HEADERS,
@@ -15,8 +15,9 @@ const BRAIN_BASE_URL =
   process.env.BRAIN_BASE_URL || "http://127.0.0.1:3211";
 
 // Tron Netter has no tools by design: his knowledge is the public content of
-// xl.net / ai.xl.net baked into the system prompt, and visitors must not be
-// able to use him to browse the internet or fetch live data.
+// xl.net / ai.xl.net injected into the system prompt (refreshed nightly by
+// scripts/refresh-tron-knowledge.mjs), and visitors must not be able to use
+// him to browse the internet or fetch live data.
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const { messages, sessionId } = body as {
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
     sessionId,
     promptId: `tron_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     messages: [
-      { role: "system", content: TRON_NETTER_SYSTEM_PROMPT },
+      { role: "system", content: getTronNetterSystemPrompt() },
       ...messages,
     ],
     // do_not_store: the persona's knowledge is only the public site content

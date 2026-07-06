@@ -92,6 +92,19 @@ for i in $(seq 1 12); do
 done
 sudo -u postgres psql -d aiwebsite -v ON_ERROR_STOP=1 -f "$APP_DIR/deploy/seed-tron-memories.sql"
 
+# ── Tron Netter nightly knowledge refresh ────────────────────────
+# Crawls 100% of xl.net + ai.xl.net, REPLACES data/tron-netter-knowledge.md
+# (read at request time for the chat/SMS system prompt) and the brain's
+# public 'site_crawl' memory rows (voice channel), then emails a run report
+# to ADMIN_EMAIL. Nightly at 08:00 UTC = 3am Chicago (CDT). Also run once
+# now (without the email) so fresh knowledge is live from this deploy
+# instead of after the first cron fire.
+echo ">>> Installing Tron Netter knowledge-refresh cron..."
+( sudo crontab -l 2>/dev/null; echo "0 8 * * * /usr/bin/node $APP_DIR/scripts/refresh-tron-knowledge.mjs >> /var/log/aiwebsite-tron-knowledge.log 2>&1" ) | sort -u | sudo crontab -
+echo ">>> Running initial knowledge crawl (no email)..."
+node "$APP_DIR/scripts/refresh-tron-knowledge.mjs" --no-email || \
+  echo "WARN: initial knowledge crawl failed — Tron Netter uses the baked-in fallback until tonight's cron run"
+
 # ── Cloudflare tunnel ────────────────────────────────────────────
 sudo bash "$APP_DIR/deploy/setup-cloudflared.sh"
 

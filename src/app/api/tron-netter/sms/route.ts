@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { NextRequest, NextResponse, after } from "next/server";
 import {
   TRON_NETTER_IDENTITY,
-  TRON_NETTER_SYSTEM_PROMPT,
+  getTronNetterSystemPrompt,
   TRON_NETTER_SMS_ADDENDUM,
 } from "@/lib/tron-netter/persona";
 import {
@@ -70,7 +70,7 @@ async function askTronNetter(from: string, body: string): Promise<string> {
     messages: [
       {
         role: "system",
-        content: TRON_NETTER_SYSTEM_PROMPT + TRON_NETTER_SMS_ADDENDUM,
+        content: getTronNetterSystemPrompt() + TRON_NETTER_SMS_ADDENDUM,
       },
       { role: "user", content: body },
     ],
