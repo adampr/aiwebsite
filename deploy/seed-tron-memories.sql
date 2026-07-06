@@ -7,9 +7,10 @@
 -- prompt; for inbound phone calls these rows ARE the knowledge base.
 --
 -- Idempotent (fixed ids + upsert). Applied by deploy/setup-vm.sh on every
--- deploy, after brain-api has created its tables. Keep the facts in sync
--- with src/lib/tron-netter/persona.ts — both must describe only publicly
--- available content of https://xl.net and https://ai.xl.net.
+-- deploy, after brain-api has created its tables. These rows cover identity
+-- and evergreen contact facts only; per-page site content lives in the
+-- source_type='site_crawl' rows that scripts/refresh-tron-knowledge.mjs
+-- replaces nightly from a full crawl of https://xl.net and https://ai.xl.net.
 
 INSERT INTO brain_memories
   (id, requester_id, group_id, scope, kind, key, value, importance, salience, source_type, created_at, updated_at)
@@ -39,7 +40,7 @@ VALUES
    0.9, 1, 'seed', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
 
   ('seed-xlnet-contact', NULL, NULL, 'public', 'org_fact', 'xl_net_contact',
-   'Contact XL.net: email ai@xl.net. Tron Netter''s own AI line, call or text 24/7: (872) 350-4325 — the only number for reaching Tron Netter himself. Sales / general inquiries (human team): +1 (844) 915-5155. Websites: https://xl.net and https://ai.xl.net.',
+   'Contact XL.net: email Tron Netter at Tron.Netter@ai.xl.net. Tron Netter''s own AI line, call or text 24/7: (872) 350-4325 — the only number for reaching Tron Netter himself. Sales / general inquiries (human team): +1 (844) 915-5155. Websites: https://xl.net and https://ai.xl.net.',
    0.92, 1, 'seed', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
 
 ON CONFLICT (id) DO UPDATE SET

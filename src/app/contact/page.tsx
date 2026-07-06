@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
-import { ContactForm } from "@/components/contact-form";
 
 export const metadata: Metadata = {
   title: "Contact Us",
   description:
-    "Get in touch with XL.net AI — email, phone, or chat with Tron Netter.",
+    "Reach XL.net AI directly — email, call, or text Tron Netter, or chat on the site. No forms, no waiting.",
   alternates: { canonical: "/contact" },
   openGraph: {
     title: "Contact Us — XL.net AI",
-    description: "Get in touch with XL.net AI — email, phone, or chat with Tron Netter.",
+    description:
+      "Reach XL.net AI directly — email, call, or text Tron Netter, or chat on the site. No forms, no waiting.",
   },
 };
 
@@ -20,8 +20,9 @@ export default function ContactPage() {
         <h1 className="mt-8">Contact Us</h1>
         <p className="mt-6 text-lg">
           XL.net is a leader in AI-powered managed IT services for small and
-          mid-size businesses. Have questions about our AI capabilities or want
-          to learn more? We&apos;d love to hear from you.
+          mid-size businesses. There&apos;s no form to fill out here — reach
+          Tron Netter, our AI agent, directly by email, phone, text, or chat.
+          Available 24/7.
         </p>
       </section>
 
@@ -30,44 +31,42 @@ export default function ContactPage() {
         <section className="panel rise">
           <span className="sys-label">Signal</span>
           <h3 className="mt-4">Email</h3>
-          <p className="mt-3 text-sm">Questions, partnerships, or feedback</p>
+          <p className="mt-3 text-sm">
+            Email Tron Netter — questions, partnerships, or feedback
+          </p>
           <a
-            href="mailto:ai@xl.net"
+            href="mailto:Tron.Netter@ai.xl.net"
             className="mono mt-4 inline-block text-sm"
           >
-            ai@xl.net
+            Tron.Netter@ai.xl.net
           </a>
         </section>
 
-        {/* Phone panel */}
+        {/* Phone & Text panel */}
         <section
           className="panel panel--lightline rise"
           style={{ transitionDelay: "120ms" }}
         >
-          <span className="sys-label">Voice</span>
-          <h3 className="mt-4">Phone</h3>
+          <span className="sys-label">Voice / SMS</span>
+          <h3 className="mt-4">Phone &amp; Text</h3>
           <p className="mt-3 text-sm">
-            Talk to Tron Netter, our AI assistant — 24/7
+            Call or text Tron Netter, our AI agent — 24/7
           </p>
-          <a
-            href="tel:+18723504325"
-            className="mono mt-4 inline-block text-sm"
-          >
-            (872) 350-4325
-          </a>
+          <div className="mt-4 flex items-center gap-4">
+            <a href="tel:+18723504325" className="mono text-sm">
+              (872) 350-4325
+            </a>
+            <a href="sms:+18723504325" className="mono text-sm">
+              Send a text
+            </a>
+          </div>
+          <p className="mt-3 text-xs opacity-70">
+            Standard message &amp; data rates apply.
+          </p>
         </section>
       </div>
 
-      {/* Contact form */}
-      <section className="panel panel--raised rise">
-        <span className="sys-label">Transmission</span>
-        <h2 className="mt-4">Send Us a Message</h2>
-        <div className="mt-8">
-          <ContactForm />
-        </div>
-      </section>
-
-      {/* Tron Netter callout */}
+      {/* Chat with Tron Netter showcase */}
       <section className="panel--void beams relative text-center">
         <div className="relative z-10 mx-auto max-w-xl px-6">
           <span className="sys-label sys-label--sand sys-label--center">
@@ -75,9 +74,11 @@ export default function ContactPage() {
           </span>
           <h2 className="mt-6">Chat with Tron Netter</h2>
           <p className="mx-auto mt-4 text-sm">
-            Have a quick question? Chat with Tron Netter, our AI assistant,
-            using the chat button in the bottom right corner — or call and it
-            will answer. Available 24/7.
+            Have a question about our AI capabilities, managed IT services, or
+            how we work? Chat with Tron Netter right now using the chat button
+            in the bottom right corner of this page. He&apos;s the same AI
+            agent on every channel — web, phone, and text — helpful, accurate,
+            and available 24/7.
           </p>
         </div>
       </section>

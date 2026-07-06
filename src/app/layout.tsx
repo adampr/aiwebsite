@@ -162,8 +162,8 @@ export default function RootLayout({
                 <span className="sys-label">Contact</span>
                 <ul className="mt-4 space-y-2 text-sm">
                   <li>
-                    <a href="mailto:ai@xl.net" className="mono">
-                      ai@xl.net
+                    <a href="mailto:Tron.Netter@ai.xl.net" className="mono">
+                      Tron.Netter@ai.xl.net
                     </a>
                   </li>
                   <li>
