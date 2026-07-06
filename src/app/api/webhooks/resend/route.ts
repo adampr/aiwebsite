@@ -152,20 +152,42 @@ async function handleInbound(emailId: string) {
   if (!bodyText) return;
   const promptBody = stripQuotedAndSignature(bodyText);
 
+  // The user turn carries ONLY the sender's own words, exactly like webchat;
+  // sender/subject metadata lives in the system prompt. Wrapping the body in
+  // an "[Email from ...]" envelope made the model treat the turn as a
+  // document to describe ("This looks like a signature block from...")
+  // instead of a message to answer.
+  //
+  // Session/requester ids are v2 on purpose: the brain stores conversation
+  // turns unconditionally (memoryMode only gates fact extraction) and
+  // replays them — by sessionId, then cross-session by requesterId — so the
+  // original per-sender sessions that contain those describe-mode replies
+  // would keep re-teaching the behavior. The new ids orphan that history.
+  // Sessions are scoped per thread (sender + normalized subject), matching
+  // itsupportchicago's per-thread email sessions.
+  const threadKey =
+    subject.replace(/^((re|fwd?|fw):\s*)+/i, "").trim().toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) ||
+    "no-subject";
+
   const envelope = {
-    sessionId: `email-${senderAddress}`,
+    sessionId: `email2-${senderAddress}-${threadKey}`,
     promptId: `email_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     messages: [
       {
         role: "system",
-        content: getTronNetterSystemPrompt() + TRON_NETTER_EMAIL_ADDENDUM,
+        content:
+          getTronNetterSystemPrompt() +
+          TRON_NETTER_EMAIL_ADDENDUM +
+          `\n\nYou are replying to an email from ${from}` +
+          (subject ? ` with the subject "${subject}".` : "."),
       },
       {
         role: "user",
-        content: `[Email from ${from}]\nSubject: ${subject}\n\n${promptBody}`,
+        content: promptBody,
       },
     ],
-    requester: { requesterId: senderAddress, email: senderAddress },
+    requester: { requesterId: `email:${senderAddress}`, email: senderAddress },
     memoryMode: "do_not_store",
     privacyScope: "private_to_requester",
     markdownMode: "strip",
