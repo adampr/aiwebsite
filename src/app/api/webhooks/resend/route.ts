@@ -70,6 +70,52 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
+// Strip quoted reply history and signature blocks from an inbound email body
+// before it is handed to the brain: a short question buried under a long
+// signature (links, phone numbers, article URLs) otherwise dominates the
+// prompt and the model answers the signature instead of the sender.
+// Conservative by design — cuts only at unambiguous markers. The FULL
+// original body is still quoted in the outbound reply; only the model
+// prompt gets the trimmed version. Keep in sync with the identical helper
+// in itsupportchicago's resend webhook.
+function stripQuotedAndSignature(text: string): string {
+  const lines = text.split("\n");
+  let cut = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (
+      /^On .{4,200} wrote:$/.test(trimmed) || // Gmail/Apple Mail reply header
+      /^-{2,}\s*Original Message\s*-{2,}$/i.test(trimmed) || // Outlook
+      /^-{4,}\s*Forwarded/i.test(trimmed) || // forward separator
+      trimmed.startsWith(">") || // already-quoted lines
+      /^--\s*$/.test(lines[i]) // RFC 3676 signature delimiter "-- "
+    ) {
+      cut = i;
+      break;
+    }
+  }
+  let kept = lines.slice(0, cut);
+  // Adam's signature: "Regards," followed by "Adam Radulovic" within the
+  // next 3 NON-BLANK lines (Gmail pads the closer with blank lines; same
+  // rule as itsupportchicago's chiai proxy flow, blank-line tolerant).
+  outer: for (let i = 0; i < kept.length; i++) {
+    if (/^Regards,?\s*$/i.test(kept[i].trim())) {
+      let checked = 0;
+      for (let j = i + 1; j < kept.length && checked < 3; j++) {
+        const next = kept[j].trim();
+        if (!next) continue;
+        checked++;
+        if (/adam\s*radulovic/i.test(next)) {
+          kept = kept.slice(0, i);
+          break outer;
+        }
+      }
+    }
+  }
+  const result = kept.join("\n").trim();
+  return result || text.trim();
+}
+
 async function handleInbound(emailId: string) {
   const resend = getResend();
   const { data: email, error } = await resend.emails.receiving.get(emailId);
@@ -104,6 +150,7 @@ async function handleInbound(emailId: string) {
   const subject = email.subject ?? "";
   const bodyText = (email.text ?? email.html ?? "").trim();
   if (!bodyText) return;
+  const promptBody = stripQuotedAndSignature(bodyText);
 
   const envelope = {
     sessionId: `email-${senderAddress}`,
@@ -115,7 +162,7 @@ async function handleInbound(emailId: string) {
       },
       {
         role: "user",
-        content: `[Email from ${from}]\nSubject: ${subject}\n\n${bodyText}`,
+        content: `[Email from ${from}]\nSubject: ${subject}\n\n${promptBody}`,
       },
     ],
     requester: { requesterId: senderAddress, email: senderAddress },

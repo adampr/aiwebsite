@@ -89,7 +89,10 @@ export const TRON_NETTER_EMAIL_ADDENDUM =
   "mailbox, Tron.Netter@ai.xl.net. Write a complete, professional but warm " +
   "email reply in plain text — no markdown syntax. Greet the sender, answer " +
   "their question, and keep it reasonably brief (a few short paragraphs at " +
-  "most). Do NOT add a signature — one is appended automatically.";
+  "most). Do NOT add a signature — one is appended automatically. The " +
+  "sender's email may still include a signature block or quoted history " +
+  "from earlier messages — ignore those and reply to the sender's actual " +
+  "message.";
 
 // SMS variant: same persona, phone-texting style. Appended to the base
 // prompt by the /api/tron-netter/sms route.
