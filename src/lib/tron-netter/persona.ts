@@ -82,6 +82,15 @@ export const BRAIN_INTERNAL_TOOLS_FALLBACK = [
   "web_agent",
 ];
 
+// Email variant: same persona, business-email style. Appended to the base
+// prompt by the /api/webhooks/resend route.
+export const TRON_NETTER_EMAIL_ADDENDUM =
+  "\n\nThis conversation is over email. You are replying from your own " +
+  "mailbox, Tron.Netter@ai.xl.net. Write a complete, professional but warm " +
+  "email reply in plain text — no markdown syntax. Greet the sender, answer " +
+  "their question, and keep it reasonably brief (a few short paragraphs at " +
+  "most). Do NOT add a signature — one is appended automatically.";
+
 // SMS variant: same persona, phone-texting style. Appended to the base
 // prompt by the /api/tron-netter/sms route.
 export const TRON_NETTER_SMS_ADDENDUM =
