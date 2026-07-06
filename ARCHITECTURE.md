@@ -9,7 +9,7 @@
 > This document specifies the brain only as far as this site consumes it (§7); rebuild the
 > brain itself from its own doc.
 
-Last verified against code: 2026-07-06 (brain submodule v1.91, Next.js 16.2.9).
+Last verified against code: 2026-07-06 (brain submodule v1.92, Next.js 16.2.9).
 
 ---
 
@@ -66,7 +66,7 @@ managed DB — just PM2, nginx, Postgres, and cloudflared on a single box.
 ```
 
 - Next.js calls brain-api over loopback (`BRAIN_BASE_URL=http://127.0.0.1:3211`) with a
-  Bearer key (first entry of `BRAIN_API_KEYS`). brain-api v1.91 is **fail-closed**: every
+  Bearer key (first entry of `BRAIN_API_KEYS`). brain-api v1.92 is **fail-closed**: every
   endpoint except `/health` and `/twilio/*` requires the Bearer.
 - skills-host is booted for completeness but effectively idle for the public persona
   (all tools disabled). The brain's `test-ui` app (:3212) is **not** run in production.
@@ -292,7 +292,7 @@ crawl never touches them (it only replaces `source_type='site_crawl'` rows).
 
 ## 7. The brain contract (what the site depends on)
 
-The brain (submodule `packages/brain` ← `https://github.com/adampr/xldev.git`, v1.91) is a
+The brain (submodule `packages/brain` ← `https://github.com/adampr/xldev.git`, v1.92) is a
 generic "conversation-first, memory-bearing" engine. **The Tron Netter persona lives entirely
 in the parent repo** — the brain receives it per-request via `brainIdentity` + a system message.
 Rebuild the brain from its own canonical doc; the site needs only this contract:
@@ -461,7 +461,7 @@ every variable below appears there with a comment.
 |---|---|---|
 | DB | `DATABASE_URL` | `postgresql://aiwebsite:aiwebsite@localhost:5432/aiwebsite` (site; throws if unset) |
 | Brain | `BRAIN_BASE_URL` | `http://127.0.0.1:3211` |
-| | `BRAIN_API_KEYS` | comma list; **set in prod** (brain v1.91 fail-closed); site uses first key as Bearer |
+| | `BRAIN_API_KEYS` | comma list; **set in prod** (brain v1.92 fail-closed); site uses first key as Bearer |
 | | `BRAIN_PUBLIC_URL` | **exactly** `https://ai.xl.net/brain` (Twilio signature base) |
 | | `BRAIN_DB_BACKEND` / `BRAIN_POSTGRES_URL` / `BRAIN_DB_TABLE_PREFIX` | `postgres` / same DB as site / `brain_` |
 | | `BRAIN_AUDIO_MODE` | `xai_realtime` |
