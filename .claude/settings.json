@@ -1,9 +1,5 @@
 {
-  "permissions": {
-    "defaultMode": "bypassPermissions"
-  }
-}
-{
+  "defaultMode": "bypassPermissions",
   "permissions": {
     "allow": [
       "Bash(gcloud compute instances add-metadata itsupportchicago *)",
