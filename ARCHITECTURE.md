@@ -68,7 +68,6 @@ managed DB — just PM2, nginx, Postgres, and cloudflared on a single box.
 - Next.js calls brain-api over loopback (`BRAIN_BASE_URL=http://127.0.0.1:3211`) with a
   Bearer key (first entry of `BRAIN_API_KEYS`). brain-api v1.91 is **fail-closed**: every
   endpoint except `/health` and `/twilio/*` requires the Bearer.
-  (`deploy/GO-LIVE.md` still describes an older keyless "open-gate" mode — stale; prod sets `BRAIN_API_KEYS`.)
 - skills-host is booted for completeness but effectively idle for the public persona
   (all tools disabled). The brain's `test-ui` app (:3212) is **not** run in production.
 - Twilio webhooks are the only public brain traffic; the brain validates `X-Twilio-Signature`
@@ -236,7 +235,7 @@ URIs registered with Google/Microsoft).
 
 | Module | Responsibility |
 |---|---|
-| `brain-client.ts` | `BRAIN_AUTH_HEADERS` (Bearer = first key in `BRAIN_API_KEYS`); `getDisabledBrainTools()` — `GET /v1/tools` (10 s), process-cached, fallback to the static `BRAIN_INTERNAL_TOOLS_FALLBACK` list; `callBrainWithRetry()` (3 attempts, backoff 0/5s/15s — sized to survive PM2 memory-restart cycles); `waitForBrainReady()` health poll |
+| `brain-client.ts` | `BRAIN_AUTH_HEADERS` (Bearer = first key in `BRAIN_API_KEYS`); `getDisabledBrainTools()` — `GET /v1/tools` (10 s), process-cached, fallback to the static `BRAIN_INTERNAL_TOOLS_FALLBACK` list. Routes construct their own `/v1/chat/completions` fetches (each channel's envelope and streaming needs differ) |
 | `auth.ts` | Stateless HMAC session cookie **`aix_session`** (30 days): `base64url(JSON{userId,email,displayName,provider,iat,exp}).base64url(HMAC-SHA256(SESSION_COOKIE_SECRET))`; secret must be ≥32 chars (throws); httpOnly, sameSite lax, secure in prod; timing-safe verify; `isAdmin()` |
 | `oauth-helpers.ts` | Cookies `aix_oauth_state` (32-byte hex) + `aix_oauth_redirect`, 600 s; redirect must start `/` and not `//` (open-redirect guard); `handleOAuthUser()` — lowercase email, upsert `users` (update lastLoginAt/displayName/provider or insert with emailDomain), set session, log to `auth_logs` |
 | `db/index.ts` | drizzle over `postgres()` pool (max 20, idle 30 s, connect 10 s); lazy Proxy singleton; throws without `DATABASE_URL` |
@@ -244,11 +243,6 @@ URIs registered with Google/Microsoft).
 | `email/send.ts` | `sendEmail()` via Resend REST `POST api.resend.com/emails` (Bearer, 10 s); default from `MAIL_FROM` = `Tron Netter <Tron.Netter@ai.xl.net>`; **always BCCs `OUTBOUND_BCC_EMAIL`** (default adam@xl.net) unless the recipient *is* that address (Resend rejects duplicates); no key → log + return false (email is best-effort) |
 | `tron-netter/persona.ts` | `TRON_NETTER_IDENTITY` (brainName/personality/purpose/goals/originStory); SMS + email addenda; `BRAIN_INTERNAL_TOOLS_FALLBACK` (v1.91 tool-name snapshot); `getTronNetterSystemPrompt()` — reads `TRON_KNOWLEDGE_FILE` (default `<cwd>/data/tron-netter-knowledge.md`), **cached by mtime** so the nightly rewrite hot-reloads without restart; files <1000 chars treated as corrupt → baked-in `FALLBACK_PUBLIC_KNOWLEDGE`. Prompt enforces: first-person-plural "we", knowledge limited to the two sites, no tools/no internet, own line (872) 350-4325, human sales line +1 (844) 915-5155 |
 | `rate-limit.ts` | in-memory Map limiter (per-process — adequate at 1 PM2 fork instance; **not distributed**, revisit if instances >1), lazy 60 s cleanup; `RATE_LIMITS.oauthStartPerIp = {windowSec:60, max:20}` |
-
-### 5.6 Known dead code (decide: wire or drop on rebuild)
-
-`contact_submissions` table (no form writes to it), `callBrainWithRetry`/`waitForBrainReady`
-(exported, unreferenced by routes — routes inline their own fetch), `src/lib/empty-polyfill.js`.
 
 ---
 
@@ -258,8 +252,9 @@ One local **PostgreSQL** instance, one database **`aiwebsite`** (role `aiwebsite
 `aiwebsite` — dev/VM-local default; loopback only). **The site and the brain share this DB**;
 brain tables carry the prefix **`brain_`** (`BRAIN_DB_TABLE_PREFIX`).
 
-**Site tables** — drizzle-managed (`src/lib/db/schema.ts`, migrations in `drizzle/migrations/`,
-applied by `npm run db:generate && npm run db:migrate`):
+**Site tables** — drizzle-managed. `src/lib/db/schema.ts` is the single source of truth;
+`drizzle/migrations/` is **gitignored by design** — setup-vm.sh regenerates and applies
+migrations on every deploy (`npm run db:generate && npm run db:migrate`):
 
 ```sql
 users              id uuid PK default gen_random_uuid(), email text NOT NULL UNIQUE,
@@ -272,7 +267,10 @@ auth_logs          id serial PK, user_id uuid REFERENCES users(id), email text N
 
 contact_submissions id serial PK, name text NOT NULL, email text NOT NULL, company text,
                    phone text, message text NOT NULL, ip_address inet,
-                   created_at timestamptz default now()      -- currently unused (no form)
+                   created_at timestamptz default now()
+                   -- no live writer: the contact form + /api/contact were removed in
+                   -- commit 1da92d1 (direct channels only); table deliberately retained
+                   -- for historical rows and possible future form
 ```
 
 **Brain tables** — created at runtime by brain-api's own migration array on first boot
@@ -456,8 +454,8 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
 
 ## 10. Environment variables (single shared `.env`, site + brain + deploy)
 
-Generate secrets with `openssl rand -hex 32`. ⚠ = referenced by code/docs but **missing from
-`.env.example`** — add them there on rebuild.
+Generate secrets with `openssl rand -hex 32`. `.env.example` is the authoritative template —
+every variable below appears there with a comment.
 
 | Group | Var | Value / purpose |
 |---|---|---|
@@ -472,14 +470,14 @@ Generate secrets with `openssl rand -hex 32`. ⚠ = referenced by code/docs but 
 | | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `TAVILY_API_KEY`, `AA_API_KEY` | optional brain providers |
 | Twilio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_PHONE_NUMBER` | number +1 872 350 4325, SID `PN9435882fd720d7ec79108d195f4c9e39` |
 | | `INBOUND_PHONE_PERSONA_NAME` / `INBOUND_PHONE_SITE` / `INBOUND_PHONE_GREETING` | voice persona (Tron Netter / ai.xl.net) |
-| Email | `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET` (svix inbound), `MAIL_FROM` (`Tron Netter <Tron.Netter@ai.xl.net>`), `CONTACT_NOTIFY_EMAIL`, `OUTBOUND_BCC_EMAIL`⚠ (default adam@xl.net — mandatory oversight BCC) | ai.xl.net domain verified in Resend |
+| Email | `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET` (svix inbound), `MAIL_FROM` (`Tron Netter <Tron.Netter@ai.xl.net>`), `CONTACT_NOTIFY_EMAIL`, `OUTBOUND_BCC_EMAIL` (default adam@xl.net — mandatory oversight BCC) | ai.xl.net domain verified in Resend |
 | Auth | `SESSION_COOKIE_SECRET` (≥32 chars), `ADMIN_EMAIL` (comma list) | |
-| | `GOOGLE_CLIENT_ID`⚠ / `GOOGLE_CLIENT_SECRET`⚠ / `GOOGLE_REDIRECT_URI`⚠ | `https://ai.xl.net/auth/google/callback` (GCP project `xl-website-1682362315172`, client "ai.xl.net") |
-| | `MICROSOFT_CLIENT_ID`⚠ / `MICROSOFT_CLIENT_SECRET`⚠ / `MICROSOFT_REDIRECT_URI`⚠ / `MICROSOFT_TENANT_ID`⚠ (default `common`) | Entra app `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c` |
+| | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | `https://ai.xl.net/auth/google/callback` (GCP project `xl-website-1682362315172`, client "ai.xl.net") |
+| | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` / `MICROSOFT_REDIRECT_URI` / `MICROSOFT_TENANT_ID` (default `common`) | Entra app `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c` |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
-| | `TRON_KNOWLEDGE_FILE`⚠ | optional override; default `<cwd>/data/tron-netter-knowledge.md` |
-| Crawl | `KNOWLEDGE_NOTIFY_EMAIL`⚠ / `ADMIN_EMAIL` | report recipient fallbacks |
-| Misc | `AUTOMATION_SECRET` (skills-host), `DEFAULT_BRAIN_NAME`⚠, `DEFAULT_PURPOSE`⚠ | brain persona defaults |
+| | `TRON_KNOWLEDGE_FILE` | optional override; default `<cwd>/data/tron-netter-knowledge.md` |
+| Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |
+| Misc | `AUTOMATION_SECRET` (skills-host), `DEFAULT_BRAIN_NAME`, `DEFAULT_PURPOSE` | brain persona defaults |
 | Deploy | `AIWEBSITE_SSH_IP` (52.237.160.75), `AIWEBSITE_USER` (xladmin), `AIWEBSITE_PW` | consumed only by deploy.sh on the dev box |
 
 ---

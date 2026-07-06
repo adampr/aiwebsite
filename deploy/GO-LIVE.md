@@ -13,17 +13,18 @@ visitor ─► https://ai.xl.net ───────────────�
                                              │                      │
                                    Next.js :3000          brain-api :3211 (/twilio/ only)
                                              │                      │
-                                             └── loopback, no key ──┘
+                                             └─ loopback + Bearer ──┘
                                        (brain runs from packages/brain submodule
                                         via PM2: brain-api + skills-host)
 ```
 
-Brain integration is **not API-key based**: the brain runs locally from the
-`packages/brain` git submodule (PM2 apps `brain-api` on :3211 and `skills-host`
-on :3213), the site calls it over loopback in open-gate mode (no
-`BRAIN_API_KEYS` set). The only publicly exposed brain surface is
-`/brain/twilio/` (Twilio webhooks + media-stream WebSocket), and those routes
-validate `X-Twilio-Signature` themselves.
+The brain runs locally from the `packages/brain` git submodule (PM2 apps
+`brain-api` on :3211 and `skills-host` on :3213). Since brain v1.89 the API is
+fail-closed: `BRAIN_API_KEYS` must be set in `.env`, and the site sends the
+first key as a Bearer token on every loopback call (`src/lib/brain-client.ts`).
+The only publicly exposed brain surface is `/brain/twilio/` (Twilio webhooks +
+media-stream WebSocket), and those routes validate `X-Twilio-Signature`
+themselves.
 
 ## Already done (automated)
 
@@ -102,8 +103,9 @@ curl -fsS https://ai.xl.net/api/health
 
 - Commit the pending changes (repo already stages `.gitmodules` +
   `packages/brain`; new/changed: `src/`, `deploy/`, configs).
-- Optional hardening: per-project API keys; move the VM SSH password out of
-  `.env` to SSH keys; `pm2 install pm2-logrotate`.
+- Optional hardening: move the VM SSH password out of `.env` to SSH keys;
+  `pm2 install pm2-logrotate`. (Brain API keys are already in place —
+  `BRAIN_API_KEYS`, fail-closed since brain v1.89.)
 
 ## Troubleshooting
 
