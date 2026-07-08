@@ -17,9 +17,13 @@ const SKIP_PREFIXES = [
   "/sitemap",
   "/opengraph-image",
 ];
+// App Router pages are all extensionless (/, /contact, /admin/*); any path
+// with an extension is a static asset or sub-resource — e.g. the homepage's
+// /brand/xl-logo-animated-{dark,light}.html logo iframes, which must NOT
+// count as page views.
 const SKIP_EXTENSIONS = [
   ".css", ".js", ".png", ".jpg", ".svg", ".ico", ".webp",
-  ".woff", ".woff2", ".ttf", ".txt", ".xml",
+  ".woff", ".woff2", ".ttf", ".txt", ".xml", ".html",
 ];
 const BOT_PATTERN =
   /bot|crawl|spider|slurp|baidu|yandex|semrush|ahref|mj12|python|curl|wget/i;
