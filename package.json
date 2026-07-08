@@ -15,6 +15,8 @@
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
+    "maxmind": "^5.0.6",
+    "mmdb-lib": "^3.0.2",
     "next": "16.2.9",
     "postgres": "^3.4.9",
     "react": "19.2.4",

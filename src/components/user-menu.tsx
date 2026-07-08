@@ -102,6 +102,16 @@ export function UserMenu() {
             <div className="truncate">{user.email}</div>
           </div>
           <hr className="rule my-1" />
+          {user.isAdmin && (
+            <Link
+              href="/admin/analytics"
+              role="menuitem"
+              className="block w-full px-4 py-2 text-left text-sm no-underline hover:opacity-70"
+              onClick={() => setOpen(false)}
+            >
+              Admin
+            </Link>
+          )}
           <button
             onClick={handleSignOut}
             role="menuitem"

@@ -46,6 +46,15 @@ sshpass -e rsync -az --delete \
 echo ">>> Copying production .env..."
 sshpass -e rsync -az "$REPO_DIR/.env" "$HOST:$APP_DIR/.env"
 
+# GeoLite2-ASN is gitignored (12 MB binary, shared with itsupportchicago) but
+# lives inside the otherwise VM-owned /data/, so it is shipped explicitly.
+# Powers the /admin/companies IP→organization lookups.
+if [ -f "$REPO_DIR/data/GeoLite2-ASN.mmdb" ]; then
+  echo ">>> Copying GeoLite2-ASN.mmdb..."
+  $SSH "mkdir -p $APP_DIR/data"
+  sshpass -e rsync -az "$REPO_DIR/data/GeoLite2-ASN.mmdb" "$HOST:$APP_DIR/data/GeoLite2-ASN.mmdb"
+fi
+
 if [ -f "$TUNNEL_CRED_LOCAL" ]; then
   echo ">>> Copying Cloudflare tunnel credentials..."
   sshpass -e rsync -az "$TUNNEL_CRED_LOCAL" "$HOST:/tmp/aiwebsite-tunnel.json"

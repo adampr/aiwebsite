@@ -9,7 +9,7 @@
 > This document specifies the brain only as far as this site consumes it (§7); rebuild the
 > brain itself from its own doc.
 
-Last verified against code: 2026-07-06 (brain submodule v1.92, Next.js 16.2.9).
+Last verified against code: 2026-07-07 (brain submodule v1.92, Next.js 16.2.9).
 
 ---
 
@@ -90,10 +90,12 @@ aiwebsite/
 ├── data/                       VM-GENERATED knowledge files — gitignored from deploy --delete,
 │   │                           rewritten nightly by the crawl (§8); never hand-edit
 │   ├── tron-netter-knowledge.md        (~175 KB budgeted prompt doc, read at request time)
-│   └── tron-netter-knowledge-full.md   (~2.5 MB full crawl, audit only)
+│   ├── tron-netter-knowledge-full.md   (~2.5 MB full crawl, audit only)
+│   └── GeoLite2-ASN.mmdb               MaxMind IP→ASN db (12 MB, gitignored; deploy.sh ships it
+│                                        explicitly; shared copy with itsupportchicago) (§5.6)
 ├── scripts/refresh-tron-knowledge.mjs  nightly crawler (§8)
 ├── deploy/                     provisioning, PM2, nginx, cloudflared, watchdog, seeds, runbooks (§9)
-├── drizzle/migrations/         SQL migrations for the site's 3 tables (§6)
+├── drizzle/migrations/         SQL migrations for the site's 6 tables (§6)
 ├── drizzle.config.ts           schema ./src/lib/db/schema.ts → ./drizzle/migrations, dialect postgresql
 ├── public/                     favicons, brand assets, fx.js (<xl-dust> canvas particles)
 ├── next.config.ts              trailingSlash:false; experimental.inlineCss:true — nothing else
@@ -102,14 +104,17 @@ aiwebsite/
 ```
 
 **Stack versions:** Node **22** (VM; brain requires ≥20) · Next.js **16.2.9** · React **19.2.4**
-· TypeScript 5 · Tailwind **v4** · drizzle-orm 0.45 + `postgres` 3.4 driver · resend 6.17.
-No `middleware.ts`. No test suite in the parent repo (the brain has its own QA/benchmarks).
+· TypeScript 5 · Tailwind **v4** · drizzle-orm 0.45 + `postgres` 3.4 driver · resend 6.17
+· maxmind 5 + mmdb-lib (IP→org for /admin/companies).
+`src/middleware.ts` does CSRF origin checks for `/api/admin/*` mutations and fire-and-forget
+page-view tracking (§5.6). No test suite in the parent repo (the brain has its own QA/benchmarks).
 
 ---
 
 ## 4. Frontend
 
-Three pages, all served from the root layout (`src/app/layout.tsx`):
+Three public pages, all served from the root layout (`src/app/layout.tsx`), plus the
+admin console under `/admin/*` (§5.6):
 
 | URL | Type | Content |
 |---|---|---|
@@ -142,7 +147,8 @@ Dark variant: `@custom-variant dark (&:where(.dark, .dark *))`.
 - `theme-toggle.tsx` — three-way `system → light → dark` cycle, `useSyncExternalStore`,
   persists `localStorage["theme"]`.
 - `user-menu.tsx` — fetches `GET /api/auth/session` on mount; "Sign In" link or avatar dropdown
-  with Sign Out (`POST /api/auth/logout` → redirect `/`).
+  with Sign Out (`POST /api/auth/logout` → redirect `/`) and, when `isAdmin`, an "Admin" link
+  to `/admin/analytics`.
 - `futurism-fx.tsx` — IntersectionObserver adds `.is-visible` to `.rise` elements; re-runs on route change.
 - `public/fx.js` — defines the `<xl-dust>` custom element (canvas dust motes; `density` attr,
   default 36; colors from `--xl-light`/`--xl-sand`; respects `prefers-reduced-motion`).
@@ -152,7 +158,12 @@ Dark variant: `@custom-variant dark (&:where(.dark, .dark *))`.
 
 ## 5. Backend (Next.js route handlers)
 
-Auth is enforced per-route via `getSession()`; there is no middleware and no globally-gated page.
+Auth is enforced per-route via `getSession()`. `src/middleware.ts` adds two cross-cutting
+behaviors (§5.6): a CSRF origin/referer check on state-changing `/api/admin/*` calls, and
+fire-and-forget page-view tracking beacons. Admin authorization is `isAdmin(email)` = membership
+in the comma-separated `ADMIN_EMAIL` env allowlist — no DB role; `/admin` pages redirect
+non-admins to `/login` (layout **and** each page), `/api/admin/*` routes use `requireAdmin()`
+(401 no session / 403 not admin).
 OAuth **callbacks** live under `/auth/...`, not `/api/auth/...` (they must match the redirect
 URIs registered with Google/Microsoft).
 
@@ -239,14 +250,52 @@ URIs registered with Google/Microsoft).
 | `auth.ts` | Stateless HMAC session cookie **`aix_session`** (30 days): `base64url(JSON{userId,email,displayName,provider,iat,exp}).base64url(HMAC-SHA256(SESSION_COOKIE_SECRET))`; secret must be ≥32 chars (throws); httpOnly, sameSite lax, secure in prod; timing-safe verify; `isAdmin()` |
 | `oauth-helpers.ts` | Cookies `aix_oauth_state` (32-byte hex) + `aix_oauth_redirect`, 600 s; redirect must start `/` and not `//` (open-redirect guard); `handleOAuthUser()` — lowercase email, upsert `users` (update lastLoginAt/displayName/provider or insert with emailDomain), set session, log to `auth_logs` |
 | `db/index.ts` | drizzle over `postgres()` pool (max 20, idle 30 s, connect 10 s); lazy Proxy singleton; throws without `DATABASE_URL` |
-| `db/schema.ts` | the 3 tables in §6 |
+| `db/schema.ts` | the 6 tables in §6 |
 | `email/send.ts` | `sendEmail()` via Resend REST `POST api.resend.com/emails` (Bearer, 10 s); default from `MAIL_FROM` = `Tron Netter <Tron.Netter@ai.xl.net>`; **always BCCs `OUTBOUND_BCC_EMAIL`** (default adam@xl.net) unless the recipient *is* that address (Resend rejects duplicates); no key → log + return false (email is best-effort) |
 | `tron-netter/persona.ts` | `TRON_NETTER_IDENTITY` (brainName/personality/purpose/goals/originStory); SMS + email addenda; `BRAIN_INTERNAL_TOOLS_FALLBACK` (v1.91 tool-name snapshot); `getTronNetterSystemPrompt()` — reads `TRON_KNOWLEDGE_FILE` (default `<cwd>/data/tron-netter-knowledge.md`), **cached by mtime** so the nightly rewrite hot-reloads without restart; files <1000 chars treated as corrupt → baked-in `FALLBACK_PUBLIC_KNOWLEDGE`. Prompt enforces: first-person-plural "we", knowledge limited to the two sites, no tools/no internet, own line (872) 350-4325, human sales line +1 (844) 915-5155 |
 | `rate-limit.ts` | in-memory Map limiter (per-process — adequate at 1 PM2 fork instance; **not distributed**, revisit if instances >1), lazy 60 s cleanup; `RATE_LIMITS.oauthStartPerIp = {windowSec:60, max:20}` |
+| `auth-guard.ts` | `requireAdmin()` for `/api/admin/*` handlers: `{ok:true, session}` or `{ok:false, response}` (401/403) |
+| `brain-db.ts` | **read-only** admin queries over the brain's tables (`BRAIN_DB_TABLE_PREFIX`, default `brain_`): session lists/transcripts (`brain_messages`), usage totals/by-model (`brain_usage_events`), call log (`brain_phone_calls`), memory list/stats (`brain_memories`), distinct requesters. Channel inferred from sessionId prefix: `tron_`→chat, `sms-`→SMS, `email`→email. Brain timestamps are TEXT ISO-8601 (sort as text) |
+| `admin/format.ts` | shared admin formatting: `fmtDate` (America/Chicago), `fmtBytes`, `fmtUsd`, `requesterLabel` (strips `email:` prefix) |
+| `seo/classify-referrer.ts` | `classifyReferrer(referrer, utm)` → organic/direct/social/referral/email/paid; `extractDomain()`. Copied verbatim from itsupportchicago |
+| `visitor-id/ip-org-resolver.ts` | `resolveIpOrg(ip)` via MaxMind GeoLite2-ASN (`MAXMIND_DB_PATH`, default `<cwd>/data/GeoLite2-ASN.mmdb`); results (incl. nulls) cached in `ip_orgs`; `visitor-id/isp-asns.ts` = static ISP/residential ASN set to filter non-attributable traffic. Missing .mmdb → resolver returns null, tracking unaffected |
 
----
+### 5.6 Admin console (`/admin/*` + `/api/admin/*` + tracking)
 
-## 6. Database
+Ported/adapted from itsupportchicago.net's admin. All pages: server components under the
+shared `src/app/admin/layout.tsx` (nav + `robots: noindex,nofollow` + redirect guard),
+`dynamic = "force-dynamic"`, styled with the futurism design system. Every data source
+degrades independently (try/catch → empty state) so a missing table or stopped brain-api
+never 500s the page.
+
+| Page | Data | Notes |
+|---|---|---|
+| `/admin/analytics` | `users`, `auth_logs`, `page_visits`, brain usage | stat cards (users, 30d visits/sessions, 30d brain spend), usage-by-model table, recent sign-ins |
+| `/admin/conversations` | `brain_messages` (read-only) | all channels; filter `?channel=chat\|sms\|email`, paginate `?offset`, transcript via `?session=<id>` |
+| `/admin/messages` | Twilio REST API (no local storage) | client component; list is always scoped to `TWILIO_PHONE_NUMBER` (`To=`/`From=`) because the Twilio account is **shared with itsupportchicago**; "all" = merged first pages of both directions (no pagination), direction filters paginate via Twilio `next_page_uri`. Reply/compose form → `POST` |
+| `/admin/mailbox` | `brain_messages` email sessions + `admin_emails` | thread list from email sessions; thread view merges Tron's turns with manual admin sends (matched by sessionId); compose/reply → `POST /api/admin/mailbox/send`; reply-to derived from requesterId, subject from the sessionId's thread slug |
+| `/admin/calls` | `brain_phone_calls` (read-only) | expandable per-call transcripts (JSON `[{role,text}]`) |
+| `/admin/contacts` | derived — no contacts table | merges OAuth users + brain requesters (SMS phones, `email:` addrs) + phone-call numbers into one directory (identifier, channels, interaction counts, first/last seen) |
+| `/admin/companies` | `page_visits` ⋈ `ip_orgs` | orgs reading the site; ISP ASNs filtered out |
+| `/admin/seo` | `page_visits` | 30-day first-party traffic: stat cards (views/sessions/visitors/bounce), source classification, referring domains, daily bars, top pages, session depth. **GSC/Semrush not wired up** |
+| `/admin/knowledge` | `brain_memories` (read-only) | rows + per-source_type stats (row sizes matter — voice injects all public rows); button triggers the crawl |
+
+API routes (all `requireAdmin()` + middleware CSRF):
+
+- `GET/POST /api/admin/messages` — Twilio list proxy / send SMS (`From=TWILIO_PHONE_NUMBER`,
+  To must be E.164, body ≤1600). Manual sends do NOT enter Tron's conversation history.
+- `POST /api/admin/mailbox/send` — `sendEmail()` (Resend, mandatory adam@xl.net BCC), then
+  records the send in `admin_emails` (success flag either way).
+- `GET/POST /api/admin/knowledge/refresh` — status / spawn `scripts/refresh-tron-knowledge.mjs`
+  detached (logs → `data/knowledge-refresh-manual.log`); module-level flag → 409 while running
+  (not coordinated with the nightly cron).
+
+**Page-view tracking:** `src/middleware.ts` (GET, non-API/non-admin/non-static paths, bot-UA
+filtered, only when `INTERNAL_TRACK_SECRET` is set — fail-closed) POSTs
+`{path, referrer, ip (cf-connecting-ip ∥ x-forwarded-for), userAgent, sessionHash =
+hash(ip|ua|date), landingUrl, utm*}` fire-and-forget to `POST /api/internal/track`
+(`x-track-secret` gated), which dedups same session+path within 30 s, inserts `page_visits`,
+and warms `ip_orgs` via `resolveIpOrg()` in the background.
 
 One local **PostgreSQL** instance, one database **`aiwebsite`** (role `aiwebsite`, password
 `aiwebsite` — dev/VM-local default; loopback only). **The site and the brain share this DB**;
@@ -271,14 +320,34 @@ contact_submissions id serial PK, name text NOT NULL, email text NOT NULL, compa
                    -- no live writer: the contact form + /api/contact were removed in
                    -- commit 1da92d1 (direct channels only); table deliberately retained
                    -- for historical rows and possible future form
+
+page_visits        id serial PK, path text NOT NULL, landing_url text, referrer text,
+                   utm_source/utm_medium/utm_campaign/utm_term/utm_content text,
+                   ip_address inet, user_agent text, session_hash text,
+                   status_code integer default 200, created_at timestamptz default now()
+                   -- written only by /api/internal/track (§5.6)
+
+ip_orgs            id serial PK, ip_address inet NOT NULL UNIQUE, asn integer,
+                   org_name text, is_isp boolean NOT NULL default false,
+                   looked_up_at timestamptz default now()
+                   -- MaxMind lookup cache; nulls cached too
+
+admin_emails       id serial PK, to_email text NOT NULL, subject text NOT NULL,
+                   body text NOT NULL, session_id text, sent_by text NOT NULL,
+                   success boolean NOT NULL, created_at timestamptz default now()
+                   -- manual sends from /admin/mailbox; session_id links a reply to its
+                   -- brain email session so the thread view can interleave it
 ```
 
 **Brain tables** — created at runtime by brain-api's own migration array on first boot
 (~40 tables: `brain_messages`, `brain_memories`, `brain_goals`, `brain_usage_events`,
 `brain_phone_calls`, …). Not managed by drizzle; never migrate them from the parent repo.
-The parent touches exactly one directly: **`brain_memories`**
+The parent **writes** exactly one directly: **`brain_memories`**
 (columns used: `id, requester_id, group_id, scope, kind, key, value, importance, salience,
 source_type, created_at, updated_at`) — written by the seed SQL and the nightly crawl.
+The admin console additionally **reads** (never writes) `brain_messages`,
+`brain_usage_events` and `brain_phone_calls` via `src/lib/brain-db.ts` (§5.6) — raw SQL,
+resilient to the tables not existing yet.
 
 **Persona seed** — `deploy/seed-tron-memories.sql`: idempotent upsert (fixed ids,
 `ON CONFLICT (id) DO UPDATE`) of **7 public-scope rows** (`seed-tron-identity`, `seed-tron-scope`,
@@ -387,8 +456,9 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
    (not sourced — passwords may contain shell metachars); uses `sshpass`.
 2. `rsync -az --delete` repo → `/var/www/aiwebsite`, **excluding** `.git`, `node_modules`,
    `.next`, brain caches, `.env`, and `/data/` (VM-generated knowledge must survive the delete).
-3. rsync the production `.env` separately; ship `~/.cloudflared/aiwebsite-tunnel.json` →
-   `/etc/cloudflared/` (0600) if present.
+3. rsync the production `.env` separately; ship `data/GeoLite2-ASN.mmdb` explicitly if
+   present locally (it lives inside the excluded `/data/`); ship
+   `~/.cloudflared/aiwebsite-tunnel.json` → `/etc/cloudflared/` (0600) if present.
 4. SSH → run `deploy/setup-vm.sh` (below).
 5. Verify `127.0.0.1:3000/api/health`, `127.0.0.1:3211/health`, then public
    `https://ai.xl.net/api/health`.
@@ -471,7 +541,9 @@ every variable below appears there with a comment.
 | Twilio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_PHONE_NUMBER` | number +1 872 350 4325, SID `PN9435882fd720d7ec79108d195f4c9e39` |
 | | `INBOUND_PHONE_PERSONA_NAME` / `INBOUND_PHONE_SITE` / `INBOUND_PHONE_GREETING` | voice persona (Tron Netter / ai.xl.net) |
 | Email | `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET` (svix inbound), `MAIL_FROM` (`Tron Netter <Tron.Netter@ai.xl.net>`), `CONTACT_NOTIFY_EMAIL`, `OUTBOUND_BCC_EMAIL` (default adam@xl.net — mandatory oversight BCC) | ai.xl.net domain verified in Resend |
-| Auth | `SESSION_COOKIE_SECRET` (≥32 chars), `ADMIN_EMAIL` (comma list) | |
+| Auth | `SESSION_COOKIE_SECRET` (≥32 chars), `ADMIN_EMAIL` (comma list — gates `/admin` + `/api/admin/*`, currently adam@xl.net) | |
+| Admin | `INTERNAL_TRACK_SECRET` | auth for middleware→`/api/internal/track` beacons; unset = visit tracking off (SEO/Companies pages stay empty) |
+| | `MAXMIND_DB_PATH` | optional; default `<cwd>/data/GeoLite2-ASN.mmdb` (IP→org for /admin/companies) |
 | | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | `https://ai.xl.net/auth/google/callback` (GCP project `xl-website-1682362315172`, client "ai.xl.net") |
 | | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` / `MICROSOFT_REDIRECT_URI` / `MICROSOFT_TENANT_ID` (default `common`) | Entra app `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c` |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
@@ -523,7 +595,9 @@ journalctl -u cloudflared -n 20                 # tunnel connected
 psql -c "select count(*) from brain_memories where scope='public'"   # ≥7 seed rows
 ```
 Then: chat widget streams tokens; text the Twilio number and get a reply <1200 chars; email
-Tron.Netter@ai.xl.net and get a reply (BCC lands at adam@xl.net); call the number.
+Tron.Netter@ai.xl.net and get a reply (BCC lands at adam@xl.net); call the number. Sign in
+as adam@xl.net → the user menu shows "Admin"; `/admin/conversations` lists the test
+exchanges above and `/admin/seo` starts counting visits (needs `INTERNAL_TRACK_SECRET`).
 
 Common failures (from GO-LIVE.md): Twilio 403 → `BRAIN_PUBLIC_URL` not exactly
 `https://ai.xl.net/brain`; calls drop → `XAI_API_KEY`; brain 503 → `OPENAI_API_KEY`;
