@@ -13,12 +13,17 @@ export async function GET() {
   let displayName: string | null = session.displayName;
   let phone: string | null = null;
   let smsOptIn = false;
+  // Server-computed "may show the SMS prompt card" flag. Defaults to false
+  // so a failed DB read suppresses the prompt (fail toward silence) instead
+  // of re-soliciting users who already registered or opted out.
+  let smsPromptEligible = false;
   try {
     const [row] = await db
       .select({
         displayName: users.displayName,
         phone: users.phone,
         smsOptInAt: users.smsOptInAt,
+        smsPromptDismissedAt: users.smsPromptDismissedAt,
       })
       .from(users)
       .where(eq(users.id, session.userId))
@@ -26,7 +31,11 @@ export async function GET() {
     displayName = row?.displayName ?? session.displayName;
     phone = row?.phone ?? null;
     smsOptIn = Boolean(row?.smsOptInAt);
-  } catch { /* non-critical */ }
+    if (row) {
+      smsPromptEligible =
+        !(row.phone && row.smsOptInAt) && !row.smsPromptDismissedAt;
+    }
+  } catch { /* non-critical; smsPromptEligible stays false */ }
 
   return NextResponse.json({
     authenticated: true,
@@ -37,6 +46,7 @@ export async function GET() {
       isAdmin: isAdmin(session.email),
       phone,
       smsOptIn,
+      smsPromptEligible,
     },
   });
 }

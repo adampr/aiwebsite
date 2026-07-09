@@ -4,6 +4,7 @@ import Script from "next/script";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/user-menu";
 import { TronNetterChat } from "@/components/tron-netter-chat";
+import { SmsPromptCard } from "@/components/sms-prompt-card";
 import { FuturismFx } from "@/components/futurism-fx";
 import { EmailLink } from "@/components/email-link";
 import "./globals.css";
@@ -203,6 +204,7 @@ export default function RootLayout({
           </div>
         </footer>
         <TronNetterChat />
+        <SmsPromptCard />
         <FuturismFx />
         <Script src="/fx.js" strategy="afterInteractive" />
       </body>

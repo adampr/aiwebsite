@@ -140,9 +140,10 @@ export default function PrivacyPage() {
           <strong>Essential cookies only.</strong> We set a single httpOnly
           session cookie (<code>aix_session</code>, 30 days) when you sign in,
           plus short-lived (10-minute) cookies during the OAuth sign-in
-          handshake. Your theme preference is kept in your browser&apos;s
-          localStorage and the chat widget&apos;s conversation state in
-          sessionStorage; neither is sent to any third party.
+          handshake. Your theme preference and interface choices (such as
+          snoozing the text-messaging sign-up prompt) are kept in your
+          browser&apos;s localStorage, and the chat widget&apos;s conversation
+          state in sessionStorage; none of this is sent to any third party.
         </p>
         <p>
           Because we set no analytics or advertising cookies, there is no

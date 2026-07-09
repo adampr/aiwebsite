@@ -2,35 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-
-type SessionUser = {
-  email: string;
-  displayName: string | null;
-  provider: "google" | "microsoft";
-  isAdmin: boolean;
-};
+import { useSession } from "@/lib/use-session";
 
 export function UserMenu() {
-  const [user, setUser] = useState<SessionUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const session = useSession();
+  const user = session.user;
+  const loading = session.status === "loading";
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/auth/session")
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled && data.authenticated) setUser(data.user);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!open) return;

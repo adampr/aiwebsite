@@ -98,7 +98,7 @@ aiwebsite/
 │                                        explicitly; shared copy with itsupportchicago) (§5.6)
 ├── scripts/refresh-tron-knowledge.mjs  nightly crawler (§8)
 ├── deploy/                     provisioning, PM2, nginx, cloudflared, watchdog, seeds, runbooks (§9)
-├── drizzle/migrations/         SQL migrations for the site's 8 tables (§6)
+├── drizzle/migrations/         SQL migrations for the site's 9 tables (§6)
 ├── drizzle.config.ts           schema ./src/lib/db/schema.ts → ./drizzle/migrations, dialect postgresql
 ├── public/                     favicons, brand assets, fx.js (<xl-dust> canvas particles)
 ├── next.config.ts              trailingSlash:false; experimental.inlineCss:true — nothing else
@@ -155,9 +155,23 @@ Dark variant: `@custom-variant dark (&:where(.dark, .dark *))`.
   `{answer}` if the response isn't NDJSON. Enter sends, Shift+Enter newline, unread dot when closed.
 - `theme-toggle.tsx` — three-way `system → light → dark` cycle, `useSyncExternalStore`,
   persists `localStorage["theme"]`.
-- `user-menu.tsx` — fetches `GET /api/auth/session` on mount; "Sign In" link or avatar dropdown
+- `user-menu.tsx` — session via `useSession()`; "Sign In" link or avatar dropdown
   with Sign Out (`POST /api/auth/logout` → redirect `/`) and, when `isAdmin`, an "Admin" link
   to `/admin/analytics`.
+- `sms-prompt-card.tsx` — post-sign-in SMS opt-in prompt (§5.8): dismissible bottom-left card
+  (deliberately NOT a modal — TCPA opt-in must never gate or steal focus), shown iff the session
+  says `smsPromptEligible` && not shown this browser session (`sessionStorage aix_sms_prompt_shown`)
+  && not snoozed (`localStorage aix_sms_prompt_snooze_until`, 14 days) && pathname ∉
+  {`/texting`, `/login`, `/admin*`} (reactive; landing on `/texting` counts as fulfilled).
+  Actions: "Add my number" → `/texting?utm_source=sms_prompt`; "Not now" → snooze (3rd snooze
+  silently becomes permanent); "Don't ask again" → permanent server-side dismissal. All actions
+  emit funnel events to `POST /api/auth/sms-prompt`. Esc (focus inside) = Not now; plain
+  `<section aria-labelledby>`, no live region, no focus steal; mobile leaves the chat FAB
+  clear (`right-24` inset).
+- `src/lib/use-session.ts` — shared client session state: `useSession()` hook + module-level
+  promise so UserMenu, the SMS prompt card, and `/texting` dedupe to ONE
+  `GET /api/auth/session` fetch per hard navigation; fetch failure resolves to signed-out;
+  `invalidateSession()` clears the cache after mutations (e.g. phone verification).
 - `email-link.tsx` — `<EmailLink email label? className?>`: mailto link wrapped in Cloudflare
   `<!--email_off-->` comments (via `dangerouslySetInnerHTML` — React can't emit HTML comments)
   so the zone's Email Address Obfuscation doesn't rewrite it into a `/cdn-cgi/l/email-protection#…`
@@ -251,9 +265,13 @@ URIs registered with Google/Microsoft).
   `mail || userPrincipalName`) → `handleOAuthUser()` (§5.5) → redirect to the validated
   `redirect` target or `/`. Every failure maps to a `/login?error=<code>` from §4's list.
 - `GET /api/auth/session` → `{authenticated:false}` or
-  `{authenticated:true, user:{email, displayName, provider, isAdmin, phone, smsOptIn}}`
-  (displayName/phone/smsOptIn refreshed from DB best-effort; `isAdmin` = email ∈
-  comma-separated `ADMIN_EMAIL`, case-insensitive; `smsOptIn` = `sms_opt_in_at` is set).
+  `{authenticated:true, user:{email, displayName, provider, isAdmin, phone, smsOptIn,
+  smsPromptEligible}}` (displayName/phone/smsOptIn refreshed from DB best-effort; `isAdmin` =
+  email ∈ comma-separated `ADMIN_EMAIL`, case-insensitive; `smsOptIn` = `sms_opt_in_at` is set;
+  `smsPromptEligible` = row read successfully && `!(phone && sms_opt_in_at)` &&
+  `!sms_prompt_dismissed_at` — **defaults false on DB failure** so the prompt card fails
+  toward silence, §5.8).
+- `POST /api/auth/sms-prompt` (§5.8) — session-gated funnel/preference sink for the prompt card.
 - `POST /api/auth/logout` → clears cookie, `{ok:true}`.
 - `GET /api/health` → `{status:"ok"}` (used by PM2 readiness, watchdog, deploy verification).
 
@@ -265,12 +283,12 @@ URIs registered with Google/Microsoft).
 | `auth.ts` | Stateless HMAC session cookie **`aix_session`** (30 days): `base64url(JSON{userId,email,displayName,provider,iat,exp}).base64url(HMAC-SHA256(SESSION_COOKIE_SECRET))`; secret must be ≥32 chars (throws); httpOnly, sameSite lax, secure in prod; timing-safe verify; `isAdmin()` |
 | `oauth-helpers.ts` | Cookies `aix_oauth_state` (32-byte hex) + `aix_oauth_redirect`, 600 s; redirect must start `/` and not `//` (open-redirect guard); `handleOAuthUser()` — lowercase email, upsert `users` (update lastLoginAt/displayName/provider or insert with emailDomain), set session, log to `auth_logs` |
 | `db/index.ts` | drizzle over `postgres()` pool (max 20, idle 30 s, connect 10 s); lazy Proxy singleton; throws without `DATABASE_URL` |
-| `db/schema.ts` | the 8 tables in §6 |
+| `db/schema.ts` | the 9 tables in §6 |
 | `twilio.ts` | `sendSms(to, body, from?)` — Twilio REST `POST /2010-04-01/Accounts/{SID}/Messages.json` (Basic auth `sid:token`, form-encoded, body capped `.slice(0,1200)`, 30 s); `from` defaults to `TWILIO_PHONE_NUMBER`. Shared by the SMS webhook reply path (§5.2) and the /texting flow (§5.7) |
 | `texting.ts` | `SMS_CONSENT_TEXT` (single source for the /texting checkbox **and** the `sms_consent_logs.consent_text` audit value), `VERIFICATION_CODE_TTL_MIN` = 10, `VERIFICATION_MAX_ATTEMPTS` = 5, `normalizeUsPhone()` (US/NANP → E.164 `+1XXXXXXXXXX` or null) |
 | `email/send.ts` | `sendEmail()` via Resend REST `POST api.resend.com/emails` (Bearer, 10 s); default from `MAIL_FROM` = `Tron Netter <Tron.Netter@ai.xl.net>`; **always BCCs `OUTBOUND_BCC_EMAIL`** (default adam@xl.net) unless the recipient *is* that address (Resend rejects duplicates); no key → log + return false (email is best-effort) |
 | `tron-netter/persona.ts` | `TRON_NETTER_IDENTITY` (brainName/personality/purpose/goals/originStory); SMS + email addenda; `BRAIN_INTERNAL_TOOLS_FALLBACK` (v1.91 tool-name snapshot); `getTronNetterSystemPrompt()` — reads `TRON_KNOWLEDGE_FILE` (default `<cwd>/data/tron-netter-knowledge.md`), **cached by mtime** so the nightly rewrite hot-reloads without restart; files <1000 chars treated as corrupt → baked-in `FALLBACK_PUBLIC_KNOWLEDGE`. Prompt enforces: first-person-plural "we", knowledge limited to the two sites, no tools/no internet, own line (872) 350-4325, human sales line +1 (844) 915-5155 |
-| `rate-limit.ts` | in-memory Map limiter (per-process — adequate at 1 PM2 fork instance; **not distributed**, revisit if instances >1), lazy 60 s cleanup; `RATE_LIMITS`: `oauthStartPerIp {60s,20}`, `textingStartPerUser {600s,3}`, `textingStartPerPhone {600s,3}`, `textingVerifyPerUser {600s,10}` |
+| `rate-limit.ts` | in-memory Map limiter (per-process — adequate at 1 PM2 fork instance; **not distributed**, revisit if instances >1), lazy 60 s cleanup; `RATE_LIMITS`: `oauthStartPerIp {60s,20}`, `textingStartPerUser {600s,3}`, `textingStartPerPhone {600s,3}`, `textingVerifyPerUser {600s,10}`, `smsPromptPerUser {600s,20}` |
 | `auth-guard.ts` | `requireAdmin()` for `/api/admin/*` handlers: `{ok:true, session}` or `{ok:false, response}` (401/403) |
 | `brain-db.ts` | **read-only** admin queries over the brain's tables (`BRAIN_DB_TABLE_PREFIX`, default `brain_`): session lists/transcripts (`brain_messages`), usage totals/by-model (`brain_usage_events`), call log (`brain_phone_calls`), memory list/stats (`brain_memories`), distinct requesters. Channel inferred from sessionId prefix: `tron_`→chat, `sms-`→SMS, `email`→email. Brain timestamps are TEXT ISO-8601 (sort as text) |
 | `admin/format.ts` | shared admin formatting: `fmtDate` (America/Chicago), `fmtBytes`, `fmtUsd`, `requesterLabel` (strips `email:` prefix) |
@@ -340,6 +358,28 @@ Opt-**out** remains carrier-level: STOP/HELP keywords are handled by Twilio Adva
 Opt-Out before webhooks fire (§5.2); the site does not process them. `users.sms_opt_in_at`
 is therefore "user opted in via /texting", not a live deliverability flag.
 
+### 5.8 SMS prompt card (`<SmsPromptCard>` + `POST /api/auth/sms-prompt`)
+
+Soft acquisition surface for §5.7, designed and design/architecture-audited 2026-07-09:
+signed-in users with no registered number see a dismissible card (frontend behavior in §4)
+pointing at `/texting`. Server pieces:
+
+- Eligibility is computed **server-side** in `GET /api/auth/session` (`smsPromptEligible`,
+  §5.4) — the client never derives it from raw fields, and a failed DB read suppresses the
+  card rather than re-soliciting an opted-in user.
+- `POST /api/auth/sms-prompt` — body `{event: "shown"|"clicked"|"snoozed"|"dismissed"}`;
+  session required (401), rate-limited 20/10 min per user, 400 on unknown event. Appends to
+  `sms_prompt_events` (funnel telemetry: card → click → `/texting?utm_source=sms_prompt`
+  page visit → `sms_consent_logs` row = verified). `dismissed` additionally sets
+  `users.sms_prompt_dismissed_at` **idempotently** (`WHERE … IS NULL`) — a UI preference,
+  deliberately NOT written to `sms_consent_logs` (that table stays a pure consent audit).
+  Lives under `/api/auth/*` (not `/api/texting/*`) because it is preference/telemetry,
+  not consent. CSRF: sameSite=lax cookie + benign mutation, same posture as `/api/texting/*`.
+- Client dismissal state: "Not now" is client-local (14-day localStorage snooze; the 3rd
+  snooze auto-sends `dismissed`), "Don't ask again" is the server column so it holds across
+  devices. A failed `dismissed` POST fails open (card may return next session) — acceptable
+  for a preference write.
+
 ## 6. Database
 
 One local **PostgreSQL** instance, one database **`aiwebsite`** (role `aiwebsite`, password
@@ -355,7 +395,13 @@ users              id uuid PK default gen_random_uuid(), email text NOT NULL UNI
                    display_name text, auth_provider text NOT NULL, email_domain text NOT NULL,
                    phone text UNIQUE,           -- E.164; set only after code verification (§5.7)
                    phone_verified_at timestamptz, sms_opt_in_at timestamptz,
+                   sms_prompt_dismissed_at timestamptz,  -- "Don't ask again" on the prompt card (§5.8)
                    created_at timestamptz default now(), last_login_at timestamptz default now()
+
+sms_prompt_events  id serial PK, user_id uuid NOT NULL REFERENCES users(id),
+                   event text NOT NULL,         -- 'shown' | 'clicked' | 'snoozed' | 'dismissed'
+                   created_at timestamptz default now()
+                   -- append-only prompt-card funnel telemetry (§5.8); NOT consent data
 
 phone_verifications id serial PK, user_id uuid NOT NULL REFERENCES users(id),
                    phone text NOT NULL, code_hash text NOT NULL,   -- SHA-256 of the 6-digit code

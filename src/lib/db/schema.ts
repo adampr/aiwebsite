@@ -19,6 +19,9 @@ export const users = pgTable("users", {
   phone: text("phone").unique(),
   phoneVerifiedAt: timestamp("phone_verified_at", { withTimezone: true }),
   smsOptInAt: timestamp("sms_opt_in_at", { withTimezone: true }),
+  // "Don't ask again" on the SMS prompt card — account-level so it holds
+  // across devices. UI preference only; deliberately NOT a consent event.
+  smsPromptDismissedAt: timestamp("sms_prompt_dismissed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }).defaultNow(),
 });
@@ -37,6 +40,18 @@ export const phoneVerifications = pgTable("phone_verifications", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
   ipAddress: inet("ip_address"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+// Funnel telemetry for the SMS prompt card (shown → clicked → snoozed →
+// dismissed); append-only, written by POST /api/auth/sms-prompt. Lets the
+// admin judge whether the soft card surface converts, per the design audit.
+export const smsPromptEvents = pgTable("sms_prompt_events", {
+  id: serial("id").primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  event: text("event").notNull(), // 'shown' | 'clicked' | 'snoozed' | 'dismissed'
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 

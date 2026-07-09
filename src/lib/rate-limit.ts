@@ -52,4 +52,5 @@ export const RATE_LIMITS = {
   textingStartPerUser: { windowSec: 600, max: 3 },
   textingStartPerPhone: { windowSec: 600, max: 3 },
   textingVerifyPerUser: { windowSec: 600, max: 10 },
+  smsPromptPerUser: { windowSec: 600, max: 20 },
 } as const;

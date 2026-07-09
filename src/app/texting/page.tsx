@@ -3,12 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { SMS_CONSENT_TEXT } from "@/lib/texting";
-
-type SessionUser = {
-  email: string;
-  phone: string | null;
-  smsOptIn: boolean;
-};
+import { useSession, invalidateSession, type SessionUser } from "@/lib/use-session";
 
 type Step = "loading" | "signin" | "phone" | "code" | "done";
 
@@ -37,27 +32,25 @@ export default function TextingPage() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const session = useSession();
+
   useEffect(() => {
-    let cancelled = false;
-    fetch("/api/auth/session")
-      .then((res) => res.json())
-      .then((data) => {
-        if (cancelled) return;
-        if (!data.authenticated) {
-          setStep("signin");
-        } else {
-          setUser(data.user);
-          setStep(data.user.phone && data.user.smsOptIn ? "done" : "phone");
-          if (data.user.phone && data.user.smsOptIn) setSentTo(data.user.phone);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setStep("signin");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (session.status === "loading") return;
+    // Only drive the wizard from session state while still on the initial
+    // steps — never yank the user out of code entry or the done panel.
+    setStep((current) => {
+      if (current !== "loading" && current !== "signin" && current !== "phone") {
+        return current;
+      }
+      if (session.status === "signed-out") return "signin";
+      setUser(session.user);
+      if (session.user.phone && session.user.smsOptIn) {
+        setSentTo(session.user.phone);
+        return "done";
+      }
+      return "phone";
+    });
+  }, [session]);
 
   async function requestCode(e?: React.FormEvent) {
     e?.preventDefault();
@@ -103,6 +96,7 @@ export default function TextingPage() {
       } else {
         setSentTo(data.phone);
         setStep("done");
+        invalidateSession();
       }
     } catch {
       setError("Network error. Please try again.");
