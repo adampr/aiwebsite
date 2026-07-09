@@ -11,13 +11,21 @@ export async function GET() {
   }
 
   let displayName: string | null = session.displayName;
+  let phone: string | null = null;
+  let smsOptIn = false;
   try {
     const [row] = await db
-      .select({ displayName: users.displayName })
+      .select({
+        displayName: users.displayName,
+        phone: users.phone,
+        smsOptInAt: users.smsOptInAt,
+      })
       .from(users)
       .where(eq(users.id, session.userId))
       .limit(1);
     displayName = row?.displayName ?? session.displayName;
+    phone = row?.phone ?? null;
+    smsOptIn = Boolean(row?.smsOptInAt);
   } catch { /* non-critical */ }
 
   return NextResponse.json({
@@ -27,6 +35,8 @@ export async function GET() {
       displayName,
       provider: session.provider,
       isAdmin: isAdmin(session.email),
+      phone,
+      smsOptIn,
     },
   });
 }

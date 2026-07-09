@@ -9,7 +9,7 @@
 > This document specifies the brain only as far as this site consumes it (§7); rebuild the
 > brain itself from its own doc.
 
-Last verified against code: 2026-07-07 (brain submodule v1.92, Next.js 16.2.9).
+Last verified against code: 2026-07-09 (brain submodule v1.92, Next.js 16.2.9).
 
 ---
 
@@ -27,6 +27,9 @@ centerpiece is **Tron Netter** — an AI agent persona reachable on four channel
 
 Tron Netter's knowledge is a nightly full crawl of `xl.net` + `ai.xl.net` (§8). The site also
 has optional Google/Microsoft OAuth sign-in (§5.4) — purely additive; no page requires login.
+Signed-in users can additionally register a mobile number for SMS at `/texting` (§5.7):
+consent checkbox + a texted 6-digit code that must be entered on the site before the number
+is saved (TCPA-style verified opt-in; legal pages at `/privacy` and `/sms-terms`).
 
 Everything runs on **one Azure VM** (`xladmin@52.237.160.75`, app dir `/var/www/aiwebsite`)
 behind a **Cloudflare tunnel**. There is no load balancer, no container runtime, no cloud
@@ -95,7 +98,7 @@ aiwebsite/
 │                                        explicitly; shared copy with itsupportchicago) (§5.6)
 ├── scripts/refresh-tron-knowledge.mjs  nightly crawler (§8)
 ├── deploy/                     provisioning, PM2, nginx, cloudflared, watchdog, seeds, runbooks (§9)
-├── drizzle/migrations/         SQL migrations for the site's 6 tables (§6)
+├── drizzle/migrations/         SQL migrations for the site's 8 tables (§6)
 ├── drizzle.config.ts           schema ./src/lib/db/schema.ts → ./drizzle/migrations, dialect postgresql
 ├── public/                     favicons, brand assets, fx.js (<xl-dust> canvas particles)
 ├── next.config.ts              trailingSlash:false; experimental.inlineCss:true — nothing else
@@ -113,14 +116,20 @@ page-view tracking (§5.6). No test suite in the parent repo (the brain has its 
 
 ## 4. Frontend
 
-Three public pages, all served from the root layout (`src/app/layout.tsx`), plus the
+Six public pages, all served from the root layout (`src/app/layout.tsx`), plus the
 admin console under `/admin/*` (§5.6):
 
 | URL | Type | Content |
 |---|---|---|
 | `/` | static server component | Marketing home: hero with `<xl-dust>` particle canvas, theme-aware animated logo iframes (`/brand/xl-logo-animated-{dark,light}.html`), stat cards (79.8% issue reduction, 24/7, 99.3% CSAT), capability panels, CTA → `/contact` |
-| `/contact` | static server component | Contact info only — **no form** (email `Tron.Netter@ai.xl.net`, phone/SMS (872) 350-4325, points users at the chat widget) |
+| `/contact` | static server component | Contact info only — **no form** (email `Tron.Netter@ai.xl.net`, phone/SMS (872) 350-4325, points users at the chat widget); links to `/texting` |
 | `/login` | client component | Sign-in card in `<Suspense>`; reads `?redirect`, `?error`, `?message`; links to `/api/auth/{google,microsoft}/start`; maps error codes (`missing_params`, `invalid_state`, `token_exchange`, `userinfo`, `no_email`, `rejected`, `provider_unconfigured`) to friendly text. `login/layout.tsx` sets `robots: noindex` |
+| `/texting` | client component | SMS opt-in wizard (§5.7): session check → phone + consent checkbox (`SMS_CONSENT_TEXT` from `lib/texting.ts` + links to the legal pages) → 6-digit code entry (resend / change-number) → "Verified" panel. Signed-out users get a Sign In link with `?redirect=/texting`; already-opted-in users land on the done state. `texting/layout.tsx` holds the metadata |
+| `/privacy` | static server component | Privacy policy: first-party-only tracking disclosure (page tracking, MaxMind company lookup, session hash), Tron Netter AI processing + human email oversight, account/SMS data, essential-cookies-only, third parties (OAuth, Resend, Twilio, Cloudflare, model providers), retention windows, contact ai@xl.net |
+| `/sms-terms` | static server component | SMS program terms: program description (conversational replies + verification codes, no marketing), opt-in methods, verification-code mechanics, frequency/rates, STOP/HELP, carriers, privacy cross-link, contact |
+
+The footer links Home, Contact, Text with Tron Netter (`/texting`), Privacy Policy, SMS
+Terms, and the main xl.net site.
 
 **Root layout** provides: metadata (title template `%s | XL.net AI`, `metadataBase` from
 `NEXT_PUBLIC_BASE_URL`, OG/Twitter, JSON-LD `Organization` with SOC 2 Type II + ISO 27001:2022),
@@ -149,6 +158,11 @@ Dark variant: `@custom-variant dark (&:where(.dark, .dark *))`.
 - `user-menu.tsx` — fetches `GET /api/auth/session` on mount; "Sign In" link or avatar dropdown
   with Sign Out (`POST /api/auth/logout` → redirect `/`) and, when `isAdmin`, an "Admin" link
   to `/admin/analytics`.
+- `email-link.tsx` — `<EmailLink email label? className?>`: mailto link wrapped in Cloudflare
+  `<!--email_off-->` comments (via `dangerouslySetInnerHTML` — React can't emit HTML comments)
+  so the zone's Email Address Obfuscation doesn't rewrite it into a `/cdn-cgi/l/email-protection#…`
+  link that 404s for crawlers/no-JS visitors. Use it for every visible email address
+  (footer, contact, privacy, sms-terms).
 - `futurism-fx.tsx` — IntersectionObserver adds `.is-visible` to `.rise` elements; re-runs on route change.
 - `public/fx.js` — defines the `<xl-dust>` custom element (canvas dust motes; `density` attr,
   default 36; colors from `--xl-light`/`--xl-sand`; respects `prefers-reduced-motion`).
@@ -195,9 +209,8 @@ URIs registered with Google/Microsoft).
      system prompt = persona + `TRON_NETTER_SMS_ADDENDUM` (target <300 chars, ≤900),
      `requester:{requesterId: from}`, `privacyScope:"private_to_requester"`,
      `markdownMode:"strip"`, plus the standard `do_not_store`/`disabledTools`/`brainIdentity`/`groupName`.
-  2. Reply via Twilio REST `POST https://api.twilio.com/2010-04-01/Accounts/{SID}/Messages.json`
-     (Basic auth `sid:token`, form-encoded, body hard-capped `.slice(0,1200)`, 30 s). On brain
-     failure sends a best-effort apology SMS.
+  2. Reply via `sendSms()` from `lib/twilio.ts` (§5.5 — Twilio REST, Basic auth, body
+     hard-capped `.slice(0,1200)`, 30 s). On brain failure sends a best-effort apology SMS.
 
 ### 5.3 `POST /api/webhooks/resend` — inbound email
 
@@ -207,7 +220,8 @@ URIs registered with Google/Microsoft).
   (Svix retries on slow responses); always returns `{ok:true}`.
 - `handleInbound(emailId)`: fetches the full message via `resend.emails.receiving.get(emailId)`, then filters:
   - recipient (to/cc) must include `@ai.xl.net` — the Resend account also receives
-    itsupportchicago.net traffic;
+    itsupportchicago.net traffic; drop `roleplay@` recipients too (that mailbox belongs to
+    roleplay.xl.net's own webhook — answering would double-reply with two personas);
   - **loop guards**: drop if sender ends `@ai.xl.net`, contains `@itsupportchicago`, or matches
     `mailer-daemon|postmaster|no-?reply|donotreply`;
   - `stripQuotedAndSignature()` removes quoted history (`On … wrote:`, forwarded blocks, `>` lines,
@@ -237,8 +251,9 @@ URIs registered with Google/Microsoft).
   `mail || userPrincipalName`) → `handleOAuthUser()` (§5.5) → redirect to the validated
   `redirect` target or `/`. Every failure maps to a `/login?error=<code>` from §4's list.
 - `GET /api/auth/session` → `{authenticated:false}` or
-  `{authenticated:true, user:{email, displayName, provider, isAdmin}}` (displayName refreshed
-  from DB best-effort; `isAdmin` = email ∈ comma-separated `ADMIN_EMAIL`, case-insensitive).
+  `{authenticated:true, user:{email, displayName, provider, isAdmin, phone, smsOptIn}}`
+  (displayName/phone/smsOptIn refreshed from DB best-effort; `isAdmin` = email ∈
+  comma-separated `ADMIN_EMAIL`, case-insensitive; `smsOptIn` = `sms_opt_in_at` is set).
 - `POST /api/auth/logout` → clears cookie, `{ok:true}`.
 - `GET /api/health` → `{status:"ok"}` (used by PM2 readiness, watchdog, deploy verification).
 
@@ -250,10 +265,12 @@ URIs registered with Google/Microsoft).
 | `auth.ts` | Stateless HMAC session cookie **`aix_session`** (30 days): `base64url(JSON{userId,email,displayName,provider,iat,exp}).base64url(HMAC-SHA256(SESSION_COOKIE_SECRET))`; secret must be ≥32 chars (throws); httpOnly, sameSite lax, secure in prod; timing-safe verify; `isAdmin()` |
 | `oauth-helpers.ts` | Cookies `aix_oauth_state` (32-byte hex) + `aix_oauth_redirect`, 600 s; redirect must start `/` and not `//` (open-redirect guard); `handleOAuthUser()` — lowercase email, upsert `users` (update lastLoginAt/displayName/provider or insert with emailDomain), set session, log to `auth_logs` |
 | `db/index.ts` | drizzle over `postgres()` pool (max 20, idle 30 s, connect 10 s); lazy Proxy singleton; throws without `DATABASE_URL` |
-| `db/schema.ts` | the 6 tables in §6 |
+| `db/schema.ts` | the 8 tables in §6 |
+| `twilio.ts` | `sendSms(to, body, from?)` — Twilio REST `POST /2010-04-01/Accounts/{SID}/Messages.json` (Basic auth `sid:token`, form-encoded, body capped `.slice(0,1200)`, 30 s); `from` defaults to `TWILIO_PHONE_NUMBER`. Shared by the SMS webhook reply path (§5.2) and the /texting flow (§5.7) |
+| `texting.ts` | `SMS_CONSENT_TEXT` (single source for the /texting checkbox **and** the `sms_consent_logs.consent_text` audit value), `VERIFICATION_CODE_TTL_MIN` = 10, `VERIFICATION_MAX_ATTEMPTS` = 5, `normalizeUsPhone()` (US/NANP → E.164 `+1XXXXXXXXXX` or null) |
 | `email/send.ts` | `sendEmail()` via Resend REST `POST api.resend.com/emails` (Bearer, 10 s); default from `MAIL_FROM` = `Tron Netter <Tron.Netter@ai.xl.net>`; **always BCCs `OUTBOUND_BCC_EMAIL`** (default adam@xl.net) unless the recipient *is* that address (Resend rejects duplicates); no key → log + return false (email is best-effort) |
 | `tron-netter/persona.ts` | `TRON_NETTER_IDENTITY` (brainName/personality/purpose/goals/originStory); SMS + email addenda; `BRAIN_INTERNAL_TOOLS_FALLBACK` (v1.91 tool-name snapshot); `getTronNetterSystemPrompt()` — reads `TRON_KNOWLEDGE_FILE` (default `<cwd>/data/tron-netter-knowledge.md`), **cached by mtime** so the nightly rewrite hot-reloads without restart; files <1000 chars treated as corrupt → baked-in `FALLBACK_PUBLIC_KNOWLEDGE`. Prompt enforces: first-person-plural "we", knowledge limited to the two sites, no tools/no internet, own line (872) 350-4325, human sales line +1 (844) 915-5155 |
-| `rate-limit.ts` | in-memory Map limiter (per-process — adequate at 1 PM2 fork instance; **not distributed**, revisit if instances >1), lazy 60 s cleanup; `RATE_LIMITS.oauthStartPerIp = {windowSec:60, max:20}` |
+| `rate-limit.ts` | in-memory Map limiter (per-process — adequate at 1 PM2 fork instance; **not distributed**, revisit if instances >1), lazy 60 s cleanup; `RATE_LIMITS`: `oauthStartPerIp {60s,20}`, `textingStartPerUser {600s,3}`, `textingStartPerPhone {600s,3}`, `textingVerifyPerUser {600s,10}` |
 | `auth-guard.ts` | `requireAdmin()` for `/api/admin/*` handlers: `{ok:true, session}` or `{ok:false, response}` (401/403) |
 | `brain-db.ts` | **read-only** admin queries over the brain's tables (`BRAIN_DB_TABLE_PREFIX`, default `brain_`): session lists/transcripts (`brain_messages`), usage totals/by-model (`brain_usage_events`), call log (`brain_phone_calls`), memory list/stats (`brain_memories`), distinct requesters. Channel inferred from sessionId prefix: `tron_`→chat, `sms-`→SMS, `email`→email. Brain timestamps are TEXT ISO-8601 (sort as text) |
 | `admin/format.ts` | shared admin formatting: `fmtDate` (America/Chicago), `fmtBytes`, `fmtUsd`, `requesterLabel` (strips `email:` prefix) |
@@ -297,6 +314,34 @@ hash(ip|ua|date), landingUrl, utm*}` fire-and-forget to `POST /api/internal/trac
 (`x-track-secret` gated), which dedups same session+path within 30 s, inserts `page_visits`,
 and warms `ip_orgs` via `resolveIpOrg()` in the background.
 
+### 5.7 SMS opt-in & phone verification (`/texting` + `/api/texting/*`)
+
+Verified (double) opt-in: possession of the phone is proven with a texted code before the
+number ever touches `users`, and the exact consent language is archived per opt-in. Both
+routes require a session (401 otherwise); constants and consent text live in `lib/texting.ts`.
+
+- `POST /api/texting/start` — body `{phone, smsOptIn}`. Rejects unless `smsOptIn === true`
+  (400); normalizes the phone via `normalizeUsPhone()` (400 if invalid); rate-limits per
+  user **and** per phone (3/10 min each, 429 + `Retry-After` — code sends cost Twilio money);
+  409 if the number belongs to another account (`users.phone` is UNIQUE). Then: generate a
+  `crypto.randomInt` 6-digit code → `sendSms()` the code (send failure → 502, nothing
+  stored) → retire the user's previous live codes (`consumed_at = now()`) → insert
+  `phone_verifications` (SHA-256 hash of the code only, 10-min expiry, requester IP).
+- `POST /api/texting/verify` — body `{code}` (6 digits). Rate-limited 10/10 min per user.
+  Loads the user's newest unconsumed row; expired/absent → 400 "request a new one".
+  **Increments `attempts` before comparing** (parallel guesses can't beat the cap; >5 → 400)
+  then compares SHA-256 hashes via `timingSafeEqual`. On match: mark consumed, set
+  `users.{phone, phone_verified_at, sms_opt_in_at}` (unique-violation race → 409), append an
+  immutable `sms_consent_logs` row (`SMS_CONSENT_TEXT`, IP, user agent, page URL), and send
+  a best-effort CTIA opt-in confirmation SMS in `after()` (frequency varies / msg&data rates
+  / STOP / HELP).
+
+Opt-**out** remains carrier-level: STOP/HELP keywords are handled by Twilio Advanced
+Opt-Out before webhooks fire (§5.2); the site does not process them. `users.sms_opt_in_at`
+is therefore "user opted in via /texting", not a live deliverability flag.
+
+## 6. Database
+
 One local **PostgreSQL** instance, one database **`aiwebsite`** (role `aiwebsite`, password
 `aiwebsite` — dev/VM-local default; loopback only). **The site and the brain share this DB**;
 brain tables carry the prefix **`brain_`** (`BRAIN_DB_TABLE_PREFIX`).
@@ -308,7 +353,23 @@ migrations on every deploy (`npm run db:generate && npm run db:migrate`):
 ```sql
 users              id uuid PK default gen_random_uuid(), email text NOT NULL UNIQUE,
                    display_name text, auth_provider text NOT NULL, email_domain text NOT NULL,
+                   phone text UNIQUE,           -- E.164; set only after code verification (§5.7)
+                   phone_verified_at timestamptz, sms_opt_in_at timestamptz,
                    created_at timestamptz default now(), last_login_at timestamptz default now()
+
+phone_verifications id serial PK, user_id uuid NOT NULL REFERENCES users(id),
+                   phone text NOT NULL, code_hash text NOT NULL,   -- SHA-256 of the 6-digit code
+                   attempts integer NOT NULL default 0, expires_at timestamptz NOT NULL,
+                   consumed_at timestamptz, ip_address inet, created_at timestamptz default now()
+                   -- written only by /api/texting/* (§5.7); a row is dead once consumed,
+                   -- expired, or attempts > 5; only the newest live row per user is honored
+
+sms_consent_logs   id serial PK, user_id uuid REFERENCES users(id), email text NOT NULL,
+                   phone text NOT NULL, sms_opt_in boolean NOT NULL, consent_text text,
+                   ip_address inet, user_agent text, page_url text,
+                   created_at timestamptz default now()
+                   -- TCPA audit trail: append-only, never update/delete; retained for the
+                   -- life of the messaging program + 4 years (see /privacy)
 
 auth_logs          id serial PK, user_id uuid REFERENCES users(id), email text NOT NULL,
                    auth_provider text NOT NULL, ip_address text, user_agent text,
@@ -538,7 +599,7 @@ every variable below appears there with a comment.
 | LLMs | `OPENAI_API_KEY`, `OPENAI_MODEL` (gpt-5-mini), `BRAIN_FIRST_PASS_MODEL` (gpt-5.4-mini), `OPENAI_TTS_MODEL` (tts-1), `OPENAI_STT_MODEL` (whisper-1) | brain chat/voice |
 | | `XAI_API_KEY` | realtime voice (calls drop without it) |
 | | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `TAVILY_API_KEY`, `AA_API_KEY` | optional brain providers |
-| Twilio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_PHONE_NUMBER` | number +1 872 350 4325, SID `PN9435882fd720d7ec79108d195f4c9e39` |
+| Twilio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_PHONE_NUMBER` | number +1 872 350 4325, SID `PN9435882fd720d7ec79108d195f4c9e39`; same number sends the /texting verification codes (§5.7) |
 | | `INBOUND_PHONE_PERSONA_NAME` / `INBOUND_PHONE_SITE` / `INBOUND_PHONE_GREETING` | voice persona (Tron Netter / ai.xl.net) |
 | Email | `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET` (svix inbound), `MAIL_FROM` (`Tron Netter <Tron.Netter@ai.xl.net>`), `CONTACT_NOTIFY_EMAIL`, `OUTBOUND_BCC_EMAIL` (default adam@xl.net — mandatory oversight BCC) | ai.xl.net domain verified in Resend |
 | Auth | `SESSION_COOKIE_SECRET` (≥32 chars), `ADMIN_EMAIL` (comma list — gates `/admin` + `/api/admin/*`, currently adam@xl.net) | |
@@ -598,7 +659,34 @@ Then: chat widget streams tokens; text the Twilio number and get a reply <1200 c
 Tron.Netter@ai.xl.net and get a reply (BCC lands at adam@xl.net); call the number. Sign in
 as adam@xl.net → the user menu shows "Admin"; `/admin/conversations` lists the test
 exchanges above and `/admin/seo` starts counting visits (needs `INTERNAL_TRACK_SECRET`).
+Sign in and register a number at `/texting`: the 6-digit code arrives by SMS, verifying it
+sets `users.phone` + adds an `sms_consent_logs` row, and a confirmation text follows.
 
 Common failures (from GO-LIVE.md): Twilio 403 → `BRAIN_PUBLIC_URL` not exactly
 `https://ai.xl.net/brain`; calls drop → `XAI_API_KEY`; brain 503 → `OPENAI_API_KEY`;
 tunnel up but 502 → nginx or PM2 down.
+
+---
+
+## 14. Design review personas
+
+Substantial changes to this system (new pages/flows, channel behavior, admin
+surfaces, deploy/ops changes) and to this document are reviewed against a standing
+persona panel — the same review-board pattern as itsupportchicago.net's
+ARCHITECTURE.md §21 ("Architecture Review Angles"), generalized in the shared
+module repo (`adampr/aicompany`, `PERSONAS.md`):
+
+| # | Persona | Reviews for |
+|---|---|---|
+| 1 | **UX/UI Designer (world-class)** | visitor + admin flows, chat streaming UX, theme parity (dark/light, pre-paint), reduced motion, designed failure states |
+| 2 | **Software Architect (world-class)** | contracts and boundaries, cleanroom-rebuild completeness of this doc, failure modes, migration paths |
+| 3 | **Marketing/SEO Strategist (world-class)** | SSR/metadata/JSON-LD, conversion paths across all four channels, first-party analytics quality, brand differentiation |
+| 4 | **Design Critic** | undesigned states (empty/error/slow/disconnect), WCAG 2.1 AA, clone-look risk across sites |
+| 5 | **Architecture/Security Critic** | webhook signature verification, SSRF/open-redirect/session hygiene, fail-closed endpoints, upgrade hazards |
+| 6 | **Marketing Critic (trust & privacy)** | cross-brand leakage on shared Twilio/Resend accounts, tracking disclosure and retention, skeptical-visitor trust |
+| 7 | **Solo Operator Critic** | watchdog coverage, backups/restore drills, log rotation, memory budget, crons, alert throttling |
+
+Protocol: personas review in parallel; findings are classified blocking /
+should-fix / note; blocking and should-fix are applied or explicitly waived with
+rationale. When a claim is aspirational, mark it "planned / not yet implemented" —
+never describe unbuilt behavior as existing.

@@ -5,6 +5,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/user-menu";
 import { TronNetterChat } from "@/components/tron-netter-chat";
 import { FuturismFx } from "@/components/futurism-fx";
+import { EmailLink } from "@/components/email-link";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -148,6 +149,15 @@ export default function RootLayout({
                     <Link href="/contact">Contact</Link>
                   </li>
                   <li>
+                    <Link href="/texting">Text with Tron Netter</Link>
+                  </li>
+                  <li>
+                    <Link href="/privacy">Privacy Policy</Link>
+                  </li>
+                  <li>
+                    <Link href="/sms-terms">SMS Terms</Link>
+                  </li>
+                  <li>
                     <a
                       href="https://xl.net"
                       target="_blank"
@@ -162,9 +172,7 @@ export default function RootLayout({
                 <span className="sys-label">Contact</span>
                 <ul className="mt-4 space-y-2 text-sm">
                   <li>
-                    <a href="mailto:Tron.Netter@ai.xl.net" className="mono">
-                      Tron.Netter@ai.xl.net
-                    </a>
+                    <EmailLink email="Tron.Netter@ai.xl.net" className="mono" />
                   </li>
                   <li>
                     <a href="tel:+18723504325" className="mono">

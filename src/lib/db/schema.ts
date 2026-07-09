@@ -15,8 +15,46 @@ export const users = pgTable("users", {
   displayName: text("display_name"),
   authProvider: text("auth_provider").notNull(),
   emailDomain: text("email_domain").notNull(),
+  // E.164 (+1XXXXXXXXXX); set only after the 6-digit SMS code is verified.
+  phone: text("phone").unique(),
+  phoneVerifiedAt: timestamp("phone_verified_at", { withTimezone: true }),
+  smsOptInAt: timestamp("sms_opt_in_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }).defaultNow(),
+});
+
+// One row per verification code sent from /texting. Codes are stored as
+// SHA-256 hashes; a row is dead once consumed_at is set, expires_at passes,
+// or attempts hits the cap. Only the newest live row per user is honored.
+export const phoneVerifications = pgTable("phone_verifications", {
+  id: serial("id").primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  phone: text("phone").notNull(), // E.164
+  codeHash: text("code_hash").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  ipAddress: inet("ip_address"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+// TCPA compliance — immutable audit trail of SMS opt-ins/opt-outs. Never
+// update or delete rows; retention is the life of the messaging program
+// plus four years (see /privacy).
+export const smsConsentLogs = pgTable("sms_consent_logs", {
+  id: serial("id").primaryKey(),
+  userId: uuid("user_id").references(() => users.id),
+  email: text("email").notNull(),
+  phone: text("phone").notNull(), // E.164
+  smsOptIn: boolean("sms_opt_in").notNull(),
+  // Exact consent language shown at the moment of opt-in.
+  consentText: text("consent_text"),
+  ipAddress: inet("ip_address"),
+  userAgent: text("user_agent"),
+  pageUrl: text("page_url"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
 export const authLogs = pgTable("auth_logs", {

@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { EmailLink } from "@/components/email-link";
 
 export const metadata: Metadata = {
   title: "Contact Us",
@@ -34,12 +36,10 @@ export default function ContactPage() {
           <p className="mt-3 text-sm">
             Email Tron Netter — questions, partnerships, or feedback
           </p>
-          <a
-            href="mailto:Tron.Netter@ai.xl.net"
+          <EmailLink
+            email="Tron.Netter@ai.xl.net"
             className="mono mt-4 inline-block text-sm"
-          >
-            Tron.Netter@ai.xl.net
-          </a>
+          />
         </section>
 
         {/* Phone & Text panel */}
@@ -61,7 +61,9 @@ export default function ContactPage() {
             </a>
           </div>
           <p className="mt-3 text-xs opacity-70">
-            Standard message &amp; data rates apply.
+            Standard message &amp; data rates apply.{" "}
+            <Link href="/texting">Register your number</Link> to text with
+            Tron Netter from your account.
           </p>
         </section>
       </div>

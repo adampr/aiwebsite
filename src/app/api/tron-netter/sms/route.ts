@@ -9,6 +9,7 @@ import {
   BRAIN_AUTH_HEADERS,
   getDisabledBrainTools,
 } from "@/lib/brain-client";
+import { sendSms } from "@/lib/twilio";
 
 // Twilio SMS webhook for Tron Netter's number, (872) 350-4325. The number's
 // SMS webhook points here (instead of the brain's generic /twilio/sms
@@ -97,31 +98,7 @@ async function askTronNetter(from: string, body: string): Promise<string> {
 }
 
 async function sendSmsReply(to: string, from: string, body: string) {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID || "";
-  const authToken = process.env.TWILIO_AUTH_TOKEN || "";
-  if (!accountSid || !authToken) {
-    throw new Error("Twilio credentials not configured");
-  }
-  const res = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-    {
-      method: "POST",
-      headers: {
-        Authorization:
-          "Basic " +
-          Buffer.from(`${accountSid}:${authToken}`).toString("base64"),
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      // Twilio splits long bodies into segments; hard-cap well below its
-      // 1600-char limit in case the model ignores the brevity instruction.
-      body: new URLSearchParams({ To: to, From: from, Body: body.slice(0, 1200) }),
-      signal: AbortSignal.timeout(30_000),
-    }
-  );
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`Twilio send error ${res.status}: ${errText}`);
-  }
+  await sendSms(to, body, from);
 }
 
 export async function POST(request: NextRequest) {

@@ -48,4 +48,8 @@ export function checkRateLimit(
 
 export const RATE_LIMITS = {
   oauthStartPerIp: { windowSec: 60, max: 20 },
+  // Verification-code sends cost real money (Twilio) — keep these tight.
+  textingStartPerUser: { windowSec: 600, max: 3 },
+  textingStartPerPhone: { windowSec: 600, max: 3 },
+  textingVerifyPerUser: { windowSec: 600, max: 10 },
 } as const;
