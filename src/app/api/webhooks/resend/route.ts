@@ -130,6 +130,11 @@ async function handleInbound(emailId: string) {
   // Shared-account webhook: ignore mail that isn't for our domain.
   if (!recipients.some((a) => a.includes(OWN_DOMAIN))) return;
 
+  // roleplay@ai.xl.net belongs to the roleplay coach (handled by
+  // roleplay.xl.net's own webhook) — Tron Netter must not answer it, or the
+  // sender would get two replies from two different personas.
+  if (recipients.some((a) => a.includes("roleplay@"))) return;
+
   const from = email.from ?? "";
   const fromLower = from.toLowerCase();
   const senderAddress = (fromLower.match(/[\w.+-]+@[\w.-]+\.\w+/) || [""])[0];
