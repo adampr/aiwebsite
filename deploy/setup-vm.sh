@@ -59,7 +59,10 @@ if [ ! -f .env ]; then
 fi
 
 echo ">>> Installing site dependencies..."
-npm ci
+# --include=dev: the VM environment omits devDependencies by default, but the
+# build needs them (drizzle-kit, typescript, tailwind) — same reason as the
+# brain install below.
+npm ci --include=dev
 
 echo ">>> Installing brain (packages/brain) dependencies..."
 if [ ! -f packages/brain/package.json ]; then
@@ -73,6 +76,11 @@ npm run db:generate
 npm run db:migrate
 
 echo ">>> Building Next.js site..."
+# deploy.sh excludes .next from rsync, and a stale Turbopack cache from a
+# previous next version breaks module resolution ("Can't resolve" errors on
+# deps that are installed). Clear only the cache — the rest of .next is
+# replaced atomically by the build while the live server keeps serving it.
+rm -rf .next/cache
 npm run build
 
 # ── PM2: site + brain-api + skills-host ──────────────────────────

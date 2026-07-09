@@ -161,8 +161,8 @@ export default function PrivacyPage() {
             only
           </li>
           <li>
-            <strong>Resend:</strong> email delivery and receiving for
-            Tron.Netter@ai.xl.net
+            <strong>Resend:</strong> email delivery and receiving for{" "}
+            <EmailLink email="Tron.Netter@ai.xl.net" />
           </li>
           <li>
             <strong>Twilio:</strong> SMS and voice-call transport (phone

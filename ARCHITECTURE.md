@@ -528,7 +528,10 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
 
 APT `build-essential python3 libpq-dev pkg-config jq rsync` → Node 22 (nodesource) + PM2 →
 PostgreSQL (create role+db `aiwebsite`, guarded) → nginx config (below) →
-`npm ci` (site) + `npm ci --include=dev` in `packages/brain` → `db:generate` + `db:migrate` →
+`npm ci --include=dev` (site **and** `packages/brain` — the VM environment omits devDependencies
+by default, and the build needs drizzle-kit/typescript/tailwind) → `db:generate` + `db:migrate` →
+`rm -rf .next/cache` (stale Turbopack cache from a previous next version breaks module
+resolution; only the cache — the built output is swapped atomically while pm2 serves it) →
 `next build` → `pm2 startOrReload deploy/ecosystem.config.cjs && pm2 save && pm2 startup systemd`
 → wait ≤60 s for brain `/health` → `psql -f deploy/seed-tron-memories.sql` → install knowledge
 cron + initial crawl `--no-email` → `setup-cloudflared.sh` → install watchdog (+cron) and start it.
