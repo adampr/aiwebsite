@@ -119,7 +119,7 @@ export default function SmsTermsPage() {
           If you experience any issues with the Program or need assistance,
           text <strong>HELP</strong> to the number from which you received
           messages, email{" "}
-          <EmailLink email="ai@xl.net" />, or see the{" "}
+          <EmailLink email="Tron.Netter@ai.xl.net" />, or see the{" "}
           <Link href="/contact">contact page</Link>.
         </p>
       </section>
@@ -169,7 +169,7 @@ export default function SmsTermsPage() {
           </a>
         </p>
         <p>
-          Email: <EmailLink email="ai@xl.net" />
+          Email: <EmailLink email="Tron.Netter@ai.xl.net" />
         </p>
         <p>
           Web: <Link href="/contact">ai.xl.net/contact</Link>

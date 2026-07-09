@@ -87,7 +87,7 @@ export default function PrivacyPage() {
         <p>
           To object to any of this processing or have your visit and contact
           records purged, email{" "}
-          <EmailLink email="ai@xl.net" />. Retention windows are
+          <EmailLink email="Tron.Netter@ai.xl.net" />. Retention windows are
           listed under Data Retention below.
         </p>
       </section>
@@ -219,7 +219,7 @@ export default function PrivacyPage() {
         <h2>Visitor Options</h2>
         <p>
           You may request deletion of your account and all associated data at
-          any time by emailing <EmailLink email="ai@xl.net" />.
+          any time by emailing <EmailLink email="Tron.Netter@ai.xl.net" />.
         </p>
         <p>
           You may block cookies via your browser settings, though this will
@@ -265,7 +265,12 @@ export default function PrivacyPage() {
       <section className="space-y-3">
         <h2>Contact</h2>
         <p>
-          For privacy questions or data requests: <EmailLink email="ai@xl.net" />
+          For privacy questions or data requests, email{" "}
+          <EmailLink email="Tron.Netter@ai.xl.net" /> or call or text{" "}
+          <a href="tel:+18723504325" className="mono">
+            (872) 350-4325
+          </a>
+          .
         </p>
       </section>
     </div>
