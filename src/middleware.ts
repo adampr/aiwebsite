@@ -35,6 +35,18 @@ function isTrackablePage(pathname: string, ua: string): boolean {
   return true;
 }
 
+// Speculative loads are not page views: Next.js <Link> prefetches fire as
+// soon as a link scrolls into view (Next-Router-Prefetch header), and
+// browsers send Sec-Purpose/Purpose: prefetch for their own speculation.
+// Without this, every render of a page containing a Link inflates the
+// target's visit count (e.g. the SMS prompt card's /texting CTA).
+function isPrefetch(request: NextRequest): boolean {
+  if (request.headers.has("next-router-prefetch")) return true;
+  const purpose =
+    request.headers.get("sec-purpose") || request.headers.get("purpose") || "";
+  return purpose.includes("prefetch");
+}
+
 function simpleHash(str: string): string {
   let h = 0;
   for (let i = 0; i < str.length; i++) {
@@ -75,7 +87,12 @@ export function middleware(request: NextRequest) {
 
   // Page-view tracking
   const ua = request.headers.get("user-agent") || "";
-  if (INTERNAL_SECRET && method === "GET" && isTrackablePage(pathname, ua)) {
+  if (
+    INTERNAL_SECRET &&
+    method === "GET" &&
+    !isPrefetch(request) &&
+    isTrackablePage(pathname, ua)
+  ) {
     const ip =
       request.headers.get("cf-connecting-ip") ||
       request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||

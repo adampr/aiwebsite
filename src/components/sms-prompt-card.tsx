@@ -119,6 +119,7 @@ export function SmsPromptCard() {
       <div className="mt-4 space-y-3">
         <Link
           href="/texting?utm_source=sms_prompt"
+          prefetch={false}
           onClick={() => sendEvent("clicked")}
           className="btn btn--primary w-full text-xs no-underline"
         >

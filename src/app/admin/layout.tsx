@@ -11,6 +11,7 @@ const ADMIN_NAV = [
   { href: "/admin/analytics", label: "Analytics" },
   { href: "/admin/conversations", label: "Chats" },
   { href: "/admin/messages", label: "SMS" },
+  { href: "/admin/texting", label: "Texting" },
   { href: "/admin/mailbox", label: "Mailbox" },
   { href: "/admin/calls", label: "Calls" },
   { href: "/admin/contacts", label: "Contacts" },

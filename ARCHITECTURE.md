@@ -308,9 +308,10 @@ never 500s the page.
 | `/admin/analytics` | `users`, `auth_logs`, `page_visits`, brain usage | stat cards (users, 30d visits/sessions, 30d brain spend), usage-by-model table, recent sign-ins |
 | `/admin/conversations` | `brain_messages` (read-only) | all channels; filter `?channel=chat\|sms\|email`, paginate `?offset`, transcript via `?session=<id>` |
 | `/admin/messages` | Twilio REST API (no local storage) | client component; list is always scoped to `TWILIO_PHONE_NUMBER` (`To=`/`From=`) because the Twilio account is **shared with itsupportchicago**; "all" = merged first pages of both directions (no pagination), direction filters paginate via Twilio `next_page_uri`. Reply/compose form → `POST` |
+| `/admin/texting` | `users`, `sms_consent_logs`, `sms_prompt_events`, `phone_verifications` | SMS opt-in operations (§5.7/§5.8): stat cards (verified numbers all-time, opt-ins 30d all-source distinct users, prompt conversion % = opted-in ∩ shown / shown, don't-ask-again); 3-stage funnel table (shown → clicked → verified, distinct users, hand-rolled bars); consent audit trail (last 50, `<details>` disclosure of consentText/UA/page); verification attempts with honest outcomes — **VERIFIED requires a matching consent-log row** (consumed_at alone also means retired/superseded), BLOCKED = attempts > 5, RETIRED, EXPIRED, LIVE. Read-only; opt-outs live at the carrier |
 | `/admin/mailbox` | `brain_messages` email sessions + `admin_emails` | thread list from email sessions; thread view merges Tron's turns with manual admin sends (matched by sessionId); compose/reply → `POST /api/admin/mailbox/send`; reply-to derived from requesterId, subject from the sessionId's thread slug |
 | `/admin/calls` | `brain_phone_calls` (read-only) | expandable per-call transcripts (JSON `[{role,text}]`) |
-| `/admin/contacts` | derived — no contacts table | merges OAuth users + brain requesters (SMS phones, `email:` addrs) + phone-call numbers into one directory (identifier, channels, interaction counts, first/last seen) |
+| `/admin/contacts` | derived — no contacts table | merges OAuth users + brain requesters (SMS phones, `email:` addrs) + phone-call numbers into one directory (identifier, verified phone, channels, interaction counts, first/last seen). **Identity merge on verified phones** (post-pass after all sources load): a `users.phone` match folds that number's SMS/voice row into the email row (possession-proven by the §5.7 double opt-in, so aggressive merging is safe) — Phone column shows the E.164 + "verified" badge; anonymous numbers stay separate with no badge; a merged user's firstSeen may predate their account (texted before signing in — correct) |
 | `/admin/companies` | `page_visits` ⋈ `ip_orgs` | orgs reading the site; ISP ASNs filtered out |
 | `/admin/seo` | `page_visits` | 30-day first-party traffic: stat cards (views/sessions/visitors/bounce), source classification, referring domains, daily bars, top pages, session depth. **GSC/Semrush not wired up** |
 | `/admin/knowledge` | `brain_memories` (read-only) | rows + per-source_type stats (row sizes matter — voice injects all public rows); button triggers the crawl |
@@ -326,7 +327,10 @@ API routes (all `requireAdmin()` + middleware CSRF):
   (not coordinated with the nightly cron).
 
 **Page-view tracking:** `src/middleware.ts` (GET, non-API/non-admin/non-static paths, bot-UA
-filtered, only when `INTERNAL_TRACK_SECRET` is set — fail-closed) POSTs
+filtered, **prefetches excluded** — requests carrying `Next-Router-Prefetch` or
+`Sec-Purpose/Purpose: prefetch` headers are speculative loads, not views; without this every
+`<Link>` render inflates its target's counts, and the SMS prompt card's CTA additionally sets
+`prefetch={false}` — only when `INTERNAL_TRACK_SECRET` is set — fail-closed) POSTs
 `{path, referrer, ip (cf-connecting-ip ∥ x-forwarded-for), userAgent, sessionHash =
 hash(ip|ua|date), landingUrl, utm*}` fire-and-forget to `POST /api/internal/track`
 (`x-track-secret` gated), which dedups same session+path within 30 s, inserts `page_visits`,
@@ -369,8 +373,10 @@ pointing at `/texting`. Server pieces:
   card rather than re-soliciting an opted-in user.
 - `POST /api/auth/sms-prompt` — body `{event: "shown"|"clicked"|"snoozed"|"dismissed"}`;
   session required (401), rate-limited 20/10 min per user, 400 on unknown event. Appends to
-  `sms_prompt_events` (funnel telemetry: card → click → `/texting?utm_source=sms_prompt`
-  page visit → `sms_consent_logs` row = verified). `dismissed` additionally sets
+  `sms_prompt_events` — the funnel surfaced on `/admin/texting` (§5.6): shown → clicked →
+  verified, where verified = a `sms_consent_logs` user who was shown the card in-window
+  (the CTA's `utm_source=sms_prompt` remains in `page_visits` for /admin/seo attribution
+  but is not a funnel stage — prefetches made it unreliable as one). `dismissed` additionally sets
   `users.sms_prompt_dismissed_at` **idempotently** (`WHERE … IS NULL`) — a UI preference,
   deliberately NOT written to `sms_consent_logs` (that table stays a pure consent audit).
   Lives under `/api/auth/*` (not `/api/texting/*`) because it is preference/telemetry,
