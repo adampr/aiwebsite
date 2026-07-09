@@ -66,7 +66,7 @@ export function UserMenu() {
     <div className="relative" ref={menuRef}>
       <button
         onClick={() => setOpen((prev) => !prev)}
-        className="btn btn--text flex items-center gap-2"
+        className="btn btn--text flex items-center gap-2 text-xs"
         aria-expanded={open}
         aria-haspopup="menu"
       >
