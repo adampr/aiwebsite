@@ -486,6 +486,7 @@ Rebuild the brain from its own canonical doc; the site needs only this contract:
 | `POST /v1/chat/completions` | Bearer | all three site channels |
 | `GET /v1/tools` | Bearer | enumerate tool names → send back as `disabledTools` |
 | `GET /health` | none | readiness (`{ok:true, service:"brain-api", version}`), PM2/watchdog/deploy checks |
+| `GET /v1/model-routing` | Bearer | (brain v1.92 + Issue #684) concrete model id per pipeline task + `plannerEffectiveModel`; consumed by `scripts/ai-provider-health.mjs` (§9.6) to probe routed ids before visitors hit them |
 | `POST|GET /twilio/*` + WS `/twilio/ws` | Twilio signature | voice + carrier SMS — Twilio calls these directly through nginx; the site never does |
 
 ### Request envelope (fields this site sends)
@@ -503,7 +504,12 @@ Rebuild the brain from its own canonical doc; the site needs only this contract:
   "privacyScope": "private_to_requester", // SMS + email only
   "requester": {"requesterId": "<phone|email>"},  // SMS + email only
   "markdownMode": "html" /* chat */ | "strip" /* sms, email */,
-  "disabledTools": ["memory_lookup","web_search",…]   // full list from GET /v1/tools
+  "disabledTools": ["memory_lookup","web_search",…],  // full list from GET /v1/tools
+  "invocation": { "maxOrchestratorPhase": 1 }  // ALL channels: clamp to direct_answer.
+      // Tron has no tools, so think_harder/plan_execute escalations only add
+      // 30-60 s latency + world-knowledge answers, and escalation-only pipeline
+      // failures (e.g. brain Issue #684's unavailable-model 404 in the
+      // plan_execute verifier) surfaced as the SMS "hit a snag" apology.
 }
 ```
 
@@ -631,6 +637,14 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
   swaps builds atomically) + restart + re-verify.
 - Alerts via Resend to adam@xl.net from `ai.xl.net Watchdog <noreply@ai.xl.net>`, throttled
   1 email / unique issue / 24 h (`/tmp/aiwebsite-watchdog-throttle`).
+- **AI-provider checks** (1st pass after start — i.e. at boot — then every 30th pass): runs
+  `scripts/ai-provider-health.mjs`, which (a) auth-probes every configured AI key (OpenAI,
+  Anthropic, xAI, Gemini, Deepgram, Tavily) and (b) fetches the brain's `GET /v1/model-routing`
+  and fires a 1-token completion at every unique routed model id — catching
+  registry-routes-to-inaccessible-model failures (the "hit a snag" class) and key
+  expiry/quota before visitors do. Failures email the full report to adam@xl.net, throttled to
+  **1 email / 4 h** (issue key `ai-provider-health`). Script is standalone:
+  `node scripts/ai-provider-health.mjs [--env path]`, exit 0/1.
 - `watchdog-cron.sh` (root cron `*/5 * * * *`) relaunches the loop if its PID is dead
   (verifies `/proc/PID/cmdline`).
 
@@ -654,6 +668,7 @@ every variable below appears there with a comment.
 | LLMs | `OPENAI_API_KEY`, `OPENAI_MODEL` (gpt-5-mini), `BRAIN_FIRST_PASS_MODEL` (gpt-5.4-mini), `OPENAI_TTS_MODEL` (tts-1), `OPENAI_STT_MODEL` (whisper-1) | brain chat/voice |
 | | `XAI_API_KEY` | realtime voice (calls drop without it) |
 | | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `TAVILY_API_KEY`, `AA_API_KEY` | optional brain providers |
+| | `GOOGLE_GEMINI_API_KEY` | **currently unset** — brain planner then falls back to OpenAI (brain Issue #684). Provisioning one (Google AI Studio) re-enables the Gemini planner + google models in the router |
 | Twilio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_PHONE_NUMBER` | number +1 872 350 4325, SID `PN9435882fd720d7ec79108d195f4c9e39`; same number sends the /texting verification codes (§5.7) |
 | | `INBOUND_PHONE_PERSONA_NAME` / `INBOUND_PHONE_SITE` / `INBOUND_PHONE_GREETING` | voice persona (Tron Netter / ai.xl.net) |
 | Email | `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET` (svix inbound), `MAIL_FROM` (`Tron Netter <Tron.Netter@ai.xl.net>`), `CONTACT_NOTIFY_EMAIL`, `OUTBOUND_BCC_EMAIL` (default adam@xl.net — mandatory oversight BCC) | ai.xl.net domain verified in Resend |

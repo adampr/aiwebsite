@@ -193,6 +193,8 @@ async function handleInbound(emailId: string) {
       },
     ],
     requester: { requesterId: `email:${senderAddress}`, email: senderAddress },
+    // Phase 1 = direct_answer only — same rationale as the chat/SMS routes.
+    invocation: { maxOrchestratorPhase: 1 },
     memoryMode: "do_not_store",
     privacyScope: "private_to_requester",
     markdownMode: "strip",

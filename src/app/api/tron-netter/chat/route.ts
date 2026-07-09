@@ -111,6 +111,10 @@ export async function POST(request: NextRequest) {
     // new "facts" that get recalled over the prompt (known self-reinforcement
     // gotcha in the brain's memory extraction).
     memoryMode: "do_not_store",
+    // Phase 1 = direct_answer only. Tron has no tools, so escalation phases
+    // add latency and world-knowledge answers without adding capability;
+    // see the SMS route for the failure mode this also shields against.
+    invocation: { maxOrchestratorPhase: 1 },
     disabledTools: await getDisabledBrainTools(),
     markdownMode: "html",
     brainIdentity: TRON_NETTER_IDENTITY,

@@ -13,8 +13,10 @@ PID_FILE="/var/run/aiwebsite-watchdog.pid"
 LOG_FILE="/var/log/aiwebsite-watchdog.log"
 THROTTLE_DIR="/tmp/aiwebsite-watchdog-throttle"
 ISSUE_THROTTLE_SECONDS=86400  # 24 hours per unique issue
+AI_THROTTLE_SECONDS=14400     # 4 hours for AI-provider failures (per Adam)
 CHECK_INTERVAL=60
-PAGE_CHECK_EVERY=5  # run page checks every Nth iteration (5 × 60s = 5 min)
+PAGE_CHECK_EVERY=5   # run page checks every Nth iteration (5 × 60s = 5 min)
+AI_CHECK_EVERY=30    # run AI-provider checks every Nth iteration (30 × 60s = 30 min)
 NOTIFY_TO="adam@xl.net"
 NOTIFY_FROM="ai.xl.net Watchdog <noreply@ai.xl.net>"
 
@@ -48,6 +50,7 @@ send_email() {
   local subject="$1"
   local body="$2"
   local issue_key="${3:-global}"
+  local throttle_seconds="${4:-$ISSUE_THROTTLE_SECONDS}"
 
   if [[ -z "${RESEND_API_KEY:-}" ]]; then
     log "WARN: Skipping email (no API key): $subject"
@@ -63,7 +66,7 @@ send_email() {
     local last_sent now
     last_sent=$(cat "$throttle_file")
     now=$(date +%s)
-    if (( now - last_sent < ISSUE_THROTTLE_SECONDS )); then
+    if (( now - last_sent < throttle_seconds )); then
       log "INFO: Email throttled for issue '$issue_key' (last sent $(( now - last_sent ))s ago): $subject"
       return
     fi
@@ -222,6 +225,36 @@ check_pages() {
   fi
 }
 
+# ── AI-provider checks ────────────────────────────────────────────
+
+# Probes every AI lab key the stack depends on (OpenAI, Anthropic, xAI,
+# Gemini, Deepgram, Tavily) plus a 1-token completion against every model id
+# the brain's router would select right now (GET /v1/model-routing). Catches
+# registry/routing failures — e.g. the router selecting a model the OpenAI
+# key can't call, which surfaced to SMS users as "Sorry, I hit a snag" — and
+# key expiry/quota exhaustion, before visitors do. Runs at watchdog startup
+# (i.e. at boot) and every AI_CHECK_EVERY iterations; failures email
+# NOTIFY_TO at most once per AI_THROTTLE_SECONDS (4h).
+check_ai_providers() {
+  local report rc
+  report=$(run_as_pm2_user "cd '$APP_ROOT' && node scripts/ai-provider-health.mjs 2>&1")
+  rc=$?
+
+  if [[ $rc -eq 0 ]]; then
+    log "OK: AI provider checks passed"
+    return
+  fi
+
+  log "FAIL: AI provider checks failed:"
+  while IFS= read -r line; do log "    $line"; done <<< "$report"
+
+  send_email \
+    "[WATCHDOG] AI provider failure on ai.xl.net" \
+    "One or more AI providers/models the site depends on are failing.\nVisitor-facing symptom when this breaks the chat pipeline: Tron Netter answers 'Sorry, I hit a snag' over SMS / 'temporarily unavailable' on webchat.\n\n${report}\n\nRuns from deploy/watchdog.sh via scripts/ai-provider-health.mjs. This alert repeats at most every 4 hours while the failure persists." \
+    "ai-provider-health" \
+    "$AI_THROTTLE_SECONDS"
+}
+
 # ── Lifecycle ────────────────────────────────────────────────────
 
 cleanup() {
@@ -304,6 +337,11 @@ while true; do
   # 7. Page-render checks (every 5 minutes)
   if (( iteration % PAGE_CHECK_EVERY == 0 )); then
     check_pages
+  fi
+
+  # 8. AI-provider checks (at startup/boot, then every 30 minutes)
+  if (( iteration == 1 || iteration % AI_CHECK_EVERY == 0 )); then
+    check_ai_providers
   fi
 
   if [[ "$any_failure" == "false" ]]; then

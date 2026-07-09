@@ -76,6 +76,13 @@ async function askTronNetter(from: string, body: string): Promise<string> {
       { role: "user", content: body },
     ],
     requester: { requesterId: from },
+    // Tron has no tools, so the brain's think_harder / plan_execute
+    // escalations can only burn 30-60s and answer from world knowledge
+    // (off-persona). Phase 1 = always direct_answer: fast, and declines
+    // stay declines. Also shields SMS from escalation-only failure modes
+    // (a bad router model pick in the verifier pass once 500'd every
+    // "best laptop"-style text as "Sorry, I hit a snag").
+    invocation: { maxOrchestratorPhase: 1 },
     memoryMode: "do_not_store",
     privacyScope: "private_to_requester",
     markdownMode: "strip",
