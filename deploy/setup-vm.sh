@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@71d6ec382104f0efd5e5b43354ef3de941e6fc11fbf343e53d30bb5b399c8e2c
+# aicompany-template: setup-vm.sh.tpl@c37b7e6e33f9dea56deeeb2665222f8393fa04c539766db990c536f6772e15b8
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -96,8 +96,16 @@ npm run build
 echo ">>> Rendering crawler config snapshot (data/aiwebsite-config.json)..."
 npx tsx "$module_dir/scripts/config-json.ts"
 
-echo ">>> Generating persona seed SQL from site.config.ts..."
-npx tsx "$module_dir/scripts/generate-seed-sql.ts" --out deploy/seed-persona-memories.sql
+# SEED_MODE=file → the host commits a hand-curated deploy/seed-persona-memories.sql
+# (e.g. aiwebsite's legacy seed-tron-* rows, which prod already carries and the
+# voice channel depends on); "generate" derives it from site.config.ts.
+if [ "file" = "file" ]; then
+  echo ">>> SEED_MODE=file — using committed deploy/seed-persona-memories.sql as-is"
+  test -f deploy/seed-persona-memories.sql
+else
+  echo ">>> Generating persona seed SQL from site.config.ts..."
+  npx tsx "$module_dir/scripts/generate-seed-sql.ts" --out deploy/seed-persona-memories.sql
+fi
 
 # ── config:check gates the reload (§4.3 layer 3) ─────────────────
 # Config↔env cross-validation, BRAIN_PUBLIC_URL, brain version range, schema
@@ -283,8 +291,20 @@ WantedBy=timers.target
 UNIT
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now aiwebsite-knowledge.timer aiwebsite-backup.timer \
-  aiwebsite-restore-drill.timer aiwebsite-retention-sweeper.timer aiwebsite-disk-check.timer
+sudo systemctl enable --now aiwebsite-knowledge.timer \
+  aiwebsite-retention-sweeper.timer aiwebsite-disk-check.timer
+# Backups are a §1 default-on invariant, but enabling the timer with no bucket
+# just produces nightly failure alerts — gate on BACKUP_BUCKET and leave a flag
+# the watchdog uses to decide whether the heartbeat check applies.
+if [ -n "" ]; then
+  sudo systemctl enable --now aiwebsite-backup.timer aiwebsite-restore-drill.timer
+  sudo mkdir -p /var/lib/aiwebsite && sudo touch /var/lib/aiwebsite/backups-enabled
+else
+  echo "WARN: BACKUP_BUCKET is empty — nightly pg_dump backups are NOT enabled."
+  echo "      Provision a bucket, set BACKUP_BUCKET in deploy/site-deploy.env, re-render, redeploy."
+  sudo systemctl disable --now aiwebsite-backup.timer aiwebsite-restore-drill.timer 2>/dev/null || true
+  sudo rm -f /var/lib/aiwebsite/backups-enabled
+fi
 echo ">>> Timers installed:"
 systemctl list-timers "aiwebsite-*" --no-pager || true
 
@@ -320,7 +340,10 @@ sudo bash "$app_dir/deploy/setup-cloudflared.sh"
 echo ">>> Installing watchdog + cron supervisor..."
 sudo install -m 755 "$app_dir/deploy/watchdog.sh"      /usr/local/bin/aiwebsite-watchdog.sh
 sudo install -m 755 "$app_dir/deploy/watchdog-cron.sh" /usr/local/bin/aiwebsite-watchdog-cron.sh
-( sudo crontab -l 2>/dev/null; echo "*/5 * * * * /usr/local/bin/aiwebsite-watchdog-cron.sh" ) | sort -u | sudo crontab -
+# Merge keeps unrelated root-cron entries but strips jobs the systemd timers
+# replaced (a leftover legacy crawl cron would double-run nightly).
+( sudo crontab -l 2>/dev/null | grep -vE 'refresh-tron-knowledge|refresh-knowledge\.(mjs|js)' ; \
+  echo "*/5 * * * * /usr/local/bin/aiwebsite-watchdog-cron.sh" ) | sort -u | sudo crontab -
 # Restart the watchdog so it picks up the freshly installed version, then
 # start immediately instead of waiting up to 5 minutes for cron.
 # Kill via PID file, not pkill -f: the script path may appear in an SSH

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@95630495fd4d50f4c3b98cc42b3bff26ec2370afa44e166f94fc2adabab81d47
+# aicompany-template: watchdog.sh.tpl@06dcb874307fad2eb1b687f6b735ac392909774fbac38217cd60417acddfaabf
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -263,9 +263,14 @@ file_age_alert() { # path, label, severity, issue_key, remedy
 }
 
 check_freshness() {
-  file_age_alert "$backup_heartbeat_file" "Backup heartbeat" "CRITICAL" "backup-heartbeat" \
-    "The nightly pg_dump has not succeeded in over a day. Check /var/log/aiwebsite-backup.log and 'systemctl list-timers aiwebsite-backup.timer'." \
-    || log "FAIL: backup heartbeat missing/stale"
+  # Heartbeat check applies only when setup-vm enabled the backup timers
+  # (BACKUP_BUCKET set) — otherwise it would alert nightly about a timer
+  # that is deliberately off.
+  if [ -f "/var/lib/aiwebsite/backups-enabled" ]; then
+    file_age_alert "$backup_heartbeat_file" "Backup heartbeat" "CRITICAL" "backup-heartbeat" \
+      "The nightly pg_dump has not succeeded in over a day. Check /var/log/aiwebsite-backup.log and 'systemctl list-timers aiwebsite-backup.timer'." \
+      || log "FAIL: backup heartbeat missing/stale"
+  fi
   file_age_alert "$knowledge_file" "Knowledge doc" "WARN" "knowledge-stale" \
     "The nightly crawl has not refreshed the prompt doc in over a day; the persona is answering from stale knowledge. Check /var/log/aiwebsite-knowledge.log and 'systemctl list-timers aiwebsite-knowledge.timer'." \
     || log "FAIL: knowledge doc missing/stale"
