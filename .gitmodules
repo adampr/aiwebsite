@@ -1,3 +1,6 @@
 [submodule "packages/brain"]
 	path = packages/brain
 	url = https://github.com/adampr/xldev.git
+[submodule "packages/aicompany"]
+	path = packages/aicompany
+	url = https://github.com/adampr/aicompany.git

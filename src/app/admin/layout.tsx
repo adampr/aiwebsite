@@ -1,50 +1,23 @@
-import type { Metadata } from "next";
-import Link from "next/link";
+// Thin wrapper over @aicompany/core (README §2.1): module admin chrome + nav
+// built from admin.enabledPages. Defense-in-depth kept from the legacy layout:
+// the module AdminLayout redirects non-admins itself (and every module admin
+// page guards itself too), but this shell re-checks the session so the
+// layout-level redirect survives any module regression.
 import { redirect } from "next/navigation";
-import { getSession, isAdmin } from "@/lib/auth";
+import { AdminLayout, adminMetadata } from "@aicompany/core/admin/layout";
+import { readSession } from "@aicompany/core/auth/session";
+import { isAdmin } from "@aicompany/core/auth/guard";
+import { siteConfig } from "site.config";
 
-export const metadata: Metadata = {
-  robots: { index: false, follow: false },
-};
+export const metadata = adminMetadata;
 
-const ADMIN_NAV = [
-  { href: "/admin/analytics", label: "Analytics" },
-  { href: "/admin/conversations", label: "Chats" },
-  { href: "/admin/messages", label: "SMS" },
-  { href: "/admin/texting", label: "Texting" },
-  { href: "/admin/mailbox", label: "Mailbox" },
-  { href: "/admin/calls", label: "Calls" },
-  { href: "/admin/contacts", label: "Contacts" },
-  { href: "/admin/companies", label: "Companies" },
-  { href: "/admin/seo", label: "SEO" },
-  { href: "/admin/knowledge", label: "Knowledge" },
-];
-
-// Defense-in-depth: each admin page also guards itself, but the shared
-// layout redirects non-admins before any page tree renders.
-export default async function AdminLayout({
+export default async function Layout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await getSession();
+  const session = await readSession(siteConfig);
   if (!session || !isAdmin(session.email)) redirect("/login");
 
-  return (
-    <div>
-      <nav
-        className="mb-8 flex flex-wrap items-center gap-x-6 gap-y-2 pb-4"
-        style={{ borderBottom: "1px solid var(--xl-line)" }}
-        aria-label="Admin navigation"
-      >
-        <span className="sys-label">Admin</span>
-        {ADMIN_NAV.map((item) => (
-          <Link key={item.href} href={item.href} className="text-sm no-underline">
-            {item.label}
-          </Link>
-        ))}
-      </nav>
-      {children}
-    </div>
-  );
+  return <AdminLayout config={siteConfig}>{children}</AdminLayout>;
 }

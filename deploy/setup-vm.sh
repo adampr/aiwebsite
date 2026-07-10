@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
+# aicompany-template: setup-vm.sh.tpl@71d6ec382104f0efd5e5b43354ef3de941e6fc11fbf343e53d30bb5b399c8e2c
 set -euo pipefail
 
-# One-time VM provisioning for ai.xl.net (idempotent — safe to re-run).
-# Assumes the repo (incl. packages/brain submodule contents and .env) has
-# been synced to $APP_DIR by deploy/deploy.sh.
+# One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
+# deploy). Assumes the repo (incl. packages/brain submodule contents and .env)
+# has been synced to the app dir by deploy/deploy.sh.
+#
+# All periodic jobs are systemd timer units with Persistent=true — NOT crontab
+# lines (§9.3: a crontab rebuild once silently dropped an entry). The only cron
+# entry is the watchdog supervisor (§9.5).
 
-APP_DIR="/var/www/aiwebsite"
+app_dir="/var/www/aiwebsite"
+module_dir="$app_dir/packages/aicompany"
 
-echo "=== XL.net AI Website — VM Setup ==="
+echo "=== ai.xl.net — VM Setup ==="
 
 # ── System packages ──────────────────────────────────────────────
 # build-essential/python3/libpq-dev are required to compile the brain's
 # native deps (better-sqlite3, pg-native).
 sudo apt-get update -qq
-sudo apt-get install -y -qq build-essential python3 libpq-dev pkg-config jq rsync
+sudo apt-get install -y -qq build-essential python3 libpq-dev pkg-config jq rsync logrotate
 
 # Node.js 22
 if ! command -v node &>/dev/null; then
@@ -37,31 +43,35 @@ sudo systemctl enable --now postgresql
 
 # Create database and user
 sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='aiwebsite'" | grep -q 1 || \
-  sudo -u postgres psql -c "CREATE USER aiwebsite WITH PASSWORD 'aiwebsite';"
+  sudo -u postgres psql -c "CREATE USER \"aiwebsite\" WITH PASSWORD 'aiwebsite';"
 sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='aiwebsite'" | grep -q 1 || \
-  sudo -u postgres createdb -O aiwebsite aiwebsite
+  sudo -u postgres createdb -O "aiwebsite" "aiwebsite"
+
+# Bounded WAL so a burst of writes cannot eat the disk (§9.5)
+sudo -u postgres psql -c "ALTER SYSTEM SET max_wal_size = '256MB';" >/dev/null
+sudo systemctl reload postgresql || true
 
 # nginx — loopback-only; the Cloudflare tunnel is the sole public entry
 if ! command -v nginx &>/dev/null; then
   sudo apt-get install -y nginx
 fi
-sudo cp "$APP_DIR/deploy/nginx.conf" /etc/nginx/sites-available/aiwebsite
+sudo cp "$app_dir/deploy/nginx.conf" /etc/nginx/sites-available/aiwebsite
 sudo ln -sf /etc/nginx/sites-available/aiwebsite /etc/nginx/sites-enabled/aiwebsite
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 
 # ── App install & build ──────────────────────────────────────────
-cd "$APP_DIR"
+cd "$app_dir"
 
 if [ ! -f .env ]; then
-  echo "ERROR: $APP_DIR/.env is missing. deploy.sh should have copied it."
+  echo "ERROR: $app_dir/.env is missing. deploy.sh should have copied it."
   exit 1
 fi
 
 echo ">>> Installing site dependencies..."
 # --include=dev: the VM environment omits devDependencies by default, but the
-# build needs them (drizzle-kit, typescript, tailwind) — same reason as the
-# brain install below.
+# build needs them (drizzle-kit, typescript, tailwind, tsx) — same reason as
+# the brain install below.
 npm ci --include=dev
 
 echo ">>> Installing brain (packages/brain) dependencies..."
@@ -71,8 +81,7 @@ if [ ! -f packages/brain/package.json ]; then
 fi
 (cd packages/brain && npm ci --include=dev)
 
-echo ">>> Database migrations (site tables)..."
-npm run db:generate
+echo ">>> Database migrations (site tables, committed history)..."
 npm run db:migrate
 
 echo ">>> Building Next.js site..."
@@ -83,45 +92,234 @@ echo ">>> Building Next.js site..."
 rm -rf .next/cache
 npm run build
 
+# ── Config-derived artifacts (need node_modules, hence after npm ci) ─
+echo ">>> Rendering crawler config snapshot (data/aiwebsite-config.json)..."
+npx tsx "$module_dir/scripts/config-json.ts"
+
+echo ">>> Generating persona seed SQL from site.config.ts..."
+npx tsx "$module_dir/scripts/generate-seed-sql.ts" --out deploy/seed-persona-memories.sql
+
+# ── config:check gates the reload (§4.3 layer 3) ─────────────────
+# Config↔env cross-validation, BRAIN_PUBLIC_URL, brain version range, schema
+# drift. Runs BEFORE the PM2 reload so a bad deploy never replaces a good one.
+echo ">>> Running config:check..."
+npm run config:check
+
 # ── PM2: site + brain-api + skills-host ──────────────────────────
 pm2 startOrReload deploy/ecosystem.config.cjs
 pm2 save
 pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null || true
 
-# ── Tron Netter shared persona memories ──────────────────────────
+# pm2-logrotate: 10M per file, retain 7 (§9.5 default-on log rotation)
+pm2 install pm2-logrotate >/dev/null 2>&1 || true
+pm2 set pm2-logrotate:max_size 10M >/dev/null
+pm2 set pm2-logrotate:retain 7 >/dev/null
+
+# ── Persona seed memories ────────────────────────────────────────
 # Public-scope brain memories that keep the persona identical across webchat,
 # SMS, and phone calls (the voice path has no system-prompt injection point —
 # these rows are its knowledge base). brain-api creates its tables on first
 # boot, so wait for it before seeding. Idempotent upsert; safe on every deploy.
-echo ">>> Seeding Tron Netter persona memories..."
+echo ">>> Waiting for brain-api and seeding persona memories..."
 for i in $(seq 1 12); do
   curl -fsS -o /dev/null http://127.0.0.1:3211/health && break
   sleep 5
 done
-sudo -u postgres psql -d aiwebsite -v ON_ERROR_STOP=1 -f "$APP_DIR/deploy/seed-tron-memories.sql"
+sudo -u postgres psql -d "aiwebsite" -v ON_ERROR_STOP=1 -f "$app_dir/deploy/seed-persona-memories.sql"
 
-# ── Tron Netter nightly knowledge refresh ────────────────────────
-# Crawls 100% of xl.net + ai.xl.net, REPLACES data/tron-netter-knowledge.md
-# (read at request time for the chat/SMS system prompt) and the brain's
-# public 'site_crawl' memory rows (voice channel), then emails a run report
-# to ADMIN_EMAIL. Nightly at 08:00 UTC = 3am Chicago (CDT). Also run once
-# now (without the email) so fresh knowledge is live from this deploy
-# instead of after the first cron fire.
-echo ">>> Installing Tron Netter knowledge-refresh cron..."
-( sudo crontab -l 2>/dev/null; echo "0 8 * * * /usr/bin/node $APP_DIR/scripts/refresh-tron-knowledge.mjs >> /var/log/aiwebsite-tron-knowledge.log 2>&1" ) | sort -u | sudo crontab -
+# ── Ops helper scripts → /usr/local/bin ──────────────────────────
+echo ">>> Installing ops scripts..."
+sudo install -m 755 "$app_dir/deploy/backup-db.sh"          /usr/local/bin/aiwebsite-backup-db.sh
+sudo install -m 755 "$app_dir/deploy/restore-drill.sh"      /usr/local/bin/aiwebsite-restore-drill.sh
+sudo install -m 755 "$app_dir/deploy/retention-sweeper.sh"  /usr/local/bin/aiwebsite-retention-sweeper.sh
+
+# Daily disk check (§9.5: alert at >80%). Small enough to live inline here.
+sudo tee /usr/local/bin/aiwebsite-disk-check.sh >/dev/null <<'EOS'
+#!/usr/bin/env bash
+# Daily disk-usage check — alerts via Resend at >80% on /.
+set -uo pipefail
+threshold=80
+usage=$(df --output=pcent / | tail -1 | tr -dc '0-9')
+if [ "$usage" -le "$threshold" ]; then
+  echo "disk OK: $usage% used"
+  exit 0
+fi
+key=$(grep -E '^RESEND_API_KEY=' "/var/www/aiwebsite/.env" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+echo "disk usage $usage% exceeds $threshold%"
+[ -z "$key" ] && exit 1
+curl -s -X POST https://api.resend.com/emails \
+  -H "Authorization: Bearer $key" \
+  -H "Content-Type: application/json" \
+  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"adam@xl.net\"],\"subject\":\"[aiwebsite] WARN Disk usage at $usage%\",\"text\":\"Disk usage on $(hostname) is at $usage% (threshold $threshold%). Triage per deploy/RUNBOOK.md (disk-full section) before it reaches 100%.\"}" >/dev/null || true
+exit 1
+EOS
+sudo chmod 755 /usr/local/bin/aiwebsite-disk-check.sh
+
+# ── Scheduled work: systemd timers (Persistent=true), NOT cron (§9.3) ─
+echo ">>> Installing systemd timer units..."
+deploy_user="$(whoami)"
+
+# Nightly knowledge crawl. ExecStartPre re-renders the JSON config snapshot so
+# the crawler always sees the currently deployed site.config.ts (§8).
+sudo tee /etc/systemd/system/aiwebsite-knowledge.service >/dev/null <<UNIT
+[Unit]
+Description=aiwebsite nightly knowledge crawl (§8)
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=$deploy_user
+WorkingDirectory=/var/www/aiwebsite
+ExecStartPre=/usr/bin/env npx tsx /var/www/aiwebsite/packages/aicompany/scripts/config-json.ts
+ExecStart=/usr/bin/env node /var/www/aiwebsite/packages/aicompany/scripts/refresh-knowledge.mjs --config /var/www/aiwebsite/data/aiwebsite-config.json
+StandardOutput=append:/var/log/aiwebsite-knowledge.log
+StandardError=append:/var/log/aiwebsite-knowledge.log
+UNIT
+sudo tee /etc/systemd/system/aiwebsite-knowledge.timer >/dev/null <<'UNIT'
+[Unit]
+Description=Nightly aiwebsite knowledge crawl
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+# Nightly DB backup (default-on invariant, §9.4)
+sudo tee /etc/systemd/system/aiwebsite-backup.service >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite nightly pg_dump backup (§9.4)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aiwebsite-backup-db.sh
+StandardOutput=append:/var/log/aiwebsite-backup.log
+StandardError=append:/var/log/aiwebsite-backup.log
+UNIT
+sudo tee /etc/systemd/system/aiwebsite-backup.timer >/dev/null <<'UNIT'
+[Unit]
+Description=Nightly aiwebsite DB backup
+
+[Timer]
+OnCalendar=*-*-* 07:15:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+# Quarterly restore drill — a backup that cannot be restored is not a backup.
+sudo tee /etc/systemd/system/aiwebsite-restore-drill.service >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite quarterly backup restore drill (§9.4)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aiwebsite-restore-drill.sh
+StandardOutput=append:/var/log/aiwebsite-restore-drill.log
+StandardError=append:/var/log/aiwebsite-restore-drill.log
+UNIT
+sudo tee /etc/systemd/system/aiwebsite-restore-drill.timer >/dev/null <<'UNIT'
+[Unit]
+Description=Quarterly aiwebsite restore drill
+
+[Timer]
+OnCalendar=*-01,04,07,10-05 06:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+# Weekly retention sweep — keeps the DB in lockstep with the privacy page (§1).
+sudo tee /etc/systemd/system/aiwebsite-retention-sweeper.service >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite weekly retention sweep (§9.5)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aiwebsite-retention-sweeper.sh
+StandardOutput=append:/var/log/aiwebsite-retention-sweeper.log
+StandardError=append:/var/log/aiwebsite-retention-sweeper.log
+UNIT
+sudo tee /etc/systemd/system/aiwebsite-retention-sweeper.timer >/dev/null <<'UNIT'
+[Unit]
+Description=Weekly aiwebsite retention sweep
+
+[Timer]
+OnCalendar=Sun *-*-* 05:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+# Daily disk-usage check (§9.5)
+sudo tee /etc/systemd/system/aiwebsite-disk-check.service >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite daily disk-usage check (§9.5)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aiwebsite-disk-check.sh
+StandardOutput=append:/var/log/aiwebsite-disk-check.log
+StandardError=append:/var/log/aiwebsite-disk-check.log
+UNIT
+sudo tee /etc/systemd/system/aiwebsite-disk-check.timer >/dev/null <<'UNIT'
+[Unit]
+Description=Daily aiwebsite disk check
+
+[Timer]
+OnCalendar=*-*-* 06:45:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now aiwebsite-knowledge.timer aiwebsite-backup.timer \
+  aiwebsite-restore-drill.timer aiwebsite-retention-sweeper.timer aiwebsite-disk-check.timer
+echo ">>> Timers installed:"
+systemctl list-timers "aiwebsite-*" --no-pager || true
+
+# ── logrotate for non-PM2 logs (§9.5: weekly, keep 4, compress) ──
+# NOTE: this site's nginx logs (/var/log/nginx/aiwebsite.*.log) are deliberately
+# NOT listed here — the distro's /etc/logrotate.d/nginx glob already covers
+# them (daily, rotate 14 on Debian), and a duplicate logrotate entry makes it
+# skip entries unpredictably. §9.5 documents this delegation.
+sudo tee /etc/logrotate.d/aiwebsite >/dev/null <<'EOF'
+/var/log/aiwebsite-*.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+EOF
+
+# ── Initial knowledge crawl ──────────────────────────────────────
+# Run once per deploy (without the email) so fresh knowledge is live from this
+# deploy instead of after the first timer fire.
 echo ">>> Running initial knowledge crawl (no email)..."
-node "$APP_DIR/scripts/refresh-tron-knowledge.mjs" --no-email || \
-  echo "WARN: initial knowledge crawl failed — Tron Netter uses the baked-in fallback until tonight's cron run"
+node "$module_dir/scripts/refresh-knowledge.mjs" --config "$app_dir/data/aiwebsite-config.json" --no-email || \
+  echo "WARN: initial knowledge crawl failed — the persona uses the existing/starter knowledge doc until tonight's timer run"
 
 # ── Cloudflare tunnel ────────────────────────────────────────────
-sudo bash "$APP_DIR/deploy/setup-cloudflared.sh"
+sudo bash "$app_dir/deploy/setup-cloudflared.sh"
 
 # ── Watchdog (self-healing service checks + email alerts) ────────
-# watchdog-cron.sh expects the watchdog at /usr/local/bin/aiwebsite-watchdog.sh
+# watchdog-cron.sh expects the watchdog at /usr/local/bin/aiwebsite-watchdog.sh.
+# The */5 cron supervisor is the ONE deliberate cron entry (§9.5).
 echo ">>> Installing watchdog + cron supervisor..."
-sudo cp "$APP_DIR/deploy/watchdog.sh" /usr/local/bin/aiwebsite-watchdog.sh
-sudo cp "$APP_DIR/deploy/watchdog-cron.sh" /usr/local/bin/aiwebsite-watchdog-cron.sh
-sudo chmod +x /usr/local/bin/aiwebsite-watchdog.sh /usr/local/bin/aiwebsite-watchdog-cron.sh
+sudo install -m 755 "$app_dir/deploy/watchdog.sh"      /usr/local/bin/aiwebsite-watchdog.sh
+sudo install -m 755 "$app_dir/deploy/watchdog-cron.sh" /usr/local/bin/aiwebsite-watchdog-cron.sh
 ( sudo crontab -l 2>/dev/null; echo "*/5 * * * * /usr/local/bin/aiwebsite-watchdog-cron.sh" ) | sort -u | sudo crontab -
 # Restart the watchdog so it picks up the freshly installed version, then
 # start immediately instead of waiting up to 5 minutes for cron.
@@ -137,6 +335,7 @@ echo ""
 echo "=== Setup complete ==="
 echo "Local checks:"
 echo "  curl -fsS http://127.0.0.1:3000/api/health          # Next.js"
-echo "  curl -fsS http://127.0.0.1:3211/health              # brain-api"
-echo "Public check (after DNS propagates):"
+echo "  curl -fsS http://127.0.0.1:3211/health            # brain-api"
+echo "  systemctl list-timers 'aiwebsite-*'                          # all 5 timers present"
+echo "Public check (after the human DNS step propagates):"
 echo "  curl -fsS https://ai.xl.net/api/health"

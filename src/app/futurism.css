@@ -132,6 +132,84 @@
 }
 
 /* ------------------------------------------------------------
+   1c · MODULE TOKENS — @aicompany/core theme contract
+   (packages/aicompany/architecture.md §4.2). Every --site-*
+   token the module consumes, mapped onto the futurism values
+   above. Dark = the :root defaults (this design system is
+   dark-first); light re-declares the set under
+   [data-theme="light"] like section 1b. --xl-* references
+   resolve at usage time, so both blocks stay in lockstep with
+   the futurism palette automatically.
+   ------------------------------------------------------------ */
+:root {
+  /* Color */
+  --site-bg: var(--xl-bg-0);
+  --site-surface: var(--xl-bg-1);
+  --site-surface-raised: var(--xl-bg-2);
+  --site-text: var(--xl-text);
+  --site-text-muted: var(--xl-text-dim);
+  --site-line: var(--xl-line);
+  --site-accent: var(--xl-light);
+  --site-accent-2: var(--xl-sand);
+  --site-accent-contrast: var(--xl-bg-0);   /* .btn--primary text on light fill */
+  --site-error: var(--xl-danger);
+  --site-success: var(--xl-ok);
+  --site-warning: var(--xl-warn);
+  /* Chat bubbles — matches the legacy TronNetterChat pairs */
+  --site-bubble-user-bg: var(--xl-light);
+  --site-bubble-user-text: var(--xl-bg-0);
+  --site-bubble-persona-bg: var(--xl-bg-2);
+  --site-bubble-persona-text: var(--xl-text);
+  /* Type */
+  --site-font-display: var(--font-display);
+  --site-font-ui: var(--font-ui);
+  --site-font-mono: var(--font-mono);
+  /* Shape — hairline futurism is square; bubbles/cards keep the
+     legacy rounded-lg (0.5rem) used by the old widget */
+  --site-radius-s: 0px;
+  --site-radius-m: 0.5rem;
+  --site-radius-l: 0px;
+  /* Depth — glow, not drop shadow (launcher / panel glows) */
+  --site-shadow-s: 0 0 20px var(--xl-light-glow);
+  --site-shadow-m: 0 0 40px var(--xl-light-glow);
+  /* Focus — same ring as globals.css :focus-visible */
+  --site-focus-ring: 2px solid var(--xl-light-dim);
+  /* Motion */
+  --site-motion-duration: var(--dur-fast);
+  --site-motion-ease: var(--ease-drift);
+}
+
+[data-theme="light"] {
+  --site-bg: var(--xl-bg-0);
+  --site-surface: var(--xl-bg-1);
+  --site-surface-raised: var(--xl-bg-2);
+  --site-text: var(--xl-text);
+  --site-text-muted: var(--xl-text-dim);
+  --site-line: var(--xl-line);
+  --site-accent: var(--xl-light);
+  --site-accent-2: var(--xl-sand);
+  --site-accent-contrast: oklch(0.98 0.005 80); /* light .btn--primary text */
+  --site-error: var(--xl-danger);
+  --site-success: var(--xl-ok);
+  --site-warning: var(--xl-warn);
+  --site-bubble-user-bg: var(--xl-light);
+  --site-bubble-user-text: oklch(0.98 0.005 80);
+  --site-bubble-persona-bg: var(--xl-bg-2);
+  --site-bubble-persona-text: var(--xl-text);
+  --site-font-display: var(--font-display);
+  --site-font-ui: var(--font-ui);
+  --site-font-mono: var(--font-mono);
+  --site-radius-s: 0px;
+  --site-radius-m: 0.5rem;
+  --site-radius-l: 0px;
+  --site-shadow-s: 0 0 20px var(--xl-light-glow);
+  --site-shadow-m: 0 0 40px var(--xl-light-glow);
+  --site-focus-ring: 2px solid var(--xl-light-dim);
+  --site-motion-duration: var(--dur-fast);
+  --site-motion-ease: var(--ease-drift);
+}
+
+/* ------------------------------------------------------------
    2 · RESET + BASE
    ------------------------------------------------------------ */
 *, *::before, *::after { box-sizing: border-box; }

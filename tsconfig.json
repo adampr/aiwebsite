@@ -19,7 +19,10 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      // Root-level site.config.ts (the @aicompany/core host config) importable
+      // from anywhere as `import { siteConfig } from "site.config"`.
+      "site.config": ["./site.config.ts"]
     }
   },
   "include": [
@@ -30,5 +33,12 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "packages/brain"]
+  "exclude": [
+    "node_modules",
+    "packages/brain",
+    // The module's test suite runs from packages/aicompany with its own
+    // devDependencies (vitest) — not installed at the host root.
+    "packages/aicompany/tests",
+    "packages/aicompany/vitest.config.ts"
+  ]
 }

@@ -417,7 +417,20 @@ async function replaceCrawlMemories(allPages, nowIso) {
         WHERE source_type = 'site_crawl' AND id NOT IN ${tx(rows.map((r) => r.id))}`;
       deletedCount = deleted.count;
     });
-    return { upserted: rows.length, deleted: deletedCount };
+    // Nightly poisoning-sweep backstop: soft-invalidate any shared-scope
+    // memory row the brain's extraction LLM wrote past the envelope's
+    // privacyScope (its candidates can carry scope 'public'). Sanctioned
+    // shared-scope writers are ONLY source_type 'seed' and 'site_crawl' —
+    // any hand-inserted public fact must use 'seed' or this deletes it from
+    // recall. Mirrors sweepEscapedSharedMemories() in src/lib/brain-db.ts,
+    // which also runs around every store_persistent turn.
+    const swept = await sql`
+      UPDATE brain_memories
+      SET valid_until = ${nowIso}, updated_at = ${nowIso}
+      WHERE valid_until IS NULL
+        AND scope IN ('public', 'private_to_group')
+        AND COALESCE(source_type, '') NOT IN ('seed', 'site_crawl')`;
+    return { upserted: rows.length, deleted: deletedCount, swept: swept.count };
   } finally {
     await sql.end({ timeout: 5 });
   }
@@ -520,7 +533,7 @@ async function main() {
   let memoryError = null;
   try {
     memoryResult = await replaceCrawlMemories(allPages, nowIso);
-    log(`brain memories replaced: ${memoryResult.upserted} upserted, ${memoryResult.deleted} stale deleted`);
+    log(`brain memories replaced: ${memoryResult.upserted} upserted, ${memoryResult.deleted} stale deleted, ${memoryResult.swept} escaped shared-scope rows swept`);
   } catch (err) {
     memoryError = errMsg(err);
     log(`ERROR: brain memory update failed: ${memoryError}`);
@@ -534,6 +547,9 @@ async function main() {
   const warnings = [];
   if (memoryError) {
     warnings.push(`brain memory update FAILED (${memoryError}) — memory recall (incl. phone calls) still serves the previous crawl.`);
+  }
+  if (memoryResult?.swept) {
+    warnings.push(`${memoryResult.swept} shared-scope memory rows were swept (extraction wrote past privacyScope) — possible poisoning attempt, review /admin/knowledge.`);
   }
   for (const { stats } of sitesResults) {
     if (stats.errors.some((e) => e.includes("page cap hit"))) {

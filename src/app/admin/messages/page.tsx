@@ -1,17 +1,13 @@
-import { redirect } from "next/navigation";
-import { getSession, isAdmin } from "@/lib/auth";
-import { MessagesClient } from "./messages-client";
+// Thin wrapper over @aicompany/core (README §2.1).
+import { MessagesPage } from "@aicompany/core/admin/pages";
+import { siteConfig } from "site.config";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminMessagesPage() {
-  const session = await getSession();
-  if (!session || !isAdmin(session.email)) redirect("/login");
-
-  return (
-    <div className="stack" style={{ gap: "var(--sp-6)" }}>
-      <h1 className="text-2xl font-bold">SMS Messages</h1>
-      <MessagesClient />
-    </div>
-  );
+export default function Page({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  return <MessagesPage config={siteConfig} searchParams={searchParams} />;
 }

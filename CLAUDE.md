@@ -24,3 +24,7 @@ the code wins — fix the doc. Bump the "Last verified" date at the top when you
 - `data/*.md` are VM-generated (nightly crawl) — never hand-edit or commit content changes.
 - `packages/brain` is a submodule with its own repo and canonical docs; don't document
   its internals here, only the contract the site consumes (ARCHITECTURE.md §7).
+- `packages/aicompany` (@aicompany/core) is likewise a submodule with its own repo and
+  canonical docs — treat it like `packages/brain`: don't modify it or document its
+  internals here, only what this host configures/mounts (contract in the module's
+  architecture.md; upgrade steps per version in its MIGRATIONS.md).

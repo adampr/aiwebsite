@@ -1,10 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Script from "next/script";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { UserMenu } from "@/components/user-menu";
-import { TronNetterChat } from "@/components/tron-netter-chat";
-import { SmsPromptCard } from "@/components/sms-prompt-card";
+import { ChatWidget } from "@aicompany/core/components/chat-widget";
+import {
+  toChatWidgetProps,
+  toSmsPromptCardProps,
+  toUserMenuProps,
+} from "@aicompany/core/components/props";
+import { SmsPromptCard } from "@aicompany/core/components/sms-prompt-card";
+import { themeScript } from "@aicompany/core/components/theme-script";
+import { ThemeToggle } from "@aicompany/core/components/theme-toggle";
+import { UserMenu } from "@aicompany/core/components/user-menu";
+import { OrgJsonLdScript } from "@aicompany/core/seo/org-jsonld";
+import { siteConfig } from "site.config";
 import { FuturismFx } from "@/components/futurism-fx";
 import { EmailLink } from "@/components/email-link";
 import "./globals.css";
@@ -54,28 +62,11 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: `(function(){try{var e=document.documentElement,t=localStorage.getItem('theme'),d=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme:dark)').matches);if(d){e.classList.add('dark')}else{e.setAttribute('data-theme','light')}}catch(e){}})()` }} />
+        <script dangerouslySetInnerHTML={{ __html: themeScript(true) }} />
         <noscript>
           <style>{`.rise{opacity:1 !important;transform:none !important}`}</style>
         </noscript>
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
-              "@context": "https://schema.org",
-              "@type": "Organization",
-              name: "XL.net",
-              url: "https://xl.net",
-              description: "Strategic IT for SMBs. SOC 2 Type II + ISO 27001:2022 certified managed IT services provider in Chicago.",
-              address: {
-                "@type": "PostalAddress",
-                addressLocality: "Chicago",
-                addressRegion: "IL",
-                addressCountry: "US",
-              },
-            }),
-          }}
-        />
+        <OrgJsonLdScript config={siteConfig} />
       </head>
       <body className="min-h-screen antialiased">
         <a href="#main-content" className="skip-to-content">
@@ -109,7 +100,7 @@ export default function RootLayout({
               <Link href="/">Home</Link>
               <Link href="/contact">Contact</Link>
               <ThemeToggle />
-              <UserMenu />
+              <UserMenu {...toUserMenuProps(siteConfig)} />
             </div>
           </nav>
         </header>
@@ -203,8 +194,8 @@ export default function RootLayout({
             </div>
           </div>
         </footer>
-        <TronNetterChat />
-        <SmsPromptCard />
+        <ChatWidget {...toChatWidgetProps(siteConfig)} />
+        <SmsPromptCard {...toSmsPromptCardProps(siteConfig)} />
         <FuturismFx />
         <Script src="/fx.js" strategy="afterInteractive" />
       </body>

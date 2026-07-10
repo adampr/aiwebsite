@@ -1,26 +1,23 @@
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
+// Db wrapper: registers the composed tables with the @aicompany/core client
+// so module code (auth, admin, channels, texting) reads/writes the HOST's
+// actual table objects, and re-exports the module's lazy drizzle proxy under
+// the historical `db` name for the rest of the site. instrumentation.ts
+// imports this file before runtimeCheck (packages/aicompany §4.3).
+import { db, getDb, registerTables } from "@aicompany/core/db/client";
 import * as schema from "./schema";
 
-let _db: PostgresJsDatabase<typeof schema> | null = null;
-
-export function getDb(): PostgresJsDatabase<typeof schema> {
-  if (_db) return _db;
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error("DATABASE_URL environment variable is not set");
-  }
-  const client = postgres(connectionString, {
-    max: 20,
-    idle_timeout: 30,
-    connect_timeout: 10,
-  });
-  _db = drizzle(client, { schema });
-  return _db;
-}
-
-export const db = new Proxy({} as PostgresJsDatabase<typeof schema>, {
-  get(_target, prop) {
-    return (getDb() as unknown as Record<string | symbol, unknown>)[prop];
-  },
+// magicLinks is deliberately omitted — auth.providers.magicLink is off.
+registerTables({
+  users: schema.users,
+  authLogs: schema.authLogs,
+  pageVisits: schema.pageVisits,
+  ipOrgs: schema.ipOrgs,
+  adminEmails: schema.adminEmails,
+  smsConsentLogs: schema.smsConsentLogs,
+  phoneVerifications: schema.phoneVerifications,
+  smsPromptEvents: schema.smsPromptEvents,
+  smsMemoryNotices: schema.smsMemoryNotices,
+  memoryDeletionLogs: schema.memoryDeletionLogs,
 });
+
+export { db, getDb, schema };

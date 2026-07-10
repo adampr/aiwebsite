@@ -1,3 +1,4 @@
+// aicompany-template: ecosystem.config.cjs.tpl@33a8d1064836145374ed73ca44ef408548e062e2a6a5d306bfdb505cfcea782b
 /* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require('fs');
 const path = require('path');
@@ -39,16 +40,16 @@ module.exports = {
       name: 'brain-api',
       // tsx lives in the brain workspace's own node_modules (the submodule is
       // a self-contained monorepo installed via `npm ci` inside packages/brain)
-      script: '/var/www/aiwebsite/packages/brain/node_modules/.bin/tsx',
+      script: APP_ROOT + '/packages/brain/node_modules/.bin/tsx',
       args: 'apps/brain-api/src/server.ts',
-      cwd: '/var/www/aiwebsite/packages/brain',
+      cwd: APP_ROOT + '/packages/brain',
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
         PORT: 3211,
         BRAIN_DB_BACKEND: 'postgres',
         BRAIN_DB_TABLE_PREFIX: 'brain_',
-        SOFTWARE_BRAIN_ENV_PATH: '/var/www/aiwebsite/.env',
+        SOFTWARE_BRAIN_ENV_PATH: APP_ROOT + '/.env',
       },
       instances: 1,
       autorestart: true,
@@ -57,14 +58,14 @@ module.exports = {
     },
     {
       name: 'skills-host',
-      script: '/var/www/aiwebsite/packages/brain/node_modules/.bin/tsx',
+      script: APP_ROOT + '/packages/brain/node_modules/.bin/tsx',
       args: 'apps/skills-host/src/server.ts',
-      cwd: '/var/www/aiwebsite/packages/brain',
+      cwd: APP_ROOT + '/packages/brain',
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
         PORT: 3213,
-        SOFTWARE_BRAIN_ENV_PATH: '/var/www/aiwebsite/.env',
+        SOFTWARE_BRAIN_ENV_PATH: APP_ROOT + '/.env',
         AUTOMATION_SECRET: envFromFile.AUTOMATION_SECRET || '',
         NEXTJS_BASE_URL: 'http://127.0.0.1:3000',
       },

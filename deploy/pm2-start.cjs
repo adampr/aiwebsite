@@ -1,3 +1,4 @@
+// aicompany-template: pm2-start.cjs.tpl@64fc3374dca2b85057f23f2fb60068b62619d1955869607ef492219d998c82b9
 /**
  * Thin wrapper around `next start` that sends PM2 the "ready" signal
  * once the HTTP server is actually listening.
@@ -25,7 +26,7 @@ const timer = setInterval(() => {
     clearInterval(timer);
     return;
   }
-  const req = http.get(`http://127.0.0.1:${PORT}/api/health`, (res) => {
+  const req = http.get('http://127.0.0.1:' + PORT + '/api/health', (res) => {
     if (res.statusCode === 200 && typeof process.send === 'function') {
       process.send('ready');
     }

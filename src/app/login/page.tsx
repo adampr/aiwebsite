@@ -2,17 +2,7 @@
 
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-
-const ERROR_MESSAGES: Record<string, string> = {
-  missing_params: "Sign-in was interrupted. Please try again.",
-  invalid_state: "Your sign-in session expired. Please try again.",
-  token_exchange: "We couldn't complete sign-in with the provider. Please try again.",
-  userinfo: "We couldn't read your profile from the provider. Please try again.",
-  no_email: "Your account didn't share an email address. Please try another account.",
-  rejected: "Sign-in was rejected.",
-  provider_unconfigured:
-    "This sign-in provider isn't available yet. Please try the other one.",
-};
+import { loginErrorMessages } from "@aicompany/core/auth/login-errors";
 
 export default function LoginPage() {
   return (
@@ -33,7 +23,7 @@ function LoginCard() {
   const redirectTo = searchParams.get("redirect") || "";
   const errorCode = searchParams.get("error");
   const errorMessage = errorCode
-    ? searchParams.get("message") || ERROR_MESSAGES[errorCode] || "Something went wrong. Please try again."
+    ? searchParams.get("message") || loginErrorMessages[errorCode] || "Something went wrong. Please try again."
     : "";
 
   const redirectParam = redirectTo ? `?redirect=${encodeURIComponent(redirectTo)}` : "";
