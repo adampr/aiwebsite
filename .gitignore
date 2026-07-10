@@ -5,7 +5,6 @@ out/
 dist/
 *.tsbuildinfo
 next-env.d.ts
-drizzle/migrations/
 .DS_Store
 # generated nightly by scripts/refresh-tron-knowledge.mjs
 /data/
