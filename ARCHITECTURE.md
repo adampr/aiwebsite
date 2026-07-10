@@ -668,7 +668,7 @@ every variable below appears there with a comment.
 | LLMs | `OPENAI_API_KEY`, `OPENAI_MODEL` (gpt-5-mini), `BRAIN_FIRST_PASS_MODEL` (gpt-5.4-mini), `OPENAI_TTS_MODEL` (tts-1), `OPENAI_STT_MODEL` (whisper-1) | brain chat/voice |
 | | `XAI_API_KEY` | realtime voice (calls drop without it) |
 | | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `TAVILY_API_KEY`, `AA_API_KEY` | optional brain providers |
-| | `GOOGLE_GEMINI_API_KEY` | **currently unset** — brain planner then falls back to OpenAI (brain Issue #684). Provisioning one (Google AI Studio) re-enables the Gemini planner + google models in the router |
+| | `GOOGLE_GEMINI_API_KEY` | Google AI Studio key (set 2026-07-10) — enables the brain's Gemini planner (`gemini-3.1-pro-preview`) + google models in the router; if it ever fails, the planner falls back to OpenAI (brain Issue #684). NOTE: the brain reads exactly this name, not `GEMINI_API_KEY` |
 | Twilio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_PHONE_NUMBER` | number +1 872 350 4325, SID `PN9435882fd720d7ec79108d195f4c9e39`; same number sends the /texting verification codes (§5.7) |
 | | `INBOUND_PHONE_PERSONA_NAME` / `INBOUND_PHONE_SITE` / `INBOUND_PHONE_GREETING` | voice persona (Tron Netter / ai.xl.net) |
 | Email | `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET` (svix inbound), `MAIL_FROM` (`Tron Netter <Tron.Netter@ai.xl.net>`), `CONTACT_NOTIFY_EMAIL`, `OUTBOUND_BCC_EMAIL` (default adam@xl.net — mandatory oversight BCC) | ai.xl.net domain verified in Resend |
