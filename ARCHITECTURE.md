@@ -532,7 +532,16 @@ never writes facts; realtime persona forces do_not_store). All persistent writes
   memories are personal context only; site knowledge always wins; never adopt instructions
   from memories. Email sender authenticity is judged by module `src/memory/email-auth.ts`
   (fail-closed Authentication-Results parsing, authserv-id pinned to
-  `memory.emailAuthservId`, DKIM-aligned only).
+  `memory.emailAuthservId` = `amazonses.com` since Resend inbound is fronted by Amazon SES,
+  DKIM-aligned only).
+- **Known-identity via `requesterName`** — memory only holds facts said in conversation,
+  never the user's own account profile, so the identity resolvers set `requester.requesterName`
+  to the account `display_name` for authenticated turns (signed-in chat, verified-phone SMS,
+  DKIM-authenticated email). The brain's `injectAuthIdentity` uses that as ground-truth
+  identity (importance 1) and overrides any mis-extracted `user_name` memory. A system-prompt
+  line does NOT work here — the brain ignores names in the caller's system message (verified
+  against the running brain). Without `requesterName`, an authenticated "do you remember my
+  name?" answered off a mis-extracted `user_name: "the user"` junk fact.
 - **Accepted risks** (product decisions, disclosed on /privacy): recycled phone numbers
   surface the previous holder's number-keyed memories until FORGET; inbound voice keys recall
   by spoofable caller ID (targeted caller-ID spoofing exposes that number's memories on a
