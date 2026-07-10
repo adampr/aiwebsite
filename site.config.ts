@@ -167,11 +167,17 @@ export const siteConfig = defineSiteConfig({
       enabled: true,
       tools: "none",
       requireAuth: false,
+      // Legacy route path (NOT the module default /api/persona/chat): the
+      // widget POSTs here. Prod incident 2026-07-10 — every widget message
+      // 404ed while this was unset. `npm run doctor` probes it.
+      mountPath: "/api/tron-netter/chat",
     },
     sms: {
       enabled: true,
       tools: "none",
       phoneNumber: "+18723504325",
+      // Legacy route namespace, matching the mounted status wrapper.
+      statusMountPath: "/api/tron-netter/sms/status",
       // The legacy OPTOUT_KEYWORDS set (src/app/api/tron-netter/sms/route.ts)
       // partitioned per the module contract: true carrier opt-outs here (the
       // Messaging Service's Advanced Opt-Out sends the compliance replies) …
