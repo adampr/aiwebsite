@@ -197,7 +197,18 @@ export const siteConfig = defineSiteConfig({
       // (Chi AI auto-replies from that shared Resend account — answering it
       // would ping-pong forever). Domain entry covers the whole domain; the
       // sibling persona mailbox listed explicitly as well.
-      siblingSites: ["chi@itsupportchicago.net", "itsupportchicago.net"],
+      //
+      // roleplay.xl.net entries added 2026-07-10 (README §3.3.4: deploy this
+      // BEFORE the coach@roleplay.xl.net inbound route goes live). The XL
+      // Roleplay Coach persona sends from coach@roleplay.xl.net (previously
+      // roleplay@ai.xl.net, kept during the transition window).
+      siblingSites: [
+        "chi@itsupportchicago.net",
+        "itsupportchicago.net",
+        "coach@roleplay.xl.net",
+        "roleplay.xl.net",
+        "roleplay@ai.xl.net",
+      ],
       // Legacy behavior: brain session per sender (+ normalized subject is a
       // module "thread" refinement aiwebsite does NOT adopt at parity).
       threading: "sender",
