@@ -242,6 +242,9 @@ export const siteConfig = defineSiteConfig({
   brain: {
     memoryMode: "do_not_store",
     timeouts: { chatMs: 120_000, smsMs: 120_000, emailMs: 300_000 },
+    // Phase-1 clamp on every envelope (brain Issue #684): keeps first-token
+    // latency snappy and avoids orchestrator-escalation failure modes.
+    maxOrchestratorPhase: 1,
   },
 
   // Persistent cross-channel memory (module §18). Canonical identity is the
