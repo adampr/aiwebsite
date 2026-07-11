@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-11 (brain submodule v1.94, @aicompany/core v0.1.0,
+Last verified against code: 2026-07-11 (brain submodule v1.94, @aicompany/core v1.0.2,
 Next.js 16.2.9).
 
 ---
@@ -106,7 +106,7 @@ aiwebsite/
 │   └── types/                  custom-element JSX typings
 ├── packages/brain/             git submodule ← https://github.com/adampr/xldev.git (§7)
 ├── packages/aicompany/         git submodule ← https://github.com/adampr/aicompany.git —
-│                               @aicompany/core v0.1.0, installed as a file: dependency;
+│                               @aicompany/core v1.0.2, installed as a file: dependency;
 │                               channels, auth, admin, tracking, texting, memory, SEO,
 │                               crawler, deploy templates (its own architecture.md is canonical)
 ├── data/                       VM-GENERATED knowledge files — gitignored from deploy --delete,
@@ -218,7 +218,7 @@ sms-prompt-card, use-session) were deleted at adoption. Host-specific components
 
 ## 5. Backend (Next.js route handlers)
 
-Every channel/auth/admin/tracking handler is **provided by @aicompany/core v0.1.0** and
+Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.0.2** and
 mounted as a thin wrapper — one file per route, contents exactly
 `export const <METHOD> = create<X>Handler(siteConfig)` plus the two imports (canonical
 wrapper table: module README §2.1). Behavior, validation, rate limits, and the
@@ -1069,7 +1069,13 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v0.1.0 (submodule `packages/aicompany` @ `e5ccbd2`).**
+**This site consumes @aicompany/core v1.0.2 (submodule `packages/aicompany` @ `cd76818`,
+tag `v1.0.2`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
+robots.txt group, Organization JSON-LD `"@id": "<baseUrl>/#org"`, `TrafficSource "ai"`
+(/admin/seo source trends have a discontinuity at 2026-07-11); v1.0.2 adds the
+sibling-recipient log-only skip (inbound mail addressed to a `siblingSites` persona no
+longer WARN-alerts). `deploy/site-deploy.env` carries `BLOG_ENABLED` / `BLOG_ONCALENDAR`
+(see §5.11/§9.7).
 Hosts pin the submodule by SHA against a tag and apply `packages/aicompany/MIGRATIONS.md`
 entries in sequence on every bump (`npm run upgrade:check --dry-run` lists pending steps);
 aiwebsite is the module's **canary host** — releases soak here 3 days before other hosts bump.
