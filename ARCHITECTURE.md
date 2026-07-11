@@ -149,7 +149,7 @@ admin console under `/admin/*` (§5.6):
 |---|---|---|
 | `/` | static server component | Marketing home: hero with `<xl-dust>` particle canvas, theme-aware animated logo iframes (`/brand/xl-logo-animated-{dark,light}.html`), stat cards (79.8% issue reduction, 24/7, 99.3% CSAT), capability panels, CTA → `/contact` |
 | `/work` | static server component | "Our Work" showcase: manifesto strip, then six anchored product exhibits in narrative order (`#brain` Software Brain → `#aicompany` @aicompany/core → `#aiwebsite` this site, framed around the §1 oversight invariants → `#itsupportchicago` the autonomy experiment, explicitly "designed as a test of a 100% autonomous organization", sandbox facts first → `#roleplay` → `#leo-netter` internal Slack-bot test), grouped by kicker labels (Engine / What It Runs / What We're Testing), mid-page + closing CTAs → `/builders` |
-| `/builders` | **dynamic** server component (`force-dynamic`) | "AI Builders" commercial page: 2028 thesis hero, two Stripe-purchasable offerings (§5.10) — Virtual Workshop $995 one-time (July 30 8am–12pm CT; card auto-flips to a "Next date: TBA → /contact" state once `2026-07-30T13:00Z` passes — that flip is why the page is force-dynamic) and AI Builder Cohort $495/month (max 6, auto-renew disclosure on-card). Below pricing: free May webinar (Zoom recording) + June 18 recap YouTube short; objection panels; CTA → `/contact` |
+| `/builders` | **dynamic** server component (`force-dynamic`) | "AI Builders" commercial page: 2028 thesis hero, two Stripe-purchasable offerings (§5.10) — Virtual Workshop $995 one-time (July 30 8am–12pm CT; card auto-flips to a "Next date: TBA → /contact" state once `2026-07-30T13:00Z` passes — that flip is why the page is force-dynamic) and AI Builder Cohort $495/month (max 6, auto-renew disclosure on-card). Below pricing: free May webinar (self-hosted MP4, §5.10) + June 18 recap YouTube short; objection panels; CTA → `/contact` |
 | `/builders/thanks` | dynamic server component, `robots: noindex` | Stripe Checkout `success_url`; reads `?session_id`, retrieves the session server-side (status must be `complete`) to show offering name + receipt email, generic copy on any lookup failure |
 | `/contact` | static server component | Contact info only — **no form** (email `Tron.Netter@ai.xl.net`, phone/SMS (872) 350-4325, points users at the chat widget); links to `/texting` |
 | `/login` | client component | Sign-in card in `<Suspense>`; reads `?redirect`, `?error`, `?message`; links to `/api/auth/{google,microsoft}/start`; error codes map to friendly text via the module's `loginErrorMessages` (`@aicompany/core/auth/login-errors`), `?message` taking precedence. `login/layout.tsx` sets `robots: noindex` |
@@ -589,6 +589,14 @@ is the system of record for purchases/subscriptions.
   known next step; the cap is currently enforced socially ("if the current cohort is
   full, you start with the next one" on the card), not technically.
 - **Dependency:** `stripe` npm SDK (server-side only; no Stripe.js on the client).
+- **Webinar recording:** `/builders` links a self-hosted copy of the May 21 Zoom
+  webinar ("AI in the Workplace: Productivity Opportunities and Cybersecurity Risks",
+  54 min, 136 MB) at `public/media/ai-in-the-workplace-webinar-2026-05.mp4`. The file
+  is **gitignored** (`/public/media/*.mp4`) but ships to the VM anyway because
+  deploy.sh rsyncs the working tree — like `data/GeoLite2-ASN.mmdb`, it must exist on
+  the dev box for a rebuild (source: the Zoom share link in the AI Builder launch
+  email; the pwd-tokenized share URL → `share-info` → `play/info` API flow yields the
+  `viewMp4Url`). Next serves it from `public/` with Range support (seekable playback).
 
 ---
 

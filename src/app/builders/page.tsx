@@ -20,8 +20,10 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 const WORKSHOP_STARTS = Date.parse("2026-07-30T13:00:00Z");
 
-const WEBINAR_URL =
-  "https://xl-net.zoom.us/rec/play/IFCEK6yDBH8EUmcE3hp83UCLYLs-D6ooeJxIFgoVDqkGZ8AVpXzwcFQXD66aaoROfwq6Gqe2A7mDBoYJ.t3WheVrhkwYMKaUS?accessLevel=meeting&canPlayFromShare=true&from=my_recording&continueMode=true&oldStyle=true&pwd=DE43qbaNZB0Fux3ZLAAAIAAAANd_KHxJxM7ZlHqp7rXjBLaklIZ27G9-tLWOKl4P7l2ptJUu7QObzDfXXB1jrKskizAwMDAwNA&componentName=rec-play";
+// Self-hosted copy of the May 21 Zoom webinar recording (54 min, 136 MB).
+// The file is gitignored; it lives in public/media/ on the dev box and ships
+// to the VM via deploy.sh's repo rsync (like data/GeoLite2, but in-tree).
+const WEBINAR_URL = "/media/ai-in-the-workplace-webinar-2026-05.mp4";
 const RECAP_URL = "https://youtube.com/shorts/XFpJpTT4_MI";
 
 export default function BuildersPage() {

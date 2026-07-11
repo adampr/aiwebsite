@@ -8,3 +8,7 @@ next-env.d.ts
 .DS_Store
 # generated nightly by scripts/refresh-tron-knowledge.mjs
 /data/
+
+# Self-hosted webinar recording(s): too large for git; deploy.sh rsyncs the
+# working tree, so the file ships to the VM from the dev box (ARCHITECTURE.md §5.10).
+/public/media/*.mp4
