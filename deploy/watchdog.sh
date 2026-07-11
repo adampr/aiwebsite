@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@06dcb874307fad2eb1b687f6b735ac392909774fbac38217cd60417acddfaabf
+# aicompany-template: watchdog.sh.tpl@677073dd6e9d6d0d47ae8c8c9c28b021455311b1846c1ff6a5ebf81cb624887c
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
-# every 60 seconds, plus the backup heartbeat and knowledge-doc freshness
+# every 60 seconds, plus the backup/blog heartbeats and knowledge-doc freshness
 # (>26h → alert). Page-render checks run every 5 minutes (every 5th pass) and
 # can trigger a clean rebuild. Restarts failed services and sends throttled
 # email alerts via Resend — every subject starts "[aiwebsite] <SEVERITY>" so one
@@ -274,6 +274,15 @@ check_freshness() {
   file_age_alert "$knowledge_file" "Knowledge doc" "WARN" "knowledge-stale" \
     "The nightly crawl has not refreshed the prompt doc in over a day; the persona is answering from stale knowledge. Check /var/log/aiwebsite-knowledge.log and 'systemctl list-timers aiwebsite-knowledge.timer'." \
     || log "FAIL: knowledge doc missing/stale"
+  # Blog heartbeat (§19.5): blog-nightly.ts touches data/blog-last-run on
+  # EVERY exit path (incl. lock-held and preflight skips), so missing/stale
+  # means the timer itself is dead — a human's problem, not silence. Gated on
+  # the rendered BLOG_ENABLED exactly like setup-vm's timer install.
+  if [ "0" = "1" ]; then
+    file_age_alert "$app_root/data/blog-last-run" "Blog heartbeat" "WARN" "blog-heartbeat" \
+      "The nightly blog job has not written its heartbeat in over a day — the timer is dead or the job is crashing before its exit paths. Check /var/log/aiwebsite-blog.log and 'systemctl list-timers aiwebsite-blog.timer'." \
+      || log "FAIL: blog heartbeat missing/stale"
+  fi
 }
 
 # ── Lifecycle ────────────────────────────────────────────────────

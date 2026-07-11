@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@c37b7e6e33f9dea56deeeb2665222f8393fa04c539766db990c536f6772e15b8
+# aicompany-template: setup-vm.sh.tpl@95dfc836026ef8b28fe2dadc231d1a46c14c8b7ad03871a84d9b05eac1361ad9
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -195,6 +195,42 @@ Persistent=true
 WantedBy=timers.target
 UNIT
 
+# Nightly blog generate/refresh (§19.11) — installed only when BLOG_ENABLED=1
+# in site-deploy.env (same gating pattern as the backup stack below).
+# After=<slug>-knowledge.service: ordering is enforced, not assumed — the
+# 08:00 crawl's worst case overruns 09:30. RandomizedDelaySec is derived from
+# a slug hash (2700–5400s) so N hosts never share a publish window
+# (network-footprint mitigation). The log is covered by the
+# /var/log/aiwebsite-*.log logrotate glob installed below.
+if [ "0" = "1" ]; then
+  blog_delay=$(( 2700 + $(printf '%s' "aiwebsite" | cksum | cut -d' ' -f1) % 2700 ))
+  sudo tee /etc/systemd/system/aiwebsite-blog.service >/dev/null <<UNIT
+[Unit]
+Description=aiwebsite nightly blog generate/refresh (§19)
+After=network-online.target postgresql.service aiwebsite-knowledge.service
+
+[Service]
+Type=oneshot
+User=$deploy_user
+WorkingDirectory=/var/www/aiwebsite
+ExecStart=/var/www/aiwebsite/node_modules/.bin/tsx /var/www/aiwebsite/packages/aicompany/scripts/blog-nightly.ts
+StandardOutput=append:/var/log/aiwebsite-blog.log
+StandardError=append:/var/log/aiwebsite-blog.log
+UNIT
+  sudo tee /etc/systemd/system/aiwebsite-blog.timer >/dev/null <<UNIT
+[Unit]
+Description=Nightly aiwebsite blog run
+
+[Timer]
+OnCalendar=*-*-* 09:30:00 UTC
+RandomizedDelaySec=$blog_delay
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+fi
+
 # Nightly DB backup (default-on invariant, §9.4)
 sudo tee /etc/systemd/system/aiwebsite-backup.service >/dev/null <<'UNIT'
 [Unit]
@@ -305,6 +341,15 @@ else
   sudo systemctl disable --now aiwebsite-backup.timer aiwebsite-restore-drill.timer 2>/dev/null || true
   sudo rm -f /var/lib/aiwebsite/backups-enabled
 fi
+# Blog timer follows the same conditional pattern: BLOG_ENABLED=0 must actively
+# disable a previously enabled timer (a host turning the blog off should not
+# keep publishing), and the watchdog's rendered BLOG_ENABLED gate keeps the
+# heartbeat check in lockstep.
+if [ "0" = "1" ]; then
+  sudo systemctl enable --now aiwebsite-blog.timer
+else
+  sudo systemctl disable --now aiwebsite-blog.timer 2>/dev/null || true
+fi
 echo ">>> Timers installed:"
 systemctl list-timers "aiwebsite-*" --no-pager || true
 
@@ -359,6 +404,6 @@ echo "=== Setup complete ==="
 echo "Local checks:"
 echo "  curl -fsS http://127.0.0.1:3000/api/health          # Next.js"
 echo "  curl -fsS http://127.0.0.1:3211/health            # brain-api"
-echo "  systemctl list-timers 'aiwebsite-*'                          # all 5 timers present"
+echo "  systemctl list-timers 'aiwebsite-*'                          # all 5 timers present (+ blog when BLOG_ENABLED=1)"
 echo "Public check (after the human DNS step propagates):"
 echo "  curl -fsS https://ai.xl.net/api/health"
