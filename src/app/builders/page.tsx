@@ -54,9 +54,11 @@ export default function BuildersPage() {
           <span className="sys-label sys-label--center">Two Ways In</span>
           <h2 className="shimmer mt-6">Pick the format that fits</h2>
         </div>
-        <div className="grid gap-6 sm:grid-cols-2">
+        {/* Subgrid keeps the two cards' rows in lockstep (badge, title, price,
+            list, CTA, fine print) so the checkout buttons align horizontally. */}
+        <div className="grid gap-6 sm:grid-cols-2 sm:grid-rows-[auto_auto_auto_auto_1fr_auto_auto]">
           {/* Workshop — primary */}
-          <div className="panel panel--lightline rise">
+          <div className="panel panel--lightline rise sm:row-span-7 sm:grid sm:grid-rows-subgrid">
             <span className="badge badge--light">
               <span className="dot" />{" "}
               {workshopOpen ? "Next session: July 30" : "Next date: TBA"}
@@ -103,7 +105,10 @@ export default function BuildersPage() {
           </div>
 
           {/* Cohort */}
-          <div className="panel rise" style={{ transitionDelay: "120ms" }}>
+          <div
+            className="panel rise sm:row-span-7 sm:grid sm:grid-rows-subgrid"
+            style={{ transitionDelay: "120ms" }}
+          >
             <span className="badge badge--ok">
               <span className="dot" /> Enrolling — capped at 6 people
             </span>
