@@ -191,6 +191,14 @@ export default function WorkPage() {
           Brain SDK in-process · realtime voice · Google sign-in + approval ·
           isolated per-tenant databases
         </p>
+        <a
+          href="https://roleplay.xl.net"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn mt-6 no-underline"
+        >
+          Visit roleplay.xl.net
+        </a>
       </section>
 
       {/* 6. Leo Netter */}
