@@ -98,6 +98,8 @@ export default function RootLayout({
             <span className="badge badge--light">AI</span>
             <div className="ml-auto flex flex-wrap items-center gap-8">
               <Link href="/">Home</Link>
+              <Link href="/work">Our Work</Link>
+              <Link href="/builders">AI Builders</Link>
               <Link href="/contact">Contact</Link>
               <ThemeToggle />
               <UserMenu {...toUserMenuProps(siteConfig)} />
@@ -136,6 +138,12 @@ export default function RootLayout({
                 <ul className="mt-4 space-y-2 text-sm">
                   <li>
                     <Link href="/">Home</Link>
+                  </li>
+                  <li>
+                    <Link href="/work">Our Work</Link>
+                  </li>
+                  <li>
+                    <Link href="/builders">AI Builders</Link>
                   </li>
                   <li>
                     <Link href="/contact">Contact</Link>

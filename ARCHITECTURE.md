@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-10 (brain submodule v1.92, @aicompany/core v0.1.0,
+Last verified against code: 2026-07-11 (brain submodule v1.92, @aicompany/core v0.1.0,
 Next.js 16.2.9).
 
 ---
@@ -142,20 +142,26 @@ aiwebsite/
 
 ## 4. Frontend
 
-Six public pages, all served from the root layout (`src/app/layout.tsx`), plus the
+Nine public pages, all served from the root layout (`src/app/layout.tsx`), plus the
 admin console under `/admin/*` (§5.6):
 
 | URL | Type | Content |
 |---|---|---|
 | `/` | static server component | Marketing home: hero with `<xl-dust>` particle canvas, theme-aware animated logo iframes (`/brand/xl-logo-animated-{dark,light}.html`), stat cards (79.8% issue reduction, 24/7, 99.3% CSAT), capability panels, CTA → `/contact` |
+| `/work` | static server component | "Our Work" showcase: manifesto strip, then six anchored product exhibits in narrative order (`#brain` Software Brain → `#aicompany` @aicompany/core → `#aiwebsite` this site, framed around the §1 oversight invariants → `#itsupportchicago` the autonomy experiment, explicitly "designed as a test of a 100% autonomous organization", sandbox facts first → `#roleplay` → `#leo-netter` internal Slack-bot test), grouped by kicker labels (Engine / What It Runs / What We're Testing), mid-page + closing CTAs → `/builders` |
+| `/builders` | **dynamic** server component (`force-dynamic`) | "AI Builders" commercial page: 2028 thesis hero, two Stripe-purchasable offerings (§5.10) — Virtual Workshop $995 one-time (July 30 8am–12pm CT; card auto-flips to a "Next date: TBA → /contact" state once `2026-07-30T13:00Z` passes — that flip is why the page is force-dynamic) and AI Builder Cohort $495/month (max 6, auto-renew disclosure on-card). Below pricing: free May webinar (Zoom recording) + June 18 recap YouTube short; objection panels; CTA → `/contact` |
+| `/builders/thanks` | dynamic server component, `robots: noindex` | Stripe Checkout `success_url`; reads `?session_id`, retrieves the session server-side (status must be `complete`) to show offering name + receipt email, generic copy on any lookup failure |
 | `/contact` | static server component | Contact info only — **no form** (email `Tron.Netter@ai.xl.net`, phone/SMS (872) 350-4325, points users at the chat widget); links to `/texting` |
 | `/login` | client component | Sign-in card in `<Suspense>`; reads `?redirect`, `?error`, `?message`; links to `/api/auth/{google,microsoft}/start`; error codes map to friendly text via the module's `loginErrorMessages` (`@aicompany/core/auth/login-errors`), `?message` taking precedence. `login/layout.tsx` sets `robots: noindex` |
 | `/texting` | server component shell + module client wizard | Page shell (heading + footnote) kept from the legacy page; the wizard itself is the module's `<TextingWizard {...toTextingWizardProps(siteConfig)}/>`: session check → phone + consent checkbox (`texting.consentText` + links to the legal pages) → 6-digit code entry (resend / change-number) → "Verified" panel. Signed-out users get a Sign In link with `?redirect=/texting`; already-opted-in users land on the done state. `texting/layout.tsx` holds the metadata |
 | `/privacy` | thin wrapper (server component) | Renders the module's `<PrivacyPolicyPage config={siteConfig} lastUpdated="July 2026"/>` — the policy is generated from the same config values the code enforces (tracking flags, cookie name, retention windows, enabled channels). Keeps the page's own `metadata` export |
 | `/sms-terms` | thin wrapper (server component) | Renders the module's `<SmsTermsPage config={siteConfig} lastUpdated="July 2026"/>` — program description, opt-in methods, verification mechanics from `texting.verification`, frequency/rates, STOP/HELP, carriers, privacy cross-link, contact. Keeps the page's own `metadata` export |
 
-The footer links Home, Contact, Text with Tron Netter (`/texting`), Privacy Policy, SMS
-Terms, and the main xl.net site.
+Header nav: Home, Our Work, AI Builders, Contact. The footer links Home, Our Work,
+AI Builders, Contact, Text with Tron Netter (`/texting`), Privacy Policy, SMS Terms, and
+the main xl.net site. The homepage carries teaser panels for `/work` and `/builders`
+between the capabilities grid and the closing CTA. Sitemap entries: `/`, `/work`,
+`/builders`, `/contact`, `/privacy`, `/sms-terms`, `/texting`.
 
 **Root layout** provides: metadata (title template `%s | XL.net AI`, `metadataBase` from
 `NEXT_PUBLIC_BASE_URL`, OG/Twitter), the module's `<OrgJsonLdScript config={siteConfig}/>`
@@ -199,6 +205,10 @@ sms-prompt-card, use-session) were deleted at adoption. Host-specific components
   so the zone's Email Address Obfuscation doesn't rewrite it into a `/cdn-cgi/l/email-protection#…`
   link that 404s for crawlers/no-JS visitors. Use it for every visible email address
   (footer, contact, privacy, sms-terms).
+- `checkout-button.tsx` — `"use client"` buy button for a §5.10 offering: POSTs
+  `{offering}` to `/api/checkout`, follows the returned Stripe-hosted Checkout URL
+  (`window.location.assign`), shows loading/error states inline. Card entry never
+  happens on-site.
 - `futurism-fx.tsx` — IntersectionObserver adds `.is-visible` to `.rise` elements; re-runs on route change.
 - `public/fx.js` — defines the `<xl-dust>` custom element (canvas dust motes; `density` attr,
   default 36; colors from `--xl-light`/`--xl-sand`; respects `prefers-reduced-motion`).
@@ -235,7 +245,7 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/texting/start` / `POST /api/texting/verify` | `createTextingStartHandler` / `createTextingVerifyHandler` · `channels/texting` | §5.10 |
 | `POST /api/auth/sms-prompt` | `createSmsPromptEventHandler` · `channels/texting` | §5.10 |
 | `POST /api/internal/track` | `createTrackHandler` · `tracking/track-api` | §5.6 |
-| `src/middleware.ts` | `createTrackingMiddleware` · `tracking/middleware` | §5.6 |
+| `src/middleware.ts` | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout`** | §5.6 |
 | `GET/POST /api/admin/messages` | `createAdminMessagesHandler` · `admin/api` | §5.6 |
 | `POST /api/admin/mailbox/send` | `createAdminMailboxSendHandler` · `admin/api` | §5.6 |
 | `GET/POST /api/admin/knowledge/refresh` | `createAdminKnowledgeRefreshHandler` · `admin/api` (wrapper adds `runtime = "nodejs"`) | §5.6 |
@@ -243,6 +253,9 @@ match the redirect URIs registered with Google/Microsoft).
 | `src/app/sitemap.ts` / `robots.ts` | `createSitemap(siteConfig, entries)` / `createRobots` · `seo/*` | §5.9 |
 
 Not mounted (disabled features): magic-link auth (`auth.providers.magicLink: false`).
+
+**Host-owned (non-module) route:** `POST /api/checkout` — Stripe Checkout Session
+creation for the `/builders` offerings (§5.10). It is not part of @aicompany/core.
 
 ### 5.1 Web chat — mounted at `POST /api/tron-netter/chat`
 
@@ -352,6 +365,7 @@ Host-owned remainder:
 |---|---|
 | `db/schema.ts` | composed schema: module factories for the 10 shared tables + host-owned `contact_submissions` (§6) |
 | `db/index.ts` | calls the module's `registerTables()` with the composed tables (magicLinks omitted — provider off) and re-exports the module's lazy drizzle proxy as the historical `db` |
+| `stripe/offerings.ts` | the two purchasable AI Builder offerings (id, name, copy, USD-cent amount, Checkout mode, price-override env var) consumed by `/api/checkout` and `/builders/thanks` (§5.10) |
 
 Values that were constants in those files (consent text, TTLs, addenda, fallback tool
 list, failure copy, retention windows) live in **site.config.ts**, ported verbatim.
@@ -547,6 +561,34 @@ never writes facts; realtime persona forces do_not_store). All persistent writes
   by spoofable caller ID (targeted caller-ID spoofing exposes that number's memories on a
   call). Historic `email:<addr>` buckets are never auto-merged into account buckets (no
   authenticated link at merge time).
+
+### 5.10 AI Builder checkout (Stripe) — host-owned
+
+The `/builders` page sells two offerings through **Stripe-hosted Checkout**; no card
+data ever touches this server, and there is no local orders table — Stripe's dashboard
+is the system of record for purchases/subscriptions.
+
+- **Offering catalog:** `src/lib/stripe/offerings.ts` — `cohort` (AI Builder Cohort,
+  $495/month subscription) and `workshop` (Virtual Workshop, $995 one-time). Names,
+  descriptions, USD-cent amounts, and Checkout `mode` live here.
+- **Route:** `POST /api/checkout` with JSON `{offering: "cohort"|"workshop"}` →
+  `stripe.checkout.sessions.create` → `200 {url}` (the Stripe-hosted page). Modes:
+  `subscription` (cohort, `recurring: {interval: "month"}`) vs `payment` (workshop,
+  `customer_creation: "always"`). Line item uses **inline `price_data`** unless the
+  offering's env override (`STRIPE_PRICE_COHORT` / `STRIPE_PRICE_WORKSHOP`) names a
+  dashboard-managed Price. `metadata.offering` tags the session for the thanks page and
+  dashboard filtering. Errors: 503 when `STRIPE_SECRET_KEY` unset (buttons show a
+  friendly "not configured" message), 400 bad JSON/unknown offering, 502 on Stripe
+  failure. `success_url` = `/builders/thanks?session_id={CHECKOUT_SESSION_ID}`,
+  `cancel_url` = `/builders?canceled=1`.
+- **CSRF:** the route is state-changing, so `src/middleware.ts` adds `/api/checkout` to
+  the module middleware's `protectedPrefixes` (same-origin Origin/Referer check).
+- **No webhook (v1):** fulfillment is manual — receipts come from Stripe (per dashboard
+  email settings), the roster is read off the dashboard. A `checkout.session.completed`
+  webhook (e.g. notify adam@xl.net, seat counting for the 6-person cohort cap) is the
+  known next step; the cap is currently enforced socially ("if the current cohort is
+  full, you start with the next one" on the card), not technically.
+- **Dependency:** `stripe` npm SDK (server-side only; no Stripe.js on the client).
 
 ---
 
@@ -938,6 +980,8 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | | `MAXMIND_DB_PATH` | optional; default `<cwd>/data/GeoLite2-ASN.mmdb` (IP→org for /admin/companies) |
 | | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | `https://ai.xl.net/auth/google/callback` (GCP project `xl-website-1682362315172`, client "ai.xl.net") |
 | | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` / `MICROSOFT_REDIRECT_URI` / `MICROSOFT_TENANT_ID` (default `common`) | Entra app `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c` |
+| Stripe | `STRIPE_SECRET_KEY` | secret API key for `/api/checkout` (§5.10); unset ⇒ the route returns 503 and the /builders buy buttons show a friendly error |
+| | `STRIPE_PRICE_COHORT` / `STRIPE_PRICE_WORKSHOP` | optional dashboard-managed Price ID overrides; unset ⇒ inline `price_data` ($495/mo recurring, $995 one-time) |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
 | | `TRON_KNOWLEDGE_FILE` | **legacy, no longer read** — the knowledge path is `persona.knowledgeFile` in site.config.ts |
 | Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |
@@ -956,6 +1000,7 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | **Resend** | Domain `ai.xl.net` verified (send); inbound routing for `Tron.Netter@ai.xl.net` → webhook `https://ai.xl.net/api/webhooks/resend` (svix secret). Account is shared with itsupportchicago.net — hence the domain filter in §5.3 |
 | **Google Cloud** | OAuth consent screen "XL.net AI" (External, published) + web client "ai.xl.net", redirects `https://ai.xl.net/auth/google/callback` and `http://localhost:3000/auth/google/callback`. Manual console work — see `deploy/GOOGLE-OAUTH-SETUP.md` |
 | **Microsoft Entra** | App `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c` (creatable via `az ad app create`), redirect `https://ai.xl.net/auth/microsoft/callback` |
+| **Stripe** | Account with a secret API key (`STRIPE_SECRET_KEY`); no dashboard product setup required (inline `price_data`), but receipt emails should be enabled in dashboard settings. Purchases/subscriptions are managed in the dashboard (no local orders table) |
 | **OpenAI / xAI / Anthropic / Deepgram / Tavily** | API keys per §10 |
 | **Azure VM** | Ubuntu-family box, ssh password auth for deploy.sh (hardening note in GO-LIVE.md: switch to keys) |
 

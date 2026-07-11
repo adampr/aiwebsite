@@ -154,6 +154,38 @@ export default function HomePage() {
         </div>
       </section>
 
+      <hr className="rule rule--glow mx-auto max-w-5xl" />
+
+      {/* Work + Builders teasers */}
+      <section className="mx-auto max-w-5xl px-6">
+        <div className="grid gap-6 sm:grid-cols-2">
+          <div className="panel panel--lightline rise">
+            <span className="sys-label">Exhibit Hall</span>
+            <h3 className="mt-4">See what we&apos;ve built</h3>
+            <p className="mt-4 text-sm">
+              Six real, running AI systems — an AI engine, reusable
+              middleware, two production sites, and our autonomy experiments.
+              Including the site you&apos;re reading.
+            </p>
+            <Link href="/work" className="btn btn--text mt-6 no-underline">
+              Tour our work →
+            </Link>
+          </div>
+          <div className="panel rise" style={{ transitionDelay: "120ms" }}>
+            <span className="sys-label sys-label--sand">Now Enrolling</span>
+            <h3 className="mt-4">Become an AI Builder</h3>
+            <p className="mt-4 text-sm">
+              Learn to build your own AI workflows and automations — the smart
+              and safe way. Weekly cohort ($495/mo, capped at 6) or a
+              four-hour hands-on workshop ($995).
+            </p>
+            <Link href="/builders" className="btn btn--text mt-6 no-underline">
+              Explore the programs →
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* CTA — void panel under light beams, the one warm action */}
       <section className="beams panel--void relative overflow-hidden text-center">
         <div className="relative z-10 mx-auto max-w-2xl px-6">

@@ -8,7 +8,18 @@
 import { createTrackingMiddleware } from "@aicompany/core/tracking/middleware";
 import { siteConfig } from "site.config";
 
-export default createTrackingMiddleware(siteConfig);
+// Host route /api/checkout (Stripe Checkout Session creation, §5.10) is
+// state-changing, so it joins the module's default CSRF-checked prefixes.
+export default createTrackingMiddleware(siteConfig, {
+  protectedPrefixes: [
+    "/api/admin",
+    "/api/auth/logout",
+    "/api/auth/email",
+    "/api/texting",
+    "/api/auth/sms-prompt",
+    "/api/checkout",
+  ],
+});
 
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon\\.ico).*)"],

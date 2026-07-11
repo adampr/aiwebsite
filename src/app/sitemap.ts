@@ -6,6 +6,8 @@ import { siteConfig } from "site.config";
 
 export default createSitemap(siteConfig, [
   { path: "/" },
+  { path: "/work" },
+  { path: "/builders" },
   { path: "/contact" },
   { path: "/privacy" },
   { path: "/sms-terms" },
