@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-11 (brain submodule v1.92, @aicompany/core v0.1.0,
+Last verified against code: 2026-07-11 (brain submodule v1.94, @aicompany/core v0.1.0,
 Next.js 16.2.9).
 
 ---
@@ -77,7 +77,7 @@ managed DB — just PM2, nginx, Postgres, and cloudflared on a single box.
 ```
 
 - Next.js calls brain-api over loopback (`BRAIN_BASE_URL=http://127.0.0.1:3211`) with a
-  Bearer key (first entry of `BRAIN_API_KEYS`). brain-api v1.92 is **fail-closed**: every
+  Bearer key (first entry of `BRAIN_API_KEYS`). brain-api (v1.92+) is **fail-closed**: every
   endpoint except `/health` and `/twilio/*` requires the Bearer.
 - skills-host is booted for completeness but effectively idle for the public persona
   (all tools disabled). The brain's `test-ui` app (:3212) is **not** run in production.
@@ -715,7 +715,11 @@ crawl never touches them (it only replaces `source_type='site_crawl'` rows).
 
 ## 7. The brain contract (what the site depends on)
 
-The brain (submodule `packages/brain` ← `https://github.com/adampr/xldev.git`, v1.92) is a
+The brain (submodule `packages/brain` ← `https://github.com/adampr/xldev.git`, pinned at
+tag `v1.94` — the merge of the v1.93 line, which added `invocation.promptProfile`
+`'full'|'lean'` and reader-determinism envelope knobs, with the Issue #684 router-
+availability fix; both are available-but-not-yet-sent by this host, whose envelopes are
+unchanged) is a
 generic "conversation-first, memory-bearing" engine. **The Tron Netter persona lives entirely
 in the parent repo** — the brain receives it per-request via `brainIdentity` + a system message.
 Rebuild the brain from its own canonical doc; the site needs only this contract:
@@ -727,7 +731,7 @@ Rebuild the brain from its own canonical doc; the site needs only this contract:
 | `POST /v1/chat/completions` | Bearer | all three site channels |
 | `GET /v1/tools` | Bearer | enumerate tool names → send back as `disabledTools` |
 | `GET /health` | none | readiness (`{ok:true, service:"brain-api", version}`), PM2/watchdog/deploy checks |
-| `GET /v1/model-routing` | Bearer | (brain v1.92 + Issue #684) concrete model id per pipeline task + `plannerEffectiveModel`; consumed by `scripts/ai-provider-health.mjs` (§9.6) to probe routed ids before visitors hit them |
+| `GET /v1/model-routing` | Bearer | (Issue #684 fix, upstream #686, in v1.94) concrete model id per pipeline task + `plannerEffectiveModel`; consumed by `scripts/ai-provider-health.mjs` (§9.6) to probe routed ids before visitors hit them |
 | `POST|GET /twilio/*` + WS `/twilio/ws` | Twilio signature | voice + carrier SMS — Twilio calls these directly through nginx; the site never does |
 
 ### Request envelope (fields this site sends)
@@ -972,7 +976,7 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | DB | `DATABASE_URL` | `postgresql://aiwebsite:aiwebsite@localhost:5432/aiwebsite` (site; throws if unset) |
 | Brain | `BRAIN_BASE_URL` | `http://127.0.0.1:3211` |
 | | `BRAIN_STUB` | **dev only**: `=1` serves canned NDJSON streams from @aicompany/core — no brain process/OpenAI key needed; config:check fails the boot if set in production |
-| | `BRAIN_API_KEYS` | comma list; **set in prod** (brain v1.92 fail-closed); site uses first key as Bearer |
+| | `BRAIN_API_KEYS` | comma list; **set in prod** (brain fail-closed since v1.92); site uses first key as Bearer |
 | | `BRAIN_PUBLIC_URL` | **exactly** `https://ai.xl.net/brain` (Twilio signature base) |
 | | `BRAIN_DB_BACKEND` / `BRAIN_POSTGRES_URL` / `BRAIN_DB_TABLE_PREFIX` | `postgres` / same DB as site / `brain_` |
 | | `BRAIN_AUDIO_MODE` | `xai_realtime` |
