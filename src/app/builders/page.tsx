@@ -143,7 +143,7 @@ export default function BuildersPage() {
 
         {/* Zero-risk path, directly under the prices */}
         <div className="panel--raised panel mt-6 text-center">
-          <p className="mx-auto text-sm">
+          <p className="mx-auto max-w-none text-sm">
             Not ready to buy? Watch our free May webinar first —{" "}
             <a href={WEBINAR_URL} target="_blank" rel="noopener noreferrer">
               AI in the Workplace: Productivity Opportunities and Cybersecurity
