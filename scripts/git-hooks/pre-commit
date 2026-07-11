@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# pre-commit: architecture-doc sync gate.
+#
+# Blocks commits that touch code paths without also staging the architecture
+# doc. Rule source: CLAUDE.md / .cursor/rules/architecture-doc-sync.mdc.
+# Activated by the npm `prepare` script:
+#   git config core.hooksPath scripts/git-hooks
+#
+# Bypass for changes with no architectural impact:
+#   ARCH_SYNC_OK=1 git commit ...      (or: git commit --no-verify)
+
+[ -n "${ARCH_SYNC_OK:-}" ] && exit 0
+
+DOC_PATTERN='^ARCHITECTURE\.md$'
+CODE_PATTERN='^(src|drizzle|deploy|packages)/|^site\.config\.ts$|^instrumentation\.ts$'
+
+staged=$(git diff --cached --name-only | grep -v '^scripts/git-hooks/')
+
+printf '%s\n' "$staged" | grep -qE "$CODE_PATTERN" || exit 0
+printf '%s\n' "$staged" | grep -qE "$DOC_PATTERN" && exit 0
+
+cat >&2 <<MSG
+
+BLOCKED: architecture-doc sync gate.
+  Staged changes touch code paths but the architecture doc is not staged.
+  Per CLAUDE.md / .cursor/rules/architecture-doc-sync.mdc, code and the architecture doc move in the same commit.
+
+  Either update and stage:  ARCHITECTURE.md
+  or, if this change truly has no architectural impact:
+    ARCH_SYNC_OK=1 git commit ...
+
+MSG
+exit 1

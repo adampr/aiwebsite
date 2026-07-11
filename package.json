@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prepare": "git config core.hooksPath scripts/git-hooks || true",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

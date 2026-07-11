@@ -17,6 +17,17 @@ and update the doc in the same commit.** Changes that almost always require an u
 Purely visual/copy tweaks don't need a doc update. When code and the doc disagree,
 the code wins — fix the doc. Bump the "Last verified" date at the top when you touch it.
 
+## Enforcement
+
+A pre-commit hook (`scripts/git-hooks/pre-commit`, activated by the npm `prepare`
+script via `git config core.hooksPath scripts/git-hooks`) blocks commits that touch
+`src/`, `drizzle/`, `deploy/`, `packages/`, `site.config.ts`, or `instrumentation.ts`
+without staging `ARCHITECTURE.md`. For changes with genuinely no architectural
+impact: `ARCH_SYNC_OK=1 git commit ...`.
+
+This rule is mirrored in `.cursor/rules/architecture-doc-sync.mdc` for Cursor
+sessions — keep the two in sync when either changes.
+
 ## Other conventions
 
 - `.env.example` is the authoritative env template: every variable the code reads
