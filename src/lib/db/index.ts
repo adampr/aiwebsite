@@ -18,6 +18,7 @@ registerTables({
   smsPromptEvents: schema.smsPromptEvents,
   smsMemoryNotices: schema.smsMemoryNotices,
   memoryDeletionLogs: schema.memoryDeletionLogs,
+  blogPosts: schema.blogPosts,
 });
 
 export { db, getDb, schema };

@@ -1,0 +1,35 @@
+CREATE TABLE "blog_posts" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"slug" text NOT NULL,
+	"type" text NOT NULL,
+	"title" text NOT NULL,
+	"meta_description" text,
+	"body_json" text NOT NULL,
+	"tags" text[],
+	"primary_keyword" text,
+	"status" text DEFAULT 'draft' NOT NULL,
+	"noindex" boolean DEFAULT false NOT NULL,
+	"published_at" timestamp with time zone,
+	"generated_by" text,
+	"calendar_week" integer,
+	"hero_image" text,
+	"hero_image_blur" text,
+	"hero_image_alt" text,
+	"read_minutes" integer,
+	"material_hash" text,
+	"last_material_update_at" timestamp with time zone,
+	"gate_results" text,
+	"gate_scores" text,
+	"gate_passed" boolean,
+	"reviewed_at" timestamp with time zone,
+	"refreshed_at" timestamp with time zone,
+	"refresh_attempted_at" timestamp with time zone,
+	"refresh_count" integer DEFAULT 0,
+	"prompt_id" text,
+	"created_at" timestamp with time zone DEFAULT now(),
+	"updated_at" timestamp with time zone DEFAULT now(),
+	CONSTRAINT "blog_posts_slug_unique" UNIQUE("slug")
+);
+--> statement-breakpoint
+CREATE INDEX "blog_posts_status_published_at_idx" ON "blog_posts" USING btree ("status","published_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "blog_posts_type_status_idx" ON "blog_posts" USING btree ("type","status");

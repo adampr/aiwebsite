@@ -43,6 +43,13 @@
       "when": 1783683104845,
       "tag": "0005_tan_spencer_smythe",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783780035328,
+      "tag": "0006_outstanding_red_ghost",
+      "breakpoints": true
     }
   ]
 }
