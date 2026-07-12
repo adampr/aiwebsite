@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Six real, running AI systems built by XL.net — the Software Brain engine, reusable AI-company middleware, two production sites, and our autonomy experiments.",
+    "Seven real, running AI systems built by XL.net — the Software Brain engine, reusable AI-company middleware, two production sites, the QBR Machine client-delivery pipeline, and our autonomy experiments.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work — XL.net AI",
     description:
-      "Six real, running AI systems built by XL.net — the Software Brain engine, reusable AI-company middleware, two production sites, and our autonomy experiments.",
+      "Seven real, running AI systems built by XL.net — the Software Brain engine, reusable AI-company middleware, two production sites, the QBR Machine client-delivery pipeline, and our autonomy experiments.",
   },
 };
 
@@ -160,16 +160,92 @@ export default function WorkPage() {
         </a>
       </section>
 
+      {/* Group: client delivery */}
+      <div className="text-center">
+        <span className="sys-label sys-label--center">
+          03 · Client Delivery
+        </span>
+      </div>
+
+      {/* 5. QBR Machine */}
+      <section id="qbr-machine" className="panel panel--lightline rise">
+        <div className="flex flex-wrap items-center gap-4">
+          <span className="badge badge--ok">
+            <span className="dot" /> In production
+          </span>
+          <span className="badge badge--light">Live client pipeline</span>
+        </div>
+        <h2 className="mt-6">QBR Machine</h2>
+        <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
+          A client name in — a complete quarterly review package out.
+        </p>
+        <p className="mt-4 text-sm">
+          The AI teammate working alongside our XL.net Technology Officers.
+          Not a chatbot
+          bolted onto a form: Claude Code running purpose-built, git-versioned
+          skills that produce the actual deliverables XL.net presents to
+          clients every quarter — sourced from live systems, with every number
+          traceable to where it came from.
+        </p>
+        <div className="mt-8 grid gap-6 md:grid-cols-3">
+          <div className="border-t border-[var(--xl-line)] pt-4">
+            <h3 className="mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--xl-light)" }}>
+              <span style={{ color: "var(--xl-text-faint)" }}>01 · </span>
+              Gap Analysis
+            </h3>
+            <p className="mt-3 text-sm">
+              A scored assessment of the client&apos;s security, network,
+              server, and workstation environment — validated and self-tested
+              before a human ever sees it.
+            </p>
+          </div>
+          <div className="border-t border-[var(--xl-line)] pt-4">
+            <h3 className="mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--xl-light)" }}>
+              <span style={{ color: "var(--xl-text-faint)" }}>02 · </span>
+              Asset Strategy
+            </h3>
+            <p className="mt-3 text-sm">
+              A lifecycle plan for every asset: when the firewall gets
+              replaced, when the switch stack ages out, what it costs and
+              when.
+            </p>
+          </div>
+          <div className="border-t border-[var(--xl-line)] pt-4">
+            <h3 className="mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--xl-light)" }}>
+              <span style={{ color: "var(--xl-text-faint)" }}>03 · </span>
+              QBR Deck
+            </h3>
+            <p className="mt-3 text-sm">
+              The client-facing review itself: a frozen 11-slide template
+              where only the words change — fed real numbers from the Gap
+              Analysis and Asset Strategy, not estimates.
+            </p>
+          </div>
+        </div>
+        <p className="mt-8 text-sm">
+          Every provider connection runs through XL Lakehouse, our scoped and
+          audited access layer — no provider API keys ever live in the
+          AI&apos;s workspace. Its memory persists, too: client context,
+          feedback, and working agreements carry forward quarter to quarter
+          instead of resetting every conversation.
+        </p>
+        <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+          Claude Code + git-versioned skills · template-locked workbooks +
+          frozen 11-slide deck · validate → approve → self-test · XL Lakehouse
+          scoped access
+        </p>
+      </section>
+
       <BuildersChip />
 
       {/* Group: what we're testing */}
       <div className="text-center">
         <span className="sys-label sys-label--center">
-          03 · What We&apos;re Testing
+          04 · What We&apos;re Testing
         </span>
       </div>
 
-      {/* 5. Roleplay */}
+      {/* 6. Roleplay */}
       <section id="roleplay" className="panel rise">
         <span className="badge badge--light">
           <span className="dot" /> Public · sign-in with approval
@@ -201,7 +277,7 @@ export default function WorkPage() {
         </a>
       </section>
 
-      {/* 6. Leo Netter */}
+      {/* 7. Leo Netter */}
       <section id="leo-netter" className="panel panel--lightline rise">
         <span className="badge">
           <span className="dot" /> Internal test
