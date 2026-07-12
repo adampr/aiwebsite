@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-12 (brain submodule v1.95, @aicompany/core v1.0.3,
+Last verified against code: 2026-07-12 (brain submodule v1.95, @aicompany/core v1.0.4,
 Next.js 16.2.9).
 
 ---
@@ -106,7 +106,7 @@ aiwebsite/
 │   └── types/                  custom-element JSX typings
 ├── packages/brain/             git submodule ← https://github.com/adampr/xldev.git (§7)
 ├── packages/aicompany/         git submodule ← https://github.com/adampr/aicompany.git —
-│                               @aicompany/core v1.0.3, installed as a file: dependency;
+│                               @aicompany/core v1.0.4, installed as a file: dependency;
 │                               channels, auth, admin, tracking, texting, memory, SEO,
 │                               crawler, deploy templates (its own architecture.md is canonical)
 ├── data/                       VM-GENERATED knowledge files — gitignored from deploy --delete,
@@ -221,7 +221,7 @@ sms-prompt-card, use-session) were deleted at adoption. Host-specific components
 
 ## 5. Backend (Next.js route handlers)
 
-Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.0.3** and
+Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.0.4** and
 mounted as a thin wrapper — one file per route, contents exactly
 `export const <METHOD> = create<X>Handler(siteConfig)` plus the two imports (canonical
 wrapper table: module README §2.1). Behavior, validation, rate limits, and the
@@ -608,7 +608,7 @@ is the system of record for purchases/subscriptions.
 
 ### 5.11 AI-news blog (module §19, host-owned news seam)
 
-Adopted 2026-07-12 (aicompany v1.0.3; needs brain ≥ v1.95, §7). One post per night
+Adopted 2026-07-12 (aicompany v1.0.4; needs brain ≥ v1.95, §7). One post per night
 about the most consequential AI story of the last 24h, authored end-to-end by the
 module's blog engine and disclosed as AI on every article. The `blog` block in
 `site.config.ts` configures it (`quality.posture: "publish"`, `pointOfView:
@@ -1156,14 +1156,17 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.0.3 (submodule `packages/aicompany` @ `36a3727`,
-tag `v1.0.3`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
+**This site consumes @aicompany/core v1.0.4 (submodule `packages/aicompany` @ `eb9cb40`,
+tag `v1.0.4`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
 robots.txt group, Organization JSON-LD `"@id": "<baseUrl>/#org"`, `TrafficSource "ai"`
 (/admin/seo source trends have a discontinuity at 2026-07-11); v1.0.2 adds the
 sibling-recipient log-only skip (inbound mail addressed to a `siblingSites` persona no
 longer WARN-alerts); v1.0.3 fixes the blog engine's brain calls (`response_format` field,
 `goals` array — it never worked on a real run before, §5.11) and is the version that
-adopts the blog. `deploy/site-deploy.env` carries `BLOG_ENABLED` / `BLOG_ONCALENDAR`
+adopts the blog; v1.0.4 exempts clearly-attributed persona opinion from the fact-check
+gate (an opinion sentence is flagged only when it embeds a specific unsupported
+verifiable assertion — first-person editorial styleGuides no longer auto-fail gate 2).
+`deploy/site-deploy.env` carries `BLOG_ENABLED` / `BLOG_ONCALENDAR`
 (see §5.11/§9.7).
 Hosts pin the submodule by SHA against a tag and apply `packages/aicompany/MIGRATIONS.md`
 entries in sequence on every bump (`npm run upgrade:check --dry-run` lists pending steps);
