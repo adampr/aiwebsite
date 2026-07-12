@@ -12,6 +12,7 @@ import { pgTable, serial, text, timestamp, inet } from "drizzle-orm/pg-core";
 import {
   makeAdminEmailsTable,
   makeAuthLogsTable,
+  makeBlogPostsTable,
   makeIpOrgsTable,
   makeMemoryDeletionLogsTable,
   makePageVisitsTable,
@@ -55,6 +56,11 @@ export const phoneVerifications = makePhoneVerificationsTable(users);
 // Funnel telemetry for the SMS prompt card (shown → clicked → snoozed →
 // dismissed); append-only, written by POST /api/auth/sms-prompt.
 export const smsPromptEvents = makeSmsPromptEventsTable(users);
+
+// AI-authored blog articles (module §19.2) — blog.enabled requires registry
+// key "blogPosts". Written only by the nightly job / admin actions; rendered
+// by the /blog wrappers.
+export const blogPosts = makeBlogPostsTable();
 
 // ---- Host-owned tables (not part of the module contract) ----
 

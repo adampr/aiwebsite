@@ -278,7 +278,7 @@ check_freshness() {
   # EVERY exit path (incl. lock-held and preflight skips), so missing/stale
   # means the timer itself is dead — a human's problem, not silence. Gated on
   # the rendered BLOG_ENABLED exactly like setup-vm's timer install.
-  if [ "0" = "1" ]; then
+  if [ "1" = "1" ]; then
     file_age_alert "$app_root/data/blog-last-run" "Blog heartbeat" "WARN" "blog-heartbeat" \
       "The nightly blog job has not written its heartbeat in over a day — the timer is dead or the job is crashing before its exit paths. Check /var/log/aiwebsite-blog.log and 'systemctl list-timers aiwebsite-blog.timer'." \
       || log "FAIL: blog heartbeat missing/stale"

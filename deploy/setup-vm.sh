@@ -202,7 +202,7 @@ UNIT
 # a slug hash (2700–5400s) so N hosts never share a publish window
 # (network-footprint mitigation). The log is covered by the
 # /var/log/aiwebsite-*.log logrotate glob installed below.
-if [ "0" = "1" ]; then
+if [ "1" = "1" ]; then
   blog_delay=$(( 2700 + $(printf '%s' "aiwebsite" | cksum | cut -d' ' -f1) % 2700 ))
   sudo tee /etc/systemd/system/aiwebsite-blog.service >/dev/null <<UNIT
 [Unit]
@@ -345,7 +345,7 @@ fi
 # disable a previously enabled timer (a host turning the blog off should not
 # keep publishing), and the watchdog's rendered BLOG_ENABLED gate keeps the
 # heartbeat check in lockstep.
-if [ "0" = "1" ]; then
+if [ "1" = "1" ]; then
   sudo systemctl enable --now aiwebsite-blog.timer
 else
   sudo systemctl disable --now aiwebsite-blog.timer 2>/dev/null || true

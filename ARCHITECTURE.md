@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-11 (brain submodule v1.94, @aicompany/core v1.0.2,
+Last verified against code: 2026-07-12 (brain submodule v1.95, @aicompany/core v1.0.3,
 Next.js 16.2.9).
 
 ---
@@ -106,7 +106,7 @@ aiwebsite/
 │   └── types/                  custom-element JSX typings
 ├── packages/brain/             git submodule ← https://github.com/adampr/xldev.git (§7)
 ├── packages/aicompany/         git submodule ← https://github.com/adampr/aicompany.git —
-│                               @aicompany/core v1.0.2, installed as a file: dependency;
+│                               @aicompany/core v1.0.3, installed as a file: dependency;
 │                               channels, auth, admin, tracking, texting, memory, SEO,
 │                               crawler, deploy templates (its own architecture.md is canonical)
 ├── data/                       VM-GENERATED knowledge files — gitignored from deploy --delete,
@@ -142,7 +142,7 @@ aiwebsite/
 
 ## 4. Frontend
 
-Nine public pages, all served from the root layout (`src/app/layout.tsx`), plus the
+Eleven public pages, all served from the root layout (`src/app/layout.tsx`), plus the
 admin console under `/admin/*` (§5.6):
 
 | URL | Type | Content |
@@ -156,12 +156,15 @@ admin console under `/admin/*` (§5.6):
 | `/texting` | server component shell + module client wizard | Page shell (heading + footnote) kept from the legacy page; the wizard itself is the module's `<TextingWizard {...toTextingWizardProps(siteConfig)}/>`: session check → phone + consent checkbox (`texting.consentText` + links to the legal pages) → 6-digit code entry (resend / change-number) → "Verified" panel. Signed-out users get a Sign In link with `?redirect=/texting`; already-opted-in users land on the done state. `texting/layout.tsx` holds the metadata |
 | `/privacy` | thin wrapper (server component) | Renders the module's `<PrivacyPolicyPage config={siteConfig} lastUpdated="July 2026"/>` — the policy is generated from the same config values the code enforces (tracking flags, cookie name, retention windows, enabled channels). Keeps the page's own `metadata` export |
 | `/sms-terms` | thin wrapper (server component) | Renders the module's `<SmsTermsPage config={siteConfig} lastUpdated="July 2026"/>` — program description, opt-in methods, verification mechanics from `texting.verification`, frequency/rates, STOP/HELP, carriers, privacy cross-link, contact. Keeps the page's own `metadata` export |
+| `/blog` + `/blog/[slug]` | thin wrappers over `@aicompany/core/blog/{index-page,article-page}` (`revalidate = 60`) | AI-news blog (§5.11, module §19). Index lists published articles (custom Tron-voiced copy from `blog.copy`); `[slug]` renders one `ArticleDoc` deterministically with the AI-authorship disclosure + `Article` JSON-LD. Metadata (canonical, OG, `noindex` for gate-failed rows) from `blog/metadata` |
 
-Header nav: Home, Our Work, AI Builders, Contact. The footer links Home, Our Work,
-AI Builders, Contact, Text with Tron Netter (`/texting`), Privacy Policy, SMS Terms, and
-the main xl.net site. The homepage carries teaser panels for `/work` and `/builders`
-between the capabilities grid and the closing CTA. Sitemap entries: `/`, `/work`,
-`/builders`, `/contact`, `/privacy`, `/sms-terms`, `/texting`.
+Header nav: Home, Our Work, AI Builders, **AI News (`/blog`)**, Contact. The footer links
+Home, Our Work, AI Builders, AI News, Contact, Text with Tron Netter (`/texting`), Privacy
+Policy, SMS Terms, and the main xl.net site. The homepage carries teaser panels for `/work`
+and `/builders` between the capabilities grid and the closing CTA. Sitemap entries: `/`,
+`/work`, `/builders`, `/contact`, `/privacy`, `/sms-terms`, `/texting`, plus the module's
+`blogSitemapEntries` (the `/blog` index once ≥1 published, and each indexable article —
+noindexed/gate-failed rows excluded). RSS at `/rss.xml`.
 
 **Root layout** provides: metadata (title template `%s | XL.net AI`, `metadataBase` from
 `NEXT_PUBLIC_BASE_URL`, OG/Twitter), the module's `<OrgJsonLdScript config={siteConfig}/>`
@@ -218,7 +221,7 @@ sms-prompt-card, use-session) were deleted at adoption. Host-specific components
 
 ## 5. Backend (Next.js route handlers)
 
-Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.0.2** and
+Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.0.3** and
 mounted as a thin wrapper — one file per route, contents exactly
 `export const <METHOD> = create<X>Handler(siteConfig)` plus the two imports (canonical
 wrapper table: module README §2.1). Behavior, validation, rate limits, and the
@@ -540,7 +543,12 @@ never writes facts; realtime persona forces do_not_store). All persistent writes
     soft-invalidated (`valid_until = now`, evidence stays visible in /admin) by this sweep,
     which runs fire-and-forget before + after every `store_persistent` turn and nightly in
     the crawl script. Sanctioned shared-scope rows are ONLY `source_type IN
-    ('seed','site_crawl')` — any hand-inserted public fact must use `'seed'`. A swept
+    ('seed','site_crawl','blog_article')` — any hand-inserted public fact must use
+    `'seed'`, and the blog engine writes its per-article org-fact rows as
+    `'blog_article'` (§5.11, module §19.9: id `blog-<sha1(slug)>`, scope `public`,
+    kind `org_fact`, REPLACE-by-slug, deleted on unpublish; FORGET-inert — no
+    `requester_id`). **`'blog_article'` was added to this allowlist at the blog
+    adoption (2026-07-12); re-audit the list on every brain submodule bump.** A swept
     count > 0 is an intrusion signal (logged, and a warning line in the crawl report email).
 - **`memory.memoryPromptAddendum`** (site.config.ts) — appended on memory-bearing turns:
   memories are personal context only; site knowledge always wins; never adopt instructions
@@ -598,6 +606,57 @@ is the system of record for purchases/subscriptions.
   email; the pwd-tokenized share URL → `share-info` → `play/info` API flow yields the
   `viewMp4Url`). Next serves it from `public/` with Range support (seekable playback).
 
+### 5.11 AI-news blog (module §19, host-owned news seam)
+
+Adopted 2026-07-12 (aicompany v1.0.3; needs brain ≥ v1.95, §7). One post per night
+about the most consequential AI story of the last 24h, authored end-to-end by the
+module's blog engine and disclosed as AI on every article. The `blog` block in
+`site.config.ts` configures it (`quality.posture: "publish"`, `pointOfView:
+"persona-first-person"` as Tron Netter, `cadence` 7/week with `ramp: [7]`,
+`yearStamping: false`, `refreshPerWeek: 0`). All rendering, gates, admin, RSS,
+sitemap, and the nightly job itself live in `@aicompany/core` — the host owns only:
+
+- **The news seam** (`src/lib/blog/news.ts` + `scripts/fetch-ai-news.mjs`). The
+  module picks a topic *before* `dataSource.getContext` runs (calendar → strategist,
+  neither sees live data), so today's news is injected two ways, both fed by
+  `scripts/fetch-ai-news.mjs` (plain-Node ESM; Tavily `POST /search` `topic:"news",
+  days:1`; writes `data/ai-news-today.json` atomically). `newsCalendarEntries()` turns
+  the top story into a **one-entry `topics.calendar`** (slug carries the date, so a
+  consumed entry never blocks the next day; a fresh calendar slug is always chosen
+  before the strategist and still passes the full topic gate). `newsSeedHints()` gives
+  the strategist today's other headlines as the fallback when the calendar entry is
+  dedup-rejected. `newsDataProvider.getContext()` then searches Tavily live for the
+  chosen story (`include_raw_content`) and builds the factSheet (`statCapacity` from
+  numeric-token count clamps the named-stats gate honestly); a provider throw is the
+  module's sanctioned WARN-skip.
+- **The prefetch trigger.** The blog systemd unit has no `ExecStartPre` hook, so
+  `news.ts` runs `fetch-ai-news.mjs` via `execFileSync` at module load **only** when
+  `process.argv[1]` ends with `blog-nightly.ts` and the file is missing/stale >20h —
+  covering both the timer and admin Run-now, inert everywhere else. Because
+  `site.config.ts` is imported by the **Edge middleware**, `news.ts` detects the Edge
+  Runtime (`globalThis.EdgeRuntime`) and touches no node builtins there (blog steering
+  returns empty/defaults; the middleware has no use for topics). Under Node it loads
+  fs/path/child_process via `process.getBuiltinModule` (≥20.16) so the bundler never
+  follows a top-level `import "node:fs"`.
+- **Wrapper mounts** (all 2–4-line, README §2.1): `src/app/blog/{page,[slug]/page}.tsx`,
+  `src/app/rss.xml/route.ts`, `src/app/admin/blog/page.tsx`, `src/app/api/admin/blog/
+  {route,run-now/route,action/route}.ts`, and `blogSitemapEntries` spread into
+  `src/app/sitemap.ts`. Nav/footer "AI News" links in `layout.tsx`. `admin.enabledPages`
+  gains `"blog"`.
+- **Persona interplay** (module §19.9, defaults on): each published article writes one
+  `brain_memories` row `source_type='blog_article'` (§5.9 allowlist), and the article
+  index is appended to Tron's prompt doc so he can cite recent posts in chat.
+
+The nightly job (`packages/aicompany/scripts/blog-nightly.ts`, tsx) preflights the brain,
+takes a pg advisory lock, budgets against the ramp, authors → runs deterministic +
+LLM fact-check + 6-dim rubric gates → applies posture in one DB transaction, writes the
+`data/blog-last-run` heartbeat on every exit path, and emails a per-run report
+(`[aiwebsite] OK|WARN|FAILED blog: …`) to `oversight.alertEmail`. Under `posture:
+"publish"`, an article that fails or skips its LLM gates still publishes but is
+`noindex`ed and excluded from the sitemap/RSS until a later clean gate pass — so
+crawlers never see unchecked copy while the decision to publish is honored. `methodologyUrl`
+is intentionally unset (accepted config:check WARN — no methodology page yet).
+
 ---
 
 ## 6. Database
@@ -607,11 +666,12 @@ One local **PostgreSQL** instance, one database **`aiwebsite`** (role `aiwebsite
 brain tables carry the prefix **`brain_`** (`BRAIN_DB_TABLE_PREFIX`).
 
 **Site tables** — drizzle-managed. `src/lib/db/schema.ts` is the single source of truth:
-the 10 shared tables are composed from **@aicompany/core's schema factories** (module
+the 11 shared tables are composed from **@aicompany/core's schema factories** (module
 architecture.md §6 — `makeUsersTable({...textingUserColumns})`, `makeAuthLogsTable`,
 `makePageVisitsTable`, `makeIpOrgsTable`, `makeAdminEmailsTable`, `makeSmsConsentLogsTable`,
 `makePhoneVerificationsTable`, `makeSmsPromptEventsTable`, `makeSmsMemoryNoticesTable`,
-`makeMemoryDeletionLogsTable`) plus the host-owned `contact_submissions`; the composed
+`makeMemoryDeletionLogsTable`, `makeBlogPostsTable` — the last added at blog adoption,
+migration `0006`) plus the host-owned `contact_submissions`; the composed
 shapes are byte-identical to the legacy inline definitions (existing rows are the module's
 source shape — module MIGRATIONS.md). `src/lib/db/index.ts` registers the composed set with
 the module's client. Migration history is **committed** (introspected no-op baseline at
@@ -684,6 +744,19 @@ admin_emails       id serial PK, to_email text NOT NULL, subject text NOT NULL,
                    success boolean NOT NULL, created_at timestamptz default now()
                    -- manual sends from /admin/mailbox; session_id links a reply to its
                    -- brain email session so the thread view can interleave it
+
+blog_posts         id uuid PK default gen_random_uuid(), slug text NOT NULL UNIQUE,
+                   type text NOT NULL, title text NOT NULL, meta_description text,
+                   body_json text NOT NULL,        -- the ArticleDoc (structured JSON; no HTML)
+                   tags text[], primary_keyword text, status text NOT NULL default 'draft',
+                   noindex boolean NOT NULL default false, published_at timestamptz,
+                   material_hash text, last_material_update_at timestamptz,
+                   gate_results/gate_scores text, gate_passed boolean, reviewed_at timestamptz,
+                   read_minutes/calendar_week/refresh_count integer, prompt_id text,
+                   hero_image/hero_image_alt text, created_at/updated_at timestamptz default now()
+                   -- module makeBlogPostsTable() (§5.11, §19.2); written only by the nightly
+                   -- job + /admin/blog actions. Indexes on (status, published_at DESC) and
+                   -- (type, status). 29 columns total (migration 0006)
 ```
 
 **Brain tables** — created at runtime by brain-api's own migration array on first boot
@@ -716,10 +789,12 @@ crawl never touches them (it only replaces `source_type='site_crawl'` rows).
 ## 7. The brain contract (what the site depends on)
 
 The brain (submodule `packages/brain` ← `https://github.com/adampr/xldev.git`, pinned at
-tag `v1.94` — the merge of the v1.93 line, which added `invocation.promptProfile`
-`'full'|'lean'` and reader-determinism envelope knobs, with the Issue #684 router-
-availability fix; both are available-but-not-yet-sent by this host, whose envelopes are
-unchanged) is a
+tag `v1.95` — the v1.93 line (added `invocation.promptProfile` `'full'|'lean'` and
+reader-determinism knobs) + the Issue #684 router-availability fix (v1.94) + **deterministic
+JSON mode** (Issue #688, v1.95): an envelope with `response_format: {type:'json_object'}`
+short-circuits the thinking pipeline to one direct completion so callers actually get JSON.
+The blog engine (§5.11) depends on v1.95; the persona channels' envelopes are unchanged and
+`promptProfile`/`temperature` remain available-but-not-yet-sent) is a
 generic "conversation-first, memory-bearing" engine. **The Tron Netter persona lives entirely
 in the parent repo** — the brain receives it per-request via `brainIdentity` + a system message.
 Rebuild the brain from its own canonical doc; the site needs only this contract:
@@ -731,7 +806,7 @@ Rebuild the brain from its own canonical doc; the site needs only this contract:
 | `POST /v1/chat/completions` | Bearer | all three site channels |
 | `GET /v1/tools` | Bearer | enumerate tool names → send back as `disabledTools` |
 | `GET /health` | none | readiness (`{ok:true, service:"brain-api", version}`), PM2/watchdog/deploy checks |
-| `GET /v1/model-routing` | Bearer | (Issue #684 fix, upstream #686, in v1.94) concrete model id per pipeline task + `plannerEffectiveModel`; consumed by `scripts/ai-provider-health.mjs` (§9.6) to probe routed ids before visitors hit them |
+| `GET /v1/model-routing` | Bearer | (Issue #684 fix, upstream #686, in v1.94+) concrete model id per pipeline task + `plannerEffectiveModel`; consumed by `scripts/ai-provider-health.mjs` (§9.6) to probe routed ids before visitors hit them |
 | `POST|GET /twilio/*` + WS `/twilio/ws` | Twilio signature | voice + carrier SMS — Twilio calls these directly through nginx; the site never does |
 
 ### Request envelope (fields this site sends)
@@ -818,13 +893,17 @@ deploy.
   walk. 4 workers, 250 ms delay each, 20 s fetch timeout, cap `knowledge.maxPagesPerSite`=1000
   (loudly reported if hit), UA `TronNetterKnowledgeBot/1.0`. URL normalization: https, strip
   www/query/fragment/trailing slash; assets skipped by extension; pages deduped by SHA-1 of
-  extracted text. HTML→text strips head/script/style/nav/header/footer/form.
+  extracted text. HTML→text strips head/script/style/nav/header/footer/form. When
+  `BLOG_ENABLED=1`, the module skips the `blog.types[].urlPrefix` paths **entirely**
+  (`blogUrlPrefixes` in the `data/aiwebsite-config.json` snapshot, §19.9): the blog job
+  already feeds Tron its own `data/<slug>-articles-index.md`, so re-crawling the articles
+  would double-count AI-authored copy back into the knowledge doc.
 - **Three sinks, REPLACE semantics (never append)**:
   1. `brain_memories` `source_type='site_crawl'` — one ≤500-char summary row per page,
      upsert current + delete stale, in one transaction (via `BRAIN_POSTGRES_URL` ∥
      `DATABASE_URL`). Core pages importance 0.9, archives 0.6. Feeds all channels incl. voice.
      Followed by the **nightly poisoning-sweep backstop** (§5.9): soft-invalidate shared-scope
-     rows with `source_type NOT IN ('seed','site_crawl')`; swept count > 0 → warning line in
+     rows with `source_type NOT IN ('seed','site_crawl','blog_article')`; swept count > 0 → warning line in
      the report email.
   2. `data/tron-netter-knowledge.md` (`persona.knowledgeFile`) — the prompt doc, budget
      175 000 chars (`knowledge.promptDocMaxChars`): core-first ordering
@@ -929,9 +1008,9 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
 - Each pass: `pg_isready`:5432 → restart postgresql · nginx active → restart · cloudflared
   active → restart · `:3211/health` `"ok":true` → `pm2 restart brain-api` · `:3213/health` →
   restart skills-host · `:3000/api/health` `"status":"ok"` → restart aiwebsite; plus
-  **freshness checks**: backup heartbeat `/var/lib/aiwebsite/last-backup-ok` and the
-  knowledge doc's mtime (path from the `data/aiwebsite-config.json` snapshot) — either
-  >26 h old → alert.
+  **freshness checks**: backup heartbeat `/var/lib/aiwebsite/last-backup-ok`, the
+  knowledge doc's mtime (path from the `data/aiwebsite-config.json` snapshot), and — when
+  `BLOG_ENABLED=1` — the blog heartbeat `data/blog-last-run` (§5.11) — any >26 h old → alert.
 - Every 5th pass: renders `/` and `/login`; on 5xx / "application error" /
   NEXT_NOT_FOUND / timeout → clean `npm run build` (1024 MB heap; **no** `rm -rf .next` — Next
   swaps builds atomically) + restart + re-verify.
@@ -951,11 +1030,13 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
 ### 9.7 Scheduled work — systemd timers (`Persistent=true`), not cron
 
 Installed/enabled by setup-vm.sh; scripts installed to `/usr/local/bin/aiwebsite-*`;
-verify with `systemctl list-timers 'aiwebsite-*'` (all 5):
+verify with `systemctl list-timers 'aiwebsite-*'` (all 6 — the blog timer is installed
+only when `BLOG_ENABLED=1`):
 
 | Timer | Schedule (UTC) | Does |
 |---|---|---|
 | `aiwebsite-knowledge` | daily 08:00 | nightly crawl (§8); `ExecStartPre` re-renders `data/aiwebsite-config.json` |
+| `aiwebsite-blog` | daily 09:30 + ~4484 s slug jitter (≈10:44) | nightly AI-news post (§5.11): `packages/aicompany/scripts/blog-nightly.ts` via the app's own tsx. `Type=oneshot`, `After=aiwebsite-knowledge.service` (ordered behind the 08:00 crawl); logs `/var/log/aiwebsite-blog.log`. Gated on `BLOG_ENABLED=1` |
 | `aiwebsite-backup` | daily 07:15 | `backup-db.sh`: `pg_dump aiwebsite \| gzip` → `$BACKUP_BUCKET` (+ `latest.sql.gz`), refuses <500 MB free disk, rejects dumps <100 KB, 30-day bucket retention, stamps the heartbeat the watchdog checks. **BACKUP_BUCKET is currently EMPTY** — no bucket exists for aiwebsite yet, so every run fails loudly (`[aiwebsite] CRITICAL Database backup FAILED` nightly) until one is provisioned (go-live TODO in site-deploy.env; Azure Blob `azblob://…` is the natural fit — the VM is Azure) |
 | `aiwebsite-restore-drill` | quarterly (Jan/Apr/Jul/Oct 5th, 06:30) | restores `latest.sql.gz` into a scratch DB, sanity-checks row counts, drops it, emails pass/fail either way — a backup that cannot be restored is not a backup |
 | `aiwebsite-retention-sweeper` | weekly Sun 05:30 | deletes `page_visits` >730 d, `auth_logs` >365 d, `ip_orgs` >730 d, `admin_emails` >730 d — **must match `privacy.retentionDays`** in site.config.ts (sms_consent_logs exempt by design) |
@@ -982,7 +1063,10 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | | `BRAIN_AUDIO_MODE` | `xai_realtime` |
 | LLMs | `OPENAI_API_KEY`, `OPENAI_MODEL` (gpt-5-mini), `BRAIN_FIRST_PASS_MODEL` (gpt-5.4-mini), `OPENAI_TTS_MODEL` (tts-1), `OPENAI_STT_MODEL` (whisper-1) | brain chat/voice |
 | | `XAI_API_KEY` | realtime voice (calls drop without it) |
-| | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `TAVILY_API_KEY`, `AA_API_KEY` | optional brain providers |
+| | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `AA_API_KEY` | optional brain providers |
+| | `TAVILY_API_KEY` | brain web_search backend AND **required for the blog** (§5.11): the news prefetch + `blog.dataSource` search it; unset ⇒ the nightly blog run WARN-skips |
+| Blog | `BLOG_ENABLED` (0/1), `BLOG_ONCALENDAR` (systemd timer, default `*-*-* 09:30:00 UTC`) | in `deploy/site-deploy.env`; the rendered setup-vm.sh installs the timer only when 1 (§5.11/§9.7) |
+| | `INDEXNOW_KEY` | optional; when set, blog publishes ping IndexNow and `/indexnow-key.txt` serves the key (not adopted yet) |
 | | `GOOGLE_GEMINI_API_KEY` | Google AI Studio key (set 2026-07-10) — enables the brain's Gemini planner (`gemini-3.1-pro-preview`) + google models in the router; if it ever fails, the planner falls back to OpenAI (brain Issue #684). NOTE: the brain reads exactly this name, not `GEMINI_API_KEY` |
 | Twilio | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_PHONE_NUMBER` | number +1 872 350 4325, SID `PN9435882fd720d7ec79108d195f4c9e39`; same number sends the /texting verification codes (§5.7) |
 | | `INBOUND_PHONE_PERSONA_NAME` / `INBOUND_PHONE_SITE` / `INBOUND_PHONE_GREETING` | voice persona (Tron Netter / ai.xl.net) |
@@ -1050,7 +1134,7 @@ curl -s http://127.0.0.1:3211/health            # {"ok":true,"service":"brain-ap
 curl -s http://127.0.0.1:3213/health            # skills-host ok                          (on VM)
 pm2 ls                                          # aiwebsite / brain-api / skills-host online
 journalctl -u cloudflared -n 20                 # tunnel connected
-systemctl list-timers 'aiwebsite-*'             # all 5 timers present (§9.7)
+systemctl list-timers 'aiwebsite-*'             # all 6 timers present (§9.7; blog gated on BLOG_ENABLED)
 psql -c "select count(*) from brain_memories where scope='public'"   # ≥7 seed rows
 ls -la /var/lib/aiwebsite/last-backup-ok        # after the first backup window (needs BACKUP_BUCKET)
 ```
@@ -1069,12 +1153,14 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.0.2 (submodule `packages/aicompany` @ `cd76818`,
-tag `v1.0.2`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
+**This site consumes @aicompany/core v1.0.3 (submodule `packages/aicompany` @ `36a3727`,
+tag `v1.0.3`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
 robots.txt group, Organization JSON-LD `"@id": "<baseUrl>/#org"`, `TrafficSource "ai"`
 (/admin/seo source trends have a discontinuity at 2026-07-11); v1.0.2 adds the
 sibling-recipient log-only skip (inbound mail addressed to a `siblingSites` persona no
-longer WARN-alerts). `deploy/site-deploy.env` carries `BLOG_ENABLED` / `BLOG_ONCALENDAR`
+longer WARN-alerts); v1.0.3 fixes the blog engine's brain calls (`response_format` field,
+`goals` array — it never worked on a real run before, §5.11) and is the version that
+adopts the blog. `deploy/site-deploy.env` carries `BLOG_ENABLED` / `BLOG_ONCALENDAR`
 (see §5.11/§9.7).
 Hosts pin the submodule by SHA against a tag and apply `packages/aicompany/MIGRATIONS.md`
 entries in sequence on every bump (`npm run upgrade:check --dry-run` lists pending steps);

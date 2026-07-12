@@ -100,6 +100,7 @@ export default function RootLayout({
               <Link href="/">Home</Link>
               <Link href="/work">Our Work</Link>
               <Link href="/builders">AI Builders</Link>
+              <Link href="/blog">AI News</Link>
               <Link href="/contact">Contact</Link>
               <ThemeToggle />
               <UserMenu {...toUserMenuProps(siteConfig)} />
@@ -144,6 +145,9 @@ export default function RootLayout({
                   </li>
                   <li>
                     <Link href="/builders">AI Builders</Link>
+                  </li>
+                  <li>
+                    <Link href="/blog">AI News</Link>
                   </li>
                   <li>
                     <Link href="/contact">Contact</Link>
