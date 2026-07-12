@@ -164,7 +164,9 @@ Policy, SMS Terms, and the main xl.net site. The homepage carries teaser panels 
 and `/builders` between the capabilities grid and the closing CTA. Sitemap entries: `/`,
 `/work`, `/builders`, `/contact`, `/privacy`, `/sms-terms`, `/texting`, plus the module's
 `blogSitemapEntries` (the `/blog` index once ≥1 published, and each indexable article —
-noindexed/gate-failed rows excluded). RSS at `/rss.xml`.
+noindexed/gate-failed rows excluded). `sitemap.ts` exports `revalidate = 3600` — without
+it Next bakes the route at build time and nightly-published articles never enter the
+sitemap between deploys. RSS at `/rss.xml`.
 
 **Root layout** provides: metadata (title template `%s | XL.net AI`, `metadataBase` from
 `NEXT_PUBLIC_BASE_URL`, OG/Twitter), the module's `<OrgJsonLdScript config={siteConfig}/>`

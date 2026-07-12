@@ -6,6 +6,10 @@ import { blogSitemapEntries } from "@aicompany/core/blog/sitemap";
 import { createSitemap } from "@aicompany/core/seo/sitemap";
 import { siteConfig } from "site.config";
 
+// Without this the route is baked at build time and nightly-published blog
+// articles never enter the sitemap until the next deploy rebuilds it.
+export const revalidate = 3600;
+
 const staticEntries = createSitemap(siteConfig, [
   { path: "/" },
   { path: "/work" },
