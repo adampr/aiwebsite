@@ -215,7 +215,7 @@
 *, *::before, *::after { box-sizing: border-box; }
 * { margin: 0; }
 
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; scroll-padding-top: 6rem; /* keep anchor targets clear of the sticky header */ }
 
 body {
   overflow-x: clip;
@@ -270,6 +270,14 @@ a {
               text-shadow var(--dur-fast) var(--ease-drift);
 }
 a:hover { text-shadow: 0 0 16px var(--xl-light-glow); }
+
+/* Prose cross-links inside panels need a non-color cue (WCAG 1.4.1) —
+   link vs body text is under 3:1, so color alone can't carry it. */
+.panel p a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--xl-light-dim);
+}
 
 code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
 
@@ -836,4 +844,5 @@ code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  html { scroll-behavior: auto; }
 }
