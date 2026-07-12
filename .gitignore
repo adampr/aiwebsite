@@ -1,4 +1,22 @@
+# Secrets — never commit env files, keys, or credentials (CLAUDE.md
+# "Never commit secrets"; enforced by scripts/git-hooks/pre-commit).
+# deploy/site-deploy.env stays tracked: it is config, holds no secrets.
 .env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+id_rsa
+id_ed25519
+id_ecdsa
+
+# Editor swap/backup files (e.g. ..env.swp from vim editing .env)
+*.swp
+*.swo
+*~
+
 node_modules/
 .next/
 out/
