@@ -156,6 +156,30 @@ export function newsSeedHints(): string[] {
 }
 
 const TAVILY_TIMEOUT_MS = 30_000;
+const SOURCE_BODY_MAX = 2500;
+
+/**
+ * Cut text at a sentence boundary within `max` chars (word boundary as
+ * fallback, hard cut as last resort) so fact-sheet sources never end
+ * mid-claim — the fact-check gate fails articles that echo truncated facts.
+ * Mirrors the sentence-accumulation pattern in @aicompany/core
+ * src/blog/render.ts (tldrDescription).
+ */
+function truncateAtSentence(text: string, max = SOURCE_BODY_MAX): string {
+  if (text.length <= max) return text;
+  const sentences = text.match(/[^.!?]+[.!?]+(?:\s|$)/g) ?? [];
+  let out = "";
+  for (const s of sentences) {
+    if (out.length + s.length > max) break;
+    out += s;
+  }
+  out = out.trim();
+  if (out) return out;
+  // No sentence fits (e.g. scraped table/nav text): cut at last word boundary.
+  const head = text.slice(0, max);
+  const lastSpace = head.lastIndexOf(" ");
+  return (lastSpace > 0 ? head.slice(0, lastSpace) : head).trimEnd();
+}
 
 async function tavilySearch(body: Record<string, unknown>): Promise<{
   results?: {
@@ -211,7 +235,9 @@ export const newsDataProvider: BlogDataProvider = {
 
     const sections = results.map((r, i) => {
       const date = r.published_date ? ` (published ${r.published_date})` : "";
-      const body = (r.raw_content ?? "").replace(/\s+\n/g, "\n").trim().slice(0, 2500) || (r.content ?? "").trim();
+      const body =
+        truncateAtSentence((r.raw_content ?? "").replace(/\s+\n/g, "\n").trim()) ||
+        (r.content ?? "").trim();
       return `## Source ${i + 1}: ${r.title}${date}\nURL: ${r.url}\n\n${body}`;
     });
     const factsMarkdown = [

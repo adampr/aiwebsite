@@ -627,8 +627,10 @@ sitemap, and the nightly job itself live in `@aicompany/core` — the host owns 
   the strategist today's other headlines as the fallback when the calendar entry is
   dedup-rejected. `newsDataProvider.getContext()` then searches Tavily live for the
   chosen story (`include_raw_content`) and builds the factSheet (`statCapacity` from
-  numeric-token count clamps the named-stats gate honestly); a provider throw is the
-  module's sanctioned WARN-skip.
+  numeric-token count clamps the named-stats gate honestly); each source body is
+  capped at ~2,500 chars **at a sentence boundary** (word-boundary fallback) — a hard
+  mid-word slice here fed the fact-check gate truncated facts and noindexed the
+  2026-07-12 article; a provider throw is the module's sanctioned WARN-skip.
 - **The prefetch trigger.** The blog systemd unit has no `ExecStartPre` hook, so
   `news.ts` runs `fetch-ai-news.mjs` via `execFileSync` at module load **only** when
   `process.argv[1]` ends with `blog-nightly.ts` and the file is missing/stale >20h —
