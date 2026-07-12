@@ -5,7 +5,7 @@
 #
 #   bash deploy/deploy.sh [--allow-sshpass]
 #
-# Transport ("sshpass", rendered from deploy/site-deploy.env):
+# Transport ("ssh-key", rendered from deploy/site-deploy.env):
 #   ssh-key    (default) key auth via SSH_KEY_PATH; reads AIWEBSITE_SSH_IP /
 #              AIWEBSITE_USER from .env
 #   sshpass    LEGACY password auth via AIWEBSITE_PW; refuses to run
@@ -23,7 +23,7 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 app_dir="/var/www/aiwebsite"
 module_dir="$repo_dir/packages/aicompany"
-transport="sshpass"
+transport="ssh-key"
 tunnel_cred_local="${TUNNEL_CRED_LOCAL:-$HOME/.cloudflared/aiwebsite-tunnel.json}"
 
 # ── Template drift gate (§9): rendered deploy/ files must match the module's

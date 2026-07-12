@@ -941,11 +941,12 @@ committed; edit the template (module repo) or `site-deploy.env`, never the outpu
 ### 9.1 Deploy flow (`deploy/deploy.sh`, run from the dev box)
 
 1. **Template-stamp drift gate** (above) — aborts before touching the VM.
-2. Transport per `site-deploy.env`: currently **`sshpass`** (the VM still uses password
-   auth — `AIWEBSITE_SSH_IP`/`AIWEBSITE_USER`/`AIWEBSITE_PW` read **literally** from
-   `.env`, never sourced), which deploy.sh refuses to run without an explicit
-   `--allow-sshpass` flag. Recommended switch: provision a key, set `AIWEBSITE_SSH_KEY`,
-   flip `DEPLOY_TRANSPORT=ssh-key`, re-render. (A `gcloud-iap` variant exists for GCP.)
+2. Transport per `site-deploy.env`: **`ssh-key`** since 2026-07-12 (dev-box key
+   `~/.ssh/id_ed25519` authorized on the VM; key path from `AIWEBSITE_SSH_KEY` in
+   `.env`, else `SSH_KEY_PATH`; `AIWEBSITE_SSH_IP`/`AIWEBSITE_USER` read **literally**
+   from `.env`, never sourced). The legacy `sshpass` transport (`AIWEBSITE_PW` +
+   explicit `--allow-sshpass` flag) remains only as a break-glass fallback.
+   (A `gcloud-iap` variant exists for GCP.)
 3. `rsync -az --delete` repo → `/var/www/aiwebsite`, **excluding** `.git`, `node_modules`,
    `.next`, brain caches, `.env`, and `/data/` (VM-generated knowledge must survive the delete).
 4. rsync the production `.env` separately; ship `data/GeoLite2-ASN.mmdb` explicitly if
@@ -1085,7 +1086,7 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |
 | Misc | `AUTOMATION_SECRET` (skills-host), `DEFAULT_BRAIN_NAME`, `DEFAULT_PURPOSE` | brain persona defaults |
 | Build | `SKIP_ENV_VALIDATION` | set by `next build` only — skips the module's runtime env validation |
-| Deploy | `AIWEBSITE_SSH_IP` (52.237.160.75), `AIWEBSITE_USER` (xladmin), `AIWEBSITE_PW` (legacy sshpass transport — current; deploy.sh requires `--allow-sshpass`), `AIWEBSITE_SSH_KEY` (key path once the ssh-key transport is adopted) | consumed only by deploy.sh on the dev box, read literally |
+| Deploy | `AIWEBSITE_SSH_IP` (52.237.160.75), `AIWEBSITE_USER` (xladmin), `AIWEBSITE_SSH_KEY` (optional key path; default `SSH_KEY_PATH=~/.ssh/id_ed25519` — ssh-key transport, current since 2026-07-12), `AIWEBSITE_PW` (legacy sshpass transport, break-glass only; deploy.sh requires `--allow-sshpass`) | consumed only by deploy.sh on the dev box, read literally |
 
 ---
 
