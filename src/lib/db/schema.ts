@@ -12,6 +12,7 @@ import { pgTable, serial, text, timestamp, inet } from "drizzle-orm/pg-core";
 import {
   makeAdminEmailsTable,
   makeAuthLogsTable,
+  makeBlogHeroImagesTable,
   makeBlogPostsTable,
   makeIpOrgsTable,
   makeMemoryDeletionLogsTable,
@@ -68,6 +69,12 @@ export const smsNotices = makeSmsNoticesTable();
 // key "blogPosts". Written only by the nightly job / admin actions; rendered
 // by the /blog wrappers.
 export const blogPosts = makeBlogPostsTable();
+
+// Hero image bytes (module §19.26, v1.3.0) — required since blog.heroImage
+// uses createGeminiHeroGenerator's default DB storage (usesModuleDbTable).
+// Written by the nightly hero hook / backfill CLI; served by the
+// /blog/hero/[slug] wrapper.
+export const blogHeroImages = makeBlogHeroImagesTable();
 
 // ---- Host-owned tables (not part of the module contract) ----
 

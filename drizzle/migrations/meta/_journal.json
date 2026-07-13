@@ -57,6 +57,13 @@
       "when": 1783900021270,
       "tag": "0007_vengeful_johnny_blaze",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1783908713958,
+      "tag": "0008_lush_outlaw_kid",
+      "breakpoints": true
     }
   ]
 }

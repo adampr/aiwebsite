@@ -1,4 +1,4 @@
-// aicompany-template: ecosystem.config.cjs.tpl@33a8d1064836145374ed73ca44ef408548e062e2a6a5d306bfdb505cfcea782b
+// aicompany-template: ecosystem.config.cjs.tpl@ed1acb30343003f5cc5a17b33d5a87f7397f0da444139b55f139a8d38784b33c
 /* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require('fs');
 const path = require('path');
@@ -53,7 +53,13 @@ module.exports = {
       },
       instances: 1,
       autorestart: true,
-      max_memory_restart: '768M',
+      // Host-tuned (site-deploy.env): one article-sized brain turn holds
+      // ~2.4GB RSS on the multi-pass provider (measured on v1.92 and v1.93;
+      // upstream reduction tracked in the brain repo), so hosts that drive
+      // article generation need far more than the old 768M default — a
+      // too-low cap makes pm2 kill brain-api MID-TURN and every in-flight
+      // caller sees "fetch failed" (itsc incident 2026-07-11).
+      max_memory_restart: '2600M',
       watch: false
     },
     {

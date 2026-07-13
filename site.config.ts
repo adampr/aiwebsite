@@ -12,6 +12,7 @@
 // src/app/privacy/page.tsx, src/app/layout.tsx, scripts/refresh-tron-knowledge.mjs.
 
 import { defineSiteConfig } from "@aicompany/core/config";
+import { createGeminiHeroGenerator } from "@aicompany/core/blog/hero";
 import type { BrainIdentity } from "@aicompany/core/config/types";
 import { newsCalendarEntries, newsDataProvider, newsSeedHints } from "@/lib/blog/news";
 // Side-effect import: registerTables() must have run in every module graph
@@ -494,8 +495,41 @@ export const siteConfig = defineSiteConfig({
       posture: "publish",
     },
     dataSource: newsDataProvider,
-    // No hero images v1 (image-less publish is a designed path, §19.7); wide
-    // wordmark keeps link shares from being bare.
+    // v1.3.0: nightly hero per article via the module adapter (§19.26) —
+    // Gemini + sharp gate, default DB storage (blog_hero_images composed in
+    // src/lib/db/schema.ts), served by app/blog/hero/[slug]/route.ts. hero.ts
+    // is import-safe by construction (no static db/sharp imports), so the
+    // factory is safe here in the middleware/client import graph. Degrades to
+    // null (image-less publish) on any failure — including a missing key.
+    heroImage: createGeminiHeroGenerator({
+      apiKey: process.env.GEMINI_API_KEY,
+      // Futurism brand (src/app/futurism.css): void-dark base, ice cyan +
+      // warm sand accents — mirrors the site's dark-first identity.
+      palette: {
+        news:
+          "Primary: near-black deep space blue (#0b0e17) and dark slate. " +
+          "Accents: ice cyan (#a5d8e6), warm sand (#d6b891), white highlights.",
+        default:
+          "Primary: near-black deep space blue (#0b0e17) and dark slate. " +
+          "Accents: ice cyan (#a5d8e6), warm sand (#d6b891), white highlights.",
+      },
+      subjects: [
+        { pattern: /regulat|policy|law|court|antitrust|copyright/i,
+          subject: "balanced scales and structured document forms woven into circuit traces" },
+        { pattern: /chip|gpu|hardware|semiconductor|datacenter|compute/i,
+          subject: "isometric silicon dies and glowing interconnect lattices" },
+        { pattern: /agent|robot|automat/i,
+          subject: "orchestrated nodes passing glowing task tokens along branching paths" },
+        { pattern: /funding|acquisition|valuation|ipo|invest/i,
+          subject: "ascending abstract bar forms and converging light streams" },
+        { pattern: /model|launch|release|benchmark|open.?source/i,
+          subject: "an unfolding lattice of neural pathways radiating from a bright core" },
+      ],
+      fallbackSubject:
+        "an abstract constellation of data streams converging into a single bright signal",
+    }),
+    // Fallback for pre-v1.3.0 posts without a stored hero; wide wordmark
+    // keeps link shares from being bare.
     ogImageFallback: "https://ai.xl.net/brand/xl-wordmark-dark.png",
     cta: {
       chatPrefill:

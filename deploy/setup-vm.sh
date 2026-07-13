@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@d57895b22042c6ec79b0d656c9450c7e8d1646ab92d7d31d9a4272f677ee3fa8
+# aicompany-template: setup-vm.sh.tpl@1090c38a9a7ebbc7e152ade31626bc6ef30fa39961e155d2e19e6b45106630e3
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -82,6 +82,16 @@ fi
 (cd packages/brain && npm ci --include=dev)
 
 echo ">>> Database migrations (site tables, committed history)..."
+# Pre-migrate hook (host-owned, optional, NOT template-rendered): runs before
+# drizzle-kit migrate when the host commits deploy/pre-migrate.sh. Use it for
+# host-specific tracking repairs — e.g. a schema that predates drizzle-kit
+# tracking must baseline drizzle.__drizzle_migrations first, or migrate
+# replays migration 0000 into the live schema and aborts the deploy (itsc
+# 2026-07-12; their hook runs src/scripts/baseline-drizzle.ts).
+if [ -f deploy/pre-migrate.sh ]; then
+  echo ">>> Running host pre-migrate hook (deploy/pre-migrate.sh)..."
+  bash deploy/pre-migrate.sh
+fi
 npm run db:migrate
 
 echo ">>> Building Next.js site..."
@@ -90,7 +100,11 @@ echo ">>> Building Next.js site..."
 # deps that are installed). Clear only the cache — the rest of .next is
 # replaced atomically by the build while the live server keeps serving it.
 rm -rf .next/cache
-npm run build
+# Heap cap (site-deploy.env): an uncapped Next build OOM-wedged a 4GB VM
+# mid-build (itsc 2026-07-10 — kernel OOM killer destroyed .next/BUILD_ID,
+# dropped the tunnel, needed a hard instance reset). Capped, a too-big build
+# fails cleanly with a JS heap error while the live site keeps serving.
+NODE_OPTIONS="--max-old-space-size=1024" npm run build
 
 # ── Config-derived artifacts (need node_modules, hence after npm ci) ─
 echo ">>> Rendering crawler config snapshot (data/aiwebsite-config.json)..."

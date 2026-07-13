@@ -20,6 +20,7 @@ registerTables({
   smsMemoryNotices: schema.smsMemoryNotices,
   memoryDeletionLogs: schema.memoryDeletionLogs,
   blogPosts: schema.blogPosts,
+  blogHeroImages: schema.blogHeroImages,
 });
 
 export { db, getDb, schema };

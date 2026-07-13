@@ -15,7 +15,8 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-13 (brain submodule v1.95, @aicompany/core v1.2.3,
+Last verified against code: 2026-07-13 (brain submodule v1.95, @aicompany/core v1.3.0
+(master ec71b61: v1.3.0 + the v1.2.2/v1.2.3 ports),
 Next.js 16.2.9).
 
 ---
@@ -106,7 +107,7 @@ aiwebsite/
 │   └── types/                  custom-element JSX typings
 ├── packages/brain/             git submodule ← https://github.com/adampr/xldev.git (§7)
 ├── packages/aicompany/         git submodule ← https://github.com/adampr/aicompany.git —
-│                               @aicompany/core v1.2.3, installed as a file: dependency;
+│                               @aicompany/core v1.3.0 (ec71b61), installed as a file: dependency;
 │                               channels, auth, admin, tracking, texting, memory, SEO,
 │                               crawler, deploy templates (its own architecture.md is canonical)
 ├── data/                       VM-GENERATED knowledge files — gitignored from deploy --delete,
@@ -230,7 +231,7 @@ sms-prompt-card, use-session) were deleted at adoption. Host-specific components
 
 ## 5. Backend (Next.js route handlers)
 
-Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.2.3** and
+Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.3.0** and
 mounted as a thin wrapper — one file per route, contents exactly
 `export const <METHOD> = create<X>Handler(siteConfig)` plus the two imports (canonical
 wrapper table: module README §2.1). Behavior, validation, rate limits, and the
@@ -721,6 +722,16 @@ markdown links as navigation (not claims) and keeps the v1.0.4 attributed-opinio
 contract next to the quoted violations; the strategist may not propose trend theses no
 source states; v1.2.3 scopes the belief contraPositions check to ENDORSEMENTS (rebuttals of a contra position were being flagged). Host-side companion: `news` `wordRange` cap 1400 → 1500 (the writer
 consistently lands ~1425–1450 on busy news days; trimming triggered the oscillation).
+**v1.3.0 (adopted 2026-07-13): nightly hero images via the module adapter** (module §19.26)
+— `blog.heroImage: createGeminiHeroGenerator(...)` in site.config.ts (futurism palette,
+news-topic subject motifs, `GEMINI_API_KEY` from the host env; no new module env var),
+default DB storage in the composed `blog_hero_images` table (§6, migration `0008`),
+served by the `app/blog/hero/[slug]/route.ts` wrapper (immutable cache + ETag,
+`blog_hero:<ip>` 240/60s limit, malformed slug ⇒ 400 so doctor can probe the mount).
+Failures degrade to an image-less publish (§19.7) recorded in the run report;
+`ogImageFallback` covers pre-v1.3.0 posts. `sharp` became a direct dependency (it was
+resolved only through Next's optionalDependencies — module panel finding). Existing
+posts get heroes via `tsx packages/aicompany/cli/backfill-heroes.ts` (operator step).
 
 ---
 
@@ -835,6 +846,14 @@ blog_posts         id uuid PK default gen_random_uuid(), slug text NOT NULL UNIQ
                    -- (type, status). 32 columns total (29 in migration 0006; the 3 nullable
                    -- prune columns landed in 0007 per module MIGRATIONS v1.1.0 — required
                    -- even though pruning isn't adopted: drizzle selects enumerate columns)
+                   -- (hero_image_blur, also in 0006, holds the v1.3.0 blur placeholder)
+
+blog_hero_images   slug text PK, data bytea NOT NULL, mime text default 'image/webp',
+                   content_hash text, updated_at timestamptz default now()
+                   -- module makeBlogHeroImagesTable() (§5.11 v1.3.0, module §19.26,
+                   -- migration 0008); ~100KB webp per post, written by the nightly hero
+                   -- hook / backfill CLI, served by /blog/hero/[slug] (bytes deliberately
+                   -- outside blog_posts so article selects stay light)
 ```
 
 **Brain tables** — created at runtime by brain-api's own migration array on first boot
@@ -1259,7 +1278,10 @@ fixes [host overrides unaffected], `<AccountSettings/>` on `/account` + the two
 reader and scopes the dead-internal-link gate (§5.11).
 `deploy/site-deploy.env` carries `BLOG_ENABLED` / `BLOG_ONCALENDAR` and, since v1.1.0, the
 **required** `BLOG_DIGEST_ONCALENDAR` (render.mjs fails without it) + optional
-`RETAIN_BLOG_CTA_EVENTS_DAYS` (see §5.11/§9.7).
+`RETAIN_BLOG_CTA_EVENTS_DAYS` (see §5.11/§9.7). The v1.3.0 bump (template update) added
+the two **required** resource-cap keys: `BRAIN_API_MAX_MEMORY=2600M` (blog-sized brain
+turns hold ~2.4GB RSS; pm2 restart threshold) and `BUILD_HEAP_MB=1024` (heap cap for the
+on-VM `next build`).
 Hosts pin the submodule by SHA against a tag and apply `packages/aicompany/MIGRATIONS.md`
 entries in sequence on every bump (`npm run upgrade:check --dry-run` lists pending steps);
 aiwebsite is the module's **canary host** — releases soak here 3 days before other hosts bump.
