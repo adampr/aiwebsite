@@ -502,7 +502,12 @@ export const siteConfig = defineSiteConfig({
     // factory is safe here in the middleware/client import graph. Degrades to
     // null (image-less publish) on any failure — including a missing key.
     heroImage: createGeminiHeroGenerator({
-      apiKey: process.env.GEMINI_API_KEY,
+      // GOOGLE_GEMINI_API_KEY is this host's canonical Gemini var (set
+      // 2026-07-10 for the brain planner; the brain reads exactly this name
+      // too — ARCHITECTURE.md env table). GEMINI_API_KEY was never in this
+      // host's env: found the hard way when the first backfill run warned
+      // "no Gemini API key configured" and published image-less.
+      apiKey: process.env.GOOGLE_GEMINI_API_KEY,
       // Futurism brand (src/app/futurism.css): void-dark base, ice cyan +
       // warm sand accents — mirrors the site's dark-first identity.
       palette: {

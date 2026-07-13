@@ -728,7 +728,10 @@ source states; v1.2.3 scopes the belief contraPositions check to ENDORSEMENTS (r
 consistently lands ~1425–1450 on busy news days; trimming triggered the oscillation).
 **v1.3.0 (adopted 2026-07-13): nightly hero images via the module adapter** (module §19.26)
 — `blog.heroImage: createGeminiHeroGenerator(...)` in site.config.ts (futurism palette,
-news-topic subject motifs, `GEMINI_API_KEY` from the host env; no new module env var),
+news-topic subject motifs, `GOOGLE_GEMINI_API_KEY` from the host env — this host's
+canonical Gemini var, same one the brain planner reads; the initial wiring read
+`GEMINI_API_KEY`, which was never in this host's env, and the first backfill ran
+image-less until fixed 2026-07-13; no new module env var),
 default DB storage in the composed `blog_hero_images` table (§6, migration `0008`),
 served by the `app/blog/hero/[slug]/route.ts` wrapper (immutable cache + ETag,
 `blog_hero:<ip>` 240/60s limit, malformed slug ⇒ 400 so doctor can probe the mount).
