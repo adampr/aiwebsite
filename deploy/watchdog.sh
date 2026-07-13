@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@677073dd6e9d6d0d47ae8c8c9c28b021455311b1846c1ff6a5ebf81cb624887c
+# aicompany-template: watchdog.sh.tpl@154b506bdba271ee4738e88444d256402553546532dab196205b369f7239294d
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -241,8 +241,9 @@ check_pages() {
 
 # ── Freshness checks: backup heartbeat + knowledge doc (§9.5) ─────
 
-file_age_alert() { # path, label, severity, issue_key, remedy
+file_age_alert() { # path, label, severity, issue_key, remedy [, threshold_seconds]
   local path="$1" label="$2" severity="$3" issue_key="$4" remedy="$5"
+  local threshold="${6:-$stale_seconds}"
   local mtime age
   mtime=$(stat -c %Y "$path" 2>/dev/null) || {
     send_email \
@@ -252,10 +253,10 @@ file_age_alert() { # path, label, severity, issue_key, remedy
     return 1
   }
   age=$(( $(date +%s) - mtime ))
-  if (( age > stale_seconds )); then
+  if (( age > threshold )); then
     send_email \
-      "$severity $label stale (>26h)" \
-      "$path was last updated $(( age / 3600 ))h ago (threshold 26h).\n\n$remedy" \
+      "$severity $label stale (>$(( threshold / 3600 ))h)" \
+      "$path was last updated $(( age / 3600 ))h ago (threshold $(( threshold / 3600 ))h).\n\n$remedy" \
       "$issue_key"
     return 1
   fi
@@ -282,6 +283,13 @@ check_freshness() {
     file_age_alert "$app_root/data/blog-last-run" "Blog heartbeat" "WARN" "blog-heartbeat" \
       "The nightly blog job has not written its heartbeat in over a day — the timer is dead or the job is crashing before its exit paths. Check /var/log/aiwebsite-blog.log and 'systemctl list-timers aiwebsite-blog.timer'." \
       || log "FAIL: blog heartbeat missing/stale"
+    # Digest staleness (§19.18/§19.11): blog-digest.ts stamps
+    # data/blog-digest-last on EVERY exit path (incl. OK-skips), so >35d
+    # stale means the daily digest timer is dead — not merely "not due".
+    file_age_alert "$app_root/data/blog-digest-last" "Blog digest state" "WARN" "blog-digest-stale" \
+      "The blog digest job has not stamped its state file in over 35 days — the timer is dead or the script is crashing before its exit paths. Check /var/log/aiwebsite-blog-digest.log and 'systemctl list-timers aiwebsite-blog-digest.timer'." \
+      3024000 \
+      || log "FAIL: blog digest state missing/stale"
   fi
 }
 

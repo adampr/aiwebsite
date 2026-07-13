@@ -184,8 +184,12 @@ export const siteConfig = defineSiteConfig({
       // Messaging Service's Advanced Opt-Out sends the compliance replies) …
       optOutKeywords: ["stop", "stopall", "unsubscribe", "cancel", "end", "quit"],
       // … and the rest of the historical list, still short-circuited with no
-      // reply (aiwebsite parity; MIGRATIONS.md baseline).
-      silentKeywords: ["start", "unstop", "yes", "help", "info"],
+      // reply (aiwebsite parity; MIGRATIONS.md baseline). "start"/"unstop"
+      // removed at v1.2.0: they moved to optInKeywords (module default
+      // ["start","unstop"]), which now records a re-opt-in consent row —
+      // keeping them here would make config:check WARN and opt-in win anyway
+      // (runtime order opt-out → opt-in → silent).
+      silentKeywords: ["yes", "help", "info"],
       // Legacy apology copy, verbatim.
       failureMessage:
         "Sorry, I hit a snag processing your message. Please try again in a moment. — Tron Netter",
@@ -228,6 +232,10 @@ export const siteConfig = defineSiteConfig({
 
   texting: {
     enabled: true,
+    // <AccountSettings/> mount (v1.2.0, module §5.10): the prompt card links
+    // this route in its dismiss note and is suppressed on it; the footer
+    // "Account" link keeps it reachable (D5 — never a dead end).
+    settingsPath: "/account",
     // SMS_CONSENT_TEXT, verbatim from src/lib/texting.ts — the audit trail in
     // sms_consent_logs.consent_text must stay comparable (MIGRATIONS.md).
     consentText:

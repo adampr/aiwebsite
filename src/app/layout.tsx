@@ -156,6 +156,9 @@ export default function RootLayout({
                     <Link href="/texting">Text with Tron Netter</Link>
                   </li>
                   <li>
+                    <Link href="/account">Account</Link>
+                  </li>
+                  <li>
                     <Link href="/privacy">Privacy Policy</Link>
                   </li>
                   <li>

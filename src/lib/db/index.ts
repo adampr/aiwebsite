@@ -16,6 +16,7 @@ registerTables({
   smsConsentLogs: schema.smsConsentLogs,
   phoneVerifications: schema.phoneVerifications,
   smsPromptEvents: schema.smsPromptEvents,
+  smsNotices: schema.smsNotices,
   smsMemoryNotices: schema.smsMemoryNotices,
   memoryDeletionLogs: schema.memoryDeletionLogs,
   blogPosts: schema.blogPosts,

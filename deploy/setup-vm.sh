@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@95dfc836026ef8b28fe2dadc231d1a46c14c8b7ad03871a84d9b05eac1361ad9
+# aicompany-template: setup-vm.sh.tpl@d57895b22042c6ec79b0d656c9450c7e8d1646ab92d7d31d9a4272f677ee3fa8
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -229,6 +229,41 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 UNIT
+  # Blog monthly digest (§19.18) — same BLOG_ENABLED conditional. The timer
+  # fires DAILY on the bare BLOG_DIGEST_ONCALENDAR placeholder (REQUIRED key —
+  # render.mjs substitutes bare UPPER_SNAKE placeholders only; a
+  # fallback-default form would pass through to systemd as a dead timer, so a
+  # host that skips the MIGRATIONS v1.1.0 env step fails loudly at render).
+  # The SCRIPT is the gate: monthlyDigest.enabled
+  # false ⇒ OK-skip, and the in-script month guard (day ≥ dayOfMonth ∧
+  # lastSentMonth < currentMonth) makes Persistent=true boot catch-up correct
+  # regardless of systemd stamp state. Log covered by the aiwebsite-*.log
+  # logrotate glob below; the watchdog alerts when data/blog-digest-last is
+  # >35d stale while BLOG_ENABLED.
+  sudo tee /etc/systemd/system/aiwebsite-blog-digest.service >/dev/null <<UNIT
+[Unit]
+Description=aiwebsite monthly blog digest (§19.18)
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=$deploy_user
+WorkingDirectory=/var/www/aiwebsite
+ExecStart=/var/www/aiwebsite/node_modules/.bin/tsx /var/www/aiwebsite/packages/aicompany/scripts/blog-digest.ts
+StandardOutput=append:/var/log/aiwebsite-blog-digest.log
+StandardError=append:/var/log/aiwebsite-blog-digest.log
+UNIT
+  sudo tee /etc/systemd/system/aiwebsite-blog-digest.timer >/dev/null <<UNIT
+[Unit]
+Description=Daily aiwebsite blog digest (self-gating month guard)
+
+[Timer]
+OnCalendar=*-*-* 14:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
 fi
 
 # Nightly DB backup (default-on invariant, §9.4)
@@ -346,9 +381,9 @@ fi
 # keep publishing), and the watchdog's rendered BLOG_ENABLED gate keeps the
 # heartbeat check in lockstep.
 if [ "1" = "1" ]; then
-  sudo systemctl enable --now aiwebsite-blog.timer
+  sudo systemctl enable --now aiwebsite-blog.timer aiwebsite-blog-digest.timer
 else
-  sudo systemctl disable --now aiwebsite-blog.timer 2>/dev/null || true
+  sudo systemctl disable --now aiwebsite-blog.timer aiwebsite-blog-digest.timer 2>/dev/null || true
 fi
 echo ">>> Timers installed:"
 systemctl list-timers "aiwebsite-*" --no-pager || true

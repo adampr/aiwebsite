@@ -50,6 +50,13 @@
       "when": 1783780035328,
       "tag": "0006_outstanding_red_ghost",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1783900021270,
+      "tag": "0007_vengeful_johnny_blaze",
+      "breakpoints": true
     }
   ]
 }

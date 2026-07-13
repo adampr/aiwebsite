@@ -19,6 +19,7 @@ import {
   makePhoneVerificationsTable,
   makeSmsConsentLogsTable,
   makeSmsMemoryNoticesTable,
+  makeSmsNoticesTable,
   makeSmsPromptEventsTable,
   makeUsersTable,
   textingUserColumns,
@@ -56,6 +57,12 @@ export const phoneVerifications = makePhoneVerificationsTable(users);
 // Funnel telemetry for the SMS prompt card (shown → clicked → snoozed →
 // dismissed); append-only, written by POST /api/auth/sms-prompt.
 export const smsPromptEvents = makeSmsPromptEventsTable(users);
+
+// One-time SMS notices, one row per phone+kind (module §5.10, v1.2.0): the
+// durable once-ever record behind the registration invite (and the memory-off
+// storage notice, which never fires here — memory.enabled). Keyed by E.164,
+// not user id, so the guarantee outlives account linking.
+export const smsNotices = makeSmsNoticesTable();
 
 // AI-authored blog articles (module §19.2) — blog.enabled requires registry
 // key "blogPosts". Written only by the nightly job / admin actions; rendered

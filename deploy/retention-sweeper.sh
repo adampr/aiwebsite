@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: retention-sweeper.sh.tpl@e2107589a1aee92bd617e302532e43fdc8455072221168275ccc3a2ccbbe2f35
+# aicompany-template: retention-sweeper.sh.tpl@d352d82132e92c112f46d9307c0c9b407df2ad8cf0538312591305c66a5d8dd6
 # Enforces the data-retention windows stated on the privacy page (§9.5). The
 # windows are rendered from site-deploy.env RETAIN_* values, which must match
 # privacy.retentionDays in site.config.ts — if you change one, change the
@@ -20,5 +20,11 @@ run "DELETE FROM page_visits  WHERE created_at < now() - interval '730 days';"
 run "DELETE FROM auth_logs    WHERE created_at < now() - interval '365 days';"
 run "DELETE FROM ip_orgs      WHERE looked_up_at < now() - interval '730 days';"
 run "DELETE FROM admin_emails WHERE created_at < now() - interval '730 days';"
+
+# blog_cta_events (fifth table, §19.17) exists only for cta.funnelEvents
+# adopters — probe with to_regclass so non-adopters' sweeps don't fail.
+if [ "$(sudo -u postgres psql -d "aiwebsite" -tAc "SELECT to_regclass('public.blog_cta_events') IS NOT NULL;")" = "t" ]; then
+  run "DELETE FROM blog_cta_events WHERE created_at < now() - interval '400 days';"
+fi
 
 echo "[retention] sweep completed $(date -Is)"

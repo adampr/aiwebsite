@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-12 (brain submodule v1.95, @aicompany/core v1.0.4,
+Last verified against code: 2026-07-13 (brain submodule v1.95, @aicompany/core v1.2.1,
 Next.js 16.2.9).
 
 ---
@@ -106,7 +106,7 @@ aiwebsite/
 │   └── types/                  custom-element JSX typings
 ├── packages/brain/             git submodule ← https://github.com/adampr/xldev.git (§7)
 ├── packages/aicompany/         git submodule ← https://github.com/adampr/aicompany.git —
-│                               @aicompany/core v1.0.4, installed as a file: dependency;
+│                               @aicompany/core v1.2.1, installed as a file: dependency;
 │                               channels, auth, admin, tracking, texting, memory, SEO,
 │                               crawler, deploy templates (its own architecture.md is canonical)
 ├── data/                       VM-GENERATED knowledge files — gitignored from deploy --delete,
@@ -142,7 +142,7 @@ aiwebsite/
 
 ## 4. Frontend
 
-Eleven public pages, all served from the root layout (`src/app/layout.tsx`), plus the
+Twelve public pages, all served from the root layout (`src/app/layout.tsx`), plus the
 admin console under `/admin/*` (§5.6):
 
 | URL | Type | Content |
@@ -154,13 +154,15 @@ admin console under `/admin/*` (§5.6):
 | `/contact` | static server component | Contact info only — **no form** (email `Tron.Netter@ai.xl.net`, phone/SMS (872) 350-4325, points users at the chat widget); links to `/texting` |
 | `/login` | client component | Sign-in card in `<Suspense>`; reads `?redirect`, `?error`, `?message`; links to `/api/auth/{google,microsoft}/start`; error codes map to friendly text via the module's `loginErrorMessages` (`@aicompany/core/auth/login-errors`), `?message` taking precedence. `login/layout.tsx` sets `robots: noindex` |
 | `/texting` | server component shell + module client wizard | Page shell (heading + footnote) kept from the legacy page; the wizard itself is the module's `<TextingWizard {...toTextingWizardProps(siteConfig)}/>`: session check → phone + consent checkbox (`texting.consentText` + links to the legal pages) → 6-digit code entry (resend / change-number) → "Verified" panel. Signed-out users get a Sign In link with `?redirect=/texting`; already-opted-in users land on the done state. `texting/layout.tsx` holds the metadata |
+| `/account` | server component shell + module client panel | Page shell (heading) mirrors `/texting`; the panel is the module's `<AccountSettings {...toAccountSettingsProps(siteConfig)}/>` (v1.2.0, module §5.10): texting status from `GET /api/texting/settings`, remove-number via `POST /api/texting/remove`, prompt-card preference. Lives at `texting.settingsPath` — the SMS prompt card's dismiss note links here and the card is suppressed on this route. `account/layout.tsx` holds the metadata (mirrors `texting/layout.tsx`) |
 | `/privacy` | thin wrapper (server component) | Renders the module's `<PrivacyPolicyPage config={siteConfig} lastUpdated="July 2026"/>` — the policy is generated from the same config values the code enforces (tracking flags, cookie name, retention windows, enabled channels). Keeps the page's own `metadata` export |
 | `/sms-terms` | thin wrapper (server component) | Renders the module's `<SmsTermsPage config={siteConfig} lastUpdated="July 2026"/>` — program description, opt-in methods, verification mechanics from `texting.verification`, frequency/rates, STOP/HELP, carriers, privacy cross-link, contact. Keeps the page's own `metadata` export |
 | `/blog` + `/blog/[slug]` | thin wrappers over `@aicompany/core/blog/{index-page,article-page}` (`revalidate = 60`) | AI-news blog (§5.11, module §19). Index lists published articles (custom Tron-voiced copy from `blog.copy`); `[slug]` renders one `ArticleDoc` deterministically with the AI-authorship disclosure + `Article` JSON-LD. Metadata (canonical, OG, `noindex` for gate-failed rows) from `blog/metadata` |
 
 Header nav: Home, Our Work, AI Builders, **AI News (`/blog`)**, Contact. The footer links
-Home, Our Work, AI Builders, AI News, Contact, Text with Tron Netter (`/texting`), Privacy
-Policy, SMS Terms, and the main xl.net site. The homepage carries teaser panels for `/work`
+Home, Our Work, AI Builders, AI News, Contact, Text with Tron Netter (`/texting`), Account
+(`/account` — the §12.7 account affordance the module's `<UserMenu/>` deliberately does not
+grow), Privacy Policy, SMS Terms, and the main xl.net site. The homepage carries teaser panels for `/work`
 and `/builders` between the capabilities grid and the closing CTA. Sitemap entries: `/`,
 `/work`, `/builders`, `/contact`, `/privacy`, `/sms-terms`, `/texting`, plus the module's
 `blogSitemapEntries` (the `/blog` index once ≥1 published, and each indexable article —
@@ -228,7 +230,7 @@ sms-prompt-card, use-session) were deleted at adoption. Host-specific components
 
 ## 5. Backend (Next.js route handlers)
 
-Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.0.4** and
+Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.2.1** and
 mounted as a thin wrapper — one file per route, contents exactly
 `export const <METHOD> = create<X>Handler(siteConfig)` plus the two imports (canonical
 wrapper table: module README §2.1). Behavior, validation, rate limits, and the
@@ -294,14 +296,26 @@ Provided by `createSmsHandler(siteConfig, {mountPath:"/api/tron-netter/sms"})` (
 403 — **the Twilio console webhook URL must byte-match**
 `https://ai.xl.net/api/tron-netter/sms`), keyword short-circuits, ACK-then-work (empty
 TwiML, brain call in `after()`), FORGET erasure flow (§5.9), first-contact memory
-disclosure, reply via Twilio REST capped at 1200 chars. aiwebsite facts:
+disclosure, reply via Twilio REST capped at 1200 chars (since v1.2.0 an over-long answer
+is truncated with `"…"` ahead of the reserve so the AI-signature/notice footer always
+survives — previously a blind `slice(0, 1200)` could amputate it). aiwebsite facts:
 
 - Number **+1 (872) 350-4325** (`channels.sms.phoneNumber`), shared Twilio account with
   itsupportchicago (admin views stay number-scoped, §5.6).
 - Legacy keyword list partitioned per the module contract: `optOutKeywords`
   `stop stopall unsubscribe cancel end quit` (carrier compliance replies come from the
-  Messaging Service's Advanced Opt-Out) + `silentKeywords` `start unstop yes help info`
-  (short-circuited with no reply — aiwebsite parity).
+  Messaging Service's Advanced Opt-Out) + `silentKeywords` `yes help info`
+  (short-circuited with no reply — aiwebsite parity). `start`/`unstop` left
+  `silentKeywords` at v1.2.0: they are covered by the module's `optInKeywords` default
+  (`["start","unstop"]`), which records a re-opt-in `sms_consent_logs` row and never
+  reaches the brain (runtime order opt-out → opt-in → silent; keeping them silent would
+  have config:check WARN with opt-in winning anyway).
+- Registration invite (v1.2.0, module §5.10): an unlinked texter's eligible brain reply
+  carries a one-time `texting.invite` line (module default copy — memory-on variant)
+  pointing at `/texting`; the durable once-ever record is an `sms_notices` row
+  (`kind='registration_invite'`, §6) — pre-existing unlinked texters receive it once on
+  their next eligible reply after the v1.2.x bump (recorded module panel decision S8).
+  The memory-off `storageNotice` never fires here (`memory.enabled: true`).
 - `sessionId: "sms-<From E.164>"`; every texting number stores
   (`store_persistent`/`private_to_requester`, §5.9); SMS addendum targets <300 chars, ≤900.
 - FORGET keyword + confirmation/failure copy and the first-contact notice line live in
@@ -464,9 +478,28 @@ in the `texting` block of site.config.ts.
   verification, idempotent, self-heals on the user's next chat/SMS if it fails here) and a
   best-effort CTIA opt-in confirmation SMS (frequency varies / msg&data rates / STOP / HELP).
 
+Since v1.2.0 the `/account` settings surface (module §5.10) adds two more wrappers:
+
+- `GET /api/texting/settings` — `createTextingSettingsHandler(siteConfig)`: the
+  `<AccountSettings/>` data source (linked phone, verification/opt-in timestamps,
+  latest consent-log posture, prompt-dismissed state). Session-gated (401),
+  rate-limited, `Cache-Control: no-store, private`.
+- `POST /api/texting/remove` — `createTextingRemoveHandler(siteConfig)`: unlinks the
+  account's number. Remove IS an opt-out, write order normative: append the opt-out
+  `sms_consent_logs` row FIRST (failure → 500, number stays linked), then null
+  `users.{phone, phone_verified_at, sms_opt_in_at}` (`sms_prompt_dismissed_at`
+  untouched — a UI preference is never consent), then in `after()` migrate the brain
+  memory bucket back to `user:<uuid>` (§5.9, recycled-number safety). Idempotent when
+  no number is linked.
+
+The `<AccountSettings/>` panel copy is the module's `DEFAULT_TEXTING_SETTINGS_COPY`
+verbatim (accepted config:check clone-smell WARN at adoption — voicing the 34
+`texting.settings` fields for Tron is a recorded follow-up, like §5.11's methodology WARN).
+
 Opt-**out** remains carrier-level: STOP/HELP keywords are handled by Twilio Advanced
 Opt-Out before webhooks fire (§5.2); the site does not process them. `users.sms_opt_in_at`
-is therefore "user opted in via /texting", not a live deliverability flag.
+is therefore "user opted in via /texting", not a live deliverability flag — but the
+account holder can now also unlink+opt-out in one action from `/account` (§4).
 
 ### 5.8 SMS prompt card (`<SmsPromptCard>` + `POST /api/auth/sms-prompt`)
 
@@ -490,7 +523,9 @@ pointing at `/texting`. Server pieces:
 - Client dismissal state: "Not now" is client-local (14-day localStorage snooze; the 3rd
   snooze auto-sends `dismissed`), "Don't ask again" is the server column so it holds across
   devices. A failed `dismissed` POST fails open (card may return next session) — acceptable
-  for a preference write.
+  for a preference write. Since v1.2.0 (`texting.settingsPath: "/account"`): the card's
+  dismiss note links `/account` so "Don't ask again" is never a dead end (module D5), and
+  the card is suppressed on that route.
 
 ### 5.9 Tron Netter's cross-channel memory
 
@@ -615,7 +650,8 @@ is the system of record for purchases/subscriptions.
 
 ### 5.11 AI-news blog (module §19, host-owned news seam)
 
-Adopted 2026-07-12 (aicompany v1.0.4; needs brain ≥ v1.95, §7). One post per night
+Adopted 2026-07-12 (aicompany v1.0.4, since bumped to v1.2.1; needs brain ≥ v1.95, §7).
+One post per night
 about the most consequential AI story of the last 24h, authored end-to-end by the
 module's blog engine and disclosed as AI on every article. The `blog` block in
 `site.config.ts` configures it (`quality.posture: "publish"`, `pointOfView:
@@ -666,6 +702,17 @@ LLM fact-check + 6-dim rubric gates → applies posture in one DB transaction, w
 crawlers never see unchecked copy while the decision to publish is honored. `methodologyUrl`
 is intentionally unset (accepted config:check WARN — no methodology page yet).
 
+v1.1.x/v1.2.1 posture (module MIGRATIONS.md is canonical): this host adopts **none** of the
+v1.1.0 optional features (no `measure`/GSC, no `cta.funnelEvents`, no `topics.adminQueue`,
+no methodology page, no `llms-full.txt`, no publish webhook) — so no feature tables beyond
+the mandatory `blog_posts` prune columns (§6). Default-on v1.1.0 behaviors accepted as-is:
+the monthly digest email (`reports.monthlyDigest`, §9.7 timer), prune **flag** lines in the
+run report (default `action:"flag"`; a flag run forces outcome ≥ WARN), and the orphan-audit
+report line. v1.1.1 adds the deterministic prompt-leak/fix-artifact scrub sets to Gate 1
+(a match publishes noindexed until a clean pass). v1.2.1 bakes `dataSource.autoLinkTerms` +
+`linking.autoLink` into the stored ArticleDoc at write time and scopes Gate 1's
+dead-internal-link check to the blog `urlPrefix`es.
+
 ---
 
 ## 6. Database
@@ -675,12 +722,13 @@ One local **PostgreSQL** instance, one database **`aiwebsite`** (role `aiwebsite
 brain tables carry the prefix **`brain_`** (`BRAIN_DB_TABLE_PREFIX`).
 
 **Site tables** — drizzle-managed. `src/lib/db/schema.ts` is the single source of truth:
-the 11 shared tables are composed from **@aicompany/core's schema factories** (module
+the 12 shared tables are composed from **@aicompany/core's schema factories** (module
 architecture.md §6 — `makeUsersTable({...textingUserColumns})`, `makeAuthLogsTable`,
 `makePageVisitsTable`, `makeIpOrgsTable`, `makeAdminEmailsTable`, `makeSmsConsentLogsTable`,
 `makePhoneVerificationsTable`, `makeSmsPromptEventsTable`, `makeSmsMemoryNoticesTable`,
-`makeMemoryDeletionLogsTable`, `makeBlogPostsTable` — the last added at blog adoption,
-migration `0006`) plus the host-owned `contact_submissions`; the composed
+`makeMemoryDeletionLogsTable`, `makeBlogPostsTable` — added at blog adoption, migration
+`0006` — and `makeSmsNoticesTable`, added at the v1.2.1 bump, migration `0007`) plus the
+host-owned `contact_submissions`; the composed
 shapes are byte-identical to the legacy inline definitions (existing rows are the module's
 source shape — module MIGRATIONS.md). `src/lib/db/index.ts` registers the composed set with
 the module's client. Migration history is **committed** (introspected no-op baseline at
@@ -719,6 +767,15 @@ sms_memory_notices id serial PK, phone text NOT NULL UNIQUE,   -- E.164
                    -- module factory makeSmsMemoryNoticesTable(); one row per number that
                    -- received the first-contact memory disclosure (§5.2); inserted only
                    -- after the SMS actually sent; deleted by FORGET
+
+sms_notices        id serial PK, phone text NOT NULL,   -- E.164
+                   kind text NOT NULL,   -- 'storage_notice' | 'registration_invite'
+                   sent_at timestamptz default now(),
+                   UNIQUE INDEX sms_notices_phone_kind_idx (phone, kind)
+                   -- module factory makeSmsNoticesTable() (v1.2.0, module §5.10); the
+                   -- once-ever arbiter for the registration invite (INSERT … ON CONFLICT
+                   -- DO NOTHING claims the send); keyed by phone, not user id. The
+                   -- 'storage_notice' kind never fires here (memory.enabled). Migration 0007
 
 memory_deletion_logs id serial PK, phone text NOT NULL,
                    requester_ids text NOT NULL,   -- JSON array of erased requester ids
@@ -762,10 +819,13 @@ blog_posts         id uuid PK default gen_random_uuid(), slug text NOT NULL UNIQ
                    material_hash text, last_material_update_at timestamptz,
                    gate_results/gate_scores text, gate_passed boolean, reviewed_at timestamptz,
                    read_minutes/calendar_week/refresh_count integer, prompt_id text,
-                   hero_image/hero_image_alt text, created_at/updated_at timestamptz default now()
+                   hero_image/hero_image_alt text, created_at/updated_at timestamptz default now(),
+                   prune_step text, prune_step_at timestamptz, prune_redirect_to text
                    -- module makeBlogPostsTable() (§5.11, §19.2); written only by the nightly
                    -- job + /admin/blog actions. Indexes on (status, published_at DESC) and
-                   -- (type, status). 29 columns total (migration 0006)
+                   -- (type, status). 32 columns total (29 in migration 0006; the 3 nullable
+                   -- prune columns landed in 0007 per module MIGRATIONS v1.1.0 — required
+                   -- even though pruning isn't adopted: drizzle selects enumerate columns)
 ```
 
 **Brain tables** — created at runtime by brain-api's own migration array on first boot
@@ -1020,7 +1080,10 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
   restart skills-host · `:3000/api/health` `"status":"ok"` → restart aiwebsite; plus
   **freshness checks**: backup heartbeat `/var/lib/aiwebsite/last-backup-ok`, the
   knowledge doc's mtime (path from the `data/aiwebsite-config.json` snapshot), and — when
-  `BLOG_ENABLED=1` — the blog heartbeat `data/blog-last-run` (§5.11) — any >26 h old → alert.
+  `BLOG_ENABLED=1` — the blog heartbeat `data/blog-last-run` (§5.11) — any >26 h old →
+  alert — plus (v1.1.0 template) the digest state file `data/blog-digest-last` at its own
+  35-day threshold (blog-digest.ts stamps it on EVERY exit path incl. OK-skips, so stale
+  means the daily digest timer is dead, not "not due").
 - Every 5th pass: renders `/` and `/login`; on 5xx / "application error" /
   NEXT_NOT_FOUND / timeout → clean `npm run build` (1024 MB heap; **no** `rm -rf .next` — Next
   swaps builds atomically) + restart + re-verify.
@@ -1040,16 +1103,17 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
 ### 9.7 Scheduled work — systemd timers (`Persistent=true`), not cron
 
 Installed/enabled by setup-vm.sh; scripts installed to `/usr/local/bin/aiwebsite-*`;
-verify with `systemctl list-timers 'aiwebsite-*'` (all 6 — the blog timer is installed
-only when `BLOG_ENABLED=1`):
+verify with `systemctl list-timers 'aiwebsite-*'` (all 7 — the blog + blog-digest timers
+are installed only when `BLOG_ENABLED=1`):
 
 | Timer | Schedule (UTC) | Does |
 |---|---|---|
 | `aiwebsite-knowledge` | daily 08:00 | nightly crawl (§8); `ExecStartPre` re-renders `data/aiwebsite-config.json` |
 | `aiwebsite-blog` | daily 09:30 + ~4484 s slug jitter (≈10:44) | nightly AI-news post (§5.11): `packages/aicompany/scripts/blog-nightly.ts` via the app's own tsx. `Type=oneshot`, `After=aiwebsite-knowledge.service` (ordered behind the 08:00 crawl); logs `/var/log/aiwebsite-blog.log`. Gated on `BLOG_ENABLED=1` |
+| `aiwebsite-blog-digest` | daily 14:00 (`BLOG_DIGEST_ONCALENDAR`, v1.1.0) | monthly blog digest email (module §19.18): `packages/aicompany/scripts/blog-digest.ts`. Fires daily; the SCRIPT is the gate — `reports.monthlyDigest` month guard (day ≥ dayOfMonth ∧ lastSentMonth < currentMonth) makes it monthly and `Persistent=true` boot catch-up correct; stamps `data/blog-digest-last` on every exit path (watchdog checks >35 d, §9.6); logs `/var/log/aiwebsite-blog-digest.log`. Gated on `BLOG_ENABLED=1` |
 | `aiwebsite-backup` | daily 07:15 | `backup-db.sh`: `pg_dump aiwebsite \| gzip` → `$BACKUP_BUCKET` (+ `latest.sql.gz`), refuses <500 MB free disk, rejects dumps <100 KB, 30-day bucket retention, stamps the heartbeat the watchdog checks. **BACKUP_BUCKET is currently EMPTY** — no bucket exists for aiwebsite yet, so every run fails loudly (`[aiwebsite] CRITICAL Database backup FAILED` nightly) until one is provisioned (go-live TODO in site-deploy.env; Azure Blob `azblob://…` is the natural fit — the VM is Azure) |
 | `aiwebsite-restore-drill` | quarterly (Jan/Apr/Jul/Oct 5th, 06:30) | restores `latest.sql.gz` into a scratch DB, sanity-checks row counts, drops it, emails pass/fail either way — a backup that cannot be restored is not a backup |
-| `aiwebsite-retention-sweeper` | weekly Sun 05:30 | deletes `page_visits` >730 d, `auth_logs` >365 d, `ip_orgs` >730 d, `admin_emails` >730 d — **must match `privacy.retentionDays`** in site.config.ts (sms_consent_logs exempt by design) |
+| `aiwebsite-retention-sweeper` | weekly Sun 05:30 | deletes `page_visits` >730 d, `auth_logs` >365 d, `ip_orgs` >730 d, `admin_emails` >730 d — **must match `privacy.retentionDays`** in site.config.ts (sms_consent_logs exempt by design). Since v1.1.0 also probes `blog_cta_events` via `to_regclass` (>400 d, `RETAIN_BLOG_CTA_EVENTS_DAYS`) — the table is absent here (cta.funnelEvents not adopted), so the sweep self-skips |
 | `aiwebsite-disk-check` | daily 06:45 | alert at >80 % disk on `/` |
 
 ---
@@ -1144,7 +1208,7 @@ curl -s http://127.0.0.1:3211/health            # {"ok":true,"service":"brain-ap
 curl -s http://127.0.0.1:3213/health            # skills-host ok                          (on VM)
 pm2 ls                                          # aiwebsite / brain-api / skills-host online
 journalctl -u cloudflared -n 20                 # tunnel connected
-systemctl list-timers 'aiwebsite-*'             # all 6 timers present (§9.7; blog gated on BLOG_ENABLED)
+systemctl list-timers 'aiwebsite-*'             # all 7 timers present (§9.7; blog + blog-digest gated on BLOG_ENABLED)
 psql -c "select count(*) from brain_memories where scope='public'"   # ≥7 seed rows
 ls -la /var/lib/aiwebsite/last-backup-ok        # after the first backup window (needs BACKUP_BUCKET)
 ```
@@ -1153,7 +1217,9 @@ Tron.Netter@ai.xl.net and get a reply (BCC lands at adam@xl.net); call the numbe
 as adam@xl.net → the user menu shows "Admin"; `/admin/conversations` lists the test
 exchanges above and `/admin/seo` starts counting visits (needs `INTERNAL_TRACK_SECRET`).
 Sign in and register a number at `/texting`: the 6-digit code arrives by SMS, verifying it
-sets `users.phone` + adds an `sms_consent_logs` row, and a confirmation text follows.
+sets `users.phone` + adds an `sms_consent_logs` row, and a confirmation text follows;
+`/account` then shows the linked number and "Remove my number" unlinks it (appending the
+opt-out consent row).
 
 Common failures (from GO-LIVE.md): Twilio 403 → `BRAIN_PUBLIC_URL` not exactly
 `https://ai.xl.net/brain`; calls drop → `XAI_API_KEY`; brain 503 → `OPENAI_API_KEY`;
@@ -1163,8 +1229,8 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.0.4 (submodule `packages/aicompany` @ `eb9cb40`,
-tag `v1.0.4`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
+**This site consumes @aicompany/core v1.2.1 (submodule `packages/aicompany` @ `cba89fa`,
+tag `v1.2.1`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
 robots.txt group, Organization JSON-LD `"@id": "<baseUrl>/#org"`, `TrafficSource "ai"`
 (/admin/seo source trends have a discontinuity at 2026-07-11); v1.0.2 adds the
 sibling-recipient log-only skip (inbound mail addressed to a `siblingSites` persona no
@@ -1172,9 +1238,19 @@ longer WARN-alerts); v1.0.3 fixes the blog engine's brain calls (`response_forma
 `goals` array — it never worked on a real run before, §5.11) and is the version that
 adopts the blog; v1.0.4 exempts clearly-attributed persona opinion from the fact-check
 gate (an opinion sentence is flagged only when it embeds a specific unsupported
-verifiable assertion — first-person editorial styleGuides no longer auto-fail gate 2).
-`deploy/site-deploy.env` carries `BLOG_ENABLED` / `BLOG_ONCALENDAR`
-(see §5.11/§9.7).
+verifiable assertion — first-person editorial styleGuides no longer auto-fail gate 2);
+v1.1.0 adds the blog measurement/distribution loop (this host adopts none of its optional
+features — §5.11; mandatory pieces: `blog_posts` prune columns in migration `0007`, the
+digest timer, and the re-rendered deploy scripts); v1.1.1 hardens Gate 1 (leak/artifact
+scrubs); v1.2.0 is the SMS onboarding/continuity release this host fully adopts
+(`sms_notices` table, `optInKeywords` consent recording — `start`/`unstop` left
+`silentKeywords`, §5.2 — registration invite, footer-reserve truncation, GSM-7 default-copy
+fixes [host overrides unaffected], `<AccountSettings/>` on `/account` + the two
+`/api/texting/{settings,remove}` wrappers, §5.7); v1.2.1 makes blog auto-links reach the
+reader and scopes the dead-internal-link gate (§5.11).
+`deploy/site-deploy.env` carries `BLOG_ENABLED` / `BLOG_ONCALENDAR` and, since v1.1.0, the
+**required** `BLOG_DIGEST_ONCALENDAR` (render.mjs fails without it) + optional
+`RETAIN_BLOG_CTA_EVENTS_DAYS` (see §5.11/§9.7).
 Hosts pin the submodule by SHA against a tag and apply `packages/aicompany/MIGRATIONS.md`
 entries in sequence on every bump (`npm run upgrade:check --dry-run` lists pending steps);
 aiwebsite is the module's **canary host** — releases soak here 3 days before other hosts bump.
