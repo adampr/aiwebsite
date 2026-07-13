@@ -15,9 +15,9 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-13 (brain submodule v1.95, @aicompany/core v1.3.0
-(master c107a41: v1.3.0 + the v1.2.2/v1.2.3 ports + the 2026-07-13 mobile-UX
-hardening released as v1.3.1),
+Last verified against code: 2026-07-13 (brain submodule v1.95, @aicompany/core v1.3.2
+(tag v1.3.2 @ 1e03da6: v1.3.1 + blog generation self-repair — generate-path repair
+pass, audience-address fact-check exemption, strategist protected-keyword semantics),
 Next.js 16.2.9).
 
 ---
@@ -108,7 +108,7 @@ aiwebsite/
 │   └── types/                  custom-element JSX typings
 ├── packages/brain/             git submodule ← https://github.com/adampr/xldev.git (§7)
 ├── packages/aicompany/         git submodule ← https://github.com/adampr/aicompany.git —
-│                               @aicompany/core v1.3.0 (c107a41 = v1.3.1 content on master), installed as a file: dependency;
+│                               @aicompany/core v1.3.2, installed as a file: dependency;
 │                               channels, auth, admin, tracking, texting, memory, SEO,
 │                               crawler, deploy templates (its own architecture.md is canonical)
 ├── data/                       VM-GENERATED knowledge files — gitignored from deploy --delete,
@@ -235,7 +235,7 @@ sms-prompt-card, use-session) were deleted at adoption. Host-specific components
 
 ## 5. Backend (Next.js route handlers)
 
-Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.3.0** and
+Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.3.2** and
 mounted as a thin wrapper — one file per route, contents exactly
 `export const <METHOD> = create<X>Handler(siteConfig)` plus the two imports (canonical
 wrapper table: module README §2.1). Behavior, validation, rate limits, and the
@@ -1264,8 +1264,8 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.2.3 (submodule `packages/aicompany` @ `1276327`,
-tag `v1.2.3`, branch `release/1.2.x`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
+**This site consumes @aicompany/core v1.3.2 (submodule `packages/aicompany` @ `1e03da6`,
+tag `v1.3.2`, master lineage).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
 robots.txt group, Organization JSON-LD `"@id": "<baseUrl>/#org"`, `TrafficSource "ai"`
 (/admin/seo source trends have a discontinuity at 2026-07-11); v1.0.2 adds the
 sibling-recipient log-only skip (inbound mail addressed to a `siblingSites` persona no

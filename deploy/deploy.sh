@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@c8e701bd502342ee3d759379a83f72e360ca16217e9d4e25f37fbeca2863dd1a
+# aicompany-template: deploy.sh.tpl@993bdcaa7161d2d62f98a04f74230a45e5a9ed7edb7f0a1469e9b9c2654d9f04
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -19,6 +19,19 @@
 # PM2 reload). DNS is always a human step — this script never writes DNS.
 #
 set -euo pipefail
+
+# Failure must be unmistakable in the LOG, not just the exit code: callers
+# routinely mask exit codes (`deploy.sh | tee log` returns tee's status; a
+# `| tail` invocation did exactly this on 2026-07-13 — the VM build failed,
+# the script aborted correctly, but the pipeline reported 0 and the log just
+# ended mid-build with no FAILED marker). Also note the gcloud-iap transport
+# collapses remote exit codes to 1 — zero/non-zero is the only reliable
+# signal, and this banner is its human-readable form.
+trap 'code=$?; if [ "$code" -ne 0 ]; then
+  echo "" >&2
+  echo "!!! DEPLOY FAILED (exit $code) — aiwebsite production was NOT reloaded." >&2
+  echo "!!! Fix the error above and re-run deploy/deploy.sh." >&2
+fi' EXIT
 
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 app_dir="/var/www/aiwebsite"
