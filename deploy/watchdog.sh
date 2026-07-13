@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@154b506bdba271ee4738e88444d256402553546532dab196205b369f7239294d
+# aicompany-template: watchdog.sh.tpl@ff93a2b44749fe3ba01ab5a6273b508191bd99db9098bbb515676f9399b6ef18
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -8,10 +8,18 @@
 # can trigger a clean rebuild. Restarts failed services and sends throttled
 # email alerts via Resend — every subject starts "[aiwebsite] <SEVERITY>" so one
 # operator can triage N sites' streams; max 1 email per 24h per unique issue.
+#
+# Singleton (§9.5): an exclusive flock on $lock_file is held for the whole
+# process lifetime — a second instance exits 0 at startup. The pid file is
+# observability only and never decides liveness (pid-file heuristics let 23
+# unrecorded daemons accumulate on aiwebsite, 2026-07-13).
 set -uo pipefail
 
 app_root="/var/www/aiwebsite"
 pid_file="/var/run/aiwebsite-watchdog.pid"
+lock_file="/var/run/aiwebsite-watchdog.lock"
+deploy_marker="/var/run/aiwebsite-deploy-in-progress"
+deploy_grace_seconds=1800     # defer repair ACTIONS while the deploy marker is fresher than this (§9.5)
 log_file="/var/log/aiwebsite-watchdog.log"
 throttle_dir="/tmp/aiwebsite-watchdog-throttle"
 issue_throttle_seconds=86400  # 24 hours per unique issue
@@ -46,6 +54,22 @@ page_check_urls=(
 
 log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S %Z') $1" >> "$log_file"
+}
+
+# Deploy↔watchdog mutex (§9.5): setup-vm.sh touches $deploy_marker at deploy
+# start (re-touched before the Next build) and removes it at the end. While
+# the marker is fresher than $deploy_grace_seconds the watchdog still
+# OBSERVES (FAIL log lines, freshness alerts) but defers repair ACTIONS — a
+# watchdog repair `npm run build` racing a deploy's npm ci/build on the same
+# tree produced 2026-07-13's EEXIST symlink collision and phantom
+# module-not-found build failures. TTL failure mode (documented, accepted):
+# a deploy that crashes before removing the marker leaves repairs deferred
+# until the TTL expires; then self-healing resumes unaided.
+deploy_in_progress() {
+  local marker_mtime age
+  marker_mtime=$(stat -c %Y "$deploy_marker" 2>/dev/null) || return 1
+  age=$(( $(date +%s) - marker_mtime ))
+  (( age < deploy_grace_seconds ))
 }
 
 load_resend_key() {
@@ -115,6 +139,25 @@ restart_and_alert() {
   local service_name="$1"
   local restart_cmd="$2"
   local details="$3"
+  local gate_on_deploy="${4:-false}"
+
+  # Deploy↔watchdog mutex (§9.5): defer ONLY the pm2/rebuild repair ACTIONS
+  # (callers pass gate_on_deploy=true) while a deploy holds the marker — those
+  # race the deploy's own npm ci/build + pm2 reload on the app tree. systemctl
+  # restarts of postgres/nginx/cloudflared are NEVER gated (default false): the
+  # deploy does not touch them, and a genuine infra death during a deploy must
+  # be repaired at once. The human is alerted either way — a deferred pm2
+  # failure still emails (throttled 24h), so a real service-down during a deploy
+  # window (or the ≤30-min tail of a crashed deploy that left the marker) is
+  # never silently swallowed; only the repair ACTION waits.
+  if [[ "$gate_on_deploy" == "true" ]] && deploy_in_progress; then
+    log "DEFER: $service_name repair action skipped — deploy in progress (marker <${deploy_grace_seconds}s); alerting only"
+    send_email \
+      "WARN $service_name failed during deploy — repair deferred" \
+      "Service: $service_name\nAction: DEFERRED while a deploy holds the mutex marker (a watchdog pm2 restart/rebuild would race the deploy on the app tree).\nThe watchdog repairs automatically once the deploy window — or its 30-min TTL — clears, if the failure persists.\n\nDetails:\n$details" \
+      "deploy-defer-$service_name"
+    return
+  fi
 
   log "ACTION: Restarting $service_name ..."
   eval "$restart_cmd" >> "$log_file" 2>&1
@@ -142,11 +185,19 @@ restart_and_alert() {
 # hit root's empty PM2 daemon and create root-owned build artifacts.
 pm2_user="${PM2_USER:-$(stat -c %U "$app_root" 2>/dev/null || echo root)}"
 
+# Close the singleton lock fd (9) in every spawned child (`9>&-`). The watchdog
+# holds an exclusive flock on fd 9 for its lifetime (see §9.5, below); without
+# this, a long-lived pm2/npm spawn — the resurrected pm2 God daemon in
+# particular — INHERITS fd 9 and, if it outlives the watchdog, keeps the lock
+# held forever. The cron supervisor's flock probe would then always fail
+# ("watchdog alive"), never restart one, and log OK every 5 min: zero watchdogs,
+# no alerts, indefinitely. bash's auto-fd form (`exec {v}>`) does NOT set
+# close-on-exec here, so the explicit `9>&-` on each spawn is required.
 run_as_pm2_user() {
   if [[ "$(id -un)" == "$pm2_user" ]]; then
-    bash -c "$1"
+    bash -c "$1" 9>&-
   else
-    runuser -u "$pm2_user" -- bash -c "$1"
+    runuser -u "$pm2_user" -- bash -c "$1" 9>&-
   fi
 }
 
@@ -203,6 +254,20 @@ check_pages() {
   if [[ "$any_page_fail" == "true" ]]; then
     local detail_list
     detail_list=$(printf '%s\n' "${failed_urls[@]}")
+
+    # Deploy↔watchdog mutex (§9.5): a rebuild racing the deploy's own
+    # npm ci/build on the same tree caused 2026-07-13's EEXIST symlink
+    # collision + phantom module-not-found failures. Defer the rebuild ACTION
+    # (the FAIL lines above are the retained observation) but still alert
+    # (throttled 24h) so a human is not blind to page errors during the window.
+    if deploy_in_progress; then
+      log "DEFER: page rebuild skipped — deploy in progress (marker <${deploy_grace_seconds}s); alerting only"
+      send_email \
+        "WARN Page errors during deploy — rebuild deferred" \
+        "Pages returning errors:\n$detail_list\n\nA clean rebuild would race the in-progress deploy's build on the same tree, so it is deferred. If pages are still broken after the deploy window — or its 30-min TTL — the watchdog rebuilds and escalates automatically." \
+        "page-render-deploy-defer"
+      return
+    fi
 
     log "ACTION: Pages failing but health OK -- attempting clean rebuild"
     if attempt_clean_rebuild; then
@@ -297,12 +362,28 @@ check_freshness() {
 
 cleanup() {
   log "INFO: Watchdog shutting down (PID $$)"
+  # Only the lock holder owns the pid file; the flock is released implicitly
+  # when the process (and fd 9) dies, so no explicit unlock is needed.
   rm -f "$pid_file"
   exit 0
 }
 trap cleanup SIGTERM SIGINT
 
-# Write PID file
+# ── Singleton lock (§9.5) ────────────────────────────────────────
+# Hold an exclusive advisory lock for the whole process lifetime. A second
+# instance fails the non-blocking acquire and exits 0 — this is the ONLY
+# liveness authority (the pid file below is observability only). Replaces the
+# pid-file heuristic under which unrecorded daemons were invisible and
+# accumulated (23 concurrent on aiwebsite, 2026-07-13). fd 9 stays open for
+# the life of the process; the kernel drops the lock automatically on exit.
+exec 9>"$lock_file" || { log "ERROR: cannot open lock file $lock_file"; exit 1; }
+if ! flock -n 9; then
+  log "INFO: another watchdog instance holds $lock_file — exiting"
+  exit 0
+fi
+
+# Record PID for observability only (crontab/humans read it; liveness is the
+# flock). Written AFTER the lock so the file always names the live holder.
 echo $$ > "$pid_file"
 load_resend_key
 log "INFO: Watchdog started (PID $$, pm2_user=$pm2_user)"
@@ -347,7 +428,8 @@ while true; do
     any_failure=true
     restart_and_alert "brain-api (PM2)" \
       "run_as_pm2_user 'pm2 restart brain-api'" \
-      "Health URL: $brain_health_url\nResponse: ${brain_response:-<empty>}"
+      "Health URL: $brain_health_url\nResponse: ${brain_response:-<empty>}" \
+      "true"
   fi
 
   # 5. skills-host (:3213)
@@ -357,7 +439,8 @@ while true; do
     any_failure=true
     restart_and_alert "skills-host (PM2)" \
       "run_as_pm2_user 'pm2 restart skills-host'" \
-      "Health URL: $skills_health_url\nResponse: ${skills_response:-<empty>}"
+      "Health URL: $skills_health_url\nResponse: ${skills_response:-<empty>}" \
+      "true"
   fi
 
   # 6. Next.js site (:3000) -- check last since it depends on postgres + brain
@@ -369,7 +452,8 @@ while true; do
     pm2_status=$(run_as_pm2_user "pm2 jlist" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 || echo "unknown")
     restart_and_alert "aiwebsite (Next.js/PM2)" \
       "run_as_pm2_user 'pm2 restart aiwebsite'" \
-      "Health URL: $site_health_url\nResponse: ${site_response:-<empty>}\nPM2 status: $pm2_status"
+      "Health URL: $site_health_url\nResponse: ${site_response:-<empty>}\nPM2 status: $pm2_status" \
+      "true"
   fi
 
   # 7. Backup heartbeat + knowledge freshness (cheap stats; alerts throttled 24h)

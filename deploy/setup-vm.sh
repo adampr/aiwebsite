@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@1090c38a9a7ebbc7e152ade31626bc6ef30fa39961e155d2e19e6b45106630e3
+# aicompany-template: setup-vm.sh.tpl@b6a41de5c1c2c2707be1cdf7c94cdeec203206ccef137296df671b54d41a1266
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -14,6 +14,20 @@ app_dir="/var/www/aiwebsite"
 module_dir="$app_dir/packages/aicompany"
 
 echo "=== ai.xl.net — VM Setup ==="
+
+# ── Deploy↔watchdog mutex marker (§9.5) ──────────────────────────
+# Touch a timestamped marker the watchdog checks before running any repair
+# ACTION (service restart / clean rebuild). While this marker is fresher than
+# the watchdog's grace TTL (30 min) the watchdog still observes+alerts but does
+# NOT act — so a watchdog `npm run build`/`pm2 restart` cannot race this
+# deploy's npm ci/build on the same tree (the 2026-07-13 EEXIST + phantom
+# module-not-found deploy failures). The marker is re-touched before the long
+# build step and removed on successful completion. Failure mode (accepted): a
+# deploy that crashes before the end leaves the marker; the watchdog resumes
+# self-healing once it ages past the TTL — no trap clears it early, so a broken
+# half-deploy is NOT immediately "repaired" by the watchdog.
+deploy_marker="/var/run/aiwebsite-deploy-in-progress"
+sudo touch "$deploy_marker"
 
 # ── System packages ──────────────────────────────────────────────
 # build-essential/python3/libpq-dev are required to compile the brain's
@@ -104,6 +118,9 @@ rm -rf .next/cache
 # mid-build (itsc 2026-07-10 — kernel OOM killer destroyed .next/BUILD_ID,
 # dropped the tunnel, needed a hard instance reset). Capped, a too-big build
 # fails cleanly with a JS heap error while the live site keeps serving.
+# Re-touch the mutex marker so its mtime stays fresh across the build window
+# (the watchdog's repair grace is 30 min; a slow install+build can approach it).
+sudo touch "$deploy_marker"
 NODE_OPTIONS="--max-old-space-size=1024" npm run build
 
 # ── Config-derived artifacts (need node_modules, hence after npm ci) ─
@@ -128,6 +145,12 @@ echo ">>> Running config:check..."
 npm run config:check
 
 # ── PM2: site + brain-api + skills-host ──────────────────────────
+# Re-touch the mutex marker before the long post-build tail (pm2 reload → brain
+# health wait → seed → timers → initial knowledge crawl → cloudflared). A slow
+# build followed by this tail can otherwise age the marker past its 30-min TTL
+# mid-deploy, letting the watchdog resume repairs while the deploy is still
+# running (§9.5).
+sudo touch "$deploy_marker"
 pm2 startOrReload deploy/ecosystem.config.cjs
 pm2 save
 pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null || true
@@ -440,13 +463,35 @@ sudo install -m 755 "$app_dir/deploy/watchdog-cron.sh" /usr/local/bin/aiwebsite-
   echo "*/5 * * * * /usr/local/bin/aiwebsite-watchdog-cron.sh" ) | sort -u | sudo crontab -
 # Restart the watchdog so it picks up the freshly installed version, then
 # start immediately instead of waiting up to 5 minutes for cron.
-# Kill via PID file, not pkill -f: the script path may appear in an SSH
-# wrapper's command line, and pkill -f would kill that session too.
-if sudo test -f /var/run/aiwebsite-watchdog.pid; then
-  sudo kill "$(sudo cat /var/run/aiwebsite-watchdog.pid)" 2>/dev/null || true
+#
+# Terminate ALL old instances deterministically, not just the pid-file one:
+# the pid file only ever named the last writer, so a pid-file kill orphaned
+# every other live daemon and they accumulated (23 concurrent, aiwebsite
+# 2026-07-13). Match by the daemon's full script name via a bracket-glob
+# ([a]iwebsite-watchdog.sh) so the pkill/pgrep command lines do NOT self-match
+# and neither does the SSH wrapper or the "-cron.sh" supervisor (whose cmdline
+# does not contain the substring "aiwebsite-watchdog.sh"). Do NOT delete the
+# lock file — its stable inode is the singleton's authority; removing it would
+# let a straggler and a fresh start hold two independent locks.
+wd_slug="aiwebsite"
+wd_pattern="[${wd_slug:0:1}]${wd_slug:1}-watchdog.sh"
+sudo pkill -f "$wd_pattern" 2>/dev/null || true
+for _ in $(seq 1 10); do
+  sudo pgrep -f "$wd_pattern" >/dev/null 2>&1 || break
+  sleep 1
+done
+if sudo pgrep -f "$wd_pattern" >/dev/null 2>&1; then
+  echo "WARN: watchdog instances survived SIGTERM — escalating to SIGKILL"
+  sudo pkill -9 -f "$wd_pattern" 2>/dev/null || true
+  sleep 1
 fi
 sudo rm -f /var/run/aiwebsite-watchdog.pid
 sudo /usr/local/bin/aiwebsite-watchdog-cron.sh || true
+
+# Deploy done — clear the mutex marker so the watchdog resumes repair ACTIONS
+# immediately. set -euo pipefail means we only reach here on success; a crashed
+# deploy deliberately leaves the marker to age out over the TTL (§9.5).
+sudo rm -f "$deploy_marker"
 
 echo ""
 echo "=== Setup complete ==="
