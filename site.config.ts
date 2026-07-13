@@ -265,6 +265,69 @@ export const siteConfig = defineSiteConfig({
       cta: "Add my number",
       snoozeDays: 14,
     },
+    // <AccountSettings/> copy (module §5.10), voiced in Tron Netter's register
+    // to clear the config:check "texting.settings >80% module defaults" clone
+    // smell. Runtime tokens ({personaName}, {phone}, {smsNumber}, {date},
+    // {FORGET}, {dataContact}, {n}) stay literal — the component interpolates
+    // them. Pure micro-labels (Sign In / Cancel / Refresh / Try again / Keep my
+    // number) are left at their module defaults on purpose.
+    settings: {
+      heading: "Texting with Tron Netter",
+      signedOutBody:
+        "Sign in to set up and manage texting with me from your account.",
+      emptyBody:
+        "Text {personaName} from your phone and get answers wherever you are. " +
+        "No browser needed. Verify your number to link it to your account.",
+      addButton: "Add my number",
+      verifiedBadge: "Verified & linked",
+      verifiedAtLabel: "Connected since {date}",
+      verifiedBody:
+        "{personaName} can text with you at this number, wherever you are. " +
+        "Reply STOP any time to opt out.",
+      verifiedStatus: "Your number is verified. We're connected.",
+      changeButton: "Use a different number",
+      removeButton: "Remove this number",
+      removeConfirmTitle: "Stop texting with {phone}?",
+      removeConfirmBody:
+        "Texting with {personaName} stops for this number and it's unlinked " +
+        "from your account. Nothing else about your account changes, and you " +
+        "can add it again anytime.",
+      removeConfirmButton: "Yes, remove my number",
+      removedStatus: "Your number is removed and unlinked from your account.",
+      pausedBadge: "Paused - you texted STOP",
+      pausedBody:
+        "You texted STOP, so {personaName} can't message this number right " +
+        "now. To pick things back up, text START to {smsNumber} from your phone.",
+      pausedHint:
+        "Already texted START? Give this page a refresh - it can take a " +
+        "moment to catch up.",
+      promptsOffBody:
+        "You asked me to stop suggesting texting setup, so I won't bring it " +
+        "up again.",
+      reenableButton: "Remind me again",
+      reenabledStatus:
+        "Got it - I may suggest texting setup again while you're browsing " +
+        "signed in.",
+      memoryHeading: "What I remember",
+      memoryOnBody:
+        "Memory is on. {personaName} remembers our conversations across chat, " +
+        "text, email, and calls, so we can pick up where we left off.",
+      memoryForgetHint:
+        "Want a clean slate? Text {FORGET} to {smsNumber} and I'll erase " +
+        "everything I remember about this number.",
+      memoryContactHint:
+        "Prefer to ask a person? To request erasure of your remembered data, " +
+        "contact {dataContact}.",
+      memoryLinkLabel: "How my memory works",
+      loading: "Getting your texting settings...",
+      loadError:
+        "I couldn't load your texting settings just now. Check your " +
+        "connection and try again.",
+      actionError:
+        "That's a lot of tries in a short window. Give it {n} min and try again.",
+      sessionExpired:
+        "Your session timed out. Please sign in again to manage texting.",
+    },
   },
 
   // Defaults, stated explicitly — identical to the legacy route envelopes
