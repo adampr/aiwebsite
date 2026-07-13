@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-13 (brain submodule v1.95, @aicompany/core v1.2.1,
+Last verified against code: 2026-07-13 (brain submodule v1.95, @aicompany/core v1.2.2,
 Next.js 16.2.9).
 
 ---
@@ -106,7 +106,7 @@ aiwebsite/
 │   └── types/                  custom-element JSX typings
 ├── packages/brain/             git submodule ← https://github.com/adampr/xldev.git (§7)
 ├── packages/aicompany/         git submodule ← https://github.com/adampr/aicompany.git —
-│                               @aicompany/core v1.2.1, installed as a file: dependency;
+│                               @aicompany/core v1.2.2, installed as a file: dependency;
 │                               channels, auth, admin, tracking, texting, memory, SEO,
 │                               crawler, deploy templates (its own architecture.md is canonical)
 ├── data/                       VM-GENERATED knowledge files — gitignored from deploy --delete,
@@ -230,7 +230,7 @@ sms-prompt-card, use-session) were deleted at adoption. Host-specific components
 
 ## 5. Backend (Next.js route handlers)
 
-Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.2.1** and
+Every channel/auth/admin/tracking handler is **provided by @aicompany/core v1.2.2** and
 mounted as a thin wrapper — one file per route, contents exactly
 `export const <METHOD> = create<X>Handler(siteConfig)` plus the two imports (canonical
 wrapper table: module README §2.1). Behavior, validation, rate limits, and the
@@ -711,7 +711,14 @@ run report (default `action:"flag"`; a flag run forces outcome ≥ WARN), and th
 report line. v1.1.1 adds the deterministic prompt-leak/fix-artifact scrub sets to Gate 1
 (a match publishes noindexed until a clean pass). v1.2.1 bakes `dataSource.autoLinkTerms` +
 `linking.autoLink` into the stored ArticleDoc at write time and scopes Gate 1's
-dead-internal-link check to the blog `urlPrefix`es.
+dead-internal-link check to the blog `urlPrefix`es. v1.2.2 (adopted 2026-07-13, no host
+action) fixes the gate prompts that made the 2026-07-12 posts oscillate: fact-check treats
+markdown links as navigation (not claims) and keeps the v1.0.4 attributed-opinion carve-out
+(absent from the v1.2.1/v1.3.0 tags — release-line regression); the writer aims 70% into
+`wordRange` with the max as a hard ceiling; refresh retries restate the still-binding
+contract next to the quoted violations; the strategist may not propose trend theses no
+source states. Host-side companion: `news` `wordRange` cap 1400 → 1500 (the writer
+consistently lands ~1425–1450 on busy news days; trimming triggered the oscillation).
 
 ---
 
@@ -1229,8 +1236,8 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.2.1 (submodule `packages/aicompany` @ `cba89fa`,
-tag `v1.2.1`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
+**This site consumes @aicompany/core v1.2.2 (submodule `packages/aicompany` @ `fd10e1f`,
+tag `v1.2.2`, branch `release/1.2.x`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
 robots.txt group, Organization JSON-LD `"@id": "<baseUrl>/#org"`, `TrafficSource "ai"`
 (/admin/seo source trends have a discontinuity at 2026-07-11); v1.0.2 adds the
 sibling-recipient log-only skip (inbound mail addressed to a `siblingSites` persona no

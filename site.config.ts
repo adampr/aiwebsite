@@ -386,9 +386,12 @@ export const siteConfig = defineSiteConfig({
         key: "news",
         urlPrefix: "/blog",
         label: "AI News",
-        // News analysis, not long-form guides. Canary run 2026-07-11 landed
-        // at 1245 words on a busy news day — the range leaves headroom.
-        wordRange: [600, 1400],
+        // News analysis, not long-form guides. Cap raised 1400→1500 on
+        // 2026-07-12 canary evidence: the writer consistently wants
+        // ~1425–1450 on busy news days, and trimming to a tighter cap is
+        // what triggered the word-count↔stats oscillation (module v1.2.2
+        // also steers the writer to ~70% of this range).
+        wordRange: [600, 1500],
       },
     ],
     cadence: {
