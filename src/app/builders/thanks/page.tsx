@@ -49,7 +49,7 @@ export default async function ThanksPage({
         </h1>
         {session ? (
           <p className="mx-auto mt-6 text-lg">
-            You&apos;re in{session.offeringName ? <> — <strong>{session.offeringName}</strong></> : null}.
+            You&apos;re in{session.offeringName ? <>: <strong>{session.offeringName}</strong></> : null}.
             {session.email ? (
               <> A receipt is on its way to <span className="mono">{session.email}</span>, and</>
             ) : (

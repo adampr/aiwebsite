@@ -14,7 +14,7 @@ export default function AccountPage() {
         <span className="sys-label sys-label--center">Account</span>
         <h1 className="mt-4 text-3xl font-bold">Account Settings</h1>
         <p className="mx-auto mt-3 text-sm">
-          Manage how you text with Tron Netter, our AI agent — your verified
+          Manage how you text with Tron Netter, our AI agent: your verified
           number, message opt-in, and the texting prompt.
         </p>
       </div>

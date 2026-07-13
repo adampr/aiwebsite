@@ -5,12 +5,12 @@ import { CheckoutButton } from "@/components/checkout-button";
 export const metadata: Metadata = {
   title: "AI Builders",
   description:
-    "Become an AI Builder — learn to build your own AI workflows and automations the smart and safe way, taught by the XL.net team. Weekly cohort or four-hour workshop.",
+    "Become an AI Builder: learn to build your own AI workflows and automations the smart and safe way, taught by the XL.net team. Weekly cohort or four-hour workshop.",
   alternates: { canonical: "/builders" },
   openGraph: {
-    title: "AI Builders — XL.net AI",
+    title: "AI Builders | XL.net AI",
     description:
-      "Become an AI Builder — learn to build your own AI workflows and automations the smart and safe way, taught by the XL.net team.",
+      "Become an AI Builder: learn to build your own AI workflows and automations the smart and safe way, taught by the XL.net team.",
   },
 };
 
@@ -40,9 +40,9 @@ export default function BuildersPage() {
         <p className="mx-auto mt-6 max-w-3xl text-lg">
           An AI Builder is anyone who uses AI to build their own workflows and
           automations. We believe most knowledge workers will be AI Builders
-          by 2028 — and we started with ourselves.{" "}
+          by 2028, and we started with ourselves.{" "}
           <Link href="/work">See what we&apos;ve built</Link>, then learn to
-          build your own — the smart and safe way.
+          build your own, the smart and safe way.
         </p>
       </section>
 
@@ -73,7 +73,7 @@ export default function BuildersPage() {
               </div>
             </div>
             <ul className="mt-6 space-y-2 text-sm">
-              <li>Four hours online, hands-on — not a lecture</li>
+              <li>Four hours online, hands-on, not a lecture</li>
               <li>Build real AI workflows and automations you keep</li>
               {workshopOpen ? (
                 <li>
@@ -91,7 +91,7 @@ export default function BuildersPage() {
             <div className="mt-8">
               {workshopOpen ? (
                 <CheckoutButton offering="workshop">
-                  Reserve your seat — $995 one-time
+                  Reserve your seat · $995 one-time
                 </CheckoutButton>
               ) : (
                 <Link href="/contact" className="btn no-underline">
@@ -110,7 +110,7 @@ export default function BuildersPage() {
             style={{ transitionDelay: "120ms" }}
           >
             <span className="badge badge--ok">
-              <span className="dot" /> Enrolling — capped at 6 people
+              <span className="dot" /> Enrolling · capped at 6 people
             </span>
             <h3 className="mt-6">AI Builder Cohort</h3>
             <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
@@ -123,7 +123,7 @@ export default function BuildersPage() {
             </div>
             <ul className="mt-6 space-y-2 text-sm">
               <li>Weekly one-hour live group session</li>
-              <li>Maximum 6 people — everyone builds, nobody hides</li>
+              <li>Maximum 6 people: everyone builds, nobody hides</li>
               <li>Learn AI step by step, on your real work</li>
               <li>
                 If the current cohort is full, you start with the next one.
@@ -131,7 +131,7 @@ export default function BuildersPage() {
             </ul>
             <div className="mt-8">
               <CheckoutButton offering="cohort">
-                Join the cohort — $495/month
+                Join the cohort · $495/month
               </CheckoutButton>
             </div>
             <p className="mt-4 text-xs" style={{ color: "var(--xl-text-faint)" }}>
@@ -144,12 +144,12 @@ export default function BuildersPage() {
         {/* Zero-risk path, directly under the prices */}
         <div className="panel--raised panel mt-6 text-center">
           <p className="mx-auto max-w-none text-sm">
-            Not ready to buy? Watch our free May webinar first —{" "}
+            Not ready to buy? Watch our free May webinar first,{" "}
             <a href={WEBINAR_URL} target="_blank" rel="noopener noreferrer">
               AI in the Workplace: Productivity Opportunities and Cybersecurity
               Risks
             </a>{" "}
-            (75 people signed up live) — or see the{" "}
+            (75 people signed up live), or see the{" "}
             <a href={RECAP_URL} target="_blank" rel="noopener noreferrer">
               60-second recap
             </a>{" "}
@@ -172,7 +172,7 @@ export default function BuildersPage() {
           <div className="panel rise">
             <h3>&ldquo;Is this secure?&rdquo;</h3>
             <p className="mt-4 text-sm">
-              We&apos;re a managed-IT provider first — cybersecurity is our
+              We&apos;re a managed-IT provider first; cybersecurity is our
               day job, not an afterthought. Our May webinar covered AI
               productivity and its security risks in the same hour, because
               you can&apos;t teach one without the other.
@@ -181,7 +181,7 @@ export default function BuildersPage() {
           <div className="panel rise" style={{ transitionDelay: "100ms" }}>
             <h3>&ldquo;Is this real or hype?&rdquo;</h3>
             <p className="mt-4 text-sm">
-              Judge for yourself: <Link href="/work">six running systems</Link>{" "}
+              Judge for yourself: <Link href="/work">ten running systems</Link>{" "}
               we built with AI, including the site you&apos;re on. We teach
               what we practice.
             </p>
@@ -190,7 +190,7 @@ export default function BuildersPage() {
             <h3>&ldquo;Am I technical enough?&rdquo;</h3>
             <p className="mt-4 text-sm">
               AI Builders are knowledge workers, not engineers. If you can
-              describe your workflow, you can learn to automate it — that&apos;s
+              describe your workflow, you can learn to automate it; that&apos;s
               the whole point of the sessions.
             </p>
           </div>
@@ -205,7 +205,7 @@ export default function BuildersPage() {
           </span>
           <h2 className="mt-8">Not sure which fits?</h2>
           <p className="mx-auto mt-6">
-            Talk it through with the XL.net team — we&apos;ll point you to the
+            Talk it through with the XL.net team; we&apos;ll point you to the
             right format, or tell you honestly if neither fits yet.
           </p>
           <Link href="/contact" className="btn btn--sand mt-10 no-underline">

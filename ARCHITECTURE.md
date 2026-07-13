@@ -283,7 +283,9 @@ widget stream (`token/answer/done/error`), 502 on brain failure. aiwebsite facts
   `disabledTools` = full brain tool list, `markdownMode:"html"`, **no `groupName`** (§5.9);
   120 s brain timeout (`brain.timeouts.chatMs`).
 - Failure copy: `chatWidget.unavailableMessage` ("Sorry, I encountered an error…" — legacy
-  copy verbatim).
+  copy verbatim); `chatWidget.disconnectedMessage` overrides the module default ("The
+  connection dropped mid-reply. This answer may be incomplete." — site copy avoids em
+  dashes).
 - **NOTE (pre-go-live):** the module's `toChatWidgetProps` hardcodes the widget's POST path
   as `/api/persona/chat`, but the wrapper is mounted at the legacy `/api/tron-netter/chat`
   — the two must be reconciled (move the wrapper or override the prop) or the widget

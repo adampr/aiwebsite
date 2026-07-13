@@ -143,7 +143,7 @@ export default function HomePage() {
             </span>
             <h3 className="mt-4">Conversational AI</h3>
             <p className="mt-4 text-sm">
-              Meet <strong>Tron Netter</strong> — our AI assistant. Try the
+              Meet <strong>Tron Netter</strong>, our AI assistant. Try the
               chat in the corner, or call{" "}
               <a href="tel:+18723504325" className="mono">
                 (872) 350-4325
@@ -163,7 +163,7 @@ export default function HomePage() {
             <span className="sys-label">Exhibit Hall</span>
             <h3 className="mt-4">See what we&apos;ve built</h3>
             <p className="mt-4 text-sm">
-              Ten real, running AI systems — an AI engine, reusable
+              Ten real, running AI systems: an AI engine, reusable
               middleware, two production sites, client-delivery platforms,
               and the access layers behind them, plus our autonomy
               experiments. Including the site you&apos;re reading.
@@ -176,7 +176,7 @@ export default function HomePage() {
             <span className="sys-label sys-label--sand">Now Enrolling</span>
             <h3 className="mt-4">Become an AI Builder</h3>
             <p className="mt-4 text-sm">
-              Learn to build your own AI workflows and automations — the smart
+              Learn to build your own AI workflows and automations, the smart
               and safe way. Weekly cohort ($495/mo, capped at 6) or a
               four-hour hands-on workshop ($995).
             </p>

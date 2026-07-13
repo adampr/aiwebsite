@@ -195,7 +195,7 @@ export const siteConfig = defineSiteConfig({
       silentKeywords: ["yes", "help", "info"],
       // Legacy apology copy, verbatim.
       failureMessage:
-        "Sorry, I hit a snag processing your message. Please try again in a moment. — Tron Netter",
+        "Sorry, I hit a snag processing your message. Please try again in a moment. - Tron Netter",
     },
     email: {
       enabled: true,
@@ -223,7 +223,7 @@ export const siteConfig = defineSiteConfig({
       // The legacy route sent nothing on brain failure (log-only); this copy
       // is the module default for the panel-mandated failure reply.
       failureMessage:
-        "Sorry — something went wrong on my end and I couldn't answer your email just now. Please try again shortly.",
+        "Sorry, something went wrong on my end and I couldn't answer your email just now. Please try again shortly.",
     },
     voice: {
       enabled: true,
