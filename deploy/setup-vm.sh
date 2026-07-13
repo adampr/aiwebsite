@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@b6a41de5c1c2c2707be1cdf7c94cdeec203206ccef137296df671b54d41a1266
+# aicompany-template: setup-vm.sh.tpl@6c50c4ace34a41c2b21c15c91afe623815c1ac8776f148745af931e711063c0d
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -14,6 +14,31 @@ app_dir="/var/www/aiwebsite"
 module_dir="$app_dir/packages/aicompany"
 
 echo "=== ai.xl.net — VM Setup ==="
+
+# ── Deploy↔deploy mutex (v1.4.0, §9.2): one deploy at a time, fail fast ──
+# Never queue: the second deployer must see the first and decide, not pile on.
+# Pre-create the lock with sudo (the marker precedent): this script runs as
+# the deploy user with per-command sudo, and a bare `exec 200>` into
+# root-owned /var/run would EACCES-abort the very first deploy at step 1
+# under `set -euo pipefail`. fd 200 is closed (`200>&-`) on every long-lived
+# spawn below — a pm2 God daemon or watchdog resurrected during this deploy
+# must not inherit + pin the deploy lock (the B1 failure class, v1.3.4).
+deploy_lock="/var/run/aiwebsite-deploy.lock"
+sudo touch "$deploy_lock"
+sudo chown "$(whoami)" "$deploy_lock"
+exec 200>"$deploy_lock"
+if ! flock -n 200; then
+  echo "ERROR: another deploy holds $deploy_lock — aborting."
+  echo "       (ps aux | grep setup-vm to find it)"
+  exit 1
+fi
+
+# Node 20/22 split hosts (v1.4.0): prepend the Node-22 toolchain for this
+# script's npm/next/pm2 work on a VM whose system node must stay v20 for
+# native-ABI services. Empty for standard hosts ⇒ no-op.
+if [ -n "" ]; then
+  export PATH=":$PATH"
+fi
 
 # ── Deploy↔watchdog mutex marker (§9.5) ──────────────────────────
 # Touch a timestamped marker the watchdog checks before running any repair
@@ -33,7 +58,9 @@ sudo touch "$deploy_marker"
 # build-essential/python3/libpq-dev are required to compile the brain's
 # native deps (better-sqlite3, pg-native).
 sudo apt-get update -qq
-sudo apt-get install -y -qq build-essential python3 libpq-dev pkg-config jq rsync logrotate
+# lsof: extra-services stop/start identity (v1.4.0) — without it, port-holder
+# detection silently degrades and services can double-start.
+sudo apt-get install -y -qq build-essential python3 libpq-dev pkg-config jq rsync logrotate lsof
 
 # Node.js 22
 if ! command -v node &>/dev/null; then
@@ -70,6 +97,17 @@ if ! command -v nginx &>/dev/null; then
   sudo apt-get install -y nginx
 fi
 sudo cp "$app_dir/deploy/nginx.conf" /etc/nginx/sites-available/aiwebsite
+# Host nginx drop-ins (v1.4.0): committed deploy/nginx.d/* are installed to
+# /etc/nginx/aiwebsite.d/ BEFORE the conf test — the rendered server block
+# includes that glob (silently empty for hosts without drop-ins).
+# rsync --delete makes the install AUTHORITATIVE: a drop-in removed from the
+# repo is removed from the VM (a plain cp would serve deleted config forever)
+# and an empty nginx.d/ empties the target instead of aborting on a bare glob.
+if [ -d "$app_dir/deploy/nginx.d" ]; then
+  echo ">>> Installing host nginx drop-ins (deploy/nginx.d/*)..."
+  sudo mkdir -p /etc/nginx/aiwebsite.d
+  sudo rsync -a --delete "$app_dir/deploy/nginx.d/" /etc/nginx/aiwebsite.d/
+fi
 sudo ln -sf /etc/nginx/sites-available/aiwebsite /etc/nginx/sites-enabled/aiwebsite
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
@@ -82,11 +120,30 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+# ── Extra services: stop BEFORE npm ci (v1.4.0, §9.5) ───────────
+# `npm ci` wipes node_modules under a RUNNING extra service — native-ABI
+# crash-loop, the 2026-07-10 roleplay outage class. Validate fail-fast, then
+# stop every declared service; they restart (health-gated) after db:migrate.
+# ABSENT manifest is loud on purpose: on a VM that is in fact running an
+# unmanaged service, a silent skip here replays that outage with green logs.
+if [ -f deploy/extra-services.json ]; then
+  bash deploy/extra-services.sh validate
+  echo ">>> Stopping extra services before npm ci..."
+  sudo bash deploy/extra-services.sh stop 200>&-
+else
+  echo "WARN: no deploy/extra-services.json — extra-service stop-before-ci and supervision are OFF for this deploy"
+fi
+
 echo ">>> Installing site dependencies..."
 # --include=dev: the VM environment omits devDependencies by default, but the
 # build needs them (drizzle-kit, typescript, tailwind, tsx) — same reason as
 # the brain install below.
 npm ci --include=dev
+# Re-touch the mutex marker after EACH npm ci block (v1.4.0): the span between
+# the initial touch and the pre-build re-touch now carries es_stop + two npm
+# ci runs + native rebuilds + migrate — on a small VM that can outrun the
+# 30-min TTL, letting the watchdog resume repairs mid-install (§9.5).
+sudo touch "$deploy_marker"
 
 echo ">>> Installing brain (packages/brain) dependencies..."
 if [ ! -f packages/brain/package.json ]; then
@@ -94,6 +151,18 @@ if [ ! -f packages/brain/package.json ]; then
   exit 1
 fi
 (cd packages/brain && npm ci --include=dev)
+sudo touch "$deploy_marker"
+
+# Post-install hook (host-owned, optional, NOT template-rendered — v1.4.0,
+# the pre-migrate.sh precedent): native ABI rebuilds / require gates for
+# hosts whose services run under a different Node than the toolchain. Runs
+# after BOTH npm ci blocks, before migrations; failure aborts the deploy
+# before any restart (`set -e`).
+if [ -f deploy/post-install.sh ]; then
+  echo ">>> Running host post-install hook (deploy/post-install.sh)..."
+  bash deploy/post-install.sh
+  sudo touch "$deploy_marker"
+fi
 
 echo ">>> Database migrations (site tables, committed history)..."
 # Pre-migrate hook (host-owned, optional, NOT template-rendered): runs before
@@ -107,6 +176,17 @@ if [ -f deploy/pre-migrate.sh ]; then
   bash deploy/pre-migrate.sh
 fi
 npm run db:migrate
+
+# ── Extra services: start + health-gate AFTER migrate, BEFORE build ─
+# (v1.4.0, §9.5) Restarting here keeps the service window off the build's
+# critical path: fresh code + fresh node_modules are live the moment the DB
+# is migrated. verify fails the deploy if a service can't pass health inside
+# its startTimeoutSeconds.
+if [ -f deploy/extra-services.json ]; then
+  echo ">>> Starting extra services (health-gated)..."
+  sudo bash deploy/extra-services.sh start 200>&-
+  bash deploy/extra-services.sh verify
+fi
 
 echo ">>> Building Next.js site..."
 # deploy.sh excludes .next from rsync, and a stale Turbopack cache from a
@@ -151,14 +231,16 @@ npm run config:check
 # mid-deploy, letting the watchdog resume repairs while the deploy is still
 # running (§9.5).
 sudo touch "$deploy_marker"
-pm2 startOrReload deploy/ecosystem.config.cjs
-pm2 save
-pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null || true
+# `200>&-` on every pm2 invocation: first contact resurrects the pm2 God
+# daemon, which must not inherit + pin the deploy lock (fd 200).
+pm2 startOrReload deploy/ecosystem.config.cjs 200>&-
+pm2 save 200>&-
+pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null 200>&- || true
 
 # pm2-logrotate: 10M per file, retain 7 (§9.5 default-on log rotation)
-pm2 install pm2-logrotate >/dev/null 2>&1 || true
-pm2 set pm2-logrotate:max_size 10M >/dev/null
-pm2 set pm2-logrotate:retain 7 >/dev/null
+pm2 install pm2-logrotate >/dev/null 2>&1 200>&- || true
+pm2 set pm2-logrotate:max_size 10M >/dev/null 200>&-
+pm2 set pm2-logrotate:retain 7 >/dev/null 200>&-
 
 # ── Persona seed memories ────────────────────────────────────────
 # Public-scope brain memories that keep the persona identical across webchat,
@@ -486,7 +568,17 @@ if sudo pgrep -f "$wd_pattern" >/dev/null 2>&1; then
   sleep 1
 fi
 sudo rm -f /var/run/aiwebsite-watchdog.pid
-sudo /usr/local/bin/aiwebsite-watchdog-cron.sh || true
+# `200>&-`: the freshly started watchdog is the archetypal long-lived spawn —
+# it must not inherit + pin this deploy's lock (fd 200).
+sudo /usr/local/bin/aiwebsite-watchdog-cron.sh 200>&- || true
+
+# ── Version stamp (v1.4.0, §13) ──────────────────────────────────
+# Record the applied module tag in the DB (aicompany_version) so
+# upgrade:check --dry-run can list pending MIGRATIONS entries before the
+# next bump. Non-fatal: a missing host script must not fail the deploy.
+echo ">>> Stamping deployed module version (upgrade:check --stamp)..."
+npm run --silent upgrade:check -- --stamp 200>&- || \
+  echo "WARNING: upgrade:check --stamp failed (non-fatal — stamp manually or add the host npm script)"
 
 # Deploy done — clear the mutex marker so the watchdog resumes repair ACTIONS
 # immediately. set -euo pipefail means we only reach here on success; a crashed

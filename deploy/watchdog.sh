@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@ff93a2b44749fe3ba01ab5a6273b508191bd99db9098bbb515676f9399b6ef18
+# aicompany-template: watchdog.sh.tpl@a06e4e7079d2fb680b7adab5bbc6ad735b3336f1e22137a8cbaed1419a31a898
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -14,6 +14,23 @@
 # observability only and never decides liveness (pid-file heuristics let 23
 # unrecorded daemons accumulate on aiwebsite, 2026-07-13).
 set -uo pipefail
+
+# Explicit PATH (v1.4.0): a CRON-respawned watchdog inherits cron's minimal
+# PATH=/usr/bin:/bin, under which a pm2 living in /usr/local/bin (a toolchain
+# shim, or any non-nodesource install) is exit-127-invisible inside
+# run_as_pm2_user — every pm2 repair would fail CRITICAL with no self-heal.
+# Existing hosts only worked by accident of nodesource's npm -g landing pm2
+# in /usr/bin.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Node-split hosts: repair paths (attempt_clean_rebuild's `npm run build`,
+# pm2 calls) must use the SAME toolchain the deploy used, or the recovery
+# build runs under the wrong Node major. Guarded against empty — a bare
+# `PATH=:$PATH` with an empty value would put CWD on
+# root's PATH via the leading colon.
+toolchain_prefix=''
+if [ -n "$toolchain_prefix" ]; then
+  export PATH="$toolchain_prefix:$PATH"
+fi
 
 app_root="/var/www/aiwebsite"
 pid_file="/var/run/aiwebsite-watchdog.pid"
@@ -388,13 +405,110 @@ echo $$ > "$pid_file"
 load_resend_key
 log "INFO: Watchdog started (PID $$, pm2_user=$pm2_user)"
 
+# ── Extra services (v1.4.0, §9.5): host-declared non-pm2 services ─
+# Supervision runs INSIDE this singleton loop — no second daemon, no new
+# liveness authority. Config is the host-owned deploy/extra-services.json
+# next to the rendered deploy/extra-services.sh library; absent manifest ⇒
+# everything below is a no-op and the loop cadence is byte-identical to
+# v1.3.4. An INVALID manifest alerts CRITICAL once and skips extra
+# supervision — the watchdog never crash-loops on host config. Fail counts
+# are in-process; last-start stamps live in /var/run (written by es_start, so
+# the cooldown grace also covers deploy-time starts). Manifest edits take
+# effect on watchdog restart.
+es_enabled=false
+es_lib="$app_root/deploy/extra-services.sh"
+es_fail_counts=()
+es_tick_every=()
+tick_seconds=$check_interval
+if [[ -f "$es_lib" ]]; then
+  # shellcheck source=/dev/null
+  source "$es_lib"
+  if es_manifest_present; then
+    if es_validate >> "$log_file" 2>&1 && es_load; then
+      es_enabled=true
+      for esi in "${!es_names[@]}"; do
+        es_fail_counts+=(0)
+        if (( ${es_check_intervals[$esi]} < tick_seconds )); then
+          tick_seconds=${es_check_intervals[$esi]}
+        fi
+      done
+      log "INFO: extra-services supervision ON (${es_names[*]}; tick ${tick_seconds}s)"
+    else
+      log "ERROR: extra-services manifest invalid — extra supervision SKIPPED (standard checks continue)"
+      send_email \
+        "CRITICAL extra-services manifest invalid — supervision skipped" \
+        "deploy/extra-services.json failed validation; extra services are NOT supervised until it is fixed and the watchdog restarts.\nRun: bash deploy/extra-services.sh validate" \
+        "es-manifest-invalid"
+    fi
+  fi
+fi
+# Standard 60s checks run every Nth tick — their cadence is unchanged; page
+# checks stay at every 5th STANDARD pass (5 min). No manifest ⇒ tick=60, N=1.
+standard_every=$(( check_interval / tick_seconds ))
+(( standard_every < 1 )) && standard_every=1
+if [[ "$es_enabled" == "true" ]]; then
+  for esi in "${!es_names[@]}"; do
+    ete=$(( ${es_check_intervals[$esi]} / tick_seconds ))
+    (( ete < 1 )) && ete=1
+    es_tick_every+=("$ete")
+  done
+fi
+
 # ── Main loop ────────────────────────────────────────────────────
 
 iteration=0
+standard_pass=0
 
 while true; do
-  any_failure=false
   iteration=$(( iteration + 1 ))
+
+  # Extra services: per-service cadence in ticks; failures during the
+  # post-start cooldown are NOT counted (start grace, legacy parity); the
+  # cooldown check runs BEFORE restart_and_alert so a refusal is a logged
+  # SKIP, never a CRITICAL failed-restart mail; repairs route through
+  # restart_and_alert with the deploy-marker gate (per-service gateOnDeploy)
+  # so a deploy that owns es_stop/es_start is never raced (§9.5).
+  if [[ "$es_enabled" == "true" ]]; then
+    for esi in "${!es_names[@]}"; do
+      (( (iteration - 1) % ${es_tick_every[$esi]} == 0 )) || continue
+      es_name="${es_names[$esi]}"
+      if es_health_one "$esi"; then
+        es_fail_counts[$esi]=0
+      elif es_in_cooldown "$esi"; then
+        log "INFO: svc-$es_name health failed during start cooldown — not counted"
+      else
+        es_fail_counts[$esi]=$(( ${es_fail_counts[$esi]} + 1 ))
+        log "FAIL: svc-$es_name health check failed (${es_fail_counts[$esi]}/${es_fail_thresholds[$esi]}) — ${es_health_urls[$esi]}"
+        if (( ${es_fail_counts[$esi]} >= ${es_fail_thresholds[$esi]} )); then
+          es_fail_counts[$esi]=0
+          es_details="Health URL: ${es_health_urls[$esi]}\nPort: :${es_ports[$esi]}\nService log: ${es_log_files[$esi]}"
+          # The decision routes through es_should_restart (the pure function
+          # the truth-table tests pin) BEFORE restart_and_alert is entered —
+          # a cooldown refusal is a logged SKIP, never a CRITICAL mail.
+          if ! es_decision=$(es_should_restart "$(date +%s)" "$(es_last_start_epoch "$es_name")" "${es_fail_thresholds[$esi]}" "${es_fail_thresholds[$esi]}" "${es_cooldowns[$esi]}"); then
+            log "SKIP: svc-$es_name restart — $es_decision"
+          elif [[ "${es_gate_on_deploys[$esi]}" == "true" ]]; then
+            restart_and_alert "svc-$es_name" \
+              "es_restart $es_name" \
+              "$es_details" \
+              "true"
+          else
+            restart_and_alert "svc-$es_name" \
+              "es_restart $es_name" \
+              "$es_details"
+          fi
+        fi
+      fi
+    done
+  fi
+
+  if (( (iteration - 1) % standard_every != 0 )); then
+    sleep "$tick_seconds"
+    continue
+  fi
+
+  standard_pass=$(( standard_pass + 1 ))
+  any_failure=false
 
   # 1. PostgreSQL
   if ! pg_isready -h localhost -p 5432 -q 2>/dev/null; then
@@ -459,8 +573,8 @@ while true; do
   # 7. Backup heartbeat + knowledge freshness (cheap stats; alerts throttled 24h)
   check_freshness
 
-  # 8. Page-render checks (every 5 minutes)
-  if (( iteration % page_check_every == 0 )); then
+  # 8. Page-render checks (every 5th standard pass = 5 minutes)
+  if (( standard_pass % page_check_every == 0 )); then
     check_pages
   fi
 
@@ -468,5 +582,5 @@ while true; do
     log "OK: All checks passed"
   fi
 
-  sleep "$check_interval"
+  sleep "$tick_seconds"
 done

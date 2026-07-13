@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@993bdcaa7161d2d62f98a04f74230a45e5a9ed7edb7f0a1469e9b9c2654d9f04
+# aicompany-template: deploy.sh.tpl@5055ab5fce4761497f3c531addb5188b55ebb2dc8606ad7dc832ca9e6782a088
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -143,6 +143,24 @@ tar_excludes=(
   --exclude "./packages/brain/scripts/benchmark/cache"
 )
 
+# Host-owned exclude list (v1.4.0): deploy/rsync-excludes.txt patterns (one
+# per line, # comments) are appended to BOTH exclude sets — VM-owned trees a
+# host must protect from rsync --delete (e.g. service data dirs, sqlite
+# files). rsync never deletes excluded paths (this is not --delete-excluded).
+if [ -f "$repo_dir/deploy/rsync-excludes.txt" ]; then
+  # `|| [ -n "$pat" ]`: read returns non-zero on a final unterminated line
+  # while still filling $pat — without this, a file missing its trailing
+  # newline silently drops its LAST pattern and rsync --delete removes the
+  # very tree the file protects. The ${pat%…} strips a CR from CRLF files,
+  # which would otherwise make every pattern match nothing.
+  while IFS= read -r pat || [ -n "$pat" ]; do
+    pat="${pat%$'\r'}"
+    case "$pat" in ''|'#'*) continue ;; esac
+    rsync_excludes+=(--exclude "$pat")
+    tar_excludes+=(--exclude "$pat")
+  done < "$repo_dir/deploy/rsync-excludes.txt"
+fi
+
 echo ">>> Preparing $app_dir on VM..."
 run_remote "sudo mkdir -p $app_dir && sudo chown \$(whoami): $app_dir"
 
@@ -175,5 +193,11 @@ run_remote "cd $app_dir && bash deploy/setup-vm.sh"
 echo ""
 echo ">>> Verifying..."
 run_remote "curl -fsS http://127.0.0.1:3000/api/health && echo && curl -fsS http://127.0.0.1:3211/health | head -c 300 && echo"
+# Extra services (v1.4.0): an `if` guard, NOT `[ -f … ] && verify || true` —
+# that form exits 0 on both missing-manifest AND verify failure, making the
+# check decorative. With `if`, a verify failure propagates through
+# run_remote's exit status into `set -e` and the failure banner; a missing
+# manifest is exit 0 by construction.
+run_remote "cd $app_dir && if [ -f deploy/extra-services.json ]; then bash deploy/extra-services.sh verify; fi"
 echo ""
 echo "=== Deploy complete. Public check: curl -fsS https://ai.xl.net/api/health ==="

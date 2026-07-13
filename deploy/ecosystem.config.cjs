@@ -1,4 +1,4 @@
-// aicompany-template: ecosystem.config.cjs.tpl@ed1acb30343003f5cc5a17b33d5a87f7397f0da444139b55f139a8d38784b33c
+// aicompany-template: ecosystem.config.cjs.tpl@dd4f3b681b4a5de35b9ab89c09bc6fa5f87d6d83ac3de93e1ea31b099a409217
 /* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require('fs');
 const path = require('path');
@@ -20,12 +20,20 @@ try {
   });
 } catch { /* .env missing on dev machines — harmless */ }
 
+// Interpreter pins (v1.4.0): empty for standard hosts (the spread renders
+// inert — pm2 resolves `node` from PATH as before). Node-split hosts pin the
+// site app to their toolchain node and the brain apps to the system node
+// whose ABI their native deps were built against.
+const SITE_INTERPRETER = '';
+const BRAIN_INTERPRETER = '';
+
 module.exports = {
   apps: [
     {
       name: 'aiwebsite',
       script: 'deploy/pm2-start.cjs',
       cwd: APP_ROOT,
+      ...(SITE_INTERPRETER ? { interpreter: SITE_INTERPRETER } : {}),
       // fork, explicitly: a stale cluster-mode registration makes the
       // next-start wrapper die silently under pm2's cluster bootstrap
       exec_mode: 'fork',
@@ -43,6 +51,7 @@ module.exports = {
       script: APP_ROOT + '/packages/brain/node_modules/.bin/tsx',
       args: 'apps/brain-api/src/server.ts',
       cwd: APP_ROOT + '/packages/brain',
+      ...(BRAIN_INTERPRETER ? { interpreter: BRAIN_INTERPRETER } : {}),
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
@@ -67,6 +76,7 @@ module.exports = {
       script: APP_ROOT + '/packages/brain/node_modules/.bin/tsx',
       args: 'apps/skills-host/src/server.ts',
       cwd: APP_ROOT + '/packages/brain',
+      ...(BRAIN_INTERPRETER ? { interpreter: BRAIN_INTERPRETER } : {}),
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',

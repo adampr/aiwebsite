@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-cloudflared.sh.tpl@4b406a20491ca4c7bbf60e2d51d2fdb0c9b0de496f0f9e493fcabb15beac4dc2
+# aicompany-template: setup-cloudflared.sh.tpl@710d2fd3d9a50e474faac97b1853721cd9a6fee185adfb5c5b3aa5aa1f702e67
 #
 # Install and configure the Cloudflare tunnel for ai.xl.net.
 #
@@ -41,6 +41,20 @@ echo "  cloudflared: $(cloudflared --version)"
 
 mkdir -p "$config_dir"
 
+# ── Externally-managed guard (v1.4.0) ───────────────────────────
+# Token-mode hosts: no credentials JSON exists anywhere and the connector was
+# installed out-of-band under a token. Falling through to the interactive
+# `cloudflared tunnel login` below would HANG a non-interactive deploy — so
+# an INSTALLED unit (active or not — it may be mid-crash during an emergency
+# deploy) with no credentials file means "externally managed": leave it alone.
+if [ ! -f "$preprovisioned_cred" ] && systemctl cat cloudflared >/dev/null 2>&1; then
+    echo ">>> No pre-provisioned credentials but a cloudflared unit exists —"
+    echo "    tunnel externally managed (token-mode); leaving connector as-is."
+    systemctl is-active --quiet cloudflared || \
+        echo "    NOTE: unit is not active — the watchdog restarts it; check 'journalctl -u cloudflared' if it stays down."
+    exit 0
+fi
+
 # ── 2. Locate or create tunnel credentials ──────────────────────
 if [ -f "$preprovisioned_cred" ]; then
     echo ">>> Using pre-provisioned tunnel credentials: $preprovisioned_cred"
@@ -48,6 +62,12 @@ if [ -f "$preprovisioned_cred" ]; then
     cred_file="$preprovisioned_cred"
 else
     echo ">>> No pre-provisioned credentials — interactive setup."
+    if [ ! -t 0 ]; then
+        echo "ERROR: interactive tunnel login required but stdin is not a TTY."
+        echo "       Pre-provision credentials (deploy.sh ships ~/.cloudflared/aiwebsite-tunnel.json)"
+        echo "       or run this script from an interactive session."
+        exit 1
+    fi
     if [ ! -f "$cred_dir/cert.pem" ]; then
         cloudflared tunnel login
     fi
@@ -94,6 +114,6 @@ fi
 
 echo ""
 echo "=== Done. Verify: ==="
-echo "  curl -fsS -H 'Host: ai.xl.net' http://127.0.0.1/api/health   # local nginx"
+echo "  curl -fsS -H 'Host: ai.xl.net' http://127.0.0.1:80/api/health   # local nginx"
 echo "  curl -fsS https://ai.xl.net/api/health                        # via tunnel"
 echo "  journalctl -u cloudflared -f"
