@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Ten real, running AI systems built in the open by XL.net: engine, middleware, production sites, client-delivery platforms, access layers, and autonomy experiments.",
+    "Eleven real, running AI systems built in the open by XL.net: engine, middleware, production sites, client-delivery platforms, access layers, autonomy experiments, and internal security tooling.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Ten real, running AI systems built in the open by XL.net: engine, middleware, production sites, client-delivery platforms, access layers, and autonomy experiments.",
+      "Eleven real, running AI systems built in the open by XL.net: engine, middleware, production sites, client-delivery platforms, access layers, autonomy experiments, and internal security tooling.",
   },
 };
 
@@ -715,6 +715,76 @@ export default function WorkPage() {
           <p className="mono mt-6 text-xs text-faint">
             Slack DM-only · internal to the XL.net team · architecture-is-canonical
             governance
+          </p>
+        </section>
+
+        {/* 11. SpamSlayer */}
+        <section id="spamslayer" className="panel panel--lightline rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Security tool</span>
+          </div>
+          <h2 className="mt-6">SpamSlayer</h2>
+          <p className="mt-2 text-sm text-faint">
+            Is this email safe to open? A five-second answer, in Slack.
+          </p>
+          <p className="mt-4 text-sm">
+            A phishing-triage bot the team runs on itself. DM it a suspicious
+            email, @mention it in any thread, or forward one into a channel, and
+            it returns a clear verdict (Safe, Likely safe, Suspicious, or
+            Dangerous), a recommended action, and the specific reasons behind
+            the call. It turns &quot;hey, is this real?&quot; into a self-serve
+            check with reasoning good enough to teach on.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Four Checks
+              </h3>
+              <p className="mt-3 text-sm">
+                Sender and headers, phishing language and impersonation, URL
+                safety, and attachment risk: four checks on every message, from
+                a pasted email, raw headers, a bare URL, or a dropped .eml or
+                .msg file.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Never Clicks the Link
+              </h3>
+              <p className="mt-3 text-sm">
+                It judges a URL by its structure and destination, never by
+                visiting it, and compares the visible link text to the real
+                href: the tell on most credential-harvest emails, caught without
+                handing attackers a fingerprint of the tool.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Errs Toward Caution
+              </h3>
+              <p className="mt-3 text-sm">
+                Verdict first, reasoning below. When the evidence is mixed it
+                returns Suspicious, not Likely safe: a false alarm costs a
+                moment, a miss costs an account.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            The same analysis rubric ships as a standalone Claude Skill
+            (email-safety-check), so the exact logic also runs on a file inside
+            a desktop Claude session, not just in the bot. It listens over an
+            outbound WebSocket with no inbound ports of its own, and runs
+            sandboxed on a low-cost VPS.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            Python · slack-bolt (Socket Mode) · Claude Sonnet · .eml / .msg
+            parsing · sandboxed systemd VPS · also a Claude Skill
           </p>
         </section>
       </section>
