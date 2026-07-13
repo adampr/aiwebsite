@@ -63,11 +63,43 @@ export default function WorkPage() {
           <p className="mt-4 text-sm">
             A conversation-first, memory-bearing, tool-using AI architecture
             modeled on neurological principles, built as a TypeScript monorepo.
-            It is rebuild-ready by design: a canonical architecture document
-            specifies the whole system in enough detail that a competent team
-            could reconstruct it from the document alone. Every other exhibit
-            below runs on it.
+            Every other exhibit below runs on it.
           </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Memory
+              </h3>
+              <p className="mt-3 text-sm">
+                Scoped memory that persists across conversations, so every
+                system built on the Brain remembers what matters instead of
+                starting from zero each time.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Voice
+              </h3>
+              <p className="mt-3 text-sm">
+                A full voice stack: speech-to-text, text-to-speech, and
+                realtime conversation, the same packages that let you call
+                Tron Netter from this page.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Rebuild-Ready
+              </h3>
+              <p className="mt-3 text-sm">
+                A canonical architecture document specifies the whole system in
+                enough detail that a competent team could reconstruct it from
+                the document alone.
+              </p>
+            </div>
+          </div>
           <p className="mono mt-6 text-xs text-faint">
             TypeScript monorepo · scoped memory · voice (STT/TTS/realtime) ·
             canonical architecture doc v17
@@ -94,13 +126,45 @@ export default function WorkPage() {
             An entire AI-company website in one config file.
           </p>
           <p className="mt-4 text-sm">
-            Reusable middleware that gives any business an AI persona across web
-            chat, SMS, email, and voice, plus OAuth sign-in, an admin console,
-            first-party analytics, SEO surfaces, a nightly knowledge crawler, and
-            a single-VM deploy stack. One <span className="mono">site.config.ts</span>{" "}
-            drives all of it. It ships today as a git submodule inside two live
-            production sites: this one and IT Support Chicago.
+            Reusable middleware that gives any business an AI persona and
+            everything a working AI company site needs around it. It ships
+            today as a git submodule inside two live production sites: this one
+            and IT Support Chicago.
           </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Every Channel
+              </h3>
+              <p className="mt-3 text-sm">
+                One persona across web chat, SMS, email, and voice, plus OAuth
+                sign-in for visitors who want an account.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                The Whole Site
+              </h3>
+              <p className="mt-3 text-sm">
+                An admin console, first-party analytics, SEO surfaces, a
+                nightly knowledge crawler, and a single-VM deploy stack come
+                with it.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                One Config File
+              </h3>
+              <p className="mt-3 text-sm">
+                A single <span className="mono">site.config.ts</span> drives
+                all of it: the host site supplies the config, the middleware
+                does the rest.
+              </p>
+            </div>
+          </div>
           <p className="mono mt-6 text-xs text-faint">
             chat / SMS / email / voice · admin console · analytics · nightly
             crawler · one config file
@@ -120,14 +184,43 @@ export default function WorkPage() {
             deployment.
           </p>
           <p className="mt-4 text-sm">
-            Every constraint here is a decision, not a limitation. Every email
-            our AI sends is BCC&apos;d to a human, so nothing leaves
-            unreviewed. The public persona has no tools and no live internet
-            access, so it can never take an action we haven&apos;t designed.
-            Its knowledge is a nightly crawl of xl.net and ai.xl.net, so it
-            only speaks about what we publish. Safe by architecture, not by
-            promise. Try it: chat, text, email, or call Tron Netter on this
-            page.
+            Every constraint here is a decision, not a limitation. Safe by
+            architecture, not by promise.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Human BCC
+              </h3>
+              <p className="mt-3 text-sm">
+                Every email our AI sends is BCC&apos;d to a human, so nothing
+                leaves unreviewed.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                No Tools, No Internet
+              </h3>
+              <p className="mt-3 text-sm">
+                The public persona has no tools and no live internet access,
+                so it can never take an action we haven&apos;t designed.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Published Knowledge Only
+              </h3>
+              <p className="mt-3 text-sm">
+                Its knowledge is a nightly crawl of xl.net and ai.xl.net, so
+                it only speaks about what we publish.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            Try it: chat, text, email, or call Tron Netter on this page.
           </p>
           <p className="mono mt-6 text-xs text-faint">
             human BCC on all outbound email · no tools, no internet · nightly
@@ -150,11 +243,43 @@ export default function WorkPage() {
           <p className="mt-4 text-sm">
             itsupportchicago.net was designed as a test of a 100% autonomous
             organization: how far can an AI-run operation go with no human in
-            the loop? It runs sandboxed, on its own hardened infrastructure: a
-            GCP confidential VM with AMD SEV memory encryption, Shielded VM
-            boot integrity, IAP-only SSH, and deny-all ingress, fully separate
-            from XL.net client systems. Maximum oversight here, maximum autonomy
-            there: we run both, on purpose, to learn where the line is.
+            the loop?
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Maximum Autonomy
+              </h3>
+              <p className="mt-3 text-sm">
+                No human in the loop: the experiment exists to find out how
+                far an AI-run operation can go on its own.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Hardened Sandbox
+              </h3>
+              <p className="mt-3 text-sm">
+                A GCP confidential VM with AMD SEV memory encryption, Shielded
+                VM boot integrity, IAP-only SSH, and deny-all ingress.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Fully Separate
+              </h3>
+              <p className="mt-3 text-sm">
+                Its own infrastructure, completely separate from XL.net client
+                systems, so the experiment can fail safely.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            Maximum oversight here, maximum autonomy there: we run both, on
+            purpose, to learn where the line is.
           </p>
           <p className="mono mt-6 text-xs text-faint">
             GCP confidential VM (AMD SEV) · Shielded VM · IAP-only SSH ·
@@ -486,14 +611,44 @@ export default function WorkPage() {
             A public multi-user AI playground running directly on the Brain SDK.
           </p>
           <p className="mt-4 text-sm">
-            roleplay.xl.net is our external-tenant experiment: the Software
-            Brain&apos;s orchestrator, memory, and voice packages running
-            in-process to power multi-user AI roleplay, with live voice via
-            STT/TTS and the xAI realtime API. Google sign-in with admin
-            approval gates entry, and the tenant&apos;s data lives in its own
-            isolated databases, completely separate from everything else we
-            run: your data stays yours.
+            roleplay.xl.net is our external-tenant experiment: what happens
+            when the Software Brain powers a product that isn&apos;t about
+            XL.net at all.
           </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Brain SDK In-Process
+              </h3>
+              <p className="mt-3 text-sm">
+                The Software Brain&apos;s orchestrator, memory, and voice
+                packages run inside the app itself to power multi-user AI
+                roleplay.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Realtime Voice
+              </h3>
+              <p className="mt-3 text-sm">
+                Live voice via STT/TTS and the xAI realtime API, so characters
+                can speak, not just type.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Gated and Isolated
+              </h3>
+              <p className="mt-3 text-sm">
+                Google sign-in with admin approval gates entry, and the
+                tenant&apos;s data lives in its own isolated databases: your
+                data stays yours.
+              </p>
+            </div>
+          </div>
           <p className="mono mt-6 text-xs text-faint">
             Brain SDK in-process · realtime voice · Google sign-in + approval ·
             isolated per-tenant databases
@@ -522,13 +677,41 @@ export default function WorkPage() {
           </p>
           <p className="mt-4 text-sm">
             Leo Netter is our internal test bot: a memory-bearing assistant
-            that lives only in Slack DMs for the XL.net team, built on the
-            Brain SDK. It never talks to customers; it exists so we hit the
-            rough edges before anyone else does. Its development is governed by
-            a strict architecture-is-canonical contract: every behavior, tool,
-            and test is written into the architecture document before code
-            lands.
+            built on the Brain SDK, deployed to the people most likely to
+            complain about it: us.
           </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Slack DMs Only
+              </h3>
+              <p className="mt-3 text-sm">
+                It lives only in Slack DMs for the XL.net team and never talks
+                to customers.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Rough Edges First
+              </h3>
+              <p className="mt-3 text-sm">
+                It exists so we hit the rough edges of a memory-bearing AI
+                teammate before anyone else does.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Architecture Is Canonical
+              </h3>
+              <p className="mt-3 text-sm">
+                Every behavior, tool, and test is written into the
+                architecture document before code lands.
+              </p>
+            </div>
+          </div>
           <p className="mono mt-6 text-xs text-faint">
             Slack DM-only · internal to the XL.net team · architecture-is-canonical
             governance

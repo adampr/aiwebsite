@@ -126,6 +126,8 @@ aiwebsite/
 ├── drizzle/migrations/         committed migration history (introspected baseline + diffs, §6)
 ├── drizzle.config.ts           schema ./src/lib/db/schema.ts → ./drizzle/migrations, dialect postgresql
 ├── public/                     favicons, brand assets, fx.js (<xl-dust> canvas particles)
+├── eslint.config.mjs           ESLint 9 flat config: next/core-web-vitals + next/typescript;
+│                               ignores packages/**, drizzle/**, data/** (submodules lint upstream)
 ├── next.config.ts              trailingSlash:false; experimental.inlineCss:true;
 │                               transpilePackages:["@aicompany/core"]
 ├── postcss.config.mjs          single plugin: @tailwindcss/postcss
@@ -137,7 +139,8 @@ aiwebsite/
 · maxmind 5 + mmdb-lib (IP→org for /admin/companies).
 `src/middleware.ts` is the module's tracking/CSRF middleware wrapper (§5.6). Module tooling via
 `package.json` scripts: `config:check`, `doctor`, `simulate:sms`, `simulate:email`,
-`upgrade:check`. No test suite in the parent repo (the module and brain have their own).
+`upgrade:check`. `npm run lint` = `eslint .` (eslint 9 + eslint-config-next, flat config).
+No test suite in the parent repo (the module and brain have their own).
 
 ---
 

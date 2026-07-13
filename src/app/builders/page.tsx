@@ -27,6 +27,7 @@ const WEBINAR_URL = "/media/ai-in-the-workplace-webinar-2026-05.mp4";
 const RECAP_URL = "https://youtube.com/shorts/XFpJpTT4_MI";
 
 export default function BuildersPage() {
+  // eslint-disable-next-line react-hooks/purity -- force-dynamic server page; per-request clock read is the point
   const workshopOpen = Date.now() < WORKSHOP_STARTS;
 
   return (
