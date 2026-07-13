@@ -16,7 +16,8 @@
 > host-owned tables and scripts); rebuild the module from its own doc.
 
 Last verified against code: 2026-07-13 (brain submodule v1.95, @aicompany/core v1.3.0
-(master ec71b61: v1.3.0 + the v1.2.2/v1.2.3 ports),
+(master c107a41: v1.3.0 + the v1.2.2/v1.2.3 ports + the 2026-07-13 mobile-UX
+hardening released as v1.3.1),
 Next.js 16.2.9).
 
 ---
@@ -107,7 +108,7 @@ aiwebsite/
 │   └── types/                  custom-element JSX typings
 ├── packages/brain/             git submodule ← https://github.com/adampr/xldev.git (§7)
 ├── packages/aicompany/         git submodule ← https://github.com/adampr/aicompany.git —
-│                               @aicompany/core v1.3.0 (ec71b61), installed as a file: dependency;
+│                               @aicompany/core v1.3.0 (c107a41 = v1.3.1 content on master), installed as a file: dependency;
 │                               channels, auth, admin, tracking, texting, memory, SEO,
 │                               crawler, deploy templates (its own architecture.md is canonical)
 ├── data/                       VM-GENERATED knowledge files — gitignored from deploy --delete,
