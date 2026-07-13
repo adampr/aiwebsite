@@ -37,7 +37,7 @@
 
   /* Lines — hairlines carry the whole system */
   --xl-line: oklch(0.28 0.012 250);
-  --xl-line-bright: oklch(0.42 0.03 220);
+  --xl-line-bright: oklch(0.50 0.03 220); /* >=3:1 on bg-0/1/2 (WCAG 1.4.11; worst: 3.22 on bg-2) */
 
   /* Status (muted) */
   --xl-ok: oklch(0.72 0.09 165);
@@ -83,12 +83,12 @@
   --xl-bg-2: oklch(0.92 0.01 80);
 
   /* Light — deepened Tron cyan for contrast on paper */
-  --xl-light: oklch(0.55 0.11 220);
-  --xl-light-dim: oklch(0.52 0.09 219); /* AA: was 0.66 → 2.8:1; sys-labels/focus ring need ≥4.5:1 */
+  --xl-light: oklch(0.49 0.11 220); /* AA: >=4.5:1 on bg-0/1/2 (worst: 4.63 on bg-2) */
+  --xl-light-dim: oklch(0.50 0.09 219); /* AA: >=4.5:1 on bg-0/1/2 (worst: 4.59 on bg-2); sys-labels/focus ring */
   --xl-light-glow: oklch(0.55 0.11 220 / 0.2);
 
   /* Sand — burnished bronze */
-  --xl-sand: oklch(0.58 0.09 70);
+  --xl-sand: oklch(0.51 0.09 70); /* AA: >=4.5:1 on bg-0/1/2 (worst: 4.62 on bg-2) */
   --xl-sand-glow: oklch(0.58 0.09 70 / 0.18);
 
   /* Text — warm ink */
@@ -98,11 +98,11 @@
 
   /* Lines */
   --xl-line: oklch(0.87 0.01 80);
-  --xl-line-bright: oklch(0.76 0.03 210);
+  --xl-line-bright: oklch(0.60 0.04 210); /* >=3:1 on bg-0/1/2 (WCAG 1.4.11; worst: 3.06 on bg-2) */
 
   /* Status — deepened */
-  --xl-ok: oklch(0.55 0.1 165);
-  --xl-warn: oklch(0.6 0.11 85);
+  --xl-ok: oklch(0.49 0.10 165); /* AA: >=4.5:1 on bg-0/1/2 (worst: 4.69 on bg-2) */
+  --xl-warn: oklch(0.50 0.11 85); /* AA: >=4.5:1 on bg-0/1/2 (worst: 4.77 on bg-2) */
   --xl-danger: oklch(0.52 0.14 25);
 }
 
@@ -148,7 +148,10 @@
   --site-surface-raised: var(--xl-bg-2);
   --site-text: var(--xl-text);
   --site-text-muted: var(--xl-text-dim);
-  --site-line: var(--xl-line);
+  /* Module form fields / toggles use --site-line for their boundaries:
+     bridge to the bright line so they pass WCAG 1.4.11 (3:1). Raw
+     --xl-line stays reserved for decorative host hairlines. */
+  --site-line: var(--xl-line-bright);
   --site-accent: var(--xl-light);
   --site-accent-2: var(--xl-sand);
   --site-accent-contrast: var(--xl-bg-0);   /* .btn--primary text on light fill */
@@ -185,7 +188,7 @@
   --site-surface-raised: var(--xl-bg-2);
   --site-text: var(--xl-text);
   --site-text-muted: var(--xl-text-dim);
-  --site-line: var(--xl-line);
+  --site-line: var(--xl-line-bright); /* module boundaries: 3:1, see :root note */
   --site-accent: var(--xl-light);
   --site-accent-2: var(--xl-sand);
   --site-accent-contrast: oklch(0.98 0.005 80); /* light .btn--primary text */
@@ -469,7 +472,7 @@ code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--xl-text-dim);
-  padding: var(--sp-1) 0;
+  padding: 12px 0; /* ~44px effective tap height (WCAG 2.5.8) */
   position: relative;
 }
 .nav a:hover { color: var(--xl-text); }
@@ -490,6 +493,9 @@ code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
   color: var(--xl-text);
 }
 .logo em { font-style: normal; color: var(--xl-light); }
+
+/* Footer link lists: 44px effective tap height (WCAG 2.5.8) */
+footer li a { display: inline-flex; min-height: 44px; align-items: center; }
 
 /* ------------------------------------------------------------
    8 · BADGES + STATS
@@ -664,11 +670,16 @@ code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
 }
 
 /* Rise — entrance for content (pair with IntersectionObserver
-   adding .is-visible, or use as a plain load animation) */
+   adding .is-visible, or use as a plain load animation).
+   Fail-visible: the hidden state only applies once FuturismFx has
+   confirmed it is running by adding html.fx-ready, so without JS
+   (or if the script fails) everything renders. */
 .rise {
+  transition: opacity 1.1s var(--ease-drift), transform 1.1s var(--ease-drift);
+}
+.fx-ready .rise:not(.is-visible) {
   opacity: 0;
   transform: translateY(24px);
-  transition: opacity 1.1s var(--ease-drift), transform 1.1s var(--ease-drift);
 }
 .rise.is-visible { opacity: 1; transform: none; }
 
@@ -837,12 +848,25 @@ code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
   .nav { gap: var(--sp-4) var(--sp-6); padding: var(--sp-4) var(--sp-6); }
   .nav .badge { display: none; }
 }
+@media (max-width: 640px) {
+  /* Long tracked-caps CTA labels, badges and display headings must wrap
+     instead of inflating min-content width past the viewport. */
+  .btn { white-space: normal; letter-spacing: 0.12em; text-align: center; }
+  .badge { white-space: normal; }
+  h2 { font-size: clamp(1.2rem, 6vw, var(--text-2xl)); overflow-wrap: anywhere; }
+  /* Entrance motion is snappier on phones. */
+  .rise { transition-duration: var(--dur-med); }
+}
 @media (max-width: 600px) {
   .grid--2, .grid--3, .grid--4 { grid-template-columns: 1fr; }
-  h1 { font-size: var(--text-3xl); }
+  h1 { font-size: clamp(1.6rem, 7.5vw, var(--text-4xl)); }
+}
+@media (max-width: 480px) {
+  h1 { letter-spacing: 0.06em; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
   html { scroll-behavior: auto; }
+  .rise { opacity: 1 !important; transform: none !important; }
 }

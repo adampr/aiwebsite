@@ -29,6 +29,12 @@
   .pulse { animation: logo-pulse 7s ease-in-out infinite; }
   .traveler { offset-path: path('M 4 60 A 56 18 0 0 0 116 60 A 56 18 0 0 0 4 60'); animation: logo-orbit-move 14s linear infinite; }
   @media (prefers-reduced-motion: reduce) { .runner, .pulse, .traveler { animation: none; } .runner { display: none; } }
+  /* Small embeds (~294-342px iframes): shrink the lockup so the full wordmark fits. */
+  @media (max-width: 480px) {
+    .lockup { padding: 16px; }
+    .orb { width: clamp(72px, 18vw, 130px); }
+    .wm { width: min(400px, 55vw); }
+  }
 </style>
 </head>
 <body>

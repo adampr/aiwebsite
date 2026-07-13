@@ -73,7 +73,9 @@ export default function RootLayout({
           Skip to content
         </a>
 
-        <header className="sticky top-0 z-40">
+        {/* Sticky only from md up: on phones the 4-row wrapped header would
+            otherwise occupy a third of the viewport and bury anchor targets. */}
+        <header className="md:sticky md:top-0 z-40">
           <nav className="nav" aria-label="Main navigation">
             <Link
               href="/"
@@ -108,7 +110,9 @@ export default function RootLayout({
           </nav>
         </header>
 
-        <main id="main-content" className="mx-auto max-w-7xl px-6 py-12">
+        {/* pb-24 keeps the last content line (e.g. /texting compliance fine
+            print) scrollable above the 56px module chat launcher. */}
+        <main id="main-content" className="mx-auto max-w-7xl px-6 pt-12 pb-24">
           {children}
         </main>
 
