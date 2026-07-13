@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Ten real, running AI systems built in the open by XL.net — engine, middleware, production sites, client-delivery platforms, access layers, and autonomy experiments.",
+    "Ten real, running AI systems built in the open by XL.net: engine, middleware, production sites, client-delivery platforms, access layers, and autonomy experiments.",
   alternates: { canonical: "/work" },
   openGraph: {
-    title: "Our Work — XL.net AI",
+    title: "Our Work | XL.net AI",
     description:
-      "Ten real, running AI systems built in the open by XL.net — engine, middleware, production sites, client-delivery platforms, access layers, and autonomy experiments.",
+      "Ten real, running AI systems built in the open by XL.net: engine, middleware, production sites, client-delivery platforms, access layers, and autonomy experiments.",
   },
 };
 
@@ -17,7 +17,7 @@ function BuildersChip() {
   return (
     <div className="text-center">
       <Link href="/builders" className="btn btn--text no-underline">
-        Learn to build things like this →
+        Learn to build things like this <span aria-hidden="true">→</span>
       </Link>
     </div>
   );
@@ -34,7 +34,7 @@ export default function WorkPage() {
         </h1>
         <p className="mx-auto mt-6 max-w-3xl text-lg">
           Everything below is real and running, built by a Chicago managed-IT
-          firm using AI — including the site you&apos;re reading. Consider this
+          firm using AI, including the site you&apos;re reading. Consider this
           a tour of the lab. Tron Netter, in the corner, will answer questions
           about any of it.
         </p>
@@ -51,13 +51,13 @@ export default function WorkPage() {
         {/* 1. Software Brain */}
         <section id="brain" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
-            <span className="badge badge--light">
-              <span className="dot" /> Core engine
+            <span className="badge badge--ok">
+              <span className="dot" /> 110 automated checks passing
             </span>
-            <span className="badge badge--ok">110 automated checks passing</span>
+            <span className="badge badge--light">Core engine</span>
           </div>
           <h2 className="mt-6">Software Brain</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mt-2 text-sm text-faint">
             The engine behind everything on this page.
           </p>
           <p className="mt-4 text-sm">
@@ -68,7 +68,7 @@ export default function WorkPage() {
             could reconstruct it from the document alone. Every other exhibit
             below runs on it.
           </p>
-          <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mono mt-6 text-xs text-faint">
             TypeScript monorepo · scoped memory · voice (STT/TTS/realtime) ·
             canonical architecture doc v17
           </p>
@@ -83,22 +83,25 @@ export default function WorkPage() {
 
         {/* 2. @aicompany/core */}
         <section id="aicompany" className="panel rise">
-          <span className="badge badge--light">
-            <span className="dot" /> Middleware · 2 production sites
-          </span>
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · 2 production sites
+            </span>
+            <span className="badge badge--light">Middleware</span>
+          </div>
           <h2 className="mt-6">@aicompany/core</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mt-2 text-sm text-faint">
             An entire AI-company website in one config file.
           </p>
           <p className="mt-4 text-sm">
             Reusable middleware that gives any business an AI persona across web
-            chat, SMS, email, and voice — plus OAuth sign-in, an admin console,
+            chat, SMS, email, and voice, plus OAuth sign-in, an admin console,
             first-party analytics, SEO surfaces, a nightly knowledge crawler, and
             a single-VM deploy stack. One <span className="mono">site.config.ts</span>{" "}
             drives all of it. It ships today as a git submodule inside two live
             production sites: this one and IT Support Chicago.
           </p>
-          <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mono mt-6 text-xs text-faint">
             chat / SMS / email / voice · admin console · analytics · nightly
             crawler · one config file
           </p>
@@ -106,25 +109,27 @@ export default function WorkPage() {
 
         {/* 3. ai.xl.net */}
         <section id="aiwebsite" className="panel panel--lightline rise">
-          <span className="badge badge--ok">
-            <span className="dot" /> Live — you&apos;re on it
-          </span>
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" />{" "}Live · you&apos;re on it
+            </span>
+          </div>
           <h2 className="mt-6">ai.xl.net</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
-            The site you&apos;re reading right now — our maximum-oversight
+          <p className="mt-2 text-sm text-faint">
+            The site you&apos;re reading right now: our maximum-oversight
             deployment.
           </p>
           <p className="mt-4 text-sm">
             Every constraint here is a decision, not a limitation. Every email
-            our AI sends is BCC&apos;d to a human — so nothing leaves
+            our AI sends is BCC&apos;d to a human, so nothing leaves
             unreviewed. The public persona has no tools and no live internet
-            access — so it can never take an action we haven&apos;t designed.
-            Its knowledge is a nightly crawl of xl.net and ai.xl.net — so it
+            access, so it can never take an action we haven&apos;t designed.
+            Its knowledge is a nightly crawl of xl.net and ai.xl.net, so it
             only speaks about what we publish. Safe by architecture, not by
             promise. Try it: chat, text, email, or call Tron Netter on this
             page.
           </p>
-          <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mono mt-6 text-xs text-faint">
             human BCC on all outbound email · no tools, no internet · nightly
             knowledge crawl · single Azure VM behind a Cloudflare tunnel
           </p>
@@ -132,24 +137,26 @@ export default function WorkPage() {
 
         {/* 4. IT Support Chicago */}
         <section id="itsupportchicago" className="panel rise">
-          <span className="badge badge--warn">
-            <span className="dot" /> Autonomy experiment
-          </span>
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--warn">
+              <span className="dot" /> Autonomy experiment
+            </span>
+          </div>
           <h2 className="mt-6">IT Support Chicago</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
-            Our controlled autonomy experiment — the deliberate opposite of the
+          <p className="mt-2 text-sm text-faint">
+            Our controlled autonomy experiment: the deliberate opposite of the
             site you&apos;re on.
           </p>
           <p className="mt-4 text-sm">
             itsupportchicago.net was designed as a test of a 100% autonomous
             organization: how far can an AI-run operation go with no human in
-            the loop? It runs sandboxed, on its own hardened infrastructure —
-            a GCP confidential VM with AMD SEV memory encryption, Shielded VM
-            boot integrity, IAP-only SSH, and deny-all ingress — fully separate
+            the loop? It runs sandboxed, on its own hardened infrastructure: a
+            GCP confidential VM with AMD SEV memory encryption, Shielded VM
+            boot integrity, IAP-only SSH, and deny-all ingress, fully separate
             from XL.net client systems. Maximum oversight here, maximum autonomy
             there: we run both, on purpose, to learn where the line is.
           </p>
-          <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mono mt-6 text-xs text-faint">
             GCP confidential VM (AMD SEV) · Shielded VM · IAP-only SSH ·
             deny-all ingress
           </p>
@@ -160,6 +167,7 @@ export default function WorkPage() {
             className="btn mt-6 no-underline"
           >
             Visit itsupportchicago.net
+            <span className="sr-only"> (opens in a new tab)</span>
           </a>
         </section>
       </section>
@@ -181,32 +189,31 @@ export default function WorkPage() {
             <span className="badge badge--light">Live client pipeline</span>
           </div>
           <h2 className="mt-6">QBR Machine</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
-            A client name in — a complete quarterly review package out.
+          <p className="mt-2 text-sm text-faint">
+            A client name in, a complete quarterly review package out.
           </p>
           <p className="mt-4 text-sm">
             The AI teammate working alongside our XL.net Technology Officers.
-            Not a chatbot
-            bolted onto a form: Claude Code running purpose-built, git-versioned
-            skills that produce the actual deliverables XL.net presents to
-            clients every quarter — sourced from live systems, with every number
-            traceable to where it came from.
+            Not a chatbot bolted onto a form: Claude Code running purpose-built,
+            git-versioned skills that produce the actual deliverables XL.net
+            presents to clients every quarter, sourced from live systems, with
+            every number traceable to where it came from.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--xl-light)" }}>
-                <span style={{ color: "var(--xl-text-faint)" }}>01 · </span>
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
                 Gap Analysis
               </h3>
               <p className="mt-3 text-sm">
                 A scored assessment of the client&apos;s security, network,
-                server, and workstation environment — validated and self-tested
+                server, and workstation environment, validated and self-tested
                 before a human ever sees it.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--xl-light)" }}>
-                <span style={{ color: "var(--xl-text-faint)" }}>02 · </span>
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
                 Asset Strategy
               </h3>
               <p className="mt-3 text-sm">
@@ -216,29 +223,28 @@ export default function WorkPage() {
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--xl-light)" }}>
-                <span style={{ color: "var(--xl-text-faint)" }}>03 · </span>
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
                 QBR Deck
               </h3>
               <p className="mt-3 text-sm">
                 The client-facing review itself: a frozen 11-slide template
-                where only the words change — fed real numbers from the Gap
+                where only the words change, fed real numbers from the Gap
                 Analysis and Asset Strategy, not estimates.
               </p>
             </div>
           </div>
           <p className="mt-8 text-sm">
             Every provider connection runs through{" "}
-            <a href="#lakehouse">XL Lakehouse</a>, our scoped and
-            audited access layer — no provider API keys ever live in the
-            AI&apos;s workspace. Its memory persists, too: client context,
-            feedback, and working agreements carry forward quarter to quarter
-            instead of resetting every conversation.
+            <a href="#lakehouse">XL Lakehouse</a>, our scoped and audited
+            access layer. No provider API keys ever live in the AI&apos;s
+            workspace. Its memory persists, too: client context, feedback, and
+            working agreements carry forward quarter to quarter instead of
+            resetting every conversation.
           </p>
-          <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
-            Claude Code + git-versioned skills · template-locked workbooks +
-            frozen 11-slide deck · validate → approve → self-test · XL Lakehouse
-            scoped access
+          <p className="mono mt-6 text-xs text-faint">
+            Claude Code · git-versioned skills · template-locked deliverables ·
+            validate, approve, self-test · Lakehouse-scoped access
           </p>
         </section>
 
@@ -251,31 +257,31 @@ export default function WorkPage() {
             <span className="badge badge--light">Live client pipeline</span>
           </div>
           <h2 className="mt-6">Onboarding Toolkit</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
-            A client name in — a documented IT environment out.
+          <p className="mt-2 text-sm text-faint">
+            A client name in, a documented IT environment out.
           </p>
           <p className="mt-4 text-sm">
             The platform XL.net techs use on every new MSP onboarding. One place
             to discover the network, capture identity and cloud posture,
-            validate completeness, and generate client runbooks — sourced from
+            validate completeness, and generate client runbooks, sourced from
             on-site scans, cloud connectors, and uploaded vendor reports, with
             every field traceable to where it came from.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--xl-light)" }}>
-                <span style={{ color: "var(--xl-text-faint)" }}>01 · </span>
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
                 Discovery
               </h3>
               <p className="mt-3 text-sm">
                 On-site network scans, M365 tenants, and uploaded vendor reports
-                merge into one inventory — deduplicated, classified, and ready
+                merge into one inventory: deduplicated, classified, and ready
                 for review.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--xl-light)" }}>
-                <span style={{ color: "var(--xl-text-faint)" }}>02 · </span>
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
                 Intake &amp; Review
               </h3>
               <p className="mt-3 text-sm">
@@ -285,13 +291,13 @@ export default function WorkPage() {
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em]" style={{ color: "var(--xl-light)" }}>
-                <span style={{ color: "var(--xl-text-faint)" }}>03 · </span>
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
                 Runbooks
               </h3>
               <p className="mt-3 text-sm">
-                Client IT runbooks — new hires, terminations, patch policy, LOB
-                apps — pre-fill from discovery data and refine with AI before
+                Client IT runbooks (new hires, terminations, patch policy, LOB
+                apps) pre-fill from discovery data and refine with AI before
                 export to documentation.
               </p>
             </div>
@@ -299,9 +305,9 @@ export default function WorkPage() {
           <p className="mt-8 text-sm">
             Client data stays scoped to the project: SSO login, a full audit
             trail, human approval on every change. An in-app AI assistant
-            proposes edits — nothing writes until a tech approves it.
+            proposes edits; nothing writes until a tech approves it.
           </p>
-          <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mono mt-6 text-xs text-faint">
             on-site discovery · cloud connectors · AI-assisted runbooks ·
             human-in-the-loop · audit everything
           </p>
@@ -327,55 +333,46 @@ export default function WorkPage() {
             <span className="badge badge--light">Internal platform</span>
           </div>
           <h2 className="mt-6">XL Lakehouse</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
-            One vault holds every key — apps borrow access, never secrets.
+          <p className="mt-2 text-sm text-faint">
+            One vault holds every key; apps borrow access, never secrets.
           </p>
           <p className="mt-4 text-sm">
             The access layer behind every XL.net AI teammate. Instead of
             scattering provider keys across workspaces, internal apps connect
-            once to Lakehouse — which holds the credentials, enforces what each
+            once to Lakehouse, which holds the credentials, enforces what each
             app is allowed to touch, and makes every upstream call itself, so
             secrets never leave the vault.
           </p>
-          <div className="mt-8">
-            <div className="border-t border-[var(--xl-line)] py-4 md:flex md:items-baseline md:gap-8">
-              <h3
-                className="mono text-xs uppercase tracking-[0.2em] md:w-48 md:flex-shrink-0"
-                style={{ color: "var(--xl-light)" }}
-              >
-                <span style={{ color: "var(--xl-text-faint)" }}>01 · </span>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
                 Scoped Access
               </h3>
-              <p className="mt-3 text-sm md:mt-0">
+              <p className="mt-3 text-sm">
                 Each AI workspace gets only the providers and operations it
-                needs — nothing broader, nothing permanent without approval.
+                needs: nothing broader, nothing permanent without approval.
               </p>
             </div>
-            <div className="border-t border-[var(--xl-line)] py-4 md:flex md:items-baseline md:gap-8">
-              <h3
-                className="mono text-xs uppercase tracking-[0.2em] md:w-48 md:flex-shrink-0"
-                style={{ color: "var(--xl-light)" }}
-              >
-                <span style={{ color: "var(--xl-text-faint)" }}>02 · </span>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
                 Curated Tools
               </h3>
-              <p className="mt-3 text-sm md:mt-0">
+              <p className="mt-3 text-sm">
                 Common workflows ship as ready-made playbooks with guardrails:
                 reads enabled, writes off by default, destructive actions
                 structurally absent.
               </p>
             </div>
-            <div className="border-t border-[var(--xl-line)] py-4 md:flex md:items-baseline md:gap-8">
-              <h3
-                className="mono text-xs uppercase tracking-[0.2em] md:w-48 md:flex-shrink-0"
-                style={{ color: "var(--xl-light)" }}
-              >
-                <span style={{ color: "var(--xl-text-faint)" }}>03 · </span>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
                 Audit Trail
               </h3>
-              <p className="mt-3 text-sm md:mt-0">
+              <p className="mt-3 text-sm">
                 Every call is logged with who asked, which app, which
-                credential, and what happened — so access can be reviewed,
+                credential, and what happened, so access can be reviewed,
                 rotated, and revoked without guesswork.
               </p>
             </div>
@@ -385,10 +382,10 @@ export default function WorkPage() {
             anyone&apos;s chat session. Humans approve new apps and expanded
             access, and credentials stay tied to the person responsible for
             them. When the <a href="#qbr-machine">QBR Machine</a> pulls live
-            Autotask and VSA numbers, it goes through here — so the deliverable
+            Autotask and VSA numbers, it goes through here, so the deliverable
             stays traceable end to end.
           </p>
-          <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mono mt-6 text-xs text-faint">
             scoped access · per-human credentials · write-default-off · full
             audit log · self-service access requests
           </p>
@@ -403,60 +400,52 @@ export default function WorkPage() {
             <span className="badge badge--light">Console live</span>
           </div>
           <h2 className="mt-6">XL API Gateway</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mt-2 text-sm text-faint">
             Your cloud, your keys, one governed front door.
           </p>
           <p className="mt-4 text-sm">
-            What <a href="#lakehouse">XL Lakehouse</a> does inside XL.net, the
-            Gateway does inside each client&apos;s own cloud: one local proxy
+            What <a href="#lakehouse">XL Lakehouse</a>{" "}
+            does inside XL.net, the Gateway does inside each
+            client&apos;s own cloud: one local proxy
             that Cursor workspaces, internal tools, and developer VMs call
             instead of holding provider keys themselves. Operators onboard a
             client once, provision a site from the console, and wire who may
             reach which upstream API from a single place. The console is live;
             client gateways are deploying now.
           </p>
-          <div className="mt-8">
-            <div className="border-t border-[var(--xl-line)] py-4 md:flex md:items-baseline md:gap-8">
-              <h3
-                className="mono text-xs uppercase tracking-[0.2em] md:w-48 md:flex-shrink-0"
-                style={{ color: "var(--xl-light)" }}
-              >
-                <span style={{ color: "var(--xl-text-faint)" }}>01 · </span>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
                 Deploy
               </h3>
-              <p className="mt-3 text-sm md:mt-0">
-                Provision a gateway — and optional locked-down developer VMs —
+              <p className="mt-3 text-sm">
+                Provision a gateway (and optional locked-down developer VMs)
                 into the client&apos;s own subscription, with live health
                 visibility and a controlled path to take a site down.
               </p>
             </div>
-            <div className="border-t border-[var(--xl-line)] py-4 md:flex md:items-baseline md:gap-8">
-              <h3
-                className="mono text-xs uppercase tracking-[0.2em] md:w-48 md:flex-shrink-0"
-                style={{ color: "var(--xl-light)" }}
-              >
-                <span style={{ color: "var(--xl-text-faint)" }}>02 · </span>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
                 Govern Access
               </h3>
-              <p className="mt-3 text-sm md:mt-0">
+              <p className="mt-3 text-sm">
                 Register consumer apps, map upstream providers, store
                 credentials in the client&apos;s vault, and grant access per
-                app — deactivated credentials fail closed, and every change
+                app. Deactivated credentials fail closed, and every change
                 leaves an audit trail.
               </p>
             </div>
-            <div className="border-t border-[var(--xl-line)] py-4 md:flex md:items-baseline md:gap-8">
-              <h3
-                className="mono text-xs uppercase tracking-[0.2em] md:w-48 md:flex-shrink-0"
-                style={{ color: "var(--xl-light)" }}
-              >
-                <span style={{ color: "var(--xl-text-faint)" }}>03 · </span>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
                 Route Traffic
               </h3>
-              <p className="mt-3 text-sm md:mt-0">
+              <p className="mt-3 text-sm">
                 The gateway checks each caller&apos;s identity and permissions,
                 attaches the right credential, forwards the request upstream,
-                and returns the response unchanged — usage counted per app,
+                and returns the response unchanged, with usage counted per app,
                 provider, and credential.
               </p>
             </div>
@@ -466,9 +455,10 @@ export default function WorkPage() {
             workspaces: they are fetched from the client&apos;s vault only when
             a permitted request needs them, verified before go-live, and cut
             off the moment a grant or credential is revoked. Fleet alerts and
-            scheduled updates keep sites current — no mailing API keys around.
+            scheduled updates keep sites current; no API keys get mailed
+            around.
           </p>
-          <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mono mt-6 text-xs text-faint">
             per-client isolation · vault-backed credentials · grant-checked
             proxy · audited fleet operations
           </p>
@@ -476,7 +466,7 @@ export default function WorkPage() {
       </section>
 
       {/* Group: what we're testing */}
-      <section aria-label="What We&apos;re Testing" className="space-y-16">
+      <section aria-label="What We're Testing" className="space-y-16">
         <div className="text-center">
           <span className="sys-label sys-label--center">
             05 · What We&apos;re Testing
@@ -485,23 +475,26 @@ export default function WorkPage() {
 
         {/* 9. Roleplay */}
         <section id="roleplay" className="panel panel--lightline rise">
-          <span className="badge badge--light">
-            <span className="dot" /> Public · sign-in with approval
-          </span>
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · public
+            </span>
+            <span className="badge badge--light">Sign-in with approval</span>
+          </div>
           <h2 className="mt-6">Roleplay</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mt-2 text-sm text-faint">
             A public multi-user AI playground running directly on the Brain SDK.
           </p>
           <p className="mt-4 text-sm">
             roleplay.xl.net is our external-tenant experiment: the Software
             Brain&apos;s orchestrator, memory, and voice packages running
-            in-process to power multi-user AI roleplay, with real-time voice via
-            STT/TTS and xAI realtime. Google sign-in with admin approval gates
-            entry, and the tenant&apos;s data lives in its own isolated
-            databases, completely separate from everything else we run — your
-            data stays yours.
+            in-process to power multi-user AI roleplay, with live voice via
+            STT/TTS and the xAI realtime API. Google sign-in with admin
+            approval gates entry, and the tenant&apos;s data lives in its own
+            isolated databases, completely separate from everything else we
+            run: your data stays yours.
           </p>
-          <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mono mt-6 text-xs text-faint">
             Brain SDK in-process · realtime voice · Google sign-in + approval ·
             isolated per-tenant databases
           </p>
@@ -512,27 +505,31 @@ export default function WorkPage() {
             className="btn mt-6 no-underline"
           >
             Visit roleplay.xl.net
+            <span className="sr-only"> (opens in a new tab)</span>
           </a>
         </section>
 
         {/* 10. Leo Netter */}
         <section id="leo-netter" className="panel rise">
-          <span className="badge">
-            <span className="dot" /> Internal test
-          </span>
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge">
+              <span className="dot" /> Internal test
+            </span>
+          </div>
           <h2 className="mt-6">Leo Netter</h2>
-          <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mt-2 text-sm text-faint">
             The AI teammate we test on ourselves first.
           </p>
           <p className="mt-4 text-sm">
-            Leo Netter is an internal-only Slack bot test: a Slack DM-only,
-            memory-bearing assistant for the XL.net team, built on the Brain
-            SDK. It never talks to customers — it exists so we hit the rough
-            edges before anyone else does. Its development is governed by a
-            strict architecture-is-canonical contract: every behavior, tool, and
-            test is written into the architecture document before code lands.
+            Leo Netter is our internal test bot: a memory-bearing assistant
+            that lives only in Slack DMs for the XL.net team, built on the
+            Brain SDK. It never talks to customers; it exists so we hit the
+            rough edges before anyone else does. Its development is governed by
+            a strict architecture-is-canonical contract: every behavior, tool,
+            and test is written into the architecture document before code
+            lands.
           </p>
-          <p className="mono mt-6 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+          <p className="mono mt-6 text-xs text-faint">
             Slack DM-only · internal to the XL.net team · architecture-is-canonical
             governance
           </p>
@@ -548,7 +545,7 @@ export default function WorkPage() {
           <h2 className="mt-8">Want to build things like this?</h2>
           <p className="mx-auto mt-6">
             You just toured our lab. We teach teams to build their own AI
-            workflows and automations — the smart and safe way.
+            workflows and automations, the smart and safe way.
           </p>
           <div className="mt-10 flex flex-wrap justify-center gap-6">
             <Link href="/builders" className="btn btn--sand no-underline">

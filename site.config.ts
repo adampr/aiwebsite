@@ -161,6 +161,9 @@ export const siteConfig = defineSiteConfig({
     launcherLabel: "Open Tron Netter chat",
     position: "bottom-right",
     unavailableMessage: "Sorry, I encountered an error. Please try again.",
+    // Override the @aicompany/core default, which contains an em dash.
+    disconnectedMessage:
+      "The connection dropped mid-reply. This answer may be incomplete.",
   },
 
   channels: {
@@ -256,7 +259,7 @@ export const siteConfig = defineSiteConfig({
       enabled: true,
       title: "Text with Tron Netter",
       body:
-        "Get answers from our AI agent by text, wherever you are — no browser " +
+        "Get answers from our AI agent by text, wherever you are. No browser " +
         "needed. Optional, and never required to use this site.",
       cta: "Add my number",
       snoozeDays: 14,
