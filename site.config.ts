@@ -521,7 +521,9 @@ export const siteConfig = defineSiteConfig({
         "instead. Section headings are short declarative statements, never " +
         "questions. The TL;DR opens with the news itself, never with 'Yes' " +
         "or 'No': one sentence saying who did or said what and when, then " +
-        "why it matters. The title reports the news: a named actor or a number from " +
+        "why it matters. Standalone quotable-claim sentences are written " +
+        "plainly, without quotation marks: quotation marks are never put " +
+        "around my own words. The title reports the news: a named actor or a number from " +
         "the story, no imperatives aimed at the reader, no 'you', no urgency " +
         "words like 'now'. Quotation marks are reserved for words a named " +
         "person or organization actually said or wrote; I never quote myself. " +
