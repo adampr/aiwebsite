@@ -165,13 +165,14 @@ admin console under `/admin/*` (§5.6):
 | `/privacy` | thin wrapper (server component) | Renders the module's `<PrivacyPolicyPage config={siteConfig} lastUpdated="July 2026"/>` — the policy is generated from the same config values the code enforces (tracking flags, cookie name, retention windows, enabled channels). Keeps the page's own `metadata` export |
 | `/sms-terms` | thin wrapper (server component) | Renders the module's `<SmsTermsPage config={siteConfig} lastUpdated="July 2026"/>` — program description, opt-in methods, verification mechanics from `texting.verification`, frequency/rates, STOP/HELP, carriers, privacy cross-link, contact. Keeps the page's own `metadata` export |
 | `/blog` + `/blog/[slug]` | thin wrappers over `@aicompany/core/blog/{index-page,article-page}` (`revalidate = 60`) | AI-news blog (§5.11, module §19). Index lists published articles (custom Tron-voiced copy from `blog.copy`); `[slug]` renders one `ArticleDoc` deterministically with the AI-authorship disclosure + `Article` JSON-LD. Metadata (canonical, OG, `noindex` for gate-failed rows) from `blog/metadata` |
+| `/methodology` | custom static page (server component) | Editorial methodology + corrections policy (added 2026-07-14 after the process reviews): pipeline description, the 12 reader-facing checklist items, corrections contact, funding/COI statement. Referenced by `blog.authorship.methodologyUrl` → `publishingPrinciples` in the Article JSON-LD (module §19.4); cleared the standing config:check WARN |
 
 Header nav: Home, Our Work, AI Builders, **AI News (`/blog`)**, Contact. The footer links
 Home, Our Work, AI Builders, AI News, Contact, Text with Tron Netter (`/texting`), Account
 (`/account` — the §12.7 account affordance the module's `<UserMenu/>` deliberately does not
 grow), Privacy Policy, SMS Terms, and the main xl.net site. The homepage carries teaser panels for `/work`
 and `/builders` between the capabilities grid and the closing CTA. Sitemap entries: `/`,
-`/work`, `/builders`, `/contact`, `/privacy`, `/sms-terms`, `/texting`, plus the module's
+`/work`, `/builders`, `/contact`, `/methodology`, `/privacy`, `/sms-terms`, `/texting`, plus the module's
 `blogSitemapEntries` (the `/blog` index once ≥1 published, and each indexable article —
 noindexed/gate-failed rows excluded). `sitemap.ts` exports `revalidate = 3600` — without
 it Next bakes the route at build time and nightly-published articles never enter the
@@ -679,17 +680,32 @@ no reader-directed imperatives in titles, quotes only for real attributed speech
 persona opinion fenced into one closing "Tron's take" section (≤~25%) with a one-line
 disclosure when the advice overlaps services XL.net sells; `bannedPhrases` additionally
 scrubs pipeline-residue phrases ("the fact sheet", "the source material", …) via the
-module's mechanical contract-gate scrub. All rendering, gates, admin, RSS,
+module's mechanical contract-gate scrub. The standard's enforceable form is the
+**16-item template checklist** in `src/lib/blog/editorial-checklist.ts`
+(`NEWS_ARTICLE_CHECKLIST`, adopted 2026-07-14 from a second round of process+archive
+reviews), appended to `editorial.styleGuide` so it rides in both the writer prompt and
+the rubric's voiceAdherence scoring: source floor + independence, primary-first citing,
+**every source hyperlinked at first mention using its fact-sheet "Cite as" URL verbatim**
+(the archive had ZERO external links while the disclosure promised them), no invented
+URLs, normalized "Month D, YYYY" dates, >1y age flags, single-source hedging for
+extraordinary claims, headline/lede/TL;DR/heading form, quote + statistic integrity,
+attribution grammar (full at first mention then short form), opinion fence, COI line,
+dated editor's notes on republished articles. A reader-facing summary lives at
+`/methodology`. All rendering, gates, admin, RSS,
 sitemap, and the nightly job itself live in `@aicompany/core` — the host owns only:
 
 - **The news seam** (`src/lib/blog/news.ts` + `scripts/fetch-ai-news.mjs`). The
   module picks a topic *before* `dataSource.getContext` runs (calendar → strategist,
   neither sees live data), so today's news is injected two ways, both fed by
-  `scripts/fetch-ai-news.mjs` (plain-Node ESM; Tavily `POST /search` `topic:"news",
-  days:1`; drops results whose cleaned **title** has no AI term — a generic outlet
-  page outscored every AI headline and got published 2026-07-14; zero relevant
-  results = exit 1, same stale-file degradation as a failed fetch; writes
-  `data/ai-news-today.json` atomically). `newsCalendarEntries()` turns
+  `scripts/fetch-ai-news.mjs` (plain-Node ESM; **two** Tavily `POST /search` calls
+  `topic:"news", days:1` — the fixed general query plus one of four rotating beat
+  queries (model releases / regulation / security incidents / enterprise adoption,
+  day-of-year modulo; single-query top-result-wins produced five straight
+  governance-anxiety stories), merged by URL keeping the higher score; drops results
+  whose cleaned **title** has no AI term — a generic outlet page outscored every AI
+  headline and got published 2026-07-14; zero relevant results = exit 1, same
+  stale-file degradation as a failed fetch; writes `data/ai-news-today.json`
+  atomically). `newsCalendarEntries()` turns
   the top story into a **one-entry `topics.calendar`** (slug carries the date, so a
   consumed entry never blocks the next day; a fresh calendar slug is always chosen
   before the strategist and still passes the full topic gate). `newsSeedHints()` gives
@@ -699,7 +715,11 @@ sitemap, and the nightly job itself live in `@aicompany/core` — the host owns 
   numeric-token count clamps the named-stats gate honestly); each source body is
   capped at ~2,500 chars **at a sentence boundary** (word-boundary fallback) — a hard
   mid-word slice here fed the fact-check gate truncated facts and noindexed the
-  2026-07-12 article; a provider throw is the module's sanctioned WARN-skip.
+  2026-07-12 article; a provider throw is the module's sanctioned WARN-skip. Each
+  source section (2026-07-14) carries `Published:` normalized to "Month D, YYYY"
+  (raw feed dates like "Thu, 18 Jun 2026 09:10:07 GMT" were being published verbatim
+  in article copy), a `(NOTE: more than a year old …)` flag past 365 days, and a
+  `Cite as: [hostname](url)` line the checklist's link rules key off.
 - **The prefetch trigger.** The blog systemd unit has no `ExecStartPre` hook, so
   `news.ts` runs `fetch-ai-news.mjs` via `execFileSync` at module load **only** when
   `process.argv[1]` ends with `blog-nightly.ts` and the file is missing/stale >20h —

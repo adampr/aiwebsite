@@ -15,6 +15,7 @@ import { defineSiteConfig } from "@aicompany/core/config";
 import { createGeminiHeroGenerator } from "@aicompany/core/blog/hero";
 import type { BrainIdentity } from "@aicompany/core/config/types";
 import { newsCalendarEntries, newsDataProvider, newsSeedHints } from "@/lib/blog/news";
+import { NEWS_ARTICLE_CHECKLIST } from "@/lib/blog/editorial-checklist";
 // Side-effect import: registerTables() must have run in every module graph
 // that executes module code (the table registry in @aicompany/core/db/client
 // is module-scope state, and each Next entrypoint bundles its own instance of
@@ -540,7 +541,11 @@ export const siteConfig = defineSiteConfig({
         "disclosure is relevant inside Tron's take, the wording is 'I am an " +
         "AI', never the phrase 'as an AI'. The news body before Tron's take " +
         "is neutral third person: the word 'I' appears only inside Tron's " +
-        "take.",
+        "take.\n\n" +
+        // The template checklist (src/lib/blog/editorial-checklist.ts) rides
+        // in the styleGuide so the writer drafts against it AND the rubric's
+        // voiceAdherence dimension scores conformance to it (module §19.5).
+        NEWS_ARTICLE_CHECKLIST,
       // "neutral-third" 2026-07-14: the body is wire-style reporting; the
       // persona's first person lives only in the fenced "Tron's take"
       // section per the styleGuide (was "persona-first-person", which
@@ -557,10 +562,12 @@ export const siteConfig = defineSiteConfig({
         // Pipeline internals must never leak into reader-facing copy
         // (2026-07-14 reviews: "the article cites its own digestive tract").
         "the fact sheet",
+        "the fact set",
         "the source material",
         "the source set",
         "the source argues",
         "source makes the point",
+        "the reporting describes",
       ],
       // dataSource grounds the facts; this belief grounds the SMB so-what
       // analysis (the fact-check gate treats belief-grounded opinion as
@@ -595,8 +602,10 @@ export const siteConfig = defineSiteConfig({
         "fact-checked this article through our automated AI editorial " +
         "pipeline; sources are linked in the text. Questions? Ask me in chat " +
         "or email Tron.Netter@ai.xl.net.",
-      // No methodology page yet — accepted config:check WARN, recorded in
-      // ARCHITECTURE.md §5.11.
+      // /methodology (src/app/methodology/page.tsx, added 2026-07-14):
+      // describes the pipeline, the checklist, and the corrections policy;
+      // emitted as publishingPrinciples in the Article JSON-LD.
+      methodologyUrl: "https://ai.xl.net/methodology",
     },
     quality: {
       // User decision: always publish; failed/skipped LLM gates go live

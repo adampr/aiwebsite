@@ -158,6 +158,35 @@ export function newsSeedHints(): string[] {
 const TAVILY_TIMEOUT_MS = 30_000;
 const SOURCE_BODY_MAX = 2500;
 
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** "Thu, 18 Jun 2026 09:10:07 GMT" → "June 18, 2026"; unparseable → null. */
+function formatSourceDate(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+}
+
+function sourceAgeDays(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  return Number.isFinite(t) ? Math.floor((Date.now() - t) / 86_400_000) : null;
+}
+
+/** Citable outlet label from a source URL: hostname without "www.". */
+function outletFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 /**
  * Cut text at a sentence boundary within `max` chars (word boundary as
  * fallback, hard cut as last resort) so fact-sheet sources never end
@@ -234,16 +263,33 @@ export const newsDataProvider: BlogDataProvider = {
     }
 
     const sections = results.map((r, i) => {
-      const date = r.published_date ? ` (published ${r.published_date})` : "";
       const body =
         truncateAtSentence((r.raw_content ?? "").replace(/\s+\n/g, "\n").trim()) ||
         (r.content ?? "").trim();
-      return `## Source ${i + 1}: ${r.title}${date}\nURL: ${r.url}\n\n${body}`;
+      // Raw feed dates ("Thu, 18 Jun 2026 09:10:07 GMT") passed straight
+      // through this builder and were PUBLISHED verbatim in article copy
+      // (2026-07-14 process review, finding P3) — normalize here, and flag
+      // year-old sources so the writer states their age (checklist item 6).
+      const published = formatSourceDate(r.published_date);
+      const ageDays = sourceAgeDays(r.published_date);
+      const ageNote =
+        ageDays !== null && ageDays > 365
+          ? " (NOTE: more than a year old; the article must state its age)"
+          : "";
+      const outlet = outletFromUrl(r.url!);
+      return [
+        `## Source ${i + 1}: ${r.title}`,
+        `Published: ${published ?? "date unknown; do not present as recent"}${ageNote}`,
+        `Cite as: [${outlet}](${r.url}) — link this URL at the source's first mention`,
+        ``,
+        body,
+      ].join("\n");
     });
     const factsMarkdown = [
       `# Fact sheet: ${entry.title}`,
       `Compiled ${new Date().toISOString()} from ${results.length} news sources via Tavily.`,
       `Every claim and number in the article must trace to a source section below.`,
+      `Every cited source must be hyperlinked at first mention using its "Cite as" URL verbatim; never use any other external URL.`,
       ...sections,
     ].join("\n\n");
 

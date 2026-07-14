@@ -118,23 +118,43 @@ function keywordsFromTitle(title) {
 const AI_RELEVANT =
   /\b(?:ai|a\.i\.|artificial intelligence|machine[- ]learning|deep[- ]learning|neural net(?:work)?s?|llms?|large language models?|gen(?:erative)?[ -]?ai|chatbots?|chatgpt|gpt-?\d\w*|openai|anthropic|claude|gemini|copilot|deepmind|agi|superintelligen\w+|agentic|grok|xai|llama|mistral|hugging face|foundation models?)\b/i;
 
-const query =
+// One fixed query produced beat monoculture: five straight governance-anxiety
+// stories, zero model-release coverage (2026-07-14 process review, P5). Run
+// the general query plus one rotating beat query and merge by URL, so the
+// day's pool always spans more than one editorial beat.
+const GENERAL_QUERY =
   "most significant artificial intelligence news today: model releases, " +
   "AI regulation, enterprise AI adoption, AI security incidents";
+const BEAT_QUERIES = [
+  "AI model release or product launch announced today",
+  "AI regulation law or government policy news today",
+  "AI security incident breach or vulnerability news today",
+  "enterprise AI adoption results or business impact news today",
+];
+const dayOfYear = Math.floor(
+  (Date.now() - Date.UTC(new Date().getUTCFullYear(), 0, 0)) / 86_400_000,
+);
+const beatQuery = BEAT_QUERIES[dayOfYear % BEAT_QUERIES.length];
 
-const data = await tavilySearch({
-  query,
-  topic: "news",
-  days: 1,
-  max_results: 10,
-  search_depth: "advanced",
-}).catch((err) => {
+const searchBody = { topic: "news", days: 1, max_results: 10, search_depth: "advanced" };
+const [general, beat] = await Promise.all([
+  tavilySearch({ query: GENERAL_QUERY, ...searchBody }),
+  tavilySearch({ query: beatQuery, ...searchBody }).catch((err) => {
+    console.error(`beat query failed (continuing on general only): ${err.message}`);
+    return { results: [] };
+  }),
+]).catch((err) => {
   console.error(`FATAL: news fetch failed: ${err.message}`);
   process.exit(1);
 });
 
-const fetched = (data.results || [])
-  .filter((r) => r && r.title && r.url)
+const byUrl = new Map();
+for (const r of [...(general.results || []), ...(beat.results || [])]) {
+  if (!r || !r.title || !r.url) continue;
+  const prev = byUrl.get(r.url);
+  if (!prev || (r.score ?? 0) > (prev.score ?? 0)) byUrl.set(r.url, r);
+}
+const fetched = [...byUrl.values()]
   .map((r) => ({ ...r, title: cleanTitle(r.title) }))
   .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
