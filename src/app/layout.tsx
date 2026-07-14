@@ -119,8 +119,8 @@ export default function RootLayout({
         <footer className="mt-24">
           <div className="mx-auto max-w-7xl px-6">
             <hr className="rule" />
-            <div className="grid gap-12 pb-12 sm:grid-cols-3">
-              <div>
+            <div className="grid gap-x-12 gap-y-10 pb-12 sm:grid-cols-5">
+              <div className="sm:col-span-5 lg:col-span-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src="/brand/xl-wordmark-dark.png"
@@ -138,9 +138,9 @@ export default function RootLayout({
                   transform managed IT services for SMBs.
                 </p>
               </div>
-              <div>
+              <div className="sm:col-span-3 lg:col-span-2">
                 <span className="sys-label">Links</span>
-                <ul className="mt-4 space-y-2 text-sm">
+                <ul className="mt-4 grid gap-y-2 text-sm sm:grid-flow-col sm:grid-cols-2 sm:grid-rows-5 sm:gap-x-6">
                   <li>
                     <Link href="/">Home</Link>
                   </li>
@@ -179,7 +179,7 @@ export default function RootLayout({
                   </li>
                 </ul>
               </div>
-              <div>
+              <div className="sm:col-span-2 lg:col-span-1">
                 <span className="sys-label">Contact</span>
                 <ul className="mt-4 space-y-2 text-sm">
                   <li>

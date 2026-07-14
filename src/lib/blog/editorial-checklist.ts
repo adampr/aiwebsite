@@ -70,5 +70,8 @@ PRE-PUBLISH CHECKLIST (every item is pass/fail; the article must pass all):
     recommendation ties to a specific fact in the day's story.
 16. UPDATES: when this article replaces an already-published version, the
     text includes a short dated editor's note saying what changed and why;
-    retired articles get a tombstone note, never a 404.
+    retired articles get a tombstone note, never a 404. Any mention of the
+    AI Desk's methodology or editorial standards is written as the markdown
+    link [methodology](/methodology), never as a bare "/methodology" path
+    or an unlinked plain-text reference.
 `.trim();

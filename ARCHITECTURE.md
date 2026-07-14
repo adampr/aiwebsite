@@ -693,8 +693,10 @@ the rubric's voiceAdherence scoring: source floor + independence, primary-first 
 URLs, normalized "Month D, YYYY" dates, >1y age flags, single-source hedging for
 extraordinary claims, headline/lede/TL;DR/heading form, quote + statistic integrity,
 attribution grammar (full at first mention then short form), opinion fence, COI line,
-dated editor's notes on republished articles. A reader-facing summary lives at
-`/methodology`. All rendering, gates, admin, RSS,
+dated editor's notes on republished articles, and any in-article mention of the
+methodology written as the markdown link `[methodology](/methodology)` (never a bare
+path — the 07-14 editor's notes shipped "see /methodology" as plain text). A
+reader-facing summary lives at `/methodology`. All rendering, gates, admin, RSS,
 sitemap, and the nightly job itself live in `@aicompany/core` — the host owns only:
 
 - **The news seam** (`src/lib/blog/news.ts` + `scripts/fetch-ai-news.mjs`). The
