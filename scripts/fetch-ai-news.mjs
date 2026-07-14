@@ -71,7 +71,8 @@ async function tavilySearch(body) {
 
 /** News APIs return "Headline - Publisher" / "Headline | Publisher" titles. */
 function cleanTitle(raw) {
-  const t = raw.trim();
+  // Publisher can also be a bare lowercase domain ("… - csoonline.com").
+  const t = raw.trim().replace(/^(.{20,}?)\s+[-–—|]\s+(?:[a-z0-9-]+\.)+[a-z]{2,}\s*$/i, "$1");
   const m = t.match(/^(.{20,}?)\s+[-–—|]\s+[A-Z][\w.]*(?:\s+[A-Z][\w.]*){0,3}$/);
   return (m ? m[1] : t).trim();
 }
