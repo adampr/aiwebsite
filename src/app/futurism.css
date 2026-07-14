@@ -494,8 +494,12 @@ code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
 }
 .logo em { font-style: normal; color: var(--xl-light); }
 
-/* Footer link lists: 44px effective tap height (WCAG 2.5.8) */
-footer li a { display: inline-flex; min-height: 44px; align-items: center; }
+/* Footer link lists: 24px rows on pointer devices (WCAG 2.5.8 AA),
+   44px tap height on touch (AAA / touch HIG) */
+footer li a { display: inline-flex; min-height: 24px; align-items: center; }
+@media (pointer: coarse) {
+  footer li a { min-height: 44px; }
+}
 
 /* ------------------------------------------------------------
    8 · BADGES + STATS

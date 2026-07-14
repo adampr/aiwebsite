@@ -119,8 +119,8 @@ export default function RootLayout({
         <footer className="mt-24">
           <div className="mx-auto max-w-7xl px-6">
             <hr className="rule" />
-            <div className="grid gap-x-12 gap-y-10 pb-12 sm:grid-cols-5">
-              <div className="sm:col-span-5 lg:col-span-2">
+            <div className="grid gap-x-12 gap-y-10 pb-12 sm:grid-cols-5 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+              <div className="sm:col-span-5 lg:col-span-1">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src="/brand/xl-wordmark-dark.png"
@@ -133,14 +133,14 @@ export default function RootLayout({
                   alt="XL.net AI"
                   className="theme-light-only h-6 w-auto"
                 />
-                <p className="mt-4 text-sm">
+                <p className="mt-4 max-w-sm text-sm">
                   Showcasing how XL.net leverages artificial intelligence to
                   transform managed IT services for SMBs.
                 </p>
               </div>
-              <div className="sm:col-span-3 lg:col-span-2">
+              <div className="sm:col-span-3 lg:col-span-1">
                 <span className="sys-label">Links</span>
-                <ul className="mt-4 grid gap-y-2 text-sm sm:grid-flow-col sm:grid-cols-2 sm:grid-rows-5 sm:gap-x-6">
+                <ul className="mt-4 grid gap-y-2 text-sm sm:grid-flow-col sm:grid-cols-[max-content_max-content] sm:grid-rows-6 sm:gap-x-10">
                   <li>
                     <Link href="/">Home</Link>
                   </li>
@@ -161,6 +161,9 @@ export default function RootLayout({
                   </li>
                   <li>
                     <Link href="/account">Account</Link>
+                  </li>
+                  <li>
+                    <Link href="/methodology">Methodology</Link>
                   </li>
                   <li>
                     <Link href="/privacy">Privacy Policy</Link>
