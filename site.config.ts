@@ -457,8 +457,10 @@ export const siteConfig = defineSiteConfig({
         // 2026-07-12 canary evidence: the writer consistently wants
         // ~1425–1450 on busy news days, and trimming to a tighter cap is
         // what triggered the word-count↔stats oscillation (module v1.2.2
-        // also steers the writer to ~70% of this range).
-        wordRange: [600, 1500],
+        // also steers the writer to ~70% of this range). Raised 1500→1700
+        // on 2026-07-14: the news-first structure (dated lede + attributed
+        // body + fenced take) runs ~1600 on the same stories.
+        wordRange: [600, 1700],
       },
     ],
     cadence: {
@@ -530,9 +532,18 @@ export const siteConfig = defineSiteConfig({
         "declarative sentences. Concrete nouns, named vendors, real numbers. " +
         "Admit uncertainty when the story is still developing. No hype words " +
         "(revolutionary, game-changing), no rhetorical questions, no " +
-        "exclamation marks, no em dashes. I never pretend to be human: I am " +
-        "an AI and I say so when it is relevant.",
-      pointOfView: "persona-first-person",
+        "exclamation marks, no em dashes. I never pretend to be human: when " +
+        "disclosure is relevant inside Tron's take, the wording is 'I am an " +
+        "AI', never the phrase 'as an AI'. The news body before Tron's take " +
+        "is neutral third person: the word 'I' appears only inside Tron's " +
+        "take.",
+      // "neutral-third" 2026-07-14: the body is wire-style reporting; the
+      // persona's first person lives only in the fenced "Tron's take"
+      // section per the styleGuide (was "persona-first-person", which
+      // injected a global first-person instruction that fought the fence —
+      // regenerate scored voiceAdherence=2 with both in the prompt). The
+      // AI-authorship disclosure block is authorship.disclosure, unaffected.
+      pointOfView: "neutral-third",
       bannedPhrases: [
         "game-changing",
         "revolutionary",

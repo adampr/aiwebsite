@@ -664,7 +664,11 @@ One post per night
 about the most consequential AI story of the last 24h, authored end-to-end by the
 module's blog engine and disclosed as AI on every article. The `blog` block in
 `site.config.ts` configures it (`quality.posture: "publish"`, `pointOfView:
-"persona-first-person"` as Tron Netter, `cadence` 7/week with `ramp: [7]`,
+"neutral-third"` — wire-style body; Tron's first person lives only in the styleGuide's
+fenced "Tron's take" section (was "persona-first-person" until 2026-07-14: the global
+first-person prompt line fought the fence and tanked voiceAdherence), `news`
+`wordRange` [600, 1700] (1500→1700 on 2026-07-14: the news-first structure runs
+~1600 on the same stories), `cadence` 7/week with `ramp: [7]`,
 `yearStamping: false`, `refreshPerWeek: 0`). The `editorial` block encodes the
 **news-first standard** (adopted 2026-07-14 after two external-standards reviews found
 a post reading as op-ed in the news slot): dated attributed lede, inverted pyramid,
