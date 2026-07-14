@@ -15,14 +15,18 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-14 (brain submodule v1.95, @aicompany/core v1.4.0
-(tag v1.4.3 @ 0efab5d — editorial-integrity patch: fact-check exempts publisher
-self-disclosure/COI sentences, quotable claims written without quote marks, related
-cards exclude noindexed rows (module MIGRATIONS v1.4.3; behavior-only, ships on next
-deploy); v1.4.0 feature set: extra-services supervision — inert here, no
-extra-services.json manifest — plus deploy↔deploy flock, deploy-marker
-re-touches, upgrade:check --stamp step, watchdog PATH export, cloudflared
-externally-managed guard; four new site-deploy.env keys at standard values),
+Last verified against code: 2026-07-14 (brain submodule v1.96 @ 1b34555 —
+re-pinned from the tag-only v1.95 lineage (b39f433, reachable only via the
+v1.95 tag; its JSON-mode content re-landed upstream as 61434b5) onto the
+canonical release line; picks up the Issue #689 BRAIN_DB_TABLE_PREFIX fix
+(five newly-prefixed tables reconciled on the VM via rename +
+compatibility views) and registry data refreshes. @aicompany/core v1.5.1
+@ 78f3d55 — master-line tag containing both the v1.4.3 editorial-integrity
+patch (fact-check exempts publisher self-disclosure/COI sentences,
+quotable claims written without quote marks, related cards exclude
+noindexed rows; already in the prior v1.4.3 pin) and v1.5.0's
+channels.voice.externallyHandled (unused on this host — pin-only, no
+config/template/env change per MIGRATIONS v1.5.0/v1.5.1).
 Next.js 16.2.9).
 
 ---
