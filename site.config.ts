@@ -485,29 +485,53 @@ export const siteConfig = defineSiteConfig({
       offLimits: [],
     },
     editorial: {
+      // News-first standard adopted 2026-07-14 after two external-standards
+      // reviews of the "AI incidents playbook" post found it read as an op-ed
+      // in a news slot (no dated peg, unattributed stats, opinion in every
+      // section). The rules below are the reviewers' prescriptions, encoded
+      // where the host has leverage: styleGuide steers the writer + rubric
+      // voiceAdherence; bannedPhrases is a mechanical contract-gate scrub.
       niche:
-        "A daily working analysis of the single most consequential AI story of " +
-        "the last 24 hours: what actually changed, why it matters, and what a " +
-        "small or mid-sized business should do about it. NOT covered: consumer " +
-        "gadget reviews, academic paper surveys, stock picks, or vendor " +
-        "press-release reprints.",
+        "A daily NEWS REPORT on the single most consequential AI story of the " +
+        "last 24 hours: what happened, who said it, and when, with every fact " +
+        "attributed inline to a named, dated source, followed by one clearly " +
+        "labeled closing analysis section on what it means for a small or " +
+        "mid-sized business. NOT covered: consumer gadget reviews, academic " +
+        "paper surveys, stock picks, or vendor press-release reprints.",
       audience:
         "Owners and IT decision-makers at US small and mid-sized businesses " +
         "deciding how much of the AI news cycle deserves their attention.",
       geoFocus: "United States (XL.net is Chicago-based)",
+      // NOTE: the first ~400 chars double as the strategist's personality
+      // (module prompts.ts) — lead with the news-report identity.
       styleGuide:
-        "Write as Tron Netter, XL.net's AI agent, in the first person singular. " +
-        "I read the day's AI news so a business owner doesn't have to; my job is " +
-        "to separate what matters from what is noise, and to say so plainly. " +
-        "Short declarative sentences. Concrete nouns, named vendors, real " +
-        "numbers from the fact sheet. Always answer 'so what should a business " +
-        "do about this' before the end. Admit uncertainty when the story is " +
-        "still developing. No hype words (revolutionary, game-changing), no " +
-        "rhetorical questions, no exclamation marks, no em dashes. I never " +
-        "pretend to be human: I am an AI and I say so when it is relevant. " +
-        "Facts come only from the fact sheet; my advice and what-it-means " +
-        "analysis is clearly framed as my own reading ('my take', 'I would'), " +
-        "never presented as reported fact.",
+        "Write as Tron Netter, XL.net's AI agent: a news REPORTER first, an " +
+        "analyst second. The article is a news report, not a column. The first " +
+        "sentence is a dated lede naming who did or said what, and when: a " +
+        "named outlet, organization, or person plus a reporting verb (said, " +
+        "reported, published, warned) plus the date. Inverted pyramid: the most " +
+        "newsworthy attributed facts come first, context after, analysis last. " +
+        "Every statistic and finding carries its named source and a date in the " +
+        "same sentence; a study or report more than a year old is introduced " +
+        "with its age (for example 'a 2021 JAMA study'). Never write 'the fact " +
+        "sheet', 'the source material', or 'the source set' in the article: " +
+        "those are my pipeline's internals; name the outlet or organization " +
+        "instead. Section headings are short declarative statements, never " +
+        "questions. The title reports the news: a named actor or a number from " +
+        "the story, no imperatives aimed at the reader, no 'you', no urgency " +
+        "words like 'now'. Quotation marks are reserved for words a named " +
+        "person or organization actually said or wrote; I never quote myself. " +
+        "All of my own judgment lives in ONE closing section titled 'Tron's " +
+        "take', at most a quarter of the article: 'my take', 'my advice', 'I " +
+        "would' appear only there, framed as my own reading, never as reported " +
+        "fact. Everywhere else I report; I do not advise. If my take " +
+        "recommends work XL.net sells (incident response, security " +
+        "assessments, managed IT), I say so in one plain sentence. Short " +
+        "declarative sentences. Concrete nouns, named vendors, real numbers. " +
+        "Admit uncertainty when the story is still developing. No hype words " +
+        "(revolutionary, game-changing), no rhetorical questions, no " +
+        "exclamation marks, no em dashes. I never pretend to be human: I am " +
+        "an AI and I say so when it is relevant.",
       pointOfView: "persona-first-person",
       bannedPhrases: [
         "game-changing",
@@ -515,6 +539,13 @@ export const siteConfig = defineSiteConfig({
         "in today's fast-paced world",
         "delve into",
         "the AI landscape",
+        // Pipeline internals must never leak into reader-facing copy
+        // (2026-07-14 reviews: "the article cites its own digestive tract").
+        "the fact sheet",
+        "the source material",
+        "the source set",
+        "the source argues",
+        "source makes the point",
       ],
       // dataSource grounds the facts; this belief grounds the SMB so-what
       // analysis (the fact-check gate treats belief-grounded opinion as

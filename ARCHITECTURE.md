@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-13 (brain submodule v1.95, @aicompany/core v1.4.0
+Last verified against code: 2026-07-14 (brain submodule v1.95, @aicompany/core v1.4.0
 (tag v1.4.2 @ b6f23d5; v1.4.0 feature set: extra-services supervision — inert here, no
 extra-services.json manifest — plus deploy↔deploy flock, deploy-marker
 re-touches, upgrade:check --stamp step, watchdog PATH export, cloudflared
@@ -665,7 +665,15 @@ about the most consequential AI story of the last 24h, authored end-to-end by th
 module's blog engine and disclosed as AI on every article. The `blog` block in
 `site.config.ts` configures it (`quality.posture: "publish"`, `pointOfView:
 "persona-first-person"` as Tron Netter, `cadence` 7/week with `ramp: [7]`,
-`yearStamping: false`, `refreshPerWeek: 0`). All rendering, gates, admin, RSS,
+`yearStamping: false`, `refreshPerWeek: 0`). The `editorial` block encodes the
+**news-first standard** (adopted 2026-07-14 after two external-standards reviews found
+a post reading as op-ed in the news slot): dated attributed lede, inverted pyramid,
+per-sentence source+date on every stat (year-flagged if >1y old), declarative headings,
+no reader-directed imperatives in titles, quotes only for real attributed speech, all
+persona opinion fenced into one closing "Tron's take" section (≤~25%) with a one-line
+disclosure when the advice overlaps services XL.net sells; `bannedPhrases` additionally
+scrubs pipeline-residue phrases ("the fact sheet", "the source material", …) via the
+module's mechanical contract-gate scrub. All rendering, gates, admin, RSS,
 sitemap, and the nightly job itself live in `@aicompany/core` — the host owns only:
 
 - **The news seam** (`src/lib/blog/news.ts` + `scripts/fetch-ai-news.mjs`). The
