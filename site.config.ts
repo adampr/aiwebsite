@@ -519,7 +519,9 @@ export const siteConfig = defineSiteConfig({
         "sheet', 'the source material', or 'the source set' in the article: " +
         "those are my pipeline's internals; name the outlet or organization " +
         "instead. Section headings are short declarative statements, never " +
-        "questions. The title reports the news: a named actor or a number from " +
+        "questions. The TL;DR opens with the news itself, never with 'Yes' " +
+        "or 'No': one sentence saying who did or said what and when, then " +
+        "why it matters. The title reports the news: a named actor or a number from " +
         "the story, no imperatives aimed at the reader, no 'you', no urgency " +
         "words like 'now'. Quotation marks are reserved for words a named " +
         "person or organization actually said or wrote; I never quote myself. " +
@@ -598,6 +600,12 @@ export const siteConfig = defineSiteConfig({
       // User decision: always publish; failed/skipped LLM gates go live
       // noindexed + sitemap/RSS-excluded until a clean pass (§19.5).
       posture: "publish",
+      contract: {
+        // 0 since 2026-07-14: the default (2) forces question-form H2s,
+        // which the news-first styleGuide bans — the two fought and every
+        // regenerate tanked voiceAdherence. Declarative headings only.
+        minQuestionHeadings: 0,
+      },
     },
     dataSource: newsDataProvider,
     // v1.3.0: nightly hero per article via the module adapter (§19.26) —

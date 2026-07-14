@@ -663,7 +663,9 @@ Adopted 2026-07-12 (aicompany v1.0.4, since bumped to v1.2.1; needs brain ≥ v1
 One post per night
 about the most consequential AI story of the last 24h, authored end-to-end by the
 module's blog engine and disclosed as AI on every article. The `blog` block in
-`site.config.ts` configures it (`quality.posture: "publish"`, `pointOfView:
+`site.config.ts` configures it (`quality.posture: "publish"`,
+`quality.contract.minQuestionHeadings: 0` — the default 2 forces question-form H2s,
+which the news-first standard bans, `pointOfView:
 "neutral-third"` — wire-style body; Tron's first person lives only in the styleGuide's
 fenced "Tron's take" section (was "persona-first-person" until 2026-07-14: the global
 first-person prompt line fought the fence and tanked voiceAdherence), `news`
