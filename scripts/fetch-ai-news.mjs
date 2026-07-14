@@ -109,6 +109,14 @@ function keywordsFromTitle(title) {
   return [primary, ...rest].filter(Boolean).slice(0, 5);
 }
 
+// The top result becomes the article's title/slug verbatim and the rest feed
+// the strategist, so a non-AI story here gets PUBLISHED (2026-07-14: a generic
+// "Technology and Science News - ABC News" outlet page outscored every real AI
+// headline). Gate on the cleaned title — not content, which mentions AI in
+// passing on generic roundup pages.
+const AI_RELEVANT =
+  /\b(?:ai|a\.i\.|artificial intelligence|machine[- ]learning|deep[- ]learning|neural net(?:work)?s?|llms?|large language models?|gen(?:erative)?[ -]?ai|chatbots?|chatgpt|gpt-?\d\w*|openai|anthropic|claude|gemini|copilot|deepmind|agi|superintelligen\w+|agentic|grok|xai|llama|mistral|hugging face|foundation models?)\b/i;
+
 const query =
   "most significant artificial intelligence news today: model releases, " +
   "AI regulation, enterprise AI adoption, AI security incidents";
@@ -124,13 +132,18 @@ const data = await tavilySearch({
   process.exit(1);
 });
 
-const results = (data.results || [])
+const fetched = (data.results || [])
   .filter((r) => r && r.title && r.url)
   .map((r) => ({ ...r, title: cleanTitle(r.title) }))
   .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
+const results = fetched.filter((r) => AI_RELEVANT.test(r.title));
+for (const r of fetched) {
+  if (!results.includes(r)) console.error(`skipped (title not AI-relevant): "${r.title}"`);
+}
+
 if (results.length === 0) {
-  console.error("FATAL: tavily returned no results");
+  console.error(`FATAL: no AI-relevant results (tavily returned ${fetched.length})`);
   process.exit(1);
 }
 

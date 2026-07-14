@@ -672,7 +672,10 @@ sitemap, and the nightly job itself live in `@aicompany/core` — the host owns 
   module picks a topic *before* `dataSource.getContext` runs (calendar → strategist,
   neither sees live data), so today's news is injected two ways, both fed by
   `scripts/fetch-ai-news.mjs` (plain-Node ESM; Tavily `POST /search` `topic:"news",
-  days:1`; writes `data/ai-news-today.json` atomically). `newsCalendarEntries()` turns
+  days:1`; drops results whose cleaned **title** has no AI term — a generic outlet
+  page outscored every AI headline and got published 2026-07-14; zero relevant
+  results = exit 1, same stale-file degradation as a failed fetch; writes
+  `data/ai-news-today.json` atomically). `newsCalendarEntries()` turns
   the top story into a **one-entry `topics.calendar`** (slug carries the date, so a
   consumed entry never blocks the next day; a fresh calendar slug is always chosen
   before the strategist and still passes the full topic gate). `newsSeedHints()` gives
