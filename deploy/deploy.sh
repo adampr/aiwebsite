@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@5055ab5fce4761497f3c531addb5188b55ebb2dc8606ad7dc832ca9e6782a088
+# aicompany-template: deploy.sh.tpl@6598ceb5a8f89324e6e7af01d4550a5ca4b9305c9f3b3e5a12f58ea603fda814
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -73,8 +73,11 @@ echo "  stamps OK"
 
 # ── Dev-box credentials: read values literally — do NOT `source` .env:
 # passwords may contain shell-special characters ($, #, *) that expansion
-# would mangle.
-envval() { grep -E "^$1=" "$repo_dir/.env" | head -1 | cut -d= -f2-; }
+# would mangle. `|| true`: a missing key must return empty, not kill the
+# script — under `set -euo pipefail` a bare failed grep aborted the deploy
+# with NO error message when the OPTIONAL <PREFIX>_SSH_KEY was absent
+# (roleplay first-deploy, v1.4.1); the REQUIRED keys have explicit :? guards.
+envval() { { grep -E "^$1=" "$repo_dir/.env" || true; } | head -1 | cut -d= -f2-; }
 
 # ── Transport wrappers ───────────────────────────────────────────
 case "$transport" in

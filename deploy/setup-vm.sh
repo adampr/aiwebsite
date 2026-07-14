@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@6c50c4ace34a41c2b21c15c91afe623815c1ac8776f148745af931e711063c0d
+# aicompany-template: setup-vm.sh.tpl@03f10c97267251a8fa18e02382ecc8ed54fa83bbaf397c4bd73eb27f3682d8f2
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -252,7 +252,11 @@ for i in $(seq 1 12); do
   curl -fsS -o /dev/null http://127.0.0.1:3211/health && break
   sleep 5
 done
-sudo -u postgres psql -d "aiwebsite" -v ON_ERROR_STOP=1 -f "$app_dir/deploy/seed-persona-memories.sql"
+# Feed the seed over STDIN (opened by THIS shell, which can read $app_dir):
+# `psql -f` makes the postgres user open the path itself, which fails with
+# "Permission denied" whenever APP_DIR sits under a 0750 home directory
+# (roleplay's /home/xladmin/roleplay, v1.4.1) — /var/www hosts never noticed.
+sudo -u postgres psql -d "aiwebsite" -v ON_ERROR_STOP=1 < "$app_dir/deploy/seed-persona-memories.sql"
 
 # ── Ops helper scripts → /usr/local/bin ──────────────────────────
 echo ">>> Installing ops scripts..."
@@ -541,7 +545,12 @@ sudo install -m 755 "$app_dir/deploy/watchdog.sh"      /usr/local/bin/aiwebsite-
 sudo install -m 755 "$app_dir/deploy/watchdog-cron.sh" /usr/local/bin/aiwebsite-watchdog-cron.sh
 # Merge keeps unrelated root-cron entries but strips jobs the systemd timers
 # replaced (a leftover legacy crawl cron would double-run nightly).
-( sudo crontab -l 2>/dev/null | grep -vE 'refresh-tron-knowledge|refresh-knowledge\.(mjs|js)' ; \
+# `|| true` on BOTH stages (v1.4.2): an EMPTY root crontab exits `crontab -l`
+# nonzero, and a no-match `grep -v` exits nonzero on empty input — under
+# `set -euo pipefail` either killed the subshell before the echo and the
+# deploy died silently on any VM getting its FIRST module watchdog (roleplay
+# cutover); hosts with existing root crontabs never hit it.
+( { sudo crontab -l 2>/dev/null || true; } | { grep -vE 'refresh-tron-knowledge|refresh-knowledge\.(mjs|js)' || true; } ; \
   echo "*/5 * * * * /usr/local/bin/aiwebsite-watchdog-cron.sh" ) | sort -u | sudo crontab -
 # Restart the watchdog so it picks up the freshly installed version, then
 # start immediately instead of waiting up to 5 minutes for cron.

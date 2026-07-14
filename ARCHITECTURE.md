@@ -16,7 +16,7 @@
 > host-owned tables and scripts); rebuild the module from its own doc.
 
 Last verified against code: 2026-07-13 (brain submodule v1.95, @aicompany/core v1.4.0
-(tag v1.4.0 @ e2da509: extra-services supervision — inert here, no
+(tag v1.4.2 @ b6f23d5; v1.4.0 feature set: extra-services supervision — inert here, no
 extra-services.json manifest — plus deploy↔deploy flock, deploy-marker
 re-touches, upgrade:check --stamp step, watchdog PATH export, cloudflared
 externally-managed guard; four new site-deploy.env keys at standard values),
