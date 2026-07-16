@@ -1406,8 +1406,11 @@ site.config.ts (§6) → **`npm run config:check`** (config↔env cross-validati
 `BRAIN_PUBLIC_URL === baseUrl + "/brain"`, brain version range, schema registry — **gates
 the build/reload**: a bad config aborts before PM2 is touched) → `rm -rf .next/cache`
 (stale Turbopack cache breaks module resolution; only the cache — built output swaps
-atomically) → `next build` → `pm2 startOrReload deploy/ecosystem.config.cjs && pm2 save &&
-pm2 startup systemd` → wait ≤60 s for brain `/health` → `psql -f
+atomically) → `next build` → `pm2 startOrReload deploy/ecosystem.config.cjs --update-env &&
+pm2 save && pm2 startup systemd` (`--update-env` is a HOST EDIT over the module
+template and MUST survive re-renders: plain reload keeps the env captured at
+process creation, so a deploy that only changed `.env` left the site running
+with stale governance caps for hours, 2026-07-16) → wait ≤60 s for brain `/health` → `psql -f
 deploy/seed-persona-memories.sql` → render `data/aiwebsite-config.json` + install the
 **five systemd timers** (§9.7) → initial crawl `--no-email` → `setup-cloudflared.sh` →
 install watchdog + cron supervisor and (re)start it.

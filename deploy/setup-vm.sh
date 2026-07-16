@@ -233,7 +233,12 @@ npm run config:check
 sudo touch "$deploy_marker"
 # `200>&-` on every pm2 invocation: first contact resurrects the pm2 God
 # daemon, which must not inherit + pin the deploy lock (fd 200).
-pm2 startOrReload deploy/ecosystem.config.cjs 200>&-
+# `--update-env`: pm2 reload keeps the env captured at process creation, NOT
+# the freshly-evaluated ecosystem env — a deploy that only changed .env left
+# the site running with stale caps for hours (2026-07-16 governance budget
+# incident). HOST EDIT over the module template: re-apply if a module bump
+# re-renders this file (upstream fix pending in @aicompany/core).
+pm2 startOrReload deploy/ecosystem.config.cjs --update-env 200>&-
 pm2 save 200>&-
 pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null 200>&- || true
 

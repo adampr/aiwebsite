@@ -15,8 +15,16 @@ ssh -i "$ssh_key" -o StrictHostKeyChecking=accept-new "$(envval AIWEBSITE_USER)@
   date -u
   echo "== .env caps on disk =="
   grep -E "^GOVERNANCE_(TAVILY|BRAIN)_DAILY_CAP=" .env || echo "unset (code defaults 300/1500)"
-  echo "== caps in the RUNNING pm2 process env =="
-  pm2 env 0 2>/dev/null | grep -E "GOVERNANCE_(TAVILY|BRAIN)_DAILY_CAP" || echo "not in pm2 env (app reads .env at boot via dotenv)"
+  echo "== caps in the RUNNING pm2 process env (per app) =="
+  pm2 jlist 2>/dev/null | python3 -c "
+import json,sys
+for p in json.load(sys.stdin):
+    e = p.get(\"pm2_env\", {})
+    caps = {k: e[k] for k in e if k.startswith(\"GOVERNANCE_\")}
+    print(p[\"name\"], \"uptime_since:\", e.get(\"pm_uptime\"), caps or \"(no GOVERNANCE_* vars)\")"
+  echo "== caps in the ACTUAL process environment (/proc, ground truth) =="
+  site_pid=$(pm2 jlist 2>/dev/null | python3 -c "import json,sys; print([p[\"pid\"] for p in json.load(sys.stdin) if p[\"name\"]==\"aiwebsite\"][0])")
+  tr "\0" "\n" < "/proc/$site_pid/environ" | grep -E "^GOVERNANCE_" || echo "no GOVERNANCE_* in live env"
   DB="$(grep -E "^DATABASE_URL=" .env | head -1 | cut -d= -f2-)"
   echo "== governance_usage (last 3 days) =="
   psql "$DB" -tAc "SELECT day, tavily_calls, brain_calls, research_runs FROM governance_usage ORDER BY day DESC LIMIT 3"
@@ -26,4 +34,6 @@ ssh -i "$ssh_key" -o StrictHostKeyChecking=accept-new "$(envval AIWEBSITE_USER)@
   psql "$DB" -tAc "SELECT status, count(*) FROM governance_projects GROUP BY status ORDER BY status"
   echo "== queued/failed projects (newest first) =="
   psql "$DB" -tAc "SELECT id, status, created_at, updated_at FROM governance_projects WHERE status IN ('\''queued'\'','\''research_failed'\'','\''created'\'') ORDER BY updated_at DESC LIMIT 10"
+  echo "== research log (last 40 lines) =="
+  tail -40 /var/log/aiwebsite-governance-research.log 2>/dev/null || echo "no log"
 '
