@@ -15,12 +15,17 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-16 (brain submodule v1.96 @ 1b34555 —
-re-pinned from the tag-only v1.95 lineage (b39f433, reachable only via the
-v1.95 tag; its JSON-mode content re-landed upstream as 61434b5) onto the
-canonical release line; picks up the Issue #689 BRAIN_DB_TABLE_PREFIX fix
-(five newly-prefixed tables reconciled on the VM via rename +
-compatibility views) and registry data refreshes. @aicompany/core v1.5.2
+Last verified against code: 2026-07-16 (brain submodule v1.97 @ e369242 —
+dynamic multi-provider model routing, Issues #692–#696: registry
+unification (anthropic claude-* ids now first-class routable alongside
+openai/xai/google — `GET /v1/model-routing` rows can carry
+`provider: "anthropic"`), router v2 behind the `BRAIN_ROUTER` env flag
+(defaults to `legacy` — behavior-identical until flipped), runtime model
+kill switch + routing telemetry (auto-migrations 45 — nullable
+success/ttft_ms/total_ms/http_status/shadow_model columns on
+usage_events — and 46 — `model_availability_overrides` table; both
+additive, applied automatically on boot). Previous pin v1.96 @ 1b34555
+(Issue #689 BRAIN_DB_TABLE_PREFIX fix). @aicompany/core v1.5.2
 @ cfe2854 — strictly-better repair adoption on the blog generate path
 (module §19.5: a still-failing repair whose failing gate names are a
 proper subset of the original's is adopted with noindex forced; pin-only,
@@ -941,11 +946,16 @@ crawl never touches them (it only replaces `source_type='site_crawl'` rows).
 ## 7. The brain contract (what the site depends on)
 
 The brain (submodule `packages/brain` ← `https://github.com/adampr/xldev.git`, pinned at
-tag `v1.95` — the v1.93 line (added `invocation.promptProfile` `'full'|'lean'` and
+tag `v1.97` — the v1.93 line (added `invocation.promptProfile` `'full'|'lean'` and
 reader-determinism knobs) + the Issue #684 router-availability fix (v1.94) + **deterministic
 JSON mode** (Issue #688, v1.95): an envelope with `response_format: {type:'json_object'}`
-short-circuits the thinking pipeline to one direct completion so callers actually get JSON.
-The blog engine (§5.11) depends on v1.95; the persona channels' envelopes are unchanged and
+short-circuits the thinking pipeline to one direct completion so callers actually get JSON
++ the Issue #689 `BRAIN_DB_TABLE_PREFIX` fix (v1.96) + **dynamic multi-provider model
+routing** (Issues #692–#696, v1.97): unified registry (anthropic ids routable —
+`/v1/model-routing` rows may now say `provider:"anthropic"`), router v2 behind `BRAIN_ROUTER`
+(legacy default — no behavior change until flipped), model kill switch + telemetry
+(additive auto-migrations 45/46).
+The blog engine (§5.11) depends on v1.95+; the persona channels' envelopes are unchanged and
 `promptProfile`/`temperature` remain available-but-not-yet-sent) is a
 generic "conversation-first, memory-bearing" engine. **The Tron Netter persona lives entirely
 in the parent repo** — the brain receives it per-request via `brainIdentity` + a system message.
