@@ -127,9 +127,10 @@ export function ResearchScreen({
         <span className="badge badge--warn">Queued</span>
         <h2 className="mt-6">Waiting in line</h2>
         <p className="mt-4 text-sm">
-          Research starts when today&apos;s budget resets at midnight UTC.
-          Your project is saved; you can leave and come back, this page
-          updates on its own.
+          Research is waiting its turn: today&apos;s research budget is used
+          up (it resets at midnight UTC), or a brief site update is in
+          progress. Your project is saved; you can leave and come back, this
+          page updates on its own, and the Start button below retries now.
         </p>
         {resuming && (
           <p className="mt-3 text-sm" style={dim}>

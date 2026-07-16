@@ -20,7 +20,7 @@ import {
   brainDailyCap,
   tavilyDailyCap,
 } from "./config";
-import { getMeta, readTodayUsage, setMeta } from "./db";
+import { getMeta, ownerEmailForProject, readTodayUsage, setMeta } from "./db";
 
 async function overrideFor(target: BudgetTarget): Promise<number | null> {
   const raw = await getMeta(OVERRIDE_KEYS[target]);
@@ -37,6 +37,37 @@ export async function effectiveBrainDailyCap(): Promise<number> {
 export async function effectiveTavilyDailyCap(): Promise<number> {
   const o = await overrideFor("global_tavily");
   return clampBudget(o ?? tavilyDailyCap(process.env), TARGET_CEILINGS.global_tavily);
+}
+
+/* ------------------------------------------------------------------ *
+ * Admin budget exemption (owner directive 2026-07-16): ADMIN_EMAIL
+ * accounts get unlimited governance budget, and their usage is NOT
+ * counted against the shared daily ledger (so admin testing can never
+ * starve real users). Concurrency/quality guards (active projects,
+ * answers per project, research runs per project) still apply: they
+ * protect the box, not the wallet. Exempt spend is invisible to the
+ * Troy usage reports by design.
+ * ------------------------------------------------------------------ */
+
+function adminEmailSet(): Set<string> {
+  return new Set(
+    (process.env.ADMIN_EMAIL || "adam@xl.net")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+/** True when this sign-in email is budget-exempt (any ADMIN_EMAIL entry). */
+export function isBudgetExemptEmail(email: string): boolean {
+  return adminEmailSet().has(email.trim().toLowerCase());
+}
+
+/** Exemption by project owner (kick path + detached research script,
+ * where only the project id is at hand). Missing row = not exempt. */
+export async function isBudgetExemptProject(projectId: string): Promise<boolean> {
+  const email = await ownerEmailForProject(projectId);
+  return email !== null && isBudgetExemptEmail(email);
 }
 
 export async function effectiveCreatesPerUserPerDay(): Promise<number> {

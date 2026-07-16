@@ -181,7 +181,7 @@ export const STATUS_META: Record<ProjectStatus, StatusMeta> = {
     cls: "badge--warn",
     dot: false,
     check: false,
-    note: "Research starts when today's budget resets at midnight UTC.",
+    note: "Research is waiting its turn and starts automatically.",
   },
   researching: {
     word: "Researching",

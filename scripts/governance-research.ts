@@ -24,6 +24,7 @@ import { CAPS, governanceEnabled } from "../src/lib/governance/config";
 import {
   effectiveBrainDailyCap,
   effectiveTavilyDailyCap,
+  isBudgetExemptProject,
   notifyBudgetHit,
 } from "../src/lib/governance/budget";
 import {
@@ -89,7 +90,12 @@ async function hb(progress: ResearchProgress): Promise<void> {
   if (!alive) throw new QueuedExit("row no longer researching (superseded or deleted)");
 }
 
+// Set once in main() from the project owner (budget.ts admin exemption):
+// exempt jobs never touch the shared daily ledger.
+let budgetExempt = false;
+
 async function spendTavily(): Promise<boolean> {
+  if (budgetExempt) return true;
   const ok = await trySpendBudget(
     "tavily_calls",
     1,
@@ -106,7 +112,10 @@ async function brainJson(
   user: string,
   timeoutMs: number
 ): Promise<unknown | null> {
-  if (!(await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))) {
+  if (
+    !budgetExempt &&
+    !(await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))
+  ) {
     void notifyBudgetHit("global_brain", { operation: "research analysis" });
     return null;
   }
@@ -317,6 +326,8 @@ async function main(): Promise<void> {
     await setResearchOutcome(projectId, { status: "queued" });
     return;
   }
+  budgetExempt = await isBudgetExemptProject(projectId);
+  if (budgetExempt) log("start", "owner is budget-exempt (admin)");
   const kind = row.kind as GovernanceKind;
   const domain = row.domain;
   const progress: ResearchProgress = {

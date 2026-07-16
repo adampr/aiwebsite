@@ -455,6 +455,23 @@ function check(name: string, cond: boolean): void {
       BUDGET_CEILINGS.tavilyDaily >= CAPS.tavilyCallsPerDayDefault &&
       BUDGET_CEILINGS.createsPerUserPerDay >= CAPS.createsPerUserPerDay
   );
+
+  // Admin budget exemption: any ADMIN_EMAIL entry, case/space-insensitive,
+  // nobody else. (Owner directive 2026-07-16: admin drafts without spending
+  // or being blocked by the shared ledger.)
+  const { isBudgetExemptEmail } = await import("../src/lib/governance/budget");
+  const savedAdmin = process.env.ADMIN_EMAIL;
+  process.env.ADMIN_EMAIL = "adam@xl.net, Ops@XL.net";
+  check(
+    "budget: admin exemption matches ADMIN_EMAIL entries only",
+    isBudgetExemptEmail("adam@xl.net") &&
+      isBudgetExemptEmail("ADAM@XL.NET") &&
+      isBudgetExemptEmail(" ops@xl.net ") &&
+      !isBudgetExemptEmail("visitor@example.com") &&
+      !isBudgetExemptEmail("adam@xl.net.evil.com")
+  );
+  if (savedAdmin === undefined) delete process.env.ADMIN_EMAIL;
+  else process.env.ADMIN_EMAIL = savedAdmin;
 }
 
 /* 11. Banned characters in the new approval-loop files. */

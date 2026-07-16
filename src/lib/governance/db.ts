@@ -326,6 +326,18 @@ export async function fetchProjectForScript(
   return rows[0] ?? null;
 }
 
+/** Project owner's sign-in email (admin budget exemption); null if gone. */
+export async function ownerEmailForProject(id: string): Promise<string | null> {
+  if (!isUuid(id)) return null;
+  const rows = await db
+    .select({ email: schema.users.email })
+    .from(P)
+    .innerJoin(schema.users, eq(P.userId, schema.users.id))
+    .where(eq(P.id, id))
+    .limit(1);
+  return rows[0]?.email ?? null;
+}
+
 /** 30-day research-brief reuse: newest same-user+domain distilled brief. */
 export async function latestBriefForDomain(
   userId: string,

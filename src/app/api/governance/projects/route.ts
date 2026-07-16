@@ -12,6 +12,7 @@ import {
 import { scaffoldDocuments } from "@/lib/governance/blueprints";
 import {
   effectiveCreatesPerUserPerDay,
+  isBudgetExemptEmail,
   notifyBudgetHit,
 } from "@/lib/governance/budget";
 import {
@@ -93,7 +94,10 @@ export async function POST(req: Request): Promise<Response> {
       409
     );
   const createsCap = await effectiveCreatesPerUserPerDay();
-  if ((await countCreatedToday(user.userId)) >= createsCap) {
+  if (
+    !isBudgetExemptEmail(user.email) &&
+    (await countCreatedToday(user.userId)) >= createsCap
+  ) {
     void notifyBudgetHit("person_creates", {
       who: user.email,
       operation: "create project",

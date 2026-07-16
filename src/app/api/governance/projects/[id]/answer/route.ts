@@ -19,6 +19,7 @@ import {
 } from "@/lib/governance/config";
 import {
   effectiveBrainDailyCap,
+  isBudgetExemptEmail,
   notifyBudgetHit,
 } from "@/lib/governance/budget";
 import {
@@ -144,7 +145,12 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       503,
       { retriable: true }
     );
-  if (!(await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))) {
+  // Admin accounts draft without spending the shared ledger (budget.ts).
+  const budgetExempt = isBudgetExemptEmail(user.email);
+  if (
+    !budgetExempt &&
+    !(await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))
+  ) {
     void notifyBudgetHit("global_brain", {
       who: user.email,
       operation: "drafting turn",
@@ -213,7 +219,10 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   // the original: the brain replays (sessionId,promptId) verbatim).
   let validation = validateTurn(parseTurnJson(raw), kind);
   if (!validation.ok && remaining() > CAPS.repairMinRemainingMs) {
-    if (await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap())) {
+    if (
+      budgetExempt ||
+      (await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))
+    ) {
       const repairRaw = await callGovernanceBrain(
         buildGovernanceEnvelope({
           sessionId,

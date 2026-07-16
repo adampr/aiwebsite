@@ -8,7 +8,11 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { governanceEnabled } from "./config";
-import { effectiveTavilyDailyCap, notifyBudgetHit } from "./budget";
+import {
+  effectiveTavilyDailyCap,
+  isBudgetExemptProject,
+  notifyBudgetHit,
+} from "./budget";
 import {
   claimResearch,
   deployInProgress,
@@ -67,7 +71,10 @@ export async function kickResearch(
     return { status: "queued", reason: "deploy" };
   }
   const usage = await readTodayUsage();
-  if (usage.tavilyCalls >= (await effectiveTavilyDailyCap())) {
+  if (
+    usage.tavilyCalls >= (await effectiveTavilyDailyCap()) &&
+    !(await isBudgetExemptProject(id))
+  ) {
     void notifyBudgetHit("global_tavily", { operation: "start research" });
     await parkQueued(id, userId);
     return { status: "queued", reason: "budget" };

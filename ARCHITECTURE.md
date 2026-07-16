@@ -911,6 +911,16 @@ Tavily plan covers ~18k credits/month) global/day, `GOVERNANCE_BRAIN_DAILY_CAP`
 (default 1500 ≈ $150/day worst case — JSON mode bills at executor-model rates,
 ~$0.10/turn) global/day; per-person 25 creates/day (owner directive 2026-07-16:
 person x5, global x10). At any cap: friendly 429/queued copy; downloads always work.
+**Admin budget exemption** (owner directive 2026-07-16): accounts whose sign-in
+email matches any comma-separated `ADMIN_EMAIL` entry (default `adam@xl.net`)
+bypass the creates/day cap and never spend the shared `governance_usage` ledger —
+drafting turns, research kicks, and the detached script's Tavily/brain calls all
+skip `trySpendBudget` (`isBudgetExemptEmail`/`isBudgetExemptProject` in
+`src/lib/governance/budget.ts`; the script resolves the owner via
+`ownerEmailForProject`). Admin spend is therefore invisible to Troy usage
+reports by design. Concurrency/quality guards (3 active projects, 40
+answers/project, 3 research runs/project/day, 2 concurrent research jobs) still
+apply to admins — they protect the box, not the wallet.
 
 **Runtime budget overrides + the Troy approval loop.** Effective caps =
 `governance_meta` override (`budget_override_{brain_daily,tavily_daily,
