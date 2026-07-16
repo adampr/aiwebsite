@@ -8,15 +8,21 @@ export const RETENTION_DAYS = 30;
 
 export const CAPS = {
   activeProjectsPerUser: 3,
-  createsPerUserPerDay: 5,
+  // Per-person daily budget (owner directive 2026-07-16: x5). The only cap
+  // that scales per person; active-projects/answers/research-runs are
+  // concurrency and per-project quality guards, not person budgets.
+  createsPerUserPerDay: 25,
   answersPerProject: 40,
   answerMaxChars: 2000,
   researchRunsPerProjectPerDay: 3,
   concurrentResearchJobs: 2,
   // JSON mode runs on the full executor model (gpt-5.4 class, ~$0.10/turn at
-  // our budgets) - the daily default authorizes roughly $15/day worst case.
-  brainCallsPerDayDefault: 150,
-  tavilyCallsPerDayDefault: 30,
+  // our budgets) - 1500/day authorizes roughly $150/day worst case (owner
+  // directive 2026-07-16: global x10). Tavily 300/day = ~600 credits/day.
+  // Both are env-overridable AND runtime-overridable via the Troy approval
+  // loop (budget.ts), clamped to BUDGET_CEILINGS either way.
+  brainCallsPerDayDefault: 1500,
+  tavilyCallsPerDayDefault: 300,
   tavilyCallsPerResearchRun: 6,
   distillCallsPerResearchRun: 12,
   // Prompt-side output bound: the host cannot set max_tokens on the brain's
@@ -46,6 +52,21 @@ export const CAPS = {
   styleSamplePromptMaxChars: 6_000,
   styleSamplePdfMaxPages: 40,
   styleSamplePdfDeadlineMs: 10_000,
+} as const;
+
+/**
+ * Bounds on runtime budget overrides (the Troy email-approval loop, §5.12).
+ * Hard ceilings bound the email channel's blast radius: even a subverted
+ * approval can at worst authorize ~$500/day of brain calls, never 10^9. The
+ * floor keeps email from bricking the feature (that is GOVERNANCE_ENABLED's
+ * job). The clamp applies to env values too, so a mistyped env var cannot
+ * exceed a ceiling either.
+ */
+export const BUDGET_FLOOR = 1;
+export const BUDGET_CEILINGS = {
+  brainDaily: 5000,
+  tavilyDaily: 2000,
+  createsPerUserPerDay: 100,
 } as const;
 
 /** Sample-policy upload: extensions the extractor understands (client accept

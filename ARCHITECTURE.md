@@ -290,7 +290,7 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/tron-netter/chat` | `createChatHandler` · `channels/chat` | §5.1 |
 | `POST /api/tron-netter/sms` | `createSmsHandler(siteConfig, {mountPath: "/api/tron-netter/sms"})` · `channels/sms` | §5.2 |
 | `POST /api/tron-netter/sms/status` | `createSmsStatusHandler` · `channels/sms` | §5.2/§5.12 |
-| `POST /api/webhooks/resend` | `createInboundEmailHandler` · `channels/email` | §5.3 |
+| `POST /api/webhooks/resend` | **host TEE** (§5.12): Troy.Netter@ai.xl.net budget-approval mail is handled host-side; everything else delegates to `createInboundEmailHandler` · `channels/email` with the ORIGINAL unread Request (module re-verifies svix; Tron cannot regress) | §5.3/§5.12 |
 | `GET /api/auth/google/start` / `GET /auth/google/callback` | `createOAuthStartHandler` / `createOAuthCallbackHandler` · `auth/oauth-google` | §5.5 |
 | `GET /api/auth/microsoft/start` / `GET /auth/microsoft/callback` | same pair · `auth/oauth-microsoft` | §5.5 |
 | `GET /api/auth/session` | `createSessionHandler` · `auth/handlers` | §5.5 |
@@ -383,7 +383,8 @@ fail-closed sender-authenticity gate (Authentication-Results parsing → memory 
   sibling persona's mail and persona↔persona reply loops.
 - `threading: "sender"` — legacy behavior kept at parity: brain session per sender
   (`sessionId: "email2-<addr>-<thread>"`), not the module's per-subject refinement.
-- Memory gate pins `memory.emailAuthservId: "resend.com"`, `allowSpfOnly: false`
+- Memory gate pins `memory.emailAuthservId: "amazonses.com"` (Resend inbound is
+  fronted by Amazon SES; verified against a real inbound 2026-07-10), `allowSpfOnly: false`
   (DKIM-aligned only). **Run the go-live probe**: send a real Gmail message + a spoofed one
   (`swaks --from victim@gmail.com` from an unrelated host) and read the logged auth-verdict
   lines; correct `emailAuthservId` if Resend stamps a different authserv-id — if it stamps
@@ -905,9 +906,46 @@ site-only brief with gaps; site unreachable → Q&A carries the load; brain down
 distill → `research_failed` with Retry / "Start the questions anyway". Deploy marker
 fresh → checkpoint + exit as `queued`. Cost caps (DB ledger `governance_usage`,
 restart-proof, covers the detached script): ≤6 Tavily calls/run,
-`GOVERNANCE_TAVILY_DAILY_CAP` (default 30) global/day, `GOVERNANCE_BRAIN_DAILY_CAP`
-(default 150 ≈ $15/day worst case — JSON mode bills at executor-model rates,
-~$0.10/turn) global/day. At any cap: friendly 429/queued copy; downloads always work.
+`GOVERNANCE_TAVILY_DAILY_CAP` (default 300 ≈ 600 Tavily credits/day; confirm the
+Tavily plan covers ~18k credits/month) global/day, `GOVERNANCE_BRAIN_DAILY_CAP`
+(default 1500 ≈ $150/day worst case — JSON mode bills at executor-model rates,
+~$0.10/turn) global/day; per-person 25 creates/day (owner directive 2026-07-16:
+person x5, global x10). At any cap: friendly 429/queued copy; downloads always work.
+
+**Runtime budget overrides + the Troy approval loop.** Effective caps =
+`governance_meta` override (`budget_override_{brain_daily,tavily_daily,
+creates_per_user_day}`) if present, else the env default — BOTH clamped into
+`[BUDGET_FLOOR=1, BUDGET_CEILINGS]` (brain 5000 ≈ $500/day, tavily 2000, creates
+100; `src/lib/governance/{config,budget,approval}.ts`), so neither a subverted
+approval nor a mistyped env var can authorize unbounded spend. When any budget is
+hit (create cap, drafting turn, research kick, or the detached script's spends),
+**Troy Netter <Troy.Netter@ai.xl.net>** emails `ADMIN_EMAIL` — throttled to one
+email per budget type per UTC day via `governance_meta` stamps written only after
+a successful send (a Resend outage must not eat the day's alert), stamp cleared
+when that budget changes. The admin replies with strict line-anchored commands
+(`SET GLOBAL BRAIN <n>` / `SET GLOBAL TAVILY <n>` / `SET PERSON CREATES <n>` /
+`RESET <target>`; parsing stops at the first quoted-reply marker, and alert
+emails only ever show placeholder syntax, so quoted text can never execute).
+The reply arrives on the `/api/webhooks/resend` **host tee** and is processed
+fail-closed by `approval-inbound.ts`: svix-verified; delivery deduped on
+`email_id`; sender must be an exact-match `ADMIN_EMAIL` member; EXACTLY ONE
+direct `Authentication-Results` header (duplicates = forged-header ambiguity =
+reject; the ARC fallback is not accepted here); DKIM-aligned verdict via the
+module's `parseEmailAuthVerdict` pinned to `memory.emailAuthservId`; the
+DKIM-covered `Date` must be <48 h old (replay guard past the 14-day dedupe
+prune); `message_id` deduped post-verification. Out-of-range values are
+REJECTED, never clamped. Every change writes a `budget_audit_*` row
+(who/old/new/emailId) and a threaded confirmation email (inbound-derived
+header values sanitized: CR/LF stripped, length-capped). Unverified mail gets
+NO reply (backscatter/probe hygiene) — adam gets a throttled WARN instead, so
+real mail never vanishes silently. Mixed-recipient mail (Tron cc'd) is handled
+by BOTH personas by design. The loop stays active under `GOVERNANCE_ENABLED=0`
+(it is an admin control plane, not user spend). Escape hatch if inbound email
+breaks with a bad override active:
+`DELETE FROM governance_meta WHERE key = 'budget_override_<name>';` on the VM
+(deploy/verify-governance.sh prints active overrides). Feature availability
+note: JSON mode is hard-wired to the OpenAI executor, so the provider's billing
+quota is the de-facto ceiling regardless of these caps.
 
 **Retention (the 30-day promise, three layers):** (1) the daily timer's guarded sweep
 (`DELETE WHERE last_activity_at < now()-'30 days'` excluding actively-researching rows;
@@ -1068,7 +1106,11 @@ governance_usage   day date PK, tavily_calls/brain_calls/research_runs integer N
                    -- and bind the detached research script; pruned at 90 days
 
 governance_meta    key text PK, value text NOT NULL, updated_at timestamptz NOT NULL default now()
-                   -- request-path stamps/throttles (governance_sweep_last_run canary).
+                   -- request-path stamps/throttles (governance_sweep_last_run canary,
+                   -- budget_alert_* alert throttles, troy_reject_* WARN throttles),
+                   -- budget_override_* runtime caps (the Troy approval loop; clamped to
+                   -- BUDGET_CEILINGS), troy_msg_* replay-dedupe keys (pruned 14 d),
+                   -- budget_audit_* change records (pruned 180 d).
                    -- Single-writer split: data/governance-standards/state.json belongs to
                    -- the timer script ALONE; the web process writes here
 
@@ -1473,8 +1515,8 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | Stripe | `STRIPE_SECRET_KEY` | secret API key for `/api/checkout` (§5.10); unset ⇒ the route returns 503 and the /builders buy buttons show a friendly error |
 | | `STRIPE_PRICE_COHORT` / `STRIPE_PRICE_WORKSHOP` | optional dashboard-managed Price ID overrides; unset ⇒ inline `price_data` ($495/mo recurring, $995 one-time) |
 | Governance | `GOVERNANCE_ENABLED` | kill switch (§5.12): `0` = mutations 503, reads/downloads stay up, the timer keeps sweeping. Unset = enabled |
-| | `GOVERNANCE_TAVILY_DAILY_CAP` (default 30) / `GOVERNANCE_BRAIN_DAILY_CAP` (default 150) | global daily budgets in the `governance_usage` ledger (~6 Tavily calls per fresh domain; brain calls bill at executor rates, ~$0.10/turn) |
-| | `GOVERNANCE_TAVILY_MONTHLY_WARN` (default 600) | MTD Tavily WARN threshold in the governance timer's report |
+| | `GOVERNANCE_TAVILY_DAILY_CAP` (default 300) / `GOVERNANCE_BRAIN_DAILY_CAP` (default 1500) | global daily budgets in the `governance_usage` ledger (~6 Tavily calls per fresh domain; brain ~$0.10/turn so 1500 ≈ $150/day worst case); runtime-overridable via the Troy approval loop, clamped to BUDGET_CEILINGS (§5.12) |
+| | `GOVERNANCE_TAVILY_MONTHLY_WARN` (default 6000) | MTD Tavily WARN threshold in the governance timer's report |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
 | | `TRON_KNOWLEDGE_FILE` | **legacy, no longer read** — the knowledge path is `persona.knowledgeFile` in site.config.ts |
 | Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |

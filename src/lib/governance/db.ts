@@ -530,3 +530,42 @@ export async function setMeta(key: string, value: string): Promise<void> {
       set: { value, updatedAt: sql`now()` },
     });
 }
+
+export async function deleteMeta(key: string): Promise<boolean> {
+  const rows = await db.delete(M).where(eq(M.key, key)).returning({ key: M.key });
+  return rows.length > 0;
+}
+
+/** Atomic once-only claim (replay dedupe): true = this call won the key. */
+export async function claimMetaOnce(key: string, value: string): Promise<boolean> {
+  const rows = await db
+    .insert(M)
+    .values({ key, value })
+    .onConflictDoNothing()
+    .returning({ key: M.key });
+  return rows.length > 0;
+}
+
+export async function listMetaByPrefix(
+  prefix: string
+): Promise<{ key: string; value: string; updatedAt: Date }[]> {
+  return db
+    .select()
+    .from(M)
+    .where(sql`${M.key} LIKE ${prefix + "%"}`)
+    .orderBy(M.key);
+}
+
+/** Prune prefixed meta rows older than `days` (dedupe keys, audit rows). */
+export async function deleteMetaByPrefixOlderThan(
+  prefix: string,
+  days: number
+): Promise<number> {
+  const rows = await db
+    .delete(M)
+    .where(
+      sql`${M.key} LIKE ${prefix + "%"} AND ${M.updatedAt} < now() - make_interval(days => ${days})`
+    )
+    .returning({ key: M.key });
+  return rows.length;
+}

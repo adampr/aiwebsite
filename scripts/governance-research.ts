@@ -20,12 +20,12 @@ import {
   callGovernanceBrain,
   newId,
 } from "../src/lib/governance/brain";
+import { CAPS, governanceEnabled } from "../src/lib/governance/config";
 import {
-  CAPS,
-  brainDailyCap,
-  governanceEnabled,
-  tavilyDailyCap,
-} from "../src/lib/governance/config";
+  effectiveBrainDailyCap,
+  effectiveTavilyDailyCap,
+  notifyBudgetHit,
+} from "../src/lib/governance/budget";
 import {
   deployInProgress,
   fetchProjectForScript,
@@ -90,7 +90,14 @@ async function hb(progress: ResearchProgress): Promise<void> {
 }
 
 async function spendTavily(): Promise<boolean> {
-  return trySpendBudget("tavily_calls", 1, tavilyDailyCap(process.env));
+  const ok = await trySpendBudget(
+    "tavily_calls",
+    1,
+    await effectiveTavilyDailyCap()
+  );
+  if (!ok)
+    void notifyBudgetHit("global_tavily", { operation: "research search" });
+  return ok;
 }
 
 async function brainJson(
@@ -99,8 +106,10 @@ async function brainJson(
   user: string,
   timeoutMs: number
 ): Promise<unknown | null> {
-  if (!(await trySpendBudget("brain_calls", 1, brainDailyCap(process.env))))
+  if (!(await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))) {
+    void notifyBudgetHit("global_brain", { operation: "research analysis" });
     return null;
+  }
   const raw = await callGovernanceBrain(
     buildGovernanceEnvelope({
       sessionId: session,

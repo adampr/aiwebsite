@@ -7,7 +7,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { governanceEnabled, tavilyDailyCap } from "./config";
+import { governanceEnabled } from "./config";
+import { effectiveTavilyDailyCap, notifyBudgetHit } from "./budget";
 import {
   claimResearch,
   deployInProgress,
@@ -66,7 +67,8 @@ export async function kickResearch(
     return { status: "queued", reason: "deploy" };
   }
   const usage = await readTodayUsage();
-  if (usage.tavilyCalls >= tavilyDailyCap(process.env)) {
+  if (usage.tavilyCalls >= (await effectiveTavilyDailyCap())) {
+    void notifyBudgetHit("global_tavily", { operation: "start research" });
     await parkQueued(id, userId);
     return { status: "queued", reason: "budget" };
   }

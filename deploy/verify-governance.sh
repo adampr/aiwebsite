@@ -21,6 +21,9 @@ echo
 echo "=== governance unit wiring ==="
 systemctl cat aiwebsite-governance.service 2>/dev/null | grep -E 'ExecStart|OnFailure|max-old-space' || echo "MISSING UNIT"
 echo
+echo "=== active budget overrides (Troy approval loop; empty = env defaults) ==="
+sudo -u postgres psql aiwebsite -tAc "select key || '=' || value from governance_meta where key like 'budget_override_%'" || true
+echo
 echo "=== governance tables present ==="
 sudo -u postgres psql aiwebsite -tAc "select to_regclass('public.governance_projects') is not null, to_regclass('public.governance_usage') is not null, to_regclass('public.governance_meta') is not null"
 echo

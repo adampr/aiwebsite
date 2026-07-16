@@ -11,6 +11,10 @@ import {
 } from "@/lib/governance/config";
 import { scaffoldDocuments } from "@/lib/governance/blueprints";
 import {
+  effectiveCreatesPerUserPerDay,
+  notifyBudgetHit,
+} from "@/lib/governance/budget";
+import {
   countActiveProjects,
   countCreatedToday,
   createProject,
@@ -88,12 +92,18 @@ export async function POST(req: Request): Promise<Response> {
       `You can have ${CAPS.activeProjectsPerUser} projects in progress at once. Finish or delete one first.`,
       409
     );
-  if ((await countCreatedToday(user.userId)) >= CAPS.createsPerUserPerDay)
+  const createsCap = await effectiveCreatesPerUserPerDay();
+  if ((await countCreatedToday(user.userId)) >= createsCap) {
+    void notifyBudgetHit("person_creates", {
+      who: user.email,
+      operation: "create project",
+    });
     return govError(
       "create_cap",
       "You have hit the limit for new projects today. It resets at midnight UTC. Your existing projects are unaffected.",
       429
     );
+  }
 
   try {
     await sweepExpiredGlobal(25);

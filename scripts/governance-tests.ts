@@ -324,6 +324,151 @@ function check(name: string, cond: boolean): void {
   check("sample: textless pdf rejected gracefully", !scanLike.ok);
 }
 
+/* 10. Troy approval loop: grammar, bounds, sender verification (round 4). */
+{
+  const {
+    parseApprovalCommands,
+    validateCommand,
+    isApprovedSender,
+    sanitizeHeaderValue,
+    isFreshDate,
+    extractAddress,
+  } = await import("../src/lib/governance/approval");
+  const { BUDGET_CEILINGS, CAPS } = await import("../src/lib/governance/config");
+  const { parseEmailAuthVerdict } = await import(
+    "@aicompany/core/memory/email-auth"
+  );
+  const { siteConfig } = await import("site.config");
+
+  // Grammar.
+  const p1 = parseApprovalCommands(
+    "set global brain 2000\nRESET PERSON CREATES\nnot a command\n> SET GLOBAL BRAIN 9999"
+  );
+  check(
+    "approval: parses set + reset, case-insensitive",
+    p1.commands.length === 2 &&
+      p1.commands[0].action === "set" &&
+      p1.commands[0].target === "global_brain" &&
+      p1.commands[0].value === 2000 &&
+      p1.commands[1].action === "reset" &&
+      p1.commands[1].target === "person_creates" &&
+      p1.ignoredLines === 1
+  );
+  const p2 = parseApprovalCommands(
+    "On Mon, Jul 16, 2026 Troy Netter wrote:\nSET GLOBAL BRAIN 3000"
+  );
+  check("approval: stops at quoted-reply marker", p2.commands.length === 0);
+  const p3 = parseApprovalCommands(
+    "From: Troy Netter <troy@x.com>\nSET GLOBAL BRAIN 3000"
+  );
+  check("approval: stops at From: top-post marker", p3.commands.length === 0);
+  check(
+    "approval: rejects trailing text and separators",
+    parseApprovalCommands("SET GLOBAL BRAIN 2000 please\nSET GLOBAL BRAIN 2,000")
+      .commands.length === 0
+  );
+
+  // Bounds: reject, never clamp.
+  const mk = (v: number) =>
+    ({ action: "set", target: "global_brain", value: v, line: "t" }) as const;
+  check("approval: floor rejects 0", !validateCommand(mk(0)).ok);
+  check(
+    "approval: ceiling boundary passes",
+    validateCommand(mk(BUDGET_CEILINGS.brainDaily)).ok
+  );
+  check(
+    "approval: ceiling+1 rejected",
+    !validateCommand(mk(BUDGET_CEILINGS.brainDaily + 1)).ok
+  );
+
+  // Sender allowlist: exact match only.
+  check(
+    "approval: admin exact match",
+    isApprovedSender("Adam <adam@xl.net>", "adam@xl.net") &&
+      isApprovedSender("ADAM@XL.NET", " adam@xl.net , other@xl.net")
+  );
+  check(
+    "approval: lookalike domains rejected",
+    !isApprovedSender("adam@xl.net.evil.com", "adam@xl.net") &&
+      !isApprovedSender("mallory@gmail.com", "adam@xl.net") &&
+      !isApprovedSender("adam@xl.net", "")
+  );
+  check("approval: extractAddress handles display form", extractAddress("A B <x@y.co>") === "x@y.co");
+
+  // DKIM verdict fail-closed matrix (synthetic Authentication-Results
+  // against the real siteConfig authserv-id pin).
+  const authserv = siteConfig.memory.emailAuthservId;
+  const ok = parseEmailAuthVerdict(
+    { "Authentication-Results": `${authserv}; dkim=pass header.d=xl.net; spf=pass` },
+    "adam@xl.net",
+    siteConfig
+  );
+  check("approval: aligned dkim pass authenticates", ok.authenticated === true);
+  const cases: [string, Record<string, string> | null][] = [
+    ["no headers", null],
+    ["no AR header", { Subject: "x" }],
+    ["wrong authserv", { "Authentication-Results": "evil.example; dkim=pass header.d=xl.net" }],
+    ["unaligned dkim", { "Authentication-Results": `${authserv}; dkim=pass header.d=attacker.net` }],
+    ["spf only", { "Authentication-Results": `${authserv}; spf=pass smtp.mailfrom=xl.net` }],
+    ["dkim fail", { "Authentication-Results": `${authserv}; dkim=fail header.d=xl.net` }],
+  ];
+  check(
+    "approval: fail-closed verdict matrix",
+    cases.every(
+      ([, h]) => parseEmailAuthVerdict(h, "adam@xl.net", siteConfig).authenticated === false
+    )
+  );
+  // B1: duplicate AR headers (case-variant keys) must be detectable.
+  const dupHeaders = {
+    "Authentication-Results": `${authserv}; dkim=pass header.d=xl.net`,
+    "AUTHENTICATION-RESULTS": "forged.example; dkim=pass header.d=xl.net",
+  };
+  const dupCount = Object.keys(dupHeaders).filter(
+    (k) => k.toLowerCase() === "authentication-results"
+  ).length;
+  check("approval: duplicate AR headers detected (reject when != 1)", dupCount === 2);
+
+  // Header sanitization + Date freshness.
+  check(
+    "approval: header injection stripped",
+    sanitizeHeaderValue("x\r\nBcc: evil@x.com") === "x Bcc: evil@x.com"
+  );
+  const now = Date.now();
+  check(
+    "approval: date freshness",
+    isFreshDate(new Date(now - 3_600_000).toUTCString(), now) &&
+      !isFreshDate(new Date(now - 72 * 3_600_000).toUTCString(), now) &&
+      !isFreshDate(undefined, now) &&
+      !isFreshDate("not a date", now)
+  );
+
+  // Config sanity: raised defaults + ceilings above them.
+  check(
+    "budget: raised defaults (x5 person, x10 global)",
+    CAPS.createsPerUserPerDay === 25 &&
+      CAPS.brainCallsPerDayDefault === 1500 &&
+      CAPS.tavilyCallsPerDayDefault === 300
+  );
+  check(
+    "budget: ceilings above defaults",
+    BUDGET_CEILINGS.brainDaily >= CAPS.brainCallsPerDayDefault &&
+      BUDGET_CEILINGS.tavilyDaily >= CAPS.tavilyCallsPerDayDefault &&
+      BUDGET_CEILINGS.createsPerUserPerDay >= CAPS.createsPerUserPerDay
+  );
+}
+
+/* 11. Banned characters in the new approval-loop files. */
+{
+  for (const rel of [
+    "src/lib/governance/approval.ts",
+    "src/lib/governance/budget.ts",
+    "src/lib/governance/approval-inbound.ts",
+  ]) {
+    const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
+    check(`no banned chars in ${rel}`, !/[–—‘’“”]/.test(text));
+  }
+}
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

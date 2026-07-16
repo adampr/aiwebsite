@@ -31,7 +31,9 @@ import {
 } from "../src/lib/governance/brain";
 import { governanceEnabled } from "../src/lib/governance/config";
 import {
+  deleteMetaByPrefixOlderThan,
   deployInProgress,
+  listMetaByPrefix,
   listQueuedProjects,
   monthTavilyCalls,
   pruneUsage,
@@ -56,7 +58,7 @@ const BROWSER_UA =
 const MASS_DELETE_CEILING = 500;
 const QUARTER_DAYS = 90;
 const TAVILY_MONTHLY_WARN = parseInt(
-  process.env.GOVERNANCE_TAVILY_MONTHLY_WARN || "600",
+  process.env.GOVERNANCE_TAVILY_MONTHLY_WARN || "6000",
   10
 );
 
@@ -332,8 +334,22 @@ async function cleanupDuties(): Promise<string[]> {
   )) as unknown as { id: string }[];
   if (requeued.length) lines.push(`reaper: requeued ${requeued.length} stale research jobs`);
 
-  // D. Usage prune.
+  // D. Usage prune + approval-loop meta hygiene: replay-dedupe keys at 14
+  // days (the Date-freshness check in approval-inbound.ts covers the DKIM
+  // replay window this reopens) and audit rows at 180 days.
   await pruneUsage(90);
+  const prunedMsgs = await deleteMetaByPrefixOlderThan("troy_msg_", 14);
+  const prunedAudit = await deleteMetaByPrefixOlderThan("budget_audit_", 180);
+  if (prunedMsgs || prunedAudit)
+    lines.push(`meta prune: ${prunedMsgs} dedupe keys, ${prunedAudit} audit rows`);
+
+  // Active budget overrides ride the daily report so a forgotten override
+  // is rediscovered within a day, not a quarter.
+  const overrides = await listMetaByPrefix("budget_override_");
+  if (overrides.length)
+    lines.push(
+      `active budget overrides: ${overrides.map((o) => `${o.key}=${o.value}`).join(", ")}`
+    );
 
   // E. Sweep stamp (request-path canary reads this from governance_meta).
   await setMeta("governance_sweep_last_run", new Date().toISOString());

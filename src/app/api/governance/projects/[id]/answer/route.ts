@@ -15,9 +15,12 @@ import {
 import {
   CAPS,
   REVIEW_FORCED_SUMMARY,
-  brainDailyCap,
   governanceEnabled,
 } from "@/lib/governance/config";
+import {
+  effectiveBrainDailyCap,
+  notifyBudgetHit,
+} from "@/lib/governance/budget";
 import {
   applyTurnWrite,
   fetchOwnedProject,
@@ -141,12 +144,17 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       503,
       { retriable: true }
     );
-  if (!(await trySpendBudget("brain_calls", 1, brainDailyCap(process.env))))
+  if (!(await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))) {
+    void notifyBudgetHit("global_brain", {
+      who: user.email,
+      operation: "drafting turn",
+    });
     return govError(
       "budget_exhausted",
       "Tron has hit today's drafting budget. Your work is saved; come back tomorrow.",
       429
     );
+  }
 
   // Assemble the turn.
   const documents = parse<GovernanceDoc[]>(row.documentsJson, []);
@@ -205,7 +213,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   // the original: the brain replays (sessionId,promptId) verbatim).
   let validation = validateTurn(parseTurnJson(raw), kind);
   if (!validation.ok && remaining() > CAPS.repairMinRemainingMs) {
-    if (await trySpendBudget("brain_calls", 1, brainDailyCap(process.env))) {
+    if (await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap())) {
       const repairRaw = await callGovernanceBrain(
         buildGovernanceEnvelope({
           sessionId,
