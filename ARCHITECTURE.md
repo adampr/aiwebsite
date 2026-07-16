@@ -640,7 +640,7 @@ never writes facts; realtime persona forces do_not_store). All persistent writes
     windows stall every brain turn, so keep the tx short; FORGET is rate-limited 3/hr).
     Retained on purpose (disclosed on /privacy): usage/billing metadata, consent logs,
     call-metadata rows minus transcript, deletion-audit row, the brain's thinking-debug
-    store (a local SQLite file on the pinned v1.97; becomes Postgres `brain_thinking_passes` when the v1.99 line is re-adopted),
+    store (Postgres `brain_thinking_passes` since the v1.99.2 re-adoption; pin now v1.100),
     server logs, oversight BCC copies.
   - `sweepEscapedSharedMemories()` — **poisoning guard, load-bearing**: the brain's extraction
     LLM may stamp a candidate fact `scope:'public'` (bot_self_fact) and candidate scope
@@ -1367,12 +1367,16 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
 ### Brain runtime facts that matter to this deployment
 
 - Express 5, run as TypeScript directly via the submodule's own `tsx` — **no build step**.
-- Storage backend is selectable (default SQLite on the pinned v1.97; the v1.99 line
-  makes postgres the default per the fleet no-SQLite directive 2026-07-16, but v1.99.1
-  was ROLLED BACK on this host the same day: its `widenPgIntegerColumns` boot migration
-  fails on views that depend on altered columns — `test_ui_issue_reports` /
-  `audio_related` — crash-looping brain-api in prod; re-adopt only after the upstream
-  migration handles view/rule dependencies). This deployment runs
+- Storage backend is selectable; the v1.99 line makes postgres the default per the
+  fleet no-SQLite directive 2026-07-16. History: v1.99.1 was ROLLED BACK on this host
+  the same day (its `widenPgIntegerColumns` boot migration failed on views depending
+  on altered columns — `test_ui_issue_reports` / `audio_related` — crash-looping
+  brain-api in prod); v1.99.2 made the widen pass best-effort (view-blocked ALTER
+  warns loudly and boot continues) and was re-adopted. **Current submodule pin:
+  v1.100 (dae30ad, 2026-07-16)** — default-off panel program Stage 0+A, behavior
+  byte-identical with BRAIN_PANEL unset; adoption caveat: a claude-*/grok-*/gemini-*
+  model pin without its provider key now fails loudly (ProviderKeyMissingError)
+  instead of silently misrouting to OpenAI. This deployment runs
   `BRAIN_DB_BACKEND=postgres` against the shared DB with prefix `brain_` (Postgres
   duck-types the sync better-sqlite3 API via `pg-native` → needs `libpq-dev` + build tools
   at `npm ci` time). Since v1.99.1 the thinking-debug store also lives in Postgres
