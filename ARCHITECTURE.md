@@ -620,8 +620,9 @@ never writes facts; realtime persona forces do_not_store). All persistent writes
     the transaction (the brain's pg adapter is one synchronous connection — long row-lock
     windows stall every brain turn, so keep the tx short; FORGET is rate-limited 3/hr).
     Retained on purpose (disclosed on /privacy): usage/billing metadata, consent logs,
-    call-metadata rows minus transcript, deletion-audit row, the brain's local
-    thinking-debug SQLite, server logs, oversight BCC copies.
+    call-metadata rows minus transcript, deletion-audit row, the brain's thinking-debug
+    store (Postgres `brain_thinking_passes` since v1.99.1; formerly a local SQLite file),
+    server logs, oversight BCC copies.
   - `sweepEscapedSharedMemories()` — **poisoning guard, load-bearing**: the brain's extraction
     LLM may stamp a candidate fact `scope:'public'` (bot_self_fact) and candidate scope
     overrides the envelope's privacyScope at write time, so a chatter could otherwise plant a
@@ -1171,10 +1172,15 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
 ### Brain runtime facts that matter to this deployment
 
 - Express 5, run as TypeScript directly via the submodule's own `tsx` — **no build step**.
-- Storage backend is selectable: default SQLite (`~/software-brain-data/brain.sqlite`), but
-  **this deployment runs `BRAIN_DB_BACKEND=postgres`** against the shared DB with prefix
-  `brain_` (Postgres duck-types the sync better-sqlite3 API via `pg-native` → needs `libpq-dev`
-  + build tools at `npm ci` time).
+- Storage backend is selectable and **defaults to postgres as of brain v1.99** (fleet
+  no-SQLite directive 2026-07-16; a missing `BRAIN_POSTGRES_URL` fails loudly at boot,
+  SQLite is explicit opt-in for throwaway fixtures only). This deployment runs
+  `BRAIN_DB_BACKEND=postgres` against the shared DB with prefix `brain_` (Postgres
+  duck-types the sync better-sqlite3 API via `pg-native` → needs `libpq-dev` + build tools
+  at `npm ci` time). Since v1.99.1 the thinking-debug store also lives in Postgres
+  (`brain_thinking_passes`) — the old `~/software-brain-data/thinking-debug.sqlite` on the
+  VM is retired (renamed `.retired-2026-07-16`), and pre-v1.99 int4 columns are widened to
+  BIGINT automatically at boot.
 - Env is loaded from `SOFTWARE_BRAIN_ENV_PATH` (prod: `/var/www/aiwebsite/.env`) — one shared
   `.env` for site + brain.
 - Embeddings are local ONNX (`nomic-ai/nomic-embed-text-v1.5`, 768-d, via
