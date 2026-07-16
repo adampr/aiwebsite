@@ -80,6 +80,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     skipped?: unknown;
     promptId?: unknown;
     mode?: unknown;
+    focusSections?: unknown;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -98,6 +99,16 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   const questionId = typeof body.questionId === "string" ? body.questionId : "";
   const answer = typeof body.answer === "string" ? body.answer.trim() : "";
   const skipped = body.skipped === true;
+  // Open-item resolver batches (§5.12): "slug#section" pairs the revision
+  // targets, serialized verbatim in the prompt so the model can see the text
+  // it must edit. Shape-checked here; the worker validates them against the
+  // actual docs (bogus refs are dropped, never an error: they only widen
+  // prompt focus).
+  const focusSections = Array.isArray(body.focusSections)
+    ? body.focusSections
+        .filter((f): f is string => typeof f === "string" && f.length <= 130)
+        .slice(0, 20)
+    : [];
   const promptId =
     typeof body.promptId === "string" && /^gov_[a-z0-9_]{4,40}$/.test(body.promptId)
       ? body.promptId
@@ -215,6 +226,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     answer,
     skipped,
     revise,
+    focusSections,
     promptId,
     attemptId,
     budgetExempt,

@@ -541,6 +541,51 @@ export async function applyTurnWrite(opts: {
   return rows.length > 0;
 }
 
+/**
+ * Open-item keep-as-drafted write (§5.12): rev-fenced like a turn but
+ * claimless, so it must ALSO refuse while a fresh turn claim is running —
+ * a strip that bumped rev under the worker would void that worker's final
+ * write and waste its brain call. Stale claims (orphans) don't block, same
+ * horizon as confirmProject.
+ */
+export async function applyResolveWrite(opts: {
+  id: string;
+  userId: string;
+  expectedRev: number;
+  documents: GovernanceDoc[];
+  transcript: TranscriptEntry[];
+  changedSections: Record<string, string[]>;
+}): Promise<boolean> {
+  const documentsJson = JSON.stringify(opts.documents);
+  const transcriptJson = JSON.stringify(opts.transcript);
+  if (
+    Buffer.byteLength(documentsJson) > CAPS.documentsJsonMaxBytes ||
+    Buffer.byteLength(transcriptJson) > CAPS.transcriptJsonMaxBytes
+  )
+    return false;
+  const rows = await db
+    .update(P)
+    .set({
+      documentsJson,
+      transcriptJson,
+      changedSectionsJson: JSON.stringify(opts.changedSections),
+      rev: sql`rev + 1`,
+      lastActivityAt: sql`now()`,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(
+        eq(P.id, opts.id),
+        eq(P.userId, opts.userId),
+        eq(P.rev, opts.expectedRev),
+        eq(P.status, "review"),
+        sql`(turn_started_at IS NULL OR turn_started_at < now() - make_interval(secs => ${CAPS.turnStaleMs / 1000}))`
+      )
+    )
+    .returning({ id: P.id });
+  return rows.length > 0;
+}
+
 export async function confirmProject(
   userId: string,
   id: string

@@ -9,6 +9,7 @@ import type {
   GovernanceErrorCode,
   GovernanceKind,
   NextQuestion,
+  OpenConfirmItem,
   ProjectStatus,
   ProjectSummary,
   ProjectView,
@@ -18,7 +19,7 @@ import type {
 } from "./types";
 import { placeholderSectionMap } from "./blueprints";
 import { CAPS, governanceEnabled } from "./config";
-import { findConfirmMarkers } from "./markdown";
+import { countConfirmMarkers, scanConfirmMarkers } from "./markdown";
 import { progressFor } from "./turn";
 import type { ProjectRow } from "./db";
 import { deletesAt } from "./db";
@@ -103,13 +104,22 @@ export function deriveTurnState(
 
 export function openConfirmItems(
   documents: GovernanceDoc[]
-): { doc: string; section: string; excerpt: string }[] {
-  const out: { doc: string; section: string; excerpt: string }[] = [];
+): OpenConfirmItem[] {
+  const out: OpenConfirmItem[] = [];
   for (const d of documents)
     for (const s of d.sections)
-      for (const excerpt of findConfirmMarkers(s.markdown))
-        out.push({ doc: d.slug, section: s.id, excerpt });
+      for (const m of scanConfirmMarkers(s.markdown))
+        out.push({ doc: d.slug, section: s.id, ...m });
   return out.slice(0, 50);
+}
+
+/** TRUE open-marker total (lenient scan; counts markers the item list cannot
+ *  parse). The confirm gate and every user-facing count use this. */
+export function openConfirmTotal(documents: GovernanceDoc[]): number {
+  let n = 0;
+  for (const d of documents)
+    for (const s of d.sections) n += countConfirmMarkers(s.markdown);
+  return n;
 }
 
 export function toProjectView(row: ProjectRow): ProjectView {
@@ -153,6 +163,7 @@ export function toProjectView(row: ProjectRow): ProjectView {
         }
       : null,
     openConfirmItems: openConfirmItems(documents),
+    openConfirmTotal: openConfirmTotal(documents),
     styleSample: row.styleSampleName ? { name: row.styleSampleName } : null,
     answersCount: row.answersCount,
     deletesAt: deletesAt(row.lastActivityAt),

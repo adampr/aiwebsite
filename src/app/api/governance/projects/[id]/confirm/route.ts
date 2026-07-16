@@ -1,10 +1,12 @@
 // POST — confirm the final draft (review -> done) (§5.12). Refuses while
-// any non-stub section still holds untouched scaffold text: the final stamp
-// is the one claim that the interview finished the set, and template
-// placeholders are not governance content. Open [TO CONFIRM] items do NOT
-// block (intentional asymmetry: unverified facts are the user's to accept;
-// undrafted sections are not content at all). Draft downloads keep working
-// regardless, so nothing is stranded.
+// any non-stub section still holds untouched scaffold text (template
+// placeholders are not governance content) AND while any [TO CONFIRM]
+// marker remains (owner ruling 2026-07-16: a FINAL draft carries zero
+// markers; each one is resolved by the user in the review panel, by a typed
+// fact or an explicit keep-as-drafted, never by silent acceptance). The
+// marker count is the LENIENT scan, so a malformed marker that the item
+// list cannot parse still blocks. Draft downloads keep working regardless,
+// so nothing is stranded.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -12,6 +14,7 @@ import { placeholderSectionMap } from "@/lib/governance/blueprints";
 import { CAPS, governanceEnabled } from "@/lib/governance/config";
 import { confirmProject, fetchOwnedProject } from "@/lib/governance/db";
 import { govError, okJson, rateLimit, requireUser } from "@/lib/governance/http";
+import { openConfirmTotal } from "@/lib/governance/view";
 import type { GovernanceDoc, GovernanceKind } from "@/lib/governance/types";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -55,6 +58,13 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
       return govError(
         "invalid_request",
         `${undrafted} ${undrafted === 1 ? "section is" : "sections are"} not drafted yet. Ask Tron to draft them in the revision box, then confirm.`,
+        409
+      );
+    const open = openConfirmTotal(docs);
+    if (open > 0)
+      return govError(
+        "open_items",
+        `${open} open ${open === 1 ? "item still needs" : "items still need"} your answer. Resolve each one in the review panel: type the correct fact or keep it as drafted.`,
         409
       );
   }

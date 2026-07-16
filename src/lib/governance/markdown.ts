@@ -161,8 +161,165 @@ export function blocksToText(blocks: Block[]): string {
 /** Find [TO CONFIRM: ...] markers for the review panel's open-items list. */
 export function findConfirmMarkers(markdown: string): string[] {
   const out: string[] = [];
-  const re = /\[TO CONFIRM:?\s*([^\]]{0,160})\]/gi;
+  const re = confirmMarkerRe();
   let m: RegExpExecArray | null;
   while ((m = re.exec(markdown)) !== null) out.push(m[1].trim() || "open item");
   return out;
+}
+
+/* ------------------------------------------------------------------ *
+ * [TO CONFIRM] marker resolution (§5.12). A FINAL draft must carry zero
+ * markers, each resolved by the user: a typed fact (AI revise turn) or an
+ * explicit keep-as-drafted (the deterministic strip below, zero AI calls).
+ * ------------------------------------------------------------------ */
+
+// 400 chars of innards is deliberately wider than any sane marker; the UI
+// truncates for display. Malformed markers (unclosed bracket, oversized) are
+// still COUNTED by countConfirmMarkers so the confirm gate can never pass a
+// document that prints a marker the parser missed.
+function confirmMarkerRe(): RegExp {
+  return /\[TO CONFIRM:?\s*([^\]]{0,400})\]/gi;
+}
+
+/** Lenient marker count: every "[TO CONFIRM" opener, malformed or not.
+ *  The confirm gate and all user-facing totals MUST use this count. */
+export function countConfirmMarkers(markdown: string): number {
+  return (markdown.match(/\[TO\s*CONFIRM/gi) ?? []).length;
+}
+
+/** Excerpt as transported to the client and echoed back to address a strip. */
+export function confirmExcerpt(inner: string): string {
+  return (inner.trim() || "open item").slice(0, 200);
+}
+
+export interface ScannedConfirmMarker {
+  excerpt: string;
+  occurrence: number; // 0-based among markers with the SAME excerpt
+  contextBefore: string;
+  contextAfter: string;
+  confirmable: boolean;
+}
+
+/** Cut to `max` chars at a word boundary, from the marker outward. */
+function windowBefore(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(s.length - max);
+  const sp = cut.indexOf(" ");
+  return "..." + (sp > 0 && sp < max / 2 ? cut.slice(sp + 1) : cut);
+}
+function windowAfter(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > max / 2 ? cut.slice(0, sp) : cut) + "...";
+}
+
+/** The line containing the span [start,end) (list items and table rows are
+ *  single lines; paragraph context beyond the line is not worth the payload). */
+function lineAround(md: string, start: number, end: number) {
+  const ls = md.lastIndexOf("\n", start - 1) + 1;
+  const leRaw = md.indexOf("\n", end);
+  const le = leRaw === -1 ? md.length : leRaw;
+  return { ls, le };
+}
+
+/** Join the text around a removed marker, cleaning strip residue: doubled
+ *  spaces at the seam, a space stranded before punctuation, and empty
+ *  bracket/paren husks the removal created. */
+function joinStripped(before: string, after: string): string {
+  let b = before;
+  let a = after;
+  if (/\(\s*$/.test(b) && /^\s*\)/.test(a)) {
+    b = b.replace(/\(\s*$/, "");
+    a = a.replace(/^\s*\)/, "");
+  }
+  if (/[ \t]$/.test(b) && /^[ \t]/.test(a)) a = a.replace(/^[ \t]+/, "");
+  if (/[ \t]$/.test(b) && /^[.,;:)\]]/.test(a)) b = b.replace(/[ \t]+$/, "");
+  return b + a;
+}
+
+/** Would the marker's containing block still hold content after a strip?
+ *  Scope: the table cell when the line is a | row, else the whole line minus
+ *  list/heading markers. "Content" = at least one letter or digit. */
+function stripLeavesContent(
+  md: string,
+  matchStart: number,
+  matchEnd: number
+): boolean {
+  const { ls, le } = lineAround(md, matchStart, matchEnd);
+  const line = md.slice(ls, le);
+  const inLineStart = matchStart - ls;
+  const inLineEnd = matchEnd - ls;
+  let scopeStart = 0;
+  let scopeEnd = line.length;
+  if (line.trim().startsWith("|")) {
+    const cellStart = line.lastIndexOf("|", inLineStart - 1);
+    const cellEnd = line.indexOf("|", inLineEnd);
+    scopeStart = cellStart === -1 ? 0 : cellStart + 1;
+    scopeEnd = cellEnd === -1 ? line.length : cellEnd;
+  }
+  const rest = joinStripped(
+    line.slice(scopeStart, inLineStart),
+    line.slice(inLineEnd, scopeEnd)
+  )
+    // list/heading markers are structure, not content
+    .replace(/^\s*(?:#{1,4}|[-*]|\d{1,3}[.)])\s*/, "");
+  return /[a-z0-9]/i.test(rest);
+}
+
+/** Scan one section's markdown into addressable open items. */
+export function scanConfirmMarkers(markdown: string): ScannedConfirmMarker[] {
+  const out: ScannedConfirmMarker[] = [];
+  const counts = new Map<string, number>();
+  const re = confirmMarkerRe();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(markdown)) !== null) {
+    const excerpt = confirmExcerpt(m[1]);
+    const occurrence = counts.get(excerpt) ?? 0;
+    counts.set(excerpt, occurrence + 1);
+    const { ls, le } = lineAround(markdown, m.index, m.index + m[0].length);
+    out.push({
+      excerpt,
+      occurrence,
+      contextBefore: windowBefore(markdown.slice(ls, m.index), 110),
+      contextAfter: windowAfter(markdown.slice(m.index + m[0].length, le), 110),
+      confirmable: stripLeavesContent(markdown, m.index, m.index + m[0].length),
+    });
+  }
+  return out;
+}
+
+export type StripResult =
+  | { ok: true; markdown: string }
+  | { ok: false; reason: "not_found" | "needs_answer" };
+
+/** Deterministically remove the `occurrence`-th marker whose excerpt matches,
+ *  with residue cleanup. Refuses when the strip would leave the containing
+ *  block empty (the marker is the content there; keep-as-drafted is a lie). */
+export function stripConfirmMarker(
+  markdown: string,
+  excerpt: string,
+  occurrence: number
+): StripResult {
+  const re = confirmMarkerRe();
+  let seen = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(markdown)) !== null) {
+    if (confirmExcerpt(m[1]) !== excerpt) continue;
+    if (seen++ < occurrence) continue;
+    const start = m.index;
+    const end = m.index + m[0].length;
+    if (!stripLeavesContent(markdown, start, end))
+      return { ok: false, reason: "needs_answer" };
+    const { ls, le } = lineAround(markdown, start, end);
+    const newLine = joinStripped(
+      markdown.slice(ls, start),
+      markdown.slice(end, le)
+    );
+    return {
+      ok: true,
+      markdown: markdown.slice(0, ls) + newLine + markdown.slice(le),
+    };
+  }
+  return { ok: false, reason: "not_found" };
 }

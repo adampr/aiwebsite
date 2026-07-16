@@ -11,10 +11,12 @@ import { KIND_LABELS } from "@/lib/governance/config";
 import { sectionTitleText } from "@/lib/governance/numbering";
 import type {
   GovernanceDoc,
+  OpenConfirmItem,
   ProjectStatus,
   ProjectView,
   TranscriptEntry,
 } from "@/lib/governance/types";
+import type { KeepResult } from "./open-items-resolver";
 import {
   api,
   firstFeedTarget,
@@ -125,6 +127,9 @@ export function Workspace({ projectId }: { projectId: string }) {
     token: number;
     questionId: string;
     promptId: string;
+    // Resolver-batch sends never own the revise box: a landed turn must not
+    // clear the user's typed-but-unsent free-form revision draft.
+    preserveDraft: boolean;
   } | null>(null);
   // The 20 s "Still working" timer outlives submitTurn's scope: an async-
   // accepted (202) turn resolves via the poll, possibly minutes later.
@@ -460,7 +465,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       if (prev && flight && next.rev > flight.preSendRev) {
         inFlightRef.current = null;
         pendingRef.current = null;
-        clearDraft(flight.questionId);
+        if (!flight.preserveDraft) clearDraft(flight.questionId);
         clearLongTimer();
         setWorking(false);
         setBrainDown(false);
@@ -473,6 +478,26 @@ export function Workspace({ projectId }: { projectId: string }) {
             ? firstFeedTarget(next.nextQuestion.feeds, next.documents)
             : null
         );
+        if (flight.preserveDraft) {
+          // Resolver-batch receipt: the TRUE open-item count delta, never
+          // per-item claims (the model may reword a marker instead of
+          // deleting it; a reworded marker is a new item, not a resolved
+          // one). Replaces the choreography's generic line in this render.
+          const preTotal =
+            prev.openConfirmTotal ?? prev.openConfirmItems.length;
+          const newTotal =
+            next.openConfirmTotal ?? next.openConfirmItems.length;
+          const resolved = Math.max(0, preTotal - newTotal);
+          setAnnounce(
+            newTotal === 0
+              ? "Draft updated. Every open item is resolved; you can confirm the final draft."
+              : newTotal > preTotal
+                ? `Draft updated. ${newTotal - preTotal} new open ${newTotal - preTotal === 1 ? "item" : "items"} appeared; ${newTotal} to go. New facts sometimes surface new assumptions.`
+                : resolved > 0
+                  ? `Draft updated. ${resolved} open ${resolved === 1 ? "item" : "items"} resolved, ${newTotal} to go.`
+                  : `Draft updated. No open items resolved this time; ${newTotal} to go.`
+          );
+        }
         choreographed = true;
       }
 
@@ -700,6 +725,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       placeholderSections: data.placeholderSections ?? prev.placeholderSections,
       progress: data.progress,
       openConfirmItems: data.openConfirmItems,
+      openConfirmTotal: data.openConfirmTotal ?? data.openConfirmItems.length,
       transcript: [...prev.transcript, entry],
       answersCount: prev.answersCount + (questionId === "revise" ? 0 : 1),
     };
@@ -717,14 +743,23 @@ export function Workspace({ projectId }: { projectId: string }) {
     );
   }
 
-  async function submitTurn(opts: { skipped: boolean }) {
+  async function submitTurn(opts: {
+    skipped: boolean;
+    // Open-item resolver batches: a composed message that bypasses the
+    // revise textarea (and its sessionStorage draft) entirely, plus the
+    // "slug#section" refs the server serializes verbatim in the prompt.
+    message?: string;
+    focusSections?: string[];
+  }) {
     const v = viewRef.current;
     if (!v || working) return;
     const revise = v.status === "review";
+    const isResolver = revise && !!opts.message;
     const questionId = revise ? "revise" : v.nextQuestion?.id;
     if (!questionId) return;
-    const answer = opts.skipped ? "" : answerText.trim();
+    const answer = opts.message ?? (opts.skipped ? "" : answerText.trim());
     if (!opts.skipped && !answer) return;
+    const preOpenTotal = v.openConfirmTotal ?? v.openConfirmItems.length;
 
     // promptId lifecycle: reuse only for a transport retry of the SAME
     // answer; anything else mints fresh.
@@ -742,9 +777,17 @@ export function Workspace({ projectId }: { projectId: string }) {
     cancelAskJump();
 
     const token = Date.now() + Math.random();
-    inFlightRef.current = { preSendRev: v.rev, token, questionId, promptId };
+    inFlightRef.current = {
+      preSendRev: v.rev,
+      token,
+      questionId,
+      promptId,
+      preserveDraft: isResolver,
+    };
     const kind: WorkingKind = revise
-      ? "revise"
+      ? isResolver
+        ? "resolve"
+        : "revise"
       : opts.skipped
         ? "skip"
         : "send";
@@ -758,9 +801,11 @@ export function Workspace({ projectId }: { projectId: string }) {
     setAnnounce(
       kind === "skip"
         ? "Question skipped. Tron is drafting a default."
-        : kind === "revise"
-          ? "Revision sent."
-          : "Answer sent."
+        : kind === "resolve"
+          ? "Answers sent. Tron is folding them in."
+          : kind === "revise"
+            ? "Revision sent."
+            : "Answer sent."
     );
     // Armed until the turn resolves (success, failure, or superseded) -
     // an async-accepted turn keeps drafting long after the POST returns.
@@ -780,6 +825,9 @@ export function Workspace({ projectId }: { projectId: string }) {
           skipped: opts.skipped || undefined,
           promptId,
           mode: "async",
+          focusSections: opts.focusSections?.length
+            ? opts.focusSections
+            : undefined,
         }),
       }
     );
@@ -799,8 +847,26 @@ export function Workspace({ projectId }: { projectId: string }) {
       clearLongTimer();
       inFlightRef.current = null;
       pendingRef.current = null;
-      clearDraft(questionId);
+      if (!isResolver) clearDraft(questionId);
       applyTurn(r.data, questionId, opts.skipped, answer);
+      if (isResolver) {
+        // Honest resolver receipt: the TRUE count delta, never per-item
+        // claims (the model may reword a marker instead of deleting it, and
+        // a reworded marker is a new item, not a resolved one). Replaces the
+        // choreography's generic announcement in the same render.
+        const newTotal =
+          r.data.openConfirmTotal ?? r.data.openConfirmItems.length;
+        const resolved = Math.max(0, preOpenTotal - newTotal);
+        setAnnounce(
+          newTotal === 0
+            ? "Draft updated. Every open item is resolved; you can confirm the final draft."
+            : newTotal > preOpenTotal
+              ? `Draft updated. ${newTotal - preOpenTotal} new open ${newTotal - preOpenTotal === 1 ? "item" : "items"} appeared; ${newTotal} to go. New facts sometimes surface new assumptions.`
+              : resolved > 0
+                ? `Draft updated. ${resolved} open ${resolved === 1 ? "item" : "items"} resolved, ${newTotal} to go.`
+                : `Draft updated. No open items resolved this time; ${newTotal} to go.`
+        );
+      }
       return;
     }
 
@@ -859,6 +925,79 @@ export function Workspace({ projectId }: { projectId: string }) {
       void fetchProject();
   }
 
+  /** Keep one open [TO CONFIRM] item as drafted: deterministic server-side
+   *  strip, zero AI calls (works through brain outages). The view is merged
+   *  in place so the row disappears and the section flashes Updated in the
+   *  same render; the resolver handles its own focus continuity. */
+  async function keepItem(item: OpenConfirmItem): Promise<KeepResult> {
+    const v = viewRef.current;
+    if (!v || working) return { ok: false };
+    const r = await api<TurnResponse>(
+      `/api/governance/projects/${encodeURIComponent(projectId)}/resolve-item`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          doc: item.doc,
+          section: item.section,
+          excerpt: item.excerpt,
+          occurrence: item.occurrence,
+        }),
+      }
+    );
+    if (r.ok) {
+      const nowIso = new Date().toISOString();
+      const next: ProjectView = {
+        ...v,
+        rev: r.data.rev,
+        documents: r.data.documents,
+        changedSections: r.data.changedSections,
+        placeholderSections:
+          r.data.placeholderSections ?? v.placeholderSections,
+        openConfirmItems: r.data.openConfirmItems,
+        openConfirmTotal:
+          r.data.openConfirmTotal ?? r.data.openConfirmItems.length,
+        reviewSummary: r.data.reviewSummary,
+        transcript: [
+          ...v.transcript,
+          {
+            qId: "confirm",
+            bankId: null,
+            q: `Open item: ${item.excerpt.slice(0, 160)}`,
+            a: "Kept as drafted.",
+            skipped: false,
+            askedAt: nowIso,
+            answeredAt: nowIso,
+          },
+        ],
+      };
+      viewRef.current = next;
+      setView(next);
+      setHighlights(r.data.changedSections);
+      setFlashKey((k) => k + 1);
+      const left = next.openConfirmTotal;
+      setAnnounce(
+        left === 0
+          ? "Kept as drafted. Every open item is resolved; you can confirm the final draft."
+          : `Kept as drafted. ${left} open ${left === 1 ? "item" : "items"} left.`
+      );
+      return { ok: true };
+    }
+    if (r.status === 401) {
+      setSignedOut(true);
+      return { ok: false };
+    }
+    if (r.code === "item_not_found") {
+      // Already resolved (another tab) or the rev moved: re-sync the list.
+      void fetchProject();
+      return {
+        ok: false,
+        message:
+          "That item was already resolved, maybe in another tab. The list is refreshed.",
+      };
+    }
+    return { ok: false, message: r.message };
+  }
+
   async function startResearch(mode: "full" | "partial") {
     if (researchBusy) return;
     setResearchBusy(true);
@@ -894,6 +1033,14 @@ export function Workspace({ projectId }: { projectId: string }) {
       setNoticeAnnounced({
         kind: "info",
         text: `Almost. ${undrafted} ${undrafted === 1 ? "section is" : "sections are"} not drafted yet. Use the list above to jump to each one and ask Tron to draft it, then confirm.`,
+      });
+      return;
+    }
+    const openTotal = v.openConfirmTotal ?? v.openConfirmItems.length;
+    if (openTotal > 0) {
+      setNoticeAnnounced({
+        kind: "info",
+        text: `Almost. ${openTotal} open ${openTotal === 1 ? "item" : "items"} above still ${openTotal === 1 ? "needs" : "need"} your answer. Type the correct fact or keep it as drafted, item by item, then confirm.`,
       });
       return;
     }
@@ -1136,6 +1283,11 @@ export function Workspace({ projectId }: { projectId: string }) {
                 onConfirm={() => void confirmFinal()}
                 confirmBusy={confirmBusy}
                 onJump={jumpTo}
+                onKeepItem={keepItem}
+                onSendResolved={(message, focusSections) =>
+                  void submitTurn({ skipped: false, message, focusSections })
+                }
+                onAnnounce={setAnnounce}
                 questionHeadingRef={questionHeadingRef}
                 reviewHeadingRef={reviewHeadingRef}
                 downloadSlot={download}

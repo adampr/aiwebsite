@@ -9,6 +9,7 @@ import type {
   GovernanceDoc,
   GovernanceErrorCode,
   NextQuestion,
+  OpenConfirmItem,
   ProjectStatus,
 } from "@/lib/governance/types";
 import { RESEARCH_DURATION_COPY } from "@/lib/governance/config";
@@ -132,7 +133,7 @@ export async function apiUpload<T>(
   };
 }
 
-/** What POST /answer returns on success. */
+/** What POST /answer (and POST /resolve-item) returns on success. */
 export interface TurnResponse {
   rev: number;
   status: ProjectStatus;
@@ -143,7 +144,9 @@ export interface TurnResponse {
   nextQuestion: NextQuestion | null;
   reviewSummary: string | null;
   progress: { answered: number; total: number };
-  openConfirmItems: { doc: string; section: string; excerpt: string }[];
+  openConfirmItems: OpenConfirmItem[];
+  // Optional for one deploy window (same rule as placeholderSections).
+  openConfirmTotal?: number;
   documents: GovernanceDoc[];
 }
 
@@ -275,6 +278,65 @@ export const STATUS_META: Record<ProjectStatus, StatusMeta> = {
     note: "Ready to download.",
   },
 };
+
+/** Which action is in flight; picks the busy copy for the status row. */
+export type WorkingKind = "send" | "skip" | "revise" | "resolve";
+
+/** Stable-width busy button: both labels are stacked in the same grid
+ *  cell so the swap never shifts neighbouring controls. */
+export function BusyLabel({
+  busy,
+  idle,
+  busyText,
+}: {
+  busy: boolean;
+  idle: string;
+  busyText: string;
+}) {
+  return (
+    <>
+      <span className="btn-swap" aria-hidden={busy ? true : undefined}>
+        {idle}
+      </span>
+      <span className="btn-swap" aria-hidden={busy ? undefined : true}>
+        {busyText}
+        <span className="dot" aria-hidden="true" />
+      </span>
+    </>
+  );
+}
+
+export function WorkingRow({ long, kind }: { long: boolean; kind: WorkingKind }) {
+  const base =
+    kind === "skip"
+      ? "Skipped. Drafting a sensible default."
+      : kind === "revise"
+        ? "On it. Revising the draft."
+        : kind === "resolve"
+          ? "On it. Folding your answers in and clearing those markers."
+          : "Got it. Folding your answer into the draft.";
+  const more = !long
+    ? " This can take a little while."
+    : kind === "skip"
+      ? " Still working."
+      : " Still working. Longer answers take longer.";
+  return (
+    <div className="mt-4">
+      <div className="working-rule" aria-hidden="true" />
+      <div
+        className="mt-3 flex items-center gap-3 text-sm"
+        style={{ color: "var(--xl-text-dim)" }}
+      >
+        <span
+          className="dot shrink-0"
+          style={{ color: "var(--xl-light)" }}
+          aria-hidden="true"
+        />
+        <span>{base + more}</span>
+      </div>
+    </div>
+  );
+}
 
 export function CheckGlyph() {
   return (

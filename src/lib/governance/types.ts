@@ -178,6 +178,26 @@ export type TurnState =
       };
     };
 
+/**
+ * One open [TO CONFIRM] marker, addressable for resolution. `occurrence` is
+ * the 0-based index among markers with the SAME excerpt inside the same
+ * section (identical markers are rare but must stay distinguishable).
+ * `contextBefore`/`contextAfter` are the text on the marker's line around it,
+ * word-boundary windowed, so the user can see WHAT they would be affirming.
+ * `confirmable` is false when stripping the marker would leave its containing
+ * paragraph, list item, or table cell empty (the marker IS the content there;
+ * only a typed answer can resolve it).
+ */
+export interface OpenConfirmItem {
+  doc: string;
+  section: string;
+  excerpt: string;
+  occurrence: number;
+  contextBefore: string;
+  contextAfter: string;
+  confirmable: boolean;
+}
+
 /** What GET /api/governance/projects/[id] returns (the poll target). */
 export interface ProjectView {
   id: string;
@@ -201,7 +221,11 @@ export interface ProjectView {
     counts: { pages?: number; mentions?: number; industry?: number; probes?: number };
     error?: string;
   } | null;
-  openConfirmItems: { doc: string; section: string; excerpt: string }[];
+  openConfirmItems: OpenConfirmItem[];
+  // TRUE total of open [TO CONFIRM] markers (lenient scan: counts malformed
+  // markers the item list cannot parse). The confirm gate, the list header,
+  // and all copy use this, never openConfirmItems.length (which is sliced).
+  openConfirmTotal: number;
   // The uploaded sample policy, name only (its text stays server-side; the
   // drafting prompt mirrors its formatting conventions). Null = none.
   styleSample: { name: string } | null;
@@ -247,7 +271,13 @@ export type GovernanceErrorCode =
   | "invalid_domain"
   | "ack_required"
   | "invalid_request"
-  | "feature_disabled";
+  | "feature_disabled"
+  // Review-phase open-item resolution (§5.12): confirm refused while markers
+  // remain; a keep-as-drafted strip can miss (already resolved elsewhere) or
+  // be structurally impossible (the marker is the block's only content).
+  | "open_items"
+  | "item_not_found"
+  | "needs_answer";
 
 export interface GovernanceError {
   error: { code: GovernanceErrorCode; message: string; retriable?: boolean };

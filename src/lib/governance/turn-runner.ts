@@ -29,12 +29,13 @@ import {
 } from "./turn";
 import { bankById, placeholderSectionMap } from "./blueprints";
 import { normalizeBrief } from "./research";
-import { openConfirmItems } from "./view";
+import { openConfirmItems, openConfirmTotal } from "./view";
 import type {
   GovernanceDoc,
   GovernanceErrorCode,
   GovernanceKind,
   NextQuestion,
+  OpenConfirmItem,
   ProjectStatus,
   ResearchBrief,
   TranscriptEntry,
@@ -48,6 +49,10 @@ export interface TurnJob {
   answer: string; // trimmed; "" when skipped
   skipped: boolean;
   revise: boolean;
+  // Open-item resolver batches (§5.12): "slug#section" pairs the revision
+  // targets; validated against the docs here, then serialized verbatim in
+  // the prompt (an elided section cannot be edited by the model).
+  focusSections: string[];
   promptId: string;
   attemptId: string; // claim fence nonce
   budgetExempt: boolean; // captured at accept for the repair spend
@@ -61,7 +66,8 @@ export interface TurnResponseBody {
   nextQuestion: NextQuestion | null;
   reviewSummary: string | null;
   progress: { answered: number; total: number };
-  openConfirmItems: { doc: string; section: string; excerpt: string }[];
+  openConfirmItems: OpenConfirmItem[];
+  openConfirmTotal: number;
   documents: GovernanceDoc[];
 }
 
@@ -159,6 +165,14 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       ? { name: row.styleSampleName ?? "sample", text: row.styleSampleText }
       : null,
   });
+  const validFocusRefs = revise
+    ? job.focusSections.filter((f) => {
+        const i = f.indexOf("#");
+        if (i <= 0 || i >= f.length - 1) return false;
+        const d = documents.find((x) => x.slug === f.slice(0, i));
+        return !!d && d.sections.some((s) => s.id === f.slice(i + 1));
+      })
+    : [];
   const userMsg = buildTurnUserMessage({
     kind,
     documents,
@@ -169,6 +183,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
     skipped,
     changedSections,
     revise,
+    focusRefs: validFocusRefs,
   });
 
   const sessionId = `gov_${row.id}`;
@@ -336,6 +351,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       reviewSummary: status === "review" ? reviewSummary : null,
       progress: progressFor(kind, covered),
       openConfirmItems: openConfirmItems(applied.documents),
+      openConfirmTotal: openConfirmTotal(applied.documents),
       documents: applied.documents,
     },
   };

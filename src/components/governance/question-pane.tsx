@@ -6,9 +6,18 @@
 // the workspace's single polite live region.
 
 import type { ReactNode, RefObject } from "react";
-import type { ProjectView } from "@/lib/governance/types";
+import type { OpenConfirmItem, ProjectView } from "@/lib/governance/types";
 import { sectionTitleText } from "@/lib/governance/numbering";
-import { chipCanon, chipSegments, firstFeedTarget, fmtDate } from "./shared";
+import {
+  BusyLabel,
+  chipCanon,
+  chipSegments,
+  firstFeedTarget,
+  fmtDate,
+  WorkingRow,
+  type WorkingKind,
+} from "./shared";
+import { OpenItemsResolver, type KeepResult } from "./open-items-resolver";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 const dim = { color: "var(--xl-text-dim)" } as const;
@@ -18,35 +27,10 @@ export interface WorkspaceNotice {
   text: string;
 }
 
-/** Which action is in flight; picks the busy copy for the status row. */
-export type WorkingKind = "send" | "skip" | "revise";
-
-/** Stable-width busy button: both labels are stacked in the same grid
- *  cell so the swap never shifts neighbouring controls. */
-function BusyLabel({
-  busy,
-  idle,
-  busyText,
-}: {
-  busy: boolean;
-  idle: string;
-  busyText: string;
-}) {
-  return (
-    <>
-      <span className="btn-swap" aria-hidden={busy ? true : undefined}>
-        {idle}
-      </span>
-      <span className="btn-swap" aria-hidden={busy ? undefined : true}>
-        {busyText}
-        <span className="dot" aria-hidden="true" />
-      </span>
-    </>
-  );
-}
+export type { WorkingKind };
 
 const REVIEW_DEFAULT_COPY =
-  "No more questions. Read the draft on the right. If something reads wrong, tell me below and I will revise it. When it reads right, confirm it and take it with you.";
+  "No more questions. Read the draft on the right. If something reads wrong, tell me below and I will revise it. When it reads right and every open item is resolved, confirm it and take it with you.";
 
 /** One collapsed disclosure for the whole Q&A history: the current question
  *  card stays the top anchor of the column no matter how many answers
@@ -55,7 +39,9 @@ const REVIEW_DEFAULT_COPY =
 function TranscriptList({ view }: { view: ProjectView }) {
   const n = view.transcript.length;
   if (n === 0) return null;
-  const hasRevisions = view.transcript.some((t) => t.qId === "revise");
+  const hasRevisions = view.transcript.some(
+    (t) => t.qId === "revise" || t.qId === "confirm"
+  );
   let qNum = 0;
   return (
     <details className="transcript mb-6">
@@ -80,8 +66,12 @@ function TranscriptList({ view }: { view: ProjectView }) {
               className="min-h-11 cursor-pointer py-2 text-sm"
               style={dim}
             >
-              {/* Revision rows never consume a question number. */}
-              {t.qId === "revise" ? "Revision request" : `Q${++qNum} · ${t.q}`}
+              {/* Revision and kept-as-drafted rows never consume a number. */}
+              {t.qId === "revise"
+                ? "Revision request"
+                : t.qId === "confirm"
+                  ? `Kept as drafted · ${t.q.replace(/^Open item: /, "")}`
+                  : `Q${++qNum} · ${t.q}`}
             </summary>
             <p className="max-w-none pb-3 text-sm">
               {t.skipped ? "Skipped. Tron drafted a default." : t.a}
@@ -90,33 +80,6 @@ function TranscriptList({ view }: { view: ProjectView }) {
         ))}
       </div>
     </details>
-  );
-}
-
-function WorkingRow({ long, kind }: { long: boolean; kind: WorkingKind }) {
-  const base =
-    kind === "skip"
-      ? "Skipped. Drafting a sensible default."
-      : kind === "revise"
-        ? "On it. Revising the draft."
-        : "Got it. Folding your answer into the draft.";
-  const more = !long
-    ? " This can take a little while."
-    : kind === "skip"
-      ? " Still working."
-      : " Still working. Longer answers take longer.";
-  return (
-    <div className="mt-4">
-      <div className="working-rule" aria-hidden="true" />
-      <div className="mt-3 flex items-center gap-3 text-sm" style={dim}>
-        <span
-          className="dot shrink-0"
-          style={{ color: "var(--xl-light)" }}
-          aria-hidden="true"
-        />
-        <span>{base + more}</span>
-      </div>
-    </div>
   );
 }
 
@@ -163,6 +126,9 @@ export function QuestionPane({
   onConfirm,
   confirmBusy,
   onJump,
+  onKeepItem,
+  onSendResolved,
+  onAnnounce,
   questionHeadingRef,
   reviewHeadingRef,
   downloadSlot,
@@ -186,6 +152,9 @@ export function QuestionPane({
   onConfirm: () => void;
   confirmBusy: boolean;
   onJump: (doc: string, section: string, focus: boolean) => void;
+  onKeepItem: (item: OpenConfirmItem) => Promise<KeepResult>;
+  onSendResolved: (message: string, focusSections: string[]) => void;
+  onAnnounce: (text: string) => void;
   questionHeadingRef: RefObject<HTMLHeadingElement | null>;
   reviewHeadingRef: RefObject<HTMLHeadingElement | null>;
   downloadSlot: ReactNode;
@@ -393,29 +362,23 @@ export function QuestionPane({
             </div>
           )}
 
-          {view.openConfirmItems.length > 0 && (
-            <div className="mt-5">
-              <p className="text-sm">
-                <strong>
-                  Open items to confirm ({view.openConfirmItems.length})
-                </strong>
-              </p>
-              <ul className="mt-2 space-y-2">
-                {view.openConfirmItems.map((it, i) => (
-                  <li key={`${it.doc}:${it.section}:${i}`} className="text-sm">
-                    <button
-                      type="button"
-                      className="linklike"
-                      onClick={() => onJump(it.doc, it.section, true)}
-                    >
-                      {(view.documents.find((d) => d.slug === it.doc)?.title ??
-                        it.doc) + " · " + it.excerpt}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <OpenItemsResolver
+            projectId={view.id}
+            items={view.openConfirmItems}
+            total={view.openConfirmTotal ?? view.openConfirmItems.length}
+            documents={view.documents}
+            status={view.status}
+            rev={view.rev}
+            working={working}
+            workingKind={workingKind}
+            workingLong={workingLong}
+            brainDown={brainDown}
+            featureDisabled={featureDisabled}
+            onJump={onJump}
+            onKeep={onKeepItem}
+            onSendAnswers={onSendResolved}
+            onAnnounce={onAnnounce}
+          />
 
           <form
             className="mt-6"
@@ -446,12 +409,22 @@ export function QuestionPane({
                 busyText="Revising"
               />
             </button>
-            {working && <WorkingRow long={workingLong} kind={workingKind} />}
+            {working && workingKind !== "resolve" && (
+              <WorkingRow long={workingLong} kind={workingKind} />
+            )}
             {brainDown && !working && <BrainDownNote />}
             <NoticeLine notice={notice} />
           </form>
 
           <hr className="rule" style={{ margin: "var(--sp-6) 0" }} />
+          {(view.openConfirmTotal ?? view.openConfirmItems.length) > 0 && (
+            <p className="mb-3 max-w-none text-xs" style={faint}>
+              {(() => {
+                const n = view.openConfirmTotal ?? view.openConfirmItems.length;
+                return `Confirming is off until the ${n} open ${n === 1 ? "item" : "items"} above ${n === 1 ? "is" : "are"} resolved. Each one is a fact I assumed for you, and a final draft should carry none of my assumptions.`;
+              })()}
+            </p>
+          )}
           <button
             type="button"
             className="btn btn--sand btn--stable"

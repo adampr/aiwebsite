@@ -19,9 +19,12 @@ import {
 import { CAPS, fileSlug, normalizeDomain } from "../src/lib/governance/config";
 import { deriveTurnState } from "../src/lib/governance/view";
 import {
+  countConfirmMarkers,
   findConfirmMarkers,
   parseMarkdown,
   sanitizeMarkdown,
+  scanConfirmMarkers,
+  stripConfirmMarker,
 } from "../src/lib/governance/markdown";
 import {
   normalizeSectionBlocks,
@@ -1004,6 +1007,86 @@ function check(name: string, cond: boolean): void {
   check(
     "turn: staleness horizon clears brain+repair+headroom",
     CAPS.turnStaleMs > CAPS.brainTurnTimeoutMs + 60_000 + 20_000
+  );
+}
+
+/* 13. Open-item resolution: the confirm gate's lenient count must never miss
+ * a marker the document prints, and the keep-as-drafted strip must be clean
+ * and refuse to empty a block. */
+{
+  const wellFormed = "We keep logs for 30 days [TO CONFIRM: retention period].";
+  check(
+    "markers: lenient count sees well-formed markers",
+    countConfirmMarkers(wellFormed) === 1
+  );
+  const unclosed =
+    "Insurer is Acme [TO CONFIRM: check the policy number\nnext line.";
+  check(
+    "markers: lenient count sees an unclosed marker the parser misses",
+    countConfirmMarkers(unclosed) === 1
+  );
+  const oversize = `x [TO CONFIRM: ${"y".repeat(500)}] z`;
+  check(
+    "markers: lenient count sees an oversized marker",
+    countConfirmMarkers(oversize) === 1
+  );
+  check(
+    "markers: lenient count is case and space tolerant",
+    countConfirmMarkers("a [to confirm: x] b [TO  CONFIRM: y]") === 2
+  );
+
+  const scanned = scanConfirmMarkers(wellFormed);
+  check(
+    "markers: scan yields excerpt + context + confirmable",
+    scanned.length === 1 &&
+      scanned[0].excerpt === "retention period" &&
+      scanned[0].confirmable &&
+      scanned[0].contextBefore.includes("30 days")
+  );
+
+  const s1 = stripConfirmMarker(wellFormed, "retention period", 0);
+  check(
+    "markers: strip removes the marker and the stranded space",
+    s1.ok && s1.markdown === "We keep logs for 30 days."
+  );
+  const paren = "Reviews run quarterly ([TO CONFIRM: cadence]).";
+  const s2 = stripConfirmMarker(paren, "cadence", 0);
+  check(
+    "markers: strip removes an empty paren husk",
+    s2.ok && s2.markdown === "Reviews run quarterly."
+  );
+  const cell = "| Owner | [TO CONFIRM: who owns this] |";
+  const s3 = stripConfirmMarker(cell, "who owns this", 0);
+  check(
+    "markers: strip refuses when the table cell would be emptied",
+    !s3.ok && s3.reason === "needs_answer"
+  );
+  const lonely = "- [TO CONFIRM: entire item unknown]";
+  const s4 = stripConfirmMarker(lonely, "entire item unknown", 0);
+  check(
+    "markers: strip refuses when a list item would be emptied",
+    !s4.ok && s4.reason === "needs_answer"
+  );
+  check(
+    "markers: scan marks a lone-marker cell not confirmable",
+    scanConfirmMarkers(cell)[0]?.confirmable === false
+  );
+  const twice = "A [TO CONFIRM: x] and B [TO CONFIRM: x].";
+  const s5 = stripConfirmMarker(twice, "x", 1);
+  check(
+    "markers: occurrence targets the second identical marker",
+    s5.ok && s5.markdown === "A [TO CONFIRM: x] and B."
+  );
+  check(
+    "markers: strip of a missing marker reports not_found",
+    (() => {
+      const r = stripConfirmMarker("clean text", "x", 0);
+      return !r.ok && r.reason === "not_found";
+    })()
+  );
+  check(
+    "markers: stripped output is marker-free by the lenient count",
+    s1.ok && countConfirmMarkers(s1.markdown) === 0
   );
 }
 
