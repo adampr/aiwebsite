@@ -82,6 +82,7 @@ export function ResearchScreen({
   actionError,
   onStartResearch,
   onPartialStart,
+  onAnnounce,
 }: {
   view: ProjectView;
   resuming: boolean;
@@ -89,6 +90,7 @@ export function ResearchScreen({
   actionError: string;
   onStartResearch: () => void;
   onPartialStart: () => void;
+  onAnnounce: (text: string) => void;
 }) {
   const { status, domain } = view;
 
@@ -99,6 +101,7 @@ export function ResearchScreen({
       projectId={view.id}
       initialName={view.styleSample?.name ?? null}
       disabled={view.featureDisabled}
+      onAnnounce={onAnnounce}
     />
   );
 

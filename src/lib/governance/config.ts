@@ -47,7 +47,17 @@ export const CAPS = {
 /** Sample-policy upload: extensions the extractor understands (client accept
  * attribute + server allowlist share this list; keep it client-safe here). */
 export const STYLE_SAMPLE_EXTENSIONS = [".docx", ".md", ".txt"] as const;
-export const STYLE_SAMPLE_ACCEPT = STYLE_SAMPLE_EXTENSIONS.join(",");
+// MIME types included: some mobile pickers ignore extension-only accepts.
+export const STYLE_SAMPLE_ACCEPT = [
+  ...STYLE_SAMPLE_EXTENSIONS,
+  "text/plain",
+  "text/markdown",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+].join(",");
+
+/** Shared helper line for the format-sample upload (create panel + control). */
+export const STYLE_SAMPLE_HELPER =
+  "Optional. Upload a policy your organization has the right to share (.docx, .md, or .txt). The draft follows its heading, list, and numbering style; Tron is instructed not to reuse the policy's content. Only the extracted text is kept: it is sent to our AI providers with each drafting turn and is deleted with the project.";
 
 /** Client-side precheck for a sample file; returns the error copy or null. */
 export function styleSampleFileError(name: string, size: number): string | null {
@@ -128,11 +138,11 @@ export const DELETION_NOTICE =
 
 /** Third-party AI processing disclosure (create panel + /privacy section). */
 export const AI_PROCESSING_NOTICE =
-  "Your answers and our research are processed by third-party AI model providers to draft your documents. Nothing you type here is stored in Tron's long-term memory or shared with other visitors.";
+  "Your answers, our research, the drafts in progress, and any format sample you upload are processed by third-party AI model providers to draft your documents. Nothing you type or upload here is stored in Tron's long-term memory or shared with other visitors.";
 
 /** Affirmative acknowledgment required at project creation (UPL posture). */
 export const ACK_TEXT =
-  "I understand these are AI-generated drafts, not legal advice, and they will be reviewed by our counsel or compliance owner before adoption. I represent this organization or am authorized to prepare these drafts for it.";
+  "I understand these are AI-generated drafts, not legal advice, and they will be reviewed by our counsel or compliance owner before adoption. I represent this organization or am authorized to prepare these drafts for it, and any file I upload here is one it may lawfully share.";
 
 export const NOT_LEGAL_ADVICE_LINE =
   "Drafts are a working starting point for your leadership and counsel to review. They are not legal advice.";

@@ -27,6 +27,7 @@ import {
 } from "./shared";
 import { ResearchScreen, researchStepLabel } from "./research-screen";
 import { DocPane, secDomId, type ChangedRef } from "./doc-pane";
+import { StyleSampleControl } from "./style-sample-control";
 import { QuestionPane, type WorkspaceNotice } from "./question-pane";
 import { DownloadMenu } from "./download-menu";
 
@@ -861,6 +862,7 @@ export function Workspace({ projectId }: { projectId: string }) {
           actionError={researchError}
           onStartResearch={() => void startResearch("full")}
           onPartialStart={() => void startResearch("partial")}
+          onAnnounce={setAnnounce}
         />
       ) : (
         <>
@@ -993,6 +995,20 @@ export function Workspace({ projectId }: { projectId: string }) {
                 onJump={jumpTo}
                 status={view.status}
                 deletesAt={view.deletesAt}
+              />
+
+              {/* The format sample stays visible and removable through
+                  drafting, review, AND done (the API locks add/replace at
+                  done; removal always works). Lives inside the Draft pane so
+                  it sits with the document on both layouts. */}
+              <StyleSampleControl
+                projectId={view.id}
+                initialName={view.styleSample?.name ?? null}
+                disabled={view.featureDisabled}
+                removeOnly={view.status === "done"}
+                note="A new or changed sample shapes the sections Tron edits from now on; already drafted sections keep their look until he next edits them."
+                onAnnounce={setAnnounce}
+                onChanged={() => void fetchProject()}
               />
             </div>
           </div>

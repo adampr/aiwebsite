@@ -13,6 +13,7 @@ import {
   DELETION_NOTICE,
   KIND_LABELS,
   STYLE_SAMPLE_ACCEPT,
+  STYLE_SAMPLE_HELPER,
   styleSampleFileError,
 } from "@/lib/governance/config";
 import {
@@ -67,12 +68,17 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
   } | null>(null);
   const [sampleFile, setSampleFile] = useState<File | null>(null);
   const [sampleError, setSampleError] = useState("");
+  // Set when the project was created but the sample upload failed: the
+  // panel stays put, shows the error inline, and offers Continue instead
+  // of silently redirecting past it.
+  const [createdId, setCreatedId] = useState<string | null>(null);
 
   const [deletePending, setDeletePending] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
   const setupRef = useRef<HTMLDivElement | null>(null);
   const setupHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const sampleInputRef = useRef<HTMLInputElement | null>(null);
 
   // Picking a kind must not strand the user above the fold: when the setup
   // heading is not already fully visible, the panel scrolls into view and
@@ -130,16 +136,26 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
       }
     );
     if (r.ok) {
-      // Best-effort sample upload before the redirect: the file was already
-      // prechecked on selection, and the workspace shows the same control,
-      // so a rare failure here is visible and fixable on the next screen.
+      // Sample upload before the redirect: the file was prechecked on
+      // selection, so failures are rare; when one happens we stay here and
+      // show the error inline rather than redirecting past it (research is
+      // already running either way, and the workspace has the same control).
       if (sampleFile) {
         const form = new FormData();
         form.append("file", sampleFile);
-        await apiUpload(
+        const up = await apiUpload(
           `/api/governance/projects/${encodeURIComponent(r.data.id)}/style-sample`,
           form
         );
+        if (!up.ok) {
+          setCreating(false);
+          setCreatedId(r.data.id);
+          setSampleFile(null);
+          setSampleError(
+            `Your project started, but the format sample was not attached: ${up.message} You can add one from the project page.`
+          );
+          return;
+        }
       }
       router.push(`/governance/${r.data.id}`);
       return;
@@ -363,37 +379,69 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
               and your industry.
             </p>
 
-            <div className="field">
-              <label htmlFor="gov-sample">Match your format (optional)</label>
-              <p className="max-w-none text-sm">
-                Upload a current company policy (.docx, .md, or .txt) and the
-                draft will follow its heading, list, and numbering style. Its
-                content is never copied, and only the extracted text is kept,
-                under the same 30-day deletion promise.
+            <div
+              className="field"
+              role="group"
+              aria-labelledby="gov-sample-label"
+            >
+              <span id="gov-sample-label" className="gov-domain-label">
+                Match your format
+              </span>
+              <p id="gov-sample-help" className="max-w-none text-sm">
+                {STYLE_SAMPLE_HELPER}
               </p>
               <input
-                id="gov-sample"
+                ref={sampleInputRef}
                 type="file"
-                className="mt-2 block text-sm"
                 accept={STYLE_SAMPLE_ACCEPT}
+                hidden
                 onChange={(e) => {
                   const f = e.target.files?.[0] ?? null;
-                  if (!f) {
-                    setSampleFile(null);
-                    setSampleError("");
-                    return;
-                  }
+                  e.target.value = "";
+                  if (!f) return;
                   const err = styleSampleFileError(f.name, f.size);
                   if (err) {
                     setSampleFile(null);
                     setSampleError(err);
-                    e.target.value = "";
                   } else {
                     setSampleFile(f);
                     setSampleError("");
                   }
                 }}
               />
+              <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
+                {sampleFile && (
+                  <span className="mono" style={dim} id="gov-sample-name">
+                    {sampleFile.name}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="btn btn--text"
+                  disabled={creating || createdId !== null}
+                  aria-describedby={
+                    sampleFile ? "gov-sample-name gov-sample-help" : "gov-sample-help"
+                  }
+                  aria-label={sampleFile ? "Replace format sample" : undefined}
+                  onClick={() => sampleInputRef.current?.click()}
+                >
+                  {sampleFile ? "Replace" : "Add a format sample"}
+                </button>
+                {sampleFile && (
+                  <button
+                    type="button"
+                    className="btn btn--text"
+                    disabled={creating}
+                    aria-label="Remove format sample"
+                    onClick={() => {
+                      setSampleFile(null);
+                      setSampleError("");
+                    }}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
               {sampleError && (
                 <p className="mt-1 max-w-none text-xs" role="alert" style={{ color: "var(--xl-warn)" }}>
                   {sampleError}
@@ -431,14 +479,23 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
             )}
 
             <div className="flex flex-wrap items-center gap-6">
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={() => void create()}
-                disabled={creating}
-              >
-                {creating ? "Starting..." : "Start research"}
-              </button>
+              {createdId ? (
+                <Link
+                  href={`/governance/${createdId}`}
+                  className="btn btn--primary no-underline"
+                >
+                  Continue to your project
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => void create()}
+                  disabled={creating}
+                >
+                  {creating ? "Starting..." : "Start research"}
+                </button>
+              )}
               <button
                 type="button"
                 className="btn btn--text"
@@ -448,6 +505,7 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
                   setAckHint(false);
                   setSampleFile(null);
                   setSampleError("");
+                  setCreatedId(null);
                 }}
               >
                 Cancel

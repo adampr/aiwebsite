@@ -174,7 +174,9 @@ export async function setStyleSample(opts: {
   return rows.length > 0;
 }
 
-/** Remove the sample. Works in any status (removing user data always works). */
+/** Remove the sample. Works in any status, and (like project DELETE, unlike
+ * every read) without the retention filter: removing user data always works,
+ * even from an expired-but-unswept row. */
 export async function clearStyleSample(
   userId: string,
   id: string
@@ -187,9 +189,7 @@ export async function clearStyleSample(
       styleSampleText: null,
       updatedAt: sql`now()`,
     })
-    .where(
-      and(eq(P.id, id), eq(P.userId, userId), gte(P.lastActivityAt, retentionCutoff()))
-    )
+    .where(and(eq(P.id, id), eq(P.userId, userId)))
     .returning({ id: P.id });
   return rows.length > 0;
 }
@@ -303,7 +303,9 @@ export async function handoffToDrafting(opts: {
     .set({
       status: "drafting",
       researchJson: JSON.stringify(opts.brief),
-      researchFlagged: opts.flagged,
+      // OR, never overwrite: a sample upload during research may already
+      // have set the flag (same pattern as applyTurnWrite/setStyleSample).
+      researchFlagged: sql`research_flagged OR ${opts.flagged}`,
       documentsJson: JSON.stringify(opts.documents),
       nextQuestionJson: JSON.stringify(opts.nextQuestion),
       changedSectionsJson: JSON.stringify(opts.changedSections),

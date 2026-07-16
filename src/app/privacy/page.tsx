@@ -22,11 +22,14 @@ export default function PrivacyPage() {
         <p className="mt-4">
           Signed-in users can draft AI governance documents with Tron Netter
           at /governance. For those projects we store your questionnaire
-          answers, the drafts, and a research brief we compile from your
-          company&apos;s public web presence. Your answers and our research
-          are processed by third-party AI model providers to draft the
-          documents; nothing from a governance project is stored in Tron
-          Netter&apos;s long-term memory or shared with other visitors.
+          answers, the drafts, a research brief we compile from your
+          company&apos;s public web presence, and, if you upload one, the text
+          we extract from your format sample (the uploaded file itself is not
+          kept). Your answers, our research, the working drafts, and that
+          extracted text are processed by third-party AI model providers to
+          draft the documents;
+          nothing from a governance project is stored in Tron Netter&apos;s
+          long-term memory or shared with other visitors.
         </p>
         <p className="mt-4">
           Governance projects are deleted from our systems 30 days after your

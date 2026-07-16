@@ -1,13 +1,18 @@
 "use client";
 
-// Format-sample control (§5.12): shows whether a sample policy is attached
-// and lets the user add, replace, or remove one. Self-contained (owns its
-// fetches and status line) so host screens embed it with two props. Status
-// changes are visual text only; the workspace live region is not involved.
+// Format-sample control (§5.12): shows whether a format sample is attached
+// and lets the user add, replace, or remove one. Self-contained fetches; the
+// host passes an optional onAnnounce wired to the workspace's single polite
+// live region for success feedback, and onChanged so the host can refetch
+// the project view (keeping other instances in sync). Errors render as
+// role="alert" text, the one assertive exception (an upload failing silently
+// reads as success). `disabled` locks add/replace only, and `removeOnly`
+// hides them entirely (final projects): removing user data always works.
 
 import { useRef, useState } from "react";
 import {
   STYLE_SAMPLE_ACCEPT,
+  STYLE_SAMPLE_HELPER,
   styleSampleFileError,
 } from "@/lib/governance/config";
 import { apiUpload, api } from "./shared";
@@ -19,15 +24,31 @@ export function StyleSampleControl({
   projectId,
   initialName,
   disabled,
+  removeOnly = false,
+  note,
+  onAnnounce,
+  onChanged,
 }: {
   projectId: string;
   initialName: string | null;
   disabled: boolean;
+  removeOnly?: boolean;
+  note?: string;
+  onAnnounce?: (text: string) => void;
+  onChanged?: () => void;
 }) {
   const [name, setName] = useState<string | null>(initialName);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"upload" | "remove" | null>(null);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Adopt server-driven changes (another tab, a fresh poll) without losing
+  // local updates: the documented adjust-state-during-render pattern.
+  const [prevInitial, setPrevInitial] = useState(initialName);
+  if (prevInitial !== initialName) {
+    setPrevInitial(initialName);
+    setName(initialName);
+  }
 
   async function upload(file: File) {
     const precheck = styleSampleFileError(file.name, file.size);
@@ -35,7 +56,7 @@ export function StyleSampleControl({
       setError(precheck);
       return;
     }
-    setBusy(true);
+    setBusy("upload");
     setError("");
     const form = new FormData();
     form.append("file", file);
@@ -43,32 +64,39 @@ export function StyleSampleControl({
       `/api/governance/projects/${encodeURIComponent(projectId)}/style-sample`,
       form
     );
-    setBusy(false);
-    if (r.ok) setName(r.data.styleSample.name);
-    else setError(r.message);
+    setBusy(null);
+    if (r.ok) {
+      setName(r.data.styleSample.name);
+      onAnnounce?.(`Format sample attached: ${r.data.styleSample.name}.`);
+      onChanged?.();
+    } else setError(r.message);
   }
 
   async function remove() {
-    setBusy(true);
+    setBusy("remove");
     setError("");
     const r = await api<undefined>(
       `/api/governance/projects/${encodeURIComponent(projectId)}/style-sample`,
       { method: "DELETE" }
     );
-    setBusy(false);
-    if (r.ok || r.status === 404) setName(null);
-    else setError(r.message);
+    setBusy(null);
+    if (r.ok || r.status === 404) {
+      setName(null);
+      onAnnounce?.("Format sample removed.");
+      onChanged?.();
+    } else setError(r.message);
   }
 
+  // In remove-only mode with nothing attached there is nothing to show.
+  if (removeOnly && !name) return null;
+
   return (
-    <div className="mt-4 text-sm">
+    <div className="mt-4 text-left text-sm">
       <input
         ref={inputRef}
         type="file"
         accept={STYLE_SAMPLE_ACCEPT}
-        className="sr-only"
-        aria-hidden="true"
-        tabIndex={-1}
+        hidden
         onChange={(e) => {
           const f = e.target.files?.[0];
           e.target.value = "";
@@ -85,32 +113,55 @@ export function StyleSampleControl({
             "No format sample attached."
           )}
         </span>
-        <button
-          type="button"
-          className="btn btn--text"
-          disabled={busy || disabled}
-          onClick={() => inputRef.current?.click()}
-        >
-          {busy ? "Working..." : name ? "Replace" : "Add a sample policy"}
-        </button>
+        {!removeOnly && (
+          <button
+            type="button"
+            className="btn btn--text"
+            disabled={busy !== null || disabled}
+            aria-label={
+              busy === "upload"
+                ? "Uploading format sample"
+                : name
+                  ? "Replace format sample"
+                  : undefined
+            }
+            onClick={() => inputRef.current?.click()}
+          >
+            {busy === "upload"
+              ? "Uploading..."
+              : name
+                ? "Replace"
+                : "Add a format sample"}
+          </button>
+        )}
         {name && (
           <button
             type="button"
             className="btn btn--text"
-            disabled={busy || disabled}
+            disabled={busy !== null}
+            aria-label={
+              busy === "remove"
+                ? "Removing format sample"
+                : "Remove format sample"
+            }
             onClick={() => void remove()}
           >
-            Remove
+            {busy === "remove" ? "Removing..." : "Remove"}
           </button>
         )}
       </div>
-      <p className="mt-1 max-w-none text-xs" style={faint}>
-        Optional. Upload a current company policy (.docx, .md, or .txt) and
-        the draft will follow its heading, list, and numbering style. Its
-        content is never copied.
-      </p>
+      {!removeOnly && (
+        <p className="mt-1 max-w-none text-xs" style={faint}>
+          {STYLE_SAMPLE_HELPER}
+          {note ? ` ${note}` : ""}
+        </p>
+      )}
       {error && (
-        <p className="mt-1 max-w-none text-xs" role="alert" style={{ color: "var(--xl-warn)" }}>
+        <p
+          className="mt-1 max-w-none text-xs"
+          role="alert"
+          style={{ color: "var(--xl-warn)" }}
+        >
           {error}
         </p>
       )}

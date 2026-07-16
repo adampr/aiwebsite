@@ -1,4 +1,4 @@
-// POST/DELETE — the optional sample-policy upload (§5.12). The user uploads
+// POST/DELETE: the optional format-sample upload (§5.12). The user uploads
 // an existing company policy (.docx/.md/.txt) and every subsequent drafting
 // turn mirrors its formatting conventions. Only extracted, injection-screened
 // plain text is stored (never the file); it deletes with the project row.
@@ -38,7 +38,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   if (row.status === "done")
     return govError(
       "invalid_request",
-      "This project is final. The format sample cannot change anymore.",
+      "This project is final, so its format sample can no longer be changed.",
       409
     );
 
@@ -70,7 +70,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   if (clean.trim().length < 40)
     return govError(
       "invalid_request",
-      "I could not keep enough of that file's text to use it. Try a plainer copy.",
+      "Too little of that file's text could be used. Try a copy with ordinary policy text and minimal markup.",
       400
     );
 
