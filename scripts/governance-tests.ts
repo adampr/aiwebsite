@@ -69,8 +69,10 @@ function check(name: string, cond: boolean): void {
     "src/lib/governance/config.ts",
     "src/lib/governance/blueprints.ts",
     "src/lib/governance/prompt.ts",
+    "src/lib/governance/probes.ts",
     "src/lib/governance/style-sample.ts",
     "src/components/governance/style-sample-control.tsx",
+    "src/components/governance/research-screen.tsx",
   ]) {
     const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
     check(`no banned chars in ${rel}`, !/[–—‘’“”]/.test(text));
@@ -484,6 +486,186 @@ function check(name: string, cond: boolean): void {
     const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
     check(`no banned chars in ${rel}`, !/[–—‘’“”]/.test(text));
   }
+}
+
+/* 12. Standard-specific applicability probes. */
+{
+  const {
+    PROBE_PACKS,
+    MAX_PROBE_QUERIES_PER_RUN,
+    MAX_APPLICABILITY_SIGNALS,
+    buildProbeQuery,
+    sanitizeQueryTerm,
+    sanitizeSignalSource,
+    probeById,
+    probeResultRelevant,
+  } = await import("../src/lib/governance/probes");
+  const { emptyBrief, truncateBrief, briefToPromptBlock, normalizeBrief } =
+    await import("../src/lib/governance/research");
+  const { CAPS } = await import("../src/lib/governance/config");
+  const { buildSystemMessage } = await import("../src/lib/governance/prompt");
+
+  for (const kind of GOVERNANCE_KINDS) {
+    const pack = PROBE_PACKS[kind];
+    check(
+      `${kind}: probe pack sized 1..${MAX_PROBE_QUERIES_PER_RUN}`,
+      pack.length >= 1 && pack.length <= MAX_PROBE_QUERIES_PER_RUN
+    );
+    const bank = bankById(kind);
+    check(
+      `${kind}: probe confirmVia resolve to bank ids`,
+      pack.every(
+        (p) => p.confirmVia.length > 0 && p.confirmVia.every((id) => bank.has(id))
+      )
+    );
+    check(
+      `${kind}: probe templates have placeholders`,
+      pack.every((p) => /\{company\}|\{domain\}/.test(p.queryTemplate))
+    );
+    check(
+      `${kind}: probe ids unique and triggers capped`,
+      new Set(pack.map((p) => p.id)).size === pack.length &&
+        pack.every((p) => p.trigger.length <= 80)
+    );
+    check(`${kind}: probeById maps the pack`, probeById(kind).size === pack.length);
+  }
+  check(
+    "probes: per-run tavily cap covers base 4 + probes",
+    CAPS.tavilyCallsPerResearchRun >= 4 + MAX_PROBE_QUERIES_PER_RUN
+  );
+
+  // Untrusted company names cannot smuggle query operators.
+  check(
+    "probes: query term sanitized",
+    sanitizeQueryTerm('Ac"me\\ Corp\n') === "Acme Corp" &&
+      sanitizeQueryTerm("x".repeat(200)).length <= 80 &&
+      !buildProbeQuery(
+        PROBE_PACKS.usage_policy[0],
+        'Evil" OR site:evil.com "',
+        "x.com"
+      ).includes('"Evil" OR site:evil.com ""')
+  );
+  check(
+    "probes: signal source urls validated",
+    sanitizeSignalSource("https://example.com/a") === "https://example.com/a" &&
+      sanitizeSignalSource("javascript:alert(1)") === "" &&
+      sanitizeSignalSource("https://user:pw@example.com/") === "" &&
+      sanitizeSignalSource("not a url") === "" &&
+      sanitizeSignalSource("https://example.com/" + "x".repeat(200)) === ""
+  );
+  check(
+    "probes: individual-profile and no-mention results dropped",
+    !probeResultRelevant(
+      { title: "Jane Doe", url: "https://linkedin.com/in/janedoe", content: "acme corp" },
+      "Acme Corp",
+      "acme.com"
+    ) &&
+      !probeResultRelevant(
+        { title: "Top 10 AI tools", url: "https://listicle.example", content: "generic" },
+        "Acme Corp",
+        "acme.com"
+      ) &&
+      probeResultRelevant(
+        { title: "Acme Corp wins award", url: "https://news.example/a", content: "..." },
+        "Acme Corp",
+        "acme.com"
+      ) &&
+      probeResultRelevant(
+        { title: "Award list", url: "https://news.example/b", content: "see acme.com" },
+        "Unrelated Name",
+        "acme.com"
+      )
+  );
+
+  // Brief shaping: defaults, caps, ceiling, legacy compatibility, rendering.
+  const eb = emptyBrief([]);
+  check(
+    "brief: empty has signal fields",
+    Array.isArray(eb.applicabilitySignals) &&
+      eb.applicabilitySignals.length === 0 &&
+      eb.probedKind === null &&
+      eb.companyName === ""
+  );
+  const big = {
+    ...eb,
+    probedKind: "nist_ai_rmf" as const,
+    applicabilitySignals: Array.from({ length: 12 }, (_, i) => ({
+      probeId: `p${i}`,
+      trigger: "T".repeat(300),
+      finding: "F".repeat(500),
+      source: "https://x.example/" + "s".repeat(300),
+      confidence: "likely" as const,
+    })),
+  };
+  const t = truncateBrief(big);
+  check(
+    "brief: signals hard-capped",
+    t.applicabilitySignals.length <= MAX_APPLICABILITY_SIGNALS &&
+      t.applicabilitySignals.every(
+        (s) => s.finding.length <= 200 && s.source.length <= 160 && s.trigger.length <= 80
+      )
+  );
+  check(
+    "brief: total ceiling still enforced",
+    JSON.stringify(t).length <= CAPS.researchBriefMaxChars
+  );
+  const legacy = normalizeBrief({
+    companyProfile: "x",
+    sizeAndFootprint: "",
+    industryContext: "",
+    aiUseSignals: [],
+    regulatoryExposure: [],
+    dataSensitivity: "",
+    openQuestions: [],
+    topSources: [],
+    gaps: [],
+    confidenceNotes: "",
+    distilledAt: new Date().toISOString(),
+  });
+  check(
+    "brief: legacy brief normalizes (no crash fields)",
+    legacy !== null &&
+      legacy.applicabilitySignals.length === 0 &&
+      legacy.probedKind === null &&
+      legacy.companyName === ""
+  );
+  check(
+    "brief: junk does not normalize",
+    normalizeBrief(null) === null && normalizeBrief({}) === null
+  );
+  const withSignal = {
+    ...eb,
+    probedKind: "nist_ai_rmf" as const,
+    applicabilitySignals: [
+      {
+        probeId: "gov-contracts",
+        trigger: "Government or defense contract work",
+        finding: "Public sources suggest a federal contract award in 2025.",
+        source: "https://example.com/a",
+        confidence: "likely" as const,
+      },
+    ],
+  };
+  const block = briefToPromptBlock(withSignal);
+  check(
+    "brief: prompt block renders signal with hedged framing",
+    block.includes("Government or defense contract work") &&
+      block.includes("not determinations")
+  );
+  check(
+    "brief: prompt block none fallback",
+    briefToPromptBlock(eb).includes("(none)")
+  );
+  const sys = buildSystemMessage({
+    kind: "nist_ai_rmf",
+    brief: eb,
+    forcedReviewSoon: false,
+    styleSample: null,
+  });
+  check(
+    "prompt: APPLICABILITY SIGNALS rule present",
+    sys.includes("APPLICABILITY SIGNALS") && sys.includes("determination")
+  );
 }
 
 if (failures) {

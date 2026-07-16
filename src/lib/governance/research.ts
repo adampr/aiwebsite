@@ -7,8 +7,10 @@ import { lookup as dnsLookup } from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
-import type { ResearchBrief, TavilyResult } from "./types";
+import type { ApplicabilitySignal, ResearchBrief, TavilyResult } from "./types";
+import { isGovernanceKind } from "./types";
 import { CAPS } from "./config";
+import { MAX_APPLICABILITY_SIGNALS, sanitizeSignalSource } from "./probes";
 
 /* ------------------------------------------------------------------ *
  * SSRF-hardened fetch
@@ -301,10 +303,13 @@ export function screenInjection(text: string): {
 export function emptyBrief(gaps: string[]): ResearchBrief {
   return {
     companyProfile: "",
+    companyName: "",
     sizeAndFootprint: "",
     industryContext: "",
     aiUseSignals: [],
     regulatoryExposure: [],
+    applicabilitySignals: [],
+    probedKind: null,
     dataSensitivity: "",
     openQuestions: [],
     topSources: [],
@@ -315,11 +320,60 @@ export function emptyBrief(gaps: string[]): ResearchBrief {
   };
 }
 
+/**
+ * Shape an arbitrary stored value into a valid ResearchBrief, or null.
+ * Briefs written before the applicability-probes change lack the new fields;
+ * this defaulting layer is what keeps existing projects and 30-day brief
+ * reuse working across the upgrade (and across a rollback: old code simply
+ * ignores the extra JSON fields).
+ */
+export function normalizeBrief(v: unknown): ResearchBrief | null {
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.distilledAt !== "string" || !o.distilledAt) return null;
+  const str = (x: unknown) => (typeof x === "string" ? x : "");
+  const arr = (x: unknown) =>
+    Array.isArray(x) ? x.filter((s): s is string => typeof s === "string") : [];
+  const signals: ApplicabilitySignal[] = Array.isArray(o.applicabilitySignals)
+    ? o.applicabilitySignals.flatMap((s) => {
+        const g = s as Record<string, unknown>;
+        if (typeof g?.probeId !== "string" || typeof g?.finding !== "string")
+          return [];
+        return [
+          {
+            probeId: g.probeId,
+            trigger: str(g.trigger),
+            finding: g.finding,
+            source: sanitizeSignalSource(str(g.source)),
+            confidence: g.confidence === "likely" ? ("likely" as const) : ("unclear" as const),
+          },
+        ];
+      })
+    : [];
+  return {
+    companyProfile: str(o.companyProfile),
+    companyName: str(o.companyName),
+    sizeAndFootprint: str(o.sizeAndFootprint),
+    industryContext: str(o.industryContext),
+    aiUseSignals: arr(o.aiUseSignals),
+    regulatoryExposure: arr(o.regulatoryExposure),
+    applicabilitySignals: signals,
+    probedKind: isGovernanceKind(o.probedKind) ? o.probedKind : null,
+    dataSensitivity: str(o.dataSensitivity),
+    openQuestions: arr(o.openQuestions),
+    topSources: arr(o.topSources),
+    gaps: arr(o.gaps),
+    confidenceNotes: str(o.confidenceNotes),
+    distilledAt: o.distilledAt,
+  };
+}
+
 /** Enforce the brief ceiling array-wise (never mid-field). */
 export function truncateBrief(brief: ResearchBrief): ResearchBrief {
   const b: ResearchBrief = {
     ...brief,
     companyProfile: brief.companyProfile.slice(0, 1200),
+    companyName: (brief.companyName ?? "").slice(0, 80),
     sizeAndFootprint: brief.sizeAndFootprint.slice(0, 600),
     industryContext: brief.industryContext.slice(0, 1200),
     dataSensitivity: brief.dataSensitivity.slice(0, 600),
@@ -328,6 +382,16 @@ export function truncateBrief(brief: ResearchBrief): ResearchBrief {
     regulatoryExposure: brief.regulatoryExposure
       .slice(0, 10)
       .map((s) => s.slice(0, 200)),
+    applicabilitySignals: (brief.applicabilitySignals ?? [])
+      .slice(0, MAX_APPLICABILITY_SIGNALS)
+      .map((s) => ({
+        probeId: s.probeId.slice(0, 40),
+        trigger: s.trigger.slice(0, 80),
+        finding: s.finding.slice(0, 200),
+        source: sanitizeSignalSource(s.source),
+        confidence: s.confidence === "likely" ? ("likely" as const) : ("unclear" as const),
+      })),
+    probedKind: brief.probedKind ?? null,
     openQuestions: brief.openQuestions.slice(0, 8).map((s) => s.slice(0, 200)),
     topSources: brief.topSources.slice(0, 10).map((s) => s.slice(0, 160)),
     gaps: brief.gaps.slice(0, 8).map((s) => s.slice(0, 80)),
@@ -342,6 +406,14 @@ export function truncateBrief(brief: ResearchBrief): ResearchBrief {
     if (b[key].length > 2) b[key] = b[key].slice(0, b[key].length - 1);
     i++;
   }
+  // Applicability signals shed LAST: only when the generic arrays are already
+  // at their floors and the brief still exceeds the ceiling.
+  while (
+    JSON.stringify(b).length > CAPS.researchBriefMaxChars &&
+    b.applicabilitySignals.length > 0
+  ) {
+    b.applicabilitySignals = b.applicabilitySignals.slice(0, -1);
+  }
   return b;
 }
 
@@ -352,6 +424,16 @@ export function briefToPromptBlock(brief: ResearchBrief): string {
     `Industry context: ${brief.industryContext || "(unknown)"}`,
     `AI use signals: ${brief.aiUseSignals.join("; ") || "(none found)"}`,
     `Regulatory exposure: ${brief.regulatoryExposure.join("; ") || "(none found)"}`,
+    `Standard applicability signals (public-source observations to confirm with the user, not determinations): ${
+      (brief.applicabilitySignals ?? []).length
+        ? brief.applicabilitySignals
+            .map(
+              (s) =>
+                `${s.trigger}: ${s.finding}${s.source ? ` [${s.source}]` : ""} (confidence: ${s.confidence})`
+            )
+            .join("; ")
+        : "(none)"
+    }`,
     `Data sensitivity: ${brief.dataSensitivity || "(unknown)"}`,
     `Open questions worth asking the user: ${brief.openQuestions.join(" | ") || "(none)"}`,
     `Research gaps: ${brief.gaps.join(", ") || "none"}`,

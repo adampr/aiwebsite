@@ -16,6 +16,7 @@ import type {
   TranscriptEntry,
 } from "./types";
 import { CAPS, RETENTION_DAYS } from "./config";
+import { normalizeBrief } from "./research";
 
 const P = schema.governanceProjects;
 const U = schema.governanceUsage;
@@ -342,7 +343,8 @@ export async function ownerEmailForProject(id: string): Promise<string | null> {
 export async function latestBriefForDomain(
   userId: string,
   domain: string,
-  excludeId: string
+  excludeId: string,
+  kind?: GovernanceKind
 ): Promise<ResearchBrief | null> {
   const rows = await db
     .select({ researchJson: P.researchJson })
@@ -357,19 +359,27 @@ export async function latestBriefForDomain(
     )
     .orderBy(desc(P.updatedAt))
     .limit(3);
+  const valid: ResearchBrief[] = [];
   for (const r of rows) {
     try {
-      const brief = JSON.parse(r.researchJson!) as ResearchBrief;
+      const brief = normalizeBrief(JSON.parse(r.researchJson!));
       if (
-        brief.distilledAt &&
+        brief &&
         Date.now() - Date.parse(brief.distilledAt) < 30 * 86_400_000 &&
         !brief.gaps.includes("research_failed")
       )
-        return brief;
+        valid.push(brief);
     } catch {
       // skip corrupt
     }
   }
+  // Prefer a brief already probed for this kind (saves the probe top-up);
+  // otherwise the freshest valid brief wins, exactly as before.
+  if (kind) {
+    const probed = valid.find((b) => b.probedKind === kind);
+    if (probed) return probed;
+  }
+  if (valid.length) return valid[0];
   return null;
 }
 

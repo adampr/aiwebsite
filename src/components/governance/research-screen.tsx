@@ -15,6 +15,7 @@ const STEP_ORDER: ResearchStep[] = [
   "site",
   "mentions",
   "industry",
+  "probes",
   "distill",
   "handoff",
 ];
@@ -29,6 +30,7 @@ export function researchStepLabel(step: ResearchStep, domain: string): string {
   if (step === "site") return `reading ${domain}`;
   if (step === "mentions") return "searching the web for mentions of you";
   if (step === "industry") return "studying your industry";
+  if (step === "probes") return "checking signals specific to your standard";
   if (step === "distill") return "writing the working brief";
   // handoff: the turn-zero group calls can hold this step for a few minutes
   // on the document sets; the label must say what is actually happening.
@@ -229,7 +231,14 @@ export function ResearchScreen({
       first: 2,
       last: 2,
     },
-    { label: "Writing the working brief", detail: "distilling", first: 3, last: 4 },
+    {
+      label: "Checking what may apply to you",
+      detail:
+        counts.probes !== undefined ? `${counts.probes} results read` : "",
+      first: 3,
+      last: 3,
+    },
+    { label: "Writing the working brief", detail: "distilling", first: 4, last: 5 },
   ];
 
   return (

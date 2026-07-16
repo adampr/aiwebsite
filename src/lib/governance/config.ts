@@ -23,7 +23,8 @@ export const CAPS = {
   // loop (budget.ts), clamped to BUDGET_CEILINGS either way.
   brainCallsPerDayDefault: 1500,
   tavilyCallsPerDayDefault: 300,
-  tavilyCallsPerResearchRun: 6,
+  // 3 company + 1 industry + up to 3 standard probes = 7 worst case, 1 headroom.
+  tavilyCallsPerResearchRun: 8,
   distillCallsPerResearchRun: 12,
   // Prompt-side output bound: the host cannot set max_tokens on the brain's
   // JSON path, so the per-turn op budget is the real ceiling (~2k output tok,

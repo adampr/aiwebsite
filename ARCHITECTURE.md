@@ -18,7 +18,8 @@
 Last verified against code: 2026-07-16 (AI Governance builder shipped —
 new §5.12 /governance section, governance tables in §6, standards pipeline
 in §8.1, `aiwebsite-governance` timer via the host post-install hook in
-§9.7. Brain submodule v1.97 @ e369242 —
+§9.7; standard-specific applicability probes added to the research
+pipeline (§5.12, `src/lib/governance/probes.ts`) the same day. Brain submodule v1.97 @ e369242 —
 dynamic multi-provider model routing, Issues #692–#696: registry
 unification (anthropic claude-* ids now first-class routable alongside
 openai/xai/google — `GET /v1/model-routing` rows can carry
@@ -885,27 +886,57 @@ Skips draft a default marked `[TO CONFIRM: …]`; the review panel lists open ma
 jump links. Progress ("question N of about M") is host-computed from bank coverage.
 
 **Research pipeline** (`scripts/governance-research.ts`, spawned detached by
-`kick.ts` after the DB claim, `NODE_OPTIONS=--max-old-space-size=256`, 10-min wall
+`kick.ts` after the DB claim, `NODE_OPTIONS=--max-old-space-size=256`, 15-min wall
 clock, heartbeat per step, log `/var/log/aiwebsite-governance-research.log` with
 `[<id8>] <ISO> step=` prefixes and NO content bodies): 30-day same-user+domain brief
-reuse → site crawl (≤12 pages, 300 KB/page, **SSRF-hardened `safeFetch`**: http/https
+reuse (kind-aware, see below) → site crawl (≤12 pages, 300 KB/page, **SSRF-hardened
+`safeFetch`**: http/https
 + default ports only, custom DNS lookup rejects loopback/private/link-local/IMDS/CGNAT
 ranges and pins the validated resolution for the connect — DNS rebinding safe — manual
 redirects ≤3 re-validated per hop) → company Tavily (3 advanced queries → top 50 by
 score, checkpointed in `research_progress_json` so requeues re-spend nothing) →
-profile mini-call → industry Tavily (top 20) → map-reduce distill (Tavily snippets
+profile mini-call → industry Tavily (top 20) → **standard applicability probes**
+(≤3 per-kind hardcoded Tavily queries from `src/lib/governance/probes.ts` targeting
+the chosen standard's conditional attributes — e.g. government/defense contract work,
+EU market presence, generative-AI products, existing ISO/SOC certifications — company
+name interpolation sanitized against query-operator smuggling, results filtered
+deterministically: individual-profile hosts dropped, must mention company or domain,
+top 6/query; checkpointed PER PROBE ID with presence semantics, empty results
+included, so requeues re-spend nothing even on zero-hit probes; skipped entirely when
+neither pages nor mentions exist) → map-reduce distill (Tavily snippets
 only; `<<<UNTRUSTED-nonce>>>` fencing; identity gate against name-collision companies;
 personal data only as public role holders; ≤12 brain calls, lowest-tier chunks dropped
-first with `gaps:["research_truncated"]`) → ≤9000-char brief (injection-screened,
-`research_flagged` on hits) → turn zero: a COMPLETE best-effort first draft of every
+first with `gaps:["research_truncated"]`; **probe sources are chunked FIRST** so
+truncation sheds generic mentions before standard-specific evidence; probe facts are
+host-annotated `(probe: <id>)` by source URL and REDUCE may attribute
+`applicabilitySignals` only to those ids) → ≤9000-char brief (injection-screened,
+`research_flagged` on hits; new fields: `companyName`, `probedKind`, and ≤5
+`applicabilitySignals` — hedged public-source observations `{probeId, trigger,
+finding, source, confidence: likely|unclear}` with trigger labels re-attached
+host-side from the catalog, unknown probe ids dropped, source URLs validated
+http/https-no-creds or blanked; signals shed LAST under the size ceiling; drafting
+prompts render them as "observations to confirm with the user, not determinations"
+and a rules() line forbids determinations from signals — anything drafted from one
+carries `[TO CONFIRM]`) → turn zero: a COMPLETE best-effort first draft of every
 non-stub section (never placeholder language; unknowns marked `[TO CONFIRM: …]`; one
 call for the usage policy, one per ~3-doc group for the standards sets, a failed group
 keeps its scaffold) → ONE handoff write
-(scaffold docs + bank question 1 + `status:'drafting'`). Degradation: Tavily down →
+(scaffold docs + bank question 1 + `status:'drafting'`). **Kind-aware brief reuse**:
+`latestBriefForDomain` (still keyed user+domain, `normalizeBrief` defaults legacy
+briefs) prefers a candidate whose `probedKind` matches the project kind (reused
+as-is, zero spend); a brief probed for a different kind gets a probe-only top-up —
+≤3 Tavily + 1 brain call (`PROBE_TOPUP_SYSTEM`, same UNTRUSTED fencing/identity
+gate/personal-data rules), signals REPLACE the other kind's, confirmation questions
+prepend `openQuestions`, `distilledAt` stays anchored to the original research so
+top-ups never extend the 30-day window; `probedKind` is only stamped when the probe
+pass ran to completion (budget/outage truncation stays topping-up-eligible; brain
+failure adds `gaps:["probes_skipped"]`). The `research_failed` write preserves
+checkpoints so retries never re-spend Tavily credits. Degradation: Tavily down →
 site-only brief with gaps; site unreachable → Q&A carries the load; brain down at
 distill → `research_failed` with Retry / "Start the questions anyway". Deploy marker
 fresh → checkpoint + exit as `queued`. Cost caps (DB ledger `governance_usage`,
-restart-proof, covers the detached script): ≤6 Tavily calls/run,
+restart-proof, covers the detached script): ≤8 Tavily calls/run (worst case 7:
+3 company + 1 industry + 3 probes),
 `GOVERNANCE_TAVILY_DAILY_CAP` (default 300 ≈ 600 Tavily credits/day; confirm the
 Tavily plan covers ~18k credits/month) global/day, `GOVERNANCE_BRAIN_DAILY_CAP`
 (default 1500 ≈ $150/day worst case — JSON mode bills at executor-model rates,
@@ -1531,7 +1562,7 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | Stripe | `STRIPE_SECRET_KEY` | secret API key for `/api/checkout` (§5.10); unset ⇒ the route returns 503 and the /builders buy buttons show a friendly error |
 | | `STRIPE_PRICE_COHORT` / `STRIPE_PRICE_WORKSHOP` | optional dashboard-managed Price ID overrides; unset ⇒ inline `price_data` ($495/mo recurring, $995 one-time) |
 | Governance | `GOVERNANCE_ENABLED` | kill switch (§5.12): `0` = mutations 503, reads/downloads stay up, the timer keeps sweeping. Unset = enabled |
-| | `GOVERNANCE_TAVILY_DAILY_CAP` (default 300) / `GOVERNANCE_BRAIN_DAILY_CAP` (default 1500) | global daily budgets in the `governance_usage` ledger (~6 Tavily calls per fresh domain; brain ~$0.10/turn so 1500 ≈ $150/day worst case); runtime-overridable via the Troy approval loop, clamped to BUDGET_CEILINGS (§5.12) |
+| | `GOVERNANCE_TAVILY_DAILY_CAP` (default 300) / `GOVERNANCE_BRAIN_DAILY_CAP` (default 1500) | global daily budgets in the `governance_usage` ledger (~7 Tavily calls per fresh domain incl. standard probes; brain ~$0.10/turn so 1500 ≈ $150/day worst case); runtime-overridable via the Troy approval loop, clamped to BUDGET_CEILINGS (§5.12) |
 | | `GOVERNANCE_TAVILY_MONTHLY_WARN` (default 6000) | MTD Tavily WARN threshold in the governance timer's report |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
 | | `TRON_KNOWLEDGE_FILE` | **legacy, no longer read** — the knowledge path is `persona.knowledgeFile` in site.config.ts |

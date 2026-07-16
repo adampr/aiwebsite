@@ -61,12 +61,34 @@ export interface NextQuestion {
   feeds: string[];
 }
 
+// Never "confirmed": signals are public-source observations, and the UPL
+// posture forbids presenting research as an applicability determination.
+export type SignalConfidence = "likely" | "unclear";
+
+/** One standard-conditioned public-source observation (§5.12 probes). The
+ * trigger label is attached host-side from the probe catalog, never taken
+ * from model output. */
+export interface ApplicabilitySignal {
+  probeId: string; // from PROBE_PACKS in probes.ts
+  trigger: string; // catalog label
+  finding: string; // one hedged sentence, "public sources suggest ..."
+  source: string; // URL, sanitized (http/https, no creds) or ""
+  confidence: SignalConfidence;
+}
+
 export interface ResearchBrief {
   companyProfile: string;
+  companyName: string; // short display name from the profile call; "" if unknown
   sizeAndFootprint: string;
   industryContext: string;
   aiUseSignals: string[];
   regulatoryExposure: string[];
+  // Standard-specific probe findings: hedged observations to confirm with
+  // the user, never determinations. Capped by MAX_APPLICABILITY_SIGNALS.
+  applicabilitySignals: ApplicabilitySignal[];
+  // Which kind's probe pack ran to completion for this brief; drives the
+  // cross-kind top-up on brief reuse. null = probes incomplete or pre-probe.
+  probedKind: GovernanceKind | null;
   dataSensitivity: string;
   openQuestions: string[]; // seeds Tron's early follow-ups
   topSources: string[];
@@ -79,17 +101,21 @@ export type ResearchStep =
   | "site"
   | "mentions"
   | "industry"
+  | "probes"
   | "distill"
   | "handoff";
 
 export interface ResearchProgress {
   step: ResearchStep;
   pct: number; // 0-100
-  counts: { pages?: number; mentions?: number; industry?: number };
+  counts: { pages?: number; mentions?: number; industry?: number; probes?: number };
   // Tavily results are checkpointed so a requeued job never re-spends credits.
+  // tavilyProbes uses PRESENCE semantics per probe id (empty arrays included):
+  // a zero-hit probe is still spent and must not re-run on requeue.
   checkpoints?: {
     tavilyCompany?: TavilyResult[];
     tavilyIndustry?: TavilyResult[];
+    tavilyProbes?: Record<string, TavilyResult[]>;
     profile?: { companyName: string; industry: string; oneLine: string };
   };
   error?: string;
@@ -146,7 +172,7 @@ export interface ProjectView {
   researchProgress: {
     step: ResearchStep;
     pct: number;
-    counts: { pages?: number; mentions?: number; industry?: number };
+    counts: { pages?: number; mentions?: number; industry?: number; probes?: number };
     error?: string;
   } | null;
   openConfirmItems: { doc: string; section: string; excerpt: string }[];

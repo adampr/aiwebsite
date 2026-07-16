@@ -42,6 +42,7 @@ import {
   validateTurn,
 } from "@/lib/governance/turn";
 import { bankById } from "@/lib/governance/blueprints";
+import { normalizeBrief } from "@/lib/governance/research";
 import { openConfirmItems } from "@/lib/governance/view";
 import type {
   GovernanceDoc,
@@ -166,7 +167,11 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   const documents = parse<GovernanceDoc[]>(row.documentsJson, []);
   const transcript = parse<TranscriptEntry[]>(row.transcriptJson, []);
   const covered = new Set(parse<string[]>(row.coveredBankIdsJson, []));
-  const brief = parse<ResearchBrief | null>(row.researchJson, null);
+  // normalizeBrief defaults fields missing from briefs stored before the
+  // applicability-probes change (legacy rows must keep drafting).
+  const brief: ResearchBrief | null = normalizeBrief(
+    parse<unknown>(row.researchJson, null)
+  );
   const changedSections = parse<Record<string, string[]> | null>(
     row.changedSectionsJson,
     null
