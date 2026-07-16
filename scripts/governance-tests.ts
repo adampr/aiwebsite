@@ -16,7 +16,8 @@ import {
   requiredBankIds,
   scaffoldDocuments,
 } from "../src/lib/governance/blueprints";
-import { fileSlug, normalizeDomain } from "../src/lib/governance/config";
+import { CAPS, fileSlug, normalizeDomain } from "../src/lib/governance/config";
+import { deriveTurnState } from "../src/lib/governance/view";
 import {
   findConfirmMarkers,
   parseMarkdown,
@@ -933,6 +934,81 @@ function check(name: string, cond: boolean): void {
     "chips: user newlines survive a removal",
     on("line one\nmore; Balanced; tail", "Balanced") ===
       "line one\nmore; tail"
+  );
+}
+
+/* 12. Async answer turn (§5.12): view derivation + timing invariants. */
+{
+  const now = Date.parse("2026-07-16T12:00:00Z");
+  const fresh = new Date(now - 30_000);
+  const stale = new Date(now - CAPS.turnStaleMs - 1000);
+  const none = deriveTurnState(
+    { turnPromptId: null, turnStartedAt: null, turnJson: null },
+    now
+  );
+  check("turn: all-null derives null", none === null);
+  const running = deriveTurnState(
+    {
+      turnPromptId: "gov_a",
+      turnStartedAt: fresh,
+      turnJson: JSON.stringify({ questionId: "q_7" }),
+    },
+    now
+  );
+  check(
+    "turn: fresh claim derives running with promptId+questionId",
+    running?.phase === "running" &&
+      running.promptId === "gov_a" &&
+      running.questionId === "q_7"
+  );
+  const orphan = deriveTurnState(
+    {
+      turnPromptId: "gov_a",
+      turnStartedAt: stale,
+      turnJson: JSON.stringify({ questionId: "q_7" }),
+    },
+    now
+  );
+  check(
+    "turn: stale claim presents as failed/network (resend copy, retriable)",
+    orphan?.phase === "failed" &&
+      orphan.error.code === "network" &&
+      orphan.error.retriable === true &&
+      orphan.error.message.includes("send it again")
+  );
+  const failed = deriveTurnState(
+    {
+      turnPromptId: "gov_a",
+      turnStartedAt: null,
+      turnJson: JSON.stringify({
+        questionId: "q_7",
+        error: { code: "invalid_turn", message: "snag", retriable: true },
+        failedAt: "2026-07-16T11:59:00Z",
+      }),
+    },
+    now
+  );
+  check(
+    "turn: failed record surfaces the persisted error",
+    failed?.phase === "failed" &&
+      failed.error.code === "invalid_turn" &&
+      failed.error.message === "snag"
+  );
+  const corrupt = deriveTurnState(
+    { turnPromptId: "gov_a", turnStartedAt: null, turnJson: "not json" },
+    now
+  );
+  check("turn: corrupt failed record degrades to null, never a throw", corrupt === null);
+  // Worst honest async turn (90 s brain + 60 s repair + write headroom) must
+  // finish inside the staleness horizon, or live turns get reaped.
+  check(
+    "turn: staleness horizon clears brain+repair+headroom",
+    CAPS.turnStaleMs > CAPS.brainTurnTimeoutMs + 60_000 + 20_000
+  );
+  // The legacy sync driver still promises to answer under nginx's 120 s.
+  check(
+    "turn: legacy route deadline stays under nginx 120 s",
+    CAPS.routeDeadlineMs < 120_000
   );
 }
 

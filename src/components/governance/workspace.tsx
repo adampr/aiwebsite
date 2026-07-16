@@ -19,12 +19,14 @@ import {
   api,
   firstFeedTarget,
   fmtDate,
+  isTurnAccepted,
   mintPromptId,
   parseFeedRef,
   StatusBadge,
   STATUS_META,
   toggleChipInAnswer,
   type FeedRef,
+  type TurnAccepted,
   type TurnResponse,
 } from "./shared";
 import { ResearchScreen, researchStepLabel } from "./research-screen";
@@ -122,7 +124,11 @@ export function Workspace({ projectId }: { projectId: string }) {
     preSendRev: number;
     token: number;
     questionId: string;
+    promptId: string;
   } | null>(null);
+  // The 20 s "Still working" timer outlives submitTurn's scope: an async-
+  // accepted (202) turn resolves via the poll, possibly minutes later.
+  const longTimerRef = useRef<number | null>(null);
   const reclaimedRef = useRef(false);
   const stepRef = useRef<string | null>(null);
   const stepAnnouncesRef = useRef(0);
@@ -193,6 +199,45 @@ export function Workspace({ projectId }: { projectId: string }) {
     setNotice(n);
     setAnnounce(n.text);
   }, []);
+
+  const clearLongTimer = useCallback(() => {
+    if (longTimerRef.current !== null) {
+      window.clearTimeout(longTimerRef.current);
+      longTimerRef.current = null;
+    }
+  }, []);
+
+  /** One place maps a failed turn's error code to UI, byte-identical copy
+   *  whether it arrived on the POST response (legacy sync path) or through
+   *  the poll's turn record (async path). */
+  const resolveTurnFailure = useCallback(
+    (code: string, message: string) => {
+      if (code === "brain_unavailable") {
+        // S3: keep the typed answer; polling re-enables Send.
+        setBrainDown(true);
+        setAnnounce(
+          "Tron's drafting engine is offline right now. Your answer is kept here; Send re-enables when he is back."
+        );
+        return;
+      }
+      if (code === "invalid_turn") {
+        pendingRef.current = null; // mint a NEW promptId on the next attempt
+        setNoticeAnnounced({ kind: "error", text: message });
+        return;
+      }
+      if (code === "stale_question") {
+        setNoticeAnnounced({
+          kind: "info",
+          text: "This question was already answered in another tab. Here is where the draft is now.",
+        });
+        return;
+      }
+      // "network" (dropped transport or an orphaned claim after a restart)
+      // and anything unknown: the message says resend; the draft is intact.
+      setNoticeAnnounced({ kind: "error", text: message });
+    },
+    [setNoticeAnnounced]
+  );
 
   /** Suggestion chips toggle as "; "-joined segments of the answer; the
    *  textarea stays the only source of truth (string surgery lives in
@@ -384,6 +429,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       viewRef.current = next;
       setView(next);
       setPollFails(0);
+      // S3: a successful GET after a brain outage re-enables Send. Lives
+      // here (not in fetchProject) so the poll-surfaced brain_unavailable
+      // failure below can re-set the gate and win the render batch.
+      setBrainDown(false);
       setActiveDoc((cur) =>
         cur && next.documents.some((d) => d.slug === cur)
           ? cur
@@ -412,6 +461,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         inFlightRef.current = null;
         pendingRef.current = null;
         clearDraft(flight.questionId);
+        clearLongTimer();
         setWorking(false);
         setBrainDown(false);
         applyChangedChoreography(
@@ -424,6 +474,23 @@ export function Workspace({ projectId }: { projectId: string }) {
             : null
         );
         choreographed = true;
+      }
+
+      // The async-turn failure path: our accepted turn recorded an error
+      // (or its claim aged out after a restart) and rev never advanced.
+      // promptId must match - a stale failure record from an earlier turn
+      // must not resolve this flight.
+      if (
+        !choreographed &&
+        flight &&
+        next.rev <= flight.preSendRev &&
+        next.turn?.phase === "failed" &&
+        next.turn.promptId === flight.promptId
+      ) {
+        inFlightRef.current = null;
+        clearLongTimer();
+        setWorking(false);
+        resolveTurnFailure(next.turn.error.code, next.turn.error.message);
       }
 
       if (!choreographed && prev && prev.status !== next.status) {
@@ -492,7 +559,13 @@ export function Workspace({ projectId }: { projectId: string }) {
         });
       }
     },
-    [applyChangedChoreography, clearDraft, scheduleAskJump]
+    [
+      applyChangedChoreography,
+      clearDraft,
+      clearLongTimer,
+      resolveTurnFailure,
+      scheduleAskJump,
+    ]
   );
 
   const fetchProject = useCallback(async (): Promise<ProjectView | null> => {
@@ -500,10 +573,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       `/api/governance/projects/${encodeURIComponent(projectId)}`
     );
     if (r.ok) {
-      handleView(r.data);
+      handleView(r.data); // also clears brainDown (S3) unless it re-sets it
       setSignedOut(false);
-      // S3: a successful GET after a brain outage re-enables Send.
-      setBrainDown(false);
       return r.data;
     }
     if (r.status === 401) setSignedOut(true);
@@ -522,10 +593,14 @@ export function Workspace({ projectId }: { projectId: string }) {
   }, []);
 
   // Poll loop: 3 s through created/queued/researching; in drafting/review it
-  // runs only while a send is in flight (10 s) or during a brain-down
-  // recheck (15 s); plus a retry cadence after transient poll failures.
+  // runs while our send is in flight (3 s - the poll is the async turn's
+  // resolution path), while another tab's turn is running (8 s), or during a
+  // brain-down recheck (15 s); plus a retry cadence after poll failures.
+  // Budget: the GET limit is 60/min/user; only the flight-owning tab polls
+  // fast (20/min), so a few open tabs stay well under it.
   const loaded = view !== null;
   const status = view?.status ?? null;
+  const turnRunning = view?.turn?.phase === "running";
   useEffect(() => {
     if (gone || signedOut) return;
     let ms: number | null = null;
@@ -536,13 +611,14 @@ export function Workspace({ projectId }: { projectId: string }) {
       status === "researching"
     )
       ms = 3000;
-    else if (working) ms = 10_000;
+    else if (working) ms = 3000;
+    else if (turnRunning) ms = 8000;
     else if (brainDown) ms = 15_000;
     else if (pollFails > 0) ms = 8000;
     if (ms === null) return;
     const t = window.setInterval(() => void fetchProject(), ms);
     return () => window.clearInterval(t);
-  }, [loaded, status, working, brainDown, pollFails, gone, signedOut, fetchProject]);
+  }, [loaded, status, turnRunning, working, brainDown, pollFails, gone, signedOut, fetchProject]);
 
   // Poll again on window focus.
   useEffect(() => {
@@ -666,7 +742,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     cancelAskJump();
 
     const token = Date.now() + Math.random();
-    inFlightRef.current = { preSendRev: v.rev, token, questionId };
+    inFlightRef.current = { preSendRev: v.rev, token, questionId, promptId };
     const kind: WorkingKind = revise
       ? "revise"
       : opts.skipped
@@ -686,12 +762,15 @@ export function Workspace({ projectId }: { projectId: string }) {
           ? "Revision sent."
           : "Answer sent."
     );
-    const longTimer = window.setTimeout(() => {
+    // Armed until the turn resolves (success, failure, or superseded) -
+    // an async-accepted turn keeps drafting long after the POST returns.
+    clearLongTimer();
+    longTimerRef.current = window.setTimeout(() => {
       setWorkingLong(true);
       setAnnounce("Still working on the draft.");
     }, 20_000);
 
-    const r = await api<TurnResponse>(
+    const r = await api<TurnResponse | TurnAccepted>(
       `/api/governance/projects/${encodeURIComponent(projectId)}/answer`,
       {
         method: "POST",
@@ -700,15 +779,23 @@ export function Workspace({ projectId }: { projectId: string }) {
           answer,
           skipped: opts.skipped || undefined,
           promptId,
+          mode: "async",
         }),
       }
     );
-    window.clearTimeout(longTimer);
 
     const flight = inFlightRef.current;
     if (!flight || flight.token !== token) return; // a poll already resolved it
 
     if (r.ok) {
+      if (isTurnAccepted(r.data)) {
+        // 202: the worker is drafting server-side. The poll resolves the
+        // flight - rev advance is success (S7 choreography), a matching
+        // failed turn record is the error path. Spinner stays on.
+        return;
+      }
+      // Full TurnResponse: a pre-async server (one deploy window).
+      clearLongTimer();
       inFlightRef.current = null;
       pendingRef.current = null;
       clearDraft(questionId);
@@ -721,6 +808,16 @@ export function Workspace({ projectId }: { projectId: string }) {
       // another tab's turn) landed and handleView already rendered it.
       await fetchProject();
       if (inFlightRef.current && inFlightRef.current.token === token) {
+        // A lost 202: the accept reached the server even though the
+        // response died. Our claim is running - let the poll resolve it.
+        const t = viewRef.current?.turn;
+        if (
+          r.code === "network" &&
+          t?.phase === "running" &&
+          t.promptId === promptId
+        )
+          return;
+        clearLongTimer();
         inFlightRef.current = null;
         setWorking(false);
         setNoticeAnnounced({
@@ -739,23 +836,21 @@ export function Workspace({ projectId }: { projectId: string }) {
       return;
     }
 
+    clearLongTimer();
     inFlightRef.current = null;
     setWorking(false);
     if (r.status === 401) {
       setSignedOut(true);
       return;
     }
-    if (r.code === "brain_unavailable") {
-      // S3: keep the typed answer; polling re-enables Send.
-      setBrainDown(true);
-      setAnnounce(
-        "Tron's drafting engine is offline right now. Your answer is kept here; Send re-enables when he is back."
-      );
+    if (r.code === "turn_pending") {
+      // Another tab's turn is mid-flight; the poll cadence picks it up.
+      setNoticeAnnounced({ kind: "info", text: r.message });
+      void fetchProject();
       return;
     }
-    if (r.code === "invalid_turn") {
-      pendingRef.current = null; // mint a NEW promptId on the next attempt
-      setNoticeAnnounced({ kind: "error", text: r.message });
+    if (r.code === "brain_unavailable" || r.code === "invalid_turn") {
+      resolveTurnFailure(r.code, r.message);
       return;
     }
     setNoticeAnnounced({ kind: "error", text: r.message });

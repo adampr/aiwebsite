@@ -15,7 +15,10 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-16 (turn-zero robustness — no stubs at
+Last verified against code: 2026-07-16 (async answer turn — POST /answer
+returns 202 + in-process worker, `turn_*` claim columns w/ attempt-nonce
+fence, poll-resolved client, Cloudflare-100s fix, migration 0012, see
+§5.12/§6; same day: turn-zero robustness — no stubs at
 turn zero, error logging, repair + op-level salvage — plus the §5.12
 placeholder-honesty contract: `placeholderSections` on the view/turn
 response, Planned rendering, confirm gate, docx notice, transcript
@@ -858,10 +861,10 @@ bodies `{error:{code,message}}`; CSRF via the middleware prefix):
 | Route | Behavior |
 |---|---|
 | `GET/POST /api/governance/projects` | list (+ bounded global sweep of expired rows, any owner) / create — requires `{kind, domain?, ack:true}` (acknowledgment checkbox is recorded as `acknowledged_at`); consumer sign-in domains (gmail etc.) force manual domain entry; caps: 3 active, 5 creates/day (SQL-counted, restart-proof). Create auto-kicks research or parks `queued` |
-| `GET/DELETE /api/governance/projects/[id]` | poll target (never mutates; reports `reclaimable` so the CLIENT re-POSTs research) / immediate hard delete |
+| `GET/DELETE /api/governance/projects/[id]` | poll target (never mutates; reports `reclaimable` so the CLIENT re-POSTs research, and `turn` — the async answer-turn state derived read-only from the `turn_*` columns: `{phase:"running"}` while the claim is fresh, `{phase:"failed", error}` from a recorded failure OR a stale orphaned claim presented as a transport failure with resend copy; 60/min limit fits the 3 s flight-tab turn poll) / immediate hard delete |
 | `POST .../research` | claim + spawn the detached research job; `{mode:"partial"}` = "start the questions anyway" after a failure (gap-flagged brief, straight to drafting). Claim is ONE conditional UPDATE enforcing owner, claimable status (created/queued/failed/stale-heartbeat >5 min), 3-runs/day, and the ≤2 global concurrency cap atomically (subquery count — no TOCTOU) |
-| `POST .../answer` | one synchronous Q&A turn (also review-phase revisions via `questionId:"revise"`): brain `/health` preflight → DB-backed daily budget spend → JSON-mode turn (90 s) → parse ladder (fence strip → lenient parse → ≤1 repair call with a NEW promptId, only if ≥40 s remain) → server-validated ops → ONE conditional write keyed on `rev`. Budgeted under nginx's 120 s. 6/min/user, 40 answers/project (the 40th force-flips to review), answers ≤2000 chars, `questionId` mismatch → 409 `stale_question` (dual-tab guard) |
-| `POST .../confirm` | review → done (only from review). **Refuses (409) while any non-stub section still holds untouched blueprint scaffold text** (host-computed `placeholderSectionMap`, exact-match, fail-open on a corrupt column so confirm can never brick; stub docs excluded — their pending/determined state keys on the presence of a `determination` section instead). Open `[TO CONFIRM]` items intentionally do NOT block. The client intercepts first with an info notice (button stays enabled); the 409 is the stale-tab backstop |
+| `POST .../answer` | one **asynchronous** Q&A turn (also review-phase revisions via `questionId:"revise"`; async because Cloudflare cuts proxied responses at ~100 s, which heavy turns exceeded). New clients send `mode:"async"`: synchronous preflights (validation → `stale_question`/`answer_cap` → fresh-claim dedupe → deploy-marker + brain `/health` gates as retriable 503 → DB-backed daily budget spend) → **atomic turn claim** (ONE conditional UPDATE on the row's `turn_*` columns keyed on owner+retention+status∈{drafting,review}+`rev`, claimable = no record / failed record / running claim older than `turnStaleMs` 240 s, which is also the lazy reap) → **202** `{pending, rev, promptId, questionId, startedAt}` → in-process worker via Next `after()` (`turn-runner.ts`): JSON-mode turn (full 90 s) → parse ladder (fence strip → lenient parse → ≤1 repair call with a NEW promptId, 60 s) → server-validated ops → ONE conditional write keyed on `rev` AND the claim's `turn_attempt_id` fence nonce (promptId is reused across user retries so it cannot fence; a reaped zombie writes nothing), clearing the claim; every failure records `{error}` in `turn_json` and releases the claim (`turn_started_at` NULL = instantly reclaimable). The GET poll resolves the outcome. Duplicate POST same promptId while running → 202 replay (no spawn/spend); different promptId → 409 `turn_pending`. Markerless POSTs (pre-async clients, ONE deploy window) run the same pipeline synchronously awaited, budgeted under nginx's 120 s (`routeDeadlineMs` 115 s, repair only if ≥40 s remain) — delete that driver + the CAPS constants next deploy. 6/min/user, 40 answers/project (the 40th force-flips to review), answers ≤2000 chars, `questionId` mismatch → 409 `stale_question` (dual-tab guard) |
+| `POST .../confirm` | review → done (only from review). Refuses (409 `turn_pending`) while a fresh revise-turn claim is running — the worker's apply must not race the done flip (both the route precheck and the `confirmProject` WHERE enforce it; stale orphaned claims don't block). **Refuses (409) while any non-stub section still holds untouched blueprint scaffold text** (host-computed `placeholderSectionMap`, exact-match, fail-open on a corrupt column so confirm can never brick; stub docs excluded — their pending/determined state keys on the presence of a `determination` section instead). Open `[TO CONFIRM]` items intentionally do NOT block. The client intercepts first with an info notice (button stays enabled); the 409 is the stale-tab backstop |
 | `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.pdf`/`.md`/`.txt` ≤2 MB): only extracted plain text is stored (never the file; docx via a linear-time jszip extractor: streaming decompression-bomb cap, headings/lists/table rows preserved, prompt-fence tokens stripped; pdf via pdfjs-dist getTextContent: no rendering, 40-page cap, 10 s deadline that destroys the parse task, dedicated scanned-PDF copy; pdfjs-dist MUST stay in next.config `serverExternalPackages` or the bundled build throws on every PDF), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions EXCLUDING numbering, which is host-owned (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
 | `GET .../download` | `?format=docx&doc=<slug>` or `?format=zip`; generated on demand from stored markdown, streamed, never stored, ZERO AI calls (works through every outage/cap and the kill switch); DRAFT watermark + `-draft` filename until done; touches `last_activity_at` (disclosed) |
 
@@ -888,10 +891,21 @@ and flips the submit button to a busy state — `aria-busy`, dim-light treatment
 stable-width stacked-label swap (`.btn--stable`/`.btn-swap`, so "Send answer" → "Sending"
 never shifts layout) — above a status row with per-path copy and a 1px `.working-rule`
 light sweep (static dim line under reduced motion). The single polite live region
-announces at 0 ms ("Answer sent." / skip / revise variants), at the 20 s long-turn mark,
-and on brain-down; `.btn:disabled` (light withdraws) vs `.btn[aria-busy]` (holds dim
-light) is a global futurism.css distinction, and pressed chips keep a dim pressed
-treatment while disabled mid-turn.
+announces at 0 ms ("Answer sent." / skip / revise variants), at the 20 s long-turn mark
+(the timer lives in a ref and survives until the turn resolves), and on brain-down;
+`.btn:disabled` (light withdraws) vs `.btn[aria-busy]` (holds dim light) is a global
+futurism.css distinction, and pressed chips keep a dim pressed treatment while disabled
+mid-turn. **Async turn resolution:** a 202 accept keeps the busy state on and the poll
+resolves the flight — rev advanced past `preSendRev` = success (the same S7 choreography:
+clear refs+draft, changed flash, announce, focus), a failed `turn` record matching the
+flight's promptId = `resolveTurnFailure` (one code→UI map shared with the POST error
+path: brain-down gate, `invalid_turn` mints a new promptId, "network" shows the resend
+notice with the draft intact). Poll cadence: 3 s only in the flight-owning tab, 8 s in
+other tabs that see `turn.running`, so a few tabs stay under the 60/min GET limit; a
+`turn_pending` 409 shows an info notice and lets the poll catch the tab up. A lost 202
+(network error but the refetched view shows OUR promptId running) keeps waiting instead
+of showing a false failure. brainDown clearing lives in `handleView` so a poll-surfaced
+`brain_unavailable` failure re-sets the gate and wins the render batch.
 
 **Brain contract.** Every governance call (turns, repairs, research distills, standards
 authoring) goes through `src/lib/governance/brain.ts` `buildGovernanceEnvelope`:
@@ -903,8 +917,9 @@ NO `groupName`** — without a requester the brain persists neither facts nor tu
 confidential answers and scraped web content never reach `brain_messages`/
 `brain_memories` (checked by `npm run test:governance`). Session ids: `gov_<projectId>`
 / `govres_<projectId>` / `govstd_<slug>`. Turn idempotency is the HOST's conditional
-`rev`-keyed write (the brain's promptId replay cache is process-local and non-durable);
-the client re-GETs and compares `rev` to recover applied-but-timed-out turns. A
+`rev`+`turn_attempt_id`-keyed write (the brain's promptId replay cache is process-local
+and non-durable); the client's poll comparing `rev` is the async turn's PRIMARY success
+path, not a fallback. A
 per-process semaphore holds governance to ≤2 in-flight brain calls so Twilio voice
 keeps priority. Feature availability equals OpenAI availability (JSON mode is
 hard-wired to the executor; no failover).
@@ -1247,6 +1262,12 @@ governance_projects id uuid PK default gen_random_uuid(),
                    acknowledged_at timestamptz NOT NULL default now(), -- UPL ack record (§5.12)
                    style_sample_name/style_sample_text text,  -- sample-policy upload (§5.12,
                    -- migration 0010): extracted text only, <=20k chars, deletes with the row
+                   turn_prompt_id/turn_attempt_id/turn_json text, turn_started_at timestamptz,
+                   -- async answer-turn claim (§5.12, migration 0012): started_at set = running
+                   -- (stale past 240 s = orphan, lazily reaped by the next claim); started_at
+                   -- NULL + prompt_id set = failed, turn_json = {questionId,error,failedAt};
+                   -- attempt_id = per-claim fence nonce for worker writes. The answer TEXT is
+                   -- never stored here (sessionStorage draft is the client's source of truth)
                    created_at/updated_at/last_activity_at timestamptz NOT NULL default now()
                    -- §5.12. Migration 0009; indexes on user_id + last_activity_at.
                    -- Hard-DELETEd 30 days after last_activity_at by the governance timer,

@@ -1,58 +1,30 @@
-// POST — one Q&A turn (or a review-phase revision) (§5.12). Synchronous:
-// preflight -> budget -> brain JSON turn (90 s) -> parse/repair ladder ->
-// server-gated apply in ONE conditional write. The whole route stays under
-// nginx's 120 s proxy timeout; a turn that lands after the client gave up is
-// recovered client-side by re-GETting and comparing rev.
+// POST — one Q&A turn (or a review-phase revision) (§5.12), async since the
+// Cloudflare-524 fix: preflight -> budget -> atomic turn claim -> 202
+// {pending} -> in-process worker (turn-runner.ts) -> the poll (GET view)
+// surfaces success (rev advanced) or the persisted failure. Markerless POSTs
+// (pre-async clients, one deploy window) get the legacy synchronous driver:
+// same pipeline, awaited, budgeted under nginx's 120 s proxy timeout.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import {
-  brainHealthy,
-  buildGovernanceEnvelope,
-  callGovernanceBrain,
-  newId,
-} from "@/lib/governance/brain";
-import {
-  CAPS,
-  REVIEW_FORCED_SUMMARY,
-  governanceEnabled,
-} from "@/lib/governance/config";
+import { after } from "next/server";
+import { brainHealthy, newId } from "@/lib/governance/brain";
+import { CAPS, governanceEnabled } from "@/lib/governance/config";
 import {
   effectiveBrainDailyCap,
   isBudgetExemptEmail,
   notifyBudgetHit,
 } from "@/lib/governance/budget";
 import {
-  applyTurnWrite,
+  claimTurn,
+  deployInProgress,
   fetchOwnedProject,
   trySpendBudget,
+  type ProjectRow,
 } from "@/lib/governance/db";
 import { govError, NOT_FOUND, okJson, rateLimit, requireUser } from "@/lib/governance/http";
-import {
-  buildSystemMessage,
-  buildTurnUserMessage,
-  repairSystemMessage,
-} from "@/lib/governance/prompt";
-import {
-  applyOps,
-  coverageComplete,
-  parseTurnJson,
-  pickNextBankQuestion,
-  progressFor,
-  validateTurn,
-} from "@/lib/governance/turn";
-import { bankById, placeholderSectionMap } from "@/lib/governance/blueprints";
-import { normalizeBrief } from "@/lib/governance/research";
-import { openConfirmItems } from "@/lib/governance/view";
-import type {
-  GovernanceDoc,
-  GovernanceKind,
-  NextQuestion,
-  ProjectStatus,
-  ResearchBrief,
-  TranscriptEntry,
-  TurnResult,
-} from "@/lib/governance/types";
+import { runTurn } from "@/lib/governance/turn-runner";
+import type { NextQuestion } from "@/lib/governance/types";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -65,9 +37,32 @@ function parse<T>(raw: string | null, fallback: T): T {
   }
 }
 
+function turnFresh(row: ProjectRow): boolean {
+  return (
+    !!row.turnStartedAt &&
+    Date.now() - row.turnStartedAt.getTime() < CAPS.turnStaleMs
+  );
+}
+
+/** 202 body for an accepted (or replayed-accept) async turn. */
+function accepted(row: ProjectRow, promptId: string, questionId: string) {
+  return okJson(
+    {
+      pending: true,
+      rev: row.rev,
+      promptId,
+      questionId,
+      startedAt: (row.turnStartedAt ?? new Date()).toISOString(),
+    },
+    202
+  );
+}
+
+const TURN_PENDING_COPY =
+  "Tron is already working on an answer for this project (maybe in another tab). This page will catch up in a moment.";
+
 export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   const started = Date.now();
-  const remaining = () => CAPS.routeDeadlineMs - (Date.now() - started);
 
   const user = await requireUser();
   if (user instanceof Response) return user;
@@ -86,12 +81,16 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     answer?: unknown;
     skipped?: unknown;
     promptId?: unknown;
+    mode?: unknown;
   };
   try {
     body = (await req.json()) as typeof body;
   } catch {
     return govError("invalid_request", "Bad JSON body.", 400);
   }
+  // Pre-async clients send no mode and expect a synchronous TurnResponse; a
+  // 202 would poison their view spread. Keep the sync driver one deploy.
+  const asyncMode = body.mode === "async";
   const questionId = typeof body.questionId === "string" ? body.questionId : "";
   const answer = typeof body.answer === "string" ? body.answer.trim() : "";
   const skipped = body.skipped === true;
@@ -111,7 +110,6 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
 
   const row = await fetchOwnedProject(user.userId, id);
   if (!row) return NOT_FOUND();
-  const kind = row.kind as GovernanceKind;
   const revise = row.status === "review" && questionId === "revise";
 
   if (row.status !== "drafting" && !revise)
@@ -139,6 +137,25 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       );
   }
 
+  // A fresh running claim: replay the accept for the same async retry
+  // (transport-retry idempotency — nothing spawns, nothing spends); anything
+  // else waits its turn. Failed/stale records fall through to the claim.
+  if (turnFresh(row)) {
+    if (asyncMode && row.turnPromptId === promptId)
+      return accepted(row, promptId, questionId);
+    return govError("turn_pending", TURN_PENDING_COPY, 409);
+  }
+
+  // Mid-deploy the process is about to die; don't accept work it can't
+  // finish. Same recovery as a brain outage: answer kept, client rechecks.
+  if (deployInProgress())
+    return govError(
+      "brain_unavailable",
+      "Tron's drafting engine is restarting for an update. Your answer is kept below; this page will keep checking.",
+      503,
+      { retriable: true }
+    );
+
   if (!(await brainHealthy()))
     return govError(
       "brain_unavailable",
@@ -163,202 +180,53 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     );
   }
 
-  // Assemble the turn.
-  const documents = parse<GovernanceDoc[]>(row.documentsJson, []);
-  const transcript = parse<TranscriptEntry[]>(row.transcriptJson, []);
-  const covered = new Set(parse<string[]>(row.coveredBankIdsJson, []));
-  // normalizeBrief defaults fields missing from briefs stored before the
-  // applicability-probes change (legacy rows must keep drafting).
-  const brief: ResearchBrief | null = normalizeBrief(
-    parse<unknown>(row.researchJson, null)
-  );
-  const changedSections = parse<Record<string, string[]> | null>(
-    row.changedSectionsJson,
-    null
-  );
-  const question: NextQuestion = revise
-    ? {
-        id: "revise",
-        bankId: null,
-        text: "Revision request",
-        why: "",
-        suggestions: [],
-        feeds: [],
-      }
-    : nextQuestion!;
-
-  const system = buildSystemMessage({
-    kind,
-    brief,
-    forcedReviewSoon: row.answersCount >= CAPS.answersPerProject - 5,
-    styleSample: row.styleSampleText
-      ? { name: row.styleSampleName ?? "sample", text: row.styleSampleText }
-      : null,
-  });
-  const userMsg = buildTurnUserMessage({
-    kind,
-    documents,
-    transcript,
-    coveredBankIds: [...covered],
-    question,
-    answer,
-    skipped,
-    changedSections,
-    revise,
-  });
-
-  const sessionId = `gov_${row.id}`;
-  const raw = await callGovernanceBrain(
-    buildGovernanceEnvelope({ sessionId, promptId, system, user: userMsg }),
-    Math.min(CAPS.brainTurnTimeoutMs, Math.max(10_000, remaining() - 10_000))
-  );
-  if (raw === null)
-    return govError(
-      "brain_unavailable",
-      "Tron's drafting engine did not answer. Your answer is kept below; try again in a moment.",
-      503,
-      { retriable: true }
-    );
-
-  // Parse -> validate -> at most ONE repair call (new promptId, never reuse
-  // the original: the brain replays (sessionId,promptId) verbatim).
-  let validation = validateTurn(parseTurnJson(raw), kind);
-  if (!validation.ok && remaining() > CAPS.repairMinRemainingMs) {
-    if (
-      budgetExempt ||
-      (await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))
-    ) {
-      const repairRaw = await callGovernanceBrain(
-        buildGovernanceEnvelope({
-          sessionId,
-          promptId: newId("gov"),
-          system: repairSystemMessage(),
-          user: `Validation errors:\n${validation.errors.join("\n")}\n\nRaw output to repair:\n${raw.slice(0, 32_000)}`,
-        }),
-        Math.min(60_000, Math.max(10_000, remaining() - 5_000))
-      );
-      if (repairRaw) validation = validateTurn(parseTurnJson(repairRaw), kind);
-    }
-  }
-  if (!validation.ok || !validation.turn)
-    return govError(
-      "invalid_turn",
-      "Tron hit a snag applying that answer. Nothing was changed; retry.",
-      502,
-      { retriable: true }
-    );
-  const turn: TurnResult = validation.turn;
-
-  // Apply ops (sanitize + injection screen inside).
-  const applied = applyOps(documents, turn.docOps, kind);
-
-  // Coverage: the current bank item is covered by answering OR skipping it;
-  // additional answered_bank_ids are merged (validated against the bank).
-  if (!revise && question.bankId) covered.add(question.bankId);
-  for (const bid of turn.answeredBankIds) covered.add(bid);
-
-  const newRev = row.rev + 1;
-  const answersIncrement = revise ? 0 : 1;
-  const newAnswersCount = row.answersCount + answersIncrement;
-
-  // Host-side review gate: the model's "review" only sticks when required
-  // coverage is complete; the 40-answer cap force-flips regardless.
-  let status: ProjectStatus;
-  let outQuestion: NextQuestion | null = null;
-  let reviewSummary: string | null = row.reviewSummary;
-  const complete = coverageComplete(kind, covered);
-  const forced = !revise && newAnswersCount >= CAPS.answersPerProject;
-
-  if (revise) {
-    status = "review";
-    reviewSummary = turn.reviewSummary ?? row.reviewSummary;
-  } else if (forced) {
-    status = "review";
-    reviewSummary = turn.reviewSummary ?? REVIEW_FORCED_SUMMARY;
-  } else if (turn.status === "review" && complete) {
-    status = "review";
-    reviewSummary = turn.reviewSummary;
-  } else {
-    status = "drafting";
-    if (turn.question)
-      outQuestion = {
-        id: `q_${newRev}`,
-        bankId: turn.question.bankId,
-        text: turn.question.text,
-        why: turn.question.why,
-        suggestions: turn.question.suggestions,
-        feeds: turn.question.bankId
-          ? (bankById(kind).get(turn.question.bankId)?.feeds ?? [])
-          : [],
-      };
-    else outQuestion = pickNextBankQuestion(kind, covered, newRev);
-    if (!outQuestion) {
-      // Bank exhausted with no model question: flip honestly.
-      status = "review";
-      reviewSummary = turn.reviewSummary ?? REVIEW_FORCED_SUMMARY;
-    }
-  }
-
-  const now = new Date().toISOString();
-  const newTranscript: TranscriptEntry[] = revise
-    ? [
-        ...transcript,
-        {
-          qId: "revise",
-          bankId: null,
-          q: "Revision request",
-          a: answer,
-          skipped: false,
-          askedAt: now,
-          answeredAt: now,
-        },
-      ]
-    : [
-        ...transcript,
-        {
-          qId: question.id,
-          bankId: question.bankId,
-          q: question.text,
-          a: skipped ? "" : answer,
-          skipped,
-          askedAt: row.updatedAt.toISOString(),
-          answeredAt: now,
-        },
-      ];
-
-  const wrote = await applyTurnWrite({
+  const attemptId = newId("govt");
+  const claimed = await claimTurn({
     id: row.id,
     userId: user.userId,
     expectedRev: row.rev,
-    status,
-    documents: applied.documents,
-    transcript: newTranscript,
-    coveredBankIds: [...covered],
-    nextQuestion: status === "drafting" ? outQuestion : null,
-    reviewSummary: status === "review" ? reviewSummary : null,
-    changedSections: applied.changedSections,
-    flagged: applied.injectionHits.length > 0,
-    answersIncrement,
+    promptId,
+    attemptId,
+    questionId,
   });
-  if (!wrote)
-    return govError(
-      "stale_question",
-      "This question was already answered (maybe in another tab).",
-      409
-    );
+  if (!claimed) {
+    // Lost a race between fetch and claim; re-read and answer honestly.
+    const now = await fetchOwnedProject(user.userId, id);
+    if (!now) return NOT_FOUND();
+    if (now.rev !== row.rev)
+      return govError(
+        "stale_question",
+        "This question was already answered (maybe in another tab).",
+        409
+      );
+    if (turnFresh(now) && asyncMode && now.turnPromptId === promptId)
+      return accepted(now, promptId, questionId); // duplicate won the claim
+    return govError("turn_pending", TURN_PENDING_COPY, 409);
+  }
 
-  return okJson({
-    rev: newRev,
-    status,
-    changedSections: applied.changedSections,
-    // Rides every turn (like changedSections) so Planned chips clear in the
-    // same render that draws the Updated chip; there is no idle poll in
-    // drafting to correct a stale map later.
-    placeholderSections: placeholderSectionMap(kind, applied.documents),
-    nextQuestion: status === "drafting" ? outQuestion : null,
-    reviewSummary: status === "review" ? reviewSummary : null,
-    progress: progressFor(kind, covered),
-    openConfirmItems: openConfirmItems(applied.documents),
-    documents: applied.documents,
-  });
+  const job = {
+    row,
+    userId: user.userId,
+    questionId,
+    answer,
+    skipped,
+    revise,
+    promptId,
+    attemptId,
+    budgetExempt,
+    deadlineMs: asyncMode ? null : CAPS.routeDeadlineMs - (Date.now() - started),
+  };
+
+  if (asyncMode) {
+    after(() => runTurn(job)); // runTurn never throws; outcome lands on the row
+    const claimedRow = { ...row, turnStartedAt: new Date() } as ProjectRow;
+    return accepted(claimedRow, promptId, questionId);
+  }
+
+  const out = await runTurn(job);
+  if (!out.ok)
+    return govError(out.code, out.message, out.status, {
+      ...(out.retriable !== undefined ? { retriable: out.retriable } : {}),
+    });
+  return okJson(out.body);
 }

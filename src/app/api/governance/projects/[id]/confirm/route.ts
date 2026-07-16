@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { placeholderSectionMap } from "@/lib/governance/blueprints";
-import { governanceEnabled } from "@/lib/governance/config";
+import { CAPS, governanceEnabled } from "@/lib/governance/config";
 import { confirmProject, fetchOwnedProject } from "@/lib/governance/db";
 import { govError, okJson, rateLimit, requireUser } from "@/lib/governance/http";
 import type { GovernanceDoc, GovernanceKind } from "@/lib/governance/types";
@@ -32,6 +32,15 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   // Defensive parse (view.ts idiom): a corrupt column degrades to "no
   // placeholders found" (fail open), never a 500 that bricks confirm.
   const row = await fetchOwnedProject(user.userId, id);
+  if (
+    row?.turnStartedAt &&
+    Date.now() - row.turnStartedAt.getTime() < CAPS.turnStaleMs
+  )
+    return govError(
+      "turn_pending",
+      "Tron is still applying your last revision. Give it a moment, then confirm.",
+      409
+    );
   if (row) {
     let docs: GovernanceDoc[] = [];
     try {

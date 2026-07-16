@@ -50,8 +50,17 @@ export const CAPS = {
   documentsJsonMaxBytes: 150_000, // aligned with what is promptable
   transcriptJsonMaxBytes: 200_000,
   researchBriefMaxChars: 9000,
-  // Answer route timing: nginx cuts the proxy at 120 s, so the route must
-  // always answer first. Brain turn 90 s; repair only if >=40 s remain.
+  // Answer turn timing. The async path (POST /answer with mode:"async")
+  // returns 202 and runs the turn in-process with no route deadline: the
+  // brain call gets the full 90 s and the repair pass its full 60 s. A
+  // running claim older than turnStaleMs is an orphan (PM2 restart mid-turn)
+  // and is reclaimable; the fence nonce keeps a slow zombie from writing.
+  // Worst honest turn: 90 s brain + 60 s repair + semaphore wait + apply.
+  turnStaleMs: 240_000,
+  // Legacy sync driver (markerless POSTs from pre-async clients, kept for
+  // one deploy window): nginx cuts the proxy at 120 s, so that path must
+  // answer first. Brain turn 90 s; repair only if >=40 s remain. Delete
+  // repairMinRemainingMs + routeDeadlineMs with the driver at deploy N+1.
   brainTurnTimeoutMs: 90_000,
   repairMinRemainingMs: 40_000,
   routeDeadlineMs: 115_000,

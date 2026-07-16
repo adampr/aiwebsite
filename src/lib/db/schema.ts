@@ -134,6 +134,16 @@ export const governanceProjects = pgTable(
     // is never stored — and it deletes with the row (30-day retention).
     styleSampleName: text("style_sample_name"),
     styleSampleText: text("style_sample_text"),
+    // In-process answer-turn claim state (§5.12 async turn). started_at set =
+    // a turn is running (staleness judged against CAPS.turnStaleMs at read
+    // time); started_at NULL with prompt_id set = the last turn failed and
+    // turn_json carries the error; all NULL = no turn record. attempt_id is
+    // the write-fencing nonce: promptId is reused across user retries by
+    // design (brain replay), so it cannot fence worker writes.
+    turnPromptId: text("turn_prompt_id"),
+    turnAttemptId: text("turn_attempt_id"),
+    turnStartedAt: timestamp("turn_started_at", { withTimezone: true }),
+    turnJson: text("turn_json"),
     answersCount: integer("answers_count").notNull().default(0),
     // The user's affirmative not-legal-advice acknowledgment at creation.
     acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true })

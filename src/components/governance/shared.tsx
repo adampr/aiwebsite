@@ -147,6 +147,22 @@ export interface TurnResponse {
   documents: GovernanceDoc[];
 }
 
+/** What POST /answer (mode:"async") returns when it accepts the turn: the
+ * worker runs server-side and the GET poll resolves the outcome. */
+export interface TurnAccepted {
+  pending: true;
+  rev: number;
+  promptId: string;
+  questionId: string;
+  startedAt: string; // ISO
+}
+
+export function isTurnAccepted(
+  data: TurnResponse | TurnAccepted
+): data is TurnAccepted {
+  return (data as TurnAccepted).pending === true;
+}
+
 /**
  * promptId: gov_<ts36>_<rand>. Minted once per submit attempt; the SAME id is
  * reused only for transport retries of the same answer, and a NEW one is

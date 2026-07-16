@@ -156,6 +156,28 @@ export interface TurnResult {
   answeredBankIds: string[];
 }
 
+/** Async answer-turn state on the poll (§5.12). "running" = a claim is
+ * fresh; "failed" = the last turn recorded an error (or its claim aged past
+ * the staleness horizon after a restart and is presented as a transport
+ * failure). promptId lets the sending tab match the record to its flight. */
+export type TurnState =
+  | {
+      phase: "running";
+      promptId: string;
+      questionId: string;
+      startedAt: string; // ISO
+    }
+  | {
+      phase: "failed";
+      promptId: string;
+      questionId: string;
+      error: {
+        code: GovernanceErrorCode | "network";
+        message: string;
+        retriable?: boolean;
+      };
+    };
+
 /** What GET /api/governance/projects/[id] returns (the poll target). */
 export interface ProjectView {
   id: string;
@@ -189,6 +211,9 @@ export interface ProjectView {
   // True when the row is queued/stale and the client should POST /research
   // to claim it (GETs never claim — CSRF-guarded POSTs do).
   reclaimable: boolean;
+  // Async answer-turn state; null when no turn record exists. Derived
+  // read-only (GETs never mutate); the next POST /answer claim reaps.
+  turn: TurnState | null;
   featureDisabled: boolean; // GOVERNANCE_ENABLED=0: reads still work
 }
 
@@ -213,6 +238,7 @@ export type GovernanceErrorCode =
   | "answer_cap"
   | "answer_too_long"
   | "stale_question"
+  | "turn_pending"
   | "research_running"
   | "research_cap"
   | "budget_exhausted"

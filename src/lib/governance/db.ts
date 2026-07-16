@@ -397,6 +397,90 @@ export async function listQueuedProjects(limit = 2): Promise<string[]> {
 }
 
 /* ------------------------------------------------------------------ *
+ * Answer-turn claim / apply / fail (§5.12 async turn)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Atomic answer-turn claim, ONE conditional UPDATE (the claimResearch
+ * pattern): ownership, retention, turn-taking status, the expected rev, and
+ * claimability. Claimable = no turn record, a failed record (started_at
+ * NULL), or a running claim past the staleness horizon (orphaned by a
+ * restart) — the reap is this overwrite. attemptId is the per-claim fence
+ * nonce for every later worker write; promptId is stored so polls and
+ * duplicate POSTs can recognize the turn (it is NOT a fence — user retries
+ * reuse it by design).
+ */
+export async function claimTurn(opts: {
+  id: string;
+  userId: string;
+  expectedRev: number;
+  promptId: string;
+  attemptId: string;
+  questionId: string;
+}): Promise<boolean> {
+  if (!isUuid(opts.id)) return false;
+  const runningJson = JSON.stringify({ questionId: opts.questionId });
+  const res = await db.execute(sql`
+    UPDATE governance_projects SET
+      turn_prompt_id = ${opts.promptId},
+      turn_attempt_id = ${opts.attemptId},
+      turn_started_at = now(),
+      turn_json = ${runningJson},
+      last_activity_at = now(),
+      updated_at = now()
+    WHERE id = ${opts.id} AND user_id = ${opts.userId}
+      AND last_activity_at >= ${retentionCutoff().toISOString()}
+      AND status IN ('drafting','review')
+      AND rev = ${opts.expectedRev}
+      AND (turn_prompt_id IS NULL
+           OR turn_started_at IS NULL
+           OR turn_started_at < now() - make_interval(secs => ${CAPS.turnStaleMs / 1000}))
+    RETURNING id
+  `);
+  return (res as unknown as unknown[]).length > 0;
+}
+
+/**
+ * Record a turn failure and release the claim (started_at NULL = claimable
+ * immediately; the error rides turn_json for the poll). Fenced on the
+ * attempt nonce: a reaped zombie cannot stomp a successor's claim.
+ */
+export async function failTurn(
+  id: string,
+  attemptId: string,
+  error: { code: string; message: string; retriable?: boolean }
+): Promise<void> {
+  if (!isUuid(id)) return;
+  const rows = await db
+    .select({ turnJson: P.turnJson })
+    .from(P)
+    .where(and(eq(P.id, id), eq(P.turnAttemptId, attemptId)))
+    .limit(1);
+  if (!rows.length) return;
+  let questionId = "";
+  try {
+    const parsed = JSON.parse(rows[0].turnJson ?? "{}") as {
+      questionId?: unknown;
+    };
+    if (typeof parsed.questionId === "string") questionId = parsed.questionId;
+  } catch {
+    // corrupt running record: fail with an empty questionId
+  }
+  await db
+    .update(P)
+    .set({
+      turnStartedAt: null,
+      turnJson: JSON.stringify({
+        questionId,
+        error,
+        failedAt: new Date().toISOString(),
+      }),
+      updatedAt: sql`now()`,
+    })
+    .where(and(eq(P.id, id), eq(P.turnAttemptId, attemptId)));
+}
+
+/* ------------------------------------------------------------------ *
  * Turn apply (single transactional write per turn)
  * ------------------------------------------------------------------ */
 
@@ -404,6 +488,7 @@ export async function applyTurnWrite(opts: {
   id: string;
   userId: string;
   expectedRev: number;
+  attemptId: string; // claim fence: a superseded worker must write nothing
   status: ProjectStatus;
   documents: GovernanceDoc[];
   transcript: TranscriptEntry[];
@@ -436,11 +521,21 @@ export async function applyTurnWrite(opts: {
       changedSectionsJson: JSON.stringify(opts.changedSections),
       answersCount: sql`answers_count + ${opts.answersIncrement}`,
       researchFlagged: sql`research_flagged OR ${opts.flagged}`,
+      // Success clears the whole turn record in the same write.
+      turnPromptId: null,
+      turnAttemptId: null,
+      turnStartedAt: null,
+      turnJson: null,
       lastActivityAt: sql`now()`,
       updatedAt: sql`now()`,
     })
     .where(
-      and(eq(P.id, opts.id), eq(P.userId, opts.userId), eq(P.rev, opts.expectedRev))
+      and(
+        eq(P.id, opts.id),
+        eq(P.userId, opts.userId),
+        eq(P.rev, opts.expectedRev),
+        eq(P.turnAttemptId, opts.attemptId)
+      )
     )
     .returning({ id: P.id });
   return rows.length > 0;
@@ -459,7 +554,10 @@ export async function confirmProject(
         eq(P.id, id),
         eq(P.userId, userId),
         eq(P.status, "review"),
-        gte(P.lastActivityAt, retentionCutoff())
+        gte(P.lastActivityAt, retentionCutoff()),
+        // No confirm while a revise turn is running: the worker's apply
+        // would race the done flip. Stale claims (orphans) don't block.
+        sql`(turn_started_at IS NULL OR turn_started_at < now() - make_interval(secs => ${CAPS.turnStaleMs / 1000}))`
       )
     )
     .returning({ id: P.id });
