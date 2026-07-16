@@ -105,7 +105,7 @@ export function StyleSampleControl({
       />
       {/* Status line and actions are separate rows: a long filename wraps on
           its own without the buttons interleaving mid-wrap. */}
-      <p style={dim}>
+      <p className="max-w-none" style={dim}>
         {name ? (
           <>
             Format sample: <span className="mono break-words">{name}</span>
