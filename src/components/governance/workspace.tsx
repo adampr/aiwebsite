@@ -619,6 +619,9 @@ export function Workspace({ projectId }: { projectId: string }) {
       nextQuestion: data.nextQuestion,
       reviewSummary: data.reviewSummary,
       changedSections: data.changedSections,
+      // Same-render update so a freshly drafted section swaps Planned for
+      // Updated immediately (no idle poll exists in drafting to fix it).
+      placeholderSections: data.placeholderSections ?? prev.placeholderSections,
       progress: data.progress,
       openConfirmItems: data.openConfirmItems,
       transcript: [...prev.transcript, entry],
@@ -785,6 +788,19 @@ export function Workspace({ projectId }: { projectId: string }) {
   async function confirmFinal() {
     const v = viewRef.current;
     if (!v || confirmBusy) return;
+    // Client-side intercept of the server's confirm gate: the button stays
+    // enabled (a dead button with no reason is worse) and this explains.
+    const undrafted = Object.values(v.placeholderSections ?? {}).reduce(
+      (n, secs) => n + secs.length,
+      0
+    );
+    if (undrafted > 0) {
+      setNoticeAnnounced({
+        kind: "info",
+        text: `Almost. ${undrafted} ${undrafted === 1 ? "section is" : "sections are"} not drafted yet. Use the list above to jump to each one and ask Tron to draft it, then confirm.`,
+      });
+      return;
+    }
     setConfirmBusy(true);
     const r = await api<{ status: string }>(
       `/api/governance/projects/${encodeURIComponent(projectId)}/confirm`,
@@ -1062,6 +1078,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 onSelectDoc={setActiveDoc}
                 highlights={highlights}
                 asking={asking}
+                placeholders={view.placeholderSections ?? {}}
                 flashKey={flashKey}
                 changedNow={changedNow}
                 onJump={jumpTo}

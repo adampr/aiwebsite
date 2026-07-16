@@ -36,6 +36,17 @@ export const CAPS = {
   maxSectionsPerDoc: 20,
   maxDocsPerProject: 12,
   maxOpsPerTurn: 12,
+  // Turn zero drafts up to 10 sections plus retitles in one response, so it
+  // gets a higher op ceiling than the one-question turns (a 10-section group
+  // sits one op from a whole-turn failure at 12).
+  turnZeroMaxOps: 24,
+  // Turn-zero groups that fail validation get at most this many repair calls
+  // per research run (each budget-counted), each with this timeout and this
+  // much of the raw output to repair. 90 s mirrors the original group call:
+  // the repair re-emits a corrected ~20k-char object, and 60 s proved tight.
+  turnZeroRepairMaxCalls: 2,
+  turnZeroRepairTimeoutMs: 90_000,
+  turnZeroRepairRawMaxChars: 48_000,
   documentsJsonMaxBytes: 150_000, // aligned with what is promptable
   transcriptJsonMaxBytes: 200_000,
   researchBriefMaxChars: 9000,

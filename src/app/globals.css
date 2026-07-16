@@ -313,3 +313,38 @@
   padding: var(--sp-3) var(--sp-4);
 }
 .doc-chip--ask { border-style: dashed; }
+
+/* Planned, not yet drafted: neutral and quiet, never an error. Chip
+   grammar: Updated = solid cyan, Asking = dashed cyan, Planned = dotted
+   gray; wording plus tone carry the state, border style is garnish. The
+   body recedes (faint + italic) EXCEPT while the active question is about
+   the section: the ask choreography exists to make that text read, so
+   asking wins the body treatment (same precedence as the asking frame).
+   Border uses --xl-line-bright (kept >=3:1 in both themes); --xl-line is
+   near invisible on the light theme. */
+.doc-sec--planned:not(.doc-sec--asking) p,
+.doc-sec--planned:not(.doc-sec--asking) li,
+.doc-sec--planned:not(.doc-sec--asking) td {
+  color: var(--xl-text-faint);
+  font-style: italic;
+}
+.doc-sec--planned .doc-h { color: var(--xl-text-dim); }
+.doc-chip--plan {
+  color: var(--xl-text-dim);
+  border-style: dotted;
+  border-color: var(--xl-line-bright);
+}
+
+/* Answered-question history: one quiet disclosure row; the list inside
+   scrolls itself so the current question card never migrates down the
+   page as answers accumulate. The row keeps its own hairline; when open,
+   the inner rows' border-b lines take over (no doubled hairline). */
+.transcript > summary { border-bottom: 1px solid var(--xl-line); }
+.transcript[open] > summary { border-bottom: none; }
+.transcript-scroll {
+  max-height: min(40vh, 22rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  border-top: 1px solid var(--xl-line);
+}

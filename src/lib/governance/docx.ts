@@ -1,6 +1,6 @@
 // Word-friendly downloads (§5.12): stored markdown -> .docx (docx npm) and
 // .zip of .docx + README (jszip), generated on demand at download time and
-// streamed — never stored, zero AI calls, so downloads work through every
+// streamed, never stored, zero AI calls, so downloads work through every
 // outage and budget cap. Markdown is parsed through the same sanitizing
 // parser the doc pane uses (defense in depth: HTML stripped again here).
 
@@ -20,6 +20,7 @@ import {
 } from "docx";
 import JSZip from "jszip";
 import type { GovernanceDoc, GovernanceKind } from "./types";
+import { placeholderSectionMap, stubDetermined } from "./blueprints";
 import type { Block, Inline } from "./markdown";
 import { parseMarkdown } from "./markdown";
 import { normalizeSectionBlocks, sectionTitleText } from "./numbering";
@@ -145,11 +146,20 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** One governance document -> .docx buffer. */
+/** One governance document -> .docx buffer. Pure and AI-free: the
+ * placeholder detection below is an exact string comparison against the
+ * blueprint, so downloads keep working through every outage and cap. */
 export async function renderDocx(
   doc: GovernanceDoc,
-  opts: { draft: boolean }
+  opts: { draft: boolean; kind: GovernanceKind }
 ): Promise<Buffer> {
+  // Sections still holding scaffold text render an explicit notice instead
+  // of the template body: a customer must never mistake scaffolding for
+  // drafted governance content, in draft or (belt and braces: rows confirmed
+  // before this shipped) final output.
+  const placeholderIds = new Set(
+    placeholderSectionMap(opts.kind, [doc])[doc.slug] ?? []
+  );
   const children: (Paragraph | Table)[] = [];
   const numRefs: string[] = [];
   const orderedRef = () => {
@@ -190,7 +200,11 @@ export async function renderDocx(
       new Paragraph({
         children: [
           new TextRun({
-            text: "This document is intentionally brief: based on your answers it records a determination rather than a full procedure.",
+            // Truthful in both stub states: before a determination is
+            // recorded, this document holds only planning outlines.
+            text: stubDetermined(doc)
+              ? "This document is intentionally brief: based on your answers it records a determination rather than a full procedure."
+              : "This document activates only if your answers show it applies. No determination has been recorded yet; its sections below are planning outlines, not drafted content.",
             italics: true,
           }),
         ],
@@ -206,6 +220,21 @@ export async function renderDocx(
         spacing: { before: 280, after: 120 },
       })
     );
+    if (placeholderIds.has(section.id)) {
+      children.push(
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: "This section has not been drafted yet. Answer or revise in your project to draft it; do not rely on this section.",
+              italics: true,
+              color: "B45309",
+            }),
+          ],
+          spacing: { after: 160 },
+        })
+      );
+      return;
+    }
     for (const block of normalizeSectionBlocks(
       parseMarkdown(section.markdown),
       si + 1
@@ -270,6 +299,12 @@ function readmeText(opts: {
     `- Open [TO CONFIRM] items in the drafts: ${opts.openConfirmCount}. Search each document for "[TO CONFIRM" and resolve them.`
   );
   lines.push(`- Questions skipped during drafting: ${opts.skippedCount}.`);
+  const undrafted = Object.entries(placeholderSectionMap(opts.kind, opts.docs))
+    .flatMap(([slug, secs]) => secs.map((s) => `${slug}#${s}`));
+  if (undrafted.length)
+    lines.push(
+      `- Sections not yet drafted (marked inside the documents): ${undrafted.length}. ${undrafted.join(", ")}.`
+    );
   const stubs = opts.docs.filter((d) => d.stub);
   if (stubs.length)
     lines.push(
@@ -298,7 +333,7 @@ export async function renderZip(opts: {
   const zip = new JSZip();
   const suffix = opts.draft ? "-draft" : "";
   for (const doc of opts.docs) {
-    const buf = await renderDocx(doc, { draft: opts.draft });
+    const buf = await renderDocx(doc, { draft: opts.draft, kind: opts.kind });
     zip.file(`${fileSlug(doc.slug)}${suffix}.docx`, buf);
   }
   zip.file("README.txt", readmeText(opts));

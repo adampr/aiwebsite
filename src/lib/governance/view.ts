@@ -14,6 +14,7 @@ import type {
   ResearchProgress,
   TranscriptEntry,
 } from "./types";
+import { placeholderSectionMap } from "./blueprints";
 import { governanceEnabled } from "./config";
 import { findConfirmMarkers } from "./markdown";
 import { progressFor } from "./turn";
@@ -81,6 +82,7 @@ export function toProjectView(row: ProjectRow): ProjectView {
       row.changedSectionsJson,
       {}
     ),
+    placeholderSections: placeholderSectionMap(kind, documents),
     progress: progressFor(kind, covered),
     researchProgress: researchProgress
       ? {

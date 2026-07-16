@@ -168,6 +168,10 @@ export interface ProjectView {
   nextQuestion: NextQuestion | null;
   reviewSummary: string | null;
   changedSections: Record<string, string[]>; // docSlug -> [sectionId]
+  // docSlug -> [sectionId] still holding untouched blueprint scaffold text
+  // (host-computed, exact match, stub docs excluded). The pane renders these
+  // as Planned; confirm refuses while any remain.
+  placeholderSections: Record<string, string[]>;
   progress: { answered: number; total: number };
   researchProgress: {
     step: ResearchStep;

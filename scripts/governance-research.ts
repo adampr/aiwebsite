@@ -59,6 +59,7 @@ import {
 import {
   buildSystemMessage,
   buildTurnZeroUserMessage,
+  repairSystemMessage,
 } from "../src/lib/governance/prompt";
 import {
   applyOps,
@@ -122,12 +123,15 @@ async function spendTavily(): Promise<boolean> {
   return ok;
 }
 
-async function brainJson(
+/** Budget-counted brain call returning the RAW text (null = budget refusal
+ * or transport failure), so callers can distinguish "no response" from
+ * "unparseable response" and can hand the raw text to a repair call. */
+async function brainRaw(
   session: string,
   system: string,
   user: string,
   timeoutMs: number
-): Promise<unknown | null> {
+): Promise<string | null> {
   if (
     !budgetExempt &&
     !(await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))
@@ -135,7 +139,7 @@ async function brainJson(
     void notifyBudgetHit("global_brain", { operation: "research analysis" });
     return null;
   }
-  const raw = await callGovernanceBrain(
+  return callGovernanceBrain(
     buildGovernanceEnvelope({
       sessionId: session,
       promptId: newId("gov"),
@@ -144,6 +148,15 @@ async function brainJson(
     }),
     timeoutMs
   );
+}
+
+async function brainJson(
+  session: string,
+  system: string,
+  user: string,
+  timeoutMs: number
+): Promise<unknown | null> {
+  const raw = await brainRaw(session, system, user, timeoutMs);
   if (!raw) return null;
   return parseTurnJson(raw);
 }
@@ -771,29 +784,34 @@ async function main(): Promise<void> {
       }
     : null;
   // Turn zero drafts a COMPLETE first version (owner rule, round 3): one
-  // call for the usage policy, one call per group of ~3 non-stub documents
+  // call for the usage policy, one call per group of 2 non-stub documents
   // for the standards sets, so every section opens genuinely drafted (with
-  // [TO CONFIRM] markers) instead of as template placeholders. A failed
-  // group keeps its scaffold; the others still land.
+  // [TO CONFIRM] markers) instead of as template placeholders. Stub docs
+  // NEVER go to turn zero: determinations rest only on user-confirmed facts
+  // and there are none yet, so their scaffolds honestly read as pending. A
+  // failed group gets one repair pass (answer-route pattern), then op-level
+  // salvage; whatever still fails keeps its scaffold, which the UI marks
+  // Planned and every later turn offers for drafting (NOT YET DRAFTED
+  // markers in the prompt).
   const system = buildSystemMessage({
     kind,
     brief,
     forcedReviewSoon: false,
     styleSample,
+    turnZero: true,
   });
   const nonStub = documents.filter((d) => !d.stub);
-  const stubs = documents.filter((d) => d.stub);
   const groups: GovernanceDoc[][] = [];
-  if (kind === "usage_policy") groups.push(documents);
+  if (kind === "usage_policy") groups.push(nonStub);
   else {
     // Groups of 2: the 24k-char op budget then covers every section of the
     // group fully, so the "complete every section" instruction never has to
     // trade thoroughness for space.
     for (let i = 0; i < nonStub.length; i += 2)
       groups.push(nonStub.slice(i, i + 2));
-    if (stubs.length) groups.push(stubs);
   }
   let groupsApplied = 0;
+  let repairsUsed = 0;
   for (const [gi, group] of groups.entries()) {
     // Never let drafting run the job into the wall clock: the handoff write
     // MUST happen. Groups that miss the window keep their scaffold and get
@@ -807,7 +825,8 @@ async function main(): Promise<void> {
     }
     progress.pct = 90 + Math.min(8, Math.round(((gi + 1) / groups.length) * 8));
     await hb(progress);
-    const turnZero = (await brainJson(
+    const tag = `turn zero group ${gi + 1}/${groups.length}`;
+    const raw = await brainRaw(
       `gov_${projectId}`,
       system,
       buildTurnZeroUserMessage({
@@ -819,26 +838,63 @@ async function main(): Promise<void> {
             : undefined,
       }),
       90_000
-    )) as unknown;
-    if (!turnZero) {
-      log("handoff", `turn zero group ${gi + 1}/${groups.length} unavailable; scaffold kept`);
+    );
+    if (!raw) {
+      log("handoff", `${tag} unavailable (no response); scaffold kept`);
       continue;
     }
-    const validation = validateTurn(turnZero, kind, { turnZero: true });
-    if (!validation.ok || !validation.turn) {
+    const parsed = parseTurnJson(raw);
+    let validation = parsed
+      ? validateTurn(parsed, kind, { turnZero: true })
+      : { ok: false, errors: ["unparseable JSON"], salvageOps: [] };
+    // One repair pass per failed group (globally capped per run), only while
+    // the repair itself cannot run into the handoff reserve. Error strings
+    // are host-generated; raw model output goes only to the repair model.
+    if (
+      !validation.ok &&
+      repairsUsed < CAPS.turnZeroRepairMaxCalls &&
+      Date.now() - started <=
+        WALL_CLOCK_MS - HANDOFF_RESERVE_MS - CAPS.turnZeroRepairTimeoutMs
+    ) {
+      repairsUsed++;
+      log("handoff", `${tag} invalid; repairing. Errors: ${validation.errors.slice(0, 6).join("; ")}`);
+      const repairRaw = await brainRaw(
+        `gov_${projectId}`,
+        repairSystemMessage(),
+        `Validation errors:\n${validation.errors.join("\n")}\n\nRaw output to repair:\n${raw.slice(0, CAPS.turnZeroRepairRawMaxChars)}`,
+        CAPS.turnZeroRepairTimeoutMs
+      );
+      const repairParsed = repairRaw ? parseTurnJson(repairRaw) : null;
+      if (repairParsed) {
+        const repaired = validateTurn(repairParsed, kind, { turnZero: true });
+        // Prefer the repaired output unless it salvages strictly less.
+        if (
+          repaired.ok ||
+          repaired.salvageOps.length >= validation.salvageOps.length
+        )
+          validation = repaired;
+      }
+    }
+    const ops =
+      validation.ok && validation.turn
+        ? validation.turn.docOps
+        : validation.salvageOps;
+    if (!ops.length) {
       log(
         "handoff",
-        `turn zero group ${gi + 1}/${groups.length} invalid (${validation.errors.length} errors); scaffold kept`
+        `${tag} invalid, nothing salvageable; scaffold kept. Errors: ${validation.errors.slice(0, 6).join("; ")}`
       );
       continue;
     }
-    const applied = applyOps(documents, validation.turn.docOps, kind);
+    const applied = applyOps(documents, ops, kind);
     documents = applied.documents;
     if (applied.injectionHits.length) flagged = true;
     groupsApplied++;
     log(
       "handoff",
-      `turn zero group ${gi + 1}/${groups.length} applied ops=${validation.turn.docOps.length}`
+      validation.ok
+        ? `${tag} applied ops=${ops.length}`
+        : `${tag} salvaged ops=${ops.length}; errors: ${validation.errors.slice(0, 6).join("; ")}`
     );
   }
   if (groupsApplied === 0) log("handoff", "turn zero fully unavailable; plain scaffold");

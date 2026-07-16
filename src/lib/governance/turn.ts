@@ -85,6 +85,11 @@ export interface TurnValidation {
   ok: boolean;
   turn?: TurnResult;
   errors: string[];
+  // Turn zero only: the individually valid ops from an INVALID turn, trimmed
+  // front-to-back to the turn-zero markdown budget. Turn zero consumes only
+  // doc_ops (the host asks the first question itself), so applying these is
+  // always safe; the answer route stays all-or-nothing and gets [].
+  salvageOps: DocOp[];
 }
 
 export function validateTurn(
@@ -94,21 +99,21 @@ export function validateTurn(
 ): TurnValidation {
   const errors: string[] = [];
   if (typeof parsed !== "object" || parsed === null)
-    return { ok: false, errors: ["not an object"] };
+    return { ok: false, errors: ["not an object"], salvageOps: [] };
   const o = parsed as Record<string, unknown>;
   const allow = docSlugAllowlist(kind);
   const opBudget = opts.turnZero
     ? CAPS.turnZeroOpMarkdownMaxChars
     : CAPS.turnOpMarkdownMaxChars;
+  const maxOps = opts.turnZero ? CAPS.turnZeroMaxOps : CAPS.maxOpsPerTurn;
 
   const rawOps = Array.isArray(o.doc_ops) ? o.doc_ops : [];
   if (!Array.isArray(o.doc_ops)) errors.push("doc_ops must be an array");
-  if (rawOps.length > CAPS.maxOpsPerTurn)
-    errors.push(`too many ops (max ${CAPS.maxOpsPerTurn})`);
+  if (rawOps.length > maxOps) errors.push(`too many ops (max ${maxOps})`);
 
   const ops: DocOp[] = [];
   let mdTotal = 0;
-  for (const [i, op] of rawOps.slice(0, CAPS.maxOpsPerTurn).entries()) {
+  for (const [i, op] of rawOps.slice(0, maxOps).entries()) {
     const e = op as Record<string, unknown>;
     const doc = str(e.doc, 64);
     if (!doc || !allow.has(doc)) {
@@ -191,10 +196,26 @@ export function validateTurn(
       )
     : [];
 
-  if (errors.length) return { ok: false, errors };
+  if (errors.length) {
+    // Salvage trim mirrors mdTotal above: only upsert_section markdown
+    // counts against the budget; drop (never truncate) an op that would
+    // exceed it. Non-turn-zero callers get [] and stay all-or-nothing.
+    let salvageOps: DocOp[] = [];
+    if (opts.turnZero) {
+      let acc = 0;
+      salvageOps = ops.filter((op) => {
+        if (op.op !== "upsert_section") return true;
+        if (acc + op.markdown.length > opBudget) return false;
+        acc += op.markdown.length;
+        return true;
+      });
+    }
+    return { ok: false, errors, salvageOps };
+  }
   return {
     ok: true,
     errors: [],
+    salvageOps: [],
     turn: {
       docOps: ops,
       status: status as "asking" | "review",

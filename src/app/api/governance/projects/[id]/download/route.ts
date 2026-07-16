@@ -72,7 +72,10 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
     const slug = url.searchParams.get("doc") ?? docs[0].slug;
     const doc = docs.find((d) => d.slug === slug);
     if (!doc) return NOT_FOUND();
-    const buf = await renderDocx(doc, { draft });
+    const buf = await renderDocx(doc, {
+      draft,
+      kind: row.kind as GovernanceKind,
+    });
     await touchActivity(row.id);
     return new Response(new Uint8Array(buf), {
       headers: {

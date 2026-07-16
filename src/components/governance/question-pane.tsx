@@ -7,6 +7,7 @@
 
 import type { ReactNode, RefObject } from "react";
 import type { ProjectView } from "@/lib/governance/types";
+import { sectionTitleText } from "@/lib/governance/numbering";
 import { chipCanon, chipSegments, firstFeedTarget, fmtDate } from "./shared";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
@@ -47,28 +48,48 @@ function BusyLabel({
 const REVIEW_DEFAULT_COPY =
   "No more questions. Read the draft on the right. If something reads wrong, tell me below and I will revise it. When it reads right, confirm it and take it with you.";
 
+/** One collapsed disclosure for the whole Q&A history: the current question
+ *  card stays the top anchor of the column no matter how many answers
+ *  accumulate, and the list scrolls itself once opened. Uncontrolled and
+ *  unkeyed so the open state survives turn re-renders. */
 function TranscriptList({ view }: { view: ProjectView }) {
-  if (view.transcript.length === 0) return null;
+  const n = view.transcript.length;
+  if (n === 0) return null;
+  const hasRevisions = view.transcript.some((t) => t.qId === "revise");
+  let qNum = 0;
   return (
-    <div className="mb-6">
-      {view.transcript.map((t, i) => (
-        <details
-          key={`${t.qId}-${i}`}
-          className="border-b"
-          style={{ borderColor: "var(--xl-line)" }}
-        >
-          <summary
-            className="min-h-11 cursor-pointer py-2 text-sm"
-            style={dim}
+    <details className="transcript mb-6">
+      <summary className="min-h-11 cursor-pointer py-2 text-sm" style={dim}>
+        {hasRevisions
+          ? `Previous questions and revisions (${n})`
+          : `Previous questions (${n})`}
+      </summary>
+      <div
+        className="transcript-scroll"
+        tabIndex={0}
+        role="group"
+        aria-label="Previous answers"
+      >
+        {view.transcript.map((t, i) => (
+          <details
+            key={`${t.qId}-${i}`}
+            className="border-b"
+            style={{ borderColor: "var(--xl-line)" }}
           >
-            {t.qId === "revise" ? "Revision request" : `Q${i + 1} · ${t.q}`}
-          </summary>
-          <p className="max-w-none pb-3 text-sm">
-            {t.skipped ? "Skipped. Tron drafted a default." : t.a}
-          </p>
-        </details>
-      ))}
-    </div>
+            <summary
+              className="min-h-11 cursor-pointer py-2 text-sm"
+              style={dim}
+            >
+              {/* Revision rows never consume a question number. */}
+              {t.qId === "revise" ? "Revision request" : `Q${++qNum} · ${t.q}`}
+            </summary>
+            <p className="max-w-none pb-3 text-sm">
+              {t.skipped ? "Skipped. Tron drafted a default." : t.a}
+            </p>
+          </details>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -179,6 +200,28 @@ export function QuestionPane({
   // The draft section this question is about; the jump link is the way to
   // reach the marked text from the Questions tab on mobile.
   const feedTarget = q ? firstFeedTarget(q.feeds, view.documents) : null;
+  // Host-detected sections still holding scaffold text, titled exactly as
+  // the doc pane renders them. These block confirm; open [TO CONFIRM]
+  // items intentionally do not (unverified facts are the user's to accept,
+  // undrafted sections are not content at all).
+  const undrafted = Object.entries(view.placeholderSections ?? {}).flatMap(
+    ([slug, secs]) => {
+      const doc = view.documents.find((d) => d.slug === slug);
+      if (!doc) return [];
+      return secs.flatMap((sid) => {
+        const si = doc.sections.findIndex((x) => x.id === sid);
+        if (si < 0) return [];
+        return [
+          {
+            doc: slug,
+            section: sid,
+            docTitle: doc.title,
+            sectionTitle: sectionTitleText(si + 1, doc.sections[si].title),
+          },
+        ];
+      });
+    }
+  );
 
   return (
     <section className="min-w-0">
@@ -311,6 +354,44 @@ export function QuestionPane({
           <p className="mt-3 max-w-none text-sm">
             {view.reviewSummary || REVIEW_DEFAULT_COPY}
           </p>
+
+          {undrafted.length > 0 && (
+            <div className="mt-5">
+              <p className="text-sm">
+                <strong>Sections not yet drafted ({undrafted.length})</strong>
+              </p>
+              <ul className="mt-2 space-y-2">
+                {undrafted.map((it) => (
+                  <li key={`${it.doc}:${it.section}`} className="text-sm">
+                    <button
+                      type="button"
+                      className="linklike"
+                      onClick={() => onJump(it.doc, it.section, true)}
+                    >
+                      {it.docTitle + " · " + it.sectionTitle}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 max-w-none text-xs" style={faint}>
+                These still hold planning text, so confirming is off until
+                they are drafted.{" "}
+                <button
+                  type="button"
+                  className="linklike"
+                  disabled={inputLocked}
+                  onClick={() =>
+                    onAnswerChange(
+                      "Draft all sections that are still marked as not yet drafted."
+                    )
+                  }
+                >
+                  Ask Tron to draft them all
+                </button>{" "}
+                fills the box below; edit it or send it as is.
+              </p>
+            </div>
+          )}
 
           {view.openConfirmItems.length > 0 && (
             <div className="mt-5">

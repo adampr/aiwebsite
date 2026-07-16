@@ -137,6 +137,9 @@ export interface TurnResponse {
   rev: number;
   status: ProjectStatus;
   changedSections: Record<string, string[]>;
+  // Optional for one deploy window: a stale server may omit it; the client
+  // then keeps the previous view's map until the next GET.
+  placeholderSections?: Record<string, string[]>;
   nextQuestion: NextQuestion | null;
   reviewSummary: string | null;
   progress: { answered: number; total: number };

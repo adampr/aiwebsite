@@ -139,6 +139,7 @@ export function DocPane({
   onSelectDoc,
   highlights,
   asking,
+  placeholders,
   flashKey,
   changedNow,
   onJump,
@@ -151,6 +152,9 @@ export function DocPane({
   highlights: Record<string, string[]>;
   /** docSlug -> [sectionId] the ACTIVE question is about (owner fix #3). */
   asking: Record<string, string[]>;
+  /** docSlug -> [sectionId] still holding scaffold text (server-computed;
+   *  stub docs are never in it). Rendered as Planned, never as content. */
+  placeholders: Record<string, string[]>;
   flashKey: number;
   changedNow: ChangedRef[] | null;
   onJump: (doc: string, section: string, focus: boolean) => void;
@@ -233,17 +237,29 @@ export function DocPane({
         <div className="mt-6 space-y-8">
           {doc.stub && (
             <p className="text-xs" style={faint}>
-              This document records a negative determination: it explains why
-              the rest of the set does not apply.
+              {doc.sections.some((s) => s.id === "determination")
+                ? "This document records a determination: it explains why these obligations do not apply."
+                : "This document activates only if your answers show it applies. No determination has been recorded yet."}
+            </p>
+          )}
+          {!doc.stub && (placeholders[doc.slug] ?? []).length > 0 && (
+            <p className="text-xs" style={faint}>
+              {status === "review"
+                ? "Sections marked Planned are not drafted yet. Ask Tron in the revision box to draft them before you confirm."
+                : status === "done"
+                  ? "Sections marked Planned were not drafted in this project."
+                  : "Sections marked Planned are drafted as the interview goes on."}
             </p>
           )}
           {doc.sections.map((s, si) => {
             const changed = (highlights[doc.slug] ?? []).includes(s.id);
             const asked = (asking[doc.slug] ?? []).includes(s.id);
+            const planned = (placeholders[doc.slug] ?? []).includes(s.id);
             const cls =
               [
                 changed ? "doc-sec--changed doc-sec--flash" : "",
                 asked ? "doc-sec--asking" : "",
+                planned ? "doc-sec--planned" : "",
               ]
                 .filter(Boolean)
                 .join(" ") || undefined;
@@ -260,6 +276,9 @@ export function DocPane({
                     <span className="doc-chip doc-chip--ask">
                       Asking about this
                     </span>
+                  )}
+                  {planned && (
+                    <span className="doc-chip doc-chip--plan">Planned</span>
                   )}
                 </h3>
                 <SectionBody markdown={s.markdown} num={si + 1} />

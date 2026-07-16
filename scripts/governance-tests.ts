@@ -76,8 +76,12 @@ function check(name: string, cond: boolean): void {
     "src/lib/governance/prompt.ts",
     "src/lib/governance/probes.ts",
     "src/lib/governance/style-sample.ts",
+    "src/lib/governance/docx.ts",
     "src/components/governance/style-sample-control.tsx",
     "src/components/governance/research-screen.tsx",
+    "src/components/governance/question-pane.tsx",
+    "src/components/governance/doc-pane.tsx",
+    "src/components/governance/workspace.tsx",
   ]) {
     const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
     check(`no banned chars in ${rel}`, !/[–—‘’“”]/.test(text));
@@ -189,6 +193,174 @@ function check(name: string, cond: boolean): void {
   check(
     "allowlist has the policy doc",
     docSlugAllowlist(kind).has("ai-usage-policy") && bankById(kind).size >= 12
+  );
+}
+
+/* 5b. Turn-zero salvage, placeholder detection, and prompt honesty: an
+   invalid turn-zero group must yield its valid ops instead of a whole kept
+   scaffold, still-scaffold sections must be host-detectable by exact match,
+   and the prompts must state the caps that validation actually enforces. */
+{
+  const { CAPS } = await import("../src/lib/governance/config");
+  const { placeholderSectionMap, stubDetermined } = await import(
+    "../src/lib/governance/blueprints"
+  );
+  const {
+    buildSystemMessage: sysMsg,
+    buildTurnUserMessage,
+    buildTurnZeroUserMessage,
+  } = await import("../src/lib/governance/prompt");
+  const kind = "usage_policy" as const;
+
+  // Salvage: the valid op survives an invalid sibling; answer turns do not.
+  const okOp = {
+    op: "upsert_section",
+    doc: "ai-usage-policy",
+    section: "data-rules",
+    title: "T",
+    markdown: "Valid drafted text.",
+  };
+  const badOp = { ...okOp, section: "bad id!" };
+  const mixed = { doc_ops: [okOp, badOp], status: "asking", question: null };
+  const vz = validateTurn(mixed, kind, { turnZero: true });
+  check(
+    "salvage: valid op extracted from invalid turn zero",
+    !vz.ok && vz.salvageOps.length === 1 &&
+      vz.salvageOps[0].op === "upsert_section" &&
+      vz.salvageOps[0].section === "data-rules"
+  );
+  const va = validateTurn(mixed, kind);
+  check("salvage: answer turns stay all-or-nothing", !va.ok && va.salvageOps.length === 0);
+
+  // Salvage trim: five 6000-char sections overflow the 24k budget; the
+  // trim keeps the first four and drops (never truncates) the fifth.
+  const five = {
+    doc_ops: [0, 1, 2, 3, 4].map((i) => ({
+      op: "upsert_section",
+      doc: "ai-usage-policy",
+      section: `sec-${i}`,
+      title: "T",
+      markdown: "x".repeat(CAPS.sectionMarkdownMaxChars),
+    })),
+    status: "asking",
+    question: null,
+  };
+  const vf = validateTurn(five, kind, { turnZero: true });
+  check(
+    "salvage: trimmed to the turn-zero budget in order",
+    !vf.ok && vf.salvageOps.length === 4 &&
+      vf.salvageOps.every(
+        (o, i) => o.op === "upsert_section" && o.section === `sec-${i}`
+      )
+  );
+
+  // Turn zero gets the higher op ceiling; answer turns keep 12.
+  const many = {
+    doc_ops: Array.from({ length: 13 }, (_, i) => ({
+      op: "upsert_section",
+      doc: "ai-usage-policy",
+      section: `s-${i}`,
+      title: "T",
+      markdown: "m",
+    })),
+    status: "asking",
+    question: null,
+  };
+  check("op cap: 13 ops valid at turn zero", validateTurn(many, kind, { turnZero: true }).ok);
+  check("op cap: 13 ops rejected on answer turns", !validateTurn(many, kind).ok);
+
+  // Placeholder detection: exact match, full on a fresh scaffold, cleared
+  // by a real edit, stub docs never in the map, strings sanitize-stable.
+  for (const k of GOVERNANCE_KINDS) {
+    const docs = scaffoldDocuments(k);
+    const map = placeholderSectionMap(k, docs);
+    const full = docs
+      .filter((d) => !d.stub)
+      .every((d) => (map[d.slug] ?? []).length === d.sections.length);
+    const noStubs = docs
+      .filter((d) => d.stub)
+      .every((d) => !(d.slug in map));
+    check(`${k}: fresh scaffold fully flagged, stubs excluded`, full && noStubs);
+    const stable = BLUEPRINTS[k].docs.every((d) =>
+      d.sections.every((s) => sanitizeMarkdown(s.placeholder) === s.placeholder)
+    );
+    check(`${k}: placeholders sanitize-stable (exact match holds)`, stable);
+  }
+  const drafted = applyOps(
+    scaffoldDocuments(kind),
+    [{ op: "upsert_section", doc: "ai-usage-policy", section: "purpose-scope", title: "T", markdown: "Real drafted text." }],
+    kind
+  ).documents;
+  const mapAfter = placeholderSectionMap(kind, drafted);
+  check(
+    "placeholder map: drafting one section unflags only it",
+    !(mapAfter["ai-usage-policy"] ?? []).includes("purpose-scope") &&
+      (mapAfter["ai-usage-policy"] ?? []).includes("data-rules")
+  );
+
+  // Stub pending vs determined keys on the determination section.
+  const nist = scaffoldDocuments("nist_ai_rmf");
+  const stub = nist.find((d) => d.stub)!;
+  check("stub: pending before set_stub", !stubDetermined(stub));
+  const stubbed = applyOps(
+    nist,
+    [{ op: "set_stub", doc: stub.slug, stub: true, markdown: "Does not apply. [TO CONFIRM: usage]" }],
+    "nist_ai_rmf"
+  ).documents.find((d) => d.slug === stub.slug)!;
+  check("stub: determined after set_stub", stubDetermined(stubbed));
+
+  // Prompt honesty: still-scaffold sections ride every turn marked NOT YET
+  // DRAFTED with their spec text kept; drafted sections carry no marker.
+  const turnMsg = buildTurnUserMessage({
+    kind,
+    documents: drafted,
+    transcript: [],
+    coveredBankIds: [],
+    question: { id: "q_1", bankId: "UP-01", text: "t", why: "w", suggestions: [], feeds: ["ai-usage-policy#purpose-scope"] },
+    answer: "a",
+    skipped: false,
+    changedSections: null,
+  });
+  const dataRulesLine = turnMsg
+    .split("\n")
+    .find((l) => l.includes("section:data-rules"));
+  check(
+    "prompt: scaffold section marked NOT YET DRAFTED with spec kept",
+    !!dataRulesLine &&
+      dataRulesLine.includes("NOT YET DRAFTED") &&
+      turnMsg.includes("traffic-light table")
+  );
+  check(
+    "prompt: drafted section carries no marker",
+    !turnMsg.split("\n").some((l) => l.includes("section:purpose-scope") && l.includes("NOT YET DRAFTED"))
+  );
+  check(
+    "prompt: rules explain the NOT YET DRAFTED marker",
+    sysMsg({ kind, brief: null, forcedReviewSoon: false }).includes("NOT YET DRAFTED")
+  );
+
+  // The turn-zero system message states the turn-zero budget (the shared
+  // rules used to say 8000 and starve turn-zero drafts); answer turns keep
+  // the per-answer budget; the turn-zero user message states both caps.
+  const sysTZ = sysMsg({ kind, brief: null, forcedReviewSoon: false, turnZero: true });
+  const sysAns = sysMsg({ kind, brief: null, forcedReviewSoon: false });
+  check(
+    "prompt: turn-zero rules state the 24k budget",
+    sysTZ.includes(`under ${CAPS.turnZeroOpMarkdownMaxChars} characters`) &&
+      !sysTZ.includes(`under ${CAPS.turnOpMarkdownMaxChars} characters`)
+  );
+  check(
+    "prompt: answer rules keep the 8k budget",
+    sysAns.includes(`under ${CAPS.turnOpMarkdownMaxChars} characters`)
+  );
+  const tzMsg = buildTurnZeroUserMessage({
+    kind: "nist_ai_rmf",
+    documents: scaffoldDocuments("nist_ai_rmf").filter((d) => !d.stub),
+  });
+  check(
+    "prompt: turn zero states both caps",
+    tzMsg.includes(String(CAPS.sectionMarkdownMaxChars)) &&
+      tzMsg.includes(String(CAPS.turnZeroOpMarkdownMaxChars))
   );
 }
 

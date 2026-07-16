@@ -41,7 +41,7 @@ import {
   progressFor,
   validateTurn,
 } from "@/lib/governance/turn";
-import { bankById } from "@/lib/governance/blueprints";
+import { bankById, placeholderSectionMap } from "@/lib/governance/blueprints";
 import { normalizeBrief } from "@/lib/governance/research";
 import { openConfirmItems } from "@/lib/governance/view";
 import type {
@@ -351,6 +351,10 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     rev: newRev,
     status,
     changedSections: applied.changedSections,
+    // Rides every turn (like changedSections) so Planned chips clear in the
+    // same render that draws the Updated chip; there is no idle poll in
+    // drafting to correct a stale map later.
+    placeholderSections: placeholderSectionMap(kind, applied.documents),
     nextQuestion: status === "drafting" ? outQuestion : null,
     reviewSummary: status === "review" ? reviewSummary : null,
     progress: progressFor(kind, covered),

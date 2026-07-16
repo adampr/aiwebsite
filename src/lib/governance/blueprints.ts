@@ -1506,6 +1506,44 @@ export function docSlugAllowlist(kind: GovernanceKind): Set<string> {
   return new Set(BLUEPRINTS[kind].docs.map((d) => d.slug));
 }
 
+/**
+ * Sections still holding untouched blueprint scaffold text, as docSlug ->
+ * [sectionId]. Host-computed by EXACT string equality against this file's
+ * placeholders: scaffolds copy them verbatim and only model ops (which are
+ * sanitized, so never byte-identical meta-language) rewrite them, so the
+ * test is deterministic and no model output can spoof "drafted". Never use
+ * a prefix heuristic here; that would be model-influencible. Editing a
+ * placeholder string above makes existing rows fail OPEN for that section
+ * (treated as drafted, never a lockout), bounded by the 30-day retention.
+ * Stub docs are skipped: their sections stay scaffold by design until an
+ * answer activates them, and their pending/determined state is carried by
+ * the presence of a "determination" section instead.
+ */
+export function placeholderSectionMap(
+  kind: GovernanceKind,
+  documents: GovernanceDoc[]
+): Record<string, string[]> {
+  const byDoc = new Map(BLUEPRINTS[kind].docs.map((d) => [d.slug, d]));
+  const out: Record<string, string[]> = {};
+  for (const doc of documents) {
+    if (doc.stub) continue;
+    const bp = byDoc.get(doc.slug);
+    if (!bp) continue;
+    for (const sec of doc.sections) {
+      const outline = bp.sections.find((s) => s.id === sec.id);
+      if (outline && sec.markdown === outline.placeholder)
+        (out[doc.slug] ??= []).push(sec.id);
+    }
+  }
+  return out;
+}
+
+/** True when a stub doc has recorded its determination (set_stub writes a
+ * "determination" section; no stub blueprint ships one). */
+export function stubDetermined(doc: GovernanceDoc): boolean {
+  return doc.stub && doc.sections.some((s) => s.id === "determination");
+}
+
 /** Bank ids counted toward interview progress (branch questions excluded). */
 export function requiredBankIds(kind: GovernanceKind): string[] {
   return BLUEPRINTS[kind].bank.filter((q) => q.required).map((q) => q.id);
