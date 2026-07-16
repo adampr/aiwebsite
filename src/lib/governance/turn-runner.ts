@@ -1,11 +1,10 @@
 // One answer/revise turn, claim to final write (§5.12 async turn). The
 // pipeline the answer route used to run inline: brain JSON turn -> parse ->
 // at most one repair call -> server-gated apply in ONE rev+fence-conditional
-// write. Runs in-process (Next after()) with no route deadline on the async
-// path; the legacy sync driver passes deadlineMs and gets the old
-// stay-under-nginx timing. Every exit path either applies the turn (which
-// clears the claim) or records a failure via failTurn (which releases it) —
-// a throw here must never leave a running claim to age out.
+// write. Runs in-process (Next after()) with no route deadline. Every exit
+// path either applies the turn (which clears the claim) or records a
+// failure via failTurn (which releases it) — a throw here must never leave
+// a running claim to age out.
 
 import {
   buildGovernanceEnvelope,
@@ -52,9 +51,6 @@ export interface TurnJob {
   promptId: string;
   attemptId: string; // claim fence nonce
   budgetExempt: boolean; // captured at accept for the repair spend
-  // Legacy sync driver only: ms left before nginx cuts the proxy. null on
-  // the async path (full brain + repair budgets; turnStaleMs is the fence).
-  deadlineMs: number | null;
 }
 
 export interface TurnResponseBody {
@@ -115,10 +111,6 @@ export async function runTurn(job: TurnJob): Promise<TurnOutcome> {
 
 async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
   const started = Date.now();
-  const remaining = () =>
-    job.deadlineMs === null
-      ? Number.POSITIVE_INFINITY
-      : job.deadlineMs - (Date.now() - started);
   const fail = async (
     code: GovernanceErrorCode,
     message: string,
@@ -180,10 +172,6 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
   });
 
   const sessionId = `gov_${row.id}`;
-  const brainTimeout =
-    job.deadlineMs === null
-      ? CAPS.brainTurnTimeoutMs
-      : Math.min(CAPS.brainTurnTimeoutMs, Math.max(10_000, remaining() - 10_000));
   const raw = await callGovernanceBrain(
     buildGovernanceEnvelope({
       sessionId,
@@ -191,7 +179,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       system,
       user: userMsg,
     }),
-    brainTimeout
+    CAPS.brainTurnTimeoutMs
   );
   if (raw === null)
     return fail(
@@ -204,16 +192,11 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
   // Parse -> validate -> at most ONE repair call (new promptId, never reuse
   // the original: the brain replays (sessionId,promptId) verbatim).
   let validation = validateTurn(parseTurnJson(raw), kind);
+  // Full repair budget as long as the staleness horizon leaves headroom
+  // for the call plus the final write (it always does after a 90 s brain
+  // call; the guard protects against pathological semaphore waits).
   const repairBudgetMs =
-    job.deadlineMs === null
-      ? // Async path: full repair budget as long as the staleness horizon
-        // leaves headroom for the call plus the final write.
-        CAPS.turnStaleMs - (Date.now() - started) > 80_000
-        ? 60_000
-        : 0
-      : remaining() > CAPS.repairMinRemainingMs
-        ? Math.min(60_000, Math.max(10_000, remaining() - 5_000))
-        : 0;
+    CAPS.turnStaleMs - (Date.now() - started) > 80_000 ? 60_000 : 0;
   if (!validation.ok && repairBudgetMs > 0) {
     if (
       job.budgetExempt ||

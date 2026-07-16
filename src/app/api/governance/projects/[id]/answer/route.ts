@@ -1,9 +1,9 @@
 // POST — one Q&A turn (or a review-phase revision) (§5.12), async since the
 // Cloudflare-524 fix: preflight -> budget -> atomic turn claim -> 202
 // {pending} -> in-process worker (turn-runner.ts) -> the poll (GET view)
-// surfaces success (rev advanced) or the persisted failure. Markerless POSTs
-// (pre-async clients, one deploy window) get the legacy synchronous driver:
-// same pipeline, awaited, budgeted under nginx's 120 s proxy timeout.
+// surfaces success (rev advanced) or the persisted failure. mode:"async" is
+// required: a markerless POST is a stale pre-async client that would spread
+// the 202 body into its view, so it gets a reload-this-page 409 instead.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -62,8 +62,6 @@ const TURN_PENDING_COPY =
   "Tron is already working on an answer for this project (maybe in another tab). This page will catch up in a moment.";
 
 export async function POST(req: Request, ctx: Ctx): Promise<Response> {
-  const started = Date.now();
-
   const user = await requireUser();
   if (user instanceof Response) return user;
   if (!governanceEnabled(process.env))
@@ -88,9 +86,15 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   } catch {
     return govError("invalid_request", "Bad JSON body.", 400);
   }
-  // Pre-async clients send no mode and expect a synchronous TurnResponse; a
-  // 202 would poison their view spread. Keep the sync driver one deploy.
-  const asyncMode = body.mode === "async";
+  // Version negotiation: pre-async clients send no mode and would spread a
+  // 202 accept body into their view (undefined rev/documents). Refuse them
+  // with copy that names the fix; the typed answer survives in their box.
+  if (body.mode !== "async")
+    return govError(
+      "invalid_request",
+      "This page is from before an update. Reload the page, then send your answer again; it stays right here in the box.",
+      409
+    );
   const questionId = typeof body.questionId === "string" ? body.questionId : "";
   const answer = typeof body.answer === "string" ? body.answer.trim() : "";
   const skipped = body.skipped === true;
@@ -137,11 +141,11 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       );
   }
 
-  // A fresh running claim: replay the accept for the same async retry
+  // A fresh running claim: replay the accept for the same retry
   // (transport-retry idempotency — nothing spawns, nothing spends); anything
   // else waits its turn. Failed/stale records fall through to the claim.
   if (turnFresh(row)) {
-    if (asyncMode && row.turnPromptId === promptId)
+    if (row.turnPromptId === promptId)
       return accepted(row, promptId, questionId);
     return govError("turn_pending", TURN_PENDING_COPY, 409);
   }
@@ -199,7 +203,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
         "This question was already answered (maybe in another tab).",
         409
       );
-    if (turnFresh(now) && asyncMode && now.turnPromptId === promptId)
+    if (turnFresh(now) && now.turnPromptId === promptId)
       return accepted(now, promptId, questionId); // duplicate won the claim
     return govError("turn_pending", TURN_PENDING_COPY, 409);
   }
@@ -214,19 +218,8 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     promptId,
     attemptId,
     budgetExempt,
-    deadlineMs: asyncMode ? null : CAPS.routeDeadlineMs - (Date.now() - started),
   };
-
-  if (asyncMode) {
-    after(() => runTurn(job)); // runTurn never throws; outcome lands on the row
-    const claimedRow = { ...row, turnStartedAt: new Date() } as ProjectRow;
-    return accepted(claimedRow, promptId, questionId);
-  }
-
-  const out = await runTurn(job);
-  if (!out.ok)
-    return govError(out.code, out.message, out.status, {
-      ...(out.retriable !== undefined ? { retriable: out.retriable } : {}),
-    });
-  return okJson(out.body);
+  after(() => runTurn(job)); // runTurn never throws; outcome lands on the row
+  const claimedRow = { ...row, turnStartedAt: new Date() } as ProjectRow;
+  return accepted(claimedRow, promptId, questionId);
 }

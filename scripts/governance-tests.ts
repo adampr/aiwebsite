@@ -1005,11 +1005,6 @@ function check(name: string, cond: boolean): void {
     "turn: staleness horizon clears brain+repair+headroom",
     CAPS.turnStaleMs > CAPS.brainTurnTimeoutMs + 60_000 + 20_000
   );
-  // The legacy sync driver still promises to answer under nginx's 120 s.
-  check(
-    "turn: legacy route deadline stays under nginx 120 s",
-    CAPS.routeDeadlineMs < 120_000
-  );
 }
 
 if (failures) {

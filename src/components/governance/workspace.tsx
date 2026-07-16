@@ -794,7 +794,8 @@ export function Workspace({ projectId }: { projectId: string }) {
         // failed turn record is the error path. Spinner stays on.
         return;
       }
-      // Full TurnResponse: a pre-async server (one deploy window).
+      // Full TurnResponse: no current server sends one (every accept is a
+      // 202), but the sync-apply path stays as mid-deploy defense.
       clearLongTimer();
       inFlightRef.current = null;
       pendingRef.current = null;
