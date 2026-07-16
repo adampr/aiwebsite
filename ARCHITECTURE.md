@@ -1511,7 +1511,7 @@ systemctl list-timers 'aiwebsite-*'             # all 8 timers present (§9.7; b
 psql -c "select count(*) from brain_memories where scope='public'"   # ≥7 seed rows
 ls -la /var/lib/aiwebsite/last-backup-ok        # after the first backup window (needs BACKUP_BUCKET)
 
-# Governance (§5.12/§8.1):
+# Governance (§5.12/§8.1) — or run everything below via deploy/verify-governance.sh:
 systemctl cat aiwebsite-governance.service | grep -E 'ExecStart|OnFailure|max-old-space'
 psql -tAc "select to_regclass('public.governance_projects') is not null"   # t
 curl -s https://ai.xl.net/governance | grep -qi "sign in" && echo gated-ok
