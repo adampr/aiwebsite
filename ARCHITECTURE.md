@@ -15,7 +15,10 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-16 (brain submodule v1.97 @ e369242 —
+Last verified against code: 2026-07-16 (AI Governance builder shipped —
+new §5.12 /governance section, governance tables in §6, standards pipeline
+in §8.1, `aiwebsite-governance` timer via the host post-install hook in
+§9.7. Brain submodule v1.97 @ e369242 —
 dynamic multi-provider model routing, Issues #692–#696: registry
 unification (anthropic claude-* ids now first-class routable alongside
 openai/xai/google — `GET /v1/model-routing` rows can carry
@@ -49,7 +52,9 @@ centerpiece is **Tron Netter** — an AI agent persona reachable on four channel
 | Voice | Same Twilio number, voice calls | Twilio → `https://ai.xl.net/brain/twilio/voice/*` → brain-api directly (site not involved) |
 
 Tron Netter's knowledge is a nightly full crawl of `xl.net` + `ai.xl.net` (§8). The site also
-has optional Google/Microsoft OAuth sign-in (§5.4) — purely additive; no page requires login.
+has optional Google/Microsoft OAuth sign-in (§5.4) — additive; no page requires login to
+render, but the AI Governance builder (§5.12) only functions for signed-in users
+(`/governance` shows a sign-in pitch to visitors).
 Signed-in users can additionally register a mobile number for SMS at `/texting` (§5.7):
 consent checkbox + a texted 6-digit code that must be entered on the site before the number
 is saved (TCPA-style verified opt-in; legal pages at `/privacy` and `/sms-terms`).
@@ -117,8 +122,11 @@ aiwebsite/
 │                               then runs the module's runtimeCheck(siteConfig) (§4.3 layer 2)
 ├── src/                        Next.js 16 App Router source (§5)
 │   ├── app/                    pages + thin wrapper routes over @aicompany/core (§5.1)
-│   ├── components/             host-only components (email-link, futurism-fx)
+│   ├── components/             host-only components (email-link, futurism-fx,
+│   │                           governance/ — the §5.12 workspace UI)
 │   ├── lib/db/                 composed schema (module factories + host tables) + db wrapper
+│   ├── lib/governance/         AI Governance builder (§5.12): blueprints, brain envelope,
+│   │                           prompts, turn validation, research plumbing, docx/zip
 │   └── types/                  custom-element JSX typings
 ├── packages/brain/             git submodule ← https://github.com/adampr/xldev.git (§7)
 ├── packages/aicompany/         git submodule ← https://github.com/adampr/aicompany.git —
@@ -131,13 +139,21 @@ aiwebsite/
 │   ├── tron-netter-knowledge-full.md   (~2.5 MB full crawl, audit only)
 │   ├── aiwebsite-config.json           JSON config snapshot for the crawler (re-rendered at
 │   │                                    deploy + by the knowledge timer's ExecStartPre)
+│   ├── governance-standards/           quarterly-researched standards reference docs +
+│   │                                    state.json (§8.1; written ONLY by the governance
+│   │                                    timer script; survives deploys like all of data/)
 │   └── GeoLite2-ASN.mmdb               MaxMind IP→ASN db (12 MB, gitignored; deploy.sh ships it
 │                                        explicitly; shared copy with itsupportchicago) (§5.6)
-├── scripts/                    ai-provider-health.mjs (§9.6); refresh-tron-knowledge.mjs is the
+├── scripts/                    ai-provider-health.mjs (§9.6); governance-research.ts +
+│                               governance-standards-refresh.ts + governance-tests.ts (§5.12,
+│                               §8.1; tsx, load .env via scripts/lib/governance-env.ts FIRST,
+│                               top-level imports only); refresh-tron-knowledge.mjs is the
 │                               LEGACY crawler — deploy now wires the module's crawler (§8)
 ├── deploy/                     site-deploy.env + files RENDERED from the module's
 │                               deploy/templates (stamped; §9) + host extras (GO-LIVE.md,
-│                               GOOGLE-OAUTH-SETUP.md, generated seed-persona-memories.sql)
+│                               GOOGLE-OAUTH-SETUP.md, generated seed-persona-memories.sql,
+│                               post-install.sh — the host hook that installs the
+│                               aiwebsite-governance units, §9.7)
 ├── drizzle/migrations/         committed migration history (introspected baseline + diffs, §6)
 ├── drizzle.config.ts           schema ./src/lib/db/schema.ts → ./drizzle/migrations, dialect postgresql
 ├── public/                     favicons, brand assets, fx.js (<xl-dust> canvas particles)
@@ -176,15 +192,18 @@ admin console under `/admin/*` (§5.6):
 | `/account` | server component shell + module client panel | Page shell (heading) mirrors `/texting`; the panel is the module's `<AccountSettings {...toAccountSettingsProps(siteConfig)}/>` (v1.2.0, module §5.10): texting status from `GET /api/texting/settings`, remove-number via `POST /api/texting/remove`, prompt-card preference. Lives at `texting.settingsPath` — the SMS prompt card's dismiss note links here and the card is suppressed on this route. `account/layout.tsx` holds the metadata (mirrors `texting/layout.tsx`) |
 | `/privacy` | thin wrapper (server component) | Renders the module's `<PrivacyPolicyPage config={siteConfig} lastUpdated="July 2026"/>` — the policy is generated from the same config values the code enforces (tracking flags, cookie name, retention windows, enabled channels). Keeps the page's own `metadata` export |
 | `/sms-terms` | thin wrapper (server component) | Renders the module's `<SmsTermsPage config={siteConfig} lastUpdated="July 2026"/>` — program description, opt-in methods, verification mechanics from `texting.verification`, frequency/rates, STOP/HELP, carriers, privacy cross-link, contact. Keeps the page's own `metadata` export |
+| `/governance` | **dynamic** server component (`force-dynamic`) | AI Governance builder landing (§5.12): signed-out visitors get a crawlable pitch + sign-in panel (`/login?redirect=/governance`); signed-in users get their project list + the create panel (kind picker, domain confirm/override, acknowledgment checkbox, 30-day + third-party-AI disclosures) |
+| `/governance/[id]` | dynamic server shell + client workspace, `robots: noindex` | The §5.12 project workspace: research progress, one-question-at-a-time Q&A beside the live document pane, review/confirm, always-available Word-friendly downloads. Signed-out → redirect to `/login?redirect=/governance/<id>` |
 | `/blog` + `/blog/[slug]` | thin wrappers over `@aicompany/core/blog/{index-page,article-page}` (`revalidate = 60`) | AI-news blog (§5.11, module §19). Index lists published articles (custom Tron-voiced copy from `blog.copy`); `[slug]` renders one `ArticleDoc` deterministically with the AI-authorship disclosure + `Article` JSON-LD. Metadata (canonical, OG, `noindex` for gate-failed rows) from `blog/metadata` |
 | `/methodology` | custom static page (server component) | Editorial methodology + corrections policy (added 2026-07-14 after the process reviews): pipeline description, the 12 reader-facing checklist items, corrections contact, funding/COI statement. Referenced by `blog.authorship.methodologyUrl` → `publishingPrinciples` in the Article JSON-LD (module §19.4); cleared the standing config:check WARN |
 
-Header nav: Home, Our Work, AI Builders, **AI News (`/blog`)**, Contact. The footer links
-Home, Our Work, AI Builders, AI News, Contact, Text with Tron Netter (`/texting`), Account
+Header nav: Home, Our Work, AI Builders, **Governance (`/governance`)**, **AI News
+(`/blog`)**, Contact. The footer links
+Home, Our Work, AI Builders, AI Governance, AI News, Contact, Text with Tron Netter (`/texting`), Account
 (`/account` — the §12.7 account affordance the module's `<UserMenu/>` deliberately does not
 grow), Privacy Policy, SMS Terms, and the main xl.net site. The homepage carries teaser panels for `/work`
 and `/builders` between the capabilities grid and the closing CTA. Sitemap entries: `/`,
-`/work`, `/builders`, `/contact`, `/methodology`, `/privacy`, `/sms-terms`, `/texting`, plus the module's
+`/work`, `/builders`, `/governance`, `/contact`, `/methodology`, `/privacy`, `/sms-terms`, `/texting`, plus the module's
 `blogSitemapEntries` (the `/blog` index once ≥1 published, and each indexable article —
 noindexed/gate-failed rows excluded). `sitemap.ts` exports `revalidate = 3600` — without
 it Next bakes the route at build time and nightly-published articles never enter the
@@ -277,7 +296,7 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/texting/start` / `POST /api/texting/verify` | `createTextingStartHandler` / `createTextingVerifyHandler` · `channels/texting` | §5.10 |
 | `POST /api/auth/sms-prompt` | `createSmsPromptEventHandler` · `channels/texting` | §5.10 |
 | `POST /api/internal/track` | `createTrackHandler` · `tracking/track-api` | §5.6 |
-| `src/middleware.ts` | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout`** | §5.6 |
+| `src/middleware.ts` | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout` and `/api/governance`** | §5.6 |
 | `GET/POST /api/admin/messages` | `createAdminMessagesHandler` · `admin/api` | §5.6 |
 | `POST /api/admin/mailbox/send` | `createAdminMailboxSendHandler` · `admin/api` | §5.6 |
 | `GET/POST /api/admin/knowledge/refresh` | `createAdminKnowledgeRefreshHandler` · `admin/api` (wrapper adds `runtime = "nodejs"`) | §5.6 |
@@ -286,8 +305,9 @@ match the redirect URIs registered with Google/Microsoft).
 
 Not mounted (disabled features): magic-link auth (`auth.providers.magicLink: false`).
 
-**Host-owned (non-module) route:** `POST /api/checkout` — Stripe Checkout Session
-creation for the `/builders` offerings (§5.10). It is not part of @aicompany/core.
+**Host-owned (non-module) routes:** `POST /api/checkout` — Stripe Checkout Session
+creation for the `/builders` offerings (§5.10) — and the `/api/governance/*` family
+(§5.12). Neither is part of @aicompany/core.
 
 ### 5.1 Web chat — mounted at `POST /api/tron-netter/chat`
 
@@ -793,6 +813,98 @@ Failures degrade to an image-less publish (§19.7) recorded in the run report;
 resolved only through Next's optionalDependencies — module panel finding). Existing
 posts get heroes via `tsx packages/aicompany/cli/backfill-heroes.ts` (operator step).
 
+### 5.12 AI Governance builder (host-owned)
+
+Shipped 2026-07-16 after a five-expert planning panel + five-critic review (the §14
+protocol). Signed-in users draft AI governance documents WITH Tron Netter at
+`/governance`: a single **AI Usage Policy** (employee-facing: what is OK to share,
+approved tools, incident reporting) or a **working draft set of core documents** for
+NIST AI RMF (7 docs), the EU AI Act (10 docs), or ISO/IEC 42001 (10 docs). Tron
+researches the user's company first (their site + web mentions + industry), then asks
+one question at a time; each answer live-edits the on-screen draft. When the host-owned
+question bank is covered, the UI flips (cyan → sand, four simultaneous signals) to a
+review/confirm state. Word-friendly downloads (single `.docx` or `.zip` of `.docx` +
+README) are available in every state; projects hard-delete 30 days after last activity.
+Everything is host-owned (`src/lib/governance/`, `src/components/governance/`,
+`src/app/api/governance/`, `scripts/governance-*.ts`) — no submodule changes.
+
+**Routes** (all `readSession`-gated; owner + 30-day retention filter folded into every
+row fetch; missing/expired/not-owned are one identical 404 — no existence oracle; error
+bodies `{error:{code,message}}`; CSRF via the middleware prefix):
+
+| Route | Behavior |
+|---|---|
+| `GET/POST /api/governance/projects` | list (+ bounded global sweep of expired rows, any owner) / create — requires `{kind, domain?, ack:true}` (acknowledgment checkbox is recorded as `acknowledged_at`); consumer sign-in domains (gmail etc.) force manual domain entry; caps: 3 active, 5 creates/day (SQL-counted, restart-proof). Create auto-kicks research or parks `queued` |
+| `GET/DELETE /api/governance/projects/[id]` | poll target (never mutates; reports `reclaimable` so the CLIENT re-POSTs research) / immediate hard delete |
+| `POST .../research` | claim + spawn the detached research job; `{mode:"partial"}` = "start the questions anyway" after a failure (gap-flagged brief, straight to drafting). Claim is ONE conditional UPDATE enforcing owner, claimable status (created/queued/failed/stale-heartbeat >5 min), 3-runs/day, and the ≤2 global concurrency cap atomically (subquery count — no TOCTOU) |
+| `POST .../answer` | one synchronous Q&A turn (also review-phase revisions via `questionId:"revise"`): brain `/health` preflight → DB-backed daily budget spend → JSON-mode turn (90 s) → parse ladder (fence strip → lenient parse → ≤1 repair call with a NEW promptId, only if ≥40 s remain) → server-validated ops → ONE conditional write keyed on `rev`. Budgeted under nginx's 120 s. 6/min/user, 40 answers/project (the 40th force-flips to review), answers ≤2000 chars, `questionId` mismatch → 409 `stale_question` (dual-tab guard) |
+| `POST .../confirm` | review → done (only from review) |
+| `GET .../download` | `?format=docx&doc=<slug>` or `?format=zip`; generated on demand from stored markdown, streamed, never stored, ZERO AI calls (works through every outage/cap and the kill switch); DRAFT watermark + `-draft` filename until done; touches `last_activity_at` (disclosed) |
+
+**Brain contract.** Every governance call (turns, repairs, research distills, standards
+authoring) goes through `src/lib/governance/brain.ts` `buildGovernanceEnvelope`:
+JSON mode (`response_format:{type:"json_object"}`, one completion on the executor
+model — the host cannot set max_tokens/temperature on this path, so output size is
+bounded prompt-side: 8k chars of ops per turn, 24k for the detached turn zero), plus
+the **do-not-remove privacy invariant: NO `requester`, `memoryMode:"do_not_store"`,
+NO `groupName`** — without a requester the brain persists neither facts nor turns, so
+confidential answers and scraped web content never reach `brain_messages`/
+`brain_memories` (checked by `npm run test:governance`). Session ids: `gov_<projectId>`
+/ `govres_<projectId>` / `govstd_<slug>`. Turn idempotency is the HOST's conditional
+`rev`-keyed write (the brain's promptId replay cache is process-local and non-durable);
+the client re-GETs and compares `rev` to recover applied-but-timed-out turns. A
+per-process semaphore holds governance to ≤2 in-flight brain calls so Twilio voice
+keeps priority. Feature availability equals OpenAI availability (JSON mode is
+hard-wired to the executor; no failover).
+
+**Turn contract** (`turn.ts`): model returns `{rationale, doc_ops[], status:
+"asking"|"review", question, review_summary, answered_bank_ids}`; `rationale` is never
+persisted or logged. Server-side, never trusted to the model: doc slugs must be in the
+kind's blueprint allowlist, ≤12 ops, section markdown ≤6000 chars, ≤20 sections/doc,
+markdown sanitized (raw HTML stripped, http(s) links only) + injection-screened at
+apply AND at docx render, em dashes normalized. **The drafting→review flip is
+host-gated**: `status:"review"` only sticks when every required bank id is covered
+(coverage = answered/skipped bank items + validated `answered_bank_ids` merges);
+otherwise the host overrides to asking and picks the next unanswered bank item itself.
+Skips draft a default marked `[TO CONFIRM: …]`; the review panel lists open markers as
+jump links. Progress ("question N of about M") is host-computed from bank coverage.
+
+**Research pipeline** (`scripts/governance-research.ts`, spawned detached by
+`kick.ts` after the DB claim, `NODE_OPTIONS=--max-old-space-size=256`, 10-min wall
+clock, heartbeat per step, log `/var/log/aiwebsite-governance-research.log` with
+`[<id8>] <ISO> step=` prefixes and NO content bodies): 30-day same-user+domain brief
+reuse → site crawl (≤12 pages, 300 KB/page, **SSRF-hardened `safeFetch`**: http/https
++ default ports only, custom DNS lookup rejects loopback/private/link-local/IMDS/CGNAT
+ranges and pins the validated resolution for the connect — DNS rebinding safe — manual
+redirects ≤3 re-validated per hop) → company Tavily (3 advanced queries → top 50 by
+score, checkpointed in `research_progress_json` so requeues re-spend nothing) →
+profile mini-call → industry Tavily (top 20) → map-reduce distill (Tavily snippets
+only; `<<<UNTRUSTED-nonce>>>` fencing; identity gate against name-collision companies;
+personal data only as public role holders; ≤12 brain calls, lowest-tier chunks dropped
+first with `gaps:["research_truncated"]`) → ≤9000-char brief (injection-screened,
+`research_flagged` on hits) → optional turn-zero personalization → ONE handoff write
+(scaffold docs + bank question 1 + `status:'drafting'`). Degradation: Tavily down →
+site-only brief with gaps; site unreachable → Q&A carries the load; brain down at
+distill → `research_failed` with Retry / "Start the questions anyway". Deploy marker
+fresh → checkpoint + exit as `queued`. Cost caps (DB ledger `governance_usage`,
+restart-proof, covers the detached script): ≤6 Tavily calls/run,
+`GOVERNANCE_TAVILY_DAILY_CAP` (default 30) global/day, `GOVERNANCE_BRAIN_DAILY_CAP`
+(default 150 ≈ $15/day worst case — JSON mode bills at executor-model rates,
+~$0.10/turn) global/day. At any cap: friendly 429/queued copy; downloads always work.
+
+**Retention (the 30-day promise, three layers):** (1) the daily timer's guarded sweep
+(`DELETE WHERE last_activity_at < now()-'30 days'` excluding actively-researching rows;
+absolute >500-candidate ceiling aborts + CRITICAL email); (2) every project read/
+download filters the window and 404s with retention copy; (3) list/create runs a
+bounded global sweep (any owner, LIMIT 25) so a dead timer still converges given any
+traffic. `last_activity_at` is touched by create, research kick/claim, answer/revise,
+confirm, download — never by GET/poll. Disclosed copy (UI + docx disclaimer + the
+host-owned /privacy addendum) says "removed from our systems 30 days after your last
+activity; encrypted backup copies expire within a further 30 days" — the nightly
+pg_dump tail is disclosed, not hidden (set the BACKUP_BUCKET lifecycle ≤35 days).
+Kill switch `GOVERNANCE_ENABLED=0`: mutations 503, reads + downloads stay up, the
+timer keeps sweeping, the research script + queued kicks stand down.
+
 ---
 
 ## 6. Database
@@ -907,6 +1019,39 @@ blog_posts         id uuid PK default gen_random_uuid(), slug text NOT NULL UNIQ
                    -- prune columns landed in 0007 per module MIGRATIONS v1.1.0 — required
                    -- even though pruning isn't adopted: drizzle selects enumerate columns)
                    -- (hero_image_blur, also in 0006, holds the v1.3.0 blur placeholder)
+
+governance_projects id uuid PK default gen_random_uuid(),
+                   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                   kind text NOT NULL,      -- usage_policy|nist_ai_rmf|eu_ai_act|iso_42001
+                   domain text NOT NULL, status text NOT NULL default 'created',
+                   -- created|queued|researching|research_failed|drafting|review|done
+                   rev integer NOT NULL default 0,   -- ++ per applied turn; client staleness guard
+                   research_started_at/research_heartbeat_at timestamptz,
+                   research_runs integer NOT NULL default 0, research_runs_date date,
+                   research_progress_json text,      -- step/pct/counts + Tavily checkpoints
+                   research_json text,               -- distilled brief, <=9000 chars
+                   research_flagged boolean NOT NULL default false,  -- injection screen hit
+                   documents_json text NOT NULL default '[]',   -- [{slug,title,stub,sections[]}]
+                   transcript_json text NOT NULL default '[]',
+                   covered_bank_ids_json text NOT NULL default '[]',
+                   next_question_json text, review_summary text, changed_sections_json text,
+                   answers_count integer NOT NULL default 0,
+                   acknowledged_at timestamptz NOT NULL default now(), -- UPL ack record (§5.12)
+                   created_at/updated_at/last_activity_at timestamptz NOT NULL default now()
+                   -- §5.12. Migration 0009; indexes on user_id + last_activity_at.
+                   -- Hard-DELETEd 30 days after last_activity_at by the governance timer,
+                   -- the request path, and the bounded list/create sweep — NOT the module
+                   -- retention sweeper. App-enforced ceilings: documents 150 KB,
+                   -- transcript 200 KB (rejected before write)
+
+governance_usage   day date PK, tavily_calls/brain_calls/research_runs integer NOT NULL default 0
+                   -- §5.12 daily budget ledger: out-of-process so caps survive PM2 restarts
+                   -- and bind the detached research script; pruned at 90 days
+
+governance_meta    key text PK, value text NOT NULL, updated_at timestamptz NOT NULL default now()
+                   -- request-path stamps/throttles (governance_sweep_last_run canary).
+                   -- Single-writer split: data/governance-standards/state.json belongs to
+                   -- the timer script ALONE; the web process writes here
 
 blog_hero_images   slug text PK, data bytea NOT NULL, mime text default 'image/webp',
                    content_hash text, updated_at timestamptz default now()
@@ -1083,6 +1228,57 @@ deploy.
   = 3 am Chicago, `Persistent=true`) → `/var/log/aiwebsite-knowledge.log`; also run once
   per deploy with `--no-email`.
 
+### 8.1 Governance standards pipeline (quarterly, host-owned)
+
+`scripts/governance-standards-refresh.ts`, run daily at 04:30 UTC by the
+`aiwebsite-governance` timer (§9.7; installed by `deploy/post-install.sh`, NOT a
+rendered template). Daily duties always run (even with `GOVERNANCE_ENABLED=0` — the
+§5.12 retention promise outlives the kill switch): guarded 30-day retention sweep,
+stale-research reaper (heartbeat >15 min → `queued`), kick ≤2 queued projects, prune
+`governance_usage` >90 d, stamp `governance_meta.governance_sweep_last_run`. Exit 1
+(→ the OnFailure alert unit emails `[aiwebsite] CRITICAL Governance timer unit
+FAILED`) is reserved for cleanup failures; standards failures WARN by email and exit 0.
+
+**Standards watch + deep research** (self-gated): per standard, fetch 2-3 watch URLs
+with a browser UA (NIST program page + AIRC; artificialintelligenceact.eu timeline +
+home + the EUR-Lex 2024/1689 page; both iso.org catalogue URLs with a Tavily-search
+fallback because iso.org 403s scripted fetchers), hash normalized text, extract
+version markers (NIST pub ids / AI-Act application dates + "digital omnibus" / ISO
+`42001:YYYY` + stage codes). Deep research triggers on: bootstrap (no doc) ∥
+`lastDeepResearch ≥ 90 days` ∥ watch-hash change judged substantive by a mini brain
+call (filters page churn). Per triggered standard: ~8 advanced Tavily queries, source
+tiering (tier1 nist.gov/eur-lex/europa.eu/iso.org/artificialintelligenceact.eu >
+tier2 iapp/.gov/.edu > tier3 corroborate-or-hedge), then the reference doc is
+authored **per skeleton section** (Overview / Key obligations / Document set
+blueprint / Question bank seeds / Glossary; ~5 JSON calls — one 7000-word JSON
+completion is fragile with no max_tokens control), **citation-validated against
+hardcoded allowlists** (EU Articles 1-113 + Annexes I-XIII; ISO A.2-A.10.x + clauses
+4-10; NIST GV/MP/MS/MG ids + `NIST AI 600-1`; unverifiable citations are stripped and
+counted), injection-screened, Sources section host-assembled from the ranked URLs,
+atomic tmp+rename to `data/governance-standards/<slug>.md` (+ `.prev` kept). Failure
+= keep yesterday's doc, WARN. `cross-standard-digest.md` (the usage-policy prompt
+slice) is host-assembled from the three docs' Key-obligations sections — no extra
+author call. `src/lib/governance/standards.ts` serves mtime-cached slices to the
+§5.12 prompts, with hardcoded conservative fallbacks during the bootstrap window.
+
+**Seed memories:** after research, 4 fixed-id `source_type='seed'` public rows
+(`seed-gov-{nist-ai-rmf,eu-ai-act,iso-42001,feature}`) are upserted so Tron is
+conversant on every channel including voice. Values are **fixed host-authored
+templates** — only bounded fields (date, sanitized version markers ≤120 chars) come
+from research; free web text NEVER enters the shared persona (public rows reach every
+visitor; the §5.9 allowlist already sanctions 'seed'). Each row carries the
+"orientation only, not legal advice" hedge.
+
+**Alert grammar** (throttled 1/24 h per condition in state.json; no daily success
+mail): OK report on research runs (diffs, citation strips, MTD Tavily);
+`WARN Governance change-detection degraded` after 7 consecutive watch-fetch failure
+days; `WARN/CRITICAL Governance standard stale` at >100 d/>120 d;
+`WARN Governance Tavily monthly usage high` past `GOVERNANCE_TAVILY_MONTHLY_WARN`;
+`CRITICAL Governance project cleanup FAILED` on sweep abort. The dead-timer story:
+post-install re-enables the timer every deploy; retention is also request-path
+enforced (§5.12); `POST /api/governance/projects` reads the sweep stamp and can WARN
+when it goes stale.
+
 ---
 
 ## 9. Deployment & operations
@@ -1121,7 +1317,11 @@ committed; edit the template (module repo) or `site-deploy.env`, never the outpu
 APT `build-essential python3 libpq-dev pkg-config jq rsync logrotate` → Node 22
 (nodesource) + PM2 (+ `pm2-logrotate` 10 M/retain 7) → PostgreSQL (create role+db
 `aiwebsite`, guarded; `max_wal_size=256MB`) → nginx config (below) →
-`npm ci --include=dev` (site **and** `packages/brain`) → `db:migrate` (committed history —
+`npm ci --include=dev` (site **and** `packages/brain`) → **host post-install hook**
+(`deploy/post-install.sh` — host-owned, not template-rendered: idempotently installs the
+`aiwebsite-governance.{service,timer}` + OnFailure alert unit, pre-touches the governance
+logs, and removes any stale `aiwebsite-governance*` unit via a manifest loop; §8.1/§9.7)
+→ `db:migrate` (committed history —
 no `db:generate` on the VM anymore) → generate `deploy/seed-persona-memories.sql` from
 site.config.ts (§6) → **`npm run config:check`** (config↔env cross-validation incl.
 `BRAIN_PUBLIC_URL === baseUrl + "/brain"`, brain version range, schema registry — **gates
@@ -1195,8 +1395,9 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
 
 ### 9.7 Scheduled work — systemd timers (`Persistent=true`), not cron
 
-Installed/enabled by setup-vm.sh; scripts installed to `/usr/local/bin/aiwebsite-*`;
-verify with `systemctl list-timers 'aiwebsite-*'` (all 7 — the blog + blog-digest timers
+Installed/enabled by setup-vm.sh — except `aiwebsite-governance`, installed by the host
+post-install hook (§9.2); scripts installed to `/usr/local/bin/aiwebsite-*`;
+verify with `systemctl list-timers 'aiwebsite-*'` (all 8 — the blog + blog-digest timers
 are installed only when `BLOG_ENABLED=1`):
 
 | Timer | Schedule (UTC) | Does |
@@ -1208,6 +1409,7 @@ are installed only when `BLOG_ENABLED=1`):
 | `aiwebsite-restore-drill` | quarterly (Jan/Apr/Jul/Oct 5th, 06:30) | restores `latest.sql.gz` into a scratch DB, sanity-checks row counts, drops it, emails pass/fail either way — a backup that cannot be restored is not a backup |
 | `aiwebsite-retention-sweeper` | weekly Sun 05:30 | deletes `page_visits` >730 d, `auth_logs` >365 d, `ip_orgs` >730 d, `admin_emails` >730 d — **must match `privacy.retentionDays`** in site.config.ts (sms_consent_logs exempt by design). Since v1.1.0 also probes `blog_cta_events` via `to_regclass` (>400 d, `RETAIN_BLOG_CTA_EVENTS_DAYS`) — the table is absent here (cta.funnelEvents not adopted), so the sweep self-skips |
 | `aiwebsite-disk-check` | daily 06:45 | alert at >80 % disk on `/` |
+| `aiwebsite-governance` | daily 04:30 (+ ≤300 s jitter) | governance daily duties (§5.12/§8.1): guarded 30-day retention sweep, stale-research reaper, queued-project kicks, usage prune, standards watch + self-gated quarterly deep research + seed upserts. **Installed by `deploy/post-install.sh` (host-owned, NOT template-rendered, no stamp)**; `OnFailure=aiwebsite-governance-alert.service` (CRITICAL email); `NODE_OPTIONS=--max-old-space-size=256`; exits quietly while the deploy marker is fresh; logs `/var/log/aiwebsite-governance.log` (research jobs: `-research.log`). Uninstall: the hook's manifest loop, or `systemctl disable --now aiwebsite-governance.timer` + rm the three units |
 
 ---
 
@@ -1246,6 +1448,9 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` / `MICROSOFT_REDIRECT_URI` / `MICROSOFT_TENANT_ID` (default `common`) | Entra app `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c` |
 | Stripe | `STRIPE_SECRET_KEY` | secret API key for `/api/checkout` (§5.10); unset ⇒ the route returns 503 and the /builders buy buttons show a friendly error |
 | | `STRIPE_PRICE_COHORT` / `STRIPE_PRICE_WORKSHOP` | optional dashboard-managed Price ID overrides; unset ⇒ inline `price_data` ($495/mo recurring, $995 one-time) |
+| Governance | `GOVERNANCE_ENABLED` | kill switch (§5.12): `0` = mutations 503, reads/downloads stay up, the timer keeps sweeping. Unset = enabled |
+| | `GOVERNANCE_TAVILY_DAILY_CAP` (default 30) / `GOVERNANCE_BRAIN_DAILY_CAP` (default 150) | global daily budgets in the `governance_usage` ledger (~6 Tavily calls per fresh domain; brain calls bill at executor rates, ~$0.10/turn) |
+| | `GOVERNANCE_TAVILY_MONTHLY_WARN` (default 600) | MTD Tavily WARN threshold in the governance timer's report |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
 | | `TRON_KNOWLEDGE_FILE` | **legacy, no longer read** — the knowledge path is `persona.knowledgeFile` in site.config.ts |
 | Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |
@@ -1302,9 +1507,20 @@ curl -s http://127.0.0.1:3211/health            # {"ok":true,"service":"brain-ap
 curl -s http://127.0.0.1:3213/health            # skills-host ok                          (on VM)
 pm2 ls                                          # aiwebsite / brain-api / skills-host online
 journalctl -u cloudflared -n 20                 # tunnel connected
-systemctl list-timers 'aiwebsite-*'             # all 7 timers present (§9.7; blog + blog-digest gated on BLOG_ENABLED)
+systemctl list-timers 'aiwebsite-*'             # all 8 timers present (§9.7; blog + blog-digest gated on BLOG_ENABLED)
 psql -c "select count(*) from brain_memories where scope='public'"   # ≥7 seed rows
 ls -la /var/lib/aiwebsite/last-backup-ok        # after the first backup window (needs BACKUP_BUCKET)
+
+# Governance (§5.12/§8.1):
+systemctl cat aiwebsite-governance.service | grep -E 'ExecStart|OnFailure|max-old-space'
+psql -tAc "select to_regclass('public.governance_projects') is not null"   # t
+curl -s https://ai.xl.net/governance | grep -qi "sign in" && echo gated-ok
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://ai.xl.net/api/governance/projects  # 401/403 (mounted, session+CSRF gated)
+# Bootstrap (first deploy only; runs 3 standards of deep research, ~10-20 min):
+sudo systemctl start --no-block aiwebsite-governance.service && tail -f /var/log/aiwebsite-governance.log
+# THEN (post-bootstrap): 3 non-empty .md + digest + state.json, and 4 seed rows
+ls -la /var/www/aiwebsite/data/governance-standards/
+psql -tAc "select count(*) from brain_memories where source_type='seed' and id like 'seed-gov-%'"   # 4
 ```
 Then: chat widget streams tokens; text the Twilio number and get a reply <1200 chars; email
 Tron.Netter@ai.xl.net and get a reply (BCC lands at adam@xl.net); call the number. Sign in

@@ -8,8 +8,9 @@
 import { createTrackingMiddleware } from "@aicompany/core/tracking/middleware";
 import { siteConfig } from "site.config";
 
-// Host route /api/checkout (Stripe Checkout Session creation, §5.10) is
-// state-changing, so it joins the module's default CSRF-checked prefixes.
+// Host routes /api/checkout (Stripe Checkout Session creation, §5.10) and
+// /api/governance/* (AI Governance builder, §5.12) are state-changing, so
+// they join the module's default CSRF-checked prefixes.
 export default createTrackingMiddleware(siteConfig, {
   protectedPrefixes: [
     "/api/admin",
@@ -18,6 +19,7 @@ export default createTrackingMiddleware(siteConfig, {
     "/api/texting",
     "/api/auth/sms-prompt",
     "/api/checkout",
+    "/api/governance",
   ],
 });
 

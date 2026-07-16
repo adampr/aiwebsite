@@ -102,6 +102,7 @@ export default function RootLayout({
               <Link href="/">Home</Link>
               <Link href="/work">Our Work</Link>
               <Link href="/builders">AI Builders</Link>
+              <Link href="/governance">Governance</Link>
               <Link href="/blog">AI News</Link>
               <Link href="/contact">Contact</Link>
               <ThemeToggle />
@@ -149,6 +150,9 @@ export default function RootLayout({
                   </li>
                   <li>
                     <Link href="/builders">AI Builders</Link>
+                  </li>
+                  <li>
+                    <Link href="/governance">AI Governance</Link>
                   </li>
                   <li>
                     <Link href="/blog">AI News</Link>

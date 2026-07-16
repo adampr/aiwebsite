@@ -16,13 +16,16 @@
     "doctor": "tsx packages/aicompany/cli/doctor.ts",
     "simulate:sms": "tsx packages/aicompany/cli/simulate-sms.ts",
     "simulate:email": "tsx packages/aicompany/cli/simulate-email.ts",
-    "upgrade:check": "tsx packages/aicompany/cli/upgrade-check.ts"
+    "upgrade:check": "tsx packages/aicompany/cli/upgrade-check.ts",
+    "test:governance": "tsx scripts/governance-tests.ts"
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",
+    "docx": "^9.7.1",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
+    "jszip": "^3.10.1",
     "maxmind": "^5.0.6",
     "mmdb-lib": "^3.0.2",
     "next": "16.2.9",

@@ -14,6 +14,7 @@ const staticEntries = createSitemap(siteConfig, [
   { path: "/" },
   { path: "/work" },
   { path: "/builders" },
+  { path: "/governance" },
   { path: "/contact" },
   { path: "/methodology" },
   { path: "/privacy" },

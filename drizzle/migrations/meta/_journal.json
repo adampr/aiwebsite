@@ -64,6 +64,13 @@
       "when": 1783908713958,
       "tag": "0008_lush_outlaw_kid",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784170304652,
+      "tag": "0009_hesitant_madame_masque",
+      "breakpoints": true
     }
   ]
 }
