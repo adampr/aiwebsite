@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Host-local pre-commit checks (run FIRST by the template-rendered pre-commit,
+# @aicompany/core §16 v1.6). Holds aiwebsite's secrets gate, formerly Gate 1
+# of the hand-owned hook. Rule source: CLAUDE.md "Never commit secrets" /
+# .cursor/rules/no-secrets.mdc.
+#
+# Bypass (false positive in the scan ONLY — never to commit a real secret):
+#   SECRETS_OK=1 git commit ...
+
+if [ -z "${SECRETS_OK:-}" ]; then
+  staged_new=$(git diff --cached --name-only --diff-filter=ACMR)
+
+  # 1a. Forbidden filenames: any dotenv file except .env.example, and
+  # private-key material. (deploy/site-deploy.env is not a dotfile and is
+  # intentionally tracked — it must stay secret-free.)
+  bad_files=$(printf '%s\n' "$staged_new" \
+    | grep -E '(^|/)\.env(\..+)?$|\.(pem|p12|pfx|key)$|(^|/)id_(rsa|ed25519|ecdsa)$' \
+    | grep -vE '(^|/)\.env\.example$')
+  if [ -n "$bad_files" ]; then
+    cat >&2 <<MSG
+
+BLOCKED: secrets gate — env/key files must never be committed.
+$(printf '  %s\n' $bad_files)
+  Real values live only in the dev box's .env and on the VM.
+  Unstage with:  git restore --staged <file>
+
+MSG
+    exit 1
+  fi
+
+  # 1b. High-signal secret formats in added lines. The hooks and
+  # .env.example (placeholders only) are excluded from the scan.
+  secret_re='sk-ant-[A-Za-z0-9_-]{8,}'                      # Anthropic
+  secret_re="$secret_re|sk_(live|test)_[A-Za-z0-9]{16,}"    # Stripe
+  secret_re="$secret_re|AKIA[0-9A-Z]{16}"                   # AWS access key
+  secret_re="$secret_re|AIza[0-9A-Za-z_-]{35}"              # Google API key
+  secret_re="$secret_re|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}"
+  secret_re="$secret_re|xox[baprs]-[A-Za-z0-9-]{10,}"       # Slack
+  secret_re="$secret_re|re_[A-Za-z0-9]{20,}"                # Resend
+  secret_re="$secret_re|SK[a-f0-9]{32}"                     # Twilio API key
+  secret_re="$secret_re|-----BEGIN [A-Z ]*PRIVATE KEY"
+  # Generic literal assignment to a secret-named variable…
+  generic_re='(API[_-]?KEY|SECRET|PASSWORD|TOKEN|PASSWD|PWD)[A-Z_]*[[:space:]]*[:=][[:space:]]*["'"'"'][^"'"'"']{8,}'
+  # …minus obvious placeholders/env indirection.
+  placeholder_re='<[^>]*>|\$\{|\bprocess\.env\b|xxx+|change-?me|example|placeholder|your[_-]|dummy|redacted'
+
+  added=$(git diff --cached --unified=0 --no-color -- . \
+            ':(exclude)scripts/git-hooks' ':(exclude).env.example' \
+          | grep -E '^\+' | grep -vE '^\+\+\+')
+  hits=$( { printf '%s\n' "$added" | grep -E  "$secret_re"; \
+            printf '%s\n' "$added" | grep -iE "$generic_re" | grep -ivE "$placeholder_re"; } \
+          | sort -u )
+  if [ -n "$hits" ]; then
+    cat >&2 <<MSG
+
+BLOCKED: secrets gate — staged additions look like API keys or passwords:
+$(printf '%s\n' "$hits" | head -10 | cut -c1-120 | sed 's/^/  /')
+  Move the value to .env (gitignored) and read it from the environment.
+  If this is a FALSE POSITIVE only:  SECRETS_OK=1 git commit ...
+  If a real secret was ever committed, rotate it immediately.
+
+MSG
+    exit 1
+  fi
+fi
+
+exit 0

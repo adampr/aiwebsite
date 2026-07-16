@@ -226,6 +226,25 @@ export const siteConfig = defineSiteConfig({
       // is the module default for the panel-mandated failure reply.
       failureMessage:
         "Sorry, something went wrong on my end and I couldn't answer your email just now. Please try again shortly.",
+      // §5.12 approval loop, v1.6: Troy.Netter budget-approval mail routes to
+      // the host handler via the module hook (replaces the retired webhook
+      // tee — same routing truth: envelope recipients, so a BCC'd approval
+      // still reaches Troy). Dynamic import keeps this file edge-safe
+      // (approval-inbound pulls the resend SDK; site.config rides the
+      // middleware bundle). Parity rule: Troy sole recipient → handled;
+      // mixed (Tron cc'd) → delegate, the module still answers as Tron.
+      onInbound: async (ctx) => {
+        const { TROY_ADDRESS, handleTroyInbound } = await import(
+          "@/lib/governance/approval-inbound"
+        );
+        if (!ctx.envelopeRecipients.includes(TROY_ADDRESS)) return "delegate";
+        void handleTroyInbound(ctx.emailId).catch((err: unknown) =>
+          console.log(
+            `[gov-approval] hook dispatch failed: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"}`
+          )
+        );
+        return ctx.envelopeRecipients.length === 1 ? "handled" : "delegate";
+      },
     },
     voice: {
       enabled: true,

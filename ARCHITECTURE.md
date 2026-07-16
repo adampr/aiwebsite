@@ -15,8 +15,12 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-16 (host-owned document numbering +
-per-list docx numbering instances, §5.12 rendering contract; same day:
+Last verified against code: 2026-07-16 (turn-zero robustness — no stubs at
+turn zero, error logging, repair + op-level salvage — plus the §5.12
+placeholder-honesty contract: `placeholderSections` on the view/turn
+response, Planned rendering, confirm gate, docx notice, transcript
+disclosure; same day: host-owned document numbering +
+per-list docx numbering instances, §5.12 rendering contract; and:
 workspace answer form: multi-select
 suggestion chips + in-flight submit feedback, see §5.12; AI
 Governance builder shipped —
@@ -33,13 +37,19 @@ kill switch + routing telemetry (auto-migrations 45 — nullable
 success/ttft_ms/total_ms/http_status/shadow_model columns on
 usage_events — and 46 — `model_availability_overrides` table; both
 additive, applied automatically on boot). Previous pin v1.96 @ 1b34555
-(Issue #689 BRAIN_DB_TABLE_PREFIX fix). @aicompany/core v1.5.2
-@ cfe2854 — strictly-better repair adoption on the blog generate path
-(module §19.5: a still-failing repair whose failing gate names are a
-proper subset of the original's is adopted with noindex forced; pin-only,
-behavior-only, no config/template/env change per MIGRATIONS v1.5.2;
-motivated by this host's 2026-07-15 noindexed run where a fact-clean
-repair was discarded over a rubric miss). Previous pin v1.5.1 @ 78f3d55.
+(Issue #689 BRAIN_DB_TABLE_PREFIX fix). @aicompany/core v1.6.1
+@ b74ff3c — fleet-convergence release (module MIGRATIONS v1.6.0/v1.6.1):
+the Troy approval tee is retired in favor of `channels.email.onInbound`
+(site.config.ts; same envelope-recipient routing truth); §5.13
+data-subject factories mounted at `GET /api/account/export` +
+`POST /api/account/delete` (governance projects cascade; contact
+submissions handled in extras/beforeDelete); deploy re-rendered with
+`peer-monitor.sh` now template-stamped (§9.7) and
+`scripts/git-hooks/pre-commit` template-rendered (secrets gate moved to
+host-owned `pre-commit.local`); setup-vm pm2 reload carries
+`--update-env` upstream (v1.6.1 — this host's HOST EDIT adopted, local
+edit dropped). Previous pin v1.5.2 @ cfe2854 (strictly-better repair
+adoption on the blog generate path). Previous pin v1.5.1 @ 78f3d55.
 Next.js 16.2.9).
 
 ---
@@ -296,7 +306,9 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/tron-netter/chat` | `createChatHandler` · `channels/chat` | §5.1 |
 | `POST /api/tron-netter/sms` | `createSmsHandler(siteConfig, {mountPath: "/api/tron-netter/sms"})` · `channels/sms` | §5.2 |
 | `POST /api/tron-netter/sms/status` | `createSmsStatusHandler` · `channels/sms` | §5.2/§5.12 |
-| `POST /api/webhooks/resend` | **host TEE** (§5.12): Troy.Netter@ai.xl.net budget-approval mail is handled host-side; everything else delegates to `createInboundEmailHandler` · `channels/email` with the ORIGINAL unread Request (module re-verifies svix; Tron cannot regress) | §5.3/§5.12 |
+| `POST /api/webhooks/resend` | `createInboundEmailHandler` · `channels/email` (thin wrapper since v1.6; Troy.Netter@ai.xl.net budget-approval mail routes via `channels.email.onInbound` in site.config.ts — sole-recipient Troy mail is "handled", mixed recipients delegate so Tron still answers) | §5.3/§5.12 |
+| `GET /api/account/export` | `createAccountExportHandler` · `account/data` (v1.6; extras: governance projects + contact submissions) | §5.13 |
+| `POST /api/account/delete` | `createAccountDeletionHandler` · `account/data` (v1.6; governance_projects cascade via users FK; beforeDelete removes contact_submissions by email) | §5.13 |
 | `GET /api/auth/google/start` / `GET /auth/google/callback` | `createOAuthStartHandler` / `createOAuthCallbackHandler` · `auth/oauth-google` | §5.5 |
 | `GET /api/auth/microsoft/start` / `GET /auth/microsoft/callback` | same pair · `auth/oauth-microsoft` | §5.5 |
 | `GET /api/auth/session` | `createSessionHandler` · `auth/handlers` | §5.5 |
@@ -849,7 +861,7 @@ bodies `{error:{code,message}}`; CSRF via the middleware prefix):
 | `GET/DELETE /api/governance/projects/[id]` | poll target (never mutates; reports `reclaimable` so the CLIENT re-POSTs research) / immediate hard delete |
 | `POST .../research` | claim + spawn the detached research job; `{mode:"partial"}` = "start the questions anyway" after a failure (gap-flagged brief, straight to drafting). Claim is ONE conditional UPDATE enforcing owner, claimable status (created/queued/failed/stale-heartbeat >5 min), 3-runs/day, and the ≤2 global concurrency cap atomically (subquery count — no TOCTOU) |
 | `POST .../answer` | one synchronous Q&A turn (also review-phase revisions via `questionId:"revise"`): brain `/health` preflight → DB-backed daily budget spend → JSON-mode turn (90 s) → parse ladder (fence strip → lenient parse → ≤1 repair call with a NEW promptId, only if ≥40 s remain) → server-validated ops → ONE conditional write keyed on `rev`. Budgeted under nginx's 120 s. 6/min/user, 40 answers/project (the 40th force-flips to review), answers ≤2000 chars, `questionId` mismatch → 409 `stale_question` (dual-tab guard) |
-| `POST .../confirm` | review → done (only from review) |
+| `POST .../confirm` | review → done (only from review). **Refuses (409) while any non-stub section still holds untouched blueprint scaffold text** (host-computed `placeholderSectionMap`, exact-match, fail-open on a corrupt column so confirm can never brick; stub docs excluded — their pending/determined state keys on the presence of a `determination` section instead). Open `[TO CONFIRM]` items intentionally do NOT block. The client intercepts first with an info notice (button stays enabled); the 409 is the stale-tab backstop |
 | `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.pdf`/`.md`/`.txt` ≤2 MB): only extracted plain text is stored (never the file; docx via a linear-time jszip extractor: streaming decompression-bomb cap, headings/lists/table rows preserved, prompt-fence tokens stripped; pdf via pdfjs-dist getTextContent: no rendering, 40-page cap, 10 s deadline that destroys the parse task, dedicated scanned-PDF copy; pdfjs-dist MUST stay in next.config `serverExternalPackages` or the bundled build throws on every PDF), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions EXCLUDING numbering, which is host-owned (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
 | `GET .../download` | `?format=docx&doc=<slug>` or `?format=zip`; generated on demand from stored markdown, streamed, never stored, ZERO AI calls (works through every outage/cap and the kill switch); DRAFT watermark + `-draft` filename until done; touches `last_activity_at` (disclosed) |
 
@@ -900,14 +912,48 @@ hard-wired to the executor; no failover).
 **Turn contract** (`turn.ts`): model returns `{rationale, doc_ops[], status:
 "asking"|"review", question, review_summary, answered_bank_ids}`; `rationale` is never
 persisted or logged. Server-side, never trusted to the model: doc slugs must be in the
-kind's blueprint allowlist, ≤12 ops, section markdown ≤6000 chars, ≤20 sections/doc,
-markdown sanitized (raw HTML stripped, http(s) links only) + injection-screened at
-apply AND at docx render, em dashes normalized. **The drafting→review flip is
-host-gated**: `status:"review"` only sticks when every required bank id is covered
-(coverage = answered/skipped bank items + validated `answered_bank_ids` merges);
-otherwise the host overrides to asking and picks the next unanswered bank item itself.
-Skips draft a default marked `[TO CONFIRM: …]`; the review panel lists open markers as
-jump links. Progress ("question N of about M") is host-computed from bank coverage.
+kind's blueprint allowlist, ≤12 ops (≤24 at turn zero), section markdown ≤6000 chars,
+≤20 sections/doc, markdown sanitized (raw HTML stripped, http(s) links only) +
+injection-screened at apply AND at docx render, em dashes normalized. **The
+drafting→review flip is host-gated**: `status:"review"` only sticks when every
+required bank id is covered (coverage = answered/skipped bank items + validated
+`answered_bank_ids` merges); otherwise the host overrides to asking and picks the next
+unanswered bank item itself. Skips draft a default marked `[TO CONFIRM: …]`; the
+review panel lists open markers as jump links. Progress ("question N of about M") is
+host-computed from bank coverage.
+
+**Placeholder honesty (undrafted-section contract).** Blueprint scaffolds seed every
+section's markdown with its placeholder string; `placeholderSectionMap(kind, docs)`
+(`blueprints.ts`) detects sections still holding it by EXACT string equality
+(host-computed, model-unspoofable — model markdown is sanitized so never
+byte-identical; never replace with a prefix heuristic; editing a placeholder string
+later fails OPEN for pre-existing rows, bounded by 30-day retention; stub docs are
+skipped — `stubDetermined` keys their pending/determined copy on a `determination`
+section existing, which only `set_stub` writes). The map rides `ProjectView.
+placeholderSections` AND the `/answer` turn response (docSlug → [sectionId]; the
+client applies it like `changedSections` so a freshly drafted section swaps Planned →
+Updated in the same render — there is no idle poll in drafting to fix it later).
+Consumers: the doc pane renders these sections with a dotted gray "Planned" chip, a
+receded italic body (suppressed while the section is the ASKED-about one — the ask
+choreography wants that text read; `.doc-sec--planned:not(.doc-sec--asking)`), and one
+status-aware doc-level note; the review panel lists them as jump links ("Sections not
+yet drafted (N)") with a one-click prefill of the revise box; confirm refuses while
+any remain (see the route table); the .docx renders an italic amber notice INSTEAD of
+the scaffold body (draft AND final paths — one shared loop, and rows confirmed before
+this shipped still render honestly) and the zip README adds an undrafted-sections
+line. Self-heal: `serializeDraft` always includes still-scaffold sections verbatim
+tagged `(NOT YET DRAFTED: template text)` (many sections are fed by NO bank question —
+9 in nist_ai_rmf — so feeds alone can never reach them), and a rules() line tells the
+model to fully replace any it can draft from the current answer or revision.
+
+**Q&A history (question-pane.tsx).** The transcript renders as ONE uncontrolled
+collapsed `<details class="transcript">` disclosure above the current-question card
+("Previous questions (N)", "…and revisions (N)" when revise rows exist), so the card
+stays the left column's top anchor at any answer count; expanded, the list scrolls
+inside `min(40vh, 22rem)` (`.transcript-scroll`, `tabIndex=0` + `role="group"` for
+keyboard scrolling, docpane precedent). Numbering skips revision rows (`Q1…Qn` count
+non-revise entries only; revise rows label "Revision request"). Answers stay inert
+plain text (no markdown rendering).
 
 **Rendering + host-owned numbering** (`numbering.ts`, client-safe, bounded-quantifier
 regexes only). Drafting edits one section at a time with the rest of the draft elided,
@@ -969,8 +1015,21 @@ prompts render them as "observations to confirm with the user, not determination
 and a rules() line forbids determinations from signals — anything drafted from one
 carries `[TO CONFIRM]`) → turn zero: a COMPLETE best-effort first draft of every
 non-stub section (never placeholder language; unknowns marked `[TO CONFIRM: …]`; one
-call for the usage policy, one per ~3-doc group for the standards sets, a failed group
-keeps its scaffold) → ONE handoff write
+call for the usage policy, one per 2-doc group for the standards sets; the turn-zero
+system message states the 24k budget — the shared rules' 8k line used to contradict
+it — plus the 6k per-section cap, and turn zero gets a 24-op ceiling vs the answer
+turns' 12). **Stub docs never go to turn zero**: determinations rest only on
+user-confirmed facts and none exist yet, so their scaffolds honestly read as pending
+(this removed a whole failure class: the stubs group used to receive a
+self-contradictory "draft every non-stub document" prompt and reliably failed
+validation). A group whose output fails validation gets the answer-route parse
+ladder: concrete error strings logged (host-generated, never content), ≤1 repair
+call per group and ≤`turnZeroRepairMaxCalls` (2) per run (90 s, ≤48k raw slice,
+budget-counted, skipped inside the wall-clock handoff reserve), then **op-level
+salvage** — `validateTurn` returns the individually valid ops (`salvageOps`, turn
+zero only, trimmed in order to the 24k budget) so one oversized section no longer
+throws away a whole group; whatever still fails keeps its scaffold, which the UI
+marks Planned and every later turn offers for drafting → ONE handoff write
 (scaffold docs + bank question 1 + `status:'drafting'`). **Kind-aware brief reuse**:
 `latestBriefForDomain` (still keyed user+domain, `normalizeBrief` defaults legacy
 briefs) prefers a candidate whose `probedKind` matches the project kind (reused
@@ -1017,8 +1076,11 @@ when that budget changes. The admin replies with strict line-anchored commands
 (`SET GLOBAL BRAIN <n>` / `SET GLOBAL TAVILY <n>` / `SET PERSON CREATES <n>` /
 `RESET <target>`; parsing stops at the first quoted-reply marker, and alert
 emails only ever show placeholder syntax, so quoted text can never execute).
-The reply arrives on the `/api/webhooks/resend` **host tee** and is processed
-fail-closed by `approval-inbound.ts`: svix-verified; delivery deduped on
+The reply arrives on `/api/webhooks/resend` and routes to the host via the
+module's `channels.email.onInbound` hook (v1.6 — the tee that re-verified
+svix on a cloned Request is retired; routing truth is unchanged: envelope
+recipients, so BCC'd approvals still reach Troy) and is processed
+fail-closed by `approval-inbound.ts`: svix-verified by the module; delivery deduped on
 `email_id`; sender must be an exact-match `ADMIN_EMAIL` member; EXACTLY ONE
 direct `Authentication-Results` header (duplicates = forged-header ambiguity =
 reject; the ARC fallback is not accepted here); DKIM-aligned verdict via the
