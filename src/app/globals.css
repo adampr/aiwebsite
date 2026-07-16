@@ -204,3 +204,52 @@
   padding-bottom: env(safe-area-inset-bottom);
 }
 @media (min-width: 1024px) { .answer-sticky { position: static; } }
+
+/* Create panel: picking a kind scrolls the setup panel into view;
+   the margin keeps its heading clear of the sticky site header. */
+.gov-setup { scroll-margin-top: var(--sp-6); }
+@media (min-width: 768px) { .gov-setup { scroll-margin-top: 6.5rem; } }
+
+/* The RESEARCHING strip spans the setup panel's full content width in
+   confirm mode; the hairline makes the row read edge to edge. In edit
+   mode the .field spans full width and only the input caps itself. */
+.gov-domain-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--sp-4);
+  row-gap: var(--sp-2);
+  width: 100%;
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--xl-line);
+}
+.gov-domain-label {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--xl-text-faint);
+}
+
+/* Below the desktop split the PAGE scrolls to jumped-to sections, so
+   they must clear the sticky workbar (and, from md up, the sticky site
+   header stacked above it). At lg+ the doc pane scrolls internally and
+   needs no margin. */
+@media (max-width: 1023px) {
+  [id^="gov-sec-"] { scroll-margin-top: 6.5rem; }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  [id^="gov-sec-"] { scroll-margin-top: 11.25rem; }
+}
+
+/* The section(s) the ACTIVE question is about: a full dashed frame plus
+   an "Asking about this" chip. Deliberately distinct from the UPDATED
+   treatment (solid cyan left rail + solid chip): border shape and style
+   plus chip wording carry the difference, never color alone. Declared
+   after .doc-sec--changed so the frame wins when a section is both. */
+.doc-sec--asking {
+  border: 1px dashed var(--xl-light-dim);
+  padding: var(--sp-3) var(--sp-4);
+}
+.doc-chip--ask { border-style: dashed; }

@@ -346,6 +346,7 @@ export function pickNextBankQuestion(
       text: q.prompt,
       why: q.why,
       suggestions: q.suggestions ?? [],
+      feeds: q.feeds,
     };
   }
   return null;

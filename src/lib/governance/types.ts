@@ -55,6 +55,10 @@ export interface NextQuestion {
   text: string;
   why: string;
   suggestions: string[];
+  // "<doc-slug>#<section-id>" pairs this question's answer feeds — the doc
+  // pane anchors and marks these sections while the question is active, so
+  // the user can see exactly the text they are being asked about.
+  feeds: string[];
 }
 
 export interface ResearchBrief {
@@ -146,6 +150,9 @@ export interface ProjectView {
     error?: string;
   } | null;
   openConfirmItems: { doc: string; section: string; excerpt: string }[];
+  // The uploaded sample policy, name only (its text stays server-side; the
+  // drafting prompt mirrors its formatting conventions). Null = none.
+  styleSample: { name: string } | null;
   answersCount: number;
   deletesAt: string; // ISO — concrete date rendered everywhere
   createdAt: string;

@@ -839,7 +839,17 @@ bodies `{error:{code,message}}`; CSRF via the middleware prefix):
 | `POST .../research` | claim + spawn the detached research job; `{mode:"partial"}` = "start the questions anyway" after a failure (gap-flagged brief, straight to drafting). Claim is ONE conditional UPDATE enforcing owner, claimable status (created/queued/failed/stale-heartbeat >5 min), 3-runs/day, and the ≤2 global concurrency cap atomically (subquery count — no TOCTOU) |
 | `POST .../answer` | one synchronous Q&A turn (also review-phase revisions via `questionId:"revise"`): brain `/health` preflight → DB-backed daily budget spend → JSON-mode turn (90 s) → parse ladder (fence strip → lenient parse → ≤1 repair call with a NEW promptId, only if ≥40 s remain) → server-validated ops → ONE conditional write keyed on `rev`. Budgeted under nginx's 120 s. 6/min/user, 40 answers/project (the 40th force-flips to review), answers ≤2000 chars, `questionId` mismatch → 409 `stale_question` (dual-tab guard) |
 | `POST .../confirm` | review → done (only from review) |
+| `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.md`/`.txt` ≤400 KB): only extracted plain text is stored (never the file; docx via jszip with a decompression-bomb size guard), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
 | `GET .../download` | `?format=docx&doc=<slug>` or `?format=zip`; generated on demand from stored markdown, streamed, never stored, ZERO AI calls (works through every outage/cap and the kill switch); DRAFT watermark + `-draft` filename until done; touches `last_activity_at` (disclosed) |
+
+Every question (`NextQuestion`) carries `feeds: string[]` — the `"<doc-slug>#<section-id>"`
+pairs its answer updates (bank questions from `blueprints.ts`; model follow-ups via their
+`bankId`; legacy rows normalize to `[]`). The workspace uses it to anchor the interview to
+the draft: fed sections get a dashed "Asking about this" marker (distinct from the solid
+cyan UPDATED treatment), the doc pane auto-scrolls its own container to the first fed
+section when a question arrives (guarded: cancelled by user scroll/answer/status change;
+container-scoped so the page never moves), and the question card carries a "See the text
+this is about" jump link for the mobile Questions tab.
 
 **Brain contract.** Every governance call (turns, repairs, research distills, standards
 authoring) goes through `src/lib/governance/brain.ts` `buildGovernanceEnvelope`:
@@ -1037,6 +1047,8 @@ governance_projects id uuid PK default gen_random_uuid(),
                    next_question_json text, review_summary text, changed_sections_json text,
                    answers_count integer NOT NULL default 0,
                    acknowledged_at timestamptz NOT NULL default now(), -- UPL ack record (§5.12)
+                   style_sample_name/style_sample_text text,  -- sample-policy upload (§5.12,
+                   -- migration 0010): extracted text only, <=20k chars, deletes with the row
                    created_at/updated_at/last_activity_at timestamptz NOT NULL default now()
                    -- §5.12. Migration 0009; indexes on user_id + last_activity_at.
                    -- Hard-DELETEd 30 days after last_activity_at by the governance timer,

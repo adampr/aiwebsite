@@ -7,7 +7,7 @@
 
 import type { ReactNode, RefObject } from "react";
 import type { ProjectView } from "@/lib/governance/types";
-import { fmtDate } from "./shared";
+import { firstFeedTarget, fmtDate } from "./shared";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 const dim = { color: "var(--xl-text-dim)" } as const;
@@ -131,6 +131,9 @@ export function QuestionPane({
   const n = view.progress.answered + 1;
   const inputLocked = working || featureDisabled;
   const sendLocked = inputLocked || brainDown;
+  // The draft section this question is about; the jump link is the way to
+  // reach the marked text from the Questions tab on mobile.
+  const feedTarget = q ? firstFeedTarget(q.feeds, view.documents) : null;
 
   return (
     <section className="min-w-0">
@@ -153,6 +156,17 @@ export function QuestionPane({
           {q.why && (
             <p className="mt-2 max-w-none text-sm" style={dim}>
               {q.why}
+            </p>
+          )}
+          {feedTarget && (
+            <p className="mt-3 max-w-none text-sm">
+              <button
+                type="button"
+                className="linklike"
+                onClick={() => onJump(feedTarget.doc, feedTarget.section, true)}
+              >
+                See the text this is about
+              </button>
             </p>
           )}
           {q.suggestions.length > 0 && (

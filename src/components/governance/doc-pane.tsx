@@ -121,6 +121,7 @@ export function DocPane({
   activeDoc,
   onSelectDoc,
   highlights,
+  asking,
   flashKey,
   changedNow,
   onJump,
@@ -131,6 +132,8 @@ export function DocPane({
   activeDoc: string | null;
   onSelectDoc: (slug: string) => void;
   highlights: Record<string, string[]>;
+  /** docSlug -> [sectionId] the ACTIVE question is about (owner fix #3). */
+  asking: Record<string, string[]>;
   flashKey: number;
   changedNow: ChangedRef[] | null;
   onJump: (doc: string, section: string, focus: boolean) => void;
@@ -219,15 +222,28 @@ export function DocPane({
           )}
           {doc.sections.map((s) => {
             const changed = (highlights[doc.slug] ?? []).includes(s.id);
+            const asked = (asking[doc.slug] ?? []).includes(s.id);
+            const cls =
+              [
+                changed ? "doc-sec--changed doc-sec--flash" : "",
+                asked ? "doc-sec--asking" : "",
+              ]
+                .filter(Boolean)
+                .join(" ") || undefined;
             return (
               <section
                 key={changed ? `${s.id}-${flashKey}` : s.id}
                 id={secDomId(doc.slug, s.id)}
-                className={changed ? "doc-sec--changed doc-sec--flash" : undefined}
+                className={cls}
               >
                 <h3 className="doc-h text-lg" tabIndex={-1} data-sec-heading>
                   {s.title}
                   {changed && <span className="doc-chip">Updated</span>}
+                  {asked && (
+                    <span className="doc-chip doc-chip--ask">
+                      Asking about this
+                    </span>
+                  )}
                 </h3>
                 <SectionBody markdown={s.markdown} />
               </section>

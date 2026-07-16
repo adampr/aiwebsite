@@ -37,6 +37,7 @@ import {
   progressFor,
   validateTurn,
 } from "@/lib/governance/turn";
+import { bankById } from "@/lib/governance/blueprints";
 import { openConfirmItems } from "@/lib/governance/view";
 import type {
   GovernanceDoc,
@@ -157,13 +158,23 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     null
   );
   const question: NextQuestion = revise
-    ? { id: "revise", bankId: null, text: "Revision request", why: "", suggestions: [] }
+    ? {
+        id: "revise",
+        bankId: null,
+        text: "Revision request",
+        why: "",
+        suggestions: [],
+        feeds: [],
+      }
     : nextQuestion!;
 
   const system = buildSystemMessage({
     kind,
     brief,
     forcedReviewSoon: row.answersCount >= CAPS.answersPerProject - 5,
+    styleSample: row.styleSampleText
+      ? { name: row.styleSampleName ?? "sample", text: row.styleSampleText }
+      : null,
   });
   const userMsg = buildTurnUserMessage({
     kind,
@@ -254,6 +265,9 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
         text: turn.question.text,
         why: turn.question.why,
         suggestions: turn.question.suggestions,
+        feeds: turn.question.bankId
+          ? (bankById(kind).get(turn.question.bankId)?.feeds ?? [])
+          : [],
       };
     else outQuestion = pickNextBankQuestion(kind, covered, newRev);
     if (!outQuestion) {

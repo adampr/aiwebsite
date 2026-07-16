@@ -37,7 +37,27 @@ export const CAPS = {
   brainTurnTimeoutMs: 90_000,
   repairMinRemainingMs: 40_000,
   routeDeadlineMs: 115_000,
+  // Optional sample-policy upload (format matching): raw file cap, stored
+  // extracted-text cap, and the slice of it that rides every prompt.
+  styleSampleFileMaxBytes: 400_000,
+  styleSampleMaxChars: 20_000,
+  styleSamplePromptMaxChars: 6_000,
 } as const;
+
+/** Sample-policy upload: extensions the extractor understands (client accept
+ * attribute + server allowlist share this list; keep it client-safe here). */
+export const STYLE_SAMPLE_EXTENSIONS = [".docx", ".md", ".txt"] as const;
+export const STYLE_SAMPLE_ACCEPT = STYLE_SAMPLE_EXTENSIONS.join(",");
+
+/** Client-side precheck for a sample file; returns the error copy or null. */
+export function styleSampleFileError(name: string, size: number): string | null {
+  const lower = name.toLowerCase();
+  if (!STYLE_SAMPLE_EXTENSIONS.some((ext) => lower.endsWith(ext)))
+    return "Upload a .docx, .md, or .txt file. PDFs are not supported yet.";
+  if (size > CAPS.styleSampleFileMaxBytes)
+    return `Keep the sample under ${Math.round(CAPS.styleSampleFileMaxBytes / 1000)} KB. A few representative pages are plenty.`;
+  return null;
+}
 
 /** Sign-in email domains that are not company domains - force manual entry. */
 export const CONSUMER_EMAIL_DOMAINS = new Set([

@@ -69,6 +69,8 @@ function check(name: string, cond: boolean): void {
     "src/lib/governance/config.ts",
     "src/lib/governance/blueprints.ts",
     "src/lib/governance/prompt.ts",
+    "src/lib/governance/style-sample.ts",
+    "src/components/governance/style-sample-control.tsx",
   ]) {
     const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
     check(`no banned chars in ${rel}`, !/[–—‘’“”]/.test(text));
@@ -164,6 +166,80 @@ function check(name: string, cond: boolean): void {
   check("domain: normalizes", normalizeDomain("https://Foo.Example.com/x") === "foo.example.com");
   check("domain: rejects junk", normalizeDomain("localhost") === null && normalizeDomain("127.0.0.1") === null);
   check("fileSlug: header-safe", fileSlug('we"ird; dom\r\nain.com') === "we-ird-dom-ain-com");
+}
+
+/* 8. Sample-policy upload: extraction, normalization, prompt embedding. */
+{
+  const { CAPS } = await import("../src/lib/governance/config");
+  const { extractStyleSampleText, sanitizeSampleName } = await import(
+    "../src/lib/governance/style-sample"
+  );
+  const { buildSystemMessage } = await import("../src/lib/governance/prompt");
+  const JSZip = (await import("jszip")).default;
+
+  const txt = await extractStyleSampleText(
+    "policy.txt",
+    Buffer.from("1. Purpose\nThis policy governs the acceptable use of AI tools.\n")
+  );
+  check("sample: txt extracts", txt.ok && txt.text.includes("1. Purpose"));
+
+  const long = await extractStyleSampleText(
+    "policy.md",
+    Buffer.from("# Policy\n" + "word ".repeat(30_000))
+  );
+  check(
+    "sample: stored text capped",
+    long.ok && long.text.length <= CAPS.styleSampleMaxChars
+  );
+
+  const zip = new JSZip();
+  zip.file(
+    "word/document.xml",
+    "<w:document><w:body><w:p><w:r><w:t>Section 1 &amp; Scope</w:t></w:r></w:p>" +
+      "<w:p><w:r><w:t>All employees must follow this policy at all times.</w:t></w:r></w:p></w:body></w:document>"
+  );
+  const docxBuf = await zip.generateAsync({ type: "nodebuffer" });
+  const docx = await extractStyleSampleText("Current Policy.DOCX", docxBuf);
+  check(
+    "sample: docx extracts paragraphs + entities",
+    docx.ok &&
+      docx.text.includes("Section 1 & Scope") &&
+      docx.text.includes("\nAll employees")
+  );
+
+  const pdf = await extractStyleSampleText("policy.pdf", Buffer.from("x".repeat(100)));
+  check("sample: unsupported extension rejected", !pdf.ok);
+  const tiny = await extractStyleSampleText("policy.txt", Buffer.from("hi"));
+  check("sample: near-empty text rejected", !tiny.ok);
+
+  check(
+    "sample: name sanitized",
+    sanitizeSampleName("C:\\Users\\a\\my  policy.docx") === "my policy.docx"
+  );
+
+  const sys = buildSystemMessage({
+    kind: "usage_policy",
+    brief: null,
+    forcedReviewSoon: false,
+    styleSample: { name: "sample.docx", text: "S".repeat(50_000) },
+  });
+  check(
+    "sample: prompt block fenced + truncated",
+    sys.includes("<<<SAMPLE") &&
+      sys.includes("SAMPLE>>>") &&
+      !sys.includes("S".repeat(CAPS.styleSamplePromptMaxChars + 1))
+  );
+  const sysNo = buildSystemMessage({
+    kind: "usage_policy",
+    brief: null,
+    forcedReviewSoon: false,
+    styleSample: null,
+  });
+  check("sample: no block without a sample", !sysNo.includes("<<<SAMPLE"));
+  check(
+    "prompt: grammar + capitalization rule present",
+    sysNo.includes("capital letter") && sysNo.includes("correct grammar")
+  );
 }
 
 if (failures) {

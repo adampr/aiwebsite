@@ -55,6 +55,14 @@ export function toProjectView(row: ProjectRow): ProjectView {
   const kind = row.kind as GovernanceKind;
   const documents = parseJson<GovernanceDoc[]>(row.documentsJson, []);
   const covered = new Set(parseJson<string[]>(row.coveredBankIdsJson, []));
+  const rawNextQuestion = parseJson<NextQuestion | null>(
+    row.nextQuestionJson,
+    null
+  );
+  // Rows written before questions carried feeds normalize to [].
+  const nextQuestion = rawNextQuestion
+    ? { ...rawNextQuestion, feeds: rawNextQuestion.feeds ?? [] }
+    : null;
   const researchProgress = parseJson<ResearchProgress | null>(
     row.researchProgressJson,
     null
@@ -67,7 +75,7 @@ export function toProjectView(row: ProjectRow): ProjectView {
     rev: row.rev,
     documents,
     transcript: parseJson<TranscriptEntry[]>(row.transcriptJson, []),
-    nextQuestion: parseJson<NextQuestion | null>(row.nextQuestionJson, null),
+    nextQuestion,
     reviewSummary: row.reviewSummary,
     changedSections: parseJson<Record<string, string[]>>(
       row.changedSectionsJson,
@@ -83,6 +91,7 @@ export function toProjectView(row: ProjectRow): ProjectView {
         }
       : null,
     openConfirmItems: openConfirmItems(documents),
+    styleSample: row.styleSampleName ? { name: row.styleSampleName } : null,
     answersCount: row.answersCount,
     deletesAt: deletesAt(row.lastActivityAt),
     createdAt: row.createdAt.toISOString(),

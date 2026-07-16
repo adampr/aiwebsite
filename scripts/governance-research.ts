@@ -454,9 +454,19 @@ async function main(): Promise<void> {
     documents = [];
   }
   let changedSections: Record<string, string[]> = {};
+  // The sample policy is usually uploaded moments after create (the client
+  // posts it right after the create response, while this job is starting);
+  // re-read the row so turn zero already drafts in the user's format.
+  const freshRow = await fetchProjectForScript(projectId);
+  const styleSample = freshRow?.styleSampleText
+    ? {
+        name: freshRow.styleSampleName ?? "sample",
+        text: freshRow.styleSampleText,
+      }
+    : null;
   const turnZero = (await brainJson(
     `gov_${projectId}`,
-    buildSystemMessage({ kind, brief, forcedReviewSoon: false }),
+    buildSystemMessage({ kind, brief, forcedReviewSoon: false, styleSample }),
     buildTurnZeroUserMessage({ kind, documents }),
     90_000
   )) as unknown;

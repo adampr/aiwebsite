@@ -129,6 +129,11 @@ export const governanceProjects = pgTable(
     nextQuestionJson: text("next_question_json"),
     reviewSummary: text("review_summary"),
     changedSectionsJson: text("changed_sections_json"),
+    // Optional user-uploaded sample policy (§5.12): drafts mirror its
+    // formatting conventions. Extracted plain text only — the original file
+    // is never stored — and it deletes with the row (30-day retention).
+    styleSampleName: text("style_sample_name"),
+    styleSampleText: text("style_sample_text"),
     answersCount: integer("answers_count").notNull().default(0),
     // The user's affirmative not-legal-advice acknowledgment at creation.
     acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true })

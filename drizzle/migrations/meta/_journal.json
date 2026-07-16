@@ -71,6 +71,13 @@
       "when": 1784170304652,
       "tag": "0009_hesitant_madame_masque",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784207333529,
+      "tag": "0010_fresh_shatterstar",
+      "breakpoints": true
     }
   ]
 }

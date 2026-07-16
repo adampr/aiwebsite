@@ -4,7 +4,7 @@
 // (kind picker, domain confirm/override, required acknowledgment). Deletion
 // is a two-step confirm that names the immediacy (critique S12).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -12,13 +12,15 @@ import {
   AI_PROCESSING_NOTICE,
   DELETION_NOTICE,
   KIND_LABELS,
+  STYLE_SAMPLE_ACCEPT,
+  styleSampleFileError,
 } from "@/lib/governance/config";
 import {
   GOVERNANCE_KINDS,
   type GovernanceKind,
   type ProjectSummary,
 } from "@/lib/governance/types";
-import { api, fmtDate, StatusBadge } from "./shared";
+import { api, apiUpload, fmtDate, StatusBadge } from "./shared";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 const dim = { color: "var(--xl-text-dim)" } as const;
@@ -63,9 +65,39 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
     code: string;
     message: string;
   } | null>(null);
+  const [sampleFile, setSampleFile] = useState<File | null>(null);
+  const [sampleError, setSampleError] = useState("");
 
   const [deletePending, setDeletePending] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const setupRef = useRef<HTMLDivElement | null>(null);
+  const setupHeadingRef = useRef<HTMLHeadingElement | null>(null);
+
+  // Picking a kind must not strand the user above the fold: when the setup
+  // heading is not already fully visible, the panel scrolls into view and
+  // the heading takes focus, so the next step is both seen and announced.
+  // Switching kinds while the panel is on screen changes the heading in
+  // place without bouncing the page or stealing focus from the cards.
+  useEffect(() => {
+    if (!kind) return;
+    const heading = setupHeadingRef.current;
+    const panel = setupRef.current;
+    if (!heading || !panel) return;
+    const r = heading.getBoundingClientRect();
+    // The site header is sticky from md up (~4.75rem); a heading under it
+    // counts as hidden.
+    const topEdge = window.matchMedia("(min-width: 768px)").matches ? 80 : 0;
+    if (r.top >= topEdge && r.bottom <= window.innerHeight) return;
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+    panel.scrollIntoView({
+      block: "start",
+      behavior: reduce ? "auto" : "smooth",
+    });
+    heading.focus({ preventScroll: true });
+  }, [kind]);
 
   useEffect(() => {
     let alive = true;
@@ -98,6 +130,17 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
       }
     );
     if (r.ok) {
+      // Best-effort sample upload before the redirect: the file was already
+      // prechecked on selection, and the workspace shows the same control,
+      // so a rare failure here is visible and fixable on the next screen.
+      if (sampleFile) {
+        const form = new FormData();
+        form.append("file", sampleFile);
+        await apiUpload(
+          `/api/governance/projects/${encodeURIComponent(r.data.id)}/style-sample`,
+          form
+        );
+      }
       router.push(`/governance/${r.data.id}`);
       return;
     }
@@ -265,19 +308,33 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
         </div>
 
         {kind && (
-          <div className="panel panel--raised mt-6 space-y-6">
+          <div
+            ref={setupRef}
+            className="panel panel--raised gov-setup mt-6 space-y-6"
+            role="group"
+            aria-labelledby="gov-setup-heading"
+          >
+            <h3
+              id="gov-setup-heading"
+              ref={setupHeadingRef}
+              tabIndex={-1}
+              className="doc-h text-lg"
+            >
+              Set up your {KIND_LABELS[kind].name}
+            </h3>
+
             {editingDomain ? (
-              <div className="field max-w-sm">
+              <div className="field">
                 <label htmlFor="gov-domain">Researching</label>
                 {defaultDomain === "" && (
-                  <p className="text-sm">
+                  <p className="max-w-none text-sm">
                     You signed in with a personal address. What is your
                     company&apos;s website?
                   </p>
                 )}
                 <input
                   id="gov-domain"
-                  className="input"
+                  className="input w-full max-w-sm"
                   value={domain}
                   onChange={(e) => setDomain(e.target.value)}
                   placeholder="company.com"
@@ -287,14 +344,9 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
                 />
               </div>
             ) : (
-              <div className="flex flex-wrap items-center gap-4">
-                <span
-                  className="text-xs font-medium uppercase"
-                  style={{ ...faint, letterSpacing: "0.3em" }}
-                >
-                  Researching
-                </span>
-                <span className="mono">{domain}</span>
+              <div className="gov-domain-row">
+                <span className="gov-domain-label">Researching</span>
+                <span className="mono min-w-0 break-all">{domain}</span>
                 <button
                   type="button"
                   className="btn btn--text"
@@ -305,15 +357,53 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
               </div>
             )}
 
-            <p className="text-sm">
+            <p className="max-w-none text-sm">
               Tron researches {domain.trim() || "your company"} before asking
               you anything: your site, pages and articles that mention you,
               and your industry.
             </p>
 
+            <div className="field">
+              <label htmlFor="gov-sample">Match your format (optional)</label>
+              <p className="max-w-none text-sm">
+                Upload a current company policy (.docx, .md, or .txt) and the
+                draft will follow its heading, list, and numbering style. Its
+                content is never copied, and only the extracted text is kept,
+                under the same 30-day deletion promise.
+              </p>
+              <input
+                id="gov-sample"
+                type="file"
+                className="mt-2 block text-sm"
+                accept={STYLE_SAMPLE_ACCEPT}
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null;
+                  if (!f) {
+                    setSampleFile(null);
+                    setSampleError("");
+                    return;
+                  }
+                  const err = styleSampleFileError(f.name, f.size);
+                  if (err) {
+                    setSampleFile(null);
+                    setSampleError(err);
+                    e.target.value = "";
+                  } else {
+                    setSampleFile(f);
+                    setSampleError("");
+                  }
+                }}
+              />
+              {sampleError && (
+                <p className="mt-1 max-w-none text-xs" role="alert" style={{ color: "var(--xl-warn)" }}>
+                  {sampleError}
+                </p>
+              )}
+            </div>
+
             <div className="space-y-3 text-sm" style={dim}>
-              <p>{DELETION_NOTICE}</p>
-              <p>{AI_PROCESSING_NOTICE}</p>
+              <p className="max-w-none">{DELETION_NOTICE}</p>
+              <p className="max-w-none">{AI_PROCESSING_NOTICE}</p>
             </div>
 
             <label className="flex items-start gap-3 text-sm">
@@ -356,6 +446,8 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
                   setKind(null);
                   setCreateError(null);
                   setAckHint(false);
+                  setSampleFile(null);
+                  setSampleError("");
                 }}
               >
                 Cancel

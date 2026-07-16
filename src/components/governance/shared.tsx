@@ -55,6 +55,36 @@ export async function api<T>(
   };
 }
 
+/** Multipart variant of api(): the browser sets the content-type boundary. */
+export async function apiUpload<T>(
+  path: string,
+  form: FormData
+): Promise<ApiResult<T>> {
+  let res: Response;
+  try {
+    res = await fetch(path, { method: "POST", body: form, cache: "no-store" });
+  } catch {
+    return { ok: false, status: 0, code: "network", message: "Network error." };
+  }
+  if (res.status === 204) return { ok: true, status: 204, data: undefined as T };
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    // non-JSON body; fall through
+  }
+  if (res.ok) return { ok: true, status: res.status, data: body as T };
+  const err = (
+    body as { error?: { code?: GovernanceErrorCode; message?: string } } | null
+  )?.error;
+  return {
+    ok: false,
+    status: res.status,
+    code: err?.code ?? "network",
+    message: err?.message ?? "Something went wrong. Try again.",
+  };
+}
+
 /** What POST /answer returns on success. */
 export interface TurnResponse {
   rev: number;
@@ -74,6 +104,36 @@ export interface TurnResponse {
  */
 export function mintPromptId(): string {
   return `gov_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** A "<doc-slug>#<section-id>" pair from NextQuestion.feeds, parsed. */
+export interface FeedRef {
+  doc: string;
+  section: string;
+}
+
+/** Parse one feeds entry; null when malformed (empty slug or id). */
+export function parseFeedRef(feed: string): FeedRef | null {
+  const i = feed.indexOf("#");
+  if (i <= 0 || i >= feed.length - 1) return null;
+  return { doc: feed.slice(0, i), section: feed.slice(i + 1) };
+}
+
+/**
+ * First fed section that actually exists in the committed documents:
+ * the anchor target for "the text this question is about".
+ */
+export function firstFeedTarget(
+  feeds: string[],
+  documents: GovernanceDoc[]
+): FeedRef | null {
+  for (const f of feeds) {
+    const ref = parseFeedRef(f);
+    if (!ref) continue;
+    const doc = documents.find((d) => d.slug === ref.doc);
+    if (doc && doc.sections.some((s) => s.id === ref.section)) return ref;
+  }
+  return null;
 }
 
 /** "Aug 15, 2026" (en-US, UTC): the concrete deletion date everywhere. */

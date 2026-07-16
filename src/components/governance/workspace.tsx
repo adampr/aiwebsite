@@ -5,7 +5,7 @@
 // stale-tab and dropped-connection recovery), the update choreography, the
 // single polite live region, and the desktop split / mobile two-tab layout.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { KIND_LABELS } from "@/lib/governance/config";
 import type {
@@ -16,10 +16,13 @@ import type {
 } from "@/lib/governance/types";
 import {
   api,
+  firstFeedTarget,
   fmtDate,
   mintPromptId,
+  parseFeedRef,
   StatusBadge,
   STATUS_META,
+  type FeedRef,
   type TurnResponse,
 } from "./shared";
 import { ResearchScreen, researchStepLabel } from "./research-screen";
@@ -29,6 +32,17 @@ import { DownloadMenu } from "./download-menu";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 const dim = { color: "var(--xl-text-dim)" } as const;
+
+/** Keys that scroll the doc pane; each signals manual reading intent. */
+const SCROLL_KEYS = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+  " ",
+]);
 
 function LiveRegion({ text }: { text: string }) {
   // The ONE live region on the page; content is replaced, never appended.
@@ -78,6 +92,9 @@ export function Workspace({ projectId }: { projectId: string }) {
     "questions"
   );
   const [draftDot, setDraftDot] = useState(0);
+  // Mobile Questions tab: a new question's asked-about section is waiting
+  // unseen on the Draft tab (owner fix #3).
+  const [askPending, setAskPending] = useState(false);
   const [isDesktop, setIsDesktop] = useState(true);
   const [answerText, setAnswerTextState] = useState("");
   const [skipPending, setSkipPending] = useState(false);
@@ -107,9 +124,16 @@ export function Workspace({ projectId }: { projectId: string }) {
     doc: string;
     section: string;
     focus: boolean;
+    // Automatic choreography (changed/ask jumps) scrolls only the doc
+    // pane's own container on desktop; user jumps use scrollIntoView.
+    auto: boolean;
   } | null>(null);
+  const askTimerRef = useRef<number | null>(null);
   const mobileTabRef = useRef(mobileTab);
   const isDesktopRef = useRef(true);
+  // Bumped on every user-initiated jump; a scheduled ask-anchor scroll
+  // aborts if the user moved themselves in the meantime (no scroll fights).
+  const userJumpSeqRef = useRef(0);
   const fetchRef = useRef<() => Promise<ProjectView | null>>(async () => null);
 
   useEffect(() => {
@@ -169,7 +193,22 @@ export function Workspace({ projectId }: { projectId: string }) {
     const reduce = window.matchMedia(
       "(prefers-reduced-motion: reduce)"
     ).matches;
-    el.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+    const behavior: ScrollBehavior = reduce ? "auto" : "smooth";
+    const pane = isDesktopRef.current
+      ? el.closest<HTMLElement>(".docpane")
+      : null;
+    if (p.auto && pane) {
+      // Automatic jumps never move the window on desktop (the user may be
+      // typing): reposition the doc pane's own scroll container only.
+      const top =
+        pane.scrollTop +
+        el.getBoundingClientRect().top -
+        pane.getBoundingClientRect().top -
+        16;
+      pane.scrollTo({ top: Math.max(top, 0), behavior });
+    } else {
+      el.scrollIntoView({ block: "start", behavior });
+    }
     if (p.focus) {
       el.querySelector<HTMLElement>("[data-sec-heading]")?.focus({
         preventScroll: true,
@@ -177,27 +216,74 @@ export function Workspace({ projectId }: { projectId: string }) {
     }
   }, []);
 
+  /** Cancel a not-yet-fired ask-anchor scroll (user intent wins). */
+  const cancelAskJump = useCallback(() => {
+    if (askTimerRef.current !== null) {
+      window.clearTimeout(askTimerRef.current);
+      askTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => cancelAskJump(), [cancelAskJump]);
+
   /** S6/S11: activate the target doc tab, then scroll, then focus. */
   const jumpTo = useCallback(
     (doc: string, section: string, focus: boolean) => {
-      pendingJumpRef.current = { doc, section, focus };
+      userJumpSeqRef.current += 1;
+      cancelAskJump();
+      pendingJumpRef.current = { doc, section, focus, auto: false };
       setActiveDoc(doc);
       if (!isDesktopRef.current) {
         setMobileTab("draft");
         setDraftDot(0);
+        setAskPending(false);
       }
       window.setTimeout(performJump, 60);
     },
-    [performJump]
+    [cancelAskJump, performJump]
   );
 
-  /** Spec 8.4: highlights, change summary, own-container scroll, focus. */
+  /**
+   * Owner fix #3 sequencing: after the UPDATED choreography settles, the
+   * doc pane parks on the first section the new question is about (the
+   * user's next task is reading that text). Aborts if the question moved
+   * on, the project left drafting, or the user jumped somewhere manually.
+   * Never touches keyboard focus; that stays on the question heading.
+   */
+  const scheduleAskJump = useCallback(
+    (ref: FeedRef, delay: number) => {
+      const qid = viewRef.current?.nextQuestion?.id ?? null;
+      const seq = userJumpSeqRef.current;
+      cancelAskJump();
+      askTimerRef.current = window.setTimeout(() => {
+        askTimerRef.current = null;
+        const v = viewRef.current;
+        if (!v || v.status !== "drafting") return;
+        if (qid === null || v.nextQuestion?.id !== qid) return;
+        if (userJumpSeqRef.current !== seq) return;
+        pendingJumpRef.current = {
+          doc: ref.doc,
+          section: ref.section,
+          focus: false,
+          auto: true,
+        };
+        setActiveDoc(ref.doc);
+        window.setTimeout(performJump, 60);
+      }, delay);
+    },
+    [cancelAskJump, performJump]
+  );
+
+  /** Spec 8.4: highlights, change summary, own-container scroll, focus.
+   *  The UPDATED scroll runs first; the new question's asked-about
+   *  section wins the final scroll position (scheduleAskJump). */
   const applyChangedChoreography = useCallback(
     (
       changed: Record<string, string[]>,
       docs: GovernanceDoc[],
       newStatus: ProjectStatus,
-      prevStatus: ProjectStatus
+      prevStatus: ProjectStatus,
+      askRef: FeedRef | null
     ) => {
       const list: ChangedRef[] = [];
       for (const [dslug, secs] of Object.entries(changed)) {
@@ -207,20 +293,33 @@ export function Workspace({ projectId }: { projectId: string }) {
           list.push({ doc: dslug, section: sid, title: s?.title ?? sid });
         }
       }
+      const asking = newStatus === "drafting" ? askRef : null;
       setHighlights(changed);
       setChangedNow(list.length ? list : null); // replaces, never stacks
       setFlashKey((k) => k + 1);
-      if (list.length) {
-        if (!isDesktopRef.current && mobileTabRef.current === "questions") {
-          setDraftDot(list.length);
-        } else {
+      if (!isDesktopRef.current && mobileTabRef.current === "questions") {
+        if (list.length) setDraftDot(list.length);
+        setAskPending(asking !== null);
+      } else {
+        setAskPending(false);
+        if (list.length) {
           pendingJumpRef.current = {
             doc: list[0].doc,
             section: list[0].section,
             focus: false,
+            auto: true,
           };
           setActiveDoc(list[0].doc);
           window.setTimeout(performJump, 60);
+        }
+        // The changed flash (900 ms) gets its beat, then the pane settles
+        // on the text under discussion. Straight there when nothing changed
+        // or when reduced motion is set (no flash to wait for).
+        if (asking) {
+          const reduce = window.matchMedia(
+            "(prefers-reduced-motion: reduce)"
+          ).matches;
+          scheduleAskJump(asking, list.length && !reduce ? 1600 : 60);
         }
       }
       const titles = list.map((x) => x.title).join(", ");
@@ -240,7 +339,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         focusSoon(questionHeadingRef);
       }
     },
-    [performJump]
+    [performJump, scheduleAskJump]
   );
 
   const handleView = useCallback(
@@ -283,7 +382,10 @@ export function Workspace({ projectId }: { projectId: string }) {
           next.changedSections,
           next.documents,
           next.status,
-          prev.status
+          prev.status,
+          next.nextQuestion
+            ? firstFeedTarget(next.nextQuestion.feeds, next.documents)
+            : null
         );
         choreographed = true;
       }
@@ -300,6 +402,18 @@ export function Workspace({ projectId }: { projectId: string }) {
           setAnnounce("Research done. First question is ready.");
           setHighlights(next.changedSections);
           focusSoon(questionHeadingRef);
+          // The very first question anchors too: show the researched text
+          // it is about (owner fix #3), without touching focus.
+          const askRef = next.nextQuestion
+            ? firstFeedTarget(next.nextQuestion.feeds, next.documents)
+            : null;
+          if (askRef) {
+            if (!isDesktopRef.current && mobileTabRef.current === "questions") {
+              setAskPending(true);
+            } else {
+              scheduleAskJump(askRef, 60);
+            }
+          }
         } else if (next.status === "review") {
           setAnnounce(
             "Tron is done asking questions. The full draft is ready for your review."
@@ -342,7 +456,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         });
       }
     },
-    [applyChangedChoreography, clearDraft]
+    [applyChangedChoreography, clearDraft, scheduleAskJump]
   );
 
   const fetchProject = useCallback(async (): Promise<ProjectView | null> => {
@@ -424,6 +538,22 @@ export function Workspace({ projectId }: { projectId: string }) {
     return () => window.clearTimeout(t);
   }, [currentQid, projectId]);
 
+  // Owner fix #3: the sections the ACTIVE question is about, derived from
+  // nextQuestion.feeds. Clears itself when the question changes or the
+  // project leaves drafting.
+  const asking = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    if (view && view.status === "drafting" && view.nextQuestion) {
+      for (const f of view.nextQuestion.feeds) {
+        const ref = parseFeedRef(f);
+        if (!ref) continue;
+        if (!map[ref.doc]) map[ref.doc] = [];
+        map[ref.doc].push(ref.section);
+      }
+    }
+    return map;
+  }, [view]);
+
   function applyTurn(
     data: TurnResponse,
     questionId: string,
@@ -465,7 +595,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       data.changedSections,
       data.documents,
       data.status,
-      prev.status
+      prev.status,
+      data.nextQuestion
+        ? firstFeedTarget(data.nextQuestion.feeds, data.documents)
+        : null
     );
   }
 
@@ -489,6 +622,9 @@ export function Workspace({ projectId }: { projectId: string }) {
         ? p.promptId
         : mintPromptId();
     pendingRef.current = { questionId, answer, skipped: opts.skipped, promptId };
+
+    // A new turn supersedes any still-pending ask-anchor scroll.
+    cancelAskJump();
 
     const token = Date.now() + Math.random();
     inFlightRef.current = { preSendRev: v.rev, token, questionId };
@@ -759,13 +895,30 @@ export function Workspace({ projectId }: { projectId: string }) {
               aria-controls={!isDesktop ? "gov-pane-draft" : undefined}
               tabIndex={!isDesktop && mobileTab !== "draft" ? -1 : undefined}
               aria-label={
-                draftDot > 0 ? `Draft, ${draftDot} sections updated` : undefined
+                draftDot > 0 && askPending
+                  ? `Draft, ${draftDot} sections updated, includes the text this question is about`
+                  : draftDot > 0
+                    ? `Draft, ${draftDot} sections updated`
+                    : askPending
+                      ? "Draft, shows the text this question is about"
+                      : undefined
               }
               onClick={() => {
                 setMobileTab("draft");
+                // The asked-about anchor wins over the changed-section jump:
+                // the user's next task is reading the text in question.
+                const ask =
+                  askPending &&
+                  view.status === "drafting" &&
+                  view.nextQuestion
+                    ? firstFeedTarget(view.nextQuestion.feeds, view.documents)
+                    : null;
                 const first = changedNow?.[0];
-                if (draftDot > 0 && first) jumpTo(first.doc, first.section, false);
+                if (ask) jumpTo(ask.doc, ask.section, false);
+                else if (draftDot > 0 && first)
+                  jumpTo(first.doc, first.section, false);
                 setDraftDot(0);
+                setAskPending(false);
               }}
               onKeyDown={(e) => {
                 if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
@@ -775,16 +928,14 @@ export function Workspace({ projectId }: { projectId: string }) {
               }}
             >
               Draft
-              {draftDot > 0 && (
-                <>
-                  <span
-                    className="dot"
-                    style={{ color: "var(--xl-light)" }}
-                    aria-hidden="true"
-                  />
-                  <span aria-hidden="true">· {draftDot}</span>
-                </>
+              {(draftDot > 0 || askPending) && (
+                <span
+                  className="dot"
+                  style={{ color: "var(--xl-light)" }}
+                  aria-hidden="true"
+                />
               )}
+              {draftDot > 0 && <span aria-hidden="true">· {draftDot}</span>}
             </button>
           </div>
 
@@ -823,12 +974,20 @@ export function Workspace({ projectId }: { projectId: string }) {
               role={!isDesktop ? "tabpanel" : undefined}
               aria-labelledby={!isDesktop ? "gov-tab-draft" : undefined}
               className={`mt-8 min-w-0 lg:mt-0 ${mobileTab === "draft" ? "block" : "hidden"} lg:block`}
+              // Manual reading intent in the doc pane cancels any pending
+              // ask-anchor scroll (wheel, touch, or scroll keys).
+              onWheel={cancelAskJump}
+              onTouchMove={cancelAskJump}
+              onKeyDown={(e) => {
+                if (SCROLL_KEYS.has(e.key)) cancelAskJump();
+              }}
             >
               <DocPane
                 documents={view.documents}
                 activeDoc={activeDoc}
                 onSelectDoc={setActiveDoc}
                 highlights={highlights}
+                asking={asking}
                 flashKey={flashKey}
                 changedNow={changedNow}
                 onJump={jumpTo}

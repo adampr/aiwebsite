@@ -143,6 +143,57 @@ export async function touchActivity(id: string): Promise<void> {
     .where(eq(P.id, id));
 }
 
+/** Set (or replace) the uploaded sample policy. Owner + retention bound into
+ * the WHERE; final projects are locked. An upload is user activity. */
+export async function setStyleSample(opts: {
+  userId: string;
+  id: string;
+  name: string;
+  text: string;
+  flagged: boolean;
+}): Promise<boolean> {
+  if (!isUuid(opts.id)) return false;
+  const rows = await db
+    .update(P)
+    .set({
+      styleSampleName: opts.name,
+      styleSampleText: opts.text,
+      researchFlagged: sql`research_flagged OR ${opts.flagged}`,
+      lastActivityAt: sql`now()`,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(
+        eq(P.id, opts.id),
+        eq(P.userId, opts.userId),
+        gte(P.lastActivityAt, retentionCutoff()),
+        sql`${P.status} <> 'done'`
+      )
+    )
+    .returning({ id: P.id });
+  return rows.length > 0;
+}
+
+/** Remove the sample. Works in any status (removing user data always works). */
+export async function clearStyleSample(
+  userId: string,
+  id: string
+): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  const rows = await db
+    .update(P)
+    .set({
+      styleSampleName: null,
+      styleSampleText: null,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(eq(P.id, id), eq(P.userId, userId), gte(P.lastActivityAt, retentionCutoff()))
+    )
+    .returning({ id: P.id });
+  return rows.length > 0;
+}
+
 /** Bounded global sweep, run opportunistically from list/create (§10):
  * expired rows of ANY user are removed even if the daily timer is dead. */
 export async function sweepExpiredGlobal(limit = 25): Promise<number> {

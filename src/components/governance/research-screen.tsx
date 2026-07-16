@@ -6,6 +6,7 @@
 
 import type { ProjectView, ResearchStep } from "@/lib/governance/types";
 import { RESEARCH_DURATION_COPY } from "@/lib/governance/config";
+import { StyleSampleControl } from "./style-sample-control";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 const dim = { color: "var(--xl-text-dim)" } as const;
@@ -91,6 +92,16 @@ export function ResearchScreen({
 }) {
   const { status, domain } = view;
 
+  // Add/replace the format sample while research runs: the first draft pass
+  // already writes in the user's format when the sample is here in time.
+  const sample = (
+    <StyleSampleControl
+      projectId={view.id}
+      initialName={view.styleSample?.name ?? null}
+      disabled={view.featureDisabled}
+    />
+  );
+
   if (status === "created") {
     return (
       <div className="panel mx-auto mt-8 max-w-2xl text-center">
@@ -99,6 +110,7 @@ export function ResearchScreen({
           Setting up your project. Research starts in a moment; this page
           updates on its own.
         </p>
+        {sample}
       </div>
     );
   }
@@ -131,6 +143,7 @@ export function ResearchScreen({
         >
           {busy ? "Starting..." : "Start research"}
         </button>
+        {sample}
       </div>
     );
   }
@@ -174,6 +187,7 @@ export function ResearchScreen({
         <p className="mt-3 text-xs" style={faint}>
           I will work from what I found so far and say so in the draft.
         </p>
+        {sample}
       </div>
     );
   }
@@ -258,6 +272,7 @@ export function ResearchScreen({
             Next: I will ask you a short series of questions and draft the
             document live as you answer.
           </p>
+          {sample}
         </div>
       </div>
     </div>
