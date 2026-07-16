@@ -55,6 +55,43 @@ export async function api<T>(
   };
 }
 
+/** Suggestion chips toggle in and out of the answer as "; "-joined
+ *  segments; the textarea string stays the only source of truth. A chip's
+ *  own semicolons become commas so it can never span two segments. */
+export function chipCanon(s: string): string {
+  return s.replace(/;/g, ",").trim();
+}
+
+export function chipSegments(text: string): string[] {
+  return text
+    .split(";")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+/** One chip toggle against the current answer. Removal excises only the
+ *  clicked segment (plus one separator) so the rest of the user's text
+ *  survives verbatim; append refuses to cross the server's 2000-char
+ *  answer cap and reports it instead. */
+export function toggleChipInAnswer(
+  text: string,
+  suggestion: string
+): { next: string } | { overLimit: true } | null {
+  const chip = chipCanon(suggestion);
+  if (!chip) return null;
+  const parts = text.split(";");
+  const i = parts.findIndex((p) => p.trim() === chip);
+  if (i !== -1) {
+    parts.splice(i, 1);
+    const next = parts.join(";");
+    return { next: i === 0 ? next.replace(/^\s+/, "") : next };
+  }
+  const base = text.replace(/[\s;]+$/, "");
+  const next = base ? `${base}; ${chip}` : chip;
+  if (next.length > 2000) return { overLimit: true };
+  return { next };
+}
+
 /** Multipart variant of api(): the browser sets the content-type boundary. */
 export async function apiUpload<T>(
   path: string,

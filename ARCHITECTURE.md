@@ -15,7 +15,9 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-16 (AI Governance builder shipped —
+Last verified against code: 2026-07-16 (workspace answer form: multi-select
+suggestion chips + in-flight submit feedback, see §5.12; same day: AI
+Governance builder shipped —
 new §5.12 /governance section, governance tables in §6, standards pipeline
 in §8.1, `aiwebsite-governance` timer via the host post-install hook in
 §9.7; standard-specific applicability probes added to the research
@@ -856,6 +858,25 @@ cyan UPDATED treatment), the doc pane auto-scrolls its own container to the firs
 section when a question arrives (guarded: cancelled by user scroll/answer/status change;
 container-scoped so the page never moves), and the question card carries a "See the text
 this is about" jump link for the mobile Questions tab.
+
+**Answer form (question-pane.tsx + workspace.tsx).** Suggestion chips are multi-select
+toggles (`aria-pressed`), not fill-the-box buttons: a click appends the chip as a
+"; "-joined segment of the answer, a second click excises exactly that segment (plus one
+separator) and leaves the rest of the user's text verbatim. The textarea string stays the
+only source of truth — pressed state is derived by splitting on ";" and trimming
+(`chipCanon`/`chipSegments` in shared.tsx; a chip's own semicolons become commas so it can
+never span two segments), so hand-edits can never desync, they just unpress the chip. A
+toggle that would push past the 2000-char answer cap is refused with an info notice
+("That is the 2000 character limit..."), and any edit or toggle retires a stale notice.
+Submit feedback: the in-flight action (`workingKind`: send/skip/revise) disables the form
+and flips the submit button to a busy state — `aria-busy`, dim-light treatment, and a
+stable-width stacked-label swap (`.btn--stable`/`.btn-swap`, so "Send answer" → "Sending"
+never shifts layout) — above a status row with per-path copy and a 1px `.working-rule`
+light sweep (static dim line under reduced motion). The single polite live region
+announces at 0 ms ("Answer sent." / skip / revise variants), at the 20 s long-turn mark,
+and on brain-down; `.btn:disabled` (light withdraws) vs `.btn[aria-busy]` (holds dim
+light) is a global futurism.css distinction, and pressed chips keep a dim pressed
+treatment while disabled mid-turn.
 
 **Brain contract.** Every governance call (turns, repairs, research distills, standards
 authoring) goes through `src/lib/governance/brain.ts` `buildGovernanceEnvelope`:

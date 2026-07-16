@@ -668,6 +668,59 @@ function check(name: string, cond: boolean): void {
   );
 }
 
+/* 9. Suggestion-chip toggle: the textarea is the only source of truth,
+      removal never rewrites the rest of the user's text. */
+{
+  const { chipCanon, chipSegments, toggleChipInAnswer } = await import(
+    "../src/components/governance/shared"
+  );
+  const on = (t: string, c: string) => {
+    const r = toggleChipInAnswer(t, c);
+    return r && "next" in r ? r.next : `<${JSON.stringify(r)}>`;
+  };
+  check("chips: first pick fills", on("", "Conservative") === "Conservative");
+  check(
+    "chips: second pick appends",
+    on("Conservative", "Balanced") === "Conservative; Balanced"
+  );
+  check(
+    "chips: re-click removes only its segment",
+    on("Conservative; Balanced; my note", "Balanced") ===
+      "Conservative; my note"
+  );
+  check(
+    "chips: removal at start trims the seam",
+    on("Balanced; my note", "Balanced") === "my note"
+  );
+  check("chips: removing the only segment empties", on("Balanced", "Balanced") === "");
+  check(
+    "chips: free text then chip",
+    on("Employees mostly", "Contractors too") ===
+      "Employees mostly; Contractors too"
+  );
+  check(
+    "chips: pressed state derives from segments",
+    chipSegments("a; Balanced ;b").includes(chipCanon("Balanced")) &&
+      !chipSegments("prefix Balanced suffix").includes(chipCanon("Balanced"))
+  );
+  check(
+    "chips: chip semicolons become commas (never spans segments)",
+    on("", "Yes; with care") === "Yes, with care" &&
+      on("Yes, with care", "Yes; with care") === ""
+  );
+  const capBase = "x".repeat(1995);
+  const capped = toggleChipInAnswer(capBase, "long chip");
+  check(
+    "chips: append refuses past the 2000 cap",
+    capped !== null && "overLimit" in capped
+  );
+  check(
+    "chips: user newlines survive a removal",
+    on("line one\nmore; Balanced; tail", "Balanced") ===
+      "line one\nmore; tail"
+  );
+}
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

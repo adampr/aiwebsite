@@ -179,7 +179,8 @@
   text-decoration-color: var(--xl-light-dim);
 }
 
-/* Suggestion chips: fill the textarea, never auto-submit. */
+/* Suggestion chips: toggle in and out of the textarea as "; "-joined
+   segments, never auto-submit. Pressed state is derived from the text. */
 .gov-chip {
   background: none;
   border: 1px solid var(--xl-line-bright);
@@ -191,8 +192,44 @@
   text-align: left;
 }
 .gov-chip:hover { border-color: var(--xl-light-dim); color: var(--xl-text); }
+.gov-chip[aria-pressed="true"] {
+  border-color: var(--xl-light-dim);
+  color: var(--xl-light);
+  background: color-mix(in oklch, var(--xl-light) 8%, transparent);
+}
+.gov-chip[aria-pressed="true"]:hover { border-color: var(--xl-light); }
+.gov-chip:disabled {
+  color: var(--xl-text-faint);
+  border-color: var(--xl-line);
+  cursor: default;
+}
+/* Selections stay readable while a turn is in flight. */
+.gov-chip:disabled[aria-pressed="true"] {
+  color: var(--xl-light-dim);
+  border-color: var(--xl-light-dim);
+  background: color-mix(in oklch, var(--xl-light) 6%, transparent);
+}
 @media (pointer: coarse) {
   .gov-chip { min-height: 44px; }
+}
+
+/* In-flight turn: a quiet hairline of light sweeping above the status
+   row. Reduced motion (and the global animation kill) gets the static
+   dim line, so the state stays visible with nothing moving. */
+.working-rule {
+  height: 1px;
+  background: var(--xl-light-dim);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .working-rule {
+    background: linear-gradient(90deg, transparent, var(--xl-light) 50%, transparent);
+    background-size: 200% 100%;
+    animation: xl-sweep 2.2s linear infinite;
+  }
+}
+@keyframes xl-sweep {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
 }
 
 /* Mobile: the answer form pins above the keyboard inside the

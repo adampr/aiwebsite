@@ -419,6 +419,37 @@ code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
 .btn--text:hover { box-shadow: none; }
 .btn--text:hover::after { background: var(--xl-light); box-shadow: 0 0 10px var(--xl-light-glow); }
 
+/* Disabled — the light withdraws. Placed after every variant so it wins
+   their base and hover rules at equal specificity. */
+.btn:disabled {
+  color: var(--xl-text-faint);
+  border-color: var(--xl-line);
+  background: transparent;
+  box-shadow: none;
+  cursor: default;
+}
+.btn--text:disabled::after { background: var(--xl-line); box-shadow: none; }
+
+/* Busy is not merely disabled: while a submit is in flight the button
+   holds a dim light, so "working" and "unavailable" read differently. */
+.btn[aria-busy="true"]:disabled {
+  border-color: var(--xl-light-dim);
+  color: var(--xl-light);
+}
+
+/* Stable-width label swap: both labels occupy the same grid cell, so
+   switching to the busy label never resizes the button or shifts its
+   neighbours mid-interaction. */
+.btn--stable { display: inline-grid; }
+.btn--stable > .btn-swap {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+}
+.btn--stable > .btn-swap[aria-hidden="true"] { visibility: hidden; }
+
 /* ------------------------------------------------------------
    6 · FORMS — underline fields, no boxes
    ------------------------------------------------------------ */

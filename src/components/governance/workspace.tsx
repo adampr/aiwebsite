@@ -22,13 +22,18 @@ import {
   parseFeedRef,
   StatusBadge,
   STATUS_META,
+  toggleChipInAnswer,
   type FeedRef,
   type TurnResponse,
 } from "./shared";
 import { ResearchScreen, researchStepLabel } from "./research-screen";
 import { DocPane, secDomId, type ChangedRef } from "./doc-pane";
 import { StyleSampleControl } from "./style-sample-control";
-import { QuestionPane, type WorkspaceNotice } from "./question-pane";
+import {
+  QuestionPane,
+  type WorkingKind,
+  type WorkspaceNotice,
+} from "./question-pane";
 import { DownloadMenu } from "./download-menu";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
@@ -82,6 +87,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [pollFails, setPollFails] = useState(0);
   const [brainDown, setBrainDown] = useState(false);
   const [working, setWorking] = useState(false);
+  const [workingKind, setWorkingKind] = useState<WorkingKind>("send");
   const [workingLong, setWorkingLong] = useState(false);
   const [announce, setAnnounce] = useState("");
   const [notice, setNotice] = useState<WorkspaceNotice | null>(null);
@@ -163,10 +169,12 @@ export function Workspace({ projectId }: { projectId: string }) {
     [projectId]
   );
 
-  /** S4: every keystroke persists to sessionStorage under the question id. */
+  /** S4: every keystroke persists to sessionStorage under the question id.
+   *  Any change also retires a stale notice (limit warning, send error). */
   const setAnswerText = useCallback(
     (text: string) => {
       setAnswerTextState(text);
+      setNotice(null);
       const v = viewRef.current;
       const qid = v?.status === "review" ? "revise" : v?.nextQuestion?.id;
       if (qid) {
@@ -184,6 +192,25 @@ export function Workspace({ projectId }: { projectId: string }) {
     setNotice(n);
     setAnnounce(n.text);
   }, []);
+
+  /** Suggestion chips toggle as "; "-joined segments of the answer; the
+   *  textarea stays the only source of truth (string surgery lives in
+   *  shared.tsx toggleChipInAnswer). */
+  const toggleSuggestion = useCallback(
+    (s: string) => {
+      const r = toggleChipInAnswer(answerText, s);
+      if (!r) return;
+      if ("overLimit" in r) {
+        setNoticeAnnounced({
+          kind: "info",
+          text: "That is the 2000 character limit. Trim your answer to add more.",
+        });
+        return;
+      }
+      setAnswerText(r.next);
+    },
+    [answerText, setAnswerText, setNoticeAnnounced]
+  );
 
   const performJump = useCallback(() => {
     const p = pendingJumpRef.current;
@@ -629,11 +656,29 @@ export function Workspace({ projectId }: { projectId: string }) {
 
     const token = Date.now() + Math.random();
     inFlightRef.current = { preSendRev: v.rev, token, questionId };
+    const kind: WorkingKind = revise
+      ? "revise"
+      : opts.skipped
+        ? "skip"
+        : "send";
     setWorking(true);
+    setWorkingKind(kind);
     setWorkingLong(false);
     setNotice(null);
     setSkipPending(false);
-    const longTimer = window.setTimeout(() => setWorkingLong(true), 20_000);
+    // The click's instant receipt: the button just disabled under the
+    // user's focus, so the live region confirms the send took.
+    setAnnounce(
+      kind === "skip"
+        ? "Question skipped. Tron is drafting a default."
+        : kind === "revise"
+          ? "Revision sent."
+          : "Answer sent."
+    );
+    const longTimer = window.setTimeout(() => {
+      setWorkingLong(true);
+      setAnnounce("Still working on the draft.");
+    }, 20_000);
 
     const r = await api<TurnResponse>(
       `/api/governance/projects/${encodeURIComponent(projectId)}/answer`,
@@ -692,6 +737,9 @@ export function Workspace({ projectId }: { projectId: string }) {
     if (r.code === "brain_unavailable") {
       // S3: keep the typed answer; polling re-enables Send.
       setBrainDown(true);
+      setAnnounce(
+        "Tron's drafting engine is offline right now. Your answer is kept here; Send re-enables when he is back."
+      );
       return;
     }
     if (r.code === "invalid_turn") {
@@ -952,7 +1000,9 @@ export function Workspace({ projectId }: { projectId: string }) {
                 view={view}
                 answerText={answerText}
                 onAnswerChange={setAnswerText}
+                onToggleSuggestion={toggleSuggestion}
                 working={working}
+                workingKind={workingKind}
                 workingLong={workingLong}
                 brainDown={brainDown}
                 featureDisabled={view.featureDisabled}

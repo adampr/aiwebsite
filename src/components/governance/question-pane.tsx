@@ -7,7 +7,7 @@
 
 import type { ReactNode, RefObject } from "react";
 import type { ProjectView } from "@/lib/governance/types";
-import { firstFeedTarget, fmtDate } from "./shared";
+import { chipCanon, chipSegments, firstFeedTarget, fmtDate } from "./shared";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 const dim = { color: "var(--xl-text-dim)" } as const;
@@ -15,6 +15,33 @@ const dim = { color: "var(--xl-text-dim)" } as const;
 export interface WorkspaceNotice {
   kind: "info" | "error";
   text: string;
+}
+
+/** Which action is in flight; picks the busy copy for the status row. */
+export type WorkingKind = "send" | "skip" | "revise";
+
+/** Stable-width busy button: both labels are stacked in the same grid
+ *  cell so the swap never shifts neighbouring controls. */
+function BusyLabel({
+  busy,
+  idle,
+  busyText,
+}: {
+  busy: boolean;
+  idle: string;
+  busyText: string;
+}) {
+  return (
+    <>
+      <span className="btn-swap" aria-hidden={busy ? true : undefined}>
+        {idle}
+      </span>
+      <span className="btn-swap" aria-hidden={busy ? undefined : true}>
+        {busyText}
+        <span className="dot" aria-hidden="true" />
+      </span>
+    </>
+  );
 }
 
 const REVIEW_DEFAULT_COPY =
@@ -45,18 +72,29 @@ function TranscriptList({ view }: { view: ProjectView }) {
   );
 }
 
-function WorkingRow({ long }: { long: boolean }) {
+function WorkingRow({ long, kind }: { long: boolean; kind: WorkingKind }) {
+  const base =
+    kind === "skip"
+      ? "Skipped. Drafting a sensible default."
+      : kind === "revise"
+        ? "On it. Revising the draft."
+        : "Got it. Folding your answer into the draft.";
+  const more = !long
+    ? " This can take a little while."
+    : kind === "skip"
+      ? " Still working."
+      : " Still working. Longer answers take longer.";
   return (
-    <div className="mt-4 flex items-center gap-3 text-sm" style={dim}>
-      <span
-        className="dot shrink-0"
-        style={{ color: "var(--xl-light)" }}
-        aria-hidden="true"
-      />
-      <span>
-        Folding your answer into the draft...
-        {long ? " Still working. Longer answers take longer." : ""}
-      </span>
+    <div className="mt-4">
+      <div className="working-rule" aria-hidden="true" />
+      <div className="mt-3 flex items-center gap-3 text-sm" style={dim}>
+        <span
+          className="dot shrink-0"
+          style={{ color: "var(--xl-light)" }}
+          aria-hidden="true"
+        />
+        <span>{base + more}</span>
+      </div>
     </div>
   );
 }
@@ -88,7 +126,9 @@ export function QuestionPane({
   view,
   answerText,
   onAnswerChange,
+  onToggleSuggestion,
   working,
+  workingKind,
   workingLong,
   brainDown,
   featureDisabled,
@@ -109,7 +149,9 @@ export function QuestionPane({
   view: ProjectView;
   answerText: string;
   onAnswerChange: (text: string) => void;
+  onToggleSuggestion: (suggestion: string) => void;
   working: boolean;
+  workingKind: WorkingKind;
   workingLong: boolean;
   brainDown: boolean;
   featureDisabled: boolean;
@@ -131,6 +173,9 @@ export function QuestionPane({
   const n = view.progress.answered + 1;
   const inputLocked = working || featureDisabled;
   const sendLocked = inputLocked || brainDown;
+  const segments = chipSegments(answerText);
+  const sendBusy = working && workingKind === "send";
+  const reviseBusy = working && workingKind === "revise";
   // The draft section this question is about; the jump link is the way to
   // reach the marked text from the Questions tab on mobile.
   const feedTarget = q ? firstFeedTarget(q.feeds, view.documents) : null;
@@ -170,19 +215,25 @@ export function QuestionPane({
             </p>
           )}
           {q.suggestions.length > 0 && (
-            <div className="mt-4 flex flex-wrap gap-2">
-              {q.suggestions.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className="gov-chip"
-                  disabled={inputLocked}
-                  onClick={() => onAnswerChange(s)}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
+            <>
+              <p className="mt-4 max-w-none text-xs" style={faint}>
+                Tap to add or remove. Combine them or edit below.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {q.suggestions.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    className="gov-chip"
+                    aria-pressed={segments.includes(chipCanon(s))}
+                    disabled={inputLocked}
+                    onClick={() => onToggleSuggestion(s)}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
 
           <form
@@ -205,10 +256,11 @@ export function QuestionPane({
             <div className="mt-4 flex flex-wrap items-center gap-6">
               <button
                 type="submit"
-                className="btn btn--primary"
+                className="btn btn--primary btn--stable"
+                aria-busy={sendBusy || undefined}
                 disabled={sendLocked || !answerText.trim()}
               >
-                Send answer
+                <BusyLabel busy={sendBusy} idle="Send answer" busyText="Sending" />
               </button>
               <button
                 type="button"
@@ -243,7 +295,7 @@ export function QuestionPane({
                 </div>
               </div>
             )}
-            {working && <WorkingRow long={workingLong} />}
+            {working && <WorkingRow long={workingLong} kind={workingKind} />}
             {brainDown && !working && <BrainDownNote />}
             <NoticeLine notice={notice} />
           </form>
@@ -303,12 +355,17 @@ export function QuestionPane({
             />
             <button
               type="submit"
-              className="btn mt-4"
+              className="btn btn--stable mt-4"
+              aria-busy={reviseBusy || undefined}
               disabled={sendLocked || !answerText.trim()}
             >
-              Revise the draft
+              <BusyLabel
+                busy={reviseBusy}
+                idle="Revise the draft"
+                busyText="Revising"
+              />
             </button>
-            {working && <WorkingRow long={workingLong} />}
+            {working && <WorkingRow long={workingLong} kind={workingKind} />}
             {brainDown && !working && <BrainDownNote />}
             <NoticeLine notice={notice} />
           </form>
@@ -316,11 +373,16 @@ export function QuestionPane({
           <hr className="rule" style={{ margin: "var(--sp-6) 0" }} />
           <button
             type="button"
-            className="btn btn--sand"
+            className="btn btn--sand btn--stable"
+            aria-busy={confirmBusy || undefined}
             disabled={working || confirmBusy || featureDisabled}
             onClick={onConfirm}
           >
-            {confirmBusy ? "Confirming..." : "Confirm final draft"}
+            <BusyLabel
+              busy={confirmBusy}
+              idle="Confirm final draft"
+              busyText="Confirming"
+            />
           </button>
           <p className="mt-3 max-w-none text-xs" style={faint}>
             Confirming locks the draft and marks the project final. You can
