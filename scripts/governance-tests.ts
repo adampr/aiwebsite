@@ -22,6 +22,11 @@ import {
   parseMarkdown,
   sanitizeMarkdown,
 } from "../src/lib/governance/markdown";
+import {
+  normalizeSectionBlocks,
+  sectionTitleText,
+  stripLeadingNumber,
+} from "../src/lib/governance/numbering";
 import { isBlockedAddress, screenInjection } from "../src/lib/governance/research";
 import {
   applyOps,
@@ -115,6 +120,44 @@ function check(name: string, cond: boolean): void {
   check(
     "confirm markers found",
     findConfirmMarkers("x [TO CONFIRM: data classes] y").length === 1
+  );
+}
+
+/* 4b. Host-owned numbering: manual numbers stripped, host numbers applied,
+   heading depth rebased. Both renderers consume this pass, so these checks
+   cover the doc pane and the .docx output at once. */
+{
+  check("strip: '3. Title'", stripLeadingNumber("3. Data handling") === "Data handling");
+  check("strip: '3.1 Title'", stripLeadingNumber("3.1 Scope of use") === "Scope of use");
+  check("strip: '3) Title'", stripLeadingNumber("3) Scope") === "Scope");
+  check("strip: quantity kept", stripLeadingNumber("30 days notice") === "30 days notice");
+  check("strip: year kept", stripLeadingNumber("2026 Budget") === "2026 Budget");
+  check("strip: bare number kept", stripLeadingNumber("3.1") === "3.1");
+  check(
+    "strip: quoted opener",
+    stripLeadingNumber('3.1 "Safe harbor" terms') === '"Safe harbor" terms'
+  );
+  check(
+    "strip: bracket opener",
+    stripLeadingNumber("3.1 [TO CONFIRM: owner]") === "[TO CONFIRM: owner]"
+  );
+  check("section title numbered", sectionTitleText(4, "7.2 Roles") === "4. Roles");
+  const md = "## 4.1 First\ntext\n### Sub one\n### 9.9 Sub two\n## Second";
+  const heads = normalizeSectionBlocks(parseMarkdown(md), 3)
+    .filter((b) => b.t === "heading")
+    .map((b) => `${b.level}:${b.inline.map((x) => x.text).join("")}`);
+  check(
+    "normalize: renumbered + depth rebased",
+    JSON.stringify(heads) ===
+      JSON.stringify(["1:3.1 First", "2:3.1.1 Sub one", "2:3.1.2 Sub two", "1:3.2 Second"])
+  );
+  // Whole-node numbers ("3.1 **Scope**" parses as text + bold) still strip.
+  const bold = normalizeSectionBlocks(parseMarkdown("## 3.1 **Scope**"), 2)
+    .filter((b) => b.t === "heading")
+    .map((b) => b.inline.map((x) => x.text).join(""));
+  check(
+    "normalize: number-only first node before markup stripped",
+    JSON.stringify(bold) === JSON.stringify(["2.1 Scope"])
   );
 }
 

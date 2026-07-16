@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { KIND_LABELS } from "@/lib/governance/config";
+import { sectionTitleText } from "@/lib/governance/numbering";
 import type {
   GovernanceDoc,
   ProjectStatus,
@@ -317,8 +318,15 @@ export function Workspace({ projectId }: { projectId: string }) {
       for (const [dslug, secs] of Object.entries(changed)) {
         const doc = docs.find((d) => d.slug === dslug);
         for (const sid of secs) {
-          const s = doc?.sections.find((x) => x.id === sid);
-          list.push({ doc: dslug, section: sid, title: s?.title ?? sid });
+          // Titles must match the pane's host-numbered rendering ("4. Roles",
+          // never a stored "7.2 Roles"), in jump links and announcements alike.
+          const si = doc?.sections.findIndex((x) => x.id === sid) ?? -1;
+          const s = si >= 0 ? doc!.sections[si] : undefined;
+          list.push({
+            doc: dslug,
+            section: sid,
+            title: s ? sectionTitleText(si + 1, s.title) : sid,
+          });
         }
       }
       const asking = newStatus === "drafting" ? askRef : null;

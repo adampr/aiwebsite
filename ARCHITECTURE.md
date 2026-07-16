@@ -15,8 +15,10 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-16 (workspace answer form: multi-select
-suggestion chips + in-flight submit feedback, see §5.12; same day: AI
+Last verified against code: 2026-07-16 (host-owned document numbering +
+per-list docx numbering instances, §5.12 rendering contract; same day:
+workspace answer form: multi-select
+suggestion chips + in-flight submit feedback, see §5.12; AI
 Governance builder shipped —
 new §5.12 /governance section, governance tables in §6, standards pipeline
 in §8.1, `aiwebsite-governance` timer via the host post-install hook in
@@ -129,7 +131,8 @@ aiwebsite/
 │   │                           governance/ — the §5.12 workspace UI)
 │   ├── lib/db/                 composed schema (module factories + host tables) + db wrapper
 │   ├── lib/governance/         AI Governance builder (§5.12): blueprints, brain envelope,
-│   │                           prompts, turn validation, research plumbing, docx/zip
+│   │                           prompts, turn validation, research plumbing, docx/zip,
+│   │                           shared render-time numbering (numbering.ts)
 │   └── types/                  custom-element JSX typings
 ├── packages/brain/             git submodule ← https://github.com/adampr/xldev.git (§7)
 ├── packages/aicompany/         git submodule ← https://github.com/adampr/aicompany.git —
@@ -847,7 +850,7 @@ bodies `{error:{code,message}}`; CSRF via the middleware prefix):
 | `POST .../research` | claim + spawn the detached research job; `{mode:"partial"}` = "start the questions anyway" after a failure (gap-flagged brief, straight to drafting). Claim is ONE conditional UPDATE enforcing owner, claimable status (created/queued/failed/stale-heartbeat >5 min), 3-runs/day, and the ≤2 global concurrency cap atomically (subquery count — no TOCTOU) |
 | `POST .../answer` | one synchronous Q&A turn (also review-phase revisions via `questionId:"revise"`): brain `/health` preflight → DB-backed daily budget spend → JSON-mode turn (90 s) → parse ladder (fence strip → lenient parse → ≤1 repair call with a NEW promptId, only if ≥40 s remain) → server-validated ops → ONE conditional write keyed on `rev`. Budgeted under nginx's 120 s. 6/min/user, 40 answers/project (the 40th force-flips to review), answers ≤2000 chars, `questionId` mismatch → 409 `stale_question` (dual-tab guard) |
 | `POST .../confirm` | review → done (only from review) |
-| `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.pdf`/`.md`/`.txt` ≤2 MB): only extracted plain text is stored (never the file; docx via a linear-time jszip extractor: streaming decompression-bomb cap, headings/lists/table rows preserved, prompt-fence tokens stripped; pdf via pdfjs-dist getTextContent: no rendering, 40-page cap, 10 s deadline that destroys the parse task, dedicated scanned-PDF copy; pdfjs-dist MUST stay in next.config `serverExternalPackages` or the bundled build throws on every PDF), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
+| `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.pdf`/`.md`/`.txt` ≤2 MB): only extracted plain text is stored (never the file; docx via a linear-time jszip extractor: streaming decompression-bomb cap, headings/lists/table rows preserved, prompt-fence tokens stripped; pdf via pdfjs-dist getTextContent: no rendering, 40-page cap, 10 s deadline that destroys the parse task, dedicated scanned-PDF copy; pdfjs-dist MUST stay in next.config `serverExternalPackages` or the bundled build throws on every PDF), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions EXCLUDING numbering, which is host-owned (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
 | `GET .../download` | `?format=docx&doc=<slug>` or `?format=zip`; generated on demand from stored markdown, streamed, never stored, ZERO AI calls (works through every outage/cap and the kill switch); DRAFT watermark + `-draft` filename until done; touches `last_activity_at` (disclosed) |
 
 Every question (`NextQuestion`) carries `feeds: string[]` — the `"<doc-slug>#<section-id>"`
@@ -905,6 +908,32 @@ host-gated**: `status:"review"` only sticks when every required bank id is cover
 otherwise the host overrides to asking and picks the next unanswered bank item itself.
 Skips draft a default marked `[TO CONFIRM: …]`; the review panel lists open markers as
 jump links. Progress ("question N of about M") is host-computed from bank coverage.
+
+**Rendering + host-owned numbering** (`numbering.ts`, client-safe, bounded-quantifier
+regexes only). Drafting edits one section at a time with the rest of the draft elided,
+so the model can never keep manual section numbers consistent — the host numbers
+instead. Both renderers (doc pane and docx) parse section markdown through the shared
+`markdown.ts` parser, then through the same `normalizeSectionBlocks` render-time pass:
+manual number prefixes are stripped from headings ("3.", "3)", "3.1", including a
+number-only first inline node before markup; conservative — a `.`/`)` separator plus
+a following letter/quote/bracket is required, so "30 days notice" / "2026 Budget"
+survive), heading depth is rebased to
+the section's shallowest level, and deterministic decimal numbering is applied:
+sections "1., 2., …" in stored order (`sectionTitleText`), inner headings "n.m" and
+"n.m.k", deeper levels unnumbered. Because normalization is render-time only, stored
+rows with drifted manual numbers render clean with no regeneration. Prompt side, the
+RULES ban starting any title/heading with an outline marker (numbers, letters
+"A."/"(a)", romans "IV."), require cross-references by section NAME (host renumbering
+breaks numeric ones), and define the mapping for user-cited numbers (section 3 = third
+section in CURRENT DRAFT order); the FORMAT SAMPLE mirroring excludes numbering, and
+the upload helper copy says numbering is applied automatically. Web hierarchy: h3
+section titles, `doc-h4`…`doc-h7` classes for the four inner levels (h7 is a visual
+class on an h6 tag; no heading renders dimmer than body text). Docx: section titles
+Heading1, inner levels Heading2…5, and every ordered list mints its OWN concrete
+numbering instance (`gov-num-<i>`) so each list restarts at 1 — a single shared
+instance makes Word continue one counter across the whole document, which shipped as
+the "numbers randomly throughout" bug. Regression-checked by `npm run
+test:governance` block 4b.
 
 **Research pipeline** (`scripts/governance-research.ts`, spawned detached by
 `kick.ts` after the DB claim, `NODE_OPTIONS=--max-old-space-size=256`, 15-min wall

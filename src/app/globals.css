@@ -110,6 +110,29 @@
   text-transform: none;
   color: var(--xl-text);
 }
+/* Inner-heading scale below the h3 section title (text-lg, weight 500):
+   each level steps down in size and presence so hierarchy is visible at
+   a glance instead of every level rendering at text-base. All levels keep
+   full text color: dimming a heading below its own body text inverts the
+   hierarchy, so size, weight, and italics carry the demotion instead. */
+.doc-h4 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+.doc-h5 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.doc-h6 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-style: italic;
+}
+.doc-h7 {
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-style: italic;
+}
 
 /* Sticky workspace header; sits under the md:sticky site header. */
 .workbar {

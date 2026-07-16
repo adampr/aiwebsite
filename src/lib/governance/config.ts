@@ -86,7 +86,7 @@ export const STYLE_SAMPLE_TYPES_COPY = ".docx, .pdf, .md, or .txt";
 
 /** Shared helper line for the format-sample upload (create panel + control). */
 export const STYLE_SAMPLE_HELPER =
-  `Optional. Upload a policy your organization has the right to share (${STYLE_SAMPLE_TYPES_COPY}). The draft follows its heading, list, and numbering style; Tron is instructed not to reuse the policy's content. Only the extracted text is kept: it is sent to our AI providers with each drafting turn and is deleted with the project.`;
+  `Optional. Upload a policy your organization has the right to share (${STYLE_SAMPLE_TYPES_COPY}). The draft follows its heading and list style, and section numbering is applied automatically; Tron is instructed not to reuse the policy's content. Only the extracted text is kept: it is sent to our AI providers with each drafting turn and is deleted with the project.`;
 
 /** Client-side precheck for a sample file; returns the error copy or null. */
 export function styleSampleFileError(name: string, size: number): string | null {

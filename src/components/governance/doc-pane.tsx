@@ -13,6 +13,10 @@ import {
   type Block,
   type Inline,
 } from "@/lib/governance/markdown";
+import {
+  normalizeSectionBlocks,
+  sectionTitleText,
+} from "@/lib/governance/numbering";
 import { fmtDate } from "./shared";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
@@ -49,10 +53,20 @@ function InlineSpans({ nodes }: { nodes: Inline[] }) {
 
 function BlockView({ block }: { block: Block }) {
   if (block.t === "heading") {
-    // Section titles are h3; markdown headings demote below them.
+    // Section titles are h3; normalized inner headings demote below them
+    // with a visible scale (doc-h4 > doc-h5 > doc-h6 > doc-h7), one class
+    // per level so web keeps the same ordering Word does (Heading2..5).
     const Tag = `h${Math.min(block.level + 3, 6)}` as "h4" | "h5" | "h6";
+    const cls =
+      block.level === 1
+        ? "doc-h4"
+        : block.level === 2
+          ? "doc-h5"
+          : block.level === 3
+            ? "doc-h6"
+            : "doc-h7";
     return (
-      <Tag className="doc-h mt-4 text-base">
+      <Tag className={`doc-h ${cls} mt-5`}>
         <InlineSpans nodes={block.inline} />
       </Tag>
     );
@@ -105,8 +119,11 @@ function BlockView({ block }: { block: Block }) {
   );
 }
 
-function SectionBody({ markdown }: { markdown: string }) {
-  const blocks = useMemo(() => parseMarkdown(markdown), [markdown]);
+function SectionBody({ markdown, num }: { markdown: string; num: number }) {
+  const blocks = useMemo(
+    () => normalizeSectionBlocks(parseMarkdown(markdown), num),
+    [markdown, num]
+  );
   return (
     <>
       {blocks.map((b, i) => (
@@ -220,7 +237,7 @@ export function DocPane({
               the rest of the set does not apply.
             </p>
           )}
-          {doc.sections.map((s) => {
+          {doc.sections.map((s, si) => {
             const changed = (highlights[doc.slug] ?? []).includes(s.id);
             const asked = (asking[doc.slug] ?? []).includes(s.id);
             const cls =
@@ -237,7 +254,7 @@ export function DocPane({
                 className={cls}
               >
                 <h3 className="doc-h text-lg" tabIndex={-1} data-sec-heading>
-                  {s.title}
+                  {sectionTitleText(si + 1, s.title)}
                   {changed && <span className="doc-chip">Updated</span>}
                   {asked && (
                     <span className="doc-chip doc-chip--ask">
@@ -245,7 +262,7 @@ export function DocPane({
                     </span>
                   )}
                 </h3>
-                <SectionBody markdown={s.markdown} />
+                <SectionBody markdown={s.markdown} num={si + 1} />
               </section>
             );
           })}

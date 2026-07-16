@@ -103,16 +103,18 @@ export function StyleSampleControl({
           if (f) void upload(f);
         }}
       />
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <span style={dim}>
-          {name ? (
-            <>
-              Format sample: <span className="mono">{name}</span>
-            </>
-          ) : (
-            "No format sample attached."
-          )}
-        </span>
+      {/* Status line and actions are separate rows: a long filename wraps on
+          its own without the buttons interleaving mid-wrap. */}
+      <p style={dim}>
+        {name ? (
+          <>
+            Format sample: <span className="mono break-words">{name}</span>
+          </>
+        ) : (
+          "No format sample attached."
+        )}
+      </p>
+      <div className="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
         {!removeOnly && (
           <button
             type="button"

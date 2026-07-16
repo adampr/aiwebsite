@@ -22,6 +22,7 @@ import JSZip from "jszip";
 import type { GovernanceDoc, GovernanceKind } from "./types";
 import type { Block, Inline } from "./markdown";
 import { parseMarkdown } from "./markdown";
+import { normalizeSectionBlocks, sectionTitleText } from "./numbering";
 import {
   DOCUMENT_DISCLAIMER,
   DOC_FOOTER,
@@ -51,19 +52,21 @@ function inlineRuns(inline: Inline[]): (TextRun | ExternalHyperlink)[] {
   });
 }
 
-const HEADING = {
-  1: HeadingLevel.HEADING_1,
-  2: HeadingLevel.HEADING_2,
-  3: HeadingLevel.HEADING_3,
-  4: HeadingLevel.HEADING_4,
+// Section titles are HEADING_1; normalized inner heading levels (1-4 from
+// normalizeSectionBlocks) demote below them, mirroring the doc pane.
+const INNER_HEADING = {
+  1: HeadingLevel.HEADING_2,
+  2: HeadingLevel.HEADING_3,
+  3: HeadingLevel.HEADING_4,
+  4: HeadingLevel.HEADING_5,
 } as const;
 
-function blockToDocx(block: Block): (Paragraph | Table)[] {
+function blockToDocx(block: Block, orderedRef: () => string): (Paragraph | Table)[] {
   switch (block.t) {
     case "heading":
       return [
         new Paragraph({
-          heading: HEADING[block.level],
+          heading: INNER_HEADING[block.level],
           children: inlineRuns(block.inline),
         }),
       ];
@@ -71,17 +74,22 @@ function blockToDocx(block: Block): (Paragraph | Table)[] {
       return [
         new Paragraph({ children: inlineRuns(block.inline), spacing: { after: 160 } }),
       ];
-    case "list":
+    case "list": {
+      // Each ordered list gets its OWN concrete numbering instance: the docx
+      // package creates one counter per reference, so a shared reference
+      // makes every later list continue counting (4, 5, ...) in Word.
+      const reference = block.ordered ? orderedRef() : null;
       return block.items.map(
         (item) =>
           new Paragraph({
             children: inlineRuns(item),
-            ...(block.ordered
-              ? { numbering: { reference: "gov-num", level: 0 } }
+            ...(reference
+              ? { numbering: { reference, level: 0 } }
               : { bullet: { level: 0 } }),
             spacing: { after: 60 },
           })
       );
+    }
     case "table": {
       const mkRow = (cells: Inline[][], header: boolean) =>
         new TableRow({
@@ -143,6 +151,12 @@ export async function renderDocx(
   opts: { draft: boolean }
 ): Promise<Buffer> {
   const children: (Paragraph | Table)[] = [];
+  const numRefs: string[] = [];
+  const orderedRef = () => {
+    const r = `gov-num-${numRefs.length}`;
+    numRefs.push(r);
+    return r;
+  };
 
   if (opts.draft)
     children.push(
@@ -184,17 +198,20 @@ export async function renderDocx(
       })
     );
 
-  for (const section of doc.sections) {
+  doc.sections.forEach((section, si) => {
     children.push(
       new Paragraph({
         heading: HeadingLevel.HEADING_1,
-        children: [new TextRun({ text: section.title })],
+        children: [new TextRun({ text: sectionTitleText(si + 1, section.title) })],
         spacing: { before: 280, after: 120 },
       })
     );
-    for (const block of parseMarkdown(section.markdown))
-      children.push(...blockToDocx(block));
-  }
+    for (const block of normalizeSectionBlocks(
+      parseMarkdown(section.markdown),
+      si + 1
+    ))
+      children.push(...blockToDocx(block, orderedRef));
+  });
 
   children.push(
     new Paragraph({
@@ -211,19 +228,19 @@ export async function renderDocx(
 
   const document = new Document({
     numbering: {
-      config: [
-        {
-          reference: "gov-num",
-          levels: [
-            {
-              level: 0,
-              format: "decimal",
-              text: "%1.",
-              alignment: AlignmentType.START,
-            },
-          ],
-        },
-      ],
+      // One config per ordered list encountered above, so every list
+      // restarts at 1 instead of sharing a document-wide counter.
+      config: numRefs.map((reference) => ({
+        reference,
+        levels: [
+          {
+            level: 0,
+            format: "decimal",
+            text: "%1.",
+            alignment: AlignmentType.START,
+          },
+        ],
+      })),
     },
     sections: [{ children }],
   });
