@@ -160,7 +160,10 @@ aiwebsite/
 ├── eslint.config.mjs           ESLint 9 flat config: next/core-web-vitals + next/typescript;
 │                               ignores packages/**, drizzle/**, data/** (submodules lint upstream)
 ├── next.config.ts              trailingSlash:false; experimental.inlineCss:true;
-│                               transpilePackages:["@aicompany/core"]
+│                               transpilePackages:["@aicompany/core"];
+│                               serverExternalPackages:["pdfjs-dist"] (pdf.js loads its
+│                               worker via an import relative to pdf.mjs — bundling it
+│                               into .next/server breaks every PDF extraction)
 ├── postcss.config.mjs          single plugin: @tailwindcss/postcss
 └── tsconfig.json               strict, bundler resolution, alias @/* → ./src/*, excludes packages/brain
 ```
@@ -839,7 +842,7 @@ bodies `{error:{code,message}}`; CSRF via the middleware prefix):
 | `POST .../research` | claim + spawn the detached research job; `{mode:"partial"}` = "start the questions anyway" after a failure (gap-flagged brief, straight to drafting). Claim is ONE conditional UPDATE enforcing owner, claimable status (created/queued/failed/stale-heartbeat >5 min), 3-runs/day, and the ≤2 global concurrency cap atomically (subquery count — no TOCTOU) |
 | `POST .../answer` | one synchronous Q&A turn (also review-phase revisions via `questionId:"revise"`): brain `/health` preflight → DB-backed daily budget spend → JSON-mode turn (90 s) → parse ladder (fence strip → lenient parse → ≤1 repair call with a NEW promptId, only if ≥40 s remain) → server-validated ops → ONE conditional write keyed on `rev`. Budgeted under nginx's 120 s. 6/min/user, 40 answers/project (the 40th force-flips to review), answers ≤2000 chars, `questionId` mismatch → 409 `stale_question` (dual-tab guard) |
 | `POST .../confirm` | review → done (only from review) |
-| `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.pdf`/`.md`/`.txt` ≤2 MB): only extracted plain text is stored (never the file; docx via a linear-time jszip extractor: streaming decompression-bomb cap, headings/lists/table rows preserved, prompt-fence tokens stripped; pdf via pdfjs-dist getTextContent: no rendering, 40-page cap, 10 s deadline that destroys the parse task, dedicated scanned-PDF copy), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
+| `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.pdf`/`.md`/`.txt` ≤2 MB): only extracted plain text is stored (never the file; docx via a linear-time jszip extractor: streaming decompression-bomb cap, headings/lists/table rows preserved, prompt-fence tokens stripped; pdf via pdfjs-dist getTextContent: no rendering, 40-page cap, 10 s deadline that destroys the parse task, dedicated scanned-PDF copy; pdfjs-dist MUST stay in next.config `serverExternalPackages` or the bundled build throws on every PDF), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
 | `GET .../download` | `?format=docx&doc=<slug>` or `?format=zip`; generated on demand from stored markdown, streamed, never stored, ZERO AI calls (works through every outage/cap and the kill switch); DRAFT watermark + `-draft` filename until done; touches `last_activity_at` (disclosed) |
 
 Every question (`NextQuestion`) carries `feeds: string[]` — the `"<doc-slug>#<section-id>"`
