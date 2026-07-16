@@ -1228,6 +1228,7 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | | `BRAIN_PUBLIC_URL` | **exactly** `https://ai.xl.net/brain` (Twilio signature base) |
 | | `BRAIN_DB_BACKEND` / `BRAIN_POSTGRES_URL` / `BRAIN_DB_TABLE_PREFIX` | `postgres` / same DB as site / `brain_` |
 | | `BRAIN_AUDIO_MODE` | `xai_realtime` |
+| | `BRAIN_ROUTER` | router v2 staged-rollout flag (brain v1.97, Issue #695): `legacy` (default, behavior-identical) / `shadow` (log v2 selections, act on legacy) / `v2`; unset everywhere until the rollout begins |
 | LLMs | `OPENAI_API_KEY`, `OPENAI_MODEL` (gpt-5-mini), `BRAIN_FIRST_PASS_MODEL` (gpt-5.4-mini), `OPENAI_TTS_MODEL` (tts-1), `OPENAI_STT_MODEL` (whisper-1) | brain chat/voice |
 | | `XAI_API_KEY` | realtime voice (calls drop without it) |
 | | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `AA_API_KEY` | optional brain providers |
