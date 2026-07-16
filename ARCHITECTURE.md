@@ -15,18 +15,18 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-14 (brain submodule v1.96 @ 1b34555 —
+Last verified against code: 2026-07-16 (brain submodule v1.96 @ 1b34555 —
 re-pinned from the tag-only v1.95 lineage (b39f433, reachable only via the
 v1.95 tag; its JSON-mode content re-landed upstream as 61434b5) onto the
 canonical release line; picks up the Issue #689 BRAIN_DB_TABLE_PREFIX fix
 (five newly-prefixed tables reconciled on the VM via rename +
-compatibility views) and registry data refreshes. @aicompany/core v1.5.1
-@ 78f3d55 — master-line tag containing both the v1.4.3 editorial-integrity
-patch (fact-check exempts publisher self-disclosure/COI sentences,
-quotable claims written without quote marks, related cards exclude
-noindexed rows; already in the prior v1.4.3 pin) and v1.5.0's
-channels.voice.externallyHandled (unused on this host — pin-only, no
-config/template/env change per MIGRATIONS v1.5.0/v1.5.1).
+compatibility views) and registry data refreshes. @aicompany/core v1.5.2
+@ cfe2854 — strictly-better repair adoption on the blog generate path
+(module §19.5: a still-failing repair whose failing gate names are a
+proper subset of the original's is adopted with noindex forced; pin-only,
+behavior-only, no config/template/env change per MIGRATIONS v1.5.2;
+motivated by this host's 2026-07-15 noindexed run where a fact-clean
+repair was discarded over a rubric miss). Previous pin v1.5.1 @ 78f3d55.
 Next.js 16.2.9).
 
 ---
