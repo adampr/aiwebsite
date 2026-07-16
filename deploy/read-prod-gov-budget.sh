@@ -23,8 +23,15 @@ for p in json.load(sys.stdin):
     caps = {k: e[k] for k in e if k.startswith(\"GOVERNANCE_\")}
     print(p[\"name\"], \"uptime_since:\", e.get(\"pm_uptime\"), caps or \"(no GOVERNANCE_* vars)\")"
   echo "== caps in the ACTUAL process environment (/proc, ground truth) =="
-  site_pid=$(pm2 jlist 2>/dev/null | python3 -c "import json,sys; print([p[\"pid\"] for p in json.load(sys.stdin) if p[\"name\"]==\"aiwebsite\"][0])")
-  tr "\0" "\n" < "/proc/$site_pid/environ" | grep -E "^GOVERNANCE_" || echo "no GOVERNANCE_* in live env"
+  site_pid=$(pm2 jlist 2>/dev/null | python3 -c "
+import json,sys
+pids = [p.get(\"pid\") for p in json.load(sys.stdin) if p.get(\"name\") == \"aiwebsite\"]
+print(pids[0] if pids and pids[0] else \"\")" || true)
+  if [ -n "$site_pid" ] && [ -r "/proc/$site_pid/environ" ]; then
+    tr "\0" "\n" < "/proc/$site_pid/environ" | grep -E "^GOVERNANCE_" || echo "no GOVERNANCE_* in live env"
+  else
+    echo "aiwebsite not running in pm2 (no live pid) — skipping /proc check"
+  fi
   DB="$(grep -E "^DATABASE_URL=" .env | head -1 | cut -d= -f2-)"
   echo "== governance_usage (last 3 days) =="
   psql "$DB" -tAc "SELECT day, tavily_calls, brain_calls, research_runs FROM governance_usage ORDER BY day DESC LIMIT 3"
