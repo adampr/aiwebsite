@@ -188,14 +188,26 @@ export function buildTurnUserMessage(opts: {
   ].join("\n\n");
 }
 
-/** Turn-zero personalization (runs detached in the research job). */
+/**
+ * Turn zero drafts a COMPLETE best-effort first version (owner rule, round
+ * 3): the user must open a filled-out draft that their answers then refine,
+ * never a page of template placeholders. Multi-doc kinds run one call per
+ * document group; `documents` is the group, `groupNote` names the scope.
+ */
 export function buildTurnZeroUserMessage(opts: {
   kind: GovernanceKind;
   documents: GovernanceDoc[];
+  groupNote?: string;
 }): string {
+  const slugs = opts.documents.map((d) => d.slug).join(", ");
   return [
-    `CURRENT DRAFT (fresh scaffold):\n${serializeDraft(opts.kind, opts.documents, null, null)}`,
-    `The user just started this project and has answered nothing yet. Using ONLY the research brief, fill any scaffold sections you can already support (mark uncertain statements [TO CONFIRM: ...]), keep total new markdown under ${CAPS.turnZeroOpMarkdownMaxChars} characters, set "status":"asking", and set "question" to null: the host asks the first question itself. Set answered_bank_ids to [].`,
+    `CURRENT DRAFT (fresh scaffold${opts.groupNote ? `; ${opts.groupNote}` : ""}):\n${serializeDraft(opts.kind, opts.documents, null, null)}`,
+    `The user just started this project and has answered nothing yet. Write the FIRST FULL DRAFT of these documents now: ${slugs}.
+- Draft EVERY section of every non-stub document listed above with complete, specific, best-effort text grounded in the RESEARCH BRIEF and the STANDARD REFERENCE. Never leave placeholder or template language ("this section will describe...", "to be completed"): write the section as if it were real, and mark every assumption or unknown specific inline as [TO CONFIRM: what to confirm].
+- Where the brief says nothing, draft the sensible small-business default for this standard and mark it [TO CONFIRM: ...].
+- Stub documents keep their one-paragraph determination style.
+- Keep total new markdown under ${CAPS.turnZeroOpMarkdownMaxChars} characters. That budget covers every section listed above: complete all of them.
+- Set "status":"asking" and "question" to null: the host asks the first question itself. Set answered_bank_ids to [].`,
   ].join("\n\n");
 }
 

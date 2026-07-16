@@ -67,6 +67,16 @@ export async function apiUpload<T>(
     return { ok: false, status: 0, code: "network", message: "Network error." };
   }
   if (res.status === 204) return { ok: true, status: 204, data: undefined as T };
+  // 413 arrives from nginx as HTML, never our JSON envelope: name the real
+  // problem instead of the generic fallback.
+  if (res.status === 413)
+    return {
+      ok: false,
+      status: 413,
+      code: "invalid_request",
+      message:
+        "That file is too large to upload. Keep the sample under 2 MB; a few representative pages are plenty.",
+    };
   let body: unknown = null;
   try {
     body = await res.json();

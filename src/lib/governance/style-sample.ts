@@ -12,14 +12,23 @@
 // wedged the event loop for minutes per 0.5 KB upload in review testing.
 
 import JSZip from "jszip";
-import { CAPS, STYLE_SAMPLE_EXTENSIONS } from "./config";
+import {
+  CAPS,
+  STYLE_SAMPLE_EXTENSIONS,
+  STYLE_SAMPLE_TYPES_COPY,
+} from "./config";
 
 export type ExtractResult =
   | { ok: true; text: string }
   | { ok: false; message: string };
 
-const UNREADABLE =
-  "No usable text was found in that file. Check that it is a valid .docx, .md, or .txt with at least a paragraph or two, and try again.";
+const UNREADABLE = `No usable text was found in that file. Check that it is a valid ${STYLE_SAMPLE_TYPES_COPY} with at least a paragraph or two, and try again.`;
+
+const PDF_NO_TEXT =
+  "That PDF has no selectable text (it may be a scan). Export a text-based copy, or save it as .docx, and try again.";
+
+const PDF_TIMEOUT =
+  "That PDF took too long to read. Export a shorter copy (a few representative pages are plenty), or save it as .docx, and try again.";
 
 const TOO_LARGE =
   "That .docx is too large to read. Export a shorter copy; a few representative pages are plenty.";
@@ -247,9 +256,81 @@ function inflateCapped(
 }
 
 /**
+ * PDF -> plain text via pdf.js getTextContent (no rendering, no canvas, no
+ * embedded-JS execution; isEvalSupported off). Hostile-input posture matches
+ * the docx path: page cap, char stop, and a hard wall-clock deadline that
+ * destroys the loading task (pdf.js parses in yielding async chunks, so
+ * destroy() genuinely cancels the work). Lines are joined per text item with
+ * y-position breaks so headings/paragraph structure stays visible to the
+ * format matcher.
+ */
+async function pdfToText(buf: Buffer): Promise<ExtractResult> {
+  const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  // pdfjs-dist 6.x: PostScript-function eval was removed upstream, so there
+  // is no isEvalSupported switch anymore; text extraction runs no PDF JS.
+  const task = getDocument({
+    data: new Uint8Array(buf),
+    disableFontFace: true,
+    useSystemFonts: false,
+    stopAtErrors: false,
+  });
+  const deadline = new Promise<"timeout">((resolve) =>
+    setTimeout(() => resolve("timeout"), CAPS.styleSamplePdfDeadlineMs)
+  );
+  try {
+    const extracted = await Promise.race([
+      (async () => {
+        const doc = await task.promise;
+        const pages = Math.min(doc.numPages, CAPS.styleSamplePdfMaxPages);
+        const out: string[] = [];
+        let total = 0;
+        for (let n = 1; n <= pages && total < EXTRACT_STOP_CHARS; n++) {
+          const page = await doc.getPage(n);
+          const content = await page.getTextContent();
+          let lastY: number | null = null;
+          const line: string[] = [];
+          const lines: string[] = [];
+          for (const item of content.items) {
+            if (!("str" in item)) continue;
+            const y = Array.isArray(item.transform) ? item.transform[5] : null;
+            if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) {
+              lines.push(line.join(""));
+              line.length = 0;
+            }
+            line.push(item.str);
+            if (item.hasEOL) {
+              lines.push(line.join(""));
+              line.length = 0;
+              lastY = null;
+            } else if (y !== null) lastY = y;
+          }
+          if (line.length) lines.push(line.join(""));
+          const pageText = lines.join("\n").trim();
+          out.push(pageText);
+          total += pageText.length;
+        }
+        return out.join("\n\n");
+      })(),
+      deadline,
+    ]);
+    if (extracted === "timeout") {
+      void task.destroy().catch(() => {});
+      return { ok: false, message: PDF_TIMEOUT };
+    }
+    void task.destroy().catch(() => {});
+    if (extracted.trim().length < 40) return { ok: false, message: PDF_NO_TEXT };
+    return { ok: true, text: extracted };
+  } catch {
+    void task.destroy().catch(() => {});
+    return { ok: false, message: UNREADABLE };
+  }
+}
+
+/**
  * Extract plain text from an uploaded sample policy. `.docx` is unzipped and
  * `word/document.xml` converted (headings, lists, and table rows kept
- * visible); `.md`/`.txt` are read as UTF-8. The result is normalized and
+ * visible); `.pdf` goes through pdf.js text extraction (deadline + page
+ * capped); `.md`/`.txt` are read as UTF-8. The result is normalized and
  * capped at CAPS.styleSampleMaxChars.
  */
 export async function extractStyleSampleText(
@@ -260,11 +341,15 @@ export async function extractStyleSampleText(
   if (!STYLE_SAMPLE_EXTENSIONS.some((ext) => lower.endsWith(ext)))
     return {
       ok: false,
-      message: "Upload a .docx, .md, or .txt file. PDFs are not supported yet.",
+      message: `Upload a ${STYLE_SAMPLE_TYPES_COPY} file.`,
     };
 
   let text: string;
-  if (lower.endsWith(".docx")) {
+  if (lower.endsWith(".pdf")) {
+    const pdf = await pdfToText(buf);
+    if (!pdf.ok) return pdf;
+    text = pdf.text;
+  } else if (lower.endsWith(".docx")) {
     try {
       const zip = await JSZip.loadAsync(buf);
       const entry = zip.file("word/document.xml");

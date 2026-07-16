@@ -62,7 +62,12 @@ import type {
   TavilyResult,
 } from "../src/lib/governance/types";
 
-const WALL_CLOCK_MS = 10 * 60_000;
+// 15 min: research phases take 3-6 min and the turn-zero group loop can add
+// up to 5 x 90 s brain calls; heartbeats keep the row claimed throughout
+// (the reaper keys on heartbeat staleness, not runtime).
+const WALL_CLOCK_MS = 15 * 60_000;
+// The group loop stops early to guarantee the handoff write always happens.
+const HANDOFF_RESERVE_MS = 2 * 60_000;
 const started = Date.now();
 const projectId = process.argv[2] ?? "";
 const id8 = projectId.slice(0, 8);
@@ -453,7 +458,6 @@ async function main(): Promise<void> {
   } catch {
     documents = [];
   }
-  let changedSections: Record<string, string[]> = {};
   // The sample policy is usually uploaded moments after create (the client
   // posts it right after the create response, while this job is starting);
   // re-read the row so turn zero already drafts in the user's format.
@@ -464,22 +468,78 @@ async function main(): Promise<void> {
         text: freshRow.styleSampleText,
       }
     : null;
-  const turnZero = (await brainJson(
-    `gov_${projectId}`,
-    buildSystemMessage({ kind, brief, forcedReviewSoon: false, styleSample }),
-    buildTurnZeroUserMessage({ kind, documents }),
-    90_000
-  )) as unknown;
-  if (turnZero) {
+  // Turn zero drafts a COMPLETE first version (owner rule, round 3): one
+  // call for the usage policy, one call per group of ~3 non-stub documents
+  // for the standards sets, so every section opens genuinely drafted (with
+  // [TO CONFIRM] markers) instead of as template placeholders. A failed
+  // group keeps its scaffold; the others still land.
+  const system = buildSystemMessage({
+    kind,
+    brief,
+    forcedReviewSoon: false,
+    styleSample,
+  });
+  const nonStub = documents.filter((d) => !d.stub);
+  const stubs = documents.filter((d) => d.stub);
+  const groups: GovernanceDoc[][] = [];
+  if (kind === "usage_policy") groups.push(documents);
+  else {
+    // Groups of 2: the 24k-char op budget then covers every section of the
+    // group fully, so the "complete every section" instruction never has to
+    // trade thoroughness for space.
+    for (let i = 0; i < nonStub.length; i += 2)
+      groups.push(nonStub.slice(i, i + 2));
+    if (stubs.length) groups.push(stubs);
+  }
+  let groupsApplied = 0;
+  for (const [gi, group] of groups.entries()) {
+    // Never let drafting run the job into the wall clock: the handoff write
+    // MUST happen. Groups that miss the window keep their scaffold and get
+    // drafted through normal Q&A turns instead.
+    if (Date.now() - started > WALL_CLOCK_MS - HANDOFF_RESERVE_MS) {
+      log(
+        "handoff",
+        `deadline near; skipping turn zero groups ${gi + 1}-${groups.length} (scaffold kept)`
+      );
+      break;
+    }
+    progress.pct = 90 + Math.min(8, Math.round(((gi + 1) / groups.length) * 8));
+    await hb(progress);
+    const turnZero = (await brainJson(
+      `gov_${projectId}`,
+      system,
+      buildTurnZeroUserMessage({
+        kind,
+        documents: group,
+        groupNote:
+          groups.length > 1
+            ? `group ${gi + 1} of ${groups.length}, draft only these documents`
+            : undefined,
+      }),
+      90_000
+    )) as unknown;
+    if (!turnZero) {
+      log("handoff", `turn zero group ${gi + 1}/${groups.length} unavailable; scaffold kept`);
+      continue;
+    }
     const validation = validateTurn(turnZero, kind, { turnZero: true });
-    if (validation.ok && validation.turn) {
-      const applied = applyOps(documents, validation.turn.docOps, kind);
-      documents = applied.documents;
-      changedSections = applied.changedSections;
-      if (applied.injectionHits.length) flagged = true;
-      log("handoff", `turn zero applied ops=${validation.turn.docOps.length}`);
-    } else log("handoff", `turn zero invalid (${validation.errors.length} errors); plain scaffold`);
-  } else log("handoff", "turn zero unavailable; plain scaffold");
+    if (!validation.ok || !validation.turn) {
+      log(
+        "handoff",
+        `turn zero group ${gi + 1}/${groups.length} invalid (${validation.errors.length} errors); scaffold kept`
+      );
+      continue;
+    }
+    const applied = applyOps(documents, validation.turn.docOps, kind);
+    documents = applied.documents;
+    if (applied.injectionHits.length) flagged = true;
+    groupsApplied++;
+    log(
+      "handoff",
+      `turn zero group ${gi + 1}/${groups.length} applied ops=${validation.turn.docOps.length}`
+    );
+  }
+  if (groupsApplied === 0) log("handoff", "turn zero fully unavailable; plain scaffold");
 
   const nextQuestion = pickNextBankQuestion(kind, new Set(), row.rev + 1);
   if (!nextQuestion) throw new Error("empty question bank");
@@ -489,7 +549,10 @@ async function main(): Promise<void> {
     flagged,
     documents,
     nextQuestion,
-    changedSections,
+    // A first draft is not an "update": empty changedSections keeps the
+    // first open free of wall-to-wall Updated chips, so the dashed
+    // "Asking about this" anchor is the one thing that draws the eye.
+    changedSections: {},
   });
   log("done", `handoff complete in ${Math.round((Date.now() - started) / 1000)}s flagged=${flagged}`);
 }

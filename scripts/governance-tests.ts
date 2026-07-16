@@ -294,6 +294,36 @@ function check(name: string, cond: boolean): void {
   );
 }
 
+/* 9. Sample-policy upload: PDF path (round 3). */
+{
+  const { extractStyleSampleText } = await import(
+    "../src/lib/governance/style-sample"
+  );
+  // Minimal one-page text PDF (title + numbered paragraph), fixed fixture.
+  const PDF_FIXTURE_B64 =
+    "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAxODIgPj4Kc3RyZWFtCkJUIC9GMSAxNCBUZiA3MiA3MjAgVGQgKEFjY2VwdGFibGUgVXNlIG9mIEFJIFRvb2xzKSBUaiAwIC0yOCBUZCAoMS4gUHVycG9zZS4gVGhpcyBwb2xpY3kgZXhwbGFpbnMgd2hhdCBlbXBsb3llZXMgbWF5IHNoYXJlIHdpdGggQUkgdG9vbHMgYW5kIHdoYXQgbXVzdCBuZXZlciBsZWF2ZSB0aGUgY29tcGFueS4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDU4IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDI0MSAwMDAwMCBuIAowMDAwMDAwNDc0IDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgNiAvUm9vdCAxIDAgUiA+PgpzdGFydHhyZWYKNTQ0CiUlRU9G";
+  const pdf = await extractStyleSampleText(
+    "Current Policy.PDF",
+    Buffer.from(PDF_FIXTURE_B64, "base64")
+  );
+  check(
+    "sample: pdf extracts with structure",
+    pdf.ok &&
+      pdf.text.includes("Acceptable Use of AI Tools") &&
+      pdf.text.includes("1. Purpose")
+  );
+  const junkPdf = await extractStyleSampleText(
+    "junk.pdf",
+    Buffer.from("this is not a pdf but is long enough to pass any length gate")
+  );
+  check("sample: junk pdf rejected gracefully", !junkPdf.ok);
+  const scanLike = await extractStyleSampleText(
+    "empty.pdf",
+    Buffer.from("%PDF-1.4\n%%EOF")
+  );
+  check("sample: textless pdf rejected gracefully", !scanLike.ok);
+}
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

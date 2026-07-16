@@ -29,7 +29,10 @@ export function researchStepLabel(step: ResearchStep, domain: string): string {
   if (step === "site") return `reading ${domain}`;
   if (step === "mentions") return "searching the web for mentions of you";
   if (step === "industry") return "studying your industry";
-  return "writing the working brief";
+  if (step === "distill") return "writing the working brief";
+  // handoff: the turn-zero group calls can hold this step for a few minutes
+  // on the document sets; the label must say what is actually happening.
+  return "drafting your starting documents";
 }
 
 function Glyph({ state }: { state: "pending" | "active" | "done" }) {

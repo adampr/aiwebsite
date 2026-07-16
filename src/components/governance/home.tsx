@@ -80,21 +80,17 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
   const setupHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const sampleInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Picking a kind must not strand the user above the fold: when the setup
-  // heading is not already fully visible, the panel scrolls into view and
-  // the heading takes focus, so the next step is both seen and announced.
-  // Switching kinds while the panel is on screen changes the heading in
-  // place without bouncing the page or stealing focus from the cards.
+  // Owner rule (round 3): EVERY click on one of the four cards snaps the
+  // full setup panel into view and focuses its heading, even when the panel
+  // is already partially (or fully) visible. pickTick makes repeat clicks on
+  // the same card re-fire; "start" + the panel's scroll-margin-top puts the
+  // whole card at the top of the viewport, clear of the sticky header.
+  const [pickTick, setPickTick] = useState(0);
   useEffect(() => {
-    if (!kind) return;
+    if (!kind || pickTick === 0) return;
     const heading = setupHeadingRef.current;
     const panel = setupRef.current;
     if (!heading || !panel) return;
-    const r = heading.getBoundingClientRect();
-    // The site header is sticky from md up (~4.75rem); a heading under it
-    // counts as hidden.
-    const topEdge = window.matchMedia("(min-width: 768px)").matches ? 80 : 0;
-    if (r.top >= topEdge && r.bottom <= window.innerHeight) return;
     const reduce = window.matchMedia(
       "(prefers-reduced-motion: reduce)"
     ).matches;
@@ -103,7 +99,7 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
       behavior: reduce ? "auto" : "smooth",
     });
     heading.focus({ preventScroll: true });
-  }, [kind]);
+  }, [kind, pickTick]);
 
   useEffect(() => {
     let alive = true;
@@ -303,7 +299,10 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
                 type="button"
                 className={`panel text-left${selected ? " panel--lightline" : ""}`}
                 aria-pressed={selected}
-                onClick={() => setKind(k)}
+                onClick={() => {
+                  setKind(k);
+                  setPickTick((t) => t + 1);
+                }}
                 style={selected ? { borderColor: "var(--xl-light-dim)" } : undefined}
               >
                 <span className={`badge${k === "usage_policy" ? " badge--light" : ""}`}>

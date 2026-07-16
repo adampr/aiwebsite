@@ -970,6 +970,20 @@ export function Workspace({ projectId }: { projectId: string }) {
                 reviewHeadingRef={reviewHeadingRef}
                 downloadSlot={download}
               />
+
+              {/* Owner rule (round 3): the format sample lives in the
+                  QUESTIONS column, right under the conversation, so it is
+                  visible while answering (desktop left pane + the mobile
+                  Questions tab) instead of buried below the document. */}
+              <StyleSampleControl
+                projectId={view.id}
+                initialName={view.styleSample?.name ?? null}
+                disabled={view.featureDisabled}
+                removeOnly={view.status === "done"}
+                note="A new or changed sample shapes the sections Tron edits from now on; already drafted sections keep their look until he next edits them."
+                onAnnounce={setAnnounce}
+                onChanged={() => void fetchProject()}
+              />
             </div>
             <div
               id="gov-pane-draft"
@@ -997,19 +1011,6 @@ export function Workspace({ projectId }: { projectId: string }) {
                 deletesAt={view.deletesAt}
               />
 
-              {/* The format sample stays visible and removable through
-                  drafting, review, AND done (the API locks add/replace at
-                  done; removal always works). Lives inside the Draft pane so
-                  it sits with the document on both layouts. */}
-              <StyleSampleControl
-                projectId={view.id}
-                initialName={view.styleSample?.name ?? null}
-                disabled={view.featureDisabled}
-                removeOnly={view.status === "done"}
-                note="A new or changed sample shapes the sections Tron edits from now on; already drafted sections keep their look until he next edits them."
-                onAnnounce={setAnnounce}
-                onChanged={() => void fetchProject()}
-              />
             </div>
           </div>
         </>

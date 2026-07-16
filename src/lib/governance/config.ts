@@ -38,34 +38,41 @@ export const CAPS = {
   repairMinRemainingMs: 40_000,
   routeDeadlineMs: 115_000,
   // Optional sample-policy upload (format matching): raw file cap, stored
-  // extracted-text cap, and the slice of it that rides every prompt.
-  styleSampleFileMaxBytes: 400_000,
+  // extracted-text cap, and the slice of it that rides every prompt. The
+  // file cap fits real multi-page policy PDFs; extraction cost stays bounded
+  // by the page/char/deadline caps in style-sample.ts, not by file size.
+  styleSampleFileMaxBytes: 2_000_000,
   styleSampleMaxChars: 20_000,
   styleSamplePromptMaxChars: 6_000,
+  styleSamplePdfMaxPages: 40,
+  styleSamplePdfDeadlineMs: 10_000,
 } as const;
 
 /** Sample-policy upload: extensions the extractor understands (client accept
  * attribute + server allowlist share this list; keep it client-safe here). */
-export const STYLE_SAMPLE_EXTENSIONS = [".docx", ".md", ".txt"] as const;
+export const STYLE_SAMPLE_EXTENSIONS = [".docx", ".pdf", ".md", ".txt"] as const;
 // MIME types included: some mobile pickers ignore extension-only accepts.
 export const STYLE_SAMPLE_ACCEPT = [
   ...STYLE_SAMPLE_EXTENSIONS,
   "text/plain",
   "text/markdown",
+  "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ].join(",");
 
+export const STYLE_SAMPLE_TYPES_COPY = ".docx, .pdf, .md, or .txt";
+
 /** Shared helper line for the format-sample upload (create panel + control). */
 export const STYLE_SAMPLE_HELPER =
-  "Optional. Upload a policy your organization has the right to share (.docx, .md, or .txt). The draft follows its heading, list, and numbering style; Tron is instructed not to reuse the policy's content. Only the extracted text is kept: it is sent to our AI providers with each drafting turn and is deleted with the project.";
+  `Optional. Upload a policy your organization has the right to share (${STYLE_SAMPLE_TYPES_COPY}). The draft follows its heading, list, and numbering style; Tron is instructed not to reuse the policy's content. Only the extracted text is kept: it is sent to our AI providers with each drafting turn and is deleted with the project.`;
 
 /** Client-side precheck for a sample file; returns the error copy or null. */
 export function styleSampleFileError(name: string, size: number): string | null {
   const lower = name.toLowerCase();
   if (!STYLE_SAMPLE_EXTENSIONS.some((ext) => lower.endsWith(ext)))
-    return "Upload a .docx, .md, or .txt file. PDFs are not supported yet.";
+    return `Upload a ${STYLE_SAMPLE_TYPES_COPY} file.`;
   if (size > CAPS.styleSampleFileMaxBytes)
-    return `Keep the sample under ${Math.round(CAPS.styleSampleFileMaxBytes / 1000)} KB. A few representative pages are plenty.`;
+    return `Keep the sample under ${Math.round(CAPS.styleSampleFileMaxBytes / 1_000_000)} MB. A few representative pages are plenty.`;
   return null;
 }
 
@@ -171,7 +178,7 @@ export const DOC_FOOTER =
 export const DRAFT_WATERMARK = "DRAFT · generated {date} · ai.xl.net";
 
 /** Research wait copy: one honest range, used everywhere. */
-export const RESEARCH_DURATION_COPY = "3 to 6 minutes";
+export const RESEARCH_DURATION_COPY = "3 to 8 minutes";
 
 export const REVIEW_FORCED_SUMMARY =
   "We reached the depth limit for one project, so I stopped asking questions. The draft on the right reflects everything you told me. Review it, ask for revisions below, and confirm when it reads right.";

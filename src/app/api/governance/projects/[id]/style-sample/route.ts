@@ -1,11 +1,15 @@
 // POST/DELETE: the optional format-sample upload (§5.12). The user uploads
-// an existing company policy (.docx/.md/.txt) and every subsequent drafting
+// an existing company policy (.docx/.pdf/.md/.txt) and every subsequent drafting
 // turn mirrors its formatting conventions. Only extracted, injection-screened
 // plain text is stored (never the file); it deletes with the project row.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { CAPS, governanceEnabled } from "@/lib/governance/config";
+import {
+  governanceEnabled,
+  STYLE_SAMPLE_TYPES_COPY,
+  styleSampleFileError,
+} from "@/lib/governance/config";
 import {
   clearStyleSample,
   fetchOwnedProject,
@@ -50,13 +54,15 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   }
   const file = form.get("file");
   if (!(file instanceof File) || file.size === 0)
-    return govError("invalid_request", "Attach one .docx, .md, or .txt file.", 400);
-  if (file.size > CAPS.styleSampleFileMaxBytes)
     return govError(
       "invalid_request",
-      `Keep the sample under ${Math.round(CAPS.styleSampleFileMaxBytes / 1000)} KB. A few representative pages are plenty.`,
+      `Attach one ${STYLE_SAMPLE_TYPES_COPY} file.`,
       400
     );
+  // Same messages as the client precheck (drag-drop clients and API callers
+  // skip the precheck entirely).
+  const preError = styleSampleFileError(file.name, file.size);
+  if (preError) return govError("invalid_request", preError, 400);
 
   const extracted = await extractStyleSampleText(
     file.name,
