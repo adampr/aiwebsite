@@ -618,9 +618,21 @@ export async function applyResolveWrite(opts: {
   id: string;
   userId: string;
   expectedRev: number;
+  // Phase fence: the strip only lands on a row still in the phase the
+  // request validated against (review resolver vs drafting chase keep).
+  expectedStatus: "review" | "drafting";
   documents: GovernanceDoc[];
   transcript: TranscriptEntry[];
   changedSections: Record<string, string[]>;
+  // Drafting chase keeps only (owner fix 2026-07-17, "as is" loop): the
+  // stored chase question quotes the marker just stripped, so the write
+  // must re-point the question (or flip to review on the last marker) in
+  // the SAME fenced update. The review path never touches these columns.
+  advance?: {
+    status: "drafting" | "review";
+    nextQuestionJson: string | null;
+    reviewSummary: string | null;
+  };
 }): Promise<boolean> {
   const documentsJson = JSON.stringify(opts.documents);
   const transcriptJson = JSON.stringify(opts.transcript);
@@ -635,6 +647,13 @@ export async function applyResolveWrite(opts: {
       documentsJson,
       transcriptJson,
       changedSectionsJson: JSON.stringify(opts.changedSections),
+      ...(opts.advance
+        ? {
+            status: opts.advance.status,
+            nextQuestionJson: opts.advance.nextQuestionJson,
+            reviewSummary: opts.advance.reviewSummary,
+          }
+        : {}),
       rev: sql`rev + 1`,
       lastActivityAt: sql`now()`,
       updatedAt: sql`now()`,
@@ -644,7 +663,7 @@ export async function applyResolveWrite(opts: {
         eq(P.id, opts.id),
         eq(P.userId, opts.userId),
         eq(P.rev, opts.expectedRev),
-        eq(P.status, "review"),
+        eq(P.status, opts.expectedStatus),
         sql`(turn_started_at IS NULL OR turn_started_at < now() - make_interval(secs => ${CAPS.turnStaleMs / 1000}))`
       )
     )

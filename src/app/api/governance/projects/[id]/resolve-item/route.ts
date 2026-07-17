@@ -7,19 +7,35 @@
 // IS the content there; only a typed answer resolves it). The decision is
 // recorded in the transcript: keep-as-drafted is a user answer, and the
 // audit trail must show who resolved each assumption.
+//
+// Two phases accept a keep (owner fix 2026-07-17, the "as is" chase loop):
+// review (the resolver cards, unchanged) and drafting WHILE a chase question
+// ("qi_" id) is stored. A drafting keep answers the asked question, so it
+// writes the real Q&A pair to the transcript (the monotone question counter
+// counts it), re-picks the next chase question in the same fenced write (the
+// stored one quotes the marker just stripped and would misapply the next
+// answer), and flips to review with host copy when the last marker clears.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { placeholderSectionMap } from "@/lib/governance/blueprints";
-import { CAPS, governanceEnabled } from "@/lib/governance/config";
+import {
+  CAPS,
+  governanceEnabled,
+  REVIEW_RESOLVED_SUMMARY,
+} from "@/lib/governance/config";
 import { applyResolveWrite, fetchOwnedProject } from "@/lib/governance/db";
 import { govError, NOT_FOUND, okJson, rateLimit, requireUser } from "@/lib/governance/http";
-import { stripConfirmMarker } from "@/lib/governance/markdown";
-import { progressFor } from "@/lib/governance/turn";
+import {
+  scanConfirmMarkersWithPos,
+  stripConfirmMarker,
+} from "@/lib/governance/markdown";
+import { pickOpenItemQuestion, progressFor } from "@/lib/governance/turn";
 import { openConfirmItems, openConfirmTotal } from "@/lib/governance/view";
 import type {
   GovernanceDoc,
   GovernanceKind,
+  NextQuestion,
   TranscriptEntry,
 } from "@/lib/governance/types";
 
@@ -76,23 +92,28 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
 
   const row = await fetchOwnedProject(user.userId, id);
   if (!row) return NOT_FOUND();
-  if (row.status !== "review")
+  const storedQuestion = parse<NextQuestion | null>(row.nextQuestionJson, null);
+  const draftingKeep =
+    row.status === "drafting" && !!storedQuestion?.id.startsWith("qi_");
+  if (row.status !== "review" && !draftingKeep)
     return govError(
       "invalid_request",
-      "Open items are resolved during review.",
+      "Keep as drafted works while I am asking about that open item, or during review.",
       409
     );
-  // A fresh revise-turn claim owns the row: a strip that bumped rev under
-  // the worker would void its final write and waste the brain call. The
+  // A fresh turn claim owns the row: a strip that bumped rev under the
+  // worker would void its final write and waste the brain call. The
   // applyResolveWrite fence backstops this atomically; the pre-check just
-  // names the situation honestly.
+  // names the situation honestly (there is no "list" on the chase card).
   if (
     row.turnStartedAt &&
     Date.now() - row.turnStartedAt.getTime() < CAPS.turnStaleMs
   )
     return govError(
       "turn_pending",
-      "Tron is folding answers into the draft right now. Give it a moment; the list refreshes when he is done.",
+      draftingKeep
+        ? "Tron is working on the draft right now. Give it a moment and try again."
+        : "Tron is folding answers into the draft right now. Give it a moment; the list refreshes when he is done.",
       409
     );
 
@@ -106,6 +127,29 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       "That item was already resolved, maybe in another tab.",
       409
     );
+
+  // Drafting keeps must address the marker the stored question asked about:
+  // the transcript row below records that question as answered, so a strip
+  // of any OTHER marker would make the audit trail lie. The asked marker is
+  // the section's first STRICT-parse marker (pickOpenItemQuestion quotes
+  // findConfirmMarkers()[0]; the strict first can differ from the lenient
+  // first when a malformed opener precedes it, so never compare against the
+  // lenient scan here or a keep the question itself invited would 409).
+  if (draftingKeep) {
+    const askedRef = (storedQuestion?.feeds ?? [])[0];
+    const first = scanConfirmMarkersWithPos(section.markdown)[0];
+    if (
+      askedRef !== `${docSlug}#${sectionId}` ||
+      !first ||
+      first.excerpt !== excerpt ||
+      first.occurrence !== occurrence
+    )
+      return govError(
+        "item_not_found",
+        "That item was already resolved, maybe in another tab.",
+        409
+      );
+  }
 
   const stripped = stripConfirmMarker(section.markdown, excerpt, occurrence);
   if (!stripped.ok) {
@@ -133,46 +177,88 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
         }
   );
   const now = new Date().toISOString();
+  // A drafting keep ANSWERS the asked chase question: the real Q&A pair goes
+  // to the transcript (qi_ id, so the monotone question counter counts it,
+  // and review's "Your answers" list can amend it later). The review path
+  // keeps its unnumbered "confirm" row.
   const transcript: TranscriptEntry[] = [
     ...parse<TranscriptEntry[]>(row.transcriptJson, []),
-    {
-      qId: "confirm",
-      bankId: null,
-      q: `Open item: ${excerpt.slice(0, 160)}`,
-      a: "Kept as drafted.",
-      skipped: false,
-      askedAt: now,
-      answeredAt: now,
-    },
+    draftingKeep && storedQuestion
+      ? {
+          qId: storedQuestion.id,
+          bankId: null,
+          q: storedQuestion.text,
+          a: "Kept as drafted.",
+          skipped: false,
+          askedAt: row.updatedAt.toISOString(),
+          answeredAt: now,
+        }
+      : {
+          qId: "confirm",
+          bankId: null,
+          q: `Open item: ${excerpt.slice(0, 160)}`,
+          a: "Kept as drafted.",
+          skipped: false,
+          askedAt: now,
+          answeredAt: now,
+        },
   ];
   const changedSections = { [docSlug]: [sectionId] };
   const covered = parse<string[]>(row.coveredBankIdsJson, []);
+
+  // Drafting keeps advance the interview deterministically: markers remain
+  // -> re-pick the next chase question (never null while the lenient total
+  // is positive); zero left -> the honest review flip (a stored qi_ question
+  // implies bank coverage is complete, so nothing is left to ask).
+  const leftTotal = openConfirmTotal(newDocuments);
+  const advance = draftingKeep
+    ? leftTotal > 0
+      ? {
+          status: "drafting" as const,
+          nextQuestionJson: JSON.stringify(
+            pickOpenItemQuestion(newDocuments, row.rev + 1)
+          ),
+          reviewSummary: null,
+        }
+      : {
+          status: "review" as const,
+          nextQuestionJson: null,
+          reviewSummary: REVIEW_RESOLVED_SUMMARY,
+        }
+    : undefined;
 
   const wrote = await applyResolveWrite({
     id: row.id,
     userId: user.userId,
     expectedRev: row.rev,
+    expectedStatus: draftingKeep ? "drafting" : "review",
     documents: newDocuments,
     transcript,
     changedSections,
+    advance,
   });
   if (!wrote)
     return govError(
       "item_not_found",
-      "The draft changed in another tab. The list refreshes with where it is now.",
+      draftingKeep
+        ? "The draft changed in another tab. Here is where it is now."
+        : "The draft changed in another tab. The list refreshes with where it is now.",
       409
     );
 
   return okJson({
     rev: row.rev + 1,
-    status: "review",
+    status: advance ? advance.status : "review",
     changedSections,
     placeholderSections: placeholderSectionMap(kind, newDocuments),
-    nextQuestion: null,
-    reviewSummary: row.reviewSummary,
+    nextQuestion:
+      advance && advance.nextQuestionJson
+        ? (JSON.parse(advance.nextQuestionJson) as NextQuestion)
+        : null,
+    reviewSummary: advance ? advance.reviewSummary : row.reviewSummary,
     progress: progressFor(kind, new Set(covered)),
     openConfirmItems: openConfirmItems(newDocuments),
-    openConfirmTotal: openConfirmTotal(newDocuments),
+    openConfirmTotal: leftTotal,
     documents: newDocuments,
   });
 }

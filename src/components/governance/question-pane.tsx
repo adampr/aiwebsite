@@ -429,7 +429,18 @@ function TranscriptList({
   );
 }
 
-function BrainDownNote() {
+function BrainDownNote({ keepAvailable }: { keepAvailable?: boolean }) {
+  // The keep variant renders ONLY while a Keep as drafted button is actually
+  // on the card (owner rule: honest receipts; promising a control that is
+  // not there would be a lie during an outage).
+  if (keepAvailable)
+    return (
+      <p className="mt-3 max-w-none text-sm" style={{ color: "var(--xl-warn)" }}>
+        Tron&apos;s drafting engine is offline right now. Your typed answer is
+        kept here; Send comes back when he is back. Keep as drafted still
+        works.
+      </p>
+    );
   return (
     <p className="mt-3 max-w-none text-sm" style={{ color: "var(--xl-warn)" }}>
       Tron&apos;s drafting engine is offline right now. Your answer is kept
@@ -531,6 +542,14 @@ export function QuestionPane({
   downloadSlot: ReactNode;
 }) {
   const q = view.nextQuestion;
+  // Chase-card keep state (owner fix 2026-07-17). keepErr is keyed to the
+  // question id it happened on: a stale error simply stops rendering when
+  // the question moves on (no setState-in-effect needed).
+  const [keepBusy, setKeepBusy] = useState(false);
+  const [keepErr, setKeepErr] = useState<{ qid: string; text: string } | null>(
+    null
+  );
+  const answerRef = useRef<HTMLTextAreaElement | null>(null);
   // ONE monotone question counter across the whole interview (owner rule
   // 2026-07-17): bank questions, follow-ups, and open-item chase questions
   // all count; the transcript numbering uses the same predicate.
@@ -541,6 +560,17 @@ export function QuestionPane({
   // denominator). Skipping one moves the draft to review instead of
   // drafting a default.
   const chase = isChaseId(q?.id);
+  // The open item this chase question quotes (owner fix 2026-07-17, the
+  // "as is" loop): feeds[0] is the marker's section, and the section's first
+  // listed item is the first marker, exactly the one pickOpenItemQuestion
+  // excerpted. Null when the display parser cannot list it (malformed
+  // marker): the card then renders as before, typed answer or Skip.
+  const keepTarget =
+    chase && q?.feeds?.[0]
+      ? (view.openConfirmItems.find(
+          (it) => `${it.doc}#${it.section}` === q.feeds[0]
+        ) ?? null)
+      : null;
   const inputLocked = working || featureDisabled || restyleActive;
   // Non-advancing turns (amend/restyle) run under the same one-turn lock;
   // the question card explains the pause instead of showing a spinner row.
@@ -597,6 +627,25 @@ export function QuestionPane({
   // reopen row in a review-status project always means THIS review session
   // follows a final. Sound permanently, not just for the first cycle.
   const reopened = view.transcript.some((t) => t.qId === "reopen");
+
+  // Keep the chase question's drafted assumption: deterministic server-side
+  // strip through onKeepItem, zero AI calls (this is why it stays enabled
+  // while the brain is down). On success the workspace owns the merge, the
+  // receipt, and focus; failures render inline here and are announced once.
+  const handleKeep = async () => {
+    if (!keepTarget || keepBusy || inputLocked || !q) return;
+    setKeepBusy(true);
+    setKeepErr(null);
+    const r = await onKeepItem(keepTarget);
+    setKeepBusy(false);
+    if (!r.ok && r.message) {
+      setKeepErr({ qid: q.id, text: r.message });
+      onAnnounce(r.message);
+      // The keep affordance is about to unmount on resync (the stored
+      // confirmable flag was stale); the textarea is the required next step.
+      if (r.code === "needs_answer") answerRef.current?.focus();
+    }
+  };
 
   return (
     <section className="min-w-0">
@@ -746,6 +795,23 @@ export function QuestionPane({
               </button>
             </p>
           )}
+          {/* Chase keep affordance (owner fix 2026-07-17, the "as is" loop):
+              typed keep-intent used to vanish into an AI turn that kept the
+              marker and silently re-asked. The hint names the deterministic
+              path; the fine print explains the one item a keep cannot
+              settle (the marker is its block's only content). */}
+          {chase && keepTarget?.confirmable && (
+            <p className="mt-2 max-w-none text-xs" style={faint}>
+              If my drafted assumption is already right, use Keep as drafted
+              below: it settles this one instantly.
+            </p>
+          )}
+          {chase && keepTarget && !keepTarget.confirmable && (
+            <p className="mt-2 max-w-none text-xs" style={faint}>
+              This one needs an answer from you: the marker is the only
+              content there, so there is no drafted default to keep.
+            </p>
+          )}
           {/* Chips (and their hint) hide when the snapshot came up empty:
               "Yes, that matches" is nonsense with nothing shown to match. */}
           {q.suggestions.length > 0 && !(q.snapshot && !view.companySnapshot) && (
@@ -778,6 +844,7 @@ export function QuestionPane({
             }}
           >
             <textarea
+              ref={answerRef}
               className="input w-full"
               rows={4}
               maxLength={2000}
@@ -792,20 +859,46 @@ export function QuestionPane({
                 type="submit"
                 className="btn btn--primary btn--stable"
                 aria-busy={sendBusy || undefined}
-                disabled={sendLocked || !answerText.trim()}
+                disabled={sendLocked || !answerText.trim() || keepBusy}
               >
                 <BusyLabel busy={sendBusy} idle="Send answer" busyText="Sending" />
               </button>
+              {/* Deterministic keep, zero AI: disabled by the one-turn lock
+                  and its own flight, NEVER by brainDown (outage resilience
+                  is the point of this path). */}
+              {chase && keepTarget?.confirmable && (
+                <button
+                  type="button"
+                  className="btn btn--text btn--stable"
+                  aria-busy={keepBusy || undefined}
+                  disabled={inputLocked || keepBusy}
+                  onClick={() => void handleKeep()}
+                >
+                  <BusyLabel
+                    busy={keepBusy}
+                    idle="Keep as drafted"
+                    busyText="Keeping"
+                  />
+                </button>
+              )}
               <button
                 type="button"
                 className="btn btn--text"
-                disabled={sendLocked}
+                disabled={sendLocked || keepBusy}
                 onClick={onSkipRequest}
               >
                 Skip this question
               </button>
             </div>
-            {skipPending && !working && (
+            {keepErr && q && keepErr.qid === q.id && (
+              <p
+                className="mt-3 max-w-none text-sm"
+                style={{ color: "var(--xl-danger)" }}
+              >
+                {keepErr.text}
+              </p>
+            )}
+            {skipPending && !working && !keepBusy && (
               <div className="mt-3 text-xs" style={faint}>
                 <p className="max-w-none">
                   {chase
@@ -850,7 +943,11 @@ export function QuestionPane({
                 </p>
               </div>
             )}
-            {brainDown && !working && <BrainDownNote />}
+            {brainDown && !working && (
+              <BrainDownNote
+                keepAvailable={chase && !!keepTarget?.confirmable}
+              />
+            )}
             <NoticeLine notice={notice} />
           </form>
         </div>

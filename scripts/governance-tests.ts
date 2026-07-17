@@ -22,6 +22,7 @@ import {
   normalizeDomain,
   REVIEW_FORCED_SUMMARY,
   REVIEW_REOPENED_SUMMARY,
+  REVIEW_RESOLVED_SUMMARY,
   STYLE_SAMPLE_DEBT_NOTE,
   STYLE_SAMPLE_HELPER,
   STYLE_SAMPLE_RESYNC_HELPER,
@@ -3116,6 +3117,131 @@ function check(name: string, cond: boolean): void {
     !STYLE_SAMPLE_HELPER.includes(STYLE_SAMPLE_RESYNC_HELPER) &&
       STYLE_SAMPLE_RESYNC_HELPER.includes("upload it again")
   );}
+
+/* Chase keep-as-drafted (owner fix 2026-07-17, the "as is" loop): the
+ * drafting-phase keep is deterministic and must stay aligned with what the
+ * chase question invited. */
+{
+  // The flip summary is host copy: no em dashes, and the open-items note
+  // wrapper must be a no-op on it (it only ships with zero markers).
+  check(
+    "keep: REVIEW_RESOLVED_SUMMARY has no em dash",
+    !REVIEW_RESOLVED_SUMMARY.includes("—")
+  );
+  check(
+    "keep: withOpenItemsNote is a no-op at zero markers",
+    withOpenItemsNote(REVIEW_RESOLVED_SUMMARY, 0) === REVIEW_RESOLVED_SUMMARY
+  );
+
+  // The prompt net for typed keep-intent, with the needs-answer carve-out.
+  const sys = buildSystemMessage({
+    kind: "usage_policy",
+    brief: null,
+    forcedReviewSoon: false,
+  });
+  check(
+    "keep: prompt treats plain keep-intent answers as settling",
+    sys.includes('"as is", "keep it", "fine as drafted"')
+  );
+  check(
+    "keep: prompt carve-out for marker-only blocks",
+    sys.includes("only content in its paragraph, list item, or table cell")
+  );
+  check(
+    "keep: review-phase marker ownership rule survives the insertion",
+    sys.includes(
+      "Once a project is already in review, open markers belong to the user"
+    )
+  );
+
+  // Strict-vs-lenient agreement (critic kill, pinned): a malformed opener
+  // before a well-formed marker must NOT desync the question's quoted
+  // excerpt from the marker the keep route validates (both use the strict
+  // parse; the LENIENT count only picks the section).
+  const malformedFirst =
+    "Intro text with a broken [TO CONFIRM opener that never closes " +
+    "x".repeat(420) +
+    "\n\nA drafted default here. [TO CONFIRM: retention period] More prose.";
+  const docs: GovernanceDoc[] = [
+    {
+      slug: "ai-usage-policy",
+      title: "AI Usage Policy",
+      stub: false,
+      sections: [
+        { id: "data-handling", title: "Data handling", markdown: malformedFirst },
+      ],
+    },
+  ];
+  const chaseQ = pickOpenItemQuestion(docs, 9);
+  const firstStrict = scanConfirmMarkersWithPos(malformedFirst)[0];
+  check(
+    "keep: chase question quotes the first STRICT marker",
+    !!chaseQ && chaseQ.text.includes("[TO CONFIRM: retention period]")
+  );
+  check(
+    "keep: route validation target equals the quoted marker",
+    !!firstStrict &&
+      firstStrict.excerpt === "retention period" &&
+      firstStrict.occurrence === 0 &&
+      findConfirmMarkers(malformedFirst)[0] === "retention period"
+  );
+  check(
+    "keep: chase feeds address the marker's section",
+    !!chaseQ && (chaseQ.feeds ?? [])[0] === "ai-usage-policy#data-handling"
+  );
+
+  // Re-pick never starves while the lenient count is positive, even when
+  // every remaining marker is malformed (strict parse sees none): the
+  // question falls back to its excerpt-free wording.
+  const malformedOnly = docs.map((d) => ({
+    ...d,
+    sections: [
+      {
+        id: "data-handling",
+        title: "Data handling",
+        markdown:
+          "Broken [TO CONFIRM opener without a close " + "y".repeat(420),
+      },
+    ],
+  }));
+  const rePick = pickOpenItemQuestion(malformedOnly, 10);
+  check(
+    "keep: re-pick survives malformed-only sections",
+    !!rePick && rePick.text.includes("an item is still marked [TO CONFIRM]")
+  );
+
+  // The drafting keep's transcript row is a QUESTION row: the monotone
+  // counter advances (review's "confirm" rows never count).
+  const base: TranscriptEntry[] = [
+    {
+      qId: "q_1",
+      bankId: "UP-01",
+      q: "q",
+      a: "a",
+      skipped: false,
+      askedAt: "2026-07-17T00:00:00Z",
+      answeredAt: "2026-07-17T00:00:01Z",
+    },
+  ];
+  const keepRow: TranscriptEntry = {
+    qId: "qi_7",
+    bankId: null,
+    q: "In the ...",
+    a: "Kept as drafted.",
+    skipped: false,
+    askedAt: "2026-07-17T00:01:00Z",
+    answeredAt: "2026-07-17T00:01:05Z",
+  };
+  const confirmRow: TranscriptEntry = { ...keepRow, qId: "confirm" };
+  check(
+    "keep: chase keep row advances the monotone counter",
+    questionNumber([...base, keepRow]) === questionNumber(base) + 1
+  );
+  check(
+    "keep: review confirm row never counts",
+    questionNumber([...base, confirmRow]) === questionNumber(base)
+  );
+}
 
 if (failures) {
   console.error(`\n${failures} failure(s)`);

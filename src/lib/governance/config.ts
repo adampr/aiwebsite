@@ -246,6 +246,13 @@ export const REVIEW_FORCED_SUMMARY =
 export const REVIEW_SKIPPED_SUMMARY =
   "You skipped, so I stopped asking questions. The draft on the right reflects everything you told me so far. Review it, ask for revisions below, and confirm when it reads right.";
 
+/** Keep-release flip (owner fix 2026-07-17, "as is" chase loop): a drafting
+ * keep-as-drafted cleared the LAST open [TO CONFIRM] marker, so nothing is
+ * left to ask (a stored chase question implies bank coverage is complete).
+ * Host-written, no AI call. */
+export const REVIEW_RESOLVED_SUMMARY =
+  "That settles every open item. The draft on the right reflects everything you told me. Review it, ask for revisions below, and confirm when it reads right.";
+
 /** Reopen flip (done -> review, owner request 2026-07-17): host-written, no
  * AI call. Non-temporal on purpose: it stays on the row through later edits,
  * so it must not claim the draft is unchanged since confirm. */

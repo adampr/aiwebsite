@@ -2223,10 +2223,16 @@ export function Workspace({ projectId }: { projectId: string }) {
   /** Keep one open [TO CONFIRM] item as drafted: deterministic server-side
    *  strip, zero AI calls (works through brain outages). The view is merged
    *  in place so the row disappears and the section flashes Updated in the
-   *  same render; the resolver handles its own focus continuity. */
+   *  same render; the resolver handles its own focus continuity. Called from
+   *  the review resolver AND the drafting chase card (owner fix 2026-07-17,
+   *  the "as is" loop): a drafting keep answers the asked chase question, so
+   *  the merge also takes the server's re-picked question (or the flip to
+   *  review on the last marker) and the workspace owns focus + receipt. */
   async function keepItem(item: OpenConfirmItem): Promise<KeepResult> {
     const v = viewRef.current;
     if (!v || working) return { ok: false };
+    const draftingKeep = v.status === "drafting";
+    const askedQ = v.nextQuestion;
     const r = await api<TurnResponse>(
       `/api/governance/projects/${encodeURIComponent(projectId)}/resolve-item`,
       {
@@ -2244,6 +2250,11 @@ export function Workspace({ projectId }: { projectId: string }) {
       const next: ProjectView = {
         ...v,
         rev: r.data.rev,
+        // status + nextQuestion travel only on the drafting path: the review
+        // merge stays byte-identical to what it always did.
+        ...(draftingKeep
+          ? { status: r.data.status, nextQuestion: r.data.nextQuestion }
+          : {}),
         documents: r.data.documents,
         changedSections: r.data.changedSections,
         placeholderSections:
@@ -2254,19 +2265,30 @@ export function Workspace({ projectId }: { projectId: string }) {
         reviewSummary: r.data.reviewSummary,
         transcript: [
           ...v.transcript,
-          {
-            qId: "confirm",
-            bankId: null,
-            q: `Open item: ${item.excerpt.slice(0, 160)}`,
-            a: "Kept as drafted.",
-            skipped: false,
-            askedAt: nowIso,
-            answeredAt: nowIso,
-          },
+          draftingKeep && askedQ
+            ? {
+                qId: askedQ.id,
+                bankId: null,
+                q: askedQ.text,
+                a: "Kept as drafted.",
+                skipped: false,
+                askedAt: nowIso,
+                answeredAt: nowIso,
+              }
+            : {
+                qId: "confirm",
+                bankId: null,
+                q: `Open item: ${item.excerpt.slice(0, 160)}`,
+                a: "Kept as drafted.",
+                skipped: false,
+                askedAt: nowIso,
+                answeredAt: nowIso,
+              },
         ],
       };
       viewRef.current = next;
       setView(next);
+      if (draftingKeep && askedQ) clearDraft(askedQ.id);
       // Direct viewRef merge bypasses the rev-change invalidation, and the
       // keep strip shifted every offset after the removed marker in its
       // section. SECTION-SCOPED invalidation (critic D1): marks in sections
@@ -2306,27 +2328,54 @@ export function Workspace({ projectId }: { projectId: string }) {
       setHighlights(r.data.changedSections);
       setFlashKey((k) => k + 1);
       const left = next.openConfirmTotal;
-      setAnnounce(
-        left === 0
-          ? "Kept as drafted. Every open item is resolved; you can confirm the final draft."
-          : `Kept as drafted. ${left} open ${left === 1 ? "item" : "items"} left.`
-      );
+      if (draftingKeep) {
+        // The workspace owns focus + receipt for chase keeps (the card has
+        // no list to hold focus). Receipt phrasing matches the established
+        // turn receipts so the pattern reads familiar.
+        if (next.status === "review") {
+          setAnnounce(
+            "Kept as drafted. Every open item is resolved. The full draft is ready for your review."
+          );
+          focusSoon(reviewHeadingRef);
+        } else {
+          setAnnounce(
+            `Kept as drafted. ${left} open ${left === 1 ? "item" : "items"} left. Next question is ready.`
+          );
+          focusSoon(questionHeadingRef);
+        }
+      } else {
+        setAnnounce(
+          left === 0
+            ? "Kept as drafted. Every open item is resolved; you can confirm the final draft."
+            : `Kept as drafted. ${left} open ${left === 1 ? "item" : "items"} left.`
+        );
+      }
       return { ok: true };
     }
     if (r.status === 401) {
       setSignedOut(true);
       return { ok: false };
     }
+    if (r.code === "needs_answer") {
+      // The stored confirmable flag was stale (section changed under us):
+      // resync so the chase card's keep affordance unmounts honestly.
+      void fetchProject();
+      return { ok: false, code: r.code, message: r.message };
+    }
     if (r.code === "item_not_found") {
-      // Already resolved (another tab) or the rev moved: re-sync the list.
+      // Already resolved (another tab) or the rev moved: re-sync. The
+      // "list" phrasing belongs to the review resolver; the chase card
+      // shows the server's phase-appropriate message instead.
       void fetchProject();
       return {
         ok: false,
-        message:
-          "That item was already resolved, maybe in another tab. The list is refreshed.",
+        code: r.code,
+        message: draftingKeep
+          ? r.message
+          : "That item was already resolved, maybe in another tab. The list is refreshed.",
       };
     }
-    return { ok: false, message: r.message };
+    return { ok: false, code: r.code, message: r.message };
   }
 
   async function startResearch(mode: "full" | "partial") {

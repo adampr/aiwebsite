@@ -465,7 +465,7 @@ export function pickOpenItemQuestion(
         text: excerpt
           ? `In ${where} I drafted an assumption marked [TO CONFIRM: ${excerpt}]. What is the right answer here?`
           : `In ${where} an item is still marked [TO CONFIRM]. What is the right answer here?`,
-        why: "A final draft cannot keep open assumptions: each one needs your answer. Or skip this question to move to review and settle the rest there.",
+        why: "A final draft cannot keep open assumptions: each one needs your call. Or skip this question to move to review and settle the rest there.",
         suggestions: [],
         feeds: [`${doc.slug}#${sec.id}`],
       };

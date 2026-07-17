@@ -57,6 +57,10 @@ function truncate(s: string, n: number): string {
 export interface KeepResult {
   ok: boolean;
   message?: string;
+  // Server error code on failure ("needs_answer", "item_not_found", ...):
+  // the chase card branches its focus handling on it; this resolver's
+  // behavior is unchanged and ignores it.
+  code?: string;
 }
 
 export function composeResolveMessage(
