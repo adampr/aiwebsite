@@ -353,6 +353,27 @@
   color: inherit;
 }
 
+/* Tron's research snapshot on the background-check question (§5.12). Warn
+   = "an assumption of mine awaiting you", the same grammar as .doc-confirm;
+   the DOTTED rail rhymes with the marker underline and stays clear of the
+   solid-cyan changed rail. Never danger: research is unconfirmed, not
+   wrong. */
+.q-snapshot {
+  margin-top: var(--sp-4);
+  padding: var(--sp-2) var(--sp-4);
+  border-left: 2px dotted var(--xl-warn);
+}
+.sys-label--warn { color: var(--xl-warn); }
+.q-snapshot dt {
+  font-size: 0.75rem;
+  color: var(--xl-text-faint);
+  margin-top: var(--sp-2);
+}
+.q-snapshot dd {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
 /* Resolution reveal (owner request 2026-07-17): when a turn resolves
    [TO CONFIRM] markers, each site plays old-marker-out -> replacement
    typing in -> a held beat. The replacement keeps a static cyan wash
@@ -368,7 +389,10 @@
 }
 @media (prefers-reduced-motion: no-preference) {
   .doc-resolve-old {
-    animation: xl-resolve-out 500ms var(--ease-drift) 1 forwards;
+    /* 700ms fade under the show's 900ms strike beat (workspace.tsx
+       runShowStep): the 200ms rest at settled 0.35 opacity is deliberate
+       reading time. Change the two numbers together. */
+    animation: xl-resolve-out 700ms var(--ease-drift) 1 forwards;
   }
 }
 @keyframes xl-resolve-out {
@@ -388,6 +412,9 @@
     animation: xl-caretblink 900ms steps(2) infinite;
   }
 }
+/* Steady while typing (a moving caret does not blink); the blink serves
+   the post-typing hold beat only. */
+.doc-reveal-caret--steady { animation: none; }
 @keyframes xl-caretblink {
   50% { opacity: 0; }
 }

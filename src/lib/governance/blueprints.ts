@@ -35,6 +35,12 @@ export interface BankQuestion {
   feeds: string[]; // ["<doc-slug>#<section-id>", ...]
   suggestions?: string[]; // 0-4 short example-answer chips
   required: boolean; // false = conditional/branch question
+  // Background-check questions ("did I get your company right?"): the
+  // question card renders Tron's research snapshot as the object of review
+  // and the ask-anchor choreography is suppressed. The flag is derived at
+  // VIEW time from this declaration (never persisted on the stored
+  // question), so it retrofits projects parked on an already-stored Q1.
+  snapshot?: true;
 }
 
 export interface KindBlueprint {
@@ -132,6 +138,7 @@ const USAGE_POLICY: KindBlueprint = {
         "We are bigger than you found",
       ],
       required: true,
+      snapshot: true,
     },
     {
       id: "UP-02",
@@ -484,6 +491,7 @@ const NIST_AI_RMF: KindBlueprint = {
         "We operate in more regions",
       ],
       required: true,
+      snapshot: true,
     },
     {
       id: "N-02",

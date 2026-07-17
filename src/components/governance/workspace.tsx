@@ -163,7 +163,8 @@ export function Workspace({ projectId }: { projectId: string }) {
   } | null>(null);
   // The reveal show queue. `seq` invalidates in-flight timers on interrupt.
   const showRef = useRef<{
-    items: ResolvedMarkerReveal[];
+    items: ResolvedMarkerReveal[]; // trimmed to the time budget + item cap
+    originalTotal: number; // pre-trim diff count (the overflow note's honest denominator)
     index: number;
     seq: number;
     askRef: FeedRef | null; // deferred ask-anchor park, runs after the show
@@ -531,7 +532,32 @@ export function Workspace({ projectId }: { projectId: string }) {
     [clearShowTimer, scheduleAskJump]
   );
 
+  // Reveal pacing (owner rule 2026-07-17, round 2): the replacement should
+  // read as text rapidly RE-WRITTEN over the marker, then rest a full
+  // second. 30ms/char clamped [1200, 3600]ms; the tick stays 60ms (every
+  // tick re-parses the revealing section, so shorter ticks buy legibility
+  // nothing and double the render bill).
   const MAX_SHOW_ITEMS = 5;
+  const SHOW_BUDGET_MS = 15_000;
+  const SHOW_TICK_MS = 60;
+  const typingTicks = (len: number) =>
+    Math.min(60, Math.max(20, Math.ceil(len / 2)));
+  /** Honest per-item time estimate with the REAL beats (same-section items
+   *  skip the jump; deletion items skip typing). */
+  const estimateItemMs = (
+    item: ResolvedMarkerReveal,
+    prev: ResolvedMarkerReveal | null
+  ): number => {
+    const sameSection =
+      !!prev && prev.doc === item.doc && prev.section === item.section;
+    const len = item.nextEnd - item.nextStart;
+    return (
+      (sameSection ? 60 : 420) +
+      900 +
+      (len === 0 ? 0 : typingTicks(len) * SHOW_TICK_MS) +
+      1000
+    );
+  };
   const runShowStep = useCallback(() => {
     const show = showRef.current;
     if (!show) return;
@@ -542,10 +568,12 @@ export function Workspace({ projectId }: { projectId: string }) {
         if (showRef.current?.seq === seq) fn();
       }, ms);
     };
-    if (show.index >= show.items.length || show.index >= MAX_SHOW_ITEMS) {
-      if (show.items.length > show.index)
+    if (show.index >= show.items.length) {
+      // Trimmed by the time budget or the item cap: the note's denominator
+      // is the ORIGINAL diff count, not the trimmed list.
+      if (show.originalTotal > show.items.length)
         setShowNote(
-          `Showed ${show.index} of ${show.items.length} resolved items. The rest are highlighted in the draft.`
+          `Showed ${show.items.length} of ${show.originalTotal} resolved items. The rest are highlighted in the draft.`
         );
       endShow(true);
       return;
@@ -553,7 +581,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     const item = show.items[show.index];
     setShowStatus({
       index: show.index,
-      total: Math.min(show.items.length, MAX_SHOW_ITEMS),
+      total: show.items.length,
     });
     // Beat 1: bring the section into view (auto jump: desktop scrolls the
     // doc pane's own container only; the window never moves).
@@ -573,14 +601,18 @@ export function Workspace({ projectId }: { projectId: string }) {
       window.setTimeout(performJump, 60);
     }
     later(sameSection ? 60 : 420, () => {
-      // Beat 2: the old marker, struck out on its way out.
+      // Beat 2: the old marker, struck out on its way out. 900ms over the
+      // CSS xl-resolve-out 700ms fade: the 200ms rest at settled opacity is
+      // reading time (change the two numbers together, see globals.css).
       setReveal({ item, mode: "old", chars: 0 });
-      later(600, () => {
-        // Beat 3: the replacement types itself out (~900 ms total, any
-        // length; the reveal is progressive disclosure of committed text).
+      later(900, () => {
+        // Beat 3: the replacement re-writes itself over the marker at
+        // ~30ms/char (closed-form chars so short texts still spend the
+        // full floor in 1-2 char steps instead of finishing early).
         const len = item.nextEnd - item.nextStart;
         if (len === 0) {
-          setReveal({ item, mode: "done", chars: 0 });
+          // Deletion only: the strike beat already showed the removal.
+          setReveal({ item, mode: "hold", chars: 0 });
           later(1000, () => {
             const s = showRef.current;
             if (s) {
@@ -590,16 +622,20 @@ export function Workspace({ projectId }: { projectId: string }) {
           });
           return;
         }
-        const ticks = 15;
-        const step = Math.ceil(len / ticks);
-        let chars = 0;
+        const ticks = typingTicks(len);
+        let t = 0;
         const tick = () => {
-          chars = Math.min(len, chars + step);
-          setReveal({ item, mode: chars >= len ? "done" : "typing", chars });
-          if (chars < len) later(60, tick);
+          t += 1;
+          const chars = Math.min(len, Math.ceil((len * t) / ticks));
+          setReveal({
+            item,
+            mode: t >= ticks ? "hold" : "typing",
+            chars,
+          });
+          if (t < ticks) later(SHOW_TICK_MS, tick);
           else
             later(1000, () => {
-              // Beat 4 done: hold, then next item.
+              // Beat 4: the held rest, caret blinking, then the next item.
               const s = showRef.current;
               if (s) {
                 s.index += 1;
@@ -610,6 +646,8 @@ export function Workspace({ projectId }: { projectId: string }) {
         tick();
       });
     });
+    // estimateItemMs/typingTicks are stable module-style helpers.
+     
   }, [endShow, performJump]);
 
   const startShow = useCallback(
@@ -634,8 +672,22 @@ export function Workspace({ projectId }: { projectId: string }) {
         if (askRef) scheduleAskJump(askRef, 60);
         return false;
       }
+      // Trim to the time budget (15s) and the item cap, always playing at
+      // least one item. Estimated with the REAL beats so a same-section or
+      // deletion item is not overcharged out of the show. Every diffed span
+      // keeps its static wash regardless; only the theater is trimmed.
+      const played: ResolvedMarkerReveal[] = [];
+      let est = 0;
+      for (const it of items) {
+        const cost = estimateItemMs(it, played[played.length - 1] ?? null);
+        if (played.length >= MAX_SHOW_ITEMS) break;
+        if (played.length > 0 && est + cost > SHOW_BUDGET_MS) break;
+        played.push(it);
+        est += cost;
+      }
       showRef.current = {
-        items,
+        items: played,
+        originalTotal: items.length,
         index: 0,
         seq: (showRef.current?.seq ?? 0) + 1,
         askRef,
@@ -645,6 +697,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       runShowStep();
       return true;
     },
+    // estimateItemMs and the caps are stable module-style helpers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [runShowStep, performJump, scheduleAskJump]
   );
 
@@ -722,9 +776,14 @@ export function Workspace({ projectId }: { projectId: string }) {
           next.documents,
           next.changedSections
         );
-        const askRef = next.nextQuestion
-          ? firstFeedTarget(next.nextQuestion.feeds, next.documents)
-          : null;
+        // Snapshot questions review the research block IN the card; the
+        // ask anchor would spotlight an unrelated section (owner bug
+        // 2026-07-17: a random highlighted marker read as the question's
+        // subject). Suppressed at every askRef source site.
+        const askRef =
+          next.nextQuestion && !next.nextQuestion.snapshot
+            ? firstFeedTarget(next.nextQuestion.feeds, next.documents)
+            : null;
         const run = restyleRunRef.current;
         const intermediatePass =
           flight.kind === "restyle" && !!run && run.pendingRefs.length > 0;
@@ -812,10 +871,15 @@ export function Workspace({ projectId }: { projectId: string }) {
           setHighlights(next.changedSections);
           focusSoon(questionHeadingRef);
           // The very first question anchors too: show the researched text
-          // it is about (owner fix #3), without touching focus.
-          const askRef = next.nextQuestion
-            ? firstFeedTarget(next.nextQuestion.feeds, next.documents)
-            : null;
+          // it is about (owner fix #3), without touching focus. EXCEPT
+          // snapshot questions (UP-01/N-01): their object of review is the
+          // research block in the card, and anchoring purpose-scope put an
+          // unrelated highlighted marker under the user's eye (owner bug
+          // 2026-07-17).
+          const askRef =
+            next.nextQuestion && !next.nextQuestion.snapshot
+              ? firstFeedTarget(next.nextQuestion.feeds, next.documents)
+              : null;
           if (askRef) {
             if (!isDesktopRef.current && mobileTabRef.current === "questions") {
               setAskPending(true);
@@ -962,10 +1026,17 @@ export function Workspace({ projectId }: { projectId: string }) {
 
   // Owner fix #3: the sections the ACTIVE question is about, derived from
   // nextQuestion.feeds. Clears itself when the question changes or the
-  // project leaves drafting.
+  // project leaves drafting. Snapshot questions mark nothing: their object
+  // of review is the research block in the card, and the dashed frame on an
+  // unrelated section misled the owner (bug 2026-07-17).
   const asking = useMemo(() => {
     const map: Record<string, string[]> = {};
-    if (view && view.status === "drafting" && view.nextQuestion) {
+    if (
+      view &&
+      view.status === "drafting" &&
+      view.nextQuestion &&
+      !view.nextQuestion.snapshot
+    ) {
       for (const f of view.nextQuestion.feeds) {
         const ref = parseFeedRef(f);
         if (!ref) continue;
@@ -975,6 +1046,36 @@ export function Workspace({ projectId }: { projectId: string }) {
     }
     return map;
   }, [view]);
+
+  // Owner request 2026-07-17: the first chase question after the planned
+  // bank flips the counter's unit from "about N to go" to "N open items
+  // left". Show a one-time bridge line that explains the seam instead of
+  // hiding it. The line also shows when a reload lands straight on a chase
+  // question (the copy is true whenever the first on-screen chase question
+  // appears); it clears on the next question, chase or not, and an amend's
+  // re-picked chase question counts as "next" (the user has seen the pane).
+  const chaseQid =
+    view && view.status === "drafting" && view.nextQuestion
+      ? view.nextQuestion.id
+      : null;
+  const [chaseBridge, setChaseBridge] = useState(false);
+  const prevChaseQidRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevChaseQidRef.current;
+    if (chaseQid === prev) return;
+    prevChaseQidRef.current = chaseQid;
+    const entering =
+      chaseQid !== null &&
+      chaseQid.startsWith("qi_") &&
+      !(prev !== null && prev.startsWith("qi_"));
+    setChaseBridge(entering);
+    // Screen-reader parity: the visible line sits above the focused
+    // question heading, so fold it into the turn's announcement.
+    if (entering)
+      setAnnounce((a) =>
+        `${a} The planned questions are done; the remaining questions are about assumptions still marked in the draft.`.trim()
+      );
+  }, [chaseQid]);
 
   function applyTurn(
     data: TurnResponse,
@@ -1031,7 +1132,11 @@ export function Workspace({ projectId }: { projectId: string }) {
       data.documents,
       data.status,
       prev.status,
-      data.nextQuestion
+      // Mid-deploy sync path only; the TurnResponse question carries no
+      // view-derived snapshot flag, but a snapshot question is always Q1
+      // (delivered by handoff + GET), so this site cannot regress the
+      // suppression in practice. Kept consistent anyway.
+      data.nextQuestion && !data.nextQuestion.snapshot
         ? firstFeedTarget(data.nextQuestion.feeds, data.documents)
         : null,
       data.openConfirmTotal ?? data.openConfirmItems.length
@@ -1766,6 +1871,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 workingKind={workingKind}
                 workingLong={workingLong}
                 brainDown={brainDown}
+                chaseBridge={chaseBridge}
                 featureDisabled={view.featureDisabled}
                 notice={notice}
                 skipPending={skipPending}

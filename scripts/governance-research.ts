@@ -908,8 +908,11 @@ async function main(): Promise<void> {
     documents,
     nextQuestion,
     // A first draft is not an "update": empty changedSections keeps the
-    // first open free of wall-to-wall Updated chips, so the dashed
-    // "Asking about this" anchor is the one thing that draws the eye.
+    // first open free of wall-to-wall Updated chips. (The first question is
+    // usually a snapshot question, whose ask anchor is suppressed: the eye's
+    // target is the research block IN the question card, owner bug
+    // 2026-07-17. For kinds whose Q1 is not a snapshot question, the dashed
+    // "Asking about this" anchor still draws the eye as before.)
     changedSections: {},
   });
   log("done", `handoff complete in ${Math.round((Date.now() - started) / 1000)}s flagged=${flagged}`);

@@ -69,6 +69,12 @@ export interface NextQuestion {
   // pane anchors and marks these sections while the question is active, so
   // the user can see exactly the text they are being asked about.
   feeds: string[];
+  // Background-check question ("did I get your company right?"): the card
+  // renders the research snapshot as the object of review and the
+  // ask-anchor choreography is suppressed. DERIVED at view time from the
+  // blueprint's bank declaration — never persisted, so it retrofits
+  // projects whose Q1 was stored before the flag existed.
+  snapshot?: boolean;
 }
 
 // Never "confirmed": signals are public-source observations, and the UPL
@@ -236,6 +242,15 @@ export interface ProjectView {
   // markers the item list cannot parse). The confirm gate, the list header,
   // and all copy use this, never openConfirmItems.length (which is sliced).
   openConfirmTotal: number;
+  // Tron's research understanding, capped for display: the object of review
+  // on background-check questions (NextQuestion.snapshot). Composed at view
+  // time from the research brief; null when research produced nothing.
+  companySnapshot: {
+    name: string;
+    profile: string;
+    size: string;
+    industry: string;
+  } | null;
   // The uploaded sample policy, name only (its text stays server-side; the
   // drafting prompt mirrors its formatting conventions). Null = none.
   styleSample: { name: string } | null;

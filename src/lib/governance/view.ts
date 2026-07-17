@@ -17,9 +17,10 @@ import type {
   TranscriptEntry,
   TurnState,
 } from "./types";
-import { placeholderSectionMap } from "./blueprints";
+import { bankById, placeholderSectionMap } from "./blueprints";
 import { CAPS, governanceEnabled } from "./config";
 import { countConfirmMarkers, scanConfirmMarkers } from "./markdown";
+import { normalizeBrief } from "./research";
 import { progressFor } from "./turn";
 import type { ProjectRow } from "./db";
 import { deletesAt } from "./db";
@@ -102,6 +103,34 @@ export function deriveTurnState(
   };
 }
 
+/** Word-boundary cap for snapshot fields (truncate idiom from the UI). */
+function capField(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > max / 2 ? cut.slice(0, sp) : cut) + "...";
+}
+
+/**
+ * Tron's research understanding, capped for the question card's snapshot
+ * block (§5.12): the object of review on background-check questions. Null
+ * when the brief is null or carries none of the display fields (the
+ * partial-start emptyBrief has distilledAt set but empty fields — that
+ * reduction is load-bearing, or the card would render an empty frame).
+ */
+export function composeCompanySnapshot(
+  brief: ReturnType<typeof normalizeBrief>
+): ProjectView["companySnapshot"] {
+  if (!brief) return null;
+  const name = capField(brief.companyName ?? "", 80);
+  const profile = capField(brief.companyProfile ?? "", 280);
+  const size = capField(brief.sizeAndFootprint ?? "", 140);
+  const industry = capField(brief.industryContext ?? "", 140);
+  if (!profile && !size && !industry && !name) return null;
+  return { name, profile, size, industry };
+}
+
 export function openConfirmItems(
   documents: GovernanceDoc[]
 ): OpenConfirmItem[] {
@@ -130,9 +159,18 @@ export function toProjectView(row: ProjectRow): ProjectView {
     row.nextQuestionJson,
     null
   );
-  // Rows written before questions carried feeds normalize to [].
+  // Rows written before questions carried feeds normalize to []. The
+  // snapshot flag is DERIVED from the blueprint here (single source of
+  // truth, never persisted): a stored Q1 from before the flag existed
+  // still gets the research-snapshot treatment.
   const nextQuestion = rawNextQuestion
-    ? { ...rawNextQuestion, feeds: rawNextQuestion.feeds ?? [] }
+    ? {
+        ...rawNextQuestion,
+        feeds: rawNextQuestion.feeds ?? [],
+        snapshot: rawNextQuestion.bankId
+          ? bankById(kind).get(rawNextQuestion.bankId)?.snapshot === true
+          : false,
+      }
     : null;
   const researchProgress = parseJson<ResearchProgress | null>(
     row.researchProgressJson,
@@ -164,6 +202,9 @@ export function toProjectView(row: ProjectRow): ProjectView {
       : null,
     openConfirmItems: openConfirmItems(documents),
     openConfirmTotal: openConfirmTotal(documents),
+    companySnapshot: composeCompanySnapshot(
+      normalizeBrief(parseJson<unknown>(row.researchJson, null))
+    ),
     styleSample: row.styleSampleName ? { name: row.styleSampleName } : null,
     answersCount: row.answersCount,
     deletesAt: deletesAt(row.lastActivityAt),

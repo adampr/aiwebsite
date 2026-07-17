@@ -40,7 +40,7 @@ import {
   textContentKey,
 } from "../src/lib/governance/restyle";
 import { diffResolvedMarkers } from "../src/lib/governance/resolved-anim";
-import { deriveTurnState } from "../src/lib/governance/view";
+import { composeCompanySnapshot, deriveTurnState } from "../src/lib/governance/view";
 import {
   countConfirmMarkers,
   findConfirmMarkers,
@@ -1661,6 +1661,58 @@ function check(name: string, cond: boolean): void {
   check(
     "prompt: amend transcript rows render as corrections",
     amendMsg.includes("CORRECTED earlier answer")
+  );
+}
+
+/* 16. Research snapshot on background-check questions (2026-07-17 round 2):
+ *     the flag lives ONLY in the blueprint and is derived at view time, so
+ *     projects with an already-stored Q1 retrofit automatically. */
+{
+  check(
+    "snapshot: UP-01 and N-01 are flagged, nothing else",
+    GOVERNANCE_KINDS.every((k) =>
+      BLUEPRINTS[k].bank.every(
+        (q) => !q.snapshot || q.id === "UP-01" || q.id === "N-01"
+      )
+    ) &&
+      bankById("usage_policy").get("UP-01")?.snapshot === true &&
+      bankById("nist_ai_rmf").get("N-01")?.snapshot === true
+  );
+  const brief = {
+    companyProfile: "An MSP for regulated SMBs. ".repeat(20),
+    companyName: "XL.net",
+    sizeAndFootprint: "About 40 people, Chicago plus remote.",
+    industryContext: "Managed IT services.",
+    aiUseSignals: [],
+    regulatoryExposure: [],
+    applicabilitySignals: [],
+    probedKind: null,
+    dataSensitivity: "",
+    openQuestions: [],
+    topSources: [],
+    gaps: [],
+    confidenceNotes: "",
+    distilledAt: "2026-07-17T00:00:00Z",
+  };
+  const snap = composeCompanySnapshot(brief);
+  check(
+    "snapshot: fields capped at word boundaries",
+    !!snap &&
+      snap.profile.length <= 283 &&
+      snap.profile.endsWith("...") &&
+      snap.name === "XL.net" &&
+      snap.size === "About 40 people, Chicago plus remote."
+  );
+  check("snapshot: null brief composes null", composeCompanySnapshot(null) === null);
+  check(
+    "snapshot: empty-fields brief (partial-start emptyBrief) composes null",
+    composeCompanySnapshot({
+      ...brief,
+      companyProfile: "",
+      companyName: "",
+      sizeAndFootprint: "",
+      industryContext: "",
+    }) === null
   );
 }
 

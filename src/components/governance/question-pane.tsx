@@ -324,6 +324,7 @@ export function QuestionPane({
   workingKind,
   workingLong,
   brainDown,
+  chaseBridge,
   featureDisabled,
   notice,
   skipPending,
@@ -352,6 +353,7 @@ export function QuestionPane({
   workingKind: WorkingKind;
   workingLong: boolean;
   brainDown: boolean;
+  chaseBridge: boolean;
   featureDisabled: boolean;
   notice: WorkspaceNotice | null;
   skipPending: boolean;
@@ -449,6 +451,13 @@ export function QuestionPane({
                   : `about ${bankLeft} to go`}
             </span>
           </div>
+          {chase && chaseBridge && (
+            <p className="mt-3 max-w-none text-sm" style={dim}>
+              The planned questions are done. The questions from here target
+              the assumptions still marked [TO CONFIRM] in the draft, so the
+              count above is open items, not questions.
+            </p>
+          )}
           <h3 ref={questionHeadingRef} tabIndex={-1} className="doc-h mt-4 text-lg">
             {q.text}
           </h3>
@@ -457,7 +466,66 @@ export function QuestionPane({
               {q.why}
             </p>
           )}
-          {feedTarget && (
+          {/* Background-check question (q.snapshot): the object of review is
+              Tron's research understanding, rendered HERE in the card. The
+              ask-anchor choreography and jump link are suppressed for this
+              question (an unrelated section's markers misled the owner). */}
+          {q.snapshot && (
+            <div className="q-snapshot">
+              <span className="sys-label sys-label--warn">
+                {view.companySnapshot
+                  ? "Research · unconfirmed"
+                  : "Research · nothing found"}
+              </span>
+              {view.companySnapshot ? (
+                <>
+                  <dl>
+                    {(view.companySnapshot.profile ||
+                      view.companySnapshot.name) && (
+                      <>
+                        <dt>Who I think you are</dt>
+                        <dd className="max-w-none">
+                          {view.companySnapshot.name &&
+                          view.companySnapshot.profile
+                            ? `${view.companySnapshot.name} · ${view.companySnapshot.profile}`
+                            : view.companySnapshot.name ||
+                              view.companySnapshot.profile}
+                        </dd>
+                      </>
+                    )}
+                    {view.companySnapshot.size && (
+                      <>
+                        <dt>Size and footprint</dt>
+                        <dd className="max-w-none">
+                          {view.companySnapshot.size}
+                        </dd>
+                      </>
+                    )}
+                    {view.companySnapshot.industry && (
+                      <>
+                        <dt>Industry</dt>
+                        <dd className="max-w-none">
+                          {view.companySnapshot.industry}
+                        </dd>
+                      </>
+                    )}
+                  </dl>
+                  <p className="mt-2 max-w-none text-xs" style={faint}>
+                    This is from public sources, not fact. Your answer below
+                    overrides all of it.
+                  </p>
+                </>
+              ) : (
+                <p className="mt-2 max-w-none text-sm">
+                  Honest answer: I could not research much about you from
+                  public sources, so this check is on you. Tell me in your own
+                  words: what you do, roughly how big you are, and what
+                  industry you are in.
+                </p>
+              )}
+            </div>
+          )}
+          {feedTarget && !q.snapshot && (
             <p className="mt-3 max-w-none text-sm">
               <button
                 type="button"
@@ -468,7 +536,9 @@ export function QuestionPane({
               </button>
             </p>
           )}
-          {q.suggestions.length > 0 && (
+          {/* Chips (and their hint) hide when the snapshot came up empty:
+              "Yes, that matches" is nonsense with nothing shown to match. */}
+          {q.suggestions.length > 0 && !(q.snapshot && !view.companySnapshot) && (
             <>
               <p className="mt-4 max-w-none text-xs" style={faint}>
                 Tap to add or remove. Combine them or edit below.

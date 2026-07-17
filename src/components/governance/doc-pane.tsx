@@ -40,7 +40,10 @@ export interface ChangedRef {
  *  (the theater is only progressive disclosure, never synthesized text). */
 export interface RevealState {
   item: ResolvedMarkerReveal;
-  mode: "old" | "typing" | "done";
+  // "hold" = typing finished, the 1 s rest with a BLINKING caret (the
+  // strongest just-live-edited cue); typing itself shows a steady caret
+  // (a moving caret does not blink).
+  mode: "old" | "typing" | "hold";
   chars: number; // typing: how much of the replacement is shown
 }
 
@@ -52,9 +55,10 @@ const R_ON = "\uE000"; // persistent resolved wash on
 const R_OFF = "\uE001"; // off
 const OLD_ON = "\uE002"; // old-marker strike on
 const OLD_OFF = "\uE003"; // off
-const CARET = "\uE004"; // typing caret
+const CARET = "\uE004"; // blinking caret (the hold beat)
+const CARET_STEADY = "\uE005"; // steady caret (while typing)
 
-const SENTINEL_RE = /[\uE000-\uE004]/;
+const SENTINEL_RE = /[\uE000-\uE005]/;
 
 /** Inject reveal/resolved sentinels into committed section markdown.
  *  Edits apply in descending offset order so earlier spans stay valid. */
@@ -82,6 +86,8 @@ function decorateMarkdown(
   if (reveal && reveal.item.nextEnd <= md.length) {
     const { item, mode, chars } = reveal;
     const full = md.slice(item.nextStart, item.nextEnd);
+    // Deletion-only items (empty span) never get a caret: a caret blinking
+    // next to nothing where text just vanished is nonsense theater.
     edits.push({
       start: item.nextStart,
       end: item.nextEnd,
@@ -89,8 +95,8 @@ function decorateMarkdown(
         mode === "old"
           ? OLD_ON + item.oldMarkerText + OLD_OFF
           : mode === "typing"
-            ? R_ON + full.slice(0, chars) + CARET + R_OFF
-            : R_ON + full + R_OFF,
+            ? R_ON + full.slice(0, chars) + (full ? CARET_STEADY : "") + R_OFF
+            : R_ON + full + (full ? CARET : "") + R_OFF,
     });
   }
   edits.sort((a, b) => b.start - a.start);
@@ -146,9 +152,18 @@ function styledText(text: string, ctx: SpanCtx, key: number) {
       flush();
       ctx.resolved = ch === R_ON ? true : ch === R_OFF ? false : ctx.resolved;
       ctx.old = ch === OLD_ON ? true : ch === OLD_OFF ? false : ctx.old;
-    } else if (ch === CARET) {
+    } else if (ch === CARET || ch === CARET_STEADY) {
       flush();
-      parts.push(<span key={parts.length} className="doc-reveal-caret" />);
+      parts.push(
+        <span
+          key={parts.length}
+          className={
+            ch === CARET_STEADY
+              ? "doc-reveal-caret doc-reveal-caret--steady"
+              : "doc-reveal-caret"
+          }
+        />
+      );
     } else buf += ch;
   }
   flush();
@@ -266,7 +281,12 @@ function SectionBody({
         ),
         num
       ),
-    [markdown, num, marks, reveal]
+    // Keyed on the reveal's PRIMITIVES, not object identity: the show
+    // creates a fresh RevealState every 60ms tick, and only the section
+    // being revealed may re-parse per tick. `marks` arrays come from the
+    // parent's memoized per-section map, so idle marked sections hold too.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [markdown, num, marks, reveal?.item, reveal?.mode, reveal?.chars]
   );
   return (
     <>
@@ -319,6 +339,20 @@ export function DocPane({
 }) {
   const doc =
     documents.find((d) => d.slug === activeDoc) ?? documents[0] ?? null;
+
+  // Stable per-section mark arrays: a fresh .filter() per render defeats
+  // SectionBody's parse memo for every marked section on every reveal tick
+  // (up to ~60 ticks/item since the per-char pacing).
+  const marksBySection = useMemo(() => {
+    const m = new Map<string, ResolvedMarkerReveal[]>();
+    for (const r of resolvedMarks ?? []) {
+      const k = `${r.doc}#${r.section}`;
+      const arr = m.get(k);
+      if (arr) arr.push(r);
+      else m.set(k, [r]);
+    }
+    return m;
+  }, [resolvedMarks]);
 
   const footer =
     status === "review"
@@ -417,12 +451,10 @@ export function DocPane({
             const changed = (highlights[doc.slug] ?? []).includes(s.id);
             const asked = (asking[doc.slug] ?? []).includes(s.id);
             const planned = (placeholders[doc.slug] ?? []).includes(s.id);
-            // undefined (not an empty array) when a section has no marks:
-            // keeps SectionBody's parse memo stable for untouched sections
-            // through the reveal's re-render ticks.
-            const secMarks = (resolvedMarks ?? []).filter(
-              (m) => m.doc === doc.slug && m.section === s.id
-            );
+            // undefined when a section has no marks; otherwise the STABLE
+            // array from marksBySection, so the parse memo holds for every
+            // section except the one actually revealing.
+            const secMarks = marksBySection.get(`${doc.slug}#${s.id}`);
             const cls =
               [
                 changed ? "doc-sec--changed doc-sec--flash" : "",
@@ -452,7 +484,7 @@ export function DocPane({
                 <SectionBody
                   markdown={s.markdown}
                   num={si + 1}
-                  marks={secMarks.length ? secMarks : undefined}
+                  marks={secMarks}
                   reveal={
                     reveal &&
                     reveal.item.doc === doc.slug &&

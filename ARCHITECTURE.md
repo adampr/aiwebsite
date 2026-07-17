@@ -15,7 +15,13 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 12: non-advancing
+Last verified against code: 2026-07-17 (governance round 13b: research
+snapshot on background-check questions — blueprint `snapshot` flag on
+UP-01/N-01 derived at VIEW time (retrofits stored Q1s), `companySnapshot`
+on ProjectView, ask-anchor suppression for those questions; reveal
+re-paced to ~30ms/char with a 15s budget trim, caret steady-while-typing
+/ blink-through-hold, doc-pane parse-memo stabilization, see §5.12;
+earlier same day round 12: non-advancing
 turns — `questionId:"restyle"` format passes + `questionId:"amend"`
 answer corrections through POST /answer, `resolveNonAdvancingGate`,
 monotone question counter (`interview.ts`), transcript amend folding,
@@ -892,6 +898,26 @@ section when a question arrives (guarded: cancelled by user scroll/answer/status
 container-scoped so the page never moves), and the question card carries a "See the text
 this is about" jump link for the mobile Questions tab.
 
+**Background-check questions (research snapshot, 2026-07-17).** UP-01 and N-01 ask
+"did I get your company right?" — the object of review is Tron's research
+understanding, so the card renders it: `ProjectView.companySnapshot`
+`{name, profile, size, industry} | null`, composed unconditionally in `view.ts`
+(`composeCompanySnapshot`, word-boundary caps 80/280/140/140, null when the brief is
+null or all fields empty — the partial-start emptyBrief reduction is load-bearing).
+The trigger is `snapshot: true` on the BLUEPRINT bank item, DERIVED onto the
+normalized `NextQuestion` at view time from `bankById` (single source of truth, never
+persisted — a Q1 stored before the flag existed retrofits automatically).
+`.q-snapshot` block: warn register (dotted warn left rail + `sys-label--warn`
+"Research · unconfirmed" / "Research · nothing found"), a `dl` of nonempty rows, and
+the hedge "This is from public sources, not fact. Your answer below overrides all of
+it." Empty state uses bridge copy owning the contradiction with the stored question
+text, and hides the suggestion chips + their hint ("Yes, that matches" with nothing
+shown to match). For snapshot questions the ask-anchor choreography is FULLY
+suppressed at every source site (the `asking` memo, the S8 first-question anchor, the
+flight-resolution askRef, the sync-apply askRef, and the card's jump link): anchoring
+purpose-scope put an unrelated always-highlighted marker under the user's eye (the
+owner's bug report).
+
 **Answer form (question-pane.tsx + workspace.tsx).** Suggestion chips are multi-select
 toggles (`aria-pressed`), not fill-the-box buttons: a click appends the chip as a
 "; "-joined segment of the answer, a second click excises exactly that segment (plus one
@@ -983,7 +1009,11 @@ history can never disagree. The secondary context line varies by phase: bank
 questions "about R to go" (R = uncovered required bank items), follow-ups
 "a follow-up[ · about R to go]", chase questions
 "T open items left · one answer can clear several" (T = `openConfirmTotal`; markers
-are never a question denominator since one answer can clear many). Tests:
+are never a question denominator since one answer can clear many). Entering the
+chase phase for the first on-screen chase question also shows a one-time bridge line
+(`chaseBridge`, workspace-derived, cleared on the next question) and folds the same
+explanation into that turn's announcement, so the counter's unit change reads as a
+seam, not a glitch. Tests:
 `gate:`/`chase:`/`note:`/`prompt:` block 14 and `counter:`/`folding:` block 15 in
 `scripts/governance-tests.ts`.
 
@@ -1010,16 +1040,26 @@ post-turn documents per changed section — a marker counts as resolved ONLY whe
 excerpt count dropped in the committed text; the replacement is a verbatim slice
 located between the marker's own line-bounded context anchors (ambiguous/missing
 anchors, cross-line spans, >300 chars, or marker-bearing slices yield NO reveal,
-never a guess; ≤20 items). The doc pane then plays the reveal (owner request): per
-item, auto-scroll (pane-container-scoped) → old marker struck out (600 ms) →
-replacement typed out over committed text (~900 ms, sentinel-injected private-use
-chars – toggle span styling across emphasis boundaries) → 1 s hold; at
-most 5 items play ("Showed 5 of N…" note after), every diffed span keeps a static
-`.doc-resolved` wash until the next rev, a sticky "Showing resolved items · i of k /
-Skip the replay" bar rides the pane, and ANY user intent (scroll/jump/Escape/skip, a
-new turn, a newer rev) ends it instantly at the final state. Reduced motion: no show,
-static washes only. Mobile: never auto-switches tabs; the show queues and plays when
-the Draft tab opens (superseded by newer revs). The live region stays count-delta
+never a guess; ≤20 items). The doc pane then plays the reveal (owner request;
+re-paced 2026-07-17 round 13b "display it slower"): per item, auto-scroll
+(pane-container-scoped, 420 ms; 60 ms same-section) → old marker struck out (900 ms
+over a 700 ms CSS fade; the 200 ms rest is reading time — change together) →
+replacement RE-WRITTEN over committed text at ~30 ms/char (60 ms ticks,
+ticks = clamp(ceil(len/2), 20, 60), closed-form chars so short texts spend the full
+1.2 s floor in 1-2 char steps; 3.6 s ceiling; sentinel-injected private-use chars
+toggle span styling across emphasis boundaries; caret STEADY while typing) →
+1 s hold with the caret BLINKING (removed at hold end; deletion-only items get no
+caret). The played list is trimmed at startShow to min(5 items, a 15 s budget
+estimated with the REAL per-item beats), always ≥1; the overflow note's denominator
+is the ORIGINAL diff count ("Showed n of m resolved items..."). Every diffed span
+keeps a static `.doc-resolved` wash until the next rev, a sticky "Showing resolved
+items · i of k / Skip the replay" bar rides the pane, and ANY user intent
+(scroll/jump/Escape/skip, a new turn, a newer rev) ends it instantly at the final
+state. Perf contract: the doc pane memoizes per-section mark arrays and keys the
+section parse memo on reveal PRIMITIVES (item/mode/chars), so only the revealing
+section re-parses per tick. Reduced motion: no show, static washes only (plus the
+deferred first-section park + ask park the show owed). Mobile: never auto-switches
+tabs; the show queues and plays when the Draft tab opens (superseded by newer revs). The live region stays count-delta
 only — the reveal adds zero announcements. (3) *Monotone counter*: above.
 (4) *Change previous answers*: every question row in the transcript disclosure
 (folded via `foldTranscript` — amend rows collapse into their target row, showing
