@@ -15,7 +15,12 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 15d: real Word
+Last verified against code: 2026-07-17 (governance round 15e: one Stop button —
+the question/review pane's pause note no longer duplicates the sample control's
+"Stop reformatting" (designer+critic panel; the duplicate read as a glitch and
+had drifted); the note explains the lock and points at the control's button,
+which is now RUN-gated, not name-gated, so a mid-run sample removal can never
+leave an active run with no Stop anywhere, see §5.12; round 15d: real Word
 numbering + PDF bookmarks in the format-sample extractor - word/numbering.xml
 + styles.xml parsed (docx-numbering.ts: linear scanners, clamped numerics,
 lvl/pStyle back-references, permutation-safe counters) so auto-numbered
@@ -1130,9 +1135,22 @@ silently and the fresh full run queues behind the in-flight pass (a replacement
 must never keep applying the superseded sample). One consent contract in every
 state: queued has Skip, running has "Stop reformatting" — a LATCHED stop
 (`stopRequested` on the run; the in-flight pass lands and is kept, button reads
-"Stopping...", honored at the pass boundary with the stopped receipt). The Stop
-affordance renders both on the control and inside the question/review pane's pause
-note (the exit lives where the lock is felt); `restyleActive` state holds the input
+"Stopping...", honored at the pass boundary with the stopped receipt). The page
+has exactly ONE "Stop reformatting" button, on the sample control (round 15e:
+the pause note's duplicate read as a glitch, broke accessible-name uniqueness,
+and had already drifted behaviorally); it is RUN-gated, not name-gated
+(`reformat.busy && !queued && !removeOnly` — the run outlives the sample row
+after a mid-run removal, local or another tab's, so the Stop must not vanish
+with the filename; only the idle "Reformat the whole draft" button requires a
+sample). The question/review pane's pause note explains the lock and points at
+that button ("To end the reformat early, use Stop reformatting next to the
+format sample below" — copy depends on the control rendering below the pane in
+the same column), with a stopping variant ("Stopping the reformat. The pass in
+progress finishes first; what is done so far is kept.") that stands alone when
+a mid-run removal empties the control's row; the control's run note likewise
+branches on the sample's presence (no sample + latched stop = "The reformat of
+the removed sample is ending"; never the replace-and-keep sentence, whose
+referents would not render). `restyleActive` state holds the input
 lock and the pause note across the setTimeout gaps between passes (`working`
 briefly drops there). Guard rails around the client-chained run: a 6-minute stall
 watchdog per pass dispatch ends the run honestly if no boundary arrives; a

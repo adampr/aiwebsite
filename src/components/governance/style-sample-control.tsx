@@ -106,12 +106,20 @@ export function StyleSampleControl({
   // states the consequence and routes stop/skip intent to the dedicated
   // Stop/Skip controls instead of the destructive Remove. Both buttons get
   // aria-describedby to this line so screen readers hear it pre-activation.
+  // With the sample gone mid-run (removed here or in another tab) the
+  // replace-and-keep sentence would point at buttons that no longer render,
+  // so it only speaks while a sample exists; a latched stop after removal
+  // gets its own honest line instead.
   const runNote =
     !removeOnly && reformat
-      ? reformat.queued
+      ? reformat.queued && name
         ? "A new sample takes this one's place. To keep the sample and skip the reformat, use Skip the reformat."
         : reformat.busy
-          ? "Replacing the sample starts the reformat over with the new one. To stop reformatting and keep the sample, use Stop reformatting."
+          ? name
+            ? "Replacing the sample starts the reformat over with the new one. To stop reformatting and keep the sample, use Stop reformatting."
+            : reformat.stopping
+              ? "The reformat of the removed sample is ending; what is done so far is kept."
+              : ""
           : ""
       : "";
 
@@ -201,7 +209,7 @@ export function StyleSampleControl({
             type="button"
             className="btn btn--text"
             disabled={busy !== null || disabled}
-            aria-describedby={runNote ? runNoteId : undefined}
+            aria-describedby={runNote && name ? runNoteId : undefined}
             aria-label={
               busy === "upload"
                 ? "Uploading format sample"
@@ -223,7 +231,7 @@ export function StyleSampleControl({
             type="button"
             className="btn btn--text"
             disabled={busy !== null}
-            aria-describedby={runNote ? runNoteId : undefined}
+            aria-describedby={runNote && name ? runNoteId : undefined}
             aria-label={
               busy === "remove"
                 ? "Removing format sample"
@@ -282,28 +290,37 @@ export function StyleSampleControl({
           </button>
         </div>
       )}
-      {name && reformat?.available && !reformat.queued && !removeOnly && (
+      {/* This is the page's ONE "Stop reformatting" button (round 15e: the
+          question/review pane's pause note now points here instead of
+          duplicating it). Run-gated, NOT name-gated: the button governs the
+          RUN, which outlives the sample row after a mid-run removal (local
+          or another tab's); only the idle start button needs the sample. */}
+      {reformat?.busy && !reformat.queued && !removeOnly && (
         <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1">
-          {reformat.busy ? (
-            <>
-              {reformat.passNote && (
-                <span className="text-xs" style={faint}>
-                  {reformat.passNote}
-                </span>
-              )}
-              {/* Not disabled while stopping: flipping disabled under focus
-                  drops focus to body, and requestStopRestyle's stopRequested
-                  guard already makes a second click a no-op. */}
-              <button
-                type="button"
-                className="btn btn--text"
-                aria-busy={reformat.stopping || undefined}
-                onClick={reformat.onStop}
-              >
-                {reformat.stopping ? "Stopping..." : "Stop reformatting"}
-              </button>
-            </>
-          ) : (
+          {reformat.passNote && (
+            <span className="text-xs" style={faint}>
+              {reformat.passNote}
+            </span>
+          )}
+          {/* Not disabled while stopping: flipping disabled under focus
+              drops focus to body, and requestStopRestyle's stopRequested
+              guard already makes a second click a no-op. */}
+          <button
+            type="button"
+            className="btn btn--text"
+            aria-busy={reformat.stopping || undefined}
+            onClick={reformat.onStop}
+          >
+            {reformat.stopping ? "Stopping..." : "Stop reformatting"}
+          </button>
+        </div>
+      )}
+      {name &&
+        reformat?.available &&
+        !reformat.busy &&
+        !reformat.queued &&
+        !removeOnly && (
+          <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1">
             <button
               type="button"
               className="btn btn--text btn--stable"
@@ -312,9 +329,8 @@ export function StyleSampleControl({
             >
               Reformat the whole draft
             </button>
-          )}
-        </div>
-      )}
+          </div>
+        )}
       {reformat?.busy && <WorkingRow long={reformat.long} kind="restyle" />}
       {/* One faint line at a time: while a reformat is queued or running the
           run note takes the helper's slot (upload guidance is dead weight

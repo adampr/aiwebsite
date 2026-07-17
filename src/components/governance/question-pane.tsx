@@ -467,7 +467,6 @@ export function QuestionPane({
   onShowPending,
   restyleActive,
   restyleStopping,
-  onStopRestyle,
   featureDisabled,
   notice,
   skipPending,
@@ -504,11 +503,12 @@ export function QuestionPane({
   pendingShowReady: boolean;
   onShowPending: () => void;
   // A reformat run holds the lock across the gaps between its passes
-  // (`working` briefly drops there); the pause note carries its own Stop so
-  // the exit lives where the lock is felt (§5.12 auto-reformat).
+  // (`working` briefly drops there). The pause note only EXPLAINS the lock
+  // and points at the page's one Stop button, on the sample control below
+  // (round 15e: a second Stop here read as a glitch and had already drifted
+  // behaviorally); `restyleStopping` selects the stopping copy variant.
   restyleActive: boolean;
   restyleStopping: boolean;
-  onStopRestyle: () => void;
   featureDisabled: boolean;
   notice: WorkspaceNotice | null;
   skipPending: boolean;
@@ -833,24 +833,21 @@ export function QuestionPane({
             {working && !pausedByOther && (
               <WorkingRow long={workingLong} kind={workingKind} />
             )}
+            {/* No Stop button here: the page's one Stop lives on the sample
+                control, which renders directly below this pane in the same
+                column (the copy's "below" depends on that DOM order). The
+                stopping variant stands alone because a mid-run sample
+                removal can unrender the control's row while the latched
+                stop drains. */}
             {pausedByOther && (
               <div className="mt-3 text-sm" style={dim}>
                 <p className="max-w-none">
                   {restylePause
-                    ? "Paused while I reformat the draft to match your sample. Answering comes back when it finishes, or stop it and finish the rest later."
+                    ? restyleStopping
+                      ? "Stopping the reformat. The pass in progress finishes first; what is done so far is kept. Answering comes back after that."
+                      : "Paused while I reformat the draft to match your sample. Answering comes back when it finishes. To end the reformat early, use Stop reformatting next to the format sample below."
                     : "Paused while I rework an earlier answer. This question is not going anywhere."}
                 </p>
-                {restylePause && (
-                  <button
-                    type="button"
-                    className="btn btn--text mt-2"
-                    disabled={restyleStopping}
-                    aria-busy={restyleStopping || undefined}
-                    onClick={onStopRestyle}
-                  >
-                    {restyleStopping ? "Stopping..." : "Stop reformatting"}
-                  </button>
-                )}
               </div>
             )}
             {brainDown && !working && <BrainDownNote />}
@@ -982,24 +979,17 @@ export function QuestionPane({
               !pausedByOther && (
                 <WorkingRow long={workingLong} kind={workingKind} />
               )}
+            {/* Same no-button rule as the drafting pause note (round 15e);
+                here the sample control sits below the confirm block. */}
             {pausedByOther && (
               <div className="mt-3 text-sm" style={dim}>
                 <p className="max-w-none">
                   {restylePause
-                    ? "Paused while I reformat the draft to match your sample. Revising comes back when it finishes, or stop it and finish the rest later."
+                    ? restyleStopping
+                      ? "Stopping the reformat. The pass in progress finishes first; what is done so far is kept. Revising comes back after that."
+                      : "Paused while I reformat the draft to match your sample. Revising comes back when it finishes. To end the reformat early, use Stop reformatting next to the format sample below."
                     : "Paused while I rework an earlier answer. The draft updates when it lands."}
                 </p>
-                {restylePause && (
-                  <button
-                    type="button"
-                    className="btn btn--text mt-2"
-                    disabled={restyleStopping}
-                    aria-busy={restyleStopping || undefined}
-                    onClick={onStopRestyle}
-                  >
-                    {restyleStopping ? "Stopping..." : "Stop reformatting"}
-                  </button>
-                )}
               </div>
             )}
             {brainDown && !working && <BrainDownNote />}

@@ -2477,7 +2477,6 @@ export function Workspace({ projectId }: { projectId: string }) {
                 }}
                 restyleActive={restyleActive}
                 restyleStopping={restyleStopping}
-                onStopRestyle={requestStopRestyle}
                 featureDisabled={view.featureDisabled}
                 notice={notice}
                 skipPending={skipPending}
