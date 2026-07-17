@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Eleven real, running AI systems built in the open by XL.net: engine, middleware, production sites, client-delivery platforms, access layers, autonomy experiments, and internal security tooling.",
+    "Twelve real, running AI systems built in the open by XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Eleven real, running AI systems built in the open by XL.net: engine, middleware, production sites, client-delivery platforms, access layers, autonomy experiments, and internal security tooling.",
+      "Twelve real, running AI systems built in the open by XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -228,8 +228,82 @@ export default function WorkPage() {
           </p>
         </section>
 
-        {/* 4. IT Support Chicago */}
-        <section id="itsupportchicago" className="panel rise">
+        {/* 4. AI Governance Writer */}
+        <section id="governance" className="panel rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · public
+            </span>
+            <span className="badge badge--light">Sign in to create</span>
+          </div>
+          <h2 className="mt-6">AI Governance Writer</h2>
+          <p className="mt-2 text-sm text-faint">
+            A governance draft written with you, one question at a time, on
+            screen as you answer.
+          </p>
+          <p className="mt-4 text-sm">
+            A workbench where you and Tron Netter write your AI governance
+            together. Pick one: a single AI Usage Policy, or a working-draft
+            set of core documents for NIST AI RMF, the EU AI Act, or ISO/IEC
+            42001, seven to ten documents per set. It runs right here on{" "}
+            <a href="#aiwebsite">ai.xl.net</a>, drafting through the{" "}
+            <a href="#brain">Software Brain</a>.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Researched First
+              </h3>
+              <p className="mt-3 text-sm">
+                Before the first question, Tron reads your website, what the
+                web says about you, and your industry, so the draft starts
+                from your reality instead of a template.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Nothing Silently Accepted
+              </h3>
+              <p className="mt-3 text-sm">
+                When coverage is complete the UI flips to review, and every
+                assumption Tron flagged in the draft must be resolved by you
+                before a final can exist. Downloads carry a DRAFT watermark
+                until you confirm.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Yours, Then Gone
+              </h3>
+              <p className="mt-3 text-sm">
+                Only the extracted text of a sample you upload is stored,
+                never the file. Delete a project instantly, anytime;
+                otherwise it hard-deletes 30 days after your last activity.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            Upload a sample policy and the writer adopts its formatting,
+            structure, and numbering. Word-friendly downloads (.docx, or .zip
+            for the sets) work in every state. Drafts are a working starting
+            point for your leadership and counsel to review, not legal
+            advice. Sign in with Google or Microsoft to create a project.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            researched first · one question at a time · live side-by-side
+            draft · zero unresolved items on finals · .docx / .zip in every
+            state · 30-day hard delete
+          </p>
+          <Link href="/governance" className="btn mt-6 no-underline">
+            Start your governance draft
+          </Link>
+        </section>
+
+        {/* 5. IT Support Chicago */}
+        <section id="itsupportchicago" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--warn">
               <span className="dot" /> Autonomy experiment
@@ -305,8 +379,8 @@ export default function WorkPage() {
           </span>
         </div>
 
-        {/* 5. QBR Machine */}
-        <section id="qbr-machine" className="panel panel--lightline rise">
+        {/* 6. QBR Machine */}
+        <section id="qbr-machine" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -373,8 +447,8 @@ export default function WorkPage() {
           </p>
         </section>
 
-        {/* 6. Onboarding Toolkit */}
-        <section id="onboarding-toolkit" className="panel rise">
+        {/* 7. Onboarding Toolkit */}
+        <section id="onboarding-toolkit" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -449,8 +523,8 @@ export default function WorkPage() {
           </span>
         </div>
 
-        {/* 7. XL Lakehouse */}
-        <section id="lakehouse" className="panel panel--lightline rise">
+        {/* 8. XL Lakehouse */}
+        <section id="lakehouse" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -516,8 +590,8 @@ export default function WorkPage() {
           </p>
         </section>
 
-        {/* 8. XL API Gateway */}
-        <section id="api-gateway" className="panel rise">
+        {/* 9. XL API Gateway */}
+        <section id="api-gateway" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
               <span className="dot" /> In development
@@ -598,8 +672,8 @@ export default function WorkPage() {
           </span>
         </div>
 
-        {/* 9. Roleplay */}
-        <section id="roleplay" className="panel panel--lightline rise">
+        {/* 10. Roleplay */}
+        <section id="roleplay" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · public
@@ -664,8 +738,8 @@ export default function WorkPage() {
           </a>
         </section>
 
-        {/* 10. Leo Netter */}
-        <section id="leo-netter" className="panel rise">
+        {/* 11. Leo Netter */}
+        <section id="leo-netter" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
               <span className="dot" /> Internal test
@@ -718,8 +792,8 @@ export default function WorkPage() {
           </p>
         </section>
 
-        {/* 11. SpamSlayer */}
-        <section id="spamslayer" className="panel panel--lightline rise">
+        {/* 12. SpamSlayer */}
+        <section id="spamslayer" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · internal
