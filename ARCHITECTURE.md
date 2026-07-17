@@ -1633,7 +1633,9 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
   v1.102 (d4f34eb, 2026-07-17)** — per-call panel forcing (`invocation.panelMode`,
   #701) + JSON-native forced panel (#703: json_object turns run draft → cross-lab
   refute → one revision; machine-checkable `thinking.panel` receipt). Consumed here
-  by the blog engine: `@aicompany/core` v1.8.0 (55f0ace) with
+  by the blog engine: `@aicompany/core` v1.8.1 (1fb62f1; chat-widget CSS scoped
+  to `aic-chat-*` so the site-wide widget no longer hijacks the admin console's
+  `aic-*` classes) with
   `blog.quality.panel: "on"` in site.config.ts forces the cross-lab refuter on every
   article-authoring call (owner directive 2026-07-17); a non-convened panel publishes
   noindexed until a panel-clean pass; chat envelopes keep `maxOrchestratorPhase: 1`.
