@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { KIND_LABELS } from "@/lib/governance/config";
+import { isChaseId } from "@/lib/governance/interview";
 import { sectionTitleText } from "@/lib/governance/numbering";
 import {
   diffResolvedMarkers,
@@ -1050,32 +1051,50 @@ export function Workspace({ projectId }: { projectId: string }) {
   // Owner request 2026-07-17: the first chase question after the planned
   // bank flips the counter's unit from "about N to go" to "N open items
   // left". Show a one-time bridge line that explains the seam instead of
-  // hiding it. The line also shows when a reload lands straight on a chase
-  // question (the copy is true whenever the first on-screen chase question
-  // appears); it clears on the next question, chase or not, and an amend's
-  // re-picked chase question counts as "next" (the user has seen the pane).
+  // hiding it. "First" is pinned per tab in sessionStorage (the S4 pattern):
+  // the key stores WHICH chase question the bridge belongs to, so re-renders,
+  // StrictMode remounts, and reloads on that same question keep it up, while
+  // any later chase question (including an amend's re-picked one, which
+  // carries a new rev id) retires it for good.
   const chaseQid =
     view && view.status === "drafting" && view.nextQuestion
       ? view.nextQuestion.id
       : null;
   const [chaseBridge, setChaseBridge] = useState(false);
-  const prevChaseQidRef = useRef<string | null>(null);
   useEffect(() => {
-    const prev = prevChaseQidRef.current;
-    if (chaseQid === prev) return;
-    prevChaseQidRef.current = chaseQid;
-    const entering =
-      chaseQid !== null &&
-      chaseQid.startsWith("qi_") &&
-      !(prev !== null && prev.startsWith("qi_"));
-    setChaseBridge(entering);
-    // Screen-reader parity: the visible line sits above the focused
-    // question heading, so fold it into the turn's announcement.
-    if (entering)
-      setAnnounce((a) =>
-        `${a} The planned questions are done; the remaining questions are about assumptions still marked in the draft.`.trim()
-      );
-  }, [chaseQid]);
+    // Deferred like the S4 restore above (the repo's pattern for state that
+    // follows the view without cascading renders); StrictMode's double run
+    // collapses to one shot via the cleanup.
+    const t = window.setTimeout(() => {
+      if (!isChaseId(chaseQid)) {
+        setChaseBridge(false);
+        return;
+      }
+      const key = `gov:${projectId}:chaseBridge`;
+      let stored: string | null = null;
+      try {
+        stored = sessionStorage.getItem(key);
+      } catch {
+        // storage unavailable: the line degrades to showing per chase question
+      }
+      if (stored === null) {
+        try {
+          sessionStorage.setItem(key, chaseQid);
+        } catch {
+          // same degradation
+        }
+        // Screen-reader parity: the visible line sits above the focused
+        // question heading, so reading forward from focus never meets it.
+        // One self-contained REPLACEMENT announcement (the live region
+        // never appends) carrying the fact that matters: the unit changed.
+        setAnnounce(
+          "Tron's planned questions are done. The count from here is open items in the draft, not questions. The next question is ready."
+        );
+      }
+      setChaseBridge(stored === null || stored === chaseQid);
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [chaseQid, projectId]);
 
   function applyTurn(
     data: TurnResponse,

@@ -15,7 +15,9 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 13b: research
+Last verified against code: 2026-07-17 (governance round 13c: chase-phase
+counter softeners — foreshadow chip suffix + one-time bridge line +
+`isChaseId`, see §5.12; earlier round 13b: research
 snapshot on background-check questions — blueprint `snapshot` flag on
 UP-01/N-01 derived at VIEW time (retrofits stored Q1s), `companySnapshot`
 on ProjectView, ask-anchor suppression for those questions; reveal
@@ -1009,11 +1011,24 @@ history can never disagree. The secondary context line varies by phase: bank
 questions "about R to go" (R = uncovered required bank items), follow-ups
 "a follow-up[ · about R to go]", chase questions
 "T open items left · one answer can clear several" (T = `openConfirmTotal`; markers
-are never a question denominator since one answer can clear many). Entering the
-chase phase for the first on-screen chase question also shows a one-time bridge line
-(`chaseBridge`, workspace-derived, cleared on the next question) and folds the same
-explanation into that turn's announcement, so the counter's unit change reads as a
-seam, not a glitch. Tests:
+are never a question denominator since one answer can clear many). Two client-only
+softeners smooth that unit flip (owner request + adversarial UX review 2026-07-17):
+(a) *foreshadow* — while `bankLeft <= 1` and `openConfirmTotal > 0`, the chip appends
+" · then the draft's open items", warning BEFORE the flip; (b) *bridge line* — the
+first chase question a tab shows renders a one-time `text-xs` note directly under the
+counter row, in Tron's first-person card voice ("My planned questions are done; the
+ones from here clear the open [TO CONFIRM] items in the draft, so this count is open
+items, not questions", the token styled `mark.doc-confirm`), tied to the question
+heading via `aria-describedby="chase-bridge-note"`. First-ness is pinned per tab in
+sessionStorage (`gov:{projectId}:chaseBridge` stores the OWNING chase question id, so
+re-renders, StrictMode remounts, and reloads on that same question keep the line,
+while any later chase question — including an amend's re-picked one, which carries a
+new rev id — retires it; storage-unavailable degrades to once per chase question).
+The entering turn REPLACES the polite live-region announcement with a self-contained
+one naming the unit change (the visible note sits above the focused heading, where
+forward reading never meets it; the live region never appends). `isChaseId`
+(`interview.ts`) is the single chase predicate the counter chip and the bridge
+share, so the two can never drift. Tests:
 `gate:`/`chase:`/`note:`/`prompt:` block 14 and `counter:`/`folding:` block 15 in
 `scripts/governance-tests.ts`.
 

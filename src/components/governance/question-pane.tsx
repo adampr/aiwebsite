@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 import type { OpenConfirmItem, ProjectView } from "@/lib/governance/types";
 import {
   foldTranscript,
+  isChaseId,
   isQuestionEntry,
   questionNumber,
   type EffectiveEntry,
@@ -383,7 +384,7 @@ export function QuestionPane({
   // answer can clear several open items, so markers are never a question
   // denominator). Skipping one moves the draft to review instead of
   // drafting a default.
-  const chase = !!q && q.id.startsWith("qi_");
+  const chase = isChaseId(q?.id);
   const inputLocked = working || featureDisabled;
   // Non-advancing turns (amend/restyle) run under the same one-turn lock;
   // the question card explains the pause instead of showing a spinner row.
@@ -420,6 +421,14 @@ export function QuestionPane({
   );
 
   const bankLeft = Math.max(0, view.progress.total - view.progress.answered);
+  // Foreshadow the counter's unit flip (UX review 2026-07-17): when the
+  // planned bank is nearly done and open [TO CONFIRM] items remain, the chip
+  // says the chase comes next, so "N open items left" never lands
+  // unannounced. The bridge line below reinforces; this warns.
+  const foreshadow =
+    !chase && bankLeft <= 1 && view.openConfirmTotal > 0
+      ? " · then the draft's open items"
+      : "";
 
   return (
     <section className="min-w-0">
@@ -446,19 +455,30 @@ export function QuestionPane({
                 ? `${view.openConfirmTotal} open ${view.openConfirmTotal === 1 ? "item" : "items"} left · one answer can clear several`
                 : q.bankId === null
                   ? bankLeft > 0
-                    ? `a follow-up · about ${bankLeft} to go`
-                    : "a follow-up"
-                  : `about ${bankLeft} to go`}
+                    ? `a follow-up · about ${bankLeft} to go${foreshadow}`
+                    : `a follow-up${foreshadow}`
+                  : `about ${bankLeft} to go${foreshadow}`}
             </span>
           </div>
           {chase && chaseBridge && (
-            <p className="mt-3 max-w-none text-sm" style={dim}>
-              The planned questions are done. The questions from here target
-              the assumptions still marked [TO CONFIRM] in the draft, so the
-              count above is open items, not questions.
+            <p
+              id="chase-bridge-note"
+              className="mt-1 max-w-none text-xs"
+              style={faint}
+            >
+              My planned questions are done; the ones from here clear the open{" "}
+              <mark className="doc-confirm">[TO CONFIRM]</mark> items in the
+              draft, so this count is open items, not questions.
             </p>
           )}
-          <h3 ref={questionHeadingRef} tabIndex={-1} className="doc-h mt-4 text-lg">
+          <h3
+            ref={questionHeadingRef}
+            tabIndex={-1}
+            className="doc-h mt-4 text-lg"
+            aria-describedby={
+              chase && chaseBridge ? "chase-bridge-note" : undefined
+            }
+          >
             {q.text}
           </h3>
           {q.why && (

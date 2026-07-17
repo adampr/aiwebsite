@@ -17,6 +17,13 @@ export function isQuestionEntry(t: TranscriptEntry): boolean {
   return /^qi?_/.test(t.qId);
 }
 
+/** Host-synthesized open-item chase question ("qi_<rev>"). THE definition
+ * for client copy that varies by phase (counter chip, bridge line): both
+ * derive from this one predicate so they can never drift apart. */
+export function isChaseId(id: string | null | undefined): id is string {
+  return !!id && id.startsWith("qi_");
+}
+
 /** The CURRENT question's number: questions asked so far + 1. */
 export function questionNumber(transcript: TranscriptEntry[]): number {
   return transcript.filter(isQuestionEntry).length + 1;
