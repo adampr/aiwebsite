@@ -618,7 +618,22 @@ export function Workspace({ projectId }: { projectId: string }) {
       const reduce = window.matchMedia(
         "(prefers-reduced-motion: reduce)"
       ).matches;
-      if (reduce) return false; // static washes only, zero motion
+      if (reduce) {
+        // Static washes only, zero motion, but the scrolls the caller
+        // deferred to this show are still owed: land on the first resolved
+        // section so the washes are on screen, then park the ask anchor,
+        // which wins the final position (spec 8.4).
+        pendingJumpRef.current = {
+          doc: items[0].doc,
+          section: items[0].section,
+          focus: false,
+          auto: true,
+        };
+        setActiveDoc(items[0].doc);
+        window.setTimeout(performJump, 60);
+        if (askRef) scheduleAskJump(askRef, 60);
+        return false;
+      }
       showRef.current = {
         items,
         index: 0,
@@ -630,7 +645,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       runShowStep();
       return true;
     },
-    [runShowStep]
+    [runShowStep, performJump, scheduleAskJump]
   );
 
   useEffect(() => {
@@ -1037,7 +1052,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     amendAnswer?: string;
   }) {
     const v = viewRef.current;
-    if (!v || working) return;
+    // Guard on the ref, not `working` state: the restyle chain reaches here
+    // through continueRestyleRef + setTimeout, whose closure predates the
+    // landing turn's setWorking(false) and would see a stale `working` true.
+    if (!v || inFlightRef.current) return;
     const restyle = !!opts.restyle;
     const amend = opts.amendIndex !== undefined;
     const revise = v.status === "review" && !restyle && !amend;
@@ -1319,6 +1337,9 @@ export function Workspace({ projectId }: { projectId: string }) {
         return;
       }
       void submitTurn({ skipped: false, restyle: true, focusSections: batch });
+      // submitTurn's sync prologue sets inFlightRef before its first await;
+      // if it bailed instead, abort so the run can't hang holding the ref.
+      if (!inFlightRef.current) abortRestyleRun();
     }, 0);
   }
 
