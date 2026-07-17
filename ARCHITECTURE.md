@@ -44,8 +44,8 @@ kill switch + routing telemetry (auto-migrations 45 — nullable
 success/ttft_ms/total_ms/http_status/shadow_model columns on
 usage_events — and 46 — `model_availability_overrides` table; both
 additive, applied automatically on boot). Previous pin v1.96 @ 1b34555
-(Issue #689 BRAIN_DB_TABLE_PREFIX fix). @aicompany/core v1.6.2
-@ 40942dc — fleet-convergence release (module MIGRATIONS v1.6.0–v1.6.2; v1.6.2 adds the export refuse seam, unused on this host):
+(Issue #689 BRAIN_DB_TABLE_PREFIX fix). @aicompany/core v1.7.1
+@ 71b7f6c — v1.7.1 privacy-page Your Data Rights section (§5.11/§5.13, renders on this host's module privacy page) + v1.7.0 caller-tools chat seam (unused here) + the v1.6.x fleet-convergence line (v1.6.2 export refuse seam, unused on this host):
 the Troy approval tee is retired in favor of `channels.email.onInbound`
 (site.config.ts; same envelope-recipient routing truth); §5.13
 data-subject factories mounted at `GET /api/account/export` +
