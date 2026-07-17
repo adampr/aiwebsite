@@ -37,6 +37,8 @@ import {
   foldTranscript,
   isQuestionEntry,
   questionNumber,
+  remapLegacyReopenedSummary,
+  REOPENED_SUMMARY_CURRENT,
 } from "../src/lib/governance/interview";
 import {
   packRestyleBatches,
@@ -2079,6 +2081,44 @@ function check(name: string, cond: boolean): void {
   check(
     "audit never reaches prompts",
     !/researchAudit|research_audit/i.test(promptSrc)
+  );
+}
+
+/* 20. Promoted "Your answers" copy plumbing (round 15, 2026-07-17): the
+ *     reopened summary is STORED at reopen time, so the client remaps the
+ *     pre-round-15 wording by prefix (suffix preserved: an amend can append
+ *     the open-items note); the note itself must be idempotent since
+ *     non-advancing review turns re-wrap priorSummary. */
+{
+  const LEGACY =
+    "Reopened. Change any answer under Previous questions, ask for any change in the box below, or confirm again to make it final as is.";
+  check(
+    "reopen copy: interview's current literal matches config's",
+    REOPENED_SUMMARY_CURRENT === REVIEW_REOPENED_SUMMARY
+  );
+  check(
+    "reopen copy: legacy summary remaps to current",
+    remapLegacyReopenedSummary(LEGACY) === REOPENED_SUMMARY_CURRENT
+  );
+  const suffixed = withOpenItemsNote(LEGACY, 2);
+  const remapped = remapLegacyReopenedSummary(suffixed);
+  check(
+    "reopen copy: remap keeps the appended open-items note",
+    !!remapped &&
+      remapped.startsWith(REOPENED_SUMMARY_CURRENT) &&
+      remapped.includes("Note: open [TO CONFIRM] items remain")
+  );
+  check(
+    "reopen copy: current and unknown summaries pass through untouched",
+    remapLegacyReopenedSummary(REOPENED_SUMMARY_CURRENT) ===
+      REOPENED_SUMMARY_CURRENT &&
+      remapLegacyReopenedSummary("model wrote this") === "model wrote this" &&
+      remapLegacyReopenedSummary(null) === null
+  );
+  const once = withOpenItemsNote("Summary.", 3);
+  check(
+    "open-items note: idempotent under re-wrapping",
+    withOpenItemsNote(once, 3) === once
   );
 }
 

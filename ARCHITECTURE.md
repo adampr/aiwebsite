@@ -15,7 +15,12 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (research hardening: profile-first mentions
+Last verified against code: 2026-07-17 (governance round 15: promoted
+"Your answers" block in the review panel — flat rows with always-visible
+Change buttons replace the buried disclosure in review (quiet disclosure
+stays for drafting/done), two-tool revise copy, legacy reopened-summary
+prefix remap, idempotent withOpenItemsNote, see §5.12 Q&A history;
+earlier same day: research hardening: profile-first mentions
 anchor + `companyNameFromTitle`, post-redirect crawl dedupe, word-boundary brief
 truncation, `research_audit_json` provenance envelope (migration 0013), presence-
 semantics Tavily checkpoints; round 14b: structure
@@ -24,6 +29,7 @@ reorder them via the permutation-gated `reorder_sections` op; SAMPLE
 OUTLINE digest of the whole stored sample rides every sample-carrying
 prompt; PDF extraction infers headings from font height, see §5.12;
 round 14: reopen a final
+>>>>>>> 879305e (feat(governance): round 15 — promote "Your answers" into the review panel)
 draft — `POST .../reopen` (done → review, rev-bumped + turn-cols cleared),
 confirm ungated from the kill switch + per-project rate bucket, final-ZIP
 README drops the review summary, "Back in review" panel variant, reopen
@@ -1222,15 +1228,45 @@ tagged `(NOT YET DRAFTED: template text)` (many sections are fed by NO bank ques
 9 in nist_ai_rmf — so feeds alone can never reach them), and a rules() line tells the
 model to fully replace any it can draft from the current answer or revision.
 
-**Q&A history (question-pane.tsx).** The transcript renders as ONE uncontrolled
-collapsed `<details class="transcript">` disclosure above the current-question card
-("Previous questions (N)", "…and revisions (N)" when revise rows exist), so the card
-stays the left column's top anchor at any answer count; expanded, the list scrolls
-inside `min(40vh, 22rem)` (`.transcript-scroll`, `tabIndex=0` + `role="group"` for
-keyboard scrolling, docpane precedent). Numbering skips revision and kept-as-drafted
-rows (`Q1…Qn` count bank/follow-up entries only; revise rows label "Revision
+**Q&A history (question-pane.tsx).** ONE `TranscriptList` instance is ever mounted
+(two would cross-leak the per-row `gov:<id>:amend:<i>` sessionStorage draft keys), in
+one of two variants (round 15, owner report 2026-07-17 "not letting me change previous
+answers"):
+- **quiet** (drafting AND done): one uncontrolled collapsed
+  `<details class="transcript">` disclosure above the current-question card
+  ("Previous questions (N)", "…and revisions (N)" when revise/confirm/reopen rows
+  exist), so the card stays the left column's top anchor at any answer count
+  (round-8 decision); expanded, the list scrolls inside `min(40vh, 22rem)`
+  (`.transcript-scroll`, `tabIndex=0` + `role="group"` for keyboard scrolling).
+- **promoted** (review, rendered INSIDE the review panel between the open-items
+  resolver and the revise box): a first-class "Your answers · N" block (N = question
+  rows only) with FLAT rows — no nested disclosures, the burying that produced the
+  owner report. Each question row: dim `Qn · question` line, effective answer in
+  full text color (explicit `var(--xl-text)` + `max-w-none`: futurism.css dims bare
+  `p`) clamped to 2 lines with the full text as `title`, amend "was" line, and an
+  ALWAYS-VISIBLE `Change` / `Answer it now` linklike button (disabled, not hidden,
+  while a turn runs) opening the same inline amend editor. History rows (revise/
+  confirm/restyle/reopen) render as faint one-liners in place; revise rows keep
+  their request text (clamped) since it is user content. Scroll region
+  `.transcript-scroll--promoted`: `min(45vh, 24rem)` (32vh below 1024px),
+  `overscroll-behavior-y: auto` so touch scrolling chains to the page (the shared
+  rule's `contain` would trap it in an always-expanded region). The revise box below
+  it gains a lead line ("Something else off in the text itself? Ask here and I will
+  revise the draft.") framing the two tools: change a fact vs change the wording.
+
+Numbering skips revision, kept-as-drafted, format, and reopen rows (`Q1…Qn` count
+bank/follow-up entries only via `isQuestionEntry`; revise rows label "Revision
 request", `qId:"confirm"` rows label "Kept as drafted · <excerpt>"). Answers stay inert
-plain text (no markdown rendering).
+plain text (no markdown rendering). After a landed amend, focus returns to the row's
+control (summary or Change button) with the review heading as fallback; `openEditor`
+discards a saved sessionStorage draft equal to the current effective answer (leftover
+from an amend that landed while the list was unmounted — it would prefill a dead
+editor via the identical-text guard). The stored pre-round-15 reopened summary
+("…under Previous questions…") names a control that no longer exists in review, so
+the client remaps it by PREFIX to the current wording, suffix (open-items note)
+preserved (`remapLegacyReopenedSummary`, interview.ts; drops out naturally with
+30-day retention). `withOpenItemsNote` is idempotent (non-advancing review turns
+re-wrap `priorSummary`; without the guard repeated amends stack the note).
 
 **Rendering + host-owned numbering** (`numbering.ts`, client-safe, bounded-quantifier
 regexes only). Drafting edits one section at a time with the rest of the draft elided,

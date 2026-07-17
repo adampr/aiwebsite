@@ -238,7 +238,7 @@ export const REVIEW_SKIPPED_SUMMARY =
  * AI call. Non-temporal on purpose: it stays on the row through later edits,
  * so it must not claim the draft is unchanged since confirm. */
 export const REVIEW_REOPENED_SUMMARY =
-  "Reopened. Change any answer under Previous questions, ask for any change in the box below, or confirm again to make it final as is.";
+  "Reopened. Change any answer under Your answers below, ask for any other change in the box under them, or confirm again to make it final as is.";
 
 /** Owner rule 2026-07-17: a review summary must never read as ready-for-final
  * while [TO CONFIRM] markers remain. Count-free on purpose: the stored
@@ -247,6 +247,9 @@ export const REVIEW_REOPENED_SUMMARY =
  * next to the resolver. */
 export function withOpenItemsNote(summary: string, openTotal: number): string {
   if (openTotal <= 0) return summary;
+  // Idempotent: non-advancing review turns re-wrap priorSummary, which may
+  // already carry the note; without this guard repeated amends stack it.
+  if (summary.includes("Note: open [TO CONFIRM] items remain")) return summary;
   return `${summary} Note: open [TO CONFIRM] items remain in this draft. It is not final until you resolve each one in the list below, with the correct fact or an explicit keep as drafted.`;
 }
 

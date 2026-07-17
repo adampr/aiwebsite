@@ -29,6 +29,28 @@ export function questionNumber(transcript: TranscriptEntry[]): number {
   return transcript.filter(isQuestionEntry).length + 1;
 }
 
+/** Round 15 (2026-07-17): the review panel renamed "Previous questions" to
+ * the promoted "Your answers" block. Reopened projects store their summary
+ * at reopen time (reopen route writes REVIEW_REOPENED_SUMMARY), so rows
+ * reopened before this release still carry the old wording, possibly with an
+ * appended open-items note (withOpenItemsNote). The prefix remap keeps that
+ * suffix. Client-side only (stored drafts age out on 30-day retention);
+ * REOPENED_SUMMARY_CURRENT is pinned equal to config's
+ * REVIEW_REOPENED_SUMMARY by governance-tests. */
+const REOPENED_SUMMARY_LEGACY =
+  "Reopened. Change any answer under Previous questions, ask for any change in the box below, or confirm again to make it final as is.";
+export const REOPENED_SUMMARY_CURRENT =
+  "Reopened. Change any answer under Your answers below, ask for any other change in the box under them, or confirm again to make it final as is.";
+export function remapLegacyReopenedSummary(
+  summary: string | null
+): string | null {
+  if (summary && summary.startsWith(REOPENED_SUMMARY_LEGACY))
+    return (
+      REOPENED_SUMMARY_CURRENT + summary.slice(REOPENED_SUMMARY_LEGACY.length)
+    );
+  return summary;
+}
+
 /**
  * Folded transcript view for display: amend rows collapse into the question
  * row they correct, so the list shows one row per question with its LATEST

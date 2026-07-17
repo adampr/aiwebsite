@@ -6,12 +6,17 @@
 // the workspace's single polite live region.
 
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import type { OpenConfirmItem, ProjectView } from "@/lib/governance/types";
+import type {
+  OpenConfirmItem,
+  ProjectView,
+  TranscriptEntry,
+} from "@/lib/governance/types";
 import {
   foldTranscript,
   isChaseId,
   isQuestionEntry,
   questionNumber,
+  remapLegacyReopenedSummary,
   type EffectiveEntry,
 } from "@/lib/governance/interview";
 import { sectionTitleText } from "@/lib/governance/numbering";
@@ -37,7 +42,7 @@ export interface WorkspaceNotice {
 export type { WorkingKind };
 
 const REVIEW_DEFAULT_COPY =
-  "No more questions. Read the draft on the right. If something reads wrong, tell me below and I will revise it. When it reads right and every open item is resolved, confirm it and take it with you.";
+  "No more questions. Read the draft on the right. Your answers below are the facts it is built on; change any of them if one is wrong, or ask for any other change in the box under them. When it reads right and every open item is resolved, confirm it and take it with you.";
 
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
@@ -46,16 +51,23 @@ function truncate(s: string, n: number): string {
   return (sp > n / 2 ? cut.slice(0, sp) : cut) + "...";
 }
 
-/** One collapsed disclosure for the whole Q&A history: the current question
- *  card stays the top anchor of the column no matter how many answers
- *  accumulate, and the list scrolls itself once opened. Uncontrolled and
- *  unkeyed so the open state survives turn re-renders.
+/** The Q&A history, in two presentations (round 15, owner report: "not
+ *  letting me change previous answers"):
  *
- *  Amend rows are FOLDED into the question row they correct (interview.ts):
- *  each question shows its latest effective answer plus a "was" line, and a
- *  "Change this answer" editor sends a non-advancing amend turn. Question
- *  numbering uses the same isQuestionEntry predicate as the header counter,
- *  so the two can never disagree. */
+ *  - "quiet" (drafting and done): one collapsed disclosure so the current
+ *    question card stays the top anchor of the column (round-8 decision).
+ *    Uncontrolled and unkeyed so the open state survives turn re-renders.
+ *  - "promoted" (review, rendered INSIDE the review panel): a first-class
+ *    "Your answers" block with flat rows and always-visible Change buttons.
+ *    In review there is no question card to protect, and burying the amend
+ *    editor two disclosures deep read as "you cannot edit answers".
+ *
+ *  Exactly ONE instance is ever mounted (two would cross-leak the per-row
+ *  sessionStorage drafts). Amend rows are FOLDED into the question row they
+ *  correct (interview.ts): each question shows its latest effective answer
+ *  plus a "was" line, and the editor sends a non-advancing amend turn.
+ *  Question numbering uses the same isQuestionEntry predicate as the header
+ *  counter, so the two can never disagree. */
 function TranscriptList({
   view,
   projectId,
@@ -65,6 +77,8 @@ function TranscriptList({
   brainDown,
   featureDisabled,
   onAmend,
+  variant,
+  fallbackFocusRef,
 }: {
   view: ProjectView;
   projectId: string;
@@ -74,6 +88,8 @@ function TranscriptList({
   brainDown: boolean;
   featureDisabled: boolean;
   onAmend: (index: number, answer: string) => void;
+  variant: "quiet" | "promoted";
+  fallbackFocusRef?: RefObject<HTMLHeadingElement | null>;
 }) {
   const [editorIndex, setEditorIndex] = useState<number | null>(null);
   const [editorText, setEditorText] = useState("");
@@ -83,7 +99,9 @@ function TranscriptList({
   // from a failed one.
   const pendingRef = useRef<{ index: number; prevAmendedAt: string | null } | null>(null);
   const [amendingIndex, setAmendingIndex] = useState<number | null>(null);
-  const summaryRefs = useRef(new Map<number, HTMLElement>());
+  // Per-row focus target after a landed amend: the row's <summary> (quiet)
+  // or its Change button (promoted).
+  const rowRefs = useRef(new Map<number, HTMLElement>());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const folded = foldTranscript(view.transcript);
@@ -109,8 +127,10 @@ function TranscriptList({
       } catch {
         // storage unavailable
       }
+      // The row's focus target can be gone (status flipped, list remounted):
+      // fall back to the panel heading rather than dropping focus on body.
       window.requestAnimationFrame(() =>
-        summaryRefs.current.get(p.index)?.focus()
+        (rowRefs.current.get(p.index) ?? fallbackFocusRef?.current)?.focus()
       );
     } else if (row) {
       pendingRef.current = null; // failed: editor stays open, text intact
@@ -124,6 +144,13 @@ function TranscriptList({
     let saved: string | null = null;
     try {
       saved = sessionStorage.getItem(draftKey(row.index));
+      // A draft equal to the current answer is a leftover from an amend that
+      // landed while this list was unmounted (status flip mid-turn): keeping
+      // it would prefill an editor whose Send is dead on the identical guard.
+      if (saved !== null && saved.trim() === row.effectiveAnswer.trim()) {
+        saved = null;
+        sessionStorage.removeItem(draftKey(row.index));
+      }
     } catch {
       // storage unavailable
     }
@@ -157,7 +184,178 @@ function TranscriptList({
       r.entry.qId === "confirm" ||
       r.entry.qId === "reopen"
   );
+
+  // Shared inline amend editor (identical in both variants).
+  const editorFor = (row: EffectiveEntry) => {
+    const amendBusy =
+      working && workingKind === "amend" && amendingIndex === row.index;
+    const identical =
+      !row.effectiveSkipped &&
+      editorText.trim() === row.effectiveAnswer.trim();
+    return (
+      <form
+        className="pb-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          send(row);
+        }}
+      >
+        <p className="max-w-none text-xs" style={faint}>
+          Tell me the new answer and I will rework what it touched.
+        </p>
+        <textarea
+          ref={textareaRef}
+          className="input mt-2 w-full"
+          rows={3}
+          maxLength={2000}
+          aria-label={`Your changed answer for: ${truncate(row.entry.q, 80)}`}
+          value={editorText}
+          onChange={(e) => setText(row.index, e.target.value)}
+          disabled={working || featureDisabled}
+        />
+        <div className="mt-3 flex flex-wrap items-center gap-6">
+          <button
+            type="submit"
+            className="btn btn--primary btn--stable"
+            aria-busy={amendBusy || undefined}
+            disabled={
+              working ||
+              featureDisabled ||
+              brainDown ||
+              !editorText.trim() ||
+              identical
+            }
+          >
+            <BusyLabel busy={amendBusy} idle="Send new answer" busyText="Sending" />
+          </button>
+          <button
+            type="button"
+            className="btn btn--text"
+            disabled={amendBusy}
+            onClick={() => setEditorIndex(null)}
+          >
+            Cancel
+          </button>
+        </div>
+        {amendBusy && <WorkingRow long={workingLong} kind="amend" />}
+        {brainDown && !working && <BrainDownNote />}
+      </form>
+    );
+  };
+
   let qNum = 0;
+  // Revision, kept-as-drafted, format, and reopen rows never consume a
+  // number; amend rows are folded and never listed.
+  const rowLabel = (t: TranscriptEntry) =>
+    t.qId === "revise"
+      ? "Revision request"
+      : t.qId === "confirm"
+        ? `Kept as drafted · ${t.q.replace(/^Open item: /, "")}`
+        : t.qId === "restyle"
+          ? "Format pass"
+          : t.qId === "reopen"
+            ? "Reopened for changes"
+            : `Q${++qNum} · ${t.q}`;
+
+  if (variant === "promoted") {
+    const qCount = folded.filter((r) => isQuestionEntry(r.entry)).length;
+    return (
+      <div className="mt-6">
+        <h4 className="sys-label">Your answers · {qCount}</h4>
+        <p className="mt-2 max-w-none text-sm" style={dim}>
+          The draft is built on these. Change one and I will rework whatever
+          it touched.
+        </p>
+        <div
+          className="transcript-scroll transcript-scroll--promoted mt-3"
+          tabIndex={0}
+          role="group"
+          aria-label="Your answers"
+        >
+          {folded.map((row) => {
+            const t = row.entry;
+            const question = isQuestionEntry(t);
+            const editing = editorIndex === row.index;
+            const label = rowLabel(t);
+            if (!question)
+              // History rows stay visible in place but quiet: label plus, for
+              // revision requests, the request text itself (it is the user's
+              // content; hiding it entirely would delete it from the UI).
+              return (
+                <div
+                  key={`${t.qId}-${row.index}`}
+                  className="border-b py-2"
+                  style={{ borderColor: "var(--xl-line)" }}
+                >
+                  <p className="max-w-none text-xs" style={faint}>
+                    {label} · {fmtDate(t.answeredAt)}
+                  </p>
+                  {t.qId === "revise" && t.a && (
+                    <p
+                      className="max-w-none text-xs line-clamp-2"
+                      style={faint}
+                      title={t.a}
+                    >
+                      {t.a}
+                    </p>
+                  )}
+                </div>
+              );
+            return (
+              <div
+                key={`${t.qId}-${row.index}`}
+                className="border-b py-2"
+                style={{ borderColor: "var(--xl-line)" }}
+              >
+                <p className="max-w-none text-sm" style={dim}>
+                  {label}
+                </p>
+                {!editing && (
+                  <p
+                    className="mt-1 max-w-none text-sm line-clamp-2"
+                    style={
+                      row.effectiveSkipped ? dim : { color: "var(--xl-text)" }
+                    }
+                    title={row.effectiveSkipped ? undefined : row.effectiveAnswer}
+                  >
+                    {row.effectiveSkipped
+                      ? "Skipped. Tron drafted a default."
+                      : row.effectiveAnswer}
+                  </p>
+                )}
+                {row.amendedAt && row.previous && (
+                  <p className="max-w-none text-xs" style={faint}>
+                    Changed {fmtDate(row.amendedAt)} · was:{" "}
+                    {row.previous.skipped
+                      ? "skipped"
+                      : `"${truncate(row.previous.answer, 160)}"`}
+                  </p>
+                )}
+                {canAmend && !editing && (
+                  <p className="pb-1 text-sm">
+                    <button
+                      type="button"
+                      ref={(el) => {
+                        if (el) rowRefs.current.set(row.index, el);
+                        else rowRefs.current.delete(row.index);
+                      }}
+                      className="linklike min-h-11"
+                      disabled={working}
+                      onClick={() => openEditor(row)}
+                    >
+                      {row.effectiveSkipped ? "Answer it now" : "Change"}
+                    </button>
+                  </p>
+                )}
+                {editing && editorFor(row)}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <details className="transcript mb-6">
       <summary className="min-h-11 cursor-pointer py-2 text-sm" style={dim}>
@@ -175,10 +373,6 @@ function TranscriptList({
           const t = row.entry;
           const question = isQuestionEntry(t);
           const editing = editorIndex === row.index;
-          const amendBusy =
-            working && workingKind === "amend" && amendingIndex === row.index;
-          const identical =
-            !row.effectiveSkipped && editorText.trim() === row.effectiveAnswer.trim();
           return (
             <details
               key={`${t.qId}-${row.index}`}
@@ -187,23 +381,13 @@ function TranscriptList({
             >
               <summary
                 ref={(el) => {
-                  if (el) summaryRefs.current.set(row.index, el);
-                  else summaryRefs.current.delete(row.index);
+                  if (el) rowRefs.current.set(row.index, el);
+                  else rowRefs.current.delete(row.index);
                 }}
                 className="min-h-11 cursor-pointer py-2 text-sm"
                 style={dim}
               >
-                {/* Revision, kept-as-drafted, and format rows never consume
-                    a number; amend rows are folded and never listed. */}
-                {t.qId === "revise"
-                  ? "Revision request"
-                  : t.qId === "confirm"
-                    ? `Kept as drafted · ${t.q.replace(/^Open item: /, "")}`
-                    : t.qId === "restyle"
-                      ? "Format pass"
-                      : t.qId === "reopen"
-                        ? "Reopened for changes"
-                        : `Q${++qNum} · ${t.q}`}
+                {rowLabel(t)}
                 {row.amendedAt && (
                   <span style={faint}>
                     {" "}
@@ -236,59 +420,7 @@ function TranscriptList({
                   </button>
                 </p>
               )}
-              {question && editing && (
-                <form
-                  className="pb-4"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    send(row);
-                  }}
-                >
-                  <p className="max-w-none text-xs" style={faint}>
-                    Tell me the new answer and I will rework what it touched.
-                  </p>
-                  <textarea
-                    ref={textareaRef}
-                    className="input mt-2 w-full"
-                    rows={3}
-                    maxLength={2000}
-                    aria-label={`Your changed answer for: ${truncate(t.q, 80)}`}
-                    value={editorText}
-                    onChange={(e) => setText(row.index, e.target.value)}
-                    disabled={working || featureDisabled}
-                  />
-                  <div className="mt-3 flex flex-wrap items-center gap-6">
-                    <button
-                      type="submit"
-                      className="btn btn--primary btn--stable"
-                      aria-busy={amendBusy || undefined}
-                      disabled={
-                        working ||
-                        featureDisabled ||
-                        brainDown ||
-                        !editorText.trim() ||
-                        identical
-                      }
-                    >
-                      <BusyLabel
-                        busy={amendBusy}
-                        idle="Send new answer"
-                        busyText="Sending"
-                      />
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--text"
-                      disabled={amendBusy}
-                      onClick={() => setEditorIndex(null)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                  {amendBusy && <WorkingRow long={workingLong} kind="amend" />}
-                  {brainDown && !working && <BrainDownNote />}
-                </form>
-              )}
+              {question && editing && editorFor(row)}
             </details>
           );
         })}
@@ -459,16 +591,22 @@ export function QuestionPane({
   return (
     <section className="min-w-0">
       <h2 className="sr-only">Questions from Tron</h2>
-      <TranscriptList
-        view={view}
-        projectId={projectId}
-        working={working}
-        workingKind={workingKind}
-        workingLong={workingLong}
-        brainDown={brainDown}
-        featureDisabled={featureDisabled}
-        onAmend={onAmend}
-      />
+      {/* Exactly ONE TranscriptList instance (shared sessionStorage keys):
+          the quiet disclosure in drafting AND done, the promoted "Your
+          answers" block inside the review panel in review. */}
+      {view.status !== "review" && (
+        <TranscriptList
+          view={view}
+          projectId={projectId}
+          working={working}
+          workingKind={workingKind}
+          workingLong={workingLong}
+          brainDown={brainDown}
+          featureDisabled={featureDisabled}
+          onAmend={onAmend}
+          variant="quiet"
+        />
+      )}
 
       {view.status === "drafting" && q && (
         <div className="panel panel--lightline">
@@ -706,7 +844,8 @@ export function QuestionPane({
                 : "That is everything I need"}
           </h3>
           <p className="mt-3 max-w-none text-sm">
-            {view.reviewSummary || REVIEW_DEFAULT_COPY}
+            {remapLegacyReopenedSummary(view.reviewSummary) ||
+              REVIEW_DEFAULT_COPY}
           </p>
 
           {undrafted.length > 0 && (
@@ -765,6 +904,19 @@ export function QuestionPane({
             onAnnounce={onAnnounce}
           />
 
+          <TranscriptList
+            view={view}
+            projectId={projectId}
+            working={working}
+            workingKind={workingKind}
+            workingLong={workingLong}
+            brainDown={brainDown}
+            featureDisabled={featureDisabled}
+            onAmend={onAmend}
+            variant="promoted"
+            fallbackFocusRef={reviewHeadingRef}
+          />
+
           <form
             className="mt-6"
             onSubmit={(e) => {
@@ -772,11 +924,15 @@ export function QuestionPane({
               onRevise();
             }}
           >
+            <p className="max-w-none text-sm" style={dim}>
+              Something else off in the text itself? Ask here and I will
+              revise the draft.
+            </p>
             <textarea
-              className="input w-full"
+              className="input mt-2 w-full"
               rows={3}
               maxLength={2000}
-              placeholder="Ask for any change, in plain words."
+              placeholder="Ask for any change to the wording or content, in plain words."
               aria-label="Revision request"
               value={answerText}
               onChange={(e) => onAnswerChange(e.target.value)}

@@ -446,3 +446,14 @@
   scrollbar-width: thin;
   border-top: 1px solid var(--xl-line);
 }
+/* Promoted "Your answers" block in the review panel (round 15): always
+   expanded there, so the region must not trap page scrolling on touch
+   (overscroll chains through) and stays shorter on small screens so the
+   revise box and Confirm remain within reach. */
+.transcript-scroll--promoted {
+  max-height: min(45vh, 24rem);
+  overscroll-behavior-y: auto;
+}
+@media (max-width: 1023px) {
+  .transcript-scroll--promoted { max-height: 32vh; }
+}
