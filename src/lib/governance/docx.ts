@@ -276,7 +276,7 @@ export async function renderDocx(
   return Packer.toBuffer(document);
 }
 
-function readmeText(opts: {
+export function readmeText(opts: {
   kind: GovernanceKind;
   domain: string;
   draft: boolean;
@@ -310,7 +310,10 @@ function readmeText(opts: {
     lines.push(
       `- Documents kept as determinations rather than full procedures: ${stubs.map((d) => d.slug).join(", ")}.`
     );
-  if (opts.reviewSummary) {
+  // Draft READMEs only: the stored summary is review-workbench guidance
+  // (since reopen it can literally say "confirm again below"), which has no
+  // place in a FINAL deliverable. The documents are the deliverable.
+  if (opts.reviewSummary && opts.draft) {
     lines.push("");
     lines.push("Assistant's review summary:");
     lines.push(opts.reviewSummary);

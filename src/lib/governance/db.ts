@@ -534,7 +534,12 @@ export async function applyTurnWrite(opts: {
         eq(P.id, opts.id),
         eq(P.userId, opts.userId),
         eq(P.rev, opts.expectedRev),
-        eq(P.turnAttemptId, opts.attemptId)
+        eq(P.turnAttemptId, opts.attemptId),
+        // A stale-but-alive worker (claim past the reap horizon, process
+        // still running) must not write over a project that confirmed to
+        // done meanwhile: confirm bumps no rev and clears no claim, so the
+        // rev+attempt fence alone would let the zombie land.
+        sql`status IN ('drafting','review')`
       )
     )
     .returning({ id: P.id });
@@ -603,6 +608,56 @@ export async function confirmProject(
         // No confirm while a revise turn is running: the worker's apply
         // would race the done flip. Stale claims (orphans) don't block.
         sql`(turn_started_at IS NULL OR turn_started_at < now() - make_interval(secs => ${CAPS.turnStaleMs / 1000}))`
+      )
+    )
+    .returning({ id: P.id });
+  return rows.length > 0;
+}
+
+/**
+ * Reopen a final draft (done -> review, owner request 2026-07-17): the one
+ * inverse of confirmProject. Content untouched; the caller appends the
+ * `qId:"reopen"` transcript row for the audit trail. Unlike confirm this
+ * DOES bump `rev` and clear the `turn_*` columns: a done row can carry a
+ * stale claim or failed-turn record (confirm clears nothing), and a
+ * transcript write without a rev bump would let a stale-but-alive worker's
+ * rev+attempt fence still match and stomp the row. `changed_sections` is
+ * cleared too, so the reopened review does not resurrect pre-confirm
+ * Updated chips beside copy that promises the text is unchanged.
+ */
+export async function reopenProject(opts: {
+  userId: string;
+  id: string;
+  expectedRev: number;
+  transcript: TranscriptEntry[];
+  reviewSummary: string;
+}): Promise<boolean> {
+  if (!isUuid(opts.id)) return false;
+  const transcriptJson = JSON.stringify(opts.transcript);
+  if (Buffer.byteLength(transcriptJson) > CAPS.transcriptJsonMaxBytes)
+    return false;
+  const rows = await db
+    .update(P)
+    .set({
+      status: "review",
+      rev: sql`rev + 1`,
+      transcriptJson,
+      reviewSummary: opts.reviewSummary,
+      changedSectionsJson: "{}",
+      turnPromptId: null,
+      turnAttemptId: null,
+      turnStartedAt: null,
+      turnJson: null,
+      lastActivityAt: sql`now()`,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(
+        eq(P.id, opts.id),
+        eq(P.userId, opts.userId),
+        eq(P.status, "done"),
+        eq(P.rev, opts.expectedRev),
+        gte(P.lastActivityAt, retentionCutoff())
       )
     )
     .returning({ id: P.id });

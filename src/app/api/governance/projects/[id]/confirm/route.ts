@@ -1,4 +1,4 @@
-// POST — confirm the final draft (review -> done) (§5.12). Refuses while
+// POST - confirm the final draft (review -> done) (§5.12). Refuses while
 // any non-stub section still holds untouched scaffold text (template
 // placeholders are not governance content) AND while any [TO CONFIRM]
 // marker remains (owner ruling 2026-07-16: a FINAL draft carries zero
@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { placeholderSectionMap } from "@/lib/governance/blueprints";
-import { CAPS, governanceEnabled } from "@/lib/governance/config";
+import { CAPS } from "@/lib/governance/config";
 import { confirmProject, fetchOwnedProject } from "@/lib/governance/db";
 import { govError, okJson, rateLimit, requireUser } from "@/lib/governance/http";
 import { openConfirmTotal } from "@/lib/governance/view";
@@ -22,14 +22,15 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   const user = await requireUser();
   if (user instanceof Response) return user;
-  if (!governanceEnabled(process.env))
-    return govError(
-      "feature_disabled",
-      "New drafting is paused right now. Existing projects and downloads still work.",
-      503
-    );
+  // Deliberately NOT gated on governanceEnabled: confirm is a zero-AI-call
+  // status flip and the kill switch is about spend (config.ts). Since reopen
+  // exists (done -> review), gating confirm would strand a reopened project
+  // as a watermarked draft with no way back to final while the switch is off.
   const { id } = await ctx.params;
-  const limited = rateLimit(`gov:confirm:${user.userId}`, 86_400, 10);
+  // Per-project bucket: reopen/confirm cycles on one project (both zero-AI
+  // flips) must not exhaust the user's ability to finalize another. Note the
+  // token is consumed before the gates below, so 409s spend it too.
+  const limited = rateLimit(`gov:confirm:${user.userId}:${id}`, 86_400, 20);
   if (limited) return limited;
 
   // Defensive parse (view.ts idiom): a corrupt column degrades to "no

@@ -143,6 +143,12 @@ export function DownloadMenu({
             auto-deletes {fmtDate(deletesAt)}. Downloading counts as activity
             and moves that date forward.
           </p>
+          {status !== "done" && (
+            <p className="mt-2 text-xs" style={faint}>
+              These files are drafts: watermarked and named -draft until the
+              project is confirmed final.
+            </p>
+          )}
         </div>
       )}
     </div>

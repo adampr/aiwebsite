@@ -21,8 +21,10 @@ import {
   fileSlug,
   normalizeDomain,
   REVIEW_FORCED_SUMMARY,
+  REVIEW_REOPENED_SUMMARY,
   withOpenItemsNote,
 } from "../src/lib/governance/config";
+import { readmeText } from "../src/lib/governance/docx";
 import {
   buildAmendUserMessage,
   buildRestyleUserMessage,
@@ -124,6 +126,10 @@ function check(name: string, cond: boolean): void {
     "src/components/governance/workspace.tsx",
     "src/components/governance/shared.tsx",
     "src/components/governance/open-items-resolver.tsx",
+    "src/components/governance/download-menu.tsx",
+    "src/app/api/governance/projects/[id]/answer/route.ts",
+    "src/app/api/governance/projects/[id]/confirm/route.ts",
+    "src/app/api/governance/projects/[id]/reopen/route.ts",
   ]) {
     const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
     check(`no banned chars in ${rel}`, !/[–—‘’“”]/.test(text));
@@ -1713,6 +1719,59 @@ function check(name: string, cond: boolean): void {
       sizeAndFootprint: "",
       industryContext: "",
     }) === null
+  );
+}
+
+/* 17. Reopen a final draft (done -> review, 2026-07-17): the transcript row
+ *     is an audit entry, never a question; final READMEs carry no assistant
+ *     summary (since reopen it can contain review-workbench guidance). */
+{
+  const reopenRow = {
+    qId: "reopen",
+    bankId: null,
+    q: "Reopened for changes",
+    a: "The final draft went back to review for changes.",
+    skipped: false,
+    askedAt: "2026-07-17T00:00:00Z",
+    answeredAt: "2026-07-17T00:00:00Z",
+  };
+  const transcript = [
+    {
+      qId: "q_1",
+      bankId: "UP-01",
+      q: "Q?",
+      a: "A.",
+      skipped: false,
+      askedAt: "2026-07-17T00:00:00Z",
+      answeredAt: "2026-07-17T00:00:00Z",
+    },
+    reopenRow,
+  ];
+  check(
+    "reopen: row is never a question and never numbers",
+    !isQuestionEntry(reopenRow) && questionNumber(transcript) === 2
+  );
+  const foldedRows = foldTranscript(transcript);
+  check(
+    "reopen: row folds as a listed, unamended entry",
+    foldedRows.length === 2 &&
+      foldedRows[1].entry.qId === "reopen" &&
+      foldedRows[1].amendedAt === null
+  );
+  const readmeOpts = {
+    kind: "usage_policy" as const,
+    domain: "xl.net",
+    docs: scaffoldDocuments("usage_policy"),
+    reviewSummary: REVIEW_REOPENED_SUMMARY,
+    openConfirmCount: 0,
+    skippedCount: 0,
+  };
+  check(
+    "reopen: README embeds the summary in drafts only",
+    readmeText({ ...readmeOpts, draft: true }).includes(REVIEW_REOPENED_SUMMARY) &&
+      !readmeText({ ...readmeOpts, draft: false }).includes(
+        "Assistant's review summary"
+      )
   );
 }
 

@@ -231,6 +231,12 @@ export const REVIEW_FORCED_SUMMARY =
 export const REVIEW_SKIPPED_SUMMARY =
   "You skipped, so I stopped asking questions. The draft on the right reflects everything you told me so far. Review it, ask for revisions below, and confirm when it reads right.";
 
+/** Reopen flip (done -> review, owner request 2026-07-17): host-written, no
+ * AI call. Non-temporal on purpose: it stays on the row through later edits,
+ * so it must not claim the draft is unchanged since confirm. */
+export const REVIEW_REOPENED_SUMMARY =
+  "Reopened. Change any answer under Previous questions, ask for any change in the box below, or confirm again to make it final as is.";
+
 /** Owner rule 2026-07-17: a review summary must never read as ready-for-final
  * while [TO CONFIRM] markers remain. Count-free on purpose: the stored
  * summary outlives resolutions (keep-as-drafted never rewrites it), so a

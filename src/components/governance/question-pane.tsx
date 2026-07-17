@@ -152,7 +152,10 @@ function TranscriptList({
   const n = folded.length;
   if (n === 0) return null;
   const hasRevisions = folded.some(
-    (r) => r.entry.qId === "revise" || r.entry.qId === "confirm"
+    (r) =>
+      r.entry.qId === "revise" ||
+      r.entry.qId === "confirm" ||
+      r.entry.qId === "reopen"
   );
   let qNum = 0;
   return (
@@ -198,7 +201,9 @@ function TranscriptList({
                     ? `Kept as drafted · ${t.q.replace(/^Open item: /, "")}`
                     : t.qId === "restyle"
                       ? "Format pass"
-                      : `Q${++qNum} · ${t.q}`}
+                      : t.qId === "reopen"
+                        ? "Reopened for changes"
+                        : `Q${++qNum} · ${t.q}`}
                 {row.amendedAt && (
                   <span style={faint}>
                     {" "}
@@ -340,6 +345,8 @@ export function QuestionPane({
   onAmend,
   onConfirm,
   confirmBusy,
+  onReopen,
+  reopenBusy,
   onJump,
   onKeepItem,
   onSendResolved,
@@ -375,6 +382,8 @@ export function QuestionPane({
   onAmend: (index: number, answer: string) => void;
   onConfirm: () => void;
   confirmBusy: boolean;
+  onReopen: () => void;
+  reopenBusy: boolean;
   onJump: (doc: string, section: string, focus: boolean) => void;
   onKeepItem: (item: OpenConfirmItem) => Promise<KeepResult>;
   onSendResolved: (message: string, focusSections: string[]) => void;
@@ -441,6 +450,11 @@ export function QuestionPane({
     !chase && bankLeft <= 1 && view.openConfirmTotal > 0
       ? " · then the draft's open items"
       : "";
+  // Review is only re-enterable through reopen (revise and non-advancing
+  // turns always stay in review; there is no review -> drafting path), so a
+  // reopen row in a review-status project always means THIS review session
+  // follows a final. Sound permanently, not just for the first cycle.
+  const reopened = view.transcript.some((t) => t.qId === "reopen");
 
   return (
     <section className="min-w-0">
@@ -687,7 +701,9 @@ export function QuestionPane({
           <h3 ref={reviewHeadingRef} tabIndex={-1} className="mt-4">
             {view.openConfirmTotal > 0
               ? "Almost there: open items need you"
-              : "That is everything I need"}
+              : reopened
+                ? "Back in review"
+                : "That is everything I need"}
           </h3>
           <p className="mt-3 max-w-none text-sm">
             {view.reviewSummary || REVIEW_DEFAULT_COPY}
@@ -830,8 +846,9 @@ export function QuestionPane({
             />
           </button>
           <p className="mt-3 max-w-none text-xs" style={faint}>
-            Confirming locks the draft and marks the project final. You can
-            still download it until it auto-deletes on {fmtDate(view.deletesAt)}.
+            {reopened
+              ? "Confirming makes this final again and takes the draft watermark off downloads."
+              : `Confirming marks the project final: downloads lose the DRAFT watermark. If something changes later, reopen it from this page any time before it auto-deletes on ${fmtDate(view.deletesAt)}.`}
           </p>
         </div>
       )}
@@ -846,6 +863,23 @@ export function QuestionPane({
             ours, not yours.
           </p>
           <div className="mt-6">{downloadSlot}</div>
+          <hr className="rule" style={{ margin: "var(--sp-6) 0" }} />
+          <p className="text-sm">Need to change something?</p>
+          <button
+            type="button"
+            className="btn btn--stable mt-3"
+            aria-busy={reopenBusy || undefined}
+            disabled={reopenBusy || featureDisabled}
+            onClick={onReopen}
+          >
+            <BusyLabel busy={reopenBusy} idle="Reopen for changes" busyText="Reopening" />
+          </button>
+          <p className="mt-3 max-w-none text-xs" style={faint}>
+            Reopening puts the draft back in review. The text stays exactly as
+            it is; downloads carry the DRAFT watermark again until you confirm
+            final.
+          </p>
+          <NoticeLine notice={notice} />
         </div>
       )}
     </section>

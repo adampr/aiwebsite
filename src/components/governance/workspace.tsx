@@ -124,6 +124,7 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [researchBusy, setResearchBusy] = useState(false);
   const [researchError, setResearchError] = useState("");
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [reopenBusy, setReopenBusy] = useState(false);
   // Resolved-marker reveal (owner request 2026-07-17): settled spans keep a
   // static wash until the next turn; `reveal` is the one item playing now.
   const [resolvedMarks, setResolvedMarks] = useState<ResolvedMarkerReveal[]>([]);
@@ -961,10 +962,14 @@ export function Workspace({ projectId }: { projectId: string }) {
             }
           }
         } else if (next.status === "review") {
+          // done -> review is only ever a reopen (ours or another tab's);
+          // the interview-finished copy would be dishonest there.
           setAnnounce(
-            (next.openConfirmTotal ?? next.openConfirmItems.length) > 0
-              ? "Tron stopped asking questions. Open items below need your confirmation before this draft can be final."
-              : "Tron is done asking questions. The full draft is ready for your review."
+            prev.status === "done"
+              ? "Reopened. The draft is back in review."
+              : (next.openConfirmTotal ?? next.openConfirmItems.length) > 0
+                ? "Tron stopped asking questions. Open items below need your confirmation before this draft can be final."
+                : "Tron is done asking questions. The full draft is ready for your review."
           );
           focusSoon(reviewHeadingRef);
         }
@@ -1904,6 +1909,28 @@ export function Workspace({ projectId }: { projectId: string }) {
     }
   }
 
+  async function reopenForChanges() {
+    const v = viewRef.current;
+    if (!v || reopenBusy) return;
+    setReopenBusy(true);
+    const r = await api<{ status: string }>(
+      `/api/governance/projects/${encodeURIComponent(projectId)}/reopen`,
+      { method: "POST", body: "{}" }
+    );
+    if (r.ok) {
+      // No optimistic flip: the reopened summary, the transcript row (which
+      // drives the "Back in review" heading), and the moved deletesAt all
+      // live server-side. handleView's done->review branch announces and
+      // moves focus to the review heading.
+      await fetchProject();
+    } else if (r.status === 401) {
+      setSignedOut(true);
+    } else {
+      setNoticeAnnounced({ kind: "error", text: r.message });
+    }
+    setReopenBusy(false);
+  }
+
   if (gone) return <GonePanel />;
 
   if (!view) {
@@ -2148,6 +2175,8 @@ export function Workspace({ projectId }: { projectId: string }) {
                 }
                 onConfirm={() => void confirmFinal()}
                 confirmBusy={confirmBusy}
+                onReopen={() => void reopenForChanges()}
+                reopenBusy={reopenBusy}
                 onJump={jumpTo}
                 onKeepItem={keepItem}
                 onSendResolved={(message, focusSections) =>

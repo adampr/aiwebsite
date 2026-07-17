@@ -1,4 +1,4 @@
-// POST — one Q&A turn (or a review-phase revision) (§5.12), async since the
+// POST - one Q&A turn (or a review-phase revision) (§5.12), async since the
 // Cloudflare-524 fix: preflight -> budget -> atomic turn claim -> 202
 // {pending} -> in-process worker (turn-runner.ts) -> the poll (GET view)
 // surfaces success (rev advanced) or the persisted failure. mode:"async" is
@@ -162,7 +162,9 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       "invalid_request",
       row.status === "review"
         ? "The draft is in review: use the revise box."
-        : "This project is not taking answers right now.",
+        : row.status === "done"
+          ? "This draft is final. Reopen it from the final panel to make changes."
+          : "This project is not taking answers right now.",
       409
     );
 
@@ -220,7 +222,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   }
 
   // A fresh running claim: replay the accept for the same retry
-  // (transport-retry idempotency — nothing spawns, nothing spends); anything
+  // (transport-retry idempotency - nothing spawns, nothing spends); anything
   // else waits its turn. Failed/stale records fall through to the claim.
   if (turnFresh(row)) {
     if (row.turnPromptId === promptId)
