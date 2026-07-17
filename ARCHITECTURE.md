@@ -20,6 +20,11 @@ Last verified against code: 2026-07-17 (governance round 15: promoted
 Change buttons replace the buried disclosure in review (quiet disclosure
 stays for drafting/done), two-tool revise copy, legacy reopened-summary
 prefix remap, idempotent withOpenItemsNote, see §5.12 Q&A history;
+round 14c: review-phase open items
+now ride the question-card structure — `open-items-resolver.tsx` rewritten
+from a single-expansion accordion list to a one-item-at-a-time card
+mirroring the drafting chase card, with a closed-by-default chip queue for
+random access; staging/batching/keep economics unchanged, see §5.12;
 earlier same day: research hardening: profile-first mentions
 anchor + `companyNameFromTitle`, post-redirect crawl dedupe, word-boundary brief
 truncation, `research_audit_json` provenance envelope (migration 0013), presence-
@@ -29,7 +34,6 @@ reorder them via the permutation-gated `reorder_sections` op; SAMPLE
 OUTLINE digest of the whole stored sample rides every sample-carrying
 prompt; PDF extraction infers headings from font height, see §5.12;
 round 14: reopen a final
->>>>>>> 879305e (feat(governance): round 15 — promote "Your answers" into the review panel)
 draft — `POST .../reopen` (done → review, rev-bumped + turn-cols cleared),
 confirm ungated from the kill switch + per-project rate bucket, final-ZIP
 README drops the review summary, "Back in review" panel variant, reopen
@@ -1170,20 +1174,63 @@ removal; refuses `needs_answer` when the containing paragraph/list item/table ce
 would end up with no letter or digit — the marker IS the content there).
 `ProjectView`/turn responses carry `openConfirmItems` (sliced to 50) AND
 `openConfirmTotal` (lenient, never sliced). UI (`open-items-resolver.tsx`, rendered
-inside the review panel ABOVE the revise form, sibling of it — rows hold their own
-`<form>`s and must never nest): a list grouped by document (headings only when >1 doc
-has items) of single-expansion accordion rows, NOT a queue — keeps are instant and
-free, typed answers cost one slow AI turn, so the user sweeps cheap confirms first
-and pays the AI cost ONCE. Expanded row: the context quote with the marker
-highlighted (the user must see WHAT they would be affirming — the excerpt label alone
-invites rubber-stamping), a jump link, a ≤500-char fact input ("Add answer" stages
-locally + sessionStorage `gov:{id}:item:{key}`, key = doc:section:excerptHash:occ
-with occurrence-shift migration), and "Keep as drafted" (omitted when
-`confirmable:false`) → `POST .../resolve-item`. Staged answers batch into ONE revise
-turn: a composed numbered message (~2000-char cap with a live meter; excerpts quoted
-at ≤60 chars) sent through `submitTurn({message, focusSections})` — the resolver
-NEVER touches the revise textarea or its `gov:{id}:revise` draft key
-(`inFlightRef.preserveDraft`). A second staging cap bounds the batch by SECTION
+inside the review panel ABOVE the revise form, sibling of it — its `<form>` must
+never nest inside the revise form). **Owner rule 2026-07-17 (round 14c): asking the
+user for a fact ALWAYS uses the question-card structure, in review exactly as in
+drafting** — the prior accordion list (round 10) was the "inline way of asking
+questions" the owner banned. The resolver therefore renders ONE item at a time in a
+`div.panel` card mirroring the drafting chase card's anatomy: sys-label header
+"Open item KK of N" (K = 1-based position among RENDERED rows, zero-padded; " listed"
+suffix when the lenient total exceeds N — never "Question NN", which is
+transcript-derived (`questionNumber`) and staging appends no transcript rows, so a
+frozen repeated number would violate the monotone-counter rule) + the drafting chase
+counter chip word-for-word ("T open items left · one answer can clear several", T =
+`openConfirmTotal`; singular drops the tail); an `h4` heading (subordinate to the
+review panel's h3, `tabIndex -1`, the focus target, `aria-describedby` the position
+label) wording the item through `pickOpenItemQuestion`'s exact formula incl. the
+empty-excerpt fallback; a dim why-line ("Keeping is instant; typed answers go
+together as one revision."); the always-visible context quote with the marker
+highlighted via `mark.doc-confirm` (the user must see WHAT they would be affirming —
+the excerpt label alone invites rubber-stamping); the "See the text this is about"
+jump link; and a ≤500-char answer form. Actions: submit is "Add answer" / "Update
+answer" (plain `.btn`, deliberately NOT `btn--primary` and NOT the word "Send" —
+"Send" and the one glowing primary are reserved for actions that actually run the
+AI), "Keep as drafted" (`confirmable` only) → `POST .../resolve-item`, "Remove this
+answer" (staged only, unstages), "Send just this one" (Not-resolved retry only), and
+a persistent honesty anchor ("Added answers are not sent yet..."). "Add" stages
+(state + sessionStorage `gov:{id}:item:{key}`, key = doc:section:excerptHash:occ with
+occurrence-shift migration) and auto-advances to the next unstaged item (forward scan
+WITH wraparound; a backward wrap announces its new position; when none remain focus
+moves to the Send button); "Update" stages in place and never advances (the user came
+back to fix a typo — advancing would catapult them at the primary). Manual nav:
+"Previous item"/"Next item" text buttons (disabled at the ends, no wraparound —
+spatial nav orients, goal nav hunts) plus a closed-by-default `<details>` chip queue
+("All open items · S ready, R to go", "Listed open items" when the total exceeds N;
+open state persisted per project in sessionStorage) of `.gov-chip` NAVIGATION buttons
+— plain buttons, NEVER `aria-pressed` (that class's toggle grammar belongs to
+suggestion chips; a "pressed" chip that navigates lies to assistive tech):
+`aria-current="true"` marks the shown item, and state rides visible label words
+("· ready" / "· sending" / "· not resolved" / "· new") plus garnish classes
+`.gov-chip--staged`/`.gov-chip--danger`, grouped by document (sys-label headings only
+when >1 doc has items, indices stay global). The "New" flag survives programmatic
+cursor moves and clears only on user navigation to the item or staging. The cursor is
+persisted (`gov:{id}:resolver:cursor`) and reconciled against every fresh list:
+vanished cursor → same index clamped; after a keep → the existing next/prev retarget
+now focuses the card heading (all-clear paragraph when the queue empties); after a
+batch → first surviving Not-resolved row's heading, else the card heading / all-clear
+(the resolver NEVER pushes to the live region after a batch — the workspace owns that
+receipt and the polite region replaces, never appends). All staged answers batch into
+ONE revise turn behind the single `btn--primary` in the resolver ("Send S answers",
+in an `answer-sticky` bar with the live meter, hidden at S=0): a composed numbered
+message (~2000-char cap; excerpts quoted at ≤60 chars) sent through
+`submitTurn({message, focusSections})` — the resolver NEVER touches the revise
+textarea or its `gov:{id}:revise` draft key (`inFlightRef.preserveDraft`). When
+`total > 0` but zero rows parsed, the card is replaced by an honest "could not
+display cleanly" note pointing at the revision box. The resolver locks on
+`working || featureDisabled || restyleActive` — keeps INCLUDED: a reformat run holds
+its latch across inter-pass gaps where `working` drops, and a keep is a server-side
+document mutation that would invalidate the run's pending pass (the card shows the
+"Paused while I reformat..." note). A second staging cap bounds the batch by SECTION
 REWRITE COST: the model re-emits every touched section in full and is told to stay
 under `turnOpMarkdownTargetChars` (12000) of markdown, so a batch whose inherent
 re-emit cost exceeds that produces truncated rewrites or validation failures the
@@ -1191,9 +1238,10 @@ repair pass cannot fix — Add answer refuses when the sum of the distinct targe
 sections' current markdown (+200 slack each) would pass 12000−1000, with "send these
 first" copy. turn-runner logs validation failures (`[governance] turn invalid …`)
 and crash stacks to the PM2 site log; never answer content. After the turn, the resolver diffs by stable key:
-survivors flip to "Not resolved" (+ per-row "Send just this one"), vanished staged
-rows clear, brand-new rows chip "New"; the live-region receipt reports the TRUE
-`openConfirmTotal` delta, never per-item claims (the model may reword a marker
+survivors flip to "Not resolved" (card note + "Send just this one" + danger chip),
+vanished staged rows clear, brand-new rows flag "new"; the live-region receipt
+(workspace-owned) reports the TRUE `openConfirmTotal` delta, never per-item claims
+(the model may reword a marker
 instead of deleting it — a reworded marker is a new item, not a resolved one). The
 confirm button stays enabled-with-intercept (undrafted sections first, then open
 items) plus a persistent helper line; the revise-turn prompt (`buildTurnUserMessage`)

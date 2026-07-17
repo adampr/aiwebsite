@@ -236,6 +236,17 @@
   .gov-chip { min-height: 44px; }
 }
 
+/* Resolver queue chips: navigation, not toggles (no aria-pressed; a
+   pressed toggle that navigates would lie to assistive tech). State is
+   words inside the label; these borders are garnish, never the only
+   signal. aria-current marks the item the card is showing. */
+.gov-chip[aria-current="true"] {
+  border-color: var(--xl-light);
+  color: var(--xl-light);
+}
+.gov-chip--staged { border-color: var(--xl-light-dim); color: var(--xl-light); }
+.gov-chip--danger { border-color: var(--xl-danger); color: var(--xl-danger); }
+
 /* In-flight turn: a quiet hairline of light sweeping above the status
    row. Reduced motion (and the global animation kill) gets the static
    dim line, so the state stays visible with nothing moving. */

@@ -897,6 +897,7 @@ export function QuestionPane({
             workingKind={workingKind}
             workingLong={workingLong}
             brainDown={brainDown}
+            restyleActive={restyleActive}
             featureDisabled={featureDisabled}
             onJump={onJump}
             onKeep={onKeepItem}
