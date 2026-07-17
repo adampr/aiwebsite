@@ -10,8 +10,13 @@ import Link from "next/link";
 import { KIND_LABELS } from "@/lib/governance/config";
 import { isChaseId } from "@/lib/governance/interview";
 import { sectionTitleText } from "@/lib/governance/numbering";
+import { BUILD_ID, staleBundleSignal } from "@/lib/governance/build-id";
 import {
   diffResolvedMarkers,
+  planShow,
+  reducedRestMs,
+  typingTicks,
+  SHOW_TICK_MS,
   type ResolvedMarkerReveal,
 } from "@/lib/governance/resolved-anim";
 import {
@@ -24,6 +29,7 @@ import type {
   OpenConfirmItem,
   ProjectStatus,
   ProjectView,
+  QueuedReason,
   TranscriptEntry,
 } from "@/lib/governance/types";
 import type { KeepResult } from "./open-items-resolver";
@@ -123,6 +129,10 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [resuming, setResuming] = useState(false);
   const [researchBusy, setResearchBusy] = useState(false);
   const [researchError, setResearchError] = useState("");
+  // Why the last research kick parked as queued (202 reason). The queued
+  // panel's copy renders from this; null until a POST reports back (the
+  // page's once-per-load reclaim fills it within a poll cycle).
+  const [queuedReason, setQueuedReason] = useState<QueuedReason | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [reopenBusy, setReopenBusy] = useState(false);
   // Resolved-marker reveal (owner request 2026-07-17): settled spans keep a
@@ -193,12 +203,28 @@ export function Workspace({ projectId }: { projectId: string }) {
     seq: number;
     askRef: FeedRef | null; // deferred ask-anchor park, runs after the show
     rev: number; // the rev this show belongs to; a newer rev supersedes it
+    reduce: boolean; // sampled once at start: simplified variant plays
   } | null>(null);
+  // A parked show (mobile Questions tab active, or the tab was hidden when
+  // the turn landed). Ref for effect/handler logic + state mirror for
+  // render (the queued-show line in the Questions pane); EVERY write goes
+  // through setPendingShow so the two can never drift.
   const pendingShowRef = useRef<{
     items: ResolvedMarkerReveal[];
     askRef: FeedRef | null;
     rev: number;
   } | null>(null);
+  const [pendingShowState, setPendingShowState] = useState<{
+    count: number;
+    rev: number;
+  } | null>(null);
+  // Stale bundle (build-id.ts): consecutive-mismatch counter + a latched
+  // banner (a draining old worker answering one poll must not flap it) the
+  // user may dismiss. Never auto-reload: an unsent answer may be typed.
+  const staleMismatchRef = useRef(0);
+  const staleFiredRef = useRef(false);
+  const [staleBundle, setStaleBundle] = useState(false);
+  const [staleDismissed, setStaleDismissed] = useState(false);
   const showTimerRef = useRef<number | null>(null);
   // fetchRef pattern: handleView (memoized) reaches the CURRENT render's
   // restyle-chaining logic through this ref, never a stale closure.
@@ -236,8 +262,18 @@ export function Workspace({ projectId }: { projectId: string }) {
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
     const apply = () => {
+      const wasDesktop = isDesktopRef.current;
       setIsDesktop(mq.matches);
       isDesktopRef.current = mq.matches;
+      // Breakpoint-flip continuity: a show queued on the mobile Questions
+      // tab has ONE flush path (the Draft tab), which ceases to exist at
+      // >=1024px - flush it here or it strands. The inverse flip would
+      // play into a hidden pane - settle it.
+      if (!wasDesktop && mq.matches) {
+        window.setTimeout(() => playPendingShowRef.current(), 500);
+      } else if (wasDesktop && !mq.matches && showRef.current) {
+        endShowRef.current(false);
+      }
     };
     apply();
     mq.addEventListener("change", apply);
@@ -586,6 +622,12 @@ export function Workspace({ projectId }: { projectId: string }) {
       clearShowTimer();
       setReveal(null);
       setShowStatus(null);
+      if (show)
+        console.info(
+          park
+            ? "[gov-reveal] show finished"
+            : "[gov-reveal] show ended early (user intent or superseded)"
+        );
       if (show && park && show.askRef) scheduleAskJump(show.askRef, 400);
     },
     [clearShowTimer, scheduleAskJump]
@@ -595,28 +637,12 @@ export function Workspace({ projectId }: { projectId: string }) {
   // read as text rapidly RE-WRITTEN over the marker, then rest a full
   // second. 30ms/char clamped [1200, 3600]ms; the tick stays 60ms (every
   // tick re-parses the revealing section, so shorter ticks buy legibility
-  // nothing and double the render bill).
-  const MAX_SHOW_ITEMS = 5;
-  const SHOW_BUDGET_MS = 15_000;
-  const SHOW_TICK_MS = 60;
-  const typingTicks = (len: number) =>
-    Math.min(60, Math.max(20, Math.ceil(len / 2)));
-  /** Honest per-item time estimate with the REAL beats (same-section items
-   *  skip the jump; deletion items skip typing). */
-  const estimateItemMs = (
-    item: ResolvedMarkerReveal,
-    prev: ResolvedMarkerReveal | null
-  ): number => {
-    const sameSection =
-      !!prev && prev.doc === item.doc && prev.section === item.section;
-    const len = item.nextEnd - item.nextStart;
-    return (
-      (sameSection ? 60 : 420) +
-      900 +
-      (len === 0 ? 0 : typingTicks(len) * SHOW_TICK_MS) +
-      1000
-    );
-  };
+  // nothing and double the render bill). Under prefers-reduced-motion the
+  // SAME runner plays a simplified variant (owner report round 3: the old
+  // early-return meant RDP/animations-off users saw NOTHING): one centered
+  // auto scroll, static strike, instant caret-free swap, length-scaled
+  // rest. Planning math (typingTicks/estimateItemMs/planShow) lives in
+  // resolved-anim.ts, pure and test-pinned.
   const runShowStep = useCallback(() => {
     const show = showRef.current;
     if (!show) return;
@@ -638,18 +664,22 @@ export function Workspace({ projectId }: { projectId: string }) {
       return;
     }
     const item = show.items[show.index];
+    const reduce = show.reduce;
     setShowStatus({
       index: show.index,
       total: show.items.length,
     });
     // Beat 1: bring the section into view (auto jump: desktop scrolls the
-    // doc pane's own container only; the window never moves).
+    // doc pane's own container only; the window never moves). Under reduce
+    // the section jump is SKIPPED: the single centered scroll inside beat 2
+    // subsumes it (two auto teleports 120ms apart read as a double flicker,
+    // the exact motion artifact reduce exists to avoid).
     const prevItem = show.index > 0 ? show.items[show.index - 1] : null;
     const sameSection =
       prevItem &&
       prevItem.doc === item.doc &&
       prevItem.section === item.section;
-    if (!sameSection) {
+    if (!sameSection && !reduce) {
       pendingJumpRef.current = {
         doc: item.doc,
         section: item.section,
@@ -659,10 +689,16 @@ export function Workspace({ projectId }: { projectId: string }) {
       setActiveDoc(item.doc);
       window.setTimeout(performJump, 60);
     }
-    later(sameSection ? 60 : 420, () => {
-      // Beat 2: the old marker, struck out on its way out. 900ms over the
-      // CSS xl-resolve-out 700ms fade: the 200ms rest at settled opacity is
-      // reading time (change the two numbers together, see globals.css).
+    if (reduce) setActiveDoc(item.doc);
+    // Timer-chain invariant (critic A1): exactly ONE pending later() at all
+    // times - strict continuation passing. A sibling schedule would orphan
+    // a live timeout that still passes the seq guard and double-advance.
+    later(reduce ? 0 : sameSection ? 60 : 420, () => {
+      // Beat 2: the old marker, struck out on its way out. Default: 900ms
+      // over the CSS xl-resolve-out 700ms fade (the 200ms rest at settled
+      // opacity is reading time; change the two numbers together, see
+      // globals.css). Reduce: 1100ms static strike, the only legible
+      // exposure of the old text (no fade drawing the eye).
       setReveal({ item, mode: "old", chars: 0 });
       // The section jump only reaches the section TOP; in a long section
       // the rewrite site can sit below the fold and the whole show plays
@@ -672,6 +708,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       later(120, () => {
         const el = document.querySelector<HTMLElement>(".doc-resolve-old");
         if (el) {
+          const behavior: ScrollBehavior = reduce ? "auto" : "smooth";
           const pane = isDesktopRef.current
             ? el.closest<HTMLElement>(".docpane")
             : null;
@@ -681,28 +718,36 @@ export function Workspace({ projectId }: { projectId: string }) {
               el.getBoundingClientRect().top -
               pane.getBoundingClientRect().top -
               pane.clientHeight * 0.4;
-            pane.scrollTo({ top: Math.max(top, 0), behavior: "smooth" });
+            pane.scrollTo({ top: Math.max(top, 0), behavior });
           } else {
-            el.scrollIntoView({ block: "center", behavior: "smooth" });
+            el.scrollIntoView({ block: "center", behavior });
           }
         }
-        later(780, () => beat3());
+        later(reduce ? 980 : 780, () => beat3());
       });
       const beat3 = () => {
-        // Beat 3: the replacement re-writes itself over the marker at
-        // ~30ms/char (closed-form chars so short texts still spend the
-        // full floor in 1-2 char steps instead of finishing early).
+        // Beat 3 default: the replacement re-writes itself over the marker
+        // at ~30ms/char (closed-form chars so short texts still spend the
+        // full floor in 1-2 char steps instead of finishing early). Beat 3
+        // reduce: instant caret-free swap, then a length-scaled rest (the
+        // user never watched it type; the rest is the orientation time).
         const len = item.nextEnd - item.nextStart;
+        const advance = () => {
+          const s = showRef.current;
+          if (s) {
+            s.index += 1;
+            runShowStep();
+          }
+        };
         if (len === 0) {
           // Deletion only: the strike beat already showed the removal.
-          setReveal({ item, mode: "hold", chars: 0 });
-          later(1000, () => {
-            const s = showRef.current;
-            if (s) {
-              s.index += 1;
-              runShowStep();
-            }
-          });
+          setReveal({ item, mode: reduce ? "swap" : "hold", chars: 0 });
+          later(1000, advance);
+          return;
+        }
+        if (reduce) {
+          setReveal({ item, mode: "swap", chars: len });
+          later(reducedRestMs(len), advance);
           return;
         }
         const ticks = typingTicks(len);
@@ -716,58 +761,50 @@ export function Workspace({ projectId }: { projectId: string }) {
             chars,
           });
           if (t < ticks) later(SHOW_TICK_MS, tick);
-          else
-            later(1000, () => {
-              // Beat 4: the held rest, caret blinking, then the next item.
-              const s = showRef.current;
-              if (s) {
-                s.index += 1;
-                runShowStep();
-              }
-            });
+          // Beat 4: the held rest, caret blinking, then the next item.
+          else later(1000, advance);
         };
         tick();
       };
     });
-    // estimateItemMs/typingTicks are stable module-style helpers.
-     
   }, [endShow, performJump]);
 
   const startShow = useCallback(
     (items: ResolvedMarkerReveal[], askRef: FeedRef | null, rev: number) => {
-      if (!items.length) return false;
+      if (!items.length) {
+        console.info("[gov-reveal] startShow called with zero items (no-op)");
+        return false;
+      }
+      // Hidden tab: timers are throttled to >=1s (and to ~1/min after 5
+      // minutes), so the show would play off screen in slow motion. Park
+      // it; the visibilitychange flush plays it on return.
+      if (document.hidden) {
+        console.info(
+          "[gov-reveal] tab hidden: show parked; plays when the tab returns"
+        );
+        setPendingShow({ items, askRef, rev });
+        return false;
+      }
+      // Sampled ONCE per show: a mid-show OS toggle keeps the variant.
       const reduce = window.matchMedia(
         "(prefers-reduced-motion: reduce)"
       ).matches;
-      if (reduce) {
-        // Static washes only, zero motion, but the scrolls the caller
-        // deferred to this show are still owed: land on the first resolved
-        // section so the washes are on screen, then park the ask anchor,
-        // which wins the final position (spec 8.4).
-        pendingJumpRef.current = {
-          doc: items[0].doc,
-          section: items[0].section,
-          focus: false,
-          auto: true,
-        };
-        setActiveDoc(items[0].doc);
-        window.setTimeout(performJump, 60);
-        if (askRef) scheduleAskJump(askRef, 60);
-        return false;
-      }
+      if (reduce)
+        console.info(
+          "[gov-reveal] reduced motion: playing simplified show (instant text, auto scroll)"
+        );
       // Trim to the time budget (15s) and the item cap, always playing at
-      // least one item. Estimated with the REAL beats so a same-section or
-      // deletion item is not overcharged out of the show. Every diffed span
-      // keeps its static wash regardless; only the theater is trimmed.
-      const played: ResolvedMarkerReveal[] = [];
-      let est = 0;
-      for (const it of items) {
-        const cost = estimateItemMs(it, played[played.length - 1] ?? null);
-        if (played.length >= MAX_SHOW_ITEMS) break;
-        if (played.length > 0 && est + cost > SHOW_BUDGET_MS) break;
-        played.push(it);
-        est += cost;
-      }
+      // least one item, priced with the REAL beats per variant (pure,
+      // test-pinned planShow). Every diffed span keeps its static wash
+      // regardless; only the theater is trimmed.
+      const played = planShow(items, reduce);
+      if (played.length < items.length)
+        console.info(
+          `[gov-reveal] show trimmed to ${played.length} of ${items.length} items (time budget)`
+        );
+      console.info(
+        `[gov-reveal] show starting: ${played.length} item(s), rev ${rev}`
+      );
       showRef.current = {
         items: played,
         originalTotal: items.length,
@@ -775,14 +812,13 @@ export function Workspace({ projectId }: { projectId: string }) {
         seq: (showRef.current?.seq ?? 0) + 1,
         askRef,
         rev,
+        reduce,
       };
       setShowNote(null);
       runShowStep();
       return true;
     },
-    // estimateItemMs and the caps are stable module-style helpers.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [runShowStep, performJump, scheduleAskJump]
+    [runShowStep]
   );
 
   useEffect(() => {
@@ -800,12 +836,125 @@ export function Workspace({ projectId }: { projectId: string }) {
 
   useEffect(() => () => clearShowTimer(), [clearShowTimer]);
 
+  /** Every clear the rev-change branch performs, shared with the two
+   *  direct-merge paths (applyTurn, keepItem) that bypass it: they write
+   *  viewRef in place, so the next handleView compares EQUAL revs and the
+   *  branch never runs - stale mark offsets over rewritten markdown would
+   *  wash (or type over) the WRONG text. */
+  function invalidateRevealState() {
+    endShow(false);
+    setPendingShow(null);
+    setResolvedMarks([]);
+    setShowNote(null);
+  }
+
+  /** The ONE writer of the parked-show pair (ref + render mirror). */
+  function setPendingShow(
+    v: {
+      items: ResolvedMarkerReveal[];
+      askRef: FeedRef | null;
+      rev: number;
+    } | null
+  ) {
+    pendingShowRef.current = v;
+    setPendingShowState(v ? { count: v.items.length, rev: v.rev } : null);
+  }
+
+  /** Flush the parked show if it still matches the current rev. Shared by
+   *  the mobile Draft-tab click, the Questions-pane line, the visibility
+   *  flush, and the breakpoint-flip flush, so they can never drift. */
+  function playPendingShow(): boolean {
+    const pending = pendingShowRef.current;
+    setPendingShow(null);
+    if (!pending) return false;
+    if (pending.rev !== viewRef.current?.rev) {
+      console.info(
+        "[gov-reveal] queued show dropped: rev moved on before it could play"
+      );
+      return false;
+    }
+    window.setTimeout(
+      () => startShow(pending.items, pending.askRef, pending.rev),
+      60
+    );
+    return true;
+  }
+  const playPendingShowRef = useRef(playPendingShow);
+  useEffect(() => {
+    playPendingShowRef.current = playPendingShow;
+  });
+
+  // Hidden-tab discipline: a show playing when the tab hides settles at
+  // its final state (hidden timers clamp to >=1s and later ~1/min; a
+  // stranded mid-show is worse than settled washes). A parked show flushes
+  // ~700ms after the tab returns (re-orientation grace), guarded through a
+  // fresh fetch so an answer-in-another-tab drop is silent, never a
+  // start-then-abort stutter.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (showRef.current) {
+          console.info(
+            "[gov-reveal] tab hidden mid-show: settled at final state"
+          );
+          endShow(true);
+        }
+        return;
+      }
+      if (!pendingShowRef.current) return;
+      window.setTimeout(() => {
+        const pending = pendingShowRef.current;
+        if (!pending || document.hidden) return;
+        void fetchRef.current().then((fresh) => {
+          if (!fresh) return;
+          if (pendingShowRef.current !== pending) return; // superseded
+          playPendingShowRef.current();
+        });
+      }, 700);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () =>
+      document.removeEventListener("visibilitychange", onVisibility);
+  }, [endShow]);
+
   const handleView = useCallback(
     (next: ProjectView) => {
       const prev = viewRef.current;
       viewRef.current = next;
       setView(next);
       setPollFails(0);
+
+      // Stale-bundle check (build-id.ts): count consecutive newer-server
+      // sightings; fire per the pure rule, latch once, evaluate only when
+      // no send is in flight (a mid-turn banner is noise).
+      {
+        const c = Number(BUILD_ID);
+        const s = Number(next.serverBuildId ?? "");
+        const rawMismatch =
+          BUILD_ID !== "" &&
+          !!next.serverBuildId &&
+          Number.isInteger(c) &&
+          Number.isInteger(s) &&
+          s > c;
+        staleMismatchRef.current = rawMismatch
+          ? staleMismatchRef.current + 1
+          : 0;
+        if (
+          !staleFiredRef.current &&
+          !inFlightRef.current &&
+          staleBundleSignal(
+            BUILD_ID,
+            next.serverBuildId,
+            staleMismatchRef.current
+          )
+        ) {
+          staleFiredRef.current = true;
+          console.info(
+            `[gov-stale] server build ${next.serverBuildId} is newer than this page's ${BUILD_ID}`
+          );
+          setStaleBundle(true);
+        }
+      }
       // S3: a successful GET after a brain outage re-enables Send. Lives
       // here (not in fetchProject) so the poll-surfaced brain_unavailable
       // failure below can re-set the gate and win the render batch.
@@ -834,10 +983,9 @@ export function Workspace({ projectId }: { projectId: string }) {
       // washes and any reveal in progress: their offsets refer to documents
       // that no longer exist. A new diff below may set fresh ones.
       if (prev && next.rev !== prev.rev) {
-        endShow(false);
-        pendingShowRef.current = null;
-        setResolvedMarks([]);
-        setShowNote(null);
+        if (showRef.current || pendingShowRef.current)
+          console.info("[gov-reveal] newer rev: reveal state invalidated");
+        invalidateRevealState();
       }
 
       // An in-flight turn that landed while the response was lost (S7): the
@@ -858,6 +1006,11 @@ export function Workspace({ projectId }: { projectId: string }) {
           prev.documents,
           next.documents,
           next.changedSections
+        );
+        console.info(
+          reveals.length
+            ? `[gov-reveal] turn landed: ${reveals.length} resolved marker(s) diffed`
+            : "[gov-reveal] turn landed: no resolved markers diffed (plain Updated treatment)"
         );
         // Snapshot questions review the research block IN the card; the
         // ask anchor would spotlight an unrelated section (owner bug
@@ -889,7 +1042,10 @@ export function Workspace({ projectId }: { projectId: string }) {
           if (!isDesktopRef.current && mobileTabRef.current === "questions") {
             // Never auto-switch tabs: the show queues and plays when the
             // user opens the Draft tab (superseded by any newer rev).
-            pendingShowRef.current = { items: reveals, askRef, rev: next.rev };
+            console.info(
+              "[gov-reveal] queued: mobile Questions tab active; plays when the Draft tab opens"
+            );
+            setPendingShow({ items: reveals, askRef, rev: next.rev });
           } else {
             startShow(reveals, askRef, next.rev);
           }
@@ -1040,6 +1196,10 @@ export function Workspace({ projectId }: { projectId: string }) {
           });
       }
 
+      // A parked reason only describes a queued row; drop it once the
+      // project moves on so a later re-queue never shows last week's cause.
+      if (next.status !== "queued") setQueuedReason(null);
+
       // B1: claim a queued / stale-researching row once per page load.
       if (
         !reclaimedRef.current &&
@@ -1048,15 +1208,22 @@ export function Workspace({ projectId }: { projectId: string }) {
       ) {
         reclaimedRef.current = true;
         setResuming(true);
-        void api<{ status: string }>(
+        void api<{ status: string; reason?: QueuedReason }>(
           `/api/governance/projects/${encodeURIComponent(next.id)}/research`,
           { method: "POST", body: "{}" }
-        ).then(() => {
+        ).then((r) => {
           setResuming(false);
+          setQueuedReason(
+            r.ok && r.data.status === "queued" ? (r.data.reason ?? null) : null
+          );
           void fetchRef.current();
         });
       }
     },
+    // invalidateRevealState/setPendingShow are hoisted per-render function
+    // declarations over refs + stable setters; listing them would churn the
+    // memo every render for no behavioral change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       applyChangedChoreography,
       clearDraft,
@@ -1273,6 +1440,13 @@ export function Workspace({ projectId }: { projectId: string }) {
     viewRef.current = next;
     setView(next);
     setWorking(false);
+    // Direct viewRef merge: the next handleView compares EQUAL revs, so the
+    // rev-change invalidation never runs for this turn - clear here or
+    // stale mark offsets wash the wrong text over rewritten markdown.
+    console.info(
+      "[gov-reveal] sync turn path: reveal pipeline not run (mid-deploy defense)"
+    );
+    invalidateRevealState();
     applyChangedChoreography(
       data.changedSections,
       data.documents,
@@ -1861,6 +2035,33 @@ export function Workspace({ projectId }: { projectId: string }) {
       };
       viewRef.current = next;
       setView(next);
+      // Direct viewRef merge bypasses the rev-change invalidation, and the
+      // keep strip shifted every offset after the removed marker in its
+      // section. SECTION-SCOPED invalidation (critic D1): marks in sections
+      // whose markdown is byte-identical stay - their offsets index
+      // unchanged text and the settled washes are owed to the user. Never
+      // re-diff: dressing a keep-as-drafted up as a resolution reveal would
+      // be a semantic lie.
+      const changedSecs = new Set(
+        Object.entries(r.data.changedSections).flatMap(([slug, secs]) =>
+          secs.map((sid) => `${slug}#${sid}`)
+        )
+      );
+      if (
+        showRef.current &&
+        changedSecs.has(
+          `${showRef.current.items[showRef.current.index]?.doc}#${showRef.current.items[showRef.current.index]?.section}`
+        )
+      ) {
+        console.info(
+          "[gov-reveal] keep changed the revealing section: show settled"
+        );
+        endShow(false);
+      }
+      setResolvedMarks((ms) =>
+        ms.filter((m) => !changedSecs.has(`${m.doc}#${m.section}`))
+      );
+      setPendingShow(null); // its rev is behind the merged one now
       setHighlights(r.data.changedSections);
       setFlashKey((k) => k + 1);
       const left = next.openConfirmTotal;
@@ -1891,7 +2092,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     if (researchBusy) return;
     setResearchBusy(true);
     setResearchError("");
-    const r = await api<{ status: string }>(
+    const r = await api<{ status: string; reason?: QueuedReason }>(
       `/api/governance/projects/${encodeURIComponent(projectId)}/research`,
       {
         method: "POST",
@@ -1905,6 +2106,10 @@ export function Workspace({ projectId }: { projectId: string }) {
         return;
       }
       setResearchError(r.message);
+    } else {
+      setQueuedReason(
+        r.data.status === "queued" ? (r.data.reason ?? null) : null
+      );
     }
     void fetchProject();
   }
@@ -2059,6 +2264,31 @@ export function Workspace({ projectId }: { projectId: string }) {
         </div>
       )}
 
+      {staleBundle && !staleDismissed && (
+        <div className="panel mb-6 flex flex-wrap items-center gap-4">
+          <p className="max-w-none text-sm">
+            This page is from before an update. Reload to get the latest;
+            everything you typed is saved.
+          </p>
+          <div className="ml-auto flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              className="linklike"
+              onClick={() => window.location.reload()}
+            >
+              Reload the page
+            </button>
+            <button
+              type="button"
+              className="btn btn--text"
+              onClick={() => setStaleDismissed(true)}
+            >
+              Not now
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="workbar mb-8">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3">
           <Link href="/governance" className="btn btn--text no-underline">
@@ -2085,6 +2315,7 @@ export function Workspace({ projectId }: { projectId: string }) {
           view={view}
           resuming={resuming}
           busy={researchBusy}
+          queuedReason={queuedReason}
           actionError={researchError}
           onStartResearch={() => void startResearch("full")}
           onPartialStart={() => void startResearch("partial")}
@@ -2136,23 +2367,11 @@ export function Workspace({ projectId }: { projectId: string }) {
                 // A queued resolution reveal plays now (it owns the scroll);
                 // otherwise the asked-about anchor wins over the changed-
                 // section jump: the user's next task is reading that text.
-                const pendingShow = pendingShowRef.current;
-                if (pendingShow && pendingShow.rev === view.rev) {
-                  pendingShowRef.current = null;
+                if (playPendingShow()) {
                   setDraftDot(0);
                   setAskPending(false);
-                  window.setTimeout(
-                    () =>
-                      startShow(
-                        pendingShow.items,
-                        pendingShow.askRef,
-                        pendingShow.rev
-                      ),
-                    60
-                  );
                   return;
                 }
-                pendingShowRef.current = null;
                 const ask =
                   askPending &&
                   view.status === "drafting" &&
@@ -2203,6 +2422,17 @@ export function Workspace({ projectId }: { projectId: string }) {
                 workingLong={workingLong}
                 brainDown={brainDown}
                 chaseBridge={chaseBridge}
+                pendingShowReady={
+                  !isDesktop &&
+                  pendingShowState !== null &&
+                  pendingShowState.rev === view.rev
+                }
+                onShowPending={() => {
+                  setMobileTab("draft");
+                  setDraftDot(0);
+                  setAskPending(false);
+                  playPendingShow();
+                }}
                 restyleActive={restyleActive}
                 restyleStopping={restyleStopping}
                 onStopRestyle={requestStopRestyle}

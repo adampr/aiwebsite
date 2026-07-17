@@ -20,6 +20,7 @@ import {
   readTodayUsage,
 } from "./db";
 import { db, schema } from "@/lib/db";
+import type { QueuedReason } from "./types";
 import { and, eq, inArray } from "drizzle-orm";
 
 const RESEARCH_LOG = "/var/log/aiwebsite-governance-research.log";
@@ -49,7 +50,7 @@ function openLog(): number {
 
 export type KickOutcome =
   | { status: "researching" }
-  | { status: "queued"; reason: "budget" | "deploy" | "disabled" }
+  | { status: "queued"; reason: QueuedReason }
   | { status: "refused"; reason: "claim" };
 
 /**

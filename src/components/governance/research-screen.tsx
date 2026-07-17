@@ -4,7 +4,11 @@
 // research_failed. The queued state is honest about the fact that nothing is
 // working yet (critique B1) and never shows the duration estimate (N1).
 
-import type { ProjectView, ResearchStep } from "@/lib/governance/types";
+import type {
+  ProjectView,
+  QueuedReason,
+  ResearchStep,
+} from "@/lib/governance/types";
 import { RESEARCH_DURATION_COPY } from "@/lib/governance/config";
 import { StyleSampleControl } from "./style-sample-control";
 
@@ -84,6 +88,7 @@ export function ResearchScreen({
   view,
   resuming,
   busy,
+  queuedReason,
   actionError,
   onStartResearch,
   onPartialStart,
@@ -92,6 +97,7 @@ export function ResearchScreen({
   view: ProjectView;
   resuming: boolean;
   busy: boolean;
+  queuedReason: QueuedReason | null;
   actionError: string;
   onStartResearch: () => void;
   onPartialStart: () => void;
@@ -124,15 +130,29 @@ export function ResearchScreen({
   }
 
   if (status === "queued") {
+    // The kill switch reads fresh off every poll and outranks the last
+    // POST's parked reason (which can predate the flip).
+    const reason: QueuedReason | null = view.featureDisabled
+      ? "disabled"
+      : queuedReason;
+    const cause =
+      reason === "deploy"
+        ? "a brief site update is in progress. Research starts again on its own once the update finishes, usually within a minute or two."
+        : reason === "budget"
+          ? "today's shared research budget is used up. It resets at midnight UTC."
+          : reason === "disabled"
+            ? "new drafting is paused right now. Existing projects and downloads still work."
+            : "today's research budget is used up (it resets at midnight UTC), or a brief site update is in progress.";
     return (
       <div className="panel mx-auto mt-8 max-w-2xl">
         <span className="badge badge--warn">Queued</span>
         <h2 className="mt-6">Waiting in line</h2>
         <p className="mt-4 text-sm">
-          Research is waiting its turn: today&apos;s research budget is used
-          up (it resets at midnight UTC), or a brief site update is in
-          progress. Your project is saved; you can leave and come back, this
-          page updates on its own, and the Start button below retries now.
+          Research is waiting its turn: {cause} Your project is saved; you
+          can leave and come back, this page updates on its own
+          {reason === "disabled"
+            ? "."
+            : ", and the Start button below retries now."}
         </p>
         {resuming && (
           <p className="mt-3 text-sm" style={dim}>
@@ -147,7 +167,7 @@ export function ResearchScreen({
         <button
           type="button"
           className="btn mt-6"
-          disabled={busy}
+          disabled={busy || reason === "disabled"}
           onClick={onStartResearch}
         >
           {busy ? "Starting..." : "Start research"}

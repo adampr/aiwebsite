@@ -26,6 +26,11 @@ export type ProjectStatus =
   | "review"
   | "done";
 
+// Why a research kick parked the row as `queued` (POST /research 202 body).
+// Derived per attempt, never stored: the client re-POSTs once per page load,
+// so the reason it holds is always from a fresh evaluation.
+export type QueuedReason = "budget" | "deploy" | "disabled";
+
 export interface DocSection {
   id: string; // stable kebab id, the op target
   title: string;
