@@ -15,7 +15,11 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 15e: one Stop button —
+Last verified against code: 2026-07-17 (governance round 15f: cross-tab
+resolution reveal — the answering tab broadcasts its diffed reveal items on a
+per-project BroadcastChannel and a sibling tab watching the draft plays the
+identical show at the exact same rev (owner report: answering in one window,
+watching in another, saw no animation), see §5.12; round 15e: one Stop button —
 the question/review pane's pause note no longer duplicates the sample control's
 "Stop reformatting" (designer+critic panel; the duplicate read as a glitch and
 had drifted); the note explains the lock and points at the control's button,
@@ -1267,12 +1271,27 @@ queued show to narrow-window users (the receipt owns all numbers). keepItem and
 the sync applyTurn merge viewRef in place (equal revs — the rev-change
 invalidation never runs), so they invalidate reveal state themselves; keepItem
 SECTION-SCOPED (marks over byte-identical sections keep their owed washes;
-never re-diffed — a keep dressed as a resolution reveal would lie). The reveal
+never re-diffed — a keep dressed as a resolution reveal would lie). CROSS-TAB
+(owner report 2026-07-17 "no longer see the animation" — they were watching a
+second window; only the flight tab ever diffed): the flight tab broadcasts its
+diffed items on a per-project `BroadcastChannel` (`gov-reveal:<projectId>`,
+same-origin) at the moment it plays them; a sibling tab plays the IDENTICAL
+show through the same play-or-queue helper (shared with the flight branch so
+mobile/hidden queueing can never drift) but ONLY at the exact sender rev —
+same rev = byte-identical committed text, so the spans stay honest; received
+items are shape-validated (`isRevealShape`, test-pinned) and capped at
+MAX_REVEALS. A broadcast arriving before the watcher's poll is held in a ref
+and consumed by handleView's idle rev-advance branch when the revs match; a
+held show whose rev passes without playing (own flight owned it, a show was
+already playing, or the project moved on) is dropped — it can never honestly
+play later. Keeps and direct merges never broadcast (they never run the
+diff); watchers get no ask-anchor jump (askRef null — they didn't ask);
+browsers without BroadcastChannel keep single-tab behavior. The reveal
 pipeline logs one-line [gov-reveal] decisions (counts and revs only, never
 document text) at every silent branch so an owner devtools screenshot
 discriminates: no lines = stale bundle, "no resolved markers diffed" = diff
 gates, "reduced motion" = the RDP case, "queued"/"parked" = tab state,
-"trimmed" = budget. Mobile: never auto-switches
+"trimmed" = budget, "broadcast:" = cross-tab path. Mobile: never auto-switches
 tabs; the show queues and plays when the Draft tab opens (superseded by newer revs). The live region stays count-delta
 only — the reveal adds zero announcements. (3) *Monotone counter*: above.
 (4) *Change previous answers*: every question row in the transcript disclosure

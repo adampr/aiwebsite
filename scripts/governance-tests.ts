@@ -57,6 +57,7 @@ import {
 import {
   diffResolvedMarkers,
   estimateItemMs,
+  isRevealShape,
   planShow,
   reducedRestMs,
   typingTicks,
@@ -1674,6 +1675,23 @@ function check(name: string, cond: boolean): void {
   check(
     "reveal: untouched sections are ignored",
     diffResolvedMarkers(prevDocs, nextDocs, {}).length === 0
+  );
+  // Cross-tab broadcast transport guard: accepts a real diffed item,
+  // rejects junk shapes and negative/inverted spans.
+  const realItem = diffResolvedMarkers(prevDocs, nextDocs, {
+    [slug]: ["scope"],
+  })[0];
+  check(
+    "reveal: broadcast shape guard accepts real items, rejects junk",
+    isRevealShape(realItem) &&
+      isRevealShape(JSON.parse(JSON.stringify(realItem))) &&
+      !isRevealShape(null) &&
+      !isRevealShape("x") &&
+      !isRevealShape({}) &&
+      !isRevealShape({ ...realItem, nextStart: -1 }) &&
+      !isRevealShape({ ...realItem, nextEnd: realItem.nextStart - 1 }) &&
+      !isRevealShape({ ...realItem, nextStart: 1.5 }) &&
+      !isRevealShape({ ...realItem, oldMarkerText: 7 })
   );
 
   // Marker scan with positions + the render-time confirm splitter.

@@ -16,9 +16,11 @@ import {
 import { BUILD_ID, staleBundleSignal } from "@/lib/governance/build-id";
 import {
   diffResolvedMarkers,
+  isRevealShape,
   planShow,
   reducedRestMs,
   typingTicks,
+  MAX_REVEALS,
   SHOW_TICK_MS,
   type ResolvedMarkerReveal,
 } from "@/lib/governance/resolved-anim";
@@ -219,6 +221,14 @@ export function Workspace({ projectId }: { projectId: string }) {
   } | null>(null);
   const [pendingShowState, setPendingShowState] = useState<{
     count: number;
+    rev: number;
+  } | null>(null);
+  // Cross-tab reveal plumbing: the same-project BroadcastChannel handle,
+  // and a received show held until this tab's poll reaches the sender's
+  // rev (the spans are only honest against that exact rev's text).
+  const bcRef = useRef<BroadcastChannel | null>(null);
+  const bcStashRef = useRef<{
+    items: ResolvedMarkerReveal[];
     rev: number;
   } | null>(null);
   // Stale bundle (build-id.ts): consecutive-mismatch counter + a latched
@@ -887,6 +897,32 @@ export function Workspace({ projectId }: { projectId: string }) {
     playPendingShowRef.current = playPendingShow;
   });
 
+  /** Play a diffed show now, or queue it where it cannot play (mobile
+   *  Questions tab; startShow itself parks hidden tabs). Shared by the
+   *  flight-landed branch and both broadcast-receive paths so their
+   *  queueing rules can never drift. */
+  function playOrQueueShow(
+    items: ResolvedMarkerReveal[],
+    askRef: FeedRef | null,
+    rev: number
+  ) {
+    setResolvedMarks(items);
+    if (!isDesktopRef.current && mobileTabRef.current === "questions") {
+      // Never auto-switch tabs: the show queues and plays when the
+      // user opens the Draft tab (superseded by any newer rev).
+      console.info(
+        "[gov-reveal] queued: mobile Questions tab active; plays when the Draft tab opens"
+      );
+      setPendingShow({ items, askRef, rev });
+    } else {
+      startShow(items, askRef, rev);
+    }
+  }
+  const playOrQueueShowRef = useRef(playOrQueueShow);
+  useEffect(() => {
+    playOrQueueShowRef.current = playOrQueueShow;
+  });
+
   // Hidden-tab discipline: a show playing when the tab hides settles at
   // its final state (hidden timers clamp to >=1s and later ~1/min; a
   // stranded mid-show is worse than settled washes). A parked show flushes
@@ -919,6 +955,49 @@ export function Workspace({ projectId }: { projectId: string }) {
     return () =>
       document.removeEventListener("visibilitychange", onVisibility);
   }, [endShow]);
+
+  // Cross-tab reveal (owner report 2026-07-17): only the tab that sent the
+  // answer diffs resolved markers, so a sibling tab watching the draft
+  // never saw the show. The flight tab broadcasts its diff; a watching tab
+  // plays the IDENTICAL show once it holds the same rev (same rev =
+  // byte-identical committed text, so the spans stay honest; against any
+  // other rev they are meaningless, hence the fence). Keeps and restyle
+  // passes never broadcast: they never run the diff. Same-origin only by
+  // construction; browsers without BroadcastChannel keep single-tab
+  // behavior.
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return;
+    const bc = new BroadcastChannel(`gov-reveal:${projectId}`);
+    bcRef.current = bc;
+    bc.onmessage = (e: MessageEvent) => {
+      const d = e.data as { rev?: unknown; items?: unknown } | null;
+      const rev = typeof d?.rev === "number" ? d.rev : null;
+      const items = Array.isArray(d?.items)
+        ? d.items.filter(isRevealShape).slice(0, MAX_REVEALS)
+        : [];
+      if (rev === null || !items.length) return;
+      // Our own in-flight turn owns this tab's theater, and a show already
+      // playing is never interrupted.
+      if (inFlightRef.current || showRef.current) return;
+      const cur = viewRef.current?.rev;
+      if (cur === rev) {
+        console.info(
+          `[gov-reveal] broadcast: ${items.length} item(s) at rev ${rev}: playing`
+        );
+        playOrQueueShowRef.current(items, null, rev);
+      } else if (cur !== undefined && rev > cur) {
+        // The sender's poll outran ours: hold until handleView sees rev.
+        console.info(
+          `[gov-reveal] broadcast: rev ${rev} ahead of ours (${cur}): held for the poll`
+        );
+        bcStashRef.current = { items, rev };
+      }
+    };
+    return () => {
+      bcRef.current = null;
+      bc.close();
+    };
+  }, [projectId]);
 
   const handleView = useCallback(
     (next: ProjectView) => {
@@ -1041,17 +1120,10 @@ export function Workspace({ projectId }: { projectId: string }) {
           }
         );
         if (reveals.length) {
-          setResolvedMarks(reveals);
-          if (!isDesktopRef.current && mobileTabRef.current === "questions") {
-            // Never auto-switch tabs: the show queues and plays when the
-            // user opens the Draft tab (superseded by any newer rev).
-            console.info(
-              "[gov-reveal] queued: mobile Questions tab active; plays when the Draft tab opens"
-            );
-            setPendingShow({ items: reveals, askRef, rev: next.rev });
-          } else {
-            startShow(reveals, askRef, next.rev);
-          }
+          // Sibling tabs watching this draft play the same show when their
+          // poll reaches this rev (cross-tab reveal, owner 2026-07-17).
+          bcRef.current?.postMessage({ rev: next.rev, items: reveals });
+          playOrQueueShow(reveals, askRef, next.rev);
         }
         if (flight.kind === "amend")
           setAnnounce(
@@ -1164,7 +1236,9 @@ export function Workspace({ projectId }: { projectId: string }) {
         }
       }
 
-      // A rev advanced by another tab while we are idle: refresh highlights.
+      // A rev advanced by another tab while we are idle: refresh highlights,
+      // and play a broadcast reveal held for exactly this rev (the sender's
+      // poll outran ours; matching rev makes the spans honest again).
       if (
         !choreographed &&
         prev &&
@@ -1173,7 +1247,20 @@ export function Workspace({ projectId }: { projectId: string }) {
         (next.status === "drafting" || next.status === "review")
       ) {
         setHighlights(next.changedSections);
+        const held = bcStashRef.current;
+        if (held && held.rev === next.rev && !showRef.current) {
+          bcStashRef.current = null;
+          console.info(
+            `[gov-reveal] broadcast: poll reached rev ${held.rev}: playing`
+          );
+          playOrQueueShow(held.items, null, held.rev);
+        }
       }
+      // A held broadcast that did not play at its rev is dead: our own
+      // flight owned the rev, we were busy, or the project moved past it.
+      // It can never honestly play later.
+      if (bcStashRef.current && next.rev >= bcStashRef.current.rev)
+        bcStashRef.current = null;
 
       // Initial load of an in-progress project: show the server's last
       // changed sections (chips persist until the next update).

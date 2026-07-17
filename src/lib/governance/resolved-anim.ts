@@ -35,9 +35,28 @@ export interface ResolvedMarkerReveal {
   nextEnd: number;
 }
 
-const MAX_REVEALS = 20;
+export const MAX_REVEALS = 20;
 const ANCHOR_MAX = 40;
 const SLICE_MAX = 300;
+
+/** Transport guard for cross-tab reveal broadcasts (workspace.tsx): true
+ *  only for a plausible ResolvedMarkerReveal. Span sanity against the
+ *  receiving tab's actual markdown stays at render time (decorateMarkdown
+ *  drops out-of-range offsets); this only rejects junk shapes. */
+export function isRevealShape(v: unknown): v is ResolvedMarkerReveal {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return (
+    typeof r.doc === "string" &&
+    typeof r.section === "string" &&
+    typeof r.excerpt === "string" &&
+    typeof r.oldMarkerText === "string" &&
+    Number.isInteger(r.nextStart) &&
+    Number.isInteger(r.nextEnd) &&
+    (r.nextStart as number) >= 0 &&
+    (r.nextEnd as number) >= (r.nextStart as number)
+  );
+}
 
 /* ------------------------------------------------------------------ *
  * Show planning (§5.12): pure so governance-tests can pin the budget
