@@ -256,13 +256,45 @@ function inflateCapped(
 }
 
 /**
+ * PDF heading inference (§5.12 structure adoption): getTextContent has no
+ * style information, so a PDF template used to reach the prompt as flat
+ * paragraphs with NO structure for the model to mirror. Font height is the
+ * signal PDFs do carry: lines set clearly larger than the document's median
+ * (body) size, short, and not ending like a sentence become markdown
+ * headings, two tiers by size. Linear; needs a minimum of lines so a
+ * one-page memo does not get fake structure. Exported for tests.
+ */
+export function markPdfHeadings(
+  lines: { text: string; h: number }[]
+): string[] {
+  const sized = lines
+    .map((l) => ({ t: l.text.trim(), h: l.h }))
+    .filter((l) => l.t.length > 0 && l.h > 0);
+  if (sized.length < 8) return lines.map((l) => l.text);
+  const heights = sized.map((l) => l.h).sort((a, b) => a - b);
+  const median = heights[Math.floor(heights.length / 2)];
+  if (!(median > 0)) return lines.map((l) => l.text);
+  return lines.map((l) => {
+    const t = l.text.trim();
+    const heading =
+      l.h >= median * 1.2 &&
+      t.length > 0 &&
+      t.length <= 100 &&
+      /[A-Za-z]/.test(t) &&
+      !/[.;,]$/.test(t);
+    if (!heading) return l.text;
+    return `${l.h >= median * 1.5 ? "#" : "##"} ${t}`;
+  });
+}
+
+/**
  * PDF -> plain text via pdf.js getTextContent (no rendering, no canvas, no
  * embedded-JS execution; isEvalSupported off). Hostile-input posture matches
  * the docx path: page cap, char stop, and a hard wall-clock deadline that
  * destroys the loading task (pdf.js parses in yielding async chunks, so
  * destroy() genuinely cancels the work). Lines are joined per text item with
- * y-position breaks so headings/paragraph structure stays visible to the
- * format matcher.
+ * y-position breaks, carry their max font height, and get heading markers
+ * from markPdfHeadings so structure stays visible to the format matcher.
  */
 async function pdfToText(buf: Buffer): Promise<ExtractResult> {
   const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -282,34 +314,42 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
       (async () => {
         const doc = await task.promise;
         const pages = Math.min(doc.numPages, CAPS.styleSamplePdfMaxPages);
-        const out: string[] = [];
+        // Lines from ALL pages classify together (one document-wide median);
+        // h=0 separator rows keep the page breaks and never classify.
+        const allLines: { text: string; h: number }[] = [];
         let total = 0;
         for (let n = 1; n <= pages && total < EXTRACT_STOP_CHARS; n++) {
           const page = await doc.getPage(n);
           const content = await page.getTextContent();
           let lastY: number | null = null;
+          let lineH = 0;
           const line: string[] = [];
-          const lines: string[] = [];
+          const push = () => {
+            const text = line.join("");
+            allLines.push({ text, h: lineH });
+            total += text.length;
+            line.length = 0;
+            lineH = 0;
+          };
           for (const item of content.items) {
             if (!("str" in item)) continue;
-            const y = Array.isArray(item.transform) ? item.transform[5] : null;
-            if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) {
-              lines.push(line.join(""));
-              line.length = 0;
-            }
+            const tf = Array.isArray(item.transform) ? item.transform : null;
+            const y = tf ? tf[5] : null;
+            // Unrotated text: |d| is the font height; |a| is the fallback
+            // for rotated or sheared matrices.
+            const h = tf ? Math.abs(tf[3]) || Math.abs(tf[0]) : 0;
+            if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) push();
             line.push(item.str);
+            if (h > lineH) lineH = h;
             if (item.hasEOL) {
-              lines.push(line.join(""));
-              line.length = 0;
+              push();
               lastY = null;
             } else if (y !== null) lastY = y;
           }
-          if (line.length) lines.push(line.join(""));
-          const pageText = lines.join("\n").trim();
-          out.push(pageText);
-          total += pageText.length;
+          if (line.length) push();
+          if (n < pages) allLines.push({ text: "", h: 0 });
         }
-        return out.join("\n\n");
+        return markPdfHeadings(allLines).join("\n").trim();
       })(),
       deadline,
     ]);

@@ -166,6 +166,25 @@ export function validateTurn(
         else ops.push({ op: "set_stub", doc, stub: e.stub, markdown });
         break;
       }
+      case "reorder_sections": {
+        // Structure adoption (§5.12): shape-checked here, permutation-checked
+        // against the live doc in applyOps (the doc can change between ops).
+        const order = Array.isArray(e.order)
+          ? e.order.filter(
+              (s): s is string => typeof s === "string" && KEBAB.test(s)
+            )
+          : [];
+        const unique = new Set(order);
+        if (
+          !order.length ||
+          order.length > CAPS.maxSectionsPerDoc ||
+          unique.size !== order.length ||
+          (Array.isArray(e.order) && e.order.length !== order.length)
+        )
+          errors.push(`op ${i}: reorder_sections needs unique kebab ids`);
+        else ops.push({ op: "reorder_sections", doc, order });
+        break;
+      }
       default:
         errors.push(`op ${i}: unknown op`);
     }
@@ -337,6 +356,30 @@ export function applyOps(
         if (existing) existing.markdown = md;
         else d.sections.unshift(stubSection);
         mark(op.doc, "determination");
+        break;
+      }
+      case "reorder_sections": {
+        // Structure adoption (§5.12): all-or-nothing. `order` must be an
+        // exact permutation of the doc's CURRENT section ids; anything else
+        // (missing id, invented id, wrong length) rejects the op untouched,
+        // so a reorder can never drop or duplicate a section. Only sections
+        // whose position actually moved are marked changed.
+        const d = find(op.doc);
+        if (!d) break;
+        const current = new Set(d.sections.map((s) => s.id));
+        if (
+          op.order.length !== d.sections.length ||
+          !op.order.every((id) => current.has(id))
+        ) {
+          errors.push(`reorder on ${op.doc} is not a permutation; ignored`);
+          break;
+        }
+        const byId = new Map(d.sections.map((s) => [s.id, s]));
+        const before = d.sections.map((s) => s.id);
+        d.sections = op.order.map((id) => byId.get(id)!);
+        op.order.forEach((id, i) => {
+          if (before[i] !== id) mark(op.doc, id);
+        });
         break;
       }
     }

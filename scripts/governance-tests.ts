@@ -30,7 +30,9 @@ import {
   buildRestyleUserMessage,
   buildSystemMessage,
   buildTurnUserMessage,
+  sampleOutline,
 } from "../src/lib/governance/prompt";
+import { markPdfHeadings } from "../src/lib/governance/style-sample";
 import {
   foldTranscript,
   isQuestionEntry,
@@ -1671,7 +1673,13 @@ function check(name: string, cond: boolean): void {
     "prompt: restyle demands marker preservation and names the batch",
     restyleMsg.includes("character for character") &&
       restyleMsg.includes(`${slug}#scope`) &&
-      restyleMsg.includes("FORMATTING only")
+      restyleMsg.includes("FORMATTING and STRUCTURE only")
+  );
+  check(
+    "prompt: restyle advertises structure adoption (retitle + full-permutation reorder)",
+    restyleMsg.includes('"op":"reorder_sections"') &&
+      restyleMsg.includes("exactly once") &&
+      restyleMsg.includes("Retitle a section to the sample's terminology")
   );
   const amendMsg = buildAmendUserMessage({
     kind,
@@ -1797,6 +1805,141 @@ function check(name: string, cond: boolean): void {
       !readmeText({ ...readmeOpts, draft: false }).includes(
         "Assistant's review summary"
       )
+  );
+}
+
+/* 18. Structure adoption (2026-07-17 round 14b): the sample's outline reaches
+ *     the prompt whole, PDFs carry inferred headings, and reorder_sections
+ *     can never drop, invent, or duplicate a section. */
+{
+  const kind = "usage_policy" as const;
+  const slug = docSlugAllowlist(kind).values().next().value as string;
+  const docs: GovernanceDoc[] = [
+    {
+      slug,
+      title: "AI Usage Policy",
+      stub: false,
+      sections: [
+        { id: "purpose", title: "Purpose", markdown: "Why this exists." },
+        { id: "scope", title: "Scope", markdown: "Who it covers." },
+        { id: "rules", title: "Rules", markdown: "What applies." },
+      ],
+    },
+  ];
+
+  // Valid permutation applies; only moved sections mark changed.
+  const good = applyOps(
+    docs,
+    [{ op: "reorder_sections", doc: slug, order: ["scope", "purpose", "rules"] }],
+    kind
+  );
+  check(
+    "reorder: permutation applies, host order follows, only moved sections marked",
+    good.errors.length === 0 &&
+      good.documents[0].sections.map((s) => s.id).join(",") ===
+        "scope,purpose,rules" &&
+      (good.changedSections[slug] ?? []).sort().join(",") === "purpose,scope"
+  );
+  // Dropping or inventing an id rejects the op whole; order unchanged.
+  for (const order of [
+    ["scope", "purpose"],
+    ["scope", "purpose", "rules", "extra"],
+    ["scope", "purpose", "invented"],
+  ]) {
+    const bad = applyOps(
+      docs,
+      [{ op: "reorder_sections", doc: slug, order }],
+      kind
+    );
+    check(
+      `reorder: non-permutation [${order.join(",")}] rejected untouched`,
+      bad.errors.length === 1 &&
+        bad.documents[0].sections.map((s) => s.id).join(",") ===
+          "purpose,scope,rules" &&
+        Object.keys(bad.changedSections).length === 0
+    );
+  }
+  // Grammar: duplicate ids never validate.
+  const parsed = validateTurn(
+    {
+      doc_ops: [
+        { op: "reorder_sections", doc: slug, order: ["scope", "scope"] },
+      ],
+      status: "asking",
+      question: null,
+      review_summary: null,
+      answered_bank_ids: [],
+    },
+    kind,
+    { nonAdvancing: true }
+  );
+  check(
+    "reorder: duplicate ids fail validation",
+    !parsed.ok && parsed.errors.some((e) => e.includes("unique kebab ids"))
+  );
+
+  // Sample outline digest: full-document headings, level-indented, capped.
+  const sample = [
+    "# ACME Policy",
+    "Body text that is not a heading.",
+    "## Purpose",
+    "More body.",
+    "## Definitions",
+    "### Terms",
+  ].join("\n");
+  const outline = sampleOutline(sample);
+  check(
+    "outline: heading lines extracted with level indentation",
+    outline === "- ACME Policy\n  - Purpose\n  - Definitions\n    - Terms"
+  );
+  check("outline: flat sample yields null", sampleOutline("just\nprose\n") === null);
+  const sys = buildSystemMessage({
+    kind,
+    brief: null,
+    forcedReviewSoon: false,
+    styleSample: { name: "acme.docx", text: sample },
+  });
+  check(
+    "outline: system prompt carries the SAMPLE OUTLINE block when headings exist",
+    sys.includes("<<<SAMPLE_OUTLINE") && sys.includes("  - Definitions")
+  );
+  check(
+    "outline: no block for a flat sample",
+    !buildSystemMessage({
+      kind,
+      brief: null,
+      forcedReviewSoon: false,
+      styleSample: { name: "flat.txt", text: "just prose\nno headings\n" },
+    }).includes("SAMPLE_OUTLINE")
+  );
+
+  // PDF heading inference: taller short lines become headings, two tiers;
+  // sentence-shaped and long lines never do; tiny docs stay untouched.
+  const body = Array.from({ length: 10 }, (_, i) => ({
+    text: `Body sentence number ${i} that continues.`,
+    h: 10,
+  }));
+  const marked = markPdfHeadings([
+    { text: "ACME POLICY", h: 16 },
+    { text: "Purpose", h: 12.5 },
+    ...body,
+    { text: "This line is body-sized.", h: 10 },
+    { text: "A long oversized line that reads like a sentence and runs past the length cap for headings so it must stay body text even at heading size which is exactly what this checks", h: 13 },
+  ]);
+  check(
+    "pdf: two-tier heading inference by font height",
+    marked[0] === "# ACME POLICY" &&
+      marked[1] === "## Purpose" &&
+      marked[2] === body[0].text &&
+      marked[marked.length - 2] === "This line is body-sized." &&
+      !marked[marked.length - 1].startsWith("#")
+  );
+  check(
+    "pdf: under 8 lines nothing is inferred",
+    markPdfHeadings([
+      { text: "BIG", h: 20 },
+      { text: "small", h: 10 },
+    ]).join("|") === "BIG|small"
   );
 }
 

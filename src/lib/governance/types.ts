@@ -156,7 +156,13 @@ export type DocOp =
     }
   | { op: "remove_section"; doc: string; section: string }
   | { op: "retitle_doc"; doc: string; title: string }
-  | { op: "set_stub"; doc: string; stub: boolean; markdown: string };
+  | { op: "set_stub"; doc: string; stub: boolean; markdown: string }
+  // Structure adoption (§5.12): reorder a document's sections to the format
+  // sample's outline. `order` must be an exact permutation of the doc's
+  // current section ids (applyOps enforces; anything else is rejected).
+  // Section ids never change, so feeds, placeholder detection, and open-item
+  // tracking survive reordering; host-owned numbering renumbers on render.
+  | { op: "reorder_sections"; doc: string; order: string[] };
 
 /** The validated shape of one brain turn (turn.ts enforces it). */
 export interface TurnResult {

@@ -571,10 +571,22 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         true
       );
     const refSet = new Set(refs);
-    const ops = out.docOps.filter(
-      (op) =>
-        op.op === "upsert_section" && refSet.has(`${op.doc}#${op.section}`)
-    );
+    // Structure adoption (§5.12): a reorder op is doc-global (section ids
+    // stay stable, host numbering renumbers on render), so it is allowed for
+    // any doc with a section in this batch — at most one per doc, first
+    // wins. applyOps enforces the exact-permutation invariant.
+    const batchDocs = new Set(refs.map((r) => r.slice(0, r.indexOf("#"))));
+    const reordered = new Set<string>();
+    const ops = out.docOps.filter((op) => {
+      if (op.op === "upsert_section")
+        return refSet.has(`${op.doc}#${op.section}`);
+      if (op.op === "reorder_sections" && batchDocs.has(op.doc)) {
+        if (reordered.has(op.doc)) return false;
+        reordered.add(op.doc);
+        return true;
+      }
+      return false;
+    });
     if (!ops.length)
       return fail(
         "invalid_turn",

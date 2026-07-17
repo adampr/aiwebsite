@@ -2221,7 +2221,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 initialName={view.styleSample?.name ?? null}
                 disabled={view.featureDisabled}
                 removeOnly={view.status === "done"}
-                note="A new or changed sample reformats the whole draft to match it and shapes everything I draft afterward. Your words, facts, and open items stay as they are."
+                note="A new or changed sample reformats the whole draft to match its look and structure, including section names and order, and shapes everything I draft afterward. Your words, facts, and open items stay as they are."
                 reformat={{
                   available:
                     (view.status === "drafting" || view.status === "review") &&
