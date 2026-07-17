@@ -1,0 +1,1 @@
+ALTER TABLE "governance_projects" ADD COLUMN "research_audit_json" text;

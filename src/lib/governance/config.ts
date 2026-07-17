@@ -56,6 +56,9 @@ export const CAPS = {
   documentsJsonMaxBytes: 150_000, // aligned with what is promptable
   transcriptJsonMaxBytes: 200_000,
   researchBriefMaxChars: 9000,
+  // research_audit_json ceiling (facts+suspicion+screen hits, never page
+  // bodies); truncateAudit sheds trailing facts to stay under it.
+  researchAuditMaxChars: 20_000,
   // Answer turn timing. POST /answer (mode:"async" required; markerless =
   // stale pre-async client, told to reload) returns 202 and runs the turn
   // in-process with no route deadline: the brain call gets the full 90 s

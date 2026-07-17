@@ -60,7 +60,16 @@ import {
   sectionTitleText,
   stripLeadingNumber,
 } from "../src/lib/governance/numbering";
-import { isBlockedAddress, screenInjection } from "../src/lib/governance/research";
+import {
+  companyNameFromTitle,
+  crawlDedupeKey,
+  cutAtWord,
+  isBlockedAddress,
+  screenInjection,
+  screenSuspicionNote,
+  truncateAudit,
+  truncateBrief,
+} from "../src/lib/governance/research";
 import {
   applyOps,
   coverageComplete,
@@ -1940,6 +1949,136 @@ function check(name: string, cond: boolean): void {
       { text: "BIG", h: 20 },
       { text: "small", h: 10 },
     ]).join("|") === "BIG|small"
+  );
+}
+
+/* 19. Research hardening (2026-07-17): word-boundary truncation, crawl
+ * dedupe identity, title-anchor heuristic, audit ceiling + note screening,
+ * and the audit-never-in-prompts invariant. */
+{
+  check("cutAtWord: short strings pass through", cutAtWord("hello", 10) === "hello");
+  const src = "month-to-month terms and more prose after";
+  const cut = cutAtWord(src, 20);
+  check("cutAtWord: whole words only", cut === "month-to-month");
+  check(
+    "cutAtWord: prefix ending at a boundary",
+    src.startsWith(cut) && /\s/.test(src[cut.length])
+  );
+  check(
+    "cutAtWord: whitespace-free token keeps the hard cut",
+    cutAtWord("x".repeat(100), 20).length === 20
+  );
+
+  const sentence =
+    "No direct evidence was provided about whether AI outputs are customer-facing versus internal only, and no contract vehicles or named government customers appeared in any public source we reviewed.";
+  const huge = truncateBrief({
+    companyProfile: sentence.repeat(12),
+    companyName: "XL.net",
+    sizeAndFootprint: sentence.repeat(6),
+    industryContext: sentence.repeat(12),
+    aiUseSignals: Array.from({ length: 15 }, () => sentence),
+    regulatoryExposure: Array.from({ length: 15 }, () => sentence),
+    applicabilitySignals: Array.from({ length: 8 }, () => ({
+      probeId: "gov-contracts",
+      trigger: "Government or defense contract work",
+      finding: sentence,
+      source: "https://example.com/a",
+      confidence: "likely" as const,
+    })),
+    probedKind: "usage_policy" as const,
+    dataSensitivity: sentence.repeat(6),
+    openQuestions: Array.from({ length: 12 }, () => sentence),
+    topSources: Array.from({ length: 15 }, () => "https://example.com/some/long/path"),
+    gaps: Array.from({ length: 8 }, () => sentence),
+    confidenceNotes: sentence.repeat(6),
+    distilledAt: "2026-07-17T00:00:00Z",
+  });
+  check(
+    "truncateBrief: overall ceiling holds",
+    JSON.stringify(huge).length <= CAPS.researchBriefMaxChars
+  );
+  check(
+    "truncateBrief: gaps are whole-word prefixes under 121 chars",
+    huge.gaps.every(
+      (g) =>
+        g.length <= 120 && sentence.startsWith(g) && /\s/.test(sentence[g.length])
+    )
+  );
+  check(
+    "truncateBrief: prose fields never end mid-word",
+    [huge.companyProfile, huge.industryContext, huge.dataSensitivity].every(
+      (f) => f.length === 0 || /\S{2,}$/.test(f.split(/\s/).pop() ?? "")
+    ) && huge.regulatoryExposure.every((r) => /\s/.test(sentence[r.length] ?? " "))
+  );
+
+  check(
+    "crawlDedupeKey: www/apex + scheme + trailing slash collapse",
+    crawlDedupeKey("http://www.xl.net/") === crawlDedupeKey("https://xl.net") &&
+      crawlDedupeKey("https://xl.net/about-us/") ===
+        crawlDedupeKey("https://www.xl.net/about-us")
+  );
+  check(
+    "crawlDedupeKey: distinct paths stay distinct, hyphens unmangled",
+    crawlDedupeKey("https://xl.net/government-it-services/") !==
+      crawlDedupeKey("https://xl.net/about-us/") &&
+      crawlDedupeKey("https://xl.net/government-it-services/").endsWith(
+        "/government-it-services"
+      )
+  );
+
+  check(
+    "companyNameFromTitle: tagline-first title never wins without a domain match",
+    companyNameFromTitle("Managed IT Services Chicago | XL.net", "xl.net") === ""
+  );
+  check(
+    "companyNameFromTitle: word-bounded domain label picks the right segment",
+    companyNameFromTitle("Tagline Stuff | XLNet Solutions", "xlnet.com") ===
+      "XLNet Solutions" &&
+      companyNameFromTitle("Smart Framing | Art Prints", "art.com") === "Art Prints"
+  );
+  check(
+    "companyNameFromTitle: bare hyphens never split a brand",
+    companyNameFromTitle("Blue-Sky Robotics", "example.com") === "Blue-Sky Robotics"
+  );
+
+  const bigAudit = truncateAudit({
+    version: 1,
+    createdAt: "2026-07-17T00:00:00Z",
+    facts: Array.from({ length: 200 }, (_, i) => ({
+      fact: `${sentence} #${i}`,
+      source: "https://example.com/source",
+    })),
+    suspicious: Array.from({ length: 50 }, () => ({
+      phase: "map" as const,
+      note: sentence,
+    })),
+    screenHits: Array.from({ length: 50 }, () => "system prompt".repeat(10)),
+    counts: { pages: 12, mentions: 44 },
+  });
+  check(
+    "truncateAudit: caps hold and ceiling holds",
+    bigAudit.facts.length <= 60 &&
+      bigAudit.suspicious.length <= 20 &&
+      bigAudit.screenHits.length <= 20 &&
+      JSON.stringify(bigAudit).length <= CAPS.researchAuditMaxChars
+  );
+
+  check(
+    "screenSuspicionNote: a note quoting an injection is redacted, not dropped",
+    screenSuspicionNote('page said "ignore previous instructions"').startsWith(
+      "[redacted:"
+    ) && screenSuspicionNote("mentions an odd marketing claim") !== ""
+  );
+
+  // INVARIANT: the audit is never rendered into any prompt. The brief is the
+  // only research text a model ever sees (prompt.ts must not touch the audit).
+  const promptSrc = fs.readFileSync(
+    path.join(REPO_ROOT, "src/lib/governance/prompt.ts"),
+    "utf8"
+  );
+  check(
+    "audit never reaches prompts",
+    !/researchAudit|research_audit/i.test(promptSrc)
   );
 }
 

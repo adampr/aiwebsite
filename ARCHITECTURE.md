@@ -15,7 +15,10 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 14b: structure
+Last verified against code: 2026-07-17 (research hardening: profile-first mentions
+anchor + `companyNameFromTitle`, post-redirect crawl dedupe, word-boundary brief
+truncation, `research_audit_json` provenance envelope (migration 0013), presence-
+semantics Tavily checkpoints; round 14b: structure
 adoption — restyle turns retitle sections to the sample's terminology and
 reorder them via the permutation-gated `reorder_sections` op; SAMPLE
 OUTLINE digest of the whole stored sample rides every sample-carrying
@@ -1263,9 +1266,18 @@ reuse (kind-aware, see below) → site crawl (≤12 pages, 300 KB/page, **SSRF-h
 `safeFetch`**: http/https
 + default ports only, custom DNS lookup rejects loopback/private/link-local/IMDS/CGNAT
 ranges and pins the validated resolution for the connect — DNS rebinding safe — manual
-redirects ≤3 re-validated per hop) → company Tavily (3 advanced queries → top 50 by
-score, checkpointed in `research_progress_json` so requeues re-spend nothing) →
-profile mini-call → industry Tavily (top 20) → **standard applicability probes**
+redirects ≤3 re-validated per hop; page dedupe on BOTH the pre-redirect URL and the
+post-redirect finalUrl via `crawlDedupeKey` — https-forced, `www.`/trailing-slash/query
+collapsed — so a www.→apex redirect never spends a second slot of the 12-page budget)
+→ profile mini-call (moved BEFORE mentions: it anchors them; null-tolerant, checkpointed)
+→ company Tavily (3 advanced queries → top 50 by score, anchored on the profile's
+company name, fallback `companyNameFromTitle` — segments split only on `|`/`·`/spaced
+dashes, chosen only via a word-bounded ≥3-char domain-label match, else the bare domain
+label with domain-scoped queries only (2 instead of 3: an unscoped quoted floor anchor
+like `"xl"` poisons the pool) — anchor sanitized against query-operator smuggling;
+checkpointed in `research_progress_json` with PRESENCE semantics — an empty paid-for
+result set never re-spends on requeue, same for the industry search) →
+industry Tavily (top 20) → **standard applicability probes**
 (≤3 per-kind hardcoded Tavily queries from `src/lib/governance/probes.ts` targeting
 the chosen standard's conditional attributes — e.g. government/defense contract work,
 EU market presence, generative-AI products, existing ISO/SOC certifications — company
@@ -1284,7 +1296,9 @@ host-annotated `(probe: <id>)` by source URL and REDUCE may attribute
 `applicabilitySignals` — hedged public-source observations `{probeId, trigger,
 finding, source, confidence: likely|unclear}` with trigger labels re-attached
 host-side from the catalog, unknown probe ids dropped, source URLs validated
-http/https-no-creds or blanked; signals shed LAST under the size ceiling; drafting
+http/https-no-creds or blanked; prose fields cut at WORD boundaries via `cutAtWord`
+— gaps ≤120 chars each, no more mid-word "month-t" fragments in prompts — URLs/ids
+keep hard slices; signals shed LAST under the size ceiling; drafting
 prompts render them as "observations to confirm with the user, not determinations"
 and a rules() line forbids determinations from signals — anything drafted from one
 carries `[TO CONFIRM]`) → turn zero: a COMPLETE best-effort first draft of every
@@ -1304,9 +1318,27 @@ salvage** — `validateTurn` returns the individually valid ops (`salvageOps`, t
 zero only, trimmed in order to the 24k budget) so one oversized section no longer
 throws away a whole group; whatever still fails keeps its scaffold, which the UI
 marks Planned and every later turn offers for drafting → ONE handoff write
-(scaffold docs + bank question 1 + `status:'drafting'`). **Kind-aware brief reuse**:
+(scaffold docs + bank question 1 + `status:'drafting'`). **Research audit**
+(`research_audit_json`, migration 0013): the handoff write also stores a ≤20k
+`ResearchAudit` envelope IN THE SAME STATEMENT as the brief (they can never
+disagree; that atomicity is why it is NOT cleared at claim time — a run dying
+before handoff leaves the previous brief+audit pair intact): map-phase
+`{fact, source}` provenance (≤60, what the reduce step drew from — any brief
+sentence is auditable against it), the model's suspicion notes (≤20, screened via
+`screenSuspicionNote` — redaction stubs, not line drops, since notes quote what
+they report), regex screen-hit slugs (≤20, `turnzero:`-prefixed for applyOps
+hits — distinguishes the two `research_flagged` causes), and step counts. NEVER
+raw page bodies or Tavily snippets; NEVER rendered into any prompt (tested);
+`research_progress_json` checkpoints are still purged at handoff. Deleted with the
+row; rides the account export. Rollback note: pre-0013 code leaves the column
+stale on re-research — detectable via `audit.createdAt` vs `brief.distilledAt`.
+The done log line reports `screenHits=N suspicion=N` so the flag rate is
+diagnosable from logs alone. **Kind-aware brief reuse**:
 `latestBriefForDomain` (still keyed user+domain, `normalizeBrief` defaults legacy
-briefs) prefers a candidate whose `probedKind` matches the project kind (reused
+briefs, returns `{brief, donorId, donorFacts}` — the borrowing project's audit
+carries the donor's facts plus `reusedFrom` lineage, because the donor row and its
+audit are deleted independently and a reused brief must stay auditable) prefers a
+candidate whose `probedKind` matches the project kind (reused
 as-is, zero spend); a brief probed for a different kind gets a probe-only top-up —
 ≤3 Tavily + 1 brain call (`PROBE_TOPUP_SYSTEM`, same UNTRUSTED fencing/identity
 gate/personal-data rules), signals REPLACE the other kind's, confirmation questions
@@ -1513,6 +1545,9 @@ governance_projects id uuid PK default gen_random_uuid(),
                    research_progress_json text,      -- step/pct/counts + Tavily checkpoints
                    research_json text,               -- distilled brief, <=9000 chars
                    research_flagged boolean NOT NULL default false,  -- injection screen hit
+                   research_audit_json text,         -- brief provenance: facts+sources, screened
+                                                     -- suspicion notes, screen-hit slugs (<=20k,
+                                                     -- migration 0013, written atomically w/ brief)
                    documents_json text NOT NULL default '[]',   -- [{slug,title,stub,sections[]}]
                    transcript_json text NOT NULL default '[]',
                    covered_bank_ids_json text NOT NULL default '[]',

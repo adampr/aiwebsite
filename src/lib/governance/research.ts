@@ -7,7 +7,12 @@ import { lookup as dnsLookup } from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
-import type { ApplicabilitySignal, ResearchBrief, TavilyResult } from "./types";
+import type {
+  ApplicabilitySignal,
+  ResearchAudit,
+  ResearchBrief,
+  TavilyResult,
+} from "./types";
 import { isGovernanceKind } from "./types";
 import { CAPS } from "./config";
 import { MAX_APPLICABILITY_SIGNALS, sanitizeSignalSource } from "./probes";
@@ -296,6 +301,103 @@ export function screenInjection(text: string): {
   return { clean: kept.join("\n"), hits };
 }
 
+/**
+ * Screen a model-emitted suspicion note for storage. Unlike screenInjection
+ * (which drops matching lines), a note that matches gets a redaction stub:
+ * notes routinely QUOTE the injection they are reporting, and deleting them
+ * would destroy exactly the evidence the audit exists to keep.
+ */
+export function screenSuspicionNote(note: string): string {
+  const { clean, hits } = screenInjection(note);
+  if (!hits.length) return clean.trim();
+  return `[redacted: matched ${hits.join(", ")}]`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Pure text/URL helpers (unit-tested in scripts/governance-tests.ts)
+ * ------------------------------------------------------------------ */
+
+/**
+ * Truncate at a word boundary: never longer than max, and when a cut is
+ * needed it backtracks to the last whitespace past max/2 (degenerate
+ * whitespace-free strings keep the hard cut). Replaces mid-word .slice()
+ * chops that shipped fragments like "month-t" into prompts.
+ */
+export function cutAtWord(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const hard = s.slice(0, max);
+  const at = hard.search(/\s\S*$/);
+  return (at > max / 2 ? hard.slice(0, at) : hard).trimEnd();
+}
+
+/**
+ * Content-identity key for crawl dedupe: https-forced, lowercased host with
+ * one leading "www." stripped, query/hash dropped, trailing slash stripped.
+ * Applied to both the pre-redirect URL (skip before spending a fetch) and
+ * the post-redirect finalUrl (a www.->apex redirect must never let the same
+ * canonical page consume a second slot of the 12-page budget).
+ */
+export function crawlDedupeKey(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    return `https://${host}${u.pathname.replace(/\/$/, "")}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Company-name fallback from a homepage <title>. Splits only on |, the
+ * middot, or a SPACED hyphen/en dash (a bare hyphen inside "Blue-Sky" never
+ * splits), then prefers the segment containing the domain's first label as a
+ * word (label >= 3 chars, word-bounded: "art.com" must not match "Smart").
+ * No segment-length guessing: taglines like "Managed IT Services Chicago |
+ * XL.net" beat any heuristic only via the domain match; when nothing
+ * matches, returns "" and the caller falls back to the bare domain label
+ * with domain-scoped queries (a weak anchor is recoverable; a wrong one
+ * poisons the whole mentions pool).
+ */
+export function companyNameFromTitle(title: string, domain: string): string {
+  const segments = title
+    .split(/\s*[|·]\s*|\s+[-–—]\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!segments.length) return "";
+  if (segments.length === 1) return segments[0].slice(0, 80);
+  const label = domain.split(".")[0].toLowerCase();
+  if (label.length >= 3) {
+    const esc = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(?:^|[^a-z0-9])${esc}(?:[^a-z0-9]|$)`, "i");
+    const hit = segments.find((seg) => re.test(seg));
+    if (hit) return hit.slice(0, 80);
+  }
+  return "";
+}
+
+/** Enforce the audit ceiling: per-field caps, then shed trailing facts. */
+export function truncateAudit(a: ResearchAudit): ResearchAudit {
+  const b: ResearchAudit = {
+    ...a,
+    facts: a.facts.slice(0, 60).map((f) => ({
+      fact: cutAtWord(f.fact, 300),
+      source: f.source.slice(0, 200),
+    })),
+    suspicious: a.suspicious.slice(0, 20).map((s) => ({
+      phase: s.phase,
+      note: cutAtWord(s.note, 200),
+    })),
+    screenHits: a.screenHits.slice(0, 20).map((h) => h.slice(0, 60)),
+  };
+  while (
+    JSON.stringify(b).length > CAPS.researchAuditMaxChars &&
+    b.facts.length > 0
+  ) {
+    b.facts = b.facts.slice(0, -1);
+  }
+  return b;
+}
+
 /* ------------------------------------------------------------------ *
  * Brief shaping
  * ------------------------------------------------------------------ */
@@ -368,33 +470,34 @@ export function normalizeBrief(v: unknown): ResearchBrief | null {
   };
 }
 
-/** Enforce the brief ceiling array-wise (never mid-field). */
+/** Enforce the brief ceiling array-wise, cutting prose at word boundaries
+ * (URLs and ids keep hard slices — a word-cut URL is a broken URL). */
 export function truncateBrief(brief: ResearchBrief): ResearchBrief {
   const b: ResearchBrief = {
     ...brief,
-    companyProfile: brief.companyProfile.slice(0, 1200),
+    companyProfile: cutAtWord(brief.companyProfile, 1200),
     companyName: (brief.companyName ?? "").slice(0, 80),
-    sizeAndFootprint: brief.sizeAndFootprint.slice(0, 600),
-    industryContext: brief.industryContext.slice(0, 1200),
-    dataSensitivity: brief.dataSensitivity.slice(0, 600),
-    confidenceNotes: brief.confidenceNotes.slice(0, 600),
-    aiUseSignals: brief.aiUseSignals.slice(0, 10).map((s) => s.slice(0, 200)),
+    sizeAndFootprint: cutAtWord(brief.sizeAndFootprint, 600),
+    industryContext: cutAtWord(brief.industryContext, 1200),
+    dataSensitivity: cutAtWord(brief.dataSensitivity, 600),
+    confidenceNotes: cutAtWord(brief.confidenceNotes, 600),
+    aiUseSignals: brief.aiUseSignals.slice(0, 10).map((s) => cutAtWord(s, 200)),
     regulatoryExposure: brief.regulatoryExposure
       .slice(0, 10)
-      .map((s) => s.slice(0, 200)),
+      .map((s) => cutAtWord(s, 200)),
     applicabilitySignals: (brief.applicabilitySignals ?? [])
       .slice(0, MAX_APPLICABILITY_SIGNALS)
       .map((s) => ({
         probeId: s.probeId.slice(0, 40),
         trigger: s.trigger.slice(0, 80),
-        finding: s.finding.slice(0, 200),
+        finding: cutAtWord(s.finding, 200),
         source: sanitizeSignalSource(s.source),
         confidence: s.confidence === "likely" ? ("likely" as const) : ("unclear" as const),
       })),
     probedKind: brief.probedKind ?? null,
-    openQuestions: brief.openQuestions.slice(0, 8).map((s) => s.slice(0, 200)),
+    openQuestions: brief.openQuestions.slice(0, 8).map((s) => cutAtWord(s, 200)),
     topSources: brief.topSources.slice(0, 10).map((s) => s.slice(0, 160)),
-    gaps: brief.gaps.slice(0, 8).map((s) => s.slice(0, 80)),
+    gaps: brief.gaps.slice(0, 8).map((s) => cutAtWord(s, 120)),
   };
   const drop: (keyof Pick<
     ResearchBrief,

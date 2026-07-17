@@ -113,6 +113,27 @@ export interface ResearchBrief {
   distilledAt: string; // ISO
 }
 
+/**
+ * Post-hoc audit evidence retained at handoff (research_audit_json): the
+ * map-phase {fact, source} provenance the reduce step drew from, the model's
+ * screened suspicion notes, and the regex screen-hit slugs, so a stored brief
+ * is auditable and research_flagged's cause is diagnosable. Derived content
+ * only, NEVER raw page bodies or Tavily snippets. INVARIANT: never rendered
+ * into any prompt (the brief is the only research text a model ever sees).
+ * Deleted with the row; rides the account export. Old code ignores the column.
+ */
+export interface ResearchAudit {
+  version: 1;
+  createdAt: string; // ISO
+  facts: { fact: string; source: string }[];
+  suspicious: { phase: "map" | "topup"; note: string }[];
+  screenHits: string[]; // pattern slugs; "turnzero:" prefix = applyOps hits
+  counts: { pages?: number; mentions?: number; industry?: number; probes?: number };
+  // Brief-reuse lineage: set when this project's brief was copied from a
+  // donor row (whose own audit dies with it); facts are carried over.
+  reusedFrom?: { projectId: string; donorDistilledAt: string };
+}
+
 export type ResearchStep =
   | "site"
   | "mentions"

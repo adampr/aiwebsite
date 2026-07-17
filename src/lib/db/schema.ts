@@ -123,6 +123,10 @@ export const governanceProjects = pgTable(
     researchProgressJson: text("research_progress_json"),
     researchJson: text("research_json"), // distilled brief, <=9000 chars
     researchFlagged: boolean("research_flagged").notNull().default(false),
+    // Post-hoc research audit (§5.12): map-phase {fact, source} provenance +
+    // screened suspicion notes + screen-hit slugs, retained at handoff so a
+    // stored brief is auditable; <=20k, cleared at claim, deleted with row.
+    researchAuditJson: text("research_audit_json"),
     documentsJson: text("documents_json").notNull().default("[]"),
     transcriptJson: text("transcript_json").notNull().default("[]"),
     coveredBankIdsJson: text("covered_bank_ids_json").notNull().default("[]"),

@@ -11,6 +11,7 @@ import type {
   GovernanceKind,
   NextQuestion,
   ProjectStatus,
+  ResearchAudit,
   ResearchBrief,
   ResearchProgress,
   TranscriptEntry,
@@ -290,10 +291,14 @@ export async function setResearchOutcome(
   }
 }
 
-/** The research job's single final write (no answer-path race afterwards). */
+/** The research job's single final write (no answer-path race afterwards).
+ * Brief and audit ride the SAME statement: they can never disagree (a run
+ * that dies before handoff changes neither, so the previous pair survives
+ * intact — this atomicity is why the audit is NOT cleared at claim time). */
 export async function handoffToDrafting(opts: {
   id: string;
   brief: ResearchBrief;
+  audit: ResearchAudit | null;
   flagged: boolean;
   documents: GovernanceDoc[];
   nextQuestion: NextQuestion;
@@ -304,6 +309,7 @@ export async function handoffToDrafting(opts: {
     .set({
       status: "drafting",
       researchJson: JSON.stringify(opts.brief),
+      researchAuditJson: opts.audit ? JSON.stringify(opts.audit) : null,
       // OR, never overwrite: a sample upload during research may already
       // have set the flag (same pattern as applyTurnWrite/setStyleSample).
       researchFlagged: sql`research_flagged OR ${opts.flagged}`,
@@ -339,15 +345,28 @@ export async function ownerEmailForProject(id: string): Promise<string | null> {
   return rows[0]?.email ?? null;
 }
 
+/** A reusable brief plus the lineage the borrowing project's audit records
+ * (the donor's own audit dies with the donor row, so its facts are carried
+ * over — without them a reused brief would be unauditable). */
+export interface ReusableBrief {
+  brief: ResearchBrief;
+  donorId: string;
+  donorFacts: { fact: string; source: string }[];
+}
+
 /** 30-day research-brief reuse: newest same-user+domain distilled brief. */
 export async function latestBriefForDomain(
   userId: string,
   domain: string,
   excludeId: string,
   kind?: GovernanceKind
-): Promise<ResearchBrief | null> {
+): Promise<ReusableBrief | null> {
   const rows = await db
-    .select({ researchJson: P.researchJson })
+    .select({
+      id: P.id,
+      researchJson: P.researchJson,
+      researchAuditJson: P.researchAuditJson,
+    })
     .from(P)
     .where(
       and(
@@ -359,7 +378,7 @@ export async function latestBriefForDomain(
     )
     .orderBy(desc(P.updatedAt))
     .limit(3);
-  const valid: ResearchBrief[] = [];
+  const valid: ReusableBrief[] = [];
   for (const r of rows) {
     try {
       const brief = normalizeBrief(JSON.parse(r.researchJson!));
@@ -368,7 +387,11 @@ export async function latestBriefForDomain(
         Date.now() - Date.parse(brief.distilledAt) < 30 * 86_400_000 &&
         !brief.gaps.includes("research_failed")
       )
-        valid.push(brief);
+        valid.push({
+          brief,
+          donorId: r.id,
+          donorFacts: donorAuditFacts(r.researchAuditJson),
+        });
     } catch {
       // skip corrupt
     }
@@ -376,11 +399,30 @@ export async function latestBriefForDomain(
   // Prefer a brief already probed for this kind (saves the probe top-up);
   // otherwise the freshest valid brief wins, exactly as before.
   if (kind) {
-    const probed = valid.find((b) => b.probedKind === kind);
+    const probed = valid.find((v) => v.brief.probedKind === kind);
     if (probed) return probed;
   }
   if (valid.length) return valid[0];
   return null;
+}
+
+/** Defensive parse of a donor row's audit facts; [] on anything malformed. */
+function donorAuditFacts(
+  auditJson: string | null
+): { fact: string; source: string }[] {
+  if (!auditJson) return [];
+  try {
+    const a = JSON.parse(auditJson) as { facts?: unknown };
+    if (!Array.isArray(a.facts)) return [];
+    return a.facts.flatMap((f) => {
+      const o = f as Record<string, unknown>;
+      return typeof o?.fact === "string"
+        ? [{ fact: o.fact, source: typeof o.source === "string" ? o.source : "" }]
+        : [];
+    });
+  } catch {
+    return [];
+  }
 }
 
 /** Queued rows eligible for a kick (used by the daily timer). */

@@ -12,6 +12,8 @@ import { contactSubmissions, governanceProjects } from "@/lib/db/schema";
 
 export const GET = createAccountExportHandler(siteConfig, {
   extras: async (user) => ({
+    // Full-row select on purpose: research_audit_json (brief provenance) is
+    // the user's own data and must ride the export like the brief itself.
     governanceProjects: await db
       .select()
       .from(governanceProjects)
