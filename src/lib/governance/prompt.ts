@@ -113,9 +113,13 @@ export function buildSystemMessage(opts: {
     rules(
       opts.kind,
       opts.forcedReviewSoon,
+      // Answer turns are told the TARGET while validation enforces the
+      // higher MAX (config.ts): the model cannot count characters, so a
+      // stated-equals-enforced budget fails on small overshoots. Turn zero
+      // keeps stating its full budget; salvage trims its overruns.
       opts.turnZero
         ? CAPS.turnZeroOpMarkdownMaxChars
-        : CAPS.turnOpMarkdownMaxChars
+        : CAPS.turnOpMarkdownTargetChars
     ),
     CONTRACT,
   ];
@@ -290,5 +294,5 @@ export function buildTurnZeroUserMessage(opts: {
 }
 
 export function repairSystemMessage(): string {
-  return `You repair malformed JSON. You will get a description of validation errors and the raw output that failed. Return ONLY the corrected JSON object satisfying the original contract. Do not add commentary.`;
+  return `You repair malformed JSON. You will get a description of validation errors and the raw output that failed. Return ONLY the corrected JSON object satisfying the original contract. Do not add commentary. If an error says content is over a character budget, cut decisively: aim at least 20 percent BELOW the stated budget (you cannot count characters exactly, so a near-miss fails again). Tighten prose and tables to fit; prefer that over dropping whole doc_ops.`;
 }

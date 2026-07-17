@@ -29,7 +29,11 @@ suggestion chips + in-flight submit feedback, see §5.12; same day:
 zero-marker finals — the confirm gate refuses while any `[TO CONFIRM]`
 marker remains (lenient count), the review panel gains the open-items
 resolver (keep-as-drafted via `POST .../resolve-item`, zero AI; typed
-facts batched into one revise turn with `focusSections`), see §5.12; AI
+facts batched into one revise turn with `focusSections`), see §5.12;
+same day: turn markdown budget split into stated target 12k / enforced
+max 16k (the stated-equals-enforced 8k cap made heavy chase/revise turns
+fail validation deterministically — the "hit a snag" incident), see
+§5.12 turn contract; AI
 Governance builder shipped —
 new §5.12 /governance section, governance tables in §6, standards pipeline
 in §8.1, `aiwebsite-governance` timer via the host post-install hook in
@@ -933,6 +937,12 @@ hard-wired to the executor; no failover).
 "asking"|"review", question, review_summary, answered_bank_ids}`; `rationale` is never
 persisted or logged. Server-side, never trusted to the model: doc slugs must be in the
 kind's blueprint allowlist, ≤12 ops (≤24 at turn zero), section markdown ≤6000 chars,
+total turn markdown ≤16000 chars (`turnOpMarkdownMaxChars`) while the prompt states a
+12000 TARGET (`turnOpMarkdownTargetChars`; turn zero states and enforces 24000, with
+salvage) — the target/max gap is the model's character-miscounting margin: a
+stated-equals-enforced 8000 failed prod turns at 8037–8828 even after repair
+(2026-07-17 snag incident), and the repair system prompt now tells the model to cut
+≥20% below any stated budget — plus
 ≤20 sections/doc, markdown sanitized (raw HTML stripped, http(s) links only) +
 injection-screened at apply AND at docx render, em dashes normalized. **The
 drafting→review flip is host-gated** (`resolveTurnGate` in `turn.ts`, pure +
@@ -988,11 +998,11 @@ turn: a composed numbered message (~2000-char cap with a live meter; excerpts qu
 at ≤60 chars) sent through `submitTurn({message, focusSections})` — the resolver
 NEVER touches the revise textarea or its `gov:{id}:revise` draft key
 (`inFlightRef.preserveDraft`). A second staging cap bounds the batch by SECTION
-REWRITE COST: the model re-emits every touched section in full, and one turn may
-emit only `turnOpMarkdownMaxChars` (8000) of markdown, so a batch spanning several
-large sections fails validation deterministically (the repair pass cannot fix an
-inherent budget overrun) — Add answer refuses when the sum of the distinct target
-sections' current markdown (+200 slack each) would pass 8000−1000, with "send these
+REWRITE COST: the model re-emits every touched section in full and is told to stay
+under `turnOpMarkdownTargetChars` (12000) of markdown, so a batch whose inherent
+re-emit cost exceeds that produces truncated rewrites or validation failures the
+repair pass cannot fix — Add answer refuses when the sum of the distinct target
+sections' current markdown (+200 slack each) would pass 12000−1000, with "send these
 first" copy. turn-runner logs validation failures (`[governance] turn invalid …`)
 and crash stacks to the PM2 site log; never answer content. After the turn, the resolver diffs by stable key:
 survivors flip to "Not resolved" (+ per-row "Send just this one"), vanished staged

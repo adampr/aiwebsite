@@ -251,13 +251,15 @@ export function OpenItemsResolver({
   const composedLen = stagedEntries.length
     ? composeResolveMessage(stagedEntries, documents).length
     : 0;
-  /** One revise turn may emit only CAPS.turnOpMarkdownMaxChars (8000) of
-   *  section markdown, and the model must re-emit every touched section IN
-   *  FULL — a batch spanning several large sections fails validation
-   *  deterministically and the repair pass cannot fix it (the budget is
-   *  inherent to the content). Estimate the re-emit cost as the sum of the
-   *  DISTINCT target sections' current markdown (+200 slack each) and stop
-   *  staging 1000 chars before the server cap. */
+  /** One revise turn is told to emit at most CAPS.turnOpMarkdownTargetChars
+   *  of section markdown (validation allows more; the gap is the model's
+   *  miscounting margin, not batch headroom), and the model must re-emit
+   *  every touched section IN FULL — a batch whose inherent re-emit cost
+   *  exceeds what the model is told produces truncated rewrites or
+   *  deterministic validation failures the repair pass cannot fix. Estimate
+   *  the re-emit cost as the sum of the DISTINCT target sections' current
+   *  markdown (+200 slack each) and stop staging 1000 chars before the
+   *  stated target. */
   const sectionRewriteEstimate = (
     entries: { item: OpenConfirmItem; answer: string }[]
   ): number => {
@@ -284,7 +286,7 @@ export function OpenItemsResolver({
     ];
     if (composeResolveMessage(entries, documents).length > 2000)
       return "chars";
-    if (sectionRewriteEstimate(entries) > CAPS.turnOpMarkdownMaxChars - 1000)
+    if (sectionRewriteEstimate(entries) > CAPS.turnOpMarkdownTargetChars - 1000)
       return "sections";
     return null;
   };

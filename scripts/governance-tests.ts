@@ -357,18 +357,75 @@ function check(name: string, cond: boolean): void {
   );
 
   // The turn-zero system message states the turn-zero budget (the shared
-  // rules used to say 8000 and starve turn-zero drafts); answer turns keep
-  // the per-answer budget; the turn-zero user message states both caps.
+  // rules used to say 8000 and starve turn-zero drafts); answer turns state
+  // the TARGET, never the enforced max (2026-07-17 snag incident: a
+  // stated-equals-enforced budget fails on the model's small overshoots);
+  // the turn-zero user message states both caps.
   const sysTZ = sysMsg({ kind, brief: null, forcedReviewSoon: false, turnZero: true });
   const sysAns = sysMsg({ kind, brief: null, forcedReviewSoon: false });
   check(
     "prompt: turn-zero rules state the 24k budget",
     sysTZ.includes(`under ${CAPS.turnZeroOpMarkdownMaxChars} characters`) &&
-      !sysTZ.includes(`under ${CAPS.turnOpMarkdownMaxChars} characters`)
+      !sysTZ.includes(`under ${CAPS.turnOpMarkdownTargetChars} characters`)
   );
   check(
-    "prompt: answer rules keep the 8k budget",
-    sysAns.includes(`under ${CAPS.turnOpMarkdownMaxChars} characters`)
+    "prompt: answer rules state the target, not the enforced max",
+    sysAns.includes(`under ${CAPS.turnOpMarkdownTargetChars} characters`) &&
+      !sysAns.includes(`under ${CAPS.turnOpMarkdownMaxChars} characters`)
+  );
+  // Miscount margin: the enforced max leaves real headroom over the stated
+  // target (prod repairs overshot 8000 by up to ~10%), and two full-size
+  // sections plus change fit one answer turn (the chase/revise shape that
+  // caused the 2026-07-17 failures).
+  check(
+    "budget: validation max leaves >=25% margin over the stated target",
+    CAPS.turnOpMarkdownMaxChars >= Math.ceil(CAPS.turnOpMarkdownTargetChars * 1.25)
+  );
+  check(
+    "budget: two full sections fit one answer turn",
+    CAPS.turnOpMarkdownMaxChars >= 2 * CAPS.sectionMarkdownMaxChars + 2000
+  );
+  const twoBig = {
+    // 2 x 6000 + 2000 = 14000: over the stated target, under the enforced
+    // max — exactly the overshoot band the 2026-07-17 turns died in.
+    doc_ops: [
+      ...[0, 1].map((i) => ({
+        op: "upsert_section",
+        doc: "ai-usage-policy",
+        section: `big-${i}`,
+        title: "T",
+        markdown: "x".repeat(CAPS.sectionMarkdownMaxChars),
+      })),
+      {
+        op: "upsert_section",
+        doc: "ai-usage-policy",
+        section: "big-extra",
+        title: "T",
+        markdown: "x".repeat(2000),
+      },
+    ],
+    status: "asking",
+    question: { bankId: null, text: "Next?", why: "w", suggestions: [] },
+    review_summary: null,
+    answered_bank_ids: [],
+  };
+  check(
+    "budget: answer turn between target and max validates",
+    validateTurn(twoBig, kind).ok
+  );
+  const overMax = {
+    ...twoBig,
+    doc_ops: [0, 1, 2].map((i) => ({
+      op: "upsert_section",
+      doc: "ai-usage-policy",
+      section: `big-${i}`,
+      title: "T",
+      markdown: "x".repeat(CAPS.sectionMarkdownMaxChars),
+    })),
+  };
+  check(
+    "budget: answer turn over the enforced max still rejected",
+    !validateTurn(overMax, kind).ok
   );
   const tzMsg = buildTurnZeroUserMessage({
     kind: "nist_ai_rmf",

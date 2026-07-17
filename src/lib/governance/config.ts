@@ -27,10 +27,16 @@ export const CAPS = {
   tavilyCallsPerResearchRun: 8,
   distillCallsPerResearchRun: 12,
   // Prompt-side output bound: the host cannot set max_tokens on the brain's
-  // JSON path, so the per-turn op budget is the real ceiling (~2k output tok,
-  // finishes well inside the 90 s brain timeout). Turn zero runs detached and
-  // may write big.
-  turnOpMarkdownMaxChars: 8000,
+  // JSON path, so the per-turn op budget is the real ceiling (~4k output tok
+  // worst case, inside the 90 s brain timeout like turn zero's 24k). The
+  // prompt states the TARGET; validation enforces the MAX. The gap is
+  // deliberate margin: the model cannot count characters, and prod turns
+  // aiming at a stated-equals-enforced 8000 failed at 8037-8828 even after
+  // repair (2026-07-17 snag incident). Late-project turns also legitimately
+  // need more than 8000: one section may be 6000 alone, and chase/revise
+  // turns re-emit every touched section in full.
+  turnOpMarkdownTargetChars: 12000,
+  turnOpMarkdownMaxChars: 16000,
   turnZeroOpMarkdownMaxChars: 24000,
   sectionMarkdownMaxChars: 6000,
   maxSectionsPerDoc: 20,

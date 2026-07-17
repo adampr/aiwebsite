@@ -11,7 +11,8 @@
 // JSON mode (brain v1.95+): response_format {type:"json_object"} short-circuits
 // the thinking pipeline to ONE completion on the executor model. The host
 // cannot set max_tokens or temperature on this path — output size is bounded
-// prompt-side (CAPS.turnOpMarkdownMaxChars).
+// prompt-side (CAPS.turnOpMarkdownTargetChars stated to the model;
+// turnOpMarkdownMaxChars enforced at validation).
 
 import { callBrain, newId } from "@aicompany/core/brain/client";
 import { extractAnswer } from "@aicompany/core/brain/stream";
