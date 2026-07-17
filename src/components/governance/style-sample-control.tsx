@@ -20,7 +20,30 @@ import {
   STYLE_SAMPLE_HELPER,
   styleSampleFileError,
 } from "@/lib/governance/config";
+import type { NumberingStyle } from "@/lib/governance/numbering";
 import { apiUpload, api, WorkingRow } from "./shared";
+
+/** Specimen items and the spoken equivalent per detected numbering style
+ *  (round 15d transparency line). Specimens are visual (mono, per-item
+ *  nowrap so wraps land between items, aria-hidden); the sr-only text is
+ *  the exact spoken form (mono "I. II. III." reads as gibberish). */
+const NUMBERING_SPECIMENS: Record<
+  NumberingStyle,
+  { items: string[]; spoken: string }
+> = {
+  decimal: { items: ["1.", "2.", "3."], spoken: "numbered 1, 2, 3" },
+  "decimal-zero": {
+    items: ["1.0", "2.0", "3.0"],
+    spoken: "numbered 1.0, 2.0, 3.0",
+  },
+  paren: { items: ["1)", "2)", "3)"], spoken: "numbered 1, 2, 3 with parentheses" },
+  roman: { items: ["I.", "II.", "III."], spoken: "numbered with roman numerals" },
+  alpha: { items: ["A.", "B.", "C."], spoken: "lettered A, B, C" },
+  "section-word": {
+    items: ["Section 1:", "Section 2:", "Section 3:"],
+    spoken: "titled Section 1, Section 2, Section 3",
+  },
+};
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 const dim = { color: "var(--xl-text-dim)" } as const;
@@ -53,6 +76,7 @@ export function StyleSampleControl({
   onChanged,
   onUploaded,
   onRemoved,
+  numbering,
 }: {
   projectId: string;
   initialName: string | null;
@@ -64,6 +88,10 @@ export function StyleSampleControl({
   onChanged?: () => void;
   onUploaded?: (name: string) => void;
   onRemoved?: () => void;
+  // The sample's detected numbering style, from the VIEW (the one source
+  // of truth the doc pane renders from). undefined = host does not surface
+  // it (research screen); null = sample attached, nothing detected.
+  numbering?: NumberingStyle | null;
 }) {
   const [name, setName] = useState<string | null>(initialName);
   const [busy, setBusy] = useState<"upload" | "remove" | null>(null);
@@ -112,11 +140,15 @@ export function StyleSampleControl({
     setBusy(null);
     if (r.ok) {
       setName(r.data.styleSample.name);
-      onChanged?.();
-      // The host composes the one announcement (attached + what happens
-      // next); announcing here too would overwrite it in the live region.
+      // The host composes the one announcement (attached + numbering +
+      // what happens next) FROM ITS OWN REFETCHED VIEW : the single source
+      // of truth the doc pane renders from : so it fetches itself;
+      // announcing or fetching here too would double both.
       if (onUploaded) onUploaded(r.data.styleSample.name);
-      else onAnnounce?.(`Format sample attached: ${r.data.styleSample.name}.`);
+      else {
+        onChanged?.();
+        onAnnounce?.(`Format sample attached: ${r.data.styleSample.name}.`);
+      }
     } else setError(r.message);
   }
 
@@ -203,6 +235,35 @@ export function StyleSampleControl({
           </button>
         )}
       </div>
+      {/* Numbering transparency line (round 15d): states what the DRAFT
+          does now, not a fact about the file. Placed after the actions row
+          so a wrapping specimen never shifts the buttons. Static text in
+          reading order; changes ride the composed live-region sentence. */}
+      {name && numbering !== undefined && (
+        <p className="mt-1 max-w-none text-xs" style={dim}>
+          {numbering ? (
+            <>
+              Sections are numbered like the sample:{" "}
+              <span aria-hidden="true">
+                {NUMBERING_SPECIMENS[numbering].items.map((it) => (
+                  <span
+                    key={it}
+                    className="mono"
+                    style={{ whiteSpace: "nowrap", marginRight: "0.75em" }}
+                  >
+                    {it}
+                  </span>
+                ))}
+              </span>
+              <span className="sr-only">
+                {NUMBERING_SPECIMENS[numbering].spoken}
+              </span>
+            </>
+          ) : (
+            "I did not find a numbering style in this sample, so sections keep the standard 1, 2, 3. Typed numbers in the sample's headings are what I can follow."
+          )}
+        </p>
+      )}
       {reformat?.queued && (
         <div
           className="mt-3 border p-4"

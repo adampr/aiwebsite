@@ -17,6 +17,15 @@ import {
   STYLE_SAMPLE_EXTENSIONS,
   STYLE_SAMPLE_TYPES_COPY,
 } from "./config";
+import {
+  buildNumberingModel,
+  createCounters,
+  numberingLabel,
+  resolveParagraphNumbering,
+  type NumberingModel,
+  type NumberingLabel,
+  type NumCounters,
+} from "./docx-numbering";
 
 export type ExtractResult =
   | { ok: true; text: string }
@@ -37,6 +46,11 @@ const TOO_LARGE =
 // smaller, and a crafted deflate stream can expand ~1000x (400 KB upload ->
 // ~400 MB) if inflation is unbounded.
 const MAX_DOCX_XML_BYTES = 5_000_000;
+
+// numbering.xml / styles.xml ceilings (round 15d): template-heavy docs run
+// ~100-500 KB; 2 MB is generous and still bomb-proof. Overflow or absence
+// only disables numbering enrichment, never the upload.
+const MAX_DOCX_AUX_XML_BYTES = 2_000_000;
 
 // Stop accumulating extracted text well past the stored cap; keeps the
 // structure pass from grinding through megabytes it will never use.
@@ -97,23 +111,102 @@ function propVal(chunk: string, marker: string): string | null {
   return close === -1 ? "" : near.slice(v + 7, close);
 }
 
+/** Direct numbering reference from a paragraph's OWN pPr, bounded to its
+ * numPr element (never propVal: its whole-region scan could grab an
+ * unrelated w:val) and CUT at any w:pPrChange marker: tracked-change
+ * paragraphs nest their PREVIOUS properties inside pPr, and reading a
+ * stale numPr there would advance live counters and shift every later
+ * number in the document (round 15d critic amendment). */
+function numPrRef(
+  chunk: string
+): { numId: string | null; ilvl: number | null } | null {
+  const end = chunk.indexOf("</w:pPr>");
+  let region = chunk.slice(0, end === -1 ? Math.min(chunk.length, 2000) : end);
+  const pc = region.indexOf("<w:pPrChange");
+  if (pc !== -1) region = region.slice(0, pc);
+  const np = region.indexOf("<w:numPr");
+  if (np === -1) return null;
+  const b = region.charAt(np + 8);
+  if (b !== ">" && b !== " " && b !== "/" && b !== "\t" && b !== "\n") return null;
+  let npEnd = region.indexOf("</w:numPr>", np);
+  if (npEnd === -1) npEnd = Math.min(region.length, np + 300);
+  const npRegion = region.slice(np, npEnd);
+  const read = (marker: string): string | null => {
+    const at = npRegion.indexOf(marker);
+    if (at === -1) return null;
+    const near = npRegion.slice(at, at + 120);
+    const v = near.indexOf('w:val="');
+    if (v === -1) return null;
+    const close = near.indexOf('"', v + 7);
+    return close === -1 ? null : near.slice(v + 7, close);
+  };
+  const numId = read("<w:numId");
+  const rawIlvl = read("<w:ilvl");
+  const ilvl =
+    rawIlvl !== null && /^[0-8]$/.test(rawIlvl) ? parseInt(rawIlvl, 10) : null;
+  return { numId, ilvl };
+}
+
 /**
  * One OOXML paragraph -> one text line, with the structure the format
  * matcher needs made visible: heading styles (or outline levels, which are
- * locale-independent) become markdown heading prefixes, numbered/bulleted
- * paragraphs (w:numPr; Word keeps the actual numbers in numbering.xml, not
- * in the text) become "- " items.
+ * locale-independent) become markdown heading prefixes, and numbered
+ * paragraphs carry their RECONSTRUCTED literal numbers when a numbering
+ * model is available (round 15d; Word keeps auto-numbers in numbering.xml).
+ * With no model (missing/hostile numbering.xml), output is byte-identical
+ * to the pre-15d extractor: bulleted/numbered paragraphs become "- " items.
  */
-function paraToLine(p: string): string {
+function paraToLine(
+  p: string,
+  model: NumberingModel | null,
+  counters: NumCounters | null
+): string {
   const text = stripRuns(p).replace(/\s+/g, " ").trim();
   if (!text) return "";
   const style = propVal(p, "<w:pStyle");
-  if (style === "Title") return `# ${text}`;
-  const styleLevel = /^[Hh]eading([1-6])$/.exec(style ?? "");
-  if (styleLevel) return `${"#".repeat(parseInt(styleLevel[1], 10))} ${text}`;
-  const outline = propVal(p, "<w:outlineLvl");
-  if (outline !== null && /^[0-5]$/.test(outline))
-    return `${"#".repeat(parseInt(outline, 10) + 1)} ${text}`;
+  let headingLevel = 0;
+  if (style === "Title") headingLevel = 1;
+  else {
+    const styleLevel = /^[Hh]eading([1-6])$/.exec(style ?? "");
+    if (styleLevel) headingLevel = parseInt(styleLevel[1], 10);
+    else {
+      const outline = propVal(p, "<w:outlineLvl");
+      if (outline !== null && /^[0-5]$/.test(outline))
+        headingLevel = parseInt(outline, 10) + 1;
+    }
+  }
+
+  let label: NumberingLabel | null = null;
+  let liveNumbering = false;
+  if (model && counters) {
+    const direct = numPrRef(p);
+    const ref = resolveParagraphNumbering(model, direct, style || null);
+    if (ref === "none") label = { kind: "none" };
+    else if (ref) {
+      liveNumbering = true;
+      label = numberingLabel(model, counters, ref.numId, ref.ilvl);
+    }
+  }
+
+  if (headingLevel > 0) {
+    const prefix =
+      label?.kind === "number" ? `${label.label} ` : "";
+    return `${"#".repeat(headingLevel)} ${prefix}${text}`;
+  }
+  if (label) {
+    if (label.kind === "number") return `${label.label} ${text}`;
+    if (label.kind === "bullet") return `- ${text}`;
+    return text; // "none": numbering explicitly removed, never a dash
+  }
+  if (model) {
+    // The model path is authoritative: a paragraph whose numbering exists
+    // but cannot render (missing definition, link cycle) degrades to the
+    // dash; one with NO live numbering (incl. stale pPrChange numPr, which
+    // the legacy propVal region would wrongly count) is plain text.
+    return liveNumbering ? `- ${text}` : text;
+  }
+  // Legacy shape (no numbering.xml): exact pre-15d behavior, including
+  // propVal's own quirks.
   if (propVal(p, "<w:numPr") !== null) return `- ${text}`;
   return text;
 }
@@ -139,7 +232,11 @@ function findTableStart(xml: string, from: number): number {
  * one row per line). Everything else flattens to paragraphs. Linear:
  * indexOf segmentation + fixed-string splits only.
  */
-function docxXmlToText(xml: string): string {
+export function docxXmlToText(
+  xml: string,
+  model: NumberingModel | null = null
+): string {
+  const counters = model ? createCounters() : null;
   const out: string[] = [];
   let total = 0;
   const push = (line: string): boolean => {
@@ -158,7 +255,7 @@ function docxXmlToText(xml: string): string {
     // inside <w:pPr>/<w:pStyle> and shred the paragraph.
     const plain = xml.slice(pos, plainEnd);
     for (const p of plain.split(/<w:p[\s>]/)) {
-      const line = paraToLine(p);
+      const line = paraToLine(p, model, counters);
       if (line && !push(line)) return out.join("\n");
     }
     if (tblStart === -1) break;
@@ -255,6 +352,82 @@ function inflateCapped(
   });
 }
 
+/** Leading numbering marker on a heading line or outline title ("III. ",
+ * "2.1 ", "Section 3: ", "A) "): stripped from BOTH sides of the outline
+ * match, since PDF lines usually carry rendered numbers and bookmark titles
+ * usually do not (or vice versa) : without this the match fails exactly on
+ * the numbered documents the feature targets. Bounded quantifiers only. */
+const LEADING_NUM_RE =
+  /^(?:\d{1,3}(?:\.\d{1,3}){0,4}[.)]?|(?=[IVXivx])[IVXivx]{1,7}[.)]|[A-Za-z][.)]|Section\s{1,4}\d{1,3}\s{0,4}[:.)-]?)\s+/;
+
+/** Canonical key for outline-title <-> text-line matching. SLICE FIRST:
+ * outline titles are attacker-controlled strings decompressed from PDF
+ * streams, and normalizing before bounding would be synchronous main-thread
+ * work the Promise.race deadline structurally cannot preempt. */
+export function normalizeOutlineKey(s: string): string {
+  return s
+    .slice(0, 200)
+    .trim()
+    .replace(LEADING_NUM_RE, "")
+    .toLowerCase()
+    .replace(/\s{1,20}/g, " ")
+    .replace(/[.:;,]{1,10}$/, "")
+    .trim();
+}
+
+interface OutlineNode {
+  title?: unknown;
+  items?: unknown;
+}
+
+/** Bookmark tree -> normalized-title -> depth (1-3) map. Iterative walk
+ * with an explicit stack (hostile depth), caps 100 items / depth 3,
+ * first-wins on duplicate titles. */
+export function buildOutlineMap(
+  outline: unknown
+): Map<string, number> | null {
+  if (!Array.isArray(outline) || !outline.length) return null;
+  const map = new Map<string, number>();
+  const stack: { nodes: OutlineNode[]; depth: number }[] = [
+    { nodes: outline as OutlineNode[], depth: 1 },
+  ];
+  let seen = 0;
+  while (stack.length) {
+    const { nodes, depth } = stack.pop()!;
+    for (const node of nodes) {
+      if (++seen > 100) return map.size ? map : null;
+      if (!node || typeof node !== "object") continue;
+      const key =
+        typeof node.title === "string" ? normalizeOutlineKey(node.title) : "";
+      if (key && !map.has(key)) map.set(key, depth);
+      if (depth < 3 && Array.isArray(node.items) && node.items.length)
+        stack.push({ nodes: node.items as OutlineNode[], depth: depth + 1 });
+    }
+  }
+  return map.size ? map : null;
+}
+
+/**
+ * Upgrade extracted lines that match a bookmark title to that bookmark's
+ * depth (overriding the font-size heuristic, including its misses). Never
+ * synthesizes lines: an outline title with no matching extracted text is
+ * dropped : injecting a skeleton would corrupt reading order in the stored
+ * sample. Empty/absent map = identity.
+ */
+export function applyOutlineHeadings(
+  marked: string[],
+  raw: { text: string }[],
+  outline: Map<string, number> | null
+): string[] {
+  if (!outline || !outline.size) return marked;
+  return marked.map((line, i) => {
+    const t = raw[i]?.text.trim() ?? "";
+    if (!t || t.length > 120) return line;
+    const depth = outline.get(normalizeOutlineKey(t));
+    return depth ? `${"#".repeat(depth)} ${t}` : line;
+  });
+}
+
 /**
  * PDF heading inference (§5.12 structure adoption): getTextContent has no
  * style information, so a PDF template used to reach the prompt as flat
@@ -313,6 +486,19 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
     const extracted = await Promise.race([
       (async () => {
         const doc = await task.promise;
+        // Bookmark outline (round 15d): the one PDF structure channel worth
+        // its cost. getStructTree/MCID correlation is deliberately NOT read
+        // (includeMarkedContent multiplies text items 2-4x against the same
+        // deadline, for a minority of uploads); font/bold detection is
+        // impossible under a getTextContent-only workflow (fonts are never
+        // resolved into commonObjs without rendering : verified against
+        // pdfjs-dist 6.1.200 sources, do not re-add naively).
+        let outlineMap: Map<string, number> | null = null;
+        try {
+          outlineMap = buildOutlineMap(await doc.getOutline());
+        } catch {
+          outlineMap = null;
+        }
         const pages = Math.min(doc.numPages, CAPS.styleSamplePdfMaxPages);
         // Lines from ALL pages classify together (one document-wide median);
         // h=0 separator rows keep the page breaks and never classify.
@@ -349,7 +535,9 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
           if (line.length) push();
           if (n < pages) allLines.push({ text: "", h: 0 });
         }
-        return markPdfHeadings(allLines).join("\n").trim();
+        return applyOutlineHeadings(markPdfHeadings(allLines), allLines, outlineMap)
+          .join("\n")
+          .trim();
       })(),
       deadline,
     ]);
@@ -398,7 +586,21 @@ export async function extractStyleSampleText(
       if (inflated.kind === "too_large")
         return { ok: false, message: TOO_LARGE };
       if (inflated.kind === "error") return { ok: false, message: UNREADABLE };
-      text = docxXmlToText(inflated.xml);
+      // Numbering enrichment (round 15d): every failure here : entry
+      // missing, over the aux cap, malformed : yields model null and the
+      // pre-15d output, never a user-facing error the file would not have
+      // hit before.
+      const aux = async (name: string): Promise<string | null> => {
+        const e = zip.file(name);
+        if (!e) return null;
+        const r = await inflateCapped(e, MAX_DOCX_AUX_XML_BYTES);
+        return r.kind === "ok" ? r.xml : null;
+      };
+      const model = buildNumberingModel(
+        await aux("word/numbering.xml"),
+        await aux("word/styles.xml")
+      );
+      text = docxXmlToText(inflated.xml, model);
     } catch {
       return { ok: false, message: UNREADABLE };
     }

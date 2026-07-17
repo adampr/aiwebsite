@@ -111,7 +111,7 @@ export function sectionTitleText(
 // for nothing: every style here renders decimal sub-numbers, so they carry
 // no signal. All quantifiers bounded (this runs over user-controlled text).
 const DETECTORS: [NumberingStyle, RegExp][] = [
-  ["section-word", /^Section\s{1,4}\d{1,3}\s{0,4}[:.)–-]/i],
+  ["section-word", /^Section\s{1,4}\d{1,3}\s{0,4}[:.)\u2013-]/i],
   ["decimal-zero", /^\d{1,3}\.0(?:\s|$)/],
   ["decimal", /^\d{1,3}\.\s{1,10}\S/],
   ["paren", /^\d{1,3}\)\s{1,10}\S/],
@@ -132,17 +132,22 @@ const STYLE_PRIORITY: NumberingStyle[] = [
 
 /**
  * Detect the sample's section-numbering style from its extracted text.
- * Heading lines (markdown "#" prefixes: real Word heading styles, or the
- * PDF font-height inference) vote with triple weight; short body lines
- * vote once (typed numbers in flat .txt/.md samples). Sub-numbered lines
- * ("3.1 Scope") are skipped entirely. Null = no style reached two votes
- * and a strict win, and the renderers keep the decimal default. Known
- * limitation: Word AUTO-numbering lives in numbering.xml, not the text,
- * so only typed numbers (and PDF/md/txt) carry a signal.
+ * HEADING lines ("#" prefixes: real Word heading styles, Word numbering
+ * reconstruction, PDF font-height inference, PDF bookmarks) are the
+ * authoritative channel: when at least two heading lines carry a marker,
+ * only heading votes decide. Body lines decide only when headings carry no
+ * signal at all (typed numbers in flat .txt/.md samples) : otherwise a
+ * document's ordinary numbered LISTS (reconstructed "1." items, round 15d)
+ * would outvote its roman/section-word headings and poison the style
+ * (critic counterexamples: roman self-defeat, section-word -> decimal
+ * regression). Sub-numbered lines ("3.1 Scope") are skipped entirely.
+ * Null = no channel produced two matching lines and a strict win; the
+ * renderers keep the decimal default.
  */
 export function detectNumberingStyle(text: string): NumberingStyle | null {
-  const votes = new Map<NumberingStyle, number>();
-  const lines = new Map<NumberingStyle, number>();
+  const headVotes = new Map<NumberingStyle, number>();
+  const headLines = new Map<NumberingStyle, number>();
+  const bodyLines = new Map<NumberingStyle, number>();
   let seen = 0;
   for (const raw of text.split("\n")) {
     if (++seen > 4000) break;
@@ -156,23 +161,32 @@ export function detectNumberingStyle(text: string): NumberingStyle | null {
       // Body-line alpha matches are ignored wholesale: initials and
       // lettered inline clauses make body text too noisy for that style.
       if (!heading && style === "alpha") break;
-      votes.set(style, (votes.get(style) ?? 0) + (heading ? 3 : 1));
-      lines.set(style, (lines.get(style) ?? 0) + 1);
+      if (heading) {
+        headVotes.set(style, (headVotes.get(style) ?? 0) + 1);
+        headLines.set(style, (headLines.get(style) ?? 0) + 1);
+      } else bodyLines.set(style, (bodyLines.get(style) ?? 0) + 1);
       break;
     }
   }
-  // Weighted votes RANK the styles; the two-LINE floor keeps one stray
-  // marker (a lone "I. Introduction" heading) from restyling a document.
-  let best: NumberingStyle | null = null;
-  let bestVotes = 0;
-  for (const style of STYLE_PRIORITY) {
-    const v = votes.get(style) ?? 0;
-    if (v > bestVotes) {
-      best = style;
-      bestVotes = v;
+  // The two-LINE floor keeps one stray marker (a lone "I. Introduction"
+  // heading) from restyling a document; priority breaks ties toward the
+  // more deliberate marker shapes.
+  const pick = (
+    votes: Map<NumberingStyle, number>,
+    lines: Map<NumberingStyle, number>
+  ): NumberingStyle | null => {
+    let best: NumberingStyle | null = null;
+    let bestVotes = 0;
+    for (const style of STYLE_PRIORITY) {
+      const v = votes.get(style) ?? 0;
+      if (v > bestVotes) {
+        best = style;
+        bestVotes = v;
+      }
     }
-  }
-  return best !== null && (lines.get(best) ?? 0) >= 2 ? best : null;
+    return best !== null && (lines.get(best) ?? 0) >= 2 ? best : null;
+  };
+  return pick(headVotes, headLines) ?? pick(bodyLines, bodyLines);
 }
 
 function stripInlineNumber(inline: Inline[]): Inline[] {

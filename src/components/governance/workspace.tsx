@@ -9,7 +9,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { KIND_LABELS } from "@/lib/governance/config";
 import { isChaseId } from "@/lib/governance/interview";
-import { sectionTitleText } from "@/lib/governance/numbering";
+import {
+  sectionTitleText,
+  type NumberingStyle,
+} from "@/lib/governance/numbering";
 import { BUILD_ID, staleBundleSignal } from "@/lib/governance/build-id";
 import {
   diffResolvedMarkers,
@@ -1714,7 +1717,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     }, 6 * 60_000);
   }
 
-  function startRestyle(auto?: { sampleName: string }) {
+  function startRestyle(auto?: { sampleName: string; styleLine?: string }) {
     const v = viewRef.current;
     if (!v || inFlightRef.current || restyleRunRef.current) return;
     const targets = restyleTargets(v.documents, v.placeholderSections ?? {});
@@ -1756,7 +1759,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     }`;
     setAnnounce(
       auto
-        ? `Format sample attached: ${auto.sampleName}. I am reformatting the whole draft to match it: ${scope}. It takes a few minutes and pauses answering while it runs. Keep this tab open; stopping keeps what is done.`
+        ? `Format sample attached: ${auto.sampleName}.${auto.styleLine ?? ""} I am reformatting the whole draft to match it: ${scope}. It takes a few minutes and pauses answering while it runs. Keep this tab open; stopping keeps what is done.`
         : `Applying the format sample to ${scope}. Each pass uses one drafting call.`
     );
     armRestyleWatchdog(run);
@@ -1795,20 +1798,49 @@ export function Workspace({ projectId }: { projectId: string }) {
     );
   }
 
+  /** One appended sentence when the detected numbering style is NEWS
+   *  (changed vs what this client last rendered, or nothing detected; a
+   *  repeat failure re-announces : each upload is a fresh attempt). PRESENT
+   *  tense, done-fact phrasing (critic amendment): numbering is render-
+   *  derived and applies regardless of the stoppable reformat run, so the
+   *  copy must never imply Stop or Skip governs it. */
+  function numberingNews(
+    style: NumberingStyle | null,
+    prev: NumberingStyle | null
+  ): string {
+    if (style === prev && style !== null) return "";
+    if (style === null)
+      return " I did not find a numbering style in it, so sections keep the standard 1, 2, 3.";
+    const spoken: Record<NumberingStyle, string> = {
+      decimal: "1, 2, 3",
+      "decimal-zero": "1.0, 2.0, 3.0",
+      paren: "1), 2), 3)",
+      roman: "roman numerals",
+      alpha: "letters A, B, C",
+      "section-word": "Section 1, Section 2",
+    };
+    return ` Section numbers now follow the sample: ${spoken[style]}.`;
+  }
+
   /** Upload landed (the control reports; this decides). Owner rule
    *  2026-07-17: a new sample immediately reformats the whole draft. Busy
    *  workspace = queue it; active run = restart with the new sample once
-   *  the old run's in-flight pass lands; nothing drafted = nothing to redo. */
-  function handleSampleUploaded(name: string) {
-    const v = viewRef.current;
+   *  the old run's in-flight pass lands; nothing drafted = nothing to redo.
+   *  ASYNC: the fresh view is fetched FIRST so the announced numbering
+   *  style comes from the same source the doc pane renders from (critic
+   *  amendment: one source of truth, never a coincidence). */
+  async function handleSampleUploaded(name: string) {
+    const prevStyle = viewRef.current?.styleSample?.numbering ?? null;
+    const v = (await fetchProject()) ?? viewRef.current;
     if (!v) return;
+    const styleLine = numberingNews(v.styleSample?.numbering ?? null, prevStyle);
     const targets =
       v.status === "drafting" || v.status === "review"
         ? restyleTargets(v.documents, v.placeholderSections ?? {})
         : [];
     if (!targets.length) {
       setAnnounce(
-        `Format sample attached: ${name}. Sections I draft from here on follow it.`
+        `Format sample attached: ${name}.${styleLine} Sections I draft from here on follow it.`
       );
       return;
     }
@@ -1820,7 +1852,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       pendingAutoRestyleRef.current = { sampleName: name };
       setRestyleQueued(true);
       setAnnounce(
-        `New sample attached: ${name}. I stopped the previous reformat and will start over with this one as soon as the pass in progress lands.`
+        `New sample attached: ${name}.${styleLine} I stopped the previous reformat and will start over with this one as soon as the pass in progress lands.`
       );
       return;
     }
@@ -1828,11 +1860,11 @@ export function Workspace({ projectId }: { projectId: string }) {
       pendingAutoRestyleRef.current = { sampleName: name };
       setRestyleQueued(true);
       setAnnounce(
-        `Format sample attached: ${name}. I will reformat the whole draft to match it as soon as the current change lands.`
+        `Format sample attached: ${name}.${styleLine} I will reformat the whole draft to match it as soon as the current change lands.`
       );
       return;
     }
-    startRestyle({ sampleName: name });
+    startRestyle({ sampleName: name, styleLine });
   }
 
   /** Removal never reformats (there is no target style to move toward),
@@ -1843,10 +1875,20 @@ export function Workspace({ projectId }: { projectId: string }) {
    *  mid-pass check must read inFlightRef BEFORE requestStopRestyle,
    *  which is what resolves it. */
   function handleSampleRemoved() {
+    // Removing a styled sample reverts the whole draft's numbering on the
+    // next render (the style is derived from the now-deleted sample text);
+    // a whole-document renumbering must never be silent (critic amendment).
+    const back =
+      (viewRef.current?.styleSample?.numbering ?? null) !== null
+        ? " Sections go back to the standard 1, 2, 3."
+        : "";
+    void fetchProject();
     if (pendingAutoRestyleRef.current) {
       pendingAutoRestyleRef.current = null;
       setRestyleQueued(false);
-      setAnnounce("Format sample removed. The queued reformat is cancelled.");
+      setAnnounce(
+        `Format sample removed.${back} The queued reformat is cancelled.`
+      );
       return;
     }
     const hadRun = !!restyleRunRef.current;
@@ -1854,10 +1896,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     if (hadRun) requestStopRestyle();
     setAnnounce(
       wasMidPass
-        ? "Format sample removed. The reformat is stopping; the pass in progress finishes first and what is done so far is kept."
+        ? `Format sample removed.${back} The reformat is stopping; the pass in progress finishes first and what is done so far is kept.`
         : hadRun
-          ? "Format sample removed. The reformat stopped; what is done so far is kept."
-          : "Format sample removed."
+          ? `Format sample removed.${back} The reformat stopped; what is done so far is kept.`
+          : `Format sample removed.${back}`
     );
   }
 
@@ -2491,8 +2533,9 @@ export function Workspace({ projectId }: { projectId: string }) {
                 }}
                 onAnnounce={setAnnounce}
                 onChanged={() => void fetchProject()}
-                onUploaded={handleSampleUploaded}
+                onUploaded={(name) => void handleSampleUploaded(name)}
                 onRemoved={handleSampleRemoved}
+                numbering={view.styleSample?.numbering ?? null}
               />
             </div>
             <div

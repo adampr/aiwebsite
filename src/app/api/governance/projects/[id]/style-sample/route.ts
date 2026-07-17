@@ -16,6 +16,7 @@ import {
   setStyleSample,
 } from "@/lib/governance/db";
 import { govError, NOT_FOUND, okJson, rateLimit, requireUser } from "@/lib/governance/http";
+import { detectNumberingStyle } from "@/lib/governance/numbering";
 import { screenInjection } from "@/lib/governance/research";
 import {
   extractStyleSampleText,
@@ -81,6 +82,13 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     );
 
   const name = sanitizeSampleName(file.name);
+  // Nothing-detected rate counter (round 15d UX critic amendment): the
+  // manual-override deferral is conditioned on this data existing. Lands in
+  // pm2 logs; grep "no numbering style detected" to read the rate.
+  if (!detectNumberingStyle(clean))
+    console.warn(
+      `[governance] style-sample: no numbering style detected (${name}, ${clean.length} chars)`
+    );
   const wrote = await setStyleSample({
     userId: user.userId,
     id,

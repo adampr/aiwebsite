@@ -32,7 +32,16 @@ import {
   buildTurnUserMessage,
   sampleOutline,
 } from "../src/lib/governance/prompt";
-import { markPdfHeadings } from "../src/lib/governance/style-sample";
+import {
+  applyOutlineHeadings,
+  buildOutlineMap,
+  docxXmlToText,
+  markPdfHeadings,
+} from "../src/lib/governance/style-sample";
+import {
+  buildNumberingModel,
+  formatNumber,
+} from "../src/lib/governance/docx-numbering";
 import {
   foldTranscript,
   isQuestionEntry,
@@ -2300,6 +2309,353 @@ function check(name: string, cond: boolean): void {
       !staleBundleSignal("abc", "1000", 9) &&
       !staleBundleSignal("1000", undefined, 9)
   );
+}
+
+/* 21. Real Word numbering + PDF outline (2026-07-17 round 15d): auto-numbers
+ *     reconstructed from numbering.xml/styles.xml, permutation-safe counters,
+ *     hostile-input posture, and bookmark-driven PDF headings. */
+{
+  const NUM_XML = (abstracts: string, nums: string) =>
+    `<w:numbering>${abstracts}${nums}</w:numbering>`;
+  const lvl = (
+    ilvl: number,
+    fmt: string,
+    txt: string,
+    extra = ""
+  ) =>
+    `<w:lvl w:ilvl="${ilvl}"><w:start w:val="1"/><w:numFmt w:val="${fmt}"/><w:lvlText w:val="${txt}"/>${extra}</w:lvl>`;
+  const abs = (id: string, lvls: string, extra = "") =>
+    `<w:abstractNum w:abstractNumId="${id}">${extra}${lvls}</w:abstractNum>`;
+  const num = (numId: string, absId: string, overrides = "") =>
+    `<w:num w:numId="${numId}"><w:abstractNumId w:val="${absId}"/>${overrides}</w:num>`;
+  const para = (opts: { style?: string; numId?: string; ilvl?: number; text: string }) => {
+    const numPr =
+      opts.numId !== undefined
+        ? `<w:numPr>${opts.ilvl !== undefined ? `<w:ilvl w:val="${opts.ilvl}"/>` : ""}<w:numId w:val="${opts.numId}"/></w:numPr>`
+        : "";
+    const style = opts.style ? `<w:pStyle w:val="${opts.style}"/>` : "";
+    return `<w:p><w:pPr>${style}${numPr}</w:pPr><w:r><w:t>${opts.text}</w:t></w:r></w:p>`;
+  };
+  const doc = (paras: string) => `<w:document><w:body>${paras}</w:body></w:document>`;
+
+  // 1. Basic decimal list: numbers, not dashes.
+  {
+    const model = buildNumberingModel(
+      NUM_XML(abs("0", lvl(0, "decimal", "%1.")), num("5", "0")),
+      null
+    );
+    const text = docxXmlToText(
+      doc(
+        para({ numId: "5", ilvl: 0, text: "A" }) +
+          para({ numId: "5", ilvl: 0, text: "B" }) +
+          para({ numId: "5", ilvl: 0, text: "C" })
+      ),
+      model
+    );
+    check("wordnum: decimal list reconstructs 1. 2. 3.", text === "1. A\n2. B\n3. C");
+  }
+
+  // 2. Heading numbering via style numPr + lvl/pStyle back-reference: the
+  // dominant Word template shape (style carries numId ONLY; the level comes
+  // from the abstract's w:lvl/w:pStyle) must not flatten to level 0.
+  {
+    const numberingXml = NUM_XML(
+      abs(
+        "1",
+        lvl(0, "decimal", "%1.", '<w:pStyle w:val="Heading1"/>') +
+          lvl(1, "decimal", "%1.%2", '<w:pStyle w:val="Heading2"/>')
+      ),
+      num("7", "1")
+    );
+    const stylesXml =
+      '<w:styles><w:style w:styleId="Heading1"><w:pPr><w:numPr><w:numId w:val="7"/></w:numPr></w:pPr></w:style><w:style w:styleId="Heading2"><w:basedOn w:val="Heading1"/><w:pPr><w:numPr><w:numId w:val="7"/></w:numPr></w:pPr></w:style></w:styles>';
+    const model = buildNumberingModel(numberingXml, stylesXml);
+    const text = docxXmlToText(
+      doc(
+        para({ style: "Heading1", text: "Intro" }) +
+          para({ style: "Heading2", text: "Scope" }) +
+          para({ style: "Heading2", text: "Data" }) +
+          para({ style: "Heading1", text: "Rules" })
+      ),
+      model
+    );
+    check(
+      "wordnum: lvl/pStyle back-reference levels heading styles (no flattening)",
+      text === "# 1. Intro\n## 1.1 Scope\n## 1.2 Data\n# 2. Rules"
+    );
+  }
+
+  // 3. Roman auto-numbered headings surface AND detect.
+  {
+    const model = buildNumberingModel(
+      NUM_XML(
+        abs("2", lvl(0, "upperRoman", "%1.", '<w:pStyle w:val="Heading1"/>')),
+        num("3", "2")
+      ),
+      '<w:styles><w:style w:styleId="Heading1"><w:pPr><w:numPr><w:numId w:val="3"/></w:numPr></w:pPr></w:style></w:styles>'
+    );
+    const text = docxXmlToText(
+      doc(
+        para({ style: "Heading1", text: "Purpose" }) +
+          para({ style: "Heading1", text: "Scope" }) +
+          para({ style: "Heading1", text: "Rules" }) +
+          para({ style: "Heading1", text: "Review" })
+      ),
+      model
+    );
+    check(
+      "wordnum: upperRoman headings reconstruct I. II. III. IV.",
+      text === "# I. Purpose\n# II. Scope\n# III. Rules\n# IV. Review"
+    );
+    check("wordnum: reconstructed roman headings detect roman", detectNumberingStyle(text) === "roman");
+  }
+
+  // 4. Anti-poisoning: roman headings + a decimal sub-list must stay roman
+  // (the critic's self-defeat counterexample).
+  {
+    const model = buildNumberingModel(
+      NUM_XML(
+        abs("2", lvl(0, "upperRoman", "%1.", '<w:pStyle w:val="Heading1"/>')) +
+          abs("9", lvl(0, "decimal", "%1.")),
+        num("3", "2") + num("4", "9")
+      ),
+      '<w:styles><w:style w:styleId="Heading1"><w:pPr><w:numPr><w:numId w:val="3"/></w:numPr></w:pPr></w:style></w:styles>'
+    );
+    const listItems = Array.from({ length: 8 }, (_, i) =>
+      para({ numId: "4", ilvl: 0, text: `Item ${i}` })
+    ).join("");
+    const text = docxXmlToText(
+      doc(
+        para({ style: "Heading1", text: "Purpose" }) +
+          listItems +
+          para({ style: "Heading1", text: "Scope" })
+      ),
+      model
+    );
+    check(
+      "wordnum: reconstructed list numbers cannot outvote roman headings",
+      detectNumberingStyle(text) === "roman"
+    );
+  }
+
+  // 5. Section-word lvlText.
+  {
+    const model = buildNumberingModel(
+      NUM_XML(
+        abs("2", lvl(0, "decimal", "Section %1:", '<w:pStyle w:val="Heading1"/>')),
+        num("3", "2")
+      ),
+      '<w:styles><w:style w:styleId="Heading1"><w:pPr><w:numPr><w:numId w:val="3"/></w:numPr></w:pPr></w:style></w:styles>'
+    );
+    const text = docxXmlToText(
+      doc(
+        para({ style: "Heading1", text: "Purpose" }) +
+          para({ style: "Heading1", text: "Scope" })
+      ),
+      model
+    );
+    check(
+      "wordnum: Section-word lvlText reconstructs and detects",
+      text === "# Section 1: Purpose\n# Section 2: Scope" &&
+        detectNumberingStyle(text) === "section-word"
+    );
+  }
+
+  // 6. startOverride restart + shared-abstract continuation + the critic's
+  // composite: an overridden level REFERENCED before it fires renders the
+  // effective (post-override) start.
+  {
+    const model = buildNumberingModel(
+      NUM_XML(
+        abs("0", lvl(0, "decimal", "%1.") + lvl(1, "decimal", "%1.%2")),
+        num("5", "0") +
+          num(
+            "6",
+            "0",
+            '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="5"/></w:lvlOverride>'
+          )
+      ),
+      null
+    );
+    const text = docxXmlToText(
+      doc(
+        para({ numId: "5", ilvl: 0, text: "A" }) +
+          para({ numId: "5", ilvl: 0, text: "B" }) +
+          para({ numId: "6", ilvl: 1, text: "deep before parent refires" }) +
+          para({ numId: "6", ilvl: 0, text: "restarted" })
+      ),
+      model
+    );
+    check(
+      "wordnum: startOverride re-bases; referenced-unfired level renders effective start",
+      text ===
+        "1. A\n2. B\n5.1 deep before parent refires\n5. restarted"
+    );
+  }
+
+  // 7. Multi-level reset composite: reset-then-referenced renders the reset
+  // level's start, not a stale counter.
+  {
+    const model = buildNumberingModel(
+      NUM_XML(
+        abs("0", lvl(0, "decimal", "%1.") + lvl(1, "decimal", "%1.%2") + lvl(2, "decimal", "%1.%2.%3")),
+        num("5", "0")
+      ),
+      null
+    );
+    const text = docxXmlToText(
+      doc(
+        para({ numId: "5", ilvl: 0, text: "one" }) +
+          para({ numId: "5", ilvl: 1, text: "one one" }) +
+          para({ numId: "5", ilvl: 0, text: "two" }) +
+          para({ numId: "5", ilvl: 2, text: "deep after reset" })
+      ),
+      model
+    );
+    check(
+      "wordnum: fired-then-reset level referenced from deeper renders its start",
+      text === "1. one\n1.1 one one\n2. two\n2.1.1 deep after reset"
+    );
+  }
+
+  // 8. numStyleLink hop + cycles never hang and fall back cleanly.
+  {
+    const linkXml = NUM_XML(
+      abs("0", "", '<w:numStyleLink w:val="ListStyle"/>') +
+        abs("1", lvl(0, "decimal", "%1.")),
+      num("5", "0") + num("9", "1")
+    );
+    const linkStyles =
+      '<w:styles><w:style w:styleId="ListStyle"><w:pPr><w:numPr><w:numId w:val="9"/></w:numPr></w:pPr></w:style></w:styles>';
+    const model = buildNumberingModel(linkXml, linkStyles);
+    const text = docxXmlToText(doc(para({ numId: "5", ilvl: 0, text: "A" })), model);
+    check("wordnum: numStyleLink hop resolves through the linked style", text === "1. A");
+    const cycXml = NUM_XML(
+      abs("0", "", '<w:numStyleLink w:val="S"/>'),
+      num("5", "0")
+    );
+    const cycStyles =
+      '<w:styles><w:style w:styleId="S"><w:pPr><w:numPr><w:numId w:val="5"/></w:numPr></w:pPr></w:style></w:styles>';
+    const cyc = buildNumberingModel(cycXml, cycStyles);
+    check(
+      "wordnum: numStyleLink cycle falls back to the legacy dash",
+      docxXmlToText(doc(para({ numId: "5", ilvl: 0, text: "A" })), cyc) === "- A"
+    );
+  }
+
+  // 9. numId 0 kills style-inherited numbering; pPrChange numbering is stale
+  // and must not advance counters.
+  {
+    const model = buildNumberingModel(
+      NUM_XML(abs("0", lvl(0, "decimal", "%1.")), num("5", "0")),
+      '<w:styles><w:style w:styleId="Listy"><w:pPr><w:numPr><w:numId w:val="5"/></w:numPr></w:pPr></w:style></w:styles>'
+    );
+    const killed = docxXmlToText(
+      doc(
+        `<w:p><w:pPr><w:pStyle w:val="Listy"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/></w:numPr></w:pPr><w:r><w:t>plain</w:t></w:r></w:p>`
+      ),
+      model
+    );
+    check("wordnum: direct numId 0 removes inherited numbering", killed === "plain");
+    const tracked = docxXmlToText(
+      doc(
+        `<w:p><w:pPr><w:pPrChange><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="5"/></w:numPr></w:pPr></w:pPrChange></w:pPr><w:r><w:t>was numbered</w:t></w:r></w:p>` +
+          para({ numId: "5", ilvl: 0, text: "first live" })
+      ),
+      model
+    );
+    check(
+      "wordnum: pPrChange stale numbering neither renders nor advances counters",
+      tracked === "was numbered\n1. first live"
+    );
+  }
+
+  // 10. Clamps: hostile start values and letter formatting stay O(log n)
+  // and never corrupt output; NaN starts reject to default.
+  {
+    const model = buildNumberingModel(
+      NUM_XML(
+        abs(
+          "0",
+          '<w:lvl w:ilvl="0"><w:start w:val="2000000000"/><w:numFmt w:val="upperLetter"/><w:lvlText w:val="%1."/></w:lvl>'
+        ) + abs("1", '<w:lvl w:ilvl="0"><w:start w:val="banana"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>'),
+        num("5", "0") + num("6", "1")
+      ),
+      null
+    );
+    const text = docxXmlToText(
+      doc(
+        para({ numId: "5", ilvl: 0, text: "big" }) +
+          para({ numId: "6", ilvl: 0, text: "nan" })
+      ),
+      model
+    );
+    check(
+      "wordnum: hostile numeric attrs clamp (start=2e9 rejected, NaN rejected, no hang)",
+      text === "A. big\n1. nan"
+    );
+    check("wordnum: bijective letters via O(log n) math", formatNumber(28, "upperLetter") === "AB");
+    check("wordnum: roman past 3999 degrades to decimal digits", formatNumber(4000, "upperRoman") === "4000");
+  }
+
+  // 11. Fallback identity: model null reproduces the pre-15d output exactly.
+  {
+    const body = doc(
+      para({ style: "Heading1", text: "Intro" }) +
+        para({ numId: "5", ilvl: 0, text: "item" }) +
+        para({ text: "plain" })
+    );
+    check(
+      "wordnum: model null is byte-identical to the legacy extractor",
+      docxXmlToText(body, null) === "# Intro\n- item\nplain"
+    );
+  }
+
+  // 12. Hostile numbering.xml: garbage, unterminated tags, and entry floods
+  // build (or reject) without wedging the event loop.
+  {
+    const t0 = Date.now();
+    buildNumberingModel("<a".repeat(50_000), null);
+    buildNumberingModel(
+      NUM_XML(abs("0", lvl(0, "decimal", "%1.")).repeat(400), num("5", "0").repeat(2000)),
+      "<w:style".repeat(20_000)
+    );
+    buildNumberingModel(
+      NUM_XML(abs("0", '<w:lvl w:ilvl="0"><w:lvlText w:val="' + "%1".repeat(5000)), ""),
+      null
+    );
+    check("wordnum: hostile fixtures stay linear (generous 10s canary)", Date.now() - t0 < 10_000);
+  }
+
+  // 13. PDF outline: number-stripped matching upgrades lines, never
+  // synthesizes, slices before normalizing.
+  {
+    const raw = [
+      { text: "III. Purpose", h: 10 },
+      { text: "Body text that stays body.", h: 10 },
+      { text: "Really long line ".repeat(10), h: 10 },
+    ];
+    const marked = raw.map((l) => l.text);
+    const outline = buildOutlineMap([
+      { title: "Purpose", items: [{ title: "3.1 Details", items: [] }] },
+      { title: "Never Extracted Section", items: [] },
+    ]);
+    const out = applyOutlineHeadings(marked, raw, outline);
+    check(
+      "pdfoutline: bookmark match strips numbering on BOTH sides and upgrades",
+      out[0] === "# III. Purpose" && out[1] === raw[1].text && out.length === 3
+    );
+    check(
+      "pdfoutline: unmatched titles are dropped, never synthesized",
+      !out.some((l) => l.includes("Never Extracted")) &&
+        applyOutlineHeadings(marked, raw, null).join("|") === marked.join("|")
+    );
+    const huge = buildOutlineMap([{ title: "x".repeat(5_000_000), items: [] }]);
+    check(
+      "pdfoutline: hostile titles are sliced before any normalization",
+      huge !== null && [...huge.keys()][0].length <= 200
+    );
+  }
 }
 
 if (failures) {
