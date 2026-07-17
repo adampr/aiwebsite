@@ -2,6 +2,8 @@
 // Pure types + type guards only: this file is imported by server routes,
 // detached scripts, AND the client workspace bundle. No node imports.
 
+import type { NumberingStyle } from "./numbering";
+
 export type GovernanceKind =
   | "usage_policy"
   | "nist_ai_rmf"
@@ -280,7 +282,10 @@ export interface ProjectView {
   } | null;
   // The uploaded sample policy, name only (its text stays server-side; the
   // drafting prompt mirrors its formatting conventions). Null = none.
-  styleSample: { name: string } | null;
+  // numbering: the sample's detected section-numbering style (round 15b),
+  // DERIVED from the stored sample text at view time, never persisted; null
+  // = no clear signal, renderers keep the decimal default.
+  styleSample: { name: string; numbering: NumberingStyle | null } | null;
   answersCount: number;
   deletesAt: string; // ISO — concrete date rendered everywhere
   createdAt: string;

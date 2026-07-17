@@ -11,6 +11,7 @@ import { fileSlug } from "@/lib/governance/config";
 import { fetchOwnedProject, touchActivity } from "@/lib/governance/db";
 import { renderDocx, renderZip } from "@/lib/governance/docx";
 import { govError, NOT_FOUND, rateLimit, requireUser } from "@/lib/governance/http";
+import { detectNumberingStyle } from "@/lib/governance/numbering";
 import type {
   GovernanceDoc,
   GovernanceKind,
@@ -47,6 +48,11 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
   const draft = row.status !== "done";
   const suffix = draft ? "-draft" : "";
   const domainSlug = fileSlug(row.domain, "company");
+  // Round 15b: the sample's numbering style is derived, never stored — the
+  // same detection the view runs, so downloads match the doc pane exactly.
+  const numbering = row.styleSampleText
+    ? detectNumberingStyle(row.styleSampleText)
+    : null;
 
   try {
     if (format === "zip") {
@@ -57,6 +63,7 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
         draft,
         docs,
         reviewSummary: row.reviewSummary,
+        numbering,
         openConfirmCount: openConfirmItems(docs).length,
         skippedCount: transcript.filter((t) => t.skipped).length,
       });
@@ -75,6 +82,7 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
     const buf = await renderDocx(doc, {
       draft,
       kind: row.kind as GovernanceKind,
+      numbering,
     });
     await touchActivity(row.id);
     return new Response(new Uint8Array(buf), {

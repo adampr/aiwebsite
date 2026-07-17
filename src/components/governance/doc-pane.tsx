@@ -18,6 +18,7 @@ import type { ResolvedMarkerReveal } from "@/lib/governance/resolved-anim";
 import {
   normalizeSectionBlocks,
   sectionTitleText,
+  type NumberingStyle,
 } from "@/lib/governance/numbering";
 import { fmtDate } from "./shared";
 
@@ -263,11 +264,13 @@ function BlockView({ block }: { block: Block }) {
 function SectionBody({
   markdown,
   num,
+  numbering,
   marks,
   reveal,
 }: {
   markdown: string;
   num: number;
+  numbering: NumberingStyle | null;
   marks?: ResolvedMarkerReveal[];
   reveal?: RevealState | null;
 }) {
@@ -279,14 +282,15 @@ function SectionBody({
             ? decorateMarkdown(markdown, marks ?? [], reveal ?? null)
             : markdown
         ),
-        num
+        num,
+        numbering
       ),
     // Keyed on the reveal's PRIMITIVES, not object identity: the show
     // creates a fresh RevealState every 60ms tick, and only the section
     // being revealed may re-parse per tick. `marks` arrays come from the
     // parent's memoized per-section map, so idle marked sections hold too.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [markdown, num, marks, reveal?.item, reveal?.mode, reveal?.chars]
+    [markdown, num, numbering, marks, reveal?.item, reveal?.mode, reveal?.chars]
   );
   return (
     <>
@@ -313,6 +317,7 @@ export function DocPane({
   reveal,
   showStatus,
   showNote,
+  numbering,
 }: {
   documents: GovernanceDoc[];
   activeDoc: string | null;
@@ -336,6 +341,9 @@ export function DocPane({
   showStatus?: { index: number; total: number; onSkip: () => void } | null;
   /** Honest overflow line after a capped reveal run. */
   showNote?: string | null;
+  /** The format sample's detected numbering style (round 15b); null =
+   *  decimal default. Applied to section titles and sub-heading labels. */
+  numbering: NumberingStyle | null;
 }) {
   const doc =
     documents.find((d) => d.slug === activeDoc) ?? documents[0] ?? null;
@@ -470,7 +478,7 @@ export function DocPane({
                 className={cls}
               >
                 <h3 className="doc-h text-lg" tabIndex={-1} data-sec-heading>
-                  {sectionTitleText(si + 1, s.title)}
+                  {sectionTitleText(si + 1, s.title, numbering)}
                   {changed && <span className="doc-chip">Updated</span>}
                   {asked && (
                     <span className="doc-chip doc-chip--ask">
@@ -484,6 +492,7 @@ export function DocPane({
                 <SectionBody
                   markdown={s.markdown}
                   num={si + 1}
+                  numbering={numbering}
                   marks={secMarks}
                   reveal={
                     reveal &&

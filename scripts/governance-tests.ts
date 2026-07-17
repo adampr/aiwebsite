@@ -58,6 +58,7 @@ import {
   stripConfirmMarker,
 } from "../src/lib/governance/markdown";
 import {
+  detectNumberingStyle,
   normalizeSectionBlocks,
   sectionTitleText,
   stripLeadingNumber,
@@ -2119,6 +2120,97 @@ function check(name: string, cond: boolean): void {
   check(
     "open-items note: idempotent under re-wrapping",
     withOpenItemsNote(once, 3) === once
+  );
+}
+
+/* 20. Numbering-style adoption (2026-07-17 round 15b): the host stays the
+ *     one numbering authority; the sample only changes the STYLE it renders
+ *     in. Detection is derived (never persisted) and conservative. */
+{
+  const heading = (lines: string[]) => lines.map((l) => `# ${l}`).join("\n");
+  check(
+    "numstyle: roman headings detect roman",
+    detectNumberingStyle(heading(["I. Purpose", "II. Scope", "III. Rules"])) ===
+      "roman"
+  );
+  check(
+    "numstyle: Section-word headings detect section-word",
+    detectNumberingStyle(
+      heading(["Section 1: Purpose", "Section 2: Scope"])
+    ) === "section-word"
+  );
+  check(
+    "numstyle: decimal-zero beats plain decimal",
+    detectNumberingStyle(heading(["1.0 Purpose", "2.0 Scope"])) ===
+      "decimal-zero"
+  );
+  check(
+    "numstyle: typed decimal body lines detect decimal",
+    detectNumberingStyle("1. Purpose\n2. Scope\nBody text here.") === "decimal"
+  );
+  check(
+    "numstyle: alpha headings detect alpha; body-line letters never vote",
+    detectNumberingStyle(heading(["A. Purpose", "B. Scope"])) === "alpha" &&
+      detectNumberingStyle("A. Smith wrote this.\nB. Jones agreed.\nprose\n") ===
+        null
+  );
+  check(
+    "numstyle: flat sample and sub-numbers alone detect nothing",
+    detectNumberingStyle("Purpose\nScope\nplain prose") === null &&
+      detectNumberingStyle("3.1 Scope\n3.2 Rules\n4.1 More") === null
+  );
+  check(
+    "numstyle: one lone marker is not a signal",
+    detectNumberingStyle("# I. Purpose\nplain\nprose") === null
+  );
+  check(
+    "numstyle: title rendering per style, decimal default unchanged",
+    sectionTitleText(3, "Data handling") === "3. Data handling" &&
+      sectionTitleText(3, "Data handling", "roman") === "III. Data handling" &&
+      sectionTitleText(3, "Data handling", "alpha") === "C. Data handling" &&
+      sectionTitleText(3, "Data handling", "decimal-zero") ===
+        "3.0 Data handling" &&
+      sectionTitleText(3, "Data handling", "paren") === "3) Data handling" &&
+      sectionTitleText(3, "Data handling", "section-word") ===
+        "Section 3: Data handling" &&
+      sectionTitleText(4, "Rules", "roman") === "IV. Rules"
+  );
+  check(
+    "numstyle: manual roman and Section-word prefixes strip; alpha titles keep",
+    stripLeadingNumber("IV. Data handling") === "Data handling" &&
+      stripLeadingNumber("Section 3: Data handling") === "Data handling" &&
+      stripLeadingNumber("A. Smith Policy") === "A. Smith Policy" &&
+      stripLeadingNumber("IT Policy") === "IT Policy"
+  );
+  const romanBlocks = normalizeSectionBlocks(
+    parseMarkdown("## First\ntext\n### Deeper\n## Second"),
+    3,
+    "roman"
+  );
+  const labels = romanBlocks
+    .filter((b) => b.t === "heading")
+    .map((b) =>
+      b.t === "heading" && b.inline[0]?.t === "text" ? b.inline[0].text : ""
+    );
+  check(
+    "numstyle: sub-headings hang off the styled ordinal (III.1, III.1.1)",
+    labels[0] === "III.1 " && labels[1] === "III.1.1 " && labels[2] === "III.2 "
+  );
+  const zeroBlocks = normalizeSectionBlocks(parseMarkdown("## First"), 3, "decimal-zero");
+  check(
+    "numstyle: decimal-zero children drop the .0 (3.0 section, 3.1 child)",
+    zeroBlocks[0].t === "heading" &&
+      zeroBlocks[0].inline[0]?.t === "text" &&
+      zeroBlocks[0].inline[0].text === "3.1 "
+  );
+  check(
+    "numstyle: system prompt tells the model the style is adopted for it",
+    buildSystemMessage({
+      kind: "usage_policy",
+      brief: null,
+      forcedReviewSoon: false,
+      styleSample: { name: "s.docx", text: "# I. A\n# II. B\n# III. C" },
+    }).includes("adopts the sample's numbering style automatically")
   );
 }
 

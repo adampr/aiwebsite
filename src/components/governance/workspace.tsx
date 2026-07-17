@@ -496,7 +496,13 @@ export function Workspace({ projectId }: { projectId: string }) {
           list.push({
             doc: dslug,
             section: sid,
-            title: s ? sectionTitleText(si + 1, s.title) : sid,
+            title: s
+              ? sectionTitleText(
+                  si + 1,
+                  s.title,
+                  viewRef.current?.styleSample?.numbering ?? null
+                )
+              : sid,
           });
         }
       }
@@ -1744,7 +1750,11 @@ export function Workspace({ projectId }: { projectId: string }) {
         list.push({
           doc: slug,
           section: sid,
-          title: sectionTitleText(si + 1, doc.sections[si].title),
+          title: sectionTitleText(
+            si + 1,
+            doc.sections[si].title,
+            next.styleSample?.numbering ?? null
+          ),
         });
     }
     setHighlights(map);
@@ -2288,6 +2298,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                     : null
                 }
                 showNote={showNote}
+                numbering={view.styleSample?.numbering ?? null}
               />
 
             </div>

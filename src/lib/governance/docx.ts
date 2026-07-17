@@ -23,7 +23,11 @@ import type { GovernanceDoc, GovernanceKind } from "./types";
 import { placeholderSectionMap, stubDetermined } from "./blueprints";
 import type { Block, Inline } from "./markdown";
 import { parseMarkdown } from "./markdown";
-import { normalizeSectionBlocks, sectionTitleText } from "./numbering";
+import {
+  normalizeSectionBlocks,
+  sectionTitleText,
+  type NumberingStyle,
+} from "./numbering";
 import {
   DOCUMENT_DISCLAIMER,
   DOC_FOOTER,
@@ -151,7 +155,13 @@ function today(): string {
  * blueprint, so downloads keep working through every outage and cap. */
 export async function renderDocx(
   doc: GovernanceDoc,
-  opts: { draft: boolean; kind: GovernanceKind }
+  opts: {
+    draft: boolean;
+    kind: GovernanceKind;
+    // The format sample's detected numbering style (round 15b); null =
+    // decimal default. Derived by the caller from the stored sample text.
+    numbering?: NumberingStyle | null;
+  }
 ): Promise<Buffer> {
   // Sections still holding scaffold text render an explicit notice instead
   // of the template body: a customer must never mistake scaffolding for
@@ -216,7 +226,11 @@ export async function renderDocx(
     children.push(
       new Paragraph({
         heading: HeadingLevel.HEADING_1,
-        children: [new TextRun({ text: sectionTitleText(si + 1, section.title) })],
+        children: [
+          new TextRun({
+            text: sectionTitleText(si + 1, section.title, opts.numbering ?? null),
+          }),
+        ],
         spacing: { before: 280, after: 120 },
       })
     );
@@ -237,7 +251,8 @@ export async function renderDocx(
     }
     for (const block of normalizeSectionBlocks(
       parseMarkdown(section.markdown),
-      si + 1
+      si + 1,
+      opts.numbering ?? null
     ))
       children.push(...blockToDocx(block, orderedRef));
   });
@@ -332,11 +347,16 @@ export async function renderZip(opts: {
   reviewSummary: string | null;
   openConfirmCount: number;
   skippedCount: number;
+  numbering?: NumberingStyle | null;
 }): Promise<Buffer> {
   const zip = new JSZip();
   const suffix = opts.draft ? "-draft" : "";
   for (const doc of opts.docs) {
-    const buf = await renderDocx(doc, { draft: opts.draft, kind: opts.kind });
+    const buf = await renderDocx(doc, {
+      draft: opts.draft,
+      kind: opts.kind,
+      numbering: opts.numbering ?? null,
+    });
     zip.file(`${fileSlug(doc.slug)}${suffix}.docx`, buf);
   }
   zip.file("README.txt", readmeText(opts));

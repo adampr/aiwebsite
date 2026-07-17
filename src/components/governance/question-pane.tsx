@@ -566,7 +566,11 @@ export function QuestionPane({
             doc: slug,
             section: sid,
             docTitle: doc.title,
-            sectionTitle: sectionTitleText(si + 1, doc.sections[si].title),
+            sectionTitle: sectionTitleText(
+              si + 1,
+              doc.sections[si].title,
+              view.styleSample?.numbering ?? null
+            ),
           },
         ];
       });

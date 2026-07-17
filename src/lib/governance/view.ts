@@ -20,6 +20,7 @@ import type {
 import { bankById, placeholderSectionMap } from "./blueprints";
 import { CAPS, governanceEnabled } from "./config";
 import { countConfirmMarkers, scanConfirmMarkers } from "./markdown";
+import { detectNumberingStyle } from "./numbering";
 import { normalizeBrief } from "./research";
 import { progressFor } from "./turn";
 import type { ProjectRow } from "./db";
@@ -205,7 +206,16 @@ export function toProjectView(row: ProjectRow): ProjectView {
     companySnapshot: composeCompanySnapshot(
       normalizeBrief(parseJson<unknown>(row.researchJson, null))
     ),
-    styleSample: row.styleSampleName ? { name: row.styleSampleName } : null,
+    styleSample: row.styleSampleName
+      ? {
+          name: row.styleSampleName,
+          // Derived per view (linear over <=20k chars), never persisted:
+          // rows uploaded before round 15b adopt their style on next load.
+          numbering: row.styleSampleText
+            ? detectNumberingStyle(row.styleSampleText)
+            : null,
+        }
+      : null,
     answersCount: row.answersCount,
     deletesAt: deletesAt(row.lastActivityAt),
     createdAt: row.createdAt.toISOString(),
