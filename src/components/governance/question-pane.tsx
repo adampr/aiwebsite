@@ -326,6 +326,9 @@ export function QuestionPane({
   workingLong,
   brainDown,
   chaseBridge,
+  restyleActive,
+  restyleStopping,
+  onStopRestyle,
   featureDisabled,
   notice,
   skipPending,
@@ -355,6 +358,12 @@ export function QuestionPane({
   workingLong: boolean;
   brainDown: boolean;
   chaseBridge: boolean;
+  // A reformat run holds the lock across the gaps between its passes
+  // (`working` briefly drops there); the pause note carries its own Stop so
+  // the exit lives where the lock is felt (§5.12 auto-reformat).
+  restyleActive: boolean;
+  restyleStopping: boolean;
+  onStopRestyle: () => void;
   featureDisabled: boolean;
   notice: WorkspaceNotice | null;
   skipPending: boolean;
@@ -385,11 +394,14 @@ export function QuestionPane({
   // denominator). Skipping one moves the draft to review instead of
   // drafting a default.
   const chase = isChaseId(q?.id);
-  const inputLocked = working || featureDisabled;
+  const inputLocked = working || featureDisabled || restyleActive;
   // Non-advancing turns (amend/restyle) run under the same one-turn lock;
   // the question card explains the pause instead of showing a spinner row.
+  // A reformat run counts for its whole span, not just while a pass is in
+  // flight, so the note (and the lock) never flickers between passes.
+  const restylePause = restyleActive || (working && workingKind === "restyle");
   const pausedByOther =
-    working && (workingKind === "amend" || workingKind === "restyle");
+    restylePause || (working && workingKind === "amend");
   const sendLocked = inputLocked || brainDown;
   const segments = chipSegments(answerText);
   const sendBusy = working && workingKind === "send";
@@ -644,11 +656,24 @@ export function QuestionPane({
               <WorkingRow long={workingLong} kind={workingKind} />
             )}
             {pausedByOther && (
-              <p className="mt-3 max-w-none text-sm" style={dim}>
-                {workingKind === "amend"
-                  ? "Paused while I rework an earlier answer. This question is not going anywhere."
-                  : "Paused while I reformat the draft to match your sample. This question is not going anywhere."}
-              </p>
+              <div className="mt-3 text-sm" style={dim}>
+                <p className="max-w-none">
+                  {restylePause
+                    ? "Paused while I reformat the draft to match your sample. Answering comes back when it finishes, or stop it and finish the rest later."
+                    : "Paused while I rework an earlier answer. This question is not going anywhere."}
+                </p>
+                {restylePause && (
+                  <button
+                    type="button"
+                    className="btn btn--text mt-2"
+                    disabled={restyleStopping}
+                    aria-busy={restyleStopping || undefined}
+                    onClick={onStopRestyle}
+                  >
+                    {restyleStopping ? "Stopping..." : "Stop reformatting"}
+                  </button>
+                )}
+              </div>
             )}
             {brainDown && !working && <BrainDownNote />}
             <NoticeLine notice={notice} />
@@ -759,11 +784,24 @@ export function QuestionPane({
                 <WorkingRow long={workingLong} kind={workingKind} />
               )}
             {pausedByOther && (
-              <p className="mt-3 max-w-none text-sm" style={dim}>
-                {workingKind === "amend"
-                  ? "Paused while I rework an earlier answer. The draft updates when it lands."
-                  : "Paused while I reformat the draft to match your sample."}
-              </p>
+              <div className="mt-3 text-sm" style={dim}>
+                <p className="max-w-none">
+                  {restylePause
+                    ? "Paused while I reformat the draft to match your sample. Revising comes back when it finishes, or stop it and finish the rest later."
+                    : "Paused while I rework an earlier answer. The draft updates when it lands."}
+                </p>
+                {restylePause && (
+                  <button
+                    type="button"
+                    className="btn btn--text mt-2"
+                    disabled={restyleStopping}
+                    aria-busy={restyleStopping || undefined}
+                    onClick={onStopRestyle}
+                  >
+                    {restyleStopping ? "Stopping..." : "Stop reformatting"}
+                  </button>
+                )}
+              </div>
             )}
             {brainDown && !working && <BrainDownNote />}
             <NoticeLine notice={notice} />
@@ -782,7 +820,7 @@ export function QuestionPane({
             type="button"
             className="btn btn--sand btn--stable"
             aria-busy={confirmBusy || undefined}
-            disabled={working || confirmBusy || featureDisabled}
+            disabled={working || restyleActive || confirmBusy || featureDisabled}
             onClick={onConfirm}
           >
             <BusyLabel

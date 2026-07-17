@@ -15,7 +15,10 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 13c: chase-phase
+Last verified against code: 2026-07-17 (governance round 13d: auto-reformat
+on format-sample upload — the post-upload offer replaced by an automatic
+whole-draft restyle run with queue/latched-Stop/watchdog/reload receipt,
+see §5.12; round 13c: chase-phase
 counter softeners — foreshadow chip suffix + one-time bridge line +
 `isChaseId`, see §5.12; earlier round 13b: research
 snapshot on background-check questions — blueprint `snapshot` flag on
@@ -888,7 +891,7 @@ bodies `{error:{code,message}}`; CSRF via the middleware prefix):
 | `POST .../answer` | one **asynchronous** Q&A turn (also review-phase revisions via `questionId:"revise"`; async because Cloudflare cuts proxied responses at ~100 s, which heavy turns exceeded). New clients send `mode:"async"`: synchronous preflights (validation → `stale_question`/`answer_cap` → fresh-claim dedupe → deploy-marker + brain `/health` gates as retriable 503 → DB-backed daily budget spend) → **atomic turn claim** (ONE conditional UPDATE on the row's `turn_*` columns keyed on owner+retention+status∈{drafting,review}+`rev`, claimable = no record / failed record / running claim older than `turnStaleMs` 240 s, which is also the lazy reap) → **202** `{pending, rev, promptId, questionId, startedAt}` → in-process worker via Next `after()` (`turn-runner.ts`): JSON-mode turn (full 90 s) → parse ladder (fence strip → lenient parse → ≤1 repair call with a NEW promptId, 60 s) → server-validated ops → ONE conditional write keyed on `rev` AND the claim's `turn_attempt_id` fence nonce (promptId is reused across user retries so it cannot fence; a reaped zombie writes nothing), clearing the claim; every failure records `{error}` in `turn_json` and releases the claim (`turn_started_at` NULL = instantly reclaimable). The GET poll resolves the outcome. Duplicate POST same promptId while running → 202 replay (no spawn/spend); different promptId → 409 `turn_pending`. `mode:"async"` is REQUIRED (version negotiation): a markerless POST is a stale pre-async client that would spread the 202 body into its view, so it gets a reload-this-page 409 `invalid_request` instead (the legacy synchronous driver was deleted one deploy after the async cutover; the CLIENT keeps its sync-apply branch as mid-deploy defense). 6/min/user, 40 answers/project (the 40th force-flips to review), answers ≤2000 chars, `questionId` mismatch → 409 `stale_question` (dual-tab guard). Revise turns accept optional `focusSections: string[]` (`"slug#section"`, ≤20, shape-checked at accept, validated against the docs in the worker, bogus refs silently dropped) — the open-item resolver sends the sections its batch targets so `serializeDraft` includes them VERBATIM (the model cannot edit an elided section it sees 120 chars of). Two further reserved ids run **non-advancing turns** (2026-07-17; legal in drafting AND review, skip the stale-question and answer-cap checks, `answersIncrement 0`, coverage untouched, status/question/summary preserved via `resolveNonAdvancingGate`): `questionId:"restyle"` (format pass — requires an attached style sample and ≥1 `focusSections`, empty answer allowed, own rate bucket `gov:restyle` 8/min, accept-time batch-size check against `turnOpMarkdownTargetChars`; the worker re-derives the safe target set itself — placeholder and stub sections NEVER restyle, or a reworded scaffold would launder undrafted text past the confirm gate — op-filters the response to `upsert_section` ops inside the batch, and hard-gates marker preservation per touched section: lenient count AND `findConfirmMarkers` excerpt-sequence equality, violation = failTurn, nothing written; transcript row `qId:"restyle"`), and `questionId:"amend"` (correct an earlier answer — body adds `amendIndex` into the append-only transcript, target must be a `q_`/`qi_` row, non-empty answer; the worker focuses on the original entry's stored `feeds` (bank feeds for legacy rows), the prompt carries original Q + old A + corrected A, review amends inherit the revise marker rules and refresh the summary through `withOpenItemsNote`; transcript row `qId:"amend"` with `amendsIndex` + `feeds`; a stored `qi_` chase question is always re-picked after a non-advancing turn since its text quotes one specific marker excerpt) |
 | `POST .../confirm` | review → done (only from review). Refuses (409 `turn_pending`) while a fresh revise-turn claim is running — the worker's apply must not race the done flip (both the route precheck and the `confirmProject` WHERE enforce it; stale orphaned claims don't block). **Refuses (409) while any non-stub section still holds untouched blueprint scaffold text** (host-computed `placeholderSectionMap`, exact-match, fail-open on a corrupt column so confirm can never brick; stub docs excluded — their pending/determined state keys on the presence of a `determination` section instead), **and refuses (409 `open_items`) while ANY `[TO CONFIRM]` marker remains** (owner ruling 2026-07-16: a FINAL carries zero markers, each resolved by the user, never silently accepted; the gate count is the LENIENT scan `countConfirmMarkers` — every `/\[TO\s*CONFIRM/gi` opener — so a malformed marker the item parser cannot display still blocks). The client intercepts first with an info notice (button stays enabled); the 409 is the stale-tab backstop |
 | `POST .../resolve-item` | keep ONE open `[TO CONFIRM]` item as drafted (review status only; body `{doc, section, excerpt ≤200, occurrence}`): deterministic host-side strip (`stripConfirmMarker` in markdown.ts) with residue cleanup (seam spaces, space-before-punctuation, empty paren/bracket husks) — ZERO AI calls, works through brain outages and budget caps; gated on `governanceEnabled` like every mutation. 409 `turn_pending` while a fresh revise-turn claim is running (a strip bumping `rev` under the worker would void its final write and waste the brain call; the write's WHERE enforces the same horizon atomically — `applyResolveWrite` in db.ts: rev + owner + review status + no-fresh-claim fence, claimless so it never touches the `turn_*` columns). 409 `needs_answer` when the strip would empty the containing paragraph / list item / table cell (the marker IS the content there; the view's `confirmable:false` computes the same predicate). 409 `item_not_found` when already resolved (other tab) or the `rev` fence lost. Appends a `qId:"confirm"` transcript entry ("Kept as drafted." — keep-as-drafted is a user decision and part of the audit trail); `answersCount` unchanged. Own rate bucket 30/min/user. Returns the turn-response shape |
-| `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.pdf`/`.md`/`.txt` ≤2 MB): only extracted plain text is stored (never the file; docx via a linear-time jszip extractor: streaming decompression-bomb cap, headings/lists/table rows preserved, prompt-fence tokens stripped; pdf via pdfjs-dist getTextContent: no rendering, 40-page cap, 10 s deadline that destroys the parse task, dedicated scanned-PDF copy; pdfjs-dist MUST stay in next.config `serverExternalPackages` or the bundled build throws on every PDF), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions EXCLUDING numbering, which is host-owned (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). Already-drafted sections keep their look until edited — the workspace offers "Reformat the whole draft" (client-chained `questionId:"restyle"` turns, see the answer row) to apply the sample retroactively. The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
+| `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.pdf`/`.md`/`.txt` ≤2 MB): only extracted plain text is stored (never the file; docx via a linear-time jszip extractor: streaming decompression-bomb cap, headings/lists/table rows preserved, prompt-fence tokens stripped; pdf via pdfjs-dist getTextContent: no rendering, 40-page cap, 10 s deadline that destroys the parse task, dedicated scanned-PDF copy; pdfjs-dist MUST stay in next.config `serverExternalPackages` or the bundled build throws on every PDF), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions EXCLUDING numbering, which is host-owned (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). A successful upload AUTO-STARTS a whole-draft reformat run in the workspace (client-chained `questionId:"restyle"` turns, see the answer row and §5.12 round 13d — queued while a turn is in flight, skippable, latched Stop); the server itself only stores the sample. The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
 | `GET .../download` | `?format=docx&doc=<slug>` or `?format=zip`; generated on demand from stored markdown, streamed, never stored, ZERO AI calls (works through every outage/cap and the kill switch); DRAFT watermark + `-draft` filename until done; touches `last_activity_at` (disclosed) |
 
 Every question (`NextQuestion`) carries `feeds: string[]` — the `"<doc-slug>#<section-id>"`
@@ -1034,16 +1037,44 @@ share, so the two can never drift. Tests:
 
 **Non-advancing turns + the four 2026-07-17 owner requests (round 12).**
 (1) *Reformat the draft*: uploading a format sample mid-project previously changed
-nothing visible (the sample only shapes sections the model edits later). The
-`StyleSampleControl` now offers a one-time post-upload prompt ("Want me to reformat
-them now?") plus a persistent "Reformat the whole draft" button whenever a sample is
-attached, status is drafting/review, and ≥1 section is drafted. A run is CLIENT-driven
+nothing visible (the sample only shapes sections the model edits later). Since
+round 13d (owner rule 2026-07-17, "a new sample immediately redoes the whole
+document(s)"), a successful upload — first or replacement — **auto-starts** a
+whole-draft restyle run; there is no opt-in offer. The workspace owns the decision
+(`handleSampleUploaded`; the control only reports the event via `onUploaded`/
+`onRemoved` and, without those props — research screen — just announces): nothing
+drafted → announce-only ("sections I draft from here on follow it"); a turn in
+flight or another tab's turn running → the run QUEUES (`pendingAutoRestyleRef` +
+queued card with a "Skip the reformat" button; `handleView` fires it the moment the
+workspace is idle, whatever freed it); a previous run still active → it is killed
+silently and the fresh full run queues behind the in-flight pass (a replacement
+must never keep applying the superseded sample). One consent contract in every
+state: queued has Skip, running has "Stop reformatting" — a LATCHED stop
+(`stopRequested` on the run; the in-flight pass lands and is kept, button reads
+"Stopping...", honored at the pass boundary with the stopped receipt). The Stop
+affordance renders both on the control and inside the question/review pane's pause
+note (the exit lives where the lock is felt); `restyleActive` state holds the input
+lock and the pause note across the setTimeout gaps between passes (`working`
+briefly drops there). Guard rails around the client-chained run: a 6-minute stall
+watchdog per pass dispatch ends the run honestly if no boundary arrives; a
+sessionStorage flag `gov:{id}:restyle-run` (set at start, cleared at every
+teardown) turns a mid-run reload into an explicit "Reformatting did not finish"
+notice on the next load (same tab only — sessionStorage is the accepted floor);
+mid-run turn failures announce reformat-specific copy ("what is done so far is
+kept; press Reformat the whole draft to finish the rest") instead of the
+answer-oriented generic, and sample REMOVAL never restyles but does skip/stop any
+pending or running run. The persistent "Reformat the whole draft" button remains
+the resume path (after Stop, failure, watchdog, or reload) whenever a sample is
+attached, status is drafting/review, and ≥1 section is drafted. A run is
+CLIENT-driven
 chaining (`restyleTargets`/`packRestyleBatches` in `src/lib/governance/restyle.ts`:
 non-stub, non-placeholder sections, greedy-packed to `turnOpMarkdownTargetChars`−1000
 with 200/section slack, ≤20 refs/batch) of `questionId:"restyle"` turns — one budget
 spend per pass; the next batch is re-packed from the FRESH view, a concurrent tab's
 running turn or any failure aborts the run honestly ("what is done so far is kept"),
-intermediate passes are silent (no announce/flash), and the single final receipt only
+intermediate passes are announce-silent with a visible+announced "Pass K of about
+N." counter, the finish receipt sets the mobile Draft-tab dot (evidence lands on
+the other tab; never an auto-switch), and the single final receipt only
 claims "the wording is unchanged" after VERIFYING it (`textContentKey`
 format-stripped compare against a pre-run baseline). (2) *Resolution reveal*:
 `[TO CONFIRM: …]` markers are always visible in the doc pane (render-time

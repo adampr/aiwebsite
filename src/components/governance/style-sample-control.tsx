@@ -8,6 +8,11 @@
 // role="alert" text, the one assertive exception (an upload failing silently
 // reads as success). `disabled` locks add/replace only, and `removeOnly`
 // hides them entirely (final projects): removing user data always works.
+//
+// Owner rule 2026-07-17: a new sample reformats the whole draft immediately.
+// When the host passes onUploaded/onRemoved, it owns the post-upload story
+// (auto-run, queueing, announcements); this component only reports the event.
+// Without them (research screen, nothing drafted yet) it announces locally.
 
 import { useRef, useState } from "react";
 import {
@@ -15,21 +20,26 @@ import {
   STYLE_SAMPLE_HELPER,
   styleSampleFileError,
 } from "@/lib/governance/config";
-import { apiUpload, api, BusyLabel, WorkingRow } from "./shared";
+import { apiUpload, api, WorkingRow } from "./shared";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 const dim = { color: "var(--xl-text-dim)" } as const;
 
 /** Reformat-the-draft wiring (§5.12 restyle run), owned by the workspace:
  *  available = a sample is attached, the project is drafting or in review,
- *  and at least one section is drafted. */
+ *  and at least one section is drafted. One consent contract in every state:
+ *  queued has Skip, running has Stop; both mean "no more restyling". */
 export interface ReformatControl {
   available: boolean;
-  busy: boolean;
+  busy: boolean; // a reformat run is active (covers the gaps between passes)
+  stopping: boolean; // Stop pressed; the pass in flight finishes first
+  queued: boolean; // auto-run waiting for the current turn to land
   long: boolean;
   locked: boolean; // any turn in flight, feature disabled, or brain down
   passNote: string; // "" or "Pass 2 of 4." while a multi-pass run advances
   onStart: () => void;
+  onStop: () => void;
+  onSkipQueued: () => void;
 }
 
 export function StyleSampleControl({
@@ -41,6 +51,8 @@ export function StyleSampleControl({
   reformat,
   onAnnounce,
   onChanged,
+  onUploaded,
+  onRemoved,
 }: {
   projectId: string;
   initialName: string | null;
@@ -50,13 +62,12 @@ export function StyleSampleControl({
   reformat?: ReformatControl;
   onAnnounce?: (text: string) => void;
   onChanged?: () => void;
+  onUploaded?: (name: string) => void;
+  onRemoved?: () => void;
 }) {
   const [name, setName] = useState<string | null>(initialName);
   const [busy, setBusy] = useState<"upload" | "remove" | null>(null);
   const [error, setError] = useState("");
-  // Post-upload one-time offer to reformat what is already drafted (the
-  // acknowledgment-with-agency the mid-project upload was missing).
-  const [offer, setOffer] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Adopt server-driven changes (another tab, a fresh poll) without losing
@@ -84,9 +95,11 @@ export function StyleSampleControl({
     setBusy(null);
     if (r.ok) {
       setName(r.data.styleSample.name);
-      onAnnounce?.(`Format sample attached: ${r.data.styleSample.name}.`);
       onChanged?.();
-      if (reformat?.available) setOffer(true);
+      // The host composes the one announcement (attached + what happens
+      // next); announcing here too would overwrite it in the live region.
+      if (onUploaded) onUploaded(r.data.styleSample.name);
+      else onAnnounce?.(`Format sample attached: ${r.data.styleSample.name}.`);
     } else setError(r.message);
   }
 
@@ -100,8 +113,9 @@ export function StyleSampleControl({
     setBusy(null);
     if (r.ok || r.status === 404) {
       setName(null);
-      onAnnounce?.("Format sample removed.");
       onChanged?.();
+      if (onRemoved) onRemoved();
+      else onAnnounce?.("Format sample removed.");
     } else setError(r.message);
   }
 
@@ -170,62 +184,52 @@ export function StyleSampleControl({
           </button>
         )}
       </div>
-      {offer && reformat?.available && !reformat.busy && (
+      {reformat?.queued && (
         <div
           className="mt-3 border p-4"
           style={{ borderColor: "var(--xl-line-bright)" }}
         >
           <p className="max-w-none text-sm">
-            Attached. Sections I draft from now on follow this sample. The
-            sections already drafted keep their old look. Want me to reformat
-            them now? It takes a few minutes and pauses other changes while
-            it runs.
+            I will reformat the whole draft to match this sample as soon as
+            the current change lands.
           </p>
-          <p className="mt-2 max-w-none text-xs" style={faint}>
-            Formatting only: headings, lists, tables, definitions. Your
-            words, facts, and open items stay as they are.
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-6">
-            <button
-              type="button"
-              className="btn"
-              disabled={reformat.locked}
-              onClick={() => {
-                setOffer(false);
-                reformat.onStart();
-              }}
-            >
-              Reformat the draft
-            </button>
-            <button
-              type="button"
-              className="btn btn--text"
-              onClick={() => setOffer(false)}
-            >
-              Not now
-            </button>
-          </div>
-        </div>
-      )}
-      {name && reformat?.available && !offer && !removeOnly && (
-        <div className="mt-2">
           <button
             type="button"
-            className="btn btn--text btn--stable"
-            aria-busy={reformat.busy || undefined}
-            disabled={reformat.locked || reformat.busy}
-            onClick={reformat.onStart}
+            className="btn btn--text mt-3"
+            onClick={reformat.onSkipQueued}
           >
-            <BusyLabel
-              busy={reformat.busy}
-              idle="Reformat the whole draft"
-              busyText="Reformatting"
-            />
+            Skip the reformat
           </button>
-          {reformat.busy && reformat.passNote && (
-            <span className="ml-3 text-xs" style={faint}>
-              {reformat.passNote}
-            </span>
+        </div>
+      )}
+      {name && reformat?.available && !reformat.queued && !removeOnly && (
+        <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+          {reformat.busy ? (
+            <>
+              {reformat.passNote && (
+                <span className="text-xs" style={faint}>
+                  {reformat.passNote}
+                </span>
+              )}
+              <button
+                type="button"
+                className="btn btn--text"
+                disabled={reformat.stopping}
+                aria-busy={reformat.stopping || undefined}
+                onClick={reformat.onStop}
+              >
+                {reformat.stopping ? "Stopping..." : "Stop reformatting"}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--text btn--stable"
+              disabled={reformat.locked}
+              onClick={reformat.onStart}
+            >
+              Reformat the whole draft
+            </button>
           )}
         </div>
       )}

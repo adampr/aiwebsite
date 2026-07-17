@@ -134,6 +134,13 @@ export function Workspace({ projectId }: { projectId: string }) {
   } | null>(null);
   const [showNote, setShowNote] = useState<string | null>(null);
   const [restylePassNote, setRestylePassNote] = useState("");
+  // Auto-reformat on upload (owner rule 2026-07-17): run state the controls
+  // render from. `restyleActive` covers the setTimeout gaps between passes
+  // (when `working` briefly drops); `restyleStopping` latches Stop until the
+  // in-flight pass lands; `restyleQueued` mirrors pendingAutoRestyleRef.
+  const [restyleActive, setRestyleActive] = useState(false);
+  const [restyleStopping, setRestyleStopping] = useState(false);
+  const [restyleQueued, setRestyleQueued] = useState(false);
 
   const viewRef = useRef<ProjectView | null>(null);
   const pendingRef = useRef<{
@@ -161,7 +168,22 @@ export function Workspace({ projectId }: { projectId: string }) {
     pass: number;
     totalEstimate: number;
     baseline: Map<string, string>; // ref -> pre-run text content key
+    // Latched Stop: the pass in flight finishes (its result is kept), then
+    // the run ends with the stopped receipt instead of chaining.
+    stopRequested: boolean;
   } | null>(null);
+  // Auto-reformat queued behind a busy workspace (upload while a turn is in
+  // flight, or a replacement upload mid-run): handleView fires it as soon as
+  // the workspace goes idle. sampleName rides along for the announcement.
+  const pendingAutoRestyleRef = useRef<{ sampleName: string } | null>(null);
+  // Stall watchdog: re-armed at each pass dispatch; if no pass boundary comes
+  // it ends the run honestly instead of holding the lock note forever.
+  const restyleWatchdogRef = useRef<number | null>(null);
+  // handleView (memoized) starts a queued auto-run through this ref, same
+  // stale-closure discipline as continueRestyleRef.
+  const startRestyleRef = useRef<(auto?: { sampleName: string }) => void>(
+    () => {}
+  );
   // The reveal show queue. `seq` invalidates in-flight timers on interrupt.
   const showRef = useRef<{
     items: ResolvedMarkerReveal[]; // trimmed to the time budget + item cap
@@ -263,22 +285,51 @@ export function Workspace({ projectId }: { projectId: string }) {
     }
   }, []);
 
+  /** Tear down every piece of restyle-run state in one place: the run ref,
+   *  the stall watchdog, the sessionStorage did-not-finish flag, and the UI
+   *  mirrors. Announcements are the caller's job (stopped, failed, finished,
+   *  and replaced each say something different). */
+  const resetRestyleRunState = useCallback(() => {
+    restyleRunRef.current = null;
+    if (restyleWatchdogRef.current !== null) {
+      window.clearTimeout(restyleWatchdogRef.current);
+      restyleWatchdogRef.current = null;
+    }
+    try {
+      sessionStorage.removeItem(`gov:${projectId}:restyle-run`);
+    } catch {
+      // storage unavailable: nothing persisted to clear
+    }
+    setRestyleActive(false);
+    setRestyleStopping(false);
+    setRestylePassNote("");
+  }, [projectId]);
+
   /** One place maps a failed turn's error code to UI, byte-identical copy
    *  whether it arrived on the POST response (legacy sync path) or through
    *  the poll's turn record (async path). */
   const resolveTurnFailure = useCallback(
     (code: string, message: string) => {
-      // A failed pass ends any restyle run; what landed already is kept.
-      if (restyleRunRef.current) {
-        restyleRunRef.current = null;
-        setRestylePassNote("");
-      }
+      // A failed pass ends any restyle run; what landed already is kept, and
+      // the receipt says so (the generic "send it again" copy is about
+      // answers and would misdirect here).
+      const hadRun = !!restyleRunRef.current;
+      if (hadRun) resetRestyleRunState();
       if (code === "brain_unavailable") {
         // S3: keep the typed answer; polling re-enables Send.
         setBrainDown(true);
         setAnnounce(
-          "Tron's drafting engine is offline right now. Your answer is kept here; Send re-enables when he is back."
+          hadRun
+            ? "Tron's drafting engine went offline partway through reformatting. What is done so far is kept; press Reformat the whole draft when he is back."
+            : "Tron's drafting engine is offline right now. Your answer is kept here; Send re-enables when he is back."
         );
+        return;
+      }
+      if (hadRun) {
+        setNoticeAnnounced({
+          kind: "error",
+          text: "I hit a problem partway through reformatting. What is done so far is kept; press Reformat the whole draft to finish the rest.",
+        });
         return;
       }
       if (code === "invalid_turn") {
@@ -297,7 +348,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       // and anything unknown: the message says resend; the draft is intact.
       setNoticeAnnounced({ kind: "error", text: message });
     },
-    [setNoticeAnnounced]
+    [resetRestyleRunState, setNoticeAnnounced]
   );
 
   /** Suggestion chips toggle as "; "-joined segments of the answer; the
@@ -859,6 +910,27 @@ export function Workspace({ projectId }: { projectId: string }) {
         resolveTurnFailure(next.turn.error.code, next.turn.error.message);
       }
 
+      // Auto-reformat queued behind a busy workspace (owner rule
+      // 2026-07-17): fire the moment the workspace is idle again, whatever
+      // freed it (our flight landing or failing above, or another tab's
+      // turn finishing as seen by the poll). Through startRestyleRef, and
+      // deferred a tick, so the started run reads post-resolution state.
+      if (pendingAutoRestyleRef.current) {
+        if (next.status !== "drafting" && next.status !== "review") {
+          pendingAutoRestyleRef.current = null; // e.g. confirmed final
+          setRestyleQueued(false);
+        } else if (
+          !inFlightRef.current &&
+          !restyleRunRef.current &&
+          next.turn?.phase !== "running"
+        ) {
+          const pend = pendingAutoRestyleRef.current;
+          pendingAutoRestyleRef.current = null;
+          setRestyleQueued(false);
+          window.setTimeout(() => startRestyleRef.current(pend), 0);
+        }
+      }
+
       if (!choreographed && prev && prev.status !== next.status) {
         if (
           next.status === "drafting" &&
@@ -913,6 +985,24 @@ export function Workspace({ projectId }: { projectId: string }) {
       // changed sections (chips persist until the next update).
       if (!prev && (next.status === "drafting" || next.status === "review")) {
         setHighlights(next.changedSections);
+        // A reformat run is client-chained; a reload mid-run killed it. The
+        // sessionStorage flag survives the reload (same tab), so the page
+        // can say so honestly instead of leaving a half-restyled draft
+        // unexplained. Cleared unconditionally: a stale flag must not
+        // resurface on every later load.
+        let interrupted = false;
+        try {
+          interrupted =
+            sessionStorage.getItem(`gov:${projectId}:restyle-run`) !== null;
+          sessionStorage.removeItem(`gov:${projectId}:restyle-run`);
+        } catch {
+          // storage unavailable: no flag to read
+        }
+        if (interrupted && next.styleSample)
+          setNoticeAnnounced({
+            kind: "info",
+            text: "Reformatting did not finish before the page closed. What is done so far is kept; press Reformat the whole draft to finish the rest.",
+          });
       }
 
       // B1: claim a queued / stale-researching row once per page load.
@@ -937,8 +1027,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       clearDraft,
       clearLongTimer,
       endShow,
+      projectId,
       resolveTurnFailure,
       scheduleAskJump,
+      setNoticeAnnounced,
       startShow,
     ]
   );
@@ -1382,20 +1474,40 @@ export function Workspace({ projectId }: { projectId: string }) {
    * Restyle run (§5.12 format pass): client-driven chaining of async
    * turns, one host-packed batch each. The next batch is re-packed from
    * the FRESH view; any failure aborts the run honestly (what is done is
-   * kept; the button finishes the rest on the next press).
+   * kept; the button finishes the rest on the next press). A new sample
+   * upload starts a run automatically (owner rule 2026-07-17); the queue,
+   * the latched Stop, the stall watchdog, and the reload receipt keep the
+   * automatic start legible and escapable.
    * ------------------------------------------------------------------ */
   function abortRestyleRun() {
     if (!restyleRunRef.current) return;
-    restyleRunRef.current = null;
-    setRestylePassNote("");
+    resetRestyleRunState();
     setAnnounce(
       "Reformatting stopped. What is done so far is kept; press Reformat the whole draft again to finish."
     );
   }
 
-  function startRestyle() {
+  /** A pass that never comes back (throttled tab, dropped connection with
+   *  no failure record) must not hold the answering lock note forever: end
+   *  the run honestly. The in-flight turn itself keeps running server-side;
+   *  if it lands later it is just a landed turn, not a pass. */
+  function armRestyleWatchdog(run: NonNullable<typeof restyleRunRef.current>) {
+    if (restyleWatchdogRef.current !== null)
+      window.clearTimeout(restyleWatchdogRef.current);
+    restyleWatchdogRef.current = window.setTimeout(() => {
+      restyleWatchdogRef.current = null;
+      if (restyleRunRef.current !== run) return;
+      resetRestyleRunState();
+      setNoticeAnnounced({
+        kind: "error",
+        text: "Reformatting is taking much longer than it should, so I stopped waiting. What is done so far is kept; press Reformat the whole draft to finish the rest.",
+      });
+    }, 6 * 60_000);
+  }
+
+  function startRestyle(auto?: { sampleName: string }) {
     const v = viewRef.current;
-    if (!v || working || inFlightRef.current || restyleRunRef.current) return;
+    if (!v || inFlightRef.current || restyleRunRef.current) return;
     const targets = restyleTargets(v.documents, v.placeholderSections ?? {});
     if (!targets.length) {
       setNoticeAnnounced({
@@ -1409,22 +1521,125 @@ export function Workspace({ projectId }: { projectId: string }) {
     for (const d of v.documents)
       for (const s of d.sections)
         baseline.set(`${d.slug}#${s.id}`, textContentKey(s.markdown));
-    restyleRunRef.current = {
+    const run = {
       pendingRefs: targets.filter((r) => !batches[0].includes(r)),
-      changedRefs: new Set(),
+      changedRefs: new Set<string>(),
       pass: 1,
       totalEstimate: batches.length,
       baseline,
+      stopRequested: false,
     };
+    restyleRunRef.current = run;
+    setRestyleActive(true);
+    setRestyleStopping(false);
+    // Survives a reload in this tab; the initial-load path turns it into
+    // the honest "did not finish" receipt. Cleared by resetRestyleRunState.
+    try {
+      sessionStorage.setItem(`gov:${projectId}:restyle-run`, "1");
+    } catch {
+      // storage unavailable: the reload receipt just will not show
+    }
     setRestylePassNote(
       batches.length > 1 ? `Pass 1 of about ${batches.length}.` : ""
     );
+    const scope = `${targets.length} ${targets.length === 1 ? "section" : "sections"}${
+      batches.length > 1 ? ` in about ${batches.length} passes` : ""
+    }`;
     setAnnounce(
-      `Applying the format sample to ${targets.length} ${targets.length === 1 ? "section" : "sections"}${
-        batches.length > 1 ? ` in about ${batches.length} passes` : ""
-      }. Each pass uses one drafting call.`
+      auto
+        ? `Format sample attached: ${auto.sampleName}. I am reformatting the whole draft to match it: ${scope}. It takes a few minutes and pauses answering while it runs. Keep this tab open; stopping keeps what is done.`
+        : `Applying the format sample to ${scope}. Each pass uses one drafting call.`
     );
+    armRestyleWatchdog(run);
     void submitTurn({ skipped: false, restyle: true, focusSections: batches[0] });
+    // submitTurn's sync prologue sets inFlightRef before its first await;
+    // if it bailed instead, abort so the run can't hang holding the ref.
+    if (!inFlightRef.current) abortRestyleRun();
+  }
+
+  /** Latched Stop: the pass in flight lands first (its result is kept), so
+   *  the button flips to "Stopping..." instead of pretending to be instant.
+   *  Between passes (or with nothing in flight) it stops right away. */
+  function requestStopRestyle() {
+    const run = restyleRunRef.current;
+    if (!run) return;
+    if (!inFlightRef.current) {
+      abortRestyleRun();
+      return;
+    }
+    if (run.stopRequested) return;
+    run.stopRequested = true;
+    setRestyleStopping(true);
+    setAnnounce(
+      "Stopping. The pass in progress finishes first; what is done so far is kept."
+    );
+  }
+
+  /** One consent contract in every state (critic amendment): the queued
+   *  auto-run's Skip mirrors the running run's Stop. */
+  function skipQueuedRestyle() {
+    if (!pendingAutoRestyleRef.current) return;
+    pendingAutoRestyleRef.current = null;
+    setRestyleQueued(false);
+    setAnnounce(
+      "Okay, the drafted sections keep their current look. Sections I draft from now on follow the sample, and Reformat the whole draft does the rest whenever you want."
+    );
+  }
+
+  /** Upload landed (the control reports; this decides). Owner rule
+   *  2026-07-17: a new sample immediately reformats the whole draft. Busy
+   *  workspace = queue it; active run = restart with the new sample once
+   *  the old run's in-flight pass lands; nothing drafted = nothing to redo. */
+  function handleSampleUploaded(name: string) {
+    const v = viewRef.current;
+    if (!v) return;
+    const targets =
+      v.status === "drafting" || v.status === "review"
+        ? restyleTargets(v.documents, v.placeholderSections ?? {})
+        : [];
+    if (!targets.length) {
+      setAnnounce(
+        `Format sample attached: ${name}. Sections I draft from here on follow it.`
+      );
+      return;
+    }
+    if (restyleRunRef.current) {
+      // Replacement mid-run: continuing would apply a sample the user just
+      // superseded. Kill the run silently (no stopped receipt; this copy is
+      // the receipt) and queue a fresh full run with the new sample.
+      resetRestyleRunState();
+      pendingAutoRestyleRef.current = { sampleName: name };
+      setRestyleQueued(true);
+      setAnnounce(
+        `New sample attached: ${name}. I stopped the previous reformat and will start over with this one as soon as the pass in progress lands.`
+      );
+      return;
+    }
+    if (inFlightRef.current || v.turn?.phase === "running") {
+      pendingAutoRestyleRef.current = { sampleName: name };
+      setRestyleQueued(true);
+      setAnnounce(
+        `Format sample attached: ${name}. I will reformat the whole draft to match it as soon as the current change lands.`
+      );
+      return;
+    }
+    startRestyle({ sampleName: name });
+  }
+
+  /** Removal never reformats (there is no target style to move toward),
+   *  but it does end any pending or running reformat of the old sample. */
+  function handleSampleRemoved() {
+    if (pendingAutoRestyleRef.current) {
+      pendingAutoRestyleRef.current = null;
+      setRestyleQueued(false);
+    }
+    const hadRun = !!restyleRunRef.current;
+    if (hadRun) requestStopRestyle();
+    setAnnounce(
+      hadRun
+        ? "Format sample removed. The reformat is stopping; what is done so far is kept."
+        : "Format sample removed."
+    );
   }
 
   /** One restyle pass landed (handleView calls this through the ref). */
@@ -1433,6 +1648,12 @@ export function Workspace({ projectId }: { projectId: string }) {
     if (!run) return;
     for (const [slug, secs] of Object.entries(next.changedSections))
       for (const sid of secs) run.changedRefs.add(`${slug}#${sid}`);
+    if (run.stopRequested) {
+      // Latched Stop honored at the pass boundary: union highlights for
+      // what did land, then the stopped receipt.
+      finishRestyleRun(next, run, { stopped: true });
+      return;
+    }
     // Re-derive what is still safely restylable from the FRESH view: a
     // concurrent tab may have changed, removed, or re-scaffolded sections.
     const stillValid = new Set(
@@ -1454,12 +1675,14 @@ export function Workspace({ projectId }: { projectId: string }) {
     run.pass += 1;
     const total = Math.max(run.totalEstimate, run.pass);
     setRestylePassNote(`Pass ${run.pass} of about ${total}.`);
+    setAnnounce(`Reformatting. Pass ${run.pass} of about ${total}.`);
     window.setTimeout(() => {
       if (restyleRunRef.current !== run) return;
       if (inFlightRef.current || viewRef.current?.turn?.phase === "running") {
         abortRestyleRun();
         return;
       }
+      armRestyleWatchdog(run);
       void submitTurn({ skipped: false, restyle: true, focusSections: batch });
       // submitTurn's sync prologue sets inFlightRef before its first await;
       // if it bailed instead, abort so the run can't hang holding the ref.
@@ -1467,12 +1690,15 @@ export function Workspace({ projectId }: { projectId: string }) {
     }, 0);
   }
 
-  function finishRestyleRun(next: ProjectView, run: {
-    changedRefs: Set<string>;
-    baseline: Map<string, string>;
-  }) {
-    restyleRunRef.current = null;
-    setRestylePassNote("");
+  function finishRestyleRun(
+    next: ProjectView,
+    run: {
+      changedRefs: Set<string>;
+      baseline: Map<string, string>;
+    },
+    opts?: { stopped?: boolean }
+  ) {
+    resetRestyleRunState();
     const changed = [...run.changedRefs];
     // Union highlight across all passes: each pass replaced the previous
     // pass's Updated chips; the final receipt restores the full set.
@@ -1495,6 +1721,20 @@ export function Workspace({ projectId }: { projectId: string }) {
     setHighlights(map);
     setChangedNow(list.length ? list : null);
     setFlashKey((k) => k + 1);
+    // Mobile: the evidence lands on the Draft tab; the dot is the passive
+    // nudge (never an auto tab switch).
+    if (
+      list.length &&
+      !isDesktopRef.current &&
+      mobileTabRef.current === "questions"
+    )
+      setDraftDot(list.length);
+    if (opts?.stopped) {
+      setAnnounce(
+        "Reformatting stopped. What is done so far is kept; press Reformat the whole draft again to finish."
+      );
+      return;
+    }
     // Honest receipt: "wording unchanged" is VERIFIED (format-stripped text
     // compare against the pre-run baseline), never asserted.
     let wordingChanged = false;
@@ -1522,6 +1762,7 @@ export function Workspace({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     continueRestyleRef.current = continueRestyleRun;
+    startRestyleRef.current = startRestyle;
   });
 
   /** Keep one open [TO CONFIRM] item as drafted: deterministic server-side
@@ -1891,6 +2132,9 @@ export function Workspace({ projectId }: { projectId: string }) {
                 workingLong={workingLong}
                 brainDown={brainDown}
                 chaseBridge={chaseBridge}
+                restyleActive={restyleActive}
+                restyleStopping={restyleStopping}
+                onStopRestyle={requestStopRestyle}
                 featureDisabled={view.featureDisabled}
                 notice={notice}
                 skipPending={skipPending}
@@ -1924,7 +2168,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 initialName={view.styleSample?.name ?? null}
                 disabled={view.featureDisabled}
                 removeOnly={view.status === "done"}
-                note="A new or changed sample shapes the sections Tron edits from now on. Use Reformat the whole draft below to restyle what is already drafted."
+                note="A new or changed sample reformats the whole draft to match it and shapes everything I draft afterward. Your words, facts, and open items stay as they are."
                 reformat={{
                   available:
                     (view.status === "drafting" || view.status === "review") &&
@@ -1932,14 +2176,20 @@ export function Workspace({ projectId }: { projectId: string }) {
                       view.documents,
                       view.placeholderSections ?? {}
                     ).length > 0,
-                  busy: working && workingKind === "restyle",
+                  busy: restyleActive,
+                  stopping: restyleStopping,
+                  queued: restyleQueued,
                   long: workingLong,
                   locked: working || view.featureDisabled || brainDown,
                   passNote: restylePassNote,
-                  onStart: startRestyle,
+                  onStart: () => startRestyle(),
+                  onStop: requestStopRestyle,
+                  onSkipQueued: skipQueuedRestyle,
                 }}
                 onAnnounce={setAnnounce}
                 onChanged={() => void fetchProject()}
+                onUploaded={handleSampleUploaded}
+                onRemoved={handleSampleRemoved}
               />
             </div>
             <div
