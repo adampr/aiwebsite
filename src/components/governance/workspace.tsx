@@ -1662,18 +1662,28 @@ export function Workspace({ projectId }: { projectId: string }) {
   }
 
   /** Removal never reformats (there is no target style to move toward),
-   *  but it does end any pending or running reformat of the old sample. */
+   *  but it does end any pending or running reformat of the old sample.
+   *  The receipt tells the truth about which of the three that was: a
+   *  queued run is cancelled, a mid-pass run is stopping (the pass in
+   *  flight lands first), a between-passes run stopped right away. The
+   *  mid-pass check must read inFlightRef BEFORE requestStopRestyle,
+   *  which is what resolves it. */
   function handleSampleRemoved() {
     if (pendingAutoRestyleRef.current) {
       pendingAutoRestyleRef.current = null;
       setRestyleQueued(false);
+      setAnnounce("Format sample removed. The queued reformat is cancelled.");
+      return;
     }
     const hadRun = !!restyleRunRef.current;
+    const wasMidPass = hadRun && !!inFlightRef.current;
     if (hadRun) requestStopRestyle();
     setAnnounce(
-      hadRun
-        ? "Format sample removed. The reformat is stopping; what is done so far is kept."
-        : "Format sample removed."
+      wasMidPass
+        ? "Format sample removed. The reformat is stopping; the pass in progress finishes first and what is done so far is kept."
+        : hadRun
+          ? "Format sample removed. The reformat stopped; what is done so far is kept."
+          : "Format sample removed."
     );
   }
 

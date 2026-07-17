@@ -14,7 +14,7 @@
 // (auto-run, queueing, announcements); this component only reports the event.
 // Without them (research screen, nothing drafted yet) it announces locally.
 
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import {
   STYLE_SAMPLE_ACCEPT,
   STYLE_SAMPLE_HELPER,
@@ -69,6 +69,23 @@ export function StyleSampleControl({
   const [busy, setBusy] = useState<"upload" | "remove" | null>(null);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const runNoteId = useId();
+
+  // Designer/critic panel 2026-07-17: while a reformat is queued or running,
+  // Replace and Remove stay ENABLED (a mid-run replace supersedes the run,
+  // a remove stops it; both land safely at a pass boundary). What changes is
+  // the fine print: the standing upload guidance swaps for one line that
+  // states the consequence and routes stop/skip intent to the dedicated
+  // Stop/Skip controls instead of the destructive Remove. Both buttons get
+  // aria-describedby to this line so screen readers hear it pre-activation.
+  const runNote =
+    !removeOnly && reformat
+      ? reformat.queued
+        ? "A new sample takes this one's place. To keep the sample and skip the reformat, use Skip the reformat."
+        : reformat.busy
+          ? "Replacing the sample starts the reformat over with the new one. To stop reformatting and keep the sample, use Stop reformatting."
+          : ""
+      : "";
 
   // Adopt server-driven changes (another tab, a fresh poll) without losing
   // local updates: the documented adjust-state-during-render pattern.
@@ -152,6 +169,7 @@ export function StyleSampleControl({
             type="button"
             className="btn btn--text"
             disabled={busy !== null || disabled}
+            aria-describedby={runNote ? runNoteId : undefined}
             aria-label={
               busy === "upload"
                 ? "Uploading format sample"
@@ -173,6 +191,7 @@ export function StyleSampleControl({
             type="button"
             className="btn btn--text"
             disabled={busy !== null}
+            aria-describedby={runNote ? runNoteId : undefined}
             aria-label={
               busy === "remove"
                 ? "Removing format sample"
@@ -211,10 +230,12 @@ export function StyleSampleControl({
                   {reformat.passNote}
                 </span>
               )}
+              {/* Not disabled while stopping: flipping disabled under focus
+                  drops focus to body, and requestStopRestyle's stopRequested
+                  guard already makes a second click a no-op. */}
               <button
                 type="button"
                 className="btn btn--text"
-                disabled={reformat.stopping}
                 aria-busy={reformat.stopping || undefined}
                 onClick={reformat.onStop}
               >
@@ -234,12 +255,26 @@ export function StyleSampleControl({
         </div>
       )}
       {reformat?.busy && <WorkingRow long={reformat.long} kind="restyle" />}
-      {!removeOnly && (
-        <p className="mt-1 max-w-none text-xs" style={faint}>
-          {STYLE_SAMPLE_HELPER}
-          {note ? ` ${note}` : ""}
-        </p>
-      )}
+      {/* One faint line at a time: while a reformat is queued or running the
+          run note takes the helper's slot (upload guidance is dead weight
+          mid-run, and two same-styled paragraphs read as one blur). The
+          standing helper returns in the same position when the run ends. */}
+      {!removeOnly &&
+        (runNote ? (
+          <p
+            id={runNoteId}
+            data-qa="style-sample-run-note"
+            className="mt-1 max-w-none text-xs"
+            style={faint}
+          >
+            {runNote}
+          </p>
+        ) : (
+          <p className="mt-1 max-w-none text-xs" style={faint}>
+            {STYLE_SAMPLE_HELPER}
+            {note ? ` ${note}` : ""}
+          </p>
+        ))}
       {error && (
         <p
           className="mt-1 max-w-none text-xs"

@@ -15,7 +15,14 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 15b: numbering-style
+Last verified against code: 2026-07-17 (governance round 15c: mid-run sample
+fine print — Replace/Remove stay enabled during a restyle run (designer+critic
+verdict: supersede, don't block); the control's standing helper swaps for one
+run-state line that routes stop/skip intent to the dedicated Stop/Skip
+controls, wired to both buttons via aria-describedby; removal receipts
+distinguish queued-cancelled / stopping / stopped; the Stop button is no
+longer disabled while "Stopping..." (focus-drop fix), see §5.12;
+round 15b: numbering-style
 adoption — the host still owns all numbering but renders it in the sample's
 detected style (decimal / decimal-zero / roman / alpha / paren / "Section N:"),
 derived from the stored sample text at view/download time, never persisted,
@@ -1118,7 +1125,21 @@ notice on the next load (same tab only — sessionStorage is the accepted floor)
 mid-run turn failures announce reformat-specific copy ("what is done so far is
 kept; press Reformat the whole draft to finish the rest") instead of the
 answer-oriented generic, and sample REMOVAL never restyles but does skip/stop any
-pending or running run. The persistent "Reformat the whole draft" button remains
+pending or running run. Replace and Remove stay ENABLED while a run is queued or
+active (round 15c designer+critic panel: a mid-run replace supersedes the run, a
+remove ends it; both land safely at a pass boundary, so the model is supersede,
+never block): the control's standing helper paragraph swaps for a single
+run-state line (one faint line at a time) that states the consequence and routes
+stop/skip intent to the dedicated controls ("To stop reformatting and keep the
+sample, use Stop reformatting" while running; "To keep the sample and skip the
+reformat, use Skip the reformat" while queued), referenced from both buttons via
+`aria-describedby` (`useId`, `data-qa="style-sample-run-note"`). Removal receipts
+tell the truth about what they ended — queued run: "The queued reformat is
+cancelled."; mid-pass: "is stopping; the pass in progress finishes first"; between
+passes: "stopped" (the mid-pass check reads `inFlightRef` BEFORE
+`requestStopRestyle` resolves it). The Stop button is never `disabled` while
+"Stopping..." (flipping disabled under focus drops focus to body; the
+`stopRequested` guard already makes a second click a no-op). The persistent "Reformat the whole draft" button remains
 the resume path (after Stop, failure, watchdog, or reload) whenever a sample is
 attached, status is drafting/review, and ≥1 section is drafted. A run is
 CLIENT-driven
