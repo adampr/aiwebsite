@@ -1476,10 +1476,18 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
   on altered columns — `test_ui_issue_reports` / `audio_related` — crash-looping
   brain-api in prod); v1.99.2 made the widen pass best-effort (view-blocked ALTER
   warns loudly and boot continues) and was re-adopted. **Current submodule pin:
-  v1.100 (dae30ad, 2026-07-16)** — default-off panel program Stage 0+A, behavior
+  v1.102 (d4f34eb, 2026-07-17)** — per-call panel forcing (`invocation.panelMode`,
+  #701) + JSON-native forced panel (#703: json_object turns run draft → cross-lab
+  refute → one revision; machine-checkable `thinking.panel` receipt). Consumed here
+  by the blog engine: `@aicompany/core` v1.8.0 (55f0ace) with
+  `blog.quality.panel: "on"` in site.config.ts forces the cross-lab refuter on every
+  article-authoring call (owner directive 2026-07-17); a non-convened panel publishes
+  noindexed until a panel-clean pass; chat envelopes keep `maxOrchestratorPhase: 1`.
+  Previous pin v1.100 (dae30ad) — default-off panel program Stage 0+A, behavior
   byte-identical with BRAIN_PANEL unset; adoption caveat: a claude-*/grok-*/gemini-*
   model pin without its provider key now fails loudly (ProviderKeyMissingError)
-  instead of silently misrouting to OpenAI. This deployment runs
+  instead of silently misrouting to OpenAI. Cross-lab prerequisite for the blog
+  panel: both `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` present in the VM `.env`. This deployment runs
   `BRAIN_DB_BACKEND=postgres` against the shared DB with prefix `brain_` (Postgres
   duck-types the sync better-sqlite3 API via `pg-native` → needs `libpq-dev` + build tools
   at `npm ci` time). Since v1.99.1 the thinking-debug store also lives in Postgres

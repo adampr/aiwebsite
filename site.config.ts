@@ -630,6 +630,11 @@ export const siteConfig = defineSiteConfig({
       // User decision: always publish; failed/skipped LLM gates go live
       // noindexed + sitemap/RSS-excluded until a clean pass (§19.5).
       posture: "publish",
+      // Owner directive 2026-07-17: every article is adversarially reviewed
+      // by the Brain's cross-lab refuter panel before publication (v1.8.0;
+      // needs local brain >= 1.102). Chat stays at maxOrchestratorPhase 1 —
+      // the panel forces its own depth on writer calls only.
+      panel: "on",
       contract: {
         // 0 since 2026-07-14: the default (2) forces question-form H2s,
         // which the news-first styleGuide bans — the two fought and every
