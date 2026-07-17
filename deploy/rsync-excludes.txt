@@ -1,0 +1,6 @@
+# Host-owned rsync excludes (see deploy.sh): patterns appended to both
+# exclude sets; rsync never deletes excluded paths.
+# Claude Code session worktrees live INSIDE the repo and churn while
+# concurrent sessions run; syncing them is wasted transfer and a vanished
+# worktree mid-transfer aborts the deploy (rsync exit 23, 2026-07-17).
+.claude/worktrees

@@ -783,6 +783,10 @@ is the system of record for purchases/subscriptions.
   54 min, 136 MB) at `public/media/ai-in-the-workplace-webinar-2026-05.mp4`. The file
   is **gitignored** (`/public/media/*.mp4`) but ships to the VM anyway because
   deploy.sh rsyncs the working tree — like `data/GeoLite2-ASN.mmdb`, it must exist on
+   `deploy/rsync-excludes.txt` (host-owned, appended to both exclude sets)
+   excludes `.claude/worktrees`: concurrent agent sessions keep git worktrees
+   INSIDE the repo and churn them mid-deploy; a worktree vanishing during the
+   rsync aborted a deploy with exit 23 (2026-07-17).
   the dev box for a rebuild (source: the Zoom share link in the AI Builder launch
   email; the pwd-tokenized share URL → `share-info` → `play/info` API flow yields the
   `viewMp4Url`). Next serves it from `public/` with Range support (seekable playback).
