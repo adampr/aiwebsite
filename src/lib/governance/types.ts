@@ -47,6 +47,13 @@ export interface TranscriptEntry {
   skipped: boolean;
   askedAt: string; // ISO
   answeredAt: string; // ISO
+  // "amend" rows only: index of the transcript entry being corrected. The
+  // transcript is append-only in every write path, so the index is stable.
+  amendsIndex?: number;
+  // Question rows written since 2026-07-17: the question's feeds, kept so a
+  // later amend can serialize the right sections verbatim. Older rows lack
+  // it; amend falls back to the bank feeds (or full serialization).
+  feeds?: string[];
 }
 
 export interface NextQuestion {

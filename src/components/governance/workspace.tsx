@@ -9,6 +9,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { KIND_LABELS } from "@/lib/governance/config";
 import { sectionTitleText } from "@/lib/governance/numbering";
+import {
+  diffResolvedMarkers,
+  type ResolvedMarkerReveal,
+} from "@/lib/governance/resolved-anim";
+import {
+  packRestyleBatches,
+  restyleTargets,
+  textContentKey,
+} from "@/lib/governance/restyle";
 import type {
   GovernanceDoc,
   OpenConfirmItem,
@@ -32,7 +41,7 @@ import {
   type TurnResponse,
 } from "./shared";
 import { ResearchScreen, researchStepLabel } from "./research-screen";
-import { DocPane, secDomId, type ChangedRef } from "./doc-pane";
+import { DocPane, secDomId, type ChangedRef, type RevealState } from "./doc-pane";
 import { StyleSampleControl } from "./style-sample-control";
 import {
   QuestionPane,
@@ -114,6 +123,16 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [researchBusy, setResearchBusy] = useState(false);
   const [researchError, setResearchError] = useState("");
   const [confirmBusy, setConfirmBusy] = useState(false);
+  // Resolved-marker reveal (owner request 2026-07-17): settled spans keep a
+  // static wash until the next turn; `reveal` is the one item playing now.
+  const [resolvedMarks, setResolvedMarks] = useState<ResolvedMarkerReveal[]>([]);
+  const [reveal, setReveal] = useState<RevealState | null>(null);
+  const [showStatus, setShowStatus] = useState<{
+    index: number;
+    total: number;
+  } | null>(null);
+  const [showNote, setShowNote] = useState<string | null>(null);
+  const [restylePassNote, setRestylePassNote] = useState("");
 
   const viewRef = useRef<ProjectView | null>(null);
   const pendingRef = useRef<{
@@ -127,10 +146,40 @@ export function Workspace({ projectId }: { projectId: string }) {
     token: number;
     questionId: string;
     promptId: string;
-    // Resolver-batch sends never own the revise box: a landed turn must not
-    // clear the user's typed-but-unsent free-form revision draft.
+    kind: WorkingKind;
+    // Resolver-batch, amend, and restyle sends never own the answer box: a
+    // landed turn must not clear the user's typed-but-unsent draft.
     preserveDraft: boolean;
   } | null>(null);
+  // A multi-pass restyle run (§5.12 format pass). Client-driven chaining:
+  // each pass is one ordinary async turn; the next batch is re-packed from
+  // the FRESH view (sections can vanish or grow under a concurrent tab).
+  const restyleRunRef = useRef<{
+    pendingRefs: string[]; // targets not yet sent
+    changedRefs: Set<string>; // union of restyled "slug#section" refs
+    pass: number;
+    totalEstimate: number;
+    baseline: Map<string, string>; // ref -> pre-run text content key
+  } | null>(null);
+  // The reveal show queue. `seq` invalidates in-flight timers on interrupt.
+  const showRef = useRef<{
+    items: ResolvedMarkerReveal[];
+    index: number;
+    seq: number;
+    askRef: FeedRef | null; // deferred ask-anchor park, runs after the show
+    rev: number; // the rev this show belongs to; a newer rev supersedes it
+  } | null>(null);
+  const pendingShowRef = useRef<{
+    items: ResolvedMarkerReveal[];
+    askRef: FeedRef | null;
+    rev: number;
+  } | null>(null);
+  const showTimerRef = useRef<number | null>(null);
+  // fetchRef pattern: handleView (memoized) reaches the CURRENT render's
+  // restyle-chaining logic through this ref, never a stale closure.
+  const continueRestyleRef = useRef<(next: ProjectView) => void>(() => {});
+  // jumpTo is defined before endShow; it interrupts the show through this.
+  const endShowRef = useRef<(park: boolean) => void>(() => {});
   // The 20 s "Still working" timer outlives submitTurn's scope: an async-
   // accepted (202) turn resolves via the poll, possibly minutes later.
   const longTimerRef = useRef<number | null>(null);
@@ -217,6 +266,11 @@ export function Workspace({ projectId }: { projectId: string }) {
    *  the poll's turn record (async path). */
   const resolveTurnFailure = useCallback(
     (code: string, message: string) => {
+      // A failed pass ends any restyle run; what landed already is kept.
+      if (restyleRunRef.current) {
+        restyleRunRef.current = null;
+        setRestylePassNote("");
+      }
       if (code === "brain_unavailable") {
         // S3: keep the typed answer; polling re-enables Send.
         setBrainDown(true);
@@ -310,6 +364,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     (doc: string, section: string, focus: boolean) => {
       userJumpSeqRef.current += 1;
       cancelAskJump();
+      endShowRef.current(false); // user intent ends any reveal show
       pendingJumpRef.current = { doc, section, focus, auto: false };
       setActiveDoc(doc);
       if (!isDesktopRef.current) {
@@ -355,7 +410,12 @@ export function Workspace({ projectId }: { projectId: string }) {
 
   /** Spec 8.4: highlights, change summary, own-container scroll, focus.
    *  The UPDATED scroll runs first; the new question's asked-about
-   *  section wins the final scroll position (scheduleAskJump). */
+   *  section wins the final scroll position (scheduleAskJump).
+   *  opts (§5.12 additions): skipFocus = non-advancing turns (amend or
+   *  restyle) never steal keyboard focus from the user's locus; deferAsk +
+   *  suppressJump = a resolution reveal owns the scroll and parks the ask
+   *  anchor itself when it ends; silent = intermediate restyle passes make
+   *  no announcement (one receipt per run, never per pass). */
   const applyChangedChoreography = useCallback(
     (
       changed: Record<string, string[]>,
@@ -363,7 +423,13 @@ export function Workspace({ projectId }: { projectId: string }) {
       newStatus: ProjectStatus,
       prevStatus: ProjectStatus,
       askRef: FeedRef | null,
-      openTotal: number
+      openTotal: number,
+      opts?: {
+        skipFocus?: boolean;
+        deferAsk?: boolean;
+        suppressJump?: boolean;
+        silent?: boolean;
+      }
     ) => {
       const list: ChangedRef[] = [];
       for (const [dslug, secs] of Object.entries(changed)) {
@@ -389,7 +455,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         setAskPending(asking !== null);
       } else {
         setAskPending(false);
-        if (list.length) {
+        if (list.length && !opts?.suppressJump) {
           pendingJumpRef.current = {
             doc: list[0].doc,
             section: list[0].section,
@@ -402,7 +468,7 @@ export function Workspace({ projectId }: { projectId: string }) {
         // The changed flash (900 ms) gets its beat, then the pane settles
         // on the text under discussion. Straight there when nothing changed
         // or when reduced motion is set (no flash to wait for).
-        if (asking) {
+        if (asking && !opts?.deferAsk) {
           const reduce = window.matchMedia(
             "(prefers-reduced-motion: reduce)"
           ).matches;
@@ -420,18 +486,167 @@ export function Workspace({ projectId }: { projectId: string }) {
         );
         focusSoon(reviewHeadingRef);
       } else if (newStatus === "review") {
-        setAnnounce(list.length ? `Draft updated: ${titles}.` : "Draft unchanged.");
+        if (!opts?.silent)
+          setAnnounce(
+            list.length ? `Draft updated: ${titles}.` : "Draft unchanged."
+          );
       } else {
-        setAnnounce(
-          list.length
-            ? `Draft updated: ${titles}. Next question is ready.`
-            : "Next question is ready."
-        );
-        focusSoon(questionHeadingRef);
+        if (!opts?.silent)
+          setAnnounce(
+            list.length
+              ? `Draft updated: ${titles}. Next question is ready.`
+              : "Next question is ready."
+          );
+        if (!opts?.skipFocus) focusSoon(questionHeadingRef);
       }
     },
     [performJump, scheduleAskJump]
   );
+
+  /* ------------------------------------------------------------------ *
+   * Resolution reveal show (owner request 2026-07-17): highlight each
+   * resolved [TO CONFIRM] marker, type its replacement out, hold a beat,
+   * move on. Plays at most MAX_SHOW_ITEMS items; every diffed span keeps a
+   * static wash regardless. Any user intent (scroll, jump, Escape, Skip, a
+   * new turn, a newer rev) ends it instantly at the final state.
+   * ------------------------------------------------------------------ */
+  const clearShowTimer = useCallback(() => {
+    if (showTimerRef.current !== null) {
+      window.clearTimeout(showTimerRef.current);
+      showTimerRef.current = null;
+    }
+  }, []);
+
+  /** End the show. park = run the deferred ask-anchor scroll (natural
+   *  completion only; interrupts mean the user moved and wins). */
+  const endShow = useCallback(
+    (park: boolean) => {
+      const show = showRef.current;
+      showRef.current = null;
+      clearShowTimer();
+      setReveal(null);
+      setShowStatus(null);
+      if (show && park && show.askRef) scheduleAskJump(show.askRef, 400);
+    },
+    [clearShowTimer, scheduleAskJump]
+  );
+
+  const MAX_SHOW_ITEMS = 5;
+  const runShowStep = useCallback(() => {
+    const show = showRef.current;
+    if (!show) return;
+    const seq = show.seq;
+    const later = (ms: number, fn: () => void) => {
+      showTimerRef.current = window.setTimeout(() => {
+        showTimerRef.current = null;
+        if (showRef.current?.seq === seq) fn();
+      }, ms);
+    };
+    if (show.index >= show.items.length || show.index >= MAX_SHOW_ITEMS) {
+      if (show.items.length > show.index)
+        setShowNote(
+          `Showed ${show.index} of ${show.items.length} resolved items. The rest are highlighted in the draft.`
+        );
+      endShow(true);
+      return;
+    }
+    const item = show.items[show.index];
+    setShowStatus({
+      index: show.index,
+      total: Math.min(show.items.length, MAX_SHOW_ITEMS),
+    });
+    // Beat 1: bring the section into view (auto jump: desktop scrolls the
+    // doc pane's own container only; the window never moves).
+    const prevItem = show.index > 0 ? show.items[show.index - 1] : null;
+    const sameSection =
+      prevItem &&
+      prevItem.doc === item.doc &&
+      prevItem.section === item.section;
+    if (!sameSection) {
+      pendingJumpRef.current = {
+        doc: item.doc,
+        section: item.section,
+        focus: false,
+        auto: true,
+      };
+      setActiveDoc(item.doc);
+      window.setTimeout(performJump, 60);
+    }
+    later(sameSection ? 60 : 420, () => {
+      // Beat 2: the old marker, struck out on its way out.
+      setReveal({ item, mode: "old", chars: 0 });
+      later(600, () => {
+        // Beat 3: the replacement types itself out (~900 ms total, any
+        // length; the reveal is progressive disclosure of committed text).
+        const len = item.nextEnd - item.nextStart;
+        if (len === 0) {
+          setReveal({ item, mode: "done", chars: 0 });
+          later(1000, () => {
+            const s = showRef.current;
+            if (s) {
+              s.index += 1;
+              runShowStep();
+            }
+          });
+          return;
+        }
+        const ticks = 15;
+        const step = Math.ceil(len / ticks);
+        let chars = 0;
+        const tick = () => {
+          chars = Math.min(len, chars + step);
+          setReveal({ item, mode: chars >= len ? "done" : "typing", chars });
+          if (chars < len) later(60, tick);
+          else
+            later(1000, () => {
+              // Beat 4 done: hold, then next item.
+              const s = showRef.current;
+              if (s) {
+                s.index += 1;
+                runShowStep();
+              }
+            });
+        };
+        tick();
+      });
+    });
+  }, [endShow, performJump]);
+
+  const startShow = useCallback(
+    (items: ResolvedMarkerReveal[], askRef: FeedRef | null, rev: number) => {
+      if (!items.length) return false;
+      const reduce = window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches;
+      if (reduce) return false; // static washes only, zero motion
+      showRef.current = {
+        items,
+        index: 0,
+        seq: (showRef.current?.seq ?? 0) + 1,
+        askRef,
+        rev,
+      };
+      setShowNote(null);
+      runShowStep();
+      return true;
+    },
+    [runShowStep]
+  );
+
+  useEffect(() => {
+    endShowRef.current = endShow;
+  }, [endShow]);
+
+  // Escape ends the show anywhere on the page.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && showRef.current) endShow(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [endShow]);
+
+  useEffect(() => () => clearShowTimer(), [clearShowTimer]);
 
   const handleView = useCallback(
     (next: ProjectView) => {
@@ -463,6 +678,16 @@ export function Workspace({ projectId }: { projectId: string }) {
         }
       }
 
+      // Any rev change invalidates the previous turn's resolved-marker
+      // washes and any reveal in progress: their offsets refer to documents
+      // that no longer exist. A new diff below may set fresh ones.
+      if (prev && next.rev !== prev.rev) {
+        endShow(false);
+        pendingShowRef.current = null;
+        setResolvedMarks([]);
+        setShowNote(null);
+      }
+
       // An in-flight turn that landed while the response was lost (S7): the
       // poll sees the advanced rev and renders the turn as success.
       const flight = inFlightRef.current;
@@ -474,17 +699,52 @@ export function Workspace({ projectId }: { projectId: string }) {
         clearLongTimer();
         setWorking(false);
         setBrainDown(false);
+        // Owner request 2026-07-17: markers this turn resolved get the
+        // reveal show; the diff is honest by construction (committed text
+        // only, anchor misses degrade to the plain Updated treatment).
+        const reveals = diffResolvedMarkers(
+          prev.documents,
+          next.documents,
+          next.changedSections
+        );
+        const askRef = next.nextQuestion
+          ? firstFeedTarget(next.nextQuestion.feeds, next.documents)
+          : null;
+        const run = restyleRunRef.current;
+        const intermediatePass =
+          flight.kind === "restyle" && !!run && run.pendingRefs.length > 0;
         applyChangedChoreography(
           next.changedSections,
           next.documents,
           next.status,
           prev.status,
-          next.nextQuestion
-            ? firstFeedTarget(next.nextQuestion.feeds, next.documents)
-            : null,
-          next.openConfirmTotal ?? next.openConfirmItems.length
+          askRef,
+          next.openConfirmTotal ?? next.openConfirmItems.length,
+          {
+            skipFocus: flight.kind === "restyle" || flight.kind === "amend",
+            deferAsk: reveals.length > 0,
+            suppressJump: reveals.length > 0,
+            silent: intermediatePass,
+          }
         );
-        if (flight.preserveDraft) {
+        if (reveals.length) {
+          setResolvedMarks(reveals);
+          if (!isDesktopRef.current && mobileTabRef.current === "questions") {
+            // Never auto-switch tabs: the show queues and plays when the
+            // user opens the Draft tab (superseded by any newer rev).
+            pendingShowRef.current = { items: reveals, askRef, rev: next.rev };
+          } else {
+            startShow(reveals, askRef, next.rev);
+          }
+        }
+        if (flight.kind === "amend")
+          setAnnounce(
+            Object.keys(next.changedSections).length
+              ? "Answer changed. The draft is updated."
+              : "Answer changed. Nothing in the draft needed to move."
+          );
+        if (flight.kind === "restyle") continueRestyleRef.current(next);
+        if (flight.preserveDraft && flight.kind === "resolve") {
           // Resolver-batch receipt: the TRUE open-item count delta, never
           // per-item claims (the model may reword a marker instead of
           // deleting it; a reworded marker is a new item, not a resolved
@@ -596,8 +856,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       applyChangedChoreography,
       clearDraft,
       clearLongTimer,
+      endShow,
       resolveTurnFailure,
       scheduleAskJump,
+      startShow,
     ]
   );
 
@@ -708,18 +970,25 @@ export function Workspace({ projectId }: { projectId: string }) {
     const prev = viewRef.current;
     if (!prev) return;
     const nowIso = new Date().toISOString();
-    const entry: TranscriptEntry = {
-      qId: questionId,
-      bankId: questionId === "revise" ? null : (prev.nextQuestion?.bankId ?? null),
-      q:
-        questionId === "revise"
-          ? "Revision request"
-          : (prev.nextQuestion?.text ?? ""),
-      a: skipped ? "" : answer,
-      skipped,
-      askedAt: nowIso,
-      answeredAt: nowIso,
-    };
+    // Non-advancing turns (restyle/amend): no local transcript fabrication
+    // (the server appended the real row; the next GET delivers it) and no
+    // answersCount bump. This path is mid-deploy defense only.
+    const nonAdvancing = questionId === "restyle" || questionId === "amend";
+    const entry: TranscriptEntry | null = nonAdvancing
+      ? null
+      : {
+          qId: questionId,
+          bankId:
+            questionId === "revise" ? null : (prev.nextQuestion?.bankId ?? null),
+          q:
+            questionId === "revise"
+              ? "Revision request"
+              : (prev.nextQuestion?.text ?? ""),
+          a: skipped ? "" : answer,
+          skipped,
+          askedAt: nowIso,
+          answeredAt: nowIso,
+        };
     const next: ProjectView = {
       ...prev,
       rev: data.rev,
@@ -734,8 +1003,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       progress: data.progress,
       openConfirmItems: data.openConfirmItems,
       openConfirmTotal: data.openConfirmTotal ?? data.openConfirmItems.length,
-      transcript: [...prev.transcript, entry],
-      answersCount: prev.answersCount + (questionId === "revise" ? 0 : 1),
+      transcript: entry ? [...prev.transcript, entry] : prev.transcript,
+      answersCount:
+        prev.answersCount +
+        (questionId === "revise" || nonAdvancing ? 0 : 1),
     };
     viewRef.current = next;
     setView(next);
@@ -759,15 +1030,32 @@ export function Workspace({ projectId }: { projectId: string }) {
     // "slug#section" refs the server serializes verbatim in the prompt.
     message?: string;
     focusSections?: string[];
+    // Restyle pass (§5.12 format pass): empty answer, batch in focusSections.
+    restyle?: boolean;
+    // Amend (§5.12): correct the transcript entry at this index.
+    amendIndex?: number;
+    amendAnswer?: string;
   }) {
     const v = viewRef.current;
     if (!v || working) return;
-    const revise = v.status === "review";
+    const restyle = !!opts.restyle;
+    const amend = opts.amendIndex !== undefined;
+    const revise = v.status === "review" && !restyle && !amend;
     const isResolver = revise && !!opts.message;
-    const questionId = revise ? "revise" : v.nextQuestion?.id;
+    const questionId = restyle
+      ? "restyle"
+      : amend
+        ? "amend"
+        : revise
+          ? "revise"
+          : v.nextQuestion?.id;
     if (!questionId) return;
-    const answer = opts.message ?? (opts.skipped ? "" : answerText.trim());
-    if (!opts.skipped && !answer) return;
+    const answer = restyle
+      ? ""
+      : amend
+        ? (opts.amendAnswer ?? "").trim()
+        : (opts.message ?? (opts.skipped ? "" : answerText.trim()));
+    if (!opts.skipped && !answer && !restyle) return;
     const preOpenTotal = v.openConfirmTotal ?? v.openConfirmItems.length;
 
     // promptId lifecycle: reuse only for a transport retry of the SAME
@@ -782,24 +1070,30 @@ export function Workspace({ projectId }: { projectId: string }) {
         : mintPromptId();
     pendingRef.current = { questionId, answer, skipped: opts.skipped, promptId };
 
-    // A new turn supersedes any still-pending ask-anchor scroll.
+    // A new turn supersedes any still-pending ask-anchor scroll or reveal.
     cancelAskJump();
+    endShow(false);
 
     const token = Date.now() + Math.random();
+    const kind: WorkingKind = restyle
+      ? "restyle"
+      : amend
+        ? "amend"
+        : revise
+          ? isResolver
+            ? "resolve"
+            : "revise"
+          : opts.skipped
+            ? "skip"
+            : "send";
     inFlightRef.current = {
       preSendRev: v.rev,
       token,
       questionId,
       promptId,
-      preserveDraft: isResolver,
+      kind,
+      preserveDraft: isResolver || restyle || amend,
     };
-    const kind: WorkingKind = revise
-      ? isResolver
-        ? "resolve"
-        : "revise"
-      : opts.skipped
-        ? "skip"
-        : "send";
     setWorking(true);
     setWorkingKind(kind);
     setWorkingLong(false);
@@ -807,17 +1101,21 @@ export function Workspace({ projectId }: { projectId: string }) {
     setSkipPending(false);
     // The click's instant receipt: the button just disabled under the
     // user's focus, so the live region confirms the send took.
-    setAnnounce(
-      kind === "skip"
-        ? questionId.startsWith("qi_")
-          ? "Question skipped. Moving the draft to review."
-          : "Question skipped. Tron is drafting a default."
-        : kind === "resolve"
-          ? "Answers sent. Tron is folding them in."
-          : kind === "revise"
-            ? "Revision sent."
-            : "Answer sent."
-    );
+    if (kind === "amend")
+      setAnnounce("New answer sent. Tron is reworking the draft.");
+    else if (kind !== "restyle")
+      // Restyle runs announce once at start (startRestyle), never per pass.
+      setAnnounce(
+        kind === "skip"
+          ? questionId.startsWith("qi_")
+            ? "Question skipped. Moving the draft to review."
+            : "Question skipped. Tron is drafting a default."
+          : kind === "resolve"
+            ? "Answers sent. Tron is folding them in."
+            : kind === "revise"
+              ? "Revision sent."
+              : "Answer sent."
+      );
     // Armed until the turn resolves (success, failure, or superseded) -
     // an async-accepted turn keeps drafting long after the POST returns.
     clearLongTimer();
@@ -839,6 +1137,7 @@ export function Workspace({ projectId }: { projectId: string }) {
           focusSections: opts.focusSections?.length
             ? opts.focusSections
             : undefined,
+          amendIndex: opts.amendIndex,
         }),
       }
     );
@@ -858,7 +1157,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       clearLongTimer();
       inFlightRef.current = null;
       pendingRef.current = null;
-      if (!isResolver) clearDraft(questionId);
+      if (!isResolver && !restyle && !amend) clearDraft(questionId);
       applyTurn(r.data, questionId, opts.skipped, answer);
       if (isResolver) {
         // Honest resolver receipt: the TRUE count delta, never per-item
@@ -917,6 +1216,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     clearLongTimer();
     inFlightRef.current = null;
     setWorking(false);
+    if (restyle) abortRestyleRun();
     if (r.status === 401) {
       setSignedOut(true);
       return;
@@ -935,6 +1235,149 @@ export function Workspace({ projectId }: { projectId: string }) {
     if (r.code === "answer_cap" || r.code === "feature_disabled")
       void fetchProject();
   }
+
+  /* ------------------------------------------------------------------ *
+   * Restyle run (§5.12 format pass): client-driven chaining of async
+   * turns, one host-packed batch each. The next batch is re-packed from
+   * the FRESH view; any failure aborts the run honestly (what is done is
+   * kept; the button finishes the rest on the next press).
+   * ------------------------------------------------------------------ */
+  function abortRestyleRun() {
+    if (!restyleRunRef.current) return;
+    restyleRunRef.current = null;
+    setRestylePassNote("");
+    setAnnounce(
+      "Reformatting stopped. What is done so far is kept; press Reformat the whole draft again to finish."
+    );
+  }
+
+  function startRestyle() {
+    const v = viewRef.current;
+    if (!v || working || inFlightRef.current || restyleRunRef.current) return;
+    const targets = restyleTargets(v.documents, v.placeholderSections ?? {});
+    if (!targets.length) {
+      setNoticeAnnounced({
+        kind: "info",
+        text: "Nothing is drafted yet. The format applies as sections are drafted.",
+      });
+      return;
+    }
+    const batches = packRestyleBatches(v.documents, targets);
+    const baseline = new Map<string, string>();
+    for (const d of v.documents)
+      for (const s of d.sections)
+        baseline.set(`${d.slug}#${s.id}`, textContentKey(s.markdown));
+    restyleRunRef.current = {
+      pendingRefs: targets.filter((r) => !batches[0].includes(r)),
+      changedRefs: new Set(),
+      pass: 1,
+      totalEstimate: batches.length,
+      baseline,
+    };
+    setRestylePassNote(
+      batches.length > 1 ? `Pass 1 of about ${batches.length}.` : ""
+    );
+    setAnnounce(
+      `Applying the format sample to ${targets.length} ${targets.length === 1 ? "section" : "sections"}${
+        batches.length > 1 ? ` in about ${batches.length} passes` : ""
+      }. Each pass uses one drafting call.`
+    );
+    void submitTurn({ skipped: false, restyle: true, focusSections: batches[0] });
+  }
+
+  /** One restyle pass landed (handleView calls this through the ref). */
+  function continueRestyleRun(next: ProjectView) {
+    const run = restyleRunRef.current;
+    if (!run) return;
+    for (const [slug, secs] of Object.entries(next.changedSections))
+      for (const sid of secs) run.changedRefs.add(`${slug}#${sid}`);
+    // Re-derive what is still safely restylable from the FRESH view: a
+    // concurrent tab may have changed, removed, or re-scaffolded sections.
+    const stillValid = new Set(
+      restyleTargets(next.documents, next.placeholderSections ?? {})
+    );
+    run.pendingRefs = run.pendingRefs.filter((r) => stillValid.has(r));
+    if (!run.pendingRefs.length) {
+      finishRestyleRun(next, run);
+      return;
+    }
+    if (next.turn?.phase === "running") {
+      // Another tab claimed a turn in the gap: stop honestly.
+      abortRestyleRun();
+      return;
+    }
+    const batches = packRestyleBatches(next.documents, run.pendingRefs);
+    const batch = batches[0];
+    run.pendingRefs = run.pendingRefs.filter((r) => !batch.includes(r));
+    run.pass += 1;
+    const total = Math.max(run.totalEstimate, run.pass);
+    setRestylePassNote(`Pass ${run.pass} of about ${total}.`);
+    window.setTimeout(() => {
+      if (restyleRunRef.current !== run) return;
+      if (inFlightRef.current || viewRef.current?.turn?.phase === "running") {
+        abortRestyleRun();
+        return;
+      }
+      void submitTurn({ skipped: false, restyle: true, focusSections: batch });
+    }, 0);
+  }
+
+  function finishRestyleRun(next: ProjectView, run: {
+    changedRefs: Set<string>;
+    baseline: Map<string, string>;
+  }) {
+    restyleRunRef.current = null;
+    setRestylePassNote("");
+    const changed = [...run.changedRefs];
+    // Union highlight across all passes: each pass replaced the previous
+    // pass's Updated chips; the final receipt restores the full set.
+    const map: Record<string, string[]> = {};
+    const list: ChangedRef[] = [];
+    for (const ref of changed) {
+      const i = ref.indexOf("#");
+      const slug = ref.slice(0, i);
+      const sid = ref.slice(i + 1);
+      (map[slug] ??= []).push(sid);
+      const doc = next.documents.find((d) => d.slug === slug);
+      const si = doc?.sections.findIndex((s) => s.id === sid) ?? -1;
+      if (doc && si >= 0)
+        list.push({
+          doc: slug,
+          section: sid,
+          title: sectionTitleText(si + 1, doc.sections[si].title),
+        });
+    }
+    setHighlights(map);
+    setChangedNow(list.length ? list : null);
+    setFlashKey((k) => k + 1);
+    // Honest receipt: "wording unchanged" is VERIFIED (format-stripped text
+    // compare against the pre-run baseline), never asserted.
+    let wordingChanged = false;
+    for (const ref of changed) {
+      const base = run.baseline.get(ref);
+      if (base === undefined) continue;
+      const i = ref.indexOf("#");
+      const md =
+        next.documents
+          .find((d) => d.slug === ref.slice(0, i))
+          ?.sections.find((s) => s.id === ref.slice(i + 1))?.markdown ?? "";
+      if (textContentKey(md) !== base) {
+        wordingChanged = true;
+        break;
+      }
+    }
+    setAnnounce(
+      changed.length === 0
+        ? "Your draft already matches the sample. Nothing needed to change."
+        : wordingChanged
+          ? `Reformatted ${changed.length} ${changed.length === 1 ? "section" : "sections"}. I also touched some wording; the changed sections are marked, worth a skim.`
+          : `Reformatted. ${changed.length} ${changed.length === 1 ? "section" : "sections"} now match your sample; the wording is unchanged.`
+    );
+  }
+
+  useEffect(() => {
+    continueRestyleRef.current = continueRestyleRun;
+  });
 
   /** Keep one open [TO CONFIRM] item as drafted: deterministic server-side
    *  strip, zero AI calls (works through brain outages). The view is merged
@@ -1233,8 +1676,26 @@ export function Workspace({ projectId }: { projectId: string }) {
               }
               onClick={() => {
                 setMobileTab("draft");
-                // The asked-about anchor wins over the changed-section jump:
-                // the user's next task is reading the text in question.
+                // A queued resolution reveal plays now (it owns the scroll);
+                // otherwise the asked-about anchor wins over the changed-
+                // section jump: the user's next task is reading that text.
+                const pendingShow = pendingShowRef.current;
+                if (pendingShow && pendingShow.rev === view.rev) {
+                  pendingShowRef.current = null;
+                  setDraftDot(0);
+                  setAskPending(false);
+                  window.setTimeout(
+                    () =>
+                      startShow(
+                        pendingShow.items,
+                        pendingShow.askRef,
+                        pendingShow.rev
+                      ),
+                    60
+                  );
+                  return;
+                }
+                pendingShowRef.current = null;
                 const ask =
                   askPending &&
                   view.status === "drafting" &&
@@ -1276,6 +1737,7 @@ export function Workspace({ projectId }: { projectId: string }) {
             >
               <QuestionPane
                 view={view}
+                projectId={view.id}
                 answerText={answerText}
                 onAnswerChange={setAnswerText}
                 onToggleSuggestion={toggleSuggestion}
@@ -1291,6 +1753,9 @@ export function Workspace({ projectId }: { projectId: string }) {
                 onSkipConfirm={() => void submitTurn({ skipped: true })}
                 onSend={() => void submitTurn({ skipped: false })}
                 onRevise={() => void submitTurn({ skipped: false })}
+                onAmend={(index, amendAnswer) =>
+                  void submitTurn({ skipped: false, amendIndex: index, amendAnswer })
+                }
                 onConfirm={() => void confirmFinal()}
                 confirmBusy={confirmBusy}
                 onJump={jumpTo}
@@ -1313,7 +1778,20 @@ export function Workspace({ projectId }: { projectId: string }) {
                 initialName={view.styleSample?.name ?? null}
                 disabled={view.featureDisabled}
                 removeOnly={view.status === "done"}
-                note="A new or changed sample shapes the sections Tron edits from now on; already drafted sections keep their look until he next edits them."
+                note="A new or changed sample shapes the sections Tron edits from now on. Use Reformat the whole draft below to restyle what is already drafted."
+                reformat={{
+                  available:
+                    (view.status === "drafting" || view.status === "review") &&
+                    restyleTargets(
+                      view.documents,
+                      view.placeholderSections ?? {}
+                    ).length > 0,
+                  busy: working && workingKind === "restyle",
+                  long: workingLong,
+                  locked: working || view.featureDisabled || brainDown,
+                  passNote: restylePassNote,
+                  onStart: startRestyle,
+                }}
                 onAnnounce={setAnnounce}
                 onChanged={() => void fetchProject()}
               />
@@ -1324,11 +1802,21 @@ export function Workspace({ projectId }: { projectId: string }) {
               aria-labelledby={!isDesktop ? "gov-tab-draft" : undefined}
               className={`mt-8 min-w-0 lg:mt-0 ${mobileTab === "draft" ? "block" : "hidden"} lg:block`}
               // Manual reading intent in the doc pane cancels any pending
-              // ask-anchor scroll (wheel, touch, or scroll keys).
-              onWheel={cancelAskJump}
-              onTouchMove={cancelAskJump}
+              // ask-anchor scroll AND ends the reveal show (wheel, touch,
+              // or scroll keys): the user's own movement always wins.
+              onWheel={() => {
+                cancelAskJump();
+                endShow(false);
+              }}
+              onTouchMove={() => {
+                cancelAskJump();
+                endShow(false);
+              }}
               onKeyDown={(e) => {
-                if (SCROLL_KEYS.has(e.key)) cancelAskJump();
+                if (SCROLL_KEYS.has(e.key)) {
+                  cancelAskJump();
+                  endShow(false);
+                }
               }}
             >
               <DocPane
@@ -1343,6 +1831,14 @@ export function Workspace({ projectId }: { projectId: string }) {
                 onJump={jumpTo}
                 status={view.status}
                 deletesAt={view.deletesAt}
+                resolvedMarks={resolvedMarks}
+                reveal={reveal}
+                showStatus={
+                  showStatus
+                    ? { ...showStatus, onSkip: () => endShow(false) }
+                    : null
+                }
+                showNote={showNote}
               />
 
             </div>

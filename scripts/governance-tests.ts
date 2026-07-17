@@ -24,9 +24,22 @@ import {
   withOpenItemsNote,
 } from "../src/lib/governance/config";
 import {
+  buildAmendUserMessage,
+  buildRestyleUserMessage,
   buildSystemMessage,
   buildTurnUserMessage,
 } from "../src/lib/governance/prompt";
+import {
+  foldTranscript,
+  isQuestionEntry,
+  questionNumber,
+} from "../src/lib/governance/interview";
+import {
+  packRestyleBatches,
+  restyleTargets,
+  textContentKey,
+} from "../src/lib/governance/restyle";
+import { diffResolvedMarkers } from "../src/lib/governance/resolved-anim";
 import { deriveTurnState } from "../src/lib/governance/view";
 import {
   countConfirmMarkers,
@@ -34,6 +47,8 @@ import {
   parseMarkdown,
   sanitizeMarkdown,
   scanConfirmMarkers,
+  scanConfirmMarkersWithPos,
+  splitConfirmRuns,
   stripConfirmMarker,
 } from "../src/lib/governance/markdown";
 import {
@@ -48,11 +63,16 @@ import {
   parseTurnJson,
   pickNextBankQuestion,
   pickOpenItemQuestion,
+  resolveNonAdvancingGate,
   resolveTurnGate,
   validateTurn,
 } from "../src/lib/governance/turn";
 import { GOVERNANCE_KINDS } from "../src/lib/governance/types";
-import type { GovernanceDoc, TurnResult } from "../src/lib/governance/types";
+import type {
+  GovernanceDoc,
+  TranscriptEntry,
+  TurnResult,
+} from "../src/lib/governance/types";
 import { REPO_ROOT } from "./lib/governance-env";
 
 let failures = 0;
@@ -94,11 +114,16 @@ function check(name: string, cond: boolean): void {
     "src/lib/governance/probes.ts",
     "src/lib/governance/style-sample.ts",
     "src/lib/governance/docx.ts",
+    "src/lib/governance/interview.ts",
+    "src/lib/governance/restyle.ts",
+    "src/lib/governance/resolved-anim.ts",
     "src/components/governance/style-sample-control.tsx",
     "src/components/governance/research-screen.tsx",
     "src/components/governance/question-pane.tsx",
     "src/components/governance/doc-pane.tsx",
     "src/components/governance/workspace.tsx",
+    "src/components/governance/shared.tsx",
+    "src/components/governance/open-items-resolver.tsx",
   ]) {
     const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
     check(`no banned chars in ${rel}`, !/[–—‘’“”]/.test(text));
@@ -1330,6 +1355,312 @@ function check(name: string, cond: boolean): void {
   check(
     "prompt: pre-coverage turns carry no open-items block",
     !earlyMsg.includes("OPEN [TO CONFIRM] ITEMS")
+  );
+}
+
+/* 15. Non-advancing turns (restyle/amend, 2026-07-17): validation waivers,
+ *     the status/question-preserving gate, batching, the monotone question
+ *     counter, transcript folding, and the resolved-marker reveal diff. */
+{
+  const kind = GOVERNANCE_KINDS[0];
+  const slug = [...docSlugAllowlist(kind)][0];
+  const allCovered = new Set(requiredBankIds(kind));
+  const mkDocs = (markdown: string): GovernanceDoc[] => [
+    {
+      slug,
+      title: "AI Usage Policy",
+      stub: false,
+      sections: [{ id: "scope", title: "Scope", markdown }],
+    },
+  ];
+
+  // validateTurn nonAdvancing: no question, no summary, either status.
+  const bare = {
+    doc_ops: [],
+    status: "asking",
+    question: null,
+    review_summary: null,
+    answered_bank_ids: [],
+  };
+  check(
+    "nonAdvancing: asking with null question validates",
+    validateTurn(bare, kind, { nonAdvancing: true }).ok
+  );
+  check(
+    "nonAdvancing: review without summary validates",
+    validateTurn({ ...bare, status: "review" }, kind, { nonAdvancing: true }).ok
+  );
+  const withQ = validateTurn(
+    {
+      ...bare,
+      question: { bankId: null, text: "extra?", why: "", suggestions: [] },
+      review_summary: "fresh summary",
+    },
+    kind,
+    { nonAdvancing: true }
+  );
+  check(
+    "nonAdvancing: returned question discarded, summary kept as input",
+    withQ.ok &&
+      withQ.turn?.question === null &&
+      withQ.turn?.reviewSummary === "fresh summary"
+  );
+  check(
+    "advancing turns still require a question when asking",
+    !validateTurn(bare, kind).ok
+  );
+
+  // resolveNonAdvancingGate.
+  const storedQ = {
+    id: "q_5",
+    bankId: requiredBankIds(kind)[0],
+    text: "Who owns this?",
+    why: "",
+    suggestions: [],
+    feeds: [`${slug}#scope`],
+  };
+  const gBase = {
+    kind,
+    documents: mkDocs("Clean text."),
+    openTotal: 0,
+    covered: allCovered,
+    turnSummary: null,
+    priorSummary: "prior summary",
+    newRev: 8,
+  };
+  const kept = resolveNonAdvancingGate({
+    ...gBase,
+    turnKind: "restyle" as const,
+    status: "drafting" as const,
+    storedQuestion: storedQ,
+  });
+  check(
+    "gate: drafting preserves the stored question verbatim (id included)",
+    kept.status === "drafting" && kept.outQuestion?.id === "q_5"
+  );
+  const chased = resolveNonAdvancingGate({
+    ...gBase,
+    turnKind: "amend" as const,
+    status: "drafting" as const,
+    storedQuestion: { ...storedQ, id: "qi_5" },
+    documents: mkDocs("Assumed [TO CONFIRM: retention]."),
+    openTotal: 1,
+  });
+  check(
+    "gate: a stored qi_ question is always re-picked against the new docs",
+    chased.status === "drafting" && chased.outQuestion?.id === "qi_8"
+  );
+  const reviewRestyle = resolveNonAdvancingGate({
+    ...gBase,
+    turnKind: "restyle" as const,
+    status: "review" as const,
+    storedQuestion: null,
+    turnSummary: "model rewrote this",
+  });
+  check(
+    "gate: restyle in review keeps the prior summary untouched",
+    reviewRestyle.status === "review" &&
+      reviewRestyle.reviewSummary === "prior summary"
+  );
+  const reviewAmend = resolveNonAdvancingGate({
+    ...gBase,
+    turnKind: "amend" as const,
+    status: "review" as const,
+    storedQuestion: null,
+    turnSummary: "corrected summary",
+    documents: mkDocs("Assumed [TO CONFIRM: retention]."),
+    openTotal: 1,
+  });
+  check(
+    "gate: amend in review refreshes the summary WITH the open-items note",
+    reviewAmend.status === "review" &&
+      (reviewAmend.reviewSummary ?? "").startsWith("corrected summary") &&
+      (reviewAmend.reviewSummary ?? "").includes("open [TO CONFIRM] items remain")
+  );
+
+  // Restyle batching: placeholder + stub exclusion, budget, ref cap.
+  const bigDocs: GovernanceDoc[] = [
+    {
+      slug,
+      title: "AI Usage Policy",
+      stub: false,
+      sections: Array.from({ length: 25 }, (_, i) => ({
+        id: `sec-${i}`,
+        title: `S${i}`,
+        markdown: "x".repeat(900),
+      })),
+    },
+    { slug: "stub-doc", title: "Stub", stub: true, sections: [{ id: "a", title: "A", markdown: "y" }] },
+  ];
+  const targets = restyleTargets(bigDocs, { [slug]: ["sec-0", "sec-1"] });
+  check(
+    "restyle: targets exclude placeholder sections and stub docs",
+    targets.length === 23 &&
+      !targets.includes(`${slug}#sec-0`) &&
+      !targets.some((r) => r.startsWith("stub-doc#"))
+  );
+  const batches = packRestyleBatches(bigDocs, targets);
+  check(
+    "restyle: batches respect the char estimate and the 20-ref cap",
+    batches.every(
+      (b) =>
+        b.length <= 20 &&
+        b.reduce((n, ref) => {
+          const i = ref.indexOf("#");
+          const d = bigDocs.find((x) => x.slug === ref.slice(0, i));
+          const s = d?.sections.find((x) => x.id === ref.slice(i + 1));
+          return n + (s?.markdown.length ?? 0) + 200;
+        }, 0) <=
+          CAPS.turnOpMarkdownTargetChars - 1000
+    ) && batches.flat().length === targets.length
+  );
+  check(
+    "restyle: textContentKey ignores formatting, catches wording drift",
+    textContentKey("## Scope\n- We log **everything**") ===
+      textContentKey("Scope\n\nWe log everything.") &&
+      textContentKey("We log everything") !== textContentKey("We log nothing")
+  );
+
+  // Monotone counter + folding.
+  const mkEntry = (qId: string, over: Partial<TranscriptEntry> = {}): TranscriptEntry => ({
+    qId,
+    bankId: null,
+    q: "Q",
+    a: "A",
+    skipped: false,
+    askedAt: "2026-07-17T00:00:00Z",
+    answeredAt: "2026-07-17T00:00:00Z",
+    ...over,
+  });
+  const transcript = [
+    mkEntry("q_1"),
+    mkEntry("q_2", { skipped: true, a: "" }),
+    mkEntry("revise"),
+    mkEntry("qi_4"),
+    mkEntry("confirm"),
+    mkEntry("restyle"),
+    mkEntry("amend", { amendsIndex: 0, a: "corrected" }),
+  ];
+  check(
+    "counter: only q_/qi_ rows count (skips included; revise/confirm/restyle/amend excluded)",
+    questionNumber(transcript) === 4
+  );
+  const folded = foldTranscript(transcript);
+  check(
+    "folding: amend rows fold into their target with a was annotation",
+    folded.length === 6 &&
+      folded[0].effectiveAnswer === "corrected" &&
+      folded[0].previous?.answer === "A" &&
+      folded[0].amendedAt !== null &&
+      !folded.some((r) => r.entry.qId === "amend")
+  );
+  check(
+    "folding: isQuestionEntry matches the counter's predicate",
+    isQuestionEntry(mkEntry("q_9")) &&
+      isQuestionEntry(mkEntry("qi_9")) &&
+      !isQuestionEntry(mkEntry("amend")) &&
+      !isQuestionEntry(mkEntry("restyle")) &&
+      !isQuestionEntry(mkEntry("revise")) &&
+      !isQuestionEntry(mkEntry("confirm"))
+  );
+
+  // Resolved-marker reveal diff: honesty gates.
+  const prevDocs = mkDocs(
+    "We keep logs for 30 days [TO CONFIRM: confirm the retention period] and then purge them."
+  );
+  const nextDocs = mkDocs(
+    "We keep logs for 30 days per the IT retention standard and then purge them."
+  );
+  const reveals = diffResolvedMarkers(prevDocs, nextDocs, { [slug]: ["scope"] });
+  check(
+    "reveal: a resolved marker anchors its verbatim replacement",
+    reveals.length === 1 &&
+      nextDocs[0].sections[0].markdown
+        .slice(reveals[0].nextStart, reveals[0].nextEnd)
+        .includes("per the IT retention standard") &&
+      reveals[0].oldMarkerText.startsWith("[TO CONFIRM:")
+  );
+  const reworded = diffResolvedMarkers(
+    prevDocs,
+    mkDocs(
+      "We keep logs for 30 days [TO CONFIRM: is 30 days right?] and then purge them."
+    ),
+    { [slug]: ["scope"] }
+  );
+  check(
+    "reveal: a reworded marker never yields a replacement containing a marker",
+    reworded.every(
+      (r) =>
+        !countConfirmMarkers(
+          "We keep logs for 30 days [TO CONFIRM: is 30 days right?] and then purge them.".slice(
+            r.nextStart,
+            r.nextEnd
+          )
+        )
+    )
+  );
+  const rewritten = diffResolvedMarkers(
+    prevDocs,
+    mkDocs("Retention is governed by the IT standard."),
+    { [slug]: ["scope"] }
+  );
+  check(
+    "reveal: a full rewrite (anchors gone) yields no reveal, never a guess",
+    rewritten.length === 0
+  );
+  check(
+    "reveal: untouched sections are ignored",
+    diffResolvedMarkers(prevDocs, nextDocs, {}).length === 0
+  );
+
+  // Marker scan with positions + the render-time confirm splitter.
+  const md = "a [TO CONFIRM: one] b [TO CONFIRM: one] c";
+  const pos = scanConfirmMarkersWithPos(md);
+  check(
+    "markers: positioned scan keeps occurrence math and exact spans",
+    pos.length === 2 &&
+      pos[0].occurrence === 0 &&
+      pos[1].occurrence === 1 &&
+      md.slice(pos[1].start, pos[1].end) === "[TO CONFIRM: one]"
+  );
+  const runs = splitConfirmRuns(md);
+  check(
+    "markers: splitConfirmRuns marks exactly the marker spans",
+    runs.filter((r) => r.confirm).length === 2 &&
+      runs.map((r) => r.text).join("") === md
+  );
+
+  // Prompts for the new turn kinds.
+  const restyleMsg = buildRestyleUserMessage({
+    kind,
+    documents: prevDocs,
+    focusRefs: [`${slug}#scope`],
+  });
+  check(
+    "prompt: restyle demands marker preservation and names the batch",
+    restyleMsg.includes("character for character") &&
+      restyleMsg.includes(`${slug}#scope`) &&
+      restyleMsg.includes("FORMATTING only")
+  );
+  const amendMsg = buildAmendUserMessage({
+    kind,
+    documents: prevDocs,
+    transcript,
+    original: transcript[0],
+    answer: "the corrected fact",
+    changedSections: null,
+    inReview: true,
+    focusRefs: [`${slug}#scope`],
+  });
+  check(
+    "prompt: amend carries the original Q, old A, new A, and review marker rules",
+    amendMsg.includes("CHANGED an earlier answer") &&
+      amendMsg.includes("the corrected fact") &&
+      amendMsg.includes("Never delete, reword, or move a [TO CONFIRM] marker")
+  );
+  check(
+    "prompt: amend transcript rows render as corrections",
+    amendMsg.includes("CORRECTED earlier answer")
   );
 }
 

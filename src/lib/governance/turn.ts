@@ -99,7 +99,11 @@ export interface TurnValidation {
 export function validateTurn(
   parsed: unknown,
   kind: GovernanceKind,
-  opts: { turnZero?: boolean } = {}
+  // nonAdvancing (restyle/amend turns, §5.12): the host preserves status and
+  // question itself, so validation is status-agnostic: neither a question
+  // nor a review_summary is required, any returned question is discarded,
+  // and a well-formed review_summary is kept as optional input.
+  opts: { turnZero?: boolean; nonAdvancing?: boolean } = {}
 ): TurnValidation {
   const errors: string[] = [];
   if (typeof parsed !== "object" || parsed === null)
@@ -188,9 +192,9 @@ export function validateTurn(
     if (!text) errors.push("question.text missing or too long");
     else question = { bankId, text, why, suggestions };
   }
-  if (status === "review" && !str(o.review_summary, 800))
+  if (status === "review" && !opts.nonAdvancing && !str(o.review_summary, 800))
     errors.push("review requires review_summary (max 800 chars)");
-  if (status === "asking" && !question && !opts.turnZero)
+  if (status === "asking" && !question && !opts.turnZero && !opts.nonAdvancing)
     errors.push("asking requires a question");
 
   const bank = bankById(kind);
@@ -223,9 +227,12 @@ export function validateTurn(
     turn: {
       docOps: ops,
       status: status as "asking" | "review",
-      question,
-      reviewSummary:
-        status === "review" ? (o.review_summary as string) : null,
+      question: opts.nonAdvancing ? null : question,
+      reviewSummary: opts.nonAdvancing
+        ? str(o.review_summary, 800)
+        : status === "review"
+          ? (o.review_summary as string)
+          : null,
       answeredBankIds,
     },
   };
@@ -504,6 +511,77 @@ export function resolveTurnGate(g: TurnGateInput): TurnGateResult {
       outQuestion: null,
       reviewSummary: withOpenItemsNote(
         g.turn.reviewSummary ?? REVIEW_FORCED_SUMMARY,
+        g.openTotal
+      ),
+    };
+  return { status: "drafting", outQuestion, reviewSummary: null };
+}
+
+export interface NonAdvancingGateInput {
+  kind: GovernanceKind;
+  turnKind: "restyle" | "amend";
+  status: "drafting" | "review"; // row.status at claim time
+  storedQuestion: NextQuestion | null; // parsed nextQuestionJson
+  documents: GovernanceDoc[]; // the applied docs
+  openTotal: number; // lenient [TO CONFIRM] count over the applied docs
+  covered: Set<string>; // UNCHANGED by non-advancing turns
+  turnSummary: string | null; // model review_summary (optional input)
+  priorSummary: string | null;
+  newRev: number;
+}
+
+/**
+ * Gate for non-advancing turns (restyle/amend, §5.12): the turn calls the
+ * brain and applies doc_ops but must not consume the pending question, must
+ * not change bank coverage, and preserves the project status (the one
+ * exception is the defensive exhaustion fallback below, which mirrors
+ * resolveTurnGate's bank-exhausted honest flip and is unreachable in
+ * practice). A stored "qi_" chase question is ALWAYS re-picked: its text
+ * quotes one specific marker excerpt, and an amend may have resolved exactly
+ * that marker (or reworded the section) while others remain: preserving it
+ * verbatim would misapply the user's next answer. Pure function so
+ * governance-tests can pin every branch.
+ */
+export function resolveNonAdvancingGate(
+  g: NonAdvancingGateInput
+): TurnGateResult {
+  if (g.status === "review") {
+    // Amend may legitimately refresh the summary (a corrected fact changes
+    // what the draft says); restyle never rewords it. Either way the summary
+    // must never read ready-for-final while markers remain (owner rule).
+    const summary =
+      g.turnKind === "amend"
+        ? (g.turnSummary ?? g.priorSummary)
+        : g.priorSummary;
+    return {
+      status: "review",
+      outQuestion: null,
+      reviewSummary:
+        g.turnKind === "amend" && summary
+          ? withOpenItemsNote(summary, g.openTotal)
+          : summary,
+    };
+  }
+  let outQuestion: NextQuestion | null = null;
+  if (g.storedQuestion && !g.storedQuestion.id.startsWith("qi_")) {
+    // The pending question survives verbatim, id included: nothing derives
+    // meaning from the id's rev suffix, and keeping it preserves the user's
+    // typed-but-unsent sessionStorage draft for that question.
+    outQuestion = g.storedQuestion;
+  } else {
+    outQuestion =
+      pickOpenItemQuestion(g.documents, g.newRev) ??
+      pickNextBankQuestion(g.kind, g.covered, g.newRev);
+  }
+  if (!outQuestion && g.openTotal > 0)
+    outQuestion = pickOpenItemQuestion(g.documents, g.newRev);
+  if (!outQuestion)
+    // Defensive only: no stored question, bank exhausted, zero markers.
+    return {
+      status: "review",
+      outQuestion: null,
+      reviewSummary: withOpenItemsNote(
+        g.priorSummary ?? REVIEW_FORCED_SUMMARY,
         g.openTotal
       ),
     };

@@ -23,8 +23,13 @@ import {
   type ProjectRow,
 } from "@/lib/governance/db";
 import { govError, NOT_FOUND, okJson, rateLimit, requireUser } from "@/lib/governance/http";
-import { runTurn } from "@/lib/governance/turn-runner";
-import type { NextQuestion } from "@/lib/governance/types";
+import { isQuestionEntry } from "@/lib/governance/interview";
+import { runTurn, type TurnKind } from "@/lib/governance/turn-runner";
+import type {
+  GovernanceDoc,
+  NextQuestion,
+  TranscriptEntry,
+} from "@/lib/governance/types";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -71,8 +76,6 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       503
     );
   const { id } = await ctx.params;
-  const limited = rateLimit(`gov:answer:${user.userId}`, 60, 6);
-  if (limited) return limited;
 
   let body: {
     questionId?: unknown;
@@ -81,12 +84,20 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     promptId?: unknown;
     mode?: unknown;
     focusSections?: unknown;
+    amendIndex?: unknown;
   };
   try {
     body = (await req.json()) as typeof body;
   } catch {
     return govError("invalid_request", "Bad JSON body.", 400);
   }
+  // Restyle gets its own bucket: a multi-batch format pass is a legitimate
+  // burst of small turns and must not starve (or be starved by) answering.
+  const limited =
+    body.questionId === "restyle"
+      ? rateLimit(`gov:restyle:${user.userId}`, 60, 8)
+      : rateLimit(`gov:answer:${user.userId}`, 60, 6);
+  if (limited) return limited;
   // Version negotiation: pre-async clients send no mode and would spread a
   // 202 accept body into their view (undefined rev/documents). Refuse them
   // with copy that names the fix; the typed answer survives in their box.
@@ -99,6 +110,15 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   const questionId = typeof body.questionId === "string" ? body.questionId : "";
   const answer = typeof body.answer === "string" ? body.answer.trim() : "";
   const skipped = body.skipped === true;
+  const restyle = questionId === "restyle";
+  const amend = questionId === "amend";
+  const amendIndex =
+    typeof body.amendIndex === "number" &&
+    Number.isInteger(body.amendIndex) &&
+    body.amendIndex >= 0 &&
+    body.amendIndex <= 9999
+      ? body.amendIndex
+      : null;
   // Open-item resolver batches (§5.12): "slug#section" pairs the revision
   // targets, serialized verbatim in the prompt so the model can see the text
   // it must edit. Shape-checked here; the worker validates them against the
@@ -120,14 +140,24 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       `Keep answers under ${CAPS.answerMaxChars} characters. Plain words are fine.`,
       400
     );
-  if (!skipped && !answer)
+  if (!skipped && !answer && !restyle)
     return govError("invalid_request", "Type an answer or skip the question.", 400);
+  if (amend && !answer)
+    return govError("invalid_request", "Type the corrected answer.", 400);
+  if (restyle && !focusSections.length)
+    return govError("invalid_request", "focusSections required for a format pass.", 400);
 
   const row = await fetchOwnedProject(user.userId, id);
   if (!row) return NOT_FOUND();
   const revise = row.status === "review" && questionId === "revise";
+  // Non-advancing turns (§5.12): a restyle (format pass) or amend (correct
+  // an earlier answer) is legal in drafting AND review. Neither consumes the
+  // pending question nor counts toward the answer cap, so the stale-question
+  // and cap checks below do not apply to them (a post-cap review project
+  // must still accept amends).
+  const nonAdvancing = restyle || amend;
 
-  if (row.status !== "drafting" && !revise)
+  if (row.status !== "drafting" && !revise && !(nonAdvancing && row.status === "review"))
     return govError(
       "invalid_request",
       row.status === "review"
@@ -136,8 +166,45 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       409
     );
 
+  if (restyle) {
+    if (!row.styleSampleText)
+      return govError(
+        "invalid_request",
+        "Attach a format sample first, then apply it.",
+        409
+      );
+    // Accept-time size check: a stale client's oversized batch would
+    // deterministically fail validation and waste the brain call.
+    const docs = parse<GovernanceDoc[]>(row.documentsJson, []);
+    let sum = 0;
+    for (const f of focusSections) {
+      const i = f.indexOf("#");
+      if (i <= 0) continue;
+      const d = docs.find((x) => x.slug === f.slice(0, i));
+      const s = d?.sections.find((x) => x.id === f.slice(i + 1));
+      sum += (s?.markdown.length ?? 0) + 200;
+    }
+    if (sum > CAPS.turnOpMarkdownTargetChars)
+      return govError(
+        "invalid_request",
+        "That batch is too large for one format pass. Reload the page and try again.",
+        400
+      );
+  }
+
+  if (amend) {
+    const transcript = parse<TranscriptEntry[]>(row.transcriptJson, []);
+    const orig = amendIndex !== null ? transcript[amendIndex] : undefined;
+    if (!orig || !isQuestionEntry(orig))
+      return govError(
+        "invalid_request",
+        "That answer can no longer be changed.",
+        400
+      );
+  }
+
   const nextQuestion = parse<NextQuestion | null>(row.nextQuestionJson, null);
-  if (!revise) {
+  if (!revise && !nonAdvancing) {
     if (!nextQuestion || nextQuestion.id !== questionId)
       return govError(
         "stale_question",
@@ -225,14 +292,22 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     return govError("turn_pending", TURN_PENDING_COPY, 409);
   }
 
+  const kind: TurnKind = revise
+    ? "revise"
+    : restyle
+      ? "restyle"
+      : amend
+        ? "amend"
+        : "answer";
   const job = {
     row,
     userId: user.userId,
     questionId,
     answer,
     skipped,
-    revise,
+    kind,
     focusSections,
+    ...(amend && amendIndex !== null ? { amendIndex } : {}),
     promptId,
     attemptId,
     budgetExempt,

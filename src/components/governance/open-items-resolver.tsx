@@ -254,7 +254,7 @@ export function OpenItemsResolver({
   /** One revise turn is told to emit at most CAPS.turnOpMarkdownTargetChars
    *  of section markdown (validation allows more; the gap is the model's
    *  miscounting margin, not batch headroom), and the model must re-emit
-   *  every touched section IN FULL — a batch whose inherent re-emit cost
+   *  every touched section IN FULL: a batch whose inherent re-emit cost
    *  exceeds what the model is told produces truncated rewrites or
    *  deterministic validation failures the repair pass cannot fix. Estimate
    *  the re-emit cost as the sum of the DISTINCT target sections' current

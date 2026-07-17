@@ -267,9 +267,19 @@ function stripLeavesContent(
   return /[a-z0-9]/i.test(rest);
 }
 
-/** Scan one section's markdown into addressable open items. */
-export function scanConfirmMarkers(markdown: string): ScannedConfirmMarker[] {
-  const out: ScannedConfirmMarker[] = [];
+/** ScannedConfirmMarker plus its character span in the section markdown.
+ *  Kept as a SEPARATE type on purpose: view.ts spreads ScannedConfirmMarker
+ *  into the public OpenConfirmItem API, and positions must not leak there. */
+export interface PositionedConfirmMarker extends ScannedConfirmMarker {
+  start: number;
+  end: number;
+}
+
+/** Scan one section's markdown into addressable open items, with spans. */
+export function scanConfirmMarkersWithPos(
+  markdown: string
+): PositionedConfirmMarker[] {
+  const out: PositionedConfirmMarker[] = [];
   const counts = new Map<string, number>();
   const re = confirmMarkerRe();
   let m: RegExpExecArray | null;
@@ -284,9 +294,42 @@ export function scanConfirmMarkers(markdown: string): ScannedConfirmMarker[] {
       contextBefore: windowBefore(markdown.slice(ls, m.index), 110),
       contextAfter: windowAfter(markdown.slice(m.index + m[0].length, le), 110),
       confirmable: stripLeavesContent(markdown, m.index, m.index + m[0].length),
+      start: m.index,
+      end: m.index + m[0].length,
     });
   }
   return out;
+}
+
+/** Scan one section's markdown into addressable open items. Positions are
+ *  deliberately dropped here (view.ts spreads these into the public API). */
+export function scanConfirmMarkers(markdown: string): ScannedConfirmMarker[] {
+  return scanConfirmMarkersWithPos(markdown).map((m) => ({
+    excerpt: m.excerpt,
+    occurrence: m.occurrence,
+    contextBefore: m.contextBefore,
+    contextAfter: m.contextAfter,
+    confirmable: m.confirmable,
+  }));
+}
+
+/** Split plain inline text into runs, marking [TO CONFIRM: ...] spans so the
+ *  doc pane can style them (render-time only; the shared Inline model and
+ *  the .docx renderer stay untouched). */
+export function splitConfirmRuns(
+  text: string
+): { text: string; confirm: boolean }[] {
+  const out: { text: string; confirm: boolean }[] = [];
+  const re = confirmMarkerRe();
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push({ text: text.slice(last, m.index), confirm: false });
+    out.push({ text: m[0], confirm: true });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push({ text: text.slice(last), confirm: false });
+  return out.length ? out : [{ text, confirm: false }];
 }
 
 export type StripResult =

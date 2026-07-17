@@ -280,7 +280,13 @@ export const STATUS_META: Record<ProjectStatus, StatusMeta> = {
 };
 
 /** Which action is in flight; picks the busy copy for the status row. */
-export type WorkingKind = "send" | "skip" | "revise" | "resolve";
+export type WorkingKind =
+  | "send"
+  | "skip"
+  | "revise"
+  | "resolve"
+  | "restyle"
+  | "amend";
 
 /** Stable-width busy button: both labels are stacked in the same grid
  *  cell so the swap never shifts neighbouring controls. */
@@ -314,12 +320,20 @@ export function WorkingRow({ long, kind }: { long: boolean; kind: WorkingKind })
         ? "On it. Revising the draft."
         : kind === "resolve"
           ? "On it. Folding your answers in and clearing those markers."
-          : "Got it. Folding your answer into the draft.";
+          : kind === "restyle"
+            ? "On it. Reformatting the drafted sections to match your sample."
+            : kind === "amend"
+              ? "Got it. Reworking the draft with your new answer."
+              : "Got it. Folding your answer into the draft.";
   const more = !long
     ? " This can take a little while."
     : kind === "skip"
       ? " Still working."
-      : " Still working. Longer answers take longer.";
+      : kind === "restyle"
+        ? " Still working. Big drafts take a few minutes."
+        : kind === "amend"
+          ? " Still working. A changed answer can ripple through several sections."
+          : " Still working. Longer answers take longer.";
   return (
     <div className="mt-4">
       <div className="working-rule" aria-hidden="true" />

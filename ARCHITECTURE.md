@@ -15,7 +15,13 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (async answer turn — POST /answer
+Last verified against code: 2026-07-17 (governance round 12: non-advancing
+turns — `questionId:"restyle"` format passes + `questionId:"amend"`
+answer corrections through POST /answer, `resolveNonAdvancingGate`,
+monotone question counter (`interview.ts`), transcript amend folding,
+always-on `[TO CONFIRM]` marker highlighting + the resolution reveal
+(`resolved-anim.ts`), reformat-the-draft control on the style sample, see
+§5.12; earlier same day: async answer turn — POST /answer
 returns 202 + in-process worker, `turn_*` claim columns w/ attempt-nonce
 fence, poll-resolved client, Cloudflare-100s fix, migration 0012, see
 §5.12/§6; same day: turn-zero robustness — no stubs at
@@ -871,10 +877,10 @@ bodies `{error:{code,message}}`; CSRF via the middleware prefix):
 | `GET/POST /api/governance/projects` | list (+ bounded global sweep of expired rows, any owner) / create — requires `{kind, domain?, ack:true}` (acknowledgment checkbox is recorded as `acknowledged_at`); consumer sign-in domains (gmail etc.) force manual domain entry; caps: 3 active, 5 creates/day (SQL-counted, restart-proof). Create auto-kicks research or parks `queued` |
 | `GET/DELETE /api/governance/projects/[id]` | poll target (never mutates; reports `reclaimable` so the CLIENT re-POSTs research, and `turn` — the async answer-turn state derived read-only from the `turn_*` columns: `{phase:"running"}` while the claim is fresh, `{phase:"failed", error}` from a recorded failure OR a stale orphaned claim presented as a transport failure with resend copy; 60/min limit fits the 3 s flight-tab turn poll) / immediate hard delete |
 | `POST .../research` | claim + spawn the detached research job; `{mode:"partial"}` = "start the questions anyway" after a failure (gap-flagged brief, straight to drafting). Claim is ONE conditional UPDATE enforcing owner, claimable status (created/queued/failed/stale-heartbeat >5 min), 3-runs/day, and the ≤2 global concurrency cap atomically (subquery count — no TOCTOU) |
-| `POST .../answer` | one **asynchronous** Q&A turn (also review-phase revisions via `questionId:"revise"`; async because Cloudflare cuts proxied responses at ~100 s, which heavy turns exceeded). New clients send `mode:"async"`: synchronous preflights (validation → `stale_question`/`answer_cap` → fresh-claim dedupe → deploy-marker + brain `/health` gates as retriable 503 → DB-backed daily budget spend) → **atomic turn claim** (ONE conditional UPDATE on the row's `turn_*` columns keyed on owner+retention+status∈{drafting,review}+`rev`, claimable = no record / failed record / running claim older than `turnStaleMs` 240 s, which is also the lazy reap) → **202** `{pending, rev, promptId, questionId, startedAt}` → in-process worker via Next `after()` (`turn-runner.ts`): JSON-mode turn (full 90 s) → parse ladder (fence strip → lenient parse → ≤1 repair call with a NEW promptId, 60 s) → server-validated ops → ONE conditional write keyed on `rev` AND the claim's `turn_attempt_id` fence nonce (promptId is reused across user retries so it cannot fence; a reaped zombie writes nothing), clearing the claim; every failure records `{error}` in `turn_json` and releases the claim (`turn_started_at` NULL = instantly reclaimable). The GET poll resolves the outcome. Duplicate POST same promptId while running → 202 replay (no spawn/spend); different promptId → 409 `turn_pending`. `mode:"async"` is REQUIRED (version negotiation): a markerless POST is a stale pre-async client that would spread the 202 body into its view, so it gets a reload-this-page 409 `invalid_request` instead (the legacy synchronous driver was deleted one deploy after the async cutover; the CLIENT keeps its sync-apply branch as mid-deploy defense). 6/min/user, 40 answers/project (the 40th force-flips to review), answers ≤2000 chars, `questionId` mismatch → 409 `stale_question` (dual-tab guard). Revise turns accept optional `focusSections: string[]` (`"slug#section"`, ≤20, shape-checked at accept, validated against the docs in the worker, bogus refs silently dropped) — the open-item resolver sends the sections its batch targets so `serializeDraft` includes them VERBATIM (the model cannot edit an elided section it sees 120 chars of) |
+| `POST .../answer` | one **asynchronous** Q&A turn (also review-phase revisions via `questionId:"revise"`; async because Cloudflare cuts proxied responses at ~100 s, which heavy turns exceeded). New clients send `mode:"async"`: synchronous preflights (validation → `stale_question`/`answer_cap` → fresh-claim dedupe → deploy-marker + brain `/health` gates as retriable 503 → DB-backed daily budget spend) → **atomic turn claim** (ONE conditional UPDATE on the row's `turn_*` columns keyed on owner+retention+status∈{drafting,review}+`rev`, claimable = no record / failed record / running claim older than `turnStaleMs` 240 s, which is also the lazy reap) → **202** `{pending, rev, promptId, questionId, startedAt}` → in-process worker via Next `after()` (`turn-runner.ts`): JSON-mode turn (full 90 s) → parse ladder (fence strip → lenient parse → ≤1 repair call with a NEW promptId, 60 s) → server-validated ops → ONE conditional write keyed on `rev` AND the claim's `turn_attempt_id` fence nonce (promptId is reused across user retries so it cannot fence; a reaped zombie writes nothing), clearing the claim; every failure records `{error}` in `turn_json` and releases the claim (`turn_started_at` NULL = instantly reclaimable). The GET poll resolves the outcome. Duplicate POST same promptId while running → 202 replay (no spawn/spend); different promptId → 409 `turn_pending`. `mode:"async"` is REQUIRED (version negotiation): a markerless POST is a stale pre-async client that would spread the 202 body into its view, so it gets a reload-this-page 409 `invalid_request` instead (the legacy synchronous driver was deleted one deploy after the async cutover; the CLIENT keeps its sync-apply branch as mid-deploy defense). 6/min/user, 40 answers/project (the 40th force-flips to review), answers ≤2000 chars, `questionId` mismatch → 409 `stale_question` (dual-tab guard). Revise turns accept optional `focusSections: string[]` (`"slug#section"`, ≤20, shape-checked at accept, validated against the docs in the worker, bogus refs silently dropped) — the open-item resolver sends the sections its batch targets so `serializeDraft` includes them VERBATIM (the model cannot edit an elided section it sees 120 chars of). Two further reserved ids run **non-advancing turns** (2026-07-17; legal in drafting AND review, skip the stale-question and answer-cap checks, `answersIncrement 0`, coverage untouched, status/question/summary preserved via `resolveNonAdvancingGate`): `questionId:"restyle"` (format pass — requires an attached style sample and ≥1 `focusSections`, empty answer allowed, own rate bucket `gov:restyle` 8/min, accept-time batch-size check against `turnOpMarkdownTargetChars`; the worker re-derives the safe target set itself — placeholder and stub sections NEVER restyle, or a reworded scaffold would launder undrafted text past the confirm gate — op-filters the response to `upsert_section` ops inside the batch, and hard-gates marker preservation per touched section: lenient count AND `findConfirmMarkers` excerpt-sequence equality, violation = failTurn, nothing written; transcript row `qId:"restyle"`), and `questionId:"amend"` (correct an earlier answer — body adds `amendIndex` into the append-only transcript, target must be a `q_`/`qi_` row, non-empty answer; the worker focuses on the original entry's stored `feeds` (bank feeds for legacy rows), the prompt carries original Q + old A + corrected A, review amends inherit the revise marker rules and refresh the summary through `withOpenItemsNote`; transcript row `qId:"amend"` with `amendsIndex` + `feeds`; a stored `qi_` chase question is always re-picked after a non-advancing turn since its text quotes one specific marker excerpt) |
 | `POST .../confirm` | review → done (only from review). Refuses (409 `turn_pending`) while a fresh revise-turn claim is running — the worker's apply must not race the done flip (both the route precheck and the `confirmProject` WHERE enforce it; stale orphaned claims don't block). **Refuses (409) while any non-stub section still holds untouched blueprint scaffold text** (host-computed `placeholderSectionMap`, exact-match, fail-open on a corrupt column so confirm can never brick; stub docs excluded — their pending/determined state keys on the presence of a `determination` section instead), **and refuses (409 `open_items`) while ANY `[TO CONFIRM]` marker remains** (owner ruling 2026-07-16: a FINAL carries zero markers, each resolved by the user, never silently accepted; the gate count is the LENIENT scan `countConfirmMarkers` — every `/\[TO\s*CONFIRM/gi` opener — so a malformed marker the item parser cannot display still blocks). The client intercepts first with an info notice (button stays enabled); the 409 is the stale-tab backstop |
 | `POST .../resolve-item` | keep ONE open `[TO CONFIRM]` item as drafted (review status only; body `{doc, section, excerpt ≤200, occurrence}`): deterministic host-side strip (`stripConfirmMarker` in markdown.ts) with residue cleanup (seam spaces, space-before-punctuation, empty paren/bracket husks) — ZERO AI calls, works through brain outages and budget caps; gated on `governanceEnabled` like every mutation. 409 `turn_pending` while a fresh revise-turn claim is running (a strip bumping `rev` under the worker would void its final write and waste the brain call; the write's WHERE enforces the same horizon atomically — `applyResolveWrite` in db.ts: rev + owner + review status + no-fresh-claim fence, claimless so it never touches the `turn_*` columns). 409 `needs_answer` when the strip would empty the containing paragraph / list item / table cell (the marker IS the content there; the view's `confirmable:false` computes the same predicate). 409 `item_not_found` when already resolved (other tab) or the `rev` fence lost. Appends a `qId:"confirm"` transcript entry ("Kept as drafted." — keep-as-drafted is a user decision and part of the audit trail); `answersCount` unchanged. Own rate bucket 30/min/user. Returns the turn-response shape |
-| `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.pdf`/`.md`/`.txt` ≤2 MB): only extracted plain text is stored (never the file; docx via a linear-time jszip extractor: streaming decompression-bomb cap, headings/lists/table rows preserved, prompt-fence tokens stripped; pdf via pdfjs-dist getTextContent: no rendering, 40-page cap, 10 s deadline that destroys the parse task, dedicated scanned-PDF copy; pdfjs-dist MUST stay in next.config `serverExternalPackages` or the bundled build throws on every PDF), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions EXCLUDING numbering, which is host-owned (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
+| `POST/DELETE .../style-sample` | optional sample-policy upload (multipart, one `.docx`/`.pdf`/`.md`/`.txt` ≤2 MB): only extracted plain text is stored (never the file; docx via a linear-time jszip extractor: streaming decompression-bomb cap, headings/lists/table rows preserved, prompt-fence tokens stripped; pdf via pdfjs-dist getTextContent: no rendering, 40-page cap, 10 s deadline that destroys the parse task, dedicated scanned-PDF copy; pdfjs-dist MUST stay in next.config `serverExternalPackages` or the bundled build throws on every PDF), injection-screened, ≤20k chars on the row, deleted with the row. Every drafting turn then mirrors ONLY the sample's formatting conventions EXCLUDING numbering, which is host-owned (a ≤6k-char slice rides the system prompt fenced as DATA; rules win on conflict). Already-drafted sections keep their look until edited — the workspace offers "Reformat the whole draft" (client-chained `questionId:"restyle"` turns, see the answer row) to apply the sample retroactively. The view exposes the file NAME only. Locked once `done`; DELETE works in any status |
 | `GET .../download` | `?format=docx&doc=<slug>` or `?format=zip`; generated on demand from stored markdown, streamed, never stored, ZERO AI calls (works through every outage/cap and the kill switch); DRAFT watermark + `-draft` filename until done; touches `last_activity_at` (disclosed) |
 
 Every question (`NextQuestion`) carries `feeds: string[]` — the `"<doc-slug>#<section-id>"`
@@ -966,10 +972,67 @@ keep-as-drafted resolutions never rewrite the stored summary) and the client
 announces "open items need your confirmation", never "ready". The confirm route's
 zero-marker 409 remains the hard final gate. Pre-coverage skips draft a default
 marked `[TO CONFIRM: …]` as before; chase turns serialize every marker-bearing
-section verbatim and list the open items (≤10) in the user message. Progress
-("question N of about M") is host-computed from bank coverage; chase turns label
-"Open item · confirming open items (N left)" instead. Tests: `gate:`/`chase:`/
-`note:`/`prompt:` block 14 in `scripts/governance-tests.ts`.
+section verbatim and list the open items (≤10) in the user message. **The question
+counter is ONE monotone number across the whole interview** (owner rule 2026-07-17,
+`src/lib/governance/interview.ts`): `questionNumber(transcript)` = transcript rows
+matching `isQuestionEntry` (`/^qi?_/` — bank, follow-up, and chase questions, skips
+included; `revise`/`confirm`/`restyle`/`amend` rows never count) + 1. The card header
+always reads "Question NN" (chase questions included — no more "Open item" label
+swap), and the transcript list numbers rows with the SAME predicate so header and
+history can never disagree. The secondary context line varies by phase: bank
+questions "about R to go" (R = uncovered required bank items), follow-ups
+"a follow-up[ · about R to go]", chase questions
+"T open items left · one answer can clear several" (T = `openConfirmTotal`; markers
+are never a question denominator since one answer can clear many). Tests:
+`gate:`/`chase:`/`note:`/`prompt:` block 14 and `counter:`/`folding:` block 15 in
+`scripts/governance-tests.ts`.
+
+**Non-advancing turns + the four 2026-07-17 owner requests (round 12).**
+(1) *Reformat the draft*: uploading a format sample mid-project previously changed
+nothing visible (the sample only shapes sections the model edits later). The
+`StyleSampleControl` now offers a one-time post-upload prompt ("Want me to reformat
+them now?") plus a persistent "Reformat the whole draft" button whenever a sample is
+attached, status is drafting/review, and ≥1 section is drafted. A run is CLIENT-driven
+chaining (`restyleTargets`/`packRestyleBatches` in `src/lib/governance/restyle.ts`:
+non-stub, non-placeholder sections, greedy-packed to `turnOpMarkdownTargetChars`−1000
+with 200/section slack, ≤20 refs/batch) of `questionId:"restyle"` turns — one budget
+spend per pass; the next batch is re-packed from the FRESH view, a concurrent tab's
+running turn or any failure aborts the run honestly ("what is done so far is kept"),
+intermediate passes are silent (no announce/flash), and the single final receipt only
+claims "the wording is unchanged" after VERIFYING it (`textContentKey`
+format-stripped compare against a pre-run baseline). (2) *Resolution reveal*:
+`[TO CONFIRM: …]` markers are always visible in the doc pane (render-time
+`splitConfirmRuns` decoration → `mark.doc-confirm`, warn text + dotted underline, no
+wash; muted inside Planned sections; the shared Inline model and docx renderer are
+untouched). When the flight-owning tab's turn resolves markers,
+`diffResolvedMarkers` (`src/lib/governance/resolved-anim.ts`) diffs pre- vs
+post-turn documents per changed section — a marker counts as resolved ONLY when its
+excerpt count dropped in the committed text; the replacement is a verbatim slice
+located between the marker's own line-bounded context anchors (ambiguous/missing
+anchors, cross-line spans, >300 chars, or marker-bearing slices yield NO reveal,
+never a guess; ≤20 items). The doc pane then plays the reveal (owner request): per
+item, auto-scroll (pane-container-scoped) → old marker struck out (600 ms) →
+replacement typed out over committed text (~900 ms, sentinel-injected private-use
+chars – toggle span styling across emphasis boundaries) → 1 s hold; at
+most 5 items play ("Showed 5 of N…" note after), every diffed span keeps a static
+`.doc-resolved` wash until the next rev, a sticky "Showing resolved items · i of k /
+Skip the replay" bar rides the pane, and ANY user intent (scroll/jump/Escape/skip, a
+new turn, a newer rev) ends it instantly at the final state. Reduced motion: no show,
+static washes only. Mobile: never auto-switches tabs; the show queues and plays when
+the Draft tab opens (superseded by newer revs). The live region stays count-delta
+only — the reveal adds zero announcements. (3) *Monotone counter*: above.
+(4) *Change previous answers*: every question row in the transcript disclosure
+(folded via `foldTranscript` — amend rows collapse into their target row, showing
+the LATEST effective answer, a "changed {date}" suffix, and a one-step
+`was: "{previous}"` line) gets "Change this answer" (skipped rows: "Answer it now"),
+an inline prefilled editor (sessionStorage draft `gov:{id}:amend:{index}`, send
+disabled while empty/identical, one editor at a time) that sends a `questionId:
+"amend"` turn (`preserveDraft` — the pending question's own draft survives; the
+choreography skips focus-stealing for amend/restyle turns and the paused question
+card explains: "Paused while I rework an earlier answer. This question is not going
+anywhere."). `TranscriptEntry` gained optional `amendsIndex` and `feeds` (question
+rows written since 2026-07-17 store their feeds so amends can focus the right
+sections). Tests: block 15 in `scripts/governance-tests.ts`.
 
 **Open-items resolver (zero-marker finals, owner ruling 2026-07-16).** Every
 `[TO CONFIRM: …]` marker is an assumption Tron made; a FINAL draft carries none, and

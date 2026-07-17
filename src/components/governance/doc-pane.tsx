@@ -10,9 +10,11 @@ import { useMemo } from "react";
 import type { GovernanceDoc, ProjectStatus } from "@/lib/governance/types";
 import {
   parseMarkdown,
+  splitConfirmRuns,
   type Block,
   type Inline,
 } from "@/lib/governance/markdown";
+import type { ResolvedMarkerReveal } from "@/lib/governance/resolved-anim";
 import {
   normalizeSectionBlocks,
   sectionTitleText,
@@ -32,12 +34,136 @@ export interface ChangedRef {
   title: string;
 }
 
-function InlineSpans({ nodes }: { nodes: Inline[] }) {
+/** The resolution reveal in progress (§5.12, owner request 2026-07-17):
+ *  one resolved item plays at a time: the old marker struck out, then the
+ *  replacement typing itself out, then a beat: over the COMMITTED markdown
+ *  (the theater is only progressive disclosure, never synthesized text). */
+export interface RevealState {
+  item: ResolvedMarkerReveal;
+  mode: "old" | "typing" | "done";
+  chars: number; // typing: how much of the replacement is shown
+}
+
+/* Private-use sentinels injected into a section's markdown BEFORE parsing so
+ * inline styling can span emphasis boundaries: the render walks them as
+ * style toggles. They never occur in real content; we inject render-side
+ * only. */
+const R_ON = "\uE000"; // persistent resolved wash on
+const R_OFF = "\uE001"; // off
+const OLD_ON = "\uE002"; // old-marker strike on
+const OLD_OFF = "\uE003"; // off
+const CARET = "\uE004"; // typing caret
+
+const SENTINEL_RE = /[\uE000-\uE004]/;
+
+/** Inject reveal/resolved sentinels into committed section markdown.
+ *  Edits apply in descending offset order so earlier spans stay valid. */
+function decorateMarkdown(
+  md: string,
+  marks: ResolvedMarkerReveal[],
+  reveal: RevealState | null
+): string {
+  type Edit = { start: number; end: number; text: string };
+  const edits: Edit[] = [];
+  for (const m of marks) {
+    if (
+      reveal &&
+      reveal.item.nextStart === m.nextStart &&
+      reveal.item.nextEnd === m.nextEnd
+    )
+      continue; // the active item renders below, not as a settled mark
+    if (m.nextEnd > md.length) continue; // stale offsets: skip, never garble
+    edits.push({
+      start: m.nextStart,
+      end: m.nextEnd,
+      text: R_ON + md.slice(m.nextStart, m.nextEnd) + R_OFF,
+    });
+  }
+  if (reveal && reveal.item.nextEnd <= md.length) {
+    const { item, mode, chars } = reveal;
+    const full = md.slice(item.nextStart, item.nextEnd);
+    edits.push({
+      start: item.nextStart,
+      end: item.nextEnd,
+      text:
+        mode === "old"
+          ? OLD_ON + item.oldMarkerText + OLD_OFF
+          : mode === "typing"
+            ? R_ON + full.slice(0, chars) + CARET + R_OFF
+            : R_ON + full + R_OFF,
+    });
+  }
+  edits.sort((a, b) => b.start - a.start);
+  let out = md;
+  for (const e of edits) out = out.slice(0, e.start) + e.text + out.slice(e.end);
+  return out;
+}
+
+/** Mutable per-render styling context: sentinel toggles persist across
+ *  inline nodes (a revealed span may cross a bold boundary). Created fresh
+ *  on every SectionBody render, so double-invoked renders stay correct. */
+interface SpanCtx {
+  resolved: boolean;
+  old: boolean;
+}
+
+function styledText(text: string, ctx: SpanCtx, key: number) {
+  // Always-on [TO CONFIRM] decoration rides the same pass: warn-colored
+  // marks, quiet (no wash) so a marker-dense draft does not read as broken.
+  if (!SENTINEL_RE.test(text)) {
+    if (ctx.old || ctx.resolved)
+      return (
+        <span key={key} className={ctx.old ? "doc-resolve-old" : "doc-resolved"}>
+          {text}
+        </span>
+      );
+    const runs = splitConfirmRuns(text);
+    if (runs.length === 1 && !runs[0].confirm)
+      return <span key={key}>{text}</span>;
+    return (
+      <span key={key}>
+        {runs.map((r, i) =>
+          r.confirm ? (
+            <mark key={i} className="doc-confirm">
+              {r.text}
+            </mark>
+          ) : (
+            <span key={i}>{r.text}</span>
+          )
+        )}
+      </span>
+    );
+  }
+  const parts: React.ReactNode[] = [];
+  let buf = "";
+  const flush = () => {
+    if (!buf) return;
+    parts.push(styledText(buf, { ...ctx }, parts.length));
+    buf = "";
+  };
+  for (const ch of text) {
+    if (ch === R_ON || ch === R_OFF || ch === OLD_ON || ch === OLD_OFF) {
+      flush();
+      ctx.resolved = ch === R_ON ? true : ch === R_OFF ? false : ctx.resolved;
+      ctx.old = ch === OLD_ON ? true : ch === OLD_OFF ? false : ctx.old;
+    } else if (ch === CARET) {
+      flush();
+      parts.push(<span key={parts.length} className="doc-reveal-caret" />);
+    } else buf += ch;
+  }
+  flush();
+  return <span key={key}>{parts}</span>;
+}
+
+function InlineSpans({ nodes, ctx }: { nodes: Inline[]; ctx?: SpanCtx }) {
+  const c = ctx ?? { resolved: false, old: false };
   return (
     <>
       {nodes.map((n, i) => {
-        if (n.t === "bold") return <strong key={i}>{n.text}</strong>;
-        if (n.t === "italic") return <em key={i}>{n.text}</em>;
+        if (n.t === "bold")
+          return <strong key={i}>{styledText(n.text, c, 0)}</strong>;
+        if (n.t === "italic")
+          return <em key={i}>{styledText(n.text, c, 0)}</em>;
         if (n.t === "code") return <code key={i}>{n.text}</code>;
         if (n.t === "link")
           return (
@@ -45,7 +171,7 @@ function InlineSpans({ nodes }: { nodes: Inline[] }) {
               {n.text}
             </a>
           );
-        return <span key={i}>{n.text}</span>;
+        return styledText(n.text, c, i);
       })}
     </>
   );
@@ -119,10 +245,28 @@ function BlockView({ block }: { block: Block }) {
   );
 }
 
-function SectionBody({ markdown, num }: { markdown: string; num: number }) {
+function SectionBody({
+  markdown,
+  num,
+  marks,
+  reveal,
+}: {
+  markdown: string;
+  num: number;
+  marks?: ResolvedMarkerReveal[];
+  reveal?: RevealState | null;
+}) {
   const blocks = useMemo(
-    () => normalizeSectionBlocks(parseMarkdown(markdown), num),
-    [markdown, num]
+    () =>
+      normalizeSectionBlocks(
+        parseMarkdown(
+          marks?.length || reveal
+            ? decorateMarkdown(markdown, marks ?? [], reveal ?? null)
+            : markdown
+        ),
+        num
+      ),
+    [markdown, num, marks, reveal]
   );
   return (
     <>
@@ -145,6 +289,10 @@ export function DocPane({
   onJump,
   status,
   deletesAt,
+  resolvedMarks,
+  reveal,
+  showStatus,
+  showNote,
 }: {
   documents: GovernanceDoc[];
   activeDoc: string | null;
@@ -160,6 +308,14 @@ export function DocPane({
   onJump: (doc: string, section: string, focus: boolean) => void;
   status: ProjectStatus;
   deletesAt: string;
+  /** Settled resolved-marker spans: persistent cyan wash until next turn. */
+  resolvedMarks?: ResolvedMarkerReveal[];
+  /** The one resolution reveal currently playing, if any. */
+  reveal?: RevealState | null;
+  /** Progress + skip control for the reveal sequence. */
+  showStatus?: { index: number; total: number; onSkip: () => void } | null;
+  /** Honest overflow line after a capped reveal run. */
+  showNote?: string | null;
 }) {
   const doc =
     documents.find((d) => d.slug === activeDoc) ?? documents[0] ?? null;
@@ -227,6 +383,12 @@ export function DocPane({
         </p>
       )}
 
+      {showNote && (
+        <p className="mt-2 max-w-none text-xs" style={faint}>
+          {showNote}
+        </p>
+      )}
+
       {!doc && (
         <p className="mt-6 text-sm" style={dim}>
           No documents yet.
@@ -255,6 +417,12 @@ export function DocPane({
             const changed = (highlights[doc.slug] ?? []).includes(s.id);
             const asked = (asking[doc.slug] ?? []).includes(s.id);
             const planned = (placeholders[doc.slug] ?? []).includes(s.id);
+            // undefined (not an empty array) when a section has no marks:
+            // keeps SectionBody's parse memo stable for untouched sections
+            // through the reveal's re-render ticks.
+            const secMarks = (resolvedMarks ?? []).filter(
+              (m) => m.doc === doc.slug && m.section === s.id
+            );
             const cls =
               [
                 changed ? "doc-sec--changed doc-sec--flash" : "",
@@ -281,10 +449,37 @@ export function DocPane({
                     <span className="doc-chip doc-chip--plan">Planned</span>
                   )}
                 </h3>
-                <SectionBody markdown={s.markdown} num={si + 1} />
+                <SectionBody
+                  markdown={s.markdown}
+                  num={si + 1}
+                  marks={secMarks.length ? secMarks : undefined}
+                  reveal={
+                    reveal &&
+                    reveal.item.doc === doc.slug &&
+                    reveal.item.section === s.id
+                      ? reveal
+                      : null
+                  }
+                />
               </section>
             );
           })}
+        </div>
+      )}
+
+      {showStatus && (
+        <div className="doc-show-bar">
+          <span className="text-xs" style={dim}>
+            Showing resolved items · {showStatus.index + 1} of{" "}
+            {showStatus.total}
+          </span>
+          <button
+            type="button"
+            className="btn btn--text"
+            onClick={showStatus.onSkip}
+          >
+            Skip the replay
+          </button>
         </div>
       )}
 
