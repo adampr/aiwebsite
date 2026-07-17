@@ -66,6 +66,10 @@ export interface TurnJob {
   // serialized verbatim in the prompt (an elided section cannot be edited
   // by the model).
   focusSections: string[];
+  // Restyle turns only (round 16): the client asserts this batch empties its
+  // pending refs; the success write then clears reformat debt. The clear is
+  // token-fenced in db.ts, so a stale assertion cannot touch a newer sample.
+  restyleFinal?: boolean;
   // Amend turns only: index of the transcript entry being corrected.
   amendIndex?: number;
   promptId: string;
@@ -486,6 +490,14 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       changedSections: appliedChanged,
       flagged,
       answersIncrement: 0,
+      // Round 16: the run's FINAL pass clears reformat debt in the same
+      // fenced write that applies it. row is the pre-claim fetch, so this is
+      // the token the worker reformatted toward; a replacement uploaded
+      // mid-turn holds a different token and keeps its debt (CASE in db.ts).
+      clearStyleDebtToken:
+        turnKind === "restyle" && job.restyleFinal
+          ? (row.styleSampleDebt ?? null)
+          : null,
     });
     if (!wrote)
       return fail(
@@ -587,13 +599,32 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       }
       return false;
     });
-    if (!ops.length)
-      return fail(
-        "invalid_turn",
-        "Tron could not apply the format this pass. Nothing was changed; try again.",
-        502,
-        true
+    if (!ops.length) {
+      // A VALIDATED response with no applicable ops is a legitimate outcome:
+      // the batch already matches the sample (common right after a re-upload
+      // of the same document). Failing here would wedge the run: the final
+      // pass could never land, so reformat debt would never clear and the
+      // user would loop on "try again" over a matching draft (critic
+      // amendment, round 16). Land it as a no-change pass: rev bump, claim
+      // clear, and the token clear when this batch was the final one.
+      const nowIso = new Date().toISOString();
+      return finishNonAdvancing(
+        "restyle",
+        documents,
+        {},
+        false,
+        out.reviewSummary,
+        {
+          qId: "restyle",
+          bankId: null,
+          q: "Format pass",
+          a: "No format changes were needed in this batch.",
+          skipped: false,
+          askedAt: nowIso,
+          answeredAt: nowIso,
+        }
       );
+    }
     const applied = applyOps(documents, ops, kind);
     for (const [slug, secs] of Object.entries(applied.changedSections)) {
       const bd = documents.find((d) => d.slug === slug);

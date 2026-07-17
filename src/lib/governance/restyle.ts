@@ -24,6 +24,20 @@ export function restyleTargets(
   return out;
 }
 
+/** Upload-time reformat-debt rule (§5.12 round 16): a new sample creates
+ *  debt ONLY when something already drafted could mismatch it. Anything
+ *  drafted after the upload follows the new sample at draft time. */
+export function uploadCreatesDebt(
+  status: string,
+  documents: GovernanceDoc[],
+  placeholderSections: Record<string, string[]>
+): boolean {
+  return (
+    (status === "drafting" || status === "review") &&
+    restyleTargets(documents, placeholderSections).length > 0
+  );
+}
+
 /** Greedy packing by the same rewrite estimate the resolver uses: one turn
  *  re-emits every batched section in full, so a batch's inherent cost is the
  *  sum of its sections' current markdown (+200 slack each), kept 1000 chars

@@ -1,0 +1,1 @@
+ALTER TABLE "governance_projects" ADD COLUMN "style_sample_debt" text;

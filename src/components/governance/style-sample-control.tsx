@@ -14,10 +14,12 @@
 // (auto-run, queueing, announcements); this component only reports the event.
 // Without them (research screen, nothing drafted yet) it announces locally.
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   STYLE_SAMPLE_ACCEPT,
+  STYLE_SAMPLE_DEBT_NOTE,
   STYLE_SAMPLE_HELPER,
+  STYLE_SAMPLE_RESYNC_HELPER,
   styleSampleFileError,
 } from "@/lib/governance/config";
 import type { NumberingStyle } from "@/lib/governance/numbering";
@@ -54,6 +56,12 @@ const dim = { color: "var(--xl-text-dim)" } as const;
  *  queued has Skip, running has Stop; both mean "no more restyling". */
 export interface ReformatControl {
   available: boolean;
+  // Server-stored reformat debt (round 16): the sample changed since the
+  // last COMPLETE reformat run. The idle start button renders ONLY with
+  // debt: after a clean auto-run it would be a no-op with a job-sounding
+  // label. Every interrupted-run receipt that names the button fires on a
+  // path where debt stands, so the button exists whenever copy names it.
+  debt: boolean;
   busy: boolean; // a reformat run is active (covers the gaps between passes)
   stopping: boolean; // Stop pressed; the pass in flight finishes first
   queued: boolean; // auto-run waiting for the current turn to land
@@ -98,6 +106,17 @@ export function StyleSampleControl({
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const runNoteId = useId();
+  const debtNoteId = useId();
+  // Focus continuity for the debt-gated idle block (round 16): when a poll
+  // clears debt (run finished, maybe in another tab) while focus is inside
+  // the block, the unmount would drop focus to body. Track focus-inside via
+  // capture handlers; clearing on EVERY blur is what makes this sound: a
+  // removed focused element fires NO blur, so the flag survives unmount
+  // exactly when focus was inside at removal, while ordinary tab-away and
+  // page clicks (blur with any relatedTarget) clear it.
+  const focusInsideIdleRef = useRef(false);
+  const sampleStatusRef = useRef<HTMLParagraphElement | null>(null);
+  const stopBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // Designer/critic panel 2026-07-17: while a reformat is queued or running,
   // Replace and Remove stay ENABLED (a mid-run replace supersedes the run,
@@ -130,6 +149,29 @@ export function StyleSampleControl({
     setPrevInitial(initialName);
     setName(initialName);
   }
+
+  // Debt-gated idle start (round 16): the one state where pressing the
+  // button does something. No debt = the happy path renders nothing here;
+  // absence of a call to action is itself the "all done" signal.
+  const idleReformatVisible =
+    !!name &&
+    !!reformat?.available &&
+    reformat.debt &&
+    !reformat.busy &&
+    !reformat.queued &&
+    !removeOnly;
+
+  useEffect(() => {
+    if (!idleReformatVisible && focusInsideIdleRef.current) {
+      focusInsideIdleRef.current = false;
+      if (document.activeElement === document.body) {
+        // Start-click swaps the block for the busy row: land on its Stop
+        // button (the control the user now needs). Any other unmount
+        // (debt cleared by a landed run) parks on the sample status line.
+        (stopBtnRef.current ?? sampleStatusRef.current)?.focus();
+      }
+    }
+  }, [idleReformatVisible]);
 
   async function upload(file: File) {
     const precheck = styleSampleFileError(file.name, file.size);
@@ -193,8 +235,9 @@ export function StyleSampleControl({
         }}
       />
       {/* Status line and actions are separate rows: a long filename wraps on
-          its own without the buttons interleaving mid-wrap. */}
-      <p className="max-w-none" style={dim}>
+          its own without the buttons interleaving mid-wrap. tabIndex -1: the
+          debt block's focus-continuity effect parks focus here on unmount. */}
+      <p className="max-w-none" style={dim} tabIndex={-1} ref={sampleStatusRef}>
         {name ? (
           <>
             Format sample: <span className="mono break-words">{name}</span>
@@ -307,6 +350,7 @@ export function StyleSampleControl({
               guard already makes a second click a no-op. */}
           <button
             type="button"
+            ref={stopBtnRef}
             className="btn btn--text"
             aria-busy={reformat.stopping || undefined}
             onClick={reformat.onStop}
@@ -315,22 +359,42 @@ export function StyleSampleControl({
           </button>
         </div>
       )}
-      {name &&
-        reformat?.available &&
-        !reformat.busy &&
-        !reformat.queued &&
-        !removeOnly && (
-          <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1">
+      {/* Debt-gated (round 16): renders ONLY while the server says the draft
+          may predate the current sample (interrupted, stopped, or skipped
+          run; reload; another tab). A clean auto-run clears the debt and
+          this whole block with it. Same label as every receipt that names
+          the button. */}
+      {idleReformatVisible && reformat && (
+        <div
+          className="mt-2"
+          onFocusCapture={() => {
+            focusInsideIdleRef.current = true;
+          }}
+          onBlurCapture={() => {
+            focusInsideIdleRef.current = false;
+          }}
+        >
+          <p
+            id={debtNoteId}
+            data-qa="style-sample-debt-note"
+            className="max-w-none text-sm"
+            style={dim}
+          >
+            {STYLE_SAMPLE_DEBT_NOTE}
+          </p>
+          <div className="mt-1 flex flex-wrap items-baseline gap-x-6 gap-y-1">
             <button
               type="button"
               className="btn btn--text btn--stable"
               disabled={reformat.locked}
+              aria-describedby={debtNoteId}
               onClick={reformat.onStart}
             >
               Reformat the whole draft
             </button>
           </div>
-        )}
+        </div>
+      )}
       {reformat?.busy && <WorkingRow long={reformat.long} kind="restyle" />}
       {/* One faint line at a time: while a reformat is queued or running the
           run note takes the helper's slot (upload guidance is dead weight
@@ -349,6 +413,12 @@ export function StyleSampleControl({
         ) : (
           <p className="mt-1 max-w-none text-xs" style={faint}>
             {STYLE_SAMPLE_HELPER}
+            {/* Drift re-sync line (round 16): workspace instances only (a
+                reformat control exists = something can drift), and not while
+                the debt block already offers the stronger path right above. */}
+            {reformat && !idleReformatVisible
+              ? ` ${STYLE_SAMPLE_RESYNC_HELPER}`
+              : ""}
             {note ? ` ${note}` : ""}
           </p>
         ))}

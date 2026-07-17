@@ -85,6 +85,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     mode?: unknown;
     focusSections?: unknown;
     amendIndex?: unknown;
+    restyleFinal?: unknown;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -111,6 +112,11 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   const answer = typeof body.answer === "string" ? body.answer.trim() : "";
   const skipped = body.skipped === true;
   const restyle = questionId === "restyle";
+  // Round 16: the client marks the batch that empties its pending refs; the
+  // worker's success write then clears reformat debt (token-fenced in db.ts).
+  // Client-asserted and owner-only: a forged flag clears the owner's own
+  // cosmetic debt line, nothing else.
+  const restyleFinal = restyle && body.restyleFinal === true;
   const amend = questionId === "amend";
   const amendIndex =
     typeof body.amendIndex === "number" &&
@@ -309,6 +315,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     skipped,
     kind,
     focusSections,
+    ...(restyleFinal ? { restyleFinal } : {}),
     ...(amend && amendIndex !== null ? { amendIndex } : {}),
     promptId,
     attemptId,

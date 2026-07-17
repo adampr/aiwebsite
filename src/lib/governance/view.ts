@@ -215,6 +215,9 @@ export function toProjectView(row: ProjectRow): ProjectView {
           numbering: row.styleSampleText
             ? detectNumberingStyle(row.styleSampleText)
             : null,
+          // Round 16: boolean only; the debt token itself never leaves the
+          // server (it fences the run worker's clear against replacements).
+          reformatDebt: row.styleSampleDebt !== null,
         }
       : null,
     answersCount: row.answersCount,

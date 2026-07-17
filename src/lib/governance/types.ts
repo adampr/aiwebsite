@@ -290,7 +290,13 @@ export interface ProjectView {
   // numbering: the sample's detected section-numbering style (round 15b),
   // DERIVED from the stored sample text at view time, never persisted; null
   // = no clear signal, renderers keep the decimal default.
-  styleSample: { name: string; numbering: NumberingStyle | null } | null;
+  // reformatDebt (round 16): the sample changed since the last COMPLETE
+  // whole-draft reformat run; gates the idle Reformat button client-side.
+  styleSample: {
+    name: string;
+    numbering: NumberingStyle | null;
+    reformatDebt: boolean;
+  } | null;
   answersCount: number;
   deletesAt: string; // ISO — concrete date rendered everywhere
   createdAt: string;

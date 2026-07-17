@@ -138,6 +138,11 @@ export const governanceProjects = pgTable(
     // is never stored — and it deletes with the row (30-day retention).
     styleSampleName: text("style_sample_name"),
     styleSampleText: text("style_sample_text"),
+    // Reformat debt (§5.12 round 16): non-NULL = the sample changed since the
+    // last COMPLETE whole-draft reformat run. Holds the upload's nonce so the
+    // run worker's clear is fenced against a mid-run replacement (sample
+    // uploads bump no rev, so the turn fences alone cannot tell samples apart).
+    styleSampleDebt: text("style_sample_debt"),
     // In-process answer-turn claim state (§5.12 async turn). started_at set =
     // a turn is running (staleness judged against CAPS.turnStaleMs at read
     // time); started_at NULL with prompt_id set = the last turn failed and

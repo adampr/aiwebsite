@@ -22,6 +22,9 @@ import {
   normalizeDomain,
   REVIEW_FORCED_SUMMARY,
   REVIEW_REOPENED_SUMMARY,
+  STYLE_SAMPLE_DEBT_NOTE,
+  STYLE_SAMPLE_HELPER,
+  STYLE_SAMPLE_RESYNC_HELPER,
   withOpenItemsNote,
 } from "../src/lib/governance/config";
 import { readmeText } from "../src/lib/governance/docx";
@@ -53,6 +56,7 @@ import {
   packRestyleBatches,
   restyleTargets,
   textContentKey,
+  uploadCreatesDebt,
 } from "../src/lib/governance/restyle";
 import {
   diffResolvedMarkers,
@@ -64,7 +68,7 @@ import {
   SHOW_TICK_MS,
 } from "../src/lib/governance/resolved-anim";
 import { staleBundleSignal } from "../src/lib/governance/build-id";
-import { composeCompanySnapshot, deriveTurnState } from "../src/lib/governance/view";
+import { composeCompanySnapshot, deriveTurnState, toProjectView } from "../src/lib/governance/view";
 import {
   countConfirmMarkers,
   findConfirmMarkers,
@@ -2797,6 +2801,112 @@ function check(name: string, cond: boolean): void {
           scaffoldClean = false;
   check("promote: no blueprint scaffold line promotes", scaffoldClean);
 }
+
+/* 22. Reformat debt (2026-07-17 round 16): the idle "Reformat the whole
+ *     draft" button is server-gated on debt = the sample changed since the
+ *     last COMPLETE reformat run. Upload creates debt only when something
+ *     drafted could mismatch; the view exposes a boolean, never the token. */
+{
+  const drafted = (md: string): GovernanceDoc[] => [
+    {
+      slug: "usage-policy",
+      title: "AI Usage Policy",
+      stub: false,
+      sections: [{ id: "purpose", title: "Purpose", markdown: md }],
+    },
+  ];
+  const docs = drafted("Real drafted text about acceptable AI use.");
+  check(
+    "debt: drafting with a drafted section creates debt",
+    uploadCreatesDebt("drafting", docs, {}) === true
+  );
+  check(
+    "debt: review with a drafted section creates debt",
+    uploadCreatesDebt("review", docs, {}) === true
+  );
+  check(
+    "debt: placeholder-only drafts create none (scaffold never restyles)",
+    uploadCreatesDebt("drafting", docs, { "usage-policy": ["purpose"] }) ===
+      false
+  );
+  check(
+    "debt: stub docs create none",
+    uploadCreatesDebt(
+      "drafting",
+      [{ ...docs[0], stub: true }],
+      {}
+    ) === false
+  );
+  check(
+    "debt: pre-drafting and final statuses create none",
+    (["created", "researching", "queued", "done"] as const).every(
+      (s) => uploadCreatesDebt(s, docs, {}) === false
+    )
+  );
+
+  const rowFor = (over: Record<string, unknown>) =>
+    ({
+      id: "11111111-1111-4111-8111-111111111111",
+      userId: "u1",
+      kind: "usage_policy",
+      domain: "example.com",
+      status: "drafting",
+      rev: 3,
+      researchJson: null,
+      researchProgressJson: null,
+      researchAuditJson: null,
+      documentsJson: JSON.stringify(docs),
+      transcriptJson: "[]",
+      coveredBankIdsJson: "[]",
+      nextQuestionJson: null,
+      reviewSummary: null,
+      changedSectionsJson: null,
+      styleSampleName: "acme-policy.docx",
+      styleSampleText: null,
+      styleSampleDebt: null,
+      openItemGuessesJson: null,
+      turnPromptId: null,
+      turnAttemptId: null,
+      turnStartedAt: null,
+      turnJson: null,
+      answersCount: 0,
+      researchFlagged: false,
+      acknowledgedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastActivityAt: new Date(),
+      ...over,
+    }) as unknown as Parameters<typeof toProjectView>[0];
+  const withDebt = toProjectView(rowFor({ styleSampleDebt: "govd_x_y" }));
+  check(
+    "debt: view derives reformatDebt true from a stored token",
+    withDebt.styleSample?.reformatDebt === true
+  );
+  check(
+    "debt: the token itself never rides the view",
+    !JSON.stringify(withDebt).includes("govd_x_y")
+  );
+  check(
+    "debt: NULL column derives reformatDebt false",
+    toProjectView(rowFor({})).styleSample?.reformatDebt === false
+  );
+  check(
+    "debt: a stray token without a sample derives styleSample null",
+    toProjectView(
+      rowFor({ styleSampleName: null, styleSampleDebt: "govd_x_y" })
+    ).styleSample === null
+  );
+
+  check(
+    "debt: status-line copy stays hedged (the client cannot diff formatting)",
+    STYLE_SAMPLE_DEBT_NOTE.includes("may") &&
+      !/certain|definitely|does not match/i.test(STYLE_SAMPLE_DEBT_NOTE)
+  );
+  check(
+    "debt: resync line stays out of the shared helper (create panel has no draft)",
+    !STYLE_SAMPLE_HELPER.includes(STYLE_SAMPLE_RESYNC_HELPER) &&
+      STYLE_SAMPLE_RESYNC_HELPER.includes("upload it again")
+  );}
 
 if (failures) {
   console.error(`\n${failures} failure(s)`);

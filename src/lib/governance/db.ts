@@ -146,13 +146,18 @@ export async function touchActivity(id: string): Promise<void> {
 }
 
 /** Set (or replace) the uploaded sample policy. Owner + retention bound into
- * the WHERE; final projects are locked. An upload is user activity. */
+ * the WHERE; final projects are locked. An upload is user activity.
+ * debtToken (round 16): the reformat-debt nonce for this upload, or null
+ * when nothing drafted could mismatch it. Always overwritten: an upload with
+ * nothing drafted clears stale debt (future sections follow the new sample
+ * at draft time). */
 export async function setStyleSample(opts: {
   userId: string;
   id: string;
   name: string;
   text: string;
   flagged: boolean;
+  debtToken: string | null;
 }): Promise<boolean> {
   if (!isUuid(opts.id)) return false;
   const rows = await db
@@ -160,6 +165,7 @@ export async function setStyleSample(opts: {
     .set({
       styleSampleName: opts.name,
       styleSampleText: opts.text,
+      styleSampleDebt: opts.debtToken,
       researchFlagged: sql`research_flagged OR ${opts.flagged}`,
       lastActivityAt: sql`now()`,
       updatedAt: sql`now()`,
@@ -189,6 +195,9 @@ export async function clearStyleSample(
     .set({
       styleSampleName: null,
       styleSampleText: null,
+      // No sample, nothing to match: removal always clears reformat debt
+      // (works in done too, so a remove-then-reopen never resurrects it).
+      styleSampleDebt: null,
       updatedAt: sql`now()`,
     })
     .where(and(eq(P.id, id), eq(P.userId, userId)))
@@ -540,6 +549,11 @@ export async function applyTurnWrite(opts: {
   changedSections: Record<string, string[]>;
   flagged: boolean;
   answersIncrement: number;
+  // Round 16: non-null on a restyle run's FINAL pass. The clear is fenced by
+  // token equality, not just the turn fences: sample uploads bump no rev, so
+  // a replacement landing mid-run must keep ITS debt while the old run's
+  // final pass lands.
+  clearStyleDebtToken?: string | null;
 }): Promise<boolean> {
   const documentsJson = JSON.stringify(opts.documents);
   const transcriptJson = JSON.stringify(opts.transcript);
@@ -563,6 +577,11 @@ export async function applyTurnWrite(opts: {
       changedSectionsJson: JSON.stringify(opts.changedSections),
       answersCount: sql`answers_count + ${opts.answersIncrement}`,
       researchFlagged: sql`research_flagged OR ${opts.flagged}`,
+      ...(opts.clearStyleDebtToken
+        ? {
+            styleSampleDebt: sql`CASE WHEN style_sample_debt = ${opts.clearStyleDebtToken} THEN NULL ELSE style_sample_debt END`,
+          }
+        : {}),
       // Success clears the whole turn record in the same write.
       turnPromptId: null,
       turnAttemptId: null,

@@ -187,6 +187,11 @@ export function Workspace({ projectId }: { projectId: string }) {
     // Latched Stop: the pass in flight finishes (its result is kept), then
     // the run ends with the stopped receipt instead of chaining.
     stopRequested: boolean;
+    // Round 16: the batch in flight was dispatched with restyleFinal (it
+    // emptied pendingRefs), so its landing means the server cleared reformat
+    // debt. A Stop pressed during that pass must report completion, not
+    // instruct the user to press a debt-gated button that no longer renders.
+    finalDispatched: boolean;
   } | null>(null);
   // Auto-reformat queued behind a busy workspace (upload while a turn is in
   // flight, or a replacement upload mid-run): handleView fires it as soon as
@@ -1562,6 +1567,9 @@ export function Workspace({ projectId }: { projectId: string }) {
     focusSections?: string[];
     // Restyle pass (§5.12 format pass): empty answer, batch in focusSections.
     restyle?: boolean;
+    // Round 16: this batch empties the run's pending refs; the server clears
+    // reformat debt on its success write (token-fenced).
+    restyleFinal?: boolean;
     // Amend (§5.12): correct the transcript entry at this index.
     amendIndex?: number;
     amendAnswer?: string;
@@ -1670,6 +1678,7 @@ export function Workspace({ projectId }: { projectId: string }) {
           focusSections: opts.focusSections?.length
             ? opts.focusSections
             : undefined,
+          restyleFinal: opts.restyleFinal || undefined,
           amendIndex: opts.amendIndex,
         }),
       }
@@ -1827,7 +1836,9 @@ export function Workspace({ projectId }: { projectId: string }) {
       totalEstimate: batches.length,
       baseline,
       stopRequested: false,
+      finalDispatched: false,
     };
+    run.finalDispatched = run.pendingRefs.length === 0;
     restyleRunRef.current = run;
     setRestyleActive(true);
     setRestyleStopping(false);
@@ -1850,7 +1861,12 @@ export function Workspace({ projectId }: { projectId: string }) {
         : `Applying the format sample to ${scope}. Each pass uses one drafting call.`
     );
     armRestyleWatchdog(run);
-    void submitTurn({ skipped: false, restyle: true, focusSections: batches[0] });
+    void submitTurn({
+      skipped: false,
+      restyle: true,
+      focusSections: batches[0],
+      restyleFinal: run.finalDispatched,
+    });
     // submitTurn's sync prologue sets inFlightRef before its first await;
     // if it bailed instead, abort so the run can't hang holding the ref.
     if (!inFlightRef.current) abortRestyleRun();
@@ -1998,18 +2014,26 @@ export function Workspace({ projectId }: { projectId: string }) {
       for (const sid of secs) run.changedRefs.add(`${slug}#${sid}`);
     if (run.stopRequested) {
       // Latched Stop honored at the pass boundary: union highlights for
-      // what did land, then the stopped receipt.
-      finishRestyleRun(next, run, { stopped: true });
+      // what did land, then the stopped receipt. EXCEPT when the pass that
+      // just landed was the FINAL one: that run completed (the server
+      // cleared reformat debt in the same write), so the receipt must
+      // report completion, never point at a button that no longer renders.
+      finishRestyleRun(next, run, run.finalDispatched ? undefined : { stopped: true });
       return;
     }
     // Re-derive what is still safely restylable from the FRESH view: a
     // concurrent tab may have changed, removed, or re-scaffolded sections.
+    const hadPending = run.pendingRefs.length > 0;
     const stillValid = new Set(
       restyleTargets(next.documents, next.placeholderSections ?? {})
     );
     run.pendingRefs = run.pendingRefs.filter((r) => stillValid.has(r));
     if (!run.pendingRefs.length) {
-      finishRestyleRun(next, run);
+      // hadPending = the remaining refs vanished under a concurrent change,
+      // so the final pass was never dispatched and debt was NOT cleared. The
+      // receipt must not claim completion (critic amendment): stale debt is
+      // the safe direction, a false all-clear is not.
+      finishRestyleRun(next, run, hadPending ? { shrunk: true } : undefined);
       return;
     }
     if (next.turn?.phase === "running") {
@@ -2020,6 +2044,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     const batches = packRestyleBatches(next.documents, run.pendingRefs);
     const batch = batches[0];
     run.pendingRefs = run.pendingRefs.filter((r) => !batch.includes(r));
+    run.finalDispatched = run.pendingRefs.length === 0;
     run.pass += 1;
     const total = Math.max(run.totalEstimate, run.pass);
     setRestylePassNote(`Pass ${run.pass} of about ${total}.`);
@@ -2031,7 +2056,12 @@ export function Workspace({ projectId }: { projectId: string }) {
         return;
       }
       armRestyleWatchdog(run);
-      void submitTurn({ skipped: false, restyle: true, focusSections: batch });
+      void submitTurn({
+        skipped: false,
+        restyle: true,
+        focusSections: batch,
+        restyleFinal: run.finalDispatched,
+      });
       // submitTurn's sync prologue sets inFlightRef before its first await;
       // if it bailed instead, abort so the run can't hang holding the ref.
       if (!inFlightRef.current) abortRestyleRun();
@@ -2044,7 +2074,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       changedRefs: Set<string>;
       baseline: Map<string, string>;
     },
-    opts?: { stopped?: boolean }
+    opts?: { stopped?: boolean; shrunk?: boolean }
   ) {
     resetRestyleRunState();
     const changed = [...run.changedRefs];
@@ -2084,6 +2114,14 @@ export function Workspace({ projectId }: { projectId: string }) {
     if (opts?.stopped) {
       setAnnounce(
         "Reformatting stopped. What is done so far is kept; press Reformat the whole draft again to finish."
+      );
+      return;
+    }
+    if (opts?.shrunk) {
+      // The remaining targets vanished under a concurrent change before the
+      // final pass could run; debt stands, so the named button renders.
+      setAnnounce(
+        "Some sections changed while I was reformatting, so I stopped there. What is done so far is kept; press Reformat the whole draft to finish."
       );
       return;
     }
@@ -2607,6 +2645,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                       view.documents,
                       view.placeholderSections ?? {}
                     ).length > 0,
+                  debt: view.styleSample?.reformatDebt === true,
                   busy: restyleActive,
                   stopping: restyleStopping,
                   queued: restyleQueued,

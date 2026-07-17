@@ -5,6 +5,8 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+import { placeholderSectionMap } from "@/lib/governance/blueprints";
+import { newId } from "@/lib/governance/brain";
 import {
   governanceEnabled,
   STYLE_SAMPLE_TYPES_COPY,
@@ -18,10 +20,12 @@ import {
 import { govError, NOT_FOUND, okJson, rateLimit, requireUser } from "@/lib/governance/http";
 import { detectNumberingStyle } from "@/lib/governance/numbering";
 import { screenInjection } from "@/lib/governance/research";
+import { uploadCreatesDebt } from "@/lib/governance/restyle";
 import {
   extractStyleSampleText,
   sanitizeSampleName,
 } from "@/lib/governance/style-sample";
+import type { GovernanceDoc, GovernanceKind } from "@/lib/governance/types";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -89,12 +93,31 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     console.warn(
       `[governance] style-sample: no numbering style detected (${name}, ${clean.length} chars)`
     );
+  // Reformat debt (round 16): a fresh nonce when something already drafted
+  // could mismatch this sample; the auto-run's final pass clears exactly this
+  // token. Known micro-race, accepted: a turn in flight drafted against the
+  // OLD sample and this drafted-ness check read the pre-turn row; worst case
+  // a few sections drift undetected and the next upload self-heals.
+  let docs: GovernanceDoc[] = [];
+  try {
+    docs = JSON.parse(row.documentsJson) as GovernanceDoc[];
+  } catch {
+    docs = [];
+  }
+  const debtToken = uploadCreatesDebt(
+    row.status,
+    docs,
+    placeholderSectionMap(row.kind as GovernanceKind, docs)
+  )
+    ? newId("govd")
+    : null;
   const wrote = await setStyleSample({
     userId: user.userId,
     id,
     name,
     text: clean,
     flagged: hits.length > 0,
+    debtToken,
   });
   if (!wrote) return NOT_FOUND();
   return okJson({ styleSample: { name } });

@@ -112,6 +112,18 @@ export const STYLE_SAMPLE_TYPES_COPY = ".docx, .pdf, .md, or .txt";
 export const STYLE_SAMPLE_HELPER =
   `Optional. Upload a policy your organization has the right to share (${STYLE_SAMPLE_TYPES_COPY}). The draft follows its heading and list style, and section numbering is applied automatically; Tron is instructed not to reuse the policy's content. Only the extracted text is kept: it is sent to our AI providers with each drafting turn and is deleted with the project.`;
 
+/** Reformat-debt status line (§5.12 round 16): shown ONLY while the server
+ * says the draft may predate the current sample. Hedged on purpose: the
+ * client cannot diff formatting, so this line never claims certainty. */
+export const STYLE_SAMPLE_DEBT_NOTE =
+  "Part of the draft may not match the sample yet.";
+
+/** Drift re-sync line appended to the workspace control's helper (never the
+ * create panel or research screen: nothing is drafted there). Replace always
+ * auto-reformats, so re-upload is the guaranteed manual re-sync path. */
+export const STYLE_SAMPLE_RESYNC_HELPER =
+  "If the draft ever stops matching the sample, upload it again and I will reformat everything to match.";
+
 /** Client-side precheck for a sample file; returns the error copy or null. */
 export function styleSampleFileError(name: string, size: number): string | null {
   const lower = name.toLowerCase();
