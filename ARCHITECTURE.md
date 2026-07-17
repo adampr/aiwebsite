@@ -1089,12 +1089,17 @@ untouched). When the flight-owning tab's turn resolves markers,
 `diffResolvedMarkers` (`src/lib/governance/resolved-anim.ts`) diffs pre- vs
 post-turn documents per changed section — a marker counts as resolved ONLY when its
 excerpt count dropped in the committed text; the replacement is a verbatim slice
-located between the marker's own line-bounded context anchors (ambiguous/missing
-anchors, cross-line spans, >300 chars, or marker-bearing slices yield NO reveal,
-never a guess; ≤20 items). The doc pane then plays the reveal (owner request;
+located between the marker's own line-bounded context anchors; when exact anchors
+miss — the common case: the model REWRITES the sentence while folding the fact in —
+a tier-2 fallback reveals the whole committed line that replaced the marker's line
+(token-overlap >=34% against >=3 old-line tokens; table rows, marker-bearing lines,
+and >360-char lines excluded; same-line resolutions dedupe to one reveal). Ambiguity
+still yields NO reveal, never a guess; ≤20 items. The doc pane then plays the reveal (owner request;
 re-paced 2026-07-17 round 13b "display it slower"): per item, auto-scroll
 (pane-container-scoped, 420 ms; 60 ms same-section) → old marker struck out (900 ms
-over a 700 ms CSS fade; the 200 ms rest is reading time — change together) →
+over a 700 ms CSS fade; the 200 ms rest is reading time — change together; 120 ms in,
+the pane CENTERS the struck marker itself — the section jump only reaches the section
+top, and a long section played the whole show below the fold, owner report) →
 replacement RE-WRITTEN over committed text at ~30 ms/char (60 ms ticks,
 ticks = clamp(ceil(len/2), 20, 60), closed-form chars so short texts spend the full
 1.2 s floor in 1-2 char steps; 3.6 s ceiling; sentinel-injected private-use chars

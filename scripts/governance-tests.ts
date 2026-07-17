@@ -1611,8 +1611,33 @@ function check(name: string, cond: boolean): void {
     { [slug]: ["scope"] }
   );
   check(
-    "reveal: a full rewrite (anchors gone) yields no reveal, never a guess",
+    "reveal: a full rewrite with no token overlap yields no reveal, never a guess",
     rewritten.length === 0
+  );
+  // Tier-2 line fallback (owner report 2026-07-17: the model usually
+  // REWRITES the sentence while folding the fact in, so exact anchors miss
+  // and the first shipped reveal never played).
+  const rewordedLineDocs = mkDocs(
+    "Chat logs are kept for 30 days per the IT standard and then purged."
+  );
+  const lineReveal = diffResolvedMarkers(prevDocs, rewordedLineDocs, {
+    [slug]: ["scope"],
+  });
+  check(
+    "reveal: a reworded sentence falls back to revealing the whole line",
+    lineReveal.length === 1 &&
+      rewordedLineDocs[0].sections[0].markdown.slice(
+        lineReveal[0].nextStart,
+        lineReveal[0].nextEnd
+      ) ===
+        "Chat logs are kept for 30 days per the IT standard and then purged."
+  );
+  const tableDocs = mkDocs(
+    "| Area | Rule |\n| --- | --- |\n| Logs | We keep logs 30 days then purge them per the standard |"
+  );
+  check(
+    "reveal: table rows never type partially (fallback skips them)",
+    diffResolvedMarkers(prevDocs, tableDocs, { [slug]: ["scope"] }).length === 0
   );
   check(
     "reveal: untouched sections are ignored",

@@ -89,8 +89,28 @@ export function diffResolvedMarkers(
         const { ls, le } = lineBounds(prevMd, m.start, m.end);
         const tail = tailAnchor(prevMd.slice(ls, m.start));
         const head = headAnchor(prevMd.slice(m.end, le));
-        const reveal = anchorReplacement(nextMd, tail, head);
+        // Tier 1: exact context anchors (the fact was folded in place).
+        // Tier 2: the model REWROTE the sentence while folding the fact in
+        // (the common case in practice, and why the first shipped reveal
+        // often never played): find the committed line that replaced the
+        // marker's line by token overlap and reveal that WHOLE line. Still
+        // a verbatim slice of committed text, never a guess.
+        const reveal =
+          anchorReplacement(nextMd, tail, head) ??
+          lineFallback(prevMd, nextMd, m.start, m.end);
         if (!reveal) continue;
+        // Dedupe: two markers resolved on the same line fall back to the
+        // same span; reveal it once.
+        if (
+          out.some(
+            (r) =>
+              r.doc === slug &&
+              r.section === sid &&
+              r.nextStart === reveal.start &&
+              r.nextEnd === reveal.end
+          )
+        )
+          continue;
         out.push({
           doc: slug,
           section: sid,
@@ -134,4 +154,57 @@ function anchorReplacement(
   if (slice.includes("\n")) return null; // cross-line: not an inline reveal
   if (countConfirmMarkers(slice) > 0) return null; // reworded marker inside
   return { start, end };
+}
+
+const LINE_MAX = 360;
+const LINE_MIN_SIMILARITY = 0.34;
+
+/** Meaningful tokens of a line: lowercased words of >=3 chars. */
+function tokenSet(s: string): Set<string> {
+  return new Set((s.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).values());
+}
+
+/**
+ * Tier-2 reveal: the committed line that replaced the marker's line, found
+ * by token overlap against the OLD line's non-marker text. Guards: at least
+ * 3 old tokens to compare against (else everything matches), >=34% overlap,
+ * candidate is a plain prose/list line (table rows are excluded: a
+ * partially typed row renders as a broken paragraph mid-reveal), carries no
+ * marker, and is 8..360 chars. The reveal strips a leading list/heading
+ * marker so structure never types itself.
+ */
+function lineFallback(
+  prevMd: string,
+  nextMd: string,
+  markerStart: number,
+  markerEnd: number
+): { start: number; end: number } | null {
+  const { ls, le } = lineBounds(prevMd, markerStart, markerEnd);
+  const oldTokens = tokenSet(
+    prevMd.slice(ls, markerStart) + " " + prevMd.slice(markerEnd, le)
+  );
+  if (oldTokens.size < 3) return null;
+  let best: { start: number; end: number; score: number } | null = null;
+  let offset = 0;
+  for (const line of nextMd.split("\n")) {
+    const start = offset;
+    offset += line.length + 1;
+    const trimmed = line.trim();
+    if (trimmed.length < 8 || line.length > LINE_MAX) continue;
+    if (trimmed.startsWith("|")) continue; // table row: no partial typing
+    if (countConfirmMarkers(line) > 0) continue;
+    const tokens = tokenSet(line);
+    let overlap = 0;
+    for (const t of oldTokens) if (tokens.has(t)) overlap += 1;
+    const score = overlap / oldTokens.size;
+    if (score >= LINE_MIN_SIMILARITY && (!best || score > best.score)) {
+      const lead = /^(\s*(?:#{1,4}|[-*]|\d{1,3}[.)])\s+)/.exec(line);
+      best = {
+        start: start + (lead ? lead[1].length : 0),
+        end: start + line.length,
+        score,
+      };
+    }
+  }
+  return best ? { start: best.start, end: best.end } : null;
 }

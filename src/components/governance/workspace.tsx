@@ -658,7 +658,31 @@ export function Workspace({ projectId }: { projectId: string }) {
       // CSS xl-resolve-out 700ms fade: the 200ms rest at settled opacity is
       // reading time (change the two numbers together, see globals.css).
       setReveal({ item, mode: "old", chars: 0 });
-      later(900, () => {
+      // The section jump only reaches the section TOP; in a long section
+      // the rewrite site can sit below the fold and the whole show plays
+      // off screen (owner report 2026-07-17). Once the struck marker is in
+      // the DOM, center IT: the doc pane's own container on desktop, the
+      // window on mobile.
+      later(120, () => {
+        const el = document.querySelector<HTMLElement>(".doc-resolve-old");
+        if (el) {
+          const pane = isDesktopRef.current
+            ? el.closest<HTMLElement>(".docpane")
+            : null;
+          if (pane) {
+            const top =
+              pane.scrollTop +
+              el.getBoundingClientRect().top -
+              pane.getBoundingClientRect().top -
+              pane.clientHeight * 0.4;
+            pane.scrollTo({ top: Math.max(top, 0), behavior: "smooth" });
+          } else {
+            el.scrollIntoView({ block: "center", behavior: "smooth" });
+          }
+        }
+        later(780, () => beat3());
+      });
+      const beat3 = () => {
         // Beat 3: the replacement re-writes itself over the marker at
         // ~30ms/char (closed-form chars so short texts still spend the
         // full floor in 1-2 char steps instead of finishing early).
@@ -697,7 +721,7 @@ export function Workspace({ projectId }: { projectId: string }) {
             });
         };
         tick();
-      });
+      };
     });
     // estimateItemMs/typingTicks are stable module-style helpers.
      
