@@ -39,6 +39,69 @@ const MAX_REVEALS = 20;
 const ANCHOR_MAX = 40;
 const SLICE_MAX = 300;
 
+/* ------------------------------------------------------------------ *
+ * Show planning (§5.12): pure so governance-tests can pin the budget
+ * math. The runner in workspace.tsx plays exactly these beats; the
+ * estimate MUST mirror them (the trim's honesty depends on it).
+ * ------------------------------------------------------------------ */
+
+export const MAX_SHOW_ITEMS = 5;
+export const SHOW_BUDGET_MS = 15_000;
+export const SHOW_TICK_MS = 60;
+
+export function typingTicks(len: number): number {
+  return Math.min(60, Math.max(20, Math.ceil(len / 2)));
+}
+
+/** Reduced-motion rest after the instant swap: length-scaled so a long
+ *  insert the user never watched type still gets orientation time. */
+export function reducedRestMs(len: number): number {
+  return Math.min(3200, Math.max(1600, len * 12));
+}
+
+/** Honest per-item time estimate with the REAL beats that will play
+ *  (same-section items skip the jump; deletion items skip typing). */
+export function estimateItemMs(
+  item: ResolvedMarkerReveal,
+  prev: ResolvedMarkerReveal | null,
+  reduce: boolean
+): number {
+  const sameSection =
+    !!prev && prev.doc === item.doc && prev.section === item.section;
+  const len = item.nextEnd - item.nextStart;
+  if (reduce) {
+    // One centered auto scroll inside the 1100ms strike beat; instant
+    // swap; length-scaled rest. Deletions rest 1000ms (the strike showed
+    // the removal).
+    return 1100 + (len === 0 ? 1000 : reducedRestMs(len));
+  }
+  return (
+    (sameSection ? 60 : 420) +
+    900 +
+    (len === 0 ? 0 : typingTicks(len) * SHOW_TICK_MS) +
+    1000
+  );
+}
+
+/** Trim the diffed items to the time budget and item cap, always playing
+ *  at least one. Semantics pinned by tests: the cap check runs BEFORE the
+ *  budget check, and the first item is budget-exempt. */
+export function planShow(
+  items: ResolvedMarkerReveal[],
+  reduce: boolean
+): ResolvedMarkerReveal[] {
+  const played: ResolvedMarkerReveal[] = [];
+  let est = 0;
+  for (const it of items) {
+    const cost = estimateItemMs(it, played[played.length - 1] ?? null, reduce);
+    if (played.length >= MAX_SHOW_ITEMS) break;
+    if (played.length > 0 && est + cost > SHOW_BUDGET_MS) break;
+    played.push(it);
+    est += cost;
+  }
+  return played;
+}
+
 function lineBounds(md: string, start: number, end: number) {
   const ls = md.lastIndexOf("\n", start - 1) + 1;
   const leRaw = md.indexOf("\n", end);

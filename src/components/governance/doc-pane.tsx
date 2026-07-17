@@ -43,8 +43,10 @@ export interface RevealState {
   item: ResolvedMarkerReveal;
   // "hold" = typing finished, the 1 s rest with a BLINKING caret (the
   // strongest just-live-edited cue); typing itself shows a steady caret
-  // (a moving caret does not blink).
-  mode: "old" | "typing" | "hold";
+  // (a moving caret does not blink). "swap" = the reduced-motion variant:
+  // full replacement at once, NO caret (a solid bar beside settled text
+  // reads as an artifact when nothing typed).
+  mode: "old" | "typing" | "hold" | "swap";
   chars: number; // typing: how much of the replacement is shown
 }
 
@@ -97,7 +99,9 @@ function decorateMarkdown(
           ? OLD_ON + item.oldMarkerText + OLD_OFF
           : mode === "typing"
             ? R_ON + full.slice(0, chars) + (full ? CARET_STEADY : "") + R_OFF
-            : R_ON + full + (full ? CARET : "") + R_OFF,
+            : mode === "swap"
+              ? R_ON + full + R_OFF
+              : R_ON + full + (full ? CARET : "") + R_OFF,
     });
   }
   edits.sort((a, b) => b.start - a.start);

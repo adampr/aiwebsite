@@ -45,7 +45,15 @@ import {
   restyleTargets,
   textContentKey,
 } from "../src/lib/governance/restyle";
-import { diffResolvedMarkers } from "../src/lib/governance/resolved-anim";
+import {
+  diffResolvedMarkers,
+  estimateItemMs,
+  planShow,
+  reducedRestMs,
+  typingTicks,
+  SHOW_TICK_MS,
+} from "../src/lib/governance/resolved-anim";
+import { staleBundleSignal } from "../src/lib/governance/build-id";
 import { composeCompanySnapshot, deriveTurnState } from "../src/lib/governance/view";
 import {
   countConfirmMarkers,
@@ -133,6 +141,7 @@ function check(name: string, cond: boolean): void {
     "src/lib/governance/interview.ts",
     "src/lib/governance/restyle.ts",
     "src/lib/governance/resolved-anim.ts",
+    "src/lib/governance/build-id.ts",
     "src/components/governance/style-sample-control.tsx",
     "src/components/governance/research-screen.tsx",
     "src/components/governance/question-pane.tsx",
@@ -2211,6 +2220,85 @@ function check(name: string, cond: boolean): void {
       forcedReviewSoon: false,
       styleSample: { name: "s.docx", text: "# I. A\n# II. B\n# III. C" },
     }).includes("adopts the sample's numbering style automatically")
+  );
+}
+
+/* 21. Reveal-show planning + stale-bundle signal (2026-07-17 round 3: the
+ *     show must reach reduced-motion users, and a long-lived tab must learn
+ *     a newer bundle shipped). */
+{
+  const mk = (
+    doc: string,
+    section: string,
+    len: number
+  ): import("../src/lib/governance/resolved-anim").ResolvedMarkerReveal => ({
+    doc,
+    section,
+    excerpt: "x",
+    oldMarkerText: "[TO CONFIRM: x]",
+    nextStart: 0,
+    nextEnd: len,
+  });
+  const five = [
+    mk("d", "a", 300),
+    mk("d", "a", 300),
+    mk("d", "b", 300),
+    mk("d", "c", 300),
+    mk("d", "e", 300),
+  ];
+  const defPlan = planShow(five, false);
+  const redPlan = planShow(five, true);
+  check(
+    "planShow: default budget math unchanged (300-char items: 2 fit in 15s)",    defPlan.length === 2
+  );
+  check(
+    "planShow: reduce fits MORE items in the same budget (cheaper beats)",
+    redPlan.length >= defPlan.length
+  );
+  check(
+    "planShow: never zero items (first item is budget-exempt)",
+    planShow([mk("d", "a", 300)], false).length === 1 &&
+      planShow([mk("d", "a", 300)], true).length === 1
+  );
+  check(
+    "planShow: estimates mirror the real beats per variant",
+    estimateItemMs(mk("d", "a", 0), null, false) === 420 + 900 + 0 + 1000 &&
+      estimateItemMs(mk("d", "a", 100), mk("d", "a", 5), false) ===
+        60 + 900 + typingTicks(100) * SHOW_TICK_MS + 1000 &&
+      estimateItemMs(mk("d", "a", 100), null, true) ===
+        1100 + reducedRestMs(100) &&
+      estimateItemMs(mk("d", "a", 0), null, true) === 1100 + 1000
+  );
+  check(
+    "planShow: reduced rest scales with length inside its clamps",
+    reducedRestMs(10) === 1600 &&
+      reducedRestMs(200) === 2400 &&
+      reducedRestMs(300) === 3200
+  );
+
+  check(
+    "stale: equal ids never fire",
+    !staleBundleSignal("1000", "1000", 99)
+  );
+  check(
+    "stale: an OLDER server (draining pm2 worker) never fires",
+    !staleBundleSignal("2000", "1000", 99)
+  );
+  check(
+    "stale: newer server inside the deploy window needs 2 consecutive",
+    !staleBundleSignal("1000", "1030", 1) &&
+      staleBundleSignal("1000", "1030", 2)
+  );
+  check(
+    "stale: newer server past 120s fires on the first sighting",
+    staleBundleSignal("1000", "1121", 1)
+  );
+  check(
+    "stale: non-numeric, empty, or absent ids disable detection",
+    !staleBundleSignal("", "1000", 9) &&
+      !staleBundleSignal("1000", "", 9) &&
+      !staleBundleSignal("abc", "1000", 9) &&
+      !staleBundleSignal("1000", undefined, 9)
   );
 }
 

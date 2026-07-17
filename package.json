@@ -6,7 +6,7 @@
   "scripts": {
     "prepare": "git config core.hooksPath scripts/git-hooks || true",
     "dev": "next dev",
-    "build": "next build",
+    "build": "NEXT_PUBLIC_BUILD_ID=$(date +%s) next build",
     "start": "next start",
     "lint": "eslint .",
     "db:generate": "drizzle-kit generate",

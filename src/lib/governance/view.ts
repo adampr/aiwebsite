@@ -18,6 +18,7 @@ import type {
   TurnState,
 } from "./types";
 import { bankById, placeholderSectionMap } from "./blueprints";
+import { BUILD_ID } from "./build-id";
 import { CAPS, governanceEnabled } from "./config";
 import { countConfirmMarkers, scanConfirmMarkers } from "./markdown";
 import { detectNumberingStyle } from "./numbering";
@@ -222,6 +223,7 @@ export function toProjectView(row: ProjectRow): ProjectView {
     reclaimable: isReclaimable(row),
     turn: deriveTurnState(row, Date.now()),
     featureDisabled: !governanceEnabled(process.env),
+    serverBuildId: BUILD_ID,
   };
 }
 

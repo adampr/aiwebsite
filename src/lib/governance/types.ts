@@ -296,6 +296,9 @@ export interface ProjectView {
   // read-only (GETs never mutate); the next POST /answer claim reaps.
   turn: TurnState | null;
   featureDisabled: boolean; // GOVERNANCE_ENABLED=0: reads still work
+  // Deploy-stamped build epoch (build-id.ts): lets a long-lived tab learn a
+  // newer bundle shipped. Absent = no signal (dev, or a pre-feature server).
+  serverBuildId?: string;
 }
 
 export interface ProjectSummary {

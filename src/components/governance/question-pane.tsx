@@ -463,6 +463,8 @@ export function QuestionPane({
   workingLong,
   brainDown,
   chaseBridge,
+  pendingShowReady,
+  onShowPending,
   restyleActive,
   restyleStopping,
   onStopRestyle,
@@ -497,6 +499,10 @@ export function QuestionPane({
   workingLong: boolean;
   brainDown: boolean;
   chaseBridge: boolean;
+  // A resolution show is parked for the CURRENT rev behind the mobile
+  // Draft tab; the button plays it (user intent, so it may switch tabs).
+  pendingShowReady: boolean;
+  onShowPending: () => void;
   // A reformat run holds the lock across the gaps between its passes
   // (`working` briefly drops there); the pause note carries its own Stop so
   // the exit lives where the lock is felt (§5.12 auto-reformat).
@@ -637,6 +643,22 @@ export function QuestionPane({
               My planned questions are done; the ones from here clear the open{" "}
               <mark className="doc-confirm">[TO CONFIRM]</mark> items in the
               draft, so this count is open items, not questions.
+            </p>
+          )}
+          {/* A resolution show parked behind the mobile Draft tab: the
+              narrowed-window user lives HERE, so this line is the only way
+              they learn the show exists. Counter-free copy on purpose: the
+              live-region receipt owns the numbers. */}
+          {pendingShowReady && (
+            <p className="mt-1 max-w-none text-xs" style={faint}>
+              Resolved items are ready to show in the draft.{" "}
+              <button
+                type="button"
+                className="linklike"
+                onClick={onShowPending}
+              >
+                Show me in the draft
+              </button>
             </p>
           )}
           <h3

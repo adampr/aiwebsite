@@ -28,8 +28,18 @@ round 14c: review-phase open items
 now ride the question-card structure — `open-items-resolver.tsx` rewritten
 from a single-expansion accordion list to a one-item-at-a-time card
 mirroring the drafting chase card, with a closed-by-default chip queue for
-random access; staging/batching/keep economics unchanged, see §5.12;
-earlier same day: research hardening: profile-first mentions
+random access; staging/batching/keep economics unchanged, see §5.12; same
+day round 13e: the reveal reaches everyone — reduced-motion plays a
+simplified show through the same runner (the old early-return left
+RDP/animations-off users with NOTHING, the owner's thrice-reported bug),
+hidden-tab shows park and flush on return, breakpoint-flip flush,
+queued-show line in the Questions pane, planShow extracted pure into
+resolved-anim.ts, [gov-reveal]/[gov-stale] console diagnostics,
+keepItem/applyTurn stale-offset invalidation (section-scoped for keeps),
+and stale-bundle detection: the npm build script stamps
+NEXT_PUBLIC_BUILD_ID=$(date +%s), view carries serverBuildId, a
+dismissible reload banner via the pure staleBundleSignal rule, see
+§5.12; same day: research hardening: profile-first mentions
 anchor + `companyNameFromTitle`, post-redirect crawl dedupe, word-boundary brief
 truncation, `research_audit_json` provenance envelope (migration 0013), presence-
 semantics Tavily checkpoints; round 14b: structure
@@ -930,6 +940,24 @@ section when a question arrives (guarded: cancelled by user scroll/answer/status
 container-scoped so the page never moves), and the question card carries a "See the text
 this is about" jump link for the mobile Questions tab.
 
+**Stale-bundle detection (round 13e).** A /governance tab is an SPA with a poll
+loop; it runs its deploy-time bundle forever. The npm `build` script stamps
+`NEXT_PUBLIC_BUILD_ID=$(date +%s)` (package.json; ONE shell evaluation per build,
+so every build worker inlines the same value into client AND server bundles, and
+the watchdog's bare `npm run build` restamps — the reason this is NOT a deploy-
+script .env stamp). `src/lib/governance/build-id.ts` exports the inlined BUILD_ID
+plus the pure `staleBundleSignal(clientId, serverId, consecutive)`: fires only
+when both parse as positive ints (dev/next-dev disable), server NEWER (ordered,
+so a draining old pm2 worker answering one poll never fires), and delta >= 120s
+or 2 consecutive sightings. ProjectView carries `serverBuildId` (additive);
+the workspace counts mismatches in handleView (skipped mid-flight), latches
+once, logs `[gov-stale] ...`, and renders a dismissible panel in the existing
+page-condition slot ("This page is from before an update. Reload to get the
+latest; everything you typed is saved." · Reload the page / Not now). Never
+auto-reloads. NEXT_PUBLIC_BUILD_ID is documented in .env.example as
+build-script-owned: a manual value without a rebuild makes every tab report
+stale until the next real build.
+
 **Background-check questions (research snapshot, 2026-07-17).** UP-01 and N-01 ask
 "did I get your company right?" — the object of review is Tron's research
 understanding, so the card renders it: `ProjectView.companySnapshot`
@@ -1160,8 +1188,35 @@ items · i of k / Skip the replay" bar rides the pane, and ANY user intent
 (scroll/jump/Escape/skip, a new turn, a newer rev) ends it instantly at the final
 state. Perf contract: the doc pane memoizes per-section mark arrays and keys the
 section parse memo on reveal PRIMITIVES (item/mode/chars), so only the revealing
-section re-parses per tick. Reduced motion: no show, static washes only (plus the
-deferred first-section park + ask park the show owed). Mobile: never auto-switches
+section re-parses per tick. REDUCED MOTION (round 13e) plays a SIMPLIFIED show
+through the SAME runner (reduce sampled once onto showRef): section jump skipped,
+ONE centered behavior:auto scroll inside a 1100ms static strike beat, instant
+caret-free swap (RevealState mode "swap"), length-scaled rest
+reducedRestMs = clamp(1600, len*12, 3200); nothing in that path depends on a CSS
+animation (futurism.css kills them all under reduce). Planning math
+(typingTicks/estimateItemMs/planShow, per-variant beats, 15s budget, 5-item cap,
+first-item exemption) is pure in resolved-anim.ts and test-pinned (block 17).
+Timer-chain invariant: exactly ONE pending later() at all times (strict
+continuation passing; a sibling schedule double-advances past the seq guard).
+HIDDEN TAB: a show starting while document.hidden parks in the pending queue
+(hidden timers clamp >=1s, later ~1/min — it would play off screen in slow
+motion); hiding MID-show settles it at the final state (endShow(true)); on
+return, a 700ms grace then a fetch-guarded flush (drops silently if the rev
+moved — never a start-then-abort stutter). Breakpoint flips: widen-to-desktop
+flushes a mobile-queued show (the Draft tab, its only other flush path, ceases
+to exist); narrowing mid-show settles it. All parked-show state flows through
+ONE setter (ref + render mirror); a counter-free "Resolved items are ready to
+show in the draft · Show me in the draft" line in the Questions pane surfaces a
+queued show to narrow-window users (the receipt owns all numbers). keepItem and
+the sync applyTurn merge viewRef in place (equal revs — the rev-change
+invalidation never runs), so they invalidate reveal state themselves; keepItem
+SECTION-SCOPED (marks over byte-identical sections keep their owed washes;
+never re-diffed — a keep dressed as a resolution reveal would lie). The reveal
+pipeline logs one-line [gov-reveal] decisions (counts and revs only, never
+document text) at every silent branch so an owner devtools screenshot
+discriminates: no lines = stale bundle, "no resolved markers diffed" = diff
+gates, "reduced motion" = the RDP case, "queued"/"parked" = tab state,
+"trimmed" = budget. Mobile: never auto-switches
 tabs; the show queues and plays when the Draft tab opens (superseded by newer revs). The live region stays count-delta
 only — the reveal adds zero announcements. (3) *Monotone counter*: above.
 (4) *Change previous answers*: every question row in the transcript disclosure

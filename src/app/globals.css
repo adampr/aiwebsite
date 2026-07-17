@@ -388,8 +388,13 @@
 /* Resolution reveal (owner request 2026-07-17): when a turn resolves
    [TO CONFIRM] markers, each site plays old-marker-out -> replacement
    typing in -> a held beat. The replacement keeps a static cyan wash
-   (cyan = it moved) until the next turn. Reduced motion gets the final
-   state and the static wash only; the workspace never starts the show. */
+   (cyan = it moved) until the next turn. Reduced motion plays a SIMPLIFIED
+   show through the same runner (owner report round 3: RDP/animations-off
+   users saw nothing under the old never-start rule): static strike, one
+   auto-scroll, instant caret-free swap, length-scaled rest. Nothing in
+   that path may depend on an animation running (futurism.css kills them
+   all under reduce with !important); these keyframes are default-motion
+   garnish only. */
 .doc-resolved {
   background: color-mix(in oklch, var(--xl-light) 14%, transparent);
 }
