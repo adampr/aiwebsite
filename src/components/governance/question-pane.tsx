@@ -161,6 +161,11 @@ export function QuestionPane({
 }) {
   const q = view.nextQuestion;
   const n = view.progress.answered + 1;
+  // Open-item chase questions ("qi_" ids, owner rule 2026-07-17) ride the
+  // same pane as every other question; only the counter copy differs (the
+  // bank counter would read "13 of about 12" past coverage). Skipping one
+  // moves the draft to review instead of drafting a default.
+  const chase = !!q && q.id.startsWith("qi_");
   const inputLocked = working || featureDisabled;
   const sendLocked = inputLocked || brainDown;
   const segments = chipSegments(answerText);
@@ -170,9 +175,9 @@ export function QuestionPane({
   // reach the marked text from the Questions tab on mobile.
   const feedTarget = q ? firstFeedTarget(q.feeds, view.documents) : null;
   // Host-detected sections still holding scaffold text, titled exactly as
-  // the doc pane renders them. These block confirm; open [TO CONFIRM]
-  // items intentionally do not (unverified facts are the user's to accept,
-  // undrafted sections are not content at all).
+  // the doc pane renders them. These block confirm, and so do open
+  // [TO CONFIRM] items (owner rule 2026-07-17: a final draft carries zero
+  // markers; each is resolved by a typed fact or an explicit keep).
   const undrafted = Object.entries(view.placeholderSections ?? {}).flatMap(
     ([slug, secs]) => {
       const doc = view.documents.find((d) => d.slug === slug);
@@ -201,10 +206,14 @@ export function QuestionPane({
         <div className="panel panel--lightline">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className="sys-label">
-              Question {String(n).padStart(2, "0")}
+              {chase ? "Open item" : `Question ${String(n).padStart(2, "0")}`}
             </span>
             <span className="text-xs" style={faint}>
-              question {n} of about {view.progress.total}
+              {chase
+                ? `confirming open items (${view.openConfirmTotal} left)`
+                : n > view.progress.total
+                  ? "follow-up question"
+                  : `question ${n} of about ${view.progress.total}`}
             </span>
           </div>
           <h3 ref={questionHeadingRef} tabIndex={-1} className="doc-h mt-4 text-lg">
@@ -286,8 +295,9 @@ export function QuestionPane({
             {skipPending && !working && (
               <div className="mt-3 text-xs" style={faint}>
                 <p className="max-w-none">
-                  Skipped. I will draft a sensible default you can change
-                  later.
+                  {chase
+                    ? "Skipping moves the draft to review. The remaining open items stay listed there for you to resolve."
+                    : "Skipped. I will draft a sensible default you can change later."}
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-6">
                   <button
@@ -318,7 +328,9 @@ export function QuestionPane({
         <div className="panel panel--lightline-sand">
           <span className="sys-label sys-label--sand">Review</span>
           <h3 ref={reviewHeadingRef} tabIndex={-1} className="mt-4">
-            That is everything I need
+            {view.openConfirmTotal > 0
+              ? "Almost there: open items need you"
+              : "That is everything I need"}
           </h3>
           <p className="mt-3 max-w-none text-sm">
             {view.reviewSummary || REVIEW_DEFAULT_COPY}

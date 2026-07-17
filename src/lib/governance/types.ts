@@ -50,7 +50,10 @@ export interface TranscriptEntry {
 }
 
 export interface NextQuestion {
-  id: string; // "q_<rev>" — the answer route 409s on any other id
+  // "q_<rev>", or "qi_<rev>" for a host-synthesized open-item chase question
+  // (owner rule 2026-07-17; skipping one flips to review with no AI call).
+  // The answer route 409s on any id that does not match the stored question.
+  id: string;
   bankId: string | null;
   text: string;
   why: string;

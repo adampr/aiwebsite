@@ -16,7 +16,17 @@ import {
   requiredBankIds,
   scaffoldDocuments,
 } from "../src/lib/governance/blueprints";
-import { CAPS, fileSlug, normalizeDomain } from "../src/lib/governance/config";
+import {
+  CAPS,
+  fileSlug,
+  normalizeDomain,
+  REVIEW_FORCED_SUMMARY,
+  withOpenItemsNote,
+} from "../src/lib/governance/config";
+import {
+  buildSystemMessage,
+  buildTurnUserMessage,
+} from "../src/lib/governance/prompt";
 import { deriveTurnState } from "../src/lib/governance/view";
 import {
   countConfirmMarkers,
@@ -37,9 +47,12 @@ import {
   coverageComplete,
   parseTurnJson,
   pickNextBankQuestion,
+  pickOpenItemQuestion,
+  resolveTurnGate,
   validateTurn,
 } from "../src/lib/governance/turn";
 import { GOVERNANCE_KINDS } from "../src/lib/governance/types";
+import type { GovernanceDoc, TurnResult } from "../src/lib/governance/types";
 import { REPO_ROOT } from "./lib/governance-env";
 
 let failures = 0;
@@ -1087,6 +1100,179 @@ function check(name: string, cond: boolean): void {
   check(
     "markers: stripped output is marker-free by the lenient count",
     s1.ok && countConfirmMarkers(s1.markdown) === 0
+  );
+}
+
+/* 14. Owner rule 2026-07-17: governance never assumes ready-for-final while
+ *     open [TO CONFIRM] markers remain. The voluntary drafting->review flip
+ *     requires coverage AND zero markers; markers are chased through the
+ *     same question flow; forced flips carry the honest open-items note. */
+{
+  const kind = GOVERNANCE_KINDS[0];
+  const slug = [...docSlugAllowlist(kind)][0];
+  const allCovered = new Set(requiredBankIds(kind));
+  const mkDocs = (markdown: string): GovernanceDoc[] => [
+    {
+      slug,
+      title: "AI Usage Policy",
+      stub: false,
+      sections: [{ id: "scope", title: "Scope", markdown }],
+    },
+  ];
+  const docsOpen = mkDocs("We keep logs 30 days [TO CONFIRM: retention period].");
+  const docsClean = mkDocs("We keep logs 30 days.");
+  const reviewTurn: TurnResult = {
+    docOps: [],
+    status: "review",
+    question: null,
+    reviewSummary: "All drafted.",
+    answeredBankIds: [],
+  };
+  const base = {
+    kind,
+    revise: false,
+    forced: false,
+    complete: true,
+    covered: allCovered,
+    turn: reviewTurn,
+    priorSummary: null,
+    newRev: 9,
+  };
+
+  const demoted = resolveTurnGate({ ...base, openTotal: 1, documents: docsOpen });
+  check(
+    "gate: voluntary review with open markers is demoted to drafting",
+    demoted.status === "drafting"
+  );
+  check(
+    "gate: demotion chases the marker with a qi_ question feeding its section",
+    demoted.outQuestion?.id === "qi_9" &&
+      (demoted.outQuestion?.feeds ?? []).includes(`${slug}#scope`)
+  );
+  const clean = resolveTurnGate({ ...base, openTotal: 0, documents: docsClean });
+  check(
+    "gate: voluntary review sticks at coverage complete + zero markers",
+    clean.status === "review" && clean.reviewSummary === "All drafted."
+  );
+  const early = resolveTurnGate({
+    ...base,
+    complete: false,
+    covered: new Set<string>(),
+    openTotal: 0,
+    documents: docsClean,
+  });
+  check(
+    "gate: review claim before coverage still demotes to a bank question",
+    early.status === "drafting" && !!early.outQuestion?.bankId
+  );
+  const forcedOpen = resolveTurnGate({
+    ...base,
+    forced: true,
+    openTotal: 1,
+    documents: docsOpen,
+    turn: { ...reviewTurn, reviewSummary: null },
+  });
+  check(
+    "gate: forced flip with markers is honest (open-items note appended)",
+    forcedOpen.status === "review" &&
+      (forcedOpen.reviewSummary ?? "").startsWith(REVIEW_FORCED_SUMMARY) &&
+      (forcedOpen.reviewSummary ?? "").includes("open [TO CONFIRM] items remain")
+  );
+  const forcedClean = resolveTurnGate({
+    ...base,
+    forced: true,
+    openTotal: 0,
+    documents: docsClean,
+    turn: { ...reviewTurn, reviewSummary: null },
+  });
+  check(
+    "gate: forced flip with zero markers carries no note",
+    forcedClean.reviewSummary === REVIEW_FORCED_SUMMARY
+  );
+  const revised = resolveTurnGate({
+    ...base,
+    revise: true,
+    openTotal: 3,
+    documents: docsOpen,
+    turn: { ...reviewTurn, reviewSummary: null },
+    priorSummary: "prior",
+  });
+  check(
+    "gate: revise turns stay in review and keep the prior summary",
+    revised.status === "review" && revised.reviewSummary === "prior"
+  );
+  const chaseOverModel = resolveTurnGate({
+    ...base,
+    openTotal: 1,
+    documents: docsOpen,
+    turn: {
+      ...reviewTurn,
+      status: "asking",
+      question: { bankId: null, text: "Anything else?", why: "", suggestions: [] },
+    },
+  });
+  check(
+    "gate: post-coverage chase outranks the model's own question",
+    chaseOverModel.outQuestion?.id === "qi_9"
+  );
+
+  check(
+    "chase: pickOpenItemQuestion is null on marker-free docs",
+    pickOpenItemQuestion(docsClean, 3) === null
+  );
+  const malformed = pickOpenItemQuestion(
+    mkDocs("Assumed [TO CONFIRM retention period with no closing bracket"),
+    3
+  );
+  check(
+    "chase: a malformed marker the display parser misses still gets chased",
+    malformed !== null && malformed.id === "qi_3" && malformed.text.length <= 500
+  );
+
+  check(
+    "note: withOpenItemsNote is count-free and only fires with open items",
+    withOpenItemsNote("s", 0) === "s" &&
+      withOpenItemsNote("s", 5).includes("open [TO CONFIRM] items remain") &&
+      !/\d/.test(withOpenItemsNote("s", 5).slice(1))
+  );
+
+  const sys = buildSystemMessage({ kind, brief: null, forcedReviewSoon: false });
+  check(
+    "prompt: rule 69 demands zero markers before review",
+    sys.includes("zero [TO CONFIRM] markers remain") &&
+      !sys.includes("how many [TO CONFIRM] items remain")
+  );
+  const chaseQ = pickOpenItemQuestion(docsOpen, 9)!;
+  const chaseMsg = buildTurnUserMessage({
+    kind,
+    documents: docsOpen,
+    transcript: [],
+    coveredBankIds: [...allCovered],
+    question: chaseQ,
+    answer: "30 days is right",
+    skipped: false,
+    changedSections: null,
+  });
+  check(
+    "prompt: chase turns list open items and serialize the marker section verbatim",
+    chaseMsg.includes("OPEN [TO CONFIRM] ITEMS (1 total") &&
+      chaseMsg.includes("retention period") &&
+      !chaseMsg.includes("(elided)") &&
+      !chaseMsg.includes("move to review")
+  );
+  const earlyMsg = buildTurnUserMessage({
+    kind,
+    documents: docsOpen,
+    transcript: [],
+    coveredBankIds: [],
+    question: pickNextBankQuestion(kind, new Set(), 1)!,
+    answer: "hi",
+    skipped: false,
+    changedSections: null,
+  });
+  check(
+    "prompt: pre-coverage turns carry no open-items block",
+    !earlyMsg.includes("OPEN [TO CONFIRM] ITEMS")
   );
 }
 

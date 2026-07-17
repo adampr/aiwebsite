@@ -171,7 +171,12 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       { retriable: true }
     );
 
-  if (!(await brainHealthy()))
+  // Skipping an open-item chase question ("qi_" id, owner rule 2026-07-17)
+  // is a deterministic host flip to review: the worker makes no brain call,
+  // so it needs neither a healthy brain nor a budget spend.
+  const chaseSkip =
+    !revise && skipped && !!nextQuestion && nextQuestion.id.startsWith("qi_");
+  if (!chaseSkip && !(await brainHealthy()))
     return govError(
       "brain_unavailable",
       "Tron's drafting engine is offline right now. Your answer is kept below; this page will keep checking.",
@@ -181,6 +186,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   // Admin accounts draft without spending the shared ledger (budget.ts).
   const budgetExempt = isBudgetExemptEmail(user.email);
   if (
+    !chaseSkip &&
     !budgetExempt &&
     !(await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))
   ) {

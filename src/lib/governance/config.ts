@@ -220,6 +220,21 @@ export const RESEARCH_DURATION_COPY = "3 to 8 minutes";
 export const REVIEW_FORCED_SUMMARY =
   "We reached the depth limit for one project, so I stopped asking questions. The draft on the right reflects everything you told me. Review it, ask for revisions below, and confirm when it reads right.";
 
+/** Skip-release flip (owner rule 2026-07-17): the user skipped an open-item
+ * chase question, declining further questions. Host-written, no AI call. */
+export const REVIEW_SKIPPED_SUMMARY =
+  "You skipped, so I stopped asking questions. The draft on the right reflects everything you told me so far. Review it, ask for revisions below, and confirm when it reads right.";
+
+/** Owner rule 2026-07-17: a review summary must never read as ready-for-final
+ * while [TO CONFIRM] markers remain. Count-free on purpose: the stored
+ * summary outlives resolutions (keep-as-drafted never rewrites it), so a
+ * baked number would go stale; the live count renders from openConfirmTotal
+ * next to the resolver. */
+export function withOpenItemsNote(summary: string, openTotal: number): string {
+  if (openTotal <= 0) return summary;
+  return `${summary} Note: open [TO CONFIRM] items remain in this draft. It is not final until you resolve each one in the list below, with the correct fact or an explicit keep as drafted.`;
+}
+
 /** Feature kill switch: disabled ONLY when explicitly "0". Reads (project
  * fetch + downloads) stay up regardless - the switch is about spend. */
 export function governanceEnabled(env: Record<string, string | undefined>) {

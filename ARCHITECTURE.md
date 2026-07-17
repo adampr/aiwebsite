@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-16 (async answer turn — POST /answer
+Last verified against code: 2026-07-17 (async answer turn — POST /answer
 returns 202 + in-process worker, `turn_*` claim columns w/ attempt-nonce
 fence, poll-resolved client, Cloudflare-100s fix, migration 0012, see
 §5.12/§6; same day: turn-zero robustness — no stubs at
@@ -935,12 +935,31 @@ persisted or logged. Server-side, never trusted to the model: doc slugs must be 
 kind's blueprint allowlist, ≤12 ops (≤24 at turn zero), section markdown ≤6000 chars,
 ≤20 sections/doc, markdown sanitized (raw HTML stripped, http(s) links only) +
 injection-screened at apply AND at docx render, em dashes normalized. **The
-drafting→review flip is host-gated**: `status:"review"` only sticks when every
-required bank id is covered (coverage = answered/skipped bank items + validated
-`answered_bank_ids` merges); otherwise the host overrides to asking and picks the next
-unanswered bank item itself. Skips draft a default marked `[TO CONFIRM: …]`; the
-review panel resolves open markers through the open-items resolver (below). Progress
-("question N of about M") is host-computed from bank coverage.
+drafting→review flip is host-gated** (`resolveTurnGate` in `turn.ts`, pure +
+test-pinned; owner rule 2026-07-17): a voluntary `status:"review"` only sticks when
+every required bank id is covered (coverage = answered/skipped bank items + validated
+`answered_bank_ids` merges) AND `openConfirmTotal` over the applied docs is ZERO —
+governance never presents a draft as ready for final while it lacks the answers to
+clear 100% of the `[TO CONFIRM]` markers. Otherwise the host keeps `drafting` and
+guarantees the next question: model follow-up → next bank item → host-synthesized
+**open-item chase question** (`pickOpenItemQuestion`, id `qi_<rev>`, `bankId:null`,
+`feeds` = the marker's `slug#section`; targeted by the lenient marker count so a
+malformed marker still gets chased). Once coverage is complete the chase outranks the
+model's own question, one item per turn, through the SAME question pane as every
+other question. Skipping a chase question is the user's explicit exit: the answer
+route flags it (`qi_` prefix; skips the brainHealthy/budget checks) and the runner
+force-flips to review deterministically — zero AI calls, no doc ops,
+`REVIEW_SKIPPED_SUMMARY`. Forced flips (40-answer cap; bank exhausted with no
+question) still land in review with markers open, but every such summary passes
+through `withOpenItemsNote` (count-free honesty note; count-free because
+keep-as-drafted resolutions never rewrite the stored summary) and the client
+announces "open items need your confirmation", never "ready". The confirm route's
+zero-marker 409 remains the hard final gate. Pre-coverage skips draft a default
+marked `[TO CONFIRM: …]` as before; chase turns serialize every marker-bearing
+section verbatim and list the open items (≤10) in the user message. Progress
+("question N of about M") is host-computed from bank coverage; chase turns label
+"Open item · confirming open items (N left)" instead. Tests: `gate:`/`chase:`/
+`note:`/`prompt:` block 14 in `scripts/governance-tests.ts`.
 
 **Open-items resolver (zero-marker finals, owner ruling 2026-07-16).** Every
 `[TO CONFIRM: …]` marker is an assumption Tron made; a FINAL draft carries none, and

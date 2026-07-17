@@ -362,7 +362,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       docs: GovernanceDoc[],
       newStatus: ProjectStatus,
       prevStatus: ProjectStatus,
-      askRef: FeedRef | null
+      askRef: FeedRef | null,
+      openTotal: number
     ) => {
       const list: ChangedRef[] = [];
       for (const [dslug, secs] of Object.entries(changed)) {
@@ -410,8 +411,12 @@ export function Workspace({ projectId }: { projectId: string }) {
       }
       const titles = list.map((x) => x.title).join(", ");
       if (newStatus === "review" && prevStatus !== "review") {
+        // Owner rule 2026-07-17: never announce readiness while open
+        // [TO CONFIRM] items remain (forced or skip-release flips).
         setAnnounce(
-          "Tron is done asking questions. The full draft is ready for your review."
+          openTotal > 0
+            ? "Tron stopped asking questions. Open items below need your confirmation before this draft can be final."
+            : "Tron is done asking questions. The full draft is ready for your review."
         );
         focusSoon(reviewHeadingRef);
       } else if (newStatus === "review") {
@@ -476,7 +481,8 @@ export function Workspace({ projectId }: { projectId: string }) {
           prev.status,
           next.nextQuestion
             ? firstFeedTarget(next.nextQuestion.feeds, next.documents)
-            : null
+            : null,
+          next.openConfirmTotal ?? next.openConfirmItems.length
         );
         if (flight.preserveDraft) {
           // Resolver-batch receipt: the TRUE open-item count delta, never
@@ -544,7 +550,9 @@ export function Workspace({ projectId }: { projectId: string }) {
           }
         } else if (next.status === "review") {
           setAnnounce(
-            "Tron is done asking questions. The full draft is ready for your review."
+            (next.openConfirmTotal ?? next.openConfirmItems.length) > 0
+              ? "Tron stopped asking questions. Open items below need your confirmation before this draft can be final."
+              : "Tron is done asking questions. The full draft is ready for your review."
           );
           focusSoon(reviewHeadingRef);
         }
@@ -739,7 +747,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       prev.status,
       data.nextQuestion
         ? firstFeedTarget(data.nextQuestion.feeds, data.documents)
-        : null
+        : null,
+      data.openConfirmTotal ?? data.openConfirmItems.length
     );
   }
 
@@ -800,7 +809,9 @@ export function Workspace({ projectId }: { projectId: string }) {
     // user's focus, so the live region confirms the send took.
     setAnnounce(
       kind === "skip"
-        ? "Question skipped. Tron is drafting a default."
+        ? questionId.startsWith("qi_")
+          ? "Question skipped. Moving the draft to review."
+          : "Question skipped. Tron is drafting a default."
         : kind === "resolve"
           ? "Answers sent. Tron is folding them in."
           : kind === "revise"

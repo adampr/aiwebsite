@@ -12,8 +12,12 @@ import type {
   NextQuestion,
   TurnResult,
 } from "./types";
-import { CAPS } from "./config";
-import { sanitizeMarkdown } from "./markdown";
+import { CAPS, REVIEW_FORCED_SUMMARY, withOpenItemsNote } from "./config";
+import {
+  countConfirmMarkers,
+  findConfirmMarkers,
+  sanitizeMarkdown,
+} from "./markdown";
 import { screenInjection } from "./research";
 import { bankById, docSlugAllowlist, requiredBankIds } from "./blueprints";
 
@@ -382,4 +386,126 @@ export function progressFor(
     answered: required.filter((id) => covered.has(id)).length,
     total: required.length,
   };
+}
+
+function truncTitle(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 3).trimEnd() + "...";
+}
+
+/** Owner rule 2026-07-17 (§5.12): a draft is never ready for final while
+ * open [TO CONFIRM] markers remain. When required coverage is complete but
+ * markers are open, the host asks about them itself, one per turn, through
+ * the SAME question flow as every other question (host-worded, exactly like
+ * bank items). The lenient count picks the target so a malformed marker the
+ * display parser misses still gets chased, in parity with the confirm gate.
+ * The "qi_" id prefix marks a chase question: skipping one is the user's
+ * explicit exit to review (deterministic host flip, zero AI calls). */
+export function pickOpenItemQuestion(
+  documents: GovernanceDoc[],
+  rev: number
+): NextQuestion | null {
+  for (const doc of documents) {
+    for (const sec of doc.sections) {
+      if (countConfirmMarkers(sec.markdown) === 0) continue;
+      const excerpt = findConfirmMarkers(sec.markdown)[0]?.slice(0, 80);
+      const where = `the "${truncTitle(sec.title, 60)}" section of "${truncTitle(doc.title, 60)}"`;
+      return {
+        id: `qi_${rev}`,
+        bankId: null,
+        text: excerpt
+          ? `In ${where} I drafted an assumption marked [TO CONFIRM: ${excerpt}]. What is the right answer here?`
+          : `In ${where} an item is still marked [TO CONFIRM]. What is the right answer here?`,
+        why: "A final draft cannot keep open assumptions: each one needs your answer. Or skip this question to move to review and settle the rest there.",
+        suggestions: [],
+        feeds: [`${doc.slug}#${sec.id}`],
+      };
+    }
+  }
+  return null;
+}
+
+export interface TurnGateInput {
+  kind: GovernanceKind;
+  revise: boolean;
+  forced: boolean; // answer cap reached this turn
+  complete: boolean; // required bank coverage after merging this turn
+  openTotal: number; // lenient [TO CONFIRM] count over the APPLIED docs
+  documents: GovernanceDoc[]; // the applied docs (chase targets)
+  covered: Set<string>;
+  turn: TurnResult;
+  priorSummary: string | null;
+  newRev: number;
+}
+
+export interface TurnGateResult {
+  status: "drafting" | "review";
+  outQuestion: NextQuestion | null;
+  reviewSummary: string | null;
+}
+
+/**
+ * Host-side review gate (owner rule 2026-07-17): the voluntary drafting ->
+ * review flip requires required-bank coverage AND zero open [TO CONFIRM]
+ * markers, no matter what the model says. While markers remain after
+ * coverage, the host keeps the project in drafting and chases them with
+ * normal questions (pickOpenItemQuestion). Forced flips (answer cap, bank
+ * exhausted) still land in review but their summary carries the honest
+ * open-items note; the confirm route's zero-marker 409 stays the hard final
+ * gate. Pure function so governance-tests can pin every branch.
+ */
+export function resolveTurnGate(g: TurnGateInput): TurnGateResult {
+  if (g.revise)
+    return {
+      status: "review",
+      outQuestion: null,
+      reviewSummary: g.turn.reviewSummary ?? g.priorSummary,
+    };
+  if (g.forced)
+    return {
+      status: "review",
+      outQuestion: null,
+      reviewSummary: withOpenItemsNote(
+        g.turn.reviewSummary ?? REVIEW_FORCED_SUMMARY,
+        g.openTotal
+      ),
+    };
+  if (g.turn.status === "review" && g.complete && g.openTotal === 0)
+    return {
+      status: "review",
+      outQuestion: null,
+      reviewSummary: g.turn.reviewSummary,
+    };
+
+  // Drafting: guarantee a next question. The open-item chase outranks the
+  // model's own question once coverage is complete (one chase per turn,
+  // same flow as every other question).
+  let outQuestion: NextQuestion | null = null;
+  if (g.complete && g.openTotal > 0)
+    outQuestion = pickOpenItemQuestion(g.documents, g.newRev);
+  if (!outQuestion && g.turn.question)
+    outQuestion = {
+      id: `q_${g.newRev}`,
+      bankId: g.turn.question.bankId,
+      text: g.turn.question.text,
+      why: g.turn.question.why,
+      suggestions: g.turn.question.suggestions,
+      feeds: g.turn.question.bankId
+        ? (bankById(g.kind).get(g.turn.question.bankId)?.feeds ?? [])
+        : [],
+    };
+  if (!outQuestion)
+    outQuestion = pickNextBankQuestion(g.kind, g.covered, g.newRev);
+  if (!outQuestion && g.openTotal > 0)
+    outQuestion = pickOpenItemQuestion(g.documents, g.newRev);
+  if (!outQuestion)
+    // Bank exhausted, no model question, zero markers: flip honestly.
+    return {
+      status: "review",
+      outQuestion: null,
+      reviewSummary: withOpenItemsNote(
+        g.turn.reviewSummary ?? REVIEW_FORCED_SUMMARY,
+        g.openTotal
+      ),
+    };
+  return { status: "drafting", outQuestion, reviewSummary: null };
 }

@@ -11,7 +11,7 @@ import {
   callGovernanceBrain,
   newId,
 } from "./brain";
-import { CAPS, REVIEW_FORCED_SUMMARY } from "./config";
+import { CAPS, REVIEW_SKIPPED_SUMMARY, withOpenItemsNote } from "./config";
 import { effectiveBrainDailyCap } from "./budget";
 import { applyTurnWrite, failTurn, type ProjectRow, trySpendBudget } from "./db";
 import {
@@ -23,11 +23,11 @@ import {
   applyOps,
   coverageComplete,
   parseTurnJson,
-  pickNextBankQuestion,
   progressFor,
+  resolveTurnGate,
   validateTurn,
 } from "./turn";
-import { bankById, placeholderSectionMap } from "./blueprints";
+import { placeholderSectionMap } from "./blueprints";
 import { normalizeBrief } from "./research";
 import { openConfirmItems, openConfirmTotal } from "./view";
 import type {
@@ -161,7 +161,66 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         suggestions: [],
         feeds: [],
       }
-    : nextQuestion!;
+    : // Pre-feeds rows normalize to [] (view.ts parity): the prompt's focus
+      // fold iterates feeds and must never throw on an old row.
+      { ...nextQuestion!, feeds: nextQuestion!.feeds ?? [] };
+
+  // Owner rule 2026-07-17: skipping an open-item chase question ("qi_" id)
+  // is the user's explicit exit to review. Deterministic host flip: no
+  // brain call, no doc ops; the review panel keeps the open items for
+  // resolution and confirm still refuses while any remain.
+  if (!revise && skipped && questionId.startsWith("qi_")) {
+    const openTotal = openConfirmTotal(documents);
+    const summary = withOpenItemsNote(REVIEW_SKIPPED_SUMMARY, openTotal);
+    const nowIso = new Date().toISOString();
+    const wrote = await applyTurnWrite({
+      id: row.id,
+      userId: job.userId,
+      expectedRev: row.rev,
+      attemptId: job.attemptId,
+      status: "review",
+      documents,
+      transcript: [
+        ...transcript,
+        {
+          qId: question.id,
+          bankId: null,
+          q: question.text,
+          a: "",
+          skipped: true,
+          askedAt: row.updatedAt.toISOString(),
+          answeredAt: nowIso,
+        },
+      ],
+      coveredBankIds: [...covered],
+      nextQuestion: null,
+      reviewSummary: summary,
+      changedSections: {},
+      flagged: false,
+      answersIncrement: 1,
+    });
+    if (!wrote)
+      return fail(
+        "stale_question",
+        "This question was already answered (maybe in another tab).",
+        409
+      );
+    return {
+      ok: true,
+      body: {
+        rev: row.rev + 1,
+        status: "review",
+        changedSections: {},
+        placeholderSections: placeholderSectionMap(kind, documents),
+        nextQuestion: null,
+        reviewSummary: summary,
+        progress: progressFor(kind, covered),
+        openConfirmItems: openConfirmItems(documents),
+        openConfirmTotal: openTotal,
+        documents,
+      },
+    };
+  }
 
   const system = buildSystemMessage({
     kind,
@@ -264,43 +323,28 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
   const answersIncrement = revise ? 0 : 1;
   const newAnswersCount = row.answersCount + answersIncrement;
 
-  // Host-side review gate: the model's "review" only sticks when required
-  // coverage is complete; the 40-answer cap force-flips regardless.
-  let status: ProjectStatus;
-  let outQuestion: NextQuestion | null = null;
-  let reviewSummary: string | null = row.reviewSummary;
+  // Host-side review gate (owner rule 2026-07-17, resolveTurnGate): the
+  // voluntary drafting->review flip requires required coverage AND zero open
+  // [TO CONFIRM] markers; while markers remain the host chases them with
+  // normal questions. Forced flips carry the honest open-items note.
   const complete = coverageComplete(kind, covered);
   const forced = !revise && newAnswersCount >= CAPS.answersPerProject;
-
-  if (revise) {
-    status = "review";
-    reviewSummary = turn.reviewSummary ?? row.reviewSummary;
-  } else if (forced) {
-    status = "review";
-    reviewSummary = turn.reviewSummary ?? REVIEW_FORCED_SUMMARY;
-  } else if (turn.status === "review" && complete) {
-    status = "review";
-    reviewSummary = turn.reviewSummary;
-  } else {
-    status = "drafting";
-    if (turn.question)
-      outQuestion = {
-        id: `q_${newRev}`,
-        bankId: turn.question.bankId,
-        text: turn.question.text,
-        why: turn.question.why,
-        suggestions: turn.question.suggestions,
-        feeds: turn.question.bankId
-          ? (bankById(kind).get(turn.question.bankId)?.feeds ?? [])
-          : [],
-      };
-    else outQuestion = pickNextBankQuestion(kind, covered, newRev);
-    if (!outQuestion) {
-      // Bank exhausted with no model question: flip honestly.
-      status = "review";
-      reviewSummary = turn.reviewSummary ?? REVIEW_FORCED_SUMMARY;
-    }
-  }
+  const openTotal = openConfirmTotal(applied.documents);
+  const gate = resolveTurnGate({
+    kind,
+    revise,
+    forced,
+    complete,
+    openTotal,
+    documents: applied.documents,
+    covered,
+    turn,
+    priorSummary: row.reviewSummary,
+    newRev,
+  });
+  const status: ProjectStatus = gate.status;
+  const outQuestion: NextQuestion | null = gate.outQuestion;
+  const reviewSummary: string | null = gate.reviewSummary;
 
   const now = new Date().toISOString();
   const newTranscript: TranscriptEntry[] = revise
@@ -365,7 +409,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       reviewSummary: status === "review" ? reviewSummary : null,
       progress: progressFor(kind, covered),
       openConfirmItems: openConfirmItems(applied.documents),
-      openConfirmTotal: openConfirmTotal(applied.documents),
+      openConfirmTotal: openTotal,
       documents: applied.documents,
     },
   };
