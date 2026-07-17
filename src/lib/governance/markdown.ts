@@ -18,6 +18,8 @@ export type Block =
   | { t: "list"; ordered: boolean; items: Inline[][] }
   | { t: "table"; header: Inline[][]; rows: Inline[][][] };
 
+import { promoteManualHeadingLines } from "./numbering";
+
 const SAFE_LINK = /^https?:\/\//i;
 
 /** Strip raw HTML tags and normalize characters the site bans (em dashes). */
@@ -66,7 +68,11 @@ const TABLE_DIVIDER = /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/;
 
 /** Parse sanitized markdown into blocks. Never throws on odd input. */
 export function parseMarkdown(raw: string): Block[] {
-  const md = sanitizeMarkdown(raw);
+  // Manual-heading promotion runs pre-parse so a bare "3.1 Data handling"
+  // line becomes a real heading instead of gluing into the paragraph above.
+  // Hooked here (the only parse entry) so the doc pane and .docx can never
+  // disagree. The reverse import is type-only in numbering.ts: no cycle.
+  const md = promoteManualHeadingLines(sanitizeMarkdown(raw));
   const lines = md.split("\n");
   const blocks: Block[] = [];
   let i = 0;

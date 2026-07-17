@@ -15,7 +15,12 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 15f: cross-tab
+Last verified against code: 2026-07-17 (governance round 16b: manual-heading
+promotion — bare sample-mirrored number lines ("3.1 Data handling") no longer
+glue inline into the preceding paragraph; `promoteManualHeadingLines` runs
+inside `parseMarkdown` so both renderers promote them to real host-numbered
+headings, and the .docx gains an inner-heading spacing ladder + keepNext,
+see §5.12 rendering contract; round 15f: cross-tab
 resolution reveal — the answering tab broadcasts its diffed reveal items on a
 per-project BroadcastChannel and a sibling tab watching the draft plays the
 identical show at the exact same rev (owner report: answering in one window,
@@ -1474,15 +1479,39 @@ survive), heading depth is rebased to
 the section's shallowest level, and deterministic decimal numbering is applied:
 sections "1., 2., …" in stored order (`sectionTitleText`), inner headings "n.m" and
 "n.m.k", deeper levels unnumbered. Because normalization is render-time only, stored
-rows with drifted manual numbers render clean with no regeneration. Prompt side, the
+rows with drifted manual numbers render clean with no regeneration. Round 16b
+(manual-heading promotion): restyle/auto-reformat turns mirror a format sample's
+literal numbers into stored markdown as bare un-marked lines ("3.1 Data handling"),
+which the paragraph parser glued into the preceding paragraph — number inline with
+body text, no break. `promoteManualHeadingLines` (numbering.ts) now runs inside
+`parseMarkdown` (the ONLY parse entry, so both renderers inherit it): line-start
+multipart decimals ("3.1", depth = dotted parts capped at ####), multi-letter romans
+("IV.") and "Section 2:" shapes — all strict subsets of `NUM_PREFIX` — promote to
+real headings when the remainder is title-shaped (≤100 chars, opens uppercase or
+`["'(`, no terminal punctuation), with the manual number removed at promotion so the
+host label can never double even through reveal sentinels. Bare "1."/"1)" stays
+ordered-list territory (promoting it would destroy real lists; a glued "7." sentence
+becoming a renumbered one-item list is a pinned known limitation); non-title numbered
+lines ("2.5 GB of logs are retained.") are left byte-untouched — body numbers are
+content, never stripped or re-flowed; single-letter romans ("V. Smith…") promote only
+with a multi-letter roman peer in the same section; lines carrying mid-reveal
+old-strike/caret sentinels (U+E002-U+E005) never promote (no heading flicker while
+typing), settled-wash sentinels (U+E000/U+E001) are skipped and preserved. Insert-only
+and idempotent. Prompt side, the
 RULES ban starting any title/heading with an outline marker (numbers, letters
 "A."/"(a)", romans "IV."), require cross-references by section NAME (host renumbering
 breaks numeric ones), and define the mapping for user-cited numbers (section 3 = third
 section in CURRENT DRAFT order); the FORMAT SAMPLE mirroring excludes numbering, and
 the upload helper copy says numbering is applied automatically. Web hierarchy: h3
 section titles, `doc-h4`…`doc-h7` classes for the four inner levels (h7 is a visual
-class on an h6 tag; no heading renders dimmer than body text). Docx: section titles
-Heading1, inner levels Heading2…5, and every ordered list mints its OWN concrete
+class on an h6 tag; no heading renders dimmer than body text; inner-heading top
+margin steps down with depth, `mt-5` levels 1-2 / `mt-4` levels 3-4, mirroring the
+docx ladder). Docx: section titles
+Heading1 (`before:280/after:120` twips), inner levels Heading2…5 with a stepped
+spacing ladder (`240/120`, `200/100`, `160/80`, `160/80` — the docx package's default
+heading styles carry NO paragraph spacing, which shipped as "headings run tight
+against body text" in Word) and `keepNext` on every heading incl. section H1 (no
+heading stranded at a page bottom), and every ordered list mints its OWN concrete
 numbering instance (`gov-num-<i>`) so each list restarts at 1 — a single shared
 instance makes Word continue one counter across the whole document, which shipped as
 the "numbers randomly throughout" bug. Regression-checked by `npm run

@@ -66,6 +66,17 @@ const INNER_HEADING = {
   4: HeadingLevel.HEADING_5,
 } as const;
 
+// The docx package's default heading styles carry NO paragraph spacing (only
+// run color/size), so without explicit values inner headings sit flush
+// against the text above. Stepped ladder below the section H1's 280/120;
+// before ~= 2x after keeps each heading attached to the content it heads.
+const INNER_HEADING_SPACING = {
+  1: { before: 240, after: 120 },
+  2: { before: 200, after: 100 },
+  3: { before: 160, after: 80 },
+  4: { before: 160, after: 80 },
+} as const;
+
 function blockToDocx(block: Block, orderedRef: () => string): (Paragraph | Table)[] {
   switch (block.t) {
     case "heading":
@@ -73,6 +84,8 @@ function blockToDocx(block: Block, orderedRef: () => string): (Paragraph | Table
         new Paragraph({
           heading: INNER_HEADING[block.level],
           children: inlineRuns(block.inline),
+          spacing: INNER_HEADING_SPACING[block.level],
+          keepNext: true,
         }),
       ];
     case "paragraph":
@@ -232,6 +245,7 @@ export async function renderDocx(
           }),
         ],
         spacing: { before: 280, after: 120 },
+        keepNext: true,
       })
     );
     if (placeholderIds.has(section.id)) {

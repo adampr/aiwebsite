@@ -68,6 +68,7 @@ import { composeCompanySnapshot, deriveTurnState } from "../src/lib/governance/v
 import {
   countConfirmMarkers,
   findConfirmMarkers,
+  inlineToText,
   parseMarkdown,
   sanitizeMarkdown,
   scanConfirmMarkers,
@@ -78,6 +79,7 @@ import {
 import {
   detectNumberingStyle,
   normalizeSectionBlocks,
+  promoteManualHeadingLines,
   sectionTitleText,
   stripLeadingNumber,
 } from "../src/lib/governance/numbering";
@@ -2674,6 +2676,126 @@ function check(name: string, cond: boolean): void {
       huge !== null && [...huge.keys()][0].length <= 200
     );
   }
+}
+
+/* 14. Manual-heading promotion (§5.12 round 16b): bare numbered heading
+ * lines promote to real headings pre-parse; body numbers are content and
+ * are never stripped, split, or re-flowed. */
+{
+  // The reported defect: an un-marked "3.1" line glued into the paragraph
+  // above. Must parse as paragraph / heading / paragraph.
+  const glue = parseMarkdown(
+    "Intro paragraph text about scope.\n3.1 Data handling\nAll data must be classified."
+  );
+  check(
+    "promote: glued numbered heading splits into its own heading block",
+    glue.length === 3 &&
+      glue[0].t === "paragraph" &&
+      glue[1].t === "heading" &&
+      glue[2].t === "paragraph" &&
+      glue[1].t === "heading" &&
+      inlineToText(glue[1].inline) === "Data handling"
+  );
+  const heading = (md: string) =>
+    parseMarkdown(md).filter((b) => b.t === "heading").length;
+  check("promote: roman multi-letter promotes", heading("IV. Retention") === 1);
+  check("promote: Section-word promotes", heading("Section 2: Access") === 1);
+  check("promote: bold-wrapped title promotes", heading("**3.1 Scope**") === 1);
+  const deep = parseMarkdown("2.1.4 Sub-sub\n\n2.1.4.3 Deep");
+  check(
+    "promote: depth follows dotted parts, capped at 4",
+    deep.length === 2 &&
+      deep[0].t === "heading" &&
+      deep[0].level === 3 &&
+      deep[1].t === "heading" &&
+      deep[1].level === 4
+  );
+  check(
+    "promote: marker-bearing title promotes ([ is a legal opener)",
+    heading("3.1 [TO CONFIRM: owner]") === 1
+  );
+  // Negatives: dates, years, versions, statute refs, sentences, lists.
+  for (const md of [
+    "2026.01 release notes follow",
+    "2026 Budget",
+    "30 days notice",
+    "v2.1 rollout",
+    "8.2 percent of budget went to training",
+    "art. 6(3) applies to this policy",
+    "7.1 All staff must complete training annually.",
+    "**2.5 GB of logs are retained.**",
+    "SECTION 2 - ACCESS",
+  ])
+    check(`promote: never promotes "${md.slice(0, 40)}"`, heading(md) === 0);
+  check(
+    "promote: soft-wrapped unit line stays one paragraph",
+    parseMarkdown("Storage is capped at\n2.5 GB per user.").length === 1
+  );
+  // Known limitation pin (round 16b critique #4): a glued bare "7." sentence
+  // still becomes a one-item renumbered ordered list. Do NOT "fix" this by
+  // promoting bare N. - that would destroy real ordered lists.
+  const bare = parseMarkdown("Body text.\n7. All staff must complete training.");
+  check(
+    "promote: bare N. stays list territory (pinned limitation)",
+    bare.length === 2 && bare[1].t === "list" && bare[1].ordered
+  );
+  check(
+    "promote: real ordered lists untouched",
+    parseMarkdown("1. Review the log\n2. File the report").some(
+      (b) => b.t === "list" && b.ordered && b.items.length === 2
+    )
+  );
+  // Lone single-letter romans need a multi-letter roman peer in-section.
+  check(
+    "promote: lone 'V. Smith' stays prose without a roman peer",
+    heading("V. Smith reviewed the policy") === 0
+  );
+  check(
+    "promote: 'V.' promotes alongside a multi-letter roman peer",
+    heading("III. Governance Roles\n\nBody.\n\nV. Review Cadence") === 2
+  );
+  // Strippability invariant: promotion + host numbering never doubles.
+  const normalized = normalizeSectionBlocks(
+    parseMarkdown("Lead-in.\n3.1 Data handling\nBody."),
+    3,
+    null
+  );
+  const label = normalized.find((b) => b.t === "heading");
+  check(
+    "promote: host label replaces the manual number, never doubles",
+    label !== undefined &&
+      label.t === "heading" &&
+      inlineToText(label.inline) === "3.1 Data handling"
+  );
+  // Reveal sentinels: settled wash promotes (sentinels intact); mid-typing
+  // caret lines must never flicker into a heading.
+  const washed = parseMarkdown("Intro.\n\uE0003.1 Data handling\uE001");
+  check(
+    "promote: settled wash line promotes with sentinels intact",
+    washed.length === 2 &&
+      washed[1].t === "heading" &&
+      inlineToText(washed[1].inline) === "\uE000Data handling\uE001"
+  );
+  check(
+    "promote: mid-typing caret line never promotes",
+    heading("Intro.\n\uE0003.1 Data hand\uE005\uE001") === 0
+  );
+  // Idempotence, and blueprint scaffolds never promote (pane rendering of
+  // planned sections must not change shape).
+  const once = promoteManualHeadingLines(
+    "Intro.\n3.1 Data handling\nIV. Retention"
+  );
+  check(
+    "promote: idempotent on re-entry",
+    promoteManualHeadingLines(once) === once
+  );
+  let scaffoldClean = true;
+  for (const kind of GOVERNANCE_KINDS)
+    for (const doc of scaffoldDocuments(kind))
+      for (const s of doc.sections)
+        if (promoteManualHeadingLines(s.markdown) !== s.markdown)
+          scaffoldClean = false;
+  check("promote: no blueprint scaffold line promotes", scaffoldClean);
 }
 
 if (failures) {

@@ -33,6 +33,100 @@ export function stripLeadingNumber(text: string): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * Manual-heading promotion (§5.12 round 16b). Restyle/auto-reformat turns
+ * mirror a format sample's literal numbers into stored markdown as bare
+ * lines ("3.1 Data handling") with no "#": the paragraph parser then glues
+ * them into the preceding paragraph, so the number renders inline with body
+ * text. This pre-parse pass promotes such lines to real headings; it runs
+ * inside parseMarkdown so both renderers inherit it and stored drifted
+ * documents self-heal at render time. The manual number is removed at
+ * promotion (the host label replaces it downstream), which keeps the
+ * one-numbering-authority invariant even when reveal sentinels sit between
+ * the line start and the number.
+ *
+ * Promotable shapes are strict SUBSETS of NUM_PREFIX (tested): multipart
+ * decimals ("3.1", "2.1.4."), uppercase romans ("IV."), and "Section 2:".
+ * Bare "1." / "1)" is ordered-list territory and never promotes. The
+ * remainder must be title-shaped: <=100 chars, opening char uppercase or
+ * one of ["'( (the [ keeps "3.1 [TO CONFIRM: ...]" promotable), and no
+ * terminal punctuation - so "2.5 GB of logs are retained." and soft-wrapped
+ * continuations starting lowercase are left exactly as written; body
+ * numbers are content, never stripped or re-flowed. Single-letter romans
+ * ("V.") promote only when a multi-letter roman heading ("III.") exists in
+ * the same section, so "V. Smith reviewed the policy" stays prose. Lines
+ * carrying mid-reveal sentinels (old-strike/caret) never promote: a heading
+ * must not flicker into existence while the reveal is still typing.
+ * ------------------------------------------------------------------ */
+
+const PROMOTE_MULTI = /^(\d{1,3}(?:\.\d{1,3}){1,4})\.?\s{1,10}/;
+const PROMOTE_ROMAN = /^((?=[IVX])X{0,3}(?:IX|IV|V?I{1,3}|V|X))[.)]\s{1,10}/;
+const PROMOTE_SECTION = /^Section\s{1,4}\d{1,3}\s{0,4}[:.)-]\s{1,10}/;
+const MID_REVEAL_SENTINEL = /[\uE002-\uE005]/; // old-strike + carets
+const WASH_SENTINELS = /^[\uE000\uE001]{1,4}/; // settled resolved wash
+
+type Promotion = {
+  line: string; // rebuilt heading line, manual number removed
+  roman: boolean; // matched via the roman shape
+  loneRoman: boolean; // "I."/"V."/"X.": needs a multi-letter roman peer
+};
+
+function classifyPromotable(trimmed: string): Promotion | null {
+  if (!trimmed || MID_REVEAL_SENTINEL.test(trimmed)) return null;
+  // Structural lines are never touched: existing headings, tables, lists.
+  if (/^#{1,4}\s/.test(trimmed) || trimmed.startsWith("|")) return null;
+  if (/^[-*]\s/.test(trimmed)) return null;
+  const lead = (WASH_SENTINELS.exec(trimmed) ?? [""])[0];
+  let core = trimmed.slice(lead.length);
+  const emph = (/^\*{1,2}/.exec(core) ?? [""])[0];
+  core = core.slice(emph.length);
+  let hashes: number;
+  let roman = false;
+  let loneRoman = false;
+  let m = PROMOTE_MULTI.exec(core);
+  if (m) {
+    hashes = Math.min(m[1].split(".").length, 4);
+  } else if ((m = PROMOTE_ROMAN.exec(core))) {
+    hashes = 2;
+    roman = true;
+    loneRoman = m[1].length === 1;
+  } else if ((m = PROMOTE_SECTION.exec(core))) {
+    hashes = 2;
+  } else return null;
+  const rest = core.slice(m[0].length);
+  // Title test runs on the visible text: trailing wash sentinels and one
+  // emphasis closer come off first ("**2.5 GB ... retained.**" must fail on
+  // its ".", not pass on its "*").
+  const bare = rest
+    .replace(/[\uE000\uE001]{1,4}$/, "")
+    .replace(/\*{1,2}$/, "")
+    .replace(/[\uE000\uE001]{1,4}$/, "");
+  if (!bare || bare.length > 100) return null;
+  if (!/^["'([A-Z]/.test(bare)) return null;
+  if (/[.,:;!?]$/.test(bare)) return null;
+  return { line: `${"#".repeat(hashes)} ${lead}${emph}${rest}`, roman, loneRoman };
+}
+
+/**
+ * Promote bare manually-numbered heading lines to markdown headings.
+ * Idempotent: promoted lines start with "#" and are skipped on re-entry.
+ * Insert-only per line - never merges, splits, or re-flows body text.
+ */
+export function promoteManualHeadingLines(md: string): string {
+  if (!/[\dIVX]/.test(md)) return md;
+  const lines = md.split("\n");
+  const found = lines.map((l) => classifyPromotable(l.trim()));
+  const multiRomanPeer = found.some((p) => p !== null && p.roman && !p.loneRoman);
+  let changed = false;
+  const out = lines.map((line, i) => {
+    const p = found[i];
+    if (!p || (p.loneRoman && !multiRomanPeer)) return line;
+    changed = true;
+    return p.line;
+  });
+  return changed ? out.join("\n") : md;
+}
+
+/* ------------------------------------------------------------------ *
  * Numbering-style adoption (§5.12 round 15b). The host stays the ONE
  * numbering authority (the model still never writes numbers); what the
  * format sample changes is the STYLE the host renders in. The style is

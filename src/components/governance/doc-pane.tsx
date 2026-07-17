@@ -211,8 +211,9 @@ function BlockView({ block }: { block: Block }) {
           : block.level === 3
             ? "doc-h6"
             : "doc-h7";
+    // Top margin steps down with depth, mirroring the .docx spacing ladder.
     return (
-      <Tag className={`doc-h ${cls} mt-5`}>
+      <Tag className={`doc-h ${cls} ${block.level <= 2 ? "mt-5" : "mt-4"}`}>
         <InlineSpans nodes={block.inline} />
       </Tag>
     );
