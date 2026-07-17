@@ -87,6 +87,7 @@ export function OpenItemsResolver({
   workingLong,
   brainDown,
   restyleActive,
+  restyleStopping,
   featureDisabled,
   onJump,
   onKeep,
@@ -106,7 +107,9 @@ export function OpenItemsResolver({
   // A reformat run holds its latch across inter-pass gaps where `working`
   // briefly drops; sends AND keeps must stay locked for its whole span (a
   // keep mutates the document under the run's pending pass).
+  // `restyleStopping` only selects the pause note's stopping copy.
   restyleActive: boolean;
+  restyleStopping: boolean;
   featureDisabled: boolean;
   onJump: (doc: string, section: string, focus: boolean) => void;
   onKeep: (item: OpenConfirmItem) => Promise<KeepResult>;
@@ -732,8 +735,9 @@ export function OpenItemsResolver({
             </p>
             {restyleActive && (
               <p className="mt-3 max-w-none text-sm" style={dim}>
-                Paused while I reformat the draft to match your sample. These
-                items are not going anywhere.
+                {restyleStopping
+                  ? "Stopping the reformat. The pass in progress finishes first; these items come back after that."
+                  : "Paused while I reformat the draft. These items are not going anywhere; answering them comes back when the reformat finishes."}
               </p>
             )}
           </form>

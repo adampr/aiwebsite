@@ -3243,6 +3243,83 @@ function check(name: string, cond: boolean): void {
   );
 }
 
+/* 23. Reformat hold banner copy (2026-07-17): while a run holds the input
+      lock the question card leads with the banner, and its pointer must
+      name a button that is actually on the page: Stop reformatting while
+      running, Skip the reformat while a replacement run is queued (the
+      sample control's Stop row is queued-gated). Stopping outranks queued
+      and drops the pass note (a ticking count next to "stopping" reads as
+      not stopping). */
+{
+  const { restyleHoldCopy } = await import(
+    "../src/components/governance/shared"
+  );
+  const running = restyleHoldCopy({
+    review: false,
+    stopping: false,
+    queued: false,
+    passNote: "Pass 2 of about 4.",
+  });
+  check(
+    "hold: running points at Stop reformatting",
+    running.resume.includes("Stop reformatting") &&
+      !running.resume.includes("Skip the reformat")
+  );
+  check(
+    "hold: pass note rides the primary line",
+    running.primary.includes("Pass 2 of about 4.")
+  );
+  check(
+    "hold: single-pass run reads complete without a pass note",
+    restyleHoldCopy({
+      review: false,
+      stopping: false,
+      queued: false,
+      passNote: "",
+    }).primary.endsWith("sample.")
+  );
+  const queued = restyleHoldCopy({
+    review: false,
+    stopping: false,
+    queued: true,
+    passNote: "",
+  });
+  check(
+    "hold: queued replacement points at Skip, never Stop",
+    queued.resume.includes("Skip the reformat") &&
+      !queued.resume.includes("Stop reformatting")
+  );
+  const stopping = restyleHoldCopy({
+    review: false,
+    stopping: true,
+    queued: false,
+    passNote: "Pass 3 of about 4.",
+  });
+  check(
+    "hold: stopping suppresses the pass count and keeps work",
+    !stopping.primary.includes("Pass") && stopping.primary.includes("kept")
+  );
+  check(
+    "hold: stopping outranks queued",
+    restyleHoldCopy({
+      review: false,
+      stopping: true,
+      queued: true,
+      passNote: "",
+    }).primary.startsWith("Stopping")
+  );
+  check(
+    "hold: review names revising and confirming, drafting names answering",
+    restyleHoldCopy({
+      review: true,
+      stopping: false,
+      queued: false,
+      passNote: "",
+    }).resume.startsWith("Revising and confirming") &&
+      running.resume.startsWith("Answering")
+  );
+}
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

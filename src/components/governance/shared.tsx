@@ -352,6 +352,90 @@ export function WorkingRow({ long, kind }: { long: boolean; kind: WorkingKind })
   );
 }
 
+/** Copy for the reformat hold banner. Pure so the invariants can pin the
+ *  pointer swap: while a replacement run is QUEUED the sample control shows
+ *  "Skip the reformat" instead of "Stop reformatting" (its Stop row is
+ *  queued-gated), so the banner must route to Skip or it points at a button
+ *  that is not on the page. Stopping outranks queued (a replacement resets
+ *  the stop latch, so the two never truly co-occur). */
+export function restyleHoldCopy({
+  review,
+  stopping,
+  queued,
+  passNote,
+}: {
+  review: boolean;
+  stopping: boolean;
+  queued: boolean;
+  passNote: string;
+}): { primary: string; resume: string } {
+  if (stopping)
+    return {
+      primary:
+        "Stopping the reformat. The pass in progress finishes first; what is done so far is kept.",
+      resume: review
+        ? "Revising and confirming come back right after that."
+        : "Answering comes back right after that.",
+    };
+  const paused = review
+    ? "Revising and confirming are paused while this runs; they come back on their own when the reformat finishes."
+    : "Answering is paused while this runs; it comes back on its own when the reformat finishes.";
+  if (queued)
+    return {
+      primary:
+        "Finishing the pass in progress; then I reformat again with your new sample.",
+      resume: `${paused} To skip the queued reformat, use Skip the reformat next to the format sample below.`,
+    };
+  return {
+    primary:
+      "Reformatting the draft to match your sample." +
+      (passNote ? ` ${passNote}` : ""),
+    resume: `${paused} To end it early, use Stop reformatting next to the format sample below.`,
+  };
+}
+
+/** The reformat hold banner: leads the question card / review panel while a
+ *  reformat run holds the input lock, in the product's existing in-motion
+ *  vocabulary (working-rule sweep + pulsing dot; both degrade to static
+ *  shapes under reduced motion, so the words carry the state). Static text
+ *  on purpose: run start, each pass, and the finish receipt already ride
+ *  the workspace's one polite live region. */
+export function RestyleHoldBanner({
+  review,
+  stopping,
+  queued,
+  passNote,
+}: {
+  review: boolean;
+  stopping: boolean;
+  queued: boolean;
+  passNote: string;
+}) {
+  const copy = restyleHoldCopy({ review, stopping, queued, passNote });
+  return (
+    <div data-qa="restyle-hold" className="mt-4 mb-6">
+      <div className="working-rule" aria-hidden="true" />
+      <div
+        className="mt-3 flex items-center gap-3 text-sm"
+        style={{ color: "var(--xl-text)" }}
+      >
+        <span
+          className="dot shrink-0"
+          style={{ color: "var(--xl-light)" }}
+          aria-hidden="true"
+        />
+        <span>{copy.primary}</span>
+      </div>
+      <p
+        className="mt-2 max-w-none text-sm"
+        style={{ color: "var(--xl-text-dim)" }}
+      >
+        {copy.resume}
+      </p>
+    </div>
+  );
+}
+
 export function CheckGlyph() {
   return (
     <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0" aria-hidden="true">

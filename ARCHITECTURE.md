@@ -15,7 +15,11 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 15g: chase-card Keep
+Last verified against code: 2026-07-17 (governance round 16d: reformat hold
+banner — while a restyle run locks the question area, the question card and
+review panel lead with a live hold banner (pass count + why the lock + where
+Stop/Skip lives) and the drafting question content recedes behind `.q-hold`,
+see §5.12 restyle run; round 15g: chase-card Keep
 as drafted — resolve-item now legal in drafting while a `qi_` chase question is
 stored, fixing the verified "as is" dead loop, see §5.12 and the resolve-item
 API row; round 16c: reveal tier
@@ -1191,17 +1195,32 @@ and had already drifted behaviorally); it is RUN-gated, not name-gated
 (`reformat.busy && !queued && !removeOnly` — the run outlives the sample row
 after a mid-run removal, local or another tab's, so the Stop must not vanish
 with the filename; only the idle "Reformat the whole draft" button requires a
-sample). The question/review pane's pause note explains the lock and points at
-that button ("To end the reformat early, use Stop reformatting next to the
-format sample below" — copy depends on the control rendering below the pane in
-the same column), with a stopping variant ("Stopping the reformat. The pass in
-progress finishes first; what is done so far is kept.") that stands alone when
-a mid-run removal empties the control's row; the control's run note likewise
-branches on the sample's presence (no sample + latched stop = "The reformat of
-the removed sample is ending"; never the replace-and-keep sentence, whose
-referents would not render). `restyleActive` state holds the input
-lock and the pause note across the setTimeout gaps between passes (`working`
-briefly drops there). Guard rails around the client-chained run: a 6-minute stall
+sample). While the run holds the lock the question card and the review panel
+LEAD with a hold banner (`RestyleHoldBanner`/`restyleHoldCopy` in shared.tsx,
+test-pinned; owner report 2026-07-17: the old small bottom-of-form note left
+the card looking idle-but-broken): working-rule sweep + pulsing dot (static
+shapes under reduced motion, the words carry the state), the primary line
+carries the pass count ("Reformatting the draft to match your sample. Pass 2
+of about 4." — mirrored from the sample control's `restylePassNote`, which on
+mobile can sit below the fold), and the resume line explains the pause,
+promises it lifts on its own, and points at the page's one Stop button ("To
+end it early, use Stop reformatting next to the format sample below" — copy
+depends on the control rendering below the pane in the same column). Pointer
+invariant: while a REPLACEMENT run is queued behind the draining pass the
+control's Stop row is queued-gated away, so the banner swaps to "use Skip the
+reformat"; stopping outranks queued, suppresses the pass count, and promises
+answering back "right after that". In drafting the question content (heading,
+snapshot, chips, textarea, send row — never the status lines, notices, or the
+banner itself) recedes behind `.q-hold` (opacity 0.65 on permanently mounted
+wrappers: no remount under focus, no layout shift; 0.65 because disabled chips
+already sit at the faint token); review content never recedes (it is
+legitimate reading material during the wait) and instead keeps short local
+echoes on the resolver card and the revise form (no Stop pointer there — the
+banner owns it once per column). The amend pause keeps its quiet bottom note.
+The finish/stopped receipts close the banner's promise explicitly ("Answering
+is back." / "Revising and confirming are back."). `restyleActive` state holds
+the input lock and the hold banner across the setTimeout gaps between passes
+(`working` briefly drops there). Guard rails around the client-chained run: a 6-minute stall
 watchdog per pass dispatch ends the run honestly if no boundary arrives; a
 sessionStorage flag `gov:{id}:restyle-run` (set at start, cleared at every
 teardown) turns a mid-run reload into an explicit "Reformatting did not finish"

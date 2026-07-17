@@ -2176,9 +2176,16 @@ export function Workspace({ projectId }: { projectId: string }) {
       mobileTabRef.current === "questions"
     )
       setDraftDot(list.length);
+    // The hold banner promised answering comes back on its own; the end
+    // receipts close that promise explicitly (critic note, 2026-07-17).
+    const back =
+      next.status === "review"
+        ? " Revising and confirming are back."
+        : " Answering is back.";
     if (opts?.stopped) {
       setAnnounce(
-        "Reformatting stopped. What is done so far is kept; press Reformat the whole draft again to finish."
+        "Reformatting stopped. What is done so far is kept; press Reformat the whole draft again to finish." +
+          back
       );
       return;
     }
@@ -2207,11 +2214,12 @@ export function Workspace({ projectId }: { projectId: string }) {
       }
     }
     setAnnounce(
-      changed.length === 0
+      (changed.length === 0
         ? "Your draft already matches the sample. Nothing needed to change."
         : wordingChanged
           ? `Reformatted ${changed.length} ${changed.length === 1 ? "section" : "sections"}. I also touched some wording; the changed sections are marked, worth a skim.`
-          : `Reformatted. ${changed.length} ${changed.length === 1 ? "section" : "sections"} now match your sample; the wording is unchanged.`
+          : `Reformatted. ${changed.length} ${changed.length === 1 ? "section" : "sections"} now match your sample; the wording is unchanged.`) +
+        back
     );
   }
 
@@ -2725,6 +2733,8 @@ export function Workspace({ projectId }: { projectId: string }) {
                 }}
                 restyleActive={restyleActive}
                 restyleStopping={restyleStopping}
+                restyleQueued={restyleQueued}
+                restylePassNote={restylePassNote}
                 featureDisabled={view.featureDisabled}
                 notice={notice}
                 skipPending={skipPending}

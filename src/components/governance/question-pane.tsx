@@ -26,6 +26,7 @@ import {
   chipSegments,
   firstFeedTarget,
   fmtDate,
+  RestyleHoldBanner,
   WorkingRow,
   type WorkingKind,
 } from "./shared";
@@ -478,6 +479,8 @@ export function QuestionPane({
   onShowPending,
   restyleActive,
   restyleStopping,
+  restyleQueued,
+  restylePassNote,
   featureDisabled,
   notice,
   skipPending,
@@ -514,12 +517,20 @@ export function QuestionPane({
   pendingShowReady: boolean;
   onShowPending: () => void;
   // A reformat run holds the lock across the gaps between its passes
-  // (`working` briefly drops there). The pause note only EXPLAINS the lock
+  // (`working` briefly drops there). The hold banner only EXPLAINS the lock
   // and points at the page's one Stop button, on the sample control below
   // (round 15e: a second Stop here read as a glitch and had already drifted
-  // behaviorally); `restyleStopping` selects the stopping copy variant.
+  // behaviorally); `restyleStopping` selects the stopping copy variant, and
+  // `restyleQueued` swaps the pointer to Skip the reformat during the
+  // replacement drain window (the control's Stop row is queued-gated, so
+  // pointing at Stop then would name a button that is not on the page).
+  // `restylePassNote` mirrors the sample control's pass count: on mobile
+  // that control can sit entirely below the fold, and under reduced motion
+  // the advancing number is the banner's only between-pass liveness.
   restyleActive: boolean;
   restyleStopping: boolean;
+  restyleQueued: boolean;
+  restylePassNote: string;
   featureDisabled: boolean;
   notice: WorkspaceNotice | null;
   skipPending: boolean;
@@ -683,6 +694,19 @@ export function QuestionPane({
                   : `about ${bankLeft} to go${foreshadow}`}
             </span>
           </div>
+          {/* Reformat hold (owner report 2026-07-17: a normal-looking card
+              with a small note at the bottom read as idle-but-broken): the
+              card leads with the in-motion banner and the question content
+              recedes behind it, so a glance says busy-reformatting, not
+              ready-to-answer. */}
+          {restylePause && (
+            <RestyleHoldBanner
+              review={false}
+              stopping={restyleStopping}
+              queued={restyleQueued}
+              passNote={restylePassNote}
+            />
+          )}
           {chase && chaseBridge && (
             <p
               id="chase-bridge-note"
@@ -710,6 +734,11 @@ export function QuestionPane({
               </button>
             </p>
           )}
+          {/* Permanent wrapper, class toggle only: the focused heading must
+              never remount when the hold starts or ends. Status lines above
+              and error/notice text below stay at full strength; only the
+              question content recedes. */}
+          <div className={restylePause ? "q-hold" : undefined}>
           <h3
             ref={questionHeadingRef}
             tabIndex={-1}
@@ -835,6 +864,7 @@ export function QuestionPane({
               </div>
             </>
           )}
+          </div>
 
           <form
             className="answer-sticky mt-6 pt-2"
@@ -845,7 +875,7 @@ export function QuestionPane({
           >
             <textarea
               ref={answerRef}
-              className="input w-full"
+              className={restylePause ? "input w-full q-hold" : "input w-full"}
               rows={4}
               maxLength={2000}
               placeholder="Plain words are fine. I draft; you steer."
@@ -854,7 +884,9 @@ export function QuestionPane({
               onChange={(e) => onAnswerChange(e.target.value)}
               disabled={inputLocked}
             />
-            <div className="mt-4 flex flex-wrap items-center gap-6">
+            <div
+              className={`mt-4 flex flex-wrap items-center gap-6${restylePause ? " q-hold" : ""}`}
+            >
               <button
                 type="submit"
                 className="btn btn--primary btn--stable"
@@ -926,20 +958,13 @@ export function QuestionPane({
             {working && !pausedByOther && (
               <WorkingRow long={workingLong} kind={workingKind} />
             )}
-            {/* No Stop button here: the page's one Stop lives on the sample
-                control, which renders directly below this pane in the same
-                column (the copy's "below" depends on that DOM order). The
-                stopping variant stands alone because a mid-run sample
-                removal can unrender the control's row while the latched
-                stop drains. */}
-            {pausedByOther && (
+            {/* The restyle hold speaks through the banner at the top of the
+                card now; this quiet bottom note is amend-only. */}
+            {pausedByOther && !restylePause && (
               <div className="mt-3 text-sm" style={dim}>
                 <p className="max-w-none">
-                  {restylePause
-                    ? restyleStopping
-                      ? "Stopping the reformat. The pass in progress finishes first; what is done so far is kept. Answering comes back after that."
-                      : "Paused while I reformat the draft to match your sample. Answering comes back when it finishes. To end the reformat early, use Stop reformatting next to the format sample below."
-                    : "Paused while I rework an earlier answer. This question is not going anywhere."}
+                  Paused while I rework an earlier answer. This question is
+                  not going anywhere.
                 </p>
               </div>
             )}
@@ -956,6 +981,19 @@ export function QuestionPane({
       {view.status === "review" && (
         <div className="panel panel--lightline-sand">
           <span className="sys-label sys-label--sand">Review</span>
+          {/* Reformat hold: same banner as the drafting card, so the panel
+              leads with why everything below is locked. The review content
+              does NOT recede (it is legitimate reading material during the
+              wait); the resolver and revise form keep short local echoes
+              because this panel can scroll the banner well out of view. */}
+          {restylePause && (
+            <RestyleHoldBanner
+              review
+              stopping={restyleStopping}
+              queued={restyleQueued}
+              passNote={restylePassNote}
+            />
+          )}
           <h3 ref={reviewHeadingRef} tabIndex={-1} className="mt-4">
             {view.openConfirmTotal > 0
               ? "Almost there: open items need you"
@@ -1018,6 +1056,7 @@ export function QuestionPane({
             workingLong={workingLong}
             brainDown={brainDown}
             restyleActive={restyleActive}
+            restyleStopping={restyleStopping}
             featureDisabled={featureDisabled}
             onJump={onJump}
             onKeep={onKeepItem}
@@ -1076,15 +1115,17 @@ export function QuestionPane({
               !pausedByOther && (
                 <WorkingRow long={workingLong} kind={workingKind} />
               )}
-            {/* Same no-button rule as the drafting pause note (round 15e);
-                here the sample control sits below the confirm block. */}
+            {/* Short local echo only: the banner at the top of the panel
+                owns the full explanation and the Stop/Skip pointer, and
+                repeating the pointer here would ship the same instruction
+                twice in one column (critic catch, 2026-07-17). */}
             {pausedByOther && (
               <div className="mt-3 text-sm" style={dim}>
                 <p className="max-w-none">
                   {restylePause
                     ? restyleStopping
-                      ? "Stopping the reformat. The pass in progress finishes first; what is done so far is kept. Revising comes back after that."
-                      : "Paused while I reformat the draft to match your sample. Revising comes back when it finishes. To end the reformat early, use Stop reformatting next to the format sample below."
+                      ? "Stopping the reformat; revising comes back after the pass in progress lands."
+                      : "Paused while I reformat the draft. Revising comes back when the reformat finishes."
                     : "Paused while I rework an earlier answer. The draft updates when it lands."}
                 </p>
               </div>

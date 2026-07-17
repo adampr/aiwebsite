@@ -385,6 +385,15 @@
   margin: 0;
 }
 
+/* Reformat hold (owner report 2026-07-17): while a reformat run owns the
+   workspace, the question card leads with the hold banner and the held
+   question content recedes behind it. Opacity, not color rewrites: the
+   disabled sub-states keep their own styling, nothing shifts layout, and
+   no element unmounts under focus. 0.65, not lower: disabled chips are
+   already at the faint token and a deeper cut makes their labels
+   unreadable in the light theme (critic catch). */
+.q-hold { opacity: 0.65; }
+
 /* Resolution reveal (owner request 2026-07-17): when a turn resolves
    [TO CONFIRM] markers, each site plays old-marker-out -> replacement
    typing in -> a held beat. The replacement keeps a static cyan wash
