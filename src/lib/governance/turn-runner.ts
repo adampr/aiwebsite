@@ -98,7 +98,13 @@ function parse<T>(raw: string | null, fallback: T): T {
 export async function runTurn(job: TurnJob): Promise<TurnOutcome> {
   try {
     return await runTurnInner(job);
-  } catch {
+  } catch (err) {
+    // Round-8 lesson, kept: a swallowed error string is a prod incident
+    // with no diagnosis path. Log the stack; never log answer content.
+    console.error(
+      `[governance] turn crashed project=${job.row.id} rev=${job.row.rev} q=${job.questionId}:`,
+      err instanceof Error ? err.stack : err
+    );
     const out = {
       ok: false as const,
       code: "invalid_turn" as const,
@@ -207,6 +213,10 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
   // Parse -> validate -> at most ONE repair call (new promptId, never reuse
   // the original: the brain replays (sessionId,promptId) verbatim).
   let validation = validateTurn(parseTurnJson(raw), kind);
+  if (!validation.ok)
+    console.error(
+      `[governance] turn invalid project=${row.id} rev=${row.rev} q=${questionId} raw=${raw.length}ch errors: ${validation.errors.join("; ").slice(0, 600)}`
+    );
   // Full repair budget as long as the staleness horizon leaves headroom
   // for the call plus the final write (it always does after a 90 s brain
   // call; the guard protects against pathological semaphore waits).
@@ -229,13 +239,17 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       if (repairRaw) validation = validateTurn(parseTurnJson(repairRaw), kind);
     }
   }
-  if (!validation.ok || !validation.turn)
+  if (!validation.ok || !validation.turn) {
+    console.error(
+      `[governance] turn failed after repair project=${row.id} rev=${row.rev} q=${questionId} errors: ${validation.errors.join("; ").slice(0, 600)}`
+    );
     return fail(
       "invalid_turn",
       "Tron hit a snag applying that answer. Nothing was changed; retry.",
       502,
       true
     );
+  }
   const turn: TurnResult = validation.turn;
 
   // Apply ops (sanitize + injection screen inside).

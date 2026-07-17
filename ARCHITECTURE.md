@@ -968,7 +968,14 @@ with occurrence-shift migration), and "Keep as drafted" (omitted when
 turn: a composed numbered message (~2000-char cap with a live meter; excerpts quoted
 at ≤60 chars) sent through `submitTurn({message, focusSections})` — the resolver
 NEVER touches the revise textarea or its `gov:{id}:revise` draft key
-(`inFlightRef.preserveDraft`). After the turn, the resolver diffs by stable key:
+(`inFlightRef.preserveDraft`). A second staging cap bounds the batch by SECTION
+REWRITE COST: the model re-emits every touched section in full, and one turn may
+emit only `turnOpMarkdownMaxChars` (8000) of markdown, so a batch spanning several
+large sections fails validation deterministically (the repair pass cannot fix an
+inherent budget overrun) — Add answer refuses when the sum of the distinct target
+sections' current markdown (+200 slack each) would pass 8000−1000, with "send these
+first" copy. turn-runner logs validation failures (`[governance] turn invalid …`)
+and crash stacks to the PM2 site log; never answer content. After the turn, the resolver diffs by stable key:
 survivors flip to "Not resolved" (+ per-row "Send just this one"), vanished staged
 rows clear, brand-new rows chip "New"; the live-region receipt reports the TRUE
 `openConfirmTotal` delta, never per-item claims (the model may reword a marker

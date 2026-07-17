@@ -11,6 +11,7 @@
 // malformed marker cannot be parsed into a row.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CAPS } from "@/lib/governance/config";
 import type {
   GovernanceDoc,
   OpenConfirmItem,
@@ -250,13 +251,42 @@ export function OpenItemsResolver({
   const composedLen = stagedEntries.length
     ? composeResolveMessage(stagedEntries, documents).length
     : 0;
-  const wouldExceed = (candidate: OpenConfirmItem, text: string): boolean => {
+  /** One revise turn may emit only CAPS.turnOpMarkdownMaxChars (8000) of
+   *  section markdown, and the model must re-emit every touched section IN
+   *  FULL — a batch spanning several large sections fails validation
+   *  deterministically and the repair pass cannot fix it (the budget is
+   *  inherent to the content). Estimate the re-emit cost as the sum of the
+   *  DISTINCT target sections' current markdown (+200 slack each) and stop
+   *  staging 1000 chars before the server cap. */
+  const sectionRewriteEstimate = (
+    entries: { item: OpenConfirmItem; answer: string }[]
+  ): number => {
+    const seen = new Set<string>();
+    let sum = 0;
+    for (const e of entries) {
+      const k = `${e.item.doc}#${e.item.section}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const doc = documents.find((d) => d.slug === e.item.doc);
+      const sec = doc?.sections.find((s) => s.id === e.item.section);
+      sum += (sec?.markdown.length ?? 0) + 200;
+    }
+    return sum;
+  };
+  const wouldExceed = (
+    candidate: OpenConfirmItem,
+    text: string
+  ): "chars" | "sections" | null => {
     const k = keyOf(candidate);
     const entries = [
       ...stagedEntries.filter((e) => keyOf(e.item) !== k),
       { item: candidate, answer: text.trim() },
     ];
-    return composeResolveMessage(entries, documents).length > 2000;
+    if (composeResolveMessage(entries, documents).length > 2000)
+      return "chars";
+    if (sectionRewriteEstimate(entries) > CAPS.turnOpMarkdownMaxChars - 1000)
+      return "sections";
+    return null;
   };
   const sendBusy = working && sendingKeys !== null;
 
@@ -462,7 +492,7 @@ export function OpenItemsResolver({
                   disabled={
                     inputLocked ||
                     !draftText.trim() ||
-                    wouldExceed(it, draftText)
+                    wouldExceed(it, draftText) !== null
                   }
                 >
                   Add answer
@@ -495,10 +525,11 @@ export function OpenItemsResolver({
                   </button>
                 )}
               </div>
-              {draftText.trim() !== "" && wouldExceed(it, draftText) && (
+              {draftText.trim() !== "" && wouldExceed(it, draftText) !== null && (
                 <p className="mt-2 max-w-none text-xs" style={faint}>
-                  That is the 2000 character limit for one revision. Send these
-                  answers first, then add the rest.
+                  {wouldExceed(it, draftText) === "chars"
+                    ? "That is the 2000 character limit for one revision. Send these answers first, then add the rest."
+                    : "That is as much of the draft as one revision can rewrite. Send these answers first, then add the rest."}
                 </p>
               )}
             </form>
