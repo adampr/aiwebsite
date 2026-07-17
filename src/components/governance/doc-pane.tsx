@@ -14,7 +14,11 @@ import {
   type Block,
   type Inline,
 } from "@/lib/governance/markdown";
-import type { ResolvedMarkerReveal } from "@/lib/governance/resolved-anim";
+import {
+  isRegionItem,
+  regionWashLines,
+  type ResolvedMarkerReveal,
+} from "@/lib/governance/resolved-anim";
 import {
   normalizeSectionBlocks,
   sectionTitleText,
@@ -45,8 +49,11 @@ export interface RevealState {
   // strongest just-live-edited cue); typing itself shows a steady caret
   // (a moving caret does not blink). "swap" = the reduced-motion variant:
   // full replacement at once, NO caret (a solid bar beside settled text
-  // reads as an artifact when nothing typed).
-  mode: "old" | "typing" | "hold" | "swap";
+  // reads as an artifact when nothing typed). "region" = the guaranteed-
+  // motion floor for unanchorable resolutions: the changed-line block
+  // washes as one, nothing types, no caret, no strike (the show bar names
+  // the removed marker instead).
+  mode: "old" | "typing" | "hold" | "swap" | "region";
   chars: number; // typing: how much of the replacement is shown
 }
 
@@ -60,8 +67,10 @@ const OLD_ON = "\uE002"; // old-marker strike on
 const OLD_OFF = "\uE003"; // off
 const CARET = "\uE004"; // blinking caret (the hold beat)
 const CARET_STEADY = "\uE005"; // steady caret (while typing)
+const RA_ON = "\uE006"; // ACTIVE region wash on (stronger than R_ON)
+const RA_OFF = "\uE007"; // off
 
-const SENTINEL_RE = /[\uE000-\uE005]/;
+const SENTINEL_RE = /[\uE000-\uE007]/;
 
 /** Inject reveal/resolved sentinels into committed section markdown.
  *  Edits apply in descending offset order so earlier spans stay valid. */
@@ -71,37 +80,63 @@ function decorateMarkdown(
   reveal: RevealState | null
 ): string {
   type Edit = { start: number; end: number; text: string };
-  const edits: Edit[] = [];
+  // Active-item edits are built FIRST and always win overlaps: a settled
+  // mark inside the active region must never displace the live beat.
+  const active: Edit[] = [];
+  if (reveal && reveal.item.nextEnd <= md.length) {
+    const { item, mode, chars } = reveal;
+    if (isRegionItem(item)) {
+      // Region beat: wash the block's structure-safe lines; nothing types,
+      // nothing strikes (the show bar names the removed marker). Table
+      // rows inside the block stay bare; an all-table block leaves zero
+      // edits and the section-level class carries the signal.
+      for (const w of regionWashLines(md, item.nextStart, item.nextEnd))
+        active.push({
+          start: w.start,
+          end: w.end,
+          text: RA_ON + md.slice(w.start, w.end) + RA_OFF,
+        });
+    } else {
+      const full = md.slice(item.nextStart, item.nextEnd);
+      // Deletion-only items (empty span) never get a caret: a caret
+      // blinking next to nothing where text just vanished is nonsense
+      // theater.
+      active.push({
+        start: item.nextStart,
+        end: item.nextEnd,
+        text:
+          mode === "old"
+            ? OLD_ON + item.oldMarkerText + OLD_OFF
+            : mode === "typing"
+              ? R_ON + full.slice(0, chars) + (full ? CARET_STEADY : "") + R_OFF
+              : mode === "swap"
+                ? R_ON + full + R_OFF
+                : R_ON + full + (full ? CARET : "") + R_OFF,
+      });
+    }
+  }
+  const edits: Edit[] = [...active];
   for (const m of marks) {
+    // Regions never settle to a wash: the block-wide claim was already the
+    // weakest honest beat, freezing it until next rev would over-assert
+    // (the Updated treatment plus the cleared chip carry the record).
+    if (isRegionItem(m)) continue;
     if (
       reveal &&
       reveal.item.nextStart === m.nextStart &&
       reveal.item.nextEnd === m.nextEnd
     )
-      continue; // the active item renders below, not as a settled mark
+      continue; // the active item renders above, not as a settled mark
     if (m.nextEnd > md.length) continue; // stale offsets: skip, never garble
+    // Drop any settled mark that intersects a kept edit (the active beats
+    // first, then earlier marks): overlapping injections would garble the
+    // descending splice below.
+    if (edits.some((e) => m.nextStart < e.end && m.nextEnd > e.start))
+      continue;
     edits.push({
       start: m.nextStart,
       end: m.nextEnd,
       text: R_ON + md.slice(m.nextStart, m.nextEnd) + R_OFF,
-    });
-  }
-  if (reveal && reveal.item.nextEnd <= md.length) {
-    const { item, mode, chars } = reveal;
-    const full = md.slice(item.nextStart, item.nextEnd);
-    // Deletion-only items (empty span) never get a caret: a caret blinking
-    // next to nothing where text just vanished is nonsense theater.
-    edits.push({
-      start: item.nextStart,
-      end: item.nextEnd,
-      text:
-        mode === "old"
-          ? OLD_ON + item.oldMarkerText + OLD_OFF
-          : mode === "typing"
-            ? R_ON + full.slice(0, chars) + (full ? CARET_STEADY : "") + R_OFF
-            : mode === "swap"
-              ? R_ON + full + R_OFF
-              : R_ON + full + (full ? CARET : "") + R_OFF,
     });
   }
   edits.sort((a, b) => b.start - a.start);
@@ -116,15 +151,25 @@ function decorateMarkdown(
 interface SpanCtx {
   resolved: boolean;
   old: boolean;
+  active: boolean; // live region wash (stronger than the settled resolved)
 }
 
 function styledText(text: string, ctx: SpanCtx, key: number) {
   // Always-on [TO CONFIRM] decoration rides the same pass: warn-colored
   // marks, quiet (no wash) so a marker-dense draft does not read as broken.
   if (!SENTINEL_RE.test(text)) {
-    if (ctx.old || ctx.resolved)
+    if (ctx.old || ctx.resolved || ctx.active)
       return (
-        <span key={key} className={ctx.old ? "doc-resolve-old" : "doc-resolved"}>
+        <span
+          key={key}
+          className={
+            ctx.old
+              ? "doc-resolve-old"
+              : ctx.active
+                ? "doc-resolved doc-resolved--active"
+                : "doc-resolved"
+          }
+        >
           {text}
         </span>
       );
@@ -153,10 +198,18 @@ function styledText(text: string, ctx: SpanCtx, key: number) {
     buf = "";
   };
   for (const ch of text) {
-    if (ch === R_ON || ch === R_OFF || ch === OLD_ON || ch === OLD_OFF) {
+    if (
+      ch === R_ON ||
+      ch === R_OFF ||
+      ch === OLD_ON ||
+      ch === OLD_OFF ||
+      ch === RA_ON ||
+      ch === RA_OFF
+    ) {
       flush();
       ctx.resolved = ch === R_ON ? true : ch === R_OFF ? false : ctx.resolved;
       ctx.old = ch === OLD_ON ? true : ch === OLD_OFF ? false : ctx.old;
+      ctx.active = ch === RA_ON ? true : ch === RA_OFF ? false : ctx.active;
     } else if (ch === CARET || ch === CARET_STEADY) {
       flush();
       parts.push(
@@ -176,7 +229,7 @@ function styledText(text: string, ctx: SpanCtx, key: number) {
 }
 
 function InlineSpans({ nodes, ctx }: { nodes: Inline[]; ctx?: SpanCtx }) {
-  const c = ctx ?? { resolved: false, old: false };
+  const c = ctx ?? { resolved: false, old: false, active: false };
   return (
     <>
       {nodes.map((n, i) => {
@@ -320,6 +373,7 @@ export function DocPane({
   deletesAt,
   resolvedMarks,
   reveal,
+  cleared,
   showStatus,
   showNote,
   numbering,
@@ -342,6 +396,10 @@ export function DocPane({
   resolvedMarks?: ResolvedMarkerReveal[];
   /** The one resolution reveal currently playing, if any. */
   reveal?: RevealState | null;
+  /** "slug#sectionId" -> markers resolved there this turn (count-delta
+   *  proven at diff time). Drives the persistent cleared chip; cleared on
+   *  the next rev alongside the marks. */
+  cleared?: Record<string, number> | null;
   /** Progress + skip control for the reveal sequence. */
   showStatus?: { index: number; total: number; onSkip: () => void } | null;
   /** Honest overflow line after a capped reveal run. */
@@ -468,11 +526,30 @@ export function DocPane({
             // array from marksBySection, so the parse memo holds for every
             // section except the one actually revealing.
             const secMarks = marksBySection.get(`${doc.slug}#${s.id}`);
+            // Count-delta proven, set at diff time: the durable trace of a
+            // resolution whose theater degraded or was skipped.
+            const clearedCount = cleared?.[`${doc.slug}#${s.id}`] ?? 0;
+            // Live region beat on this section. The section-level class
+            // mounts ONLY when the block has no washable lines (all-table
+            // regions): with wash spans present the line-level treatment
+            // carries both the motion and the static reduce signal, and a
+            // second outline would just be noise.
+            const regionActive =
+              !!reveal &&
+              reveal.mode === "region" &&
+              reveal.item.doc === doc.slug &&
+              reveal.item.section === s.id &&
+              regionWashLines(
+                s.markdown,
+                reveal.item.nextStart,
+                reveal.item.nextEnd
+              ).length === 0;
             const cls =
               [
                 changed ? "doc-sec--changed doc-sec--flash" : "",
                 asked ? "doc-sec--asking" : "",
                 planned ? "doc-sec--planned" : "",
+                regionActive ? "doc-sec--region" : "",
               ]
                 .filter(Boolean)
                 .join(" ") || undefined;
@@ -485,6 +562,13 @@ export function DocPane({
                 <h3 className="doc-h text-lg" tabIndex={-1} data-sec-heading>
                   {sectionTitleText(si + 1, s.title, numbering)}
                   {changed && <span className="doc-chip">Updated</span>}
+                  {clearedCount > 0 && (
+                    <span className="doc-chip">
+                      {clearedCount === 1
+                        ? "Open item cleared"
+                        : `${clearedCount} open items cleared`}
+                    </span>
+                  )}
                   {asked && (
                     <span className="doc-chip doc-chip--ask">
                       Asking about this
@@ -519,6 +603,21 @@ export function DocPane({
             Showing resolved items · {showStatus.index + 1} of{" "}
             {showStatus.total}
           </span>
+          {/* Region beats have no inline strike (no anchored place to put
+              one); the bar names the removed marker instead. Verbatim old
+              text, struck, full opacity: WCAG-persistent, never faded. */}
+          {reveal && isRegionItem(reveal.item) && reveal.item.excerpt && (
+            <span className="doc-bar-strike text-xs">
+              Cleared ·{" "}
+              <s>
+                [TO CONFIRM:{" "}
+                {reveal.item.excerpt.replace(/\s+/g, " ").length > 48
+                  ? `${reveal.item.excerpt.replace(/\s+/g, " ").slice(0, 48).trimEnd()}...`
+                  : reveal.item.excerpt.replace(/\s+/g, " ")}
+                ]
+              </s>
+            </span>
+          )}
           <button
             type="button"
             className="btn btn--text"

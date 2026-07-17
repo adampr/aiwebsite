@@ -15,7 +15,9 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 16: the idle "Reformat
+Last verified against code: 2026-07-17 (governance round 16c: reveal tier
+pipeline — sentence-bounded tier 2, region floor, cleared chips, reveal
+channel v2, see §5.12; round 16: the idle "Reformat
 the whole draft" button is DEBT-gated — since auto-reformat-on-upload (13d) it
 was a standing no-op in the happy path; `style_sample_debt` (migration 0014)
 holds an upload nonce meaning "the sample changed since the last COMPLETE
@@ -1285,13 +1287,34 @@ wash; muted inside Planned sections; the shared Inline model and docx renderer a
 untouched). When the flight-owning tab's turn resolves markers,
 `diffResolvedMarkers` (`src/lib/governance/resolved-anim.ts`) diffs pre- vs
 post-turn documents per changed section — a marker counts as resolved ONLY when its
-excerpt count dropped in the committed text; the replacement is a verbatim slice
-located between the marker's own line-bounded context anchors; when exact anchors
-miss — the common case: the model REWRITES the sentence while folding the fact in —
-a tier-2 fallback reveals the whole committed line that replaced the marker's line
-(token-overlap >=34% against >=3 old-line tokens; table rows, marker-bearing lines,
-and >360-char lines excluded; same-line resolutions dedupe to one reveal). Ambiguity
-still yields NO reveal, never a guess; ≤20 items. The doc pane then plays the reveal (owner request;
+excerpt count dropped in the committed text. TIER PIPELINE (round 16; the owner's
+"animation stops at the open items" report: real chase-phase edits failed both old
+tiers and nothing else moves there, so answers landed with zero motion): markers
+whose OLD line is a table row route straight to the region floor (no tier may type
+part of a row or strike across a cell); tier 1 anchors the verbatim replacement
+between the marker's own line-bounded context anchors (now also rejecting spans
+whose committed line is a table row); tier 2 (`sentenceFallback` + exported
+`sentenceSpans`) matches the committed SENTENCE that replaced the marker's sentence
+— sentence segmentation by forward scan (boundary = [.!?] + optional closing
+quote/paren + whitespace + upper/digit/quote/paren opener; no split after 1-2
+letter words like "e.g." or between digits like "3.1"; whitespace-trimmed spans,
+terminal punctuation kept), candidates are 8..360-char marker-free sentences of
+non-table lines that did NOT exist verbatim pre-turn, lead-stripped, scored by
+token overlap against the old marker's sentence context (>=3 old tokens; >=50%
+overlap; distinctiveness: >=2 matched tokens of length >=4 or >=75% overlap;
+winner needs a 0.15 margin over the best different-text rival, else one positional
+tie-break — the sole candidate within 10% relative offset of the old sentence —
+else no inline reveal). This kills the old whole-line fallback's silent >360-char
+line exclusion (real policy paragraphs are one markdown line) and its margin-free
+wrong-line picks. REGION FLOOR (kind "region", the guaranteed-motion fallback):
+markers no tier could anchor emit ONE region item per section — `changedLineRegion`
+strips common exact prefix/suffix lines, shrinks edges past marker-bearing lines,
+returns an empty span for pure deletions, and ABSTAINS (null) when the changed
+block still carries a marker (a reworded marker is a NEW open item; washing it as a
+resolution would lie); suppressed when the section already plays an inline item
+(no double-claiming). Region items carry excerpt = first unanchored marker's
+excerpt, oldMarkerText = "" (isRevealShape-valid, test-pinned). Ambiguity still
+never types a guess; ≤20 items. The doc pane then plays the reveal (owner request;
 re-paced 2026-07-17 round 13b "display it slower"): per item, auto-scroll
 (pane-container-scoped, 420 ms; 60 ms same-section) → old marker struck out (900 ms
 over a 700 ms CSS fade; the 200 ms rest is reading time — change together; 120 ms in,
@@ -1302,11 +1325,31 @@ ticks = clamp(ceil(len/2), 20, 60), closed-form chars so short texts spend the f
 1.2 s floor in 1-2 char steps; 3.6 s ceiling; sentinel-injected private-use chars
 toggle span styling across emphasis boundaries; caret STEADY while typing) →
 1 s hold with the caret BLINKING (removed at hold end; deletion-only items get no
-caret). The played list is trimmed at startShow to min(5 items, a 15 s budget
+caret). REGION BEATS (kind "region"): optional section jump, wash on (mode
+"region": `regionWashLines` spans — per non-blank non-table line, lead-stripped,
+may be empty for all-table blocks — rendered via new RA sentinels / as
+`.doc-resolved--active`; an all-table block mounts the section-level
+`.doc-sec--region` outline instead), one centered scroll (selector falls back
+`.doc-resolve-old, .doc-resolved--active`, then the section element), then a
+`regionHoldMs = clamp(1800, len*6, 3200)` hold — no strike, no typing, no caret;
+the sticky bar names the removed marker ("Cleared · [TO CONFIRM: excerpt…]"
+struck at full opacity, `.doc-bar-strike`, never faded). estimateItemMs prices
+regions additively as (jump) + 300 + regionHoldMs (the 300 = the runner's
+120 + 180; inline math untouched). Region CSS follows the authoring rule: static
+declarations ARE the final state (reduce kills all animations); the pulse
+keyframes are default-motion garnish. CLEARED CHIPS: `clearedSectionCounts`
+(pure, count-delta per changed section) is computed at diff time in BOTH the
+flight-landed and idle-rev-advance branches and rendered as a persistent
+"Open item cleared" / "N open items cleared" heading chip until the next rev
+(cleared with the marks; keepItem drops it section-scoped) — the durable record
+that survives skips, Escapes, and degraded theater. The played list is trimmed at
+startShow to min(5 items, a 15 s budget
 estimated with the REAL per-item beats), always ≥1; the overflow note's denominator
-is the ORIGINAL diff count ("Showed n of m resolved items..."). Every diffed span
-keeps a static `.doc-resolved` wash until the next rev, a sticky "Showing resolved
-items · i of k / Skip the replay" bar rides the pane, and ANY user intent
+is the ORIGINAL diff count ("Showed n of m resolved items..."). Every diffed
+INLINE span keeps a static `.doc-resolved` wash until the next rev (region items
+never settle to a wash — the block-wide claim was already the weakest honest beat;
+the Updated treatment and the cleared chip carry the record), a sticky "Showing
+resolved items · i of k / Skip the replay" bar rides the pane, and ANY user intent
 (scroll/jump/Escape/skip, a new turn, a newer rev) ends it instantly at the final
 state. Perf contract: the doc pane memoizes per-section mark arrays and keys the
 section parse memo on reveal PRIMITIVES (item/mode/chars), so only the revealing
@@ -1336,8 +1379,13 @@ SECTION-SCOPED (marks over byte-identical sections keep their owed washes;
 never re-diffed — a keep dressed as a resolution reveal would lie). CROSS-TAB
 (owner report 2026-07-17 "no longer see the animation" — they were watching a
 second window; only the flight tab ever diffed): the flight tab broadcasts its
-diffed items on a per-project `BroadcastChannel` (`gov-reveal:<projectId>`,
-same-origin) at the moment it plays them; a sibling tab plays the IDENTICAL
+diffed items on a per-project `BroadcastChannel` (`gov-reveal:<projectId>:v2`,
+same-origin; the v2 suffix shipped with region items — an old bundle's
+field-only shape guard would accept a region item and TYPE its multi-line span
+as an inline reveal, so mixed-bundle deploy windows simply do not exchange
+shows, the documented no-BroadcastChannel degradation; `isRevealShape` is now
+also closed-world over `kind`: absent/"inline"/"region" only) at the moment it
+plays them; a sibling tab plays the IDENTICAL
 show through the same play-or-queue helper (shared with the flight branch so
 mobile/hidden queueing can never drift) but ONLY at the exact sender rev —
 same rev = byte-identical committed text, so the spans stay honest; received

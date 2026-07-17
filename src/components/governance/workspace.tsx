@@ -15,10 +15,13 @@ import {
 } from "@/lib/governance/numbering";
 import { BUILD_ID, staleBundleSignal } from "@/lib/governance/build-id";
 import {
+  clearedSectionCounts,
   diffResolvedMarkers,
+  isRegionItem,
   isRevealShape,
   planShow,
   reducedRestMs,
+  regionHoldMs,
   typingTicks,
   MAX_REVEALS,
   SHOW_TICK_MS,
@@ -143,6 +146,14 @@ export function Workspace({ projectId }: { projectId: string }) {
   // Resolved-marker reveal (owner request 2026-07-17): settled spans keep a
   // static wash until the next turn; `reveal` is the one item playing now.
   const [resolvedMarks, setResolvedMarks] = useState<ResolvedMarkerReveal[]>([]);
+  // "slug#sid" -> markers resolved there this turn (count-delta proven,
+  // clearedSectionCounts). Drives the persistent cleared chip; set at diff
+  // time so it survives skipped or degraded theater, cleared with the
+  // marks on any newer rev (then immediately re-set from the new diff).
+  const [clearedSections, setClearedSections] = useState<Record<
+    string,
+    number
+  > | null>(null);
   const [reveal, setReveal] = useState<RevealState | null>(null);
   const [showStatus, setShowStatus] = useState<{
     index: number;
@@ -708,9 +719,60 @@ export function Workspace({ projectId }: { projectId: string }) {
       window.setTimeout(performJump, 60);
     }
     if (reduce) setActiveDoc(item.doc);
+    const advance = () => {
+      const s = showRef.current;
+      if (s) {
+        s.index += 1;
+        runShowStep();
+      }
+    };
+    /** Center the live beat's element: the struck marker or the active
+     *  region wash, else the section itself (an all-table region renders
+     *  no wash spans). The doc pane's own container on desktop, the
+     *  window on mobile. */
+    const centerShowTarget = () => {
+      const el =
+        document.querySelector<HTMLElement>(
+          ".doc-resolve-old, .doc-resolved--active"
+        ) ?? document.getElementById(secDomId(item.doc, item.section));
+      if (!el) return;
+      const behavior: ScrollBehavior = reduce ? "auto" : "smooth";
+      const pane = isDesktopRef.current
+        ? el.closest<HTMLElement>(".docpane")
+        : null;
+      if (pane) {
+        const top =
+          pane.scrollTop +
+          el.getBoundingClientRect().top -
+          pane.getBoundingClientRect().top -
+          pane.clientHeight * 0.4;
+        pane.scrollTo({ top: Math.max(top, 0), behavior });
+      } else {
+        el.scrollIntoView({ block: "center", behavior });
+      }
+    };
     // Timer-chain invariant (critic A1): exactly ONE pending later() at all
     // times - strict continuation passing. A sibling schedule would orphan
     // a live timeout that still passes the seq guard and double-advance.
+    if (isRegionItem(item)) {
+      // Region beats: optional section jump above, wash on, one centered
+      // scroll, then the hold. No strike, no typing, no caret; the show
+      // bar names the removed marker. estimateItemMs mirrors this chain
+      // as (jump) + 300 + regionHoldMs (120 + 180 = 300): change the
+      // numbers together. Reduce plays the SAME chain with auto scrolls
+      // and the static .doc-resolved--active / .doc-sec--region styling
+      // carrying the signal (nothing depends on a CSS animation running).
+      later(reduce ? 0 : sameSection ? 60 : 420, () => {
+        setReveal({ item, mode: "region", chars: 0 });
+        later(120, () => {
+          centerShowTarget();
+          later(180, () =>
+            later(regionHoldMs(item.nextEnd - item.nextStart), advance)
+          );
+        });
+      });
+      return;
+    }
     later(reduce ? 0 : sameSection ? 60 : 420, () => {
       // Beat 2: the old marker, struck out on its way out. Default: 900ms
       // over the CSS xl-resolve-out 700ms fade (the 200ms rest at settled
@@ -724,23 +786,7 @@ export function Workspace({ projectId }: { projectId: string }) {
       // the DOM, center IT: the doc pane's own container on desktop, the
       // window on mobile.
       later(120, () => {
-        const el = document.querySelector<HTMLElement>(".doc-resolve-old");
-        if (el) {
-          const behavior: ScrollBehavior = reduce ? "auto" : "smooth";
-          const pane = isDesktopRef.current
-            ? el.closest<HTMLElement>(".docpane")
-            : null;
-          if (pane) {
-            const top =
-              pane.scrollTop +
-              el.getBoundingClientRect().top -
-              pane.getBoundingClientRect().top -
-              pane.clientHeight * 0.4;
-            pane.scrollTo({ top: Math.max(top, 0), behavior });
-          } else {
-            el.scrollIntoView({ block: "center", behavior });
-          }
-        }
+        centerShowTarget();
         later(reduce ? 980 : 780, () => beat3());
       });
       const beat3 = () => {
@@ -750,13 +796,6 @@ export function Workspace({ projectId }: { projectId: string }) {
         // reduce: instant caret-free swap, then a length-scaled rest (the
         // user never watched it type; the rest is the orientation time).
         const len = item.nextEnd - item.nextStart;
-        const advance = () => {
-          const s = showRef.current;
-          if (s) {
-            s.index += 1;
-            runShowStep();
-          }
-        };
         if (len === 0) {
           // Deletion only: the strike beat already showed the removal.
           setReveal({ item, mode: reduce ? "swap" : "hold", chars: 0 });
@@ -863,6 +902,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     endShow(false);
     setPendingShow(null);
     setResolvedMarks([]);
+    setClearedSections(null);
     setShowNote(null);
   }
 
@@ -972,7 +1012,12 @@ export function Workspace({ projectId }: { projectId: string }) {
   // behavior.
   useEffect(() => {
     if (typeof BroadcastChannel === "undefined") return;
-    const bc = new BroadcastChannel(`gov-reveal:${projectId}`);
+    // v2: items carry `kind` since the region floor shipped. The version
+    // suffix keeps a mixed-bundle deploy window safe: an old bundle would
+    // pass its field-only isRevealShape and then TYPE a multi-line region
+    // span as if it were an inline reveal. Old and new tabs simply do not
+    // exchange shows (the documented no-BroadcastChannel degradation).
+    const bc = new BroadcastChannel(`gov-reveal:${projectId}:v2`);
     bcRef.current = bc;
     bc.onmessage = (e: MessageEvent) => {
       const d = e.data as { rev?: unknown; items?: unknown } | null;
@@ -1096,9 +1141,19 @@ export function Workspace({ projectId }: { projectId: string }) {
         );
         console.info(
           reveals.length
-            ? `[gov-reveal] turn landed: ${reveals.length} resolved marker(s) diffed`
+            ? `[gov-reveal] turn landed: ${reveals.length} resolved marker(s) diffed (${reveals.filter(isRegionItem).length} region)`
             : "[gov-reveal] turn landed: no resolved markers diffed (plain Updated treatment)"
         );
+        // The durable cleared chips ride the count delta, not the theater:
+        // they survive skips, Escapes, and degraded beats alike.
+        {
+          const counts = clearedSectionCounts(
+            prev.documents,
+            next.documents,
+            next.changedSections
+          );
+          setClearedSections(Object.keys(counts).length ? counts : null);
+        }
         // Snapshot questions review the research block IN the card; the
         // ask anchor would spotlight an unrelated section (owner bug
         // 2026-07-17: a random highlighted marker read as the question's
@@ -1252,6 +1307,16 @@ export function Workspace({ projectId }: { projectId: string }) {
         (next.status === "drafting" || next.status === "review")
       ) {
         setHighlights(next.changedSections);
+        // Same durable chips for a turn another tab ran: this tab holds the
+        // pre-turn docs too, so the count delta is just as honest here.
+        {
+          const counts = clearedSectionCounts(
+            prev.documents,
+            next.documents,
+            next.changedSections
+          );
+          setClearedSections(Object.keys(counts).length ? counts : null);
+        }
         const held = bcStashRef.current;
         if (held && held.rev === next.rev && !showRef.current) {
           bcStashRef.current = null;
@@ -2228,6 +2293,15 @@ export function Workspace({ projectId }: { projectId: string }) {
       setResolvedMarks((ms) =>
         ms.filter((m) => !changedSecs.has(`${m.doc}#${m.section}`))
       );
+      // Section-scoped like the marks: a kept section's chip described the
+      // pre-keep turn; the keep receipt (announce below) owns that story.
+      setClearedSections((cs) => {
+        if (!cs) return cs;
+        const kept = Object.fromEntries(
+          Object.entries(cs).filter(([k]) => !changedSecs.has(k))
+        );
+        return Object.keys(kept).length ? kept : null;
+      });
       setPendingShow(null); // its rev is behind the merged one now
       setHighlights(r.data.changedSections);
       setFlashKey((k) => k + 1);
@@ -2699,6 +2773,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 status={view.status}
                 deletesAt={view.deletesAt}
                 resolvedMarks={resolvedMarks}
+                cleared={clearedSections}
                 reveal={reveal}
                 showStatus={
                   showStatus

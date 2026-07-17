@@ -435,16 +435,60 @@
   50% { opacity: 0; }
 }
 
-/* The reveal's progress row + skip control, pinned inside the doc pane. */
+/* Region floor (round 16): a resolution no tier could anchor washes the
+   changed-line block as one; nothing types, nothing strikes inline (the
+   show bar names the removed marker instead). AUTHORING RULE: the static
+   declarations below ARE the final state - futurism.css kills every
+   animation under reduce with !important, so the pulse keyframes are
+   default-motion garnish only and nothing may depend on them running. */
+.doc-resolved--active {
+  background: color-mix(in oklch, var(--xl-light) 24%, transparent);
+  outline: 1px solid color-mix(in oklch, var(--xl-light) 45%, transparent);
+}
+/* All-table region blocks render no line washes; the section outline is
+   then the whole signal (and the static reduce carrier). */
+.doc-sec--region {
+  outline: 1px solid color-mix(in oklch, var(--xl-light) 40%, transparent);
+  outline-offset: 4px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .doc-resolved--active {
+    animation: xl-region-pulse 900ms var(--ease-drift) 2;
+  }
+  .doc-sec--region {
+    animation: xl-region-pulse-sec 900ms var(--ease-drift) 2;
+  }
+}
+@keyframes xl-region-pulse {
+  50% { background: color-mix(in oklch, var(--xl-light) 8%, transparent); }
+}
+@keyframes xl-region-pulse-sec {
+  50% { outline-color: color-mix(in oklch, var(--xl-light) 12%, transparent); }
+}
+
+/* The show bar's strike line for region beats: the literal removed marker,
+   struck at FULL opacity. Persistent for the beat, so it never rides the
+   xl-resolve-out fade (a held sub-contrast line would fail WCAG). */
+.doc-bar-strike {
+  color: var(--xl-warn);
+}
+.doc-bar-strike s {
+  text-decoration: line-through;
+}
+
+/* The reveal's progress row + skip control, pinned inside the doc pane.
+   flex-wrap: the region strike line may need its own row on mobile; the
+   44px Skip target never shrinks for it. */
 .doc-show-bar {
   position: sticky;
   bottom: 0;
   margin-top: var(--sp-4);
   padding: var(--sp-2) 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--sp-4);
+  gap: var(--sp-2) var(--sp-4);
   background: var(--xl-bg-1);
   border-top: 1px solid var(--xl-line);
 }

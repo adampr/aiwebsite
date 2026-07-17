@@ -59,11 +59,16 @@ import {
   uploadCreatesDebt,
 } from "../src/lib/governance/restyle";
 import {
+  changedLineRegion,
+  clearedSectionCounts,
   diffResolvedMarkers,
   estimateItemMs,
   isRevealShape,
   planShow,
   reducedRestMs,
+  regionHoldMs,
+  regionWashLines,
+  sentenceSpans,
   typingTicks,
   SHOW_TICK_MS,
 } from "../src/lib/governance/resolved-anim";
@@ -1644,14 +1649,22 @@ function check(name: string, cond: boolean): void {
         )
     )
   );
-  const rewritten = diffResolvedMarkers(
-    prevDocs,
-    mkDocs("Retention is governed by the IT standard."),
-    { [slug]: ["scope"] }
-  );
+  const rewrittenDocs = mkDocs("Retention is governed by the IT standard.");
+  const rewritten = diffResolvedMarkers(prevDocs, rewrittenDocs, {
+    [slug]: ["scope"],
+  });
   check(
-    "reveal: a full rewrite with no token overlap yields no reveal, never a guess",
-    rewritten.length === 0
+    "reveal: a full rewrite yields one region item, never a typed guess",
+    rewritten.length === 1 &&
+      rewritten[0].kind === "region" &&
+      countConfirmMarkers(
+        rewrittenDocs[0].sections[0].markdown.slice(
+          rewritten[0].nextStart,
+          rewritten[0].nextEnd
+        )
+      ) === 0 &&
+      rewritten[0].oldMarkerText === "" &&
+      rewritten[0].excerpt.length > 0
   );
   // Tier-2 line fallback (owner report 2026-07-17: the model usually
   // REWRITES the sentence while folding the fact in, so exact anchors miss
@@ -1674,9 +1687,18 @@ function check(name: string, cond: boolean): void {
   const tableDocs = mkDocs(
     "| Area | Rule |\n| --- | --- |\n| Logs | We keep logs 30 days then purge them per the standard |"
   );
+  const proseToTable = diffResolvedMarkers(prevDocs, tableDocs, {
+    [slug]: ["scope"],
+  });
   check(
-    "reveal: table rows never type partially (fallback skips them)",
-    diffResolvedMarkers(prevDocs, tableDocs, { [slug]: ["scope"] }).length === 0
+    "reveal: prose replaced by a table degrades to a region, never partial row typing",
+    proseToTable.length === 1 &&
+      proseToTable[0].kind === "region" &&
+      regionWashLines(
+        tableDocs[0].sections[0].markdown,
+        proseToTable[0].nextStart,
+        proseToTable[0].nextEnd
+      ).length === 0
   );
   check(
     "reveal: untouched sections are ignored",
@@ -1698,6 +1720,193 @@ function check(name: string, cond: boolean): void {
       !isRevealShape({ ...realItem, nextEnd: realItem.nextStart - 1 }) &&
       !isRevealShape({ ...realItem, nextStart: 1.5 }) &&
       !isRevealShape({ ...realItem, oldMarkerText: 7 })
+  );
+  check(
+    "reveal: shape guard kind is closed-world (absent/inline/region only)",
+    isRevealShape({ ...realItem, kind: "inline" }) &&
+      isRevealShape({ ...realItem, kind: "region" }) &&
+      !isRevealShape({ ...realItem, kind: "block" }) &&
+      !isRevealShape({ ...realItem, kind: 7 })
+  );
+
+  // Round 16: sentence-bounded tier 2 + the region floor (owner report:
+  // "the animation as you write things out stops" in the chase phase -
+  // real edits failed both anchor tiers and nothing else moves there).
+  check(
+    "sentenceSpans: boundary splits, abbreviation and decimal guards, verbatim slice-back",
+    (() => {
+      const line = "We log 3.1 GB daily. Retention, e.g. logs, is short. Purges run.";
+      const spans = sentenceSpans(line, 0);
+      const texts = spans.map((s) => line.slice(s.start, s.end));
+      return (
+        texts.length === 3 &&
+        texts[0] === "We log 3.1 GB daily." &&
+        texts[1] === "Retention, e.g. logs, is short." &&
+        texts[2] === "Purges run."
+      );
+    })()
+  );
+  // The main gap that shipped this round: a sentence rewritten INSIDE a
+  // long one-line paragraph (>360 chars) now reveals the sentence; the old
+  // whole-line fallback's 360-char cap silently excluded it.
+  const longPad =
+    "The organization maintains a comprehensive program for the management of artificial intelligence systems across all business units, including procurement, deployment, monitoring, and decommissioning, with clearly assigned ownership and periodic review cycles that align with the annual governance calendar and the risk appetite approved by leadership. ";
+  const longPrev = mkDocs(
+    longPad +
+      "Access is limited to trained staff and [TO CONFIRM: contractors are excluded from tool access]."
+  );
+  const longNext = mkDocs(
+    longPad +
+      "Access is limited to trained staff; approved contractors may use tools with sign-off."
+  );
+  const longReveal = diffResolvedMarkers(longPrev, longNext, {
+    [slug]: ["scope"],
+  });
+  check(
+    "reveal: a rewritten sentence inside a long paragraph-line reveals the sentence",
+    longReveal.length === 1 &&
+      longReveal[0].kind === undefined &&
+      longNext[0].sections[0].markdown.slice(
+        longReveal[0].nextStart,
+        longReveal[0].nextEnd
+      ) ===
+        "Access is limited to trained staff; approved contractors may use tools with sign-off."
+  );
+  // In-place folds keep beating the sentence tier on long lines (tier 1).
+  const longFoldNext = mkDocs(
+    longPad + "Access is limited to trained staff and approved contractors."
+  );
+  const longFold = diffResolvedMarkers(longPrev, longFoldNext, {
+    [slug]: ["scope"],
+  });
+  check(
+    "reveal: an in-place fold on a long line still anchors via tier 1",
+    longFold.length === 1 &&
+      longFoldNext[0].sections[0].markdown
+        .slice(longFold[0].nextStart, longFold[0].nextEnd)
+        .includes("approved contractors")
+  );
+  // Wrong-pick guard: two near-identical qualifying sentences at
+  // incompatible positions kill the margin and the positional tie-break,
+  // degrading to the region floor instead of typing either.
+  const ambigPrev = mkDocs(
+    longPad +
+      "\n\nWe keep chat logs for thirty days then purge them [TO CONFIRM: confirm retention]."
+  );
+  const ambigNext = mkDocs(
+    "We keep chat logs for thirty days then purge them fully.\n\nWe keep chat logs for thirty days then purge them quarterly.\n\n" +
+      longPad
+  );
+  const ambig = diffResolvedMarkers(ambigPrev, ambigNext, {
+    [slug]: ["scope"],
+  });
+  check(
+    "reveal: ambiguous near-tie candidates degrade to a region, never type a guess",
+    ambig.length === 1 && ambig[0].kind === "region"
+  );
+  // Own-line bullet markers (no context tokens) reach the region floor
+  // instead of playing nothing.
+  const bulletPrev = mkDocs(
+    "Intro paragraph stands here unchanged.\n\n- [TO CONFIRM: contractors are excluded from tool access]\n\nClosing paragraph stands here unchanged."
+  );
+  const bulletNext = mkDocs(
+    "Intro paragraph stands here unchanged.\n\nApproved contractors may use tools with manager sign-off.\n\nClosing paragraph stands here unchanged."
+  );
+  const bullet = diffResolvedMarkers(bulletPrev, bulletNext, {
+    [slug]: ["scope"],
+  });
+  check(
+    "reveal: an own-line marker resolution washes the changed region",
+    bullet.length === 1 &&
+      bullet[0].kind === "region" &&
+      bulletNext[0].sections[0].markdown
+        .slice(bullet[0].nextStart, bullet[0].nextEnd)
+        .includes("Approved contractors")
+  );
+  // Markers on table rows route straight to the region floor: no tier may
+  // type part of a row or strike across a cell.
+  const cellPrev = mkDocs(
+    "| Tool | Notes |\n| --- | --- |\n| ChatGPT | [TO CONFIRM: which plan tier is licensed] |"
+  );
+  const cellNext = mkDocs(
+    "| Tool | Notes |\n| --- | --- |\n| ChatGPT | Team plan, 25 seats |"
+  );
+  const cell = diffResolvedMarkers(cellPrev, cellNext, { [slug]: ["scope"] });
+  check(
+    "reveal: a table-cell marker resolution is a region, never inline typing",
+    cell.length === 1 && cell[0].kind === "region"
+  );
+  check(
+    "changedLineRegion: strips common edges, empty span on pure deletion, abstains on marker-only change",
+    (() => {
+      const r1 = changedLineRegion("a\nOLD LINE\nc", "a\nNEW LINE\nc");
+      const r2 = changedLineRegion("a\ngone\nc", "a\nc");
+      const r3 = changedLineRegion(
+        "a\n[TO CONFIRM: one]\nc",
+        "a\n[TO CONFIRM: two]\nc"
+      );
+      return (
+        r1 !== null &&
+        "a\nNEW LINE\nc".slice(r1.start, r1.end) === "NEW LINE" &&
+        r2 !== null &&
+        r2.start === r2.end &&
+        r3 === null &&
+        changedLineRegion("same", "same") === null
+      );
+    })()
+  );
+  check(
+    "regionWashLines: skips blanks and table rows, strips list leads, slices verbatim",
+    (() => {
+      const md = "- item one\n\n| a | b |\nplain line";
+      const spans = regionWashLines(md, 0, md.length);
+      const texts = spans.map((s) => md.slice(s.start, s.end));
+      return (
+        texts.length === 2 &&
+        texts[0] === "item one" &&
+        texts[1] === "plain line" &&
+        regionWashLines("| a |\n| --- |\n| b |", 0, 19).length === 0
+      );
+    })()
+  );
+  check(
+    "regionHoldMs: clamps 1800..3200 at len*6",
+    regionHoldMs(0) === 1800 &&
+      regionHoldMs(300) === 1800 &&
+      regionHoldMs(400) === 2400 &&
+      regionHoldMs(1000) === 3200
+  );
+  const regionItem = {
+    ...realItem,
+    kind: "region" as const,
+    nextStart: 0,
+    nextEnd: 400,
+  };
+  check(
+    "estimateItemMs: region beats price as (jump) + 300 + hold, additive to inline math",
+    estimateItemMs(regionItem, null, false) === 420 + 300 + regionHoldMs(400) &&
+      estimateItemMs(regionItem, regionItem, false) ===
+        60 + 300 + regionHoldMs(400) &&
+      estimateItemMs(regionItem, null, true) === 0 + 300 + regionHoldMs(400)
+  );
+  check(
+    "planShow: a mixed inline+region list plays within the budget rules",
+    planShow([realItem, regionItem], false).length === 2
+  );
+  check(
+    "clearedSectionCounts: per-section positive marker-count deltas only",
+    (() => {
+      const counts = clearedSectionCounts(prevDocs, nextDocs, {
+        [slug]: ["scope"],
+      });
+      return (
+        counts[`${slug}#scope`] === 1 &&
+        Object.keys(
+          clearedSectionCounts(prevDocs, prevDocs, { [slug]: ["scope"] })
+        ).length === 0 &&
+        Object.keys(clearedSectionCounts(prevDocs, nextDocs, {})).length === 0
+      );
+    })()
   );
 
   // Marker scan with positions + the render-time confirm splitter.
