@@ -116,9 +116,22 @@ export const STYLE_SAMPLE_ACCEPT = [
 
 export const STYLE_SAMPLE_TYPES_COPY = ".docx, .pdf, .md, or .txt";
 
-/** Shared helper line for the format-sample upload (create panel + control). */
+/** Shared helper line for the format-sample upload (create panel + control).
+ * Round 17: names verbosity adoption and the .docx letterhead carry-over,
+ * scoped and hedged so nothing here can read as a lie (logos and images are
+ * text-unextractable; the privacy sentence stays literally true: letterhead
+ * text is extracted text, kept for downloads only, never sent to AI). */
 export const STYLE_SAMPLE_HELPER =
-  `Optional. Upload a policy your organization has the right to share (${STYLE_SAMPLE_TYPES_COPY}). The draft follows its heading and list style, and section numbering is applied automatically; Tron is instructed not to reuse the policy's content. Only the extracted text is kept: it is sent to our AI providers with each drafting turn and is deleted with the project.`;
+  `Optional. Upload a policy your organization has the right to share (${STYLE_SAMPLE_TYPES_COPY}). The draft follows its heading and list style and how detailed its sections are, and section numbering is applied automatically; a .docx sample's page header and footer text also carries into your Word downloads (logos and images are not). Tron is instructed not to reuse the policy's content. Only the extracted text is kept: it is sent to our AI providers with each drafting turn, except the header and footer text, which is used only to build your downloads. Everything is deleted with the project.`;
+
+/** Per-page provenance line appended by the renderer to every adopted
+ * letterhead footer (§5.12 round 17). Never stored, so stored sample lines
+ * can never displace it: a letterheaded page without it would read as a
+ * human-authored document. Per-mode copy: a confirmed final must not call
+ * itself a draft on every page. */
+export const PAGE_PROVENANCE_DRAFT = "AI-generated draft. Not legal advice.";
+export const PAGE_PROVENANCE_FINAL =
+  "AI-generated. Not legal advice; review by counsel required before adoption.";
 
 /** Reformat-debt status line (§5.12 round 16): shown ONLY while the server
  * says the draft may predate the current sample. Hedged on purpose: the

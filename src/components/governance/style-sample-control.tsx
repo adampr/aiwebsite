@@ -50,6 +50,62 @@ const NUMBERING_SPECIMENS: Record<
 const faint = { color: "var(--xl-text-faint)" } as const;
 const dim = { color: "var(--xl-text-dim)" } as const;
 
+/** Human display form of a stored letterhead line (round 17): tokens become
+ *  bracketed placeholders, tabs become a middot separator. */
+export function displayFrameLine(line: string): string {
+  return line
+    .split("{{PAGE}}")
+    .join("[page number]")
+    .split("{{PAGES}}")
+    .join("[page count]")
+    .split("{{TITLE}}")
+    .join("[document title]")
+    .split("\t")
+    .join(" · ");
+}
+
+/** Part-accurate letterhead adoption copy (round 17): never claims both
+ *  parts when only one stored text survives. Empty when neither did. */
+export function letterheadPartCopy(letterhead: {
+  header: string;
+  footer: string;
+}): string {
+  const hasH = letterhead.header.trim().length > 0;
+  const hasF = letterhead.footer.trim().length > 0;
+  if (hasH && hasF) return "page header and footer";
+  if (hasH) return "page header";
+  if (hasF) return "page footer";
+  return "";
+}
+
+/** One-time honesty line when the sample's register and the existing draft
+ *  are two bands apart (round 17, panel must-have): reformatting matches
+ *  look, never length, and without this line the owner's literal scenario
+ *  (terse sample over a long draft) reads as "the feature did nothing".
+ *  Returns "" when the gap is smaller or nothing is drafted. */
+export function sampleLengthNote(
+  documents: { slug: string; sections: { id: string; markdown: string }[] }[],
+  placeholders: Record<string, string[]>,
+  verbosity: { band: "concise" | "standard" | "expansive" } | null | undefined
+): string {
+  if (!verbosity || verbosity.band === "standard") return "";
+  let words = 0;
+  let sections = 0;
+  for (const d of documents)
+    for (const s of d.sections) {
+      if ((placeholders[d.slug] ?? []).includes(s.id)) continue;
+      sections++;
+      words += s.markdown.split(/\s+/).filter(Boolean).length;
+    }
+  if (sections === 0) return "";
+  const avg = words / sections;
+  if (verbosity.band === "concise" && avg > 380)
+    return "Your sample runs shorter than the current draft. Reformatting matches its look, not its length; to tighten a section, ask for that in a revision or your next answer.";
+  if (verbosity.band === "expansive" && avg < 160)
+    return "Your sample runs longer than the current draft. Reformatting matches its look, not its length; to expand a section, ask for that in a revision or your next answer.";
+  return "";
+}
+
 /** Reformat-the-draft wiring (§5.12 restyle run), owned by the workspace:
  *  available = a sample is attached, the project is drafting or in review,
  *  and at least one section is drafted. One consent contract in every state:
@@ -85,6 +141,9 @@ export function StyleSampleControl({
   onUploaded,
   onRemoved,
   numbering,
+  letterhead,
+  verbosity,
+  lengthNote,
 }: {
   projectId: string;
   initialName: string | null;
@@ -100,6 +159,16 @@ export function StyleSampleControl({
   // of truth the doc pane renders from). undefined = host does not surface
   // it (research screen); null = sample attached, nothing detected.
   numbering?: NumberingStyle | null;
+  // Round 17, from the VIEW like numbering. undefined = host does not
+  // surface them. letterhead null = stored before capture existed (legacy);
+  // empty strings = a .docx was scanned and nothing usable was found.
+  letterhead?: { header: string; footer: string } | null;
+  verbosity?: {
+    band: "concise" | "standard" | "expansive";
+    targetWords: number;
+  } | null;
+  // Pre-composed length-mismatch line (sampleLengthNote); "" hides it.
+  lengthNote?: string;
 }) {
   const [name, setName] = useState<string | null>(initialName);
   const [busy, setBusy] = useState<"upload" | "remove" | null>(null);
@@ -315,6 +384,97 @@ export function StyleSampleControl({
           )}
         </p>
       )}
+      {/* Letterhead transparency (round 17): what will actually print. The
+          preview shows the stored lines verbatim (tokens humanized) so a
+          stale or wrong line is noticed BEFORE the first export, and every
+          empty state says honestly why nothing carries over. */}
+      {name &&
+        letterhead !== undefined &&
+        (() => {
+          const lower = name.toLowerCase();
+          if (letterhead === null) {
+            if (lower.endsWith(".docx"))
+              return (
+                <p className="mt-1 max-w-none text-xs" style={dim}>
+                  This sample was stored before letterhead capture existed.
+                  Replace it (the same file is fine) to carry its page header
+                  and footer text into your Word downloads.
+                </p>
+              );
+            if (lower.endsWith(".pdf"))
+              return (
+                <p className="mt-1 max-w-none text-xs" style={dim}>
+                  Page header and footer text cannot be carried over from a
+                  PDF. Upload the .docx version to include it in downloads.
+                </p>
+              );
+            return null;
+          }
+          const part = letterheadPartCopy(letterhead);
+          if (!part)
+            return lower.endsWith(".docx") ? (
+              <p className="mt-1 max-w-none text-xs" style={dim}>
+                No header or footer text was found in this sample. A logo-only
+                letterhead cannot be carried over; downloads keep the standard
+                layout.
+              </p>
+            ) : null;
+          const group = (label: string, text: string) =>
+            text.trim()
+              ? text
+                  .split("\n")
+                  .filter(Boolean)
+                  .map((l, i) => (
+                    <p
+                      key={`${label}-${i}`}
+                      className="max-w-none"
+                      style={faint}
+                    >
+                      {i === 0 ? `${label}: ` : ""}
+                      <span className="mono break-words">
+                        {displayFrameLine(l)}
+                      </span>
+                    </p>
+                  ))
+              : null;
+          return (
+            <div
+              className="mt-1 text-xs"
+              data-qa="style-sample-letterhead"
+              style={dim}
+            >
+              <p className="max-w-none">
+                Word downloads carry this sample&apos;s {part} (text only;
+                logos and images cannot be carried over):
+              </p>
+              {group("Header", letterhead.header)}
+              {group("Footer", letterhead.footer)}
+            </div>
+          );
+        })()}
+      {/* Verbosity transparency (round 17): fine print for the non-standard
+          bands only (the middle band is the default register and a line
+          about it would be noise). States intent, never an outcome. */}
+      {name && verbosity != null && verbosity.band !== "standard" && (
+        <p
+          className="mt-1 max-w-none text-xs"
+          data-qa="style-sample-verbosity"
+          style={dim}
+        >
+          {verbosity.band === "concise"
+            ? `The sample keeps its sections short, so I aim for about ${verbosity.targetWords} words per section when drafting new text.`
+            : `The sample writes in detail, so I aim for about ${verbosity.targetWords} words per section when drafting new text.`}
+        </p>
+      )}
+      {name && lengthNote ? (
+        <p
+          className="mt-1 max-w-none text-xs"
+          data-qa="style-sample-length-note"
+          style={dim}
+        >
+          {lengthNote}
+        </p>
+      ) : null}
       {reformat?.queued && (
         <div
           className="mt-3 border p-4"

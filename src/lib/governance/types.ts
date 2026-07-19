@@ -302,10 +302,18 @@ export interface ProjectView {
   // = no clear signal, renderers keep the decimal default.
   // reformatDebt (round 16): the sample changed since the last COMPLETE
   // whole-draft reformat run; gates the idle Reformat button client-side.
+  // letterhead (round 17): the stored page header/footer text captured from
+  // a .docx sample ({{PAGE}}/{{PAGES}}/{{TITLE}} tokens included) for the
+  // control's preview; null = stored before capture existed (legacy).
+  // Empty strings = scanned, nothing usable found (image-only letterheads).
+  // verbosity (round 17): the drafting length target derived from the
+  // sample text at view time, never persisted; null = signal too weak.
   styleSample: {
     name: string;
     numbering: NumberingStyle | null;
     reformatDebt: boolean;
+    letterhead: { header: string; footer: string } | null;
+    verbosity: { band: "concise" | "standard" | "expansive"; targetWords: number } | null;
   } | null;
   answersCount: number;
   deletesAt: string; // ISO — concrete date rendered everywhere

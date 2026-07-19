@@ -57,7 +57,11 @@ import {
 } from "./shared";
 import { ResearchScreen, researchStepLabel } from "./research-screen";
 import { DocPane, secDomId, type ChangedRef, type RevealState } from "./doc-pane";
-import { StyleSampleControl } from "./style-sample-control";
+import {
+  StyleSampleControl,
+  letterheadPartCopy,
+  sampleLengthNote,
+} from "./style-sample-control";
 import {
   QuestionPane,
   type WorkingKind,
@@ -2001,7 +2005,19 @@ export function Workspace({ projectId }: { projectId: string }) {
     const prevStyle = viewRef.current?.styleSample?.numbering ?? null;
     const v = (await fetchProject()) ?? viewRef.current;
     if (!v) return;
-    const styleLine = numberingNews(v.styleSample?.numbering ?? null, prevStyle);
+    // Round 17: the composed receipt also names what the letterhead and
+    // length adoption will actually do (part-accurate, intent not outcome),
+    // so assistive-tech users hear the same facts the fine print shows.
+    const lhPart = v.styleSample?.letterhead
+      ? letterheadPartCopy(v.styleSample.letterhead)
+      : "";
+    const vb = v.styleSample?.verbosity ?? null;
+    const styleLine =
+      numberingNews(v.styleSample?.numbering ?? null, prevStyle) +
+      (lhPart ? ` Word downloads carry its ${lhPart}.` : "") +
+      (vb && vb.band !== "standard"
+        ? ` I aim for about ${vb.targetWords} words per section in new drafting.`
+        : "");
     const targets =
       v.status === "drafting" || v.status === "review"
         ? restyleTargets(v.documents, v.placeholderSections ?? {})
@@ -2794,7 +2810,15 @@ export function Workspace({ projectId }: { projectId: string }) {
                 onUploaded={(name) => void handleSampleUploaded(name)}
                 onRemoved={handleSampleRemoved}
                 numbering={view.styleSample?.numbering ?? null}
+                letterhead={view.styleSample?.letterhead ?? null}
+                verbosity={view.styleSample?.verbosity ?? null}
+                lengthNote={sampleLengthNote(
+                  view.documents,
+                  view.placeholderSections ?? {},
+                  view.styleSample?.verbosity
+                )}
               />
+
             </div>
             <div
               id="gov-pane-draft"

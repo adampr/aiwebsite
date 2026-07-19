@@ -138,6 +138,12 @@ export const governanceProjects = pgTable(
     // is never stored — and it deletes with the row (30-day retention).
     styleSampleName: text("style_sample_name"),
     styleSampleText: text("style_sample_text"),
+    // Sample letterhead (§5.12 round 17): the sample's page header/footer
+    // captured at upload time (docx header/footer parts; repeated PDF
+    // page-edge lines). Rendered into generated .docx page frames;
+    // {{PAGE}}/{{PAGES}} tokens become live Word fields at render time.
+    styleSampleHeader: text("style_sample_header"),
+    styleSampleFooter: text("style_sample_footer"),
     // Reformat debt (§5.12 round 16): non-NULL = the sample changed since the
     // last COMPLETE whole-draft reformat run. Holds the upload's nonce so the
     // run worker's clear is fenced against a mid-run replacement (sample

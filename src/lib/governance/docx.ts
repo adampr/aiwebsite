@@ -9,18 +9,29 @@ import {
   BorderStyle,
   Document,
   ExternalHyperlink,
+  Footer,
+  Header,
   HeadingLevel,
   Packer,
+  PageNumber,
   Paragraph,
+  Tab,
   Table,
   TableCell,
   TableRow,
+  TabStopType,
   TextRun,
   WidthType,
 } from "docx";
 import JSZip from "jszip";
 import type { GovernanceDoc, GovernanceKind } from "./types";
 import { placeholderSectionMap, stubDetermined } from "./blueprints";
+import {
+  PAGE_TOKEN,
+  PAGES_TOKEN,
+  TITLE_TOKEN,
+  type SampleFrame,
+} from "./letterhead";
 import type { Block, Inline } from "./markdown";
 import { parseMarkdown } from "./markdown";
 import {
@@ -33,6 +44,8 @@ import {
   DOC_FOOTER,
   DRAFT_WATERMARK,
   KIND_LABELS,
+  PAGE_PROVENANCE_DRAFT,
+  PAGE_PROVENANCE_FINAL,
   fileSlug,
 } from "./config";
 import { standardsDate } from "./standards";
@@ -141,6 +154,111 @@ function blockToDocx(block: Block, orderedRef: () => string): (Paragraph | Table
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Sample letterhead (§5.12 round 17): stored header/footer text -> real
+ * Word page headers/footers. Host-owned and render-time only, exactly like
+ * numbering: the letterhead never rides a prompt and the model never sees
+ * it. {{PAGE}}/{{PAGES}} become live fields, {{TITLE}} becomes each
+ * document's own title. With no stored letterhead the output is
+ * byte-identical to pre-round-17 files.
+ * ------------------------------------------------------------------ */
+
+/** One letterhead line -> TextRun children: tokens to fields, tabs to real
+ * tabs (the paragraph supplies center/right tab stops). */
+function frameChildren(
+  line: string,
+  docTitle: string
+): (string | Tab | (typeof PageNumber)[keyof typeof PageNumber])[] {
+  const out: (string | Tab | (typeof PageNumber)[keyof typeof PageNumber])[] =
+    [];
+  // Split on the three tokens and tab, keeping delimiters.
+  const parts = line.split(
+    /(\{\{PAGE\}\}|\{\{PAGES\}\}|\{\{TITLE\}\}|\t)/
+  );
+  for (const part of parts) {
+    if (!part) continue;
+    if (part === PAGE_TOKEN) out.push(PageNumber.CURRENT);
+    else if (part === PAGES_TOKEN) out.push(PageNumber.TOTAL_PAGES);
+    else if (part === TITLE_TOKEN) out.push(docTitle);
+    else if (part === "\t") out.push(new Tab());
+    else out.push(part);
+  }
+  return out;
+}
+
+function frameParagraph(line: string, docTitle: string): Paragraph {
+  return new Paragraph({
+    children: [
+      new TextRun({
+        children: frameChildren(line, docTitle),
+        size: 18,
+        color: "444444",
+      }),
+    ],
+    // Center/right stops make tab-separated letterhead segments land where
+    // Word's own header layout puts them (half and full text width for the
+    // default letter geometry the renderer uses).
+    ...(line.includes("\t")
+      ? {
+          tabStops: [
+            { type: TabStopType.CENTER, position: 4513 },
+            { type: TabStopType.RIGHT, position: 9026 },
+          ],
+        }
+      : {}),
+  });
+}
+
+/** Page header: the sample's lines, plus a per-page DRAFT marker on draft
+ * exports (page 1's watermark never reaches page 3 of a printout). */
+function frameHeader(
+  headerText: string,
+  docTitle: string,
+  draft: boolean
+): Header {
+  const children = headerText
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => frameParagraph(l, docTitle));
+  if (draft)
+    children.push(
+      new Paragraph({
+        children: [
+          new TextRun({ text: "DRAFT", bold: true, size: 16, color: "B45309" }),
+        ],
+        alignment: AlignmentType.RIGHT,
+      })
+    );
+  return new Header({ children });
+}
+
+/** Page footer: the sample's lines plus the provenance line. The
+ * provenance line is renderer-appended from config, never stored, so
+ * stored sample lines can never displace it (a letterheaded page without
+ * it would read as a human-authored document). */
+function frameFooter(
+  footerText: string | null,
+  docTitle: string,
+  draft: boolean
+): Footer {
+  const children = (footerText ?? "")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => frameParagraph(l, docTitle));
+  children.push(
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: draft ? PAGE_PROVENANCE_DRAFT : PAGE_PROVENANCE_FINAL,
+          size: 14,
+          color: "777777",
+        }),
+      ],
+    })
+  );
+  return new Footer({ children });
+}
+
 function disclaimerParagraphs(): Paragraph[] {
   const text = DOCUMENT_DISCLAIMER.replace("{standards_date}", standardsDate());
   return text.split("\n").map(
@@ -174,6 +292,9 @@ export async function renderDocx(
     // The format sample's detected numbering style (round 15b); null =
     // decimal default. Derived by the caller from the stored sample text.
     numbering?: NumberingStyle | null;
+    // The sample's stored letterhead (round 17); empty/null strings mean
+    // no adopted frame and the output stays byte-identical to pre-17.
+    letterhead?: SampleFrame | null;
   }
 ): Promise<Buffer> {
   // Sections still holding scaffold text render an explicit notice instead
@@ -284,6 +405,13 @@ export async function renderDocx(
     })
   );
 
+  // Adopted letterhead (round 17): any non-empty stored line puts a real
+  // header/footer on every page. A footer (with the provenance line) renders
+  // whenever ANY letterhead renders: a letterheaded page must carry its
+  // AI provenance on the page itself, not only in the body's final line.
+  const lhHeader = opts.letterhead?.header || null;
+  const lhFooter = opts.letterhead?.footer || null;
+  const framed = Boolean(lhHeader || lhFooter);
   const document = new Document({
     numbering: {
       // One config per ordered list encountered above, so every list
@@ -300,7 +428,25 @@ export async function renderDocx(
         ],
       })),
     },
-    sections: [{ children }],
+    sections: [
+      {
+        ...(framed
+          ? {
+              ...(lhHeader
+                ? {
+                    headers: {
+                      default: frameHeader(lhHeader, doc.title, opts.draft),
+                    },
+                  }
+                : {}),
+              footers: {
+                default: frameFooter(lhFooter, doc.title, opts.draft),
+              },
+            }
+          : {}),
+        children,
+      },
+    ],
   });
   return Packer.toBuffer(document);
 }
@@ -362,6 +508,7 @@ export async function renderZip(opts: {
   openConfirmCount: number;
   skippedCount: number;
   numbering?: NumberingStyle | null;
+  letterhead?: SampleFrame | null;
 }): Promise<Buffer> {
   const zip = new JSZip();
   const suffix = opts.draft ? "-draft" : "";
@@ -370,6 +517,7 @@ export async function renderZip(opts: {
       draft: opts.draft,
       kind: opts.kind,
       numbering: opts.numbering ?? null,
+      letterhead: opts.letterhead ?? null,
     });
     zip.file(`${fileSlug(doc.slug)}${suffix}.docx`, buf);
   }

@@ -607,6 +607,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         name: row.styleSampleName ?? "sample",
         text: row.styleSampleText,
       },
+      restyle: true,
     });
     const out = await callValidated(
       system,

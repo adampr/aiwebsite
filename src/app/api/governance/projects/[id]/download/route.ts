@@ -53,6 +53,12 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
   const numbering = row.styleSampleText
     ? detectNumberingStyle(row.styleSampleText)
     : null;
+  // Round 17: the sample's stored letterhead rides every generated file
+  // (empty strings mean "scanned, nothing found" and render nothing).
+  const letterhead = {
+    header: row.styleSampleHeader,
+    footer: row.styleSampleFooter,
+  };
 
   try {
     if (format === "zip") {
@@ -64,6 +70,7 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
         docs,
         reviewSummary: row.reviewSummary,
         numbering,
+        letterhead,
         openConfirmCount: openConfirmItems(docs).length,
         skippedCount: transcript.filter((t) => t.skipped).length,
       });
@@ -83,6 +90,7 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
       draft,
       kind: row.kind as GovernanceKind,
       numbering,
+      letterhead,
     });
     await touchActivity(row.id);
     return new Response(new Uint8Array(buf), {

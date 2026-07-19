@@ -158,6 +158,10 @@ export async function setStyleSample(opts: {
   text: string;
   flagged: boolean;
   debtToken: string | null;
+  // Letterhead (round 17): always overwritten as a pair with the text, so a
+  // replacement sample without a header never inherits the old sample's.
+  header: string | null;
+  footer: string | null;
 }): Promise<boolean> {
   if (!isUuid(opts.id)) return false;
   const rows = await db
@@ -165,6 +169,8 @@ export async function setStyleSample(opts: {
     .set({
       styleSampleName: opts.name,
       styleSampleText: opts.text,
+      styleSampleHeader: opts.header,
+      styleSampleFooter: opts.footer,
       styleSampleDebt: opts.debtToken,
       researchFlagged: sql`research_flagged OR ${opts.flagged}`,
       lastActivityAt: sql`now()`,
@@ -195,6 +201,8 @@ export async function clearStyleSample(
     .set({
       styleSampleName: null,
       styleSampleText: null,
+      styleSampleHeader: null,
+      styleSampleFooter: null,
       // No sample, nothing to match: removal always clears reformat debt
       // (works in done too, so a remove-then-reopen never resurrects it).
       styleSampleDebt: null,

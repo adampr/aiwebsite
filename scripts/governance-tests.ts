@@ -3484,6 +3484,331 @@ function check(name: string, cond: boolean): void {
   );
 }
 
+/* 25. Sample letterhead + verbosity (round 17b): the .docx header/footer
+      frame is captured at upload (fields tokenized, cached values
+      suppressed, document-control lines dropped, the sample's own title
+      swapped for the per-document token), rendered host-side only, and
+      the drafting length target rides drafting prompts but NEVER restyle
+      prompts (whose contract is content survives character for character). */
+{
+  const lh = await import("../src/lib/governance/letterhead");
+
+  // Rels + part picking: LAST body sectPr wins, default > first, and
+  // traversal targets never resolve.
+  const rels = lh.parseHeaderFooterRels(
+    `<Relationships>
+      <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+      <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header2.xml"/>
+      <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>
+      <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+      <Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="../evil.xml"/>
+    </Relationships>`
+  );
+  check(
+    "letterhead: rels keep header/footer only, traversal dropped",
+    rels.size === 3 && rels.get("rId1")?.path === "word/header1.xml" && !rels.has("rId5")
+  );
+  const doc2sect = `<w:document><w:body>
+    <w:p><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="rId2"/></w:sectPr></w:pPr></w:p>
+    <w:p><w:r><w:t>body</w:t></w:r></w:p>
+    <w:sectPr><w:headerReference w:type="first" r:id="rId2"/><w:headerReference w:type="default" r:id="rId1"/><w:footerReference w:type="default" r:id="rId3"/></w:sectPr>
+  </w:body></w:document>`;
+  const picked = lh.pickFrameParts(doc2sect, rels);
+  check(
+    "letterhead: last sectPr wins and default outranks first",
+    picked.headerPath === "word/header1.xml" &&
+      picked.footerPath === "word/footer1.xml"
+  );
+
+  // Field state machine: complex PAGE field tokenizes and its cached "3"
+  // never leaks; NUMPAGES is not PAGE; non-page fields keep cached text.
+  const complex = `<w:p><w:r><w:t>Page </w:t></w:r>
+    <w:r><w:fldChar w:fldCharType="begin"/></w:r>
+    <w:r><w:instrText> PAGE \\* MERGEFORMAT </w:instrText></w:r>
+    <w:r><w:fldChar w:fldCharType="separate"/></w:r>
+    <w:r><w:t>3</w:t></w:r>
+    <w:r><w:fldChar w:fldCharType="end"/></w:r>
+    <w:r><w:t> of </w:t></w:r>
+    <w:fldSimple w:instr=" NUMPAGES \\* MERGEFORMAT "><w:r><w:t>12</w:t></w:r></w:fldSimple></w:p>`;
+  const complexText = lh.frameParaText(complex);
+  check(
+    "letterhead: PAGE/NUMPAGES fields tokenize, cached digits suppressed",
+    complexText.includes("{{PAGE}}") &&
+      complexText.includes("{{PAGES}}") &&
+      !/[0-9]/.test(complexText)
+  );
+  check(
+    "letterhead: non-page field keeps its cached display text",
+    lh
+      .frameParaText(
+        `<w:p><w:fldSimple w:instr=" DATE "><w:r><w:t>January 2026</w:t></w:r></w:fldSimple></w:p>`
+      )
+      .includes("January 2026")
+  );
+
+  // Literal typed page numbers tokenize too (fields are not the only way
+  // real footers say "Page 1 of 4").
+  const typed = lh.headerFooterXmlToText(
+    `<w:hdr><w:p><w:r><w:t>Page 1 of 4</w:t></w:r></w:p></w:hdr>`
+  );
+  check(
+    "letterhead: literal Page 1 of 4 tokenizes instead of freezing",
+    typed !== null && typed.includes("{{PAGE}}") && typed.includes("{{PAGES}}")
+  );
+
+  // Document-control lines never carry (fabricated review history), while
+  // company and classification lines pass.
+  check(
+    "letterhead: version/approval/date lines drop, company and classification stay",
+    lh.isDocControlLine("Version 3.2") &&
+      lh.isDocControlLine("Effective Date: 2023-01-01") &&
+      lh.isDocControlLine("Approved by: The CEO") &&
+      lh.isDocControlLine("March 2024") &&
+      !lh.isDocControlLine("Acme Corporation") &&
+      !lh.isDocControlLine("Internal Use Only")
+  );
+  const dropped = lh.headerFooterXmlToText(
+    `<w:hdr><w:p><w:r><w:t>Acme Corp</w:t></w:r></w:p><w:p><w:r><w:t>Version 3.2, approved 2019</w:t></w:r></w:p></w:hdr>`
+  );
+  check(
+    "letterhead: control lines stripped from the stored frame",
+    dropped === "Acme Corp"
+  );
+
+  // Title substitution: mid-line match keeps the company prefix; the
+  // sample's own title comes from its first heading, outline prefix
+  // stripped; short titles never match.
+  check(
+    "letterhead: sample title from first heading, number stripped",
+    lh.sampleTitleFromText("# 1. AI Use Policy\nbody text here") ===
+      "AI Use Policy"
+  );
+  check(
+    "letterhead: mid-line title swap keeps the prefix",
+    lh.substituteTitle("Acme Corp - AI  USE Policy", "AI Use Policy") ===
+      "Acme Corp - {{TITLE}}"
+  );
+  check(
+    "letterhead: unmatched and too-short titles leave the line verbatim",
+    lh.substituteTitle("Acme Corp", "AI Use Policy") === "Acme Corp" &&
+      lh.substituteTitle("Short doc", "Short") === "Short doc"
+  );
+
+  // Frame caps: hostile many-line parts clamp to 4 lines and glyph runs die.
+  const capped = lh.normalizeFrameText(
+    Array.from({ length: 9 }, (_, i) => `line ${i} <<<<`).join("\n")
+  );
+  check(
+    "letterhead: frame clamps to 4 lines and fence glyphs are destroyed",
+    capped !== null &&
+      capped.split("\n").length === 4 &&
+      !capped.includes("<<<")
+  );
+  check(
+    "letterhead: image-only header stores empty (scanned, nothing found)",
+    lh.headerFooterXmlToText(`<w:hdr><w:p><w:r></w:r></w:p></w:hdr>`) === null
+  );
+
+  // PDF: repeated page-edge lines are detected for body stripping only.
+  const uniq = ["alpha", "bravo", "charlie", "delta", "echo"];
+  const pdfPages = Array.from({ length: 5 }, (_, i) => [
+    "ACME AI Policy",
+    `${uniq[i]} intro paragraph differing for real`,
+    `body content about ${uniq[4 - i]} topics`,
+    `Page ${i + 1} of 5`,
+  ]);
+  const pdfFrame = lh.detectPdfFrame(pdfPages);
+  check(
+    "letterhead: pdf repeated edges detected with tokens and drop keys",
+    pdfFrame.header === "ACME AI Policy" &&
+      pdfFrame.footer !== null &&
+      pdfFrame.footer.includes("{{PAGE}}") &&
+      pdfFrame.dropKeys.size === 2 &&
+      lh.isFrameLine("Page 4 of 5", pdfFrame.dropKeys)
+  );
+  check(
+    "letterhead: three pages is too few to infer a pdf frame",
+    lh.detectPdfFrame(pdfPages.slice(0, 3)).header === null
+  );
+
+  // Verbosity: all-heading-level metric, heading-less fallback, weak-signal
+  // silence, and the turn-zero cap that keeps an expansive target from
+  // reproducing the over-budget failure class.
+  const prompt = await import("../src/lib/governance/prompt");
+  const terse = ["# A", ...Array(3).fill("short line of policy text here")].join(
+    "\n"
+  );
+  const sec = (words: number) =>
+    Array.from({ length: words }, (_, i) => `word${i}`).join(" ");
+  const concise = `# A\n${sec(60)}\n## B\n${sec(60)}\n## C\n${sec(60)}`;
+  const expansive = `# A\n${sec(500)}\n## B\n${sec(500)}\n## C\n${sec(500)}`;
+  check(
+    "verbosity: concise and expansive band boundaries",
+    prompt.sampleVerbosity(concise)?.band === "concise" &&
+      prompt.sampleVerbosity(expansive)?.band === "expansive"
+  );
+  check(
+    "verbosity: heading-less short memo falls back to concise",
+    (() => {
+      const v = prompt.sampleVerbosity(sec(300));
+      return v?.band === "concise" && v.wordsPerSection === null;
+    })()
+  );
+  check(
+    "verbosity: too-small samples emit nothing",
+    prompt.sampleVerbosity(terse) === null &&
+      prompt.verbosityLine(terse, false) === null
+  );
+  const vLine = prompt.verbosityLine(expansive, false);
+  const vZero = prompt.verbosityLine(expansive, true);
+  check(
+    "verbosity: turn zero caps the stated target below the answer-turn one",
+    vLine !== null &&
+      vZero !== null &&
+      vLine.includes("450") &&
+      vZero.includes("300") &&
+      !vZero.includes("450")
+  );
+  const sysDraft = prompt.buildSystemMessage({
+    kind: "usage_policy",
+    brief: null,
+    forcedReviewSoon: false,
+    styleSample: { name: "s.docx", text: expansive },
+  });
+  const sysRestyle = prompt.buildSystemMessage({
+    kind: "usage_policy",
+    brief: null,
+    forcedReviewSoon: false,
+    styleSample: { name: "s.docx", text: expansive },
+    restyle: true,
+  });
+  check(
+    "verbosity: SAMPLE LENGTH rides drafting prompts and never restyle prompts",
+    sysDraft.includes("SAMPLE LENGTH:") && !sysRestyle.includes("SAMPLE LENGTH:")
+  );
+  const { buildRestyleUserMessage } = await import(
+    "../src/lib/governance/prompt"
+  );
+  check(
+    "verbosity: restyle user message states the length-preserving override",
+    buildRestyleUserMessage({
+      kind: "usage_policy",
+      documents: [],
+      focusRefs: ["a#b"],
+    }).includes("ignore the sample's typical section length")
+  );
+
+  // Renderer: adopted letterhead becomes a real Word header/footer with a
+  // live PAGE field, the per-document title, the provenance line, and a
+  // per-page DRAFT marker on drafts; without a letterhead the parts do not
+  // exist at all (byte-stable legacy output).
+  const { renderDocx } = await import("../src/lib/governance/docx");
+  const { default: JSZipMod } = await import("jszip");
+  const gdoc = {
+    slug: "ai-usage-policy",
+    title: "AI Usage Policy",
+    sections: [{ id: "s1", title: "Purpose", markdown: "Some drafted text." }],
+  } as GovernanceDoc;
+  const framedBuf = await renderDocx(gdoc, {
+    draft: true,
+    kind: "usage_policy",
+    letterhead: {
+      header: "Acme Corp\t{{TITLE}}",
+      footer: "Confidential\tPage {{PAGE}} of {{PAGES}}",
+    },
+  });
+  const framedZip = await JSZipMod.loadAsync(framedBuf);
+  const headerXml = await framedZip
+    .file(/word\/header\d*\.xml/)[0]
+    ?.async("string");
+  const footerXml = await framedZip
+    .file(/word\/footer\d*\.xml/)[0]
+    ?.async("string");
+  check(
+    "letterhead: rendered header carries the doc title and the DRAFT marker",
+    !!headerXml &&
+      headerXml.includes("Acme Corp") &&
+      headerXml.includes("AI Usage Policy") &&
+      headerXml.includes("DRAFT")
+  );
+  check(
+    "letterhead: rendered footer has live PAGE fields and the provenance line",
+    !!footerXml &&
+      footerXml.includes("Confidential") &&
+      footerXml.includes("PAGE") &&
+      footerXml.includes("AI-generated draft. Not legal advice.")
+  );
+  const bareBuf = await renderDocx(gdoc, { draft: true, kind: "usage_policy" });
+  const bareZip = await JSZipMod.loadAsync(bareBuf);
+  check(
+    "letterhead: no stored frame renders no header or footer part at all",
+    bareZip.file(/word\/header\d*\.xml/).length === 0 &&
+      bareZip.file(/word\/footer\d*\.xml/).length === 0
+  );
+  const finalBuf = await renderDocx(gdoc, {
+    draft: false,
+    kind: "usage_policy",
+    letterhead: { header: "Acme Corp", footer: "" },
+  });
+  const finalZip = await JSZipMod.loadAsync(finalBuf);
+  const finalFooter = await finalZip
+    .file(/word\/footer\d*\.xml/)[0]
+    ?.async("string");
+  const finalHeader = await finalZip
+    .file(/word\/header\d*\.xml/)[0]
+    ?.async("string");
+  check(
+    "letterhead: a confirmed final never calls itself a draft on any page",
+    !!finalFooter &&
+      finalFooter.includes("review by counsel required before adoption") &&
+      !finalFooter.includes("draft") &&
+      !!finalHeader &&
+      !finalHeader.includes("DRAFT")
+  );
+
+  // Copy honesty: the helper names the logo limitation and the letterhead
+  // data-flow exception to the AI-provider sentence.
+  const cfg = await import("../src/lib/governance/config");
+  check(
+    "letterhead: helper copy scopes to .docx and disclaims logos",
+    cfg.STYLE_SAMPLE_HELPER.includes(".docx sample's page header and footer") &&
+      cfg.STYLE_SAMPLE_HELPER.includes("logos and images are not") &&
+      cfg.STYLE_SAMPLE_HELPER.includes("used only to build your downloads")
+  );
+  const ctrl = await import("../src/components/governance/style-sample-control");
+  check(
+    "letterhead: part copy is part-accurate and display humanizes tokens",
+    ctrl.letterheadPartCopy({ header: "H", footer: "" }) === "page header" &&
+      ctrl.letterheadPartCopy({ header: "", footer: "F" }) === "page footer" &&
+      ctrl.letterheadPartCopy({ header: "H", footer: "F" }) ===
+        "page header and footer" &&
+      ctrl.displayFrameLine("A\t{{PAGE}} of {{PAGES}}") ===
+        "A · [page number] of [page count]"
+  );
+  check(
+    "letterhead: length-mismatch note fires only on a two-band gap",
+    ctrl.sampleLengthNote(
+      [
+        {
+          slug: "d",
+          sections: [{ id: "s", markdown: sec(500) }],
+        },
+      ],
+      {},
+      { band: "concise" }
+    ).includes("runs shorter") &&
+      ctrl.sampleLengthNote(
+        [{ slug: "d", sections: [{ id: "s", markdown: sec(500) }] }],
+        {},
+        { band: "standard" }
+      ) === "" &&
+      ctrl.sampleLengthNote(
+        [{ slug: "d", sections: [{ id: "s", markdown: sec(200) }] }],
+        {},
+        { band: "concise" }
+      ) === ""  );
+}
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

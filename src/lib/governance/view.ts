@@ -27,6 +27,7 @@ import {
 } from "./guesses";
 import { countConfirmMarkers, scanConfirmMarkers } from "./markdown";
 import { detectNumberingStyle } from "./numbering";
+import { sampleVerbosity } from "./prompt";
 import { normalizeBrief } from "./research";
 import { progressFor } from "./turn";
 import type { ProjectRow } from "./db";
@@ -231,6 +232,22 @@ export function toProjectView(row: ProjectRow): ProjectView {
           // Round 16: boolean only; the debt token itself never leaves the
           // server (it fences the run worker's clear against replacements).
           reformatDebt: row.styleSampleDebt !== null,
+          // Round 17: the stored letterhead for the control's preview
+          // (null = pre-capture legacy sample; "" = scanned, none found).
+          letterhead:
+            row.styleSampleHeader !== null || row.styleSampleFooter !== null
+              ? {
+                  header: row.styleSampleHeader ?? "",
+                  footer: row.styleSampleFooter ?? "",
+                }
+              : null,
+          // Round 17: derived per view like numbering, never persisted.
+          verbosity: (() => {
+            const v = row.styleSampleText
+              ? sampleVerbosity(row.styleSampleText)
+              : null;
+            return v ? { band: v.band, targetWords: v.targetWords } : null;
+          })(),
         }
       : null,
     answersCount: row.answersCount,

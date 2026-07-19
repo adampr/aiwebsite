@@ -118,6 +118,11 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     text: clean,
     flagged: hits.length > 0,
     debtToken,
+    // Letterhead (round 17): stored as extracted; screening is not applied
+    // (the frame never rides a prompt, it is render-only text) but the
+    // extractor's own normalization already strips fence glyphs and caps it.
+    header: extracted.frame.header,
+    footer: extracted.frame.footer,
   });
   if (!wrote) return NOT_FOUND();
   return okJson({ styleSample: { name } });

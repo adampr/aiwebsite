@@ -26,10 +26,21 @@ import {
   type NumberingLabel,
   type NumCounters,
 } from "./docx-numbering";
+import {
+  detectPdfFrame,
+  headerFooterXmlToText,
+  isFrameLine,
+  parseHeaderFooterRels,
+  pickFrameParts,
+  sampleTitleFromText,
+  type SampleFrame,
+} from "./letterhead";
 
 export type ExtractResult =
-  | { ok: true; text: string }
+  | { ok: true; text: string; frame: SampleFrame }
   | { ok: false; message: string };
+
+const NO_FRAME: SampleFrame = { header: null, footer: null };
 
 const UNREADABLE = `No usable text was found in that file. Check that it is a valid ${STYLE_SAMPLE_TYPES_COPY} with at least a paragraph or two, and try again.`;
 
@@ -499,20 +510,20 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
         } catch {
           outlineMap = null;
         }
-        const pages = Math.min(doc.numPages, CAPS.styleSamplePdfMaxPages);
-        // Lines from ALL pages classify together (one document-wide median);
-        // h=0 separator rows keep the page breaks and never classify.
-        const allLines: { text: string; h: number }[] = [];
+        const pageCount = Math.min(doc.numPages, CAPS.styleSamplePdfMaxPages);
+        // Per-page collection: the letterhead pass needs page boundaries.
+        const pages: { text: string; h: number }[][] = [];
         let total = 0;
-        for (let n = 1; n <= pages && total < EXTRACT_STOP_CHARS; n++) {
+        for (let n = 1; n <= pageCount && total < EXTRACT_STOP_CHARS; n++) {
           const page = await doc.getPage(n);
           const content = await page.getTextContent();
+          const pageLines: { text: string; h: number }[] = [];
           let lastY: number | null = null;
           let lineH = 0;
           const line: string[] = [];
           const push = () => {
             const text = line.join("");
-            allLines.push({ text, h: lineH });
+            pageLines.push({ text, h: lineH });
             total += text.length;
             line.length = 0;
             lineH = 0;
@@ -533,11 +544,38 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
             } else if (y !== null) lastY = y;
           }
           if (line.length) push();
-          if (n < pages) allLines.push({ text: "", h: 0 });
+          pages.push(pageLines);
         }
-        return applyOutlineHeadings(markPdfHeadings(allLines), allLines, outlineMap)
-          .join("\n")
-          .trim();
+        // Letterhead inference (round 17): lines repeating across page
+        // tops/bottoms become the frame and leave the body (a 40-page
+        // sample must not repeat its letterhead 40 times into the stored
+        // text, which would also poison the verbosity measurement).
+        const frame = detectPdfFrame(pages.map((p) => p.map((l) => l.text)));
+        const filtered = pages.map((p) => {
+          if (!frame.dropKeys.size) return p;
+          const nonEmpty = p
+            .map((l, idx) => (l.text.trim() ? idx : -1))
+            .filter((idx) => idx !== -1);
+          const edge = new Set([...nonEmpty.slice(0, 2), ...nonEmpty.slice(-2)]);
+          return p.filter(
+            (l, idx) => !(edge.has(idx) && isFrameLine(l.text, frame.dropKeys))
+          );
+        });
+        // Lines from ALL pages classify together (one document-wide median);
+        // h=0 separator rows keep the page breaks and never classify.
+        const allLines: { text: string; h: number }[] = [];
+        filtered.forEach((p, idx) => {
+          allLines.push(...p);
+          if (idx < filtered.length - 1) allLines.push({ text: "", h: 0 });
+        });
+        return {
+          text: applyOutlineHeadings(markPdfHeadings(allLines), allLines, outlineMap)
+            .join("\n")
+            .trim(),
+          // PDF-inferred frames are strip-only (see letterhead.ts): never
+          // adopted into downloads, so never stored.
+          frame: NO_FRAME,
+        };
       })(),
       deadline,
     ]);
@@ -546,8 +584,9 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
       return { ok: false, message: PDF_TIMEOUT };
     }
     void task.destroy().catch(() => {});
-    if (extracted.trim().length < 40) return { ok: false, message: PDF_NO_TEXT };
-    return { ok: true, text: extracted };
+    if (extracted.text.trim().length < 40)
+      return { ok: false, message: PDF_NO_TEXT };
+    return { ok: true, text: extracted.text, frame: extracted.frame };
   } catch {
     void task.destroy().catch(() => {});
     return { ok: false, message: UNREADABLE };
@@ -573,10 +612,12 @@ export async function extractStyleSampleText(
     };
 
   let text: string;
+  let frame: SampleFrame = NO_FRAME;
   if (lower.endsWith(".pdf")) {
     const pdf = await pdfToText(buf);
     if (!pdf.ok) return pdf;
     text = pdf.text;
+    frame = pdf.frame;
   } else if (lower.endsWith(".docx")) {
     try {
       const zip = await JSZip.loadAsync(buf);
@@ -601,6 +642,30 @@ export async function extractStyleSampleText(
         await aux("word/styles.xml")
       );
       text = docxXmlToText(inflated.xml, model);
+      // Letterhead (round 17): resolve the body sectPr's default header and
+      // footer parts through the rels and capture their text. Every failure
+      // here (missing rels, oversized part, malformed XML) is just "no
+      // frame", never a user-facing error. Empty string (not null) means
+      // "this .docx was scanned and nothing usable was found": the UI needs
+      // that to stay honest about image-only letterheads, and null stays
+      // the marker for samples stored before this round existed.
+      const sampleTitle = sampleTitleFromText(text);
+      const rels = await aux("word/_rels/document.xml.rels");
+      let header: string | null = null;
+      let footer: string | null = null;
+      if (rels) {
+        const parts = pickFrameParts(inflated.xml, parseHeaderFooterRels(rels));
+        const readPart = async (
+          path: string | null
+        ): Promise<string | null> => {
+          if (!path) return null;
+          const xml = await aux(path);
+          return xml ? headerFooterXmlToText(xml, sampleTitle) : null;
+        };
+        header = await readPart(parts.headerPath);
+        footer = await readPart(parts.footerPath);
+      }
+      frame = { header: header ?? "", footer: footer ?? "" };
     } catch {
       return { ok: false, message: UNREADABLE };
     }
@@ -610,7 +675,7 @@ export async function extractStyleSampleText(
 
   const clean = normalize(text);
   if (clean.length < 40) return { ok: false, message: UNREADABLE };
-  return { ok: true, text: clean.slice(0, CAPS.styleSampleMaxChars) };
+  return { ok: true, text: clean.slice(0, CAPS.styleSampleMaxChars), frame };
 }
 
 /** Display-safe file name: basename only, control chars out, length-capped. */
