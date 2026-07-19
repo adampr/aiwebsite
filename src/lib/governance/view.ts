@@ -20,6 +20,11 @@ import type {
 import { bankById, placeholderSectionMap } from "./blueprints";
 import { BUILD_ID } from "./build-id";
 import { CAPS, governanceEnabled } from "./config";
+import {
+  attachItemGuesses,
+  hydrateChaseSuggestions,
+  parseGuessStore,
+} from "./guesses";
 import { countConfirmMarkers, scanConfirmMarkers } from "./markdown";
 import { detectNumberingStyle } from "./numbering";
 import { normalizeBrief } from "./research";
@@ -164,15 +169,23 @@ export function toProjectView(row: ProjectRow): ProjectView {
   // Rows written before questions carried feeds normalize to []. The
   // snapshot flag is DERIVED from the blueprint here (single source of
   // truth, never persisted): a stored Q1 from before the flag existed
-  // still gets the research-snapshot treatment.
+  // still gets the research-snapshot treatment. A chip-less chase question
+  // is re-hydrated from the guess store (idempotent with the runner's own
+  // hydration; covers qi_ questions stored before a guess arrived).
+  const guessStore = parseGuessStore(row.openItemGuessesJson);
   const nextQuestion = rawNextQuestion
-    ? {
-        ...rawNextQuestion,
-        feeds: rawNextQuestion.feeds ?? [],
-        snapshot: rawNextQuestion.bankId
-          ? bankById(kind).get(rawNextQuestion.bankId)?.snapshot === true
-          : false,
-      }
+    ? hydrateChaseSuggestions(
+        {
+          ...rawNextQuestion,
+          feeds: rawNextQuestion.feeds ?? [],
+          suggestions: rawNextQuestion.suggestions ?? [],
+          snapshot: rawNextQuestion.bankId
+            ? bankById(kind).get(rawNextQuestion.bankId)?.snapshot === true
+            : false,
+        },
+        documents,
+        guessStore
+      )
     : null;
   const researchProgress = parseJson<ResearchProgress | null>(
     row.researchProgressJson,
@@ -202,7 +215,7 @@ export function toProjectView(row: ProjectRow): ProjectView {
           ...(researchProgress.error ? { error: researchProgress.error } : {}),
         }
       : null,
-    openConfirmItems: openConfirmItems(documents),
+    openConfirmItems: attachItemGuesses(openConfirmItems(documents), guessStore),
     openConfirmTotal: openConfirmTotal(documents),
     companySnapshot: composeCompanySnapshot(
       normalizeBrief(parseJson<unknown>(row.researchJson, null))

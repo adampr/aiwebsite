@@ -113,6 +113,13 @@ import {
   resolveTurnGate,
   validateTurn,
 } from "../src/lib/governance/turn";
+import {
+  attachItemGuesses,
+  guessKey,
+  hydrateChaseSuggestions,
+  mergeOpenItemGuesses,
+  parseGuessStore,
+} from "../src/lib/governance/guesses";
 import { GOVERNANCE_KINDS } from "../src/lib/governance/types";
 import type {
   GovernanceDoc,
@@ -1260,6 +1267,7 @@ function check(name: string, cond: boolean): void {
     question: null,
     reviewSummary: "All drafted.",
     answeredBankIds: [],
+    openItemGuesses: [],
   };
   const base = {
     kind,
@@ -3317,6 +3325,162 @@ function check(name: string, cond: boolean): void {
       passNote: "",
     }).resume.startsWith("Revising and confirming") &&
       running.resume.startsWith("Answering")
+  );
+}
+
+/* 24. Open-item best-guess chips (§5.12): the open_item_guesses turn field
+   is LENIENT (junk can never fail a valid turn or trigger repair), the
+   store merges fresh-wins/carry-forward and prunes to live markers, and
+   hydration fills a chase question's chips from the store, including the
+   off-by-one first chase (picked by the gate from a turn that was not
+   chase-flagged). */
+{
+  const kind = GOVERNANCE_KINDS[0];
+  const validAsking = {
+    rationale: "r",
+    doc_ops: [],
+    status: "asking",
+    question: { bankId: null, text: "Next?", why: "", suggestions: [] },
+    review_summary: null,
+    answered_bank_ids: [],
+  };
+  for (const junk of [
+    undefined,
+    "garbage",
+    123,
+    [{ excerpt: 9, guesses: ["x"] }],
+    [{ guesses: ["x"] }],
+    [{ excerpt: "k", guesses: "not-an-array" }],
+  ]) {
+    const v = validateTurn({ ...validAsking, open_item_guesses: junk }, kind);
+    check(
+      `guesses: junk field never invalidates a turn (${JSON.stringify(junk)?.slice(0, 24)})`,
+      v.ok && v.turn?.openItemGuesses.length === 0
+    );
+  }
+  const capped = validateTurn(
+    {
+      ...validAsking,
+      open_item_guesses: [
+        {
+          excerpt: "retention period",
+          guesses: ["30 days", "90 days", "1 year", "forever", "x".repeat(200)],
+        },
+        { excerpt: "marker-key-alias-accepted", guesses: [] },
+        { marker: "alias", guesses: ["via marker key"] },
+      ],
+    },
+    kind
+  );
+  check(
+    "guesses: caps trim to 3 per item, drop empties, accept the marker alias",
+    capped.ok &&
+      capped.turn?.openItemGuesses.length === 2 &&
+      capped.turn.openItemGuesses[0].guesses.length === 3 &&
+      capped.turn.openItemGuesses[1].excerpt === "alias"
+  );
+  const nonAdv = validateTurn(
+    {
+      ...validAsking,
+      status: "asking",
+      question: null,
+      open_item_guesses: [{ excerpt: "k", guesses: ["v"] }],
+    },
+    kind,
+    { nonAdvancing: true }
+  );
+  check(
+    "guesses: nonAdvancing turns keep the field (amend refreshes guesses)",
+    nonAdv.ok && nonAdv.turn?.openItemGuesses[0]?.guesses[0] === "v"
+  );
+
+  const docs: GovernanceDoc[] = [
+    {
+      slug: "ai-usage-policy",
+      title: "AI Usage Policy",
+      stub: false,
+      sections: [
+        {
+          id: "logging",
+          title: "Logging",
+          markdown:
+            "Logs kept 30 days [TO CONFIRM: retention period for AI chat logs].",
+        },
+        {
+          id: "tools",
+          title: "Tools",
+          markdown: "Approved: [TO CONFIRM: which AI tools are approved].",
+        },
+      ],
+    },
+  ];
+  const store = mergeOpenItemGuesses(
+    { [guessKey("retention period for AI chat logs")]: ["14 days"] },
+    [
+      { excerpt: "which AI tools are approved", guesses: ["ChatGPT Team"] },
+      { excerpt: "hallucinated marker nobody drafted", guesses: ["ghost"] },
+    ],
+    docs
+  );
+  check(
+    "guesses: merge keeps carry-forward, takes fresh, prunes hallucinations",
+    store[guessKey("retention period for AI chat logs")]?.[0] === "14 days" &&
+      store[guessKey("which AI tools are approved")]?.[0] === "ChatGPT Team" &&
+      Object.keys(store).length === 2
+  );
+  const resolvedDocs: GovernanceDoc[] = [
+    {
+      ...docs[0],
+      sections: [docs[0].sections[1]], // retention marker resolved away
+    },
+  ];
+  const pruned = mergeOpenItemGuesses(store, [], resolvedDocs);
+  check(
+    "guesses: a resolved marker's key prunes on the next merge",
+    !(guessKey("retention period for AI chat logs") in pruned) &&
+      pruned[guessKey("which AI tools are approved")]?.[0] === "ChatGPT Team"
+  );
+  check(
+    "guesses: parseGuessStore degrades junk to empty",
+    Object.keys(parseGuessStore("not json")).length === 0 &&
+      Object.keys(parseGuessStore(null)).length === 0 &&
+      parseGuessStore(JSON.stringify(store))[
+        guessKey("which AI tools are approved")
+      ]?.[0] === "ChatGPT Team"
+  );
+
+  // The off-by-one pipeline: the gate picks the first chase question from a
+  // turn that was not chase-flagged; hydration must still fill its chips.
+  const chaseQ = pickOpenItemQuestion(docs, 7);
+  check("guesses: chase question still stores empty suggestions", chaseQ !== null && chaseQ.suggestions.length === 0);
+  const hydrated = chaseQ ? hydrateChaseSuggestions(chaseQ, docs, store) : null;
+  check(
+    "guesses: hydration fills the first chase question's chips from the store",
+    hydrated?.suggestions[0] === "14 days"
+  );
+  const bankQ = pickNextBankQuestion(kind, new Set(), 7);
+  check(
+    "guesses: a bank question is never touched by hydration",
+    bankQ !== null &&
+      hydrateChaseSuggestions(bankQ, docs, store) === bankQ
+  );
+  const items = attachItemGuesses(
+    [
+      {
+        doc: "ai-usage-policy",
+        section: "logging",
+        excerpt: "retention period for AI chat logs",
+        occurrence: 0,
+        contextBefore: "",
+        contextAfter: "",
+        confirmable: false,
+      },
+    ],
+    store
+  );
+  check(
+    "guesses: resolver items get guesses attached, unconfirmable included",
+    items[0].guesses?.[0] === "14 days"
   );
 }
 

@@ -31,6 +31,12 @@ import {
   validateTurn,
 } from "./turn";
 import { isQuestionEntry } from "./interview";
+import {
+  attachItemGuesses,
+  hydrateChaseSuggestions,
+  mergeOpenItemGuesses,
+  parseGuessStore,
+} from "./guesses";
 import { countConfirmMarkers, findConfirmMarkers } from "./markdown";
 import { bankById, placeholderSectionMap } from "./blueprints";
 import { normalizeBrief } from "./research";
@@ -293,7 +299,12 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         nextQuestion: null,
         reviewSummary: summary,
         progress: progressFor(kind, covered),
-        openConfirmItems: openConfirmItems(documents),
+        // The skip write leaves the guess column untouched; the resolver
+        // that opens right after still gets the stored best guesses.
+        openConfirmItems: attachItemGuesses(
+          openConfirmItems(documents),
+          parseGuessStore(row.openItemGuessesJson)
+        ),
         openConfirmTotal: openTotal,
         documents,
       },
@@ -378,8 +389,21 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
     newRev,
   });
   const status: ProjectStatus = gate.status;
-  const outQuestion: NextQuestion | null = gate.outQuestion;
   const reviewSummary: string | null = gate.reviewSummary;
+
+  // Marker best-guess store (§5.12): this turn's emissions win, surviving
+  // markers carry their prior guesses forward, dead keys prune. Stored in
+  // its own cold column, so it can never tip documentsJson over its byte
+  // cap. Hydration fills a chase question's chips from the store here (the
+  // POST body) exactly as view.ts does for the poll.
+  const guessStore = mergeOpenItemGuesses(
+    parseGuessStore(row.openItemGuessesJson),
+    turn.openItemGuesses,
+    applied.documents
+  );
+  const outQuestion: NextQuestion | null = gate.outQuestion
+    ? hydrateChaseSuggestions(gate.outQuestion, applied.documents, guessStore)
+    : null;
 
   const now = new Date().toISOString();
   const newTranscript: TranscriptEntry[] = revise
@@ -425,6 +449,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
     changedSections: applied.changedSections,
     flagged: applied.injectionHits.length > 0,
     answersIncrement,
+    openItemGuesses: guessStore,
   });
   if (!wrote)
     return fail(
@@ -446,7 +471,10 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       nextQuestion: status === "drafting" ? outQuestion : null,
       reviewSummary: status === "review" ? reviewSummary : null,
       progress: progressFor(kind, covered),
-      openConfirmItems: openConfirmItems(applied.documents),
+      openConfirmItems: attachItemGuesses(
+        openConfirmItems(applied.documents),
+        guessStore
+      ),
       openConfirmTotal: openTotal,
       documents: applied.documents,
     },
@@ -460,7 +488,12 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
     appliedChanged: Record<string, string[]>,
     flagged: boolean,
     turnSummary: string | null,
-    entry: TranscriptEntry
+    entry: TranscriptEntry,
+    // Amend turns pass their open_item_guesses (a corrected fact can change
+    // what the model would guess); restyle passes [] (markers are preserved
+    // character for character, so stored guesses stay valid and just carry
+    // forward through the merge's prune).
+    emittedGuesses: { excerpt: string; guesses: string[] }[]
   ): Promise<TurnOutcome> {
     const newRev = row.rev + 1;
     const openTotal = openConfirmTotal(appliedDocs);
@@ -476,6 +509,14 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       priorSummary: row.reviewSummary,
       newRev,
     });
+    const guessStore = mergeOpenItemGuesses(
+      parseGuessStore(row.openItemGuessesJson),
+      emittedGuesses,
+      appliedDocs
+    );
+    const outQ = gate.outQuestion
+      ? hydrateChaseSuggestions(gate.outQuestion, appliedDocs, guessStore)
+      : null;
     const wrote = await applyTurnWrite({
       id: row.id,
       userId: job.userId,
@@ -485,7 +526,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       documents: appliedDocs,
       transcript: [...transcript, entry],
       coveredBankIds: [...covered],
-      nextQuestion: gate.status === "drafting" ? gate.outQuestion : null,
+      nextQuestion: gate.status === "drafting" ? outQ : null,
       reviewSummary: gate.status === "review" ? gate.reviewSummary : null,
       changedSections: appliedChanged,
       flagged,
@@ -498,6 +539,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         turnKind === "restyle" && job.restyleFinal
           ? (row.styleSampleDebt ?? null)
           : null,
+      openItemGuesses: guessStore,
     });
     if (!wrote)
       return fail(
@@ -512,10 +554,13 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         status: gate.status,
         changedSections: appliedChanged,
         placeholderSections: placeholderSectionMap(kind, appliedDocs),
-        nextQuestion: gate.status === "drafting" ? gate.outQuestion : null,
+        nextQuestion: gate.status === "drafting" ? outQ : null,
         reviewSummary: gate.status === "review" ? gate.reviewSummary : null,
         progress: progressFor(kind, covered),
-        openConfirmItems: openConfirmItems(appliedDocs),
+        openConfirmItems: attachItemGuesses(
+          openConfirmItems(appliedDocs),
+          guessStore
+        ),
         openConfirmTotal: openTotal,
         documents: appliedDocs,
       },
@@ -622,7 +667,8 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
           skipped: false,
           askedAt: nowIso,
           answeredAt: nowIso,
-        }
+        },
+        []
       );
     }
     const applied = applyOps(documents, ops, kind);
@@ -668,7 +714,8 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         skipped: false,
         askedAt: nowIso,
         answeredAt: nowIso,
-      }
+      },
+      []
     );
   }
 
@@ -752,7 +799,8 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         answeredAt: nowIso,
         amendsIndex: idx,
         feeds: focusRefs,
-      }
+      },
+      out.openItemGuesses
     );
   }
 }

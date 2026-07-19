@@ -659,6 +659,35 @@ export function OpenItemsResolver({
               submitAnswer(current);
             }}
           >
+            {/* Tron's best guesses for THIS marker (guess store, §5.12).
+                A tap REPLACES the box (this textarea is one fact, not the
+                question card's "; "-joined segments) and stays editable:
+                the user still presses Add answer, so a guess can never
+                slip through unread. Shown on unconfirmable items too: with
+                no drafted default to keep, a candidate fact saves the most
+                typing exactly there. */}
+            {(current.guesses?.length ?? 0) > 0 && (
+              <>
+                <p className="mt-3 max-w-none text-xs" style={faint}>
+                  My best {(current.guesses?.length ?? 0) === 1 ? "guess" : "guesses, most likely first"}: tap to
+                  use, then correct anything wrong.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {current.guesses?.map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      className="gov-chip"
+                      aria-pressed={draftText.trim() === g}
+                      disabled={inputLocked}
+                      onClick={() => setDraftText(g)}
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             <textarea
               className="input mt-3 w-full"
               rows={2}

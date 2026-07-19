@@ -223,6 +223,30 @@ export function validateTurn(
       )
     : [];
 
+  // Open-item best guesses (§5.12): LENIENT by contract. This field must
+  // never fail an otherwise valid turn or trigger the repair call, so junk
+  // shapes filter to [] and nothing here ever pushes to errors[]. Caps are
+  // re-enforced at merge time (guesses.ts); this trim just bounds transport.
+  const openItemGuesses = (
+    Array.isArray(o.open_item_guesses) ? o.open_item_guesses : []
+  )
+    .flatMap((e): { excerpt: string; guesses: string[] }[] => {
+      const r = e as Record<string, unknown>;
+      const excerpt = str(r.excerpt, 400) ?? str(r.marker, 400);
+      const guesses = Array.isArray(r.guesses)
+        ? r.guesses
+            .filter(
+              (g): g is string =>
+                typeof g === "string" &&
+                g.trim().length > 0 &&
+                g.length <= CAPS.openItemGuessMaxChars
+            )
+            .slice(0, CAPS.openItemGuessesPerItem)
+        : [];
+      return excerpt && guesses.length ? [{ excerpt, guesses }] : [];
+    })
+    .slice(0, CAPS.openItemGuessesMaxKeys);
+
   if (errors.length) {
     // Salvage trim mirrors mdTotal above: only upsert_section markdown
     // counts against the budget; drop (never truncate) an op that would
@@ -253,6 +277,7 @@ export function validateTurn(
           ? (o.review_summary as string)
           : null,
       answeredBankIds,
+      openItemGuesses,
     },
   };
 }

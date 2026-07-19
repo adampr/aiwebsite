@@ -204,6 +204,11 @@ export interface TurnResult {
   } | null;
   reviewSummary: string | null;
   answeredBankIds: string[];
+  // Best-guess candidate answers for open [TO CONFIRM] markers, emitted by
+  // the SAME turn that drafted or kept them (zero extra AI calls, §5.12).
+  // Parsed leniently: a malformed field can never fail an otherwise valid
+  // turn; junk degrades to []. Keyed downstream by the marker excerpt.
+  openItemGuesses: { excerpt: string; guesses: string[] }[];
 }
 
 /** Async answer-turn state on the poll (§5.12). "running" = a claim is
@@ -246,6 +251,11 @@ export interface OpenConfirmItem {
   contextBefore: string;
   contextAfter: string;
   confirmable: boolean;
+  // Tron's best-guess answers for this marker (model-authored on a prior
+  // turn, stored in open_item_guesses_json, attached at view time). Absent =
+  // no guess stored; the resolver renders no chips. Markers sharing an
+  // excerpt share guesses.
+  guesses?: string[];
 }
 
 /** What GET /api/governance/projects/[id] returns (the poll target). */

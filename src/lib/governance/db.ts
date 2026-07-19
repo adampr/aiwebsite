@@ -312,6 +312,9 @@ export async function handoffToDrafting(opts: {
   documents: GovernanceDoc[];
   nextQuestion: NextQuestion;
   changedSections: Record<string, string[]>;
+  // Turn zero's marker best-guesses (§5.12), already merged+pruned against
+  // the handed-off documents. Empty = column stays null (no chips).
+  openItemGuesses: Record<string, string[]>;
 }): Promise<void> {
   await db
     .update(P)
@@ -324,6 +327,9 @@ export async function handoffToDrafting(opts: {
       researchFlagged: sql`research_flagged OR ${opts.flagged}`,
       documentsJson: JSON.stringify(opts.documents),
       nextQuestionJson: JSON.stringify(opts.nextQuestion),
+      openItemGuessesJson: Object.keys(opts.openItemGuesses).length
+        ? JSON.stringify(opts.openItemGuesses)
+        : null,
       changedSectionsJson: JSON.stringify(opts.changedSections),
       researchProgressJson: null,
       rev: sql`rev + 1`,
@@ -554,6 +560,10 @@ export async function applyTurnWrite(opts: {
   // a replacement landing mid-run must keep ITS debt while the old run's
   // final pass lands.
   clearStyleDebtToken?: string | null;
+  // Marker best-guess store (§5.12), merged+pruned by the caller. Omitted
+  // (undefined) = leave the column untouched (the deterministic qi_-skip
+  // write and other no-brain paths carry the store forward unchanged).
+  openItemGuesses?: Record<string, string[]>;
 }): Promise<boolean> {
   const documentsJson = JSON.stringify(opts.documents);
   const transcriptJson = JSON.stringify(opts.transcript);
@@ -570,6 +580,13 @@ export async function applyTurnWrite(opts: {
       documentsJson,
       transcriptJson,
       coveredBankIdsJson: JSON.stringify(opts.coveredBankIds),
+      ...(opts.openItemGuesses !== undefined
+        ? {
+            openItemGuessesJson: Object.keys(opts.openItemGuesses).length
+              ? JSON.stringify(opts.openItemGuesses)
+              : null,
+          }
+        : {}),
       nextQuestionJson: opts.nextQuestion
         ? JSON.stringify(opts.nextQuestion)
         : null,

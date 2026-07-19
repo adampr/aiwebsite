@@ -143,6 +143,12 @@ export const governanceProjects = pgTable(
     // run worker's clear is fenced against a mid-run replacement (sample
     // uploads bump no rev, so the turn fences alone cannot tell samples apart).
     styleSampleDebt: text("style_sample_debt"),
+    // Best-guess answers for open [TO CONFIRM] markers (§5.12), keyed by
+    // marker excerpt: model-authored on drafting turns, pruned to live
+    // markers on every turn write. Deliberately its OWN cold column so
+    // guesses can never push documentsJson over its byte cap (that overflow
+    // silently discards a paid turn). Null on old rows = no chips.
+    openItemGuessesJson: text("open_item_guesses_json"),
     // In-process answer-turn claim state (§5.12 async turn). started_at set =
     // a turn is running (staleness judged against CAPS.turnStaleMs at read
     // time); started_at NULL with prompt_id set = the last turn failed and

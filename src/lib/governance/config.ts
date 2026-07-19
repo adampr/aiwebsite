@@ -77,6 +77,14 @@ export const CAPS = {
   styleSamplePromptMaxChars: 6_000,
   styleSamplePdfMaxPages: 40,
   styleSamplePdfDeadlineMs: 10_000,
+  // Open-item best-guess chips (§5.12): candidate answers the model emits
+  // for its own [TO CONFIRM] markers, stored OUTSIDE documentsJson (its own
+  // cold column) so they can never tip the promptable hot path over
+  // documentsJsonMaxBytes. Lenient everywhere: over-cap input is trimmed,
+  // never an error.
+  openItemGuessesPerItem: 3,
+  openItemGuessMaxChars: 80,
+  openItemGuessesMaxKeys: 100,
 } as const;
 
 /**

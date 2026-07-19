@@ -1,0 +1,1 @@
+ALTER TABLE "governance_projects" ADD COLUMN "open_item_guesses_json" text;

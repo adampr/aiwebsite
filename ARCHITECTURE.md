@@ -15,7 +15,8 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-17 (governance round 16d: reformat hold
+Last verified against code: 2026-07-19 (governance: open-item best-guess
+chips ride existing turns; previously round 16d: reformat hold
 banner — while a restyle run locks the question area, the question card and
 review panel lead with a live hold banner (pass count + why the lock + where
 Stop/Skip lives) and the drafting question content recedes behind `.q-hold`,
@@ -1089,7 +1090,9 @@ keeps priority. Feature availability equals OpenAI availability (JSON mode is
 hard-wired to the executor; no failover).
 
 **Turn contract** (`turn.ts`): model returns `{rationale, doc_ops[], status:
-"asking"|"review", question, review_summary, answered_bank_ids}`; `rationale` is never
+"asking"|"review", question, review_summary, answered_bank_ids,
+open_item_guesses?}` (the last optional and parsed leniently — see the
+best-guess-chips paragraph below); `rationale` is never
 persisted or logged. Server-side, never trusted to the model: doc slugs must be in the
 kind's blueprint allowlist, ≤12 ops (≤24 at turn zero), section markdown ≤6000 chars,
 total turn markdown ≤16000 chars (`turnOpMarkdownMaxChars`) while the prompt states a
@@ -1171,6 +1174,42 @@ forward reading never meets it; the live region never appends). `isChaseId`
 share, so the two can never drift. Tests:
 `gate:`/`chase:`/`note:`/`prompt:` block 14 and `counter:`/`folding:` block 15 in
 `scripts/governance-tests.ts`.
+
+**Open-item best-guess chips** (2026-07-19, owner directive: minimize the user's
+typing; designer+critic panel — hybrid of cold-column storage and exact-excerpt
+keying). Every drafting-capable brain turn (turn zero, answer, skip, revise,
+amend — not restyle, whose marker-preservation gate makes stored guesses stay
+valid) MAY emit an optional top-level `open_item_guesses` field:
+`[{excerpt, guesses[]}]`, the marker's text plus up to 3 drop-in candidate
+answers for THIS company (most likely first, prompt-instructed to be concrete
+facts, "omit when no real basis"). The field is **lenient by contract**
+(`validateTurn` filters junk to `[]`, never pushes to `errors[]`, so it can
+never invalidate a turn or trigger the repair call) and lives outside `doc_ops`
+so it counts toward no markdown budget. Guesses persist in their own cold
+column `governance_projects.open_item_guesses_json` (`{key: guesses[]}`;
+migration 0015) — deliberately NEVER inside `documentsJson`, whose 150k write
+cap silently discards a paid turn on overflow — merged on every turn write by
+`mergeOpenItemGuesses` (`src/lib/governance/guesses.ts`, pure/client-safe):
+fresh emission wins, surviving markers carry forward, keys without a live
+marker prune, caps 3 guesses × 80 chars × 100 keys. `guessKey` (whitespace
+collapse + 200-char `confirmExcerpt` window, deliberately NOT lowercased — a
+reworded marker SHOULD miss) is the single normalizer on both the write and
+read side. The keep-as-drafted strip and the deterministic `qi_`-skip leave the
+column untouched (orphan keys are inert and prune on the next turn write).
+Read side: `hydrateChaseSuggestions` fills a chip-less `qi_` question's
+`suggestions` by re-scanning the first marker of the section it feeds (the
+stored chase question stays `suggestions: []` — `pickOpenItemQuestion` and both
+gates remain pure and store-blind), and `attachItemGuesses` decorates
+`openConfirmItems[].guesses` for the review resolver — both applied in
+`toProjectView`, the turn-runner response bodies, and the resolve-item
+response. UI: the chase question card reuses the existing `gov-chip` toggle
+row with honest chase copy ("My best guesses at your answer, most likely
+first…"); the review resolver renders a chip row above its single-fact
+textarea where a tap REPLACES the draft text (still editable, still requires
+Add answer — a guess can never slip through unread; shown on unconfirmable
+items too, where a candidate fact saves the most typing). Missing store, old
+rows (null column), or a model that never emits the field all degrade to
+exactly the pre-feature chip-less behavior. Tests: `guesses:` block 24.
 
 **Non-advancing turns + the four 2026-07-17 owner requests (round 12).**
 (1) *Reformat the draft*: uploading a format sample mid-project previously changed
@@ -1966,6 +2005,10 @@ governance_projects id uuid PK default gen_random_uuid(),
                    -- set by style-sample POST (only when >=1 drafted section), cleared by
                    -- DELETE and by the restyle run's final pass (token-equality CASE in
                    -- applyTurnWrite fences it against mid-run replacements)
+                   open_item_guesses_json text,  -- marker best-guess store (§5.12, migration
+                   -- 0015): {marker key: guesses[]}, model-authored, pruned to live markers
+                   -- on every turn write; null = no chips. Own cold column BY DESIGN so
+                   -- guesses can never tip documents_json over its 150 KB write cap
                    turn_prompt_id/turn_attempt_id/turn_json text, turn_started_at timestamptz,
                    -- async answer-turn claim (§5.12, migration 0012): started_at set = running
                    -- (stale past 240 s = orphan, lazily reaped by the next claim); started_at

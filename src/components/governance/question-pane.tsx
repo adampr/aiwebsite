@@ -842,11 +842,18 @@ export function QuestionPane({
             </p>
           )}
           {/* Chips (and their hint) hide when the snapshot came up empty:
-              "Yes, that matches" is nonsense with nothing shown to match. */}
+              "Yes, that matches" is nonsense with nothing shown to match.
+              On a chase question the chips are Tron's model-authored best
+              guesses at the user's OWN fact (guess store, §5.12), so the
+              hint says so honestly: the marker exists BECAUSE the model
+              guessed, and a tapped chip stays editable text, never a
+              one-tap send. */}
           {q.suggestions.length > 0 && !(q.snapshot && !view.companySnapshot) && (
             <>
               <p className="mt-4 max-w-none text-xs" style={faint}>
-                Tap to add or remove. Combine them or edit below.
+                {chase
+                  ? "My best guesses at your answer, most likely first. Tap one if it fits, then edit or add your own."
+                  : "Tap to add or remove. Combine them or edit below."}
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {q.suggestions.map((s) => (

@@ -25,6 +25,11 @@ import {
   REVIEW_RESOLVED_SUMMARY,
 } from "@/lib/governance/config";
 import { applyResolveWrite, fetchOwnedProject } from "@/lib/governance/db";
+import {
+  attachItemGuesses,
+  hydrateChaseSuggestions,
+  parseGuessStore,
+} from "@/lib/governance/guesses";
 import { govError, NOT_FOUND, okJson, rateLimit, requireUser } from "@/lib/governance/http";
 import {
   scanConfirmMarkersWithPos,
@@ -211,12 +216,21 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   // is positive); zero left -> the honest review flip (a stored qi_ question
   // implies bank coverage is complete, so nothing is left to ask).
   const leftTotal = openConfirmTotal(newDocuments);
+  // The keep leaves the guess column untouched, so the re-picked chase
+  // question hydrates its chips from the live store (a stripped marker's
+  // key just goes inert until the next turn write prunes it).
+  const guessStore = parseGuessStore(row.openItemGuessesJson);
+  const picked = draftingKeep
+    ? pickOpenItemQuestion(newDocuments, row.rev + 1)
+    : null;
   const advance = draftingKeep
     ? leftTotal > 0
       ? {
           status: "drafting" as const,
           nextQuestionJson: JSON.stringify(
-            pickOpenItemQuestion(newDocuments, row.rev + 1)
+            picked
+              ? hydrateChaseSuggestions(picked, newDocuments, guessStore)
+              : picked
           ),
           reviewSummary: null,
         }
@@ -257,7 +271,12 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
         : null,
     reviewSummary: advance ? advance.reviewSummary : row.reviewSummary,
     progress: progressFor(kind, new Set(covered)),
-    openConfirmItems: openConfirmItems(newDocuments),
+    // The keep write leaves the guess column alone (orphaned keys are inert;
+    // the next turn write prunes them), so remaining items keep their chips.
+    openConfirmItems: attachItemGuesses(
+      openConfirmItems(newDocuments),
+      guessStore
+    ),
     openConfirmTotal: leftTotal,
     documents: newDocuments,
   });

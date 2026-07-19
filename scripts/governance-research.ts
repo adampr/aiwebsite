@@ -66,6 +66,7 @@ import {
   buildTurnZeroUserMessage,
   repairSystemMessage,
 } from "../src/lib/governance/prompt";
+import { mergeOpenItemGuesses } from "../src/lib/governance/guesses";
 import {
   applyOps,
   parseTurnJson,
@@ -895,6 +896,11 @@ async function main(): Promise<void> {
   }
   let groupsApplied = 0;
   let repairsUsed = 0;
+  // Turn zero is where most [TO CONFIRM] markers are born, so its groups'
+  // best-guess emissions accumulate here and merge once against the final
+  // handed-off documents (salvaged groups contribute none; that only costs
+  // chips, never the draft).
+  const zeroGuesses: { excerpt: string; guesses: string[] }[] = [];
   for (const [gi, group] of groups.entries()) {
     // Never let drafting run the job into the wall clock: the handoff write
     // MUST happen. Groups that miss the window keep their scaffold and get
@@ -958,6 +964,8 @@ async function main(): Promise<void> {
           validation = repaired;
       }
     }
+    if (validation.ok && validation.turn)
+      zeroGuesses.push(...validation.turn.openItemGuesses);
     const ops =
       validation.ok && validation.turn
         ? validation.turn.docOps
@@ -1009,6 +1017,7 @@ async function main(): Promise<void> {
     flagged,
     documents,
     nextQuestion,
+    openItemGuesses: mergeOpenItemGuesses({}, zeroGuesses, documents),
     // A first draft is not an "update": empty changedSections keeps the
     // first open free of wall-to-wall Updated chips. (The first question is
     // usually a snapshot question, whose ask anchor is suppressed: the eye's
