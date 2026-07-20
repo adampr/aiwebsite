@@ -15,7 +15,11 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-20 (governance round 18b: template
+Last verified against code: 2026-07-20 (governance round 18c: alpha-marker
+heading promotion — mirrored LETTER lines ("B. Data Handling") promote to
+host-numbered headings under a consecutive-letter run guard, real lettered
+heading sets shed their letters before host labels, see §5.12 rendering
+contract; round 18b: template
 skeleton adoption, "reparent never merge" - a whole-draft reformat with a
 usable sample outline may emit ONE adopt_outline op per non-stub document: an
 EXACT partition of ALL its section ids into ordered buckets titled from the
@@ -76,7 +80,14 @@ no-change success (a wedged final pass would otherwise leave permanent false
 debt), Stop during the final pass reports completion (debt cleared, button
 gone), targets vanishing under a concurrent tab keep debt with honest copy, and
 focus parks on the sample status line (or the Stop button on start-click) when
-the gated block unmounts, see §5.12; round 16b: manual-heading
+the gated block unmounts, see §5.12; round 18c: alpha-marker promotion — the
+16b glue class closed for LETTER markers ("B. Data Handling" trailing the
+previous sentence, owner report 2026-07-20): letters promote only inside
+consecutive-letter same-separator runs whose members are separated by body
+content, with initials-chain and enumeration guards; real "#" lettered
+heading sets shed their letters before host labels (no "3.1 B. Data"
+doubling) while a lone "## A. Smith Policy" keeps its name, see §5.12;
+round 16b: manual-heading
 promotion — bare sample-mirrored number lines ("3.1 Data handling") no longer
 glue inline into the preceding paragraph; `promoteManualHeadingLines` runs
 inside `parseMarkdown` so both renderers promote them to real host-numbered
@@ -1738,10 +1749,31 @@ ordered-list territory (promoting it would destroy real lists; a glued "7." sent
 becoming a renumbered one-item list is a pinned known limitation); non-title numbered
 lines ("2.5 GB of logs are retained.") are left byte-untouched — body numbers are
 content, never stripped or re-flowed; single-letter romans ("V. Smith…") promote only
-with a multi-letter roman peer in the same section; lines carrying mid-reveal
+with a multi-letter roman peer in the same section OR as letter-run members (below);
+lines carrying mid-reveal
 old-strike/caret sentinels (U+E002-U+E005) never promote (no heading flicker while
 typing), settled-wash sentinels (U+E000/U+E001) are skipped and preserved. Insert-only
-and idempotent. Prompt side, the
+and idempotent. Round 18c (alpha-marker promotion): single uppercase LETTER markers
+("B. Data Handling", "C) Access") — the shapes 16b deliberately excluded, which
+resurfaced when a bold-same-size lettered PDF sample extracted flat and the model
+mirrored bare letter lines — promote under a RUN guard: >=2 chain candidates with
+strictly consecutive letters (B→C) and the SAME separator, each pair separated by at
+least one non-blank non-marker content line (adjacent lettered lines are
+enumeration-shaped content, "A. Email / B. Chat logs", never headings); a second
+single-letter marker in the remainder rejects abbreviation chains ("U. S.
+obligations"); chain membership is computed on a sentinel-stripped shadow so a
+punctuated/washed/mid-reveal member stays a LINK (its neighbours never unpromote
+across reveal ticks) while itself staying prose; the promotion gate widened from
+/[\dIVX]/ to /[0-9A-Z]/ (an all-letter section previously bypassed the pass
+entirely). A LONE letter line never promotes (indistinguishable from "A. Smith
+Policy" — pinned limitation), and consecutive-initial rosters separated by content
+("J. Doe" / "K. Lee") promoting is the pinned accepted residual (same risk profile
+as the roman peer rule). `normalizeSectionBlocks` applies the same run logic
+(ascending letters, gaps allowed — heading-ness is already established) to real "#"
+lettered heading SETS, shedding their letters (including whole-node bold "**B.**"
+markers, husk dropped) before host labels so "3.1 B. Data" doubling can't happen,
+while a lone "## A. Smith Policy" and `sectionTitleText` titles keep their letters
+forever (no peer context on the title path). Prompt side, the
 RULES ban starting any title/heading with an outline marker (numbers, letters
 "A."/"(a)", romans "IV."), require cross-references by section NAME (host renumbering
 breaks numeric ones), and define the mapping for user-cited numbers (section 3 = third

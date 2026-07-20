@@ -4140,6 +4140,192 @@ function check(name: string, cond: boolean): void {
   );
 }
 
+/* 27. Alpha-marker promotion (§5.12 round 18c): mirrored LETTER markers
+ * ("B. Data Handling") promote to headings only inside consecutive-letter,
+ * same-separator runs whose members are separated by body content; real
+ * lettered heading SETS shed their letters before host labels; every prose
+ * class the guard names stays byte-untouched. */
+{
+  const heading = (md: string) =>
+    parseMarkdown(md).filter((b) => b.t === "heading").length;
+  const kinds = (md: string) => parseMarkdown(md).map((b) => b.t).join(",");
+  const R_ON = String.fromCharCode(0xe000);
+  const R_OFF = String.fromCharCode(0xe001);
+  const CARET_STEADY = String.fromCharCode(0xe005);
+
+  // The motivating shape: mirrored lettered sub-headings with body between.
+  const run = parseMarkdown(
+    "Intro text about scope.\nB. Data Handling\nAll data is classified.\nC. Retention\nRecords are kept."
+  );
+  check(
+    "alpha: letter run promotes, markers removed",
+    run.length === 5 &&
+      run.map((b) => b.t).join(",") ===
+        "paragraph,heading,paragraph,heading,paragraph" &&
+      run[1].t === "heading" &&
+      run[3].t === "heading" &&
+      inlineToText(run[1].inline) === "Data Handling" &&
+      inlineToText(run[3].inline) === "Retention"
+  );
+  check(
+    "alpha: paren-separator run promotes",
+    heading("Lead.\nB) Data\nBody.\nC) Access\nBody.") === 2
+  );
+  check(
+    "alpha: A-start run of three promotes",
+    heading("A. Purpose\nWhy we exist.\nB. Scope\nWho it covers.\nC. Review\nWhen we check.") === 3
+  );
+  check(
+    "alpha: all-letter section with no digit or I/V/X still promotes (gate)",
+    heading("Overview follows.\nB. Data\nBody b.\nC. Access\nBody c.") === 2
+  );
+  check(
+    "alpha: I/V/X join letter runs without a roman peer",
+    heading("Lead.\nH. Roles\nBody.\nI. Data\nBody.\nJ. Review\nBody.") === 3 &&
+      heading("Lead.\nU. Vendor Register\nBody.\nV. Vendor Reviews\nBody.") === 2
+  );
+  // Suppressed members stay chain LINKS: a punctuated middle line keeps its
+  // neighbours promoted while itself staying prose; a mid-reveal caret on
+  // one member never unpromotes the others across ticks.
+  const linkMd =
+    "Lead.\nB. Data\nBody.\nC. Records are kept.\nBody.\nD. Access\nBody.";
+  check(
+    "alpha: punctuated member is a link, not a heading",
+    heading(linkMd) === 2 && kinds(linkMd).split("heading").length === 3
+  );
+  check(
+    "alpha: caret-carrying member keeps neighbours promoted",
+    heading(
+      `Lead.\nB. Data\nBody.\nC. Da${CARET_STEADY}\nBody.\nD. Access\nBody.`
+    ) === 2
+  );
+  check(
+    "alpha: wash-led run member still promotes",
+    heading(`Lead.\n${R_ON}B. Data${R_OFF}\nBody.\nC. Access\nBody.`) === 2
+  );
+  // Host labels replace the letters end-to-end; real "#" lettered heading
+  // sets shed letters too (no "3.1 B. Data" doubling), including whole-node
+  // bold markers.
+  const labeled = normalizeSectionBlocks(
+    parseMarkdown("Lead.\nB. Data\nBody.\nC. Access\nBody."),
+    3,
+    null
+  ).filter((b) => b.t === "heading");
+  check(
+    "alpha: host labels replace letters end-to-end",
+    labeled.length === 2 &&
+      inlineToText(labeled[0].inline) === "3.1 Data" &&
+      inlineToText(labeled[1].inline) === "3.2 Access"
+  );
+  const stripped = normalizeSectionBlocks(
+    parseMarkdown("## B. Data\n\nBody.\n\n## C. Access\n\nBody."),
+    3,
+    null
+  ).filter((b) => b.t === "heading");
+  check(
+    "alpha: real lettered heading set sheds letters",
+    stripped.length === 2 &&
+      inlineToText(stripped[0].inline) === "3.1 Data" &&
+      inlineToText(stripped[1].inline) === "3.2 Access"
+  );
+  const bold = normalizeSectionBlocks(
+    parseMarkdown("## **B.** Scope\n\nBody.\n\n## C. Data\n\nBody."),
+    3,
+    null
+  ).filter((b) => b.t === "heading");
+  check(
+    "alpha: whole-node bold marker strips with its husk",
+    bold.length === 2 &&
+      inlineToText(bold[0].inline) === "3.1 Scope" &&
+      inlineToText(bold[1].inline) === "3.2 Data"
+  );
+  const onceAlpha = promoteManualHeadingLines(
+    "Lead.\nB. Data\nBody.\nC. Access\nBody."
+  );
+  check(
+    "alpha: idempotent on re-entry",
+    promoteManualHeadingLines(onceAlpha) === onceAlpha
+  );
+  // Negative pins: every named prose class stays byte-untouched.
+  check(
+    "alpha: lone letter never promotes (pinned limitation)",
+    heading("Intro.\nB. Data Handling\nBody text.") === 0
+  );
+  check(
+    "alpha: name title stays a name",
+    heading("A. Smith Policy\nBody one.") === 0 &&
+      sectionTitleText(3, "A. Smith Policy", null) === "3. A. Smith Policy"
+  );
+  check(
+    "alpha: non-consecutive letters never chain",
+    heading("A. Smith Policy\nBody one.\nJ. Edgar Hoover\nBody two.") === 0
+  );
+  check(
+    "alpha: mixed separators never chain",
+    heading("Lead.\nB. Data\nBody.\nC) Access\nBody.") === 0
+  );
+  check(
+    "alpha: initials chains never promote",
+    heading("Lead.\nU. S. obligations apply\nBody.\nV. P. approval required\nBody.") === 0
+  );
+  check(
+    "alpha: descending or duplicate letters never chain",
+    heading("Lead.\nC. Data\nBody.\nB. Access\nBody.") === 0 &&
+      heading("Lead.\nB. First\nBody.\nB. Second\nBody.") === 0
+  );
+  check(
+    "alpha: sentence runs stay prose (terminal punctuation)",
+    heading("Lead.\nB. All staff must train.\nBody.\nC. Records are kept.\nBody.") === 0
+  );
+  check(
+    "alpha: adjacent lettered lines are enumerations, never headings",
+    heading("The following are covered:\nA. Email\nB. Chat logs\nC. Financial records") === 0
+  );
+  // Accepted residual (same risk profile as the roman peer rule): sign-off
+  // rosters with consecutive initials separated by content DO promote.
+  check(
+    "alpha: consecutive-initial roster promotes (accepted residual)",
+    heading("Prepared by:\nJ. Doe\nReviewed by:\nK. Lee") === 2
+  );
+  check(
+    "alpha: list items with letters stay lists",
+    parseMarkdown("- A. Smith Policy\n- B. Jones Policy").filter(
+      (b) => b.t === "list"
+    ).length === 1
+  );
+  const loneHeading = normalizeSectionBlocks(
+    parseMarkdown("## A. Smith Policy\n\nBody."),
+    3,
+    null
+  );
+  check(
+    "alpha: lone lettered heading keeps its name through normalize",
+    loneHeading[0].t === "heading" &&
+      inlineToText(loneHeading[0].inline) === "3.1 A. Smith Policy"
+  );
+  check(
+    "alpha: V. Smith stays prose with letters active",
+    heading("Lead.\nV. Smith reviewed the policy\nBody.") === 0
+  );
+  // Known limitations, pinned so a future change is a decision: number-only
+  // lines, no-separator numbers, lowercase romans, lowercase or punctuated
+  // multipart lines all stay exactly as written.
+  check(
+    "alpha: sibling number shapes stay pinned limitations",
+    heading("Lead.\n2.1\nData Handling continues.") === 0 &&
+      heading("Lead.\n2 Data Handling\nBody.") === 0 &&
+      heading("Lead.\niv. Data Handling\nBody.") === 0 &&
+      heading("Lead.\n2.1 data handling practices\nBody.") === 0 &&
+      heading("Lead.\n2.1 Data Handling.\nBody.") === 0
+  );
+  check(
+    "alpha: real ordered lists survive intact",
+    parseMarkdown("1. First step\n2. Second step").filter(
+      (b) => b.t === "list"
+    ).length === 1
+  );
+}
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

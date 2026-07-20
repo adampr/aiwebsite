@@ -16,8 +16,11 @@ import type { Block, Inline } from "./markdown";
 // bracket, or paren ('3.1 "Quoted"', "3.1 [TO CONFIRM: ...]"). "30 days
 // notice" (no separator) and "2026 Budget" (four digits, no separator)
 // never match: the separator requirement guards those, not the lookahead.
-// Single letters ("A.") are deliberately NOT stripped: "A. Smith Policy" is
-// a legitimate title shape and the model is forbidden alpha markers anyway.
+// Single letters ("A.") are deliberately NOT stripped here: "A. Smith
+// Policy" is a legitimate title shape, and a lone title/heading has no peer
+// context to prove the letter is a marker. Mirrored letter RUNS are handled
+// by the guarded paths instead (round 18c): promoteManualHeadingLines for
+// bare lines, alphaHeadingRun for real "#" headings.
 const NUM_PREFIX =
   /^(?:\d{1,3}(?:\.\d{1,3}){1,4}\.?|\d{1,3}[.)]|(?=[IVX])X{0,3}(?:IX|IV|V?I{1,3}|V|X)[.)]|Section\s{1,4}\d{1,3}\s{0,4}[:.)-])\s{1,10}(?=["'([A-Za-z])/;
 
@@ -44,30 +47,60 @@ export function stripLeadingNumber(text: string): string {
  * one-numbering-authority invariant even when reveal sentinels sit between
  * the line start and the number.
  *
- * Promotable shapes are strict SUBSETS of NUM_PREFIX (tested): multipart
- * decimals ("3.1", "2.1.4."), uppercase romans ("IV."), and "Section 2:".
- * Bare "1." / "1)" is ordered-list territory and never promotes. The
- * remainder must be title-shaped: <=100 chars, opening char uppercase or
- * one of ["'( (the [ keeps "3.1 [TO CONFIRM: ...]" promotable), and no
- * terminal punctuation - so "2.5 GB of logs are retained." and soft-wrapped
- * continuations starting lowercase are left exactly as written; body
- * numbers are content, never stripped or re-flowed. Single-letter romans
- * ("V.") promote only when a multi-letter roman heading ("III.") exists in
- * the same section, so "V. Smith reviewed the policy" stays prose. Lines
+ * Promotable shapes: multipart decimals ("3.1", "2.1.4."), uppercase romans
+ * ("IV."), "Section 2:", and (round 18c) single uppercase LETTERS ("B.",
+ * "C)") under the run guard below. Bare "1." / "1)" is ordered-list
+ * territory and never promotes. The remainder must be title-shaped: <=100
+ * chars, opening char uppercase or one of ["'( (the [ keeps "3.1 [TO
+ * CONFIRM: ...]" promotable), and no terminal punctuation - so "2.5 GB of
+ * logs are retained." and soft-wrapped continuations starting lowercase are
+ * left exactly as written; body numbers are content, never stripped or
+ * re-flowed. Single-letter romans ("V.") promote only when a multi-letter
+ * roman heading ("III.") exists in the same section OR they sit in a letter
+ * run ("H. I. J."), so "V. Smith reviewed the policy" stays prose. Lines
  * carrying mid-reveal sentinels (old-strike/caret) never promote: a heading
  * must not flicker into existence while the reveal is still typing.
+ *
+ * Alpha run guard (round 18c): letters promote only in chains of >= 2 lines
+ * with strictly consecutive letters (B -> C), the SAME separator, and at
+ * least one non-blank NON-marker content line between members. Each rule
+ * kills a named prose class: consecutiveness kills scattered name titles
+ * ("A. Smith Policy" ... "J. Edgar Hoover"); same-separator kills
+ * coincidence pairs ("B. x" + "C) y"); the between-content rule kills
+ * lettered ENUMERATIONS ("A. Email\nB. Chat logs\nC. Financial records" -
+ * adjacent lettered lines are list-shaped content, while mirrored headings
+ * always have body text between them); a per-line initials test kills
+ * abbreviation chains ("U. S. obligations"). Chain membership is computed
+ * on a sentinel-STRIPPED shadow of each line and tolerates members that are
+ * themselves unpromotable (punctuated, mid-reveal, washed): such lines keep
+ * their place as links so one suppressed member never unpromotes its
+ * neighbours across reveal ticks. Accepted residual (pinned): consecutive
+ * initial-led name lines separated by content ("J. Doe" / "K. Lee" rosters)
+ * promote - same risk profile the roman peer rule accepted. A LONE mirrored
+ * letter (one marker in the whole section) never promotes - known
+ * limitation; the motivating corpus (sample-mirrored lettered sub-headings)
+ * arrives in runs.
  * ------------------------------------------------------------------ */
 
 const PROMOTE_MULTI = /^(\d{1,3}(?:\.\d{1,3}){1,4})\.?\s{1,10}/;
-const PROMOTE_ROMAN = /^((?=[IVX])X{0,3}(?:IX|IV|V?I{1,3}|V|X))[.)]\s{1,10}/;
+const PROMOTE_ROMAN = /^((?=[IVX])X{0,3}(?:IX|IV|V?I{1,3}|V|X))([.)])\s{1,10}/;
 const PROMOTE_SECTION = /^Section\s{1,4}\d{1,3}\s{0,4}[:.)-]\s{1,10}/;
+const PROMOTE_ALPHA = /^([A-Z])([.)])\s{1,10}/;
 const MID_REVEAL_SENTINEL = /[\uE002-\uE005]/; // old-strike + carets
 const WASH_SENTINELS = /^[\uE000\uE001]{1,4}/; // settled resolved wash
+// Every reveal sentinel the doc pane can splice in (wash, strike, carets,
+// region wash): stripped before CHAIN-link detection so a mid-animation
+// member keeps its place in a letter run.
+const ALL_SENTINELS = /[\uE000-\uE007]/g;
+// A second single-letter marker right after the first = abbreviation chain
+// ("U. S. obligations", "J. E. Hoover memo"), never a heading.
+const INITIALS_CHAIN = /^[A-Z][.)]\s/;
 
 type Promotion = {
   line: string; // rebuilt heading line, manual number removed
   roman: boolean; // matched via the roman shape
   loneRoman: boolean; // "I."/"V."/"X.": needs a multi-letter roman peer
+  alpha: { letter: string; sep: string } | null; // needs a letter-run peer
 };
 
 function classifyPromotable(trimmed: string): Promotion | null {
@@ -82,6 +115,7 @@ function classifyPromotable(trimmed: string): Promotion | null {
   let hashes: number;
   let roman = false;
   let loneRoman = false;
+  let alpha: { letter: string; sep: string } | null = null;
   let m = PROMOTE_MULTI.exec(core);
   if (m) {
     hashes = Math.min(m[1].split(".").length, 4);
@@ -89,8 +123,14 @@ function classifyPromotable(trimmed: string): Promotion | null {
     hashes = 2;
     roman = true;
     loneRoman = m[1].length === 1;
+    // A lone I./V./X. is also a letter: it may promote as a run member
+    // ("H. I. J.") even with no multi-letter roman peer.
+    if (loneRoman) alpha = { letter: m[1], sep: m[2] };
   } else if ((m = PROMOTE_SECTION.exec(core))) {
     hashes = 2;
+  } else if ((m = PROMOTE_ALPHA.exec(core))) {
+    hashes = 2;
+    alpha = { letter: m[1], sep: m[2] };
   } else return null;
   const rest = core.slice(m[0].length);
   // Title test runs on the visible text: trailing wash sentinels and one
@@ -103,23 +143,87 @@ function classifyPromotable(trimmed: string): Promotion | null {
   if (!bare || bare.length > 100) return null;
   if (!/^["'([A-Z]/.test(bare)) return null;
   if (/[.,:;!?]$/.test(bare)) return null;
-  return { line: `${"#".repeat(hashes)} ${lead}${emph}${rest}`, roman, loneRoman };
+  if (alpha && INITIALS_CHAIN.test(bare)) {
+    if (!roman) return null; // "U. S. obligations": never a heading
+    alpha = null; // "V. P. approval required": roman semantics only
+  }
+  return {
+    line: `${"#".repeat(hashes)} ${lead}${emph}${rest}`,
+    roman,
+    loneRoman,
+    alpha,
+  };
+}
+
+/** Chain-link detection for the alpha run guard: any single-letter marker
+ *  on the sentinel-STRIPPED line, regardless of title shape. Punctuated,
+ *  washed, or mid-reveal member lines keep their place as LINKS in a letter
+ *  chain (so one suppressed member never unpromotes its neighbours across
+ *  reveal ticks); classifyPromotable alone decides what actually promotes. */
+function chainLetter(rawLine: string): { letter: string; sep: string } | null {
+  const shadow = rawLine.replace(ALL_SENTINELS, "").trim();
+  if (!shadow || /^#{1,4}\s/.test(shadow) || shadow.startsWith("|")) return null;
+  if (/^[-*]\s/.test(shadow)) return null;
+  const core = shadow.slice((/^\*{1,2}/.exec(shadow) ?? [""])[0].length);
+  const m = /^([A-Z])([.)])\s{1,10}(?=\S)/.exec(core);
+  if (!m) return null;
+  if (INITIALS_CHAIN.test(core.slice(m[0].length))) return null;
+  return { letter: m[1], sep: m[2] };
 }
 
 /**
  * Promote bare manually-numbered heading lines to markdown headings.
- * Idempotent: promoted lines start with "#" and are skipped on re-entry.
- * Insert-only per line - never merges, splits, or re-flows body text.
+ * Idempotent: promoted lines start with "#" and are skipped on re-entry
+ * (and alpha chain links vanish with their markers, so a second pass sees
+ * no runs). Insert-only per line - never merges, splits, or re-flows body
+ * text.
  */
 export function promoteManualHeadingLines(md: string): string {
-  if (!/[\dIVX]/.test(md)) return md;
+  // Gate is width, not depth: an all-letters section ("B. Data Handling")
+  // has no digit and no I/V/X, so the old /[\dIVX]/ gate silently disabled
+  // alpha promotion (round 18c).
+  if (!/[0-9A-Z]/.test(md)) return md;
   const lines = md.split("\n");
   const found = lines.map((l) => classifyPromotable(l.trim()));
   const multiRomanPeer = found.some((p) => p !== null && p.roman && !p.loneRoman);
+
+  // Letter runs: indexes of chain links whose maximal chain has >= 2
+  // members. Links chain when letters are strictly consecutive, separators
+  // match, and at least one non-blank non-link content line sits between
+  // them (adjacent lettered lines are enumeration-shaped, never headings).
+  const chain = lines.map(chainLetter);
+  const idxs: number[] = [];
+  for (let i = 0; i < chain.length; i++) if (chain[i]) idxs.push(i);
+  const linked = (aIdx: number, bIdx: number): boolean => {
+    const a = chain[aIdx]!;
+    const b = chain[bIdx]!;
+    if (b.letter.charCodeAt(0) !== a.letter.charCodeAt(0) + 1) return false;
+    if (b.sep !== a.sep) return false;
+    for (let k = aIdx + 1; k < bIdx; k++)
+      if (lines[k].trim() && !chain[k]) return true;
+    return false;
+  };
+  const runMember = new Set<number>();
+  let runStart = 0;
+  for (let c = 1; c <= idxs.length; c++) {
+    if (c === idxs.length || !linked(idxs[c - 1], idxs[c])) {
+      if (c - runStart >= 2)
+        for (let r = runStart; r < c; r++) runMember.add(idxs[r]);
+      runStart = c;
+    }
+  }
+
+  // Letters need a run peer; lone romans need a multi-letter roman peer OR
+  // a run; every other shape promotes on its own.
+  const promotes = (p: Promotion, i: number): boolean => {
+    if (p.alpha && runMember.has(i)) return true;
+    if (p.loneRoman) return multiRomanPeer;
+    return !p.alpha;
+  };
   let changed = false;
   const out = lines.map((line, i) => {
     const p = found[i];
-    if (!p || (p.loneRoman && !multiRomanPeer)) return line;
+    if (!p || !promotes(p, i)) return line;
     changed = true;
     return p.line;
   });
@@ -318,6 +422,71 @@ function stripInlineNumber(inline: Inline[]): Inline[] {
   return [{ ...first, text: stripped }, ...inline.slice(1)];
 }
 
+/* Guarded alpha strip for real "#" headings (round 18c): a mirrored
+ * lettered heading SET ("## B. Data" ... "## C. Access") sheds its letters
+ * before host labels are prepended (no more "3.1 B. Data" doubling), while
+ * a lone "## A. Smith Policy" keeps its name - same no-peer-no-strip logic
+ * as promotion. Ascending letters with gaps allowed (the model may mirror
+ * B and D when C had no corresponding content): heading-ness is already
+ * established here, unlike bare-line promotion which demands strict +1. */
+
+// Marker as an inline-text prefix ("B. Scope") or as a whole node
+// ("**B.** Scope" parses as bold "B." + text " Scope").
+const ALPHA_PREFIX = /^([A-Z])([.)])\s{1,10}(?=\S)/;
+const ALPHA_NODE = /^([A-Z])([.)])\s{0,10}$/;
+
+function headingAlphaMarker(
+  b: Block
+): { letter: string; sep: string } | null {
+  if (b.t !== "heading") return null;
+  const first = b.inline[0];
+  if (!first) return null;
+  let m = ALPHA_NODE.exec(first.text);
+  if (m && b.inline.length > 1) return { letter: m[1], sep: m[2] };
+  m = ALPHA_PREFIX.exec(first.text);
+  if (!m || INITIALS_CHAIN.test(first.text.slice(m[0].length))) return null;
+  return { letter: m[1], sep: m[2] };
+}
+
+/** Block indexes of headings whose leading letter sits in an ascending
+ *  same-separator letter run of >= 2 headings. */
+function alphaHeadingRun(blocks: Block[]): Set<number> {
+  const marks: { idx: number; letter: string; sep: string }[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const m = headingAlphaMarker(blocks[i]);
+    if (m) marks.push({ idx: i, ...m });
+  }
+  const out = new Set<number>();
+  let start = 0;
+  for (let c = 1; c <= marks.length; c++) {
+    if (
+      c === marks.length ||
+      marks[c].letter.charCodeAt(0) <= marks[c - 1].letter.charCodeAt(0) ||
+      marks[c].sep !== marks[c - 1].sep
+    ) {
+      if (c - start >= 2)
+        for (let r = start; r < c; r++) out.add(marks[r].idx);
+      start = c;
+    }
+  }
+  return out;
+}
+
+function stripAlphaMarker(inline: Inline[]): Inline[] {
+  const first = inline[0];
+  if (!first) return inline;
+  if (inline.length > 1 && ALPHA_NODE.test(first.text)) {
+    // Whole-node husk: drop it and the space it owned in the next node.
+    const rest = inline.slice(1);
+    if (rest[0]?.t === "text")
+      rest[0] = { ...rest[0], text: rest[0].text.replace(/^\s{1,10}/, "") };
+    return rest;
+  }
+  const stripped = first.text.replace(ALPHA_PREFIX, "");
+  if (stripped === first.text) return inline;
+  return [{ ...first, text: stripped }, ...inline.slice(1)];
+}
+
 /**
  * Normalize one section's blocks under its host-assigned number:
  * - strip manual number prefixes from headings,
@@ -343,10 +512,12 @@ export function normalizeSectionBlocks(
   // Sub-headings hang off the section's styled ordinal ("III.1", "C.2");
   // decimal styles keep today's "3.1" exactly.
   const base = baseLabel ?? subPrefix(sectionNum, style ?? "decimal");
-  return blocks.map((b): Block => {
+  const alphaRun = alphaHeadingRun(blocks);
+  return blocks.map((b, bi): Block => {
     if (b.t !== "heading") return b;
     const depth = b.level - min;
-    const inline = stripInlineNumber(b.inline);
+    let inline = stripInlineNumber(b.inline);
+    if (alphaRun.has(bi)) inline = stripAlphaMarker(inline);
     let label = "";
     if (depth === 0) {
       c1++;
