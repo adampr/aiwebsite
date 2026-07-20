@@ -189,7 +189,7 @@ export const KIND_LABELS: Record<
   { name: string; badge: string; blurb: string }
 > = {
   usage_policy: {
-    name: "AI Usage Policy",
+    name: "AI Acceptable Use Policy (AUP)",
     badge: "FASTEST · ONE DOCUMENT",
     blurb:
       "One page your employees will actually use. It answers the real questions, like what is OK to paste into a chatbot and what never is.",

@@ -53,6 +53,12 @@ import { extractJson } from "../src/lib/governance/turn";
 import type { TavilyResult } from "../src/lib/governance/types";
 
 const FORCE = process.argv.includes("--force-research");
+// --reseed: regenerate the cross-standard digest and re-upsert the seed
+// memories from current templates, then exit. Skips the deploy-marker and
+// research gates: digest/seed wording otherwise only refreshes when a
+// quarterly (or watch-triggered) research run fires, so template copy
+// changes need this one-off after deploy.
+const RESEED = process.argv.includes("--reseed");
 const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const MASS_DELETE_CEILING = 500;
@@ -567,8 +573,8 @@ async function regenerateDigest(): Promise<void> {
   // Host-assembled digest: the Overview + Key obligations of each standard,
   // sliced mechanically (no extra author call to go wrong).
   const parts: string[] = [
-    `# Cross-standard digest for AI usage policies (updated ${new Date().toISOString().slice(0, 10)})`,
-    `## Overview\nThis digest condenses the three standards references for the AI Usage Policy flow. An AI usage policy is the employee-facing edge of NIST AI RMF governance, EU AI Act literacy and transparency duties, and ISO/IEC 42001 responsible-use controls.`,
+    `# Cross-standard digest for AI acceptable use policies (updated ${new Date().toISOString().slice(0, 10)})`,
+    `## Overview\nThis digest condenses the three standards references for the AI Acceptable Use Policy flow. An AI acceptable use policy is the employee-facing edge of NIST AI RMF governance, EU AI Act literacy and transparency duties, and ISO/IEC 42001 responsible-use controls.`,
   ];
   for (const def of STANDARDS) {
     try {
@@ -612,7 +618,7 @@ async function upsertSeeds(state: State): Promise<void> {
   rows.push({
     id: "seed-gov-feature",
     key: "governance_builder_feature",
-    value: `XL.net AI offers an AI Governance builder at https://ai.xl.net/governance. Signed-in users work with Tron Netter to draft an AI usage policy or a working draft set of governance documents aligned with NIST AI RMF, the EU AI Act, or ISO/IEC 42001. Tron researches their company first, asks questions one at a time, and the documents update live; downloads are Word-friendly and projects auto-delete 30 days after last activity. Drafts are starting points for counsel review, not legal advice.`,
+    value: `XL.net AI offers an AI Governance builder at https://ai.xl.net/governance. Signed-in users work with Tron Netter to draft an AI acceptable use policy (AUP, sometimes called an AI usage policy) or a working draft set of governance documents aligned with NIST AI RMF, the EU AI Act, or ISO/IEC 42001. Tron researches their company first, asks questions one at a time, and the documents update live; downloads are Word-friendly and projects auto-delete 30 days after last activity. Drafts are starting points for counsel review, not legal advice.`,
   });
   for (const r of rows) {
     await db.execute(sql`
@@ -634,6 +640,13 @@ async function upsertSeeds(state: State): Promise<void> {
  * ------------------------------------------------------------------ */
 
 async function main(): Promise<void> {
+  if (RESEED) {
+    fs.mkdirSync(STANDARDS_DIR, { recursive: true });
+    await regenerateDigest();
+    await upsertSeeds(loadState());
+    log("reseed: digest regenerated and seed memories re-upserted");
+    return;
+  }
   if (deployInProgress()) {
     log("deploy in progress; exiting quietly");
     return;

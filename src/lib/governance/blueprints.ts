@@ -56,11 +56,13 @@ export interface KindBlueprint {
 
 const USAGE_POLICY: KindBlueprint = {
   kind: "usage_policy",
-  title: "AI Usage Policy",
+  title: "AI Acceptable Use Policy",
   docs: [
     {
+      // Slug is stored in every existing project's documents_json and matched
+      // by the op allowlist, feeds, and placeholderSectionMap: never rename.
       slug: "ai-usage-policy",
-      title: "AI Usage Policy",
+      title: "AI Acceptable Use Policy",
       sections: [
         {
           id: "purpose-scope",

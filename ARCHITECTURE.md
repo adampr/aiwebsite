@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-20 (governance round 17c: PDF letterhead
+Last verified against code: 2026-07-20 (governance round 18: AUP rename; round 17c: PDF letterhead
 parity - owner ruling overriding the 17b panel's strip-only stance: repeated
 PDF page-edge lines are now ADOPTED into downloads through the same shaping
 pipeline as .docx parts (2-3 page docs require the line on EVERY page, 4+ keep
@@ -984,7 +984,7 @@ posts get heroes via `tsx packages/aicompany/cli/backfill-heroes.ts` (operator s
 
 Shipped 2026-07-16 after a five-expert planning panel + five-critic review (the §14
 protocol). Signed-in users draft AI governance documents WITH Tron Netter at
-`/governance`: a single **AI Usage Policy** (employee-facing: what is OK to share,
+`/governance`: a single **AI Acceptable Use Policy (AUP)** (employee-facing: what is OK to share,
 approved tools, incident reporting) or a **working draft set of core documents** for
 NIST AI RMF (7 docs), the EU AI Act (10 docs), or ISO/IEC 42001 (10 docs). Tron
 researches the user's company first (their site + web mentions + industry), then asks
@@ -994,6 +994,30 @@ review/confirm state. Word-friendly downloads (single `.docx` or `.zip` of `.doc
 README) are available in every state; projects hard-delete 30 days after last activity.
 Everything is host-owned (`src/lib/governance/`, `src/components/governance/`,
 `src/app/api/governance/`, `scripts/governance-*.ts`) — no submodule changes.
+
+**Naming (round 18, 2026-07-20):** the single-document offering was renamed from
+"AI Usage Policy" to **"AI Acceptable Use Policy (AUP)"** (industry term of art;
+3-expert + 3-critic panel). Two-tier convention: the parenthetical "(AUP)" appears on
+offering/marketing surfaces (`KIND_LABELS.usage_policy.name`, /work exhibit, ZIP
+README header); the bare formal title "AI Acceptable Use Policy" is the blueprint/doc
+title (letterhead, model-facing prompts — no acronym in model-facing text); flowing
+prose uses lowercase, and SEO copy keeps "AI usage policy" once as a searched
+secondary phrase. The DB kind value `usage_policy` and doc slug `ai-usage-policy` are
+STORED IDENTITY (project rows, `documents_json`, op allowlist, feeds,
+`placeholderSectionMap`) and are permanently retained. Blueprint placeholder strings
+are byte-frozen (exact-match drafted detection fails open if edited), so the one
+"usage policy" mention in the genai-profile-addendum placeholder intentionally keeps
+the old phrasing. Existing projects keep their stored "AI Usage Policy" doc title;
+because `retitle_doc` is ungated and the system prompt now names the new title, the
+model may converge old projects' titles to the new name on ordinary user-initiated
+turns — accepted. Download filenames derive from the STORED doc title
+(`docFileNames()` in docx.ts: `fileSlug(title, slug)` + collision dedupe, used by the
+zip, its README listing, and the single-`.docx` content-disposition), so old projects
+keep `ai-usage-policy.docx` and new ones get `ai-acceptable-use-policy.docx`. The
+standards-refresh script gained `--reseed` (regenerate `cross-standard-digest.md` +
+re-upsert seed memories from current templates, skipping deploy-marker/research
+gates) — run once on the VM post-deploy, since digest/seed wording otherwise only
+refreshes on a quarterly or watch-triggered research run.
 
 **Routes** (all `readSession`-gated; owner + 30-day retention filter folded into every
 row fetch; missing/expired/not-owned are one identical 404 — no existence oracle; error
@@ -1763,7 +1787,7 @@ prompts render them as "observations to confirm with the user, not determination
 and a rules() line forbids determinations from signals — anything drafted from one
 carries `[TO CONFIRM]`) → turn zero: a COMPLETE best-effort first draft of every
 non-stub section (never placeholder language; unknowns marked `[TO CONFIRM: …]`; one
-call for the usage policy, one per 2-doc group for the standards sets; the turn-zero
+call for the AUP (`usage_policy`), one per 2-doc group for the standards sets; the turn-zero
 system message states the 24k budget — the shared rules' 8k line used to contradict
 it — plus the 6k per-section cap, and turn zero gets a 24-op ceiling vs the answer
 turns' 12). **Stub docs never go to turn zero**: determinations rest only on
@@ -1996,7 +2020,7 @@ blog_posts         id uuid PK default gen_random_uuid(), slug text NOT NULL UNIQ
 
 governance_projects id uuid PK default gen_random_uuid(),
                    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                   kind text NOT NULL,      -- usage_policy|nist_ai_rmf|eu_ai_act|iso_42001
+                   kind text NOT NULL,      -- usage_policy (displayed "AI Acceptable Use Policy (AUP)")|nist_ai_rmf|eu_ai_act|iso_42001
                    domain text NOT NULL, status text NOT NULL default 'created',
                    -- created|queued|researching|research_failed|drafting|review|done
                    rev integer NOT NULL default 0,   -- ++ per applied turn; client staleness guard
@@ -2281,7 +2305,7 @@ hardcoded allowlists** (EU Articles 1-113 + Annexes I-XIII; ISO A.2-A.10.x + cla
 4-10; NIST GV/MP/MS/MG ids + `NIST AI 600-1`; unverifiable citations are stripped and
 counted), injection-screened, Sources section host-assembled from the ranked URLs,
 atomic tmp+rename to `data/governance-standards/<slug>.md` (+ `.prev` kept). Failure
-= keep yesterday's doc, WARN. `cross-standard-digest.md` (the usage-policy prompt
+= keep yesterday's doc, WARN. `cross-standard-digest.md` (the AUP (`usage_policy`) prompt
 slice) is host-assembled from the three docs' Key-obligations sections — no extra
 author call. `src/lib/governance/standards.ts` serves mtime-cached slices to the
 §5.12 prompts, with hardcoded conservative fallbacks during the bootstrap window.

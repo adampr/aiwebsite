@@ -243,7 +243,8 @@ export default function WorkPage() {
           </p>
           <p className="mt-4 text-sm">
             A workbench where you and Tron Netter write your AI governance
-            together. Pick one: a single AI Usage Policy, or a working-draft
+            together. Pick one: a single AI Acceptable Use Policy (AUP), or a
+            working-draft
             set of core documents for NIST AI RMF, the EU AI Act, or ISO/IEC
             42001, seven to ten documents per set. It runs right here on{" "}
             <a href="#aiwebsite">ai.xl.net</a>, drafting through the{" "}

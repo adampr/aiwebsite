@@ -868,7 +868,7 @@ async function main(): Promise<void> {
       }
     : null;
   // Turn zero drafts a COMPLETE first version (owner rule, round 3): one
-  // call for the usage policy, one call per group of 2 non-stub documents
+  // call for the AUP (usage_policy), one call per group of 2 non-stub documents
   // for the standards sets, so every section opens genuinely drafted (with
   // [TO CONFIRM] markers) instead of as template placeholders. Stub docs
   // NEVER go to turn zero: determinations rest only on user-confirmed facts

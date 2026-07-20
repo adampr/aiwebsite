@@ -52,7 +52,7 @@ Scope and context, AI policy, roles, risk methodology, impact assessment, object
 ## Question bank seeds
 Ask about certification goals, scope, leadership, existing ISO management systems, risk scales, high-impact systems, lifecycle practice, data provenance, suppliers, and audit readiness.`,
   "cross-standard-digest": `## Overview
-Cross-standard digest for AI usage policies (bootstrap fallback). An AI usage policy should tell employees in plain language which AI tools are approved, what data may and may not be shared with them (keyed to the organization's data classes), how to verify AI output, when to disclose AI use, extra care for decisions about people, how to raise incidents without blame, and who owns the policy. NIST AI RMF, the EU AI Act, and ISO/IEC 42001 all reward documented tool governance, human oversight, and incident reporting; a good usage policy is the employee-facing edge of all three.`,
+Cross-standard digest for AI acceptable use policies (bootstrap fallback). An AI acceptable use policy should tell employees in plain language which AI tools are approved, what data may and may not be shared with them (keyed to the organization's data classes), how to verify AI output, when to disclose AI use, extra care for decisions about people, how to raise incidents without blame, and who owns the policy. NIST AI RMF, the EU AI Act, and ISO/IEC 42001 all reward documented tool governance, human oversight, and incident reporting; a good acceptable use policy is the employee-facing edge of all three.`,
 };
 
 interface CacheEntry {

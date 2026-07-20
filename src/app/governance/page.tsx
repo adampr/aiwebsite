@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     absolute: "Free AI Governance Builder | NIST AI RMF, EU AI Act, ISO 42001",
   },
   description:
-    "Free AI governance builder: draft an AI usage policy or a document set mapped to NIST AI RMF, the EU AI Act, or ISO/IEC 42001, researched for your company.",
+    "Free AI governance builder: draft an AI acceptable use policy (AI usage policy) or a document set for NIST AI RMF, the EU AI Act, or ISO/IEC 42001.",
   alternates: { canonical: "/governance" },
 };
 
@@ -38,7 +38,7 @@ const appJsonLd = JSON.stringify({
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
   provider: { "@type": "Organization", "@id": `${siteConfig.site.baseUrl}/#org` },
   description:
-    "Draft an AI usage policy or a governance document set mapped to NIST AI RMF, the EU AI Act, or ISO/IEC 42001. Tron Netter researches your company first and drafts with you, live.",
+    "Draft an AI acceptable use policy (AUP) or a governance document set mapped to NIST AI RMF, the EU AI Act, or ISO/IEC 42001. Tron Netter researches your company first and drafts with you, live.",
 }).replace(/</g, "\\u003c");
 
 const SESSION_STEPS = [
@@ -190,11 +190,12 @@ export default async function GovernancePage() {
           </div>
           <div className="mt-12 grid gap-6 sm:grid-cols-2">
             <div className="panel rise">
-              <h3>An AI usage policy</h3>
+              <h3>An AI acceptable use policy</h3>
               <p className="mt-4 text-sm">
-                One document, written for your staff to actually read: what
-                your people may use AI for, what they may not, and who
-                decides. Most companies should start here.
+                One document, sometimes called an AI usage policy, written for
+                your staff to actually read: what your people may use AI for,
+                what they may not, and who decides. Most companies should
+                start here.
               </p>
             </div>
             <div className="panel rise" style={{ transitionDelay: "100ms" }}>

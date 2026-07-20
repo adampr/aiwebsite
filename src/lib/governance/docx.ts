@@ -451,6 +451,29 @@ export async function renderDocx(
   return Packer.toBuffer(document);
 }
 
+/**
+ * Download filenames derive from each doc's STORED title (letterhead/H1),
+ * falling back to the immutable slug, so the saved file always matches the
+ * document it contains: pre-rename projects keep ai-usage-policy.docx, new
+ * ones get ai-acceptable-use-policy.docx. Deduped within a set so two docs
+ * with colliding titles cannot overwrite each other inside a zip.
+ */
+export function docFileNames(
+  docs: GovernanceDoc[],
+  suffix: string
+): Map<string, string> {
+  const used = new Set<string>();
+  const out = new Map<string, string>();
+  for (const d of docs) {
+    const base = fileSlug(d.title, d.slug);
+    let name = base;
+    for (let i = 2; used.has(name); i++) name = `${base}-${i}`;
+    used.add(name);
+    out.set(d.slug, `${name}${suffix}.docx`);
+  }
+  return out;
+}
+
 export function readmeText(opts: {
   kind: GovernanceKind;
   domain: string;
@@ -466,8 +489,9 @@ export function readmeText(opts: {
   if (opts.draft) lines.push(`STATUS: DRAFT. This set was downloaded before final confirmation.`);
   lines.push("");
   lines.push("Contents:");
+  const names = docFileNames(opts.docs, opts.draft ? "-draft" : "");
   for (const d of opts.docs)
-    lines.push(`- ${d.title}${d.stub ? " (determination only)" : ""} (${d.slug}.docx)`);
+    lines.push(`- ${d.title}${d.stub ? " (determination only)" : ""} (${names.get(d.slug)})`);
   lines.push("");
   lines.push("Gaps and next steps:");
   lines.push(
@@ -512,6 +536,7 @@ export async function renderZip(opts: {
 }): Promise<Buffer> {
   const zip = new JSZip();
   const suffix = opts.draft ? "-draft" : "";
+  const names = docFileNames(opts.docs, suffix);
   for (const doc of opts.docs) {
     const buf = await renderDocx(doc, {
       draft: opts.draft,
@@ -519,7 +544,7 @@ export async function renderZip(opts: {
       numbering: opts.numbering ?? null,
       letterhead: opts.letterhead ?? null,
     });
-    zip.file(`${fileSlug(doc.slug)}${suffix}.docx`, buf);
+    zip.file(names.get(doc.slug)!, buf);
   }
   zip.file("README.txt", readmeText(opts));
   return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }) as Promise<Buffer>;

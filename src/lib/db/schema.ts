@@ -109,7 +109,7 @@ export const governanceProjects = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    kind: text("kind").notNull(), // usage_policy|nist_ai_rmf|eu_ai_act|iso_42001
+    kind: text("kind").notNull(), // usage_policy (displayed "AI Acceptable Use Policy (AUP)")|nist_ai_rmf|eu_ai_act|iso_42001
     domain: text("domain").notNull(),
     status: text("status").notNull().default("created"),
     rev: integer("rev").notNull().default(0),

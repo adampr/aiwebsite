@@ -97,7 +97,7 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
       headers: {
         "content-type":
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "content-disposition": `attachment; filename="${domainSlug}-${fileSlug(doc.slug)}${suffix}.docx"`,
+        "content-disposition": `attachment; filename="${domainSlug}-${fileSlug(doc.title, doc.slug)}${suffix}.docx"`,
         "cache-control": "no-store, private",
       },
     });
