@@ -27,7 +27,7 @@ import {
 } from "./guesses";
 import { countConfirmMarkers, scanConfirmMarkers } from "./markdown";
 import { detectNumberingStyle } from "./numbering";
-import { sampleVerbosity } from "./prompt";
+import { sampleOutlineTopTitles, sampleVerbosity } from "./prompt";
 import { normalizeBrief } from "./research";
 import { progressFor } from "./turn";
 import type { ProjectRow } from "./db";
@@ -241,6 +241,10 @@ export function toProjectView(row: ProjectRow): ProjectView {
                   footer: row.styleSampleFooter ?? "",
                 }
               : null,
+          // Round 18b: derived per view like numbering, never persisted.
+          outlineTitles: row.styleSampleText
+            ? sampleOutlineTopTitles(row.styleSampleText)
+            : [],
           // Round 17: derived per view like numbering, never persisted.
           verbosity: (() => {
             const v = row.styleSampleText

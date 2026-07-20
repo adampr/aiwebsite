@@ -19,7 +19,7 @@ import {
   remapLegacyReopenedSummary,
   type EffectiveEntry,
 } from "@/lib/governance/interview";
-import { sectionTitleText } from "@/lib/governance/numbering";
+import { sectionDisplayLabel } from "@/lib/governance/outline";
 import {
   BusyLabel,
   chipCanon,
@@ -613,9 +613,9 @@ export function QuestionPane({
             doc: slug,
             section: sid,
             docTitle: doc.title,
-            sectionTitle: sectionTitleText(
-              si + 1,
-              doc.sections[si].title,
+            sectionTitle: sectionDisplayLabel(
+              doc,
+              sid,
               view.styleSample?.numbering ?? null
             ),
           },

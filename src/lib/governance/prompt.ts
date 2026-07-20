@@ -179,6 +179,41 @@ export function verbosityLine(
   return `SAMPLE LENGTH: the sample ${basis} (${v.band} register). Aim for roughly ${target} words per section you draft, trimming or expanding explanation and examples, never required substance. The character budgets in the RULES always win over this target, and never shorten an existing section the user has not asked you to change.`;
 }
 
+/**
+ * The sample's TOP-LEVEL outline item titles (round 18b): the shallowest
+ * heading level with at least two entries, numbering-prefixed text kept as
+ * written (canonicalization happens at compare time). Feeds the view's
+ * styleSample.outlineTitles so the client can compute dropped-heading
+ * honesty surfaces without ever seeing the sample text.
+ */
+export function sampleOutlineTopTitles(text: string): string[] {
+  const byLevel = new Map<number, string[]>();
+  for (const line of text.split("\n")) {
+    const m = /^(#{1,6})\s(.{1,300})$/.exec(line);
+    if (!m) continue;
+    const lvl = m[1].length;
+    const arr = byLevel.get(lvl) ?? [];
+    if (arr.length < 24) arr.push(m[2].trim().slice(0, 80));
+    byLevel.set(lvl, arr);
+  }
+  // The sample's own document title sometimes lands at the same inferred
+  // level as its section headings (PDF font sizing); it is never an
+  // outline ITEM, so drop it by identity with the first extracted heading.
+  const docTitle = text.split("\n").find((l) => /^#{1,6}\s/.test(l));
+  const canon = (t: string) =>
+    t.toLowerCase().replace(/\s{1,20}/g, " ").trim();
+  const titleCanon = docTitle
+    ? canon(docTitle.replace(/^#{1,6}\s/, ""))
+    : null;
+  for (const lvl of [...byLevel.keys()].sort((a, b) => a - b)) {
+    const arr = byLevel
+      .get(lvl)!
+      .filter((t) => !titleCanon || canon(t) !== titleCanon);
+    if (arr.length >= 2) return arr.slice(0, 12);
+  }
+  return [];
+}
+
 /** Prompt slice of the sample: cap chars, then cut back to a line boundary
  * so the block never ends mid-table-row or mid-sentence. */
 function sliceSample(text: string): string {
@@ -279,6 +314,15 @@ function serializeDraft(
   const out: string[] = [];
   for (const doc of documents) {
     out.push(`### doc:${doc.slug} "${doc.title}"${doc.stub ? " [stub]" : ""}`);
+    // Skeleton adoption (round 18b): show the adopted grouping so restyle
+    // passes file consistently across batches instead of re-guessing.
+    if (doc.outline?.length)
+      out.push(
+        `(adopted outline: ${doc.outline
+          .map((b) => `${b.title}[${b.sections.join(" ")}]`)
+          .join(" / ")
+          .slice(0, 600)})`
+      );
     for (const sec of doc.sections) {
       const key = `${doc.slug}#${sec.id}`;
       const scaffold = (placeholders[doc.slug] ?? []).includes(sec.id);
@@ -431,6 +475,10 @@ export function buildRestyleUserMessage(opts: {
   kind: GovernanceKind;
   documents: GovernanceDoc[];
   focusRefs: string[];
+  // Round 18b: the sample has a usable top-level outline, so this pass may
+  // also file sections under it (adopt_outline). Stated only when true: an
+  // instruction pointing at an absent SAMPLE OUTLINE block invites guessing.
+  adoptOutline?: boolean;
 }): string {
   const refs = opts.focusRefs.join(", ");
   return [
@@ -438,7 +486,11 @@ export function buildRestyleUserMessage(opts: {
     `The user asked you to REFORMAT existing sections so they match the FORMAT SAMPLE, in look AND in structure. Re-emit EACH of these sections in full with one upsert_section op, and ONLY these sections: ${refs}.
 - Change FORMATTING and STRUCTURE only: heading style and case, list style, table usage, defined-term style, document-control layout, paragraph shape, and how each section organizes its content internally (intro lines, sub-clause patterns, definitions blocks) to read like the sample.
 - Retitle a section to the sample's terminology when the sample (see SAMPLE OUTLINE) has a clearly corresponding heading for the same subject; otherwise keep the title. Never start a title with any numbering.
-- If the sample orders its topics differently, ALSO emit {"op":"reorder_sections","doc":"<slug>","order":["<section-id>", ...]} once per document whose flow should change: "order" must list EVERY existing section id of that document exactly once (all ids are shown in CURRENT DRAFT), arranged to match the sample's outline. Sections with no counterpart in the sample keep their relative position. An order that drops or invents an id is rejected whole.
+- If the sample orders its topics differently, ALSO emit {"op":"reorder_sections","doc":"<slug>","order":["<section-id>", ...]} once per document whose flow should change: "order" must list EVERY existing section id of that document exactly once (all ids are shown in CURRENT DRAFT), arranged to match the sample's outline. Sections with no counterpart in the sample keep their relative position. An order that drops or invents an id is rejected whole.${
+      opts.adoptOutline
+        ? `\n- The document can also render under the sample's own SKELETON. Emit {"op":"adopt_outline","doc":"<slug>","buckets":[{"title":"...","sections":["<section-id>", ...]}]} once per non-stub document that has no "(adopted outline: ...)" line yet or whose adopted outline no longer matches the sample: file EVERY existing section id of that document under exactly one bucket. Bucket titles use the SAMPLE OUTLINE's top-level wording without any numbering, ordered as the sample orders them; put sections with no clear home in the bucket that holds the main policy body; skip sample items that would hold nothing. A proposal that misses, duplicates, or invents a section id is rejected whole. Never move or rewrite content to fit the outline: file the sections as they are.`
+        : ""
+    }
 - Preserve every fact, obligation, name, number, date, and citation exactly. Do not add, remove, or reword substantive content.
 - Keep each section's content and length as it is: reformatting changes look and structure only, never how much is said. For this pass, ignore the sample's typical section length.
 - Preserve every [TO CONFIRM: ...] marker character for character, in place. A response that drops, rewords, or moves one is rejected and wasted.

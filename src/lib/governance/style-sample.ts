@@ -473,6 +473,46 @@ export function markPdfHeadings(
 }
 
 /**
+ * Round 18b (#1): Word-exported PDFs emit auto-number labels AFTER their
+ * title text in the content stream, so section titles arrive as flat prose
+ * with the number glued to the line END ("Purpose1.", "Policy5.") and the
+ * outline machinery (SAMPLE OUTLINE digest, skeleton adoption, numbering
+ * style) starves. Recover them: unmarked, short, title-shaped lines whose
+ * trailing numbers form an ASCENDING chain starting at 1 become numbered
+ * headings ("## 1. Purpose"). The chain (>=3 links, +1 steps) is the
+ * false-positive guard: sub-item numbers restart per parent and body
+ * sentences end with a period before the glued number, so neither can
+ * ride the chain. Anything short of a full chain changes nothing.
+ */
+const TRAILING_NUM_TITLE =
+  /^([A-Za-z][^\n]{1,78}?)[\s:]{0,4}(\d{1,3})\s{0,2}\.?$/;
+
+export function recoverTrailingNumberedHeadings(lines: string[]): string[] {
+  const hits: { idx: number; title: string }[] = [];
+  let expected = 1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^#{1,6}\s/.test(lines[i])) continue;
+    const t = lines[i].trim();
+    const m = TRAILING_NUM_TITLE.exec(t);
+    if (!m) continue;
+    if (parseInt(m[2], 10) !== expected) continue;
+    const title = m[1].trim().replace(/[\s:]{1,4}$/, "");
+    // Title-shaped only: no sentence break, no terminal punctuation, short.
+    if (/[.!?;]\s/.test(title) || /[.!?;,]$/.test(title)) continue;
+    if (!/[A-Za-z]/.test(title) || title.split(/\s{1,10}/).length > 10)
+      continue;
+    hits.push({ idx: i, title });
+    expected++;
+  }
+  if (hits.length < 3) return lines;
+  const out = [...lines];
+  hits.forEach((h, k) => {
+    out[h.idx] = `## ${k + 1}. ${h.title}`;
+  });
+  return out;
+}
+
+/**
  * PDF -> plain text via pdf.js getTextContent (no rendering, no canvas, no
  * embedded-JS execution; isEvalSupported off). Hostile-input posture matches
  * the docx path: page cap, char stop, and a hard wall-clock deadline that
@@ -569,10 +609,8 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
           allLines.push(...p);
           if (idx < filtered.length - 1) allLines.push({ text: "", h: 0 });
         });
-        const text = applyOutlineHeadings(
-          markPdfHeadings(allLines),
-          allLines,
-          outlineMap
+        const text = recoverTrailingNumberedHeadings(
+          applyOutlineHeadings(markPdfHeadings(allLines), allLines, outlineMap)
         )
           .join("\n")
           .trim();

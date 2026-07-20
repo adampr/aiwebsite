@@ -185,6 +185,37 @@ export function validateTurn(
         else ops.push({ op: "reorder_sections", doc, order });
         break;
       }
+      case "adopt_outline": {
+        // Skeleton adoption (§5.12 round 18b): shape-checked here,
+        // partition-checked against the live doc in applyOps.
+        const raw = Array.isArray(e.buckets) ? e.buckets : [];
+        const buckets: { title: string; sections: string[] }[] = [];
+        let shapeOk = raw.length > 0 && raw.length <= CAPS.maxSectionsPerDoc;
+        for (const b of raw) {
+          const bo = b as Record<string, unknown>;
+          const title = str(bo.title, 80);
+          const secs = Array.isArray(bo.sections)
+            ? bo.sections.filter(
+                (x): x is string => typeof x === "string" && KEBAB.test(x)
+              )
+            : [];
+          if (
+            !title ||
+            !secs.length ||
+            (Array.isArray(bo.sections) && bo.sections.length !== secs.length)
+          ) {
+            shapeOk = false;
+            break;
+          }
+          buckets.push({ title, sections: secs });
+        }
+        if (!shapeOk)
+          errors.push(
+            `op ${i}: adopt_outline needs 1-${CAPS.maxSectionsPerDoc} buckets, each a title plus kebab section ids`
+          );
+        else ops.push({ op: "adopt_outline", doc, buckets });
+        break;
+      }
       default:
         errors.push(`op ${i}: unknown op`);
     }
@@ -364,6 +395,18 @@ export function applyOps(
         if (idx !== -1) {
           d.sections.splice(idx, 1);
           mark(op.doc, op.section);
+          // Keep an adopted outline consistent: the removed id leaves its
+          // bucket; a bucket emptied by removals disappears (render is
+          // lenient anyway, this just keeps the stored shape honest).
+          if (d.outline) {
+            d.outline = d.outline
+              .map((b) => ({
+                title: b.title,
+                sections: b.sections.filter((id) => id !== op.section),
+              }))
+              .filter((b) => b.sections.length > 0);
+            if (!d.outline.length) delete d.outline;
+          }
         }
         break;
       }
@@ -405,6 +448,32 @@ export function applyOps(
         op.order.forEach((id, i) => {
           if (before[i] !== id) mark(op.doc, id);
         });
+        break;
+      }
+      case "adopt_outline": {
+        // Skeleton adoption (§5.12 round 18b): all-or-nothing like reorder.
+        // The buckets must partition the doc's CURRENT section ids EXACTLY
+        // (every id filed once, none invented), so adoption can never drop,
+        // duplicate, or merge a required section. Content and titles are
+        // byte-untouched: this is a presentation grouping, so NO section is
+        // marked changed (marking would balloon the next prompt's verbatim
+        // serialization for a zero-content-change op).
+        const d = find(op.doc);
+        if (!d) break;
+        const filed = op.buckets.flatMap((b) => b.sections);
+        const current = new Set(d.sections.map((s) => s.id));
+        if (
+          filed.length !== d.sections.length ||
+          new Set(filed).size !== filed.length ||
+          !filed.every((id) => current.has(id))
+        ) {
+          errors.push(`adopt_outline on ${op.doc} is not a partition; ignored`);
+          break;
+        }
+        d.outline = op.buckets.map((b) => ({
+          title: b.title,
+          sections: [...b.sections],
+        }));
         break;
       }
     }

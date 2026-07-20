@@ -6,7 +6,7 @@
 // the "Updated just now" change summary with jump links. The pane never
 // blanks during updates; it always renders the last committed documents.
 
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import type { GovernanceDoc, ProjectStatus } from "@/lib/governance/types";
 import {
   parseMarkdown,
@@ -24,6 +24,7 @@ import {
   sectionTitleText,
   type NumberingStyle,
 } from "@/lib/governance/numbering";
+import { droppedOutlineTitles, planOutline } from "@/lib/governance/outline";
 import { fmtDate } from "./shared";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
@@ -323,12 +324,16 @@ function SectionBody({
   markdown,
   num,
   numbering,
+  baseLabel,
   marks,
   reveal,
 }: {
   markdown: string;
   num: number;
   numbering: NumberingStyle | null;
+  // Round 18b: nested sections hang their inner headings off the compound
+  // label ("5.2" -> "5.2.1") instead of their flat ordinal.
+  baseLabel?: string | null;
   marks?: ResolvedMarkerReveal[];
   reveal?: RevealState | null;
 }) {
@@ -341,14 +346,15 @@ function SectionBody({
             : markdown
         ),
         num,
-        numbering
+        numbering,
+        baseLabel ?? null
       ),
     // Keyed on the reveal's PRIMITIVES, not object identity: the show
     // creates a fresh RevealState every 60ms tick, and only the section
     // being revealed may re-parse per tick. `marks` arrays come from the
     // parent's memoized per-section map, so idle marked sections hold too.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [markdown, num, numbering, marks, reveal?.item, reveal?.mode, reveal?.chars]
+    [markdown, num, numbering, baseLabel, marks, reveal?.item, reveal?.mode, reveal?.chars]
   );
   return (
     <>
@@ -377,6 +383,8 @@ export function DocPane({
   showStatus,
   showNote,
   numbering,
+  groupedOkDocs,
+  sampleOutlineTitles,
 }: {
   documents: GovernanceDoc[];
   activeDoc: string | null;
@@ -407,9 +415,62 @@ export function DocPane({
   /** The format sample's detected numbering style (round 15b); null =
    *  decimal default. Applied to section titles and sub-heading labels. */
   numbering: NumberingStyle | null;
+  /** Round 18b: while a reformat run is active, docs NOT in this set render
+   *  flat even if an adoption landed mid-run (no regrouping under the hold
+   *  banner; the end receipt announces it). null = no run, adoptions render
+   *  immediately. */
+  groupedOkDocs?: ReadonlySet<string> | null;
+  /** Round 18b: the sample's top-level outline titles (from the view) for
+   *  the dropped-heading honesty note; null hides the note. */
+  sampleOutlineTitles?: string[] | null;
 }) {
   const doc =
     documents.find((d) => d.slug === activeDoc) ?? documents[0] ?? null;
+
+  // Skeleton adoption (round 18b): with an adopted outline the pane renders
+  // in PLAN order (bucket headings + nested sections); without one, rows are
+  // the flat section list, byte-identical to the pre-18b pane. Every
+  // existing section appears exactly once either way (planOutline invariant).
+  const renderRows = useMemo(() => {
+    if (!doc) return [];
+    type Row = {
+      s: (typeof doc.sections)[number];
+      si: number;
+      meta: {
+        label: string;
+        nested: boolean;
+        base: string | null;
+        bucket: string | null;
+      } | null;
+    };
+    const grouped = groupedOkDocs == null || groupedOkDocs.has(doc.slug);
+    const plan = grouped ? planOutline(doc, numbering) : null;
+    if (!plan)
+      return doc.sections.map((s, si): Row => ({ s, si, meta: null }));
+    const bySec = new Map(doc.sections.map((s, si) => [s.id, { s, si }]));
+    const rows: Row[] = [];
+    let pendingBucket: string | null = null;
+    for (const e of plan) {
+      if (e.sectionId === null) {
+        pendingBucket = e.label;
+        continue;
+      }
+      const rec = bySec.get(e.sectionId);
+      if (!rec) continue;
+      rows.push({
+        s: rec.s,
+        si: rec.si,
+        meta: {
+          label: e.label,
+          nested: !e.top,
+          base: e.innerBase,
+          bucket: pendingBucket,
+        },
+      });
+      pendingBucket = null;
+    }
+    return rows;
+  }, [doc, numbering, groupedOkDocs]);
 
   // Stable per-section mark arrays: a fresh .filter() per render defeats
   // SectionBody's parse memo for every marked section on every reveal tick
@@ -518,7 +579,30 @@ export function DocPane({
                   : "Sections marked Planned are drafted as the interview goes on."}
             </p>
           )}
-          {doc.sections.map((s, si) => {
+          {/* Round 18b durable honesty note (panel rule: receipts are
+              ephemeral; "where did References go" needs a standing answer).
+              Renders ONLY while the adoption dropped sample headings; clean
+              adoptions say nothing (the structure is its own receipt). */}
+          {(() => {
+            if (!doc.outline?.length || !sampleOutlineTitles?.length)
+              return null;
+            if (groupedOkDocs != null && !groupedOkDocs.has(doc.slug))
+              return null;
+            const dropped = droppedOutlineTitles(doc, sampleOutlineTitles);
+            if (!dropped.length) return null;
+            const text =
+              dropped.length === 1
+                ? `Grouped to match your format sample. Its "${dropped[0]}" heading has no matching content here, so it does not appear.`
+                : dropped.length === 2
+                  ? `Grouped to match your format sample. Its "${dropped[0]}" and "${dropped[1]}" headings have no matching content here, so they do not appear.`
+                  : `Grouped to match your format sample. ${dropped.length} of its headings have no matching content here, so they do not appear.`;
+            return (
+              <p className="text-xs" style={faint} data-qa="doc-outline-note">
+                {text}
+              </p>
+            );
+          })()}
+          {renderRows.map(({ s, si, meta }) => {
             const changed = (highlights[doc.slug] ?? []).includes(s.id);
             const asked = (asking[doc.slug] ?? []).includes(s.id);
             const planned = (placeholders[doc.slug] ?? []).includes(s.id);
@@ -553,14 +637,23 @@ export function DocPane({
               ]
                 .filter(Boolean)
                 .join(" ") || undefined;
+            // Nested rows keep the exact visual style sections have today
+            // (text-lg) one semantic level down; the bucket heading above
+            // them is the larger new layer, so nothing ever looks demoted.
+            const SecTag = meta?.nested ? "h4" : "h3";
             return (
+              <Fragment key={changed ? `${s.id}-${flashKey}` : s.id}>
+                {meta?.bucket != null && (
+                  <h3 className="doc-h doc-bucket text-xl" aria-label={meta.bucket}>
+                    {meta.bucket}
+                  </h3>
+                )}
               <section
-                key={changed ? `${s.id}-${flashKey}` : s.id}
                 id={secDomId(doc.slug, s.id)}
                 className={cls}
               >
-                <h3 className="doc-h text-lg" tabIndex={-1} data-sec-heading>
-                  {sectionTitleText(si + 1, s.title, numbering)}
+                <SecTag className="doc-h text-lg" tabIndex={-1} data-sec-heading>
+                  {meta ? meta.label : sectionTitleText(si + 1, s.title, numbering)}
                   {changed && <span className="doc-chip">Updated</span>}
                   {clearedCount > 0 && (
                     <span className="doc-chip">
@@ -577,11 +670,12 @@ export function DocPane({
                   {planned && (
                     <span className="doc-chip doc-chip--plan">Planned</span>
                   )}
-                </h3>
+                </SecTag>
                 <SectionBody
                   markdown={s.markdown}
                   num={si + 1}
                   numbering={numbering}
+                  baseLabel={meta?.base ?? null}
                   marks={secMarks}
                   reveal={
                     reveal &&
@@ -592,6 +686,7 @@ export function DocPane({
                   }
                 />
               </section>
+              </Fragment>
             );
           })}
         </div>

@@ -20,6 +20,7 @@ import {
   buildSystemMessage,
   buildTurnUserMessage,
   repairSystemMessage,
+  sampleOutline,
 } from "./prompt";
 import {
   applyOps,
@@ -611,7 +612,12 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
     });
     const out = await callValidated(
       system,
-      buildRestyleUserMessage({ kind, documents, focusRefs: refs }),
+      buildRestyleUserMessage({
+        kind,
+        documents,
+        focusRefs: refs,
+        adoptOutline: sampleOutline(row.styleSampleText) !== null,
+      }),
       { nonAdvancing: true }
     );
     if (out === "brain_down")
@@ -635,12 +641,23 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
     // wins. applyOps enforces the exact-permutation invariant.
     const batchDocs = new Set(refs.map((r) => r.slice(0, r.indexOf("#"))));
     const reordered = new Set<string>();
+    const adopted = new Set<string>();
     const ops = out.docOps.filter((op) => {
       if (op.op === "upsert_section")
         return refSet.has(`${op.doc}#${op.section}`);
       if (op.op === "reorder_sections" && batchDocs.has(op.doc)) {
         if (reordered.has(op.doc)) return false;
         reordered.add(op.doc);
+        return true;
+      }
+      // Skeleton adoption (round 18b): doc-global like reorder, at most one
+      // per doc, never for stub docs (a determination must lead a stub, not
+      // sit inside a template bucket). applyOps enforces the exact
+      // partition; a non-partition proposal is dropped there, whole.
+      if (op.op === "adopt_outline" && batchDocs.has(op.doc)) {
+        if (adopted.has(op.doc)) return false;
+        if (documents.find((d) => d.slug === op.doc)?.stub) return false;
+        adopted.add(op.doc);
         return true;
       }
       return false;

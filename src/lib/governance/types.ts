@@ -44,6 +44,15 @@ export interface GovernanceDoc {
   // instead of disappearing (auditors prefer negative determinations).
   stub: boolean;
   sections: DocSection[];
+  // Template skeleton adoption (§5.12 round 18b, "reparent never merge"):
+  // ordered buckets whose titles come from the format sample's top-level
+  // outline; every entry lists section IDS filed under that heading.
+  // Sections stay the atomic content units (ids stable, every gate
+  // unchanged); the outline is a PRESENTATION grouping only. Absent or
+  // empty = flat rendering, exactly the pre-18b document. Persisted inside
+  // documents_json (no migration); render is lenient about ids that no
+  // longer exist.
+  outline?: { title: string; sections: string[] }[];
 }
 
 export interface TranscriptEntry {
@@ -190,7 +199,16 @@ export type DocOp =
   // current section ids (applyOps enforces; anything else is rejected).
   // Section ids never change, so feeds, placeholder detection, and open-item
   // tracking survive reordering; host-owned numbering renumbers on render.
-  | { op: "reorder_sections"; doc: string; order: string[] };
+  | { op: "reorder_sections"; doc: string; order: string[] }
+  // Skeleton adoption (§5.12 round 18b): partition ALL of the doc's current
+  // sections into ordered buckets titled from the sample's outline. applyOps
+  // enforces the exact partition; anything else rejects the op whole, so
+  // adoption can never drop, duplicate, or merge a required section.
+  | {
+      op: "adopt_outline";
+      doc: string;
+      buckets: { title: string; sections: string[] }[];
+    };
 
 /** The validated shape of one brain turn (turn.ts enforces it). */
 export interface TurnResult {
@@ -314,6 +332,10 @@ export interface ProjectView {
     reformatDebt: boolean;
     letterhead: { header: string; footer: string } | null;
     verbosity: { band: "concise" | "standard" | "expansive"; targetWords: number } | null;
+    // Round 18b: the sample's top-level outline item titles (derived per
+    // view, never persisted) so the client can compose dropped-heading
+    // honesty surfaces without the sample text.
+    outlineTitles: string[];
   } | null;
   answersCount: number;
   deletesAt: string; // ISO — concrete date rendered everywhere

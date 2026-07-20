@@ -3846,6 +3846,300 @@ function check(name: string, cond: boolean): void {
       ) === ""  );
 }
 
+/* 26. Skeleton adoption + glued-number heading recovery (round 18b,
+      "reparent never merge"): the sample's outline becomes a PRESENTATION
+      grouping over the blueprint's required sections. adopt_outline must be
+      an exact partition (anything else rejected whole), rendering shares
+      one plan (pane + docx), quoting surfaces share one label composer,
+      and the PDF extractor recovers titles whose auto-numbers got glued to
+      the line END so the outline machinery finally has input. */
+{
+  const outline = await import("../src/lib/governance/outline");
+  const numbering = await import("../src/lib/governance/numbering");
+  const kind = GOVERNANCE_KINDS[0];
+  const mkDoc = (): GovernanceDoc => ({
+    slug: "ai-usage-policy",
+    title: "AI Acceptable Use Policy",
+    stub: false,
+    sections: [
+      { id: "purpose-scope", title: "Why this policy exists", markdown: "Body A." },
+      { id: "approved-tools", title: "Approved tools", markdown: "Body B." },
+      { id: "data-rules", title: "What you may not share", markdown: "### Detail\nBody C." },
+      { id: "violations", title: "Violations and review", markdown: "Body D." },
+    ],
+  });
+
+  // Partition validation: exact partition adopted; drop/dupe/invent rejected.
+  const { applyOps } = await import("../src/lib/governance/turn");
+  const good = applyOps(
+    [mkDoc()],
+    [
+      {
+        op: "adopt_outline",
+        doc: "ai-usage-policy",
+        buckets: [
+          { title: "Purpose", sections: ["purpose-scope"] },
+          { title: "Policy", sections: ["approved-tools", "data-rules"] },
+          { title: "Enforcement", sections: ["violations"] },
+        ],
+      },
+    ],
+    kind
+  );
+  check(
+    "outline: exact partition adopts with zero changed sections",
+    good.errors.length === 0 &&
+      good.documents[0].outline?.length === 3 &&
+      Object.keys(good.changedSections).length === 0
+  );
+  const badShapes: { title: string; sections: string[] }[][] = [
+    [{ title: "Policy", sections: ["approved-tools"] }],
+    [
+      { title: "A", sections: ["purpose-scope", "approved-tools"] },
+      { title: "B", sections: ["data-rules", "violations", "purpose-scope"] },
+    ],
+    [
+      { title: "A", sections: ["purpose-scope", "approved-tools", "data-rules"] },
+      { title: "B", sections: ["violations", "invented-id"] },
+    ],
+  ];
+  check(
+    "outline: dropping, duplicating, or inventing an id rejects whole",
+    badShapes.every((buckets) => {
+      const r = applyOps(
+        [mkDoc()],
+        [{ op: "adopt_outline", doc: "ai-usage-policy", buckets }],
+        kind
+      );
+      return r.errors.length === 1 && !r.documents[0].outline;
+    })
+  );
+  const pruned = applyOps(
+    [{ ...good.documents[0] }],
+    [{ op: "remove_section", doc: "ai-usage-policy", section: "violations" }],
+    kind
+  );
+  check(
+    "outline: removing a section prunes its bucket from the stored outline",
+    pruned.documents[0].outline?.length === 2 &&
+      !pruned.documents[0].outline!.some((b) =>
+        b.sections.includes("violations")
+      )
+  );
+
+  // Plan: bucket rows, nested labels, fused single-section buckets, and
+  // sections the outline missed rendering as visible top-level items.
+  const adopted = good.documents[0];
+  const plan = outline.planOutline(adopted, null)!;
+  check(
+    "outline: plan renders bucket rows plus nested three-level numbering",
+    plan.length === 5 &&
+      plan[0].label === "1. Purpose" &&
+      plan[0].fused === true &&
+      plan[1].sectionId === null &&
+      plan[1].label === "2. Policy" &&
+      plan[2].label === "2.1 Approved tools" &&
+      plan[2].innerBase === "2.1" &&
+      plan[4].label === "3. Enforcement" &&
+      plan[4].fused === true
+  );
+  const drifted: GovernanceDoc = {
+    ...adopted,
+    sections: [
+      ...adopted.sections,
+      { id: "new-later", title: "Added later", markdown: "New." },
+    ],
+  };
+  const driftPlan = outline.planOutline(drifted, null)!;
+  check(
+    "outline: sections added after adoption stay visible as top-level items",
+    driftPlan[driftPlan.length - 1].label === "4. Added later" &&
+      driftPlan.filter((e) => e.sectionId !== null).length ===
+        drifted.sections.length
+  );
+  check(
+    "outline: no outline means null plan (flat rendering untouched)",
+    outline.planOutline(mkDoc(), null) === null
+  );
+
+  // One label composer for every quoting surface.
+  check(
+    "outline: display labels agree with the plan on every shape",
+    outline.sectionDisplayLabel(adopted, "data-rules", null) ===
+      "2.2 What you may not share" &&
+      outline.sectionDisplayLabel(adopted, "purpose-scope", null) ===
+        "1. Purpose" &&
+      outline.sectionDisplayLabel(mkDoc(), "data-rules", null) ===
+        "3. What you may not share"
+  );
+  check(
+    "outline: display label survives all six numbering styles nested",
+    (["decimal", "decimal-zero", "paren", "roman", "alpha", "section-word"] as const).every(
+      (style) => {
+        const l = outline.sectionDisplayLabel(adopted, "approved-tools", style);
+        return l.length > 0 && l.includes("Approved tools");
+      }
+    )
+  );
+  {
+    const { parseMarkdown: pmd } = await import(
+      "../src/lib/governance/markdown"
+    );
+    const blocks = numbering.normalizeSectionBlocks(
+      pmd("### Detail\nBody C."),
+      3,
+      null,
+      "2.1"
+    );
+    const h = blocks.find((b) => b.t === "heading") as {
+      inline: { text: string }[];
+    };
+    check(
+      "outline: nested inner headings hang off the compound base",
+      h.inline[0].text === "2.1.1 "
+    );
+  }
+
+  // Glued trailing-number heading recovery (#1): the owner's exact document
+  // shape. Sub-item colon titles restart their numbers and body sentences
+  // end with a period before the glued digit; neither rides the chain.
+  const glued = [
+    "# ISO27001 - Production Access Management",
+    "Purpose1.",
+    "This policy outlines the processes for managing privileged access.",
+    "Scope2.",
+    "This policy applies to all employees and contractors.",
+    "Definitions3.",
+    "References4.",
+    "Policy5.",
+    "Principle of Least Privilege:1.",
+    "Access will be granted only on a need-to-know basis.1.",
+    "Users get the minimum level of access necessary to do their jobs.2.",
+    "Annual Review6.",
+    "Exceptions7.",
+    "Enforcement8.",
+  ];
+  const { recoverTrailingNumberedHeadings } = await import(
+    "../src/lib/governance/style-sample"
+  );
+  const rec = recoverTrailingNumberedHeadings(glued);
+  check(
+    "recovery: glued ascending chain becomes numbered headings",
+    rec[1] === "## 1. Purpose" &&
+      rec[3] === "## 2. Scope" &&
+      rec[7] === "## 5. Policy" &&
+      rec[11] === "## 6. Annual Review" &&
+      rec[13] === "## 8. Enforcement"
+  );
+  check(
+    "recovery: sub-item and body lines never promote",
+    rec[8] === glued[8] && rec[9] === glued[9] && rec[10] === glued[10]
+  );
+  check(
+    "recovery: fewer than three chain links changes nothing",
+    recoverTrailingNumberedHeadings(["Purpose1.", "Scope2.", "body text"]).join(
+      "|"
+    ) === "Purpose1.|Scope2.|body text"
+  );
+  const promptMod = await import("../src/lib/governance/prompt");
+  check(
+    "recovery: recovered headings feed the outline machinery",
+    promptMod.sampleOutline(rec.join("\n")) !== null &&
+      promptMod.sampleOutlineTopTitles(rec.join("\n")).length === 8
+  );
+
+  // Dropped-heading honesty derives, never asserts.
+  check(
+    "outline: dropped titles compare numbering-insensitively",
+    outline
+      .droppedOutlineTitles(adopted, [
+        "1. Purpose",
+        "2. References",
+        "3. Policy",
+        "4. Enforcement",
+      ])
+      .join("|") === "2. References"
+  );
+
+  // Restyle prompt gating: the adoption instruction rides only when the
+  // sample has a usable outline, and restyle stays length-preserving.
+  const withFlag = promptMod.buildRestyleUserMessage({
+    kind,
+    documents: [mkDoc()],
+    focusRefs: ["ai-usage-policy#approved-tools"],
+    adoptOutline: true,
+  });
+  const withoutFlag = promptMod.buildRestyleUserMessage({
+    kind,
+    documents: [mkDoc()],
+    focusRefs: ["ai-usage-policy#approved-tools"],
+  });
+  check(
+    "outline: adopt instruction gated on a usable sample outline",
+    withFlag.includes("adopt_outline") && !withoutFlag.includes("adopt_outline")
+  );
+  check(
+    "outline: adopted grouping serialized so passes file consistently",
+    promptMod
+      .buildRestyleUserMessage({
+        kind,
+        documents: [adopted],
+        focusRefs: ["ai-usage-policy#approved-tools"],
+      })
+      .includes("(adopted outline: Purpose[purpose-scope]")
+  );
+
+  // Word export shares the plan: bucket H1, nested H2, no bucket parts at
+  // all without an outline.
+  const { renderDocx } = await import("../src/lib/governance/docx");
+  const { default: JSZipMod } = await import("jszip");
+  const groupedBuf = await renderDocx(adopted, {
+    draft: true,
+    kind,
+  });
+  const groupedXml = await (
+    await JSZipMod.loadAsync(groupedBuf)
+  )
+    .file("word/document.xml")!
+    .async("string");
+  check(
+    "outline: docx renders bucket headings with nested section labels",
+    groupedXml.includes("2. Policy") &&
+      groupedXml.includes("2.1 Approved tools") &&
+      groupedXml.includes("1. Purpose") &&
+      !groupedXml.includes("Why this policy exists")
+  );
+  const flatBuf = await renderDocx(mkDoc(), { draft: true, kind });
+  const flatXml = await (await JSZipMod.loadAsync(flatBuf))
+    .file("word/document.xml")!
+    .async("string");
+  check(
+    "outline: docx without an outline keeps the flat titles",
+    flatXml.includes("1. Why this policy exists") &&
+      !flatXml.includes("1. Purpose")
+  );
+
+  // Label-drift gate (critic amendment): quoting surfaces must not compose
+  // section titles themselves; sectionDisplayLabel is the one composer.
+  const fs = await import("fs");
+  const path = await import("path");
+  const quoting = [
+    "src/components/governance/workspace.tsx",
+    "src/components/governance/question-pane.tsx",
+    "src/components/governance/open-items-resolver.tsx",
+    "src/components/governance/shared.tsx",
+  ];
+  check(
+    "outline: no quoting surface calls sectionTitleText directly",
+    quoting.every(
+      (f) =>
+        !fs
+          .readFileSync(path.join(REPO_ROOT, f), "utf8")
+          .includes("sectionTitleText(")
+    )
+  );
+}
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

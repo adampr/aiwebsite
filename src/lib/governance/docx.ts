@@ -32,6 +32,7 @@ import {
   TITLE_TOKEN,
   type SampleFrame,
 } from "./letterhead";
+import { planOutline } from "./outline";
 import type { Block, Inline } from "./markdown";
 import { parseMarkdown } from "./markdown";
 import {
@@ -90,17 +91,26 @@ const INNER_HEADING_SPACING = {
   4: { before: 160, after: 80 },
 } as const;
 
-function blockToDocx(block: Block, orderedRef: () => string): (Paragraph | Table)[] {
+function blockToDocx(
+  block: Block,
+  orderedRef: () => string,
+  // Round 18b: sections nested under a skeleton bucket demote their inner
+  // headings one Word level so the navigation-pane outline stays strict
+  // (bucket H1, section H2, inner H3...).
+  headingShift: 0 | 1 = 0
+): (Paragraph | Table)[] {
   switch (block.t) {
-    case "heading":
+    case "heading": {
+      const lvl = Math.min(block.level + headingShift, 4) as 1 | 2 | 3 | 4;
       return [
         new Paragraph({
-          heading: INNER_HEADING[block.level],
+          heading: INNER_HEADING[lvl],
           children: inlineRuns(block.inline),
-          spacing: INNER_HEADING_SPACING[block.level],
+          spacing: INNER_HEADING_SPACING[lvl],
           keepNext: true,
         }),
       ];
+    }
     case "paragraph":
       return [
         new Paragraph({ children: inlineRuns(block.inline), spacing: { after: 160 } }),
@@ -356,19 +366,65 @@ export async function renderDocx(
       })
     );
 
-  doc.sections.forEach((section, si) => {
+  // Skeleton adoption (round 18b): with an adopted outline the export
+  // renders the sample's skeleton (bucket H1, nested sections H2, inner
+  // headings one level deeper), sharing the SAME plan the doc pane renders
+  // from so the two can never disagree. plan null = today's flat document.
+  const plan = planOutline(doc, opts.numbering ?? null);
+  const rows: {
+    section: (typeof doc.sections)[number] | null;
+    label: string;
+    nested: boolean;
+    innerBase: string | null;
+    flatIndex: number;
+  }[] = [];
+  if (!plan)
+    doc.sections.forEach((section, si) =>
+      rows.push({
+        section,
+        label: sectionTitleText(si + 1, section.title, opts.numbering ?? null),
+        nested: false,
+        innerBase: null,
+        flatIndex: si + 1,
+      })
+    );
+  else {
+    const byId = new Map(doc.sections.map((x, i) => [x.id, { x, i }]));
+    for (const e of plan) {
+      if (e.sectionId === null) {
+        rows.push({
+          section: null,
+          label: e.label,
+          nested: false,
+          innerBase: null,
+          flatIndex: 0,
+        });
+        continue;
+      }
+      const rec = byId.get(e.sectionId);
+      if (!rec) continue;
+      rows.push({
+        section: rec.x,
+        label: e.label,
+        nested: !e.top,
+        innerBase: e.innerBase,
+        flatIndex: rec.i + 1,
+      });
+    }
+  }
+  for (const row of rows) {
     children.push(
       new Paragraph({
-        heading: HeadingLevel.HEADING_1,
-        children: [
-          new TextRun({
-            text: sectionTitleText(si + 1, section.title, opts.numbering ?? null),
-          }),
-        ],
-        spacing: { before: 280, after: 120 },
+        heading: row.nested ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1,
+        children: [new TextRun({ text: row.label })],
+        spacing: row.nested
+          ? { before: 240, after: 100 }
+          : { before: 280, after: 120 },
         keepNext: true,
       })
     );
+    if (!row.section) continue;
+    const section = row.section;
     if (placeholderIds.has(section.id)) {
       children.push(
         new Paragraph({
@@ -382,15 +438,16 @@ export async function renderDocx(
           spacing: { after: 160 },
         })
       );
-      return;
+      continue;
     }
     for (const block of normalizeSectionBlocks(
       parseMarkdown(section.markdown),
-      si + 1,
-      opts.numbering ?? null
+      row.flatIndex,
+      opts.numbering ?? null,
+      row.innerBase
     ))
-      children.push(...blockToDocx(block, orderedRef));
-  });
+      children.push(...blockToDocx(block, orderedRef, row.nested ? 1 : 0));
+  }
 
   children.push(
     new Paragraph({

@@ -10,9 +10,12 @@ import Link from "next/link";
 import { KIND_LABELS } from "@/lib/governance/config";
 import { isChaseId } from "@/lib/governance/interview";
 import {
-  sectionTitleText,
   type NumberingStyle,
 } from "@/lib/governance/numbering";
+import {
+  droppedOutlineTitles,
+  sectionDisplayLabel,
+} from "@/lib/governance/outline";
 import { BUILD_ID, staleBundleSignal } from "@/lib/governance/build-id";
 import {
   clearedSectionCounts,
@@ -207,6 +210,11 @@ export function Workspace({ projectId }: { projectId: string }) {
     // debt. A Stop pressed during that pass must report completion, not
     // instruct the user to press a debt-gated button that no longer renders.
     finalDispatched: boolean;
+    // Round 18b: docs that ALREADY rendered grouped at run start. Newly
+    // stored adoptions are visually deferred until the run ends (panel
+    // rule: no regrouping under the hold banner), and the end receipt
+    // reports adoption only for docs not in this set.
+    preOutline: Set<string>;
   } | null>(null);
   // Auto-reformat queued behind a busy workspace (upload while a turn is in
   // flight, or a replacement upload mid-run): handleView fires it as soon as
@@ -565,13 +573,14 @@ export function Workspace({ projectId }: { projectId: string }) {
           list.push({
             doc: dslug,
             section: sid,
-            title: s
-              ? sectionTitleText(
-                  si + 1,
-                  s.title,
-                  viewRef.current?.styleSample?.numbering ?? null
-                )
-              : sid,
+            title:
+              doc && s
+                ? sectionDisplayLabel(
+                    doc,
+                    sid,
+                    viewRef.current?.styleSample?.numbering ?? null
+                  )
+                : sid,
           });
         }
       }
@@ -1906,6 +1915,9 @@ export function Workspace({ projectId }: { projectId: string }) {
       baseline,
       stopRequested: false,
       finalDispatched: false,
+      preOutline: new Set(
+        v.documents.filter((d) => (d.outline?.length ?? 0) > 0).map((d) => d.slug)
+      ),
     };
     run.finalDispatched = run.pendingRefs.length === 0;
     restyleRunRef.current = run;
@@ -2154,6 +2166,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     run: {
       changedRefs: Set<string>;
       baseline: Map<string, string>;
+      preOutline?: Set<string>;
     },
     opts?: { stopped?: boolean; shrunk?: boolean }
   ) {
@@ -2174,9 +2187,9 @@ export function Workspace({ projectId }: { projectId: string }) {
         list.push({
           doc: slug,
           section: sid,
-          title: sectionTitleText(
-            si + 1,
-            doc.sections[si].title,
+          title: sectionDisplayLabel(
+            doc,
+            sid,
             next.styleSample?.numbering ?? null
           ),
         });
@@ -2198,9 +2211,40 @@ export function Workspace({ projectId }: { projectId: string }) {
       next.status === "review"
         ? " Revising and confirming are back."
         : " Answering is back.";
+    // Skeleton adoption receipt clause (round 18b, panel-amended): reported
+    // ONLY for docs whose adoption is newly in effect this run, with counts
+    // read from the STORED partition (verified, never asserted). Single-doc
+    // runs may also name up to two of the sample's headings that had no
+    // matching content; multi-doc runs collapse to counts. Rides every run
+    // ending (critic amendment: a stopped run that already stored an
+    // adoption regroups the pane, and silence there reads as a bug).
+    const adoptionClause = (() => {
+      const adopted = next.documents.filter(
+        (d) => (d.outline?.length ?? 0) > 0 && !run.preOutline?.has(d.slug)
+      );
+      if (!adopted.length) return "";
+      if (adopted.length > 1)
+        return ` I also arranged ${adopted.length} documents under your sample's outline; every section is filed under one of its headings.`;
+      const d = adopted[0];
+      const buckets = d.outline!.length;
+      const secs = d.sections.length;
+      let clause = ` I also arranged the document under your sample's outline: all ${secs} ${secs === 1 ? "section is" : "sections are"} filed under its ${buckets} ${buckets === 1 ? "heading" : "headings"}.`;
+      const dropped = droppedOutlineTitles(
+        d,
+        next.styleSample?.outlineTitles ?? []
+      );
+      if (dropped.length === 1)
+        clause += ` Your sample's "${dropped[0]}" heading had no matching content, so I left it out rather than pad it.`;
+      else if (dropped.length === 2)
+        clause += ` Your sample's "${dropped[0]}" and "${dropped[1]}" headings had no matching content, so I left them out rather than pad them.`;
+      else if (dropped.length >= 3)
+        clause += ` ${dropped.length} of your sample's headings had no matching content, so I left them out rather than pad them.`;
+      return clause;
+    })();
     if (opts?.stopped) {
       setAnnounce(
         "Reformatting stopped. What is done so far is kept; press Reformat the whole draft again to finish." +
+          adoptionClause +
           back
       );
       return;
@@ -2209,7 +2253,8 @@ export function Workspace({ projectId }: { projectId: string }) {
       // The remaining targets vanished under a concurrent change before the
       // final pass could run; debt stands, so the named button renders.
       setAnnounce(
-        "Some sections changed while I was reformatting, so I stopped there. What is done so far is kept; press Reformat the whole draft to finish."
+        "Some sections changed while I was reformatting, so I stopped there. What is done so far is kept; press Reformat the whole draft to finish." +
+          adoptionClause
       );
       return;
     }
@@ -2231,10 +2276,17 @@ export function Workspace({ projectId }: { projectId: string }) {
     }
     setAnnounce(
       (changed.length === 0
-        ? "Your draft already matches the sample. Nothing needed to change."
+        ? adoptionClause
+          ? // Zero-op wording + a stored adoption: "nothing needed to
+            // change" would be false (the structure did), so this branch
+            // gets its own honest lead (panel copy, shipped with the
+            // feature, not after).
+            "The wording already matched your sample, so I changed none of it."
+          : "Your draft already matches the sample. Nothing needed to change."
         : wordingChanged
           ? `Reformatted ${changed.length} ${changed.length === 1 ? "section" : "sections"}. I also touched some wording; the changed sections are marked, worth a skim.`
           : `Reformatted. ${changed.length} ${changed.length === 1 ? "section" : "sections"} now match your sample; the wording is unchanged.`) +
+        adoptionClause +
         back
     );
   }
@@ -2786,7 +2838,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 initialName={view.styleSample?.name ?? null}
                 disabled={view.featureDisabled}
                 removeOnly={view.status === "done"}
-                note="A new or changed sample reformats the whole draft to match its look and structure, including section names and order, and shapes everything I draft afterward. Your words, facts, and open items stay as they are."
+                note="A new or changed sample reformats the whole draft to match its look and structure, including its outline, section names, and order, and shapes everything I draft afterward. Your words, facts, and open items stay as they are."
                 reformat={{
                   available:
                     (view.status === "drafting" || view.status === "review") &&
@@ -2865,6 +2917,12 @@ export function Workspace({ projectId }: { projectId: string }) {
                 }
                 showNote={showNote}
                 numbering={view.styleSample?.numbering ?? null}
+                groupedOkDocs={
+                  restyleActive || restyleStopping
+                    ? (restyleRunRef.current?.preOutline ?? new Set())
+                    : null
+                }
+                sampleOutlineTitles={view.styleSample?.outlineTitles ?? null}
               />
 
             </div>

@@ -186,6 +186,31 @@ function subPrefix(n: number, style: NumberingStyle): string {
   return ordinalLabel(n, style);
 }
 
+/** Compound base for a NESTED section's inner headings and its own label
+ * (§5.12 round 18b skeleton adoption): bucket 5, section 2 -> "5.2", so
+ * that section's inner headings run "5.2.1", "5.2.2". sub null = the
+ * top-level base, identical to the flat document's. */
+export function nestedBaseLabel(
+  num: number,
+  sub: number | null,
+  style: NumberingStyle | null = null
+): string {
+  const base = subPrefix(num, style ?? "decimal");
+  return sub === null ? base : `${base}.${sub}`;
+}
+
+/** Title line of a section nested under a skeleton bucket: "5.2 Data
+ * handling" ("V.2 ...", etc.). No trailing dot, matching the established
+ * inner-heading label shape. */
+export function nestedSectionTitleText(
+  num: number,
+  sub: number,
+  title: string,
+  style: NumberingStyle | null = null
+): string {
+  return `${nestedBaseLabel(num, sub, style)} ${stripLeadingNumber(title.trim())}`;
+}
+
 /** Section title as rendered in both panes: "3. Data handling",
  *  "III. Data handling", "Section 3: Data handling". */
 export function sectionTitleText(
@@ -306,7 +331,10 @@ function stripInlineNumber(inline: Inline[]): Inline[] {
 export function normalizeSectionBlocks(
   blocks: Block[],
   sectionNum: number,
-  style: NumberingStyle | null = null
+  style: NumberingStyle | null = null,
+  // Skeleton adoption (round 18b): a nested section's inner headings hang
+  // off its compound label ("5.2" -> "5.2.1") instead of its ordinal.
+  baseLabel: string | null = null
 ): Block[] {
   let min = Infinity;
   for (const b of blocks) if (b.t === "heading" && b.level < min) min = b.level;
@@ -314,7 +342,7 @@ export function normalizeSectionBlocks(
   let c2 = 0;
   // Sub-headings hang off the section's styled ordinal ("III.1", "C.2");
   // decimal styles keep today's "3.1" exactly.
-  const base = subPrefix(sectionNum, style ?? "decimal");
+  const base = baseLabel ?? subPrefix(sectionNum, style ?? "decimal");
   return blocks.map((b): Block => {
     if (b.t !== "heading") return b;
     const depth = b.level - min;
