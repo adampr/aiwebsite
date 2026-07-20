@@ -3619,16 +3619,53 @@ function check(name: string, cond: boolean): void {
   ]);
   const pdfFrame = lh.detectPdfFrame(pdfPages);
   check(
-    "letterhead: pdf repeated edges detected with tokens and drop keys",
-    pdfFrame.header === "ACME AI Policy" &&
-      pdfFrame.footer !== null &&
-      pdfFrame.footer.includes("{{PAGE}}") &&
+    "letterhead: pdf repeated edges detected raw with drop keys",
+    pdfFrame.headerLines[0] === "ACME AI Policy" &&
+      pdfFrame.footerLines[0] === "Page 1 of 5" &&
       pdfFrame.dropKeys.size === 2 &&
       lh.isFrameLine("Page 4 of 5", pdfFrame.dropKeys)
   );
   check(
-    "letterhead: three pages is too few to infer a pdf frame",
-    lh.detectPdfFrame(pdfPages.slice(0, 3)).header === null
+    "letterhead: pdf frame shapes through the same pipeline as docx",
+    (() => {
+      const shaped = lh.shapeFrameLines(pdfFrame.footerLines, null);
+      return shaped !== null && shaped.includes("{{PAGE}} of {{PAGES}}");
+    })()
+  );
+  // Owner parity ruling (2026-07-20): short PDFs carry their letterhead
+  // too, but only unanimous repetition proves a frame there; a single page
+  // can never prove one.
+  check(
+    "letterhead: 2-3 page pdfs adopt a frame present on EVERY page",
+    lh.detectPdfFrame(pdfPages.slice(0, 3)).headerLines[0] ===
+      "ACME AI Policy" &&
+      lh.detectPdfFrame(pdfPages.slice(0, 2)).headerLines[0] ===
+        "ACME AI Policy"
+  );
+  check(
+    "letterhead: a missing page breaks the short-pdf unanimity requirement",
+    lh.detectPdfFrame([
+      pdfPages[0],
+      pdfPages[1],
+      ["different opening line", "body text without the header"],
+    ]).headerLines.length === 0
+  );
+  check(
+    "letterhead: one page can never prove a pdf frame",
+    lh.detectPdfFrame(pdfPages.slice(0, 1)).headerLines.length === 0
+  );
+  // The two false positives the round-17c e2e caught live, pinned: digits
+  // that are not page numbers require EXACT repetition, and sentence-shaped
+  // page-number lines are never candidates at all.
+  check(
+    "letterhead: varying-digit headings and page-citing sentences never frame",
+    lh.frameCandidateKey("Section 2 heading") === "x:section 2 heading" &&
+      lh.frameCandidateKey(
+        "More body text specific to page 2 with different words each page here."
+      ) === null &&
+      lh.frameCandidateKey("Page 2 of 4") === lh.frameLineKey("Page 2 of 4") &&
+      lh.frameCandidateKey("Acme Corp Confidential") ===
+        lh.frameLineKey("Acme Corp Confidential")
   );
 
   // Verbosity: all-heading-level metric, heading-less fallback, weak-signal
@@ -3771,7 +3808,7 @@ function check(name: string, cond: boolean): void {
   const cfg = await import("../src/lib/governance/config");
   check(
     "letterhead: helper copy scopes to .docx and disclaims logos",
-    cfg.STYLE_SAMPLE_HELPER.includes(".docx sample's page header and footer") &&
+    cfg.STYLE_SAMPLE_HELPER.includes(".docx or PDF sample's page header and footer") &&
       cfg.STYLE_SAMPLE_HELPER.includes("logos and images are not") &&
       cfg.STYLE_SAMPLE_HELPER.includes("used only to build your downloads")
   );

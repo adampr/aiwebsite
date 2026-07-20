@@ -392,23 +392,17 @@ export function StyleSampleControl({
         letterhead !== undefined &&
         (() => {
           const lower = name.toLowerCase();
+          const framed = lower.endsWith(".docx") || lower.endsWith(".pdf");
           if (letterhead === null) {
-            if (lower.endsWith(".docx"))
-              return (
-                <p className="mt-1 max-w-none text-xs" style={dim}>
-                  This sample was stored before letterhead capture existed.
-                  Replace it (the same file is fine) to carry its page header
-                  and footer text into your Word downloads.
-                </p>
-              );
-            if (lower.endsWith(".pdf"))
-              return (
-                <p className="mt-1 max-w-none text-xs" style={dim}>
-                  Page header and footer text cannot be carried over from a
-                  PDF. Upload the .docx version to include it in downloads.
-                </p>
-              );
-            return null;
+            // Round 17c parity: .docx and PDF samples both carry letterhead;
+            // a null store just predates capture (either format).
+            return framed ? (
+              <p className="mt-1 max-w-none text-xs" style={dim}>
+                This sample was stored before letterhead capture existed.
+                Replace it (the same file is fine) to carry its page header
+                and footer text into your Word downloads.
+              </p>
+            ) : null;
           }
           const part = letterheadPartCopy(letterhead);
           if (!part)
@@ -416,6 +410,12 @@ export function StyleSampleControl({
               <p className="mt-1 max-w-none text-xs" style={dim}>
                 No header or footer text was found in this sample. A logo-only
                 letterhead cannot be carried over; downloads keep the standard
+                layout.
+              </p>
+            ) : lower.endsWith(".pdf") ? (
+              <p className="mt-1 max-w-none text-xs" style={dim}>
+                No repeating page header or footer was found in this sample (a
+                one page PDF cannot show one). Downloads keep the standard
                 layout.
               </p>
             ) : null;

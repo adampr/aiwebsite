@@ -9,13 +9,14 @@
 // captured as {{PAGE}} / {{PAGES}} tokens so the renderer can emit real
 // Word fields instead of a frozen number.
 //
-// .pdf: no header/footer structure exists. Lines repeating across enough
-// page tops/bottoms are detected ONLY to strip them from the stored body
-// (a 40-page sample must not repeat its letterhead 40 times into the text
-// that rides prompts and feeds the verbosity measurement). PDF-inferred
-// lines are deliberately NOT adopted into downloads: a false positive
-// would print a body phrase on every page of every export (panel ruling,
-// round 17).
+// .pdf: no header/footer structure exists. Lines repeating across page
+// tops/bottoms ARE the frame: adopted into downloads through the same
+// shaping pipeline as .docx parts (owner parity ruling 2026-07-20,
+// overriding the round-17b panel's strip-only stance; the control's
+// line-by-line preview is the false-positive safety net) and stripped
+// from the stored body (a 40-page sample must not repeat its letterhead
+// 40 times into the text that rides prompts and feeds the verbosity
+// measurement).
 //
 // Same iron rules as style-sample.ts: everything here runs synchronously on
 // the request path over attacker-controlled input, so every pass is LINEAR
@@ -333,6 +334,17 @@ export function headerFooterXmlToText(
     if (t.replace(/[\s\t]/g, "").length) lines.push(t);
     if (lines.length >= MAX_FRAME_LINES * 2) break;
   }
+  return shapeFrameLines(lines, sampleTitle);
+}
+
+/** The one shaping pipeline every letterhead source goes through (round
+ * 17c: .docx parts and PDF page-edge lines get identical treatment): page
+ * numbers tokenized, document-control lines dropped, the sample's own
+ * title swapped for the per-document token, then normalized and capped. */
+export function shapeFrameLines(
+  lines: string[],
+  sampleTitle: string | null
+): string | null {
   const shaped = lines
     .map((l) => tokenizePageNumbers(l))
     .filter((l) => !isDocControlLine(l))
@@ -359,7 +371,7 @@ export function sampleTitleFromText(text: string): string | null {
  * PDF: repeated top/bottom lines across pages
  * ------------------------------------------------------------------ */
 
-const PDF_MIN_PAGES = 4; // below this, "repeats" is noise, not structure
+const PDF_MIN_PAGES = 2; // 1 page has no repetition to prove a frame
 const EDGE_LINES = 2; // lines per page edge considered frame candidates
 
 /** Digit-insensitive identity key for a candidate frame line. */
@@ -369,6 +381,29 @@ export function frameLineKey(line: string): string {
     .replace(/\s{1,20}/g, " ")
     .trim()
     .toLowerCase();
+}
+
+/**
+ * Candidate identity for one page-edge line, or null when the line can
+ * never be letterhead. Digit-free lines match case/whitespace-insensitively.
+ * Lines whose digits are PAGE NUMBERS (tokenizable, short, not
+ * sentence-shaped) match digit-insensitively so "Page 3 of 12" repeats.
+ * Every other digit-bearing line must repeat EXACTLY: a "Section 2" page-top
+ * heading or a body sentence mentioning "page 4" varies per page and must
+ * never become letterhead (both false positives were caught live by the
+ * round-17c e2e before this guard existed).
+ */
+export function frameCandidateKey(line: string): string | null {
+  const t = line.trim();
+  if (t.length < 2 || t.length > MAX_FRAME_LINE_CHARS) return null;
+  const tokenized = tokenizePageNumbers(t);
+  if (tokenized !== t) {
+    if (t.length <= 80 && !/[.;,:]$/.test(t)) return frameLineKey(t);
+    return null;
+  }
+  if (/\d/.test(t))
+    return `x:${t.toLowerCase().replace(/\s{1,20}/g, " ")}`;
+  return frameLineKey(t);
 }
 
 /** Generalize page numbers in one concrete frame line to tokens. Ordered
@@ -382,8 +417,11 @@ export function tokenizePageNumbers(line: string): string {
 }
 
 export interface PdfFrameResult {
-  header: string | null;
-  footer: string | null;
+  /** RAW first-instance lines of the detected frame, top and bottom edge.
+   * The caller shapes them (shapeFrameLines) once the sample's title is
+   * known; raw is kept here so dropKeys and shaping stay independent. */
+  headerLines: string[];
+  footerLines: string[];
   /** Keys of detected frame lines: the extractor drops matching page-edge
    * lines from the body so a 40-page sample does not repeat its letterhead
    * 40 times into the stored text (which would also poison the verbosity
@@ -394,15 +432,26 @@ export interface PdfFrameResult {
 /**
  * Detect repeated page-edge lines across pages. `pages` is the per-page
  * list of raw text lines. A candidate must sit in the first/last EDGE_LINES
- * non-empty lines of its page and repeat (digit-insensitively) on at least
- * 60 percent of pages (minimum 3). Order within the frame follows average
- * edge position.
+ * non-empty lines of its page and repeat (digit-insensitively): on EVERY
+ * page for 2-3 page documents (owner parity ruling 2026-07-20: short PDFs
+ * must carry their letterhead too, and unanimous repetition is the only
+ * evidence a short document can offer), on at least 70 percent (minimum 3)
+ * for longer ones. One-page PDFs stay empty: with no repetition there is
+ * no way to tell a header from content. Order within the frame follows
+ * average edge position.
  */
 export function detectPdfFrame(pages: string[][]): PdfFrameResult {
-  const empty: PdfFrameResult = { header: null, footer: null, dropKeys: new Set() };
+  const empty: PdfFrameResult = {
+    headerLines: [],
+    footerLines: [],
+    dropKeys: new Set(),
+  };
   const usable = pages.filter((p) => p.some((l) => l.trim().length > 0));
   if (usable.length < PDF_MIN_PAGES) return empty;
-  const need = Math.max(3, Math.ceil(usable.length * 0.7));
+  const need =
+    usable.length <= 3
+      ? usable.length
+      : Math.max(3, Math.ceil(usable.length * 0.7));
 
   const collect = (edge: "top" | "bottom") => {
     const counts = new Map<
@@ -417,12 +466,8 @@ export function detectPdfFrame(pages: string[][]): PdfFrameResult {
           : nonEmpty.slice(-EDGE_LINES);
       slice.forEach((line, idx) => {
         const t = line.trim();
-        if (t.length < 2 || t.length > MAX_FRAME_LINE_CHARS) return;
-        const key = frameLineKey(t);
-        if (!key || key === "#") {
-          // A bare page number is a legitimate footer; key it distinctly.
-          if (key !== "#") return;
-        }
+        const key = frameCandidateKey(t);
+        if (!key) return;
         const rec = counts.get(key);
         if (rec) {
           rec.n++;
@@ -440,20 +485,18 @@ export function detectPdfFrame(pages: string[][]): PdfFrameResult {
   const top = collect("top");
   const bottom = collect("bottom");
   const dropKeys = new Set<string>([...top, ...bottom].map(([k]) => k));
-  const toText = (hits: [string, { first: string }][]) =>
-    hits.length
-      ? normalizeFrameText(
-          hits.map(([, r]) => tokenizePageNumbers(r.first)).join("\n")
-        )
-      : null;
-  return { header: toText(top), footer: toText(bottom), dropKeys };
+  return {
+    headerLines: top.map(([, r]) => r.first),
+    footerLines: bottom.map(([, r]) => r.first),
+    dropKeys,
+  };
 }
 
 /** True when this page-edge line matches a detected frame line (used by the
- * extractor to drop it from the body). */
+ * extractor to drop it from the body). Must key EXACTLY like detection or
+ * the strip and the adoption would disagree about what the frame is. */
 export function isFrameLine(line: string, dropKeys: Set<string>): boolean {
   if (!dropKeys.size) return false;
-  const t = line.trim();
-  if (!t || t.length > MAX_FRAME_LINE_CHARS) return false;
-  return dropKeys.has(frameLineKey(t));
+  const key = frameCandidateKey(line);
+  return key !== null && dropKeys.has(key);
 }

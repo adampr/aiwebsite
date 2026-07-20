@@ -33,6 +33,7 @@ import {
   parseHeaderFooterRels,
   pickFrameParts,
   sampleTitleFromText,
+  shapeFrameLines,
   type SampleFrame,
 } from "./letterhead";
 
@@ -568,13 +569,24 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
           allLines.push(...p);
           if (idx < filtered.length - 1) allLines.push({ text: "", h: 0 });
         });
+        const text = applyOutlineHeadings(
+          markPdfHeadings(allLines),
+          allLines,
+          outlineMap
+        )
+          .join("\n")
+          .trim();
+        // Round 17c (owner parity ruling): detected PDF frame lines are
+        // ADOPTED through the same shaping pipeline as .docx parts. Empty
+        // string = scanned, nothing repeating found (1-page docs can never
+        // prove a frame) so the UI can say so honestly.
+        const sampleTitle = sampleTitleFromText(text);
         return {
-          text: applyOutlineHeadings(markPdfHeadings(allLines), allLines, outlineMap)
-            .join("\n")
-            .trim(),
-          // PDF-inferred frames are strip-only (see letterhead.ts): never
-          // adopted into downloads, so never stored.
-          frame: NO_FRAME,
+          text,
+          frame: {
+            header: shapeFrameLines(frame.headerLines, sampleTitle) ?? "",
+            footer: shapeFrameLines(frame.footerLines, sampleTitle) ?? "",
+          },
         };
       })(),
       deadline,
