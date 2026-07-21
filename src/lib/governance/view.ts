@@ -30,6 +30,7 @@ import {
 } from "./guesses";
 import { countConfirmMarkers, scanConfirmMarkers } from "./markdown";
 import { detectNumberingStyle } from "./numbering";
+import { healSampleHeadings } from "./style-sample";
 import { sampleOutlineTopTitles, sampleVerbosity } from "./prompt";
 import { normalizeBrief } from "./research";
 import { progressFor } from "./turn";
@@ -270,13 +271,19 @@ export function toProjectView(row: ProjectRow): ProjectView {
       ? { bankCheckEvidence: bankProfile.evidence.slice(0, 3) }
       : {}),
     styleSample: row.styleSampleName
-      ? {
+      ? (() => {
+          // Round 19b: pre-fix extractions heal at the read edge (gated,
+          // pure, never persisted) so numbering/outline/verbosity match
+          // what the turn prompts will see.
+          const sampleText = healSampleHeadings(
+            row.styleSampleText,
+            row.styleSampleName
+          );
+          return {
           name: row.styleSampleName,
           // Derived per view (linear over <=20k chars), never persisted:
           // rows uploaded before round 15b adopt their style on next load.
-          numbering: row.styleSampleText
-            ? detectNumberingStyle(row.styleSampleText)
-            : null,
+          numbering: sampleText ? detectNumberingStyle(sampleText) : null,
           // Round 16: boolean only; the debt token itself never leaves the
           // server (it fences the run worker's clear against replacements).
           reformatDebt: row.styleSampleDebt !== null,
@@ -290,17 +297,14 @@ export function toProjectView(row: ProjectRow): ProjectView {
                 }
               : null,
           // Round 18b: derived per view like numbering, never persisted.
-          outlineTitles: row.styleSampleText
-            ? sampleOutlineTopTitles(row.styleSampleText)
-            : [],
+          outlineTitles: sampleText ? sampleOutlineTopTitles(sampleText) : [],
           // Round 17: derived per view like numbering, never persisted.
           verbosity: (() => {
-            const v = row.styleSampleText
-              ? sampleVerbosity(row.styleSampleText)
-              : null;
+            const v = sampleText ? sampleVerbosity(sampleText) : null;
             return v ? { band: v.band, targetWords: v.targetWords } : null;
           })(),
-        }
+          };
+        })()
       : null,
     answersCount: row.answersCount,
     deletesAt: deletesAt(row.lastActivityAt),

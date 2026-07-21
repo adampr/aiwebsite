@@ -519,13 +519,31 @@ export function recoverTrailingNumberedHeadings(lines: string[]): string[] {
  * never match - without this the fix would starve the outline machinery it
  * was built to feed. Same ascending-chain guard (>=3 links, +1 steps from
  * 1), same title shape; tiered (indented) lines are list items and never
- * candidates, a ":"-terminal line is a list parent, and a line whose next
- * non-blank line is an INDENTED marker is a list parent too.
+ * candidates, and a ":"-terminal line is a list parent.
+ *
+ * List-vs-heading discrimination is CHAIN-LEVEL (round 19b). The local
+ * shape "N. Title over an indented marker" is undecidable line-by-line:
+ * a real heading whose section OPENS with a sub-list (the flagship ISO
+ * template's Definitions and Policy sections) is byte-identical to a
+ * list parent, and round 19's per-link skip broke the +1 chain right
+ * there, silently disarming the whole outline machinery for exactly the
+ * document class it was built for. Each link now RECORDS indented-child
+ * evidence instead of dying on it, and only a strict majority of that
+ * evidence vetoes the whole chain; a tie promotes (evidence this weak
+ * cannot outvote the ascending chain - half the sections opening with
+ * definition lists is still a skeleton). Col-0 siblings are deliberately
+ * NOT evidence: numbered body paragraphs ("1. This policy applies...")
+ * and bare skeleton templates are col-0 runs that MUST promote. Accepted,
+ * test-pinned limitation: a flat col-0 checklist of short title-shaped
+ * lines in an otherwise outline-dead document still promotes (status-quo
+ * parity with round 19; visible in outlineTitles, recoverable by
+ * removing the sample).
  */
 const LEADING_NUM_TITLE = /^(\d{1,3})[.)]\s{1,4}([A-Za-z][^\n]{0,78})$/;
+const INDENTED_MARKER = /^\s{1,10}(?:[-*]\s|\d{1,3}[.)]\s|[A-Za-z][.)]\s)/;
 
 export function recoverLeadingNumberedHeadings(lines: string[]): string[] {
-  const hits: { idx: number; title: string }[] = [];
+  const hits: { idx: number; title: string; listChild: boolean }[] = [];
   let expected = 1;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -538,20 +556,52 @@ export function recoverLeadingNumberedHeadings(lines: string[]): string[] {
     if (title.split(/\s{1,10}/).length > 10) continue;
     let next = i + 1;
     while (next < lines.length && !lines[next].trim()) next++;
-    if (
-      next < lines.length &&
-      /^\s{1,10}(?:[-*]\s|\d{1,3}[.)]\s|[A-Za-z][.)]\s)/.test(lines[next])
-    )
-      continue;
-    hits.push({ idx: i, title });
+    hits.push({
+      idx: i,
+      title,
+      listChild: next < lines.length && INDENTED_MARKER.test(lines[next]),
+    });
     expected++;
   }
   if (hits.length < 3) return lines;
+  const parents = hits.reduce((n, h) => n + (h.listChild ? 1 : 0), 0);
+  if (parents * 2 > hits.length) return lines;
   const out = [...lines];
   hits.forEach((h, k) => {
     out[h.idx] = `## ${k + 1}. ${h.title}`;
   });
   return out;
+}
+
+/**
+ * Read-edge heal (round 19b): stored samples keep whatever the extractor
+ * of their upload day produced - the file itself is discarded, so
+ * extraction fixes never retro-apply on their own. A row whose stored
+ * text leaves the outline machinery disarmed (fewer than two
+ * sampleOutline-shaped heading lines - the exact starved state) re-runs
+ * BOTH numbered-heading recoveries in pipeline order at every read edge.
+ * Never persisted: the stored text is the only copy of data derived from
+ * a discarded upload, and a later-improved heal can always re-run over
+ * it. Gated by the stored filename to PDF/unknown sources: the
+ * recoveries only ever ran in the PDF extraction branch, so healing a
+ * .docx/.md/.txt row would invent promotions no re-upload of that file
+ * could produce. Pure, linear, idempotent (healed output carries >=2
+ * headings, so a second call takes the early return).
+ */
+const NON_PDF_SAMPLE_NAME = /\.(docx|md|txt)$/i;
+
+export function healSampleHeadings(
+  text: string | null,
+  name: string | null
+): string | null {
+  if (!text || (name !== null && NON_PDF_SAMPLE_NAME.test(name))) return text;
+  let headings = 0;
+  for (const line of text.split("\n"))
+    if (/^#{1,6}\s.{1,300}$/.test(line) && ++headings >= 2) break;
+  if (headings >= 2) return text;
+  return recoverTrailingNumberedHeadings(
+    recoverLeadingNumberedHeadings(text.split("\n"))
+  ).join("\n");
 }
 
 /* ------------------------------------------------------------------ *

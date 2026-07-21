@@ -80,6 +80,7 @@ import {
   repairSystemMessage,
 } from "../src/lib/governance/prompt";
 import { mergeOpenItemGuesses } from "../src/lib/governance/guesses";
+import { healSampleHeadings } from "../src/lib/governance/style-sample";
 import {
   applyOps,
   parseTurnJson,
@@ -995,12 +996,20 @@ async function main(): Promise<void> {
   // posts it right after the create response, while this job is starting);
   // re-read the row so turn zero already drafts in the user's format.
   const freshRow = await fetchProjectForScript(projectId);
-  const styleSample = freshRow?.styleSampleText
-    ? {
-        name: freshRow.styleSampleName ?? "sample",
-        text: freshRow.styleSampleText,
-      }
-    : null;
+  // Round 19b: heal pre-fix extractions at the read edge (gated, pure,
+  // never persisted) so turn zero's prompt, SAMPLE OUTLINE digest, and
+  // adopt_outline allowlist all see the same armed text.
+  const freshSampleText = healSampleHeadings(
+    freshRow?.styleSampleText ?? null,
+    freshRow?.styleSampleName ?? null
+  );
+  const styleSample =
+    freshRow && freshSampleText
+      ? {
+          name: freshRow.styleSampleName ?? "sample",
+          text: freshSampleText,
+        }
+      : null;
   // Turn zero drafts a COMPLETE first version (owner rule, round 3): one
   // call for the AUP (usage_policy), one call per group of 2 non-stub documents
   // for the standards sets, so every section opens genuinely drafted (with

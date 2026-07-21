@@ -12,6 +12,7 @@ import { fetchOwnedProject, touchActivity } from "@/lib/governance/db";
 import { renderDocx, renderZip } from "@/lib/governance/docx";
 import { govError, NOT_FOUND, rateLimit, requireUser } from "@/lib/governance/http";
 import { detectNumberingStyle } from "@/lib/governance/numbering";
+import { healSampleHeadings } from "@/lib/governance/style-sample";
 import type {
   GovernanceDoc,
   GovernanceKind,
@@ -49,10 +50,10 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
   const suffix = draft ? "-draft" : "";
   const domainSlug = fileSlug(row.domain, "company");
   // Round 15b: the sample's numbering style is derived, never stored — the
-  // same detection the view runs, so downloads match the doc pane exactly.
-  const numbering = row.styleSampleText
-    ? detectNumberingStyle(row.styleSampleText)
-    : null;
+  // same detection the view runs, so downloads match the doc pane exactly
+  // (round 19b: over the same read-edge-healed text the view derives from).
+  const sampleText = healSampleHeadings(row.styleSampleText, row.styleSampleName);
+  const numbering = sampleText ? detectNumberingStyle(sampleText) : null;
   // Round 17: the sample's stored letterhead rides every generated file
   // (empty strings mean "scanned, nothing found" and render nothing).
   const letterhead = {

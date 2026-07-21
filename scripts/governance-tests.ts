@@ -5262,6 +5262,213 @@ function check(name: string, cond: boolean): void {
   );
 }
 
+
+/* 30. Round 19b (§5.12): chain-level list-vs-heading discrimination in
+ *     leading-number recovery (the round-19 per-link list-parent skip broke
+ *     the +1 chain on ISO-template docs whose Definitions/Policy sections
+ *     open with sub-lists, silently disarming the outline machinery), plus
+ *     the gated read-edge heal for rows extracted under pre-fix code. */
+{
+  const { healSampleHeadings, recoverTrailingNumberedHeadings } = await import(
+    "../src/lib/governance/style-sample"
+  );
+  const promptMod = await import("../src/lib/governance/prompt");
+  // Shape-faithful subset of the flagship ISO sample (real line SHAPES,
+  // not the owner's policy content): every heading followed by its
+  // actual next-line class - glued "1.This" body, indented sub-markers
+  // under Definitions/Policy, a blank + glued colon line mid-body.
+  const ISO_LINES = [
+    "# ISO27001 - Sample Access Policy",
+    "1. Purpose",
+    "1.This policy outlines the processes for managing privileged access to production",
+    "2. Scope",
+    "1.This policy applies to all employees, contractors, and business partners who",
+    "3. Definitions",
+    "  1. Privileged Access: Any access that allows users to perform significant actions.",
+    "4. References",
+    "1.Information Security Policy",
+    "5. Policy",
+    "  1. Principle of Least Privilege:",
+    "",
+    "4.Access Termination:",
+    "6. Annual Review",
+    "1.This policy will be reviewed annually by the security team",
+    "7. Exceptions",
+    "1.Any exceptions to this policy must be approved in writing",
+    "8. Enforcement",
+    "1.This policy will be enforced by the security team",
+  ];
+  check(
+    "pdf19b: ISO chain survives minority list-parent links",
+    (() => {
+      const out = recoverLeadingNumberedHeadings([...ISO_LINES]);
+      const promoted = out.filter((l) => l.startsWith("## "));
+      return (
+        promoted.length === 8 &&
+        out[1] === "## 1. Purpose" &&
+        out[5] === "## 3. Definitions" &&
+        out[9] === "## 5. Policy" &&
+        out[17] === "## 8. Enforcement" &&
+        out[6] === ISO_LINES[6] &&
+        out[12] === "4.Access Termination:"
+      );
+    })()
+  );
+  check(
+    "pdf19b: uniform and majority list-parent chains never promote",
+    (() => {
+      const uniform = recoverLeadingNumberedHeadings([
+        "1. Access approval",
+        "  1. Sub item",
+        "2. Named accounts",
+        "  1. Sub item",
+        "3. Reviews",
+        "  1. Sub item",
+      ]);
+      const majority = recoverLeadingNumberedHeadings([
+        "1. Access approval",
+        "  1. Sub item",
+        "2. Named accounts",
+        "  1. Sub item",
+        "3. Reviews",
+        "Body prose closes the run.",
+      ]);
+      return [...uniform, ...majority].every((l) => !l.startsWith("##"));
+    })()
+  );
+  check(
+    "pdf19b: evidence tie promotes (half the sections may open with lists)",
+    (() => {
+      const out = recoverLeadingNumberedHeadings([
+        "1. Purpose",
+        "Body prose one.",
+        "2. Definitions",
+        "  1. Term: meaning.",
+        "3. Policy",
+        "  1. Rule one",
+        "4. Enforcement",
+        "Body prose two.",
+      ]);
+      return out[0] === "## 1. Purpose" && out[2] === "## 2. Definitions";
+    })()
+  );
+  check(
+    "pdf19b: bare skeleton and spaced-numbered-body chains promote (col-0 siblings are not list evidence)",
+    (() => {
+      const skeleton = recoverLeadingNumberedHeadings([
+        "1. Purpose",
+        "2. Scope",
+        "3. Definitions",
+        "4. Policy",
+        "5. Enforcement",
+      ]);
+      const spaced = recoverLeadingNumberedHeadings([
+        "1. Purpose",
+        "1. This policy applies to all employees of the company and to all contractors.",
+        "2. Scope",
+        "1. The scope covers production systems and business records for every department.",
+        "3. Review",
+        "1. This policy is reviewed annually by the security team without exception.",
+      ]);
+      return (
+        skeleton.filter((l) => l.startsWith("## ")).length === 5 &&
+        spaced[0] === "## 1. Purpose" &&
+        spaced[2] === "## 2. Scope" &&
+        spaced[4] === "## 3. Review" &&
+        spaced[1] === "1. This policy applies to all employees of the company and to all contractors."
+      );
+    })()
+  );
+  // Accepted, deliberate limitation (status-quo parity with round 19): a
+  // flat col-0 checklist of short title-shaped lines in an otherwise
+  // outline-dead doc still promotes. Do NOT "fix" this with col-0 sibling
+  // evidence - that disarms bare skeletons and spaced-numbered-body ISO
+  // docs (the two shapes pinned above), which MUST promote.
+  check(
+    "pdf19b: flat col-0 checklist still promotes (pinned limitation)",
+    recoverLeadingNumberedHeadings([
+      "1. Lock screens",
+      "2. Use MFA",
+      "3. Report incidents",
+      "Body prose follows the list.",
+    ])[0] === "## 1. Lock screens"
+  );
+  // --- Read-edge heal: gated, pure, idempotent, never for non-PDF rows.
+  const isoText = ISO_LINES.join("\n");
+  const healed = healSampleHeadings(isoText, "iso-policy (1).pdf");
+  check(
+    "heal19b: outline-dead PDF row heals and arms the whole outline chain",
+    healed !== null &&
+      healed !== isoText &&
+      promptMod.sampleOutline(healed) !== null &&
+      promptMod.sampleOutlineTopTitles(healed).length === 8 &&
+      JSON.stringify(promptMod.sampleBucketTitles(healed)) ===
+        JSON.stringify([
+          "Purpose",
+          "Scope",
+          "Definitions",
+          "References",
+          "Policy",
+          "Annual Review",
+          "Exceptions",
+          "Enforcement",
+        ])
+  );
+  check(
+    "heal19b: pre-round-19 trailing-glue rows heal through the same edge",
+    (() => {
+      const glued =
+        "# Old Extraction\nGenerated line\nPurpose1.\nSome body text here.\nScope2.\nMore body text here.\nReview3.\nFinal body text here.";
+      const h = healSampleHeadings(glued, "legacy.pdf");
+      return h !== null && h.includes("## 1. Purpose") && h.includes("## 3. Review");
+    })()
+  );
+  check(
+    "heal19b: heading-bearing samples return byte-identical (gate parity with sampleOutline)",
+    (() => {
+      const structured =
+        "## Purpose\nbody\n## Scope\nbody\n1. Purpose\nBody one.\n2. Scope\nBody two.\n3. Review\nBody three.";
+      return healSampleHeadings(structured, "sample.pdf") === structured;
+    })()
+  );
+  check(
+    "heal19b: non-PDF rows never heal (recoveries only ever ran in the PDF branch)",
+    healSampleHeadings(isoText, "sample.docx") === isoText &&
+      healSampleHeadings(isoText, "notes.md") === isoText &&
+      healSampleHeadings(isoText, "notes.txt") === isoText &&
+      healSampleHeadings(isoText, "scan.pdf") !== isoText
+  );
+  check(
+    "heal19b: idempotent and null-passing",
+    healSampleHeadings(healed, "iso-policy (1).pdf") === healed &&
+      healSampleHeadings(null, null) === null
+  );
+  check(
+    "heal19b: healed text feeds the composed prompt's SAMPLE OUTLINE and the restyle allowlist",
+    (() => {
+      const sys = buildSystemMessage({
+        kind: "usage_policy",
+        brief: null,
+        forcedReviewSoon: false,
+        styleSample: { name: "iso-policy (1).pdf", text: healed as string },
+      });
+      const titles = promptMod.sampleBucketTitles(healed as string);
+      const restyle = buildRestyleUserMessage({
+        kind: "usage_policy",
+        documents: scaffoldDocuments("usage_policy"),
+        focusRefs: ["ai-usage-policy#purpose-scope"],
+        adoptTitles: titles,
+      });
+      return (
+        sys.includes("<<<SAMPLE_OUTLINE") &&
+        sys.includes("- 1. Purpose") &&
+        restyle.includes('"Annual Review"') &&
+        restyle.includes("adopt_outline")
+      );
+    })()
+  );
+}
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

@@ -35,6 +35,7 @@ import {
   validateTurn,
 } from "./turn";
 import { tierFromAnswer } from "./bank-detect";
+import { healSampleHeadings } from "./style-sample";
 import { isQuestionEntry } from "./interview";
 import {
   attachItemGuesses,
@@ -171,7 +172,19 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
     return { ok: false, code, message, status, retriable };
   };
 
-  const { row, questionId, answer, skipped } = job;
+  const { questionId, answer, skipped } = job;
+  // Round 19b: rows extracted under pre-fix code heal at the read edge
+  // (never written back), so the FORMAT SAMPLE excerpt, SAMPLE OUTLINE
+  // digest, verbosity line, adopt-instruction titles, and the applyOps
+  // bucket-title allowlist all derive from the SAME healed text and can
+  // never disagree.
+  const row = {
+    ...job.row,
+    styleSampleText: healSampleHeadings(
+      job.row.styleSampleText,
+      job.row.styleSampleName
+    ),
+  };
   const revise = job.kind === "revise";
   const kind = row.kind as GovernanceKind;
 
