@@ -21,6 +21,7 @@ import {
   placeholderSectionMap,
   requiredBankIds,
 } from "./blueprints";
+import { stripOutlineNumbering } from "./outline";
 
 const DRAFT_FULLTEXT_MAX_CHARS = 40_000; // ~10k tok of verbatim sections
 const TRANSCRIPT_MAX_CHARS = 14_000;
@@ -212,6 +213,28 @@ export function sampleOutlineTopTitles(text: string): string[] {
     if (arr.length >= 2) return arr.slice(0, 12);
   }
   return [];
+}
+
+/** The clean bucket-title allowlist for skeleton adoption (round 18e):
+ * the sample's top-level headings, numbering stripped. Null when the
+ * sample has no usable outline; adoption is impossible then and both the
+ * instruction and the applyOps allowlist key off this one value. */
+export function sampleBucketTitles(text: string): string[] | null {
+  const titles = sampleOutlineTopTitles(text).map((t) =>
+    stripOutlineNumbering(t)
+  );
+  const clean = titles.filter((t) => t.length > 0);
+  return clean.length >= 2 ? clean : null;
+}
+
+/** The adoption instruction shared by restyle and turn-zero prompts: the
+ * allowed titles are spelled out LITERALLY because the live model invented
+ * its own bucket names under a see-the-outline instruction (prod evidence
+ * 2026-07-21); applyOps enforces the same list, so the prompt and the
+ * validator can never disagree. */
+function adoptInstruction(titles: string[]): string {
+  const list = titles.map((t) => `"${t}"`).join(", ");
+  return `Also emit {"op":"adopt_outline","doc":"<slug>","buckets":[{"title":"...","sections":["<section-id>", ...]}]} once per document: file EVERY section id of that document under exactly one bucket. Bucket titles MUST be chosen from exactly these sample headings and no others: ${list}. Keep the buckets in that order, skip headings that would hold nothing, and put sections with no clear home under the heading that holds the main policy body. A proposal that misses, duplicates, or invents a section id, or uses any other bucket title, is rejected whole. Never move or rewrite content to fit the outline: file the sections as they are.`;
 }
 
 /** Prompt slice of the sample: cap chars, then cut back to a line boundary
@@ -452,12 +475,11 @@ export function buildTurnZeroUserMessage(opts: {
   kind: GovernanceKind;
   documents: GovernanceDoc[];
   groupNote?: string;
-  // Round 18d: the sample (attached at creation) has a usable top-level
-  // outline, so the FIRST draft should already file its sections under the
-  // template's skeleton. Round 18b wired adopt_outline into reformat runs
-  // only, which a fresh-project-with-sample flow never enters (the owner's
-  // own repro); turn zero is where that flow drafts, so it adopts here.
-  adoptOutline?: boolean;
+  // Round 18d/18e: the sample's clean top-level headings; non-null means
+  // the FIRST draft already files its sections under the template's
+  // skeleton (the fresh-project-with-sample flow never enters a reformat
+  // run, so turn zero is where it must adopt).
+  adoptTitles?: string[] | null;
 }): string {
   const slugs = opts.documents.map((d) => d.slug).join(", ");
   return [
@@ -467,8 +489,8 @@ export function buildTurnZeroUserMessage(opts: {
 - Where the brief says nothing, draft the sensible small-business default for this standard and mark it [TO CONFIRM: ...].
 - Keep EACH section under ${CAPS.sectionMarkdownMaxChars} characters (prefer concise tables and tight prose) and total new markdown under ${CAPS.turnZeroOpMarkdownMaxChars} characters. That budget covers every section listed above: complete all of them.
 - For each [TO CONFIRM] marker you write, also add an "open_item_guesses" entry with your most likely answer first (see the rules): these become one-tap suggestions that save the user typing later.${
-      opts.adoptOutline
-        ? `\n- Also emit {"op":"adopt_outline","doc":"<slug>","buckets":[{"title":"...","sections":["<section-id>", ...]}]} once per document listed above: file EVERY section id of that document under exactly one bucket. Bucket titles use the SAMPLE OUTLINE's top-level wording without any numbering, ordered as the sample orders them; put sections with no clear home in the bucket that holds the main policy body; skip sample items that would hold nothing. A proposal that misses, duplicates, or invents a section id is rejected whole. Never move or rewrite content to fit the outline: file the sections as they are.`
+      opts.adoptTitles?.length
+        ? `\n- ${adoptInstruction(opts.adoptTitles)}`
         : ""
     }
 - Set "status":"asking" and "question" to null: the host asks the first question itself. Set answered_bank_ids to [].`,
@@ -485,10 +507,10 @@ export function buildRestyleUserMessage(opts: {
   kind: GovernanceKind;
   documents: GovernanceDoc[];
   focusRefs: string[];
-  // Round 18b: the sample has a usable top-level outline, so this pass may
-  // also file sections under it (adopt_outline). Stated only when true: an
-  // instruction pointing at an absent SAMPLE OUTLINE block invites guessing.
-  adoptOutline?: boolean;
+  // Round 18b/18e: the sample's clean top-level headings; non-null means
+  // this pass may also file sections under them (adopt_outline), with the
+  // allowed titles spelled out literally.
+  adoptTitles?: string[] | null;
 }): string {
   const refs = opts.focusRefs.join(", ");
   return [
@@ -497,8 +519,8 @@ export function buildRestyleUserMessage(opts: {
 - Change FORMATTING and STRUCTURE only: heading style and case, list style, table usage, defined-term style, document-control layout, paragraph shape, and how each section organizes its content internally (intro lines, sub-clause patterns, definitions blocks) to read like the sample.
 - Retitle a section to the sample's terminology when the sample (see SAMPLE OUTLINE) has a clearly corresponding heading for the same subject; otherwise keep the title. Never start a title with any numbering.
 - If the sample orders its topics differently, ALSO emit {"op":"reorder_sections","doc":"<slug>","order":["<section-id>", ...]} once per document whose flow should change: "order" must list EVERY existing section id of that document exactly once (all ids are shown in CURRENT DRAFT), arranged to match the sample's outline. Sections with no counterpart in the sample keep their relative position. An order that drops or invents an id is rejected whole.${
-      opts.adoptOutline
-        ? `\n- The document can also render under the sample's own SKELETON. Emit {"op":"adopt_outline","doc":"<slug>","buckets":[{"title":"...","sections":["<section-id>", ...]}]} once per non-stub document that has no "(adopted outline: ...)" line yet or whose adopted outline no longer matches the sample: file EVERY existing section id of that document under exactly one bucket. Bucket titles use the SAMPLE OUTLINE's top-level wording without any numbering, ordered as the sample orders them; put sections with no clear home in the bucket that holds the main policy body; skip sample items that would hold nothing. A proposal that misses, duplicates, or invents a section id is rejected whole. Never move or rewrite content to fit the outline: file the sections as they are.`
+      opts.adoptTitles?.length
+        ? `\n- The document can also render under the sample's own SKELETON. For every non-stub document that has no "(adopted outline: ...)" line yet or whose adopted outline no longer matches the sample: ${adoptInstruction(opts.adoptTitles)}`
         : ""
     }
 - Preserve every fact, obligation, name, number, date, and citation exactly. Do not add, remove, or reword substantive content.

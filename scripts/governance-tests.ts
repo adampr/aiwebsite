@@ -4266,7 +4266,7 @@ function check(name: string, cond: boolean): void {
     kind,
     documents: [mkDoc()],
     focusRefs: ["ai-usage-policy#approved-tools"],
-    adoptOutline: true,
+    adoptTitles: ["Purpose", "Policy", "Enforcement"],
   });
   const withoutFlag = promptMod.buildRestyleUserMessage({
     kind,
@@ -4277,6 +4277,94 @@ function check(name: string, cond: boolean): void {
     "outline: adopt instruction gated on a usable sample outline",
     withFlag.includes("adopt_outline") && !withoutFlag.includes("adopt_outline")
   );
+  check(
+    "outline: instruction spells the allowed titles literally",
+    withFlag.includes('"Purpose", "Policy", "Enforcement"') &&
+      withFlag.includes("no others")
+  );
+  // Round 18e title provenance: the live model invented 6 of 8 bucket
+  // titles under a see-the-outline instruction, so applyOps enforces the
+  // allowlist: invented titles reject whole, matching titles are reworded
+  // to the sample's wording and reordered to the sample's sequence, and
+  // no-sample turns reject every adoption outright.
+  const allowlist = ["Purpose", "Definitions", "Policy", "Enforcement"];
+  const inventing = applyOps(
+    [mkDoc()],
+    [
+      {
+        op: "adopt_outline",
+        doc: "ai-usage-policy",
+        buckets: [
+          { title: "Purpose", sections: ["purpose-scope"] },
+          { title: "Disclosure", sections: ["approved-tools", "data-rules"] },
+          { title: "Enforcement", sections: ["violations"] },
+        ],
+      },
+    ],
+    kind,
+    { bucketTitles: allowlist }
+  );
+  check(
+    "outline: invented bucket titles reject the whole op",
+    inventing.errors.length === 1 && !inventing.documents[0].outline
+  );
+  const reordered = applyOps(
+    [mkDoc()],
+    [
+      {
+        op: "adopt_outline",
+        doc: "ai-usage-policy",
+        buckets: [
+          { title: "enforcement", sections: ["violations"] },
+          { title: "3. Policy", sections: ["approved-tools"] },
+          { title: "Purpose", sections: ["purpose-scope"] },
+          { title: "policy", sections: ["data-rules"] },
+        ],
+      },
+    ],
+    kind,
+    { bucketTitles: allowlist }
+  );
+  check(
+    "outline: titles reworded to the sample and reordered to its sequence",
+    JSON.stringify(reordered.documents[0].outline) ===
+      JSON.stringify([
+        { title: "Purpose", sections: ["purpose-scope"] },
+        { title: "Policy", sections: ["approved-tools", "data-rules"] },
+        { title: "Enforcement", sections: ["violations"] },
+      ])
+  );
+  check(
+    "outline: no usable sample outline rejects adoption outright",
+    (() => {
+      const r = applyOps(
+        [mkDoc()],
+        [
+          {
+            op: "adopt_outline",
+            doc: "ai-usage-policy",
+            buckets: [
+              { title: "Purpose", sections: ["purpose-scope"] },
+              {
+                title: "Policy",
+                sections: ["approved-tools", "data-rules", "violations"],
+              },
+            ],
+          },
+        ],
+        kind,
+        { bucketTitles: null }
+      );
+      return r.errors.length === 1 && !r.documents[0].outline;
+    })()
+  );
+  check(
+    "outline: sampleBucketTitles strips numbering and needs two headings",
+    JSON.stringify(
+      promptMod.sampleBucketTitles("# T\n## 1. Purpose\nbody\n## 2. Scope\nbody")
+    ) === JSON.stringify(["Purpose", "Scope"]) &&
+      promptMod.sampleBucketTitles("# Title only\nbody") === null
+  );
   // Round 18d: the fresh-project-with-sample flow never enters a reformat
   // run, so turn zero must carry the adoption instruction too (owner repro:
   // sample at creation drafted flat forever).
@@ -4286,7 +4374,7 @@ function check(name: string, cond: boolean): void {
       .buildTurnZeroUserMessage({
         kind,
         documents: [mkDoc()],
-        adoptOutline: true,
+        adoptTitles: ["Purpose", "Policy", "Enforcement"],
       })
       .includes("adopt_outline") &&
       !promptMod

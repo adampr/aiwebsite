@@ -15,7 +15,15 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-21 (governance round 19: PDF list
+Last verified against code: 2026-07-21 (governance round 18e: bucket-title bucket-title
+PROVENANCE enforced - the live model invented 6 of 8 bucket titles under a
+see-the-outline instruction, so applyOps now takes a bucketTitles allowlist
+(sampleBucketTitles: top-level sample headings, numbering stripped): invented
+titles reject the op whole, matching buckets are host-reworded to the sample's
+wording and host-reordered to its sequence (same-title buckets merge), null
+allowlist (no usable sample outline) rejects adoption outright, undefined =
+legacy accept-any for unit shapes; both adoption prompts now spell the allowed
+titles literally; round 19: PDF list
 reading-order fix + list model v2 - `assemblePdfLines` reunites Word's
 out-of-order auto-number labels (K=12 recency window, y-tolerance anchored
 to a line's first member, x-splice with gap-based spaces, bullet-glyph

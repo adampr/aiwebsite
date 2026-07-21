@@ -22,7 +22,7 @@ import {
   buildTurnUserMessage,
   guessBackfillSystemMessage,
   repairSystemMessage,
-  sampleOutline,
+  sampleBucketTitles,
 } from "./prompt";
 import {
   applyOps,
@@ -366,7 +366,11 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
   const turn: TurnResult = outcome;
 
   // Apply ops (sanitize + injection screen inside).
-  const applied = applyOps(documents, turn.docOps, kind);
+  const applied = applyOps(documents, turn.docOps, kind, {
+    bucketTitles: row.styleSampleText
+      ? sampleBucketTitles(row.styleSampleText)
+      : null,
+  });
 
   // Coverage: the current bank item is covered by answering OR skipping it;
   // additional answered_bank_ids are merged (validated against the bank).
@@ -684,7 +688,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         kind,
         documents,
         focusRefs: refs,
-        adoptOutline: sampleOutline(row.styleSampleText) !== null,
+        adoptTitles: sampleBucketTitles(row.styleSampleText),
       }),
       { nonAdvancing: true }
     );
@@ -757,7 +761,11 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         []
       );
     }
-    const applied = applyOps(documents, ops, kind);
+    const applied = applyOps(documents, ops, kind, {
+      bucketTitles: row.styleSampleText
+        ? sampleBucketTitles(row.styleSampleText)
+        : null,
+    });
     for (const [slug, secs] of Object.entries(applied.changedSections)) {
       const bd = documents.find((d) => d.slug === slug);
       const ad = applied.documents.find((d) => d.slug === slug);
@@ -867,7 +875,11 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         502,
         true
       );
-    const applied = applyOps(documents, out.docOps, kind);
+    const applied = applyOps(documents, out.docOps, kind, {
+      bucketTitles: row.styleSampleText
+        ? sampleBucketTitles(row.styleSampleText)
+        : null,
+    });
     const nowIso = new Date().toISOString();
     return finishNonAdvancing(
       "amend",

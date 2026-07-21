@@ -18,6 +18,7 @@ import {
   findConfirmMarkers,
   sanitizeMarkdown,
 } from "./markdown";
+import { canonOutlineTitle } from "./outline";
 import { screenInjection } from "./research";
 import { bankById, docSlugAllowlist, requiredBankIds } from "./blueprints";
 
@@ -347,7 +348,17 @@ export interface ApplyResult {
 export function applyOps(
   documents: GovernanceDoc[],
   ops: DocOp[],
-  kind: GovernanceKind
+  kind: GovernanceKind,
+  // Round 18e: sample-title provenance for adopt_outline. undefined =
+  // accept any titles (legacy shape, unit tests); null = no usable sample
+  // outline, every adopt_outline op is rejected; string[] = every bucket
+  // title must canon-match one of the sample's top-level headings, and the
+  // stored outline is host-reworded to the sample's wording and
+  // host-ordered to the sample's sequence (same-title buckets merge). The
+  // live model half-complied with wording-by-instruction alone (prod
+  // evidence 2026-07-21: 6 of 8 bucket titles were invented section
+  // names), so provenance is enforced here, never trusted.
+  opts: { bucketTitles?: string[] | null } = {}
 ): ApplyResult {
   const docs: GovernanceDoc[] = documents.map((d) => ({
     ...d,
@@ -488,6 +499,33 @@ export function applyOps(
           !filed.every((id) => current.has(id))
         ) {
           errors.push(`adopt_outline on ${op.doc} is not a partition; ignored`);
+          break;
+        }
+        const allowed = opts.bucketTitles;
+        if (allowed === null) {
+          errors.push(
+            `adopt_outline on ${op.doc}: no usable sample outline; ignored`
+          );
+          break;
+        }
+        if (allowed !== undefined) {
+          const canonAllowed = allowed.map((t) => canonOutlineTitle(t));
+          const idxOf = (t: string) =>
+            canonAllowed.indexOf(canonOutlineTitle(t));
+          if (op.buckets.some((b) => idxOf(b.title) === -1)) {
+            errors.push(
+              `adopt_outline on ${op.doc} invents bucket titles outside the sample outline; ignored`
+            );
+            break;
+          }
+          const byIdx = new Map<number, string[]>();
+          for (const b of op.buckets) {
+            const i = idxOf(b.title);
+            byIdx.set(i, [...(byIdx.get(i) ?? []), ...b.sections]);
+          }
+          d.outline = [...byIdx.keys()]
+            .sort((a, b) => a - b)
+            .map((i) => ({ title: allowed[i], sections: byIdx.get(i)! }));
           break;
         }
         d.outline = op.buckets.map((b) => ({

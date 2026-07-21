@@ -43,6 +43,17 @@ export function sectionDisplayLabel(
     : sectionId;
 }
 
+/** Leading outline numbering stripped, case preserved: the clean wording
+ * stored as a bucket title and listed in prompts (round 18e). */
+export function stripOutlineNumbering(t: string): string {
+  return t
+    .replace(
+      /^(?:\d{1,3}(?:\.\d{1,3}){0,4}[.)]?|[IVXivx]{1,7}[.)]|[A-Za-z][.)]|[Ss]ection\s{1,4}\d{1,3}\s{0,4}[:.)-]?)\s+/,
+      ""
+    )
+    .trim();
+}
+
 /** Case/space/numbering-insensitive identity for outline titles: bucket
  * titles come from model output mirroring the sample and may carry the
  * sample's numbering; the extractor's top-title list is number-stripped. */

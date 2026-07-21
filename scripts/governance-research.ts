@@ -64,7 +64,7 @@ import {
 import {
   buildSystemMessage,
   buildTurnZeroUserMessage,
-  sampleOutline,
+  sampleBucketTitles,
   repairSystemMessage,
 } from "../src/lib/governance/prompt";
 import { mergeOpenItemGuesses } from "../src/lib/governance/guesses";
@@ -926,9 +926,9 @@ async function main(): Promise<void> {
           groups.length > 1
             ? `group ${gi + 1} of ${groups.length}, draft only these documents`
             : undefined,
-        adoptOutline: styleSample
-          ? sampleOutline(styleSample.text) !== null
-          : false,
+        adoptTitles: styleSample
+          ? sampleBucketTitles(styleSample.text)
+          : null,
       }),
       90_000
     );
@@ -981,7 +981,9 @@ async function main(): Promise<void> {
       );
       continue;
     }
-    const applied = applyOps(documents, ops, kind);
+    const applied = applyOps(documents, ops, kind, {
+      bucketTitles: styleSample ? sampleBucketTitles(styleSample.text) : null,
+    });
     documents = applied.documents;
     if (applied.injectionHits.length) {
       flagged = true;
