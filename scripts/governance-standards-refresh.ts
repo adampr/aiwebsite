@@ -43,6 +43,7 @@ import {
 } from "../src/lib/governance/db";
 import { kickResearch } from "../src/lib/governance/kick";
 import {
+  feedlyMirrorLines,
   htmlToText,
   safeFetch,
   screenInjection,
@@ -100,6 +101,7 @@ interface StandardDef {
   watchUrls: string[];
   tavilyWatchFallback: string | null; // for bot-blocked pages (iso.org 403s)
   watchFallbackDomains?: string[]; // domain-restrict the fallback search
+  feedlyStreamId?: string; // Feedly public-API mirror of a bot-blocked RSS feed
   markerPatterns: RegExp[];
   queries: StandardQuery[];
   validCitation: (cite: string) => boolean;
@@ -227,13 +229,17 @@ const STANDARDS: StandardDef[] = [
     // because supervisory issuances move faster than the three standards
     // (SR 26-2 explicitly deferred AI provisions to forthcoming guidance).
     // ithandbook.ffiec.gov hard-blocks every direct fetch (curl, browser UA,
-    // headless chromium, Tavily /extract: all CAPTCHA 403, verified
-    // 2026-07-21), so watchUrls is empty BY DESIGN and the domain-restricted
-    // Tavily fallback is the change signal; the fail-streak alarm never arms
-    // because the fallback counts as an ok watch leg.
+    // headless chromium, Tavily /extract, and the rss-whatsnew feed URL
+    // itself: all CAPTCHA 403, verified 2026-07-21), so watchUrls is empty BY
+    // DESIGN. The preferred change signal is Feedly's public mirror of the
+    // What's New feed (Feedly's pollers are allow-listed; announcements-only,
+    // items years apart — a precise booklet-revision signal). It is a
+    // courtesy endpoint with no SLA, so the domain-restricted Tavily fallback
+    // stays behind it; the fail-streak alarm arms only when BOTH are dark.
     slug: "ffiec-ai",
     name: "FFIEC and interagency AI expectations for banks",
     watchUrls: [],
+    feedlyStreamId: "feed/http://ithandbook.ffiec.gov/rss-whatsnew.aspx",
     tavilyWatchFallback:
       "FFIEC IT Examination Handbook what's new booklet update",
     watchFallbackDomains: ["ithandbook.ffiec.gov"],
@@ -474,6 +480,26 @@ async function fetchWatch(
       hashes[url] = sha(t);
       text += `\n${t}`;
       okCount++;
+    }
+  }
+  // Feedly public-API mirror of a bot-blocked feed (ffiec): counts as an ok
+  // leg when it yields items, which also skips the Tavily fallback below
+  // (one fewer daily Tavily call while the mirror is healthy). When Feedly
+  // is dark the fallback still runs, so the fail-streak semantics are
+  // unchanged: it arms only when every leg is dark.
+  if (def.feedlyStreamId) {
+    const res = await safeFetch(
+      `https://cloud.feedly.com/v3/streams/contents?streamId=${encodeURIComponent(def.feedlyStreamId)}&count=10`,
+      { maxBytes: 600_000, timeoutMs: 20_000, userAgent: BROWSER_UA }
+    );
+    if (res && res.status === 200) {
+      const lines = feedlyMirrorLines(res.body);
+      if (lines && lines.length) {
+        const t = lines.join("\n").slice(0, 20_000);
+        hashes["feedly-mirror"] = sha(t);
+        text += `\n${t}`;
+        okCount++;
+      }
     }
   }
   // Bot-blocked fallback (iso.org 403s scripted fetchers): a Tavily search

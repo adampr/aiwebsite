@@ -129,6 +129,7 @@ import {
   companyNameFromTitle,
   crawlDedupeKey,
   cutAtWord,
+  feedlyMirrorLines,
   isBlockedAddress,
   screenInjection,
   screenSuspicionNote,
@@ -5466,6 +5467,53 @@ function check(name: string, cond: boolean): void {
         restyle.includes("adopt_outline")
       );
     })()
+  );
+}
+
+/* 31. Feedly watch mirror (§5.12 ffiec): the public-API stream body reduces
+ *     to stable "YYYY-MM-DD Title" lines — volatile engagement/crawl fields
+ *     must never reach the watch hash, and a malformed body must read as a
+ *     dark leg (null), never as hashable garbage. */
+{
+  const body = JSON.stringify({
+    id: "feed/http://ithandbook.ffiec.gov/rss-whatsnew.aspx",
+    updated: 1773266880000,
+    items: [
+      {
+        title: "Executive Order 14331",
+        published: 1772150400000, // 2026-02-27T00:00:00Z
+        engagement: 57,
+        crawled: 1772199999999,
+      },
+      { title: "Rescinded the E-Banking booklet " }, // no published → title only
+      { title: 42, published: 1772150400000 }, // non-string title skipped
+      { title: "   ", published: 1772150400000 }, // blank title skipped
+    ],
+  });
+  const lines = feedlyMirrorLines(body);
+  check(
+    "feedly31: items reduce to dated-title lines, volatile fields dropped",
+    lines !== null &&
+      lines.length === 2 &&
+      lines[0] === "2026-02-27 Executive Order 14331" &&
+      lines[1] === "Rescinded the E-Banking booklet"
+  );
+  check(
+    "feedly31: same published day at a different hour hashes identically",
+    feedlyMirrorLines(
+      JSON.stringify({ items: [{ title: "X", published: 1772150400000 + 7 * 3_600_000 }] })
+    )?.[0] === "2026-02-27 X"
+  );
+  check(
+    "feedly31: malformed bodies are a dark leg, not garbage",
+    feedlyMirrorLines("<html>CAPTCHA Error | FFIEC</html>") === null &&
+      feedlyMirrorLines(JSON.stringify({ errorCode: 404 })) === null &&
+      feedlyMirrorLines(JSON.stringify({ items: "nope" })) === null &&
+      feedlyMirrorLines("null") === null
+  );
+  check(
+    "feedly31: empty items array is a valid-but-empty feed (not null)",
+    JSON.stringify(feedlyMirrorLines(JSON.stringify({ items: [] }))) === "[]"
   );
 }
 

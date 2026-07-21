@@ -223,6 +223,38 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
+/** Feedly public-API stream body → stable "YYYY-MM-DD Title" lines (§5.12
+ * ffiec watch mirror: ithandbook.ffiec.gov CAPTCHA-403s its own RSS URL, but
+ * Feedly's polling infrastructure is allow-listed and its unauthenticated
+ * streams endpoint re-serves the items). Only title + published DAY survive:
+ * the raw JSON carries engagement counters and crawl timestamps that would
+ * thrash the substantive-change classifier. Returns null when the body is
+ * not the expected shape so callers treat the leg as dark rather than
+ * hashing garbage. */
+export function feedlyMirrorLines(body: string): string[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const items = (parsed as { items?: unknown }).items;
+  if (!Array.isArray(items)) return null;
+  const lines: string[] = [];
+  for (const it of items) {
+    if (!it || typeof it !== "object") continue;
+    const { title, published } = it as { title?: unknown; published?: unknown };
+    if (typeof title !== "string" || !title.trim()) continue;
+    const day =
+      typeof published === "number" && Number.isFinite(published)
+        ? new Date(published).toISOString().slice(0, 10)
+        : "";
+    lines.push(day ? `${day} ${title.trim()}` : title.trim());
+  }
+  return lines;
+}
+
 /* ------------------------------------------------------------------ *
  * Tavily (api key in body — the fetch-ai-news.mjs pattern)
  * ------------------------------------------------------------------ */

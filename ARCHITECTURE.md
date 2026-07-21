@@ -15,7 +15,9 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-21 (governance round 19b: chain-level
+Last verified against code: 2026-07-21 (ffiec watch: Feedly public-API mirror of
+the CAPTCHA-blocked rss-whatsnew feed as the preferred change-signal leg;
+governance round 19b: chain-level
 list-vs-heading discrimination in `recoverLeadingNumberedHeadings` (round 19's
 per-link list-parent skip broke the ascending chain on ISO-template samples
 whose Definitions/Policy sections open with sub-lists, silently disarming the
@@ -2505,10 +2507,20 @@ version markers (NIST pub ids / AI-Act application dates + "digital omnibus" / I
 provisions to forthcoming guidance) ∥ watch-hash change judged substantive by a mini
 brain call (filters page churn). The `ffiec-ai` def has `watchUrls: []` BY DESIGN
 (ithandbook.ffiec.gov CAPTCHA-403s every direct fetcher we have, verified
-2026-07-21: curl, browser UA, headless chromium, Tavily /extract) — its
+2026-07-21: curl, browser UA, headless chromium, Tavily /extract, and the
+`/rss-whatsnew` feed URL itself). Its preferred change signal is the **Feedly
+public-API mirror** of the What's New feed (`feedlyStreamId:
+"feed/http://ithandbook.ffiec.gov/rss-whatsnew.aspx"` — Feedly's pollers are
+allow-listed by FFIEC; `GET cloud.feedly.com/v3/streams/contents?streamId=…`,
+unauthenticated). `feedlyMirrorLines()` (research.ts, test-pinned) reduces the
+body to stable `YYYY-MM-DD Title` lines — volatile engagement/crawl fields never
+reach the watch hash, malformed bodies read as a dark leg. The feed is
+announcements-only (items years apart), so a hash change is a precise
+booklet-revision signal. Feedly is a courtesy endpoint with no SLA, so the
 domain-restricted Tavily fallback (`watchFallbackDomains`, `include_domains`
-passthrough in `tavilySearch`) is the change signal and counts as an ok watch leg,
-so the fail-streak alarm never arms. Its 10-query bank includes two
+passthrough in `tavilySearch`) stays behind it as the `okCount === 0` backstop
+(also: a healthy mirror saves that daily Tavily call); either leg counts as ok,
+so the fail-streak alarm arms only when both are dark. Its 10-query bank includes two
 ithandbook-domain-restricted queries and one `maxResults:10` open news sweep (the
 owner's top-10 review — its articles enter the ranked SOURCE POOL the author calls
 read, deliberately NOT a watch leg: a daily news hash would thrash the substantive
