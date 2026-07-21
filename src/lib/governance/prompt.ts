@@ -452,6 +452,12 @@ export function buildTurnZeroUserMessage(opts: {
   kind: GovernanceKind;
   documents: GovernanceDoc[];
   groupNote?: string;
+  // Round 18d: the sample (attached at creation) has a usable top-level
+  // outline, so the FIRST draft should already file its sections under the
+  // template's skeleton. Round 18b wired adopt_outline into reformat runs
+  // only, which a fresh-project-with-sample flow never enters (the owner's
+  // own repro); turn zero is where that flow drafts, so it adopts here.
+  adoptOutline?: boolean;
 }): string {
   const slugs = opts.documents.map((d) => d.slug).join(", ");
   return [
@@ -460,7 +466,11 @@ export function buildTurnZeroUserMessage(opts: {
 - Draft EVERY section of every document listed above with complete, specific, best-effort text grounded in the RESEARCH BRIEF and the STANDARD REFERENCE. Never leave placeholder or template language ("this section will describe...", "to be completed"): write the section as if it were real, and mark every assumption or unknown specific inline as [TO CONFIRM: what to confirm].
 - Where the brief says nothing, draft the sensible small-business default for this standard and mark it [TO CONFIRM: ...].
 - Keep EACH section under ${CAPS.sectionMarkdownMaxChars} characters (prefer concise tables and tight prose) and total new markdown under ${CAPS.turnZeroOpMarkdownMaxChars} characters. That budget covers every section listed above: complete all of them.
-- For each [TO CONFIRM] marker you write, also add an "open_item_guesses" entry with your most likely answer first (see the rules): these become one-tap suggestions that save the user typing later.
+- For each [TO CONFIRM] marker you write, also add an "open_item_guesses" entry with your most likely answer first (see the rules): these become one-tap suggestions that save the user typing later.${
+      opts.adoptOutline
+        ? `\n- Also emit {"op":"adopt_outline","doc":"<slug>","buckets":[{"title":"...","sections":["<section-id>", ...]}]} once per document listed above: file EVERY section id of that document under exactly one bucket. Bucket titles use the SAMPLE OUTLINE's top-level wording without any numbering, ordered as the sample orders them; put sections with no clear home in the bucket that holds the main policy body; skip sample items that would hold nothing. A proposal that misses, duplicates, or invents a section id is rejected whole. Never move or rewrite content to fit the outline: file the sections as they are.`
+        : ""
+    }
 - Set "status":"asking" and "question" to null: the host asks the first question itself. Set answered_bank_ids to [].`,
   ].join("\n\n");
 }

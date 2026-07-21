@@ -64,6 +64,7 @@ import {
 import {
   buildSystemMessage,
   buildTurnZeroUserMessage,
+  sampleOutline,
   repairSystemMessage,
 } from "../src/lib/governance/prompt";
 import { mergeOpenItemGuesses } from "../src/lib/governance/guesses";
@@ -925,6 +926,9 @@ async function main(): Promise<void> {
           groups.length > 1
             ? `group ${gi + 1} of ${groups.length}, draft only these documents`
             : undefined,
+        adoptOutline: styleSample
+          ? sampleOutline(styleSample.text) !== null
+          : false,
       }),
       90_000
     );

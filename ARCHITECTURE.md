@@ -15,7 +15,11 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-21 (governance best-guess round 2:
+Last verified against code: 2026-07-21 (governance round 18d: turn zero also
+adopts the skeleton - the fresh-project-with-sample flow never enters a
+reformat run, so buildTurnZeroUserMessage now carries the adopt_outline
+instruction whenever the sample has a usable outline (flag from
+governance-research.ts via sampleOutline); best-guess round 2:
 deterministic repeated-label chips + expected chase emission + guess backfill
 AI call; previously round 18c: alpha-marker
 heading promotion — mirrored LETTER lines ("B. Data Handling") promote to

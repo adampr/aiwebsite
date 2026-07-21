@@ -4272,6 +4272,22 @@ function check(name: string, cond: boolean): void {
     "outline: adopt instruction gated on a usable sample outline",
     withFlag.includes("adopt_outline") && !withoutFlag.includes("adopt_outline")
   );
+  // Round 18d: the fresh-project-with-sample flow never enters a reformat
+  // run, so turn zero must carry the adoption instruction too (owner repro:
+  // sample at creation drafted flat forever).
+  check(
+    "outline: turn zero adopts when the sample has a usable outline",
+    promptMod
+      .buildTurnZeroUserMessage({
+        kind,
+        documents: [mkDoc()],
+        adoptOutline: true,
+      })
+      .includes("adopt_outline") &&
+      !promptMod
+        .buildTurnZeroUserMessage({ kind, documents: [mkDoc()] })
+        .includes("adopt_outline")
+  );
   check(
     "outline: adopted grouping serialized so passes file consistently",
     promptMod
