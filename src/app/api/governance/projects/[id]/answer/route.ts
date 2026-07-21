@@ -16,6 +16,13 @@ import {
   notifyBudgetHit,
 } from "@/lib/governance/budget";
 import {
+  applyBankSwitch,
+  parseSwitchDecision,
+  SWITCH_DECISION_ERROR,
+} from "@/lib/governance/bank-detect";
+import { scaffoldDocuments } from "@/lib/governance/blueprints";
+import {
+  applyBankCheckDecision,
   claimTurn,
   deployInProgress,
   fetchOwnedProject,
@@ -23,10 +30,13 @@ import {
   type ProjectRow,
 } from "@/lib/governance/db";
 import { govError, NOT_FOUND, okJson, rateLimit, requireUser } from "@/lib/governance/http";
-import { isQuestionEntry } from "@/lib/governance/interview";
+import { isQuestionEntry, isSwitchId } from "@/lib/governance/interview";
+import { kickResearch } from "@/lib/governance/kick";
 import { runTurn, type TurnKind } from "@/lib/governance/turn-runner";
 import type {
+  BankProfile,
   GovernanceDoc,
+  GovernanceKind,
   NextQuestion,
   TranscriptEntry,
 } from "@/lib/governance/types";
@@ -155,6 +165,60 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
 
   const row = await fetchOwnedProject(user.userId, id);
   if (!row) return NOT_FOUND();
+
+  // Bank-check decision (§5.12): a paused project's qs_ switch card resolves
+  // deterministically and synchronously: no turn claim, no brain call, no
+  // budget spend (which is why this branch sits BEFORE the status gate, the
+  // brain health check, and the budget spend: an outage must never block a
+  // zero-AI decision, the chase-skip precedent). Only the exact chips or an
+  // explicit skip resolve it; anything else re-presents the card, because
+  // the choice is final and a silently guessed branch would be unrecoverable.
+  if (row.status === "bank_check") {
+    const stored = parse<NextQuestion | null>(row.nextQuestionJson, null);
+    if (!stored || !isSwitchId(stored.id) || stored.id !== questionId)
+      return govError(
+        "stale_question",
+        "This question was already answered (maybe in another tab). Reload the page.",
+        409
+      );
+    const decision = parseSwitchDecision(answer, skipped);
+    if (!decision)
+      return govError("invalid_request", SWITCH_DECISION_ERROR, 400);
+    const bankProfile = parse<BankProfile>(row.bankProfileJson, {});
+    const result = applyBankSwitch(
+      {
+        kind: row.kind as GovernanceKind,
+        bankProfile,
+        transcript: parse<TranscriptEntry[]>(row.transcriptJson, []),
+        question: stored,
+        answer,
+        skipped,
+        now: new Date().toISOString(),
+      },
+      decision
+    );
+    const applied = await applyBankCheckDecision({
+      id: row.id,
+      userId: user.userId,
+      expectedRev: row.rev,
+      kind: result.kind,
+      reScaffold: result.reScaffold,
+      documents: result.reScaffold ? scaffoldDocuments("ffiec_aup") : null,
+      bankProfile: result.bankProfile,
+      transcript: result.transcript,
+    });
+    if (!applied)
+      return govError(
+        "stale_question",
+        "This question was already answered (maybe in another tab). Reload the page.",
+        409
+      );
+    // Research restarts under the (possibly new) kind; a gated kick parks the
+    // row as queued and the existing queued panel explains the hold.
+    await kickResearch(row.id, user.userId);
+    return okJson({ ok: true, decision, rev: row.rev + 1 });
+  }
+
   const revise = row.status === "review" && questionId === "revise";
   // Non-advancing turns (§5.12): a restyle (format pass) or amend (correct
   // an earlier answer) is legal in drafting AND review. Neither consumes the

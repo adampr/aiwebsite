@@ -109,6 +109,26 @@ export const PROBE_PACKS: Record<GovernanceKind, ApplicabilityProbe[]> = {
       confirmVia: ["UP-08"],
     },
   ],
+  ffiec_aup: [
+    {
+      id: "charter-regulator",
+      trigger: "Bank charter and primary federal regulator",
+      queryTemplate: `"{company}" bank charter OCC OR FDIC OR "Federal Reserve" OR NCUA`,
+      confirmVia: ["FF-03"],
+    },
+    {
+      id: "ai-in-banking",
+      trigger: "Public AI or generative AI use in bank operations",
+      queryTemplate: `"{company}" AI OR chatbot OR "machine learning" lending OR fraud`,
+      confirmVia: ["FF-05", "FF-06"],
+    },
+    {
+      id: "fintech-partnerships",
+      trigger: "Fintech or banking-as-a-service partnerships",
+      queryTemplate: `"{company}" fintech partnership OR "banking as a service" OR "embedded finance"`,
+      confirmVia: ["FF-11"],
+    },
+  ],
   nist_ai_rmf: [
     {
       id: "gov-contracts",

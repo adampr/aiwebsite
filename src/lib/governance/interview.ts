@@ -24,6 +24,14 @@ export function isChaseId(id: string | null | undefined): id is string {
   return !!id && id.startsWith("qi_");
 }
 
+/** Bank-check switch card ("qs_<rev>", §5.12): the research-pause question
+ * offering the FFIEC offering to a detected bank. Deliberately NOT matched
+ * by isQuestionEntry: its transcript row never consumes a question number
+ * (the interview has not started when it is asked). */
+export function isSwitchId(id: string | null | undefined): id is string {
+  return !!id && id.startsWith("qs_");
+}
+
 /** The CURRENT question's number: questions asked so far + 1. */
 export function questionNumber(transcript: TranscriptEntry[]): number {
   return transcript.filter(isQuestionEntry).length + 1;

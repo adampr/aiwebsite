@@ -233,6 +233,11 @@ export async function tavilySearch(body: {
   search_depth?: "basic" | "advanced";
   topic?: string;
   days?: number;
+  // Domain-restricted searches (§5.12 FFIEC): Tavily serves indexed content
+  // for hosts that hard-block direct fetches (ithandbook.ffiec.gov CAPTCHAs
+  // every crawler we have), so a restricted search is the only working
+  // change-detection leg for those sources.
+  include_domains?: string[];
 }): Promise<TavilyResult[]> {
   const key = process.env.TAVILY_API_KEY || "";
   if (!key) throw new Error("TAVILY_API_KEY not set");

@@ -273,6 +273,510 @@ const USAGE_POLICY: KindBlueprint = {
 };
 
 // ---------------------------------------------------------------------------
+// ffiec_aup: seven documents, hub-and-spoke (Board hub + five amendments to
+// the bank's EXISTING policies + living artifacts). Amendments cross-reference
+// and never restate the target policy: duplicated policy text drifts, and
+// drift between two Board documents is itself an exam finding. Per the
+// file-header hard rules, NO numbered supervisory identifiers appear in these
+// strings (no SR numbers, circular numbers, or booklet section numbers):
+// this code does not refresh, the weekly-researched knowledge file in
+// data/governance-standards/ffiec-ai.md does. Titles are drafting DEFAULTS
+// (retitle_doc may adapt them, e.g. to starter-policy mode); slugs and
+// section ids are frozen like every other kind's.
+// ---------------------------------------------------------------------------
+
+const FFIEC_AUP: KindBlueprint = {
+  kind: "ffiec_aup",
+  title: "Bank AI Acceptable Use Policy (FFIEC)",
+  docs: [
+    {
+      slug: "bank-ai-use-policy",
+      title: "AI Use Policy",
+      sections: [
+        {
+          id: "purpose-scope",
+          title: "Purpose, scope, and definitions",
+          placeholder:
+            "This section will state why the bank governs AI, who and what is covered (employees, contractors, vendor-embedded AI, and free or personal accounts), and define AI, generative AI, and model in terms an examiner will recognize. It will name your charter, primary federal regulator, and asset tier so the proportionality argument is on page one. Satisfies: the AI section of the FFIEC IT Handbook's operations booklet and safety and soundness expectations for a written, Board-approved policy.",
+        },
+        {
+          id: "governance-accountability",
+          title: "Governance and accountability",
+          placeholder:
+            "This section will name the Board's oversight role, the committee that owns AI (an existing risk or IT steering committee with an expanded charter is acceptable for community banks), the named first-line and second-line owners, and a short AI risk appetite statement your Board can adopt. Satisfies: the interagency model risk guidance on board and senior management responsibilities and the FFIEC Management booklet.",
+        },
+        {
+          id: "ai-inventory-risk-tiers",
+          title: "AI inventory and risk tiers",
+          placeholder:
+            "This section will require a complete inventory of AI in use, including AI embedded in vendor systems such as your core processor and fraud tools, with each entry assigned a risk tier that drives approval and validation depth. Satisfies: the interagency model risk guidance's inventory expectations and the FFIEC IT Handbook's system inventory expectations.",
+        },
+        {
+          id: "approved-tools-genai",
+          title: "Approved tools and employee AI rules",
+          placeholder:
+            "This section will hold the approved, conditionally approved, and not approved tool table with allowed account types, plus the request path and decision owner for new tools. Satisfies: the AI section of the FFIEC IT Handbook's operations booklet and the Information Security booklet's acceptable use expectations.",
+        },
+        {
+          id: "data-rules",
+          title: "Bank data in AI tools",
+          placeholder:
+            "This section will set traffic-light rules keyed to the bank's real data classes, with customer nonpublic personal information, credentials, suspicious activity information, and confidential supervisory information in the never-without-written-approval class. Satisfies: GLBA safeguards under the FFIEC Information Security booklet and Regulation P privacy obligations.",
+        },
+        {
+          id: "output-verification-disclosure",
+          title: "Verifying and disclosing AI output",
+          placeholder:
+            "This section will set the rule that staff own what they send: verify facts and figures, and never send AI output to a customer, a regulator, or into a credit decision without qualified human review. Satisfies: examiner expectations for human oversight in the FFIEC IT Handbook and the CFPB circulars on AI-assisted decisions.",
+        },
+        {
+          id: "training-awareness",
+          title: "Training and awareness",
+          placeholder:
+            "This section will attach AI rules to the bank's existing annual training cycle and add fraud awareness for AI-enabled schemes such as deepfake voice and synthetic identity. Satisfies: the Information Security booklet's training expectations and FinCEN alerting on deepfake fraud.",
+        },
+        {
+          id: "monitoring-audit-reporting",
+          title: "Monitoring, audit, and Board reporting",
+          placeholder:
+            "This section will set what management monitors, what internal audit covers, and what the Board sees on a defined cadence, so the policy leaves an exam-ready paper trail. Satisfies: the FFIEC Audit booklet's coverage expectations and the interagency model risk guidance on reporting.",
+        },
+        {
+          id: "exceptions-enforcement-maintenance",
+          title: "Exceptions, enforcement, and maintenance",
+          placeholder:
+            "This section will define the written exception path with expiry dates, proportionate consequences, the policy owner, and the review cadence with a version table. It will also list the living artifacts management maintains without Board action. Satisfies: examiner expectations for policy lifecycle management in the FFIEC Management booklet.",
+        },
+        {
+          id: "regulatory-mapping",
+          title: "Regulatory mapping",
+          placeholder:
+            "This section will hold a table mapping each document in this set, and each section of this policy, to the supervisory source it answers: the page examiners and auditors will read first. Satisfies: exam workpaper traceability expectations across the FFIEC handbook booklets.",
+        },
+      ],
+    },
+    {
+      slug: "amend-model-risk",
+      title: "Amendment: Model Risk Management",
+      sections: [
+        {
+          id: "landing",
+          title: "Where this amendment lands",
+          placeholder:
+            "This section will name the bank's existing model risk management policy, the sections this amendment modifies, and who approves it. If the bank reports no standalone model risk policy, this document redrafts as a compact starter policy sized to your tier, because pretending to amend a policy that does not exist would cost you credibility with your examiner. Satisfies: the interagency model risk guidance's expectation of documented, proportionate practice.",
+        },
+        {
+          id: "ai-in-scope",
+          title: "AI and machine learning as models",
+          placeholder:
+            "This section will bring AI and machine learning tools inside the bank's model definition and inventory, and note that the agencies have signaled further AI-specific guidance, which this policy will absorb on its review cadence. Satisfies: the interagency model risk guidance's model definition and inventory expectations.",
+        },
+        {
+          id: "validation-proportionality",
+          title: "Validation scaled to size and materiality",
+          placeholder:
+            "This section will set validation depth by risk tier and asset size: outsourced or pooled validation is acceptable for community banks, while larger banks need independent in-house effective challenge. Satisfies: the interagency model risk guidance's materiality and proportionality principles.",
+        },
+        {
+          id: "vendor-models",
+          title: "Vendor and third-party models",
+          placeholder:
+            "This section will state plainly that using a vendor's model never transfers responsibility: the bank must understand, monitor, and be able to explain vendor AI it relies on. Satisfies: the interagency model risk guidance's third-party provisions and the interagency third-party risk guidance.",
+        },
+      ],
+    },
+    {
+      slug: "amend-third-party",
+      title: "Amendment: Third-Party Risk Management",
+      sections: [
+        {
+          id: "landing",
+          title: "Where this amendment lands",
+          placeholder:
+            "This section will name the bank's vendor or third-party risk policy and the sections this amendment modifies, keyed to the policies you confirm you actually have, and who approves it. If no such policy exists, this document redrafts as a compact starter policy. Satisfies: the interagency third-party risk management guidance and its community bank companion guide.",
+        },
+        {
+          id: "ai-due-diligence",
+          title: "AI-specific due diligence",
+          placeholder:
+            "This section will add AI questions to onboarding diligence: training data use, whether bank data trains vendor models, model update practices, and subcontractor AI. Satisfies: the interagency third-party guidance's due diligence expectations applied to AI features.",
+        },
+        {
+          id: "contract-provisions",
+          title: "Contract provisions for AI",
+          placeholder:
+            "This section will list the contract terms to seek for AI vendors, including data use limits, notice of material model changes, audit and information rights, and exit assistance. Satisfies: the interagency third-party guidance's contract negotiation expectations.",
+        },
+        {
+          id: "ongoing-monitoring",
+          title: "Ongoing monitoring and concentration",
+          placeholder:
+            "This section will set how the bank watches vendor AI changes over time and tracks concentration in critical AI providers, including AI quietly added to systems the bank already uses. Satisfies: the interagency third-party guidance's ongoing monitoring expectations.",
+        },
+      ],
+    },
+    {
+      slug: "amend-infosec",
+      title: "Amendment: Information Security and Incident Response",
+      sections: [
+        {
+          id: "landing",
+          title: "Where this amendment lands",
+          placeholder:
+            "This section will name the bank's information security program and incident response plan and the sections this amendment modifies, and who approves it. If neither exists in writing, this document redrafts as a compact starter standard. Satisfies: GLBA safeguards implemented through the FFIEC Information Security booklet.",
+        },
+        {
+          id: "ai-threat-surface",
+          title: "AI threat surface and controls",
+          placeholder:
+            "This section will add AI-specific risks to the security program: data leakage into external tools, prompt injection, credential exposure, and unsanctioned shadow AI, with the controls that answer each. Satisfies: the Information Security booklet's risk identification and control expectations.",
+        },
+        {
+          id: "ai-incidents",
+          title: "AI incidents in the response plan",
+          placeholder:
+            "This section will define what counts as an AI incident, route it through the existing incident response plan, and connect fraud-flavored AI incidents to suspicious activity review. Satisfies: the Information Security booklet's incident response expectations and FinCEN alerting on AI-enabled fraud.",
+        },
+        {
+          id: "access-logging",
+          title: "Access, logging, and retention",
+          placeholder:
+            "This section will set access control, logging, and retention expectations for approved AI tools so use can be reviewed after the fact. Satisfies: the Information Security booklet's access management and audit trail expectations.",
+        },
+      ],
+    },
+    {
+      slug: "amend-compliance",
+      title: "Amendment: Compliance and Fair Lending",
+      sections: [
+        {
+          id: "landing",
+          title: "Where this amendment lands",
+          placeholder:
+            "This section will name the bank's compliance management system and fair lending policy and the sections this amendment modifies, and who approves it. If no written compliance policy exists, this document redrafts as a compact starter policy. Satisfies: interagency consumer compliance expectations for a written compliance management system.",
+        },
+        {
+          id: "fair-lending-ai",
+          title: "Fair lending and AI models",
+          placeholder:
+            "This section will require fair lending testing before and after any AI touches credit or pricing, including disparate impact analysis and documentation of searches for less discriminatory alternatives. Satisfies: ECOA and Regulation B, and the CFPB circulars on credit decision models.",
+        },
+        {
+          id: "adverse-action",
+          title: "Adverse action notices",
+          placeholder:
+            "This section will set the rule that adverse action reasons must be specific and accurate even when a complex model made the call: the model said so is never a permissible reason. Satisfies: the CFPB circulars on adverse action notification when AI or complex models are used.",
+        },
+        {
+          id: "udaap-customer-ai",
+          title: "UDAAP, chatbots, and marketing",
+          placeholder:
+            "This section will cover customer-facing AI such as chatbots and AI-assisted marketing: accuracy, escalation to a human, complaint capture, and avoiding deceptive AI claims. Satisfies: UDAAP prohibitions and supervisory attention to bank chatbots.",
+        },
+      ],
+    },
+    {
+      slug: "amend-bsa-aml",
+      title: "Amendment: BSA/AML Program",
+      sections: [
+        {
+          id: "landing",
+          title: "Where this amendment lands",
+          placeholder:
+            "This section will name the bank's BSA/AML program documents and the sections this amendment modifies, coordinated with the BSA officer, and who approves it. Satisfies: BSA/AML program requirements as examined under the FFIEC BSA/AML manual.",
+        },
+        {
+          id: "monitoring-models",
+          title: "AI in monitoring and screening",
+          placeholder:
+            "This section will bring AI features of transaction monitoring, sanctions screening, and customer risk rating under model validation, with tuning and threshold changes documented. Satisfies: FFIEC BSA/AML manual expectations for monitoring system validation and the interagency model risk guidance as applied to compliance models.",
+        },
+        {
+          id: "fraud-typologies",
+          title: "AI-enabled fraud typologies",
+          placeholder:
+            "This section will require detection and staff awareness for deepfake identity documents, synthetic voices, and AI-assisted phishing, and route confirmed cases into suspicious activity review. Satisfies: FinCEN alerting on deepfake media and AI-enabled fraud schemes.",
+        },
+        {
+          id: "sar-governance",
+          title: "Human decisions on suspicious activity",
+          placeholder:
+            "This section will fix the line that AI may surface and prioritize alerts but a documented human decision closes or files every case; no alert is auto-dismissed by a model. Satisfies: suspicious activity reporting obligations and examiner expectations for alert disposition documentation.",
+        },
+      ],
+    },
+    {
+      slug: "ai-artifacts",
+      title: "AI Program Artifacts",
+      sections: [
+        {
+          id: "ai-inventory-template",
+          title: "AI inventory template",
+          placeholder:
+            "This section will hold the starter inventory table (system, owner, vendor, use, data touched, risk tier, validation status, review date), prefilled with what research and your answers surfaced. These artifacts are management-owned working documents the policy references; they update without Board action. Satisfies: model inventory expectations in a form management can keep current.",
+        },
+        {
+          id: "risk-tier-matrix",
+          title: "Risk tier matrix",
+          placeholder:
+            "This section will define the bank's AI risk tiers with plain criteria (customer impact, credit relevance, data sensitivity, autonomy) and what each tier requires before use. Satisfies: proportionate risk management under the interagency model risk guidance and the FFIEC IT Handbook.",
+        },
+        {
+          id: "approved-tools-register",
+          title: "Approved tools register",
+          placeholder:
+            "This section will hold the running register behind the policy's tool table, including approval date, conditions, account type, and next review. Satisfies: the FFIEC IT Handbook's expectations for controlled, documented AI use.",
+        },
+        {
+          id: "vendor-ai-questionnaire",
+          title: "Vendor AI questionnaire",
+          placeholder:
+            "This section will hold the due diligence question set your third-party amendment requires, ready to send to any AI vendor or to a core provider adding AI features. Satisfies: the interagency third-party guidance's due diligence expectations.",
+        },
+        {
+          id: "employee-quick-reference",
+          title: "Employee quick reference",
+          placeholder:
+            "This section will hold a one-page plain-language card: approved tools, the never list, the ask-first rule, and where to report a mishap. Satisfies: training and awareness expectations in the Information Security booklet.",
+        },
+      ],
+    },
+  ],
+  bank: [
+    {
+      id: "FF-01",
+      prompt:
+        "Before we draft anything: here is what I found about your institution, including what public sources show about your size where available. Did I get your institution right, and what would you correct?",
+      why: "Every document is calibrated to your charter, regulator, and asset size, so a wrong assumption here would ripple through the whole set.",
+      feeds: ["bank-ai-use-policy#purpose-scope"],
+      suggestions: [
+        "Yes, that matches",
+        "Assets figure is off",
+        "Wrong charter or regulator",
+      ],
+      required: true,
+      snapshot: true,
+    },
+    {
+      id: "FF-02",
+      prompt:
+        "What are your institution's total consolidated assets? If I found a figure in the Federal Reserve's quarterly bank list, it is the first suggestion below; confirm or correct it. Savings institutions and credit unions are not on that list, so I may need it from you.",
+      why: "Supervisory expectations scale with size, and this answer sets the tier every document drafts to.",
+      feeds: [
+        "bank-ai-use-policy#governance-accountability",
+        "amend-model-risk#validation-proportionality",
+      ],
+      suggestions: [
+        "Under $1 billion",
+        "$1 billion to $10 billion",
+        "$10 billion to $30 billion",
+        "Over $30 billion",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-03",
+      prompt:
+        "Who is your primary federal regulator and what is your charter: OCC, Federal Reserve, FDIC with a state charter, or NCUA as a credit union?",
+      why: "The mapping table and several amendments name your regulator, and the wrong one is an instant credibility hit with examiners.",
+      feeds: [
+        "bank-ai-use-policy#purpose-scope",
+        "bank-ai-use-policy#regulatory-mapping",
+      ],
+      suggestions: [
+        "OCC national bank",
+        "State member, Federal Reserve",
+        "State nonmember, FDIC",
+        "Credit union, NCUA",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-04",
+      prompt:
+        "Which of these written policies does your bank have today: model risk management, vendor or third-party risk, information security and incident response, compliance or fair lending, BSA/AML? Name them as they are titled internally.",
+      why: "The amendments modify your real policies by name; anything you do not have becomes a short standalone starter policy instead.",
+      feeds: [
+        "amend-model-risk#landing",
+        "amend-third-party#landing",
+        "amend-infosec#landing",
+        "amend-compliance#landing",
+        "amend-bsa-aml#landing",
+      ],
+      suggestions: [
+        "All five, standard titles",
+        "No standalone model risk policy",
+        "Not sure of exact titles",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-05",
+      prompt:
+        "Which AI tools are in use at the bank today, officially or not, including AI features inside vendor systems like your core processor, loan origination, or fraud tools?",
+      why: "The inventory and tool table only protect you if they match reality, and embedded vendor AI is what banks most often miss.",
+      feeds: [
+        "bank-ai-use-policy#ai-inventory-risk-tiers",
+        "bank-ai-use-policy#approved-tools-genai",
+        "ai-artifacts#ai-inventory-template",
+      ],
+      suggestions: [
+        "Staff use ChatGPT or Copilot",
+        "AI features in our core or LOS",
+        "Not sure what is embedded",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-06",
+      prompt:
+        "Does any AI touch customers directly today: a chatbot, AI-drafted customer messages, or AI-generated marketing?",
+      why: "Customer-facing AI is where UDAAP and complaint risk concentrate, so these sections draft only as strongly as your reality requires.",
+      feeds: [
+        "amend-compliance#udaap-customer-ai",
+        "bank-ai-use-policy#output-verification-disclosure",
+      ],
+      suggestions: [
+        "Chatbot on our site",
+        "AI-drafted emails or letters",
+        "No customer-facing AI",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-07",
+      prompt:
+        "Does AI or a complex model play any role in credit decisions, pricing, or account approvals, whether built in-house or inside a vendor system?",
+      why: "Credit is the highest-stakes use a bank has: it pulls in fair lending testing and strict adverse action rules.",
+      feeds: [
+        "amend-compliance#fair-lending-ai",
+        "amend-compliance#adverse-action",
+        "amend-model-risk#ai-in-scope",
+      ],
+      suggestions: [
+        "Yes, in vendor underwriting",
+        "Only as a second look",
+        "No AI in credit today",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-08",
+      prompt:
+        "What runs your BSA/AML transaction monitoring and sanctions screening, and do you know whether it uses AI or machine learning features?",
+      why: "Monitoring systems are validated like models, and vendors are adding AI features that change what examiners expect of you.",
+      feeds: ["amend-bsa-aml#monitoring-models", "amend-bsa-aml#landing"],
+      suggestions: [
+        "Verafin",
+        "Abrigo or similar",
+        "Unsure about AI features",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-09",
+      prompt:
+        "Which existing committee should own AI oversight, or do you want a new one? For community banks an existing risk or IT steering committee with an expanded charter is normal.",
+      why: "Examiners look for a named owner with Board reporting, not necessarily a new committee.",
+      feeds: ["bank-ai-use-policy#governance-accountability"],
+      suggestions: [
+        "IT steering committee",
+        "Enterprise risk committee",
+        "Suggest one for our size",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-10",
+      prompt:
+        "How do you validate models today: in-house staff, an outsourced validation firm, or not formally at all?",
+      why: "Validation depth is the most size-sensitive expectation in the whole set, and the amendment must match what you can actually staff.",
+      feeds: ["amend-model-risk#validation-proportionality"],
+      suggestions: [
+        "Outsourced firm",
+        "In-house validators",
+        "No formal validation yet",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-11",
+      prompt:
+        "Which vendors matter most for AI exposure: your core processor, loan origination, fraud, document, or marketing vendors? Name the big ones.",
+      why: "The vendor amendment and questionnaire should name your critical providers, not a generic list.",
+      feeds: [
+        "amend-third-party#ai-due-diligence",
+        "ai-artifacts#vendor-ai-questionnaire",
+      ],
+      suggestions: [
+        "FIS, Fiserv, or Jack Henry core",
+        "A fintech partner",
+        "Need to pull the vendor list",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-12",
+      prompt:
+        "Beyond customer nonpublic personal information, what data at your bank must never touch an external AI tool? Think exam materials, suspicious activity information, credentials, and merger work.",
+      why: "The never list is what staff remember under pressure, and confidential supervisory information has special handling rules.",
+      feeds: ["bank-ai-use-policy#data-rules"],
+      suggestions: [
+        "Exam materials and CSI",
+        "SAR-related information",
+        "Credentials and keys",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-13",
+      prompt:
+        "Where should staff report an AI mishap, and is that channel actually monitored? An existing incident or ethics line is fine.",
+      why: "A monitored channel with a no-blame norm is what turns mistakes into fixable events instead of exam findings.",
+      feeds: [
+        "amend-infosec#ai-incidents",
+        "bank-ai-use-policy#monitoring-audit-reporting",
+      ],
+      suggestions: [
+        "Existing incident process",
+        "Email to our ISO",
+        "Need to create one",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-14",
+      prompt:
+        "Who owns this policy set, what training cycle can it attach to, and how often will the Board realistically review it?",
+      why: "An owner, a training hook, and an honest Board cadence are what keep this alive between exams.",
+      feeds: [
+        "bank-ai-use-policy#training-awareness",
+        "bank-ai-use-policy#exceptions-enforcement-maintenance",
+      ],
+      suggestions: [
+        "CRO, annual Board review",
+        "ISO owns it, annual training",
+        "Not decided yet",
+      ],
+      required: true,
+    },
+    {
+      id: "FF-15",
+      prompt:
+        "Have recent exams or audits raised anything about IT, models, vendors, or BSA that this policy set should visibly answer? Keep it general; do not paste examiner language here.",
+      why: "A policy that quietly closes a known gap is worth far more at the next exam. Confidential supervisory information stays at the bank; a general theme is all the drafting needs.",
+      feeds: ["bank-ai-use-policy#monitoring-audit-reporting"],
+      suggestions: [
+        "Yes, an IT or model finding",
+        "Clean recent exams",
+        "Prefer not to say",
+      ],
+      required: false,
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
 // nist_ai_rmf: seven documents (GOVERN / MAP / MEASURE / MANAGE program)
 // ---------------------------------------------------------------------------
 
@@ -1492,6 +1996,7 @@ const ISO_42001: KindBlueprint = {
 
 export const BLUEPRINTS: Record<GovernanceKind, KindBlueprint> = {
   usage_policy: USAGE_POLICY,
+  ffiec_aup: FFIEC_AUP,
   nist_ai_rmf: NIST_AI_RMF,
   eu_ai_act: EU_AI_ACT,
   iso_42001: ISO_42001,

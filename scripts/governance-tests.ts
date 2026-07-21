@@ -54,10 +54,35 @@ import {
 import {
   foldTranscript,
   isQuestionEntry,
+  isSwitchId,
   questionNumber,
   remapLegacyReopenedSummary,
   REOPENED_SUMMARY_CURRENT,
 } from "../src/lib/governance/interview";
+import {
+  applyBankSwitch,
+  buildSwitchQuestion,
+  detectBankSignal,
+  lbrSuggestion,
+  parseSwitchDecision,
+  TIER_CHIPS,
+  tierFromAnswer,
+} from "../src/lib/governance/bank-detect";
+import {
+  assetTier,
+  decodeCharter,
+  fmtAssetsMil,
+  fmtAsOf,
+  matchBank,
+  parseLbr,
+} from "../src/lib/governance/lbr";
+import { PROBE_PACKS } from "../src/lib/governance/probes";
+import {
+  STANDARD_SLUGS,
+  standardsReference,
+} from "../src/lib/governance/standards";
+import { turnZeroGroups } from "../src/lib/governance/turn";
+import { hydrateAssetSuggestions } from "../src/lib/governance/view";
 import {
   packRestyleBatches,
   restyleTargets,
@@ -134,6 +159,9 @@ import {
 import { GOVERNANCE_KINDS } from "../src/lib/governance/types";
 import type {
   GovernanceDoc,
+  GovernanceKind,
+  NextQuestion,
+  ResearchBrief,
   TranscriptEntry,
   TurnResult,
 } from "../src/lib/governance/types";
@@ -179,6 +207,8 @@ function check(name: string, cond: boolean): void {
     "src/lib/governance/style-sample.ts",
     "src/lib/governance/docx.ts",
     "src/lib/governance/interview.ts",
+    "src/lib/governance/bank-detect.ts",
+    "src/lib/governance/lbr.ts",
     "src/lib/governance/restyle.ts",
     "src/lib/governance/resolved-anim.ts",
     "src/lib/governance/build-id.ts",
@@ -189,6 +219,7 @@ function check(name: string, cond: boolean): void {
     "src/components/governance/workspace.tsx",
     "src/components/governance/shared.tsx",
     "src/components/governance/open-items-resolver.tsx",
+    "src/components/governance/bank-check-screen.tsx",
     "src/components/governance/download-menu.tsx",
     "src/app/api/governance/projects/[id]/answer/route.ts",
     "src/app/api/governance/projects/[id]/confirm/route.ts",
@@ -1991,13 +2022,14 @@ function check(name: string, cond: boolean): void {
  *     projects with an already-stored Q1 retrofit automatically. */
 {
   check(
-    "snapshot: UP-01 and N-01 are flagged, nothing else",
+    "snapshot: UP-01, FF-01, and N-01 are flagged, nothing else",
     GOVERNANCE_KINDS.every((k) =>
       BLUEPRINTS[k].bank.every(
-        (q) => !q.snapshot || q.id === "UP-01" || q.id === "N-01"
+        (q) => !q.snapshot || q.id === "UP-01" || q.id === "FF-01" || q.id === "N-01"
       )
     ) &&
       bankById("usage_policy").get("UP-01")?.snapshot === true &&
+      bankById("ffiec_aup").get("FF-01")?.snapshot === true &&
       bankById("nist_ai_rmf").get("N-01")?.snapshot === true
   );
   const brief = {
@@ -4981,6 +5013,252 @@ function check(name: string, cond: boolean): void {
       ]);
       return out.length === 1 && out[0].text === "rotated text" && out[0].startX === null;
     })()
+  );
+}
+
+
+/* 29. FFIEC bank offering (§5.12): LBR parse/match/tier, deterministic bank
+ *     detection + switch reducer, FF-02 tier write-back, turn-zero grouping,
+ *     weekly-refresh isolation, and the qs_ question-id contract. */
+{
+  // --- LBR parser: header-derived columns, wrapped names, as-of, charter.
+  const LBR_FIXTURE = [
+    "U.S. DOMESTICALLY CHARTERED COMMERCIAL BANKS,",
+    "RANKED by CONSOLIDATED ASSETS",
+    "As of March 31, 2026",
+    "",
+    "------------------------------------------------------------------------------------------------------------------------------------------------------------",
+    "Bank Name / Holding Co       Nat'lRank   Bank ID  Bank Headquarters     Charter    Consol     Domestic      Pct         Pct       Domestic   Foreign    IBF ",
+    "Name                                                                               Assets      Assets     Domestic   Cumulative   Branches   Branches       ",
+    "                                                                                   (Mil $)     (Mil $)     Assets      Assets                               ",
+    "--------------------------- ----------- --------- -------------------- --------- ----------- ----------- ---------- ------------ ---------- ---------- -----",
+    "JPMORGAN CHASE BK NA /           1       852218   COLUMBUS, OH            NAT     4,016,571   2,857,519      71          16         5098        31       Y  ",
+    "JPMORGAN CHASE & CO                                                                                                                                         ",
+    "PINNACLE BK /                  500       123456   NASHVILLE, TN           SMB        12,000      12,000     100          90          10         0        N  ",
+    "PINNACLE FNCL PTNR                                                                                                                                          ",
+    "MILLENNIUM BK /               1049      3547896   DES PLAINES, IL         NMB          835         835     100          97           2         0        N  ",
+    "MILLENNIUM BC                                                                                                                                               ",
+    "MILLENNIUM BK /               1094      2820604   OOLTEWAH, TN            NMB          789         789     100          97          12         0        N  ",
+    "MILLENNIUM BSHRS                                                                                                                                            ",
+  ].join("\n");
+  const parsed = parseLbr(LBR_FIXTURE);
+  check("lbr29: as-of date extracted ISO", parsed?.asOf === "2026-03-31");
+  check("lbr29: four records, wrapped names joined", parsed?.banks.length === 4 &&
+    parsed.banks[0].name === "JPMORGAN CHASE BK NA / JPMORGAN CHASE & CO");
+  const mill = parsed!.banks[2];
+  check(
+    "lbr29: Millennium row parses (rank, rssd, city/state, charter, assets)",
+    mill.rank === 1049 && mill.rssdId === "3547896" && mill.city === "DES PLAINES" &&
+      mill.state === "IL" && mill.charter === "NMB" && mill.consolAssetsMil === 835
+  );
+  check(
+    "lbr29: NMB decodes to FDIC state nonmember; NAT to OCC; unknown null",
+    decodeCharter("NMB")?.regulator === "FDIC" &&
+      decodeCharter("NAT")?.regulator === "OCC" &&
+      decodeCharter("SMB")?.regulator === "Federal Reserve" &&
+      decodeCharter("ILC") === null
+  );
+  // --- Matching: city-corroborated high confidence; ambiguity never guesses.
+  const m1 = matchBank(parsed!.banks, "Millennium Bank", "Des Plaines", "IL");
+  check("lbr29: city-corroborated match is high confidence", m1?.confidence === "high" && m1.bank.rank === 1049);
+  check("lbr29: two same-name banks with no hint = no match", matchBank(parsed!.banks, "Millennium Bank") === null);
+  check("lbr29: Pinnacle Software never matches PINNACLE BK", matchBank(parsed!.banks, "Pinnacle Software") === null);
+  // --- Tier boundaries + formatting.
+  check(
+    "lbr29: assetTier boundaries",
+    assetTier(999) === "under-1b" && assetTier(1_000) === "1b-10b" &&
+      assetTier(9_999) === "1b-10b" && assetTier(10_000) === "10b-30b" &&
+      assetTier(29_999) === "10b-30b" && assetTier(30_000) === "over-30b"
+  );
+  check(
+    "lbr29: asset formatter (millions, billions, trillions)",
+    fmtAssetsMil(835) === "$835 million" && fmtAssetsMil(1_200) === "$1.2 billion" &&
+      fmtAssetsMil(12_000) === "$12 billion" && fmtAssetsMil(4_016_571) === "$4.0 trillion"
+  );
+  check("lbr29: as-of formatter", fmtAsOf("2026-03-31") === "March 31, 2026");
+
+  // --- Detection: two-class keyword gate, partner-bank exclusion, LBR arm.
+  const mkBrief = (over: Partial<ResearchBrief>): ResearchBrief => ({
+    companyProfile: "", companyName: "", sizeAndFootprint: "", industryContext: "",
+    aiUseSignals: [], regulatoryExposure: [], applicabilitySignals: [], probedKind: null,
+    dataSensitivity: "", openQuestions: [], topSources: [], gaps: [],
+    confidenceNotes: "", distilledAt: new Date().toISOString(), ...over,
+  });
+  check(
+    "detect29: bank name + FDIC language fires",
+    detectBankSignal(
+      mkBrief({ companyName: "Millennium Bank", companyProfile: "A community bank in Des Plaines. Member FDIC, equal housing lender." }),
+      null
+    ).likely === true
+  );
+  check(
+    "detect29: food bank never fires (no regulator class)",
+    detectBankSignal(
+      mkBrief({ companyName: "Food Bank of Chicago", companyProfile: "A food bank distributing meals across Cook County." }),
+      null
+    ).likely === false
+  );
+  check(
+    "detect29: blood bank with GLBA-free text never fires",
+    detectBankSignal(
+      mkBrief({ companyName: "LifeSource Blood Bank", companyProfile: "A blood bank and donation network." }),
+      null
+    ).likely === false
+  );
+  check(
+    "detect29: partner-bank fintech never fires on the keyword path",
+    detectBankSignal(
+      mkBrief({ companyName: "Chimeish", companyProfile: "A fintech app. Banking services provided by Example Bank, Member FDIC." }),
+      null
+    ).likely === false
+  );
+  check(
+    "detect29: high-confidence LBR match alone (zero keywords) never fires",
+    detectBankSignal(mkBrief({ companyName: "Pinnacle" }), { bank: parsed!.banks[1], confidence: "high" }).likely === false
+  );
+  check(
+    "detect29: LBR match + one keyword class fires with LBR evidence first",
+    (() => {
+      const s = detectBankSignal(
+        mkBrief({ companyName: "Millennium Bank" }),
+        { bank: mill, confidence: "high" }
+      );
+      return s.likely && s.evidence.length >= 1 && s.evidence[0].includes("Federal Reserve bank release");
+    })()
+  );
+
+  // --- qs_ id contract: never a question-number consumer, never a chase.
+  const qs = buildSwitchQuestion(7);
+  check("qs29: switch card id shape + two exact chips", qs.id === "qs_7" &&
+    qs.suggestions.length === 2 && qs.suggestions[0] === "Switch to the FFIEC version");
+  check(
+    "qs29: qs_ rows never count toward the question number",
+    isQuestionEntry({ qId: "qs_7", bankId: null, q: "x", a: "y", skipped: false, askedAt: "", answeredAt: "" }) === false &&
+      isSwitchId("qs_7") === true && isSwitchId("qi_7") === false
+  );
+  check(
+    "qs29: decision parse is exact-chip-or-skip only",
+    parseSwitchDecision("Switch to the FFIEC version", false) === "switch" &&
+      parseSwitchDecision("  stay with what i picked ", false) === "continue" &&
+      parseSwitchDecision("", true) === "continue" &&
+      parseSwitchDecision("yes, switch me please", false) === null
+  );
+
+  // --- Switch reducer: both branches, pinned against scaffoldDocuments.
+  const qsQ = buildSwitchQuestion(3);
+  const baseInput = {
+    kind: "usage_policy" as const,
+    bankProfile: { detectedAt: "2026-07-21T00:00:00Z", evidence: ["e"] },
+    transcript: [] as TranscriptEntry[],
+    question: qsQ,
+    answer: "Switch to the FFIEC version",
+    skipped: false,
+    now: "2026-07-21T00:00:01Z",
+  };
+  const sw = applyBankSwitch(baseInput, "switch");
+  check(
+    "switch29: switch flips kind, re-scaffolds, records decision, appends qs_ row",
+    sw.kind === "ffiec_aup" && sw.reScaffold === true &&
+      sw.bankProfile.decision === "switch" && sw.transcript.length === 1 &&
+      sw.transcript[0].qId === "qs_3" && sw.transcript[0].a === "Switch to the FFIEC version"
+  );
+  const st = applyBankSwitch({ ...baseInput, answer: "Stay with what I picked" }, "continue");
+  check(
+    "switch29: continue keeps kind, no re-scaffold, decision recorded",
+    st.kind === "usage_policy" && st.reScaffold === false && st.bankProfile.decision === "continue"
+  );
+
+  // --- FF-02 tier write-back: all four mapping paths.
+  const lbrVal = { name: "MILLENNIUM BK / MILLENNIUM BC", rssdId: "3547896", rank: 1049,
+    city: "DES PLAINES", state: "IL", charter: "NMB", consolAssetsMil: 835, asOf: "2026-03-31" };
+  check(
+    "tier29: exact chip maps; hydrated LBR chip maps from stored figure",
+    tierFromAnswer("$10 billion to $30 billion", null) === "10b-30b" &&
+      tierFromAnswer(lbrSuggestion(lbrVal), lbrVal) === "under-1b"
+  );
+  check(
+    "tier29: freeform dollar figures parse leniently",
+    tierFromAnswer("we are about $2.5 billion in assets", null) === "1b-10b" &&
+      tierFromAnswer("roughly $850 million", null) === "under-1b" &&
+      tierFromAnswer("42 billion", null) === "over-30b"
+  );
+  check("tier29: unparseable answer returns null", tierFromAnswer("ask our CFO", null) === null);
+  check(
+    "tier29: chips and assetTier are the same partition",
+    TIER_CHIPS.length === 4 &&
+      TIER_CHIPS.every((c) => c.tier !== undefined)
+  );
+  check(
+    "tier29: hydration prepends the LBR chip exactly once",
+    (() => {
+      const q: NextQuestion = { id: "q_9", bankId: "FF-02", text: "t", why: "w",
+        suggestions: ["Under $1 billion"], feeds: [] };
+      const h = hydrateAssetSuggestions(q, { lbr: lbrVal });
+      const again = hydrateAssetSuggestions(h, { lbr: lbrVal });
+      return h.suggestions[0].startsWith("About $835 million") && again.suggestions.length === h.suggestions.length;
+    })()
+  );
+
+  // --- Turn-zero grouping partition pins (all five kinds).
+  const groupsFor = (k: GovernanceKind) =>
+    turnZeroGroups(k, scaffoldDocuments(k).filter((d) => !d.stub)).map((g) => g.map((d) => d.slug));
+  check("group29: usage_policy is one group", groupsFor("usage_policy").length === 1);
+  const fg = groupsFor("ffiec_aup");
+  check(
+    "group29: ffiec hub drafts ALONE, rest in pairs, exact partition",
+    fg.length === 4 && fg[0].length === 1 && fg[0][0] === "bank-ai-use-policy" &&
+      fg.slice(1).every((g) => g.length === 2) &&
+      fg.flat().sort().join(",") === scaffoldDocuments("ffiec_aup").map((d) => d.slug).sort().join(",")
+  );
+  check(
+    "group29: nist stays [2,2,2] (6 non-stub docs in pairs, regression pin)",
+    JSON.stringify(groupsFor("nist_ai_rmf").map((g) => g.length)) === "[2,2,2]"
+  );
+
+  // --- Blueprint invariants beyond block 3: probes confirmVia resolve; no
+  //     numbered supervisory identifiers frozen into blueprint strings.
+  const ffBank = new Set(BLUEPRINTS.ffiec_aup.bank.map((q) => q.id));
+  check(
+    "bp29: every ffiec probe confirmVia id exists in the FF bank",
+    PROBE_PACKS.ffiec_aup.every((p) => p.confirmVia.every((id) => ffBank.has(id)))
+  );
+  check(
+    "bp29: no frozen SR/circular numbers in ffiec blueprint strings",
+    (() => {
+      const all = JSON.stringify(BLUEPRINTS.ffiec_aup);
+      return !/SR \d{2}-\d/.test(all) && !/Circular 20\d{2}/.test(all) && !/VII\.D/.test(all);
+    })()
+  );
+  check(
+    "bp29: standards slug + fallback wired and sliceable",
+    STANDARD_SLUGS.ffiec_aup === "ffiec-ai" &&
+      standardsReference("ffiec_aup").text.includes("## Key obligations")
+  );
+  // --- Prompt: FFIEC rules ride the kind; other kinds byte-identical with a
+  //     profile passed; endorsement list extended only for ffiec.
+  const bp = { tier: "under-1b" as const, lbr: lbrVal };
+  const sysF = buildSystemMessage({ kind: "ffiec_aup", brief: null, forcedReviewSoon: false, bankProfile: bp });
+  check(
+    "prompt29: ffiec system carries rules + calibration + endorsement ban",
+    sysF.includes("FFIEC DRAFTING RULES") && sysF.includes("BANK CALIBRATION") &&
+      sysF.includes("$835 million") && sysF.includes("the FFIEC, the Federal Reserve, the OCC")
+  );
+  check(
+    "prompt29: old kinds byte-identical whether or not a profile is passed",
+    buildSystemMessage({ kind: "usage_policy", brief: null, forcedReviewSoon: false, bankProfile: bp }) ===
+      buildSystemMessage({ kind: "usage_policy", brief: null, forcedReviewSoon: false })
+  );
+  // --- README: ffiec adoption map present, others untouched.
+  const readmeF = readmeText({ kind: "ffiec_aup", domain: "mb.bank", draft: true,
+    docs: scaffoldDocuments("ffiec_aup"), reviewSummary: null, openConfirmCount: 0, skippedCount: 0 });
+  check(
+    "readme29: ffiec ZIP explains hub-and-spoke adoption",
+    readmeF.includes("Read order:") && readmeF.includes("drift is itself an exam finding")
+  );
+  check(
+    "readme29: non-ffiec README carries no adoption map",
+    !readmeText({ kind: "usage_policy", domain: "x.com", draft: true,
+      docs: scaffoldDocuments("usage_policy"), reviewSummary: null, openConfirmCount: 0, skippedCount: 0 }).includes("Read order:")
   );
 }
 

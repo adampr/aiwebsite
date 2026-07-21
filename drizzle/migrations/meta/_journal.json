@@ -120,6 +120,13 @@
       "when": 1784495208087,
       "tag": "0016_sample_letterhead",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784601322110,
+      "tag": "0017_bank_profile",
+      "breakpoints": true
     }
   ]
 }

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import type {
+  BankProfile,
   GovernanceDoc,
   GovernanceKind,
   NextQuestion,
@@ -323,10 +324,17 @@ export async function handoffToDrafting(opts: {
   // Turn zero's marker best-guesses (§5.12), already merged+pruned against
   // the handed-off documents. Empty = column stays null (no chips).
   openItemGuesses: Record<string, string[]>;
+  // FFIEC runs: LBR lookup + tier, composed by the script as a MERGE over
+  // the row's existing profile (a switch decision must survive handoff).
+  // Undefined = leave the column untouched (all other kinds).
+  bankProfile?: BankProfile;
 }): Promise<void> {
   await db
     .update(P)
     .set({
+      ...(opts.bankProfile
+        ? { bankProfileJson: JSON.stringify(opts.bankProfile) }
+        : {}),
       status: "drafting",
       researchJson: JSON.stringify(opts.brief),
       researchAuditJson: opts.audit ? JSON.stringify(opts.audit) : null,
@@ -345,6 +353,99 @@ export async function handoffToDrafting(opts: {
       updatedAt: sql`now()`,
     })
     .where(and(eq(P.id, opts.id), eq(P.status, "researching")));
+}
+
+/**
+ * Bank-check pause (§5.12): the research script's alternative final write
+ * when host-side detection concludes the company is likely a bank on a
+ * non-FFIEC project. Mirrors handoffToDrafting's single-write discipline
+ * (brief + audit + evidence + the qs_ card in ONE statement, fenced on the
+ * researching claim). research_progress_json is deliberately KEPT: the paid
+ * Tavily checkpoints must survive for the post-decision resume; the view
+ * layer hides progress for this status. Returns false when the fence missed
+ * (row superseded between heartbeat and pause) — caller exits quietly.
+ */
+export async function pauseForBankCheck(opts: {
+  id: string;
+  brief: ResearchBrief;
+  audit: ResearchAudit | null;
+  flagged: boolean;
+  bankProfile: BankProfile;
+  nextQuestion: NextQuestion;
+}): Promise<boolean> {
+  const rows = await db
+    .update(P)
+    .set({
+      status: "bank_check",
+      researchJson: JSON.stringify(opts.brief),
+      researchAuditJson: opts.audit ? JSON.stringify(opts.audit) : null,
+      researchFlagged: sql`research_flagged OR ${opts.flagged}`,
+      bankProfileJson: JSON.stringify(opts.bankProfile),
+      nextQuestionJson: JSON.stringify(opts.nextQuestion),
+      rev: sql`rev + 1`,
+      lastActivityAt: sql`now()`,
+      updatedAt: sql`now()`,
+    })
+    .where(and(eq(P.id, opts.id), eq(P.status, "researching")))
+    .returning({ id: P.id });
+  return rows.length > 0;
+}
+
+/**
+ * Bank-check decision write (§5.12): ONE fenced statement applying the pure
+ * applyBankSwitch reducer's output. Fences on status AND the expected rev
+ * (double-submit = clean 409 via rowcount 0); honors the rev-bump +
+ * turn-col-clear invariant. On switch it additionally re-scaffolds the
+ * documents for the FFIEC kind and clears every drafting accumulator; the
+ * pause always happens pre-turn-zero, so provably no user-produced drafting
+ * state exists to lose. Status lands on 'queued'; the caller kicks research.
+ */
+export async function applyBankCheckDecision(opts: {
+  id: string;
+  userId: string;
+  expectedRev: number;
+  kind: GovernanceKind; // post-decision kind from the reducer
+  reScaffold: boolean;
+  documents: GovernanceDoc[] | null; // fresh scaffold when reScaffold
+  bankProfile: BankProfile; // with decision merged
+  transcript: TranscriptEntry[]; // with the appended qs_ row
+}): Promise<boolean> {
+  const rows = await db
+    .update(P)
+    .set({
+      kind: opts.kind,
+      ...(opts.reScaffold && opts.documents
+        ? {
+            documentsJson: JSON.stringify(opts.documents),
+            coveredBankIdsJson: "[]",
+            openItemGuessesJson: null,
+            changedSectionsJson: null,
+            reviewSummary: null,
+            answersCount: 0,
+          }
+        : {}),
+      bankProfileJson: JSON.stringify(opts.bankProfile),
+      transcriptJson: JSON.stringify(opts.transcript),
+      nextQuestionJson: null,
+      status: "queued",
+      turnPromptId: null,
+      turnAttemptId: null,
+      turnStartedAt: null,
+      turnJson: null,
+      rev: sql`rev + 1`,
+      lastActivityAt: sql`now()`,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(
+        eq(P.id, opts.id),
+        eq(P.userId, opts.userId),
+        eq(P.status, "bank_check"),
+        eq(P.rev, opts.expectedRev)
+      )
+    )
+    .returning({ id: P.id });
+  return rows.length > 0;
 }
 
 /** Script-context row fetch (no owner filter — the id came from a claim). */
@@ -572,6 +673,11 @@ export async function applyTurnWrite(opts: {
   // (undefined) = leave the column untouched (the deterministic qi_-skip
   // write and other no-brain paths carry the store forward unchanged).
   openItemGuesses?: Record<string, string[]>;
+  // FFIEC tier write-back (§5.12): when the consumed question was FF-02, the
+  // caller maps the answer to a tier deterministically and passes the merged
+  // profile; it rides the SAME fenced statement so the calibration can never
+  // disagree with the transcript. Undefined = column untouched.
+  bankProfile?: BankProfile;
 }): Promise<boolean> {
   const documentsJson = JSON.stringify(opts.documents);
   const transcriptJson = JSON.stringify(opts.transcript);
@@ -594,6 +700,9 @@ export async function applyTurnWrite(opts: {
               ? JSON.stringify(opts.openItemGuesses)
               : null,
           }
+        : {}),
+      ...(opts.bankProfile !== undefined
+        ? { bankProfileJson: JSON.stringify(opts.bankProfile) }
         : {}),
       nextQuestionJson: opts.nextQuestion
         ? JSON.stringify(opts.nextQuestion)

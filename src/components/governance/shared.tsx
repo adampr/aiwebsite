@@ -256,6 +256,13 @@ export const STATUS_META: Record<ProjectStatus, StatusMeta> = {
     check: false,
     note: "Research paused.",
   },
+  bank_check: {
+    word: "Question",
+    cls: "badge--sand",
+    dot: false,
+    check: false,
+    note: "Research paused to ask you something.",
+  },
   drafting: {
     word: "Drafting",
     cls: "badge--light",

@@ -11,6 +11,7 @@ import {
   ACK_TEXT,
   AI_PROCESSING_NOTICE,
   DELETION_NOTICE,
+  FFIEC_SETUP_NOTE,
   KIND_LABELS,
   STYLE_SAMPLE_ACCEPT,
   STYLE_SAMPLE_HELPER,
@@ -35,6 +36,8 @@ function statusLine(p: ProjectSummary): string {
       return "researching now";
     case "research_failed":
       return "research paused";
+    case "bank_check":
+      return "one question for you";
     case "drafting":
       return `question ${p.progress.answered + 1} of about ${p.progress.total}`;
     case "review":
@@ -47,6 +50,7 @@ function statusLine(p: ProjectSummary): string {
 function openLabel(status: ProjectSummary["status"]): string {
   if (status === "drafting") return "Resume";
   if (status === "review") return "Review and confirm";
+  if (status === "bank_check") return "Answer";
   return "Open";
 }
 
@@ -337,6 +341,11 @@ export function GovernanceHome({ defaultDomain }: { defaultDomain: string }) {
             >
               Set up your {KIND_LABELS[kind].name}
             </h3>
+            {kind === "ffiec_aup" && (
+              <p className="mt-2 max-w-none text-xs" style={faint}>
+                {FFIEC_SETUP_NOTE}
+              </p>
+            )}
 
             {editingDomain ? (
               <div className="field">

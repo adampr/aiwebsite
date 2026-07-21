@@ -21,6 +21,7 @@ export const STANDARD_SLUGS: Record<
   Exclude<GovernanceKind, "usage_policy">,
   string
 > = {
+  ffiec_aup: "ffiec-ai",
   nist_ai_rmf: "nist-ai-rmf",
   eu_ai_act: "eu-ai-act",
   iso_42001: "iso-42001",
@@ -51,6 +52,14 @@ Define AIMS scope and context, leadership commitment and policy, roles, AI risk 
 Scope and context, AI policy, roles, risk methodology, impact assessment, objectives and Statement of Applicability, lifecycle procedure, data management, support and communications, performance and improvement.
 ## Question bank seeds
 Ask about certification goals, scope, leadership, existing ISO management systems, risk scales, high-impact systems, lifecycle practice, data provenance, suppliers, and audit readiness.`,
+  "ffiec-ai": `## Overview
+There is no standalone FFIEC AI regulation. Bank examiners assess AI through four existing lenses: the FFIEC IT Examination Handbook (the Architecture, Infrastructure, and Operations booklet's AI and machine learning section, the Development, Acquisition, and Maintenance booklet, and the Information Security booklet under GLBA safeguards); model risk management under SR 26-2, the interagency guidance that superseded SR 11-7, proportionate to size and materiality, with AI-specific provisions deferred to signaled future guidance; the Interagency Guidance on Third-Party Relationships (2023) and its community bank guide (2024); and consumer compliance, meaning ECOA and Regulation B adverse action duties per the CFPB circulars on AI credit decisions, UDAAP, Regulation P privacy, plus BSA/AML monitoring model validation and FinCEN alerting on deepfake and AI-enabled fraud. (Bootstrap fallback: the weekly-researched reference is not on disk yet; draft conservatively, name sources without quoting them, and mark anything uncertain for confirmation.)
+## Key obligations
+Board-approved policy and named accountability; a complete AI inventory including AI embedded in vendor systems; risk tiers driving proportionate validation, with outsourced validation acceptable for community banks and independent effective challenge expected as size grows; full bank responsibility for vendor models; AI-specific due diligence, contract terms, and monitoring for third parties; GLBA-grade data controls with customer nonpublic information, suspicious activity information, and confidential supervisory information in the never class; specific and accurate adverse action reasons even from complex models; human decisions on suspicious activity alerts; training and Board reporting that leave an exam-ready trail. Asset-size calibration: under $10 billion, expanded existing committees and outsourced validation suffice; $10 billion to $30 billion adds direct consumer-compliance supervision and formal fair lending testing; above $30 billion the full model risk expectations are most directly relevant, with standalone model risk functions; the largest institutions face large financial institution standards with dedicated AI governance.
+## Document set blueprint
+Board AI use policy hub; amendments to model risk, third-party, information security and incident response, compliance and fair lending, and BSA/AML policies; living artifacts covering inventory, tier matrix, tools register, vendor questionnaire, and an employee quick reference.
+## Question bank seeds
+Ask about charter and primary regulator, consolidated assets, which written policies exist today, AI in use including vendor-embedded features, customer-facing AI, AI in credit decisions, the BSA monitoring vendor, validation approach, committee ownership, never-share data including exam materials, incident channels, and recent exam themes.`,
   "cross-standard-digest": `## Overview
 Cross-standard digest for AI acceptable use policies (bootstrap fallback). An AI acceptable use policy should tell employees in plain language which AI tools are approved, what data may and may not be shared with them (keyed to the organization's data classes), how to verify AI output, when to disclose AI use, extra care for decisions about people, how to raise incidents without blame, and who owns the policy. NIST AI RMF, the EU AI Act, and ISO/IEC 42001 all reward documented tool governance, human oversight, and incident reporting; a good acceptable use policy is the employee-facing edge of all three.`,
 };

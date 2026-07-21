@@ -155,6 +155,11 @@ export const governanceProjects = pgTable(
     // guesses can never push documentsJson over its byte cap (that overflow
     // silently discards a paid turn). Null on old rows = no chips.
     openItemGuessesJson: text("open_item_guesses_json"),
+    // Bank profile (§5.12 FFIEC offering, migration 0017): LBR lookup result,
+    // bank-detection evidence, the user's switch/continue decision, and the
+    // asset tier the drafting prompt calibrates to. Cold column, lenient-
+    // parsed at read edges; NULL = detection never ran (all pre-FFIEC rows).
+    bankProfileJson: text("bank_profile_json"),
     // In-process answer-turn claim state (§5.12 async turn). started_at set =
     // a turn is running (staleness judged against CAPS.turnStaleMs at read
     // time); started_at NULL with prompt_id set = the last turn failed and

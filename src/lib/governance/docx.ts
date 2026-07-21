@@ -635,6 +635,18 @@ export function readmeText(opts: {
   for (const d of opts.docs)
     lines.push(`- ${d.title}${d.stub ? " (determination only)" : ""} (${names.get(d.slug)})`);
   lines.push("");
+  if (opts.kind === "ffiec_aup") {
+    lines.push(
+      "Read order: 1. the AI Use Policy (route to your Board), 2. the five amendments (hand each to the owner of the policy it amends), 3. the AI Program Artifacts (hand to their management owners)."
+    );
+    lines.push(
+      "Amendments are cross-references into policies your bank already has. Adopt each inside the existing document rather than as a standalone policy; duplicated policy text drifts, and drift is itself an exam finding. Where a target policy does not exist, that document is drafted as a starter policy and says so."
+    );
+    lines.push(
+      "Living artifacts are management-owned working documents referenced from the policy. Keep them current; the policy points to them instead of restating them."
+    );
+    lines.push("");
+  }
   lines.push("Gaps and next steps:");
   lines.push(
     `- Open [TO CONFIRM] items in the drafts: ${opts.openConfirmCount}. Search each document for "[TO CONFIRM" and resolve them.`

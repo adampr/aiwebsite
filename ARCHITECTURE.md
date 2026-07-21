@@ -15,7 +15,8 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-21 (governance round 18e: bucket-title bucket-title
+Last verified against code: 2026-07-21 (governance round 20: FFIEC bank offering
++ bank-check switch + weekly FFIEC refresh; round 18e: bucket-title
 PROVENANCE enforced - the live model invented 6 of 8 bucket titles under a
 see-the-outline instruction, so applyOps now takes a bucketTitles allowlist
 (sampleBucketTitles: top-level sample headings, numbering stripped): invented
@@ -1077,6 +1078,61 @@ re-upsert seed memories from current templates, skipping deploy-marker/research
 gates) — run once on the VM post-deploy, since digest/seed wording otherwise only
 refreshes on a quarterly or watch-triggered research run.
 
+**FFIEC bank offering (round 20, 2026-07-21, 4-expert + 4-critic panel):** a fifth
+kind **`ffiec_aup`** ("Bank AI Acceptable Use Policy (FFIEC)", badge "FOR BANKS ·
+POLICY + AMENDMENTS", second card in `GOVERNANCE_KINDS`) ships a hub-and-spoke set
+of 7 docs: Board hub `bank-ai-use-policy` (10 sections, drafted ALONE at turn zero),
+five amendment docs (`amend-model-risk`, `amend-third-party`, `amend-infosec`,
+`amend-compliance`, `amend-bsa-aml`; each `landing` + 3 content sections;
+cross-reference-never-restate is a hard prompt rule, and a bank reporting no target
+policy gets that doc redrafted as a starter policy and retitled via the ordinary
+`retitle_doc` op), plus `ai-artifacts` (5 management-owned template sections).
+FF-01..FF-15 bank (FF-01 snapshot, FF-15 optional exam-posture, CSI warning in its
+why). Blueprint strings carry NO numbered supervisory identifiers (SR/circular
+numbers live only in the weekly-refreshed `data/governance-standards/ffiec-ai.md`
+and its `standards.ts` FALLBACK). Proportionality: `src/lib/governance/lbr.ts`
+downloads/caches the Fed's quarterly Large Commercial Banks release
+(`data/lbr/lrg_bnk_lst.txt` + `meta.json`, tmp+rename; refresh timer is writer of
+record weekly via `LBR_REFRESH_DAYS`, research script bootstraps an absent cache;
+two idempotent writers by documented design), parses the fixed-width two-line
+records linearly, matches conservatively (bidirectional distinctive-token match;
+ambiguity = no match; city/state corroboration for high confidence), decodes only
+NAT/SMB/NMB charters (wrong regulator is the unrecoverable error), and maps
+`assetTier` under-1b|1b-10b|10b-30b|over-30b == the FF-02 chip partition.
+`bank_profile_json` (migration 0017, cold column, lenient-parsed) carries
+`{detectedAt, evidence[], decision, lbr, tier}`; `buildSystemMessage` gains
+`ffiecBlock()` (FFIEC drafting rules + tier calibration + extended
+never-claim-endorsement list) for this kind only — all other kinds' prompts are
+byte-identical (pinned). FF-02's stored question stays static; `view.ts
+hydrateAssetSuggestions` prepends the found-figure chip at read time, and the
+answer turn writes the tier back deterministically (`tierFromAnswer` in
+`applyTurnWrite`'s fenced statement). **Bank detection + switch:**
+`bank-detect.ts detectBankSignal` runs host-side (zero AI/Tavily) in the research
+script at the brief-final join for non-FFIEC projects with no recorded decision:
+two-independent-keyword-class gate (institution AND regulator terms,
+partner-bank-attribution exclusion) OR high-confidence LBR match + one class; on
+fire the run PAUSES pre-turn-zero via `pauseForBankCheck` (new status
+**`bank_check`**, single fenced write mirroring handoff, checkpoints kept but
+progress hidden by the view, reaper/kick/claim all blind to the status) storing a
+`qs_<rev>` switch card (`isSwitchId`; NOT matched by `isQuestionEntry`, so it never
+consumes a question number). The answer route resolves it synchronously before
+every gate (chase-skip precedent): exact chips only (`parseSwitchDecision`;
+anything else 400s and re-presents), skip = continue; `applyBankCheckDecision`
+applies the pure `applyBankSwitch` reducer in one rev-fenced statement (switch:
+kind flip + re-scaffold + accumulator reset — provably nothing user-produced exists
+pre-turn-zero; both: decision recorded forever, qs_ transcript row, status
+`queued`) then `kickResearch`. The research script resumes a decided row from its
+OWN stored brief through the existing reuse machinery (continue = same-kind,
+straight to turn zero; switch = ffiec probe top-up + LBR lookup first). Turn-zero
+grouping is now the exported `turnZeroGroups` partition in turn.ts (AUP one group,
+ffiec hub alone then pairs, standards pairs — pinned for all five kinds).
+Workspace renders `bank_check` as a standalone centered card
+(`bank-check-screen.tsx`; STATUS_META word "Question", sand; no Stop — nothing
+runs). ZIP README gains an FFIEC read-order/adoption map. Accepted limitations:
+detection is deliberately conservative (banks/thrifts only — credit unions pick
+the card directly; sub-threshold signals never pause) and per-project (a new
+project on the same domain re-asks).
+
 **Routes** (all `readSession`-gated; owner + 30-day retention filter folded into every
 row fetch; missing/expired/not-owned are one identical 404 — no existence oracle; error
 bodies `{error:{code,message}}`; CSRF via the middleware prefix):
@@ -1928,7 +1984,8 @@ prompts render them as "observations to confirm with the user, not determination
 and a rules() line forbids determinations from signals — anything drafted from one
 carries `[TO CONFIRM]`) → turn zero: a COMPLETE best-effort first draft of every
 non-stub section (never placeholder language; unknowns marked `[TO CONFIRM: …]`; one
-call for the AUP (`usage_policy`), one per 2-doc group for the standards sets; the turn-zero
+call for the AUP (`usage_policy`), the `ffiec_aup` hub alone then 2-doc groups, one
+per 2-doc group for the standards sets (`turnZeroGroups` in turn.ts, pinned); the turn-zero
 system message states the 24k budget — the shared rules' 8k line used to contradict
 it — plus the 6k per-section cap, and turn zero gets a 24-op ceiling vs the answer
 turns' 12). **Stub docs never go to turn zero**: determinations rest only on
@@ -2161,9 +2218,10 @@ blog_posts         id uuid PK default gen_random_uuid(), slug text NOT NULL UNIQ
 
 governance_projects id uuid PK default gen_random_uuid(),
                    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                   kind text NOT NULL,      -- usage_policy (displayed "AI Acceptable Use Policy (AUP)")|nist_ai_rmf|eu_ai_act|iso_42001
+                   kind text NOT NULL,      -- usage_policy (displayed "AI Acceptable Use Policy (AUP)")|ffiec_aup|nist_ai_rmf|eu_ai_act|iso_42001
                    domain text NOT NULL, status text NOT NULL default 'created',
-                   -- created|queued|researching|research_failed|drafting|review|done
+                   -- created|queued|researching|research_failed|bank_check|drafting|review|done
+                   -- (bank_check: paused pre-turn-zero on a qs_ switch card, §5.12 round 20)
                    rev integer NOT NULL default 0,   -- ++ per applied turn; client staleness guard
                    research_started_at/research_heartbeat_at timestamptz,
                    research_runs integer NOT NULL default 0, research_runs_date date,
@@ -2192,6 +2250,8 @@ governance_projects id uuid PK default gen_random_uuid(),
                    -- DELETE and by the restyle run's final pass (token-equality CASE in
                    -- applyTurnWrite fences it against mid-run replacements)
                    open_item_guesses_json text,  -- marker best-guess store (§5.12, migration
+                   bank_profile_json text,           -- FFIEC: LBR row + evidence + switch decision
+                                                     -- + asset tier (migration 0017, lenient-parsed)
                    -- 0015): {marker key: guesses[]}, model-authored, pruned to live markers
                    -- on every turn write; null = no chips. Own cold column BY DESIGN so
                    -- guesses can never tip documents_json over its 150 KB write cap
@@ -2435,8 +2495,26 @@ home + the EUR-Lex 2024/1689 page; both iso.org catalogue URLs with a Tavily-sea
 fallback because iso.org 403s scripted fetchers), hash normalized text, extract
 version markers (NIST pub ids / AI-Act application dates + "digital omnibus" / ISO
 `42001:YYYY` + stage codes). Deep research triggers on: bootstrap (no doc) ∥
-`lastDeepResearch ≥ 90 days` ∥ watch-hash change judged substantive by a mini brain
-call (filters page churn). Per triggered standard: ~8 advanced Tavily queries, source
+`lastDeepResearch ≥ refreshDays` (per-StandardDef; default 90, **7 for `ffiec-ai`**
+— FFIEC-relevant issuances move faster and SR 26-2 explicitly deferred AI
+provisions to forthcoming guidance) ∥ watch-hash change judged substantive by a mini
+brain call (filters page churn). The `ffiec-ai` def has `watchUrls: []` BY DESIGN
+(ithandbook.ffiec.gov CAPTCHA-403s every direct fetcher we have, verified
+2026-07-21: curl, browser UA, headless chromium, Tavily /extract) — its
+domain-restricted Tavily fallback (`watchFallbackDomains`, `include_domains`
+passthrough in `tavilySearch`) is the change signal and counts as an ok watch leg,
+so the fail-streak alarm never arms. Its 10-query bank includes two
+ithandbook-domain-restricted queries and one `maxResults:10` open news sweep (the
+owner's top-10 review — its articles enter the ranked SOURCE POOL the author calls
+read, deliberately NOT a watch leg: a daily news hash would thrash the substantive
+classifier). Per-def `staleWarnDays/staleCritDays` (17/28 for ffiec) scale the
+staleness alarms; `inCrossDigest:false` keeps FFIEC content out of the AUP digest;
+per-def `extraCiteCapture` appends SR/Circular/FIL/FIN/12-CFR shapes to the
+citation capture for the ffiec def ONLY (other standards' docs stay
+byte-identical, pinned), and its `validCitation` also accepts `NIST AI` ids. A new
+`--only=<slug>` flag (combined with `--force-research`) bootstraps one standard's
+knowledge without re-researching the rest. The timer also refreshes the
+`data/lbr/` bank-list cache weekly (WARN on failure, stale cache stays served). Per triggered standard: ~8 advanced Tavily queries, source
 tiering (tier1 nist.gov/eur-lex/europa.eu/iso.org/artificialintelligenceact.eu >
 tier2 iapp/.gov/.edu > tier3 corroborate-or-hedge), then the reference doc is
 authored **per skeleton section** (Overview / Key obligations / Document set
@@ -2451,8 +2529,8 @@ slice) is host-assembled from the three docs' Key-obligations sections — no ex
 author call. `src/lib/governance/standards.ts` serves mtime-cached slices to the
 §5.12 prompts, with hardcoded conservative fallbacks during the bootstrap window.
 
-**Seed memories:** after research, 4 fixed-id `source_type='seed'` public rows
-(`seed-gov-{nist-ai-rmf,eu-ai-act,iso-42001,feature}`) are upserted so Tron is
+**Seed memories:** after research, 5 fixed-id `source_type='seed'` public rows
+(`seed-gov-{nist-ai-rmf,eu-ai-act,iso-42001,ffiec-ai,feature}`) are upserted so Tron is
 conversant on every channel including voice. Values are **fixed host-authored
 templates** — only bounded fields (date, sanitized version markers ≤120 chars) come
 from research; free web text NEVER enters the shared persona (public rows reach every

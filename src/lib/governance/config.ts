@@ -204,6 +204,12 @@ export const KIND_LABELS: Record<
     blurb:
       "One page your employees will actually use. It answers the real questions, like what is OK to paste into a chatbot and what never is.",
   },
+  ffiec_aup: {
+    name: "Bank AI Acceptable Use Policy (FFIEC)",
+    badge: "FOR BANKS · POLICY + AMENDMENTS",
+    blurb:
+      "For banks, savings institutions, and credit unions under federal supervision. One Board-ready AI use policy built to FFIEC examiner expectations, plus targeted amendments to the policies your bank already has: model risk, vendors, security, fair lending, BSA/AML.",
+  },
   nist_ai_rmf: {
     name: "NIST AI RMF draft set",
     badge: "DOCUMENT SET · ZIP",
@@ -223,6 +229,33 @@ export const KIND_LABELS: Record<
       "A working draft set of the core AI management system documents aligned with ISO/IEC 42001: scope, policy, roles, risk and impact assessment, statement of applicability, lifecycle.",
   },
 };
+
+/** Bank-check pause surface copy (§5.12): the qs_ switch card frame. All
+ * client-safe here so workspace.tsx never imports the server-only
+ * bank-detect module. Chip canon lives in bank-detect.ts; the two chip
+ * strings ride the stored question's suggestions, so the client renders them
+ * without importing the canon. */
+export const BANK_CHECK_CONTEXT_LINE =
+  "Research is paused to ask you something. It picks back up after you answer.";
+export const BANK_CHECK_EVIDENCE_LABEL = "Research · what I saw";
+export const BANK_CHECK_EVIDENCE_FINEPRINT =
+  "This is from public sources. If I have it wrong, say so and carry on.";
+export const BANK_CHECK_SWITCH_NOTE =
+  "Switching restarts research on the FFIEC track: bank research, one Board-ready policy, and amendments to the policies you already have.";
+export const BANK_CHECK_STAY_NOTE =
+  "Staying keeps your chosen document type, and I will not bring this up again on this project. Skip does the same.";
+export const BANK_CHECK_WAIT_FINEPRINT =
+  "Your project is saved. This question waits for you; nothing runs until you answer.";
+export const BANK_CHECK_SWITCH_RECEIPT =
+  "Switched to the FFIEC version. Research is restarting with bank supervision in scope.";
+export const BANK_CHECK_STAY_RECEIPT =
+  "Staying with your chosen document type. I will not raise it again; research is restarting where it left off.";
+
+/** Setup-panel note under the FFIEC card (home.tsx renders it only for
+ * kind ffiec_aup). The weekly claim is backed by the refresh script's
+ * per-standard 7-day cadence, pinned by governance-tests. */
+export const FFIEC_SETUP_NOTE =
+  "Built for institutions supervised by the FDIC, OCC, the Federal Reserve, or NCUA. Not a supervised financial institution? The plain AI Acceptable Use Policy card is the one you want. FFIEC expectations move; my knowledge of them is refreshed weekly.";
 
 /**
  * Canonical deletion notice (reused verbatim in the create panel, workspace,

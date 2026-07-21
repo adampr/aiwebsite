@@ -5,6 +5,7 @@
 // never claim anything).
 
 import type {
+  BankProfile,
   GovernanceDoc,
   GovernanceErrorCode,
   GovernanceKind,
@@ -17,9 +18,11 @@ import type {
   TranscriptEntry,
   TurnState,
 } from "./types";
+import { lbrSuggestion } from "./bank-detect";
 import { bankById, placeholderSectionMap } from "./blueprints";
 import { BUILD_ID } from "./build-id";
 import { CAPS, governanceEnabled } from "./config";
+import { decodeCharter, fmtAssetsMil, fmtAsOf } from "./lbr";
 import {
   attachItemGuesses,
   hydrateChaseSuggestions,
@@ -159,9 +162,27 @@ export function openConfirmTotal(documents: GovernanceDoc[]): number {
   return n;
 }
 
+/**
+ * FF-02 suggestion hydration (§5.12): when the LBR lookup found the bank,
+ * the asset question's first chip becomes the found figure with its as-of
+ * date. View-time only, never stored into the question JSON (the stored
+ * question stays the static blueprint copy; a later profile change would
+ * otherwise be baked stale).
+ */
+export function hydrateAssetSuggestions(
+  q: NextQuestion,
+  bankProfile: BankProfile | null
+): NextQuestion {
+  if (q.bankId !== "FF-02" || !bankProfile?.lbr) return q;
+  const chip = lbrSuggestion(bankProfile.lbr);
+  if (q.suggestions.includes(chip)) return q;
+  return { ...q, suggestions: [chip, ...q.suggestions] };
+}
+
 export function toProjectView(row: ProjectRow): ProjectView {
   const kind = row.kind as GovernanceKind;
   const documents = parseJson<GovernanceDoc[]>(row.documentsJson, []);
+  const bankProfile = parseJson<BankProfile | null>(row.bankProfileJson, null);
   const covered = new Set(parseJson<string[]>(row.coveredBankIdsJson, []));
   const rawNextQuestion = parseJson<NextQuestion | null>(
     row.nextQuestionJson,
@@ -175,17 +196,20 @@ export function toProjectView(row: ProjectRow): ProjectView {
   // hydration; covers qi_ questions stored before a guess arrived).
   const guessStore = parseGuessStore(row.openItemGuessesJson);
   const nextQuestion = rawNextQuestion
-    ? hydrateChaseSuggestions(
-        {
-          ...rawNextQuestion,
-          feeds: rawNextQuestion.feeds ?? [],
-          suggestions: rawNextQuestion.suggestions ?? [],
-          snapshot: rawNextQuestion.bankId
-            ? bankById(kind).get(rawNextQuestion.bankId)?.snapshot === true
-            : false,
-        },
-        documents,
-        guessStore
+    ? hydrateAssetSuggestions(
+        hydrateChaseSuggestions(
+          {
+            ...rawNextQuestion,
+            feeds: rawNextQuestion.feeds ?? [],
+            suggestions: rawNextQuestion.suggestions ?? [],
+            snapshot: rawNextQuestion.bankId
+              ? bankById(kind).get(rawNextQuestion.bankId)?.snapshot === true
+              : false,
+          },
+          documents,
+          guessStore
+        ),
+        bankProfile
       )
     : null;
   const researchProgress = parseJson<ResearchProgress | null>(
@@ -208,23 +232,43 @@ export function toProjectView(row: ProjectRow): ProjectView {
     ),
     placeholderSections: placeholderSectionMap(kind, documents),
     progress: progressFor(kind, covered),
-    researchProgress: researchProgress
-      ? {
-          step: researchProgress.step,
-          pct: researchProgress.pct,
-          counts: researchProgress.counts,
-          ...(researchProgress.error ? { error: researchProgress.error } : {}),
-        }
-      : null,
+    // bank_check keeps its checkpoints in the column for the post-decision
+    // resume, but the paused card must not render a stale mid-research
+    // progress block, so progress is exposed only for the running statuses.
+    researchProgress:
+      researchProgress &&
+      ["created", "queued", "researching", "research_failed"].includes(
+        row.status
+      )
+        ? {
+            step: researchProgress.step,
+            pct: researchProgress.pct,
+            counts: researchProgress.counts,
+            ...(researchProgress.error ? { error: researchProgress.error } : {}),
+          }
+        : null,
     openConfirmItems: attachItemGuesses(
       openConfirmItems(documents),
       documents,
       guessStore
     ),
     openConfirmTotal: openConfirmTotal(documents),
-    companySnapshot: composeCompanySnapshot(
-      normalizeBrief(parseJson<unknown>(row.researchJson, null))
-    ),
+    companySnapshot: (() => {
+      const snap = composeCompanySnapshot(
+        normalizeBrief(parseJson<unknown>(row.researchJson, null))
+      );
+      // FFIEC snapshot card: fold the LBR public record into the size line
+      // (no client type change; the FF-01 card renders it as part of size).
+      if (snap && kind === "ffiec_aup" && bankProfile?.lbr) {
+        const c = decodeCharter(bankProfile.lbr.charter);
+        const lbrLine = `Federal Reserve bank list: about ${fmtAssetsMil(bankProfile.lbr.consolAssetsMil)} in consolidated assets as of ${fmtAsOf(bankProfile.lbr.asOf)}${c ? `; ${c.description}, ${c.regulator} supervised` : ""}`;
+        snap.size = snap.size ? `${snap.size}. ${lbrLine}` : lbrLine;
+      }
+      return snap;
+    })(),
+    ...(row.status === "bank_check" && bankProfile?.evidence?.length
+      ? { bankCheckEvidence: bankProfile.evidence.slice(0, 3) }
+      : {}),
     styleSample: row.styleSampleName
       ? {
           name: row.styleSampleName,

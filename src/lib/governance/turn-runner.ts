@@ -34,6 +34,7 @@ import {
   resolveTurnGate,
   validateTurn,
 } from "./turn";
+import { tierFromAnswer } from "./bank-detect";
 import { isQuestionEntry } from "./interview";
 import {
   attachItemGuesses,
@@ -49,6 +50,7 @@ import { bankById, placeholderSectionMap } from "./blueprints";
 import { normalizeBrief } from "./research";
 import { openConfirmItems, openConfirmTotal } from "./view";
 import type {
+  BankProfile,
   GovernanceDoc,
   GovernanceErrorCode,
   GovernanceKind,
@@ -180,6 +182,9 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
   const brief: ResearchBrief | null = normalizeBrief(
     parse<unknown>(row.researchJson, null)
   );
+  // FFIEC proportionality profile (§5.12): lenient-parsed, only consumed by
+  // buildSystemMessage for kind ffiec_aup (other kinds' prompts unchanged).
+  const bankProfile = parse<BankProfile | null>(row.bankProfileJson, null);
   const changedSections = parse<Record<string, string[]> | null>(
     row.changedSectionsJson,
     null
@@ -326,6 +331,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
     styleSample: row.styleSampleText
       ? { name: row.styleSampleName ?? "sample", text: row.styleSampleText }
       : null,
+    bankProfile,
   });
   const validFocusRefs = revise
     ? job.focusSections.filter((f) => {
@@ -506,6 +512,18 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         },
       ];
 
+  // FFIEC tier write-back (§5.12): the FF-02 answer is the authoritative
+  // asset figure (the LBR misses every savings institution and credit
+  // union, and a user correcting a wrong match must win). Deterministic
+  // chip/figure mapping only; an unparseable freeform answer leaves the
+  // stored tier untouched (the model still reads the verbatim answer).
+  let tierProfile: BankProfile | undefined;
+  if (!revise && !skipped && question.bankId === "FF-02") {
+    const prior = parse<BankProfile | null>(row.bankProfileJson, null) ?? {};
+    const tier = tierFromAnswer(answer, prior.lbr ?? null);
+    if (tier && tier !== prior.tier) tierProfile = { ...prior, tier };
+  }
+
   const wrote = await applyTurnWrite({
     id: row.id,
     userId: job.userId,
@@ -521,6 +539,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
     flagged: applied.injectionHits.length > 0,
     answersIncrement,
     openItemGuesses: guessStore,
+    ...(tierProfile ? { bankProfile: tierProfile } : {}),
   });
   if (!wrote)
     return fail(
@@ -681,6 +700,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         text: row.styleSampleText,
       },
       restyle: true,
+      bankProfile: parse<BankProfile | null>(row.bankProfileJson, null),
     });
     const out = await callValidated(
       system,
@@ -846,6 +866,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       styleSample: row.styleSampleText
         ? { name: row.styleSampleName ?? "sample", text: row.styleSampleText }
         : null,
+      bankProfile: parse<BankProfile | null>(row.bankProfileJson, null),
     });
     const out = await callValidated(
       system,

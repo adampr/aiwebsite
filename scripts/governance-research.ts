@@ -34,14 +34,26 @@ import {
   heartbeatResearch,
   isUuid,
   latestBriefForDomain,
+  pauseForBankCheck,
   setResearchOutcome,
   trySpendBudget,
 } from "../src/lib/governance/db";
+import {
+  buildSwitchQuestion,
+  detectBankSignal,
+} from "../src/lib/governance/bank-detect";
+import {
+  assetTier,
+  loadLbr,
+  matchBank,
+  type LbrMatch,
+} from "../src/lib/governance/lbr";
 import {
   companyNameFromTitle,
   crawlDedupeKey,
   emptyBrief,
   htmlToText,
+  normalizeBrief,
   safeFetch,
   screenInjection,
   screenSuspicionNote,
@@ -72,10 +84,12 @@ import {
   applyOps,
   parseTurnJson,
   pickNextBankQuestion,
+  turnZeroGroups,
   validateTurn,
 } from "../src/lib/governance/turn";
 import type {
   ApplicabilitySignal,
+  BankProfile,
   GovernanceDoc,
   GovernanceKind,
   ResearchAudit,
@@ -542,7 +556,51 @@ async function main(): Promise<void> {
   // Kind-aware: a brief already probed for this kind is preferred and reused
   // as-is; a brief probed for a different kind (or never probed) is reused
   // with a probe-only top-up (<=3 Tavily + 1 brain call), never a full rerun.
-  const reused = await latestBriefForDomain(row.userId, domain, projectId, kind);
+  let reused = await latestBriefForDomain(row.userId, domain, projectId, kind);
+  // Bank-check resume (§5.12): a decided pause resumes from the row's OWN
+  // stored brief, riding the same reuse machinery: zero re-crawl, zero
+  // re-distill. A continue is same-kind (probes already ran for it) and
+  // reuses as-is; a switch (kind is now ffiec_aup) takes the probe top-up
+  // path below (<=3 Tavily + 1 brain call). Detection is skipped later
+  // because the decision is recorded, so no pause loop is possible.
+  const priorBankProfile = ((): BankProfile | null => {
+    try {
+      return row.bankProfileJson
+        ? (JSON.parse(row.bankProfileJson) as BankProfile)
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (priorBankProfile?.decision && row.researchJson) {
+    const own = normalizeBrief(
+      ((): unknown => {
+        try {
+          return JSON.parse(row.researchJson);
+        } catch {
+          return null;
+        }
+      })()
+    );
+    if (own) {
+      const ownFacts = ((): { fact: string; source: string }[] => {
+        try {
+          const a = JSON.parse(row.researchAuditJson ?? "null") as {
+            facts?: { fact?: unknown; source?: unknown }[];
+          } | null;
+          return (a?.facts ?? []).flatMap((f) =>
+            typeof f?.fact === "string"
+              ? [{ fact: f.fact, source: typeof f.source === "string" ? f.source : "" }]
+              : []
+          );
+        } catch {
+          return [];
+        }
+      })();
+      reused = { brief: own, donorId: projectId, donorFacts: ownFacts };
+      log("resume", `bank-check decision=${priorBankProfile.decision}; resuming from own brief`);
+    }
+  }
   let brief: ResearchBrief;
   let flagged = false;
   // research_audit_json accumulators: map-phase {fact, source} provenance,
@@ -848,6 +906,81 @@ async function main(): Promise<void> {
     }
   }
 
+  // LBR lookup + bank detection (§5.12), at the single point where the brief
+  // is final for both the fresh-distill and every reuse/resume path.
+  // FFIEC runs enrich the bank profile with the Fed release row (asset
+  // figure + tier the prompt calibrates to); non-FFIEC runs without a
+  // recorded decision run deterministic bank detection and may PAUSE here,
+  // before any turn-zero spend. LBR data is cached on disk and best-effort:
+  // a fetch failure never blocks or fails research.
+  const cityStateHint = ((): { city?: string; state?: string } => {
+    const m = /\b([A-Z][A-Za-z .-]{2,30}),\s*([A-Z]{2})\b/.exec(
+      `${brief.sizeAndFootprint}\n${brief.companyProfile}`
+    );
+    return m ? { city: m[1], state: m[2] } : {};
+  })();
+  const lbrRow = (m: LbrMatch, asOf: string): NonNullable<BankProfile["lbr"]> => ({
+    name: m.bank.name,
+    rssdId: m.bank.rssdId,
+    rank: m.bank.rank,
+    city: m.bank.city,
+    state: m.bank.state,
+    charter: m.bank.charter,
+    consolAssetsMil: m.bank.consolAssetsMil,
+    asOf,
+  });
+  let bankProfileOut: BankProfile | undefined;
+  if (kind === "ffiec_aup") {
+    const base: BankProfile = { ...(priorBankProfile ?? {}) };
+    // lbr === undefined means never looked up; null means a recorded miss.
+    if (base.lbr === undefined && brief.companyName) {
+      const data = await loadLbr();
+      const m = data
+        ? matchBank(data.banks, brief.companyName, cityStateHint.city, cityStateHint.state)
+        : null;
+      base.lbr = m && m.confidence === "high" ? lbrRow(m, data!.asOf) : null;
+      log("lbr", `lookup ${base.lbr ? `hit rank=${base.lbr.rank}` : "miss"}`);
+    }
+    if (base.lbr && !base.tier) base.tier = assetTier(base.lbr.consolAssetsMil);
+    bankProfileOut = base;
+  } else if (!priorBankProfile?.decision) {
+    const data = brief.companyName ? await loadLbr() : null;
+    const m = data
+      ? matchBank(data.banks, brief.companyName, cityStateHint.city, cityStateHint.state)
+      : null;
+    const signal = detectBankSignal(brief, m);
+    if (signal.likely) {
+      const pauseAudit: ResearchAudit = truncateAudit({
+        version: 1,
+        createdAt: new Date().toISOString(),
+        facts: auditFacts,
+        suspicious: auditSuspicious,
+        screenHits: auditScreenHits,
+        counts: progress.counts,
+        ...(reuseLineage ? { reusedFrom: reuseLineage } : {}),
+      });
+      const paused = await pauseForBankCheck({
+        id: projectId,
+        brief,
+        audit: pauseAudit,
+        flagged,
+        bankProfile: {
+          detectedAt: new Date().toISOString(),
+          evidence: signal.evidence,
+          lbr: m && m.confidence === "high" && data ? lbrRow(m, data.asOf) : null,
+        },
+        nextQuestion: buildSwitchQuestion(row.rev + 1),
+      });
+      log(
+        "bank_check",
+        paused
+          ? `paused for bank check (evidence=${signal.evidence.length})`
+          : "pause fence missed (row superseded); exiting"
+      );
+      return;
+    }
+  }
+
   // Step 7: handoff — scaffold + optional turn zero + first question, ONE write.
   progress.step = "handoff";
   progress.pct = 90;
@@ -884,17 +1017,14 @@ async function main(): Promise<void> {
     forcedReviewSoon: false,
     styleSample,
     turnZero: true,
+    bankProfile: bankProfileOut ?? null,
   });
+  // Grouping is the shared turnZeroGroups partition (§5.12, test-pinned):
+  // AUP one group, ffiec hub ALONE then pairs, standards sets in pairs. The
+  // 24k-char op budget then covers every section of a group fully, so the
+  // "complete every section" instruction never trades thoroughness for space.
   const nonStub = documents.filter((d) => !d.stub);
-  const groups: GovernanceDoc[][] = [];
-  if (kind === "usage_policy") groups.push(nonStub);
-  else {
-    // Groups of 2: the 24k-char op budget then covers every section of the
-    // group fully, so the "complete every section" instruction never has to
-    // trade thoroughness for space.
-    for (let i = 0; i < nonStub.length; i += 2)
-      groups.push(nonStub.slice(i, i + 2));
-  }
+  const groups: GovernanceDoc[][] = turnZeroGroups(kind, nonStub);
   let groupsApplied = 0;
   let repairsUsed = 0;
   // Turn zero is where most [TO CONFIRM] markers are born, so its groups'
@@ -1020,6 +1150,7 @@ async function main(): Promise<void> {
     id: projectId,
     brief,
     audit,
+    ...(bankProfileOut ? { bankProfile: bankProfileOut } : {}),
     flagged,
     documents,
     nextQuestion,

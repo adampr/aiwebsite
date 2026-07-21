@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     absolute: "Free AI Governance Builder | NIST AI RMF, EU AI Act, ISO 42001",
   },
   description:
-    "Free AI governance builder: draft an AI acceptable use policy (AI usage policy) or a document set for NIST AI RMF, the EU AI Act, or ISO/IEC 42001.",
+    "Free AI governance builder: draft an AI acceptable use policy (AI usage policy), an FFIEC-aligned bank AI policy suite, or a document set for NIST AI RMF, the EU AI Act, or ISO/IEC 42001.",
   alternates: { canonical: "/governance" },
 };
 
@@ -38,7 +38,7 @@ const appJsonLd = JSON.stringify({
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
   provider: { "@type": "Organization", "@id": `${siteConfig.site.baseUrl}/#org` },
   description:
-    "Draft an AI acceptable use policy (AUP) or a governance document set mapped to NIST AI RMF, the EU AI Act, or ISO/IEC 42001. Tron Netter researches your company first and drafts with you, live.",
+    "Draft an AI acceptable use policy (AUP), an FFIEC-aligned bank AI policy suite, or a governance document set mapped to NIST AI RMF, the EU AI Act, or ISO/IEC 42001. Tron Netter researches your company first and drafts with you, live.",
 }).replace(/</g, "\\u003c");
 
 const SESSION_STEPS = [
@@ -205,6 +205,19 @@ export default async function GovernancePage() {
                 the EU AI Act, or ISO/IEC 42001: risk registers, human
                 oversight, transparency, scope and roles. Tron re-checks all
                 three standards every quarter.
+              </p>
+            </div>
+          </div>
+          <div className="mt-6 grid gap-6 sm:grid-cols-1">
+            <div className="panel rise">
+              <h3>A bank AI policy suite, FFIEC aligned</h3>
+              <p className="mt-4 text-sm">
+                For banks and other federally supervised institutions: one
+                Board-ready AI use policy plus targeted amendments to the
+                policies your examiners already know, calibrated to your asset
+                size from the Federal Reserve&apos;s bank list. Supervisory
+                expectations move fast here, so Tron re-checks them every
+                week.
               </p>
             </div>
           </div>

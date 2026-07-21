@@ -579,6 +579,31 @@ export function pickNextBankQuestion(
   return null;
 }
 
+/**
+ * Turn-zero drafting groups (§5.12): usage_policy drafts its single doc in
+ * one call; standards sets pair docs so the op budget covers every section
+ * of a group fully; ffiec_aup drafts its ten-section hub ALONE (pairing it
+ * with an amendment would put ~14 sections against the same 24k budget that
+ * pairs 8, the "hit a snag" class of failure) and pairs the rest. Pure and
+ * exported so the partition is test-pinned; the research script consumes it
+ * verbatim.
+ */
+export function turnZeroGroups(
+  kind: GovernanceKind,
+  nonStub: GovernanceDoc[]
+): GovernanceDoc[][] {
+  if (kind === "usage_policy") return nonStub.length ? [nonStub] : [];
+  const groups: GovernanceDoc[][] = [];
+  let rest = nonStub;
+  if (kind === "ffiec_aup") {
+    const hub = nonStub.filter((d) => d.slug === "bank-ai-use-policy");
+    if (hub.length) groups.push(hub);
+    rest = nonStub.filter((d) => d.slug !== "bank-ai-use-policy");
+  }
+  for (let i = 0; i < rest.length; i += 2) groups.push(rest.slice(i, i + 2));
+  return groups;
+}
+
 export function progressFor(
   kind: GovernanceKind,
   covered: Set<string>

@@ -6,22 +6,30 @@ import type { NumberingStyle } from "./numbering";
 
 export type GovernanceKind =
   | "usage_policy"
+  | "ffiec_aup"
   | "nist_ai_rmf"
   | "eu_ai_act"
   | "iso_42001";
 
 export const GOVERNANCE_KINDS: GovernanceKind[] = [
   "usage_policy",
+  "ffiec_aup",
   "nist_ai_rmf",
   "eu_ai_act",
   "iso_42001",
 ];
 
+// "bank_check": research paused pre-turn-zero because host-side detection
+// concluded the company is likely a bank on a non-FFIEC project; the stored
+// qs_ question card is the only pending work and nothing runs until it is
+// answered (§5.12). The reaper, queued kick, and claim paths all key on
+// other statuses, so a paused row is never requeued out from under the card.
 export type ProjectStatus =
   | "created"
   | "queued"
   | "researching"
   | "research_failed"
+  | "bank_check"
   | "drafting"
   | "review"
   | "done";
@@ -107,6 +115,35 @@ export interface ApplicabilitySignal {
   source: string; // URL, sanitized (http/https, no creds) or ""
   confidence: SignalConfidence;
 }
+
+/**
+ * bank_profile_json (§5.12, migration 0017): one cold column carrying the
+ * Fed LBR lookup result, the bank-detection evidence, the user's switch
+ * decision, and the asset tier the drafting prompt calibrates to. Lenient-
+ * parsed at every read edge (guesses-column precedent); NULL on every row
+ * that predates the feature or where detection never ran.
+ */
+export interface BankProfile {
+  detectedAt?: string; // ISO; set when detection paused the project
+  evidence?: string[]; // pause-card lines, captured AT pause time (max 3)
+  decision?: "switch" | "continue";
+  decidedAt?: string; // ISO
+  lbr?: {
+    name: string; // matched LBR bank name, normalized display form
+    rssdId: string;
+    rank: number;
+    city: string;
+    state: string;
+    charter: string; // LBR charter code (NAT | SMB | NMB | ...)
+    consolAssetsMil: number;
+    asOf: string; // release "as of" date, ISO yyyy-mm-dd
+  } | null;
+  tier?: AssetTier;
+}
+
+/** Consolidated-asset tiers driving proportionality calibration. Chip copy in
+ * blueprints and the mapper in lbr.ts must stay the same partition. */
+export type AssetTier = "under-1b" | "1b-10b" | "10b-30b" | "over-30b";
 
 export interface ResearchBrief {
   companyProfile: string;
@@ -313,6 +350,9 @@ export interface ProjectView {
     size: string;
     industry: string;
   } | null;
+  // bank_check only (§5.12): the detection evidence lines captured at pause
+  // time, rendered in the switch card's context block. Absent otherwise.
+  bankCheckEvidence?: string[];
   // The uploaded sample policy, name only (its text stays server-side; the
   // drafting prompt mirrors its formatting conventions). Null = none.
   // numbering: the sample's detected section-numbering style (round 15b),

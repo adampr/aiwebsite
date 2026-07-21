@@ -58,6 +58,7 @@ import {
   type TurnAccepted,
   type TurnResponse,
 } from "./shared";
+import { BankCheckScreen } from "./bank-check-screen";
 import { ResearchScreen, researchStepLabel } from "./research-screen";
 import { DocPane, secDomId, type ChangedRef, type RevealState } from "./doc-pane";
 import {
@@ -2676,7 +2677,13 @@ export function Workspace({ projectId }: { projectId: string }) {
         </div>
       </div>
 
-      {!showSplit ? (
+      {view.status === "bank_check" ? (
+        <BankCheckScreen
+          view={view}
+          onDecided={() => void fetchProject()}
+          onAnnounce={setAnnounce}
+        />
+      ) : !showSplit ? (
         <ResearchScreen
           view={view}
           resuming={resuming}
