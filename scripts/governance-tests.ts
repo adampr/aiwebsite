@@ -31,9 +31,11 @@ import {
 import { readmeText } from "../src/lib/governance/docx";
 import {
   buildAmendUserMessage,
+  buildGuessBackfillUserMessage,
   buildRestyleUserMessage,
   buildSystemMessage,
   buildTurnUserMessage,
+  guessBackfillSystemMessage,
   sampleOutline,
 } from "../src/lib/governance/prompt";
 import {
@@ -106,6 +108,7 @@ import {
 import {
   applyOps,
   coverageComplete,
+  parseBackfillGuesses,
   parseTurnJson,
   pickNextBankQuestion,
   pickOpenItemQuestion,
@@ -115,6 +118,9 @@ import {
 } from "../src/lib/governance/turn";
 import {
   attachItemGuesses,
+  combineGuesses,
+  deriveDeterministicGuesses,
+  guessGapMarkers,
   guessKey,
   hydrateChaseSuggestions,
   mergeOpenItemGuesses,
@@ -3476,11 +3482,199 @@ function check(name: string, cond: boolean): void {
         confirmable: false,
       },
     ],
+    docs,
     store
   );
   check(
     "guesses: resolver items get guesses attached, unconfirmable included",
     items[0].guesses?.[0] === "14 days"
+  );
+
+  /* Round 2 (§5.12): deterministic repeated-label guesses, combine
+     ordering, the backfill gap list + parser, and the prompt strings. */
+  const detDocs: GovernanceDoc[] = [
+    {
+      slug: "ai-usage-policy",
+      title: "AI Usage Policy",
+      stub: false,
+      sections: [
+        {
+          id: "doc-control",
+          title: "Document control",
+          markdown:
+            "Initial Policy Effective Date: 8/1/2026\n\nOwned by Department: Security\n\nPurpose\nThis policy sets baseline rules.",
+        },
+        {
+          id: "approved-tools",
+          title: "Approved tools",
+          markdown:
+            "**Owned by Department:** [TO CONFIRM: owning department]\n\nNote to reviewers: see above.\n\n| Review cadence | Quarterly |\n| Review cadence | [TO CONFIRM: review cadence] |",
+        },
+        {
+          id: "prose",
+          title: "Prose",
+          markdown:
+            "As a reminder: this policy exists. Approval flows are described in a runbook nobody labeled, [TO CONFIRM: approval SLA] applies.",
+        },
+      ],
+    },
+  ];
+  const det = deriveDeterministicGuesses(detDocs);
+  check(
+    "det: repeated colon label resolves the marker, bold tolerated",
+    det[guessKey("owning department")]?.[0] === "Security"
+  );
+  check(
+    "det: two-cell table row resolves the table marker",
+    det[guessKey("review cadence")]?.[0] === "Quarterly"
+  );
+  check(
+    "det: mid-sentence unlabeled marker yields nothing",
+    !(guessKey("approval SLA") in det)
+  );
+  check(
+    "det: a one-off prose colon with no sibling teaches nothing",
+    !Object.keys(det).some((k) => det[k].includes("this policy exists"))
+  );
+  const longLabelDocs: GovernanceDoc[] = [
+    {
+      slug: "ai-usage-policy",
+      title: "P",
+      stub: false,
+      sections: [
+        {
+          id: "a",
+          title: "A",
+          markdown:
+            "Requests get a first response within a business day at most: 24 hours\n\nRequests get a first response within a business day at most: [TO CONFIRM: sla]",
+        },
+      ],
+    },
+  ];
+  check(
+    "det: labels over six words are rejected",
+    Object.keys(deriveDeterministicGuesses(longLabelDocs)).length === 0
+  );
+  const conflictDocs: GovernanceDoc[] = [
+    {
+      slug: "ai-usage-policy",
+      title: "P",
+      stub: false,
+      sections: [
+        {
+          id: "a",
+          title: "A",
+          markdown:
+            "Owner: Security\n\nOwner: [TO CONFIRM: responsible party]",
+        },
+        {
+          id: "b",
+          title: "B",
+          markdown:
+            "Data steward: Legal\n\nData steward: [TO CONFIRM: responsible party]",
+        },
+      ],
+    },
+  ];
+  check(
+    "det: same excerpt under disagreeing labels is dropped whole",
+    Object.keys(deriveDeterministicGuesses(conflictDocs)).length === 0
+  );
+  check(
+    "det: combine is det-first, case-insensitive dedupe, capped at 3",
+    JSON.stringify(
+      combineGuesses(["Security"], [["security", "Legal", "IT", "HR"]])
+    ) === JSON.stringify(["Security", "Legal", "IT"])
+  );
+  const detdone = attachItemGuesses(
+    [
+      {
+        doc: "ai-usage-policy",
+        section: "approved-tools",
+        excerpt: "owning department",
+        occurrence: 0,
+        contextBefore: "",
+        contextAfter: "",
+        confirmable: false,
+      },
+    ],
+    detDocs,
+    {}
+  );
+  check(
+    "det: resolver chip appears with an EMPTY store (the owner's case)",
+    detdone[0].guesses?.[0] === "Security"
+  );
+  const detChase = pickOpenItemQuestion(detDocs, 9);
+  check(
+    "det: chase question hydrates deterministic chips over an empty store",
+    detChase !== null &&
+      hydrateChaseSuggestions(detChase, detDocs, {}).suggestions[0] ===
+        "Security"
+  );
+
+  const gap = guessGapMarkers(detDocs, deriveDeterministicGuesses(detDocs), {});
+  check(
+    "gap: only markers with neither det nor stored guesses are listed",
+    gap.length === 1 && gap[0].excerpt === guessKey("approval SLA")
+  );
+  check(
+    "gap: a stored guess removes the marker from the gap",
+    guessGapMarkers(detDocs, deriveDeterministicGuesses(detDocs), {
+      [guessKey("approval SLA")]: ["24 hours"],
+    }).length === 0
+  );
+
+  check(
+    "backfill: junk raw degrades to empty, valid object parses with caps",
+    parseBackfillGuesses("no json here").length === 0 &&
+      parseBackfillGuesses("{}").length === 0 &&
+      parseBackfillGuesses(
+        JSON.stringify({
+          open_item_guesses: [
+            { excerpt: "approval SLA", guesses: ["24 hours", "", "x".repeat(200), "1 week", "2 days"] },
+          ],
+        })
+      )[0].guesses.join(",") === "24 hours,1 week,2 days"
+  );
+
+  const chaseMsg = buildTurnUserMessage({
+    kind,
+    documents: detDocs,
+    transcript: [],
+    coveredBankIds: [...requiredBankIds(kind)],
+    question: {
+      id: "qi_9",
+      bankId: null,
+      text: "q",
+      why: "",
+      suggestions: [],
+      feeds: ["ai-usage-policy#approved-tools"],
+    },
+    answer: "a",
+    skipped: false,
+    changedSections: null,
+  });
+  check(
+    "prompt: chase turns state the expected per-item guess emission",
+    chaseMsg.includes('For EACH open item listed above, add an "open_item_guesses" entry')
+  );
+  check(
+    "prompt: rules name the CURRENT DRAFT as a guess source",
+    buildSystemMessage({ kind, brief: null, forcedReviewSoon: false }).includes(
+      "established elsewhere in the CURRENT DRAFT"
+    )
+  );
+  const backfillMsg = buildGuessBackfillUserMessage({
+    documents: detDocs,
+    brief: null,
+    markers: [{ ref: "ai-usage-policy#prose", excerpt: guessKey("approval SLA") }],
+  });
+  check(
+    "prompt: backfill serializes the marker's section verbatim and lists it",
+    backfillMsg.includes("a runbook nobody labeled") &&
+      backfillMsg.includes("- approval SLA") &&
+      guessBackfillSystemMessage().includes('"open_item_guesses"')
   );
 }
 

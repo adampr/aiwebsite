@@ -15,7 +15,9 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-20 (governance round 18c: alpha-marker
+Last verified against code: 2026-07-21 (governance best-guess round 2:
+deterministic repeated-label chips + expected chase emission + guess backfill
+AI call; previously round 18c: alpha-marker
 heading promotion — mirrored LETTER lines ("B. Data Handling") promote to
 host-numbered headings under a consecutive-letter run guard, real lettered
 heading sets shed their letters before host labels, see §5.12 rendering
@@ -1280,6 +1282,47 @@ Add answer — a guess can never slip through unread; shown on unconfirmable
 items too, where a candidate fact saves the most typing). Missing store, old
 rows (null column), or a model that never emits the field all degrade to
 exactly the pre-feature chip-less behavior. Tests: `guesses:` block 24.
+
+**Best-guess round 2** (2026-07-21, after the live observation that the model
+never emitted the optional field and that the owner's obvious answer sat in
+sibling sections the elided serialization hid; architect+critic panel). Three
+guess sources now compose, best first, at every read edge: (1) DETERMINISTIC
+repeated-label guesses — `deriveDeterministicGuesses` (guesses.ts, pure,
+client-safe, derived at read time from the FULL stored documents, never
+persisted, never prompted): a label index over plain/bold "Label: value" lines
+(last colon wins) and two-cell table rows (value marker-free, ≤80 chars, has
+alphanumerics; label ≤6 words) feeds marker-side lookups keyed by the marker's
+own line label (colon tail or preceding table cell); a value only surfaces
+when the SAME label resolves concretely elsewhere (one-off prose colons have
+no sibling), the marker's own line never teaches, and a key whose occurrences
+disagree across labels is dropped whole (a wrong chip is worse than none).
+(2) The stored column (inline emissions, unchanged). (3) A **guess backfill
+AI call** (owner-authorized 2026-07-21, relaxing round 1's zero-extra-calls
+rule): in the runner's main advancing path only, when the turn will present
+open items (entering review with markers, or a `qi_` next question) whose
+markers have NEITHER a deterministic nor a stored guess (`guessGapMarkers`,
+cap `backfillMaxMarkers` 10), ONE extra budget-counted brain call
+(`guessBackfillSystemMessage` + `buildGuessBackfillUserMessage`: gap sections
+VERBATIM ≤20k chars + brief + the marker list; response = a bare
+`open_item_guesses` object parsed by `parseBackfillGuesses` →
+`coerceGuessEntries`, the extraction now shared with `validateTurn`, still
+lenient) runs BEFORE the fenced write (no idle poll in drafting), gap-only
+merged so it can never clobber an existing guess. The call is wrapped in a
+`Promise.race` wall-clock deadline (`backfillTimeoutMs` 30 s) that bounds the
+brain SEMAPHORE WAIT too, and gated on `turnStaleMs` headroom
+(`backfillMinHeadroomMs` 90 s = timeout + write margin): an unbounded acquire
+under load must never push the worker past the claim horizon and void the
+turn (critic-mandated; worst stack 90 s turn + 60 s repair + 30 s backfill =
+180 s < 240 s). Budget refusal → `notifyBudgetHit`, degrade; any failure
+degrades to no chips, never fails the turn. Amend/restyle and the zero-AI
+`qi_`-skip never backfill; the review resolver gets deterministic + stored
+chips at its read edges with no new spend. `attachItemGuesses` gained a
+`documents` param (det derivation); `hydrateChaseSuggestions` now combines
+det-first even over already-hydrated suggestions. Prompt-side: chase turns
+now STATE the per-item emission expectation ("For EACH open item listed
+above…"), and the rules name facts "established elsewhere in the CURRENT
+DRAFT" as a guess source (validation unchanged either way). Tests: `det:`,
+`gap:`, `backfill:`, and `prompt:` checks in block 24.
 
 **Non-advancing turns + the four 2026-07-17 owner requests (round 12).**
 (1) *Reformat the draft*: uploading a format sample mid-project previously changed

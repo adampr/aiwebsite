@@ -85,6 +85,44 @@ function str(v: unknown, max: number): string | null {
   return typeof v === "string" && v.length > 0 && v.length <= max ? v : null;
 }
 
+/** Shared lenient coercion for open_item_guesses shapes (validateTurn and
+ *  the backfill parser): junk filters to [], never an error. Extracted
+ *  behavior-identical from validateTurn (§5.12 round 2). */
+export function coerceGuessEntries(
+  v: unknown
+): { excerpt: string; guesses: string[] }[] {
+  return (Array.isArray(v) ? v : [])
+    .flatMap((e): { excerpt: string; guesses: string[] }[] => {
+      const r = e as Record<string, unknown>;
+      const excerpt = str(r.excerpt, 400) ?? str(r.marker, 400);
+      const guesses = Array.isArray(r.guesses)
+        ? r.guesses
+            .filter(
+              (g): g is string =>
+                typeof g === "string" &&
+                g.trim().length > 0 &&
+                g.length <= CAPS.openItemGuessMaxChars
+            )
+            .slice(0, CAPS.openItemGuessesPerItem)
+        : [];
+      return excerpt && guesses.length ? [{ excerpt, guesses }] : [];
+    })
+    .slice(0, CAPS.openItemGuessesMaxKeys);
+}
+
+/** Backfill-call response parse (§5.12 round 2): one JSON object carrying
+ *  only open_item_guesses. Fully lenient standalone: unparseable or
+ *  malformed output degrades to [] and the turn proceeds guess-less. */
+export function parseBackfillGuesses(
+  raw: string
+): { excerpt: string; guesses: string[] }[] {
+  const parsed = parseTurnJson(raw);
+  if (typeof parsed !== "object" || parsed === null) return [];
+  return coerceGuessEntries(
+    (parsed as Record<string, unknown>).open_item_guesses
+  );
+}
+
 export interface TurnValidation {
   ok: boolean;
   turn?: TurnResult;
@@ -258,25 +296,7 @@ export function validateTurn(
   // never fail an otherwise valid turn or trigger the repair call, so junk
   // shapes filter to [] and nothing here ever pushes to errors[]. Caps are
   // re-enforced at merge time (guesses.ts); this trim just bounds transport.
-  const openItemGuesses = (
-    Array.isArray(o.open_item_guesses) ? o.open_item_guesses : []
-  )
-    .flatMap((e): { excerpt: string; guesses: string[] }[] => {
-      const r = e as Record<string, unknown>;
-      const excerpt = str(r.excerpt, 400) ?? str(r.marker, 400);
-      const guesses = Array.isArray(r.guesses)
-        ? r.guesses
-            .filter(
-              (g): g is string =>
-                typeof g === "string" &&
-                g.trim().length > 0 &&
-                g.length <= CAPS.openItemGuessMaxChars
-            )
-            .slice(0, CAPS.openItemGuessesPerItem)
-        : [];
-      return excerpt && guesses.length ? [{ excerpt, guesses }] : [];
-    })
-    .slice(0, CAPS.openItemGuessesMaxKeys);
+  const openItemGuesses = coerceGuessEntries(o.open_item_guesses);
 
   if (errors.length) {
     // Salvage trim mirrors mdTotal above: only upsert_section markdown

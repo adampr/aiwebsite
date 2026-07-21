@@ -12,19 +12,22 @@ import {
   newId,
 } from "./brain";
 import { CAPS, REVIEW_SKIPPED_SUMMARY, withOpenItemsNote } from "./config";
-import { effectiveBrainDailyCap } from "./budget";
+import { effectiveBrainDailyCap, notifyBudgetHit } from "./budget";
 import { applyTurnWrite, failTurn, type ProjectRow, trySpendBudget } from "./db";
 import {
   buildAmendUserMessage,
   buildRestyleUserMessage,
   buildSystemMessage,
+  buildGuessBackfillUserMessage,
   buildTurnUserMessage,
+  guessBackfillSystemMessage,
   repairSystemMessage,
   sampleOutline,
 } from "./prompt";
 import {
   applyOps,
   coverageComplete,
+  parseBackfillGuesses,
   parseTurnJson,
   progressFor,
   resolveNonAdvancingGate,
@@ -34,6 +37,9 @@ import {
 import { isQuestionEntry } from "./interview";
 import {
   attachItemGuesses,
+  deriveDeterministicGuesses,
+  guessGapMarkers,
+  guessKey,
   hydrateChaseSuggestions,
   mergeOpenItemGuesses,
   parseGuessStore,
@@ -304,6 +310,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         // that opens right after still gets the stored best guesses.
         openConfirmItems: attachItemGuesses(
           openConfirmItems(documents),
+          documents,
           parseGuessStore(row.openItemGuessesJson)
         ),
         openConfirmTotal: openTotal,
@@ -397,11 +404,70 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
   // its own cold column, so it can never tip documentsJson over its byte
   // cap. Hydration fills a chase question's chips from the store here (the
   // POST body) exactly as view.ts does for the poll.
-  const guessStore = mergeOpenItemGuesses(
+  let guessStore = mergeOpenItemGuesses(
     parseGuessStore(row.openItemGuessesJson),
     turn.openItemGuesses,
     applied.documents
   );
+
+  // Guess backfill (§5.12 round 2, owner-authorized extra AI call): when
+  // this turn will present open items whose markers have neither a
+  // deterministic draft-derived guess nor a stored one, ONE budget-counted
+  // call fills the gap BEFORE the fenced write (there is no idle poll in
+  // drafting; anything written later misses the screen until the next
+  // turn). The Promise.race deadline covers the brain SEMAPHORE WAIT, not
+  // just the HTTP call: an unbounded acquire under load must never push
+  // this worker past turnStaleMs, or a reclaimer voids the fenced write
+  // and the user's applied answer is lost. Failure of any kind degrades to
+  // no chips; the turn itself never fails here.
+  const presentsOpen =
+    (gate.status === "review" && openTotal > 0) ||
+    gate.outQuestion?.id.startsWith("qi_") === true;
+  if (presentsOpen) {
+    const det = deriveDeterministicGuesses(applied.documents);
+    const gap = guessGapMarkers(applied.documents, det, guessStore);
+    const headroom = CAPS.turnStaleMs - (Date.now() - started);
+    if (gap.length && headroom > CAPS.backfillMinHeadroomMs) {
+      if (
+        job.budgetExempt ||
+        (await trySpendBudget("brain_calls", 1, await effectiveBrainDailyCap()))
+      ) {
+        const raw = await Promise.race([
+          callGovernanceBrain(
+            buildGovernanceEnvelope({
+              sessionId,
+              promptId: newId("gov"),
+              system: guessBackfillSystemMessage(),
+              user: buildGuessBackfillUserMessage({
+                documents: applied.documents,
+                brief,
+                markers: gap,
+              }),
+            }),
+            CAPS.backfillTimeoutMs
+          ),
+          new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), CAPS.backfillTimeoutMs)
+          ),
+        ]);
+        // Gap-only merge: backfill can never clobber an existing guess.
+        const fill = raw
+          ? parseBackfillGuesses(raw).filter(
+              (e) => !(guessKey(e.excerpt) in guessStore)
+            )
+          : [];
+        if (fill.length)
+          guessStore = mergeOpenItemGuesses(guessStore, fill, applied.documents);
+        else
+          console.error(
+            `[governance] guess backfill ${raw ? "empty" : "no response"} project=${row.id} markers=${gap.length}`
+          );
+      } else {
+        void notifyBudgetHit("global_brain", { operation: "guess backfill" });
+      }
+    }
+  }
+
   const outQuestion: NextQuestion | null = gate.outQuestion
     ? hydrateChaseSuggestions(gate.outQuestion, applied.documents, guessStore)
     : null;
@@ -474,6 +540,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
       progress: progressFor(kind, covered),
       openConfirmItems: attachItemGuesses(
         openConfirmItems(applied.documents),
+        applied.documents,
         guessStore
       ),
       openConfirmTotal: openTotal,
@@ -560,6 +627,7 @@ async function runTurnInner(job: TurnJob): Promise<TurnOutcome> {
         progress: progressFor(kind, covered),
         openConfirmItems: attachItemGuesses(
           openConfirmItems(appliedDocs),
+          appliedDocs,
           guessStore
         ),
         openConfirmTotal: openTotal,

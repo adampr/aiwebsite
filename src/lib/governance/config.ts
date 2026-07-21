@@ -85,6 +85,16 @@ export const CAPS = {
   openItemGuessesPerItem: 3,
   openItemGuessMaxChars: 80,
   openItemGuessesMaxKeys: 100,
+  // Guess backfill (§5.12 round 2, owner-authorized extra AI call): one
+  // budget-counted call per advancing turn that presents open items with
+  // neither a deterministic nor a stored guess. The race deadline covers
+  // the brain SEMAPHORE WAIT too (an unbounded acquire must never push the
+  // fenced write past turnStaleMs and void a paid turn); min headroom =
+  // timeout + 60s write margin so the guard mirrors the repair guard's
+  // arithmetic against the 240s claim horizon.
+  backfillTimeoutMs: 30_000,
+  backfillMinHeadroomMs: 90_000,
+  backfillMaxMarkers: 10,
 } as const;
 
 /**

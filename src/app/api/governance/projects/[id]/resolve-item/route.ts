@@ -275,6 +275,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     // the next turn write prunes them), so remaining items keep their chips.
     openConfirmItems: attachItemGuesses(
       openConfirmItems(newDocuments),
+      newDocuments,
       guessStore
     ),
     openConfirmTotal: leftTotal,

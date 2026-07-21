@@ -216,7 +216,11 @@ export function toProjectView(row: ProjectRow): ProjectView {
           ...(researchProgress.error ? { error: researchProgress.error } : {}),
         }
       : null,
-    openConfirmItems: attachItemGuesses(openConfirmItems(documents), guessStore),
+    openConfirmItems: attachItemGuesses(
+      openConfirmItems(documents),
+      documents,
+      guessStore
+    ),
     openConfirmTotal: openConfirmTotal(documents),
     companySnapshot: composeCompanySnapshot(
       normalizeBrief(parseJson<unknown>(row.researchJson, null))
