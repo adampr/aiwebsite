@@ -1099,6 +1099,18 @@ async function main(): Promise<void> {
       const repairParsed = repairRaw ? parseTurnJson(repairRaw) : null;
       if (repairParsed) {
         const repaired = validateTurn(repairParsed, kind, { turnZero: true });
+        // Round 19c diagnostic: an accepted repair that silently DROPPED an
+        // adopt_outline op the original carried is exactly how the 2026-07-21
+        // skeleton-adoption loss went undiagnosed. Log-only, no behavior.
+        const hadAdopt = (v: typeof validation) =>
+          (v.ok && v.turn ? v.turn.docOps : v.salvageOps).some(
+            (o) => o.op === "adopt_outline"
+          );
+        if (repaired.ok && hadAdopt(validation) && !hadAdopt(repaired))
+          log(
+            "handoff",
+            `${tag} repair dropped the adopt_outline op; skeleton adoption lost this turn`
+          );
         // Prefer the repaired output unless it salvages strictly less.
         if (
           repaired.ok ||

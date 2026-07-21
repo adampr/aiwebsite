@@ -5517,6 +5517,305 @@ function check(name: string, cond: boolean): void {
   );
 }
 
+
+/* 31. Round 19c (§5.12): adopt_outline empty-bucket tolerance (host-enforced
+ *     "skip headings that would hold nothing" - the 2026-07-21 prod turn
+ *     zero emitted empty Definitions/References buckets, the whole-op
+ *     rejection's one-line error made the repair model DROP the op, and the
+ *     skeleton adoption was silently lost), named bucket errors for the
+ *     remaining rejection paths, and the AUP definitions blueprint section. */
+{
+  const kind = "usage_policy" as const;
+  const outlineMod = await import("../src/lib/governance/outline");
+  const bpMod = await import("../src/lib/governance/blueprints");
+  const promptMod19c = await import("../src/lib/governance/prompt");
+  const mkDoc = (): GovernanceDoc => ({
+    slug: "ai-usage-policy",
+    title: "AI Acceptable Use Policy",
+    stub: false,
+    sections: [
+      { id: "purpose-scope", title: "Why this policy exists", markdown: "Body A." },
+      { id: "approved-tools", title: "Approved tools", markdown: "Body B." },
+      { id: "data-rules", title: "What you may not share", markdown: "Body C." },
+      { id: "violations", title: "Violations and review", markdown: "Body D." },
+    ],
+  });
+  const adoptOp = (buckets: unknown) => ({
+    doc_ops: [{ op: "adopt_outline", doc: "ai-usage-policy", buckets }],
+    status: "asking",
+    question: null,
+  });
+
+  // --- Tolerance: empty buckets drop, survivors keep emission order.
+  const tolerant = adoptOp([
+    { title: "Purpose", sections: ["purpose-scope"] },
+    { title: "Definitions", sections: [] },
+    { title: "References" },
+    { title: "Policy", sections: ["approved-tools", "data-rules", "violations"] },
+  ]);
+  const vTol = validateTurn(tolerant, kind, { turnZero: true });
+  check(
+    "adopt19c: empty buckets dropped, op valid, order preserved (turn zero)",
+    vTol.ok === true &&
+      (() => {
+        const op = vTol.turn!.docOps.find((o) => o.op === "adopt_outline");
+        return (
+          op !== undefined &&
+          op.op === "adopt_outline" &&
+          op.buckets.length === 2 &&
+          op.buckets[0].title === "Purpose" &&
+          op.buckets[1].title === "Policy"
+        );
+      })()
+  );
+  check(
+    "adopt19c: tolerance is not turn-zero-gated",
+    validateTurn(
+      {
+        ...tolerant,
+        question: { bankId: null, text: "Next?", why: "w", suggestions: [] },
+      },
+      kind
+    ).ok === true
+  );
+  check(
+    "adopt19c: all-empty buckets reject with the files-nothing error",
+    (() => {
+      const v = validateTurn(
+        adoptOp([{ title: "Purpose", sections: [] }, { title: "Policy" }]),
+        kind,
+        { turnZero: true }
+      );
+      return !v.ok && v.errors.join(" ").includes("files no section ids");
+    })()
+  );
+  check(
+    "adopt19c: non-kebab ids reject whole and name the bucket",
+    (() => {
+      const v = validateTurn(
+        adoptOp([{ title: "Policy", sections: ["Approved Tools"] }]),
+        kind,
+        { turnZero: true }
+      );
+      const j = v.errors.join(" ");
+      return !v.ok && j.includes('bucket 1 ("Policy")') && j.includes("malformed section ids");
+    })()
+  );
+  check(
+    "adopt19c: missing title on a non-empty bucket rejects with the exact named error",
+    (() => {
+      const v = validateTurn(adoptOp([{ sections: ["purpose-scope"] }]), kind, {
+        turnZero: true,
+      });
+      return (
+        !v.ok &&
+        v.errors.some((e) =>
+          e.includes("adopt_outline bucket 1 needs a title, 1-80 chars")
+        )
+      );
+    })()
+  );
+  check(
+    "adopt19c: empty bucket with a garbage title still just drops",
+    (() => {
+      const v = validateTurn(
+        adoptOp([
+          { title: 123, sections: [] },
+          { title: "Policy", sections: ["purpose-scope"] },
+        ]),
+        kind,
+        { turnZero: true }
+      );
+      if (!v.ok) return false;
+      const op = v.turn!.docOps.find((o) => o.op === "adopt_outline");
+      return op !== undefined && op.op === "adopt_outline" && op.buckets.length === 1;
+    })()
+  );
+  check(
+    "adopt19c: sections as a string is mangled, not empty",
+    (() => {
+      const v = validateTurn(
+        adoptOp([{ title: "Policy", sections: "purpose-scope" }]),
+        kind,
+        { turnZero: true }
+      );
+      return !v.ok && v.errors.join(" ").includes("malformed section ids");
+    })()
+  );
+  check(
+    "adopt19c: a mis-keyed filing is named, never laundered as empty",
+    (() => {
+      const v = validateTurn(
+        adoptOp([{ title: "Data", section: ["data-rules"] }]),
+        kind,
+        { turnZero: true }
+      );
+      const j = v.errors.join(" ");
+      return !v.ok && j.includes('bucket 1 ("Data")') && j.includes("wrong key");
+    })()
+  );
+  check(
+    "adopt19c: bucket count out of bounds reports the actual count",
+    (() => {
+      const many = Array.from({ length: 21 }, (_, k) => ({
+        title: `T${k}`,
+        sections: ["purpose-scope"],
+      }));
+      const v = validateTurn(adoptOp(many), kind, { turnZero: true });
+      return !v.ok && v.errors.join(" ").includes("(got 21)");
+    })()
+  );
+  // The prod-incident regression pin: a turn-zero group invalid for an
+  // UNRELATED reason still salvages its tolerance-validated adopt op.
+  check(
+    "adopt19c: turn-zero salvage carries the adopt op, empties dropped",
+    (() => {
+      const mixed = {
+        doc_ops: [
+          { op: "upsert_section", doc: "ai-usage-policy", section: "bad id!", title: "T", markdown: "m" },
+          {
+            op: "adopt_outline",
+            doc: "ai-usage-policy",
+            buckets: [
+              { title: "Purpose", sections: ["purpose-scope"] },
+              { title: "Definitions", sections: [] },
+            ],
+          },
+        ],
+        status: "asking",
+        question: null,
+      };
+      const v = validateTurn(mixed, kind, { turnZero: true });
+      const adopt = v.salvageOps.find((o) => o.op === "adopt_outline");
+      return (
+        !v.ok &&
+        adopt !== undefined &&
+        adopt.op === "adopt_outline" &&
+        adopt.buckets.length === 1 &&
+        adopt.buckets[0].title === "Purpose"
+      );
+    })()
+  );
+
+  // --- applyOps defensive filters (hand-built shapes bypass validateTurn).
+  const legacyStored = applyOps(
+    [mkDoc()],
+    [
+      {
+        op: "adopt_outline",
+        doc: "ai-usage-policy",
+        buckets: [
+          { title: "Purpose", sections: ["purpose-scope"] },
+          { title: "References", sections: [] },
+          { title: "Policy", sections: ["approved-tools", "data-rules"] },
+          { title: "Enforcement", sections: ["violations"] },
+        ],
+      },
+    ],
+    kind
+  );
+  check(
+    "adopt19c: legacy apply path never stores an empty bucket",
+    legacyStored.errors.length === 0 &&
+      JSON.stringify(legacyStored.documents[0].outline?.map((b) => b.title)) ===
+        JSON.stringify(["Purpose", "Policy", "Enforcement"])
+  );
+  check(
+    "adopt19c: 18e apply path drops a cast-in empty bucket and the honesty surface reports it",
+    (() => {
+      const allowlist = ["Purpose", "Definitions", "Policy", "Enforcement"];
+      const r = applyOps(
+        [mkDoc()],
+        [
+          {
+            op: "adopt_outline",
+            doc: "ai-usage-policy",
+            buckets: [
+              { title: "Purpose", sections: ["purpose-scope"] },
+              { title: "Definitions", sections: [] },
+              { title: "Policy", sections: ["approved-tools", "data-rules"] },
+              { title: "Enforcement", sections: ["violations"] },
+            ],
+          },
+        ],
+        kind,
+        { bucketTitles: allowlist }
+      );
+      const titles = r.documents[0].outline?.map((b) => b.title) ?? [];
+      return (
+        r.errors.length === 0 &&
+        JSON.stringify(titles) === JSON.stringify(["Purpose", "Policy", "Enforcement"]) &&
+        JSON.stringify(
+          outlineMod.droppedOutlineTitles(r.documents[0], allowlist)
+        ) === JSON.stringify(["Definitions"])
+      );
+    })()
+  );
+  check(
+    "adopt19c: all-empty cast-in adoption stores no outline key at all",
+    (() => {
+      const bare: GovernanceDoc = {
+        slug: "ai-usage-policy",
+        title: "AI Acceptable Use Policy",
+        stub: false,
+        sections: [],
+      };
+      const r = applyOps(
+        [bare],
+        [
+          {
+            op: "adopt_outline",
+            doc: "ai-usage-policy",
+            buckets: [{ title: "Purpose", sections: [] }],
+          },
+        ],
+        kind,
+        { bucketTitles: ["Purpose"] }
+      );
+      return !("outline" in r.documents[0]);
+    })()
+  );
+
+  // --- Prompt: honest parenthetical, pinned substrings intact.
+  const restyle19c = promptMod19c.buildRestyleUserMessage({
+    kind,
+    documents: [mkDoc()],
+    focusRefs: ["ai-usage-policy#approved-tools"],
+    adoptTitles: ["Purpose", "Policy", "Enforcement"],
+  });
+  const tz19c = promptMod19c.buildTurnZeroUserMessage({
+    kind,
+    documents: [mkDoc()],
+    adoptTitles: ["Purpose", "Policy", "Enforcement"],
+  });
+  check(
+    "adopt19c: both adoption prompts state the empty-bucket drop and keep the pinned title list",
+    [restyle19c, tz19c].every(
+      (m) =>
+        m.includes("simply dropped") &&
+        m.includes('"Purpose", "Policy", "Enforcement"') &&
+        m.includes("no others")
+    )
+  );
+
+  // --- Blueprint: the AUP definitions section exists, positioned, unfed.
+  const aupSections = bpMod.BLUEPRINTS.usage_policy.docs[0].sections;
+  check(
+    "bp19c: AUP definitions section at position 2 of eleven",
+    aupSections.length === 11 &&
+      aupSections[1].id === "definitions" &&
+      aupSections[1].title === "Definitions" &&
+      aupSections[0].id === "purpose-scope" &&
+      aupSections[2].id === "approved-tools"
+  );
+  check(
+    "bp19c: no bank item feeds the definitions section (NOT-YET-DRAFTED route only)",
+    [...bpMod.bankById(kind).values()].every(
+      (q) => !(q.feeds ?? []).includes("ai-usage-policy#definitions")
+    )
+  );
+}
+
 if (failures) {
   console.error(`\n${failures} failure(s)`);
   process.exit(1);

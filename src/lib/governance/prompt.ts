@@ -236,7 +236,7 @@ export function sampleBucketTitles(text: string): string[] | null {
  * validator can never disagree. */
 function adoptInstruction(titles: string[]): string {
   const list = titles.map((t) => `"${t}"`).join(", ");
-  return `Also emit {"op":"adopt_outline","doc":"<slug>","buckets":[{"title":"...","sections":["<section-id>", ...]}]} once per document: file EVERY section id of that document under exactly one bucket. Bucket titles MUST be chosen from exactly these sample headings and no others: ${list}. Keep the buckets in that order, skip headings that would hold nothing, and put sections with no clear home under the heading that holds the main policy body. A proposal that misses, duplicates, or invents a section id, or uses any other bucket title, is rejected whole. Never move or rewrite content to fit the outline: file the sections as they are.`;
+  return `Also emit {"op":"adopt_outline","doc":"<slug>","buckets":[{"title":"...","sections":["<section-id>", ...]}]} once per document: file EVERY section id of that document under exactly one bucket. Bucket titles MUST be chosen from exactly these sample headings and no others: ${list}. Keep the buckets in that order, skip headings that would hold nothing (a bucket with an empty "sections" list is simply dropped), and put sections with no clear home under the heading that holds the main policy body. A proposal that misses, duplicates, or invents a section id, or uses any other bucket title, is rejected whole. Never move or rewrite content to fit the outline: file the sections as they are.`;
 }
 
 /** Prompt slice of the sample: cap chars, then cut back to a line boundary

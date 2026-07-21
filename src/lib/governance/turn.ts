@@ -226,32 +226,80 @@ export function validateTurn(
       }
       case "adopt_outline": {
         // Skeleton adoption (§5.12 round 18b): shape-checked here,
-        // partition-checked against the live doc in applyOps.
+        // partition-checked against the live doc in applyOps. Round 19c
+        // (prod 2026-07-21): a model reproducing the full sample skeleton
+        // emits buckets for headings the draft has nothing to file under;
+        // an EMPTY bucket is "skip headings that would hold nothing"
+        // half-followed, so the host enforces the skip by DROPPING empty
+        // buckets (survivor order preserved) instead of rejecting the
+        // whole op with a one-liner the repair model could only drop.
+        // A bucket that carries an ARRAY under a wrong key, or malformed
+        // section ids, is filed-but-mangled, NOT empty: dropping it would
+        // silently lose the filing to a non-repairable partition failure,
+        // so those still reject the whole op - with errors that name the
+        // bucket (op index 0-based per the surrounding convention, bucket
+        // ordinal 1-based; the title slice is the primary locator) so the
+        // repair model can FIX rather than drop. Dropped buckets surface
+        // to the user only via droppedOutlineTitles (round-18b honesty).
         const raw = Array.isArray(e.buckets) ? e.buckets : [];
         const buckets: { title: string; sections: string[] }[] = [];
-        let shapeOk = raw.length > 0 && raw.length <= CAPS.maxSectionsPerDoc;
-        for (const b of raw) {
-          const bo = b as Record<string, unknown>;
+        const bucketErrors: string[] = [];
+        if (raw.length === 0 || raw.length > CAPS.maxSectionsPerDoc)
+          bucketErrors.push(
+            `op ${i}: adopt_outline needs 1-${CAPS.maxSectionsPerDoc} buckets (got ${raw.length})`
+          );
+        for (const [j, b] of raw
+          .slice(0, CAPS.maxSectionsPerDoc)
+          .entries()) {
+          const bo = (
+            typeof b === "object" && b !== null ? b : {}
+          ) as Record<string, unknown>;
+          const name =
+            typeof bo.title === "string" && bo.title.trim().length
+              ? `bucket ${j + 1} ("${bo.title.slice(0, 40)}")`
+              : `bucket ${j + 1}`;
+          const secsRaw = bo.sections;
+          if (secsRaw === undefined || secsRaw === null) {
+            // Mis-keyed filing ({"title":X,"section":[...]}) carries an
+            // array under another key; an honest empty bucket does not.
+            if (
+              Object.keys(bo).some(
+                (k) =>
+                  k !== "title" && k !== "sections" && Array.isArray(bo[k])
+              )
+            ) {
+              bucketErrors.push(
+                `op ${i}: adopt_outline ${name} puts its section ids under the wrong key; use "sections": ["<kebab-id>", ...]`
+              );
+            }
+            continue;
+          }
+          if (Array.isArray(secsRaw) && secsRaw.length === 0) continue;
           const title = str(bo.title, 80);
-          const secs = Array.isArray(bo.sections)
-            ? bo.sections.filter(
+          if (!title) {
+            bucketErrors.push(
+              `op ${i}: adopt_outline ${name} needs a title, 1-80 chars`
+            );
+            continue;
+          }
+          const secs = Array.isArray(secsRaw)
+            ? secsRaw.filter(
                 (x): x is string => typeof x === "string" && KEBAB.test(x)
               )
             : [];
-          if (
-            !title ||
-            !secs.length ||
-            (Array.isArray(bo.sections) && bo.sections.length !== secs.length)
-          ) {
-            shapeOk = false;
-            break;
+          if (!Array.isArray(secsRaw) || secs.length !== secsRaw.length) {
+            bucketErrors.push(
+              `op ${i}: adopt_outline ${name} has malformed section ids; every entry must be a kebab-case section id, fix the ids rather than dropping the bucket`
+            );
+            continue;
           }
           buckets.push({ title, sections: secs });
         }
-        if (!shapeOk)
-          errors.push(
-            `op ${i}: adopt_outline needs 1-${CAPS.maxSectionsPerDoc} buckets, each a title plus kebab section ids`
+        if (!bucketErrors.length && buckets.length === 0)
+          bucketErrors.push(
+            `op ${i}: adopt_outline files no section ids at all; file every section of the document under one of the sample's headings`
           );
+        if (bucketErrors.length) errors.push(...bucketErrors);
         else ops.push({ op: "adopt_outline", doc, buckets });
         break;
       }
@@ -523,15 +571,24 @@ export function applyOps(
             const i = idxOf(b.title);
             byIdx.set(i, [...(byIdx.get(i) ?? []), ...b.sections]);
           }
-          d.outline = [...byIdx.keys()]
+          // Round 19c: validated ops carry no empty buckets, but applyOps
+          // also takes hand-built shapes - an emptied bucket disappears
+          // (the remove_section pruning invariant), never stores [].
+          const merged = [...byIdx.keys()]
             .sort((a, b) => a - b)
-            .map((i) => ({ title: allowed[i], sections: byIdx.get(i)! }));
+            .map((i) => ({ title: allowed[i], sections: byIdx.get(i)! }))
+            .filter((b) => b.sections.length > 0);
+          if (merged.length) d.outline = merged;
+          else delete d.outline;
           break;
         }
-        d.outline = op.buckets.map((b) => ({
-          title: b.title,
-          sections: [...b.sections],
-        }));
+        const kept = op.buckets.filter((b) => b.sections.length > 0);
+        if (kept.length)
+          d.outline = kept.map((b) => ({
+            title: b.title,
+            sections: [...b.sections],
+          }));
+        else delete d.outline;
         break;
       }
     }

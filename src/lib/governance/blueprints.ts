@@ -51,7 +51,7 @@ export interface KindBlueprint {
 }
 
 // ---------------------------------------------------------------------------
-// usage_policy: one document, ten sections
+// usage_policy: one document, eleven sections
 // ---------------------------------------------------------------------------
 
 const USAGE_POLICY: KindBlueprint = {
@@ -69,6 +69,12 @@ const USAGE_POLICY: KindBlueprint = {
           title: "Why this policy exists and who it covers",
           placeholder:
             "This section will explain why your company has an AI policy and who must follow it, based on your answers. It covers all AI tools used for work, including free and personal accounts.",
+        },
+        {
+          id: "definitions",
+          title: "Definitions",
+          placeholder:
+            "This section will define the handful of terms the rest of the policy leans on: AI tool, generative AI, approved account, and company data. Each definition will be one or two plain sentences keyed to how your business actually talks, so nobody can argue that a chatbot in a browser tab does not count.",
         },
         {
           id: "approved-tools",

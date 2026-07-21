@@ -15,7 +15,30 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-21 (ffiec watch: Feedly public-API mirror of
+Last verified against code: 2026-07-21 (governance round 19c: adopt_outline
+EMPTY-BUCKET TOLERANCE - a model reproducing the full sample skeleton emits
+buckets for headings the draft has nothing to file under, and the old
+whole-op shape rejection's one-line error made the repair model drop the op
+(prod 2026-07-21: turn zero lost the skeleton adoption this way), so
+validateTurn now DROPS empty buckets (host-enforced "skip headings that
+would hold nothing", survivor order preserved, dropped headings surface only
+via droppedOutlineTitles) while filed-but-mangled buckets (array under a
+wrong key, non-kebab ids, missing title) still reject the WHOLE op with
+errors that NAME the bucket (op index 0-based, bucket ordinal 1-based, title
+slice as primary locator) so repair can fix rather than drop; applyOps
+mirrors the emptiness guard at both store paths (an emptied bucket
+disappears, never stores []); the adoption prompts state the drop
+parenthetically; the usage_policy blueprint gains an eleventh section
+`definitions` at position 2 (unfed - NOT-YET-DRAFTED is its route) so the
+Definitions bucket has real content to hold on fresh projects. NOTE the
+tolerance removes the empty-bucket TRIGGER but a turn-zero group invalid for
+OTHER reasons (e.g. over-budget) can still lose its adopt op to a
+repaired-ok output that dropped it - narrowed, not closed; the research
+script logs "repair dropped the adopt_outline op" when that happens.
+Existing projects keep their stored documents_json: no definitions section
+appears in them unless a later turn drafts one organically, and until a
+reformat re-adopts, such a section renders as a trailing top-level item
+after the adopted buckets; ffiec watch: Feedly public-API mirror of
 the CAPTCHA-blocked rss-whatsnew feed as the preferred change-signal leg;
 governance round 19b: chain-level
 list-vs-heading discrimination in `recoverLeadingNumberedHeadings` (round 19's
@@ -59,7 +82,8 @@ contract; round 18b: template
 skeleton adoption, "reparent never merge" - a whole-draft reformat with a
 usable sample outline may emit ONE adopt_outline op per non-stub document: an
 EXACT partition of ALL its section ids into ordered buckets titled from the
-sample's top-level items (anything else rejected whole in applyOps); sections
+sample's top-level items (anything else rejected whole in applyOps; round 19c:
+empty buckets are dropped by the host at validation, never a rejection); sections
 stay the atomic content units (ids, confirm gates, feeds, markers untouched)
 and the outline is a persisted PRESENTATION grouping inside documents_json (no
 migration). planOutline (outline.ts) is the ONE render plan (doc pane + docx:
