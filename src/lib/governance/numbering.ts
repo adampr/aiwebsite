@@ -83,6 +83,13 @@ export function stripLeadingNumber(text: string): string {
  * ------------------------------------------------------------------ */
 
 const PROMOTE_MULTI = /^(\d{1,3}(?:\.\d{1,3}){1,4})\.?\s{1,10}/;
+// ".7.1 Title": multipart number missing its leading component (a bad-PDF
+// extraction artifact the model mirrors). >=2 numeric parts, so a wrapped
+// decimal fragment (".5 GB") never matches; whitespace CONSUMED so the
+// remainder starts at the title (round 19 critic fix).
+const ORPHAN_DOT_PROMOTE = /^\.(\d{1,3}(?:\.\d{1,3}){1,3})\.?\s{1,10}/;
+const ORPHAN_DOT_PREFIX = /^\.\d{1,3}(?:\.\d{1,3}){1,3}\.?\s{1,10}(?=\S)/;
+const ORPHAN_DOT_ONLY = /^\.\d{1,3}(?:\.\d{1,3}){1,3}\.?\s{0,10}$/;
 const PROMOTE_ROMAN = /^((?=[IVX])X{0,3}(?:IX|IV|V?I{1,3}|V|X))([.)])\s{1,10}/;
 const PROMOTE_SECTION = /^Section\s{1,4}\d{1,3}\s{0,4}[:.)-]\s{1,10}/;
 const PROMOTE_ALPHA = /^([A-Z])([.)])\s{1,10}/;
@@ -95,6 +102,65 @@ const ALL_SENTINELS = /[\uE000-\uE007]/g;
 // A second single-letter marker right after the first = abbreviation chain
 // ("U. S. obligations", "J. E. Hoover memo"), never a heading.
 const INITIALS_CHAIN = /^[A-Z][.)]\s/;
+// Case-widened variant shared with the markdown parser's lettered-list rule
+// (round 19): "b. v. Wade case" is an abbreviation chain too.
+const INITIALS_CHAIN_ANY = /^[A-Za-z][.)]\s/;
+
+/** True when the text AFTER a single-letter marker opens with another
+ *  single-letter marker - an initials/abbreviation chain, never a list item
+ *  or heading. Shared by classifyPromotable (uppercase context) and the
+ *  markdown parser (any case). */
+export function isInitialsRest(rest: string): boolean {
+  return INITIALS_CHAIN_ANY.test(rest);
+}
+
+/* ------------------------------------------------------------------ *
+ * Orphan number-line drop (§5.12 round 19). Badly extracted PDF samples
+ * teach the model to write Word auto-number labels as their own lines
+ * ("5." alone, no content); those lines are pure numbering artifacts -
+ * never content - and glue into paragraphs or strand as one-line blocks.
+ * Dropped at render time inside parseMarkdown (both renderers, stored
+ * drafts self-heal). GUARDS: the line's sentinel-stripped trim must be
+ * EXACTLY "N." / "N)" (N <= 3 digits; "2.5", "2.1.", "1995." never match);
+ * the drop fires only in STRUCTURAL context - previous non-blank line
+ * absent, a heading, a table row, marker-led, or ending in terminal
+ * punctuation, OR next non-blank line marker-led - so a soft-wrapped
+ * mid-sentence number ("capped at\n5.\nGB") keeps gluing as today, content
+ * intact. Lines carrying mid-reveal sentinels (old-strike/caret) are kept
+ * while typing; wash/region sentinels do NOT protect a line (a region beat
+ * must not flicker a nonexistent "5." paragraph into the settled document).
+ * ------------------------------------------------------------------ */
+
+const ORPHAN_LABEL = /^\d{1,3}[.)]$/;
+const ANY_MARKER_LEAD = /^(?:[-*]\s|\d{1,3}[.)]\s|[A-Za-z][.)]\s|#{1,4}\s|\|)/;
+
+export function dropOrphanNumberLines(md: string): string {
+  if (!/\d/.test(md)) return md;
+  const lines = md.split("\n");
+  const shadows = lines.map((l) => l.replace(ALL_SENTINELS, "").trim());
+  const structural = (s: string): boolean =>
+    ANY_MARKER_LEAD.test(s) || ORPHAN_LABEL.test(s) || /[.!?:;]$/.test(s);
+  let changed = false;
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const s = shadows[i];
+    if (ORPHAN_LABEL.test(s) && !MID_REVEAL_SENTINEL.test(lines[i])) {
+      let prev = i - 1;
+      while (prev >= 0 && !shadows[prev]) prev--;
+      let next = i + 1;
+      while (next < lines.length && !shadows[next]) next++;
+      const prevOk = prev < 0 || structural(shadows[prev]);
+      const nextOk =
+        next < lines.length && ANY_MARKER_LEAD.test(shadows[next]);
+      if (prevOk || nextOk) {
+        changed = true;
+        continue;
+      }
+    }
+    out.push(lines[i]);
+  }
+  return changed ? out.join("\n") : md;
+}
 
 type Promotion = {
   line: string; // rebuilt heading line, manual number removed
@@ -126,6 +192,11 @@ function classifyPromotable(trimmed: string): Promotion | null {
     // A lone I./V./X. is also a letter: it may promote as a run member
     // ("H. I. J.") even with no multi-letter roman peer.
     if (loneRoman) alpha = { letter: m[1], sep: m[2] };
+  } else if ((m = ORPHAN_DOT_PROMOTE.exec(core))) {
+    // ".7.1 Policy": a multipart number whose leading component was lost by
+    // a bad PDF extraction (round 19). The orphan dot implies one lost
+    // level, so depth = numeric parts + 1.
+    hashes = Math.min(m[1].split(".").length + 1, 4);
   } else if ((m = PROMOTE_SECTION.exec(core))) {
     hashes = 2;
   } else if ((m = PROMOTE_ALPHA.exec(core))) {
@@ -415,8 +486,15 @@ export function detectNumberingStyle(text: string): NumberingStyle | null {
 function stripInlineNumber(inline: Inline[]): Inline[] {
   const first = inline[0];
   if (!first) return inline;
-  if (inline.length > 1 && NUM_ONLY.test(first.text)) return inline.slice(1);
-  const stripped = stripLeadingNumber(first.text);
+  if (
+    inline.length > 1 &&
+    (NUM_ONLY.test(first.text) || ORPHAN_DOT_ONLY.test(first.text))
+  )
+    return inline.slice(1);
+  const stripped = stripLeadingNumber(first.text).replace(
+    ORPHAN_DOT_PREFIX,
+    ""
+  );
   if (stripped === first.text) return inline;
   if (!stripped) return inline.slice(1);
   return [{ ...first, text: stripped }, ...inline.slice(1)];
@@ -511,7 +589,9 @@ export function normalizeSectionBlocks(
   let c2 = 0;
   // Sub-headings hang off the section's styled ordinal ("III.1", "C.2");
   // decimal styles keep today's "3.1" exactly.
-  const base = baseLabel ?? subPrefix(sectionNum, style ?? "decimal");
+  // `||` not `??`: an empty-string baseLabel must fall back too (defensive;
+  // no live caller produces "", but a "" base would mint ".7.1"-style labels).
+  const base = baseLabel || subPrefix(sectionNum, style ?? "decimal");
   const alphaRun = alphaHeadingRun(blocks);
   return blocks.map((b, bi): Block => {
     if (b.t !== "heading") return b;

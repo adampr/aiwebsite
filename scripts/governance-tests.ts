@@ -40,9 +40,12 @@ import {
 } from "../src/lib/governance/prompt";
 import {
   applyOutlineHeadings,
+  assemblePdfLines,
   buildOutlineMap,
   docxXmlToText,
   markPdfHeadings,
+  recoverLeadingNumberedHeadings,
+  shapePdfListLines,
 } from "../src/lib/governance/style-sample";
 import {
   buildNumberingModel,
@@ -78,6 +81,7 @@ import {
 import { staleBundleSignal } from "../src/lib/governance/build-id";
 import { composeCompanySnapshot, deriveTurnState, toProjectView } from "../src/lib/governance/view";
 import {
+  blocksToText,
   countConfirmMarkers,
   findConfirmMarkers,
   inlineToText,
@@ -90,6 +94,7 @@ import {
 } from "../src/lib/governance/markdown";
 import {
   detectNumberingStyle,
+  dropOrphanNumberLines,
   normalizeSectionBlocks,
   promoteManualHeadingLines,
   sectionTitleText,
@@ -4533,6 +4538,361 @@ function check(name: string, cond: boolean): void {
     parseMarkdown("1. First step\n2. Second step").filter(
       (b) => b.t === "list"
     ).length === 1
+  );
+}
+
+
+/* 28. List model v2 + PDF positional assembly (round 19): split ordered
+ * lists keep their count via literal starts, adjacent lettered lines are
+ * lists (never glue), one sub level nests, orphan number-only lines drop
+ * only in structural context, ".7.1" orphan-dot headings heal, and the PDF
+ * extractor reunites Word's out-of-order auto-number labels. */
+{
+  const CARET = String.fromCharCode(0xe005);
+  const RA_ON = String.fromCharCode(0xe006);
+  const RA_OFF = String.fromCharCode(0xe007);
+  const lists = (md: string) =>
+    parseMarkdown(md).filter((b) => b.t === "list");
+  const heads = (md: string) =>
+    parseMarkdown(md).filter((b) => b.t === "heading").length;
+
+  // Ordered start capture: a split run keeps counting.
+  const split = parseMarkdown(
+    "1. First\n2. Second\n\nAn intervening paragraph.\n\n3. Third\n4. Fourth"
+  );
+  const splitLists = split.filter((b) => b.t === "list");
+  check(
+    "list19: split ordered run keeps its count via start",
+    splitLists.length === 2 &&
+      splitLists[0].start === 1 &&
+      splitLists[1].start === 3 &&
+      splitLists[1].items.length === 2
+  );
+  // Stale-comment refresh from round 16b: a glued bare "7." sentence is
+  // still a one-item list, but now START-PRESERVING, never a lying "1.".
+  const bare7 = parseMarkdown("7. All staff must complete training.");
+  check(
+    "list19: bare numbered sentence keeps its literal start",
+    bare7.length === 1 && bare7[0].t === "list" && bare7[0].start === 7
+  );
+  // Orphan number-only lines: dropped in structural context, kept as
+  // content in a soft-wrap, kept while a mid-reveal caret is typing,
+  // dropped even under a region wash (no phantom paragraph after settle).
+  const dropped = parseMarkdown(
+    "Reported incidents are triaged.\n1. Triage severity.\n2. Contain and document.\n5.\nMore text follows here."
+  );
+  check(
+    "list19: orphan number line after a list drops",
+    dropped.filter((b) => b.t === "list").length === 1 &&
+      dropped.every(
+        (b) => b.t !== "paragraph" || !inlineToText(b.inline).includes("5.")
+      )
+  );
+  check(
+    "list19: soft-wrapped number stays content",
+    (() => {
+      const soft = parseMarkdown("Storage is capped at\n5.\nGB for all users.");
+      return (
+        soft.length === 1 &&
+        soft[0].t === "paragraph" &&
+        inlineToText(soft[0].inline) === "Storage is capped at 5. GB for all users."
+      );
+    })()
+  );
+  check(
+    "list19: caret-carrying orphan line survives while typing",
+    dropOrphanNumberLines(`Done.\n5.${CARET}\nNext.`).includes("5.")
+  );
+  check(
+    "list19: region-washed orphan line still drops (no phantom paragraph)",
+    !dropOrphanNumberLines(`Done.\n${RA_ON}5.${RA_OFF}\nNext.`).includes("5.")
+  );
+  check(
+    "list19: drop pass idempotent + same-reference no-op",
+    (() => {
+      const md = "Done.\n5.\nNext is fine.";
+      const once = dropOrphanNumberLines(md);
+      const clean = "No orphans here at all.";
+      return (
+        dropOrphanNumberLines(once) === once &&
+        dropOrphanNumberLines(clean) === clean
+      );
+    })()
+  );
+  let scaffold19 = true;
+  for (const kind of GOVERNANCE_KINDS)
+    for (const doc of scaffoldDocuments(kind))
+      for (const s of doc.sections)
+        if (dropOrphanNumberLines(s.markdown) !== s.markdown) scaffold19 = false;
+  check("list19: no blueprint scaffold line drops", scaffold19);
+
+  // Lettered adjacency: run -> real list; the 18c partition holds.
+  const alpha = parseMarkdown(
+    "Examples include:\nA. Fabricated facts.\nB. Code causing an outage.\nC. Unapproved use."
+  );
+  const alphaList = alpha.find((b) => b.t === "list");
+  check(
+    "list19: adjacent lettered run parses as an upperLetter list",
+    alpha.length === 2 &&
+      !!alphaList &&
+      alphaList.ordered &&
+      alphaList.format === "upperLetter" &&
+      alphaList.start === 1 &&
+      alphaList.items.length === 3
+  );
+  check(
+    "list19: lettered list starting at B carries start=2",
+    lists("Lead:\nB. Data rules.\nC. Access rules.")[0]?.start === 2
+  );
+  check(
+    "list19: lone lettered line stays prose",
+    lists("A. Smith Policy\nBody text follows.").length === 0 &&
+      heads("A. Smith Policy\nBody text follows.") === 0
+  );
+  check(
+    "list19: blank-separated letters stay prose",
+    lists("A. Email\n\nB. Chat logs").length === 0
+  );
+  check(
+    "list19: mixed separators and initials chains never list",
+    lists("B. Data rules.\nC) Access rules.").length === 0 &&
+      lists("U. S. obligations apply\nV. P. approval required").length === 0
+  );
+  check(
+    "list19: adjacent roster pair renders as a lettered list (pinned)",
+    (() => {
+      const r = lists("J. Doe\nK. Lee");
+      return r.length === 1 && r[0].start === 10 && r[0].format === "upperLetter";
+    })()
+  );
+  // Partition matrix: adjacent = list; content-between = headings (18c);
+  // orphan-number-between = list because the drop runs BEFORE promotion.
+  check(
+    "list19: partition - content between letters still promotes headings",
+    heads("Lead.\nB. Data Handling\nBody one.\nC. Retention\nBody two.") === 2
+  );
+  check(
+    "list19: partition - orphan number between letters yields a list, not headings",
+    (() => {
+      const md = "Lead.\nB. Data Handling\n5.\nC. Retention";
+      return heads(md) === 0 && lists(md).length === 1;
+    })()
+  );
+  // Reveal-tick stability: a washed member keeps the list skeleton.
+  check(
+    "list19: washed lettered member keeps the run a list across ticks",
+    (() => {
+      const plain = parseMarkdown("Lead:\nA. First rule.\nB. Second rule.");
+      const washed = parseMarkdown(
+        `Lead:\n${RA_ON}A. First rule.${RA_OFF}\nB. Second rule.`
+      );
+      return (
+        plain.map((b) => b.t).join(",") === washed.map((b) => b.t).join(",") &&
+        washed.find((b) => b.t === "list")?.items.length === 2
+      );
+    })()
+  );
+
+  // One sub level: attach, restart per parent, coercion pinned.
+  const nest = parseMarkdown(
+    "1. Principle of Least Privilege:\n   1. Need-to-know basis.\n   2. Minimum level.\n2. Separate Named Accounts:\n   1. Unique accounts.\n   - stray bullet coerces"
+  );
+  check(
+    "list19: one sub level attaches and restarts per parent",
+    (() => {
+      const l = nest.find((b) => b.t === "list");
+      return (
+        !!l &&
+        l.items.length === 2 &&
+        l.items[0].sub?.ordered === true &&
+        l.items[0].sub.items.length === 2 &&
+        l.items[1].sub?.items.length === 2 // coerced stray bullet joins
+      );
+    })()
+  );
+  check(
+    "list19: blocksToText includes sub items",
+    blocksToText(nest).includes("Need-to-know basis.")
+  );
+
+  // Orphan-dot heading heal (".7.1 Policy" - lost leading component).
+  const dotHead = normalizeSectionBlocks(
+    parseMarkdown("## Intro\n\nBody.\n\n### .7.1 Policy\n\nMore."),
+    3,
+    null
+  ).filter((b) => b.t === "heading");
+  check(
+    "list19: orphan-dot heading strips and labels",
+    dotHead.length === 2 && inlineToText(dotHead[1].inline) === "3.1.1 Policy"
+  );
+  check(
+    "list19: bare orphan-dot line promotes, decimals never match",
+    heads("Lead in text.\n.7.1 Policy\nBody follows.") === 1 &&
+      heads("The cap is\n.5 GB per user\ntoday.") === 0
+  );
+
+  // docx: startOverride, letter formats, sub levels, per-sub-run restarts.
+  const { renderDocx: renderDocx19 } = await import("../src/lib/governance/docx");
+  const { default: JSZip19 } = await import("jszip");
+  const listDoc = {
+    slug: "ai-usage-policy",
+    title: "AI Usage Policy",
+    sections: [
+      {
+        id: "s1",
+        title: "Rules",
+        markdown:
+          "1. First\n2. Second\n\nBreak paragraph.\n\n3. Third\n4. Fourth\n\nMore:\nA. Alpha one.\nB. Alpha two.\n\n1. Parent:\n   1. Child one.\n   2. Child two.",
+      },
+    ],
+  } as GovernanceDoc;
+  const buf19 = await renderDocx19(listDoc, { draft: false, kind: "usage_policy" });
+  const zip19 = await JSZip19.loadAsync(buf19);
+  const numberingXml = await zip19.file("word/numbering.xml")!.async("string");
+  const documentXml = await zip19.file("word/document.xml")!.async("string");
+  check(
+    "list19: docx split run carries startOverride 3",
+    numberingXml.includes('w:val="3"') && numberingXml.includes("startOverride")
+  );
+  check(
+    "list19: docx lettered list uses upperLetter numbering",
+    numberingXml.includes('w:numFmt w:val="upperLetter"') ||
+      numberingXml.includes('<w:numFmt w:val="upperLetter"/>')
+  );
+  check(
+    "list19: docx sub items ride level 1",
+    documentXml.includes('<w:ilvl w:val="1"/>')
+  );
+  check(
+    "list19: docx level configs carry the indent ladder",
+    numberingXml.includes('w:left="720"') && numberingXml.includes('w:left="1440"')
+  );
+
+  // Extraction: out-of-order labels reunite; wrapped items join; orphan
+  // labels never reach the sample; multi-column degrades to stream order.
+  const asmItems = (
+    rows: [string, number, number, number, boolean][]
+  ): unknown[] =>
+    rows.map(([str, x, y, w, hasEOL]) => ({
+      str,
+      transform: [1, 0, 0, 1, x, y],
+      width: w,
+      hasEOL,
+    }));
+  const asm = assemblePdfLines(
+    asmItems([
+      ["Privileged access will be granted", 90, 700, 180, false],
+      ["only on a need-to-know basis.", 90, 686, 160, false],
+      ["1.", 72, 700, 8, true],
+      ["Users get the minimum level.", 90, 672, 170, false],
+      ["2.", 72, 672, 8, true],
+    ])
+  );
+  check(
+    "pdf19: out-of-order label merges by x with a seam space",
+    asm[0].text === "1. Privileged access will be granted" &&
+      asm[2].text === "2. Users get the minimum level."
+  );
+  const shaped19 = shapePdfListLines([asm]);
+  check(
+    "pdf19: wrapped item joins its continuation line",
+    shaped19[0][0].text ===
+      "1. Privileged access will be granted only on a need-to-know basis." &&
+      shaped19[0].length === 2
+  );
+  check(
+    "pdf19: residual orphan label lines never reach the sample",
+    shapePdfListLines([
+      [
+        { text: "Item text here.", h: 11, startX: 72, textX: 72 },
+        { text: "3.", h: 11, startX: 72, textX: 72 },
+      ],
+    ])[0].length === 1
+  );
+  check(
+    "pdf19: single-spaced small-font lines never merge",
+    (() => {
+      const two = assemblePdfLines(
+        asmItems([
+          ["Line one text", 72, 700, 80, false],
+          ["Line two text", 72, 689, 80, false],
+        ])
+      );
+      return two.length === 2;
+    })()
+  );
+  check(
+    "pdf19: indent tiers rank marker clusters",
+    (() => {
+      const page: { text: string; h: number; startX: number | null; textX: number | null }[] = [
+        { text: "1. Parent one", h: 11, startX: 72, textX: 90 },
+        { text: "1. Child a", h: 11, startX: 108, textX: 126 },
+        { text: "2. Child b", h: 11, startX: 108, textX: 126 },
+        { text: "2. Parent two", h: 11, startX: 72, textX: 90 },
+      ];
+      const t = shapePdfListLines([page])[0].map((l) => l.text);
+      return (
+        t[0] === "1. Parent one" &&
+        t[1] === "  1. Child a" &&
+        t[2] === "  2. Child b" &&
+        t[3] === "2. Parent two"
+      );
+    })()
+  );
+  check(
+    "pdf19: first-line-indented paragraph never joins a finished item",
+    (() => {
+      const page = [
+        { text: "1. Access is granted by the owner.", h: 11, startX: 72, textX: 90 },
+        { text: "All employees must comply.", h: 11, startX: 90, textX: 90 },
+      ];
+      const t = shapePdfListLines([page])[0];
+      return t.length === 2;
+    })()
+  );
+  check(
+    "pdf19: leading-number heading chain recovers post-assembly titles",
+    (() => {
+      const out = recoverLeadingNumberedHeadings([
+        "1. Purpose",
+        "This policy outlines things.",
+        "2. Scope",
+        "It applies to everyone.",
+        "3. Definitions",
+        "Terms are defined.",
+        "1. Restarting list item",
+      ]);
+      return (
+        out[0] === "## 1. Purpose" &&
+        out[2] === "## 2. Scope" &&
+        out[4] === "## 3. Definitions" &&
+        out[6] === "1. Restarting list item"
+      );
+    })()
+  );
+  check(
+    "pdf19: list parents never ride the heading chain",
+    (() => {
+      const out = recoverLeadingNumberedHeadings([
+        "1. Principle of Least Privilege:",
+        "  1. Sub item one",
+        "2. Named Accounts",
+        "  1. Sub item",
+        "3. Reviews",
+        "  1. Sub item",
+      ]);
+      return out.every((l) => !l.startsWith("##"));
+    })()
+  );
+  check(
+    "pdf19: rotated items keep stream-order fallback",
+    (() => {
+      const out = assemblePdfLines([
+        { str: "rotated", transform: [0, 1, -1, 0, 72, 700], width: 40, hasEOL: false },
+        { str: " text", transform: [0, 1, -1, 0, 72, 690], width: 30, hasEOL: true },
+      ]);
+      return out.length === 1 && out[0].text === "rotated text" && out[0].startX === null;
+    })()
   );
 }
 

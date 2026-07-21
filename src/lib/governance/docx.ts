@@ -12,6 +12,7 @@ import {
   Footer,
   Header,
   HeadingLevel,
+  LevelFormat,
   Packer,
   PageNumber,
   Paragraph,
@@ -33,7 +34,7 @@ import {
   type SampleFrame,
 } from "./letterhead";
 import { planOutline } from "./outline";
-import type { Block, Inline } from "./markdown";
+import type { Block, Inline, ListFormat } from "./markdown";
 import { parseMarkdown } from "./markdown";
 import {
   normalizeSectionBlocks,
@@ -91,9 +92,23 @@ const INNER_HEADING_SPACING = {
   4: { before: 160, after: 80 },
 } as const;
 
+/** Per-list Word numbering config (round 19): level-0 format + literal
+ * start (docx 9.7.1 copies levels[0].start into a w:startOverride on the
+ * concrete instance - level 0 only, read POSITIONALLY, so level 0 must stay
+ * first in the levels array), plus one optional level-1 config for ordered
+ * subs. The first ordered sub's format/start wins for the whole list; later
+ * mismatched subs coerce (pinned) - and a non-1 sub start applies to every
+ * sibling sub-list of the reference (w:start on the abstract level is the
+ * restart value; Word restarts level 1 whenever level 0 fires). */
+interface OrderedNumCfg {
+  format: ListFormat;
+  start: number;
+  sub: { format: ListFormat; start: number } | null;
+}
+
 function blockToDocx(
   block: Block,
-  orderedRef: () => string,
+  orderedRef: (cfg: OrderedNumCfg) => string,
   // Round 18b: sections nested under a skeleton bucket demote their inner
   // headings one Word level so the navigation-pane outline stays strict
   // (bucket H1, section H2, inner H3...).
@@ -118,18 +133,66 @@ function blockToDocx(
     case "list": {
       // Each ordered list gets its OWN concrete numbering instance: the docx
       // package creates one counter per reference, so a shared reference
-      // makes every later list continue counting (4, 5, ...) in Word.
-      const reference = block.ordered ? orderedRef() : null;
-      return block.items.map(
-        (item) =>
+      // makes every later list continue counting in Word. Round 19: the
+      // instance starts at the model's literal first number ("4. x" after a
+      // paragraph split renders 4, 5, ... - the count is never lost), letter
+      // formats render as real Word upperLetter/lowerLetter numbering, and
+      // ONE sub level nests at level 1 (restarting per parent item).
+      const paras: Paragraph[] = [];
+      const item = (children: Inline[], num: object) =>
+        paras.push(
           new Paragraph({
-            children: inlineRuns(item),
-            ...(reference
-              ? { numbering: { reference, level: 0 } }
-              : { bullet: { level: 0 } }),
+            children: inlineRuns(children),
+            ...num,
             spacing: { after: 60 },
           })
-      );
+        );
+      if (block.ordered) {
+        const firstSub = block.items.find((it) => it.sub?.ordered)?.sub;
+        const reference = orderedRef({
+          format: block.format ?? "decimal",
+          start: block.start ?? 1,
+          sub: firstSub
+            ? {
+                format: firstSub.format ?? "decimal",
+                start: firstSub.start ?? 1,
+              }
+            : null,
+        });
+        for (const it of block.items) {
+          item(it.inline, { numbering: { reference, level: 0 } });
+          for (const si of it.sub?.items ?? [])
+            item(
+              si,
+              it.sub!.ordered
+                ? { numbering: { reference, level: 1 } }
+                : { bullet: { level: 1 } }
+            );
+        }
+      } else {
+        for (const it of block.items) {
+          item(it.inline, { bullet: { level: 0 } });
+          if (!it.sub) continue;
+          if (it.sub.ordered) {
+            // Per sub-RUN reference: the parent bullet never fires level 0,
+            // so sharing one reference would make the SECOND ordered sub
+            // continue counting instead of restarting (critic amendment).
+            const subRef = orderedRef({
+              format: "decimal",
+              start: 1,
+              sub: {
+                format: it.sub.format ?? "decimal",
+                start: it.sub.start ?? 1,
+              },
+            });
+            for (const si of it.sub.items)
+              item(si, { numbering: { reference: subRef, level: 1 } });
+          } else {
+            for (const si of it.sub.items) item(si, { bullet: { level: 1 } });
+          }
+        }
+      }
+      return paras;
     }
     case "table": {
       const mkRow = (cells: Inline[][], header: boolean) =>
@@ -315,11 +378,11 @@ export async function renderDocx(
     placeholderSectionMap(opts.kind, [doc])[doc.slug] ?? []
   );
   const children: (Paragraph | Table)[] = [];
-  const numRefs: string[] = [];
-  const orderedRef = () => {
-    const r = `gov-num-${numRefs.length}`;
-    numRefs.push(r);
-    return r;
+  const numRefs: { reference: string; cfg: OrderedNumCfg }[] = [];
+  const orderedRef = (cfg: OrderedNumCfg) => {
+    const reference = `gov-num-${numRefs.length}`;
+    numRefs.push({ reference, cfg });
+    return reference;
   };
 
   if (opts.draft)
@@ -469,18 +532,40 @@ export async function renderDocx(
   const lhHeader = opts.letterhead?.header || null;
   const lhFooter = opts.letterhead?.footer || null;
   const framed = Boolean(lhHeader || lhFooter);
+  const lvlFormat = (f: ListFormat) =>
+    f === "upperLetter"
+      ? LevelFormat.UPPER_LETTER
+      : f === "lowerLetter"
+        ? LevelFormat.LOWER_LETTER
+        : LevelFormat.DECIMAL;
   const document = new Document({
     numbering: {
       // One config per ordered list encountered above, so every list
-      // restarts at 1 instead of sharing a document-wide counter.
-      config: numRefs.map((reference) => ({
+      // restarts (at its own literal start) instead of sharing a
+      // document-wide counter. Level 0 MUST be first in the array: docx
+      // 9.7.1 reads levels[0].start positionally for the w:startOverride on
+      // the concrete instance. Level-1 start rides the abstract w:start
+      // (explicit - ECMA-376 defaults absent w:start to 0) and the 720/360
+      // indent ladder matches the package's default bullet levels so bullet
+      // and ordered subs align.
+      config: numRefs.map(({ reference, cfg }) => ({
         reference,
         levels: [
           {
             level: 0,
-            format: "decimal",
+            format: lvlFormat(cfg.format),
             text: "%1.",
             alignment: AlignmentType.START,
+            start: cfg.start,
+            style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+          },
+          {
+            level: 1,
+            format: lvlFormat(cfg.sub?.format ?? "decimal"),
+            text: "%2.",
+            alignment: AlignmentType.START,
+            start: cfg.sub?.start ?? 1,
+            style: { paragraph: { indent: { left: 1440, hanging: 360 } } },
           },
         ],
       })),

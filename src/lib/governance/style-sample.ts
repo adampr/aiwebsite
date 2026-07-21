@@ -513,6 +513,293 @@ export function recoverTrailingNumberedHeadings(lines: string[]): string[] {
 }
 
 /**
+ * Round 19 companion to the trailing recovery above: once positional
+ * assembly reunites labels in READING order, section titles arrive as
+ * "1. Purpose" body lines (number now LEADS), which the trailing regex can
+ * never match - without this the fix would starve the outline machinery it
+ * was built to feed. Same ascending-chain guard (>=3 links, +1 steps from
+ * 1), same title shape; tiered (indented) lines are list items and never
+ * candidates, a ":"-terminal line is a list parent, and a line whose next
+ * non-blank line is an INDENTED marker is a list parent too.
+ */
+const LEADING_NUM_TITLE = /^(\d{1,3})[.)]\s{1,4}([A-Za-z][^\n]{0,78})$/;
+
+export function recoverLeadingNumberedHeadings(lines: string[]): string[] {
+  const hits: { idx: number; title: string }[] = [];
+  let expected = 1;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    if (/^#{1,6}\s/.test(raw) || /^\s/.test(raw)) continue;
+    const m = LEADING_NUM_TITLE.exec(raw.trim());
+    if (!m) continue;
+    if (parseInt(m[1], 10) !== expected) continue;
+    const title = m[2].trim();
+    if (/[.!?;]\s/.test(title) || /[:.!?;,]$/.test(title)) continue;
+    if (title.split(/\s{1,10}/).length > 10) continue;
+    let next = i + 1;
+    while (next < lines.length && !lines[next].trim()) next++;
+    if (
+      next < lines.length &&
+      /^\s{1,10}(?:[-*]\s|\d{1,3}[.)]\s|[A-Za-z][.)]\s)/.test(lines[next])
+    )
+      continue;
+    hits.push({ idx: i, title });
+    expected++;
+  }
+  if (hits.length < 3) return lines;
+  const out = [...lines];
+  hits.forEach((h, k) => {
+    out[h.idx] = `## ${k + 1}. ${h.title}`;
+  });
+  return out;
+}
+
+/* ------------------------------------------------------------------ *
+ * Positional PDF line assembly (§5.12 round 19). Word-exported PDFs emit
+ * list/heading auto-number labels OUT of reading order (after their
+ * paragraph's text items, at the y of the paragraph's FIRST line), which
+ * the old stream-order assembly turned into orphan "1." lines and
+ * "text.2." trailing glue - garbage the model then mirrors from the format
+ * sample into drafts. The fix is deliberately LOCAL, not a full y-sort: a
+ * positioned item may merge into one of the last K=12 lines when its y
+ * matches within tolerance, spliced by x. Multi-column PDFs degrade to
+ * stream order (a matching y in another column is a full column height
+ * back, outside the window); rotated/sheared and transform-less items keep
+ * the old append behavior; RTL lines never x-splice. Tolerance
+ * 0.45*max(h, line first-member h) sits between the superscript raise
+ * (<=0.45em) and single-space leading (>=1.08em); line y and the tolerance
+ * anchor stay pinned to the FIRST member so one merged oversized part
+ * cannot widen the funnel. All passes linear; 30k items/page truncation.
+ * ------------------------------------------------------------------ */
+
+export interface PdfRawLine {
+  text: string;
+  h: number;
+  /** min x of positioned parts; null = fallback-assembled line. */
+  startX: number | null;
+  /** x where content begins after a standalone leading marker part. */
+  textX: number | null;
+}
+
+const BULLET_GLYPHS = /^[•●▪■◦○·\uF0A7\uF0B7\uF076\uF0D8]$/;
+const SYMBOL_PUA = /[\uF000-\uF8FF]/g;
+const MARKER_PART = /^\s*(?:[-*]|\d{1,3}[.)]|[A-Za-z][.)])\s*$/;
+const MAX_PAGE_ITEMS = 30_000;
+const MERGE_WINDOW = 12;
+
+interface AsmPart {
+  x: number | null; // null = stream-appended (no usable position)
+  wEnd: number | null; // x + width when width is usable
+  str: string;
+  h: number;
+  spliced: boolean; // inserted out of arrival order
+}
+
+interface AsmLine {
+  y: number | null; // first member's y, never updated
+  hFirst: number;
+  h: number;
+  rtl: boolean;
+  parts: AsmPart[];
+}
+
+function emitLine(l: AsmLine): PdfRawLine {
+  let text = "";
+  let prev: AsmPart | null = null;
+  for (const p of l.parts) {
+    if (prev && text && !/\s$/.test(text) && !/^\s/.test(p.str)) {
+      const gapKnown =
+        prev.wEnd !== null && p.x !== null && !l.rtl ? p.x - prev.wEnd : null;
+      if (gapKnown !== null) {
+        if (gapKnown > 0.3 * Math.max(prev.h, p.h)) text += " ";
+      } else if (p.spliced || prev.spliced) text += " ";
+    }
+    text += p.str;
+    prev = p;
+  }
+  // Bullet glyphs normalize to a markdown bullet; leftover Symbol-font PUA
+  // glyphs are dropped (they were stored as garbage bytes before).
+  const first = l.parts[0];
+  if (first && BULLET_GLYPHS.test(first.str.trim()))
+    text = `- ${text.slice(first.str.length).trimStart()}`;
+  text = text.replace(SYMBOL_PUA, "");
+  const positioned = l.parts.filter((p) => p.x !== null);
+  const startX = positioned.length
+    ? Math.min(...positioned.map((p) => p.x!))
+    : null;
+  let textX = startX;
+  if (
+    positioned.length >= 2 &&
+    l.parts[0]?.x !== null &&
+    MARKER_PART.test(l.parts[0].str)
+  )
+    textX = l.parts[1]?.x ?? startX;
+  return { text, h: l.h, startX, textX };
+}
+
+/** One page's getTextContent items -> lines. Pure; exported for tests. */
+export function assemblePdfLines(items: unknown[]): PdfRawLine[] {
+  const lines: AsmLine[] = [];
+  let current: AsmLine | null = null;
+  const newLine = (part: AsmPart, y: number | null, rtl: boolean): AsmLine => {
+    const l: AsmLine = { y, hFirst: part.h, h: part.h, rtl, parts: [part] };
+    lines.push(l);
+    return l;
+  };
+  const count = Math.min(items.length, MAX_PAGE_ITEMS);
+  for (let idx = 0; idx < count; idx++) {
+    const item = items[idx] as {
+      str?: unknown;
+      transform?: unknown;
+      hasEOL?: unknown;
+      width?: unknown;
+      dir?: unknown;
+    };
+    if (typeof item.str !== "string") continue;
+    const tf = Array.isArray(item.transform) ? item.transform : null;
+    const rotated =
+      !tf ||
+      Math.abs(Number(tf[1]) || 0) > 0.001 ||
+      Math.abs(Number(tf[2]) || 0) > 0.001;
+    const h = tf
+      ? Math.abs(Number(tf[3]) || 0) || Math.abs(Number(tf[0]) || 0)
+      : 0;
+    const rtl = item.dir === "rtl";
+    if (rotated || !Number.isFinite(Number(tf?.[4])) || !Number.isFinite(Number(tf?.[5]))) {
+      // Fallback: today's behavior byte-for-byte - append to the current
+      // line, hasEOL closes it.
+      const part: AsmPart = { x: null, wEnd: null, str: item.str, h, spliced: false };
+      if (current) {
+        current.parts.push(part);
+        if (h > current.h) current.h = h;
+        if (rtl) current.rtl = true;
+      } else current = newLine(part, null, rtl);
+      if (item.hasEOL) current = null;
+      continue;
+    }
+    const x = Number(tf![4]);
+    const y = Number(tf![5]);
+    const w = typeof item.width === "number" && item.width > 0 ? item.width : null;
+    const part: AsmPart = {
+      x,
+      wEnd: w !== null ? x + w : null,
+      str: item.str,
+      h,
+      spliced: false,
+    };
+    // Merge-target search over the last K lines: smallest |dy| within
+    // tolerance wins, ties to the most recent.
+    let best: AsmLine | null = null;
+    let bestDy = Infinity;
+    for (let k = lines.length - 1; k >= 0 && k >= lines.length - MERGE_WINDOW; k--) {
+      const l = lines[k];
+      if (l.y === null) continue;
+      const dy = Math.abs(y - l.y);
+      if (dy <= Math.max(2, 0.45 * Math.max(h, l.hFirst)) && dy < bestDy) {
+        best = l;
+        bestDy = dy;
+      }
+    }
+    if (best) {
+      if (rtl) best.rtl = true;
+      if (best.rtl) best.parts.push(part);
+      else {
+        // Insert by x (stable for equal x). Splicing before existing parts
+        // marks the part so the space rule knows the seam was rebuilt.
+        let at = best.parts.length;
+        while (at > 0) {
+          const q = best.parts[at - 1];
+          if (q.x !== null && q.x > x) at--;
+          else break;
+        }
+        part.spliced = at < best.parts.length || best !== current;
+        best.parts.splice(at, 0, part);
+      }
+      if (h > best.h) best.h = h;
+      if (best === current && item.hasEOL) current = null;
+    } else {
+      current = newLine(part, y, rtl);
+      if (item.hasEOL) current = null;
+    }
+  }
+  return lines.map(emitLine);
+}
+
+/* Indent tiers + continuation joins + residual orphan drop (round 19).
+ * Runs AFTER frame stripping (a footer must never join a wrapped item) and
+ * never across pages. Tiers: marker-led lines cluster by startX (quantized
+ * 9pt - Word steps indents in 18pt units; jitter stays within a cluster);
+ * a line's tier = number of distinct major clusters strictly left of its
+ * own, capped at 2, emitted as 2 spaces per tier (our parser's own nesting
+ * threshold). Anchoring on MARKER-line clusters, not the body margin,
+ * keeps hanging-indent continuations from polluting the baseline. Joins: a
+ * non-marker line whose startX matches the preceding marker line's textX
+ * within 3pt joins it - gated on the marker line not already ending a
+ * sentence OR the candidate starting lowercase, so a first-line-indented
+ * paragraph never fuses into a list item. */
+const LINE_MARKER_LEAD = /^(?:[-*]\s|\d{1,3}[.)]\s|[A-Za-z][.)]\s)/;
+
+export function shapePdfListLines(pages: PdfRawLine[][]): PdfRawLine[][] {
+  const clusterKey = (x: number) => Math.round(x / 9) * 9;
+  const counts = new Map<number, number>();
+  for (const page of pages)
+    for (const l of page) {
+      if (l.startX === null) continue;
+      if (!LINE_MARKER_LEAD.test(l.text.trim())) continue;
+      const k = clusterKey(l.startX);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+  const major = [...counts.entries()]
+    .filter(([, c]) => c >= 2)
+    .map(([k]) => k)
+    .sort((a, b) => a - b);
+  const tierOf = (x: number): number => {
+    const k = clusterKey(x);
+    let t = 0;
+    for (const mk of major) if (mk < k) t++;
+    return Math.min(t, 2);
+  };
+  return pages.map((page) => {
+    const out: PdfRawLine[] = [];
+    let marker: PdfRawLine | null = null;
+    for (const l of page) {
+      const trimmed = l.text.trim();
+      if (!trimmed) {
+        marker = null;
+        out.push(l);
+        continue;
+      }
+      // Residual orphan auto-number label that still defeated geometry:
+      // drop it here so the format sample never teaches the shape.
+      if (/^\d{1,3}[.)]$/.test(trimmed)) continue;
+      if (LINE_MARKER_LEAD.test(trimmed)) {
+        const tier = l.startX !== null && major.length ? tierOf(l.startX) : 0;
+        const shaped: PdfRawLine = {
+          ...l,
+          text: `${"  ".repeat(tier)}${trimmed}`,
+        };
+        out.push(shaped);
+        marker = shaped;
+        continue;
+      }
+      if (
+        marker &&
+        marker.textX !== null &&
+        l.startX !== null &&
+        Math.abs(l.startX - marker.textX) <= 3 &&
+        (!/[.!?;]$/.test(marker.text) || /^[a-z]/.test(trimmed))
+      ) {
+        marker.text = `${marker.text} ${trimmed}`;
+        continue;
+      }
+      marker = null;
+      out.push(l);
+    }
+    return out;
+  });
+}
+
+/**
  * PDF -> plain text via pdf.js getTextContent (no rendering, no canvas, no
  * embedded-JS execution; isEvalSupported off). Hostile-input posture matches
  * the docx path: page cap, char stop, and a hard wall-clock deadline that
@@ -553,44 +840,26 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
         }
         const pageCount = Math.min(doc.numPages, CAPS.styleSamplePdfMaxPages);
         // Per-page collection: the letterhead pass needs page boundaries.
-        const pages: { text: string; h: number }[][] = [];
+        // Round 19: positional line assembly (assemblePdfLines) reunites
+        // Word's out-of-order auto-number labels with their items in
+        // reading order. The char cap stops NEW pages only, so the frame
+        // pass always sees complete pages (retro-merged text makes the cap
+        // approximate by design).
+        const pages: PdfRawLine[][] = [];
         let total = 0;
         for (let n = 1; n <= pageCount && total < EXTRACT_STOP_CHARS; n++) {
           const page = await doc.getPage(n);
           const content = await page.getTextContent();
-          const pageLines: { text: string; h: number }[] = [];
-          let lastY: number | null = null;
-          let lineH = 0;
-          const line: string[] = [];
-          const push = () => {
-            const text = line.join("");
-            pageLines.push({ text, h: lineH });
-            total += text.length;
-            line.length = 0;
-            lineH = 0;
-          };
-          for (const item of content.items) {
-            if (!("str" in item)) continue;
-            const tf = Array.isArray(item.transform) ? item.transform : null;
-            const y = tf ? tf[5] : null;
-            // Unrotated text: |d| is the font height; |a| is the fallback
-            // for rotated or sheared matrices.
-            const h = tf ? Math.abs(tf[3]) || Math.abs(tf[0]) : 0;
-            if (lastY !== null && y !== null && Math.abs(y - lastY) > 2) push();
-            line.push(item.str);
-            if (h > lineH) lineH = h;
-            if (item.hasEOL) {
-              push();
-              lastY = null;
-            } else if (y !== null) lastY = y;
-          }
-          if (line.length) push();
+          const pageLines = assemblePdfLines(content.items);
+          for (const l of pageLines) total += l.text.length;
           pages.push(pageLines);
         }
         // Letterhead inference (round 17): lines repeating across page
         // tops/bottoms become the frame and leave the body (a 40-page
         // sample must not repeat its letterhead 40 times into the stored
-        // text, which would also poison the verbosity measurement).
+        // text, which would also poison the verbosity measurement). Frame
+        // stripping runs BEFORE list shaping so a footer can never
+        // continuation-join into a wrapped list item.
         const frame = detectPdfFrame(pages.map((p) => p.map((l) => l.text)));
         const filtered = pages.map((p) => {
           if (!frame.dropKeys.size) return p;
@@ -602,15 +871,19 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
             (l, idx) => !(edge.has(idx) && isFrameLine(l.text, frame.dropKeys))
           );
         });
+        const shaped = shapePdfListLines(filtered);
         // Lines from ALL pages classify together (one document-wide median);
         // h=0 separator rows keep the page breaks and never classify.
-        const allLines: { text: string; h: number }[] = [];
-        filtered.forEach((p, idx) => {
+        const allLines: PdfRawLine[] = [];
+        shaped.forEach((p, idx) => {
           allLines.push(...p);
-          if (idx < filtered.length - 1) allLines.push({ text: "", h: 0 });
+          if (idx < shaped.length - 1)
+            allLines.push({ text: "", h: 0, startX: null, textX: null });
         });
         const text = recoverTrailingNumberedHeadings(
-          applyOutlineHeadings(markPdfHeadings(allLines), allLines, outlineMap)
+          recoverLeadingNumberedHeadings(
+            applyOutlineHeadings(markPdfHeadings(allLines), allLines, outlineMap)
+          )
         )
           .join("\n")
           .trim();

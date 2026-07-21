@@ -12,13 +12,44 @@ export type Inline =
   | { t: "code"; text: string }
   | { t: "link"; text: string; href: string };
 
+/** Word list-number format for ordered lists (round 19). "decimal" is the
+ * default and the only shape older stored blocks had. */
+export type ListFormat = "decimal" | "upperLetter" | "lowerLetter";
+
+/** One nesting level under a list item (round 19). Subs never nest further:
+ * deeper indents fold into this level. */
+export interface SubList {
+  ordered: boolean;
+  start?: number; // default 1
+  format?: ListFormat; // meaningful only when ordered; default "decimal"
+  items: Inline[][];
+}
+
+export interface ListItem {
+  inline: Inline[];
+  sub?: SubList;
+}
+
 export type Block =
   | { t: "heading"; level: 1 | 2 | 3 | 4; inline: Inline[] }
   | { t: "paragraph"; inline: Inline[] }
-  | { t: "list"; ordered: boolean; items: Inline[][] }
+  | {
+      t: "list";
+      ordered: boolean;
+      /** First item's literal ordinal (1-based; letters map A=1). The rest
+       * of the run renumbers sequentially from here, so a split list run
+       * ("3. x" after an intervening paragraph) keeps its count. */
+      start?: number;
+      format?: ListFormat;
+      items: ListItem[];
+    }
   | { t: "table"; header: Inline[][]; rows: Inline[][][] };
 
-import { promoteManualHeadingLines } from "./numbering";
+import {
+  dropOrphanNumberLines,
+  isInitialsRest,
+  promoteManualHeadingLines,
+} from "./numbering";
 
 const SAFE_LINK = /^https?:\/\//i;
 
@@ -66,13 +97,100 @@ function parseTableRow(line: string): Inline[][] {
 
 const TABLE_DIVIDER = /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/;
 
+/* List-marker detection (round 19). Markers are recognized through a
+ * reveal-sentinel lead (the wash/region splices land BEFORE the marker on
+ * washed lines) so a mid-animation member never flips its list into a
+ * paragraph for the duration of a beat. Alpha markers ("B.", "c)") are list
+ * items only in ADJACENT runs of consecutive letters with the same
+ * separator - the parser-side complement of numbering.ts's promotion rule
+ * (non-adjacent letter runs with content between become headings; adjacent
+ * ones are enumeration content). A lone lettered line stays prose ("A.
+ * Smith Policy"), and an initials remainder never counts ("U. S. ..."). */
+const SENTINEL_LEAD_RE = /^[\uE000-\uE007]{0,4}/;
+
+type LineMarker =
+  | { kind: "bullet"; lead: string; rest: string }
+  | { kind: "decimal"; lead: string; n: number; rest: string }
+  | { kind: "alpha"; lead: string; letter: string; sep: string; rest: string };
+
+function lineMarker(trimmed: string): LineMarker | null {
+  const lead = (SENTINEL_LEAD_RE.exec(trimmed) ?? [""])[0];
+  const core = trimmed.slice(lead.length);
+  let m = /^[-*]\s+(.*)$/.exec(core);
+  if (m) return { kind: "bullet", lead, rest: m[1] };
+  m = /^(\d{1,3})[.)]\s+(.*)$/.exec(core);
+  if (m) return { kind: "decimal", lead, n: parseInt(m[1], 10), rest: m[2] };
+  m = /^([A-Za-z])([.)])\s{1,10}(?=\S)/.exec(core);
+  if (m) {
+    const rest = core.slice(m[0].length);
+    if (isInitialsRest(rest)) return null;
+    return { kind: "alpha", lead, letter: m[1], sep: m[2], rest };
+  }
+  return null;
+}
+
+/** b continues a's letter chain: strictly next letter, same case (charCode
+ * arithmetic is case-sensitive), same separator. */
+function alphaFollows(
+  a: { letter: string; sep: string },
+  b: { letter: string; sep: string }
+): boolean {
+  return (
+    b.letter.charCodeAt(0) === a.letter.charCodeAt(0) + 1 && b.sep === a.sep
+  );
+}
+
+function letterOrdinal(letter: string): number {
+  return letter.toUpperCase().charCodeAt(0) - 64; // A/a = 1
+}
+
+/** Leading indent of the RAW (untrimmed) line; tab counts as 2. */
+function lineIndent(raw: string): number {
+  let n = 0;
+  for (let k = 0; k < raw.length && k < 40; k++) {
+    if (raw[k] === " ") n++;
+    else if (raw[k] === "\t") n += 2;
+    else break;
+  }
+  return n;
+}
+
+/** True when the marker at lines[i] opens a lettered run (>=2 adjacent). */
+function alphaRunAhead(
+  lines: string[],
+  i: number,
+  lm: LineMarker & { kind: "alpha" }
+): boolean {
+  if (i + 1 >= lines.length) return false;
+  const next = lineMarker(lines[i + 1].trim());
+  return !!next && next.kind === "alpha" && alphaFollows(lm, next);
+}
+
+/** A structural line that ends a paragraph: heading, table, bullet or
+ * decimal marker, or an alpha marker that opens an adjacent run. */
+function breaksParagraph(lines: string[], i: number): boolean {
+  const t = lines[i].trim();
+  if (!t || /^#{1,4}\s/.test(t) || t.startsWith("|")) return true;
+  const m = lineMarker(t);
+  if (!m) return false;
+  if (m.kind !== "alpha") return true;
+  return alphaRunAhead(lines, i, m);
+}
+
 /** Parse sanitized markdown into blocks. Never throws on odd input. */
 export function parseMarkdown(raw: string): Block[] {
-  // Manual-heading promotion runs pre-parse so a bare "3.1 Data handling"
-  // line becomes a real heading instead of gluing into the paragraph above.
-  // Hooked here (the only parse entry) so the doc pane and .docx can never
-  // disagree. The reverse import is type-only in numbering.ts: no cycle.
-  const md = promoteManualHeadingLines(sanitizeMarkdown(raw));
+  // Pre-parse repair order matters (round 19): orphan number-only lines
+  // ("5." alone - Word auto-number artifacts the model mirrors from badly
+  // extracted samples) drop FIRST, because such a line between two adjacent
+  // lettered lines would count as between-content in the promotion chain
+  // guard and flip an enumeration into headings. Then manual-heading
+  // promotion runs so a bare "3.1 Data handling" line becomes a real
+  // heading instead of gluing into the paragraph above. Hooked here (the
+  // only parse entry) so the doc pane and .docx can never disagree. The
+  // reverse import is type-only in numbering.ts: no cycle.
+  const md = promoteManualHeadingLines(
+    dropOrphanNumberLines(sanitizeMarkdown(raw))
+  );
   const lines = md.split("\n");
   const blocks: Block[] = [];
   let i = 0;
@@ -109,38 +227,84 @@ export function parseMarkdown(raw: string): Block[] {
       blocks.push({ t: "table", header, rows });
       continue;
     }
-    // Lists (unordered and ordered), one level.
-    const ul = /^[-*]\s+(.*)$/.exec(trimmed);
-    const ol = /^\d{1,3}[.)]\s+(.*)$/.exec(trimmed);
-    if (ul || ol) {
-      const ordered = !!ol;
-      const items: Inline[][] = [];
+    // Lists: bullets, ordered decimals (literal start preserved), lettered
+    // runs, with ONE nesting level via raw-line indent >= first item + 2.
+    const lm = lineMarker(trimmed);
+    if (lm && (lm.kind !== "alpha" || alphaRunAhead(lines, i, lm))) {
+      const baseIndent = lineIndent(line);
+      const ordered = lm.kind !== "bullet";
+      const format: ListFormat | undefined =
+        lm.kind === "alpha"
+          ? lm.letter >= "a"
+            ? "lowerLetter"
+            : "upperLetter"
+          : undefined;
+      const start =
+        lm.kind === "decimal"
+          ? lm.n
+          : lm.kind === "alpha"
+            ? letterOrdinal(lm.letter)
+            : undefined;
+      const items: ListItem[] = [{ inline: parseInline(lm.lead + lm.rest) }];
+      let prevAlpha: { letter: string; sep: string } | null =
+        lm.kind === "alpha" ? lm : null;
+      i++;
       while (i < lines.length) {
-        const t = lines[i].trim();
-        const mu = /^[-*]\s+(.*)$/.exec(t);
-        const mo = /^\d{1,3}[.)]\s+(.*)$/.exec(t);
-        const m = ordered ? mo : mu;
-        if (!m) break;
-        items.push(parseInline(m[1]));
+        const rawLine = lines[i];
+        const t = rawLine.trim();
+        if (!t) break;
+        const m2 = lineMarker(t);
+        if (!m2) break;
+        if (lineIndent(rawLine) >= baseIndent + 2) {
+          // Sub level. The first sub line fixes the sub's kind; later
+          // mismatched sub markers coerce into it (pinned) - one level only.
+          const last = items[items.length - 1];
+          if (!last.sub)
+            last.sub = {
+              ordered: m2.kind !== "bullet",
+              start:
+                m2.kind === "decimal"
+                  ? m2.n
+                  : m2.kind === "alpha"
+                    ? letterOrdinal(m2.letter)
+                    : undefined,
+              format:
+                m2.kind === "alpha"
+                  ? m2.letter >= "a"
+                    ? "lowerLetter"
+                    : "upperLetter"
+                  : undefined,
+              items: [],
+            };
+          last.sub.items.push(parseInline(m2.lead + m2.rest));
+          i++;
+          continue;
+        }
+        if (
+          lm.kind === "bullet"
+            ? m2.kind !== "bullet"
+            : lm.kind === "decimal"
+              ? m2.kind !== "decimal"
+              : !(
+                  m2.kind === "alpha" &&
+                  prevAlpha !== null &&
+                  alphaFollows(prevAlpha, m2)
+                )
+        )
+          break;
+        if (m2.kind === "alpha") prevAlpha = m2;
+        items.push({ inline: parseInline(m2.lead + m2.rest) });
         i++;
       }
-      blocks.push({ t: "list", ordered, items });
+      blocks.push({ t: "list", ordered, start, format, items });
       continue;
     }
     // Paragraph: consume until blank line or a structural line.
     const para: string[] = [trimmed];
     i++;
     while (i < lines.length) {
-      const t = lines[i].trim();
-      if (
-        !t ||
-        /^#{1,4}\s/.test(t) ||
-        /^[-*]\s/.test(t) ||
-        /^\d{1,3}[.)]\s/.test(t) ||
-        t.startsWith("|")
-      )
-        break;
-      para.push(t);
+      if (breaksParagraph(lines, i)) break;
+      para.push(lines[i].trim());
       i++;
     }
     blocks.push({ t: "paragraph", inline: parseInline(para.join(" ")) });
@@ -156,7 +320,15 @@ export function blocksToText(blocks: Block[]): string {
   return blocks
     .map((b) => {
       if (b.t === "heading" || b.t === "paragraph") return inlineToText(b.inline);
-      if (b.t === "list") return b.items.map(inlineToText).join("\n");
+      if (b.t === "list")
+        return b.items
+          .map((it) =>
+            [
+              inlineToText(it.inline),
+              ...(it.sub ? it.sub.items.map(inlineToText) : []),
+            ].join("\n")
+          )
+          .join("\n");
       return [b.header, ...b.rows]
         .map((r) => r.map(inlineToText).join(" | "))
         .join("\n");

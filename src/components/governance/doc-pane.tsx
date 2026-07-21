@@ -6,13 +6,14 @@
 // the "Updated just now" change summary with jump links. The pane never
 // blanks during updates; it always renders the last committed documents.
 
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, type CSSProperties } from "react";
 import type { GovernanceDoc, ProjectStatus } from "@/lib/governance/types";
 import {
   parseMarkdown,
   splitConfirmRuns,
   type Block,
   type Inline,
+  type SubList,
 } from "@/lib/governance/markdown";
 import {
   isRegionItem,
@@ -280,13 +281,49 @@ function BlockView({ block }: { block: Block }) {
     );
   }
   if (block.t === "list") {
+    // Letter formats via inline listStyleType: the list-decimal utility
+    // class sets CSS list-style-type, which silently overrides the HTML
+    // `type` attribute - inline style is the only reliable override.
+    // `start` keeps split ordered runs counting from their literal number.
+    const letterStyle = (f?: string): CSSProperties =>
+      f === "upperLetter"
+        ? { ...dim, listStyleType: "upper-alpha" }
+        : f === "lowerLetter"
+          ? { ...dim, listStyleType: "lower-alpha" }
+          : dim;
+    const renderSub = (sub: SubList | undefined) => {
+      if (!sub) return null;
+      const lis = sub.items.map((si, k) => (
+        <li key={k} className="text-sm" style={dim}>
+          <InlineSpans nodes={si} />
+        </li>
+      ));
+      return sub.ordered ? (
+        <ol
+          className="mt-1 list-decimal space-y-1 pl-5"
+          start={sub.start && sub.start > 1 ? sub.start : undefined}
+          style={letterStyle(sub.format)}
+        >
+          {lis}
+        </ol>
+      ) : (
+        <ul className="mt-1 list-disc space-y-1 pl-5">{lis}</ul>
+      );
+    };
     const items = block.items.map((it, i) => (
       <li key={i} className="text-sm" style={dim}>
-        <InlineSpans nodes={it} />
+        <InlineSpans nodes={it.inline} />
+        {renderSub(it.sub)}
       </li>
     ));
     return block.ordered ? (
-      <ol className="mt-3 list-decimal space-y-1 pl-5">{items}</ol>
+      <ol
+        className="mt-3 list-decimal space-y-1 pl-5"
+        start={block.start && block.start > 1 ? block.start : undefined}
+        style={letterStyle(block.format)}
+      >
+        {items}
+      </ol>
     ) : (
       <ul className="mt-3 list-disc space-y-1 pl-5">{items}</ul>
     );
