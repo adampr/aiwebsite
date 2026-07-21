@@ -2394,7 +2394,11 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
   on altered columns — `test_ui_issue_reports` / `audio_related` — crash-looping
   brain-api in prod); v1.99.2 made the widen pass best-effort (view-blocked ALTER
   warns loudly and boot continues) and was re-adopted. **Current submodule pin:
-  v1.102 (d4f34eb, 2026-07-17)** — per-call panel forcing (`invocation.panelMode`,
+  v1.105 (60df5d5, 2026-07-21)** — postgres memory_lookup crash fixes +
+  decay-score restoration (PG relevance scores were silently 0 since the v1.99
+  port) + tool fault boundary (xldev #710-#713); pin history v1.102 d4f34eb →
+  v1.103 f13d6be → v1.105 60df5d5. v1.102 brought
+  per-call panel forcing (`invocation.panelMode`,
   #701) + JSON-native forced panel (#703: json_object turns run draft → cross-lab
   refute → one revision; machine-checkable `thinking.panel` receipt). Consumed here
   by the blog engine: `@aicompany/core` v1.8.1 (1fb62f1; chat-widget CSS scoped
