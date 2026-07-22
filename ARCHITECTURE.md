@@ -2460,10 +2460,11 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
   on altered columns — `test_ui_issue_reports` / `audio_related` — crash-looping
   brain-api in prod); v1.99.2 made the widen pass best-effort (view-blocked ALTER
   warns loudly and boot continues) and was re-adopted. **Current submodule pin:
-  v1.105 (60df5d5, 2026-07-21)** — postgres memory_lookup crash fixes +
-  decay-score restoration (PG relevance scores were silently 0 since the v1.99
-  port) + tool fault boundary (xldev #710-#713); pin history v1.102 d4f34eb →
-  v1.103 f13d6be → v1.105 60df5d5. v1.102 brought
+  v1.106 (02cc6ca, 2026-07-22)** — automatic model-registry id-drift resolution
+  (rename auto-repoint w/ alias preservation, alias-aware kill switch,
+  retirement lifecycle, heads-baseline anti-silent-flip gate) + gpt-5.6-terra/
+  -sol and grok-4.5 routable (xldev #715/#716); pin history v1.102 d4f34eb →
+  v1.103 f13d6be → v1.105 60df5d5 → v1.106 02cc6ca. v1.102 brought
   per-call panel forcing (`invocation.panelMode`,
   #701) + JSON-native forced panel (#703: json_object turns run draft → cross-lab
   refute → one revision; machine-checkable `thinking.panel` receipt). Consumed here
