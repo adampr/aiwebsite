@@ -2930,8 +2930,12 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.13.0 (submodule `packages/aicompany`,
-tag `v1.13.0`, master lineage — v1.13.0 replaces the in-live-tree deploy
+**This site consumes @aicompany/core v1.14.0 (submodule `packages/aicompany`,
+tag `v1.14.0`, master lineage — v1.14.0 adds the stored-verdict mode to the
+headless publish CLI (`--stored-verdict`, module §19.10): a fresh (<60 min),
+material-hash-bound, fully-clean authoring verdict publishes with nightly
+trust, closing the review-refetch nondeterminism loop that refused two
+ladder-clean drafts on 2026-07-22; v1.13.0 replaces the in-live-tree deploy
 build with the staged zero-downtime cutover pipeline (`deploy/stage-build.sh`,
 §9.1/§9.2 here; module §9.2/§9.5 + MIGRATIONS v1.13.0 contracts: hook cwd =
 stage, hook-mutated trees must be in the flip set, env edits by absolute live
