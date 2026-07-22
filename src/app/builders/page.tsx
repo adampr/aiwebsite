@@ -14,10 +14,14 @@ export const metadata: Metadata = {
   },
 };
 
-// The workshop card flips to a "next date TBA" state once the August 27
-// session has started (8:00am CT = 13:00 UTC), so the page never advertises
-// a past event. Requires dynamic rendering — do not remove force-dynamic.
+// The workshop card renders three time windows so the page never advertises
+// a past event: until July 30 8:00am CT it shows that session sold out above
+// the bookable August 27 one; from then until August 27 8:00am CT only the
+// August 27 session; afterwards a "next date TBA" state. 8:00am CT = 13:00
+// UTC (both dates are CDT). Requires dynamic rendering — do not remove
+// force-dynamic.
 export const dynamic = "force-dynamic";
+const JULY_SESSION_STARTS = Date.parse("2026-07-30T13:00:00Z");
 const WORKSHOP_STARTS = Date.parse("2026-08-27T13:00:00Z");
 
 // Workshop seats are sold on Ticket Tailor (single seat pool with the email
@@ -32,7 +36,9 @@ const RECAP_URL = "https://youtube.com/shorts/XFpJpTT4_MI";
 
 export default function BuildersPage() {
   // eslint-disable-next-line react-hooks/purity -- force-dynamic server page; per-request clock read is the point
-  const workshopOpen = Date.now() < WORKSHOP_STARTS;
+  const now = Date.now();
+  const soldOutVisible = now < JULY_SESSION_STARTS;
+  const workshopOpen = now < WORKSHOP_STARTS;
 
   return (
     <div className="mx-auto max-w-5xl space-y-16">
@@ -64,10 +70,25 @@ export default function BuildersPage() {
         <div className="grid gap-6 sm:grid-cols-2 sm:grid-rows-[auto_auto_auto_auto_1fr_auto_auto]">
           {/* Workshop — primary */}
           <div className="panel panel--lightline rise min-w-0 sm:row-span-7 sm:grid sm:grid-rows-subgrid">
-            <span className="badge badge--light">
-              <span className="dot" />{" "}
-              {workshopOpen ? "Next session: August 27" : "Next date: TBA"}
-            </span>
+            {soldOutVisible && workshopOpen ? (
+              // Sold-out strip has no dot: the breathing dot is the "live,
+              // bookable" signal and belongs only on the open session.
+              // Column flex stretches both strips full width, matching the
+              // cohort card's stretched grid-item badge.
+              <div className="flex flex-col gap-2">
+                <span className="badge badge--warn">
+                  Next session · July 30 · Sold out
+                </span>
+                <span className="badge badge--light">
+                  <span className="dot" /> August 27 · Booking open
+                </span>
+              </div>
+            ) : (
+              <span className="badge badge--light self-start">
+                <span className="dot" />{" "}
+                {workshopOpen ? "Next session: August 27" : "Next date: TBA"}
+              </span>
+            )}
             <h3 className="mt-6">Virtual Workshop</h3>
             <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
               Build real workflows in one morning.
@@ -82,12 +103,16 @@ export default function BuildersPage() {
               <li>Build real AI workflows and automations you keep</li>
               {workshopOpen ? (
                 <li>
-                  Thursday, August 27 · 8:00am–12:00pm CT
+                  Your session: Thursday, August 27 · 8:00am–12:00pm CT
                 </li>
               ) : (
                 <li>Next session being scheduled now</li>
               )}
-              <li>Capped at 8 attendees · the July 30 session sold out</li>
+              {soldOutVisible && workshopOpen ? (
+                <li>Capped at 8 attendees · July 30 filled all 8 seats</li>
+              ) : (
+                <li>Capped at 8 attendees · the July 30 session sold out</li>
+              )}
               <li>
                 Date doesn&apos;t work after you buy?{" "}
                 <Link href="/contact">Contact us</Link>{" "}
@@ -102,7 +127,7 @@ export default function BuildersPage() {
                   rel="noopener noreferrer"
                   className="btn btn--primary no-underline"
                 >
-                  Reserve your seat · $995 one-time
+                  Reserve August 27 · $995 one-time
                 </a>
               ) : (
                 <Link href="/contact" className="btn no-underline">
@@ -120,7 +145,9 @@ export default function BuildersPage() {
             className="panel rise min-w-0 sm:row-span-7 sm:grid sm:grid-rows-subgrid"
             style={{ transitionDelay: "120ms" }}
           >
-            <span className="badge badge--ok">
+            {/* self-start stops the subgrid from stretching this badge to the
+                height of the workshop card's two stacked status strips. */}
+            <span className="badge badge--ok self-start">
               <span className="dot" /> Enrolling · capped at 6 people
             </span>
             <h3 className="mt-6">AI Builder Cohort</h3>
