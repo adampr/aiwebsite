@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@ccc5c2e00816f8fef9c5043417591f915bd021e536a952f07ad116917ddc84a4
+# aicompany-template: watchdog.sh.tpl@ab1ba45515ab68f0493c6bce432182f5a0817c1b034d86bf942d07038aa434c5
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -122,7 +122,12 @@ send_email() {
     local last_sent now
     last_sent=$(cat "$throttle_file")
     now=$(date +%s)
-    if (( now - last_sent < issue_throttle_seconds )); then
+    # v1.15.2: earlyoom kills throttle at 1h (a SECOND distinct kill inside
+    # the default 24h window must not go silent — it means sustained
+    # pressure); everything else keeps the default.
+    local key_throttle="$issue_throttle_seconds"
+    [[ "$issue_key" == "earlyoom-kill" ]] && key_throttle=3600
+    if (( now - last_sent < key_throttle )); then
       log "INFO: Email throttled for issue '$issue_key' (last sent $(( now - last_sent ))s ago): $subject"
       return
     fi
@@ -612,23 +617,50 @@ while true; do
       "swapon --show is empty. The v1.15.0 defenses assume the 4G swapfile: swap = schedulability under pressure, and earlyoom's swap threshold never trips without it. stage-build will refuse to deploy until it is back. Re-run deploy/setup-vm.sh (MIGRATIONS v1.15.0)." \
       "swap-missing"
   fi
-  # earlyoom kill events since the last pass → CRITICAL naming the victim.
+  # earlyoom kill events since the last pass → alert naming the victim.
   # This REPLACES earlyoom's -N notifier: Debian's unit sandboxing broke the
   # mailer silently (S2) — the journal is the source of truth.
+  # v1.15.2: match KILL EVENTS ONLY — earlyoom's startup banner ("sending
+  # SIGTERM when mem <= ...") matched the v1.15.0 pattern and fired one false
+  # CRITICAL per host per restart (2026-07-22, three in one rollout). Kill
+  # lines (earlyoom 1.8.x, C locale — re-verify formats on earlyoom upgrades,
+  # MIGRATIONS v1.15.2) name a pid: `sending SIGTERM to process <pid> uid
+  # <uid> "<name>": badness ...`, SIGKILL escalation same shape; pre-1.0 used
+  # `Killing process <pid>`. The discriminator is "to process".
   now_ts=$(date +%s)
   if ! last_scan=$(cat "$earlyoom_scan_stamp" 2>/dev/null) || [[ -z "$last_scan" ]]; then
     last_scan=$(( now_ts - 3600 ))
   fi
-  earlyoom_kills=$(journalctl -u earlyoom --since "@${last_scan}" --no-pager 2>/dev/null | grep -aiE 'sending sig(term|kill)' || true)
-  echo "$now_ts" > "$earlyoom_scan_stamp"
+  earlyoom_window=$(journalctl -u earlyoom --since "@${last_scan}" --no-pager 2>/dev/null || true)
+  earlyoom_kills=$(printf '%s' "$earlyoom_window" | grep -aE 'sending SIG(TERM|KILL) to (process|pid) [0-9]+|[Kk]illing process [0-9]+' || true)
+  if printf '%s' "$earlyoom_window" | grep -aq 'sending SIGTERM when'; then
+    # Banner = unit (re)start — routine during deploys; log-only, never mail.
+    log "INFO: earlyoom (re)started in this window"
+  fi
   if [[ -n "$earlyoom_kills" ]]; then
+    # Threshold evidence, quoted verbatim when earlyoom logged it.
+    earlyoom_evidence=$(printf '%s' "$earlyoom_window" | grep -a 'low memory' | tail -2 || true)
+    # Severity taxonomy (ops panel 2026-07-22): a killed BUILD step during a
+    # live deploy window is the designed pre-cutover abort → WARN; anything
+    # else (app/infra victim, or no deploy running) is the livelock
+    # precursor → CRITICAL, even though pm2 auto-restarts.
+    kill_sev="CRITICAL"
+    marker="/var/run/aiwebsite-deploy-in-progress"
+    if [[ -f "$marker" ]] && (( now_ts - $(stat -c %Y "$marker" 2>/dev/null || echo 0) < 1800 )); then
+      if ! printf '%s' "$earlyoom_kills" | grep -aqvE '"(npm|node|next-server|tsx|npx)[^"]*"'; then
+        kill_sev="WARN (deploy window)"
+      fi
+    fi
     log "FAIL: earlyoom killed under memory pressure: $(echo "$earlyoom_kills" | tail -1)"
     any_failure=true
     send_email \
-      "CRITICAL earlyoom killed a process (memory pressure)" \
-      "earlyoom kill events since the last watchdog pass (victim named per line):\n$earlyoom_kills\n\nThe box crossed MemAvail<15% + SwapFree<30%. A killed npm/node build step means a deploy aborted safely pre-cutover; a killed app has been restarted by pm2/this watchdog — but the PRESSURE is the story. Check free -m, /var/log/aiwebsite-psi.log and sar -r before the next deploy." \
+      "$kill_sev earlyoom killed a process (memory pressure)" \
+      "earlyoom kill events since the last watchdog pass (victim named per line):\n$earlyoom_kills\n\nThreshold evidence from earlyoom (verbatim, may be empty):\n$earlyoom_evidence\n\nConfigured thresholds: SIGTERM at MemAvail<=15% AND SwapFree<=30%; SIGKILL at 8%/15%. A killed npm/node build step means a deploy aborted safely pre-cutover; a killed app SHOULD have been restarted by pm2/this watchdog — verify below. The PRESSURE is the story: check free -m, /var/log/aiwebsite-psi.log and sar -r before the next deploy.\n\npm2 status now:\n$(run_as_pm2_user pm2 ls 2>/dev/null | head -12)" \
       "earlyoom-kill"
   fi
+  # Stamp written AFTER the mail path so a crash between scan and send never
+  # loses a kill (re-reporting a window once is the safe direction).
+  echo "$now_ts" > "$earlyoom_scan_stamp"
 
   # 8. Backup heartbeat + knowledge freshness (cheap stats; alerts throttled 24h)
   check_freshness
