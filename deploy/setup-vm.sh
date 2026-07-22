@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@4e080a9b79a65b612a388ccce5e6665111ba44b334b9bad8b20788ba6fcd299e
+# aicompany-template: setup-vm.sh.tpl@8ad50c0e6d137f9de001a76fe3a40ff2bff9ca669e99458c732895e46ccea478
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -54,6 +54,18 @@ fi
 deploy_marker="/var/run/aiwebsite-deploy-in-progress"
 sudo touch "$deploy_marker"
 
+# ── Capability probe: memory-capped staging must WORK here (v1.15.0, A3) ──
+# stage-build.sh runs every heavy step inside a systemd scope with a hard
+# MemoryMax (§9.2) and is FAIL-CLOSED. Probe the exact capability up front
+# with a 64M throwaway scope, so a VM where sudo -n systemd-run cannot place
+# scopes aborts NOW — before any package or staging work — not mid-pipeline.
+if ! sudo -n systemd-run --quiet --collect --scope --unit="aiwebsite-stage-probe-$$" -p MemoryMax=64M true; then
+  echo "ERROR: sudo -n systemd-run cannot create a memory-capped scope on this VM —"
+  echo "       staged builds would have to run UNCAPPED (the 2026-07-22 livelock class)."
+  echo "       Fix sudoers/systemd (MIGRATIONS.md v1.15.0 step 4) and redeploy."
+  exit 1
+fi
+
 # ── System packages ──────────────────────────────────────────────
 # build-essential/python3/libpq-dev are required to compile the brain's
 # native deps (better-sqlite3, pg-native).
@@ -61,6 +73,141 @@ sudo apt-get update -qq
 # lsof: extra-services stop/start identity (v1.4.0) — without it, port-holder
 # detection silently degrades and services can double-start.
 sudo apt-get install -y -qq build-essential python3 libpq-dev pkg-config jq rsync logrotate lsof
+
+# ── System measures vs swapless near-OOM livelock (v1.15.0, §9.5) ──
+# Mirrors the PROVEN one-off harden-vm.sh applied fleet-wide on 2026-07-22
+# (aiwebsite outage): the template now MAINTAINS what the one-off
+# bootstrapped. Three legs: swap restores schedulability under memory
+# pressure; earlyoom turns an unbounded livelock into a bounded kill;
+# systemd drop-ins keep operator access (sshd/journald/cloudflared) alive.
+# Idempotent. Restarts ONLY earlyoom/journald/psi-log/ssh — NEVER cron
+# (S4: cron's drop-in is MemoryMin-only; a cron restart would orphan the
+# running watchdog chain).
+
+# 1. swapfile 4G + swappiness=60 (S3: the kernel must be WILLING to swap
+#    anon pages or earlyoom's swap gate never trips)
+if ! sudo swapon --show=NAME --noheadings | grep -q '^/swapfile$'; then
+  sudo fallocate -l 4G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
+  sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+fi
+grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+printf 'vm.swappiness = 60\n' | sudo tee /etc/sysctl.d/90-aicompany-memory.conf >/dev/null
+sudo sysctl -q -p /etc/sysctl.d/90-aicompany-memory.conf
+
+# 2. earlyoom (S2: no -N mailer — the notifier is sandbox-broken on Debian
+#    units and failed silently; the watchdog scans the journal for kill
+#    events instead. S5: regexes UNQUOTED + space-free — systemd $VAR
+#    splitting keeps quote characters literal otherwise)
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq earlyoom >/dev/null 2>&1 || sudo apt-get install -y earlyoom
+sudo systemctl mask --now systemd-oomd >/dev/null 2>&1 || true
+sudo tee /etc/default/earlyoom >/dev/null <<'EOF'
+# aicompany hardening 2026-07-22: SIGTERM at MemAvail<15% AND SwapFree<30%; KILL at 8%/15%.
+# Regexes UNQUOTED+space-free (systemd $VAR splitting keeps quotes literal otherwise).
+EARLYOOM_ARGS="-m 15,8 -s 30,15 -r 300 --avoid ^(sshd|sshd-session|systemd|systemd-journal|systemd-logind|cloudflared|nginx|postgres|earlyoom|cron)$ --prefer ^(npm|node|next-server|tsx|npx)$"
+EOF
+sudo mkdir -p /etc/systemd/system/earlyoom.service.d
+sudo tee /etc/systemd/system/earlyoom.service.d/90-aicompany.conf >/dev/null <<'EOF'
+[Service]
+OOMScoreAdjust=-1000
+MemoryMin=16M
+Restart=always
+EOF
+
+# 3. critical-daemon drop-ins (S4: cron NOT restarted; S10: slice min 384M)
+mkdrop() { sudo mkdir -p "/etc/systemd/system/$1.d"; sudo tee "/etc/systemd/system/$1.d/90-aicompany-oom.conf" >/dev/null; }
+mkdrop system.slice <<'EOF'
+[Slice]
+MemoryMin=384M
+EOF
+mkdrop ssh.service <<'EOF'
+[Service]
+OOMScoreAdjust=-1000
+MemoryMin=32M
+EOF
+mkdrop systemd-journald.service <<'EOF'
+[Service]
+OOMScoreAdjust=-900
+MemoryMin=64M
+EOF
+mkdrop cloudflared.service <<'EOF'
+[Service]
+OOMScoreAdjust=-900
+MemoryMin=64M
+EOF
+mkdrop nginx.service <<'EOF'
+[Service]
+OOMScoreAdjust=-500
+MemoryMin=32M
+EOF
+mkdrop 'postgresql@.service' <<'EOF'
+[Service]
+OOMScoreAdjust=-800
+MemoryMin=128M
+EOF
+mkdrop cron.service <<'EOF'
+[Service]
+MemoryMin=16M
+EOF
+
+# 4. journald persistent + bounded (the 07-22 forensics lost the freeze
+#    window; persistent storage survives the console reboot)
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo tee /etc/systemd/journald.conf.d/90-aicompany.conf >/dev/null <<'EOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=200M
+RuntimeMaxUse=64M
+EOF
+
+# 5. sysstat 1-min grain + PSI flight recorder (07-22 had a 10-min sar grain
+#    and zero pressure history)
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sysstat >/dev/null 2>&1 || true
+sudo sed -i 's/^ENABLED=.*/ENABLED="true"/' /etc/default/sysstat 2>/dev/null || true
+sudo mkdir -p /etc/systemd/system/sysstat-collect.timer.d
+sudo tee /etc/systemd/system/sysstat-collect.timer.d/90-aicompany.conf >/dev/null <<'EOF'
+[Timer]
+OnCalendar=
+OnCalendar=*-*-* *:*:00
+EOF
+sudo tee /usr/local/bin/aiwebsite-psi-log.sh >/dev/null <<'PSIEOF'
+#!/usr/bin/env bash
+while true; do
+  printf '%s mem[%s] io[%s] MemAvailable=%skB SwapFree=%skB\n' \
+    "$(date -u +%FT%TZ)" \
+    "$(tr '\n' ' ' < /proc/pressure/memory)" \
+    "$(grep ^full /proc/pressure/io | tr -d '\n')" \
+    "$(awk '/MemAvailable/{print $2}' /proc/meminfo)" \
+    "$(awk '/SwapFree/{print $2}' /proc/meminfo)" >> /var/log/aiwebsite-psi.log
+  sleep 30
+done
+PSIEOF
+sudo chmod +x /usr/local/bin/aiwebsite-psi-log.sh
+sudo tee /etc/systemd/system/aiwebsite-psi-log.service >/dev/null <<'EOF'
+[Unit]
+Description=aiwebsite PSI flight recorder
+[Service]
+ExecStart=/usr/local/bin/aiwebsite-psi-log.sh
+Restart=always
+OOMScoreAdjust=-500
+MemoryMin=16M
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 6. apply: daemon-reload; restart earlyoom/journald/psi-log + ssh (existing
+#    SSH connections survive an ssh restart); cron untouched (S4)
+sudo systemctl daemon-reload
+sudo systemctl enable --now earlyoom >/dev/null 2>&1 || true
+sudo systemctl restart earlyoom
+sudo systemctl enable --now aiwebsite-psi-log.service
+sudo systemctl enable --now sysstat-collect.timer >/dev/null 2>&1 || sudo systemctl enable --now sysstat >/dev/null 2>&1 || true
+sudo systemctl restart systemd-journald
+sudo systemctl restart ssh || sudo systemctl restart sshd
+# Apply oom_score_adj to ALREADY-RUNNING protected daemons (drop-ins take
+# effect on their next restart; these must be protected NOW).
+for p in $(pgrep -x sshd; pgrep -x cloudflared; pgrep -x systemd-journal); do
+  echo -1000 | sudo tee /proc/$p/oom_score_adj >/dev/null 2>&1 || true
+done
 
 # Node.js 22
 if ! command -v node &>/dev/null; then
@@ -143,6 +290,48 @@ else
   echo "WARN: no deploy/extra-services.json — extra-service stop-before-cutover and supervision are OFF for this deploy"
 fi
 
+# ── Deploy liveness sentinel (v1.15.0, §9.2 — G3) ────────────────
+# Watches the LIVE site's /api/health for the whole stage window (heal → the
+# config:check gate): 3 consecutive misses at a 10s cadence (a curl timeout
+# counts as a miss) means the stage work is starving the box — write the
+# abort flag FIRST (systemd-run --collect destroys scope status; the flag is
+# the only forensic marker run_capped's banner can read, A10), THEN SIGKILL
+# every capped scope. It never covers the cutover bracket — the flip's
+# seconds-wide health dip is EXPECTED. Honesty (§9.2): a FULL livelock also
+# freezes this sentinel; the §9.5 earlyoom layer owns that band — the
+# sentinel exists for the wide near-livelock band where userspace still
+# schedules. 45-min self-TTL; the EXIT trap reaps it and the stale flag.
+sentinel_should_abort() {  # <misses> <threshold> → exit 0 = abort
+  [ "$1" -ge "$2" ]
+}
+sentinel_flag="$stage_dir/.liveness-abort"
+rm -f "$sentinel_flag"
+deploy_sentinel() {
+  misses=0
+  ticks=0
+  while :; do
+    sleep 10
+    ticks=$(( ticks + 1 ))
+    if [ "$ticks" -gt 270 ]; then exit 0; fi     # 45-min self-TTL
+    body=$(curl -fsS -m 5 "http://127.0.0.1:3000/api/health" 2>/dev/null) || body=""
+    if printf '%s' "$body" | grep -q '"status":"ok"'; then
+      misses=0
+      continue
+    fi
+    misses=$(( misses + 1 ))
+    if sentinel_should_abort "$misses" 3; then
+      touch "$sentinel_flag"                     # flag BEFORE the kill (A5/A10)
+      sudo -n systemctl kill -s KILL "aiwebsite-stage-*.scope" 2>/dev/null || true
+      exit 0
+    fi
+  done
+}
+# Spawn closes fd 200 AND 201 (B1 class): the sentinel is a long-lived child
+# that must never inherit + pin the deploy or stage lock.
+deploy_sentinel 200>&- 201>&- &
+sentinel_pid=$!
+trap 'kill "$sentinel_pid" 2>/dev/null || true; rm -f "$sentinel_flag"' EXIT
+
 # Re-touch the mutex marker after each staged step (v1.4.0 rule): the whole
 # install+build span can outrun the watchdog's 30-min TTL on a small VM.
 bash deploy/stage-build.sh heal;      sudo touch "$deploy_marker"
@@ -202,6 +391,12 @@ fi
 # migrations), BEFORE the flip so a bad deploy never replaces a good one.
 echo ">>> Running config:check (stage, post-migrate)..."
 bash deploy/stage-build.sh check
+
+# Sentinel OFF right after the check gate, BEFORE the extra-services bracket
+# (v1.15.0): the cutover flip restarts the site — its seconds-wide health dip
+# must never be read as starvation and trigger a scope kill.
+kill "$sentinel_pid" 2>/dev/null || true
+wait "$sentinel_pid" 2>/dev/null || true
 
 # Pre-cutover gate: the seed artifact must exist/generate BEFORE the flip.
 # SEED_MODE=file → the host commits a hand-curated deploy/seed-persona-memories.sql
@@ -526,9 +721,38 @@ Persistent=true
 WantedBy=timers.target
 UNIT
 
+# Cross-site peer monitor (§9.7 — template-managed since v1.15.0; formerly a
+# manual runbook step: the 2026-07-22 forensics burned an hour establishing
+# whether the DOWN alert had even fired, because hand-managed units are
+# unverifiable from the module). Runs the RENDERED deploy/peer-monitor.sh
+# from the app tree, so a re-render lands on the next fire with no unit edit.
+sudo tee /etc/systemd/system/aiwebsite-peer-monitor.service >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite cross-site peer monitor (§9.7)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash /var/www/aiwebsite/deploy/peer-monitor.sh
+StandardOutput=append:/var/log/aiwebsite-peer-monitor.log
+StandardError=append:/var/log/aiwebsite-peer-monitor.log
+UNIT
+sudo tee /etc/systemd/system/aiwebsite-peer-monitor.timer >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite peer monitor every 5 min (§9.7)
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now aiwebsite-knowledge.timer \
-  aiwebsite-retention-sweeper.timer aiwebsite-disk-check.timer
+  aiwebsite-retention-sweeper.timer aiwebsite-disk-check.timer \
+  aiwebsite-peer-monitor.timer
 # Backups are a §1 default-on invariant, but enabling the timer with no bucket
 # just produces nightly failure alerts — gate on BACKUP_BUCKET and leave a flag
 # the watchdog uses to decide whether the heartbeat check applies.
@@ -642,6 +866,6 @@ echo "=== Setup complete ==="
 echo "Local checks:"
 echo "  curl -fsS http://127.0.0.1:3000/api/health          # Next.js"
 echo "  curl -fsS http://127.0.0.1:3211/health            # brain-api"
-echo "  systemctl list-timers 'aiwebsite-*'                          # all 5 timers present (+ blog when BLOG_ENABLED=1)"
+echo "  systemctl list-timers 'aiwebsite-*'                          # all 6 timers present (+ blog when BLOG_ENABLED=1)"
 echo "Public check (after the human DNS step propagates):"
 echo "  curl -fsS https://ai.xl.net/api/health"

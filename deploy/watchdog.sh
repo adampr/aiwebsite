@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@4467b1d0562efdcc460e5216d14b5cfb2a98713976984ad2c5757a2368c172d8
+# aicompany-template: watchdog.sh.tpl@ccc5c2e00816f8fef9c5043417591f915bd021e536a952f07ad116917ddc84a4
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -43,6 +43,7 @@ issue_throttle_seconds=86400  # 24 hours per unique issue
 check_interval=60
 page_check_every=5            # run page checks every Nth iteration (5 × 60s = 5 min)
 stale_seconds=93600           # 26h — backup heartbeat + knowledge doc freshness
+earlyoom_scan_stamp="/var/run/aiwebsite-watchdog-earlyoom-scan"  # journal-scan cursor (v1.15.0)
 notify_to="adam@xl.net"
 notify_from="ai.xl.net Watchdog <noreply@ai.xl.net>"
 
@@ -591,10 +592,48 @@ while true; do
       "true"
   fi
 
-  # 7. Backup heartbeat + knowledge freshness (cheap stats; alerts throttled 24h)
+  # 7. Livelock defenses armed? (v1.15.0 §9.5 — 2026-07-22 aiwebsite outage)
+  # swap + earlyoom turn a memory squeeze into a bounded kill instead of a
+  # 78-min reclaim livelock; if either is missing the box is one heavy build
+  # away from unrecoverable-without-console. WARNs throttle 24h as usual.
+  if [[ "$(systemctl is-active earlyoom 2>/dev/null)" != "active" ]]; then
+    log "FAIL: earlyoom is not active — livelock breaker unarmed"
+    any_failure=true
+    send_email \
+      "WARN earlyoom not active — livelock breaker unarmed" \
+      "systemctl is-active earlyoom: $(systemctl is-active earlyoom 2>&1)\n\nWithout earlyoom a memory squeeze can relapse into the 2026-07-22 near-OOM reclaim livelock (box dead 78 min, console reboot required). Re-run deploy/setup-vm.sh, or: sudo systemctl enable --now earlyoom" \
+      "earlyoom-inactive"
+  fi
+  if [[ -z "$(swapon --show --noheadings 2>/dev/null)" ]]; then
+    log "FAIL: no active swap — schedulability under memory pressure lost"
+    any_failure=true
+    send_email \
+      "WARN no active swap — livelock defenses degraded" \
+      "swapon --show is empty. The v1.15.0 defenses assume the 4G swapfile: swap = schedulability under pressure, and earlyoom's swap threshold never trips without it. stage-build will refuse to deploy until it is back. Re-run deploy/setup-vm.sh (MIGRATIONS v1.15.0)." \
+      "swap-missing"
+  fi
+  # earlyoom kill events since the last pass → CRITICAL naming the victim.
+  # This REPLACES earlyoom's -N notifier: Debian's unit sandboxing broke the
+  # mailer silently (S2) — the journal is the source of truth.
+  now_ts=$(date +%s)
+  if ! last_scan=$(cat "$earlyoom_scan_stamp" 2>/dev/null) || [[ -z "$last_scan" ]]; then
+    last_scan=$(( now_ts - 3600 ))
+  fi
+  earlyoom_kills=$(journalctl -u earlyoom --since "@${last_scan}" --no-pager 2>/dev/null | grep -aiE 'sending sig(term|kill)' || true)
+  echo "$now_ts" > "$earlyoom_scan_stamp"
+  if [[ -n "$earlyoom_kills" ]]; then
+    log "FAIL: earlyoom killed under memory pressure: $(echo "$earlyoom_kills" | tail -1)"
+    any_failure=true
+    send_email \
+      "CRITICAL earlyoom killed a process (memory pressure)" \
+      "earlyoom kill events since the last watchdog pass (victim named per line):\n$earlyoom_kills\n\nThe box crossed MemAvail<15% + SwapFree<30%. A killed npm/node build step means a deploy aborted safely pre-cutover; a killed app has been restarted by pm2/this watchdog — but the PRESSURE is the story. Check free -m, /var/log/aiwebsite-psi.log and sar -r before the next deploy." \
+      "earlyoom-kill"
+  fi
+
+  # 8. Backup heartbeat + knowledge freshness (cheap stats; alerts throttled 24h)
   check_freshness
 
-  # 8. Page-render checks (every 5th standard pass = 5 minutes)
+  # 9. Page-render checks (every 5th standard pass = 5 minutes)
   if (( standard_pass % page_check_every == 0 )); then
     check_pages
   fi

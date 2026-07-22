@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@cbe00e52f01db3787769eb0137b6ef39e8ac25a10606e07c279f31c64d79372c
+# aicompany-template: deploy.sh.tpl@b01973008a516e13681a23c3b23af7db8ca19d87c966985f37200ee581447827
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
-#   bash deploy/deploy.sh [--allow-sshpass]
+#   bash deploy/deploy.sh [--allow-sshpass] [--takeover]
+#
+# --takeover (v1.15.0): skip the pre-rsync deploy-busy guard (fresh remote
+# deploy marker) and reap orphaned capped build scopes first — ONLY for
+# taking over from a deploy that is provably dead (crashed session).
 #
 # Transport ("ssh-key", rendered from deploy/site-deploy.env):
 #   ssh-key    (default) key auth via SSH_KEY_PATH; reads AIWEBSITE_SSH_IP /
@@ -34,6 +38,23 @@ trap 'code=$?; if [ "$code" -ne 0 ]; then
   echo "!!! If that line IS present, the NEW build is live and a post-cutover step failed; it was NOT un-deployed." >&2
   echo "!!! Fix the error above and re-run deploy/deploy.sh." >&2
 fi' EXIT
+
+# ── Dev-box per-host deploy serialization (v1.15.0, A7/G5) ───────
+# Two agent sessions deployed the same host within minutes on 2026-07-22 —
+# the VM-side locks (fd 200/201) only start AFTER rsync, so the source-sync
+# window needs a dev-box mutex too. fd 202 (200/201 are the VM-side pair).
+# XDG_RUNTIME_DIR may be unset in cron/CI shells (set -u) — fall back
+# through TMPDIR to /tmp. Opened APPEND (not truncate) so a losing session
+# can still read the winner's holder line; the winner rewrites it below.
+deploy_local_lock="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/aicompany-deploy-aiwebsite.lock"
+exec 202>>"$deploy_local_lock"
+if ! flock -n 202; then
+  echo "ERROR: another deploy of aiwebsite is already running from this dev box — aborting."
+  echo "       lock:   $deploy_local_lock"
+  echo "       holder: $(cat "$deploy_local_lock" 2>/dev/null || echo '<unknown>')"
+  exit 1
+fi
+printf 'pid %s started %s\n' "$$" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$deploy_local_lock"
 
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 app_dir="/var/www/aiwebsite"
@@ -95,7 +116,10 @@ case "$transport" in
     : "${ssh_user:?set AIWEBSITE_USER in .env}"
     [ -f "$ssh_key" ] || { echo "ERROR: SSH key $ssh_key not found (set AIWEBSITE_SSH_KEY in .env or SSH_KEY_PATH in deploy/site-deploy.env)"; exit 1; }
     ssh_e="ssh -i $ssh_key -o StrictHostKeyChecking=accept-new"
-    run_remote() { $ssh_e "$ssh_user@$ssh_ip" "$@"; }
+    # REMOTE_TIMEOUT (v1.15.0): the preflight probe sets 15s so a livelocked
+    # box (TCP accepts, SSH banner hangs — the 2026-07-22 signature) fails
+    # fast; everywhere else it is unset ⇒ `timeout 0` ⇒ no timeout.
+    run_remote() { timeout "${REMOTE_TIMEOUT:-0}" $ssh_e "$ssh_user@$ssh_ip" "$@"; }
     sync_dir()  { rsync -az --delete "${rsync_excludes[@]}" -e "$ssh_e" "$1" "$ssh_user@$ssh_ip:$2"; }
     push_file() { rsync -az -e "$ssh_e" "$1" "$ssh_user@$ssh_ip:$2"; }
     ;;
@@ -114,13 +138,13 @@ case "$transport" in
     : "${ssh_user:?set AIWEBSITE_USER in .env}"
     : "${ssh_pw:?set AIWEBSITE_PW in .env}"
     export SSHPASS="$ssh_pw"
-    run_remote() { sshpass -e ssh -o StrictHostKeyChecking=accept-new "$ssh_user@$ssh_ip" "$@"; }
+    run_remote() { timeout "${REMOTE_TIMEOUT:-0}" sshpass -e ssh -o StrictHostKeyChecking=accept-new "$ssh_user@$ssh_ip" "$@"; }
     sync_dir()  { sshpass -e rsync -az --delete "${rsync_excludes[@]}" "$1" "$ssh_user@$ssh_ip:$2"; }
     push_file() { sshpass -e rsync -az "$1" "$ssh_user@$ssh_ip:$2"; }
     ;;
   gcloud-iap)
     gcloud_args=(--project "" --zone "" --tunnel-through-iap)
-    run_remote() { gcloud compute ssh "" "${gcloud_args[@]}" --command "$*"; }
+    run_remote() { timeout "${REMOTE_TIMEOUT:-0}" gcloud compute ssh "" "${gcloud_args[@]}" --command "$*"; }
     # No rsync over IAP: ship a tar stream. --delete semantics are lost; the
     # exclude list still keeps VM-owned paths (data/, .env) untouched.
     sync_dir() {
@@ -170,6 +194,62 @@ if [ -f "$repo_dir/deploy/rsync-excludes.txt" ]; then
     rsync_excludes+=(--exclude "$pat")
     tar_excludes+=(--exclude "$pat")
   done < "$repo_dir/deploy/rsync-excludes.txt"
+fi
+
+# ── Remote preflight (v1.15.0): ONE probe call before any rsync ──
+# (i)   dead-box guard: `free` under a 15s timeout — the 2026-07-22
+#       livelocked VM accepted TCP but hung at the SSH banner, and a 15:02
+#       rsync piled onto the dead box. No answer ⇒ console runbook, never a
+#       blind retry.
+# (ii)  memory floor: MemAvailable < 1024MB ⇒ refuse before shipping bytes
+#       (stage-build's prepare re-checks the same floor VM-side).
+# (iii) deploy-busy guard: a fresh (<30min) deploy marker means another
+#       session's deploy owns the VM — abort BEFORE rsync (the VM-side
+#       flocks only protect setup-vm, not the source sync; two sessions
+#       deployed the same host on 2026-07-22). Detection is TOKEN-GREP on
+#       the probe output, not exit codes: gcloud-iap collapses every remote
+#       exit code to 1.
+takeover="no"
+for arg in "$@"; do [ "$arg" = "--takeover" ] && takeover="yes"; done
+echo ">>> Remote preflight (VM liveness + memory floor + busy guard)..."
+pf_script='free -m | head -2
+awk "/^MemAvailable:/{print \"MEMAVAIL_KB\", \$2}" /proc/meminfo
+ps -eo rss=,comm= --sort=-rss | head -3 | sed "s/^/TOP-RSS /"
+if [ -f /var/run/aiwebsite-deploy-in-progress ]; then
+  echo "MARKER_AGE $(( $(date +%s) - $(stat -c %Y /var/run/aiwebsite-deploy-in-progress) ))"
+else
+  echo "MARKER_AGE none"
+fi'
+pf_rc=0
+REMOTE_TIMEOUT=15
+preflight_out=$(run_remote "$pf_script" 2>&1) || pf_rc=$?
+REMOTE_TIMEOUT=0
+if ! printf '%s' "$preflight_out" | grep -q 'MEMAVAIL_KB'; then
+  echo "ERROR: VM unresponsive — the preflight probe got no answer in 15s (rc=$pf_rc)."
+  printf '%s\n' "$preflight_out" | head -5
+  echo "       A hung SSH banner plus a public 530 is the livelock/dead-box signature."
+  echo "       Do NOT retry-loop the deploy — see deploy/RUNBOOK.md, section"
+  echo "       'VM unreachable (SSH dead / site 530) — console recovery'."
+  exit 1
+fi
+mem_avail_kb=$(printf '%s\n' "$preflight_out" | awk '/^MEMAVAIL_KB/{print $2; exit}')
+if [ -n "$mem_avail_kb" ] && [ $(( mem_avail_kb / 1024 )) -lt 1024 ]; then
+  echo "ERROR: VM MemAvailable is $(( mem_avail_kb / 1024 ))MB — under the 1024MB deploy floor."
+  echo "       Top-3 RSS on the VM:"
+  printf '%s\n' "$preflight_out" | grep '^TOP-RSS' || true
+  echo "       Free memory first (leaky app? blog window?) and re-run."
+  exit 1
+fi
+marker_age=$(printf '%s\n' "$preflight_out" | awk '/^MARKER_AGE/{print $2; exit}')
+if [ "$takeover" = "yes" ]; then
+  echo ">>> --takeover: skipping the busy guard; reaping orphaned capped stage scopes (A4)..."
+  run_remote "sudo -n systemctl stop 'aiwebsite-stage-*.scope' 2>/dev/null || true"
+elif [ "$marker_age" != "none" ] && [ "$marker_age" -lt 1800 ]; then
+  echo "DEPLOY-BUSY age=${marker_age}s — another deploy touched this VM's marker under 30min ago."
+  echo "If that deploy is still running, let it finish. If it is provably dead"
+  echo "(crashed session, closed pipe), take over with:"
+  echo "  bash deploy/deploy.sh --takeover"
+  exit 1
 fi
 
 echo ">>> Preparing $app_dir on VM..."
