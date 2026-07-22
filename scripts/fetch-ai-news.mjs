@@ -24,6 +24,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { rankByPeg } from "./lib/peg-score.mjs";
 
 const argv = process.argv.slice(2);
 const envFlagIdx = argv.indexOf("--env");
@@ -158,14 +159,27 @@ const fetched = [...byUrl.values()]
   .map((r) => ({ ...r, title: cleanTitle(r.title) }))
   .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
-const results = fetched.filter((r) => AI_RELEVANT.test(r.title));
+const relevant = fetched.filter((r) => AI_RELEVANT.test(r.title));
 for (const r of fetched) {
-  if (!results.includes(r)) console.error(`skipped (title not AI-relevant): "${r.title}"`);
+  if (!relevant.includes(r)) console.error(`skipped (title not AI-relevant): "${r.title}"`);
 }
 
-if (results.length === 0) {
+if (relevant.length === 0) {
   console.error(`FATAL: no AI-relevant results (tavily returned ${fetched.length})`);
   process.exit(1);
+}
+
+// Peg-aware re-rank (scripts/lib/peg-score.mjs): dated-event headlines beat
+// peg-less survey/opinion headlines for the top slot AND the seedHints order
+// (headlines feed the strategist fallback). Demotion, never exclusion — on a
+// thin news day the best peg-less story still leads, and news.ts injects
+// report-of-record framing for it. Every re-rank is audited to stderr.
+const results = rankByPeg(relevant);
+for (const r of results) {
+  console.error(`peg ${String(r.pegScore).padStart(3)} [${r.pegSignals.join(" ") || "none"}] "${r.title}"`);
+}
+if (results[0] !== relevant[0]) {
+  console.error(`peg re-rank: top story changed from "${relevant[0].title}" to "${results[0].title}"`);
 }
 
 const now = new Date();
@@ -179,12 +193,17 @@ const payload = {
     keywords: keywordsFromTitle(top.title),
     description: (top.content || "").replace(/\s+/g, " ").trim().slice(0, 240),
     url: top.url,
+    // Peg verdict for news.ts: a peg-less top story (negative score — no
+    // pegged alternative existed today) gets report-of-record framing
+    // injected into the calendar entry's brief.
+    peg: { score: top.pegScore, pegless: top.pegScore < 0 },
   },
   headlines: results.map((r) => ({
     title: r.title.trim(),
     url: r.url,
     snippet: (r.content || "").replace(/\s+/g, " ").trim().slice(0, 240),
     score: r.score ?? null,
+    pegScore: r.pegScore,
   })),
 };
 

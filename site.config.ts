@@ -519,7 +519,9 @@ export const siteConfig = defineSiteConfig({
         "attributed inline to a named, dated source, followed by one clearly " +
         "labeled closing analysis section on what it means for a small or " +
         "mid-sized business. NOT covered: consumer gadget reviews, academic " +
-        "paper surveys, stock picks, or vendor press-release reprints.",
+        "paper surveys, stock picks, vendor press-release reprints, or " +
+        "perception surveys and opinion round-ups with no dated news event " +
+        "of their own.",
       audience:
         "Owners and IT decision-makers at US small and mid-sized businesses " +
         "deciding how much of the AI news cycle deserves their attention.",
@@ -533,6 +535,14 @@ export const siteConfig = defineSiteConfig({
         "named outlet, organization, or person plus a reporting verb (said, " +
         "reported, published, warned) plus the date. Inverted pyramid: the most " +
         "newsworthy attributed facts come first, context after, analysis last. " +
+        // 2026-07-22: the recurring voiceAdherence=2 signature was survey
+        // stories written as op-eds. This clause is in the styleGuide (not
+        // the niche) because the styleGuide is what the rubric scores
+        // voiceAdherence against — the writer AND the judge see it.
+        "When the story is a survey or a report, the news peg is its " +
+        "release: the lede names the publishing organization and the " +
+        "release date, and the article reports the findings with inline " +
+        "attribution rather than editorializing the trend. " +
         "Every statistic and finding carries its named source and a date in the " +
         "same sentence; a study or report more than a year old is introduced " +
         "with its age (for example 'a 2021 JAMA study'). Never write 'the fact " +
@@ -635,6 +645,13 @@ export const siteConfig = defineSiteConfig({
       // needs local brain >= 1.102). Chat stays at maxOrchestratorPhase 1 —
       // the panel forces its own depth on writer calls only.
       panel: "on",
+      // Owner directive 2026-07-22 (module v1.10 escalation ladder, §19.5):
+      // after a failed repair (or straight away on a rubric-only failure),
+      // ONE feedback-carrying fresh-writer regenerate re-gates in-run before
+      // the terminal publish-noindexed+WARN. Costs up to 3 extra brain calls
+      // only on nights that would otherwise WARN; this host runs Phase B
+      // refresh disabled, so the shared 12-call ceiling has headroom.
+      maxRegenerates: 1,
       contract: {
         // 0 since 2026-07-14: the default (2) forces question-form H2s,
         // which the news-first styleGuide bans — the two fought and every

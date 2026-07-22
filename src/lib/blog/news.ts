@@ -61,9 +61,40 @@ const REFETCH_AFTER_H = 20; // nightly cadence with slack for manual run-nows
 
 interface NewsFile {
   fetchedAt: string;
-  top: { slug: string; title: string; keywords: string[]; description: string; url: string };
-  headlines: { title: string; url: string; snippet: string; score: number | null }[];
+  top: {
+    slug: string;
+    title: string;
+    keywords: string[];
+    description: string;
+    url: string;
+    /** Peg verdict from scripts/lib/peg-score.mjs; absent in pre-peg files
+     *  (transition tolerance — an old file must still steer). */
+    peg?: { score: number; pegless: boolean };
+  };
+  headlines: {
+    title: string;
+    url: string;
+    snippet: string;
+    score: number | null;
+    /** Absent in pre-peg files. */
+    pegScore?: number;
+  }[];
 }
+
+/**
+ * Report-of-record framing, appended to the calendar entry's description
+ * (which reaches the writer verbatim as "Brief:") when the day's best story
+ * is peg-less — the voiceAdherence fix at the source: the peg IS the release.
+ * NOTE: this text flows into checkTopic's offLimits/protectedKeywords
+ * haystack (topics.ts) — keep the wording neutral; this host has offLimits []
+ * and no protected keyword overlaps (pinned by scripts/peg-score-tests.mjs).
+ */
+const REPORT_OF_RECORD_BRIEF =
+  " FRAMING (report-of-record): this story has no external dated event; the " +
+  "news peg is the RELEASE of the survey/report itself. The dated lede names " +
+  "the publishing organization, what it published, and the release date; the " +
+  "article reports the findings with inline attribution. Do not editorialize " +
+  "the trend outside the closing take section.";
 
 function ageHours(iso: string): number {
   const t = Date.parse(iso);
@@ -139,15 +170,25 @@ export function newsCalendarEntries(): {
       slug: news.top.slug,
       title: news.top.title,
       keywords: news.top.keywords,
-      description: news.top.description,
+      description:
+        news.top.description + (news.top.peg?.pegless ? REPORT_OF_RECORD_BRIEF : ""),
     },
   ];
 }
 
-/** Today's other headlines for the strategist; evergreen angles when stale. */
+/** Today's other headlines for the strategist; evergreen angles when stale.
+ *  Peg-less headlines (pegScore < 0) are annotated so the strategist knows
+ *  they need report-of-record framing; the list arrives pegged-first (the
+ *  fetcher already sorts by pegScore). */
 export function newsSeedHints(): string[] {
   const news = loadTodaysNews();
-  if (news) return news.headlines.slice(0, 8).map((h) => h.title);
+  if (news) {
+    return news.headlines.slice(0, 8).map((h) =>
+      (h.pegScore ?? 0) < 0
+        ? `${h.title} [no dated news peg — usable only framed as a report-of-record: lede names the publisher and the release date]`
+        : h.title,
+    );
+  }
   return [
     "What this week's most consequential AI release means for small businesses",
     "An AI regulation development and what it changes for US companies",

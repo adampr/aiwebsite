@@ -15,7 +15,9 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-22 (workshop → Ticket Tailor; governance round 19c: adopt_outline
+Last verified against code: 2026-07-22 (blog peg-aware topic steering + module
+v1.10.0 escalation-ladder opt-in (`quality.maxRegenerates: 1`, styleGuide
+report-of-record clause); workshop → Ticket Tailor; governance round 19c: adopt_outline
 EMPTY-BUCKET TOLERANCE - a model reproducing the full sample skeleton emits
 buckets for headings the draft has nothing to file under, and the old
 whole-op shape rejection's one-line error made the repair model drop the op
@@ -1013,12 +1015,35 @@ sitemap, and the nightly job itself live in `@aicompany/core` — the host owns 
   whose cleaned **title** has no AI term — a generic outlet page outscored every AI
   headline and got published 2026-07-14; zero relevant results = exit 1, same
   stale-file degradation as a failed fetch; writes `data/ai-news-today.json`
-  atomically). `newsCalendarEntries()` turns
+  atomically). 2026-07-22 (peg steering): survivors are re-ranked by
+  `scripts/lib/peg-score.mjs` — `(pegScore desc, Tavily score desc)` — before the
+  top pick and the headlines array are written. `pegScore(title, {publishedAt})`
+  is a pure additive heuristic: +2 named actor (known org/regulator list, or a
+  mid-title Capitalized token with the sentence-initial word and an
+  AI/GPT-style stoplist excluded), +2 dated-event verb
+  (launches/releases/sues/fines/orders/… — "reveals"/"finds" deliberately
+  absent), +1 number in title, +1 published <48 h; −2 per peg-less signature
+  (survey/poll, "study finds…", "N% of leaders…", leading Why/What/How,
+  question-mark title, opinion/commentary, "the state of"); a fresh NAMED
+  survey release gets a one-time +2 offset (its release IS the peg).
+  **Demotion, never exclusion** — a peg-less day still leads with its best
+  story; every score and any top-story change is logged to stderr. The file
+  gains `top.peg {score, pegless}` and `headlines[].pegScore` (news.ts is
+  tolerant of old files without them). Tests: `npm run test:peg`
+  (`scripts/peg-score-tests.mjs`, pins the 2026-07-22 survey headline as
+  negative and the named-release offset). `newsCalendarEntries()` turns
   the top story into a **one-entry `topics.calendar`** (slug carries the date, so a
   consumed entry never blocks the next day; a fresh calendar slug is always chosen
-  before the strategist and still passes the full topic gate). `newsSeedHints()` gives
+  before the strategist and still passes the full topic gate); when
+  `top.peg.pegless` it appends the report-of-record framing sentence to the
+  entry description (the writer's "Brief:") — the lede must name the
+  publishing organization and release date, reporting the findings, not
+  editorializing the trend (the wording is neutral on purpose: the
+  description flows into `checkTopic`'s offLimits haystack, safe today
+  because `offLimits: []` — pinned by test:peg). `newsSeedHints()` gives
   the strategist today's other headlines as the fallback when the calendar entry is
-  dedup-rejected. `newsDataProvider.getContext()` then searches Tavily live for the
+  dedup-rejected, pegged-first, with peg-less hints annotated
+  `[no dated news peg — usable only framed as a report-of-record …]`. `newsDataProvider.getContext()` then searches Tavily live for the
   chosen story (`include_raw_content`) and builds the factSheet (`statCapacity` from
   numeric-token count clamps the named-stats gate honestly); each source body is
   capped at ~2,500 chars **at a sentence boundary** (word-boundary fallback) — a hard
@@ -2442,12 +2467,23 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
   per-call panel forcing (`invocation.panelMode`,
   #701) + JSON-native forced panel (#703: json_object turns run draft → cross-lab
   refute → one revision; machine-checkable `thinking.panel` receipt). Consumed here
-  by the blog engine: `@aicompany/core` v1.9.0 (b90e723, master tag — carries the
-  v1.8.1 chat-widget `aic-chat-*` scoping this host was branch-pinned to at 1fb62f1,
-  the v1.8.2 duplicate-tolerant session read, and §5.3 blocked-sender forwards) with
-  `blog.quality.panel: "on"` in site.config.ts forces the cross-lab refuter on every
-  article-authoring call (owner directive 2026-07-17); a non-convened panel publishes
-  noindexed until a panel-clean pass; chat envelopes keep `maxOrchestratorPhase: 1`.
+  by the blog engine: `@aicompany/core` v1.10.0 (master lineage — carries v1.9.0
+  §5.3 blocked-sender forwards, the v1.8.2 duplicate-tolerant session read, and the
+  v1.8.1 chat-widget `aic-chat-*` scoping this host was branch-pinned to at 1fb62f1)
+  with `blog.quality.panel: "on"` in site.config.ts forcing the cross-lab refuter on
+  every article-authoring call (owner directive 2026-07-17); a non-convened panel
+  publishes noindexed until a panel-clean pass; chat envelopes keep
+  `maxOrchestratorPhase: 1`. v1.10.0 adds the §19.5 gate-failure escalation ladder,
+  opted in here via `blog.quality.maxRegenerates: 1` (owner directive 2026-07-22 —
+  "resolve WARNs in-run"): a rubric-only failure skips the (style-incapable)
+  data-only repair and goes straight to ONE feedback-carrying fresh-writer
+  regenerate (failed gates, verbatim issues, rubric scores vs thresholds, reviewer
+  notes, full-rewrite marker), which re-gates and adopts on pass (published
+  INDEXED, outcome OK) or strictly-better; the terminal case still publishes
+  noindexed + WARN. Report lines: `generate-repair: skipped (rubric-only …` /
+  `generate-regenerate: fresh draft passed all gates — resolved in-run` / `… not
+  better …` / `… skipped — call budget insufficient`. Safe here vs the shared
+  12-call nightly ceiling because Phase B refresh is disabled on this host.
   Previous pin v1.100 (dae30ad) — default-off panel program Stage 0+A, behavior
   byte-identical with BRAIN_PANEL unset; adoption caveat: a claude-*/grok-*/gemini-*
   model pin without its provider key now fails loudly (ProviderKeyMissingError)
@@ -2873,9 +2909,10 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.9.0 (submodule `packages/aicompany` @ `b90e723`,
-tag `v1.9.0`, master lineage — the 1fb62f1 branch pin returned to master when
-v1.9.0 merged `fix/chat-widget-css-scope`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
+**This site consumes @aicompany/core v1.10.0 (submodule `packages/aicompany`,
+tag `v1.10.0`, master lineage — the 1fb62f1 branch pin returned to master when
+v1.9.0 merged `fix/chat-widget-css-scope`; v1.10.0 adds the blog escalation
+ladder this host opts into with `quality.maxRegenerates: 1`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
 robots.txt group, Organization JSON-LD `"@id": "<baseUrl>/#org"`, `TrafficSource "ai"`
 (/admin/seo source trends have a discontinuity at 2026-07-11); v1.0.2 adds the
 sibling-recipient log-only skip (inbound mail addressed to a `siblingSites` persona no
