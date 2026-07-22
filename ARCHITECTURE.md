@@ -2917,7 +2917,11 @@ exact admin semantics and REFUSES (exit 2) when the fresh verdict would land
 noindexed; this host's packaged runbook `deploy/regen-noindexed.sh <slugs…>`
 chains regenerate→publish per slug over the ssh-key transport, prints
 before/after ground-truth enumeration, and never passes `--allow-noindex`
-(human-only flag); the 1fb62f1 branch pin returned to master when
+(human-only flag); `deploy/regen-noindexed-async.sh` is the detached variant
+(nohup on the VM writing `/tmp/regen-noindexed-<ts>.log` + a `.done` marker
+— panel-forced writer calls make one slug take many minutes, so an
+interactive ssh would die mid-write), polled by the read-only
+`deploy/read-prod-blog-status.sh` (non-clean rows + newest log tail); the 1fb62f1 branch pin returned to master when
 v1.9.0 merged `fix/chat-widget-css-scope`; v1.10.0 adds the blog escalation
 ladder this host opts into with `quality.maxRegenerates: 1`; v1.11.0 adds
 page-aware webchat + hover gestures + conversational issue reporting, both
