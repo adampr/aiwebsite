@@ -2909,10 +2909,16 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.10.0 (submodule `packages/aicompany`,
-tag `v1.10.0`, master lineage — the 1fb62f1 branch pin returned to master when
+**This site consumes @aicompany/core v1.11.0 (submodule `packages/aicompany`,
+tag `v1.11.0`, master lineage — the 1fb62f1 branch pin returned to master when
 v1.9.0 merged `fix/chat-widget-css-scope`; v1.10.0 adds the blog escalation
-ladder this host opts into with `quality.maxRegenerates: 1`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
+ladder this host opts into with `quality.maxRegenerates: 1`; v1.11.0 adds
+page-aware webchat + hover gestures + conversational issue reporting, both
+default-ON — the module privacy page renders the new Chat Page Context /
+Issue Reports disclosure sections automatically, `[aiwebsite] ISSUE` emails
+arrive at oversight.alertEmail, and this host is the §13 canary for the
+module MIGRATIONS v1.11.0 soak checklist: `issue_report … marker unparseable`
+rates + §18.8 page-title-derived memory grep).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
 robots.txt group, Organization JSON-LD `"@id": "<baseUrl>/#org"`, `TrafficSource "ai"`
 (/admin/seo source trends have a discontinuity at 2026-07-11); v1.0.2 adds the
 sibling-recipient log-only skip (inbound mail addressed to a `siblingSites` persona no
