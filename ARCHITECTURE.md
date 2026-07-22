@@ -2931,8 +2931,8 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.15.0 (submodule `packages/aicompany`,
-tag `v1.15.0`, master lineage — v1.14.0 adds the stored-verdict mode to the
+**This site consumes @aicompany/core v1.15.1 (submodule `packages/aicompany`,
+tag `v1.15.1`, master lineage — v1.14.0 adds the stored-verdict mode to the
 headless publish CLI (`--stored-verdict`, module §19.10): a fresh (<60 min),
 material-hash-bound, fully-clean authoring verdict publishes with nightly
 trust, closing the review-refetch nondeterminism loop that refused two

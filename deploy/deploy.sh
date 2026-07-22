@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@b01973008a516e13681a23c3b23af7db8ca19d87c966985f37200ee581447827
+# aicompany-template: deploy.sh.tpl@049d263615d2c13f554a756929ecc45c4987b1e3dbb65cc55747b1e21d815a82
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -221,11 +221,19 @@ else
   echo "MARKER_AGE none"
 fi'
 pf_rc=0
-REMOTE_TIMEOUT=15
+# v1.15.1: transport-aware probe budget — gcloud-iap spends 20-40s ESTABLISHING
+# the tunnel on a perfectly healthy box (observed: itsc false-positive
+# "VM unresponsive" on the v1.15.0 canary rollout), so IAP gets 75s; direct
+# ssh keeps the tight 15s that actually discriminates a livelocked guest.
+case "$transport" in
+  gcloud-iap) REMOTE_TIMEOUT=75 ;;
+  *)          REMOTE_TIMEOUT=15 ;;
+esac
+pf_budget=$REMOTE_TIMEOUT
 preflight_out=$(run_remote "$pf_script" 2>&1) || pf_rc=$?
 REMOTE_TIMEOUT=0
 if ! printf '%s' "$preflight_out" | grep -q 'MEMAVAIL_KB'; then
-  echo "ERROR: VM unresponsive — the preflight probe got no answer in 15s (rc=$pf_rc)."
+  echo "ERROR: VM unresponsive — the preflight probe got no answer in ${pf_budget}s (rc=$pf_rc)."
   printf '%s\n' "$preflight_out" | head -5
   echo "       A hung SSH banner plus a public 530 is the livelock/dead-box signature."
   echo "       Do NOT retry-loop the deploy — see deploy/RUNBOOK.md, section"
