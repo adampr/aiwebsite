@@ -56,7 +56,7 @@ ssh -i "$ssh_key" -o StrictHostKeyChecking=accept-new "$(envval AIWEBSITE_USER)@
       continue
     fi
     echo \"== \$slug: publish ==\"
-    npx tsx packages/aicompany/scripts/blog-publish.ts \"--slug=\$slug\"
+    npx tsx packages/aicompany/scripts/blog-publish.ts \"--slug=\$slug\" --stored-verdict
     rc=\$?
     if [ \$rc -ne 0 ]; then
       echo \"== \$slug: PUBLISH exit \$rc (2 = refused: fresh gates would land noindexed; row left as draft) ==\"

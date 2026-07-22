@@ -53,7 +53,7 @@ for slug in \"\$@\"; do
     continue
   fi
   echo \"== \$slug: publish (\$(date +%H:%M:%S)) ==\"
-  npx tsx packages/aicompany/scripts/blog-publish.ts \"--slug=\$slug\"
+  npx tsx packages/aicompany/scripts/blog-publish.ts \"--slug=\$slug\" --stored-verdict
   rc=\$?
   if [ \$rc -ne 0 ]; then
     echo \"== \$slug: PUBLISH exit \$rc ==\"
