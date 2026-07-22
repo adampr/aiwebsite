@@ -2909,8 +2909,15 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.11.2 (submodule `packages/aicompany`,
-tag `v1.11.2`, master lineage — the 1fb62f1 branch pin returned to master when
+**This site consumes @aicompany/core v1.12.0 (submodule `packages/aicompany`,
+tag `v1.12.0`, master lineage — v1.12.0 adds the headless draft-publish CLI
+(`scripts/blog-publish.ts`, module §19.10): after a targeted
+`--regenerate=<slug>` lands a fresh-gated draft, the CLI publishes it with the
+exact admin semantics and REFUSES (exit 2) when the fresh verdict would land
+noindexed; this host's packaged runbook `deploy/regen-noindexed.sh <slugs…>`
+chains regenerate→publish per slug over the ssh-key transport, prints
+before/after ground-truth enumeration, and never passes `--allow-noindex`
+(human-only flag); the 1fb62f1 branch pin returned to master when
 v1.9.0 merged `fix/chat-widget-css-scope`; v1.10.0 adds the blog escalation
 ladder this host opts into with `quality.maxRegenerates: 1`; v1.11.0 adds
 page-aware webchat + hover gestures + conversational issue reporting, both
