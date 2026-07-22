@@ -883,6 +883,15 @@ footer li a { display: inline-flex; min-height: 24px; align-items: center; }
   .nav { gap: var(--sp-4) var(--sp-6); padding: var(--sp-4) var(--sp-6); }
   .nav .badge { display: none; }
 }
+/* Opt-in wrap for CTAs inside width-capped cards (pricing subgrid): between
+   640px and the max-w-5xl cap the two-column card interior is narrower than
+   a nowrap tracked-caps label, so let exactly these buttons wrap. Scoped as
+   an opt-in class because a global rule would break .btn--text underlines
+   (single ::after hairline under the last line) and .btn--stable geometry. */
+@media (min-width: 640px) {
+  .btn--wrap { white-space: normal; text-align: center; }
+  .badge--wrap { white-space: normal; }
+}
 @media (max-width: 640px) {
   /* Long tracked-caps CTA labels, badges and display headings must wrap
      instead of inflating min-content width past the viewport. */

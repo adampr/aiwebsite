@@ -76,15 +76,15 @@ export default function BuildersPage() {
               // Column flex stretches both strips full width, matching the
               // cohort card's stretched grid-item badge.
               <div className="flex flex-col gap-2">
-                <span className="badge badge--warn">
+                <span className="badge badge--warn badge--wrap">
                   Next session · July 30 · Sold out
                 </span>
-                <span className="badge badge--light">
+                <span className="badge badge--light badge--wrap">
                   <span className="dot" /> August 27 · Booking open
                 </span>
               </div>
             ) : (
-              <span className="badge badge--light self-start">
+              <span className="badge badge--light badge--wrap self-start">
                 <span className="dot" />{" "}
                 {workshopOpen ? "Next session: August 27" : "Next date: TBA"}
               </span>
@@ -125,13 +125,13 @@ export default function BuildersPage() {
                   href={WORKSHOP_TICKETS_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="btn btn--primary no-underline"
+                  className="btn btn--primary btn--wrap no-underline"
                 >
-                  Reserve August 27 · $995 one-time
+                  Reserve August 27 · $995
                 </a>
               ) : (
-                <Link href="/contact" className="btn no-underline">
-                  Get notified about the next date
+                <Link href="/contact" className="btn btn--wrap no-underline">
+                  Ask about the next date
                 </Link>
               )}
             </div>
@@ -147,7 +147,7 @@ export default function BuildersPage() {
           >
             {/* self-start stops the subgrid from stretching this badge to the
                 height of the workshop card's two stacked status strips. */}
-            <span className="badge badge--ok self-start">
+            <span className="badge badge--ok badge--wrap self-start">
               <span className="dot" /> Enrolling · capped at 6 people
             </span>
             <h3 className="mt-6">AI Builder Cohort</h3>
@@ -168,7 +168,10 @@ export default function BuildersPage() {
               </li>
             </ul>
             <div className="mt-8">
-              <CheckoutButton offering="cohort">
+              <CheckoutButton
+                offering="cohort"
+                className="btn btn--primary btn--wrap"
+              >
                 Join the cohort · $495/month
               </CheckoutButton>
             </div>
