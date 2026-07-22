@@ -1,8 +1,10 @@
-// The two purchasable AI Builder offerings (§5.10). Prices are defined here
+// The purchasable AI Builder offering (§5.10). The price is defined here
 // (inline Checkout price_data) so no Stripe Dashboard product setup is needed;
-// set STRIPE_PRICE_COHORT / STRIPE_PRICE_WORKSHOP to use dashboard-managed
-// Prices instead (required if prices are edited without a deploy).
-export type OfferingId = "cohort" | "workshop";
+// set STRIPE_PRICE_COHORT to use a dashboard-managed Price instead (required
+// if the price is edited without a deploy). The virtual workshop is no longer
+// sold here — seats live on Ticket Tailor (single seat pool; linked from
+// /builders) since the July 30, 2026 session.
+export type OfferingId = "cohort";
 
 export interface Offering {
   id: OfferingId;
@@ -25,17 +27,8 @@ export const OFFERINGS: Record<OfferingId, Offering> = {
     mode: "subscription",
     priceEnv: "STRIPE_PRICE_COHORT",
   },
-  workshop: {
-    id: "workshop",
-    name: "Virtual Workshop — Thursday, July 30",
-    description:
-      "A four-hour online session (8:00am–12:00pm CT) building real AI workflows and automations.",
-    amount: 99_500,
-    mode: "payment",
-    priceEnv: "STRIPE_PRICE_WORKSHOP",
-  },
 };
 
 export function isOfferingId(value: unknown): value is OfferingId {
-  return value === "cohort" || value === "workshop";
+  return value === "cohort";
 }

@@ -14,11 +14,15 @@ export const metadata: Metadata = {
   },
 };
 
-// The workshop card flips to a "next date TBA" state once the July 30
+// The workshop card flips to a "next date TBA" state once the August 27
 // session has started (8:00am CT = 13:00 UTC), so the page never advertises
 // a past event. Requires dynamic rendering — do not remove force-dynamic.
 export const dynamic = "force-dynamic";
-const WORKSHOP_STARTS = Date.parse("2026-07-30T13:00:00Z");
+const WORKSHOP_STARTS = Date.parse("2026-08-27T13:00:00Z");
+
+// Workshop seats are sold on Ticket Tailor (single seat pool with the email
+// invite audience) — the July 30 session oversold its site/Stripe split.
+const WORKSHOP_TICKETS_URL = "https://www.tickettailor.com/events/xlnet/2323973";
 
 // Self-hosted copy of the May 21 Zoom webinar recording (54 min, 136 MB).
 // The file is gitignored; it lives in public/media/ on the dev box and ships
@@ -62,7 +66,7 @@ export default function BuildersPage() {
           <div className="panel panel--lightline rise min-w-0 sm:row-span-7 sm:grid sm:grid-rows-subgrid">
             <span className="badge badge--light">
               <span className="dot" />{" "}
-              {workshopOpen ? "Next session: July 30" : "Next date: TBA"}
+              {workshopOpen ? "Next session: August 27" : "Next date: TBA"}
             </span>
             <h3 className="mt-6">Virtual Workshop</h3>
             <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
@@ -78,11 +82,12 @@ export default function BuildersPage() {
               <li>Build real AI workflows and automations you keep</li>
               {workshopOpen ? (
                 <li>
-                  Thursday, July 30 · 8:00am–12:00pm CT
+                  Thursday, August 27 · 8:00am–12:00pm CT
                 </li>
               ) : (
                 <li>Next session being scheduled now</li>
               )}
+              <li>Capped at 8 attendees · the July 30 session sold out</li>
               <li>
                 Date doesn&apos;t work after you buy?{" "}
                 <Link href="/contact">Contact us</Link>{" "}
@@ -91,9 +96,14 @@ export default function BuildersPage() {
             </ul>
             <div className="mt-8">
               {workshopOpen ? (
-                <CheckoutButton offering="workshop">
+                <a
+                  href={WORKSHOP_TICKETS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn--primary no-underline"
+                >
                   Reserve your seat · $995 one-time
-                </CheckoutButton>
+                </a>
               ) : (
                 <Link href="/contact" className="btn no-underline">
                   Get notified about the next date
@@ -101,7 +111,7 @@ export default function BuildersPage() {
               )}
             </div>
             <p className="mt-4 text-xs" style={{ color: "var(--xl-text-faint)" }}>
-              Secure card payment on Stripe-hosted checkout.
+              Secure checkout on Ticket Tailor.
             </p>
           </div>
 

@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-21 (governance round 19c: adopt_outline
+Last verified against code: 2026-07-22 (workshop → Ticket Tailor; governance round 19c: adopt_outline
 EMPTY-BUCKET TOLERANCE - a model reproducing the full sample skeleton emits
 buckets for headings the draft has nothing to file under, and the old
 whole-op shape rejection's one-line error made the repair model drop the op
@@ -433,7 +433,7 @@ admin console under `/admin/*` (§5.6):
 |---|---|---|
 | `/` | static server component | Marketing home: hero with `<xl-dust>` particle canvas, theme-aware animated logo iframes (`/brand/xl-logo-animated-{dark,light}.html`), stat cards (79.8% issue reduction, 24/7, 99.3% CSAT), capability panels, CTA → `/contact` |
 | `/work` | static server component | "Our Work" showcase: manifesto strip, then twelve anchored product exhibits in narrative order (`#brain` Software Brain → `#aicompany` @aicompany/core → `#aiwebsite` this site, framed around the §1 oversight invariants → `#governance` AI Governance Writer, the §5.12 builder as a product exhibit (live · public, "Sign in to create" qualifier badge; three-facet sub-grid: Researched First / Nothing Silently Accepted / Yours, Then Gone; body anchor-links `#aiwebsite` + `#brain`; closing paragraph folds in the not-legal-advice hedge; internal `<Link>` `btn` CTA to `/governance` — the page's only internal-route exhibit CTA) → `#itsupportchicago` the autonomy experiment, explicitly "designed as a test of a 100% autonomous organization", sandbox facts first → `#qbr-machine` the Claude Code client-delivery pipeline (in production; three-deliverable sub-grid: Gap Analysis / Asset Strategy / QBR Deck; inline anchor link to `#lakehouse`) → `#onboarding-toolkit` the MSP-onboarding platform (in production; three-facet sub-grid: Discovery / Intake & Review / Runbooks) → `#lakehouse` XL Lakehouse, the scoped vault-backed access layer behind the AI teammates (in production; row-form "facet ledger" instead of the 3-col sub-grid; links back to `#qbr-machine`) → `#api-gateway` XL API Gateway, per-client-cloud API proxy (in development, console live — plain badge by rule: green `badge--ok` only when the panel's primary status is production as a whole; facet ledger; opener defines it against `#lakehouse` with an inline link) → `#roleplay` → `#leo-netter` internal Slack-bot test → `#spamslayer` SpamSlayer, an internal phishing-triage Slack bot (live · internal; standalone Python service on Claude Sonnet, not on the Brain; three-facet sub-grid: Four Checks / Never Clicks the Link / Errs Toward Caution; green `badge--ok` — production internally; the analysis rubric also ships as the `email-safety-check` Claude Skill)), grouped into five `aria-label`ed `<section>` wrappers with visual kicker labels (Engine / What It Runs / Client Delivery / The Access Layer / What We're Testing; "X in — Y out" taglines are the Client Delivery pair's signature only), mid-page (after `#onboarding-toolkit`) + closing CTAs → `/builders` |
-| `/builders` | **dynamic** server component (`force-dynamic`) | "AI Builders" commercial page: 2028 thesis hero, two Stripe-purchasable offerings (§5.10) — Virtual Workshop $995 one-time (July 30 8am–12pm CT; card auto-flips to a "Next date: TBA → /contact" state once `2026-07-30T13:00Z` passes — that flip is why the page is force-dynamic) and AI Builder Cohort $495/month (max 6, auto-renew disclosure on-card). Below pricing: free May webinar (self-hosted MP4, §5.10) + June 18 recap YouTube short; objection panels; CTA → `/contact` |
+| `/builders` | **dynamic** server component (`force-dynamic`) | "AI Builders" commercial page: 2028 thesis hero, two offerings (§5.10) — Virtual Workshop $995 one-time (Aug 27 8am–12pm CT, capped at 8, "July 30 sold out" proof line; CTA is an external link to the Ticket Tailor event page `WORKSHOP_TICKETS_URL`, not Stripe; card auto-flips to a "Next date: TBA → /contact" state once `2026-08-27T13:00Z` passes — that flip is why the page is force-dynamic) and Stripe-purchasable AI Builder Cohort $495/month (max 6, auto-renew disclosure on-card). Below pricing: free May webinar (self-hosted MP4, §5.10) + June 18 recap YouTube short; objection panels; CTA → `/contact` |
 | `/builders/thanks` | dynamic server component, `robots: noindex` | Stripe Checkout `success_url`; reads `?session_id`, retrieves the session server-side (status must be `complete`) to show offering name + receipt email, generic copy on any lookup failure |
 | `/contact` | static server component | Contact info only — **no form** (email `Tron.Netter@ai.xl.net`, phone/SMS (872) 350-4325, points users at the chat widget); links to `/texting` |
 | `/login` | client component | Sign-in card in `<Suspense>`; reads `?redirect`, `?error`, `?message`; links to `/api/auth/{google,microsoft}/start`; error codes map to friendly text via the module's `loginErrorMessages` (`@aicompany/core/auth/login-errors`), `?message` taking precedence. `login/layout.tsx` sets `robots: noindex` |
@@ -907,20 +907,29 @@ never writes facts; realtime persona forces do_not_store). All persistent writes
   call). Historic `email:<addr>` buckets are never auto-merged into account buckets (no
   authenticated link at merge time).
 
-### 5.10 AI Builder checkout (Stripe) — host-owned
+### 5.10 AI Builder checkout (Stripe) + workshop ticketing (Ticket Tailor) — host-owned
 
-The `/builders` page sells two offerings through **Stripe-hosted Checkout**; no card
+The `/builders` page sells the cohort through **Stripe-hosted Checkout**; no card
 data ever touches this server, and there is no local orders table — Stripe's dashboard
-is the system of record for purchases/subscriptions.
+is the system of record for purchases/subscriptions. The **Virtual Workshop** is no
+longer sold through the site's Stripe checkout (since the August 27, 2026 session):
+its card links out to the public **Ticket Tailor** event page
+(`https://www.tickettailor.com/events/xlnet/<event_series_number>`, constant
+`WORKSHOP_TICKETS_URL` in `src/app/builders/page.tsx`), so workshop seats live in a
+single Ticket Tailor pool shared with the email-invite audience — the July 30 session
+oversold precisely because site/Stripe and Ticket Tailor were two separate pools.
+Ticket Tailor events are managed via its REST API (`api.tickettailor.com/v1`, Basic
+auth, key in the dev box's `.env` as `TICKETTAILOR_API_KEY` — ops-only, **never read
+by site code**; note the API cannot set the "online event" flag or upload images —
+those are dashboard-manual).
 
 - **Offering catalog:** `src/lib/stripe/offerings.ts` — `cohort` (AI Builder Cohort,
-  $495/month subscription) and `workshop` (Virtual Workshop, $995 one-time). Names,
-  descriptions, USD-cent amounts, and Checkout `mode` live here.
-- **Route:** `POST /api/checkout` with JSON `{offering: "cohort"|"workshop"}` →
-  `stripe.checkout.sessions.create` → `200 {url}` (the Stripe-hosted page). Modes:
-  `subscription` (cohort, `recurring: {interval: "month"}`) vs `payment` (workshop,
-  `customer_creation: "always"`). Line item uses **inline `price_data`** unless the
-  offering's env override (`STRIPE_PRICE_COHORT` / `STRIPE_PRICE_WORKSHOP`) names a
+  $495/month subscription) only. Names, descriptions, USD-cent amounts, and Checkout
+  `mode` live here.
+- **Route:** `POST /api/checkout` with JSON `{offering: "cohort"}` →
+  `stripe.checkout.sessions.create` → `200 {url}` (the Stripe-hosted page). Mode:
+  `subscription` (`recurring: {interval: "month"}`). Line item uses **inline
+  `price_data`** unless the offering's env override (`STRIPE_PRICE_COHORT`) names a
   dashboard-managed Price. `metadata.offering` tags the session for the thanks page and
   dashboard filtering. Errors: 503 when `STRIPE_SECRET_KEY` unset (buttons show a
   friendly "not configured" message), 400 bad JSON/unknown offering, 502 on Stripe
@@ -2763,7 +2772,8 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | `https://ai.xl.net/auth/google/callback` (GCP project `xl-website-1682362315172`, client "ai.xl.net") |
 | | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` / `MICROSOFT_REDIRECT_URI` / `MICROSOFT_TENANT_ID` (default `common`) | Entra app `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c` |
 | Stripe | `STRIPE_SECRET_KEY` | secret API key for `/api/checkout` (§5.10); unset ⇒ the route returns 503 and the /builders buy buttons show a friendly error |
-| | `STRIPE_PRICE_COHORT` / `STRIPE_PRICE_WORKSHOP` | optional dashboard-managed Price ID overrides; unset ⇒ inline `price_data` ($495/mo recurring, $995 one-time) |
+| | `STRIPE_PRICE_COHORT` | optional dashboard-managed Price ID override; unset ⇒ inline `price_data` ($495/mo recurring) |
+| Ticket Tailor | `TICKETTAILOR_API_KEY` | **not read by site code** — ops-only key in the dev box `.env` for managing workshop events via `api.tickettailor.com/v1` (§5.10); the site only links to the public event page |
 | Governance | `GOVERNANCE_ENABLED` | kill switch (§5.12): `0` = mutations 503, reads/downloads stay up, the timer keeps sweeping. Unset = enabled |
 | | `GOVERNANCE_TAVILY_DAILY_CAP` (default 300) / `GOVERNANCE_BRAIN_DAILY_CAP` (default 1500) | global daily budgets in the `governance_usage` ledger (~7 Tavily calls per fresh domain incl. standard probes; brain ~$0.10/turn so 1500 ≈ $150/day worst case); runtime-overridable via the Troy approval loop, clamped to BUDGET_CEILINGS (§5.12) |
 | | `GOVERNANCE_TAVILY_MONTHLY_WARN` (default 6000) | MTD Tavily WARN threshold in the governance timer's report |
