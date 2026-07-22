@@ -2909,8 +2909,8 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.12.0 (submodule `packages/aicompany`,
-tag `v1.12.0`, master lineage — v1.12.0 adds the headless draft-publish CLI
+**This site consumes @aicompany/core v1.12.1 (submodule `packages/aicompany`,
+tag `v1.12.1`, master lineage — v1.12.0 adds the headless draft-publish CLI
 (`scripts/blog-publish.ts`, module §19.10): after a targeted
 `--regenerate=<slug>` lands a fresh-gated draft, the CLI publishes it with the
 exact admin semantics and REFUSES (exit 2) when the fresh verdict would land
