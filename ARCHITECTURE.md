@@ -642,6 +642,14 @@ fail-closed sender-authenticity gate (Authentication-Results parsing → memory 
   adam@xl.net as always. 300 s brain timeout (`brain.timeouts.emailMs`).
 - Brain-failure reply copy: `channels.email.failureMessage` (module default — the legacy
   route sent nothing on failure; this is a panel-mandated hardening delta).
+- **Blocked-sender forwards (module §5.3 v1.9, default-on):** daemon-class senders
+  (noreply/donotreply/mailer-daemon/postmaster) to Tron's mailbox forward **in full**
+  to adam@xl.net (`oversight.alertEmail`) — subject
+  `[aiwebsite] FWD blocked-sender inbound: …`, byte-exact text relay, RFC 3834
+  auto-response-suppress headers, Reply-To self-addressed. Rolling caps (10/sender,
+  50/mailbox per 24 h) and failed sends fall back to the old throttled WARN notice.
+  No config set on this host — module defaults (`forwardBlockedSenders: true`,
+  `forwardBlockedTo` → alertEmail).
 
 ### 5.4 OAuth (Google + Microsoft), session, logout, health
 
@@ -2434,9 +2442,9 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
   per-call panel forcing (`invocation.panelMode`,
   #701) + JSON-native forced panel (#703: json_object turns run draft → cross-lab
   refute → one revision; machine-checkable `thinking.panel` receipt). Consumed here
-  by the blog engine: `@aicompany/core` v1.8.1 (1fb62f1; chat-widget CSS scoped
-  to `aic-chat-*` so the site-wide widget no longer hijacks the admin console's
-  `aic-*` classes) with
+  by the blog engine: `@aicompany/core` v1.9.0 (b90e723, master tag — carries the
+  v1.8.1 chat-widget `aic-chat-*` scoping this host was branch-pinned to at 1fb62f1,
+  the v1.8.2 duplicate-tolerant session read, and §5.3 blocked-sender forwards) with
   `blog.quality.panel: "on"` in site.config.ts forces the cross-lab refuter on every
   article-authoring call (owner directive 2026-07-17); a non-convened panel publishes
   noindexed until a panel-clean pass; chat envelopes keep `maxOrchestratorPhase: 1`.
@@ -2865,8 +2873,9 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.4.0 (submodule `packages/aicompany` @ `e2da509`,
-tag `v1.4.0`, master lineage).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
+**This site consumes @aicompany/core v1.9.0 (submodule `packages/aicompany` @ `b90e723`,
+tag `v1.9.0`, master lineage — the 1fb62f1 branch pin returned to master when
+v1.9.0 merged `fix/chat-widget-css-scope`).** The v1.0.1 every-host deltas are live: refreshed `DEFAULT_AI_BOTS`
 robots.txt group, Organization JSON-LD `"@id": "<baseUrl>/#org"`, `TrafficSource "ai"`
 (/admin/seo source trends have a discontinuity at 2026-07-11); v1.0.2 adds the
 sibling-recipient log-only skip (inbound mail addressed to a `siblingSites` persona no
