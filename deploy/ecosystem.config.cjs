@@ -1,4 +1,4 @@
-// aicompany-template: ecosystem.config.cjs.tpl@dd4f3b681b4a5de35b9ab89c09bc6fa5f87d6d83ac3de93e1ea31b099a409217
+// aicompany-template: ecosystem.config.cjs.tpl@6ba8ba5ae5ca8f3cb91f2c1e791e0ad969163a63df875f8c1b0045e2478013c3
 /* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require('fs');
 const path = require('path');
@@ -40,6 +40,8 @@ module.exports = {
       env: { NODE_ENV: 'production', PORT: 3000, ...envFromFile },
       instances: 1,
       autorestart: true,
+      // Bounded churn if a restart lands inside a deploy flip gap (v1.13.0)
+      exp_backoff_restart_delay: 500,
       max_memory_restart: '1G',
       wait_ready: true,
       listen_timeout: 30000
@@ -62,6 +64,8 @@ module.exports = {
       },
       instances: 1,
       autorestart: true,
+      // Bounded churn if a restart lands inside a deploy flip gap (v1.13.0)
+      exp_backoff_restart_delay: 500,
       // Host-tuned (site-deploy.env): one article-sized brain turn holds
       // ~2.4GB RSS on the multi-pass provider (measured on v1.92 and v1.93;
       // upstream reduction tracked in the brain repo), so hosts that drive
@@ -87,6 +91,8 @@ module.exports = {
       },
       instances: 1,
       autorestart: true,
+      // Bounded churn if a restart lands inside a deploy flip gap (v1.13.0)
+      exp_backoff_restart_delay: 500,
       max_memory_restart: '256M',
       watch: false
     }

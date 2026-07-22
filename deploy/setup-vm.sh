@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@f330c333a3bc93d8088ebb25df15d2526f2ecc8daf92df4379fb495218db5252
+# aicompany-template: setup-vm.sh.tpl@4e080a9b79a65b612a388ccce5e6665111ba44b334b9bad8b20788ba6fcd299e
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -112,7 +112,7 @@ sudo ln -sf /etc/nginx/sites-available/aiwebsite /etc/nginx/sites-enabled/aiwebs
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 
-# ── App install & build ──────────────────────────────────────────
+# ── App install & build (staged, v1.13.0 §9.2) ───────────────────
 cd "$app_dir"
 
 if [ ! -f .env ]; then
@@ -120,132 +120,169 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# ── Extra services: stop BEFORE npm ci (v1.4.0, §9.5) ───────────
-# `npm ci` wipes node_modules under a RUNNING extra service — native-ABI
-# crash-loop, the 2026-07-10 roleplay outage class. Validate fail-fast, then
-# stop every declared service; they restart (health-gated) after db:migrate.
+stage_dir="/var/www/aiwebsite.stage"
+[ -d "$stage_dir" ] || { sudo mkdir -p "$stage_dir"; sudo chown "$(whoami)" "$stage_dir"; }
+
+# ── Pipeline-scoped stage lock (fd 201; fd 200 remains the deploy lock) ──
+# Held for the rest of this script: deploy and watchdog stage-build pipelines
+# can never interleave subcommand-by-subcommand. Every long-lived spawn below
+# closes it (`201>&-`) beside the existing `200>&-` — same B1 fd class.
+exec 201>"$stage_dir/.lock"
+flock -n 201 || { echo "ERROR: a stage-build pipeline (watchdog rebuild?) holds the stage lock — aborting; live site untouched"; exit 1; }
+export STAGE_BUILD_LOCK_HELD=1
+
+# Extra services: validate fail-fast, but KEEP RUNNING through install+build —
+# staged npm ci never touches live node_modules; ABI changes land only at the
+# cutover flip, so the stop/start bracket moves there (v1.13.0; supersedes the
+# v1.4.0 stop-before-ci — same outage class, now a seconds-wide window).
 # ABSENT manifest is loud on purpose: on a VM that is in fact running an
 # unmanaged service, a silent skip here replays that outage with green logs.
 if [ -f deploy/extra-services.json ]; then
   bash deploy/extra-services.sh validate
-  echo ">>> Stopping extra services before npm ci..."
-  sudo bash deploy/extra-services.sh stop 200>&-
 else
-  echo "WARN: no deploy/extra-services.json — extra-service stop-before-ci and supervision are OFF for this deploy"
+  echo "WARN: no deploy/extra-services.json — extra-service stop-before-cutover and supervision are OFF for this deploy"
 fi
 
-echo ">>> Installing site dependencies..."
+# Re-touch the mutex marker after each staged step (v1.4.0 rule): the whole
+# install+build span can outrun the watchdog's 30-min TTL on a small VM.
+bash deploy/stage-build.sh heal;      sudo touch "$deploy_marker"
+bash deploy/stage-build.sh prepare;   sudo touch "$deploy_marker"
+echo ">>> Installing site dependencies (staged)..."
 # --include=dev: the VM environment omits devDependencies by default, but the
-# build needs them (drizzle-kit, typescript, tailwind, tsx) — same reason as
-# the brain install below.
-npm ci --include=dev
-# Re-touch the mutex marker after EACH npm ci block (v1.4.0): the span between
-# the initial touch and the pre-build re-touch now carries es_stop + two npm
-# ci runs + native rebuilds + migrate — on a small VM that can outrun the
-# 30-min TTL, letting the watchdog resume repairs mid-install (§9.5).
-sudo touch "$deploy_marker"
-
-echo ">>> Installing brain (packages/brain) dependencies..."
-if [ ! -f packages/brain/package.json ]; then
+# build needs them (drizzle-kit, typescript, tailwind, tsx).
+bash deploy/stage-build.sh install;   sudo touch "$deploy_marker"
+if [ ! -f "$stage_dir/packages/brain/package.json" ]; then
   echo "ERROR: packages/brain is empty — submodule contents were not synced."
   exit 1
 fi
-(cd packages/brain && npm ci --include=dev)
-sudo touch "$deploy_marker"
+echo ">>> Installing brain (packages/brain) dependencies (staged)..."
+bash deploy/stage-build.sh install-brain; sudo touch "$deploy_marker"
 
-# Post-install hook (host-owned, optional, NOT template-rendered — v1.4.0,
-# the pre-migrate.sh precedent): native ABI rebuilds / require gates for
-# hosts whose services run under a different Node than the toolchain. Runs
-# after BOTH npm ci blocks, before migrations; failure aborts the deploy
-# before any restart (`set -e`).
-if [ -f deploy/post-install.sh ]; then
-  echo ">>> Running host post-install hook (deploy/post-install.sh)..."
-  bash deploy/post-install.sh
-  sudo touch "$deploy_marker"
+# Host post-install hook (host-owned, optional, NOT template-rendered): cwd =
+# STAGE, so native rebuilds target the trees that ship at cutover. Trees a
+# hook rebuilds OUTSIDE the default flip set must be declared in host-owned
+# deploy/swap-dirs.txt or the work is silently discarded (MIGRATIONS v1.13.0).
+# ENV CONTRACT: hooks that edit env must edit the LIVE $app_dir/.env by
+# ABSOLUTE path (itsc pin-prod-env does — its ENV_FILE default IS the live
+# path and its hard-verify reads the serving file). setup-vm then re-copies
+# the pinned live .env into stage so migrate/build/config:check validate the
+# exact env that goes live. .env is NEVER generation-flipped.
+if [ -f "$stage_dir/deploy/post-install.sh" ]; then
+  echo ">>> Running host post-install hook (stage cwd)..."
+  (cd "$stage_dir" && bash deploy/post-install.sh); sudo touch "$deploy_marker"
 fi
+install -m 600 "$app_dir/.env" "$stage_dir/.env"
 
-echo ">>> Database migrations (site tables, committed history)..."
-# Pre-migrate hook (host-owned, optional, NOT template-rendered): runs before
-# drizzle-kit migrate when the host commits deploy/pre-migrate.sh. Use it for
-# host-specific tracking repairs — e.g. a schema that predates drizzle-kit
-# tracking must baseline drizzle.__drizzle_migrations first, or migrate
-# replays migration 0000 into the live schema and aborts the deploy (itsc
-# 2026-07-12; their hook runs src/scripts/baseline-drizzle.ts).
-if [ -f deploy/pre-migrate.sh ]; then
-  echo ">>> Running host pre-migrate hook (deploy/pre-migrate.sh)..."
-  bash deploy/pre-migrate.sh
-fi
-npm run db:migrate
-
-# ── Extra services: start + health-gate AFTER migrate, BEFORE build ─
-# (v1.4.0, §9.5) Restarting here keeps the service window off the build's
-# critical path: fresh code + fresh node_modules are live the moment the DB
-# is migrated. verify fails the deploy if a service can't pass health inside
-# its startTimeoutSeconds.
-if [ -f deploy/extra-services.json ]; then
-  echo ">>> Starting extra services (health-gated)..."
-  sudo bash deploy/extra-services.sh start 200>&-
-  bash deploy/extra-services.sh verify
-fi
-
-echo ">>> Building Next.js site..."
-# deploy.sh excludes .next from rsync, and a stale Turbopack cache from a
-# previous next version breaks module resolution ("Can't resolve" errors on
-# deps that are installed). Clear only the cache — the rest of .next is
-# replaced atomically by the build while the live server keeps serving it.
-rm -rf .next/cache
+echo ">>> Building Next.js site (staged — live server keeps serving)..."
+# next build CLEARS distDir at build start — that is exactly why the build is
+# staged (the 2026-07-22 itsc outage: 15 min of 502s while .next was empty).
 # Heap cap (site-deploy.env): an uncapped Next build OOM-wedged a 4GB VM
-# mid-build (itsc 2026-07-10 — kernel OOM killer destroyed .next/BUILD_ID,
-# dropped the tunnel, needed a hard instance reset). Capped, a too-big build
-# fails cleanly with a JS heap error while the live site keeps serving.
-# Re-touch the mutex marker so its mtime stays fresh across the build window
-# (the watchdog's repair grace is 30 min; a slow install+build can approach it).
+# mid-build (itsc 2026-07-10). Capped, a too-big build fails cleanly as a
+# pre-cutover no-op; stage-build also self-marks the build as the kernel's
+# preferred OOM victim so an OOM never takes brain-api/postgres.
 sudo touch "$deploy_marker"
-NODE_OPTIONS="--max-old-space-size=1024" npm run build
+bash deploy/stage-build.sh build
+bash deploy/stage-build.sh verify-relocatable
 
-# ── Config-derived artifacts (need node_modules, hence after npm ci) ─
-echo ">>> Rendering crawler config snapshot (data/aiwebsite-config.json)..."
-npx tsx "$module_dir/scripts/config-json.ts"
+# Migrations: new code against the live DB, old server still serving
+# (expand-contract). AFTER the build so a failed build leaves the DB untouched.
+# Pre-migrate hook (host-owned, optional, NOT template-rendered): tracking
+# repairs — e.g. baseline drizzle.__drizzle_migrations on a schema that
+# predates drizzle-kit tracking (itsc 2026-07-12).
+echo ">>> Database migrations (from stage, live DB)..."
+if [ -f "$stage_dir/deploy/pre-migrate.sh" ]; then
+  echo ">>> Running host pre-migrate hook (stage cwd)..."
+  (cd "$stage_dir" && bash deploy/pre-migrate.sh)
+fi
+(cd "$stage_dir" && npm run db:migrate); sudo touch "$deploy_marker"
 
+# ── config:check gates the CUTOVER (§4.3 layer 3) ────────────────
+# Config↔env cross-validation, BRAIN_PUBLIC_URL, brain version range, schema
+# drift. AFTER migrate (the drift gate fails on committed-but-unapplied
+# migrations), BEFORE the flip so a bad deploy never replaces a good one.
+echo ">>> Running config:check (stage, post-migrate)..."
+bash deploy/stage-build.sh check
+
+# Pre-cutover gate: the seed artifact must exist/generate BEFORE the flip.
 # SEED_MODE=file → the host commits a hand-curated deploy/seed-persona-memories.sql
-# (e.g. aiwebsite's legacy seed-tron-* rows, which prod already carries and the
-# voice channel depends on); "generate" derives it from site.config.ts.
+# (e.g. aiwebsite's legacy seed-tron-* rows); "generate" derives it from
+# site.config.ts using STAGE deps, writing to the LIVE tree (psql reads it later).
 if [ "file" = "file" ]; then
   echo ">>> SEED_MODE=file — using committed deploy/seed-persona-memories.sql as-is"
-  test -f deploy/seed-persona-memories.sql
+  test -f "$stage_dir/deploy/seed-persona-memories.sql"
 else
-  echo ">>> Generating persona seed SQL from site.config.ts..."
-  npx tsx "$module_dir/scripts/generate-seed-sql.ts" --out deploy/seed-persona-memories.sql
+  echo ">>> Generating persona seed SQL from site.config.ts (stage deps, live output)..."
+  (cd "$stage_dir" && npx tsx "$module_dir/scripts/generate-seed-sql.ts" --out "$app_dir/deploy/seed-persona-memories.sql")
 fi
 
-# ── config:check gates the reload (§4.3 layer 3) ─────────────────
-# Config↔env cross-validation, BRAIN_PUBLIC_URL, brain version range, schema
-# drift. Runs BEFORE the PM2 reload so a bad deploy never replaces a good one.
-echo ">>> Running config:check..."
-npm run config:check
-
-# ── PM2: site + brain-api + skills-host ──────────────────────────
-# Re-touch the mutex marker before the long post-build tail (pm2 reload → brain
-# health wait → seed → timers → initial knowledge crawl → cloudflared). A slow
-# build followed by this tail can otherwise age the marker past its 30-min TTL
-# mid-deploy, letting the watchdog resume repairs while the deploy is still
-# running (§9.5).
+# ── CUTOVER BRACKET (renames only; the only live-tree mutation) ──
+# Extra services stop only for the flip so native-ABI trees never change under
+# a running service (the 2026-07-10 roleplay class) — a seconds-wide window.
 sudo touch "$deploy_marker"
-# `200>&-` on every pm2 invocation: first contact resurrects the pm2 God
-# daemon, which must not inherit + pin the deploy lock (fd 200).
+if [ -f deploy/extra-services.json ]; then
+  echo ">>> Stopping extra services for the cutover flip..."
+  sudo bash deploy/extra-services.sh stop 200>&- 201>&-
+fi
+bash deploy/stage-build.sh cutover               # ~ms; .old deletion deferred
+if [ -f deploy/extra-services.json ]; then
+  sudo bash deploy/extra-services.sh start 200>&- 201>&-
+  bash deploy/extra-services.sh verify
+fi
 # `--update-env` (v1.6.1): pm2 reload keeps the env captured at process
 # creation, NOT the freshly-evaluated ecosystem env — a deploy that only
 # changed .env left a site running with stale caps for hours (aiwebsite
-# governance budget incident, 2026-07-16). Upstream adoption of that host's
-# documented HOST EDIT.
-pm2 startOrReload deploy/ecosystem.config.cjs --update-env 200>&-
-pm2 save 200>&-
-pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null 200>&- || true
+# governance budget incident, 2026-07-16).
+pm2 startOrReload deploy/ecosystem.config.cjs --update-env 200>&- 201>&-
+
+# ── Health gate (120s, watchdog-strength) + auto-rollback ────────
+# Site body must carry "status":"ok" (not a bare 200), brain-api /health must
+# answer, brain-api + skills-host must be pm2-online. On failure: roll the
+# flip fully back to the N-1 generation and restart everything — the deploy
+# fails with the OLD build serving.
+gate_fail=""
+site_ok=""
+for i in $(seq 1 24); do
+  body=$(curl -fsS -m 5 "http://127.0.0.1:3000/api/health" 2>/dev/null) || body=""
+  echo "$body" | grep -q '"status":"ok"' && { site_ok=1; break; }
+  sleep 5
+done
+[ -n "$site_ok" ] || gate_fail="site /api/health lacked \"status\":\"ok\" within 120s"
+if [ -z "$gate_fail" ]; then
+  brain_ok=""
+  for i in $(seq 1 12); do
+    curl -fsS -m 5 -o /dev/null "http://127.0.0.1:3211/health" && { brain_ok=1; break; }
+    sleep 5
+  done
+  [ -n "$brain_ok" ] || gate_fail="brain-api /health not 200 within 60s"
+fi
+if [ -z "$gate_fail" ]; then
+  for a in brain-api skills-host; do
+    pm2 jlist 200>&- 201>&- | jq -e --arg n "$a" '.[] | select(.name==$n) | select(.pm2_env.status=="online")' >/dev/null \
+      || gate_fail="pm2 app $a not online"
+  done
+fi
+if [ -n "$gate_fail" ]; then
+  echo "ERROR: post-cutover health gate failed ($gate_fail) — pm2 state follows; rolling back to previous generation"
+  pm2 jlist 200>&- 201>&- | head -c 4000 || true
+  bash deploy/stage-build.sh rollback
+  pm2 restart aiwebsite brain-api skills-host --update-env 200>&- 201>&-   # matches the manual command
+  if [ -f deploy/extra-services.json ]; then sudo bash deploy/extra-services.sh start 200>&- 201>&- || true; fi
+  exit 1
+fi
+echo ">>> CUTOVER COMPLETE — the new build is LIVE (a failure after this line does NOT un-deploy it)"
+bash deploy/stage-build.sh purge-trash           # delete the parked N-1 set OUTSIDE the bracket
+
+# ── Config-derived artifacts (live tree now has new node_modules) ─
+echo ">>> Rendering crawler config snapshot (data/aiwebsite-config.json)..."
+npx tsx "$module_dir/scripts/config-json.ts"
+
+pm2 save 200>&- 201>&-
+pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null 200>&- 201>&- || true
 
 # pm2-logrotate: 10M per file, retain 7 (§9.5 default-on log rotation)
-pm2 install pm2-logrotate >/dev/null 2>&1 200>&- || true
-pm2 set pm2-logrotate:max_size 10M >/dev/null 200>&-
-pm2 set pm2-logrotate:retain 7 >/dev/null 200>&-
+pm2 install pm2-logrotate >/dev/null 2>&1 200>&- 201>&- || true
+pm2 set pm2-logrotate:max_size 10M >/dev/null 200>&- 201>&-
+pm2 set pm2-logrotate:retain 7 >/dev/null 200>&- 201>&-
 
 # ── Persona seed memories ────────────────────────────────────────
 # Public-scope brain memories that keep the persona identical across webchat,
@@ -582,16 +619,17 @@ if sudo pgrep -f "$wd_pattern" >/dev/null 2>&1; then
   sleep 1
 fi
 sudo rm -f /var/run/aiwebsite-watchdog.pid
-# `200>&-`: the freshly started watchdog is the archetypal long-lived spawn —
-# it must not inherit + pin this deploy's lock (fd 200).
-sudo /usr/local/bin/aiwebsite-watchdog-cron.sh 200>&- || true
+# `200>&- 201>&-`: the freshly started watchdog is the archetypal long-lived
+# spawn — it must not inherit + pin this deploy's lock (fd 200) or the stage
+# lock (fd 201).
+sudo /usr/local/bin/aiwebsite-watchdog-cron.sh 200>&- 201>&- || true
 
 # ── Version stamp (v1.4.0, §13) ──────────────────────────────────
 # Record the applied module tag in the DB (aicompany_version) so
 # upgrade:check --dry-run can list pending MIGRATIONS entries before the
 # next bump. Non-fatal: a missing host script must not fail the deploy.
 echo ">>> Stamping deployed module version (upgrade:check --stamp)..."
-npm run --silent upgrade:check -- --stamp 200>&- || \
+npm run --silent upgrade:check -- --stamp 200>&- 201>&- || \
   echo "WARNING: upgrade:check --stamp failed (non-fatal — stamp manually or add the host npm script)"
 
 # Deploy done — clear the mutex marker so the watchdog resumes repair ACTIONS

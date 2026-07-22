@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@6598ceb5a8f89324e6e7af01d4550a5ca4b9305c9f3b3e5a12f58ea603fda814
+# aicompany-template: deploy.sh.tpl@cbe00e52f01db3787769eb0137b6ef39e8ac25a10606e07c279f31c64d79372c
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -29,7 +29,9 @@ set -euo pipefail
 # signal, and this banner is its human-readable form.
 trap 'code=$?; if [ "$code" -ne 0 ]; then
   echo "" >&2
-  echo "!!! DEPLOY FAILED (exit $code) — aiwebsite production was NOT reloaded." >&2
+  echo "!!! DEPLOY FAILED (exit $code)." >&2
+  echo "!!! If the remote log has NO \">>> CUTOVER COMPLETE\" line, aiwebsite production was NOT touched — the old build is still serving." >&2
+  echo "!!! If that line IS present, the NEW build is live and a post-cutover step failed; it was NOT un-deployed." >&2
   echo "!!! Fix the error above and re-run deploy/deploy.sh." >&2
 fi' EXIT
 
@@ -139,6 +141,12 @@ rsync_excludes=(
   --exclude .env --exclude /data/
   --exclude packages/brain/node_modules
   --exclude packages/brain/scripts/benchmark/cache
+  # Staged-deploy artifacts (v1.13.0): the VM-side rollback (.old) and
+  # candidate (.new) generations must survive rsync --delete. Unanchored
+  # basename patterns also cover packages/brain/node_modules.old and any
+  # host swap-dirs extras (e.g. vendor/brain-sdk/node_modules.old).
+  --exclude node_modules.old --exclude node_modules.new
+  --exclude .next.old --exclude .next.new
 )
 tar_excludes=(
   --exclude ./.git --exclude "node_modules" --exclude ./.next
@@ -166,6 +174,11 @@ fi
 
 echo ">>> Preparing $app_dir on VM..."
 run_remote "sudo mkdir -p $app_dir && sudo chown \$(whoami): $app_dir"
+
+# Cover the source-sync window with the deploy↔watchdog marker: a watchdog
+# staged rebuild must never stage half-synced sources (§9.5). setup-vm
+# re-touches and finally removes it as before; a crashed sync ages out via TTL.
+run_remote "sudo touch /var/run/aiwebsite-deploy-in-progress"
 
 echo ">>> Syncing repo..."
 sync_dir "$repo_dir/" "$app_dir/"

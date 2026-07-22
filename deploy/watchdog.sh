@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@a06e4e7079d2fb680b7adab5bbc6ad735b3336f1e22137a8cbaed1419a31a898
+# aicompany-template: watchdog.sh.tpl@4467b1d0562efdcc460e5216d14b5cfb2a98713976984ad2c5757a2368c172d8
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -221,18 +221,34 @@ run_as_pm2_user() {
 # ── Page-render checks ────────────────────────────────────────────
 
 attempt_clean_rebuild() {
-  log "ACTION: Attempting rebuild (npm run build) ..."
-  # No rm -rf .next: next build writes to a temp dir and swaps atomically, so
-  # the running process keeps serving; deleting first causes 30-90s of 500s.
-  run_as_pm2_user "cd '$app_root' && NODE_OPTIONS='--max-old-space-size=1024' npm run build" >> "$log_file" 2>&1
+  log "ACTION: staged rebuild via deploy/stage-build.sh (live tree keeps serving; failure = no-op) ..."
+  # Staged (v1.13.0, §9.2): next build CLEARS distDir at build start, so an
+  # in-live-tree rebuild was never atomic — the build runs in the sibling
+  # stage tree and only a ms-wide rename flip touches the live one. Deps come
+  # from a hardlink clone of the LIVE node_modules (refresh-modules): ABI-
+  # exact, no npm-registry dependence, and the deploy's .old rollback set is
+  # never consumed (cutover-repair flips .next only). One shell invocation so
+  # the fd-201 flock spans the WHOLE pipeline; a concurrent deploy makes
+  # flock -n fail -> rc 3 = benign skip, never interleave.
+  run_as_pm2_user "cd '$app_root' && mkdir -p '$app_root.stage' && exec 201>'$app_root.stage/.lock' && { flock -n 201 || exit 3; } \
+    && export STAGE_BUILD_LOCK_HELD=1 \
+    && bash deploy/stage-build.sh prepare \
+    && bash deploy/stage-build.sh refresh-modules \
+    && bash deploy/stage-build.sh build \
+    && bash deploy/stage-build.sh verify-relocatable \
+    && bash deploy/stage-build.sh check \
+    && bash deploy/stage-build.sh cutover-repair" >> "$log_file" 2>&1
   local rc=$?
   if [[ $rc -eq 0 ]]; then
-    log "ACTION: Rebuild succeeded, restarting PM2 ..."
+    log "ACTION: staged repair flip done (deploy .old rollback set untouched), restarting PM2 ..."
     run_as_pm2_user "pm2 restart aiwebsite" >> "$log_file" 2>&1
     sleep 3
     return 0
+  elif [[ $rc -eq 3 ]]; then
+    log "SKIP: stage lock held (deploy pipeline active) — rebuild deferred, live tree untouched"
+    return 2
   else
-    log "ERROR: Rebuild failed (exit $rc)"
+    log "ERROR: staged rebuild failed (exit $rc) — live tree untouched"
     return 1
   fi
 }
@@ -287,7 +303,12 @@ check_pages() {
     fi
 
     log "ACTION: Pages failing but health OK -- attempting clean rebuild"
-    if attempt_clean_rebuild; then
+    attempt_clean_rebuild; local rebuild_rc=$?
+    if [[ $rebuild_rc -eq 2 ]]; then
+      # Benign lock-held skip (a deploy pipeline owns the stage) — already
+      # logged; the deploy marker/DEFER machinery owns alerting for that window.
+      :
+    elif [[ $rebuild_rc -eq 0 ]]; then
       # Verify the fix worked
       local still_broken=false
       for url in "${page_check_urls[@]}"; do

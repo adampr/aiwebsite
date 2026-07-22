@@ -2670,7 +2670,10 @@ committed; edit the template (module repo) or `site-deploy.env`, never the outpu
    explicit `--allow-sshpass` flag) remains only as a break-glass fallback.
    (A `gcloud-iap` variant exists for GCP.)
 3. `rsync -az --delete` repo → `/var/www/aiwebsite`, **excluding** `.git`, `node_modules`,
-   `.next`, brain caches, `.env`, and `/data/` (VM-generated knowledge must survive the delete).
+   `.next`, brain caches, `.env`, `/data/` (VM-generated knowledge must survive the delete),
+   and — v1.13.0 — the staged-deploy `*.old`/`*.new` generation dirs (the VM-side rollback
+   set must survive the delete too). deploy.sh also touches the deploy↔watchdog marker
+   BEFORE the sync so a watchdog staged rebuild can never stage half-synced sources.
 4. rsync the production `.env` separately; ship `data/GeoLite2-ASN.mmdb` explicitly if
    present locally (it lives inside the excluded `/data/`); ship
    `~/.cloudflared/aiwebsite-tunnel.json` → `/etc/cloudflared/` (0600) if present.
@@ -2682,25 +2685,39 @@ committed; edit the template (module repo) or `site-deploy.env`, never the outpu
 
 APT `build-essential python3 libpq-dev pkg-config jq rsync logrotate` → Node 22
 (nodesource) + PM2 (+ `pm2-logrotate` 10 M/retain 7) → PostgreSQL (create role+db
-`aiwebsite`, guarded; `max_wal_size=256MB`) → nginx config (below) →
-`npm ci --include=dev` (site **and** `packages/brain`) → **host post-install hook**
-(`deploy/post-install.sh` — host-owned, not template-rendered: idempotently installs the
-`aiwebsite-governance.{service,timer}` + OnFailure alert unit, pre-touches the governance
-logs, and removes any stale `aiwebsite-governance*` unit via a manifest loop; §8.1/§9.7)
-→ `db:migrate` (committed history —
-no `db:generate` on the VM anymore) → generate `deploy/seed-persona-memories.sql` from
-site.config.ts (§6) → **`npm run config:check`** (config↔env cross-validation incl.
-`BRAIN_PUBLIC_URL === baseUrl + "/brain"`, brain version range, schema registry — **gates
-the build/reload**: a bad config aborts before PM2 is touched) → `rm -rf .next/cache`
-(stale Turbopack cache breaks module resolution; only the cache — built output swaps
-atomically) → `next build` → `pm2 startOrReload deploy/ecosystem.config.cjs --update-env &&
-pm2 save && pm2 startup systemd` (`--update-env` is a HOST EDIT over the module
-template and MUST survive re-renders: plain reload keeps the env captured at
+`aiwebsite`, guarded; `max_wal_size=256MB`) → nginx config (below) → **staged
+build pipeline (module v1.13.0, `deploy/stage-build.sh`)**: everything mutating
+runs in the sibling `/var/www/aiwebsite.stage` tree under a pipeline-scoped
+fd-201 flock while the OLD app keeps serving — heal → prepare (rsync live→stage;
+6144 MB disk floor) → `npm ci --include=dev` (site **and** `packages/brain`, in
+stage) → **host post-install hook** (`deploy/post-install.sh` — host-owned, not
+template-rendered; cwd = STAGE since v1.13.0: idempotently installs the
+`aiwebsite-governance.{service,timer}` + OnFailure alert unit BY ABSOLUTE LIVE
+PATHS — compliant with the v1.13.0 env/live-path contract; §8.1/§9.7) → re-copy
+the live `.env` into stage → heap-capped `next build` (in stage; `next build`
+CLEARS distDir at start, which is why it must never run in the live tree —
+the pre-v1.13.0 claim that output "swaps atomically" was false) →
+`verify-relocatable` → `db:migrate` (from stage against the live DB, committed
+history — AFTER the build so a failed build leaves the DB untouched) →
+**`npm run config:check`** (AFTER migrate — its drift gate fails on
+committed-but-unapplied migrations; **gates the CUTOVER**: a bad config aborts
+with the old build serving) → generate `deploy/seed-persona-memories.sql` from
+site.config.ts (§6) → **journaled renames-only cutover** (flips `node_modules`,
+`packages/brain/node_modules`, `.next`; N−1 kept as `*.old` for rollback) →
+`pm2 startOrReload deploy/ecosystem.config.cjs --update-env && pm2 save && pm2
+startup systemd` (`--update-env`: plain reload keeps the env captured at
 process creation, so a deploy that only changed `.env` left the site running
-with stale governance caps for hours, 2026-07-16) → wait ≤60 s for brain `/health` → `psql -f
-deploy/seed-persona-memories.sql` → render `data/aiwebsite-config.json` + install the
-**five systemd timers** (§9.7) → initial crawl `--no-email` → `setup-cloudflared.sh` →
-install watchdog + cron supervisor and (re)start it.
+with stale governance caps for hours, 2026-07-16; upstreamed v1.6.1) → **120 s
+health gate** (site body `"status":"ok"`, brain-api `/health`, pm2-online ×2;
+failure auto-rolls the flip back and the deploy FAILS with the OLD build
+serving; success prints `>>> CUTOVER COMPLETE`) → wait ≤60 s for brain
+`/health` → `psql -f deploy/seed-persona-memories.sql` → render
+`data/aiwebsite-config.json` + install the **five systemd timers** (§9.7) →
+initial crawl `--no-email` → `setup-cloudflared.sh` → install watchdog + cron
+supervisor and (re)start it. Successful-deploy downtime = the pm2 fork restart
+(~3–10 s); every pre-cutover failure leaves the old app serving. Manual
+rollback: `cd /var/www/aiwebsite && bash deploy/stage-build.sh rollback && pm2
+restart aiwebsite brain-api skills-host --update-env`.
 
 ### 9.3 PM2 processes (`deploy/ecosystem.config.cjs` + `deploy/pm2-start.cjs`)
 
@@ -2747,8 +2764,12 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
   35-day threshold (blog-digest.ts stamps it on EVERY exit path incl. OK-skips, so stale
   means the daily digest timer is dead, not "not due").
 - Every 5th pass: renders `/` and `/login`; on 5xx / "application error" /
-  NEXT_NOT_FOUND / timeout → clean `npm run build` (1024 MB heap; **no** `rm -rf .next` — Next
-  swaps builds atomically) + restart + re-verify.
+  NEXT_NOT_FOUND / timeout → **staged rebuild** (module v1.13.0: full-pipeline flock on
+  `/var/www/aiwebsite.stage/.lock`; deps hardlink-cloned from the LIVE `node_modules`
+  via `cp -al` — no npm; `BUILD_HEAP_MB`-capped build; `config:check` drift gate;
+  `.next`-only cutover-repair that never consumes the deploy's `*.old` rollback set;
+  a lock-held collision with a deploy is a benign rc-3 skip) + restart + re-verify.
+  A failed repair leaves the live tree untouched.
 - Alerts via Resend to adam@xl.net from `ai.xl.net Watchdog <noreply@ai.xl.net>`, throttled
   1 email / unique issue / 24 h (`/tmp/aiwebsite-watchdog-throttle`); every subject starts
   **`[aiwebsite] <SEVERITY>`** (module §9.5 multi-site alert grammar).
@@ -2909,8 +2930,13 @@ tunnel up but 502 → nginx or PM2 down.
 
 ## 14. Module dependency & design review personas
 
-**This site consumes @aicompany/core v1.12.1 (submodule `packages/aicompany`,
-tag `v1.12.1`, master lineage — v1.12.0 adds the headless draft-publish CLI
+**This site consumes @aicompany/core v1.13.0 (submodule `packages/aicompany`,
+tag `v1.13.0`, master lineage — v1.13.0 replaces the in-live-tree deploy
+build with the staged zero-downtime cutover pipeline (`deploy/stage-build.sh`,
+§9.1/§9.2 here; module §9.2/§9.5 + MIGRATIONS v1.13.0 contracts: hook cwd =
+stage, hook-mutated trees must be in the flip set, env edits by absolute live
+path — this host's governance post-install hook is compliant as-is);
+v1.12.0 adds the headless draft-publish CLI
 (`scripts/blog-publish.ts`, module §19.10): after a targeted
 `--regenerate=<slug>` lands a fresh-gated draft, the CLI publishes it with the
 exact admin semantics and REFUSES (exit 2) when the fresh verdict would land
