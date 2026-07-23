@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Thirteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Fourteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Thirteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Fourteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -932,6 +932,84 @@ export default function WorkPage() {
             Claude Skill · triggers on pasted ticket activity · chronological
             notes, findings inline · facts-only escalations · hypothesis kept
             as separate analysis
+          </p>
+        </section>
+
+        {/* 14. Autotask Ticket Summaries */}
+        <section id="ticket-summaries" className="panel rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Claude Skill</span>
+          </div>
+          <h2 className="mt-6">Autotask Ticket Summaries</h2>
+          <p className="mt-2 text-sm text-faint">
+            Catch up on every open ticket without re-reading a single one.
+          </p>
+          <p className="mt-4 text-sm">
+            A Claude Skill that reads your open Autotask tickets through
+            Google Chrome and hands back a brief for each: the issue, what
+            has been done so far, and the next steps sitting in the notes.
+            Ask naturally (&quot;what&apos;s on my plate in
+            Autotask?&quot;, &quot;catch me up on my service desk&quot;) and
+            the skill picks it up, no magic word required. Tell it to skip a
+            queue and it filters.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Reads With Your Login
+              </h3>
+              <p className="mt-3 text-sm">
+                Claude drives Chrome and reads the live Autotask screen in
+                the tech&apos;s own session, in front of the tech: it sees
+                exactly what the tech can already see, nothing more. When
+                XL needs live Autotask numbers in a client deliverable, that
+                goes through XL Lakehouse&apos;s scoped API. A personal
+                read-only brief doesn&apos;t: no API keys, no integration
+                project, no new credentials to mint and then guard.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Issue, Done, Next
+              </h3>
+              <p className="mt-3 text-sm">
+                Every ticket collapses to the same three answers: what is
+                wrong, what has been tried, and what happens next. A fixed
+                shape means the whole queue scans like one ticket, and
+                nothing hides in the formatting.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Looks, Never Touches
+              </h3>
+              <p className="mt-3 text-sm">
+                The procedure has no write step: no edit, no save, no
+                complete. Reading is the entire job. The summary informs the
+                tech; every change to a ticket is still made by a human, on
+                purpose.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            Built for a real Monday problem: our service desk opens each day
+            with a 15-minute review of current tickets, and after a weekend
+            one of us kept re-reading Friday&apos;s tickets before the call.
+            Now Claude does the re-reading. It is the return leg of{" "}
+            <a href="#ticketscribe">TicketScribe</a>: that skill drafts the
+            clean notes techs put into tickets, this one reads them back
+            out, delivered the same way, with nothing to host.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            Claude Skill · reads live Autotask in Chrome · issue / done so
+            far / next steps per ticket · queue filters · view-only · no
+            write step · changes stay human
           </p>
         </section>
       </section>
