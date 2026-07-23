@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Fifteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Sixteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Fifteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Sixteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -1098,6 +1098,101 @@ export default function WorkPage() {
             and booking link · &quot;chill follow-up&quot; variant · draft
             in the rep&apos;s Gmail · no send step · logs contact / no
             answer
+          </p>
+        </section>
+
+        {/* 16. Beacon */}
+        <section id="beacon" className="panel rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge">
+              <span className="dot" /> Built · final setup
+            </span>
+            <span className="badge badge--light">Internal Slack assistant</span>
+          </div>
+          <h2 className="mt-6">Beacon</h2>
+          <p className="mt-2 text-sm text-faint">
+            The channel assistant that answers &quot;has someone already built
+            this?&quot; before anyone builds it twice.
+          </p>
+          <p className="mt-4 text-sm">
+            Our own Slack, one channel: #claude-teamhub, where the team talks
+            about what it wants to build next. Beacon sits in that
+            conversation, built for a problem that grows with every automation
+            a team ships: the same thing getting built twice because there was
+            no quick way to ask whether it already exists. It matches new
+            ideas against the team&apos;s tool registry, cites the relevant
+            company procedure by name when a thread touches process or client
+            data, and asks a clarifying question when an idea is genuinely
+            new. Where <a href="#leo-netter">Leo Netter</a> is a teammate
+            tested one DM at a time, Beacon works in the open channel.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Match Before Build
+              </h3>
+              <p className="mt-3 text-sm">
+                Describe what you want to build and Beacon searches the
+                team&apos;s registry of existing tools. A close match comes
+                back as the tool&apos;s name and its owner, a person to talk
+                to instead of a project to start. And once a week, or on
+                demand, the manager gets a plain-language digest: what was
+                asked, what matched existing work, and where effort looks
+                duplicated.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Claude Talks, Code Decides
+              </h3>
+              <p className="mt-3 text-sm">
+                Claude decides what to say in a reply. Beacon&apos;s own code,
+                ordinary software outside the model, decides who receives each
+                message, what gets written to storage, and whether restricted
+                content moves at all. In the channel a restricted policy
+                appears only as a title and its owning team; the full text
+                arrives by direct message, after a live team-membership lookup
+                confirms the requester belongs to that team. A permission
+                decision is a lookup against records, not an inference from
+                how convincing the request sounds.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Writes Wait for the Owner
+              </h3>
+              <p className="mt-3 text-sm">
+                When a conversation confirms a tool is finished, Beacon drafts
+                a registry entry rather than filing one. The proposal is
+                sanitized first: length caps, stripped markup,
+                instruction-like phrasing flagged. It commits only after the
+                tool&apos;s owner approves it with a reaction in the thread,
+                and an unconfirmed proposal expires after 72 hours.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            Beacon holds no SweetProcess credential of its own. Every
+            governance search and permission check is brokered through{" "}
+            <a href="#lakehouse">XL Lakehouse</a>, scoped read-only and
+            audited, against a library of roughly 5,755 procedures and 255
+            policies refreshed on a 24-hour cycle. Slack connects directly
+            because realtime events have no broker equivalent, and Google
+            Drive connects directly because the tool registry and interaction
+            log live in Google Docs, which Lakehouse&apos;s Google integration
+            does not yet cover. The pipeline is built and tested, module by
+            module, against real production data; what remains is the Slack
+            app itself and a short list of setup steps before the channel gets
+            its first reply.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            Node.js · Slack Bolt (Socket Mode) · Claude tool-use loop · prompt
+            caching · SweetProcess via Lakehouse (read-only) · 5,755
+            procedures / 255 policies · 24-hour refresh · owner-reaction
+            commit · 72-hour proposal expiry · weekly digest
           </p>
         </section>
       </section>
