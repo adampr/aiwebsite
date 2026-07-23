@@ -1,0 +1,24 @@
+{
+  "slug": "aiwebsite",
+  "baseUrl": "https://ai.xl.net",
+  "pages": [
+    { "path": "/", "class": "critical", "minBytes": 50000, "markers": ["aria-label=\"Open Tron Netter chat\""] },
+    { "path": "/blog", "class": "critical", "minBytes": 60000, "markers": ["href=\"/blog/"] },
+    { "path": "/texting", "class": "warn", "minBytes": 50000, "markers": ["Text with Tron Netter"] },
+    { "path": "/privacy", "class": "warn", "minBytes": 50000 },
+    { "path": "/work", "class": "warn" },
+    { "path": "/builders", "class": "warn" },
+    { "path": "/governance", "class": "warn" },
+    { "path": "/contact", "class": "warn" },
+    { "path": "/methodology", "class": "warn" },
+    { "path": "/sms-terms", "class": "warn" }
+  ],
+  "newestArticle": { "fromFeed": true, "minBytes": 20000 },
+  "feeds": {
+    "sitemap": "/sitemap.xml",
+    "robots": "/robots.txt",
+    "rss": "/rss.xml",
+    "rssItemPrefixes": ["/blog/"]
+  },
+  "sitemapRequiredPaths": ["/", "/work", "/builders", "/governance", "/contact", "/methodology", "/privacy", "/sms-terms", "/texting"]
+}

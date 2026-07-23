@@ -667,7 +667,14 @@ silence). aiwebsite facts:
   Entra app `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c` (§11).
 - `isAdmin` = email ∈ comma-separated `ADMIN_EMAIL` (currently adam@xl.net).
 - `GET /api/health` → `{status:"ok"}` (PM2 readiness, watchdog, deploy verification, the
-  external uptime monitor).
+  external uptime monitor, and the module v1.17.0 dev-box synthetic sweep's
+  post-deploy settle gate — module §9.8).
+- Synthetic monitoring (module v1.17.0, §9.8): `deploy/synth-inventory.json`
+  lists the public pages/markers/feeds the dev-box sweep checks every 15 min
+  (all alert-only, `[aiwebsite] SYNTH` mail grammar); `SYNTH_PAGES` in
+  site-deploy.env adds `/blog` + `/texting` to the on-VM watchdog as
+  alert-only local checks; `SYNTH_HEARTBEAT=1` dead-mans the sweep runner via
+  `data/synth-last-sweep`.
 
 ### 5.5 `src/lib/` — what remains host-owned
 

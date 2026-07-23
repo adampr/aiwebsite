@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@ab1ba45515ab68f0493c6bce432182f5a0817c1b034d86bf942d07038aa434c5
+# aicompany-template: watchdog.sh.tpl@7c85b10e1ef7117c62fb409616178a3950dfb63b0a461e98adf2213c6f348a69
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -67,6 +67,13 @@ page_check_urls=(
   "http://127.0.0.1:3000/"
   "http://127.0.0.1:3000/login"
 )
+
+# Synthetic page list (§9.8 v1.17.0): paths from SYNTH_PAGES, checked locally
+# on every page pass, ALERT-ONLY — never rebuild-eligible. Tokens are "path"
+# or "path|minBytes". The rebuild-eligible set stays exactly page_check_urls
+# above. The heartbeat gate is consumed in check_freshness.
+synth_pages='/blog|60000 /texting|50000'
+synth_heartbeat_enabled='1'
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -348,6 +355,46 @@ check_pages() {
   fi
 }
 
+# ── Synthetic page checks (§9.8 v1.17.0) — ALERT-ONLY ─────────────
+# A >=400 or thin body on a SYNTH_PAGES path is a content/route regression a
+# rebuild cannot fix, so this class never touches the rebuild machinery; the
+# dev-box sweep covers the same paths from the public side.
+check_synth_pages() {
+  [ -n "$synth_pages" ] || return 0
+  local hc
+  hc=$(curl -sf -m 5 "$site_health_url" 2>&1) || hc=""
+  if [[ -z "$hc" ]] || ! echo "$hc" | grep -q '"status":"ok"'; then
+    return 0   # total-down belongs to the main-loop service checks
+  fi
+  if deploy_in_progress; then
+    log "INFO: synth page checks skipped -- deploy in progress"
+    return 0
+  fi
+  local tok p want_bytes url out http_code size
+  for tok in $synth_pages; do
+    p="${tok%%|*}"
+    want_bytes=0
+    [[ "$tok" == *"|"* ]] && want_bytes="${tok##*|}"
+    url="http://127.0.0.1:3000${p}"
+    out=$(curl -s -o /dev/null -w '%{http_code} %{size_download}' -m 15 "$url" 2>/dev/null) || out="000 0"
+    http_code="${out%% *}"
+    size="${out##* }"
+    if [[ "$http_code" == "000" || "$http_code" -ge 400 ]]; then
+      log "FAIL: synth page $p HTTP $http_code (alert-only)"
+      send_email \
+        "SYNTH WARN page $p failing (HTTP $http_code)" \
+        "Local check of $url returned HTTP $http_code.\n\nAlert-only class (§9.8): no rebuild is attempted — a >=400 here is a content/route regression, not a corrupted build. The dev-box sweep checks the same path from the public side." \
+        "synth-page-$p"
+    elif (( want_bytes > 0 && size < want_bytes )); then
+      log "FAIL: synth page $p thin body (${size}B < ${want_bytes}B, alert-only)"
+      send_email \
+        "SYNTH WARN page $p body ${size}B below floor ${want_bytes}B" \
+        "Local check of $url returned HTTP $http_code with a ${size}-byte body (floor ${want_bytes}).\n\nUsually an empty shell or half-rendered page. Alert-only class (§9.8); no rebuild attempted." \
+        "synth-page-$p"
+    fi
+  done
+}
+
 # ── Freshness checks: backup heartbeat + knowledge doc (§9.5) ─────
 
 file_age_alert() { # path, label, severity, issue_key, remedy [, threshold_seconds]
@@ -399,6 +446,25 @@ check_freshness() {
       "The blog digest job has not stamped its state file in over 35 days — the timer is dead or the script is crashing before its exit paths. Check /var/log/aiwebsite-blog-digest.log and 'systemctl list-timers aiwebsite-blog-digest.timer'." \
       3024000 \
       || log "FAIL: blog digest state missing/stale"
+  fi
+  # Synthetic-sweep heartbeat (§9.8 v1.17.0): the dev-box sweep stamps this
+  # file over ssh after every completed run. Render-key-gated so
+  # non-participating (gcloud-iap) hosts never false-fire. Seeded on first
+  # sight — a fresh enable must not fire "missing" before the first sweep
+  # lands — and chowned to $pm2_user so the ssh login user can overwrite it
+  # (the watchdog runs as root).
+  if [ "$synth_heartbeat_enabled" = "1" ]; then
+    if [ ! -f "$app_root/data/synth-last-sweep" ]; then
+      if date +%s > "$app_root/data/synth-last-sweep" 2>/dev/null; then
+        chown "$pm2_user" "$app_root/data/synth-last-sweep" 2>/dev/null || true
+        log "INFO: seeded synth sweep heartbeat"
+      fi
+    else
+      file_age_alert "$app_root/data/synth-last-sweep" "Synthetic sweep heartbeat" "SYNTH WARN" "synth-heartbeat" \
+        "The dev-box sweep runner has not stamped in >2h (8 missed 15-min cycles) — dead cron or dead runner. On the dev box: crontab -l | grep synth-sweep; tail ~/.local/state/aicompany-synth/sweep.log (RUNBOOK: Synthetic sweep)." \
+        7200 \
+        || log "FAIL: synth sweep heartbeat stale"
+    fi
   fi
 }
 
@@ -668,6 +734,7 @@ while true; do
   # 9. Page-render checks (every 5th standard pass = 5 minutes)
   if (( standard_pass % page_check_every == 0 )); then
     check_pages
+    check_synth_pages
   fi
 
   if [[ "$any_failure" == "false" ]]; then

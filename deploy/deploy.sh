@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@049d263615d2c13f554a756929ecc45c4987b1e3dbb65cc55747b1e21d815a82
+# aicompany-template: deploy.sh.tpl@47d6811d1b383c5a561082d45005bb203780cdc61cafc4bff2972cd2ffff307c
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -305,3 +305,18 @@ run_remote "curl -fsS http://127.0.0.1:3000/api/health && echo && curl -fsS http
 run_remote "cd $app_dir && if [ -f deploy/extra-services.json ]; then bash deploy/extra-services.sh verify; fi"
 echo ""
 echo "=== Deploy complete. Public check: curl -fsS https://ai.xl.net/api/health ==="
+
+# ── Post-deploy synthetic sweep (§9.8 v1.17.0) — ALERT-ONLY ──────
+# Runs dev-box-side against the PUBLIC domain. --post-deploy gates every
+# assertion on public-health SETTLE (3 consecutive /api/health OKs — the
+# documented ~90s PM2/tunnel bounce must not false-alarm) and does one retry
+# before alerting. NOTHING here may fail the deploy: missing runner or
+# inventory ⇒ NOTE; sweep findings ⇒ WARN line (the runner already mailed).
+synth_runner="$module_dir/scripts/synth-sweep.mjs"
+if [ -f "$synth_runner" ] && [ -f "$repo_dir/deploy/synth-inventory.json" ]; then
+  echo ">>> Post-deploy synthetic sweep of https://ai.xl.net (alert-only)..."
+  node "$synth_runner" --host-dir "$repo_dir" --post-deploy \
+    || echo "WARN: synthetic sweep failed or found problems — see its [aiwebsite] SYNTH mail and ~/.local/state/aicompany-synth/ (deploy NOT failed)"
+else
+  echo "NOTE: synth-sweep runner or deploy/synth-inventory.json absent — post-deploy sweep skipped."
+fi
