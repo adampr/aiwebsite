@@ -15,7 +15,9 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-22 (blog peg-aware topic steering + module
+Last verified against code: 2026-07-23 (admin governance review console:
+host-owned `/admin/governance` + `src/lib/governance/admin-db.ts` + extraNav,
+§5.6/§5.12; no-ledger ruling documented). Previously: 2026-07-22 (blog peg-aware topic steering + module
 v1.10.0 escalation-ladder opt-in (`quality.maxRegenerates: 1`, styleGuide
 report-of-record clause); workshop → Ticket Tailor; governance round 19c: adopt_outline
 EMPTY-BUCKET TOLERANCE - a model reproducing the full sample skeleton emits
@@ -708,7 +710,9 @@ list, failure copy, retention windows) live in **site.config.ts**, ported verbat
 ### 5.6 Admin console (`/admin/*` + `/api/admin/*` + tracking)
 
 The console is @aicompany/core's admin (module architecture.md §5.6), mounted as thin
-wrappers. Each `src/app/admin/<key>/page.tsx` renders the module page component with
+wrappers — plus one host-owned page, `/admin/governance` (§5.12 "Admin review
+console"), added to the nav via `admin.extraNav` and self-guarding like every module
+page. Each `src/app/admin/<key>/page.tsx` renders the module page component with
 `{config, searchParams}` and sets `dynamic = "force-dynamic"` (the module components
 don't). `src/app/admin/layout.tsx` wraps the module `<AdminLayout config>` — nav built
 from `admin.enabledPages` (legacy ADMIN_NAV order preserved in site.config.ts; labels
@@ -731,6 +735,7 @@ never 500s the page.
 | `/admin/companies` | `page_visits` ⋈ `ip_orgs` | orgs reading the site; ISP ASNs filtered out |
 | `/admin/seo` | `page_visits` | 30-day first-party traffic: stat cards (views/sessions/visitors/bounce), source classification, referring domains, daily bars, top pages, session depth. **GSC/Semrush not wired up** |
 | `/admin/knowledge` | `brain_memories` (read-only) | rows + per-source_type stats (row sizes matter — voice injects all public rows); button triggers the crawl |
+| `/admin/governance` | `governance_projects` ⋈ `users`, `governance_usage`, `page_visits` | **host-owned** (not a module wrapper): read-only §5.12 usage review — stat tiles, per-user rollup, project list with status/liveness/failed-turn chips + deletion countdown, 14-day counters. Metadata only, content columns never selected; full contract in §5.12 "Admin review console" |
 
 API routes (module factories from `@aicompany/core/admin/api`; every handler runs the
 module's `requireAdmin()`, middleware adds CSRF):
@@ -2180,6 +2185,48 @@ activity; encrypted backup copies expire within a further 30 days" — the night
 pg_dump tail is disclosed, not hidden (set the BACKUP_BUCKET lifecycle ≤35 days).
 Kill switch `GOVERNANCE_ENABLED=0`: mutations 503, reads + downloads stay up, the
 timer keeps sweeping, the research script + queued kicks stand down.
+
+**Admin review console (`/admin/governance`, 2026-07-23, panel-designed):** the first
+host-owned admin page (all others are module wrappers, §5.6). Read-only server
+component, `force-dynamic`, self-guarding (`readSession` + `isAdmin` → redirect
+`/login`; the layout re-check stays defense-in-depth), reached via
+`admin.extraNav` in site.config.ts (module renders host entries after
+`enabledPages`). Direct DB reads via `src/lib/governance/admin-db.ts` — a file
+deliberately SEPARATE from `db.ts` (whose contract is owner-bound WHERE clauses)
+with three invariants, all pinned by tests (`adm32` block in
+scripts/governance-tests.ts, which pins `.toSQL()` shapes off the NON-async
+exported query builders, no DB connection needed): (1) read-only, no mutation
+exported; (2) every project read folds in `retentionCutoff()` exactly like owner
+reads, so an expired-but-unswept row never surfaces to the admin either; (3)
+content columns NEVER leave Postgres — selects are explicit metadata allowlists;
+documents/transcript/research/research-audit/research-progress JSON,
+review_summary, next_question_json, open_item_guesses_json, bank_profile_json,
+turn_json, changed_sections_json, covered_bank_ids_json, and all style_sample_*
+columns are user business content and are not selected, not even inside
+`octet_length()`. Page sections: stat tiles (projects on file, owners, research
+runs today via `readTodayUsage()` — NEVER `usage[0]`, which is stale on any
+quiet day; Tavily month-to-date; failed turns; /governance page views 30d from
+`page_visits` — all traffic, not user-attributed, gated on a local replica of
+the module's private tracking-disabled check), per-user rollup (staff chip via
+`isBudgetExemptEmail` so exempt testing is never read as demand; per-project
+`research_runs` is deliberately NOT summed — it is a daily-reset counter and
+would mislabel as lifetime), project list (limit 100, status badge covering the
+FULL eight-status union incl. `research_failed` as the error state, `live` chip
+from claim-liveness horizons coupled to `CAPS.turnStaleMs` and the
+claimResearch 5-minute reap, `err` chip for the recorded failed-turn state
+`turn_prompt_id` set + `turn_started_at` NULL, deletion countdown derived from
+`deletesAt()`), and the attribution-free `governance_usage` 14-day table.
+**Deliberate non-feature — no durable per-user event ledger:** the /privacy
+governance addendum promises projects are "deleted from our systems 30 days
+after your last activity" (backups a further 30), so ANY surviving per-user
+governance record — even metadata-only — breaks the letter of published copy,
+not just the "Yours, Then Gone" posture. The console's history horizon
+therefore EQUALS the public promise, and its copy says so ("a window, not an
+archive"). If per-user history is ever required, the order is fixed: amend the
+/privacy addendum section in `src/app/privacy/page.tsx` AND the /governance FAQ
+line AND review the /work facet copy, deploy the copy, and only then ship a
+`governance_events` table (excluding `domain`) with its own pruner. Copy first,
+table second.
 
 ---
 

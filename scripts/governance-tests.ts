@@ -17,8 +17,21 @@ import {
   scaffoldDocuments,
 } from "../src/lib/governance/blueprints";
 import {
+  ADMIN_GOV_COUNTERS_NOTE,
+  ADMIN_GOV_POSTURE,
+  ADMIN_GOV_SUBLINE,
+  adminProjectsQuery,
+  adminUsersQuery,
+  KIND_SHORT,
+  RESEARCH_HEARTBEAT_STALE_SECS,
+  STATUS_BADGE_VARIANT,
+  statusLabel,
+  TURN_STALE_SECS,
+} from "../src/lib/governance/admin-db";
+import {
   CAPS,
   fileSlug,
+  KIND_LABELS,
   normalizeDomain,
   REVIEW_FORCED_SUMMARY,
   REVIEW_REOPENED_SUMMARY,
@@ -5813,6 +5826,176 @@ function check(name: string, cond: boolean): void {
     [...bpMod.bankById(kind).values()].every(
       (q) => !(q.feeds ?? []).includes("ai-usage-policy#definitions")
     )
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 32. Admin review console (§5.12, /admin/governance): read-only,
+ *     retention-bounded, content columns never leave Postgres. DB-free:
+ *     the builders are non-async so .toSQL() pins shape without a
+ *     connection.
+ * ------------------------------------------------------------------ */
+{
+  const usersQ = adminUsersQuery().toSQL();
+  const projQ = adminProjectsQuery().toSQL();
+
+  // Retention folded into BOTH admin reads, same cutoff the owner reads
+  // use: an expired-but-unswept row must never surface to the admin.
+  // Drizzle serializes Date params to ISO strings by the time toSQL runs.
+  const nearCutoff = (q: { params: unknown[] }) =>
+    q.params.some((p) => {
+      const t =
+        p instanceof Date
+          ? p.getTime()
+          : typeof p === "string"
+            ? Date.parse(p)
+            : NaN;
+      return (
+        !isNaN(t) && Math.abs(t - (Date.now() - 30 * 86_400_000)) < 60_000
+      );
+    });
+  check(
+    "adm32: users rollup bounds last_activity_at at retentionCutoff",
+    usersQ.sql.includes('"last_activity_at" >= ') && nearCutoff(usersQ)
+  );
+  check(
+    "adm32: projects list bounds last_activity_at at retentionCutoff",
+    projQ.sql.includes('"last_activity_at" >= ') && nearCutoff(projQ)
+  );
+
+  // Content allowlist: no user-content column may appear ANYWHERE in the
+  // generated SQL (not even wrapped in octet_length). A future column that
+  // carries content must be added here when it is added to the schema.
+  const CONTENT_COLUMNS = [
+    "documents_json",
+    "transcript_json",
+    "research_json",
+    "research_audit_json",
+    "research_progress_json",
+    "review_summary",
+    "next_question_json",
+    "open_item_guesses_json",
+    "bank_profile_json",
+    "changed_sections_json",
+    "covered_bank_ids_json",
+    "turn_json",
+    "style_sample_name",
+    "style_sample_text",
+    "style_sample_header",
+    "style_sample_footer",
+    "style_sample_debt",
+  ];
+  check(
+    "adm32: no content column in the projects SQL",
+    CONTENT_COLUMNS.every((c) => !projQ.sql.includes(c))
+  );
+  check(
+    "adm32: no content column in the users SQL",
+    CONTENT_COLUMNS.every((c) => !usersQ.sql.includes(c))
+  );
+
+  // Liveness horizons stay coupled to the real claim constants.
+  check(
+    "adm32: turn liveness window equals CAPS.turnStaleMs",
+    TURN_STALE_SECS === CAPS.turnStaleMs / 1000 &&
+      projQ.sql.includes("make_interval")
+  );
+  check(
+    "adm32: research heartbeat horizon is the claimResearch 5-minute reap",
+    RESEARCH_HEARTBEAT_STALE_SECS === 300
+  );
+  check(
+    "adm32: failed-turn signal is prompt_id set with started_at NULL",
+    projQ.sql.includes('"turn_prompt_id" IS NOT NULL') &&
+      projQ.sql.includes('"turn_started_at" IS NULL')
+  );
+
+  // Status canon: the FULL eight-member union, so a ninth status fails
+  // here instead of rendering as an unstyled raw string.
+  const STATUSES = [
+    "created",
+    "queued",
+    "researching",
+    "research_failed",
+    "bank_check",
+    "drafting",
+    "review",
+    "done",
+  ];
+  check(
+    "adm32: badge variants cover exactly the eight statuses",
+    Object.keys(STATUS_BADGE_VARIANT).sort().join(",") ===
+      [...STATUSES].sort().join(",")
+  );
+  check(
+    "adm32: research_failed is the error state, done is the ok state",
+    STATUS_BADGE_VARIANT.research_failed === "err" &&
+      STATUS_BADGE_VARIANT.done === "ok" &&
+      STATUS_BADGE_VARIANT.bank_check === "warn" &&
+      STATUS_BADGE_VARIANT.review === "warn"
+  );
+  check(
+    "adm32: status labels swap underscores for spaces, nothing else",
+    statusLabel("research_failed") === "research failed" &&
+      statusLabel("bank_check") === "bank check" &&
+      statusLabel("drafting") === "drafting"
+  );
+  check(
+    "adm32: kind short-labels cover exactly the offered kinds",
+    Object.keys(KIND_SHORT).sort().join(",") ===
+      Object.keys(KIND_LABELS).sort().join(",")
+  );
+
+  // Copy honesty: window-not-archive framing, "user's" never "owner's"
+  // (on admin pages "the owner" means the site owner), no em/en dashes.
+  const adminCopy = [
+    ADMIN_GOV_SUBLINE,
+    ADMIN_GOV_POSTURE,
+    ADMIN_GOV_COUNTERS_NOTE,
+  ].join("\n");
+  check(
+    "adm32: subline is honest about the 30-day window",
+    ADMIN_GOV_SUBLINE.includes("window, not an archive") &&
+      ADMIN_GOV_SUBLINE.includes("user's last activity")
+  );
+  check(
+    "adm32: posture line promises metadata only",
+    ADMIN_GOV_POSTURE.includes("metadata only") &&
+      ADMIN_GOV_POSTURE.includes("belong to the user")
+  );
+  check(
+    "adm32: counters note says unattributed",
+    ADMIN_GOV_COUNTERS_NOTE.includes("not tied to any user")
+  );
+  check(
+    "adm32: admin copy has no em or en dashes and never says owner",
+    !/[–—]/.test(adminCopy) && !/owner/i.test(adminCopy)
+  );
+
+  // Source pins: the query module exports no mutation, and neither new
+  // host file carries an em or en dash anywhere.
+  const adminDbSrc = fs.readFileSync(
+    path.join(REPO_ROOT, "src/lib/governance/admin-db.ts"),
+    "utf8"
+  );
+  const adminPageSrc = fs.readFileSync(
+    path.join(REPO_ROOT, "src/app/admin/governance/page.tsx"),
+    "utf8"
+  );
+  check(
+    "adm32: admin-db.ts is read-only (no insert/update/delete/execute)",
+    !/\.(insert|update|delete|execute)\(/.test(adminDbSrc)
+  );
+  check(
+    "adm32: admin sources carry no em or en dash",
+    !/[–—]/.test(adminDbSrc) && !/[–—]/.test(adminPageSrc)
+  );
+  check(
+    "adm32: page guards itself (readSession + isAdmin + redirect)",
+    adminPageSrc.includes("readSession(siteConfig)") &&
+      adminPageSrc.includes("isAdmin(session.email)") &&
+      adminPageSrc.includes('redirect("/login")') &&
+      adminPageSrc.includes('dynamic = "force-dynamic"')
   );
 }
 
