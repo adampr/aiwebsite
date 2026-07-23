@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Twelve real, running AI systems built in the open by XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Thirteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Twelve real, running AI systems built in the open by XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Thirteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -860,6 +860,78 @@ export default function WorkPage() {
           <p className="mono mt-6 text-xs text-faint">
             Python · slack-bolt (Socket Mode) · Claude Sonnet · .eml / .msg
             parsing · sandboxed systemd VPS · also a Claude Skill
+          </p>
+        </section>
+
+        {/* 13. TicketScribe */}
+        <section id="ticketscribe" className="panel panel--lightline rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Claude Skill</span>
+          </div>
+          <h2 className="mt-6">TicketScribe</h2>
+          <p className="mt-2 text-sm text-faint">
+            Clean notes from messy tickets, and handoffs that carry facts
+            instead of conclusions.
+          </p>
+          <p className="mt-4 text-sm">
+            A Claude Skill used live on our own service desk. Paste raw
+            troubleshooting activity (a call recap, DNS lookups, PowerShell
+            output, admin center findings) into a Claude session and it kicks
+            in, returning a chronological ticket note with findings stated
+            inline, or, when you&apos;re handing the issue off, an escalation
+            message stripped down to observable facts.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Chronological, Every Ticket
+              </h3>
+              <p className="mt-3 text-sm">
+                However scrambled the input, the note comes back in time
+                order, each finding noted where it happened, in the same
+                format on every ticket, rushed or not. That is exactly what
+                matters when someone else picks it up mid-issue.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Facts-Only Handoffs
+              </h3>
+              <p className="mt-3 text-sm">
+                Escalations to other teams and vendors carry observed facts,
+                not conclusions. A handoff that carries your conclusion makes
+                the receiver react to your conclusion instead of diagnosing
+                the problem, and that is what causes the rework when a
+                handoff goes wrong.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                The Hypothesis Stays Home
+              </h3>
+              <p className="mt-3 text-sm">
+                The thinking isn&apos;t thrown away: any working hypothesis
+                comes back separately, as analysis for the tech sending the
+                message, never folded into the message itself.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            Same delivery as the <a href="#spamslayer">SpamSlayer</a> rubric:
+            a plain .skill file that runs inside a desktop Claude session,
+            nothing to host, just a documented procedure the model follows.
+            Built for our own queue and in use on it now, not a product.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            Claude Skill · triggers on pasted ticket activity · chronological
+            notes, findings inline · facts-only escalations · hypothesis kept
+            as separate analysis
           </p>
         </section>
       </section>

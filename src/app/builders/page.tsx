@@ -222,7 +222,7 @@ export default function BuildersPage() {
           <div className="panel rise" style={{ transitionDelay: "100ms" }}>
             <h3>&ldquo;Is this real or hype?&rdquo;</h3>
             <p className="mt-4 text-sm">
-              Judge for yourself: <Link href="/work">ten running systems</Link>{" "}
+              Judge for yourself: <Link href="/work">the running systems</Link>{" "}
               we built with AI, including the site you&apos;re on. We teach
               what we practice.
             </p>

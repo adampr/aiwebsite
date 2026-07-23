@@ -163,7 +163,7 @@ export default function HomePage() {
             <span className="sys-label">Exhibit Hall</span>
             <h3 className="mt-4">See what we&apos;ve built</h3>
             <p className="mt-4 text-sm">
-              Ten real, running AI systems: an AI engine, reusable
+              Real, running AI systems: an AI engine, reusable
               middleware, two production sites, client-delivery platforms,
               and the access layers behind them, plus our autonomy
               experiments. Including the site you&apos;re reading.
