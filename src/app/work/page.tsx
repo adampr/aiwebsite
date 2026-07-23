@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Sixteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Seventeen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Sixteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Seventeen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -1193,6 +1193,91 @@ export default function WorkPage() {
             caching · SweetProcess via Lakehouse (read-only) · 5,755
             procedures / 255 policies · 24-hour refresh · owner-reaction
             commit · 72-hour proposal expiry · weekly digest
+          </p>
+        </section>
+
+        {/* 17. Morning Brief */}
+        <section id="morning-brief" className="panel panel--lightline rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Claude Skill</span>
+          </div>
+          <h2 className="mt-6">Morning Brief</h2>
+          <p className="mt-2 text-sm text-faint">
+            Thirty seconds, one drawing, and you know what kind of day this
+            is.
+          </p>
+          <p className="mt-4 text-sm">
+            Say &quot;run my morning brief&quot;, or just type /morning, and
+            Claude answers with a page instead of a paragraph. Across the top
+            runs a hand-drawn terrain line whose profile is the day&apos;s
+            first reading: light, normal, or heavy, taken in before a word of
+            text. Below it, two short lists finish the glance: what is
+            waiting on you, and what stopped waiting.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                The Day, Drawn First
+              </h3>
+              <p className="mt-3 text-sm">
+                The horizon line answers the morning&apos;s first question,
+                how much day is there, before the reading starts; the lists
+                underneath say what and who. Every skill before this one
+                hands back words: notes, a verdict, a brief, a draft. This
+                one hands back a picture of the day with the words
+                underneath it.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                The List That Subtracts
+              </h3>
+              <p className="mt-3 text-sm">
+                Status tools are good at adding to your plate. The
+                brief&apos;s second list takes things off it: a thread that
+                wrapped up on its own, a question that found its answer
+                without you, a meeting that dropped off the calendar. Each
+                line is something you no longer have to carry into the day,
+                and what remains in the first list is the day&apos;s real
+                size.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                No New Access
+              </h3>
+              <p className="mt-3 text-sm">
+                The skill brings no connection step and adds no credential
+                of its own. It reads the calendar, email, and chat you have
+                already linked, for one purpose: drawing this page. A source
+                that is not connected simply thins the brief; the page is
+                drawn from whatever remains, and the page is the whole
+                deliverable.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            The other skills in this group face work the team shares: a
+            triage rubric, the service queue, the sales call log.{" "}
+            <a href="#beacon">Beacon</a>, just above, answers for a whole
+            channel. Morning Brief is the first whose sources are yours
+            alone: your calendar, your inbox, your morning. It is also the
+            first that can keep its own appointment: ask once for a
+            recurring run, weekday mornings if you like, and the page is
+            waiting before you sit down. The rest of the group answers when
+            asked. This one, once asked, is simply there when the day
+            starts.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            one drawn page · light / normal / heavy · reads only what you
+            already linked · /morning, on demand or on a schedule · a .skill
+            file like the rest
           </p>
         </section>
       </section>
