@@ -15,7 +15,10 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-23 (/work exhibit row synced: seventeen exhibits
+Last verified against code: 2026-07-24 (brain pin v1.107 `6440513` — vendor PG
+adapter reconnect + brain-api /health DB deep-check; RCA of the 2026-07-24
+chat outage on this host, same defect as roleplay's — see the pin section).
+Previous: 2026-07-23 (/work exhibit row synced: seventeen exhibits
 incl. `#ticketscribe`, `#ticket-summaries`, `#follow-up-emails`, `#beacon`,
 `#morning-brief`; admin
 governance review console: host-owned `/admin/governance` +
@@ -2517,11 +2520,18 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
   on altered columns — `test_ui_issue_reports` / `audio_related` — crash-looping
   brain-api in prod); v1.99.2 made the widen pass best-effort (view-blocked ALTER
   warns loudly and boot continues) and was re-adopted. **Current submodule pin:
-  v1.106 (02cc6ca, 2026-07-22)** — automatic model-registry id-drift resolution
+  v1.107 (6440513, 2026-07-24, hotfix branch off v1.106 02cc6ca)** — xldev
+  Issue #718: the vendor PG adapter reconnects on server-side connection loss
+  and brain-api `/health` deep-checks the DB (503 + `db:"error"`). Root cause
+  of the 2026-07-24 chat outage on THIS host (every turn = one instant
+  `{"type":"error"}` NDJSON event while `/health` stayed 200): brain-api's
+  single sync pg-native connection died after boot with no reconnect path; no
+  dependency or registry churn vs 02cc6ca. Previous pin v1.106 (02cc6ca,
+  2026-07-22) carried automatic model-registry id-drift resolution
   (rename auto-repoint w/ alias preservation, alias-aware kill switch,
   retirement lifecycle, heads-baseline anti-silent-flip gate) + gpt-5.6-terra/
   -sol and grok-4.5 routable (xldev #715/#716); pin history v1.102 d4f34eb →
-  v1.103 f13d6be → v1.105 60df5d5 → v1.106 02cc6ca. v1.102 brought
+  v1.103 f13d6be → v1.105 60df5d5 → v1.106 02cc6ca → v1.107 6440513. v1.102 brought
   per-call panel forcing (`invocation.panelMode`,
   #701) + JSON-native forced panel (#703: json_object turns run draft → cross-lab
   refute → one revision; machine-checkable `thinking.panel` receipt). Consumed here
