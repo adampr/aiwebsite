@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Eighteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Nineteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Eighteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Nineteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -1377,6 +1377,120 @@ export default function WorkPage() {
             gaps flagged to confirm, never guessed · the vault entry name,
             not the password · markdown and Word, bold intact · review and
             publish stay with a tech
+          </p>
+        </section>
+
+        {/* 19. Kaseya AP Builder */}
+        <section id="kaseya-ap-builder" className="panel panel--lightline rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Claude Skill</span>
+          </div>
+          <h2 className="mt-6">Kaseya AP Builder</h2>
+          <p className="mt-2 text-sm text-faint">
+            The request is a sentence in plain English; the deliverable is
+            a finished agent procedure, XML and all.
+          </p>
+          <p className="mt-4 text-sm">
+            For Central Services, a plain-language request, install this
+            agent, audit what&apos;s installed, uninstall the old copy,
+            report a result into a custom column, comes back as a complete
+            Kaseya VSA 9 agent procedure in the format Kaseya itself uses
+            when a procedure is exported from the editor, fit for the
+            editor&apos;s import. Installers come straight from the
+            vendor&apos;s evergreen link when latest is the goal, or from a
+            pinned copy on our S3 bucket when the version matters. Each run
+            hands back two things: the .xml itself, and a short numbered
+            account of what the procedure does, written for the description
+            field and the client runbook. Every procedure lands in the same
+            house shape, so the structure holds from one AP to the next and
+            none of the XML is typed by hand.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                The Log Does the Talking
+              </h3>
+              <p className="mt-3 text-sm">
+                On the endpoint, a generated procedure shows nothing:
+                silent switches, SYSTEM context, no window for whoever is
+                signed in at the keyboard. In the Kaseya agent log it hides
+                nothing. Every meaningful step announces itself before it
+                acts and confirms after, failures carry an ERROR: prefix,
+                and when a check finds the work already done, the skip
+                itself is written down, so a machine that needed nothing
+                says so. Those checks lead: a registered service, a
+                registry footprint, or an install path in either Program
+                Files folder means the procedure logs a skip instead of an
+                install. At the end, downloaded installers and scratch
+                files are removed, and OS-specific steps carry an OS tag so
+                a mixed Windows and macOS policy never sends one
+                platform&apos;s commands to the other.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Built to Survive the Import
+              </h3>
+              <p className="mt-3 text-sm">
+                One oversized field is enough to sink an entire import;
+                Kaseya rejects the whole file with a database truncation
+                error rather than trimming it. The skill treats that as a
+                format rule, not a surprise. Ampersands, quotes, and angle
+                brackets inside attribute values are escaped, newlines are
+                encoded, and the bracketed managed-variable tokens are
+                escaped along with them. Descriptions and inline commands
+                stay under Kaseya&apos;s column limits, a script too long
+                to inline is hosted and downloaded at runtime instead, and
+                the finished file is parse-checked before it is handed
+                over.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                No Connection, No Keys
+              </h3>
+              <p className="mt-3 text-sm">
+                The skill has no session with Kaseya and no way to open
+                one; it reads a request and writes a file, and its
+                documentation is blunt on the point: it never connects,
+                never runs anything, and holds no secrets. License keys and
+                site tokens exist only in Kaseya&apos;s AP Variable
+                Manager; Kaseya drops them in when the procedure runs. The
+                skill knows variable names, wraps each in an exists-check,
+                and a missing one surfaces as a plain log line naming the
+                variable the client org still needs. The published copy is
+                sanitized by design, placeholders where an installer host
+                would go, no client names anywhere in it. Between the file
+                and production stand two deliberate steps: a tech reviews
+                and imports the XML, and the first run happens on a single
+                lab machine, because a procedure that runs as SYSTEM across
+                a fleet earns its trust on one box first.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            One card up, <a href="#sp-writer">SP Writer</a> drafts
+            procedures for people to follow, step by step in SweetProcess.
+            This skill drafts the other kind: procedures a Kaseya agent
+            carries out on an endpoint with no one watching. Both end at a
+            document, and both keep a tech between that document and the
+            world: publish over there; review, import, and a lab run over
+            here. The difference is the reader. A SweetProcess draft is
+            judged by the engineer who follows it; an agent procedure is
+            judged by its log, which is why every one of these is built to
+            narrate itself.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            a sentence becomes a procedure · checks before installs ·
+            every step in the agent log · names in the file, values at
+            runtime · escaped, sized, parse-checked · a lab machine before
+            any fleet
           </p>
         </section>
       </section>
