@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Nineteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Twenty real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Nineteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Twenty real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -1491,6 +1491,126 @@ export default function WorkPage() {
             every step in the agent log · names in the file, values at
             runtime · escaped, sized, parse-checked · a lab machine before
             any fleet
+          </p>
+        </section>
+
+        {/* 20. TPS Client Count */}
+        <section id="tps-client-count" className="panel rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Claude Skill</span>
+          </div>
+          <h2 className="mt-6">TPS Client Count</h2>
+          <p className="mt-2 text-sm text-faint">
+            One scorecard number, backed by a sheet that keeps doing the
+            math.
+          </p>
+          <p className="mt-4 text-sm">
+            The department scorecard has a new line: how many clients sit
+            at or below a target TPS of 0.45, where TPS is a client&apos;s
+            tickets divided by its seats over a rolling window, four
+            Thursdays back through yesterday. Producing that count by hand
+            was an Excel job, several spreadsheets combined with vlookups
+            and pivot tables, then a separate filter over the result, and
+            the scorecard wants the number every week. This skill runs the
+            chain on request: it opens Autotask in Chrome under your own
+            sign-in, runs the two LiveReports, filling the date window
+            into the one that takes it, and exports both to Excel. Then it
+            folds the seats report into the ticket report, client by
+            client, and writes the answer in: a TPS column, a headline
+            count, and the exact dates used.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Arithmetic Left in the Cells
+              </h3>
+              <p className="mt-3 text-sm">
+                Python does the merge, but no answer is pasted in as a
+                plain number. Every TPS cell carries a live formula,
+                tickets over seats at two decimals, and the headline count
+                is a live COUNTIF at the 0.45 line, so a value edited by
+                hand later moves the count with it; the arithmetic never
+                leaves the sheet. A client with no row in the seats report
+                stays blank, a blank stays out of the count, and the merge
+                lists every client it skipped. Then the skill reopens the
+                finished file and checks its own work: TPS against the
+                ticket and seat columns, the count against the rows, the
+                recorded dates against what went into the report filter.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Burned Twice, Written Down
+              </h3>
+              <p className="mt-3 text-sm">
+                Two failures shaped this skill, and both are written into
+                it. Autotask once slid an extra column into the ticket
+                report, moving everything after it, and a script that
+                trusted fixed column letters kept writing seats and TPS
+                where those columns used to be; a person checking the
+                numbers by hand caught it. The merge now locates tickets,
+                seats, TPS, and account name by their headers, and if a
+                header vanishes or gets renamed, the run stops and the
+                error says which one. The date math had its turn too:
+                written on a Tuesday, it ran a week short the first time
+                it executed on a Thursday, when the most recent Thursday
+                was that very day, and again a person caught the bad start
+                date. The correction sits in the skill file beside a
+                warning that the off-by-one is easy to bring back, so the
+                mistake is part of what the model reads before it computes
+                a single date.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Only the Downloads Folder
+              </h3>
+              <p className="mt-3 text-sm">
+                Autotask is read through Chrome in your own signed-in
+                session, the same two reports you could open yourself, and
+                nothing travels the other way: no write into Autotask, no
+                API key, no credential minted for the job. The only place
+                the skill writes is your Downloads folder, two Excel
+                files, and it looks before it lands there: a report you
+                still have open in Excel stops the copy, and the skill
+                tells you which file to close instead of retrying into a
+                locked file. Scope is fenced on purpose, these two
+                reports, this pod, this threshold; a different report is a
+                new skill, not a setting on this one. The deliverable
+                never grows extras either, no added sheets, no pivot
+                tables, just the ticket report with seats, TPS, the
+                count, and the dates filled in.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            Autotask has come up twice before in this group:{" "}
+            <a href="#ticketscribe">TicketScribe</a> drafts the clean
+            notes a tech pastes into a ticket, and{" "}
+            <a href="#ticket-summaries">Autotask Ticket Summaries</a>{" "}
+            reads the open queue back as briefs, through Chrome, in a
+            session the tech already owns. This skill uses that same
+            Chrome door and comes back with something neither of them
+            makes: not text for a person to read, but a number for the
+            department scorecard to hold. The number does not arrive
+            alone. The formulas under it stay live, the skipped clients
+            are listed, and the window is printed on the sheet, so anyone
+            who doubts the count can follow the cells and land on it
+            themselves.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            two autotask livereports · your own chrome session · four
+            thursdays back, through yesterday · merged on client name ·
+            live formulas, two decimals · count at or below 0.45 ·
+            columns found by header, not letter · finished file re-read
+            and checked · writes only to downloads · nothing back to
+            autotask
           </p>
         </section>
       </section>
