@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Seventeen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Eighteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Seventeen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Eighteen real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -1278,6 +1278,105 @@ export default function WorkPage() {
             one drawn page · light / normal / heavy · reads only what you
             already linked · /morning, on demand or on a schedule · a .skill
             file like the rest
+          </p>
+        </section>
+
+        {/* 18. SP Writer */}
+        <section id="sp-writer" className="panel rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Claude Skill</span>
+          </div>
+          <h2 className="mt-6">SP Writer</h2>
+          <p className="mt-2 text-sm text-faint">
+            The fix is still warm when the draft comes back, already in
+            house format.
+          </p>
+          <p className="mt-4 text-sm">
+            The hard part of a procedure is rarely the knowledge; it is the
+            formatting. SP Writer takes whatever an engineer has at hand,
+            rough troubleshooting notes, a pasted ticket, an old Word
+            document, or a walkthrough typed straight into chat, and
+            returns a SweetProcess draft already in XL.net&apos;s house
+            shape: a title prefixed the house way, client name for client
+            work, software name for the generic, search tags an engineer
+            would actually type, a purpose statement, and short numbered
+            steps, one action or one decision apiece. The draft arrives
+            twice, as markdown and as a matching Word file, because
+            SweetProcess&apos;s editor keeps bold and drops code spans, and
+            the Word copy is what lets the formatting survive the paste.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Every Path Reaches End
+              </h3>
+              <p className="mt-3 text-sm">
+                A procedure that branches gets a real decision step: the
+                step title is the question, and an answers block routes
+                each reply to a numbered destination. Before the draft goes
+                out, the skill walks every path from step one, through
+                every branch and every jump, and confirms each one lands on
+                the End step. No dead ends, no orphaned steps, no route
+                that points at a step nobody wrote. If drafting adds or
+                removes a step, the whole thing renumbers so the routing
+                stays true.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Flagged, Never Filled In
+              </h3>
+              <p className="mt-3 text-sm">
+                The skill&apos;s own file puts it plainly: a wrong SP is
+                worse than no SP. An obvious hole in the notes becomes a
+                question before drafting starts. A server name or URL the
+                engineer did not mention comes back as a bracketed marker
+                to confirm, not a plausible guess. A screenshot the
+                procedure needs becomes a placeholder, not a description
+                written from imagination, and credentials appear only as
+                the name of the BitWarden entry that holds them. Nothing
+                technical is invented to make a step read complete.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Two Files, Then a Tech
+              </h3>
+              <p className="mt-3 text-sm">
+                The draft is where it stops. Creating the SP inside
+                SweetProcess is not one of its steps, and nothing is
+                connected that could: no SweetProcess login, no client
+                system, only a conversation with an engineer. What leaves
+                the chat is a pair of files, and both wait for the same
+                thing every draft waits for: a tech reads it, corrects
+                what needs correcting, and publishes it.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            <a href="#ticketscribe">TicketScribe</a>, earlier in this
+            group, turns a single ticket&apos;s history into notes a tech
+            pastes back in; SP Writer is for the part worth keeping once
+            the ticket closes. It also has a neighbor:{" "}
+            <a href="#beacon">Beacon</a>, still in its final setup, will
+            answer questions out of the team&apos;s procedure library, and
+            every draft that survives review will be one more procedure it
+            can find. The trade is the one the skill was built for: an SP
+            that used to cost an hour of formatting now costs a paste and
+            a review, written while the fix is still fresh instead of
+            waiting behind everything else.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            scratch notes in, house format out · every path traced to End ·
+            gaps flagged to confirm, never guessed · the vault entry name,
+            not the password · markdown and Word, bold intact · review and
+            publish stay with a tech
           </p>
         </section>
       </section>
