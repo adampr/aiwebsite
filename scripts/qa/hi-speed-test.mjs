@@ -90,11 +90,19 @@ async function measure() {
 }
 
 function appendOpenIssue(detail) {
-  const header = `# Open issues — ${label}\n\nAuto-tracked operational issues (hi-speed gate & friends). An entry is\nappended on every breach; RESOLVE by investigating, fixing, and moving the\nentry to a "Resolved" section with the fix reference.\n\n`;
-  fs.mkdirSync(path.dirname(openIssuesPath), { recursive: true });
-  if (!fs.existsSync(openIssuesPath)) fs.writeFileSync(openIssuesPath, header);
-  const entry = `## OPEN ${now.toISOString()} — "Hi" speed gate breach (${label})\n\n${detail}\n- Threshold: ${thresholdMs}ms. Endpoint: ${baseUrl}/v1/chat/completions.\n- Reproduce: \`node scripts/qa/hi_speed_test.mjs --label ${label}\`\n- Triage hints: brain phase_timing for this window (search_planning wall-time,\n  first_pass model), embedding-cache state (~/software-brain-data/hf-cache),\n  VM memory/earlyoom, and whether a deploy just wiped node_modules.\n\n`;
-  fs.appendFileSync(openIssuesPath, entry);
+  // Reporting must never crash the reporter: an unwritable issues file
+  // (root-owned leftover, read-only checkout) degrades to console-only.
+  try {
+    const header = `# Open issues — ${label}\n\nAuto-tracked operational issues (hi-speed gate & friends). An entry is\nappended on every breach; RESOLVE by investigating, fixing, and moving the\nentry to a "Resolved" section with the fix reference.\n\n`;
+    fs.mkdirSync(path.dirname(openIssuesPath), { recursive: true });
+    if (!fs.existsSync(openIssuesPath)) fs.writeFileSync(openIssuesPath, header);
+    const entry = `## OPEN ${now.toISOString()} — "Hi" speed gate breach (${label})\n\n${detail}\n- Threshold: ${thresholdMs}ms. Endpoint: ${baseUrl}/v1/chat/completions.\n- Reproduce: \`node scripts/qa/hi_speed_test.mjs --label ${label}\`\n- Triage hints: brain phase_timing for this window (search_planning wall-time,\n  first_pass model), embedding-cache state (~/software-brain-data/hf-cache),\n  VM memory/earlyoom, and whether a deploy just wiped node_modules.\n\n`;
+    fs.appendFileSync(openIssuesPath, entry);
+    return openIssuesPath;
+  } catch (err) {
+    console.error(`  (open-issue file unwritable: ${err instanceof Error ? err.message : err})`);
+    return `<unwritable: ${openIssuesPath}>`;
+  }
 }
 
 async function reportByEmail(subject, text) {
