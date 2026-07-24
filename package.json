@@ -18,7 +18,8 @@
     "simulate:email": "tsx packages/aicompany/cli/simulate-email.ts",
     "upgrade:check": "tsx packages/aicompany/cli/upgrade-check.ts",
     "test:governance": "tsx scripts/governance-tests.ts",
-    "test:peg": "node scripts/peg-score-tests.mjs"
+    "test:peg": "node scripts/peg-score-tests.mjs",
+    "qa:hi-speed": "node scripts/qa/hi-speed-test.mjs"
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",
