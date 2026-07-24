@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@8ad50c0e6d137f9de001a76fe3a40ff2bff9ca669e99458c732895e46ccea478
+# aicompany-template: setup-vm.sh.tpl@4b2bf87cc891c1b6937ab6bfd6df50be00450184ceff40ecefdfb91d1bcb40ee
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -749,10 +749,42 @@ Persistent=true
 WantedBy=timers.target
 UNIT
 
+# Nightly "Hi" speed gate (§9.9 v1.20.0 — alert-only; after the itsc 5-7s
+# and ai.xl.net 36s greeting incidents). Runs the RENDERED deploy/hi-speed.sh
+# (same re-render-lands-next-fire contract as the peer monitor). 05:10 UTC
+# sits ≥85 min clear of every module timer and ~1h50m before itsc's 07:00 UTC
+# collect-nightly brain hammering. WorkingDirectory is load-bearing: the
+# probe resolves .env (bearer) from cwd.
+sudo tee /etc/systemd/system/aiwebsite-hi-speed.service >/dev/null <<UNIT
+[Unit]
+Description=aiwebsite nightly Hi-speed gate (§9.9, alert-only)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=$deploy_user
+WorkingDirectory=/var/www/aiwebsite
+ExecStart=/usr/bin/env bash /var/www/aiwebsite/deploy/hi-speed.sh
+StandardOutput=append:/var/log/aiwebsite-hi-speed.log
+StandardError=append:/var/log/aiwebsite-hi-speed.log
+UNIT
+sudo tee /etc/systemd/system/aiwebsite-hi-speed.timer >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite nightly Hi-speed gate (§9.9)
+
+[Timer]
+OnCalendar=*-*-* 05:10:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now aiwebsite-knowledge.timer \
   aiwebsite-retention-sweeper.timer aiwebsite-disk-check.timer \
-  aiwebsite-peer-monitor.timer
+  aiwebsite-peer-monitor.timer aiwebsite-hi-speed.timer
 # Backups are a §1 default-on invariant, but enabling the timer with no bucket
 # just produces nightly failure alerts — gate on BACKUP_BUCKET and leave a flag
 # the watchdog uses to decide whether the heartbeat check applies.
@@ -866,6 +898,6 @@ echo "=== Setup complete ==="
 echo "Local checks:"
 echo "  curl -fsS http://127.0.0.1:3000/api/health          # Next.js"
 echo "  curl -fsS http://127.0.0.1:3211/health            # brain-api"
-echo "  systemctl list-timers 'aiwebsite-*'                          # all 6 timers present (+ blog when BLOG_ENABLED=1)"
+echo "  systemctl list-timers 'aiwebsite-*'                          # all 7 timers present (+ blog when BLOG_ENABLED=1)"
 echo "Public check (after the human DNS step propagates):"
 echo "  curl -fsS https://ai.xl.net/api/health"

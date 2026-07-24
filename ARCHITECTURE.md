@@ -17,7 +17,8 @@
 
 Last verified against code: 2026-07-24 (/work 20th exhibit
 `#tps-client-count`, TPS Client Count Claude Skill, metadata count
-Latest 2026-07-24 (late): brain pin v1.108 `1e351d8` + module pin v1.19.0
+Latest 2026-07-24 (later still): module pin v1.20.0 `5e25666` — nightly Hi-speed gate (§9.9): `aiwebsite-hi-speed.timer` 05:10 UTC alert-only, 5s owner ceiling, best-of-2, brain-health boot pre-gate; breach emails from ALERT_FROM (noreply@ai.xl.net) + appends data/hi-speed-open-issues.md; watchdog dead-mans data/hi-speed-last-run; deploy/hi-speed.sh rendered.
+Previous: brain pin v1.108 `1e351d8` + module pin v1.19.0
 `66b09df` — the 36s-"Hi" incident fixes (panel-designed, critic-amended).
 Brain #725: persistent HF embedding-model cache at
 `~/software-brain-data/hf-cache` (BRAIN_HF_CACHE_DIR; the old cache lived

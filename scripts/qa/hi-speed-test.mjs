@@ -108,8 +108,12 @@ function appendOpenIssue(detail) {
 async function reportByEmail(subject, text) {
   const key = env.RESEND_API_KEY;
   if (!key) return 'no RESEND_API_KEY — email skipped (exit code + OPEN_ISSUES.md are the report)';
+  // No guessing a from-address: an unverified-domain guess 403s (itsc,
+  // 2026-07-24). Hosts pass their proven identity via HI_SPEED_ALERT_FROM
+  // (module timers export ALERT_FROM/ALERT_EMAIL — the watchdog's pair).
+  const from = env.HI_SPEED_ALERT_FROM || env.RESEND_FROM || env.ALERT_FROM_EMAIL || '';
+  if (!from) return 'no alert-from configured (HI_SPEED_ALERT_FROM/RESEND_FROM/ALERT_FROM_EMAIL) — email skipped; exit code + open-issues entry are the report';
   try {
-    const from = env.HI_SPEED_ALERT_FROM || env.RESEND_FROM || env.ALERT_FROM_EMAIL || 'alerts@xl.net';
     const to = env.HI_SPEED_ALERT_TO || 'adam@xl.net';
     const r = await fetch('https://api.resend.com/emails', {
       method: 'POST',

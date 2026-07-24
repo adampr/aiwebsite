@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@7c85b10e1ef7117c62fb409616178a3950dfb63b0a461e98adf2213c6f348a69
+# aicompany-template: watchdog.sh.tpl@4eee6057d60a710959b69a38d81b7124b2ca0419b7834c05035983d4fa3a2eeb
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -465,6 +465,22 @@ check_freshness() {
         7200 \
         || log "FAIL: synth sweep heartbeat stale"
     fi
+  fi
+
+  # §9.9 v1.20.0: nightly hi-speed gate dead-man. hi-speed.sh stamps
+  # data/hi-speed-last-run on EVERY exit path (incl. skips); >26h of silence
+  # means the timer/unit itself is dead. Seed-on-first-sight so a fresh
+  # v1.20.0 render never fires "missing" before the first 05:10 UTC fire.
+  if [ ! -f "$app_root/data/hi-speed-last-run" ]; then
+    if date +%s > "$app_root/data/hi-speed-last-run" 2>/dev/null; then
+      chown "$pm2_user" "$app_root/data/hi-speed-last-run" 2>/dev/null || true
+      log "INFO: seeded hi-speed heartbeat"
+    fi
+  else
+    file_age_alert "$app_root/data/hi-speed-last-run" "Hi-speed gate heartbeat" "HI-SPEED WARN" "hi-speed-heartbeat" \
+      "The nightly hi-speed timer has not stamped in >26h — dead timer or unit. On the VM: systemctl list-timers '*hi-speed*'; tail /var/log/*-hi-speed.log (RUNBOOK: Hi-speed gate)." \
+      93600 \
+      || log "FAIL: hi-speed heartbeat stale"
   fi
 }
 
