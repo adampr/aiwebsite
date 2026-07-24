@@ -17,7 +17,24 @@
 
 Last verified against code: 2026-07-24 (/work 20th exhibit
 `#tps-client-count`, TPS Client Count Claude Skill, metadata count
-nineteen → twenty; same day: 19th exhibit
+Latest 2026-07-24 (late): brain pin v1.108 `1e351d8` + module pin v1.19.0
+`66b09df` — the 36s-"Hi" incident fixes (panel-designed, critic-amended).
+Brain #725: persistent HF embedding-model cache at
+`~/software-brain-data/hf-cache` (BRAIN_HF_CACHE_DIR; the old cache lived
+inside node_modules and this host's staged `npm ci` deleted it every
+dependency-changing deploy — the 522MB re-download then rode a visitor turn),
+boot pre-warm, and bare-visitor-text routing gates (this site's own page copy
+"what AI can do for" was firing the brain's recommendation preflight on
+greetings via the widget's in-message page appendix). Rides #720
+(gpt-5.6 capability policy — plan_execute 400s fix) and dormant Stage B
+routing (BRAIN_ROUTER unset here → legacy). Module v1.19.0: widget wait-state
+ladder (8s/38s honest labels), 120s silent-wire watchdog → disconnected/Retry,
+no-partial disconnect copy. Deploy note: `deploy/rsync-excludes.txt` now
+excludes `packages/brain/data/model-registry.json.freeze` (committed bench
+sentinel in the brain repo; on the VM it would permanently disable the daily
+registry refresh). VM cache pre-seeded from the old node_modules cache before
+the cutover so the fix deploy itself pays no download.
+Previous: nineteen → twenty; same day: 19th exhibit
 `#kaseya-ap-builder`, Kaseya AP Builder Claude Skill, metadata count
 eighteen → nineteen; same day: 18th exhibit `#sp-writer`, SP
 Writer SweetProcess-documentation Claude Skill, metadata count seventeen →

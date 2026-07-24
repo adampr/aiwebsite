@@ -4,3 +4,9 @@
 # concurrent sessions run; syncing them is wasted transfer and a vanished
 # worktree mid-transfer aborts the deploy (rsync exit 23, 2026-07-17).
 .claude/worktrees
+# Issue #725 / brain #717: the LongMemEval benchmark freeze sentinel is
+# COMMITTED in the brain repo while the canonical run is pending. If it ever
+# reaches the VM it permanently disables the daily model-registry refresh
+# and the #715 drift auto-resolution in prod (goal scheduler hard-skips
+# while the file exists). Never ship it.
+packages/brain/data/model-registry.json.freeze
