@@ -87,12 +87,23 @@ t("rankByPeg tiebreaks equal peg scores by Tavily score", () => {
 });
 
 // --- framing-text safety vs the topic gate ----------------------------------
-// The report-of-record brief text news.ts appends flows into checkTopic's
+// The brief texts news.ts appends (REPORT_OF_RECORD_BRIEF and, since
+// 2026-07-25, RANKABILITY_BRIEF on every entry) flow into checkTopic's
 // offLimits haystack. This host runs offLimits: [] so nothing can trip — pin
 // that assumption so a future offLimits addition gets a loud failure here.
 t("site.config.ts still runs with empty blog offLimits (framing-text safety)", () => {
   const cfg = fsRead("site.config.ts");
   assert.match(cfg, /offLimits:\s*\[\s*\]/);
+});
+
+// RANKABILITY_BRIEF rides on EVERY calendar entry (not just peg-less days) —
+// pin its presence and its unconditional append so a refactor that drops it
+// (or makes it conditional) fails loudly here rather than silently reverting
+// the 2026-07-25 owner directive.
+t("news.ts appends RANKABILITY_BRIEF to every calendar entry description", () => {
+  const news = fsRead("src/lib/blog/news.ts");
+  assert.match(news, /const RANKABILITY_BRIEF =/);
+  assert.match(news, /news\.top\.description \+\s*\n?\s*RANKABILITY_BRIEF \+/);
 });
 
 console.log(`\n${passed} peg-score tests passed`);

@@ -29,6 +29,17 @@
 // was reworded in the same pass (site.config.ts). Each amendment below
 // kills one of those devices; item 2 gains "according to" so item 13's
 // cadence rule cannot collide with it.
+//
+// 2026-07-25 rankability amendment (item 8, owner directive): the nightly
+// posts mirrored source outlets' headlines near-verbatim (07-24 post vs
+// VentureBeat) and a zero-authority subdomain cannot win those SERPs. Item 8
+// now bans any 4-consecutive-word overlap with brief/fact-sheet titles and
+// requires the SMB stake in the headline, phrased fresh per story (a stock
+// ending would just be a new template — both unrankable and dedup-hostile).
+// The judge cannot see the brief, so the overlap ban is writer-side
+// instruction; the stake/actor/verb/length clauses are judge-verifiable.
+// Paired with the RANKABILITY_BRIEF in news.ts and the styleGuide title
+// rule in site.config.ts.
 
 export const NEWS_ARTICLE_CHECKLIST = `
 PRE-PUBLISH CHECKLIST (every item is pass/fail; the article must pass all):
@@ -60,8 +71,12 @@ PRE-PUBLISH CHECKLIST (every item is pass/fail; the article must pass all):
 7. SINGLE-SOURCE CAUTION: a government order or ban, lawsuit, breach, or
    market-moving figure that rests on exactly one source is hedged in the
    text: "X reported ...; the report has not been confirmed elsewhere."
-8. HEADLINE: composed fresh, never copied from a search-result title;
-   at most 70 characters; contains a named actor and an active verb; proper
+8. HEADLINE: composed fresh, never copied from a search-result title; shares
+   no run of 4 or more consecutive words with the working title in my brief
+   or with any source title in the fact sheet; at most 70 characters;
+   contains a named actor, an active verb, and the stake for a small or
+   mid-sized business reader; the stake wording is composed fresh for this
+   story, never a stock ending like "what it means for SMBs"; proper
    nouns capitalized; no "you", no imperatives, no urgency words.
 9. LEDE AND TL;DR: the first body sentence names who did or said what, with
    a reporting verb and a date. The TL;DR opens with that news, never with

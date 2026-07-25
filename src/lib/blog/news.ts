@@ -96,6 +96,28 @@ const REPORT_OF_RECORD_BRIEF =
   "article reports the findings with inline attribution. Do not editorialize " +
   "the trend outside the closing take section.";
 
+/**
+ * Rankability framing (owner directive 2026-07-25), appended to EVERY
+ * calendar entry description ahead of any peg-less framing. The entry title
+ * above the brief is the source outlet's own headline; a zero-authority
+ * subdomain cannot outrank the outlet for its own headline (the 07-24 post
+ * mirrored VentureBeat's and was absent from that SERP), so the writer must
+ * compose a differentiated title and framing. Same haystack caveat as
+ * REPORT_OF_RECORD_BRIEF above: this text flows into checkTopic's
+ * offLimits/protectedKeywords scan — keep the wording neutral (pinned by
+ * scripts/peg-score-tests.mjs).
+ */
+const RANKABILITY_BRIEF =
+  " ANGLE (rankability): the working title of this entry is the source " +
+  "outlet's own search headline. It is a retrieval key, never the article " +
+  "title. Major outlets already own that headline in search; do not compete " +
+  "for it or echo its wording. Compose the title and framing for the " +
+  "follow-up question a small or mid-sized business owner or IT " +
+  "decision-maker would search after seeing this news: what it changes, " +
+  "costs, or requires for a business like theirs. The article is still a " +
+  "dated news report with inline attribution; the SMB stake belongs in the " +
+  "title and the closing take, not as opinion in the body.";
+
 function ageHours(iso: string): number {
   const t = Date.parse(iso);
   return Number.isFinite(t) ? (Date.now() - t) / 3_600_000 : Infinity;
@@ -171,7 +193,9 @@ export function newsCalendarEntries(): {
       title: news.top.title,
       keywords: news.top.keywords,
       description:
-        news.top.description + (news.top.peg?.pegless ? REPORT_OF_RECORD_BRIEF : ""),
+        news.top.description +
+        RANKABILITY_BRIEF +
+        (news.top.peg?.pegless ? REPORT_OF_RECORD_BRIEF : ""),
     },
   ];
 }

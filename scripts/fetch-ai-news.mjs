@@ -97,9 +97,13 @@ function slugify(s, maxLen = 60) {
 /** keywords[0] = primary keyword (must read naturally in the title). */
 function keywordsFromTitle(title) {
   const tokens = title
+    // Possessives first ("Anthropic's Claude" → "Anthropic Claude"): the
+    // generic scrub below would otherwise leave an orphan "s" token that
+    // pollutes the primary keyword and the slug built from it.
+    .replace(/(['’])s\b/g, "")
     .replace(/[^\w\s-]/g, " ")
     .split(/\s+/)
-    .filter((t) => t && !STOPWORDS.has(t.toLowerCase()));
+    .filter((t) => t && t.length > 1 && !STOPWORDS.has(t.toLowerCase()));
   // Primary: the first run of 2-3 significant tokens — for news headlines that
   // is almost always the acting entity + subject ("OpenAI GPT-6", "EU AI Act").
   const primary = tokens.slice(0, Math.min(3, tokens.length)).join(" ").toLowerCase();
@@ -185,12 +189,22 @@ if (results[0] !== relevant[0]) {
 const now = new Date();
 const dateStamp = now.toISOString().slice(0, 10);
 const top = results[0];
+const topKeywords = keywordsFromTitle(top.title);
 const payload = {
   fetchedAt: now.toISOString(),
   top: {
-    slug: `${slugify(top.title)}-${dateStamp}`,
+    // Slug = entity keywords + date, NOT the full source headline (owner
+    // directive 2026-07-25): the published URL must never clone the source
+    // outlet's slug — a zero-authority domain cannot outrank the outlet for
+    // its own headline, and the writer composes a differentiated title
+    // anyway (site.config.ts styleGuide). top.title stays the verbatim
+    // source headline: it is the Tavily retrieval key (news.ts getContext)
+    // and the dedup candidate — do not "improve" it, dataCompleteness
+    // drops. Date suffix preserved: consumption is slug-existence in
+    // blog_posts, so yesterday's consumed entry never blocks today's.
+    slug: `${slugify(topKeywords[0] || top.title, 42)}-${dateStamp}`,
     title: top.title.trim(),
-    keywords: keywordsFromTitle(top.title),
+    keywords: topKeywords,
     description: (top.content || "").replace(/\s+/g, " ").trim().slice(0, 240),
     url: top.url,
     // Peg verdict for news.ts: a peg-less top story (negative score — no

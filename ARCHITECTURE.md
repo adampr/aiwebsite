@@ -15,7 +15,9 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-25 (build-warning cleanup:
+Last verified against code: 2026-07-25 (SEO rankability pass + module pin
+v1.22.0 `publish_indexed` posture — the "Latest 2026-07-25 (later)" entry
+below; earlier same day: build-warning cleanup:
 `src/middleware.ts` → `src/proxy.ts` (Next 16 proxy convention, Node.js
 runtime — kills the deprecation warning AND the six Edge-Runtime `node:*`
 warnings, since `site.config.ts` no longer rides any Edge bundle);
@@ -25,7 +27,27 @@ upstream NFT whole-project-trace warning (root cause in
 `scripts/check-build-warnings.sh` + `npm run build:check` regression gate)
 Previous 2026-07-24: /work 20th exhibit
 `#tps-client-count`, TPS Client Count Claude Skill, metadata count
-Latest 2026-07-25: module pin v1.21.1 `25b800a` — §19.27 cadence-aware
+Latest 2026-07-25 (later): module pin v1.22.0 `58fc06e` + SEO rankability
+pass (owner directives after the 07-25 SEO audit: only the homepage was
+indexed; nightly posts mirrored source outlets' headlines/slugs and lost
+every SERP; gate-noindex ate the 24-48h news freshness window).
+(1) `blog.quality.posture: "publish_indexed"` (module v1.22, §19.5): a
+published row is NEVER gate/panel-noindexed — gates/panel/WARN unchanged,
+per-row admin noindex + prune ladder are the only setters, correction is
+post-publication; one-time SQL (MIGRATIONS v1.22.0) flipped previously
+gate/panel-noindexed rows indexable, run post-deploy. (2) fetch-ai-news.mjs:
+`top.slug` = entity keywords + date (42-char cap), never the full source
+headline (URL must not clone the outlet's slug); possessive/single-letter
+token scrub in keywordsFromTitle; `top.title` stays the verbatim source
+headline (Tavily retrieval key + dedup candidate). (3) news.ts
+RANKABILITY_BRIEF on EVERY calendar entry (before any report-of-record
+framing): working title is a retrieval key, compose the title for the SMB
+decision-maker's follow-up question; pinned by test:peg. (4) styleGuide
+title rule (judge-verifiable: actor + verb + SMB stake, ≤70 chars) +
+checklist item 8 (no 4-consecutive-word overlap with brief/fact-sheet
+titles, stake phrased fresh per story, no stock endings). No env keys, no
+schema, no re-render.
+Previous 2026-07-25: module pin v1.21.1 `25b800a` — §19.27 cadence-aware
 blog publish-liveness (nightly WARN when the newest published/indexed post
 ages past `(8−cap)+2` days; transition + 7-day email throttle; liveness
 block + blogEnabledSince now persisted in data/blog-last-run) and the
@@ -520,7 +542,7 @@ admin console under `/admin/*` (§5.6):
 | `/sms-terms` | thin wrapper (server component) | Renders the module's `<SmsTermsPage config={siteConfig} lastUpdated="July 2026"/>` — program description, opt-in methods, verification mechanics from `texting.verification`, frequency/rates, STOP/HELP, carriers, privacy cross-link, contact. Keeps the page's own `metadata` export |
 | `/governance` | **dynamic** server component (`force-dynamic`) | AI Governance builder landing (§5.12): signed-out visitors get a crawlable showcase (hero + static "representative session" vignette + deliverables + stat strip + FAQ + closing sign-in panel, all CTAs to `/login?redirect=/governance`; `title.absolute` metadata + a `WebApplication` JSON-LD node referencing the layout's `#org` entity, price-0 offer); signed-in users get their project list + the create panel (kind picker, domain confirm/override, acknowledgment checkbox, 30-day + third-party-AI disclosures) |
 | `/governance/[id]` | dynamic server shell + client workspace, `robots: noindex` | The §5.12 project workspace: research progress, one-question-at-a-time Q&A beside the live document pane, review/confirm, always-available Word-friendly downloads. Signed-out → redirect to `/login?redirect=/governance/<id>` |
-| `/blog` + `/blog/[slug]` | thin wrappers over `@aicompany/core/blog/{index-page,article-page}` (`revalidate = 60`) | AI-news blog (§5.11, module §19). Index lists published articles (custom Tron-voiced copy from `blog.copy`); `[slug]` renders one `ArticleDoc` deterministically with the AI-authorship disclosure + `Article` JSON-LD. Metadata (canonical, OG, `noindex` for gate-failed rows) from `blog/metadata` |
+| `/blog` + `/blog/[slug]` | thin wrappers over `@aicompany/core/blog/{index-page,article-page}` (`revalidate = 60`) | AI-news blog (§5.11, module §19). Index lists published articles (custom Tron-voiced copy from `blog.copy`); `[slug]` renders one `ArticleDoc` deterministically with the AI-authorship disclosure + `Article` JSON-LD. Metadata (canonical, OG, `noindex` for per-row-noindexed rows — since the 2026-07-25 `publish_indexed` posture, gate outcomes never set noindex; only admin/prune do) from `blog/metadata` |
 | `/methodology` | custom static page (server component) | Editorial methodology + corrections policy (added 2026-07-14 after the process reviews): pipeline description, the 12 reader-facing checklist items, corrections contact, funding/COI statement. Referenced by `blog.authorship.methodologyUrl` → `publishingPrinciples` in the Article JSON-LD (module §19.4); cleared the standing config:check WARN |
 
 Header nav: Home, Our Work, AI Builders, **Governance (`/governance`)**, **AI News
@@ -531,7 +553,8 @@ grow), Privacy Policy, SMS Terms, and the main xl.net site. The homepage carries
 and `/builders` between the capabilities grid and the closing CTA. Sitemap entries: `/`,
 `/work`, `/builders`, `/governance`, `/contact`, `/methodology`, `/privacy`, `/sms-terms`, `/texting`, plus the module's
 `blogSitemapEntries` (the `/blog` index once ≥1 published, and each indexable article —
-noindexed/gate-failed rows excluded). `sitemap.ts` exports `revalidate = 3600` — without
+per-row-noindexed rows excluded; since the 2026-07-25 `publish_indexed` posture only
+admin/prune set that flag, never gate outcomes). `sitemap.ts` exports `revalidate = 3600` — without
 it Next bakes the route at build time and nightly-published articles never enter the
 sitemap between deploys. RSS at `/rss.xml`.
 
@@ -1109,7 +1132,14 @@ cadence rule cannot collide with it; and outlets are written by the display name
 the fact sheet now provides. Item 10 (no question headings) was clarified the same
 day to exempt FAQ entries — the module's FAQ format is questions by design, and the
 2026-07-25 regenerate's rubric notes flagged the ambiguity as a "potential format
-conflict" (the collision-scan rule applied to our own new rules). A
+conflict" (the collision-scan rule applied to our own new rules). Item 8 was
+amended later on 2026-07-25 (rankability, owner directive): the headline must share
+no run of 4+ consecutive words with the brief's working title or any fact-sheet
+source title (writer-side — the judge never sees those), and must carry the SMB
+stake alongside the named actor + active verb within 70 chars, with the stake
+phrased fresh per story (stock endings like "what it means for SMBs" banned — a
+fixed formula is both unrankable templating and dedup-hostile). The styleGuide
+title rule was replaced in the same pass with its judge-verifiable subset. A
 reader-facing summary lives at `/methodology`. All rendering, gates, admin, RSS,
 sitemap, and the nightly job itself live in `@aicompany/core` — the host owns only:
 
@@ -1167,6 +1197,23 @@ sitemap, and the nightly job itself live in `@aicompany/core` — the host owns 
   title-cased base-domain fallback): the published 07-25 article copied
   "foxbusiness.com reported" straight from the sheet, and the fact-check
   gate verifies named facts against the sheet, so the name must live there.
+  2026-07-25 (rankability, owner directive): `top.slug` is now
+  `slugify(keywords[0], 42)` + date — the entity keyword run, NEVER the full
+  source headline (the 07-24 post's URL cloned VentureBeat's slug
+  near-verbatim and lost that SERP outright); `keywordsFromTitle` strips
+  possessive suffixes and single-letter tokens first ("Anthropic's" no
+  longer yields an orphan "s"). `top.title` deliberately STAYS the verbatim
+  source headline — it is the Tavily retrieval key in `getContext` and the
+  trigram-dedup candidate; rewriting it would tank dataCompleteness. The
+  differentiated reader-facing title is the writer's job, steered by
+  `RANKABILITY_BRIEF` — appended by `newsCalendarEntries()` to EVERY entry
+  description ahead of any report-of-record framing (same neutral-wording
+  haystack caveat, both pinned by test:peg): the working title is a
+  retrieval key, never the article title; compose the title/framing for the
+  follow-up question an SMB owner or IT decision-maker would search.
+  Strategist-fallback days (calendar entry dedup-rejected) bypass the brief
+  and rely on the styleGuide/checklist title rules alone — known partial
+  coverage.
 - **The prefetch trigger.** The blog systemd unit has no `ExecStartPre` hook, so
   `news.ts` runs `fetch-ai-news.mjs` via `execFileSync` at module load **only** when
   `process.argv[1]` ends with `blog-nightly.ts` and the file is missing/stale >20h —
@@ -1191,10 +1238,15 @@ The nightly job (`packages/aicompany/scripts/blog-nightly.ts`, tsx) preflights t
 takes a pg advisory lock, budgets against the ramp, authors → runs deterministic +
 LLM fact-check + 6-dim rubric gates → applies posture in one DB transaction, writes the
 `data/blog-last-run` heartbeat on every exit path, and emails a per-run report
-(`[aiwebsite] OK|WARN|FAILED blog: …`) to `oversight.alertEmail`. Under `posture:
-"publish"`, an article that fails or skips its LLM gates still publishes but is
-`noindex`ed and excluded from the sitemap/RSS until a later clean gate pass — so
-crawlers never see unchecked copy while the decision to publish is honored. `methodologyUrl`
+(`[aiwebsite] OK|WARN|FAILED blog: …`) to `oversight.alertEmail`. Posture history:
+`"publish"` from adoption to 2026-07-25 (gate-failed/skipped articles published
+noindexed + sitemap/RSS-excluded until a clean pass); since 2026-07-25 (owner
+directive, module v1.22 §19.5) this host runs `posture: "publish_indexed"`: every
+published article is indexable immediately, gate/panel outcomes never set noindex
+(the WARN email is the containment; correction is post-publication via the admin
+per-row noindex/unpublish levers), and the prior gate/panel-noindexed rows were
+flipped indexable by the MIGRATIONS v1.22.0 one-time SQL (admin-set noindex
+preserved). `methodologyUrl`
 is intentionally unset (accepted config:check WARN — no methodology page yet).
 
 v1.1.x/v1.2.1 posture (module MIGRATIONS.md is canonical): this host adopts **none** of the
@@ -2638,15 +2690,18 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
   v1.8.1 chat-widget `aic-chat-*` scoping this host was branch-pinned to at 1fb62f1)
   with `blog.quality.panel: "on"` in site.config.ts forcing the cross-lab refuter on
   every article-authoring call (owner directive 2026-07-17); a non-convened panel
-  publishes noindexed until a panel-clean pass; chat envelopes keep
+  published noindexed until a panel-clean pass (until 2026-07-25 — under the
+  `publish_indexed` posture, module v1.22, it publishes indexed + WARN); chat
+  envelopes keep
   `maxOrchestratorPhase: 1`. v1.10.0 adds the §19.5 gate-failure escalation ladder,
   opted in here via `blog.quality.maxRegenerates: 1` (owner directive 2026-07-22 —
   "resolve WARNs in-run"): a rubric-only failure skips the (style-incapable)
   data-only repair and goes straight to ONE feedback-carrying fresh-writer
   regenerate (failed gates, verbatim issues, rubric scores vs thresholds, reviewer
   notes, full-rewrite marker), which re-gates and adopts on pass (published
-  INDEXED, outcome OK) or strictly-better; the terminal case still publishes
-  noindexed + WARN. Report lines: `generate-repair: skipped (rubric-only …` /
+  INDEXED, outcome OK) or strictly-better; the terminal case published
+  noindexed + WARN until 2026-07-25 (now indexed + WARN under
+  `publish_indexed`, module v1.22). Report lines: `generate-repair: skipped (rubric-only …` /
   `generate-regenerate: fresh draft passed all gates — resolved in-run` / `… not
   better …` / `… skipped — call budget insufficient`. Safe here vs the shared
   12-call nightly ceiling because Phase B refresh is disabled on this host.

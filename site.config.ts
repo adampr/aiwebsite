@@ -567,8 +567,20 @@ export const siteConfig = defineSiteConfig({
         "why it matters. The quotable claim of each reporting section is " +
         "one of its attributed reporting sentences, written plainly " +
         "without quotation marks: quotation marks are never put " +
-        "around my own words. The title reports the news: a named actor or a number from " +
-        "the story, no imperatives aimed at the reader, no 'you', no urgency " +
+        "around my own words. " +
+        // 2026-07-25 rankability (owner directive): the old rule ("the title
+        // reports the news: a named actor or a number") reinforced mirroring
+        // the source outlet's headline — unwinnable SERPs for this domain.
+        // The clauses here are the judge-verifiable subset (actor, verb,
+        // stake, length); the mechanical no-4-word-overlap ban lives in
+        // checklist item 8 (the judge never sees the brief or fact sheet).
+        "The title reports the news AND names its consequence for a small " +
+        "or mid-sized business: it carries a named actor and an active " +
+        "verb, states the stake for SMB owners or IT decision-makers, and " +
+        "stays within 70 characters. The title never echoes a source " +
+        "outlet's headline wording, and the stake phrasing is composed " +
+        "fresh for each story, never a recurring formula. No imperatives " +
+        "aimed at the reader, no 'you', no urgency " +
         "words like 'now'. Quotation marks are reserved for words a named " +
         "person or organization actually said or wrote; I never quote myself. " +
         "All of my own judgment lives in ONE closing section titled 'Tron's " +
@@ -651,9 +663,13 @@ export const siteConfig = defineSiteConfig({
       methodologyUrl: "https://ai.xl.net/methodology",
     },
     quality: {
-      // User decision: always publish; failed/skipped LLM gates go live
-      // noindexed + sitemap/RSS-excluded until a clean pass (§19.5).
-      posture: "publish",
+      // Owner directive 2026-07-25 (was "publish" since adoption): never
+      // publish noindexed — the 24-48h news freshness window is the whole
+      // value of a news post, and a noindex through it guarantees the post
+      // can never rank. Gates and the panel still run, WARN, and email;
+      // per-row admin noindex stays the correction lever (correct AFTER
+      // publication, module v1.22 §19.5).
+      posture: "publish_indexed",
       // Owner directive 2026-07-17: every article is adversarially reviewed
       // by the Brain's cross-lab refuter panel before publication (v1.8.0;
       // needs local brain >= 1.102). Chat stays at maxOrchestratorPhase 1 —
@@ -662,7 +678,8 @@ export const siteConfig = defineSiteConfig({
       // Owner directive 2026-07-22 (module v1.10 escalation ladder, §19.5):
       // after a failed repair (or straight away on a rubric-only failure),
       // ONE feedback-carrying fresh-writer regenerate re-gates in-run before
-      // the terminal publish-noindexed+WARN. Costs up to 3 extra brain calls
+      // the terminal WARN (published indexed under posture publish_indexed
+      // since 2026-07-25). Costs up to 3 extra brain calls
       // only on nights that would otherwise WARN; this host runs Phase B
       // refresh disabled, so the shared 12-call ceiling has headroom.
       maxRegenerates: 1,
