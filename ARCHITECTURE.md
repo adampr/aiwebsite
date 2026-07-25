@@ -1106,7 +1106,10 @@ outlet-plus-date mention); attribution is never nested (speaker as subject, outl
 kept as a trailing ", X reported" or "according to X") and no two consecutive
 sentences share a source-plus-verb opener; item 2 accepts "according to" so the
 cadence rule cannot collide with it; and outlets are written by the display name
-the fact sheet now provides. A
+the fact sheet now provides. Item 10 (no question headings) was clarified the same
+day to exempt FAQ entries — the module's FAQ format is questions by design, and the
+2026-07-25 regenerate's rubric notes flagged the ambiguity as a "potential format
+conflict" (the collision-scan rule applied to our own new rules). A
 reader-facing summary lives at `/methodology`. All rendering, gates, admin, RSS,
 sitemap, and the nightly job itself live in `@aicompany/core` — the host owns only:
 

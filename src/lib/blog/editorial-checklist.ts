@@ -69,7 +69,9 @@ PRE-PUBLISH CHECKLIST (every item is pass/fail; the article must pass all):
    sentence or takeaway shares its first 8 words with any body sentence,
    and the TL;DR uses only short-form attribution ("Fox Business
    reported"): the body lede owns the full outlet-plus-date first mention.
-10. HEADINGS: short declarative statements; zero question headings.
+10. HEADINGS: short declarative statements; zero question headings in body
+    sections. FAQ entries are exempt: their questions are the module's FAQ
+    format, not headings under this rule.
 11. QUOTES: quotation marks appear only around words a named person or
     organization actually said or wrote, verbatim from the fact sheet,
     attributed in the same sentence, with the speaker's title or affiliation
