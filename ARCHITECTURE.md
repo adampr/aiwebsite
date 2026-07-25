@@ -27,7 +27,12 @@ upstream NFT whole-project-trace warning (root cause in
 `scripts/check-build-warnings.sh` + `npm run build:check` regression gate)
 Previous 2026-07-24: /work 20th exhibit
 `#tps-client-count`, TPS Client Count Claude Skill, metadata count
-Latest 2026-07-25 (later): module pin v1.22.0 `58fc06e` + SEO rankability
+Latest 2026-07-25 (evening): module pin v1.23.0 `b31a965` — §5.3 reply-signature
+phone line now NANP display + callout: "(872) 350-4325 · Call or Text" (was
+bare E.164; fleet signature-consistency incident 2026-07-25, this host is the
+canary; no schema/re-render/env — MIGRATIONS v1.23.0 = bump + deploy, brain
+range unchanged).
+Previous 2026-07-25 (later): module pin v1.22.0 `58fc06e` + SEO rankability
 pass (owner directives after the 07-25 SEO audit: only the homepage was
 indexed; nightly posts mirrored source outlets' headlines/slugs and lost
 every SERP; gate-noindex ate the 24-48h news freshness window).
@@ -740,7 +745,9 @@ fail-closed sender-authenticity gate (Authentication-Results parsing → memory 
   (`swaks --from victim@gmail.com` from an unrelated host) and read the logged auth-verdict
   lines; correct `emailAuthservId` if Resend stamps a different authserv-id — if it stamps
   none, email memory silently stays off (fail-closed, by design).
-- Reply signature: name / AI Agent, XL.net / mailbox / (872) 350-4325 — call or text / the
+- Reply signature: name / AI Agent, XL.net / mailbox / "(872) 350-4325 · Call or Text"
+  (module v1.23.0 renders the NANP display + callout; before that the wire carried bare
+  E.164 `+18723504325`) / the
   one-line memory disclosure with the /privacy link / https://ai.xl.net. Oversight BCC to
   adam@xl.net as always. 300 s brain timeout (`brain.timeouts.emailMs`).
 - Brain-failure reply copy: `channels.email.failureMessage` (module default — the legacy
