@@ -229,9 +229,14 @@ export const siteConfig = defineSiteConfig({
       // §5.12 approval loop, v1.6: Troy.Netter budget-approval mail routes to
       // the host handler via the module hook (replaces the retired webhook
       // tee — same routing truth: envelope recipients, so a BCC'd approval
-      // still reaches Troy). Dynamic import keeps this file edge-safe
-      // (approval-inbound pulls the resend SDK; site.config rides the
-      // middleware bundle). Parity rule: Troy sole recipient → handled;
+      // still reaches Troy). The dynamic import defers loading the handler
+      // (and the resend SDK it pulls) until the first approval mail arrives.
+      // NOTE it is NOT what keeps this file edge-safe — Turbopack bundles
+      // dynamic imports into whatever graph imports this file (that's how the
+      // Edge-Runtime node:* build warnings regressed pre-2026-07-25);
+      // edge-safety comes from src/proxy.ts running in the Node runtime
+      // (Next 16 proxy convention), so this file rides no Edge bundle at all.
+      // Parity rule: Troy sole recipient → handled;
       // mixed (Tron cc'd) → delegate, the module still answers as Tron.
       onInbound: async (ctx) => {
         const { TROY_ADDRESS, handleTroyInbound } = await import(
@@ -554,8 +559,14 @@ export const siteConfig = defineSiteConfig({
         "instead. Section headings are short declarative statements, never " +
         "questions. The TL;DR opens with the news itself, never with 'Yes' " +
         "or 'No': one sentence saying who did or said what and when, then " +
-        "why it matters. Standalone quotable-claim sentences are written " +
-        "plainly, without quotation marks: quotation marks are never put " +
+        // 2026-07-25: was "Standalone quotable-claim sentences are written
+        // plainly..." which endorsed a separate unattributed line per
+        // section and collided with checklist item 11 (same collision
+        // class as persona-first-person vs the fenced voice). The
+        // no-quote-marks protection (v1.4.3) survives unchanged.
+        "why it matters. The quotable claim of each reporting section is " +
+        "one of its attributed reporting sentences, written plainly " +
+        "without quotation marks: quotation marks are never put " +
         "around my own words. The title reports the news: a named actor or a number from " +
         "the story, no imperatives aimed at the reader, no 'you', no urgency " +
         "words like 'now'. Quotation marks are reserved for words a named " +

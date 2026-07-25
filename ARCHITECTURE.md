@@ -15,7 +15,15 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-24 (/work 20th exhibit
+Last verified against code: 2026-07-25 (build-warning cleanup:
+`src/middleware.ts` → `src/proxy.ts` (Next 16 proxy convention, Node.js
+runtime — kills the deprecation warning AND the six Edge-Runtime `node:*`
+warnings, since `site.config.ts` no longer rides any Edge bundle);
+`next.config.ts` gains a tightly scoped `turbopack.ignoreIssue` for the
+upstream NFT whole-project-trace warning (root cause in
+`packages/aicompany/src/admin/api/blog.ts`, not fixable host-side);
+`scripts/check-build-warnings.sh` + `npm run build:check` regression gate)
+Previous 2026-07-24: /work 20th exhibit
 `#tps-client-count`, TPS Client Count Claude Skill, metadata count
 Latest 2026-07-25: module pin v1.21.1 `25b800a` — §19.27 cadence-aware
 blog publish-liveness (nightly WARN when the newest published/indexed post
@@ -325,7 +333,7 @@ host-owned `pre-commit.local`); setup-vm pm2 reload carries
 `--update-env` upstream (v1.6.1 — this host's HOST EDIT adopted, local
 edit dropped). Previous pin v1.5.2 @ cfe2854 (strictly-better repair
 adoption on the blog generate path). Previous pin v1.5.1 @ 78f3d55.
-Next.js 16.2.9).
+Next.js 16.2.11).
 
 ---
 
@@ -454,17 +462,41 @@ aiwebsite/
 │                               transpilePackages:["@aicompany/core"];
 │                               serverExternalPackages:["pdfjs-dist"] (pdf.js loads its
 │                               worker via an import relative to pdf.mjs — bundling it
-│                               into .next/server breaks every PDF extraction)
+│                               into .next/server breaks every PDF extraction);
+│                               turbopack.ignoreIssue: suppresses the "Encountered
+│                               unexpected file in NFT list" warning (path next.config.ts
+│                               + that exact title only) — root cause is upstream
+│                               (packages/aicompany/src/admin/api/blog.ts spawns
+│                               node_modules/.bin/tsx via path.join(process.cwd(),…),
+│                               which whole-project-traces the route); NFT output is
+│                               unused here (no output:"standalone", VM builds in place)
+│                               and outputFileTracingExcludes was verified NOT to
+│                               silence it (issue fires during trace collection).
+│                               REMOVE once upstream adds turbopackIgnore comments
 ├── postcss.config.mjs          single plugin: @tailwindcss/postcss
 └── tsconfig.json               strict, bundler resolution, alias @/* → ./src/*, excludes packages/brain
 ```
 
-**Stack versions:** Node **22** (VM; brain requires ≥20) · Next.js **16.2.9** · React **19.2.4**
+**Stack versions:** Node **22** (VM; brain requires ≥20) · Next.js **16.2.11** · React **19.2.4**
 · TypeScript 5 · Tailwind **v4** · drizzle-orm 0.45 + `postgres` 3.4 driver · resend 6.17
 · maxmind 5 + mmdb-lib (IP→org for /admin/companies).
-`src/middleware.ts` is the module's tracking/CSRF middleware wrapper (§5.6). Module tooling via
-`package.json` scripts: `config:check`, `doctor`, `simulate:sms`, `simulate:email`,
-`upgrade:check`. `npm run lint` = `eslint .` (eslint 9 + eslint-config-next, flat config).
+`src/proxy.ts` is the module's tracking/CSRF middleware wrapper (§5.6) under the Next 16
+**proxy** file convention (the renamed `middleware.ts`; proxy always runs in the Node.js
+runtime, so `site.config.ts` and its governance dynamic-import chain never enter an Edge
+bundle — this is what keeps the build free of "node module in Edge Runtime" warnings).
+Module tooling via `package.json` scripts: `config:check`, `doctor`, `simulate:sms`,
+`simulate:email`, `upgrade:check`. `npm run lint` = `eslint .` (eslint 9 +
+eslint-config-next, flat config). `npm run build:check` =
+`scripts/check-build-warnings.sh`: runs the build (or takes an existing log) and fails on
+banned warning markers ("A Node.js module is loaded", "deprecated", "warning while
+optimizing", "Encountered unexpected file in NFT list") — the pre-deploy regression gate
+for exactly the warning classes cleaned up on 2026-07-25. It is run manually (dev box,
+before deploy); it is deliberately NOT wired into `deploy/stage-build.sh` (a rendered
+upstream template — host edits there get orphaned by re-renders) or the pre-commit hook.
+Note the NFT marker is currently inert: `next.config.ts` `turbopack.ignoreIssue`
+suppresses that issue class entirely (the flagged path is always `next.config.ts`
+whichever module causes the trace), so coverage returns only when the upstream
+`@aicompany/core` blog.ts fix lands and the ignore rule is removed.
 No test suite in the parent repo (the module and brain have their own).
 
 ---
@@ -592,7 +624,7 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/texting/start` / `POST /api/texting/verify` | `createTextingStartHandler` / `createTextingVerifyHandler` · `channels/texting` | §5.10 |
 | `POST /api/auth/sms-prompt` | `createSmsPromptEventHandler` · `channels/texting` | §5.10 |
 | `POST /api/internal/track` | `createTrackHandler` · `tracking/track-api` | §5.6 |
-| `src/middleware.ts` | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout` and `/api/governance`** | §5.6 |
+| `src/proxy.ts` (Next 16 proxy convention, Node runtime) | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout` and `/api/governance`** | §5.6 |
 | `GET/POST /api/admin/messages` | `createAdminMessagesHandler` · `admin/api` | §5.6 |
 | `POST /api/admin/mailbox/send` | `createAdminMailboxSendHandler` · `admin/api` | §5.6 |
 | `GET/POST /api/admin/knowledge/refresh` | `createAdminKnowledgeRefreshHandler` · `admin/api` (wrapper adds `runtime = "nodejs"`) | §5.6 |
@@ -798,7 +830,7 @@ module's `requireAdmin()`, middleware adds CSRF):
   timer runs the module's crawler from `packages/aicompany/scripts/` (§8); until a
   host-root shim exists, the manual refresh button spawns a missing file.
 
-**Page-view tracking:** `src/middleware.ts` (GET, non-API/non-admin/non-static paths, bot-UA
+**Page-view tracking:** `src/proxy.ts` (GET, non-API/non-admin/non-static paths, bot-UA
 filtered, **prefetches excluded** — requests carrying `Next-Router-Prefetch` or
 `Sec-Purpose/Purpose: prefetch` headers are speculative loads, not views; without this every
 `<Link>` render inflates its target's counts, and the SMS prompt card's CTA additionally sets
@@ -998,7 +1030,7 @@ those are dashboard-manual).
   friendly "not configured" message), 400 bad JSON/unknown offering, 502 on Stripe
   failure. `success_url` = `/builders/thanks?session_id={CHECKOUT_SESSION_ID}`,
   `cancel_url` = `/builders?canceled=1`.
-- **CSRF:** the route is state-changing, so `src/middleware.ts` adds `/api/checkout` to
+- **CSRF:** the route is state-changing, so `src/proxy.ts` adds `/api/checkout` to
   the module middleware's `protectedPrefixes` (same-origin Origin/Referer check).
 - **No webhook (v1):** fulfillment is manual — receipts come from Stripe (per dashboard
   email settings), the roster is read off the dashboard. A `checkout.session.completed`
@@ -1053,7 +1085,28 @@ extraordinary claims, headline/lede/TL;DR/heading form, quote + statistic integr
 attribution grammar (full at first mention then short form), opinion fence, COI line,
 dated editor's notes on republished articles, and any in-article mention of the
 methodology written as the markdown link `[methodology](/methodology)` (never a bare
-path — the 07-14 editor's notes shipped "see /methodology" as plain text). A
+path — the 07-14 editor's notes shipped "see /methodology" as plain text). Items 2, 3,
+9, 11, 12, and 13 were amended 2026-07-25 after a noindexed voiceAdherence=2 run whose
+article restated every section in a naked unattributed line (the module's per-section
+quotable-claim mandate, prompts.ts §19.4, item 11's old "my own words" wording, AND a
+styleGuide sentence that endorsed the standalone device: it was reworded in the same
+pass so the two cannot collide, same collision class as persona-first-person vs the
+fenced voice), repeated load-bearing facts 3-4 times, named outlets by bare domain
+(the news seam's "Cite as:" line carried a raw hostname), and nested attribution
+verbs ("X reported that Y said"). The amended rules: the quotable claim of each
+reporting section is one of its attributed reporting sentences; adjacent sentences
+never restate each other; the population is named inside the stat's own sentence,
+never in a separate explainer sentence; a statistic (excluding source publication
+dates) appears with its full value in at most one body section and at most once
+within it, with the TL;DR and one FAQ answer each allowed one repeat; item 12's
+2-stat floor is hedged "when the fact sheet allows" (statCapacity-thin sheets);
+no TL;DR sentence or takeaway shares its first 8 words with any body sentence and
+the TL;DR carries only short-form attribution (the body lede owns the full
+outlet-plus-date mention); attribution is never nested (speaker as subject, outlet
+kept as a trailing ", X reported" or "according to X") and no two consecutive
+sentences share a source-plus-verb opener; item 2 accepts "according to" so the
+cadence rule cannot collide with it; and outlets are written by the display name
+the fact sheet now provides. A
 reader-facing summary lives at `/methodology`. All rendering, gates, admin, RSS,
 sitemap, and the nightly job itself live in `@aicompany/core` — the host owns only:
 
@@ -1105,16 +1158,23 @@ sitemap, and the nightly job itself live in `@aicompany/core` — the host owns 
   source section (2026-07-14) carries `Published:` normalized to "Month D, YYYY"
   (raw feed dates like "Thu, 18 Jun 2026 09:10:07 GMT" were being published verbatim
   in article copy), a `(NOTE: more than a year old …)` flag past 365 days, and a
-  `Cite as: [hostname](url)` line the checklist's link rules key off.
+  `Cite as: [outlet](url)` line the checklist's link rules key off; since
+  2026-07-25 the outlet label is a display name, not a raw hostname (fixed
+  hostname map for the ~20 outlets the pipeline surfaces, deterministic
+  title-cased base-domain fallback): the published 07-25 article copied
+  "foxbusiness.com reported" straight from the sheet, and the fact-check
+  gate verifies named facts against the sheet, so the name must live there.
 - **The prefetch trigger.** The blog systemd unit has no `ExecStartPre` hook, so
   `news.ts` runs `fetch-ai-news.mjs` via `execFileSync` at module load **only** when
   `process.argv[1]` ends with `blog-nightly.ts` and the file is missing/stale >20h —
-  covering both the timer and admin Run-now, inert everywhere else. Because
-  `site.config.ts` is imported by the **Edge middleware**, `news.ts` detects the Edge
-  Runtime (`globalThis.EdgeRuntime`) and touches no node builtins there (blog steering
-  returns empty/defaults; the middleware has no use for topics). Under Node it loads
-  fs/path/child_process via `process.getBuiltinModule` (≥20.16) so the bundler never
-  follows a top-level `import "node:fs"`.
+  covering both the timer and admin Run-now, inert everywhere else. `news.ts` detects
+  the Edge Runtime (`globalThis.EdgeRuntime`) and touches no node builtins there (blog
+  steering returns empty/defaults) — a module-owned guard that this host no longer
+  exercises since the 2026-07-25 middleware→proxy migration: `site.config.ts` is now
+  imported only from Node-runtime contexts (the `src/proxy.ts` proxy runs on Node), so
+  no Edge bundle exists in this host's build. Under Node it loads fs/path/child_process
+  via `process.getBuiltinModule` (≥20.16) so the bundler never follows a top-level
+  `import "node:fs"`.
 - **Wrapper mounts** (all 2–4-line, README §2.1): `src/app/blog/{page,[slug]/page}.tsx`,
   `src/app/rss.xml/route.ts`, `src/app/admin/blog/page.tsx`, `src/app/api/admin/blog/
   {route,run-now/route,action/route}.ts`, and `blogSitemapEntries` spread into

@@ -1,3 +1,9 @@
+// Next 16 proxy convention (the renamed middleware file; proxy always runs in
+// the Node.js runtime — https://nextjs.org/docs/messages/middleware-to-proxy).
+// Running on Node also keeps site.config.ts (which this file imports) out of
+// any Edge bundle, so its dynamic import of the governance approval handler
+// (node:crypto/dns/fs/...) no longer trips Edge Runtime build warnings.
+//
 // Thin wrapper over @aicompany/core (README §2.1): CSRF origin checks for
 // state-changing module routes plus fire-and-forget page-view tracking into
 // /api/internal/track (fail-closed without INTERNAL_TRACK_SECRET and

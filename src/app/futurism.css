@@ -9,8 +9,11 @@
    Display: Julius Sans One (thin, wide, monumental caps)
    UI: Manrope (quiet geometric sans)
    Data: JetBrains Mono (sparingly)
+   The Google Fonts @import moved to the top of globals.css: this file is
+   imported with layer(base), and an @import inside a layer is invalid CSS
+   (must precede all other rules). next/font deliberately not used (would
+   add a build-time font download / deploy-time network failure mode).
    ------------------------------------------------------------ */
-@import url('https://fonts.googleapis.com/css2?family=Julius+Sans+One&family=Manrope:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
 /* ------------------------------------------------------------
    1 · TOKENS

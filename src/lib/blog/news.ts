@@ -219,10 +219,54 @@ function sourceAgeDays(raw: string | undefined): number | null {
   return Number.isFinite(t) ? Math.floor((Date.now() - t) / 86_400_000) : null;
 }
 
-/** Citable outlet label from a source URL: hostname without "www.". */
+/**
+ * Public editorial names for the outlets this pipeline actually surfaces.
+ * 2026-07-25: the fact sheet's "Cite as:" line used the bare hostname and
+ * the published article copied it ("foxbusiness.com reported"); the writer
+ * imitates the sheet, so the display name must live in the sheet itself
+ * (checklist item 3 keys off it, and the fact-check gate verifies named
+ * facts against the sheet, so the name has to appear there verbatim).
+ */
+const OUTLET_NAMES: Record<string, string> = {
+  "foxbusiness.com": "Fox Business",
+  "bbc.com": "BBC",
+  "bbc.co.uk": "BBC",
+  "abcnews.go.com": "ABC News",
+  "cbsnews.com": "CBS News",
+  "aljazeera.com": "Al Jazeera",
+  "cnbc.com": "CNBC",
+  "reuters.com": "Reuters",
+  "techcrunch.com": "TechCrunch",
+  "theverge.com": "The Verge",
+  "arstechnica.com": "Ars Technica",
+  "csoonline.com": "CSO",
+  "wsj.com": "The Wall Street Journal",
+  "nytimes.com": "The New York Times",
+  "ft.com": "Financial Times",
+  "bloomberg.com": "Bloomberg",
+  "wired.com": "Wired",
+  "zdnet.com": "ZDNET",
+  "venturebeat.com": "VentureBeat",
+  "axios.com": "Axios",
+  "theguardian.com": "The Guardian",
+};
+
+/**
+ * Citable outlet label from a source URL: the mapped display name, else a
+ * deterministic fallback (hostname without "www." and the TLD, dot/hyphen
+ * parts title-cased: "someoutlet.com" becomes "Someoutlet") so the writer
+ * never sees a raw hostname presented as an outlet name.
+ */
 function outletFromUrl(url: string): string {
   try {
-    return new URL(url).hostname.replace(/^www\./, "");
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    const mapped = OUTLET_NAMES[host];
+    if (mapped) return mapped;
+    const base = host.split(".").slice(0, -1).join(".") || host;
+    return base
+      .split(/[-.]/)
+      .map((p) => (p ? p[0]!.toUpperCase() + p.slice(1) : p))
+      .join(" ");
   } catch {
     return url;
   }

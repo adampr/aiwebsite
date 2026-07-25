@@ -7,6 +7,7 @@
     "prepare": "git config core.hooksPath scripts/git-hooks || true",
     "dev": "next dev",
     "build": "NEXT_PUBLIC_BUILD_ID=$(date +%s) next build",
+    "build:check": "scripts/check-build-warnings.sh",
     "start": "next start",
     "lint": "eslint .",
     "db:generate": "drizzle-kit generate",

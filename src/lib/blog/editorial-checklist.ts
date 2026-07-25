@@ -9,11 +9,26 @@
 // writer prompt and the rubric's voiceAdherence scoring (module prompts.ts).
 //
 // The fact sheet referenced below is built by src/lib/blog/news.ts, which
-// gives every source a "Cite as:" line — an outlet name, a normalized
-// "Month D, YYYY" date, and the exact URL the checklist requires.
+// gives every source a "Cite as:" line: the outlet's display name (a
+// hostname-to-name map in news.ts, title-cased base-domain fallback), a
+// normalized "Month D, YYYY" date, and the exact URL the checklist requires.
 //
 // Mirror of the archived reviews: this file IS the canonical checklist; keep
 // ARCHITECTURE.md §5.11 in sync when items change.
+//
+// 2026-07-25 amendments (items 2, 3, 9, 11, 12, 13), from the noindexed
+// voiceAdherence=2 "harder to control" article: the module's per-section
+// quotable-claim mandate plus item 11's old "my own words" wording produced
+// a naked unattributed restatement line in every section; item 12's
+// population clause produced separate "the figure refers to" explainer
+// sentences; load-bearing facts repeated 3-4 times; outlets were named by
+// bare domain (foxbusiness.com) because the fact sheet's "Cite as:" line
+// carried a raw hostname (now mapped to a display name in news.ts); and
+// attribution nested two verbs per sentence ("X reported that Y said").
+// The styleGuide sentence that endorsed standalone quotable-claim lines
+// was reworded in the same pass (site.config.ts). Each amendment below
+// kills one of those devices; item 2 gains "according to" so item 13's
+// cadence rule cannot collide with it.
 
 export const NEWS_ARTICLE_CHECKLIST = `
 PRE-PUBLISH CHECKLIST (every item is pass/fail; the article must pass all):
@@ -22,12 +37,15 @@ PRE-PUBLISH CHECKLIST (every item is pass/fail; the article must pass all):
    more than half of the load-bearing claims when others are available.
 2. PRIMARY FIRST: when the fact sheet contains the underlying report, order,
    filing, or the outlet that originated the story, cite that; aggregators
-   are introduced with "reported" or "said", never asserted as my own voice.
-3. LINK EVERY SOURCE: at each source's first mention, the source's name is
-   the hyperlink anchor and the href is copied verbatim from that source's
-   "Cite as:" URL in the fact sheet, like: [CSO](https://example.com/story)
-   reported on July 14, 2026, that ... . The article must contain at least
-   as many distinct external links as distinct named sources.
+   are introduced with "reported", "said", or "according to", never
+   asserted as my own voice.
+3. LINK EVERY SOURCE: at each source's first mention, the outlet name from
+   that source's "Cite as:" line in the fact sheet is the hyperlink anchor
+   and the href is copied verbatim from the same line, like:
+   [CSO](https://example.com/story) reported on July 14, 2026, that ... .
+   Outlets are always written by that name (Fox Business, BBC, CBS News),
+   never as a bare domain like foxbusiness.com. The article must contain
+   at least as many distinct external links as distinct named sources.
 4. NO INVENTED URLS: every external href in the article appears verbatim in
    the fact sheet. If a source has no URL there, name it without a link.
 5. DATES: every cited source carries its date as "Month D, YYYY" at first
@@ -47,20 +65,40 @@ PRE-PUBLISH CHECKLIST (every item is pass/fail; the article must pass all):
    nouns capitalized; no "you", no imperatives, no urgency words.
 9. LEDE AND TL;DR: the first body sentence names who did or said what, with
    a reporting verb and a date. The TL;DR opens with that news, never with
-   "Yes" or "No".
+   "Yes" or "No". The TL;DR states the news in fresh wording: no TL;DR
+   sentence or takeaway shares its first 8 words with any body sentence,
+   and the TL;DR uses only short-form attribution ("Fox Business
+   reported"): the body lede owns the full outlet-plus-date first mention.
 10. HEADINGS: short declarative statements; zero question headings.
 11. QUOTES: quotation marks appear only around words a named person or
     organization actually said or wrote, verbatim from the fact sheet,
     attributed in the same sentence, with the speaker's title or affiliation
-    at first mention. Standalone quotable-claim lines are my own words and
-    carry no quotation marks.
-12. STATISTICS: at least 2 named stats; numerals in house style (71%, not
+    at first mention. The quotable-claim sentence of each reporting section
+    (every section before Tron's take) is one of
+    that section's attributed reporting sentences (named source in the
+    sentence, at most 25 words, no deictics, and, being my paraphrase, no
+    quotation marks); it is never an extra unattributed sentence restating
+    information the section already attributed. No sentence anywhere
+    repeats the information of the sentence directly before or after it
+    in different words.
+12. STATISTICS: at least 2 named stats (when the fact sheet allows);
+    numerals in house style (71%, not
     "seventy-one percent"); the value and unit verbatim from the fact sheet
     with formatting normalized; each stat carries its named source and date
-    in the same sentence and says what population it describes.
+    in the same sentence and says, inside that same sentence, what
+    population it describes: never a separate sentence explaining what a
+    number refers to. A statistic (any number other than a source's
+    publication date) appears with its full value in at most one body
+    section, and at most once within that section; the TL;DR and one FAQ
+    answer may each carry it once more.
 13. ATTRIBUTION GRAMMAR: active voice with the named source as subject
     ("Axios reported"); never "it was reported", "experts say", "one
-    source", "another source", or "the reporting" as a subject.
+    source", "another source", or "the reporting" as a subject. Never
+    nest one attribution inside another ("X reported that Y said Z");
+    when an outlet relays a speaker, the speaker is the subject and the
+    outlet is kept, folded in as a trailing ", X reported" or "according
+    to X". No two consecutive sentences open with the same
+    source-plus-verb pattern.
 14. OPINION FENCE: first person appears only inside the single closing
     section titled "Tron's take", which is at most a quarter of the article;
     the body before it contains no advice aimed at the reader.

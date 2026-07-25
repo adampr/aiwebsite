@@ -1,3 +1,10 @@
+/* Google Fonts import lives here (not in futurism.css) because CSS requires
+   @import before all other rules; when futurism.css is pulled in via
+   `@import ... layer(base)` below, an @import inside it lands mid-layer and
+   is invalid (build warned "Unknown at rule: @import"). Kept as a runtime
+   @import rather than next/font on purpose: next/font downloads fonts at
+   build time, which would add a deploy-time network failure mode on the VM. */
+@import url('https://fonts.googleapis.com/css2?family=Julius+Sans+One&family=Manrope:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 /* Elegant Futurism design system (tokens, themes, type, components, motion).
    Imported into the base layer so Tailwind utilities in components still win
