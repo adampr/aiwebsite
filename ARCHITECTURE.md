@@ -45,8 +45,11 @@ framing): working title is a retrieval key, compose the title for the SMB
 decision-maker's follow-up question; pinned by test:peg. (4) styleGuide
 title rule (judge-verifiable: actor + verb + SMB stake, ≤70 chars) +
 checklist item 8 (no 4-consecutive-word overlap with brief/fact-sheet
-titles, stake phrased fresh per story, no stock endings). No env keys, no
-schema, no re-render.
+titles, stake phrased fresh per story, no stock endings). (5) host-authored
+/methodology gate paragraph updated to the publish-indexed truth (it is the
+JSON-LD publishingPrinciples target; the module's own methodology-page.tsx
+posture sentence is NOT mounted on this host). No env keys, no schema, no
+re-render.
 Previous 2026-07-25: module pin v1.21.1 `25b800a` — §19.27 cadence-aware
 blog publish-liveness (nightly WARN when the newest published/indexed post
 ages past `(8−cap)+2` days; transition + 7-day email throttle; liveness

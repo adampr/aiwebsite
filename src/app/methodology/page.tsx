@@ -55,9 +55,10 @@ export default function MethodologyPage() {
           contract check (length, statistics, banned phrases, link rules), an
           automated fact-check that traces each claim back to its source, and
           an editorial rubric that scores completeness, balance, specificity,
-          and adherence to the standards below. Articles that fail the
-          editorial gates are excluded from search indexing and feeds until
-          they pass.
+          and adherence to the standards below. Articles publish and remain
+          indexable even when a gate fails: every failure is flagged for
+          human review the same night, and the article is then corrected,
+          withheld from search indexing, or withdrawn if the flag holds up.
         </p>
       </section>
 
