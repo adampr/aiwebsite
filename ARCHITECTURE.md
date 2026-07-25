@@ -17,7 +17,18 @@
 
 Last verified against code: 2026-07-24 (/work 20th exhibit
 `#tps-client-count`, TPS Client Count Claude Skill, metadata count
-Latest 2026-07-24 (later still): module pin v1.20.0 `5e25666` — nightly Hi-speed gate (§9.9): `aiwebsite-hi-speed.timer` 05:10 UTC alert-only, 5s owner ceiling, best-of-2, brain-health boot pre-gate; breach emails from ALERT_FROM (noreply@ai.xl.net) + appends data/hi-speed-open-issues.md; watchdog dead-mans data/hi-speed-last-run; deploy/hi-speed.sh rendered.
+Latest 2026-07-25: module pin v1.21.1 `25b800a` — §19.27 cadence-aware
+blog publish-liveness (nightly WARN when the newest published/indexed post
+ages past `(8−cap)+2` days; transition + 7-day email throttle; liveness
+block + blogEnabledSince now persisted in data/blog-last-run) and the
+v1.21.1 raw-sql date coercion: the blog budget gate
+(maxNewPerDay/newPerWeek) was BLIND on drizzle-shared clients — this host
+runs the nightly directly (no retry wrapper), the itsc-class double-publish
+config; the gate enforces now. Exterior backstop enabled:
+newestArticle.maxAgeDays: 4 in deploy/synth-inventory.json. No re-render,
+no env keys, no schema (MIGRATIONS v1.21.0/v1.21.1); owner-ordered fleet
+ship, canary soak waived (itsc production-proved v1.21.x same day).
+Previous 2026-07-24 (later still): module pin v1.20.0 `5e25666` — nightly Hi-speed gate (§9.9): `aiwebsite-hi-speed.timer` 05:10 UTC alert-only, 5s owner ceiling, best-of-2, brain-health boot pre-gate; breach emails from ALERT_FROM (noreply@ai.xl.net) + appends data/hi-speed-open-issues.md; watchdog dead-mans data/hi-speed-last-run; deploy/hi-speed.sh rendered.
 Previous: brain pin v1.108 `1e351d8` + module pin v1.19.0
 `66b09df` — the 36s-"Hi" incident fixes (panel-designed, critic-amended).
 Brain #725: persistent HF embedding-model cache at

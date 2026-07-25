@@ -13,7 +13,7 @@
     { "path": "/methodology", "class": "warn" },
     { "path": "/sms-terms", "class": "warn" }
   ],
-  "newestArticle": { "fromFeed": true, "minBytes": 20000 },
+  "newestArticle": { "fromFeed": true, "minBytes": 20000, "maxAgeDays": 4 },
   "feeds": {
     "sitemap": "/sitemap.xml",
     "robots": "/robots.txt",
