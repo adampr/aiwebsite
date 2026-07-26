@@ -565,32 +565,25 @@ export const siteConfig = defineSiteConfig({
         "with its age (for example 'a 2021 JAMA study'). Never write 'the fact " +
         "sheet', 'the source material', or 'the source set' in the article: " +
         "those are my pipeline's internals; name the outlet or organization " +
-        "instead. Section headings are short declarative statements, never " +
-        "questions. The TL;DR opens with the news itself, never with 'Yes' " +
+        // 2026-07-26 round 5: the heading, quotable-claim, and title rules
+        // that used to sit here were DELETED, not moved — checklist items
+        // 10, 11, and 8 already state each of them, the judge sees the
+        // checklist through this same styleGuide seam, and duplicated rules
+        // double-count every violation for an unanchored judge. The
+        // quotable-claim sentence (the 2026-07-25 counterweight to the
+        // module's standalone-sentence mandate) could only go because the
+        // module bullet itself is reworded in the same release
+        // (quality.contract.quotableClaim "attributed", v1.29).
+        "instead. The TL;DR opens with the news itself, never with 'Yes' " +
         "or 'No': one sentence saying who did or said what and when, then " +
-        // 2026-07-25: was "Standalone quotable-claim sentences are written
-        // plainly..." which endorsed a separate unattributed line per
-        // section and collided with checklist item 11 (same collision
-        // class as persona-first-person vs the fenced voice). The
-        // no-quote-marks protection (v1.4.3) survives unchanged.
-        "why it matters. The quotable claim of each reporting section is " +
-        "one of its attributed reporting sentences, written plainly " +
-        "without quotation marks: quotation marks are never put " +
-        "around my own words. " +
-        // 2026-07-25 rankability (owner directive): the old rule ("the title
-        // reports the news: a named actor or a number") reinforced mirroring
-        // the source outlet's headline — unwinnable SERPs for this domain.
-        // The clauses here are the judge-verifiable subset (actor, verb,
-        // stake, length); the mechanical no-4-word-overlap ban lives in
-        // checklist item 8 (the judge never sees the brief or fact sheet).
-        "The title reports the news AND names its consequence for a small " +
-        "or mid-sized business: it carries a named actor and an active " +
-        "verb, states the stake for SMB owners or IT decision-makers, and " +
-        "stays within 70 characters. The title never echoes a source " +
-        "outlet's headline wording, and the stake phrasing is composed " +
-        "fresh for each story, never a recurring formula. No imperatives " +
-        "aimed at the reader, no 'you', no urgency " +
-        "words like 'now'. Quotation marks are reserved for words a named " +
+        "why it matters. " +
+        // 2026-07-25 rankability title rule deleted 2026-07-26 (round 5):
+        // checklist item 8 owns every clause of it (actor, verb, stake,
+        // length, fresh phrasing, no you/imperatives/urgency) and the judge
+        // sees the checklist, so the "judge-verifiable subset" rationale
+        // was void duplication. The no-4-word-overlap ban stays writer-side
+        // in item 8 (the judge never sees the brief or fact sheet).
+        "Quotation marks are reserved for words a named " +
         "person or organization actually said or wrote; I never quote myself. " +
         "All of my own judgment lives in ONE closing section titled 'Tron's " +
         "take', at most a quarter of the article: 'my take', 'my advice', 'I " +
@@ -679,6 +672,16 @@ export const siteConfig = defineSiteConfig({
       // per-row admin noindex stays the correction lever (correct AFTER
       // publication, module v1.22 §19.5).
       posture: "publish_indexed",
+      // 2026-07-26 (module v1.29, solver+critic panel): anchored judge
+      // calibration. Three consecutive evaluations scored voiceAdherence=2
+      // with the five other dims passing (sum 23 >= 21, failing on the
+      // min-3 rule alone) — an unanchored judge maps ANY detected deviation
+      // from this host's ~60-clause styleGuide+checklist to a failing 2.
+      // "anchored": isolated clause lapses = 3, 2 reserved for pervasive
+      // failure, clause citations required below 3, violation-targeted
+      // regen remedies, and the rubric-only near-miss REVISE path. Pairs
+      // with the checklist's SCORING NOTE (editorial-checklist.ts round 5).
+      rubric: { calibration: "anchored" },
       // Owner directive 2026-07-17: every article is adversarially reviewed
       // by the Brain's cross-lab refuter panel before publication (v1.8.0;
       // needs local brain >= 1.102). Chat stays at maxOrchestratorPhase 1 —
@@ -697,8 +700,22 @@ export const siteConfig = defineSiteConfig({
         // which the news-first styleGuide bans — the two fought and every
         // regenerate tanked voiceAdherence. Declarative headings only.
         minQuestionHeadings: 0,
+        // 2026-07-26 (module v1.29): the module's default standalone
+        // quotable-claim mandate contradicted this host's inline-attribution
+        // rules (checklist item 11) and produced the 07-25 naked-restatement
+        // WARN signature. "attributed" makes the module bullet and item 11
+        // say the same thing; the styleGuide sentence that compensated for
+        // the contradiction was deleted in the same commit.
+        quotableClaim: "attributed",
       },
     },
+    // 2026-07-26 (module v1.29): tag repeated identical failures in the
+    // nightly report — "recurring failure signature: ... N consecutive
+    // authored runs" Notes line + " (repeat xN)" subject suffix. Never
+    // suppresses the WARN (under publish_indexed the WARN email is the
+    // containment); it stops identical red emails reading as fresh alarms
+    // and is the standing early-warning for the next rule-accretion spiral.
+    reports: { recurrence: { enabled: true } },
     dataSource: newsDataProvider,
     // v1.3.0: nightly hero per article via the module adapter (§19.26) —
     // Gemini + sharp gate, default DB storage (blog_hero_images composed in

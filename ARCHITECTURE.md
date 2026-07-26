@@ -15,7 +15,13 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-26 (/work 21st exhibit `#log-analyzer`,
+Last verified against code: 2026-07-26 (blog checklist round 5 + module pin
+v1.29.0 — the third-consecutive voiceAdherence=2 WARN recurrence: anchored
+rubric calibration + quotableClaim "attributed" + reports.recurrence knobs
+all on, checklist preamble/SCORING NOTE/items 8/9/13, styleGuide
+de-duplication, securityweek.com outlet entry, gate-trend section in
+`deploy/read-prod-blog-status.sh`; §5.11 round-5 + verification/rollback
+paragraphs. Earlier same day: /work 21st exhibit `#log-analyzer`,
 Log Analyzer Claude Skill, metadata count Twenty→Twenty-one)
 Previous 2026-07-25: (SEO rankability pass + module pin
 v1.22.0 `publish_indexed` posture — the "Latest 2026-07-25 (later)" entry
@@ -1151,9 +1157,70 @@ source title (writer-side — the judge never sees those), and must carry the SM
 stake alongside the named actor + active verb within 70 chars, with the stake
 phrased fresh per story (stock endings like "what it means for SMBs" banned — a
 fixed formula is both unrankable templating and dedup-hostile). The styleGuide
-title rule was replaced in the same pass with its judge-verifiable subset. A
-reader-facing summary lives at `/methodology`. All rendering, gates, admin, RSS,
-sitemap, and the nightly job itself live in `@aicompany/core` — the host owns only:
+title rule was replaced in the same pass with its judge-verifiable subset
+(deleted outright 2026-07-26 — see round 5).
+
+**Round 5 (2026-07-26, solver+critic panel; module v1.29.0 + host commit in
+the same deploy).** Trigger: THIRD consecutive voiceAdherence=2 evaluation
+(07-25 nightly sum 19; 07-25 regenerate and 07-26 nightly both sum 23, avg
+3.83 — failing on the min-3 rule alone, five dims passing), the 07-26 article
+publishing INDEXED under `publish_indexed` with a degraded verdict. Root
+cause (all three panel lanes converged): the checklist preamble's "the
+article must pass all" rode into the rubric judge's scoring text via the
+styleGuide seam while the module's judge prompt anchored only 3/4/5 — so an
+unanchored judge rationally mapped ANY detected deviation from the ~60-clause
+guide to a failing 2, a level a one-pass writer can never reach; each prior
+incident round ADDED clauses, ratcheting toward permanent WARN. Fixes: (a)
+module `quality.rubric.calibration: "anchored"` (v1.29 opt-in, this host on):
+judge scoring anchors (isolated clause lapses = 3; 2 reserved for pervasive
+failure; anchors override in-guide pass/fail wording) + clause-citation duty
+below 3 + violation-targeted regen remedies + rubric-only near-miss REVISE
+regenerates; (b) checklist preamble reworded to a drafting rule and a
+SCORING NOTE appended after item 16 anchoring voiceAdherence 1-5 in this
+host's own voice terms (fact-sheet/brief-relative clauses declared out of
+scoring scope — the judge never sees those documents); (c) item 13 rewritten
+to LICENSE varied attribution placement (source-subject, trailing,
+"according to", actor-subject) with a binary cap — fewer than half of each
+body section's sentences may open with an outlet name or "according to" —
+because the old source-as-subject mandate FORCED the every-sentence
+"X reported" cadence the judge flagged (a rule fighting itself; the cap
+wording includes "according to" so writers cannot route monotony through
+it); (d) module `quality.contract.quotableClaim: "attributed"` (v1.29
+opt-in, this host on) rewords the ANSWER-ENGINE standalone-sentence mandate
+that contradicted item 11 — the styleGuide's compensating quotable-claim
+sentence, plus its heading and title rules (all duplicated by checklist
+items 11/10/8, double-counting violations for the judge), were deleted in
+the same commit; (e) item 9 gains a TL;DR answer-vs-takeaway
+non-restatement clause and item 8 a colon-series-tag ban (": Security News
+Week" was a franchise label pad); (f) news.ts OUTLET_NAMES gains
+securityweek.com ("Securityweek" shipped via the title-case fallback — a
+soft recurrence of the bare-domain defect; CamelCase outlets need explicit
+map entries); (g) module `reports.recurrence` (v1.29 opt-in, this host on):
+identical-signature WARN nights gain a "recurring failure signature ... N
+consecutive authored runs" Notes line + " (repeat xN)" subject suffix —
+never suppressing the WARN, which under publish_indexed is the containment.
+
+**Verification + rollback (round 5; pre-agreed so a lucky night cannot be
+miscalled "fixed").** PASS = three consecutive nightly rows in
+`blog_posts` with `gate_passed = t`, every dimension ≥ 3 and sum ≥ 21
+(one-command check: `deploy/read-prod-blog-status.sh` prints the 7-row
+gate-score trend + the newest row's verbatim judge notes + the nightly log
+tail); OK-subject emails corroborate while they still arrive but are NOT
+the criterion — `notifyOn: "always"` auto-downgrades to "issues" at 20
+published articles (~15 now), after which OK nights send no email. One OK
+night is judge variance, not proof. Watch that no OTHER dimension drops
+below 3 (fix-induced regression), that WARN nights' Notes carry
+clause-specific judge citations (anchored calibration observable), and on
+any repeat WARN the " (repeat xN)" suffix (recurrence observable).
+Rollback: host styleGuide/checklist edits revert via `git revert` +
+deploy.sh (no migration; published rows untouched — correction levers stay
+admin per-row noindex/unpublish and `--regenerate=<slug>`, which lands a
+draft); module knobs revert by re-pinning `packages/aicompany` to v1.28.3
+AND removing the three opt-in keys from `site.config.ts` in the same commit
+(the old module's TypeScript excess-property check rejects unknown keys at
+build). A reader-facing summary lives at `/methodology`. All rendering,
+gates, admin, RSS, sitemap, and the nightly job itself live in
+`@aicompany/core` — the host owns only:
 
 - **The news seam** (`src/lib/blog/news.ts` + `scripts/fetch-ai-news.mjs`). The
   module picks a topic *before* `dataSource.getContext` runs (calendar → strategist,

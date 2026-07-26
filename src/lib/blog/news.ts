@@ -273,6 +273,10 @@ const OUTLET_NAMES: Record<string, string> = {
   "venturebeat.com": "VentureBeat",
   "axios.com": "Axios",
   "theguardian.com": "The Guardian",
+  // 2026-07-26: the 07-26 article shipped "Securityweek" — the title-case
+  // fallback's output for an unmapped host, a soft recurrence of the 07-25
+  // bare-domain outlet defect. CamelCase names need explicit entries.
+  "securityweek.com": "SecurityWeek",
 };
 
 /**
