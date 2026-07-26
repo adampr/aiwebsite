@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Twenty real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Twenty-one real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Twenty real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Twenty-one real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -1611,6 +1611,138 @@ export default function WorkPage() {
             columns found by header, not letter · finished file re-read
             and checked · writes only to downloads · nothing back to
             autotask
+          </p>
+        </section>
+
+        {/* 21. Log Analyzer */}
+        <section id="log-analyzer" className="panel panel--lightline rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Claude Skill</span>
+          </div>
+          <h2 className="mt-6">Log Analyzer</h2>
+          <p className="mt-2 text-sm text-faint">
+            Reads the logs, checks the vendor, and says how sure it is.
+          </p>
+          <p className="mt-4 text-sm">
+            The chore is old: export the logs, scroll past the same
+            warnings repeating for months, then feed event IDs one at a
+            time to a search engine that has no idea which build of
+            Windows you are on. This skill runs that investigation as a
+            procedure. Hand it log files, Windows Event Logs, syslog,
+            firewall, hypervisor, backup, or web server output, with or
+            without a symptom, and it identifies each format, collapses
+            the lines into distinct error signatures, and reads that
+            summary before any raw text. What surfaces goes to the
+            vendor&apos;s documentation next, where a published fix is
+            weighed against the machine&apos;s own OS build and patch
+            level rather than assumed to apply. Out comes one structured
+            report: active issues held apart from resolved ones, root
+            causes graded High, Medium, or Low with the evidence behind
+            each grade, and solutions mapped to causes. The details below
+            come from a real run: two Event Log exports off an HP
+            business laptop at XL, read the same day they were pulled.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Triage by Signature
+              </h3>
+              <p className="mt-3 text-sm">
+                Reading starts from a summary, not the file. A bundled
+                parser normalizes each line and masks what varies between
+                occurrences, numbers, IP addresses, GUIDs, hex, so
+                near-identical messages collapse into one signature,
+                printed once with its severity, its count, and its first
+                and last timestamps, worst first. Raw lines are pulled
+                only around the moments that earn a closer look. The
+                documented run met a format the parser does not read, two
+                binary Event Log exports, and the skill&apos;s format
+                guide already had the answer: get the records into
+                readable form, then keep the same discipline. The model
+                pulled a library, converted 122,644 records into a
+                filtered table of level, time, source, and event ID, and
+                read that by frequency. Five months of one laptop&apos;s
+                history became a findings table with a source, an event
+                ID, a count, and a date range per issue.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                The Fix Must Fit the Build
+              </h3>
+              <p className="mt-3 text-sm">
+                Vendor research is version-gated. A fix documented for a
+                different release can point you the wrong way, so a cited
+                cause is checked against the machine&apos;s actual build,
+                an inexact match is said out loud, and the grade drops to
+                match. In the documented run nobody had to supply that
+                build; Windows 11 24H2, build 26100, was confirmed from
+                component manifests inside the logs themselves. Each
+                graded cause states its reason. Forced hibernation rated
+                High because the exact diagnostic value in the logs shows
+                up in HP&apos;s own support threads, with HP acknowledging
+                the behavior on batches of new units. The Kaseya agent
+                crashes rated Medium, and the report says why: the crash
+                signature is consistent, but version-specific research
+                would need the agent version, which the logs never
+                record, so it went on the open questions list instead of
+                into a guess.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Works From the Export
+              </h3>
+              <p className="mt-3 text-sm">
+                The machine under investigation is present only as a
+                file. Input is whatever export a person drops into the
+                chat; the procedure runs against that copy and ends at
+                the report, with no step that reaches back toward the
+                source machine: nothing installed on it, no credential
+                for it, no write in its direction. Beyond the file, the
+                skill reads public pages, vendor documentation first,
+                support forums admitted as corroboration but not as the
+                primary source. Everything the report recommends, a
+                cleaned fan, a BIOS update, a reinstalled agent, is a
+                person&apos;s move made outside the chat. Asking is
+                rationed the same way: the bundled checklist has the
+                skill request missing environment detail when plausible
+                causes genuinely diverge on it, and log what would only
+                soften a confidence grade as an open question while the
+                run continues.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            <a href="#ticket-summaries">Autotask Ticket Summaries</a> and{" "}
+            <a href="#tps-client-count">TPS Client Count</a> both work
+            inside a live system, reading Autotask through the
+            tech&apos;s own browser. Log Analyzer runs with nothing live
+            on the other end. The laptop, firewall, or hypervisor it is
+            diagnosing exists for it only as an exported file, and the
+            only thing it reaches out to is the public record of what
+            those errors mean. That distance is the point: evidence
+            carried to the investigation can come from any machine that
+            can produce a log, which is how the same procedure that read
+            one HP laptop&apos;s five months of Event Logs, and found its
+            firmware putting it to sleep on purpose, is ready for the
+            next firewall or backup job that starts misbehaving.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            windows event logs / syslog / firewall / hypervisor / backup
+            / web server · noise collapsed into counted signatures ·
+            summary first, raw lines second · event ids researched in
+            vendor documentation · forums corroborate, never primary ·
+            fixes checked against the exact build · causes graded high /
+            medium / low, reasons attached · active apart from resolved ·
+            solutions mapped to causes · open questions listed, not
+            guessed · 122,644 records in the documented run
           </p>
         </section>
       </section>
