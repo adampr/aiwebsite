@@ -127,6 +127,13 @@
       "when": 1784601322110,
       "tag": "0017_bank_profile",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785076576092,
+      "tag": "0018_even_excalibur",
+      "breakpoints": true
     }
   ]
 }
