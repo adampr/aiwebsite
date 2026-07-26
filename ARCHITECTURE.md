@@ -15,7 +15,13 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-26 (blog checklist round 5 + module pin
+Last verified against code: 2026-07-26 (module pin v1.29.1 — swapfile size
+gate + undersized-swap drift alert, §9.5: `deploy/setup-vm.sh` now aborts a
+deploy when `/swapfile` < 4 GiB and `deploy/watchdog.sh` sends an alert-only
+`swap-undersized` WARN when `SwapTotal` < ~4 G; re-render only, no schema/env.
+This VM's swapfile was already 4 G, verified 2026-07-26 — the fleet audit that
+found itsupportchicago and roleplay running legacy 2 G files. Earlier same day:
+blog checklist round 5 + module pin
 v1.29.0 — the third-consecutive voiceAdherence=2 WARN recurrence: anchored
 rubric calibration + quotableClaim "attributed" + reports.recurrence knobs
 all on, checklist preamble/SCORING NOTE/items 8/9/13, styleGuide

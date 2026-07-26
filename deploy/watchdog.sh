@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@4eee6057d60a710959b69a38d81b7124b2ca0419b7834c05035983d4fa3a2eeb
+# aicompany-template: watchdog.sh.tpl@6f12445c6c66565607e293cc2abbfb3df97e49b5d1f9be63a79b98d00574c1bb
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -698,6 +698,20 @@ while true; do
       "WARN no active swap — livelock defenses degraded" \
       "swapon --show is empty. The v1.15.0 defenses assume the 4G swapfile: swap = schedulability under pressure, and earlyoom's swap threshold never trips without it. stage-build will refuse to deploy until it is back. Re-run deploy/setup-vm.sh (MIGRATIONS v1.15.0)." \
       "swap-missing"
+  else
+    # v1.29.1 drift detector: setup-vm's size gate only runs at deploy time —
+    # a host that pre-dates it (or hasn't deployed since) can still run an
+    # undersized legacy swapfile, whose SwapFree arms earlyoom's -s 30 leg
+    # permanently once utilization climbs (itsupportchicago 2026-07-26).
+    # Alert-only, deliberately NOT any_failure: the box is degraded, not down.
+    swap_total_kb=$(awk '/^SwapTotal:/{print $2}' /proc/meminfo)
+    if (( swap_total_kb < 4000000 )); then
+      log "WARN: SwapTotal ${swap_total_kb}kB is below the 4G fleet standard"
+      send_email \
+        "WARN swap undersized — SwapTotal ${swap_total_kb}kB < 4G standard" \
+        "SwapTotal is ${swap_total_kb} kB; the §9.5 defenses assume a 4G /swapfile. At high utilization an undersized swap holds SwapFree below earlyoom's 30% SIGTERM leg permanently, so deploy builds get killed whenever MemAvailable dips under 15%. Live-resize it (temp-swap-first, never a bare swapoff under load — MIGRATIONS v1.29.1); setup-vm.sh now refuses to deploy over an undersized swapfile." \
+        "swap-undersized"
+    fi
   fi
   # earlyoom kill events since the last pass → alert naming the victim.
   # This REPLACES earlyoom's -N notifier: Debian's unit sandboxing broke the

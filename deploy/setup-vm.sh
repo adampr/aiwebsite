@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@4b2bf87cc891c1b6937ab6bfd6df50be00450184ceff40ecefdfb91d1bcb40ee
+# aicompany-template: setup-vm.sh.tpl@698fcf3afc6222ddc9c941d7c7aa8454726ae2fc7d23effd4e93e3a8dee77305
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -89,6 +89,21 @@ sudo apt-get install -y -qq build-essential python3 libpq-dev pkg-config jq rsyn
 if ! sudo swapon --show=NAME --noheadings | grep -q '^/swapfile$'; then
   sudo fallocate -l 4G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
   sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+fi
+# v1.29.1: the guard above is existence-only — a pre-hardening legacy
+# /swapfile (e.g. 2G) passes it forever, and at typical utilization its
+# SwapFree sits below earlyoom's -s 30 SIGTERM leg PERMANENTLY, degenerating
+# the AND-gate to "MemAvail<=15%" and killing deploy builds (itsupportchicago
+# ran 2G for a month of staged-install "OOMs", root-caused 2026-07-26). Fail
+# the deploy loudly — deliberately NO auto-resize: a safe live resize needs
+# temp-swap-first + drain + recreate with RAM-headroom gating, and an
+# unattended swapoff of a hot swapfile inside a deploy is exactly the
+# 2026-07-22 livelock class (MIGRATIONS v1.29.1 has the runbook pointer).
+swap_bytes=$(sudo stat -c %s /swapfile 2>/dev/null || echo 0)
+if [ "$swap_bytes" -lt 4294967296 ]; then
+  echo "ERROR: /swapfile is $((swap_bytes / 1048576))M — the §9.5 memory defenses assume 4096M."
+  echo "Live-resize it first (temp-swap-first, never a bare swapoff under load; see MIGRATIONS v1.29.1), then re-deploy."
+  exit 1
 fi
 grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
 printf 'vm.swappiness = 60\n' | sudo tee /etc/sysctl.d/90-aicompany-memory.conf >/dev/null
