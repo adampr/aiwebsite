@@ -1721,8 +1721,8 @@ export default function WorkPage() {
           </div>
           <p className="mt-8 text-sm">
             <a href="#ticket-summaries">Autotask Ticket Summaries</a> and{" "}
-            <a href="#tps-client-count">TPS Client Count</a> both work
-            inside a live system, reading Autotask through the
+            <a href="#tps-client-count">TPS Client Count</a>{" "}
+            both work inside a live system, reading Autotask through the
             tech&apos;s own browser. Log Analyzer runs with nothing live
             on the other end. The laptop, firewall, or hypervisor it is
             diagnosing exists for it only as an exported file, and the
