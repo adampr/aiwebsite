@@ -491,6 +491,15 @@ export const siteConfig = defineSiteConfig({
         wordRange: [600, 1700],
       },
     ],
+    // GSC measurement loop (module §19.15) — enabled 2026-07-26 per
+    // reviews/2026-07-26-seo-upgrade-panel.md: sc-domain:ai.xl.net granted
+    // to the fleet service account (verified), GSC_SERVICE_ACCOUNT_JSON in
+    // .env, blogMetrics registry key in src/lib/db. metaRewrite (§19.30)
+    // stays OFF here BY DESIGN: this is a news site whose 2026-07-14
+    // editorial standard leads titles with source attribution — a CTR-driven
+    // retitle loop would fight that policy. Canary moved to roleplay.
+    measure: { enabled: true },
+    gsc: { enabled: true },
     cadence: {
       // Nightly post: ramp [7] overrides the default [1,1,2,2,3,3], which
       // would cap week one at a single article.

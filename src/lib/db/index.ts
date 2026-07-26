@@ -21,6 +21,8 @@ registerTables({
   memoryDeletionLogs: schema.memoryDeletionLogs,
   blogPosts: schema.blogPosts,
   blogHeroImages: schema.blogHeroImages,
+  // measurement loop (module §19.15) — key required iff measure.enabled.
+  blogMetrics: schema.blogMetrics,
 });
 
 export { db, getDb, schema };

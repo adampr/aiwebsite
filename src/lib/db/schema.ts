@@ -24,6 +24,7 @@ import {
   makeAdminEmailsTable,
   makeAuthLogsTable,
   makeBlogHeroImagesTable,
+  makeBlogMetricsTable,
   makeBlogPostsTable,
   makeIpOrgsTable,
   makeMemoryDeletionLogsTable,
@@ -86,6 +87,13 @@ export const blogPosts = makeBlogPostsTable();
 // Written by the nightly hero hook / backfill CLI; served by the
 // /blog/hero/[slug] wrapper.
 export const blogHeroImages = makeBlogHeroImagesTable();
+
+// GSC measurement loop (module §19.15) — measure.enabled requires registry
+// key "blogMetrics". Enabled 2026-07-26 per reviews/2026-07-26-seo-upgrade-
+// panel.md: sc-domain:ai.xl.net property granted to the fleet service
+// account and verified (5 page rows on first probe). aiwebsite is the
+// §19.30 meta-rewrite canary.
+export const blogMetrics = makeBlogMetricsTable();
 
 // ---- Host-owned tables (not part of the module contract) ----
 
