@@ -1641,9 +1641,14 @@ export default function WorkPage() {
             level rather than assumed to apply. Out comes one structured
             report: active issues held apart from resolved ones, root
             causes graded High, Medium, or Low with the evidence behind
-            each grade, and solutions mapped to causes. The details below
-            come from a real run: two Event Log exports off an HP
-            business laptop at XL, read the same day they were pulled.
+            each grade, and solutions mapped to causes. The report is not
+            the only way in: hand the skill a question instead, some
+            behavior that wants explaining, and the same reading narrows
+            to the events that speak to it, ending in graded causes and
+            fixes in the order worth trying. The details below come from
+            a real run: two Event Log exports off an HP business laptop
+            at XL, read the same day they were pulled, once for the full
+            report and once for a question.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1691,7 +1696,30 @@ export default function WorkPage() {
                 signature is consistent, but version-specific research
                 would need the agent version, which the logs never
                 record, so it went on the open questions list instead of
-                into a guess.
+                into a guess. The WiFi complaint from later in the run, a
+                connection that seemed to return only when reconnected by
+                hand after restarts and wake-ups, was answered under the
+                same rule. Read against the power events, the wireless
+                service&apos;s entries sized the problem: of 164 sleep,
+                wake, and boot events in the exports, 75 show a connect
+                attempt within a minute of waking, 82 show nothing for
+                over an hour, and a handful sit between. From the
+                excerpts it quoted, the report drew the shape of the
+                fault, a connection that returns when someone opens the
+                network flyout, not when the machine wakes, and the one
+                cause graded High is a reconnect regression reported on
+                precisely the build those manifests confirmed. Research
+                also surfaced a registry workaround, and the report
+                ranked it behind the ordinary steps, and gave the reason:
+                the page describing it covers a newer build than this
+                machine runs. Ahead of it went a wireless driver fetched
+                from its maker rather than Windows Update, a network
+                profile reset, a power-management setting, and Fast
+                Startup turned off, which the machine&apos;s own shutdown
+                entries showed active; the build itself was left for
+                last. Forced hibernation stayed a separate finding: a
+                different mechanism in the report&apos;s reading, whose
+                fix would leave this one untouched.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1715,7 +1743,13 @@ export default function WorkPage() {
                 skill request missing environment detail when plausible
                 causes genuinely diverge on it, and log what would only
                 soften a confidence grade as an open question while the
-                run continues.
+                run continues. A person can also hand that detail over
+                unprompted: OS details, installed patches, software and
+                driver inventories, pasted in as a list or attached as
+                screenshots beside the export, so the research starts
+                oriented instead of asking its way there. The documented
+                run volunteered none of it; the logs carried their own
+                environment.
               </p>
             </div>
           </div>
@@ -1737,12 +1771,15 @@ export default function WorkPage() {
           <p className="mono mt-6 text-xs text-faint">
             windows event logs / syslog / firewall / hypervisor / backup
             / web server · noise collapsed into counted signatures ·
-            summary first, raw lines second · event ids researched in
-            vendor documentation · forums corroborate, never primary ·
-            fixes checked against the exact build · causes graded high /
+            summary first, raw lines second · a single symptom narrows
+            the same procedure · event ids researched in vendor
+            documentation · forums corroborate, never primary · fixes
+            checked against the exact build · causes graded high /
             medium / low, reasons attached · active apart from resolved ·
             solutions mapped to causes · open questions listed, not
-            guessed · 122,644 records in the documented run
+            guessed · os / patch / software / driver inventories
+            volunteered with the export · 122,644 records in the
+            documented run
           </p>
         </section>
       </section>
