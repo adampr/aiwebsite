@@ -107,6 +107,13 @@ const REPORT_OF_RECORD_BRIEF =
  * offLimits/protectedKeywords scan — keep the wording neutral (pinned by
  * scripts/peg-score-tests.mjs).
  */
+// 2026-07-27 reword (fact-check WARN "Moonshot Changes SMB Costs"): the
+// unconditional "changes, costs, or requires" triad pushed the writer to
+// invent an SMB-effect claim on a sheet with no SMB-effect facts, which the
+// fact-check gate then failed — the brief now points the same direction as
+// the gate. The casing sentence closes the primary-keyword leak (the 07-27
+// meta description shipped lowercase "chinese" copied verbatim from
+// primary_keyword "panic around chinese").
 const RANKABILITY_BRIEF =
   " ANGLE (rankability): the working title of this entry is the source " +
   "outlet's own search headline. It is a retrieval key, never the article " +
@@ -114,7 +121,14 @@ const RANKABILITY_BRIEF =
   "for it or echo its wording. Compose the title and framing for the " +
   "follow-up question a small or mid-sized business owner or IT " +
   "decision-maker would search after seeing this news: what it changes, " +
-  "costs, or requires for a business like theirs. The article is still a " +
+  "costs, or requires for a business like theirs when the sources establish " +
+  "that; when they do not, the stake is what they do establish, such as " +
+  "attention, availability, or debate, and the title claims no effect the " +
+  "sources do not state. The assigned primary keyword and its sibling " +
+  "keyword phrases are lowercase search strings, never copy: wherever " +
+  "their words appear in the article, its title, or its description, they " +
+  "take normal prose capitalization (proper nouns and nationalities " +
+  "capitalized). The article is still a " +
   "dated news report with inline attribution; the SMB stake belongs in the " +
   "title and the closing take, not as opinion in the body.";
 
@@ -277,20 +291,76 @@ const OUTLET_NAMES: Record<string, string> = {
   // fallback's output for an unmapped host, a soft recurrence of the 07-25
   // bare-domain outlet defect. CamelCase names need explicit entries.
   "securityweek.com": "SecurityWeek",
+  // 2026-07-27: the 07-27 article shipped "Pbs", "Latimes", and
+  // "Greenwichtime" (3rd recurrence of the fallback-name defect class).
+  // The layered fallback in outletFromUrl now derives most long-tail names;
+  // entries here stay the certainty layer for hosts already seen plus the
+  // national outlets topic:"news" plausibly surfaces.
+  "pbs.org": "PBS",
+  "latimes.com": "Los Angeles Times",
+  "greenwichtime.com": "Greenwich Time",
+  "npr.org": "NPR",
+  "apnews.com": "The Associated Press",
+  "washingtonpost.com": "The Washington Post",
+  "politico.com": "Politico",
+  "cnn.com": "CNN",
+  "nbcnews.com": "NBC News",
+  "foxnews.com": "Fox News",
+  "usatoday.com": "USA Today",
+  "businessinsider.com": "Business Insider",
+  "fortune.com": "Fortune",
+  "forbes.com": "Forbes",
+  "theinformation.com": "The Information",
+  "semafor.com": "Semafor",
+  "thehill.com": "The Hill",
+  "technologyreview.com": "MIT Technology Review",
+  "theatlantic.com": "The Atlantic",
+  "news.sky.com": "Sky News",
+  "nypost.com": "New York Post",
+  "sfchronicle.com": "San Francisco Chronicle",
 };
 
+/** True when a "Headline - Publisher" title suffix plausibly names the
+ *  source's host: its squashed letters (minus a leading "The") or its
+ *  word-initials match the base domain. Keeps a coincidental subtitle
+ *  suffix out of the gate-verified "Cite as:" line. The squash-prefix
+ *  branch requires 4+ chars: at 3, generic suffixes like "- New" matched
+ *  newsweek.com and "- News" matched any news*-prefixed host. */
+function suffixNamesHost(candidate: string, base: string): boolean {
+  const words = candidate.replace(/^The\s+/i, "").split(/\s+/).filter(Boolean);
+  if (words.length === 0) return false;
+  const squash = words.join("").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const initials = words.map((w) => w[0]!.toLowerCase()).join("");
+  const flat = base.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return (
+    (flat.length >= 3 && squash.startsWith(flat)) ||
+    (squash.length >= 4 && flat.startsWith(squash)) ||
+    (initials.length >= 3 && flat.startsWith(initials))
+  );
+}
+
 /**
- * Citable outlet label from a source URL: the mapped display name, else a
- * deterministic fallback (hostname without "www." and the TLD, dot/hyphen
- * parts title-cased: "someoutlet.com" becomes "Someoutlet") so the writer
- * never sees a raw hostname presented as an outlet name.
+ * Citable outlet label for a source: the mapped display name; else the
+ * "Headline - Publisher" suffix news feeds append to titles, accepted only
+ * when it is 1-5 Capitalized words AND suffixNamesHost ties it to the
+ * source's domain (Tavily titles carry the real editorial name for exactly
+ * the long-tail outlets the map misses: "... - Greenwich Time"); else an
+ * all-caps initialism when the base domain has no vowels (pbs -> PBS,
+ * npr -> NPR); last resort, the title-cased base domain so the writer
+ * never sees a raw hostname presented as an outlet name. A last-resort
+ * name showing up in a run report is a map gap: add an OUTLET_NAMES entry.
  */
-function outletFromUrl(url: string): string {
+function outletFromUrl(url: string, sourceTitle?: string): string {
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");
     const mapped = OUTLET_NAMES[host];
     if (mapped) return mapped;
     const base = host.split(".").slice(0, -1).join(".") || host;
+    const suffix = sourceTitle?.match(
+      /\s[-–—|]\s((?:The\s+)?[A-Z][\w.&'’]*(?:\s+[A-Z&][\w.&'’]*){0,4})\s*$/,
+    );
+    if (suffix && suffixNamesHost(suffix[1]!, base)) return suffix[1]!;
+    if (/^[bcdfghjklmnpqrstvwxz]{2,6}$/.test(base)) return base.toUpperCase();
     return base
       .split(/[-.]/)
       .map((p) => (p ? p[0]!.toUpperCase() + p.slice(1) : p))
@@ -389,7 +459,7 @@ export const newsDataProvider: BlogDataProvider = {
         ageDays !== null && ageDays > 365
           ? " (NOTE: more than a year old; the article must state its age)"
           : "";
-      const outlet = outletFromUrl(r.url!);
+      const outlet = outletFromUrl(r.url!, r.title);
       return [
         `## Source ${i + 1}: ${r.title}`,
         `Published: ${published ?? "date unknown; do not present as recent"}${ageNote}`,

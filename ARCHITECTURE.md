@@ -15,7 +15,10 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-27 (/work card-uniformity pass: per-card
+Last verified against code: 2026-07-27 (blog fact-check WARN round: §5.11
+2026-07-27 checklist/brief/news-seam amendments — items 7/8/13, RANKABILITY_BRIEF
+stake+casing reword, layered outlet-name fallback, run-based keywordsFromTitle.
+Same day, earlier: /work card-uniformity pass: per-card
 visible copy held to one shape, five "Full detail" `<details>` disclosures on
 the longest cards, and a `work-page` scope that lifts the global 62ch `p` cap
 inside exhibit panels — §"Pages" `/work` row. Earlier same day: module pin
@@ -1132,7 +1135,8 @@ reviews), appended to `editorial.styleGuide` so it rides in both the writer prom
 the rubric's voiceAdherence scoring: source floor + independence, primary-first citing,
 **every source hyperlinked at first mention using its fact-sheet "Cite as" URL verbatim**
 (the archive had ZERO external links while the disclosure promised them), no invented
-URLs, normalized "Month D, YYYY" dates, >1y age flags, single-source hedging for
+URLs, normalized "Month D, YYYY" dates, >1y age flags, single-source hedging and
+absence-claim caution for
 extraordinary claims, headline/lede/TL;DR/heading form, quote + statistic integrity,
 attribution grammar (full at first mention then short form), opinion fence, COI line,
 dated editor's notes on republished articles, and any in-article mention of the
@@ -1211,6 +1215,71 @@ identical-signature WARN nights gain a "recurring failure signature ... N
 consecutive authored runs" Notes line + " (repeat xN)" subject suffix —
 never suppressing the WARN, which under publish_indexed is the containment.
 
+**2026-07-27 (fact-check WARN "panic-around-chinese"; 2-fixer + 2-critic
+panel).** New failure class — rubric PASSED (voiceAdherence=3, second
+consecutive night under v1.29 anchored) but the fact-check gate failed two
+claims: the draft title "Moonshot Changes SMB Costs Amid Panic Around
+Chinese AI" (an SMB-effect claim no sheet source stated — the gate
+programmatically softened the title, so this half self-healed) and an
+unattributed absence claim ("no announced US business requirement appears
+in coverage from TechCrunch, Pbs and Latimes") stated in the TL;DR, an
+FAQ, and the body, which survived repair AND regenerate and shipped
+INDEXED under `publish_indexed`. The article also shipped "Pbs"/"Latimes"/
+"Greenwichtime" outlet names (title-case fallback, 3rd recurrence) and
+lowercase "chinese" in the meta description and Tron's take (verbatim leak
+of primary_keyword "panic around chinese", itself a bad extraction:
+first-3-tokens straddled the preposition and cut the noun phrase mid-way).
+Fixes: item 8's stake clause now conditions an effect-claim stake
+(changes/cuts/raises/requires) on a fact-sheet source stating that effect,
+with a weigh-or-watch relevance stake as the supported fallback; item 7
+was renamed CLAIM CAUTION and gains an absence-claim clause (a
+no-rule/no-requirement/no-announcement sentence only when a named source
+states the absence, with item 7's own single-source hedge exempt as the
+one stated exception — the mandated hedge sentence is itself an absence
+claim; otherwise report what named sources do say); item 13's subject ban
+was generalized from an enumeration to any collective stand-in for the
+sources ("the reports", "the coverage", "the accounts") after "The
+reports show that..." and "The supplied accounts describe..." escaped the
+old list; RANKABILITY_BRIEF was scoped to the sources on the same triad
+("changes, costs, or requires ... when the sources establish that") and
+gains a keywords-are-lowercase-search-strings capitalization sentence.
+The absence rule lives ONLY in checklist item 7, not the styleGuide
+(round-5 dedup: the judge sees both through one seam); a proposed
+bannedPhrases entry for "the reports show" was REFUTED in panel — the
+module scrub (gates.ts) is a substring DELETION ("fix, not fail"), which
+would publish subject-less fragments and can rewrite verbatim quotes.
+News-seam fixes in the same commit: `outletFromUrl` grew a layered
+fallback (map → "Headline - Publisher" title suffix validated by
+`suffixNamesHost` squash/initials-vs-domain matching (squash-prefix branch
+requires ≥4 chars: at 3, "- New" matched newsweek.com) → all-caps
+initialism for vowel-less base domains (pbs → PBS) → title-cased base
+domain) plus a 22-entry OUTLET_NAMES batch (PBS, Los Angeles Times,
+Greenwich Time, AP, NPR, WaPo, ...); `keywordsFromTitle` was redesigned
+run-based (first-refutation in panel killed a longest-run-wins draft that
+dropped leading entities and overflowed the 42-char slug budget):
+stopwords (now including prepositions), single-char tokens, and clause
+punctuation end runs; the FIRST run of 2+ tokens wins (entity-first); a
+single-token leading run rejoins its action across a connective break
+("Microsoft to invest billions" → "microsoft invest billions") but yields
+to the head noun phrase across a preposition break ("Panic Around Chinese
+AI Models" → "chinese ai models"); primary capped at 4 tokens and 38
+chars so `slugify(keywords[0], 42)` never cuts mid-word. Upstream
+candidate (module fact-check gate, not adoptable host-side): the gate
+fails coverage-scoped negative claims even when scoped to named outlets,
+because a fact sheet can never "explicitly establish" a negative;
+candidate carve-out: treat an absence claim as verifiable when (a) a
+named source itself states the absence, or (b) the claim is scoped to the
+fact sheet's own named sources and no sheet passage contradicts it —
+caveat on (b): sheet source bodies are truncated at ~2,500 chars
+(`truncateAtSentence`), so absence-of-contradiction verifies only the
+excerpts, not an outlet's full coverage; an adopted carve-out must scope
+the claim to the excerpted text or otherwise account for truncation.
+Host containment until adopted: item 7's CLAIM CAUTION clause. Article
+remediation: re-anchor primary_keyword (checked against the 07-19 Kimi
+post's keyword to avoid two posts targeting one head entity) →
+`--regenerate=panic-around-chinese-2026-07-27` under the deployed fixes →
+draft review → SQL status-flip republish (slug/published_at immutable).
+
 **Verification + rollback (round 5; pre-agreed so a lucky night cannot be
 miscalled "fixed").** PASS = three consecutive nightly rows in
 `blog_posts` with `gate_passed = t`, every dimension ≥ 3 and sum ≥ 21
@@ -1282,17 +1351,33 @@ gates, admin, RSS, sitemap, and the nightly job itself live in
   (raw feed dates like "Thu, 18 Jun 2026 09:10:07 GMT" were being published verbatim
   in article copy), a `(NOTE: more than a year old …)` flag past 365 days, and a
   `Cite as: [outlet](url)` line the checklist's link rules key off; since
-  2026-07-25 the outlet label is a display name, not a raw hostname (fixed
-  hostname map for the ~20 outlets the pipeline surfaces, deterministic
-  title-cased base-domain fallback): the published 07-25 article copied
-  "foxbusiness.com reported" straight from the sheet, and the fact-check
-  gate verifies named facts against the sheet, so the name must live there.
+  2026-07-25 the outlet label is a display name, not a raw hostname: the
+  published 07-25 article copied "foxbusiness.com reported" straight from
+  the sheet, and the fact-check gate verifies named facts against the
+  sheet, so the name must live there. Since 2026-07-27 ("Pbs"/"Latimes"/
+  "Greenwichtime" shipped, 3rd fallback-name recurrence) the label is
+  layered: OUTLET_NAMES hostname map (~40 entries, the certainty layer) →
+  the "Headline - Publisher" suffix from the source's own Tavily title,
+  accepted only when 1-5 Capitalized words AND `suffixNamesHost` ties it
+  to the domain (squashed-letters or word-initials match; squash-prefix
+  branch needs ≥4 chars so "- New"/"- News" cannot match news*-hosts) →
+  all-caps initialism for vowel-less base domains (pbs → PBS) →
+  title-cased base domain as last resort (its appearance in a run report
+  is a map gap).
   2026-07-25 (rankability, owner directive): `top.slug` is now
   `slugify(keywords[0], 42)` + date — the entity keyword run, NEVER the full
   source headline (the 07-24 post's URL cloned VentureBeat's slug
   near-verbatim and lost that SERP outright); `keywordsFromTitle` strips
   possessive suffixes and single-letter tokens first ("Anthropic's" no
-  longer yields an orphan "s"). `top.title` deliberately STAYS the verbatim
+  longer yields an orphan "s") and since 2026-07-27 is run-based over the
+  title's first clause (stopwords incl. prepositions, single-char tokens,
+  and commas/semicolons end runs; first run of 2+ tokens wins; an
+  orphaned single-token entity rejoins its action across a connective
+  but yields to the head noun phrase across a preposition; primary ≤4
+  tokens and ≤38 chars so the 42-char slug never cuts mid-word) — the
+  07-27 primary "panic around chinese" straddled a preposition, cut the
+  noun phrase mid-way, and its lowercase nationality leaked verbatim into
+  the meta description. `top.title` deliberately STAYS the verbatim
   source headline — it is the Tavily retrieval key in `getContext` and the
   trigram-dedup candidate; rewriting it would tank dataCompleteness. The
   differentiated reader-facing title is the writer's job, steered by

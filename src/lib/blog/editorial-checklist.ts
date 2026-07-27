@@ -60,6 +60,26 @@
 // stated the core event); item 8 gains a colon-series-tag ban (the 07-26
 // title padded with ": Security News Week", a franchise label).
 
+// 2026-07-27 (fact-check WARN "panic-around-chinese", 2-fixer + 2-critic
+// panel): item 8's stake clause now conditions an EFFECT-claim stake
+// (changes/cuts/raises/requires) on a fact-sheet source stating that
+// effect, with a weigh-or-watch relevance stake as the supported fallback
+// (the bare stake mandate plus the brief's what-it-changes triad pushed
+// the writer to invent "Moonshot Changes SMB Costs", which the fact-check
+// gate failed); item 7 renamed CLAIM CAUTION and gains an absence-claim
+// clause (a no-rule/no-requirement/no-announcement sentence only when a
+// named source states the absence; the item's own mandated single-source
+// hedge is the one stated exception, because that hedge is itself an
+// absence claim) after the 07-27 TL;DR/FAQ/body asserted an unattributed
+// negative the gate cannot verify; item 13's subject ban generalized from
+// an enumeration to any collective stand-in for the sources ("the
+// reports", "the coverage", "the accounts") after "The reports show
+// that..." and "The supplied accounts describe..." escaped the old list.
+// The absence rule lives ONLY here, not in the styleGuide (round-5 dedup:
+// the judge sees both texts through one seam). RANKABILITY_BRIEF
+// (news.ts) was scoped to the sources on the same triad in the same
+// commit and gains a keywords-are-lowercase-search-strings casing rule.
+
 export const NEWS_ARTICLE_CHECKLIST = `
 PRE-PUBLISH CHECKLIST (each item is a pass/fail drafting rule; I draft and
 revise until every item holds):
@@ -88,14 +108,24 @@ revise until every item holds):
    introduced with its age ("a 2021 JAMA study", "a 2023 Samsung incident");
    nothing older than a week sits under "today", "what changed", or
    "the last 24 hours" framing unless its date is in the same sentence.
-7. SINGLE-SOURCE CAUTION: a government order or ban, lawsuit, breach, or
+7. CLAIM CAUTION: a government order or ban, lawsuit, breach, or
    market-moving figure that rests on exactly one source is hedged in the
    text: "X reported ...; the report has not been confirmed elsewhere."
+   A sentence claiming that something does not exist, has not happened,
+   or appears in no coverage (no rule, no requirement, no announcement)
+   is written only when a named source itself states that absence,
+   attributed like any other fact; otherwise I report, with each source
+   named, what the sources do say, and leave the absence unstated. The
+   single-source hedge above is the one exception to this clause.
 8. HEADLINE: composed fresh, never copied from a search-result title; shares
    no run of 4 or more consecutive words with the working title in my brief
    or with any source title in the fact sheet; at most 70 characters;
    contains a named actor, an active verb, and the stake for a small or
-   mid-sized business reader; the stake wording is composed fresh for this
+   mid-sized business reader; a stake that asserts an effect on such
+   businesses (changes, cuts, raises, requires) must be an effect a source
+   in my fact sheet states; when no source states one, the stake is what
+   the story gives that reader to weigh or watch, never an asserted
+   outcome; the stake wording is composed fresh for this
    story, never a stock ending like "what it means for SMBs"; never a
    colon-appended series tag or beat label (nothing shaped like
    ": Security News Week" or ": AI Roundup"; a colon followed by this
@@ -140,7 +170,10 @@ revise until every item holds):
     in ("OpenAI said it patched the flaw, TechCrunch reported"). In each
     body section, fewer than half of the sentences open with an outlet
     name or with "according to". Never "it was reported", "experts say",
-    "one source", "another source", or "the reporting" as a subject.
+    "one source", "another source", nor any collective stand-in for my
+    sources as a subject ("the reporting", "the reports", "the
+    coverage", "the accounts"): when sources converge on a point, that
+    sentence names them.
     Never nest one attribution inside another ("X reported that Y said
     Z"); when an outlet relays a speaker, the speaker is the subject and
     the outlet trails. No two consecutive sentences open with the same
