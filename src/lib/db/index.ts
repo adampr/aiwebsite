@@ -21,6 +21,8 @@ registerTables({
   memoryDeletionLogs: schema.memoryDeletionLogs,
   blogPosts: schema.blogPosts,
   blogHeroImages: schema.blogHeroImages,
+  // audio narration (module §19.33 v1.38) — key required iff blog.audio.enabled.
+  blogAudio: schema.blogAudio,
   // measurement loop (module §19.15) — key required iff measure.enabled.
   blogMetrics: schema.blogMetrics,
   // issue ledger (module §5.15 v1.30) — required for issue recording.

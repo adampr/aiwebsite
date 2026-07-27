@@ -13,6 +13,7 @@
 
 import { defineSiteConfig } from "@aicompany/core/config";
 import { createGeminiHeroGenerator } from "@aicompany/core/blog/hero";
+import { createGeminiTtsSynthesizer } from "@aicompany/core/blog/audio-tts";
 import type { BrainIdentity } from "@aicompany/core/config/types";
 import { newsCalendarEntries, newsDataProvider, newsSeedHints } from "@/lib/blog/news";
 import { NEWS_ARTICLE_CHECKLIST } from "@/lib/blog/editorial-checklist";
@@ -723,6 +724,44 @@ export const siteConfig = defineSiteConfig({
     // is import-safe by construction (no static db/sharp imports), so the
     // factory is safe here in the middleware/client import graph. Degrades to
     // null (image-less publish) on any failure — including a missing key.
+    // Article audio narration (module §19.33, v1.38.0). Enabled 2026-07-27.
+    // The podcast feed stays OFF here pending two things only a human can do:
+    // 1400–3000 px square show artwork, and the Apple/Spotify submissions
+    // (both behind a login + 2FA; both free). MIGRATIONS v1.38.0 has the steps.
+    audio: {
+      enabled: true,
+      // REQUIRED and AI-naming. Spoken in the cold open AND rendered in the
+      // player. Kept short: it lands in the first ten seconds of every file,
+      // and the full written disclosure is in authorship.disclosure above.
+      disclosure:
+        "This is an AI-generated narration of an article written by Tron Netter, " +
+        "XL.net's AI agent.",
+      // site.name is "XL.net AI" — without this the narrator says
+      // "X.L. dot net A.I." with a stray period from the domain suffix.
+      nameSpoken: "X.L. dot net A.I.",
+      pronunciations: {
+        // The persona's name is in every cold open and every outro.
+        "Tron Netter": "Tron Netter",
+        "XL.net": "X.L. dot net",
+      },
+      player: {
+        // Article-page telemetry stays off here: cta.funnelEvents is off on
+        // this host, and playEvent is AND-ed with it by design (§19.33) —
+        // the beacon writes to blog_cta_events, whose privacy disclosure is
+        // what makes it honest.
+        downloadLink: false,
+      },
+    },
+    // Voice is REQUIRED and deliberately has no fleet default: one shared
+    // voice would make all three sites on this module sound like one content
+    // mill. "Charon" is the informative//news register — this host is a daily
+    // news report, not a guide site.
+    audioGenerator: createGeminiTtsSynthesizer({
+      // Same var the hero adapter uses — this host never had GEMINI_API_KEY
+      // (see the note on heroImage below; it was found the hard way).
+      apiKey: process.env.GOOGLE_GEMINI_API_KEY,
+      voice: "Charon",
+    }),
     heroImage: createGeminiHeroGenerator({
       // GOOGLE_GEMINI_API_KEY is this host's canonical Gemini var (set
       // 2026-07-10 for the brain planner; the brain reads exactly this name

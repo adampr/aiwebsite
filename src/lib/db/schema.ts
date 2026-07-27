@@ -23,6 +23,7 @@ import {
 import {
   makeAdminEmailsTable,
   makeAuthLogsTable,
+  makeBlogAudioTable,
   makeBlogHeroImagesTable,
   makeBlogMetricsTable,
   makeBlogPostsTable,
@@ -88,6 +89,15 @@ export const blogPosts = makeBlogPostsTable();
 // Written by the nightly hero hook / backfill CLI; served by the
 // /blog/hero/[slug] wrapper.
 export const blogHeroImages = makeBlogHeroImagesTable();
+
+// Article audio narration (module §19.33, v1.38.0) — blog.audio.enabled
+// requires registry key "blogAudio". Written by the nightly audio hook /
+// backfill CLI; served by the /blog/audio/[slug] wrapper. Holds the MP3 bytes
+// AND all audio metadata: no columns were added to blog_posts, so this table
+// is the whole footprint. NOTE the hand-written storage clause in
+// drizzle/ (SET STORAGE EXTERNAL) — drizzle will not emit it, and it is what
+// makes the route's byte-range reads a genuine slice.
+export const blogAudio = makeBlogAudioTable();
 
 // GSC measurement loop (module §19.15) — measure.enabled requires registry
 // key "blogMetrics". Enabled 2026-07-26 per reviews/2026-07-26-seo-upgrade-

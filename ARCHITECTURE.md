@@ -1457,6 +1457,33 @@ Failures degrade to an image-less publish (§19.7) recorded in the run report;
 resolved only through Next's optionalDependencies — module panel finding). Existing
 posts get heroes via `tsx packages/aicompany/cli/backfill-heroes.ts` (operator step).
 
+**v1.38.0 (adopted 2026-07-27): article audio narration** (module §19.33) — every
+published article carries a "listen to this article" player (play/pause, ±15 s,
+playback speed, scrubber, and a chapter list built from the article's own
+sections), rendered below the hero and above the ToC. Audio is synthesized at
+publish time by the nightly job, normalized to −19 LUFS, encoded to 48 kbps mono
+MP3, and stored in the composed `blog_audio` table (§6, migration `0021`), served
+by the `app/blog/audio/[slug]/route.ts` wrapper — GET **and HEAD**, immutable
+cache + ETag, `blog_audio:<ip>` 60/60s, byte-range capable (iOS Safari will not
+seek a source that ignores Range), malformed slug ⇒ 400 so doctor can probe the
+mount. `blog.audio` in site.config.ts carries the required AI-narration
+disclosure (spoken in the cold open AND rendered in the player), `nameSpoken:
+"X.L. dot net A.I."` — without it the narrator reads the domain suffix as a stray
+period — and a Tron Netter pronunciation entry. **Voice `"Charon"`** (the
+informative/news register); the module requires a voice and ships no default on
+purpose, so the three sites on it never sound like one content mill.
+`audioGenerator: createGeminiTtsSynthesizer({ apiKey: process.env.GOOGLE_GEMINI_API_KEY })`
+— the same canonical Gemini var the hero adapter learned the hard way; no new
+module env var. `@breezystack/lamejs` (pure-JS MP3 encoder) became a direct
+dependency. Failures degrade to an audio-less publish recorded in the run report
+AND raise the phase to WARN (the nightly report is issues-only past 20 published
+articles, so a report line alone can be silent for months). Existing posts get
+audio via `tsx packages/aicompany/cli/backfill-audio.ts` (operator step; prints
+estimated cost and takes the nightly advisory lock). **The podcast feed
+(module §19.33.7) is deliberately OFF here** pending 1400–3000 px square show
+artwork and the Apple/Spotify submissions, which need a human — both are behind a
+login with 2FA, and both are free.
+
 ### 5.12 AI Governance builder (host-owned)
 
 Shipped 2026-07-16 after a five-expert planning panel + five-critic review (the §14
@@ -2756,6 +2783,21 @@ governance_meta    key text PK, value text NOT NULL, updated_at timestamptz NOT 
                    -- budget_audit_* change records (pruned 180 d).
                    -- Single-writer split: data/governance-standards/state.json belongs to
                    -- the timer script ALONE; the web process writes here
+
+blog_audio         slug text PK, data bytea, url text NOT NULL, mime text default 'audio/mpeg',
+                   content_hash text, render_hash text, duration_sec int, byte_length int,
+                   voice text, model_id text, chapters text, guid text,
+                   stale bool NOT NULL default false, updated_at timestamptz default now()
+                   -- module makeBlogAudioTable() (§5.11 v1.38.0, module §19.33,
+                   -- migration 0021); ~500KB mp3 per post, written by the nightly audio
+                   -- hook / backfill CLI, served by /blog/audio/[slug]. Migration 0021
+                   -- also carries a HAND-ADDED `ALTER COLUMN data SET STORAGE EXTERNAL`
+                   -- (drizzle emits no storage clause) so the route's byte-range reads
+                   -- are a real slice, not a full detoast on every iOS seek. byte_length
+                   -- is the single source of truth for Content-Length and, if the podcast
+                   -- feed is ever enabled, enclosure/@length. NOTE the disk math before
+                   -- turning on more of this: ~500KB/post is also ~500KB in every pg_dump
+                   -- and every retained backup copy.
 
 blog_hero_images   slug text PK, data bytea NOT NULL, mime text default 'image/webp',
                    content_hash text, updated_at timestamptz default now()
