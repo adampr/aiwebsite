@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@5a72292f12709fbe3e393bf777815262ebb7eb96932c5baf69f0afeb90db4bff
+# aicompany-template: setup-vm.sh.tpl@e41961f0cdb9d5981db091d4683639a220d5f6fbc32fbdd85a96b6b6bef88654
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -924,10 +924,41 @@ if sudo pgrep -f "$wd_pattern" >/dev/null 2>&1; then
   sleep 1
 fi
 sudo rm -f /var/run/aiwebsite-watchdog.pid
+# v1.30.1: WAIT FOR THE LOCK, not just for the process. pkill matched the
+# daemon's own cmdline; its children (the inter-pass `sleep`, an in-flight
+# curl) do NOT match, survive the signal, and INHERIT the singleton lock fd —
+# so the lock can stay held for up to check_interval (60 s) after the daemon
+# is gone. watchdog-cron.sh decides liveness by trying to TAKE that lock, so
+# calling it inside that window makes it log "Watchdog is running", no-op, and
+# leave ZERO watchdogs until the next */5 cron tick (proven on
+# itsupportchicago 2026-07-26 — a 5-minute self-healing hole after every
+# deploy). Probing with `flock -n <file> true` neither deletes nor truncates
+# the lock file, so the singleton's stable inode is preserved.
+wd_lock="/var/run/aiwebsite-watchdog.lock"
+for _ in $(seq 1 75); do
+  sudo flock -n "$wd_lock" true 2>/dev/null && break
+  sleep 1
+done
+if ! sudo flock -n "$wd_lock" true 2>/dev/null; then
+  echo "WARN: aiwebsite-watchdog.lock still held after 75s — a straggler child outlived the daemon;"
+  echo "      the supervisor may no-op and cron will start the watchdog within 5 minutes."
+fi
 # `200>&- 201>&-`: the freshly started watchdog is the archetypal long-lived
 # spawn — it must not inherit + pin this deploy's lock (fd 200) or the stage
 # lock (fd 201).
 sudo /usr/local/bin/aiwebsite-watchdog-cron.sh 200>&- 201>&- || true
+# Confirm the restart actually took, and retry ONCE: the supervisor no-ops
+# whenever the lock is held, so a straggler that released it between the probe
+# and the call would otherwise leave the deploy finishing watchdog-less.
+sleep 2
+if ! sudo pgrep -f "$wd_pattern" >/dev/null 2>&1; then
+  echo "WARN: no watchdog after the supervisor call — retrying once"
+  sleep 5
+  sudo /usr/local/bin/aiwebsite-watchdog-cron.sh 200>&- 201>&- || true
+  sleep 2
+  sudo pgrep -f "$wd_pattern" >/dev/null 2>&1 || \
+    echo "WARN: watchdog STILL not running — cron's */5 supervisor is the backstop; see /var/log/aiwebsite-watchdog-cron.log"
+fi
 
 # ── Version stamp (v1.4.0, §13) ──────────────────────────────────
 # Record the applied module tag in the DB (aicompany_version) so

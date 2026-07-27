@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@d93f2b38e810de123abd636e9cdac3ae4dab46aaf5752311119fb1d6657b40fe
+# aicompany-template: watchdog.sh.tpl@9e8b6c7b3590739b1bf335ccfbf732f8344974d67b302954540a5011c0f67e29
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -523,6 +523,7 @@ check_freshness() {
       "The nightly hi-speed timer has not stamped in >26h — dead timer or unit. On the VM: systemctl list-timers '*hi-speed*'; tail /var/log/*-hi-speed.log (RUNBOOK: Hi-speed gate)." \
       93600 \
       || log "FAIL: hi-speed heartbeat stale"
+  fi
 
   # §5.15 drain honesty: a spool/.sending line older than 26h means issue
   # RECORDING is dead (secret missing in .env, /api/internal/issues not
@@ -716,7 +717,7 @@ while true; do
   fi
 
   if (( (iteration - 1) % standard_every != 0 )); then
-    sleep "$tick_seconds"
+    sleep "$tick_seconds" 9>&-
     continue
   fi
 
@@ -884,5 +885,12 @@ while true; do
     drain_issue_spool || true
   fi
 
-  sleep "$tick_seconds"
+  # v1.30.1: `9>&-` for the same reason it is on every run_as_pm2_user spawn
+  # above — this sleep is the watchdog's LONGEST-LIVED child (a full tick), so
+  # without it a `pkill -f <daemon-name>` (which never matches a bare `sleep`)
+  # leaves the singleton lock held for up to tick_seconds after the daemon is
+  # gone. The cron supervisor's flock probe then reports "alive", no-ops, and
+  # the box runs with ZERO watchdogs until the next */5 tick — observed on
+  # itsupportchicago 2026-07-26 during a watchdog reinstall.
+  sleep "$tick_seconds" 9>&-
 done
