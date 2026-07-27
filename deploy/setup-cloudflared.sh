@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-cloudflared.sh.tpl@710d2fd3d9a50e474faac97b1853721cd9a6fee185adfb5c5b3aa5aa1f702e67
+# aicompany-template: setup-cloudflared.sh.tpl@d2fbb4789b769e717f2d4c566a54930f8903c3f965f09a1f4d13018a9a3082ad
 #
 # Install and configure the Cloudflare tunnel for ai.xl.net.
 #
@@ -21,6 +21,11 @@ set -euo pipefail
 
 tunnel_name="aiwebsite"
 hostname_root="ai.xl.net"
+# §20 outreach: additional hostnames served by this same box (e.g. the cold
+# sending domain, which must serve its own landing page and the /u/<token>
+# unsubscribe route — never a redirect to the brand domain, or one-click
+# unsubscribe 404s). Space-separated; empty for hosts that do not run outreach.
+extra_hostnames=""
 config_dir="/etc/cloudflared"
 preprovisioned_cred="$config_dir/aiwebsite-tunnel.json"
 cred_dir="/root/.cloudflared"
@@ -80,6 +85,9 @@ else
     cred_file="$cred_dir/$tunnel_id.json"
     # DNS route only needed in fresh mode (pre-provisioned mode routes on the dev box)
     cloudflared tunnel route dns "$tunnel_name" "$hostname_root" 2>&1 || echo "  DNS route may already exist"
+    for h in $extra_hostnames; do
+        cloudflared tunnel route dns "$tunnel_name" "$h" 2>&1 || echo "  DNS route for $h may already exist"
+    done
 fi
 
 if [ -z "${tunnel_id:-}" ]; then
@@ -94,6 +102,9 @@ credentials-file: $cred_file
 
 ingress:
   - hostname: $hostname_root
+$(for h in $extra_hostnames; do
+    printf '    service: http://127.0.0.1:%s\n  - hostname: %s\n' "80" "$h"
+  done)
     service: http://127.0.0.1:80
   - service: http_status:404
 YAML
