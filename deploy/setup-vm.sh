@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@e41961f0cdb9d5981db091d4683639a220d5f6fbc32fbdd85a96b6b6bef88654
+# aicompany-template: setup-vm.sh.tpl@ba28189cf8693e0e1aea17133f663ca2f2b57bf5230598397006631fcf7e7f15
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -69,7 +69,14 @@ fi
 # ── System packages ──────────────────────────────────────────────
 # build-essential/python3/libpq-dev are required to compile the brain's
 # native deps (better-sqlite3, pg-native).
-sudo apt-get update -qq
+# `apt-get update` exits non-zero when ANY configured repository fails, and
+# under `set -e` that aborts the whole deploy. A third-party repo being down
+# must not do that: the packages below come from Debian's own repos, Node is
+# installed once and guarded by `command -v node` further down, and the
+# `apt-get install` on the next line is the real gate — it still fails loudly
+# if a package genuinely cannot be resolved. (2026-07-27: deb.nodesource.com
+# started returning 403 and took BOTH remaining hosts' deploys down with it.)
+sudo apt-get update -qq || echo "WARN: apt-get update had failing repositories — continuing; the package install below is the gate"
 # lsof: extra-services stop/start identity (v1.4.0) — without it, port-holder
 # detection silently degrades and services can double-start.
 sudo apt-get install -y -qq build-essential python3 libpq-dev pkg-config jq rsync logrotate lsof
