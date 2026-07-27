@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Twenty-one real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Twenty-two real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Twenty-one real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Twenty-two real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -1782,6 +1782,105 @@ export default function WorkPage() {
             single symptom narrows the same procedure · fixes checked
             against the exact build · causes graded high / medium / low,
             reasons attached · 122,644 records in the documented run
+          </p>
+        </section>
+
+        {/* 22. Autotask CI Intake */}
+        <section id="autotask-ci-intake" className="panel rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Claude Skill</span>
+          </div>
+          <h2 className="mt-6">Autotask CI Intake</h2>
+          <p className="mt-2 text-sm text-faint">
+            Configuration items built from what the tech already has, laid
+            out in the order the entry form asks for them.
+          </p>
+          <p className="mt-4 text-sm">
+            Documenting a client&apos;s hardware in Autotask is mostly
+            typing, the same fields device after device into the New
+            Configuration Item form. This skill does the reading first. The
+            input is whatever the tech already has: a photographed serial
+            label, an iDRAC or vCenter screen, an RMM or tool export, or
+            pasted text. It sorts what it is given into the CI categories XL
+            documents, among them Physical Server, Virtual Server, Storage,
+            Network Devices, and Vendor, then picks the type inside. Back
+            comes a field block per device, plus a row on the
+            client&apos;s running inventory sheet. It prepares the entry,
+            not the record: a tech pastes the block in and confirms the
+            values before saving.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                A Column Is Not a Field
+              </h3>
+              <p className="mt-3 text-sm">
+                In one documented run, backfilling a client environment, the
+                main input was an RMM agent export, 23 columns across eight
+                machines. Manufacturer read VMware on every row, so all
+                eight logged as virtual servers. The serial column was
+                populated on all eight, but with a VMware UUID, written down
+                as such rather than entered as hardware. The operating
+                system arrived in two pieces, a bare year and a build
+                string, and resolved into four Windows Server releases.
+                Purchase date was empty on every row, so each install date
+                is the day that agent first checked in, derived rather than
+                read.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Parents Already on File
+              </h3>
+              <p className="mt-3 text-sm">
+                A configuration item search export put the two hypervisor
+                hosts in front of the run, already on file in Autotask as
+                Physical Server records, and each virtual machine came back
+                naming one of them as its parent rather than proposing a new
+                host. Which host a machine ran on is nowhere in the agent
+                export. That came from a vCenter view supplied with it, and
+                the eight split across the two.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Where a Person Comes In
+              </h3>
+              <p className="mt-3 text-sm">
+                What each machine was for appeared in neither input. That
+                column came back from the one round of questions the run
+                asked, roles a person supplied, among them a domain
+                controller, a SQL server, an RDS session host, and a backup
+                server. Status, installer, and location sat on our defaults,
+                so nobody was asked. On one row the vCenter name disagreed
+                with the name the agent reported. The row keeps the reported
+                name, records the other beside it, and asks the tech which
+                machine it is.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            <a href="#kaseya-ap-builder">Kaseya AP Builder</a> points into
+            Kaseya: a tech imports its XML and an agent runs it on an
+            endpoint. This one points the other way, turning what those
+            agents already reported into an entry for a system that has no
+            record of the machines yet.{" "}
+            <a href="#log-analyzer">Log Analyzer</a> reads an export to
+            explain a machine that is misbehaving. This reads one to
+            establish what the machine is.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            a photographed label, a management screen, or a 23-column agent
+            export · category and type chosen per device · fields in new
+            configuration item form order · per-client sheet, one tab per
+            category · eight vms onto two hosts already on file · keyed into
+            autotask by a tech, confirmed before saving
           </p>
         </section>
       </section>
