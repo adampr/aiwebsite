@@ -25,7 +25,7 @@ function BuildersChip() {
 
 export default function WorkPage() {
   return (
-    <div className="mx-auto max-w-5xl space-y-16">
+    <div className="work-page mx-auto max-w-5xl space-y-16">
       {/* Manifesto strip */}
       <section className="pt-8 text-center">
         <span className="sys-label sys-label--center">Home / Our Work</span>
@@ -1001,10 +1001,9 @@ export default function WorkPage() {
             Built for a real Monday problem: our service desk opens each day
             with a 15-minute review of current tickets, and after a weekend
             one of us kept re-reading Friday&apos;s tickets before the call.
-            Now Claude does the re-reading. It is the return leg of{" "}
+            Now Claude does the re-reading, as the return leg of{" "}
             <a href="#ticketscribe">TicketScribe</a>: that skill drafts the
-            clean notes techs put into tickets, this one reads them back
-            out, delivered the same way, with nothing to host.
+            clean notes techs put into tickets, this one reads them back out.
           </p>
           <p className="mono mt-6 text-xs text-faint">
             Claude Skill · reads live Autotask in Chrome · issue / done so
@@ -1027,15 +1026,11 @@ export default function WorkPage() {
             and a draft waiting in Gmail.
           </p>
           <p className="mt-4 text-sm">
-            A Claude Skill our inside-sales team runs after calls. Even with
-            a standard template on file, the follow-up email was a chore:
-            open the template, look the contact up, paste in the name and
-            the industry, edit in what the template can&apos;t know, on
-            every call. Now it is a one-line request. The rep drops the
-            contact&apos;s email address or phone number into chat, and a
-            filled-in draft appears in their own Gmail, ready to review. Ask
-            for a &quot;chill follow-up&quot; and the softer, low-pressure
-            variant of the template comes back instead.
+            A Claude Skill our inside-sales team runs after calls. The rep
+            drops the contact&apos;s email address or phone number into chat,
+            and a filled-in draft appears in their own Gmail, ready to
+            review. Ask for a &quot;chill follow-up&quot; and the softer,
+            low-pressure variant of the template comes back instead.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1050,7 +1045,7 @@ export default function WorkPage() {
                 XL.net follow-up, the one that introduces CEO Adam Radulovic
                 and carries his booking link. The template was always the
                 easy part; hunting down the details and fitting them in was
-                the chore, and that is the part that is gone.
+                the chore.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1087,17 +1082,12 @@ export default function WorkPage() {
             call instead of the note after the ticket. Where the Autotask
             skill&apos;s procedure has no write step, this one is allowed
             exactly two writes, a Gmail draft and a PhoneBurner disposition,
-            and nothing reaches a prospect until the rep sends it. Delivery
-            has not changed since <a href="#spamslayer">SpamSlayer</a>:
-            write the procedure down, hand it to Claude, run nothing new.
-            Live with our inside-sales team now, internal, not a product.
+            and nothing reaches a prospect until the rep sends it.
           </p>
           <p className="mono mt-6 text-xs text-faint">
-            Claude Skill · paste an email address or phone number ·
-            PhoneBurner lookup · XL.net template, tokens filled · CEO intro
-            and booking link · &quot;chill follow-up&quot; variant · draft
-            in the rep&apos;s Gmail · no send step · logs contact / no
-            answer
+            Claude Skill · PhoneBurner lookup · XL.net template, tokens
+            filled · &quot;chill follow-up&quot; variant · draft in the
+            rep&apos;s Gmail, no send step · logs contact / no answer
           </p>
         </section>
 
@@ -1119,12 +1109,7 @@ export default function WorkPage() {
             about what it wants to build next. Beacon sits in that
             conversation, built for a problem that grows with every automation
             a team ships: the same thing getting built twice because there was
-            no quick way to ask whether it already exists. It matches new
-            ideas against the team&apos;s tool registry, cites the relevant
-            company procedure by name when a thread touches process or client
-            data, and asks a clarifying question when an idea is genuinely
-            new. Where <a href="#leo-netter">Leo Netter</a> is a teammate
-            tested one DM at a time, Beacon works in the open channel.
+            no quick way to ask whether it already exists.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1136,10 +1121,7 @@ export default function WorkPage() {
                 Describe what you want to build and Beacon searches the
                 team&apos;s registry of existing tools. A close match comes
                 back as the tool&apos;s name and its owner, a person to talk
-                to instead of a project to start. And once a week, or on
-                demand, the manager gets a plain-language digest: what was
-                asked, what matched existing work, and where effort looks
-                duplicated.
+                to instead of a project to start.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1188,11 +1170,23 @@ export default function WorkPage() {
             app itself and a short list of setup steps before the channel gets
             its first reply.
           </p>
+          <details className="card-more mt-8">
+            <summary aria-label="Full detail: Beacon">Full detail</summary>
+            <p className="mt-4 text-sm">
+              Beacon also cites the relevant company procedure by name when a
+              thread touches process or client data, and asks a clarifying
+              question when an idea is genuinely new. Once a week, or on
+              demand, the manager gets a plain-language digest: what was
+              asked, what matched existing work, and where effort looks
+              duplicated. Where <a href="#leo-netter">Leo Netter</a> is a
+              teammate tested one DM at a time, Beacon works in the open
+              channel.
+            </p>
+          </details>
           <p className="mono mt-6 text-xs text-faint">
-            Node.js · Slack Bolt (Socket Mode) · Claude tool-use loop · prompt
-            caching · SweetProcess via Lakehouse (read-only) · 5,755
-            procedures / 255 policies · 24-hour refresh · owner-reaction
-            commit · 72-hour proposal expiry · weekly digest
+            Node.js · Slack Bolt (Socket Mode) · Claude tool-use loop ·
+            SweetProcess via Lakehouse (read-only) · 5,755 procedures / 255
+            policies, 24-hour refresh · owner-reaction commit, 72-hour expiry
           </p>
         </section>
 
@@ -1226,10 +1220,8 @@ export default function WorkPage() {
               <p className="mt-3 text-sm">
                 The horizon line answers the morning&apos;s first question,
                 how much day is there, before the reading starts; the lists
-                underneath say what and who. Every skill before this one
-                hands back words: notes, a verdict, a brief, a draft. This
-                one hands back a picture of the day with the words
-                underneath it.
+                underneath say what and who. It hands back a picture of the
+                day with the words underneath it.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1241,10 +1233,8 @@ export default function WorkPage() {
                 Status tools are good at adding to your plate. The
                 brief&apos;s second list takes things off it: a thread that
                 wrapped up on its own, a question that found its answer
-                without you, a meeting that dropped off the calendar. Each
-                line is something you no longer have to carry into the day,
-                and what remains in the first list is the day&apos;s real
-                size.
+                without you, a meeting that dropped off the calendar. What
+                remains in the first list is the day&apos;s real size.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1257,22 +1247,16 @@ export default function WorkPage() {
                 of its own. It reads the calendar, email, and chat you have
                 already linked, for one purpose: drawing this page. A source
                 that is not connected simply thins the brief; the page is
-                drawn from whatever remains, and the page is the whole
-                deliverable.
+                drawn from whatever remains.
               </p>
             </div>
           </div>
           <p className="mt-8 text-sm">
-            The other skills in this group face work the team shares: a
-            triage rubric, the service queue, the sales call log.{" "}
-            <a href="#beacon">Beacon</a>, just above, answers for a whole
-            channel. Morning Brief is the first whose sources are yours
+            Morning Brief is the first in this group whose sources are yours
             alone: your calendar, your inbox, your morning. It is also the
             first that can keep its own appointment: ask once for a
             recurring run, weekday mornings if you like, and the page is
-            waiting before you sit down. The rest of the group answers when
-            asked. This one, once asked, is simply there when the day
-            starts.
+            waiting before you sit down.
           </p>
           <p className="mono mt-6 text-xs text-faint">
             one drawn page · light / normal / heavy · reads only what you
@@ -1300,13 +1284,7 @@ export default function WorkPage() {
             rough troubleshooting notes, a pasted ticket, an old Word
             document, or a walkthrough typed straight into chat, and
             returns a SweetProcess draft already in XL.net&apos;s house
-            shape: a title prefixed the house way, client name for client
-            work, software name for the generic, search tags an engineer
-            would actually type, a purpose statement, and short numbered
-            steps, one action or one decision apiece. The draft arrives
-            twice, as markdown and as a matching Word file, because
-            SweetProcess&apos;s editor keeps bold and drops code spans, and
-            the Word copy is what lets the formatting survive the paste.
+            shape, delivered as markdown plus a matching Word file.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1318,12 +1296,9 @@ export default function WorkPage() {
                 A procedure that branches gets a real decision step: the
                 step title is the question, and an answers block routes
                 each reply to a numbered destination. Before the draft goes
-                out, the skill walks every path from step one, through
-                every branch and every jump, and confirms each one lands on
-                the End step. No dead ends, no orphaned steps, no route
-                that points at a step nobody wrote. If drafting adds or
-                removes a step, the whole thing renumbers so the routing
-                stays true.
+                out, the skill walks every path from step one and confirms
+                each one lands on the End step: no dead ends, no orphaned
+                steps, no route that points at a step nobody wrote.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1336,11 +1311,8 @@ export default function WorkPage() {
                 worse than no SP. An obvious hole in the notes becomes a
                 question before drafting starts. A server name or URL the
                 engineer did not mention comes back as a bracketed marker
-                to confirm, not a plausible guess. A screenshot the
-                procedure needs becomes a placeholder, not a description
-                written from imagination, and credentials appear only as
-                the name of the BitWarden entry that holds them. Nothing
-                technical is invented to make a step read complete.
+                to confirm, not a plausible guess, and credentials appear
+                only as the name of the BitWarden entry that holds them.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1363,15 +1335,31 @@ export default function WorkPage() {
             <a href="#ticketscribe">TicketScribe</a>, earlier in this
             group, turns a single ticket&apos;s history into notes a tech
             pastes back in; SP Writer is for the part worth keeping once
-            the ticket closes. It also has a neighbor:{" "}
-            <a href="#beacon">Beacon</a>, still in its final setup, will
-            answer questions out of the team&apos;s procedure library, and
-            every draft that survives review will be one more procedure it
-            can find. The trade is the one the skill was built for: an SP
-            that used to cost an hour of formatting now costs a paste and
-            a review, written while the fix is still fresh instead of
-            waiting behind everything else.
+            the ticket closes. An SP that used to cost an hour of
+            formatting now costs a paste and a review, written while the
+            fix is still fresh.
           </p>
+          <details className="card-more mt-8">
+            <summary aria-label="Full detail: SP Writer">Full detail</summary>
+            <p className="mt-4 text-sm">
+              The house shape breaks down like this: a title prefixed the
+              house way, client name for client work, software name for the
+              generic, search tags an engineer would actually type, a purpose
+              statement, and short numbered steps, one action or one decision
+              apiece. The draft arrives twice because SweetProcess&apos;s
+              editor keeps bold and drops code spans, and the Word copy is
+              what lets the formatting survive the paste. The path check goes
+              through every branch and every jump, and if drafting adds or
+              removes a step, the whole thing renumbers so the routing stays
+              true. A screenshot the procedure needs becomes a placeholder,
+              not a description written from imagination, and nothing
+              technical is invented to make a step read complete. SP Writer
+              also has a neighbor: <a href="#beacon">Beacon</a>, still in its
+              final setup, will answer questions out of the team&apos;s
+              procedure library, and every draft that survives review will be
+              one more procedure it can find.
+            </p>
+          </details>
           <p className="mono mt-6 text-xs text-faint">
             scratch notes in, house format out · every path traced to End ·
             gaps flagged to confirm, never guessed · the vault entry name,
@@ -1399,14 +1387,7 @@ export default function WorkPage() {
             report a result into a custom column, comes back as a complete
             Kaseya VSA 9 agent procedure in the format Kaseya itself uses
             when a procedure is exported from the editor, fit for the
-            editor&apos;s import. Installers come straight from the
-            vendor&apos;s evergreen link when latest is the goal, or from a
-            pinned copy on our S3 bucket when the version matters. Each run
-            hands back two things: the .xml itself, and a short numbered
-            account of what the procedure does, written for the description
-            field and the client runbook. Every procedure lands in the same
-            house shape, so the structure holds from one AP to the next and
-            none of the XML is typed by hand.
+            editor&apos;s import. None of the XML is typed by hand.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1418,17 +1399,9 @@ export default function WorkPage() {
                 On the endpoint, a generated procedure shows nothing:
                 silent switches, SYSTEM context, no window for whoever is
                 signed in at the keyboard. In the Kaseya agent log it hides
-                nothing. Every meaningful step announces itself before it
-                acts and confirms after, failures carry an ERROR: prefix,
-                and when a check finds the work already done, the skip
-                itself is written down, so a machine that needed nothing
-                says so. Those checks lead: a registered service, a
-                registry footprint, or an install path in either Program
-                Files folder means the procedure logs a skip instead of an
-                install. At the end, downloaded installers and scratch
-                files are removed, and OS-specific steps carry an OS tag so
-                a mixed Windows and macOS policy never sends one
-                platform&apos;s commands to the other.
+                nothing: every meaningful step announces itself before it
+                acts and confirms after, and failures carry an ERROR:
+                prefix.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1440,12 +1413,8 @@ export default function WorkPage() {
                 One oversized field is enough to sink an entire import;
                 Kaseya rejects the whole file with a database truncation
                 error rather than trimming it. The skill treats that as a
-                format rule, not a surprise. Ampersands, quotes, and angle
-                brackets inside attribute values are escaped, newlines are
-                encoded, and the bracketed managed-variable tokens are
-                escaped along with them. Descriptions and inline commands
-                stay under Kaseya&apos;s column limits, a script too long
-                to inline is hosted and downloaded at runtime instead, and
+                format rule, not a surprise: special characters are
+                escaped, field lengths held under Kaseya&apos;s limits, and
                 the finished file is parse-checked before it is handed
                 over.
               </p>
@@ -1461,16 +1430,12 @@ export default function WorkPage() {
                 documentation is blunt on the point: it never connects,
                 never runs anything, and holds no secrets. License keys and
                 site tokens exist only in Kaseya&apos;s AP Variable
-                Manager; Kaseya drops them in when the procedure runs. The
-                skill knows variable names, wraps each in an exists-check,
-                and a missing one surfaces as a plain log line naming the
-                variable the client org still needs. The published copy is
-                sanitized by design, placeholders where an installer host
-                would go, no client names anywhere in it. Between the file
-                and production stand two deliberate steps: a tech reviews
-                and imports the XML, and the first run happens on a single
-                lab machine, because a procedure that runs as SYSTEM across
-                a fleet earns its trust on one box first.
+                Manager; Kaseya drops them in when the procedure runs.
+                Between the file and production stand two deliberate steps:
+                a tech reviews and imports the XML, and the first run
+                happens on a single lab machine, because a procedure that
+                runs as SYSTEM across a fleet earns its trust on one box
+                first.
               </p>
             </div>
           </div>
@@ -1480,12 +1445,43 @@ export default function WorkPage() {
             This skill drafts the other kind: procedures a Kaseya agent
             carries out on an endpoint with no one watching. Both end at a
             document, and both keep a tech between that document and the
-            world: publish over there; review, import, and a lab run over
-            here. The difference is the reader. A SweetProcess draft is
-            judged by the engineer who follows it; an agent procedure is
-            judged by its log, which is why every one of these is built to
-            narrate itself.
+            world; the difference is the reader, an agent procedure judged
+            by its log.
           </p>
+          <details className="card-more mt-8">
+            <summary aria-label="Full detail: Kaseya AP Builder">
+              Full detail
+            </summary>
+            <p className="mt-4 text-sm">
+              Each run hands back two things: the .xml itself, and a short
+              numbered account of what the procedure does, written for the
+              description field and the client runbook; every procedure lands
+              in the same house shape, so the structure holds from one AP to
+              the next. Installers come straight from the vendor&apos;s
+              evergreen link when latest is the goal, or from a pinned copy on
+              our S3 bucket when the version matters. The checks that decide a
+              skip lead the log: a registered service, a registry footprint,
+              or an install path in either Program Files folder means the
+              procedure logs a skip instead of an install, so a machine that
+              needed nothing says so. At the end, downloaded installers and
+              scratch files are removed, and OS-specific steps carry an OS tag
+              so a mixed Windows and macOS policy never sends one
+              platform&apos;s commands to the other.
+            </p>
+            <p className="mt-4 text-sm">
+              On the import side, ampersands, quotes, and angle brackets
+              inside attribute values are escaped, newlines are encoded, and
+              the bracketed managed-variable tokens are escaped along with
+              them; descriptions and inline commands stay under
+              Kaseya&apos;s column limits, and a script too long to inline is
+              hosted and downloaded at runtime instead. The skill knows
+              variable names only: each is wrapped in an exists-check, and a
+              missing one surfaces as a plain log line naming the variable the
+              client org still needs. The published copy of the skill is
+              sanitized by design, placeholders where an installer host would
+              go, no client names anywhere in it.
+            </p>
+          </details>
           <p className="mono mt-6 text-xs text-faint">
             a sentence becomes a procedure · checks before installs ·
             every step in the agent log · names in the file, values at
@@ -1511,16 +1507,12 @@ export default function WorkPage() {
             The department scorecard has a new line: how many clients sit
             at or below a target TPS of 0.45, where TPS is a client&apos;s
             tickets divided by its seats over a rolling window, four
-            Thursdays back through yesterday. Producing that count by hand
-            was an Excel job, several spreadsheets combined with vlookups
-            and pivot tables, then a separate filter over the result, and
-            the scorecard wants the number every week. This skill runs the
-            chain on request: it opens Autotask in Chrome under your own
-            sign-in, runs the two LiveReports, filling the date window
-            into the one that takes it, and exports both to Excel. Then it
-            folds the seats report into the ticket report, client by
-            client, and writes the answer in: a TPS column, a headline
-            count, and the exact dates used.
+            Thursdays back through yesterday. This skill runs the chain on
+            request: it opens Autotask in Chrome under your own sign-in,
+            runs the two LiveReports, exports both to Excel, then folds the
+            seats report into the ticket report, client by client, and
+            writes the answer in: a TPS column, a headline count, and the
+            exact dates used.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1534,12 +1526,7 @@ export default function WorkPage() {
                 tickets over seats at two decimals, and the headline count
                 is a live COUNTIF at the 0.45 line, so a value edited by
                 hand later moves the count with it; the arithmetic never
-                leaves the sheet. A client with no row in the seats report
-                stays blank, a blank stays out of the count, and the merge
-                lists every client it skipped. Then the skill reopens the
-                finished file and checks its own work: TPS against the
-                ticket and seat columns, the count against the rows, the
-                recorded dates against what went into the report filter.
+                leaves the sheet.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1550,20 +1537,13 @@ export default function WorkPage() {
               <p className="mt-3 text-sm">
                 Two failures shaped this skill, and both are written into
                 it. Autotask once slid an extra column into the ticket
-                report, moving everything after it, and a script that
-                trusted fixed column letters kept writing seats and TPS
-                where those columns used to be; a person checking the
-                numbers by hand caught it. The merge now locates tickets,
-                seats, TPS, and account name by their headers, and if a
-                header vanishes or gets renamed, the run stops and the
-                error says which one. The date math had its turn too:
-                written on a Tuesday, it ran a week short the first time
-                it executed on a Thursday, when the most recent Thursday
-                was that very day, and again a person caught the bad start
-                date. The correction sits in the skill file beside a
-                warning that the off-by-one is easy to bring back, so the
-                mistake is part of what the model reads before it computes
-                a single date.
+                report, and a script that trusted fixed column letters kept
+                writing seats and TPS where those columns used to be; a
+                person checking the numbers by hand caught it. The merge
+                now locates tickets, seats, TPS, and account name by their
+                headers. The date math had its turn too, and the correction
+                sits in the skill file beside a warning that the off-by-one
+                is easy to bring back.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1577,15 +1557,7 @@ export default function WorkPage() {
                 nothing travels the other way: no write into Autotask, no
                 API key, no credential minted for the job. The only place
                 the skill writes is your Downloads folder, two Excel
-                files, and it looks before it lands there: a report you
-                still have open in Excel stops the copy, and the skill
-                tells you which file to close instead of retrying into a
-                locked file. Scope is fenced on purpose, these two
-                reports, this pod, this threshold; a different report is a
-                new skill, not a setting on this one. The deliverable
-                never grows extras either, no added sheets, no pivot
-                tables, just the ticket report with seats, TPS, the
-                count, and the dates filled in.
+                files.
               </p>
             </div>
           </div>
@@ -1598,19 +1570,49 @@ export default function WorkPage() {
             session the tech already owns. This skill uses that same
             Chrome door and comes back with something neither of them
             makes: not text for a person to read, but a number for the
-            department scorecard to hold. The number does not arrive
-            alone. The formulas under it stay live, the skipped clients
-            are listed, and the window is printed on the sheet, so anyone
-            who doubts the count can follow the cells and land on it
-            themselves.
+            department scorecard to hold.
           </p>
+          <details className="card-more mt-8">
+            <summary aria-label="Full detail: TPS Client Count">
+              Full detail
+            </summary>
+            <p className="mt-4 text-sm">
+              Producing that count by hand was an Excel job: several
+              spreadsheets combined with vlookups and pivot tables, then a
+              separate filter over the result, and the scorecard wants the
+              number every week. In the sheet, a client with no row in the
+              seats report stays blank, a blank stays out of the count, and
+              the merge lists every client it skipped. Then the skill reopens
+              the finished file and checks its own work: TPS against the
+              ticket and seat columns, the count against the rows, the
+              recorded dates against what went into the report filter. If a
+              header vanishes or gets renamed, the run stops and the error
+              says which one.
+            </p>
+            <p className="mt-4 text-sm">
+              The date math ran a week short the first time it executed on a
+              Thursday, written on a Tuesday, when the most recent Thursday
+              was that very day, and again a person caught the bad start date.
+              The warning that sits beside the correction is part of what the
+              model reads before it computes a single date. On the way to
+              Downloads, a report you still have open in Excel stops the copy,
+              and the skill tells you which file to close instead of retrying
+              into a locked file. Scope is fenced on purpose, these two
+              reports, this pod, this threshold; a different report is a new
+              skill, not a setting on this one. The deliverable never grows
+              extras either, no added sheets, no pivot tables, just the ticket
+              report with seats, TPS, the count, and the dates filled in. And
+              the number does not arrive alone: the formulas under it stay
+              live, the skipped clients are listed, and the window is printed
+              on the sheet, so anyone who doubts the count can follow the
+              cells and land on it themselves.
+            </p>
+          </details>
           <p className="mono mt-6 text-xs text-faint">
             two autotask livereports · your own chrome session · four
-            thursdays back, through yesterday · merged on client name ·
-            live formulas, two decimals · count at or below 0.45 ·
-            columns found by header, not letter · finished file re-read
-            and checked · writes only to downloads · nothing back to
-            autotask
+            thursdays back, through yesterday · live formulas, count at or
+            below 0.45 · columns found by header, not letter · writes only
+            to downloads, nothing back to autotask
           </p>
         </section>
 
@@ -1631,24 +1633,17 @@ export default function WorkPage() {
             warnings repeating for months, then feed event IDs one at a
             time to a search engine that has no idea which build of
             Windows you are on. This skill runs that investigation as a
-            procedure. Hand it log files, Windows Event Logs, syslog,
-            firewall, hypervisor, backup, or web server output, with or
-            without a symptom, and it identifies each format, collapses
-            the lines into distinct error signatures, and reads that
-            summary before any raw text. What surfaces goes to the
-            vendor&apos;s documentation next, where a published fix is
-            weighed against the machine&apos;s own OS build and patch
-            level rather than assumed to apply. Out comes one structured
-            report: active issues held apart from resolved ones, root
-            causes graded High, Medium, or Low with the evidence behind
-            each grade, and solutions mapped to causes. The report is not
-            the only way in: hand the skill a question instead, some
-            behavior that wants explaining, and the same reading narrows
-            to the events that speak to it, ending in graded causes and
-            fixes in the order worth trying. The details below come from
-            a real run: two Event Log exports off an HP business laptop
-            at XL, read the same day they were pulled, once for the full
-            report and once for a question.
+            procedure: it identifies the format, collapses the lines into
+            distinct error signatures, and weighs what surfaces against the
+            vendor&apos;s documentation and the machine&apos;s own OS build
+            and patch level. Out comes one structured report: root causes
+            graded High, Medium, or Low with the evidence behind each
+            grade, and solutions mapped to causes. The report is not the
+            only way in: hand the skill a question instead, some behavior
+            that wants explaining, and the same reading narrows to the
+            events that speak to it. The details below come from a real
+            run: two Event Log exports off an HP business laptop at XL,
+            read the same day they were pulled.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1662,17 +1657,13 @@ export default function WorkPage() {
                 occurrences, numbers, IP addresses, GUIDs, hex, so
                 near-identical messages collapse into one signature,
                 printed once with its severity, its count, and its first
-                and last timestamps, worst first. Raw lines are pulled
-                only around the moments that earn a closer look. The
-                documented run met a format the parser does not read, two
-                binary Event Log exports, and the skill&apos;s format
-                guide already had the answer: get the records into
-                readable form, then keep the same discipline. The model
-                pulled a library, converted 122,644 records into a
-                filtered table of level, time, source, and event ID, and
-                read that by frequency. Five months of one laptop&apos;s
-                history became a findings table with a source, an event
-                ID, a count, and a date range per issue.
+                and last timestamps, worst first. The documented run met a
+                format the parser does not read, two binary Event Log
+                exports, and the skill&apos;s format guide already had the
+                answer: get the records into readable form, then keep the
+                same discipline. The model pulled a library and converted
+                122,644 records into a filtered table of level, time,
+                source, and event ID, read by frequency.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1686,40 +1677,9 @@ export default function WorkPage() {
                 cause is checked against the machine&apos;s actual build,
                 an inexact match is said out loud, and the grade drops to
                 match. In the documented run nobody had to supply that
-                build; Windows 11 24H2, build 26100, was confirmed from
+                build: Windows 11 24H2, build 26100, was confirmed from
                 component manifests inside the logs themselves. Each
-                graded cause states its reason. Forced hibernation rated
-                High because the exact diagnostic value in the logs shows
-                up in HP&apos;s own support threads, with HP acknowledging
-                the behavior on batches of new units. The Kaseya agent
-                crashes rated Medium, and the report says why: the crash
-                signature is consistent, but version-specific research
-                would need the agent version, which the logs never
-                record, so it went on the open questions list instead of
-                into a guess. The WiFi complaint from later in the run, a
-                connection that seemed to return only when reconnected by
-                hand after restarts and wake-ups, was answered under the
-                same rule. Read against the power events, the wireless
-                service&apos;s entries sized the problem: of 164 sleep,
-                wake, and boot events in the exports, 75 show a connect
-                attempt within a minute of waking, 82 show nothing for
-                over an hour, and a handful sit between. From the
-                excerpts it quoted, the report drew the shape of the
-                fault, a connection that returns when someone opens the
-                network flyout, not when the machine wakes, and the one
-                cause graded High is a reconnect regression reported on
-                precisely the build those manifests confirmed. Research
-                also surfaced a registry workaround, and the report
-                ranked it behind the ordinary steps, and gave the reason:
-                the page describing it covers a newer build than this
-                machine runs. Ahead of it went a wireless driver fetched
-                from its maker rather than Windows Update, a network
-                profile reset, a power-management setting, and Fast
-                Startup turned off, which the machine&apos;s own shutdown
-                entries showed active; the build itself was left for
-                last. Forced hibernation stayed a separate finding: a
-                different mechanism in the report&apos;s reading, whose
-                fix would leave this one untouched.
+                graded cause states its reason.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -1736,20 +1696,7 @@ export default function WorkPage() {
                 for it, no write in its direction. Beyond the file, the
                 skill reads public pages, vendor documentation first,
                 support forums admitted as corroboration but not as the
-                primary source. Everything the report recommends, a
-                cleaned fan, a BIOS update, a reinstalled agent, is a
-                person&apos;s move made outside the chat. Asking is
-                rationed the same way: the bundled checklist has the
-                skill request missing environment detail when plausible
-                causes genuinely diverge on it, and log what would only
-                soften a confidence grade as an open question while the
-                run continues. A person can also hand that detail over
-                unprompted: OS details, installed patches, software and
-                driver inventories, pasted in as a list or attached as
-                screenshots beside the export, so the research starts
-                oriented instead of asking its way there. The documented
-                run volunteered none of it; the logs carried their own
-                environment.
+                primary source.
               </p>
             </div>
           </div>
@@ -1758,28 +1705,83 @@ export default function WorkPage() {
             <a href="#tps-client-count">TPS Client Count</a>{" "}
             both work inside a live system, reading Autotask through the
             tech&apos;s own browser. Log Analyzer runs with nothing live
-            on the other end. The laptop, firewall, or hypervisor it is
+            on the other end: the laptop, firewall, or hypervisor it is
             diagnosing exists for it only as an exported file, and the
             only thing it reaches out to is the public record of what
             those errors mean. That distance is the point: evidence
             carried to the investigation can come from any machine that
-            can produce a log, which is how the same procedure that read
-            one HP laptop&apos;s five months of Event Logs, and found its
-            firmware putting it to sleep on purpose, is ready for the
-            next firewall or backup job that starts misbehaving.
+            can produce a log.
           </p>
+          <details className="card-more mt-8">
+            <summary aria-label="Full detail: Log Analyzer">Full detail</summary>
+            <p className="mt-4 text-sm">
+              The full input range is Windows Event Logs, syslog, firewall,
+              hypervisor, backup, and web server output, each identified by
+              format before anything is read, with active issues held apart
+              from resolved ones and the summary read before any raw text.
+              Raw lines are pulled only around the moments that earn a closer
+              look. The documented run was read twice this way, once for the
+              full report and once for a question, and five months of one
+              laptop&apos;s history became a findings table with a source, an
+              event ID, a count, and a date range per issue.
+            </p>
+            <p className="mt-4 text-sm">
+              Each graded cause stated its reason. Forced hibernation rated
+              High because the exact diagnostic value in the logs shows up in
+              HP&apos;s own support threads, with HP acknowledging the
+              behavior on batches of new units. The Kaseya agent crashes rated
+              Medium, and the report says why: the crash signature is
+              consistent, but version-specific research would need the agent
+              version, which the logs never record, so it went on the open
+              questions list instead of into a guess.
+            </p>
+            <p className="mt-4 text-sm">
+              The question pass, later in the run, was a WiFi complaint: a
+              connection that seemed to return only when reconnected by hand
+              after restarts and wake-ups. Read against the power events, the
+              wireless service&apos;s entries sized the problem: of 164 sleep,
+              wake, and boot events in the exports, 75 show a connect attempt
+              within a minute of waking, 82 show nothing for over an hour, and
+              a handful sit between. From the excerpts it quoted, the report
+              drew the shape of the fault, a connection that returns when
+              someone opens the network flyout, not when the machine wakes,
+              and the one cause graded High is a reconnect regression reported
+              on precisely the build those manifests confirmed. Research also
+              surfaced a registry workaround, and the report ranked it behind
+              the ordinary steps, with the reason attached: the page
+              describing it covers a newer build than this machine runs. Ahead
+              of it went a wireless driver fetched from its maker rather than
+              Windows Update, a network profile reset, a power-management
+              setting, and Fast Startup turned off, which the machine&apos;s
+              own shutdown entries showed active; the build itself was left
+              for last. Forced hibernation stayed a separate finding: a
+              different mechanism in the report&apos;s reading, whose fix
+              would leave this one untouched.
+            </p>
+            <p className="mt-4 text-sm">
+              Asking is rationed by the bundled checklist: the skill requests
+              missing environment detail when plausible causes genuinely
+              diverge on it, and logs what would only soften a confidence
+              grade as an open question while the run continues. A person can
+              also hand that detail over unprompted, OS details, installed
+              patches, software and driver inventories, pasted in as a list or
+              attached as screenshots beside the export, so the research
+              starts oriented instead of asking its way there; the documented
+              run volunteered none of it, because the logs carried their own
+              environment. Everything the report recommends, a cleaned fan, a
+              BIOS update, a reinstalled agent, is a person&apos;s move made
+              outside the chat, which is how the same procedure that read one
+              HP laptop&apos;s five months of Event Logs, and found its
+              firmware putting it to sleep on purpose, is ready for the next
+              firewall or backup job that starts misbehaving.
+            </p>
+          </details>
           <p className="mono mt-6 text-xs text-faint">
             windows event logs / syslog / firewall / hypervisor / backup
-            / web server · noise collapsed into counted signatures ·
-            summary first, raw lines second · a single symptom narrows
-            the same procedure · event ids researched in vendor
-            documentation · forums corroborate, never primary · fixes
-            checked against the exact build · causes graded high /
-            medium / low, reasons attached · active apart from resolved ·
-            solutions mapped to causes · open questions listed, not
-            guessed · os / patch / software / driver inventories
-            volunteered with the export · 122,644 records in the
-            documented run
+            / web server · noise collapsed into counted signatures · a
+            single symptom narrows the same procedure · fixes checked
+            against the exact build · causes graded high / medium / low,
+            reasons attached · 122,644 records in the documented run
           </p>
         </section>
       </section>

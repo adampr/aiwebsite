@@ -340,6 +340,39 @@ code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
   padding: var(--sp-16) 0;
 }
 
+/* /work exhibit cards: prose spans the full panel width — the global 62ch
+   p cap reads as a layout bug inside these wide panels. */
+.work-page .panel p { max-width: none; }
+
+/* Card "More" disclosure — native <details>, JS-free. Summary reads as a
+   mono control in the sys-label register; +/− glyph carries the state. */
+.card-more { margin-top: var(--sp-6); }
+.card-more > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--xl-light-dim);
+  transition: color var(--dur-fast) var(--ease-drift);
+}
+.card-more > summary::-webkit-details-marker { display: none; }
+.card-more > summary::before {
+  content: '+';
+  font-family: var(--font-mono);
+  color: var(--xl-light-dim);
+}
+.card-more[open] > summary::before { content: '\2212'; }
+.card-more > summary:hover { color: var(--xl-light); }
+.card-more > summary:focus-visible {
+  outline: 1px solid var(--xl-light-dim);
+  outline-offset: 4px;
+}
+
 /* Hairline divider, fading */
 .rule {
   border: none;
