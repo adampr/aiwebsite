@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-26 (module pin v1.29.1 — swapfile size
+Last verified against code: 2026-07-27 (module pin v1.30.0 — issue ledger, module §5.15: new `reported_issues` table (migration 0020) + `GET/POST /api/internal/issues` wrapper + `ISSUE_TRACKER_SECRET` in `.env`; the watchdog and the other ops emitters now mirror every WARN/FAIL-class alert email into that table via a spool the watchdog drains on healthy passes, and the dev box reads it with `node scripts/issues.mjs list`. `/api/internal/*` is outside the host's CSRF-protected prefixes, so no proxy.ts change was needed); previous 2026-07-26 (module pin v1.29.1 — swapfile size
 gate + undersized-swap drift alert, §9.5: `deploy/setup-vm.sh` now aborts a
 deploy when `/swapfile` < 4 GiB and `deploy/watchdog.sh` sends an alert-only
 `swap-undersized` WARN when `SwapTotal` < ~4 G; re-render only, no schema/env.
@@ -669,6 +669,7 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/texting/start` / `POST /api/texting/verify` | `createTextingStartHandler` / `createTextingVerifyHandler` · `channels/texting` | §5.10 |
 | `POST /api/auth/sms-prompt` | `createSmsPromptEventHandler` · `channels/texting` | §5.10 |
 | `POST /api/internal/track` | `createTrackHandler` · `tracking/track-api` | §5.6 |
+| `GET/POST /api/internal/issues` | `createIssuesHandler` · `issues/api` (module §5.15, v1.30) — issue-ledger ingest/read; fail-closed on `ISSUE_TRACKER_SECRET`. Written by this VM's watchdog drain over loopback, and by the dev-box synth sweep + `issues.mjs` over public HTTPS | §6 |
 | `src/proxy.ts` (Next 16 proxy convention, Node runtime) | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout` and `/api/governance`** | §5.6 |
 | `GET/POST /api/admin/messages` | `createAdminMessagesHandler` · `admin/api` | §5.6 |
 | `POST /api/admin/mailbox/send` | `createAdminMailboxSendHandler` · `admin/api` | §5.6 |
@@ -2556,6 +2557,22 @@ page_visits        id serial PK, path text NOT NULL, landing_url text, referrer 
                    status_code integer default 200, created_at timestamptz default now()
                    -- written only by /api/internal/track (§5.6)
 
+reported_issues    id serial PK, source text NOT NULL, issue_key text NOT NULL,
+                   severity text NOT NULL, subject text NOT NULL, detail text,
+                   status text NOT NULL default 'open', count integer NOT NULL default 1,
+                   first_seen_at/last_seen_at timestamptz NOT NULL default now(),
+                   last_emailed_at/resolved_at timestamptz, resolved_by text,
+                   resolution_note text,
+                   UNIQUE (source, issue_key) WHERE status='open',
+                   INDEX (status, last_seen_at DESC)
+                   -- module §5.15 issue ledger (v1.30, migration 0020). One row
+                   -- per OPEN episode of an alert-worthy issue; resolving closes
+                   -- it and a recurrence opens a new row, so resolved rows are
+                   -- the history. Written by /api/internal/issues (watchdog
+                   -- drain, synth sweep, module sendEmail/chat-issue seams);
+                   -- read by scripts/issues.mjs at build start. Operator audit
+                   -- trail — no retention sweeper.
+
 ip_orgs            id serial PK, ip_address inet NOT NULL UNIQUE, asn integer,
                    org_name text, is_isp boolean NOT NULL default false,
                    looked_up_at timestamptz default now()
@@ -3057,6 +3074,17 @@ fresh mode does `tunnel login/create/route dns`. `/etc/cloudflared/config.yml` i
 zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, **Proxied**.
 
 ### 9.6 Watchdog (`deploy/watchdog.sh` + `watchdog-cron.sh`)
+
+- **Issue ledger (module §5.15, v1.30):** every `send_email()` — including its
+  no-key and throttled early returns — also appends a jq-built NDJSON line to
+  `/var/lib/aiwebsite/issue-spool.d/watchdog.ndjson`, and once per pass, ONLY
+  after that pass's `:3000/api/health` check passed, the watchdog POSTs the
+  batch to `http://127.0.0.1:3000/api/internal/issues` with the `.env`
+  `ISSUE_TRACKER_SECRET`. Recording never blocks or fails an alert; if the
+  drain is stuck >26 h a throttled `issues-spool-stuck` WARN says so. Successful
+  restarts and rebuild-fixed pages emit auto-resolve lines. peer-monitor,
+  backup-db, restore-drill, hi-speed and the daily disk-check write to the same
+  spool directory under their own file names.
 
 - Persistent root loop, 60 s interval, PID `/var/run/aiwebsite-watchdog.pid`, log
   `/var/log/aiwebsite-watchdog.log`; executes pm2/npm as the app owner via `runuser`.

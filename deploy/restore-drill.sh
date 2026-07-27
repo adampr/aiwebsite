@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: restore-drill.sh.tpl@4de27d5106fd7c96981cc39320ed03e64c6915793823045ce332b2064131c56a
+# aicompany-template: restore-drill.sh.tpl@3bf4f3f68cc014a76c87db182a9b1b23f44c68bfbaf9100477a32016f6d7d2ef
 # Automated backup restore drill (§9.4): prove latest.sql.gz actually restores.
 # Installed as the aiwebsite-restore-drill systemd timer (quarterly). Restores
 # the latest bucket backup into a scratch database, sanity-checks row counts,
@@ -12,20 +12,49 @@ scratch_db="aiwebsite_restore_drill"
 workdir="/var/backups/aiwebsite"
 env_file="/var/www/aiwebsite/.env"
 
-notify() { # subject-after-prefix body
+# ── Issue ledger hook (§5.15 v1.30) — spool-first, strictly best-effort ──
+# Mirrors every alert email into the per-host reported_issues table via the
+# watchdog's drain. jq-only JSON (correct escaping by construction); every
+# expansion ${n:-}-defaulted (set -u safe); every failure path absorbed
+# (set -e safe); 1MB per-emitter cap. NEVER blocks or fails the alert path.
+# This function must stay BYTE-IDENTICAL across every template that carries
+# it (templates.test.ts pins that); per-template identity is $issue_source.
+issue_source="restore-drill"
+issue_spool_dir="/var/lib/aiwebsite/issue-spool.d"
+record_issue() { # 1=severity-prefixed subject 2=body 3=issue key 4=emailed 0|1 [5=resolve 0|1] [6=resolvedBy]
+  command -v jq >/dev/null 2>&1 || return 0
+  local rf="$issue_spool_dir/${issue_source:-unknown}.ndjson"
+  if [ ! -d "$issue_spool_dir" ]; then mkdir -p "$issue_spool_dir" 2>/dev/null || return 0; fi
+  local rsz; rsz=$(stat -c %s "$rf" 2>/dev/null || echo 0)
+  if [ "$rsz" -gt 1048576 ]; then return 0; fi
+  local rsev
+  rsev=$(printf '%s' "${1:-}" | grep -oE '^((HI-SPEED|SYNTH) )?(CRITICAL|ERROR|WARN)' || echo WARN)
+  jq -nc --arg src "${issue_source:-unknown}" --arg k "${3:-}" --arg sev "$rsev" \
+    --arg s "${1:-}" --arg b "${2:-}" --arg e "${4:-0}" --arg r "${5:-0}" --arg by "${6:-}" \
+    --arg ts "$(date -u +%FT%TZ)" \
+    '{action:(if $r=="1" then "resolve" else "record" end),source:$src,key:$k,severity:$sev,subject:($s|.[0:300]),detail:($b|.[0:4000]),emailed:($e=="1"),seenAt:$ts} + (if $r=="1" then {resolvedBy:(if ($by|length)>0 then $by else "auto" end),note:($s|.[0:300])} else {} end)' \
+    >> "$rf" 2>/dev/null || true
+  return 0
+}
+
+notify() { # subject-after-prefix body — returns 0 iff the mail actually went out
   local key
   key=$(grep -E '^RESEND_API_KEY=' "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-  [ -z "$key" ] && return 0
+  [ -z "$key" ] && return 1
   curl -s -X POST https://api.resend.com/emails \
     -H "Authorization: Bearer $key" \
     -H "Content-Type: application/json" \
-    -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":\"adam@xl.net\",\"subject\":\"[aiwebsite] $1\",\"text\":\"$2\"}" >/dev/null || true
+    -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":\"adam@xl.net\",\"subject\":\"[aiwebsite] $1\",\"text\":\"$2\"}" >/dev/null || return 1
+  return 0
 }
 
 fail() {
   echo "[restore-drill] FAIL: $1"
-  notify "CRITICAL Backup restore drill FAILED" \
-    "$1 -- on $(hostname) at $(date -Is). Investigate before assuming backups are usable."
+  local body emailed=0
+  body="$1 -- on $(hostname) at $(date -Is). Investigate before assuming backups are usable."
+  # Mail FIRST (alerting is primary), then mirror into the ledger, then exit.
+  notify "CRITICAL Backup restore drill FAILED" "$body" && emailed=1
+  record_issue "CRITICAL Backup restore drill FAILED" "$body" "restore-drill-failed" "$emailed"
   sudo -u postgres dropdb --if-exists "$scratch_db" 2>/dev/null
   rm -f "$dump"
   exit 1

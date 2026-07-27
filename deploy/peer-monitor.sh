@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: peer-monitor.sh.tpl@29652f5473c129137c087c75b89e5065acc3353a007cbb5e9585ce18ec80ea0d
+# aicompany-template: peer-monitor.sh.tpl@87963f98136ea92a8f169cf6bbd5287b804fdb07342b74297378e8313fcaaf7a
 # Cross-site peer monitor (@aicompany/core template, §9.7 v1.15). The
 # self-hosted watchdog can't report a dead VM or severed tunnel, so sibling
 # sites watch each other across hosting providers — FULL MESH is normative
@@ -43,7 +43,32 @@ throttle_sec=$((6 * 3600))
 resend_api_key=$(grep -m1 '^RESEND_API_KEY=' "$env_file" | cut -d= -f2-)
 mkdir -p "$state_dir"
 
-send_alert() { # subject body
+# ── Issue ledger hook (§5.15 v1.30) — spool-first, strictly best-effort ──
+# Mirrors every alert email into the per-host reported_issues table via the
+# watchdog's drain. jq-only JSON (correct escaping by construction); every
+# expansion ${n:-}-defaulted (set -u safe); every failure path absorbed
+# (set -e safe); 1MB per-emitter cap. NEVER blocks or fails the alert path.
+# This function must stay BYTE-IDENTICAL across every template that carries
+# it (templates.test.ts pins that); per-template identity is $issue_source.
+issue_source="peer-monitor"
+issue_spool_dir="/var/lib/aiwebsite/issue-spool.d"
+record_issue() { # 1=severity-prefixed subject 2=body 3=issue key 4=emailed 0|1 [5=resolve 0|1] [6=resolvedBy]
+  command -v jq >/dev/null 2>&1 || return 0
+  local rf="$issue_spool_dir/${issue_source:-unknown}.ndjson"
+  if [ ! -d "$issue_spool_dir" ]; then mkdir -p "$issue_spool_dir" 2>/dev/null || return 0; fi
+  local rsz; rsz=$(stat -c %s "$rf" 2>/dev/null || echo 0)
+  if [ "$rsz" -gt 1048576 ]; then return 0; fi
+  local rsev
+  rsev=$(printf '%s' "${1:-}" | grep -oE '^((HI-SPEED|SYNTH) )?(CRITICAL|ERROR|WARN)' || echo WARN)
+  jq -nc --arg src "${issue_source:-unknown}" --arg k "${3:-}" --arg sev "$rsev" \
+    --arg s "${1:-}" --arg b "${2:-}" --arg e "${4:-0}" --arg r "${5:-0}" --arg by "${6:-}" \
+    --arg ts "$(date -u +%FT%TZ)" \
+    '{action:(if $r=="1" then "resolve" else "record" end),source:$src,key:$k,severity:$sev,subject:($s|.[0:300]),detail:($b|.[0:4000]),emailed:($e=="1"),seenAt:$ts} + (if $r=="1" then {resolvedBy:(if ($by|length)>0 then $by else "auto" end),note:($s|.[0:300])} else {} end)' \
+    >> "$rf" 2>/dev/null || true
+  return 0
+}
+
+send_alert() { # subject body — returns 0 iff the mail actually went out
   [ -n "$resend_api_key" ] || { echo "$(date -Is) no RESEND_API_KEY; cannot alert"; return 1; }
   if curl -sS -m 20 https://api.resend.com/emails \
     -H "Authorization: Bearer $resend_api_key" \
@@ -53,8 +78,10 @@ send_alert() { # subject body
     # Logged on SUCCESS too (v1.15.0): silent success made the 2026-07-22
     # "did the DOWN alert fire?" question a forensic exercise.
     echo "$(date -Is) alert email SENT: $1"
+    return 0
   else
     echo "$(date -Is) alert email send FAILED: $1"
+    return 1
   fi
 }
 
@@ -84,6 +111,8 @@ for peer in $peers; do
     if [ -f "$alerted_f" ]; then
       send_alert "[$site_name peer-monitor] RECOVERED: $name" \
         "$name ($url) is answering 200 again as of $(date -Is), observed from $site_name."
+      # §5.15: RECOVERED is a machine recovery signal — close the episode.
+      record_issue "WARN peer $name recovered" "$name ($url) answering 200 again" "peer:$name" 0 1 "auto:peer-recovered"
       rm -f "$alerted_f" "$alerted_f.sms"   # re-arm BOTH throttles for the next outage
     fi
     rm -f "$fails_f"
@@ -96,11 +125,18 @@ for peer in $peers; do
   now=$(date +%s)
   if [ "$fails" -ge "$fail_threshold" ]; then
     last=$(cat "$alerted_f" 2>/dev/null || echo 0)
+    down_body="$name ($url) has failed $fails consecutive checks (latest HTTP $code) as of $(date -Is), observed from $site_name. The site's own watchdog cannot report a dead VM or severed tunnel — check the hosting console (RUNBOOK: 'VM unreachable')."
+    down_emailed=0
     if [ $((now - last)) -ge "$throttle_sec" ]; then
-      send_alert "[$site_name peer-monitor] DOWN: $name (HTTP $code)" \
-        "$name ($url) has failed $fails consecutive checks (latest HTTP $code) as of $(date -Is), observed from $site_name. The site's own watchdog cannot report a dead VM or severed tunnel — check the hosting console (RUNBOOK: 'VM unreachable')."
+      if send_alert "[$site_name peer-monitor] DOWN: $name (HTTP $code)" "$down_body"; then
+        down_emailed=1
+      fi
       echo "$now" > "$alerted_f"
     fi
+    # §5.15: record on EVERY at-or-over-threshold pass — a throttled but
+    # persisting outage bumps count/last_seen with emailed=0. The row lands in
+    # the OBSERVER's ledger (the dead peer's own DB is what is unreachable).
+    record_issue "CRITICAL peer $name DOWN (HTTP $code)" "$down_body" "peer:$name" "$down_emailed"
     # SMS escalation (v1.15.0): >=15 min down; 6h throttle in the .sms file.
     if [ -n "$sms_to" ] && [ $(( fails * check_period )) -ge "$sms_after_seconds" ]; then
       last_sms=$(cat "$alerted_f.sms" 2>/dev/null || echo 0)

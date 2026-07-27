@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@698fcf3afc6222ddc9c941d7c7aa8454726ae2fc7d23effd4e93e3a8dee77305
+# aicompany-template: setup-vm.sh.tpl@5a72292f12709fbe3e393bf777815262ebb7eb96932c5baf69f0afeb90db4bff
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -529,11 +529,36 @@ if [ "$usage" -le "$threshold" ]; then
 fi
 key=$(grep -E '^RESEND_API_KEY=' "/var/www/aiwebsite/.env" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
 echo "disk usage $usage% exceeds $threshold%"
-[ -z "$key" ] && exit 1
-curl -s -X POST https://api.resend.com/emails \
+issue_source="disk-check"
+issue_spool_dir="/var/lib/aiwebsite/issue-spool.d"
+record_issue() { # 1=severity-prefixed subject 2=body 3=issue key 4=emailed 0|1 [5=resolve 0|1] [6=resolvedBy]
+  command -v jq >/dev/null 2>&1 || return 0
+  local rf="$issue_spool_dir/${issue_source:-unknown}.ndjson"
+  if [ ! -d "$issue_spool_dir" ]; then mkdir -p "$issue_spool_dir" 2>/dev/null || return 0; fi
+  local rsz; rsz=$(stat -c %s "$rf" 2>/dev/null || echo 0)
+  if [ "$rsz" -gt 1048576 ]; then return 0; fi
+  local rsev
+  rsev=$(printf '%s' "${1:-}" | grep -oE '^((HI-SPEED|SYNTH) )?(CRITICAL|ERROR|WARN)' || echo WARN)
+  jq -nc --arg src "${issue_source:-unknown}" --arg k "${3:-}" --arg sev "$rsev" \
+    --arg s "${1:-}" --arg b "${2:-}" --arg e "${4:-0}" --arg r "${5:-0}" --arg by "${6:-}" \
+    --arg ts "$(date -u +%FT%TZ)" \
+    '{action:(if $r=="1" then "resolve" else "record" end),source:$src,key:$k,severity:$sev,subject:($s|.[0:300]),detail:($b|.[0:4000]),emailed:($e=="1"),seenAt:$ts} + (if $r=="1" then {resolvedBy:(if ($by|length)>0 then $by else "auto" end),note:($s|.[0:300])} else {} end)' \
+    >> "$rf" 2>/dev/null || true
+  return 0
+}
+disk_body="Disk usage on $(hostname) is at $usage% (threshold $threshold%). Triage per deploy/RUNBOOK.md (disk-full section) before it reaches 100%."
+if [ -z "$key" ]; then
+  record_issue "WARN Disk usage at $usage%" "$disk_body" "disk-usage" 0
+  exit 1
+fi
+if curl -s -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $key" \
   -H "Content-Type: application/json" \
-  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"adam@xl.net\"],\"subject\":\"[aiwebsite] WARN Disk usage at $usage%\",\"text\":\"Disk usage on $(hostname) is at $usage% (threshold $threshold%). Triage per deploy/RUNBOOK.md (disk-full section) before it reaches 100%.\"}" >/dev/null || true
+  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"adam@xl.net\"],\"subject\":\"[aiwebsite] WARN Disk usage at $usage%\",\"text\":\"$disk_body\"}" >/dev/null; then
+  record_issue "WARN Disk usage at $usage%" "$disk_body" "disk-usage" 1
+else
+  record_issue "WARN Disk usage at $usage%" "$disk_body" "disk-usage" 0
+fi
 exit 1
 EOS
 sudo chmod 755 /usr/local/bin/aiwebsite-disk-check.sh
@@ -541,6 +566,15 @@ sudo chmod 755 /usr/local/bin/aiwebsite-disk-check.sh
 # ── Scheduled work: systemd timers (Persistent=true), NOT cron (§9.3) ─
 echo ">>> Installing systemd timer units..."
 deploy_user="$(whoami)"
+
+# Issue-ledger spool (§5.15 v1.30) — one NDJSON file per emitter, drained by
+# the watchdog into reported_issues. UNCONDITIONAL (not gated on backups) and
+# setgid-group-writable: root emitters (watchdog, peer-monitor, backup,
+# restore-drill, disk-check) and the deploy-user hi-speed unit both append
+# here, so a plain 0755 root dir would make hi-speed's best-effort helper a
+# permanent silent no-op.
+sudo install -d -m 2775 -o root -g "$deploy_user" /var/lib/aiwebsite
+sudo install -d -m 2775 -o root -g "$deploy_user" /var/lib/aiwebsite/issue-spool.d
 
 # Nightly knowledge crawl. ExecStartPre re-renders the JSON config snapshot so
 # the crawler always sees the currently deployed site.config.ts (§8).

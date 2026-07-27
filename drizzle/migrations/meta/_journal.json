@@ -141,6 +141,13 @@
       "when": 1785103289178,
       "tag": "0019_breezy_edwin_jarvis",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785110901982,
+      "tag": "0020_blue_madripoor",
+      "breakpoints": true
     }
   ]
 }

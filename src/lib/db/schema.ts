@@ -30,6 +30,7 @@ import {
   makeMemoryDeletionLogsTable,
   makePageVisitsTable,
   makePhoneVerificationsTable,
+  makeReportedIssuesTable,
   makeSmsConsentLogsTable,
   makeSmsMemoryNoticesTable,
   makeSmsNoticesTable,
@@ -94,6 +95,12 @@ export const blogHeroImages = makeBlogHeroImagesTable();
 // account and verified (5 page rows on first probe). aiwebsite is the
 // §19.30 meta-rewrite canary.
 export const blogMetrics = makeBlogMetricsTable();
+
+// Issue ledger (module §5.15, v1.30) — every WARN/FAIL-class alert email this
+// host sends is mirrored here as an open-episode row; the watchdog drains its
+// spool into /api/internal/issues and the dev-box `issues.mjs` CLI reads it
+// back at build start. Registry key "reportedIssues".
+export const reportedIssues = makeReportedIssuesTable();
 
 // ---- Host-owned tables (not part of the module contract) ----
 

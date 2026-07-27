@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: backup-db.sh.tpl@d1cfed40186c46aa3114d89e3b9b001584a6b4c6a2566fb9260a89d4075b2252
+# aicompany-template: backup-db.sh.tpl@393897147a8398bd6859be02d15cf40b922f0fe821044ff9eae0a75f45a1387c
 # Nightly pg_dump to a cloud bucket with failure alerting and a success
 # heartbeat (§9.4, from host B's hardened version). Failures email
 # adam@xl.net via Resend; success stamps /var/lib/aiwebsite/last-backup-ok,
@@ -21,19 +21,49 @@ min_bytes=100000     # a healthy compressed dump is well over 100 KB
 min_free_kb=512000   # refuse to dump with < 500 MB free
 retention_days=30
 
-alert() { # subject-after-prefix body
+# ── Issue ledger hook (§5.15 v1.30) — spool-first, strictly best-effort ──
+# Mirrors every alert email into the per-host reported_issues table via the
+# watchdog's drain. jq-only JSON (correct escaping by construction); every
+# expansion ${n:-}-defaulted (set -u safe); every failure path absorbed
+# (set -e safe); 1MB per-emitter cap. NEVER blocks or fails the alert path.
+# This function must stay BYTE-IDENTICAL across every template that carries
+# it (templates.test.ts pins that); per-template identity is $issue_source.
+issue_source="backup"
+issue_spool_dir="/var/lib/aiwebsite/issue-spool.d"
+record_issue() { # 1=severity-prefixed subject 2=body 3=issue key 4=emailed 0|1 [5=resolve 0|1] [6=resolvedBy]
+  command -v jq >/dev/null 2>&1 || return 0
+  local rf="$issue_spool_dir/${issue_source:-unknown}.ndjson"
+  if [ ! -d "$issue_spool_dir" ]; then mkdir -p "$issue_spool_dir" 2>/dev/null || return 0; fi
+  local rsz; rsz=$(stat -c %s "$rf" 2>/dev/null || echo 0)
+  if [ "$rsz" -gt 1048576 ]; then return 0; fi
+  local rsev
+  rsev=$(printf '%s' "${1:-}" | grep -oE '^((HI-SPEED|SYNTH) )?(CRITICAL|ERROR|WARN)' || echo WARN)
+  jq -nc --arg src "${issue_source:-unknown}" --arg k "${3:-}" --arg sev "$rsev" \
+    --arg s "${1:-}" --arg b "${2:-}" --arg e "${4:-0}" --arg r "${5:-0}" --arg by "${6:-}" \
+    --arg ts "$(date -u +%FT%TZ)" \
+    '{action:(if $r=="1" then "resolve" else "record" end),source:$src,key:$k,severity:$sev,subject:($s|.[0:300]),detail:($b|.[0:4000]),emailed:($e=="1"),seenAt:$ts} + (if $r=="1" then {resolvedBy:(if ($by|length)>0 then $by else "auto" end),note:($s|.[0:300])} else {} end)' \
+    >> "$rf" 2>/dev/null || true
+  return 0
+}
+
+alert() { # subject-after-prefix body — returns 0 iff the mail actually went out
   local key
   key=$(grep -E '^RESEND_API_KEY=' "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
-  [ -z "$key" ] && return 0
+  [ -z "$key" ] && return 1
   curl -s -X POST https://api.resend.com/emails \
     -H "Authorization: Bearer $key" \
     -H "Content-Type: application/json" \
-    -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":\"adam@xl.net\",\"subject\":\"[aiwebsite] $1\",\"text\":\"$2\"}" >/dev/null || true
+    -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":\"adam@xl.net\",\"subject\":\"[aiwebsite] $1\",\"text\":\"$2\"}" >/dev/null || return 1
+  return 0
 }
 
 on_error() {
-  alert "CRITICAL Database backup FAILED" \
-    "backup-db.sh failed at line $1 on $(hostname) at $(date -Is). Check /var/log/aiwebsite-backup.log. The last-known-good backup heartbeat is NOT updated until a backup succeeds."
+  # Mail FIRST (alerting is primary), then mirror the outcome into the ledger.
+  local body emailed=0
+  body="backup-db.sh failed at line $1 on $(hostname) at $(date -Is). Check /var/log/aiwebsite-backup.log. The last-known-good backup heartbeat is NOT updated until a backup succeeds."
+  alert "CRITICAL Database backup FAILED" "$body" && emailed=1
+  record_issue "CRITICAL Database backup FAILED" "$body" "backup-failed" "$emailed"
+  return 0
 }
 trap 'on_error $LINENO' ERR
 

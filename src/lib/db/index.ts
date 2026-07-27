@@ -23,6 +23,8 @@ registerTables({
   blogHeroImages: schema.blogHeroImages,
   // measurement loop (module §19.15) — key required iff measure.enabled.
   blogMetrics: schema.blogMetrics,
+  // issue ledger (module §5.15 v1.30) — required for issue recording.
+  reportedIssues: schema.reportedIssues,
 });
 
 export { db, getDb, schema };

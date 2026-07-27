@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@6f12445c6c66565607e293cc2abbfb3df97e49b5d1f9be63a79b98d00574c1bb
+# aicompany-template: watchdog.sh.tpl@d93f2b38e810de123abd636e9cdac3ae4dab46aaf5752311119fb1d6657b40fe
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -107,9 +107,37 @@ load_resend_key() {
   fi
 }
 
+# ── Issue ledger hook (§5.15 v1.30) — spool-first, strictly best-effort ──
+# Mirrors every alert email into the per-host reported_issues table via this
+# watchdog's drain. jq-only JSON (correct escaping by construction); every
+# expansion ${n:-}-defaulted (set -u safe); every failure path absorbed
+# (set -e safe); 1MB per-emitter cap. NEVER blocks or fails the alert path.
+# This function must stay BYTE-IDENTICAL across every template that carries
+# it (templates.test.ts pins that); per-template identity is $issue_source.
+issue_source="watchdog"
+issue_spool_dir="/var/lib/aiwebsite/issue-spool.d"
+record_issue() { # 1=severity-prefixed subject 2=body 3=issue key 4=emailed 0|1 [5=resolve 0|1] [6=resolvedBy]
+  command -v jq >/dev/null 2>&1 || return 0
+  local rf="$issue_spool_dir/${issue_source:-unknown}.ndjson"
+  if [ ! -d "$issue_spool_dir" ]; then mkdir -p "$issue_spool_dir" 2>/dev/null || return 0; fi
+  local rsz; rsz=$(stat -c %s "$rf" 2>/dev/null || echo 0)
+  if [ "$rsz" -gt 1048576 ]; then return 0; fi
+  local rsev
+  rsev=$(printf '%s' "${1:-}" | grep -oE '^((HI-SPEED|SYNTH) )?(CRITICAL|ERROR|WARN)' || echo WARN)
+  jq -nc --arg src "${issue_source:-unknown}" --arg k "${3:-}" --arg sev "$rsev" \
+    --arg s "${1:-}" --arg b "${2:-}" --arg e "${4:-0}" --arg r "${5:-0}" --arg by "${6:-}" \
+    --arg ts "$(date -u +%FT%TZ)" \
+    '{action:(if $r=="1" then "resolve" else "record" end),source:$src,key:$k,severity:$sev,subject:($s|.[0:300]),detail:($b|.[0:4000]),emailed:($e=="1"),seenAt:$ts} + (if $r=="1" then {resolvedBy:(if ($by|length)>0 then $by else "auto" end),note:($s|.[0:300])} else {} end)' \
+    >> "$rf" 2>/dev/null || true
+  return 0
+}
+
 # send_email "<subject after the [slug] prefix>" "<body>" "<issue key>"
 # Subject convention (§9.5): "[aiwebsite] <SEVERITY> ..." — callers pass
 # "CRITICAL ..." / "WARN ..." and the site prefix is added here.
+# Every invocation ALSO records into the issue ledger (§5.15) — including the
+# throttled and no-API-key early returns: a persisting throttled issue bumps
+# its open row's count/last_seen on every occurrence, with emailed=0.
 send_email() {
   local subject="[aiwebsite] $1"
   local body="$2"
@@ -117,6 +145,7 @@ send_email() {
 
   if [[ -z "${resend_api_key:-}" ]]; then
     log "WARN: Skipping email (no API key): $subject"
+    record_issue "$1" "$body" "$issue_key" 0
     return
   fi
 
@@ -136,6 +165,7 @@ send_email() {
     [[ "$issue_key" == "earlyoom-kill" ]] && key_throttle=3600
     if (( now - last_sent < key_throttle )); then
       log "INFO: Email throttled for issue '$issue_key' (last sent $(( now - last_sent ))s ago): $subject"
+      record_issue "$1" "$body" "$issue_key" 0
       return
     fi
   fi
@@ -160,8 +190,10 @@ send_email() {
     >> "$log_file" 2>&1 && {
       date +%s > "$throttle_file"
       log "INFO: Alert email sent: $subject"
+      record_issue "$1" "$body" "$issue_key" 1
     } || {
       log "WARN: Failed to send alert email: $subject"
+      record_issue "$1" "$body" "$issue_key" 0
     }
 }
 
@@ -199,6 +231,12 @@ restart_and_alert() {
       "WARN Restarted $service_name" \
       "Service: $service_name\nAction: Restarted\nResult: Success\n\nDetails:\n$details" \
       "restart-$service_name"
+    # §5.15: a successful restart is a RESOLUTION event — close the episode the
+    # send_email above just opened (and any prior failed-restart episode) so
+    # self-healed incidents never sit open in build-start triage. The resolved
+    # rows keep the incident history.
+    record_issue "WARN Restarted $service_name" "self-healed: restart succeeded" "restart-$service_name" 0 1 "auto:self-healed"
+    record_issue "WARN Restarted $service_name" "self-healed: a later restart succeeded" "restart-fail-$service_name" 0 1 "auto:self-healed"
   else
     log "ERROR: Failed to restart $service_name (exit $rc)"
     send_email \
@@ -343,6 +381,10 @@ check_pages() {
           "WARN Auto-fixed page errors via clean rebuild" \
           "Pages that were failing:\n$detail_list\n\nA clean rebuild + PM2 restart resolved the issue.\nLikely cause: corrupted build cache." \
           "page-render-autofix"
+        # §5.15 self-heal resolution — close this episode and any prior
+        # page-render-fail episode the rebuild just fixed.
+        record_issue "WARN Auto-fixed page errors via clean rebuild" "self-healed: clean rebuild fixed pages" "page-render-autofix" 0 1 "auto:self-healed"
+        record_issue "WARN Auto-fixed page errors via clean rebuild" "self-healed: clean rebuild fixed pages" "page-render-fail" 0 1 "auto:self-healed"
       fi
     else
       send_email \
@@ -481,7 +523,69 @@ check_freshness() {
       "The nightly hi-speed timer has not stamped in >26h — dead timer or unit. On the VM: systemctl list-timers '*hi-speed*'; tail /var/log/*-hi-speed.log (RUNBOOK: Hi-speed gate)." \
       93600 \
       || log "FAIL: hi-speed heartbeat stale"
+
+  # §5.15 drain honesty: a spool/.sending line older than 26h means issue
+  # RECORDING is dead (secret missing in .env, /api/internal/issues not
+  # mounted, endpoint erroring, drain wedged) while alerting still works —
+  # say so once per 24h. Existence-guarded: no files = healthy silence,
+  # never a "missing" mail (the .sending file only exists mid-retry).
+  local sf first_ts first_epoch
+  for sf in "$issue_spool_dir"/.sending "$issue_spool_dir"/*.ndjson; do
+    [ -s "$sf" ] || continue
+    first_ts=$(head -1 "$sf" 2>/dev/null | jq -r '.seenAt // empty' 2>/dev/null || true)
+    [ -n "$first_ts" ] || continue
+    first_epoch=$(date -d "$first_ts" +%s 2>/dev/null || echo 0)
+    if (( first_epoch > 0 && $(date +%s) - first_epoch > stale_seconds )); then
+      send_email \
+        "WARN issue-ledger drain stuck (oldest spool line >26h)" \
+        "Issue recording has not drained in over 26h while alert emails still send.\nFile: $sf\nLikely causes: ISSUE_TRACKER_SECRET missing from $app_root/.env, the host has not mounted /api/internal/issues, or the endpoint is failing.\nAlert emails are UNAFFECTED — only the reported_issues mirror is behind (§5.15)." \
+        "issues-spool-stuck"
+      break
+    fi
+  done
+}
+
+# ── Issue-ledger drain (§5.15 v1.30) ─────────────────────────────
+# One NDJSON batch POST per pass, run ONLY after the site health check just
+# passed (the endpoint lives in the app we verified — zero added latency on
+# sick passes, where the spool simply grows). Two-phase: an existing .sending
+# (a prior failed POST) is retried FIRST and its mtime is never touched (the
+# check_freshness stuck alert keys on its first line's seenAt); new spool
+# files are claimed only when nothing is pending. The batch is line- AND
+# byte-bounded BELOW the server caps (2000 lines/512KB): 500 lines, then
+# drop-oldest to <=256KB on line boundaries. Fail-closed: no secret ⇒ no
+# drain (the spool ages into the stuck alert). All failure paths absorbed.
+issue_sending="$issue_spool_dir/.sending"
+drain_issue_spool() {
+  [ -d "$issue_spool_dir" ] || return 0
+  if [ ! -s "$issue_sending" ]; then
+    local f claimed=0
+    rm -f "$issue_sending" "$issue_sending.tmp" 2>/dev/null || true
+    for f in "$issue_spool_dir"/*.ndjson; do
+      [ -s "$f" ] || continue
+      cat "$f" >> "$issue_sending.tmp" 2>/dev/null && : > "$f" && claimed=1
+    done
+    if [ "$claimed" = "1" ]; then
+      tail -n 500 "$issue_sending.tmp" > "$issue_sending" 2>/dev/null || true
+      rm -f "$issue_sending.tmp" 2>/dev/null || true
+      local bsz
+      bsz=$(stat -c %s "$issue_sending" 2>/dev/null || echo 0)
+      while [ "$bsz" -gt 262144 ]; do
+        tail -n +51 "$issue_sending" > "$issue_sending.tmp" 2>/dev/null && mv "$issue_sending.tmp" "$issue_sending" || break
+        bsz=$(stat -c %s "$issue_sending" 2>/dev/null || echo 0)
+      done
+    else
+      rm -f "$issue_sending.tmp" 2>/dev/null || true
+    fi
   fi
+  [ -s "$issue_sending" ] || return 0
+  local ledger_secret
+  ledger_secret=$(grep -E '^ISSUE_TRACKER_SECRET=' "$app_root/.env" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+  [ -n "$ledger_secret" ] || return 0
+  curl -sf -m 10 -X POST "http://127.0.0.1:3000/api/internal/issues" \
+    -H "content-type: application/x-ndjson" -H "x-issue-secret: $ledger_secret" \
+    --data-binary @"$issue_sending" >/dev/null 2>&1 && rm -f "$issue_sending" || true
+  return 0
 }
 
 # ── Lifecycle ────────────────────────────────────────────────────
@@ -667,6 +771,7 @@ while true; do
   fi
 
   # 6. Next.js site (:3000) -- check last since it depends on postgres + brain
+  site_healthy=false
   site_response=$(curl -sf -m 10 "$site_health_url" 2>&1) || site_response=""
   if [[ -z "$site_response" ]] || ! echo "$site_response" | grep -q '"status":"ok"'; then
     log "FAIL: site health check failed: $site_response"
@@ -677,6 +782,8 @@ while true; do
       "run_as_pm2_user 'pm2 restart aiwebsite'" \
       "Health URL: $site_health_url\nResponse: ${site_response:-<empty>}\nPM2 status: $pm2_status" \
       "true"
+  else
+    site_healthy=true
   fi
 
   # 7. Livelock defenses armed? (v1.15.0 §9.5 — 2026-07-22 aiwebsite outage)
@@ -769,6 +876,12 @@ while true; do
 
   if [[ "$any_failure" == "false" ]]; then
     log "OK: All checks passed"
+  fi
+
+  # §5.15 issue-ledger drain — only when the site health check just passed
+  # (never inside send_email; never on a sick pass).
+  if [[ "$site_healthy" == "true" ]]; then
+    drain_issue_spool || true
   fi
 
   sleep "$tick_seconds"
