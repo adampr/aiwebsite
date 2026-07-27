@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@47d6811d1b383c5a561082d45005bb203780cdc61cafc4bff2972cd2ffff307c
+# aicompany-template: deploy.sh.tpl@d7f6a62c8d2fd44bd8c4f973d2ac5743bdc5c7054d704e9737b679fcc5853f1c
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -93,6 +93,55 @@ if [ "$stale" -ne 0 ]; then
   exit 1
 fi
 echo "  stamps OK"
+
+# ── Rendered-artifact syntax gate (v1.30.3, §9) ──────────────────
+# The stamp check above proves the rendered files MATCH the module templates —
+# not that they RUN. Templates cannot be linted directly (their unsubstituted
+# placeholder tokens are not bash, so `bash -n` on a .tpl fails even when the
+# template is perfect), so the rendered artifact is the only lintable form.
+# v1.30.0 shipped a watchdog.sh whose `check_freshness()` had an unclosed
+# `if`: it rendered, stamped, installed and deployed cleanly, and could never
+# start — three hosts ran with ZERO watchdogs, silently, because the cron
+# supervisor only logs that it tried (MIGRATIONS v1.30.1).
+#
+# v1.30.2 added the same parse gate to the module's test suite. This is the
+# HOST-SIDE backstop, and it is not redundant: the test suite only protects a
+# host whose module bump was actually tested, and v1.30.0 reached production
+# precisely because nothing between "template edited" and "script running on
+# the VM" ever parsed the output. Fail closed here, before anything is rsynced.
+# nginx.conf is exempt — validating it needs an nginx binary plus server
+# context, so the VM's own `nginx -t` remains its gate.
+echo ">>> Syntax-checking rendered deploy scripts..."
+bad_syntax=0
+for f in "$repo_dir"/deploy/*.sh; do
+  [ -f "$f" ] || continue
+  if ! err="$(bash -n "$f" 2>&1)"; then
+    echo "ERROR: deploy/$(basename "$f") is not valid bash:"
+    printf '%s\n' "$err" | sed 's/^/    /'
+    bad_syntax=1
+  fi
+done
+# Rendered JS is just as load-bearing: a broken ecosystem.config.cjs or
+# pm2-start.cjs takes down the PM2 apps the same way a broken watchdog.sh
+# takes down self-healing. `node --check` is the equivalent parse-only test.
+if command -v node >/dev/null 2>&1; then
+  for f in "$repo_dir"/deploy/*.cjs "$repo_dir"/deploy/*.mjs; do
+    [ -f "$f" ] || continue
+    if ! err="$(node --check "$f" 2>&1)"; then
+      echo "ERROR: deploy/$(basename "$f") is not valid JavaScript:"
+      printf '%s\n' "$err" | sed 's/^/    /'
+      bad_syntax=1
+    fi
+  done
+fi
+if [ "$bad_syntax" -ne 0 ]; then
+  echo ""
+  echo "A rendered deploy script would not execute. Fix the module template,"
+  echo "re-render, and commit before deploying:"
+  echo "  node packages/aicompany/deploy/render.mjs && git add deploy/ && git commit"
+  exit 1
+fi
+echo "  syntax OK"
 
 # ── Dev-box credentials: read values literally — do NOT `source` .env:
 # passwords may contain shell-special characters ($, #, *) that expansion
