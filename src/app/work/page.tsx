@@ -4,12 +4,12 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Twenty-two real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Twenty-four real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Twenty-two real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Twenty-four real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
   },
 };
 
@@ -1881,6 +1881,208 @@ export default function WorkPage() {
             configuration item form order · per-client sheet, one tab per
             category · eight vms onto two hosts already on file · keyed into
             autotask by a tech, confirmed before saving
+          </p>
+        </section>
+
+        {/* 23. Script Master */}
+        <section id="script-master" className="panel panel--lightline rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Claude Skill</span>
+          </div>
+          <h2 className="mt-6">Script Master</h2>
+          <p className="mt-2 text-sm text-faint">
+            PowerShell, Bash, or Python, written for an environment it knows
+            only from what it was told.
+          </p>
+          <p className="mt-4 text-sm">
+            A Claude Skill for the scripting side of systems work, packaged
+            and handed to the team as a skill file. It covers PowerShell, CMD
+            and Batch, Bash, Python, and the other languages IT operations
+            runs on, over work like Active Directory and Entra ID accounts,
+            VMware and Veeam automation, and log parsing. Describing the task
+            in plain language starts it, with no language named. What comes
+            back arrives in a fixed order: a compatibility note, a
+            recommended language when none was given, the script, testing and
+            QA notes, then, for anything past a one-liner, an Admin Guide for
+            someone technical and a User Guide for someone who has not seen
+            it. Output bound for review or an audit adds one question, which
+            format, and returns as CSV, HTML, or PDF from a single pass of
+            the data.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Its Own Form Proves Nothing
+              </h3>
+              <p className="mt-3 text-sm">
+                The first stage settles what is missing and material:
+                platform and version, the account the script runs under,
+                execution policy, and whether the thing has to be safe to run
+                twice. A profile already filled in and sitting in the project
+                is read first, and only its gaps become questions. The form
+                the skill ships
+                with is blank and reads the same for everyone, bracketed
+                placeholders where an estate would go, so the procedure rules
+                it out as a source of fact. Otherwise the defaults come back
+                with the assumption stated in the open.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                A Clean Pass Says So
+              </h3>
+              <p className="mt-3 text-sm">
+                Two passes run over a finished script. First, syntax and lint
+                validation, actually run where a code execution tool is on
+                hand rather than asserted, plus a walk through the branches
+                that break things: empty input, missing permissions, a
+                failure partway through. Then a QA
+                review under fixed headings, among them correctness,
+                security, performance, reliability, and standards
+                compliance, ending in the findings and the corrected script.
+                A review that turns up nothing says so, and a stage judged
+                not applicable is named as skipped rather than dropped in
+                silence.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Stops Ride Inside the Script
+              </h3>
+              <p className="mt-3 text-sm">
+                Destructive, irreversible, or elevated work is named before
+                the script is presented, and carries what holds it back:
+                -WhatIf and -Confirm support, a dry-run mode, a
+                confirmation prompt. Secrets are not typed in. They arrive at
+                run time from Get-Credential, an environment variable, or a
+                vault. The testing note records what the session could not
+                exercise, live Active Directory and vCenter among the
+                file&apos;s own examples, next to what to confirm before
+                production. The procedure has no step that opens a session
+                with a live system, so the first run against one belongs to a
+                person.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            <a href="#kaseya-ap-builder">Kaseya AP Builder</a> writes for a
+            platform that keeps the secrets: license keys and site tokens
+            stay in Kaseya&apos;s own variable manager and reach the
+            procedure at run time. A standalone script has nothing underneath
+            it doing that, so the version it was written against, the
+            credential prompt, and the switch that stops a destructive run
+            travel inside the file, in front of whoever opens it next.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            powershell, cmd, batch, bash, or python · a filled-in profile
+            read first, defaults labelled · compatibility notes ahead of the
+            code · syntax check, branch walk, then a qa pass · admin guide
+            and user guide, a page each · the first run against a live system
+            belongs to a person
+          </p>
+        </section>
+
+        {/* 24. Ticket Reply Composer */}
+        <section id="ticket-reply-composer" className="panel rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge">
+              <span className="dot" /> Built · internal
+            </span>
+            <span className="badge badge--light">Helpdesk browser tool</span>
+          </div>
+          <h2 className="mt-6">Ticket Reply Composer</h2>
+          <p className="mt-2 text-sm text-faint">
+            The facts a technician types stay as typed, and the sentences
+            around them change with the tone.
+          </p>
+          <p className="mt-4 text-sm">
+            A ticket closes with a message the customer has to be able to
+            follow, and that message is the part the fix does not supply.
+            This page turns it into fields: the customer&apos;s name, the
+            technician&apos;s own, a ticket reference, an issue category, a
+            tone that is formal, friendly, or apologetic, a status, and boxes
+            for what happened, what was done, and, on the statuses that ask
+            for it, what the customer needs to do. The reply assembles as
+            those boxes fill, drawn as a perforated ticket with the reference
+            at the top and the status in a rotated stamp. A second tab holds
+            the troubleshooting checklist the technician works from. No build
+            step and no server behind it: the file is the whole of it, at
+            version five.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Interchangeable Parts
+              </h3>
+              <p className="mt-3 text-sm">
+                Every reply comes out in the same order: greeting, opening
+                line, what happened, what was done, then, on the two statuses
+                that ask for it, what the customer needs to do, then a
+                closing line, a sign-off, and the technician&apos;s name.
+                Tone swaps the greeting, the opener, and the sign-off. Status
+                swaps the lead-in to the work and the closing line, and all
+                three tones carry a closing line for each of the four
+                statuses. What the technician typed passes through untouched.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Nine Presets or a Paragraph
+              </h3>
+              <p className="mt-3 text-sm">
+                Choosing a category fills the plain-English cause box with an
+                explanation pitched at a customer and stocks the checklist
+                with five steps, each with a sentence on why it is on the
+                list, 31 of the 45 carrying a PowerShell or CMD line. Password, email, VPN,
+                printer, network, software, hardware, performance, and a
+                catch-all each carry their own. An issue outside them goes
+                into a box of its own: the page asks a model for both halves,
+                and the steps come back flagged as generated from that
+                description while the explanation lands in the cause box
+                unmarked, where the technician edits it. Clearing the box
+                brings the presets back.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Nowhere to Put an Address
+              </h3>
+              <p className="mt-3 text-sm">
+                There is no address field among the inputs, no mail account
+                attached, and no send button. Each output leaves by a Copy
+                button and lands wherever the technician pastes it. The
+                checklist tab is labelled in the page as internal reference,
+                not for the customer. The description box is the one place
+                the page reaches past itself, on a button the technician
+                presses, and that request carries no key of its own, so
+                nothing here holds a credential for a client system or opens
+                a session with one.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            <a href="#follow-up-emails">Auto-Draft Follow-Up Emails</a> lands
+            its draft inside the rep&apos;s own Gmail, one review short of a
+            send. This page has no account to land in. The reply sits in the
+            tab it was assembled in until a technician copies it out, which
+            is also what keeps the checklist beside it internal: nothing here
+            has a way to reach the customer on its own.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            one html file, extended through its own packaged skill · formal,
+            friendly, or apologetic · four statuses, each with its own
+            closing line · a preset cause and five steps per category ·
+            internal checklist, not for the customer · copy buttons, no send
+            path
           </p>
         </section>
       </section>
