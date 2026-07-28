@@ -10,16 +10,47 @@ import { siteConfig } from "site.config";
 // articles never enter the sitemap until the next deploy rebuilds it.
 export const revalidate = 3600;
 
+// lastmod per static page (§21 scorecard row `sitemap-lastmod`, which found
+// 10 of 26 locs carrying no <lastmod> — every one of them a host page, while
+// blogSitemapEntries has always emitted last_material_update_at for articles).
+//
+// THE RULE: a REAL content timestamp or NOTHING. Never `new Date()`.
+// itsupportchicago's QA-058 restamped 117 URLs on every hourly ISR
+// regeneration, which teaches crawlers to ignore lastmod on the domain
+// entirely — strictly worse than omitting it. Note `revalidate = 3600` above:
+// this route re-renders hourly, so a computed date here would be exactly that
+// defect.
+//
+// Real dates of last material change, from `git log -1 --format=%cs -- <file>`
+// on 2026-07-28. **Update the entry when you materially change the page.**
+// Stale-but-true is fine — it says "this has not changed". A date that moves
+// without the content moving is a lie the crawler learns from.
+const STATIC_LASTMOD: Record<string, string> = {
+  "/": "2026-07-23",
+  "/work": "2026-07-27",
+  "/builders": "2026-07-23",
+  "/governance": "2026-07-21",
+  "/contact": "2026-07-13",
+  "/methodology": "2026-07-25",
+  "/privacy": "2026-07-16",
+  "/sms-terms": "2026-07-10",
+  "/texting": "2026-07-10",
+};
+
+// Bare "YYYY-MM-DD" parses as UTC midnight — no timezone drift makes a date
+// appear to move.
+const lm = (path: string) => new Date(STATIC_LASTMOD[path]);
+
 const staticEntries = createSitemap(siteConfig, [
-  { path: "/" },
-  { path: "/work" },
-  { path: "/builders" },
-  { path: "/governance" },
-  { path: "/contact" },
-  { path: "/methodology" },
-  { path: "/privacy" },
-  { path: "/sms-terms" },
-  { path: "/texting" },
+  { path: "/", lastModified: lm("/") },
+  { path: "/work", lastModified: lm("/work") },
+  { path: "/builders", lastModified: lm("/builders") },
+  { path: "/governance", lastModified: lm("/governance") },
+  { path: "/contact", lastModified: lm("/contact") },
+  { path: "/methodology", lastModified: lm("/methodology") },
+  { path: "/privacy", lastModified: lm("/privacy") },
+  { path: "/sms-terms", lastModified: lm("/sms-terms") },
+  { path: "/texting", lastModified: lm("/texting") },
 ]);
 
 export default async function sitemap() {
