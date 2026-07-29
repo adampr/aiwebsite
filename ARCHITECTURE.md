@@ -15,7 +15,13 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-29 (later: team work submissions, §5.16 — an
+Last verified against code: 2026-07-29 (latest: §5.16 owner artifact retention —
+the accepted original upload (.zip/.skill/.md) now rides `work_submissions.archive_data`
+(bytea, migration 0023) until the card publishes (auto OR admin approve), at which
+point it is emailed to ADMIN_EMAIL as a Resend attachment and the column is cleared
+on a confirmed send only (failed send keeps the bytes recoverable; logged). All
+list/poll/panel reads exclude the column (`ROW_COLS`); non-published rows drop it
+with the row (delete/sweep). Earlier same day: team work submissions, §5.16 — an
 @xl.net staffer submits a CoWork skill or a Claude Code program zip at
 `/work/submit`; the upload is inspected in memory (jszip, inflate caps, secret
 scan, required architecture.md/SKILL.md rule with an instructive rejection),
@@ -2688,9 +2694,13 @@ stripping code fences/front matter; failures 422 with the exact fix
 (`MISSING_ARCH_DOC_MESSAGE` / `MISSING_SKILL_DOC_MESSAGE`). Persisted: doc
 text (≤40k), evidence corpus (doc + remaining `.md/.txt` ascending by size to
 80k total; source code never), file manifest (≤300 entries), archive
-name/sha256/bytes — all text columns on ONE `work_submissions` row (hard
-DELETE removes everything). Returns 202 `{id, status, queued}` and kicks the
-panel.
+name/sha256/bytes — all on ONE `work_submissions` row (hard DELETE removes
+everything). The accepted ORIGINAL upload is kept in `archive_data` (bytea)
+solely for owner retention: on publish (either path) it is emailed to
+ADMIN_EMAIL as an attachment (`sendArchiveRetentionEmail`, 60 s timeout,
+≤10 MB ≈ 13.4 MB base64 inside Resend's 40 MB cap) and cleared only on a
+confirmed send; every list/poll/panel query excludes the column (`ROW_COLS`).
+Returns 202 `{id, status, queued}` and kicks the panel.
 
 **Panel job** (`panel.ts`, in-process `after()` like the governance
 turn-runner; no route deadline, claim/fence columns survive PM2 restarts).
@@ -2958,8 +2968,10 @@ work_submissions   id uuid PK, user_id uuid NULL FK users ON DELETE SET NULL (pu
                    submitter_name text NULL (validated first name; NULL = team credit),
                    status text default 'received' (received|running|published|held|failed),
                    architecture_text/skill_md_text/file_manifest_json/corpus_files_json,
-                   archive_name/archive_sha256/archive_bytes (provenance only; zip bytes
-                   are NEVER stored),
+                   archive_name/archive_sha256/archive_bytes (provenance),
+                   archive_data bytea NULL (migration 0023: the original upload, retained
+                   ONLY until the owner retention email confirms on publish, then cleared;
+                   excluded from every list/poll/panel SELECT via ROW_COLS),
                    panel_attempt_id/panel_started_at/panel_heartbeat_at (claim/fence trio),
                    panel_runs + panel_runs_date (3/day guard), panel_progress_json,
                    panel_transcript_json (≤60k audit trail), panel_error,

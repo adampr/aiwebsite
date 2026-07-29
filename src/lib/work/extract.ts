@@ -1,8 +1,9 @@
 // Upload inspection for team work submissions (§5.16). Server-side only
 // (jszip). Everything runs in memory with hard caps (the governance
-// style-sample precedent): the archive is parsed, allowlisted text is
-// extracted, and the upload bytes are then discarded. Zip bytes are never
-// written to disk and never stored.
+// style-sample precedent): the archive is parsed and allowlisted text is
+// extracted. Upload bytes are never written to disk; the accepted original
+// rides the row's archive_data column only until the owner retention email
+// sends on publish (notify.ts), then is cleared.
 
 import { createHash } from "node:crypto";
 import JSZip from "jszip";

@@ -39,7 +39,11 @@ import {
   type SubmissionRow,
 } from "./db";
 import { lintCard, type WorkCard } from "./lint";
-import { notifyHeld, notifyPublished } from "./notify";
+import {
+  deliverArchiveRetention,
+  notifyHeld,
+  notifyPublished,
+} from "./notify";
 
 interface CorpusFile {
   path: string;
@@ -403,4 +407,7 @@ async function runPanelInner(
     // ISR (revalidate = 300 on /work) is the self-healing floor
   }
   await notifyPublished(row, card, slug);
+  // Owner retention: the original upload rides the row until this email
+  // confirms; a failed send keeps the bytes recoverable.
+  await deliverArchiveRetention(row);
 }

@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 import { approveHeld, submissionById } from "@/lib/work/db";
 import { okJson, rateLimit, requireXlUser, workError } from "@/lib/work/http";
+import { deliverArchiveRetention } from "@/lib/work/notify";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -31,5 +32,8 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   } catch {
     // ISR revalidate=300 is the floor
   }
+  // Owner retention email (original upload attachment) on this publish path
+  // too; clears the stored bytes only on a confirmed send.
+  await deliverArchiveRetention(row);
   return okJson({ status: "published", slug });
 }

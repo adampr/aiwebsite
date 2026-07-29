@@ -1,0 +1,1 @@
+ALTER TABLE "work_submissions" ADD COLUMN "archive_data" "bytea";

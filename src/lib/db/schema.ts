@@ -9,6 +9,7 @@
 // source; see packages/aicompany/MIGRATIONS.md "aiwebsite adoption baseline").
 
 import {
+  customType,
   pgTable,
   serial,
   text,
@@ -21,6 +22,14 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+
+// drizzle-orm has no built-in pg bytea (same workaround as the module's
+// hero-image column, packages/aicompany/src/db/schema.ts).
+const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
+  dataType() {
+    return "bytea";
+  },
+});
 import {
   makeAdminEmailsTable,
   makeAuthLogsTable,
@@ -242,9 +251,10 @@ export const governanceMeta = pgTable("governance_meta", {
 // or a Claude Code program zip; an automated editorial panel (3 writers +
 // 3 counterpart critics + synthesis, §5.16) drafts a /work card from the
 // submitted documents and publishes it when the deterministic lint passes.
-// One row carries everything as text columns (governance_projects pattern)
-// so a hard DELETE removes the whole submission. Zip bytes are NEVER stored:
-// only extracted document text, the file manifest, and the produced card.
+// One row carries everything (governance_projects pattern) so a hard DELETE
+// removes the whole submission: extracted document text, the file manifest,
+// the produced card, and (transiently) the original upload in archive_data,
+// which is emailed to the owner on publish and then cleared.
 // user_id is SET NULL on account deletion (published cards are company
 // content, not private user data; attribution is denormalized below).
 export const workSubmissions = pgTable(
@@ -272,6 +282,11 @@ export const workSubmissions = pgTable(
     archiveName: text("archive_name"),
     archiveSha256: text("archive_sha256"),
     archiveBytes: integer("archive_bytes"),
+    // The original upload (.zip/.skill/.md), retained ONLY until the owner
+    // retention email sends on publish (then cleared), so the owner keeps
+    // every artifact that reached the public page. Non-published rows drop
+    // it with the row (delete/sweep). ≤10 MB per row, transient.
+    archiveData: bytea("archive_data"),
     // Panel claim/fence trio + daily runs guard (turn-runner pattern).
     panelAttemptId: text("panel_attempt_id"),
     panelStartedAt: timestamp("panel_started_at", { withTimezone: true }),

@@ -183,6 +183,9 @@ export async function POST(req: Request): Promise<Response> {
     archiveName: name.slice(0, 200),
     archiveSha256: extracted.archiveSha256,
     archiveBytes: extracted.archiveBytes,
+    // Retained until the owner retention email sends on publish (§5.16);
+    // non-published rows drop it with the row.
+    archiveData: bytes,
   });
 
   const kicked = await kickPanel(row.id);

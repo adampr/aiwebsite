@@ -2,7 +2,16 @@
 // run are fenced on panel_attempt_id (turn-runner pattern): a zombie worker
 // from a superseded claim can never publish.
 
-import { and, desc, eq, gte, isNotNull, ne, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  getTableColumns,
+  gte,
+  isNotNull,
+  ne,
+  sql,
+} from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { WORK_CAPS, type WorkKind } from "./config";
 import type { WorkCard } from "./lint";
@@ -10,7 +19,12 @@ import { slugForTitle } from "./lint";
 
 const S = schema.workSubmissions;
 
-export type SubmissionRow = typeof S.$inferSelect;
+// Every list/poll/panel read EXCLUDES archive_data (the transient original
+// upload, ≤10 MB): only the retention-email step ever selects it, via
+// archiveDataById().
+const { archiveData: _archiveData, ...ROW_COLS } = getTableColumns(S);
+
+export type SubmissionRow = Omit<typeof S.$inferSelect, "archiveData">;
 
 export function isUuid(v: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -32,10 +46,12 @@ export async function createSubmission(opts: {
   archiveName: string;
   archiveSha256: string;
   archiveBytes: number;
+  archiveData: Buffer;
 }): Promise<SubmissionRow> {
   const [row] = await db
     .insert(S)
     .values({
+      archiveData: opts.archiveData,
       userId: opts.userId,
       submitterEmail: opts.email,
       submitterName: opts.name,
@@ -50,7 +66,7 @@ export async function createSubmission(opts: {
       archiveSha256: opts.archiveSha256,
       archiveBytes: opts.archiveBytes,
     })
-    .returning();
+    .returning(ROW_COLS);
   return row;
 }
 
@@ -58,13 +74,13 @@ export async function submissionById(
   id: string
 ): Promise<SubmissionRow | null> {
   if (!isUuid(id)) return null;
-  const rows = await db.select().from(S).where(eq(S.id, id)).limit(1);
+  const rows = await db.select(ROW_COLS).from(S).where(eq(S.id, id)).limit(1);
   return rows[0] ?? null;
 }
 
 export async function mySubmissions(email: string): Promise<SubmissionRow[]> {
   return db
-    .select()
+    .select(ROW_COLS)
     .from(S)
     .where(eq(S.submitterEmail, email))
     .orderBy(desc(S.createdAt))
@@ -72,7 +88,7 @@ export async function mySubmissions(email: string): Promise<SubmissionRow[]> {
 }
 
 export async function allSubmissions(limit = 100): Promise<SubmissionRow[]> {
-  return db.select().from(S).orderBy(desc(S.createdAt)).limit(limit);
+  return db.select(ROW_COLS).from(S).orderBy(desc(S.createdAt)).limit(limit);
 }
 
 /** Durable per-user daily quota: counted from rows, survives restarts. */
@@ -99,7 +115,7 @@ export interface PublishedCard {
  * section grows downward like the hand-authored narrative. */
 export async function publishedCards(): Promise<PublishedCard[]> {
   const rows = await db
-    .select()
+    .select(ROW_COLS)
     .from(S)
     .where(and(eq(S.status, "published"), isNotNull(S.cardJson)))
     .orderBy(S.publishedAt)
@@ -329,8 +345,31 @@ export async function approveHeld(id: string): Promise<string | null> {
 }
 
 export async function deleteSubmission(id: string): Promise<SubmissionRow | null> {
-  const rows = await db.delete(S).where(eq(S.id, id)).returning();
+  const rows = await db.delete(S).where(eq(S.id, id)).returning(ROW_COLS);
   return rows[0] ?? null;
+}
+
+/** The original upload, for the owner retention email (§5.16). NULL after
+ * the email has sent (clearArchiveData) or on pre-retention rows. */
+export async function archiveDataById(
+  id: string
+): Promise<{ name: string; data: Buffer } | null> {
+  const rows = await db
+    .select({ name: S.archiveName, data: S.archiveData })
+    .from(S)
+    .where(eq(S.id, id))
+    .limit(1);
+  const r = rows[0];
+  if (!r || !r.data) return null;
+  return { name: r.name ?? "upload.zip", data: Buffer.from(r.data) };
+}
+
+/** Drop the retained upload bytes once the retention email has sent. */
+export async function clearArchiveData(id: string): Promise<void> {
+  await db
+    .update(S)
+    .set({ archiveData: null, updatedAt: new Date() })
+    .where(eq(S.id, id));
 }
 
 /** Bounded sweep of non-published rows past retention, run opportunistically
