@@ -19,6 +19,7 @@ import {
   boolean,
   date,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import {
   makeAdminEmailsTable,
@@ -235,6 +236,74 @@ export const governanceMeta = pgTable("governance_meta", {
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+});
+
+// Team work submissions (§5.16): an @xl.net staffer submits a CoWork skill
+// or a Claude Code program zip; an automated editorial panel (3 writers +
+// 3 counterpart critics + synthesis, §5.16) drafts a /work card from the
+// submitted documents and publishes it when the deterministic lint passes.
+// One row carries everything as text columns (governance_projects pattern)
+// so a hard DELETE removes the whole submission. Zip bytes are NEVER stored:
+// only extracted document text, the file manifest, and the produced card.
+// user_id is SET NULL on account deletion (published cards are company
+// content, not private user data; attribution is denormalized below).
+export const workSubmissions = pgTable(
+  "work_submissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    submitterEmail: text("submitter_email").notNull(),
+    // Optional public credit, a validated single first name; NULL = the card
+    // credits "the XL.net team". Never derived from the OAuth profile.
+    submitterName: text("submitter_name"),
+    kind: text("kind").notNull(), // "skill" | "program"
+    title: text("title").notNull(),
+    blurb: text("blurb").notNull(), // submitter's one-paragraph description
+    // received -> running -> published | held | failed (held = panel could
+    // not verify safety/rules; renders nowhere until admin approves).
+    status: text("status").notNull().default("received"),
+    architectureText: text("architecture_text"),
+    skillMdText: text("skill_md_text"),
+    fileManifestJson: text("file_manifest_json"),
+    // The exact files whose text was fed to the panel (the evidence corpus).
+    corpusFilesJson: text("corpus_files_json"),
+    archiveName: text("archive_name"),
+    archiveSha256: text("archive_sha256"),
+    archiveBytes: integer("archive_bytes"),
+    // Panel claim/fence trio + daily runs guard (turn-runner pattern).
+    panelAttemptId: text("panel_attempt_id"),
+    panelStartedAt: timestamp("panel_started_at", { withTimezone: true }),
+    panelHeartbeatAt: timestamp("panel_heartbeat_at", { withTimezone: true }),
+    panelRuns: integer("panel_runs").notNull().default(0),
+    panelRunsDate: date("panel_runs_date"),
+    panelProgressJson: text("panel_progress_json"),
+    panelTranscriptJson: text("panel_transcript_json"), // capped audit trail
+    panelError: text("panel_error"),
+    cardJson: text("card_json"),
+    slug: text("slug"), // "team-<slugified-title>", disjoint from exhibit ids
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("work_sub_user_idx").on(t.userId),
+    index("work_sub_status_idx").on(t.status, t.publishedAt),
+    uniqueIndex("work_sub_slug_uq").on(t.slug),
+  ]
+);
+
+// Daily budget ledger for the submission panel (governance_usage pattern):
+// survives PM2 restarts, checked at run admission and per brain call.
+export const workUsage = pgTable("work_usage", {
+  day: date("day").primaryKey(),
+  brainCalls: integer("brain_calls").notNull().default(0),
+  panelRuns: integer("panel_runs").notNull().default(0),
 });
 
 export const contactSubmissions = pgTable("contact_submissions", {

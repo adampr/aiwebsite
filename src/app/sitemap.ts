@@ -41,9 +41,27 @@ const STATIC_LASTMOD: Record<string, string> = {
 // appear to move.
 const lm = (path: string) => new Date(STATIC_LASTMOD[path]);
 
-const staticEntries = createSitemap(siteConfig, [
+// /work also changes when a team-submitted card publishes (§5.16, no deploy
+// involved), so its lastmod is max(hand-maintained floor, latest publish).
+// A publish IS a real content change, so this does not violate the rule
+// above; the hand date stays the floor (the value can never regress below
+// it or go null), and a DB error falls back to the floor.
+async function workLastmod(): Promise<Date> {
+  const floor = lm("/work");
+  try {
+    const { latestPublishedAt } = await import("@/lib/work/db");
+    const latest = await latestPublishedAt();
+    if (latest && new Date(latest).getTime() > floor.getTime())
+      return new Date(latest);
+  } catch {
+    // fall through to the floor
+  }
+  return floor;
+}
+
+const staticEntries = (workDate: Date) => createSitemap(siteConfig, [
   { path: "/", lastModified: lm("/") },
-  { path: "/work", lastModified: lm("/work") },
+  { path: "/work", lastModified: workDate },
   { path: "/builders", lastModified: lm("/builders") },
   { path: "/governance", lastModified: lm("/governance") },
   { path: "/contact", lastModified: lm("/contact") },
@@ -54,5 +72,8 @@ const staticEntries = createSitemap(siteConfig, [
 ]);
 
 export default async function sitemap() {
-  return [...staticEntries(), ...(await blogSitemapEntries(siteConfig))];
+  return [
+    ...staticEntries(await workLastmod())(),
+    ...(await blogSitemapEntries(siteConfig)),
+  ];
 }

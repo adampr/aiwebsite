@@ -85,3 +85,14 @@ if ! node "$(dirname "$0")/check-jsx-spacing.mjs" --module; then
   echo "check-build-warnings: FAILED — glued JSX text (see above); do not deploy." >&2
   exit 1
 fi
+
+# /work static-snapshot gate (added 2026-07-29, §5.16). The team-submission
+# lint checks title/facet uniqueness against a generated snapshot of the
+# hand-authored /work exhibits; editing a static card without regenerating it
+# (node scripts/work-static-snapshot.mjs --write) would silently stop the
+# uniqueness scan, which is worse than not having one.
+if ! node "$(dirname "$0")/work-static-snapshot.mjs" --check; then
+  echo "" >&2
+  echo "check-build-warnings: FAILED — /work static snapshot drifted (see above); do not deploy." >&2
+  exit 1
+fi

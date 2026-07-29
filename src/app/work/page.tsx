@@ -1,15 +1,23 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { CommunitySection } from "./community";
+
+// Team-submitted cards (§5.16) publish to this page without a deploy, so a
+// hard-coded count in the metadata would go false on the first publish;
+// the description is count-free by rule. ISR keeps the page static-fast
+// while letting publishes appear within minutes (the blog precedent);
+// publish/delete also call revalidatePath as the fast path.
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "Our Work",
   description:
-    "Twenty-four real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+    "Real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, a public AI governance writer, and tools built by the team.",
   alternates: { canonical: "/work" },
   openGraph: {
     title: "Our Work | XL.net AI",
     description:
-      "Twenty-four real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, and a public AI governance writer.",
+      "Real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, a public AI governance writer, and tools built by the team.",
   },
 };
 
@@ -2087,6 +2095,11 @@ export default function WorkPage() {
           </p>
         </section>
       </section>
+
+      {/* Group: team-submitted cards (§5.16). Renders nothing while empty
+          or if the DB read fails; the static exhibits above never depend
+          on it. */}
+      <CommunitySection />
 
       {/* Closing CTA */}
       <section className="beams panel--void relative overflow-hidden text-center">
