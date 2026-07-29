@@ -1971,8 +1971,9 @@ export default function WorkPage() {
             </div>
           </div>
           <p className="mt-8 text-sm">
-            <a href="#kaseya-ap-builder">Kaseya AP Builder</a> writes for a
-            platform that keeps the secrets: license keys and site tokens
+            <a href="#kaseya-ap-builder">Kaseya AP Builder</a>{" "}
+            writes for a platform that keeps the secrets: license keys and
+            site tokens
             stay in Kaseya&apos;s own variable manager and reach the
             procedure at run time. A standalone script has nothing underneath
             it doing that, so the version it was written against, the
@@ -2070,9 +2071,9 @@ export default function WorkPage() {
             </div>
           </div>
           <p className="mt-8 text-sm">
-            <a href="#follow-up-emails">Auto-Draft Follow-Up Emails</a> lands
-            its draft inside the rep&apos;s own Gmail, one review short of a
-            send. This page has no account to land in. The reply sits in the
+            <a href="#follow-up-emails">Auto-Draft Follow-Up Emails</a>{" "}
+            lands its draft inside the rep&apos;s own Gmail, one review short
+            of a send. This page has no account to land in. The reply sits in the
             tab it was assembled in until a technician copies it out, which
             is also what keeps the checklist beside it internal: nothing here
             has a way to reach the customer on its own.

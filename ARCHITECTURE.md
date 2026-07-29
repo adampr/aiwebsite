@@ -15,7 +15,12 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-28 (/work 23rd + 24th exhibits `#script-master`
+Last verified against code: 2026-07-29 (JSX glued-text fix + gate: two `/work` closing
+bridges shipped with the link joined to the next word ("Follow-Up Emailslands"); root
+cause is an SWC whitespace rule documented in §3, fixed with explicit `{" "}`, and now
+enforced by `scripts/check-jsx-spacing.mjs` in the pre-commit hook and `build:check`.
+Five further occurrences live in `@aicompany/core` and need an upstream fix. Previous
+2026-07-28: /work 23rd + 24th exhibits `#script-master`
 (Script Master Claude Skill) and `#ticket-reply-composer` (Ticket Reply Composer,
 a single-file browser app, "built · internal" on a plain `badge`), metadata count
 Twenty-two→Twenty-four, `src/app/sitemap.ts` `/work` lastmod → 2026-07-28 — copy
@@ -547,13 +552,35 @@ eslint-config-next, flat config). `npm run build:check` =
 `scripts/check-build-warnings.sh`: runs the build (or takes an existing log) and fails on
 banned warning markers ("A Node.js module is loaded", "deprecated", "warning while
 optimizing", "Encountered unexpected file in NFT list") — the pre-deploy regression gate
-for exactly the warning classes cleaned up on 2026-07-25. It is run manually (dev box,
+for exactly the warning classes cleaned up on 2026-07-25. Since 2026-07-29 it also runs
+`scripts/check-jsx-spacing.mjs --module` as its last step, failing the gate on the SWC
+glued-text defect (below). It is run manually (dev box,
 before deploy); it is deliberately NOT wired into `deploy/stage-build.sh` (a rendered
 upstream template — host edits there get orphaned by re-renders) or the pre-commit hook.
 Note the NFT marker is currently inert: `next.config.ts` `turbopack.ignoreIssue`
 suppresses that issue class entirely (the flagged path is always `next.config.ts`
 whichever module causes the trace), so coverage returns only when the upstream
 `@aicompany/core` blog.ts fix lands and the ignore rule is removed.
+
+`scripts/check-jsx-spacing.mjs` (added 2026-07-29, after the defect shipped twice):
+guards one SWC compile behaviour that silently corrupts copy. **A JSX text node loses
+ALL of its leading horizontal whitespace if and only if the node contains a newline AND
+contains a decodable HTML entity** (`&name;`, `&#dec;`, `&#xHEX;`) — verified against
+next 16.2.11's own SWC binary via `transformSync`, not inferred from rendered pages. What
+precedes the text is irrelevant: a close tag, a self-closing element and a `{expression}`
+behave identically; trailing whitespace is never affected; a single-line node is safe. So
+`<a …>Auto-Draft Follow-Up Emails</a> lands its draft in the\nrep&apos;s own Gmail` ships
+as "Follow-Up Emailslands", while the same lines without the `&apos;` render correctly —
+which is why review keeps missing it. The fix is an explicit `{" "}` at the boundary.
+The scanner reads STAGED blobs under `--staged` (worktree and index diverge under
+`git add -p`), exits 1 for a finding and 2 when it cannot run, and reports
+`packages/aicompany` hits without gating (those are fixed in the module's own repo). It
+runs as gate 2 of `scripts/git-hooks/pre-commit.local` and as the last step of
+`build:check`; the hook is the fast signal, the build gate is the one the deploy path
+cannot skip. Known upstream occurrences as of 2026-07-29 (live on this host, awaiting a
+module fix): `legal/privacy-page.tsx` 138/143/240/283 and
+`admin/pages/mailbox-client.tsx:95`; `legal/methodology-page.tsx:167` is dead here
+because `/methodology` is a host page.
 No test suite in the parent repo (the module and brain have their own).
 
 ---

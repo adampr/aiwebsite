@@ -73,3 +73,15 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 echo "check-build-warnings: OK — no banned build warnings."
+
+# JSX glued-text gate (added 2026-07-29). The pre-commit hook is the fast local
+# signal, but it is skippable (--no-verify, a clone that never ran `npm install`,
+# an editor that bypasses hooks, a submodule re-pin). This is the gate the deploy
+# path actually runs, so a page whose copy would ship with a link glued to the
+# next word cannot reach production. --module reports @aicompany/core findings
+# without failing: those are fixed in that repo, not here.
+if ! node "$(dirname "$0")/check-jsx-spacing.mjs" --module; then
+  echo "" >&2
+  echo "check-build-warnings: FAILED — glued JSX text (see above); do not deploy." >&2
+  exit 1
+fi

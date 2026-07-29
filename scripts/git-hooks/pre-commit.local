@@ -64,4 +64,34 @@ MSG
   fi
 fi
 
+# 2. JSX glued-text gate: a text node carrying BOTH a newline and an HTML entity
+# silently loses the space separating it from whatever precedes it, so a link and
+# the next word ship joined ("Follow-Up Emailslands"). Shipped twice; the fix is an
+# explicit {" "} at the boundary. Rule and evidence: scripts/check-jsx-spacing.mjs.
+#
+# The scanner reads STAGED blobs, not the worktree, so `git add -p` and
+# stage-then-keep-editing cannot slip a defect past the gate. It exits 1 for a
+# finding and 2 when the check itself cannot run; both block, but only 1 is
+# bypassable, because a check that did not run is not a clean check.
+#
+# Bypass (false positive in the scan ONLY):  JSX_SPACING_OK=1 git commit ...
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '\.tsx$'; then
+  if [ ! -r scripts/check-jsx-spacing.mjs ]; then
+    echo "BLOCKED: scripts/check-jsx-spacing.mjs is missing — the jsx-spacing gate" >&2
+    echo "  cannot run, and a gate that did not run is not a pass. Restore it." >&2
+    exit 1
+  fi
+  node scripts/check-jsx-spacing.mjs --staged >&2
+  jsx_status=$?
+  if [ "$jsx_status" -eq 2 ]; then
+    echo "BLOCKED: the jsx-spacing check could not run (node missing or script error)." >&2
+    echo "  This gate fails closed. Fix the check rather than bypassing it." >&2
+    exit 1
+  fi
+  if [ "$jsx_status" -ne 0 ] && [ -z "${JSX_SPACING_OK:-}" ]; then
+    echo "  Bypass for a false positive only:  JSX_SPACING_OK=1 git commit ..." >&2
+    exit 1
+  fi
+fi
+
 exit 0
