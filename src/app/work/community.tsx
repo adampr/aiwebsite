@@ -5,7 +5,6 @@
 // table renders NOTHING (the 24 hand-authored exhibits are unaffected and
 // the page never breaks on this section's account).
 
-import Link from "next/link";
 import { publishedCards, type PublishedCard } from "@/lib/work/db";
 
 function CommunityCard({ item, index }: { item: PublishedCard; index: number }) {
@@ -72,10 +71,6 @@ export async function CommunitySection() {
       {cards.map((item, i) => (
         <CommunityCard key={item.id} item={item} index={i} />
       ))}
-      <p className="mono text-center text-xs text-faint">
-        On the team and built something?{" "}
-        <Link href="/work/submit">Submit it for review.</Link>
-      </p>
     </section>
   );
 }

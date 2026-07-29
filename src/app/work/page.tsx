@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CommunitySection } from "./community";
+import { StaffSubmitLink } from "./staff-submit-link";
 
 // Team-submitted cards (§5.16) publish to this page without a deploy, so a
 // hard-coded count in the metadata would go false on the first publish;
@@ -2100,6 +2101,10 @@ export default function WorkPage() {
           or if the DB read fails; the static exhibits above never depend
           on it. */}
       <CommunitySection />
+
+      {/* Staff-only submit entry point: client-side session check, invisible
+          to everyone else (§5.16). */}
+      <StaffSubmitLink />
 
       {/* Closing CTA */}
       <section className="beams panel--void relative overflow-hidden text-center">
