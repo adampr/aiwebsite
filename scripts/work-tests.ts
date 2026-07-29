@@ -7,6 +7,7 @@ import JSZip from "jszip";
 import {
   inspectArchive,
   inspectBareMd,
+  mergeSkillCorpus,
   proseLength,
 } from "../src/lib/work/extract";
 import { lintCard, slugForTitle, wordCount } from "../src/lib/work/lint";
@@ -136,6 +137,39 @@ async function main() {
   const bare = inspectBareMd("SKILL.md", Buffer.from(PROSE));
   assert.ok(bare.ok, "bare md accepted");
   assert.ok(!inspectBareMd("SKILL.md", Buffer.from("short")).ok);
+
+  // Two-file CoWork Skill corpus: the standalone SKILL.md leads (slot 0, its
+  // text is the reviewed doc), package texts follow, byte-identical
+  // duplicates of the standalone .md are skipped.
+  const standalone = inspectBareMd("SKILL.md", Buffer.from(PROSE + " standalone edition."));
+  const pkgForMerge = await inspectArchive(
+    await zipOf({
+      "myskill/SKILL.md": PROSE,
+      "myskill/references/notes.md": "Reference notes with enough text to ride along.",
+    }),
+    "skill"
+  );
+  assert.ok(standalone.ok && pkgForMerge.ok);
+  if (standalone.ok && pkgForMerge.ok) {
+    const merged = mergeSkillCorpus(standalone, pkgForMerge);
+    assert.equal(merged[0].path, "SKILL.md", "standalone md leads the corpus");
+    assert.ok(merged[0].text.endsWith("standalone edition."));
+    assert.ok(
+      merged.some((c) => c.path === "myskill/references/notes.md"),
+      "package extras ride along"
+    );
+    // Byte-identical package SKILL.md is deduped when texts match.
+    const identical = inspectBareMd("SKILL.md", Buffer.from(PROSE));
+    assert.ok(identical.ok);
+    if (identical.ok) {
+      const merged2 = mergeSkillCorpus(identical, pkgForMerge);
+      assert.equal(
+        merged2.filter((c) => c.text === identical.docText).length,
+        1,
+        "identical package copy deduped"
+      );
+    }
+  }
 
   // ---- lint ----
   assert.equal(wordCount("one two  three"), 3);

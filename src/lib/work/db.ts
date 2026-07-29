@@ -22,9 +22,14 @@ const S = schema.workSubmissions;
 // Every list/poll/panel read EXCLUDES archive_data (the transient original
 // upload, ≤10 MB): only the retention-email step ever selects it, via
 // archiveDataById().
-const { archiveData: _archiveData, ...ROW_COLS } = getTableColumns(S);
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const { archiveData: _archiveData, mdData: _mdData, ...ROW_COLS } =
+  getTableColumns(S);
 
-export type SubmissionRow = Omit<typeof S.$inferSelect, "archiveData">;
+export type SubmissionRow = Omit<
+  typeof S.$inferSelect,
+  "archiveData" | "mdData"
+>;
 
 export function isUuid(v: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -47,11 +52,17 @@ export async function createSubmission(opts: {
   archiveSha256: string;
   archiveBytes: number;
   archiveData: Buffer;
+  // The standalone SKILL.md (CoWork Skill kind only).
+  md?: { name: string; sha256: string; bytes: number; data: Buffer };
 }): Promise<SubmissionRow> {
   const [row] = await db
     .insert(S)
     .values({
       archiveData: opts.archiveData,
+      mdName: opts.md?.name ?? null,
+      mdSha256: opts.md?.sha256 ?? null,
+      mdBytes: opts.md?.bytes ?? null,
+      mdData: opts.md?.data ?? null,
       userId: opts.userId,
       submitterEmail: opts.email,
       submitterName: opts.name,
@@ -349,26 +360,37 @@ export async function deleteSubmission(id: string): Promise<SubmissionRow | null
   return rows[0] ?? null;
 }
 
-/** The original upload, for the owner retention email (§5.16). NULL after
+/** The original upload(s), for the owner retention email (§5.16): the
+ * package plus, on CoWork Skill rows, the standalone SKILL.md. Empty after
  * the email has sent (clearArchiveData) or on pre-retention rows. */
 export async function archiveDataById(
   id: string
-): Promise<{ name: string; data: Buffer } | null> {
+): Promise<{ name: string; data: Buffer }[]> {
   const rows = await db
-    .select({ name: S.archiveName, data: S.archiveData })
+    .select({
+      name: S.archiveName,
+      data: S.archiveData,
+      mdName: S.mdName,
+      mdData: S.mdData,
+    })
     .from(S)
     .where(eq(S.id, id))
     .limit(1);
   const r = rows[0];
-  if (!r || !r.data) return null;
-  return { name: r.name ?? "upload.zip", data: Buffer.from(r.data) };
+  if (!r) return [];
+  const files: { name: string; data: Buffer }[] = [];
+  if (r.data)
+    files.push({ name: r.name ?? "upload.zip", data: Buffer.from(r.data) });
+  if (r.mdData)
+    files.push({ name: r.mdName ?? "SKILL.md", data: Buffer.from(r.mdData) });
+  return files;
 }
 
 /** Drop the retained upload bytes once the retention email has sent. */
 export async function clearArchiveData(id: string): Promise<void> {
   await db
     .update(S)
-    .set({ archiveData: null, updatedAt: new Date() })
+    .set({ archiveData: null, mdData: null, updatedAt: new Date() })
     .where(eq(S.id, id));
 }
 

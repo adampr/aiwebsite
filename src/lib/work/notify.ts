@@ -4,22 +4,30 @@
 // status page loses nothing.
 
 import { adminRecipient, sendTroyEmail, TROY_FROM } from "@/lib/governance/budget";
+import { KIND_LABELS, type WorkKind } from "./config";
 import { archiveDataById, clearArchiveData, type SubmissionRow } from "./db";
 import type { WorkCard } from "./lint";
+
+function kindLabel(kind: string): string {
+  return KIND_LABELS[kind as WorkKind] ?? kind;
+}
 
 const SITE = "https://ai.xl.net";
 
 /**
- * Owner retention email (§5.16): the original upload (.zip/.skill/.md) as an
- * attachment, sent when the card is successfully posted (auto-publish AND
- * admin approve). Returns true only when Resend accepted it; the caller
- * clears the stored bytes ONLY then, so a failed send keeps the artifact
- * recoverable from the row. 10 MB upload ≈ 13.4 MB base64, inside Resend's
- * 40 MB message cap; timeout is 60 s for the larger payloads.
+ * Owner retention email (§5.16): the original upload(s) as attachments in
+ * ONE email, sent when the card is successfully posted (auto-publish AND
+ * admin approve). CoWork Skill rows carry two files (package + SKILL.md);
+ * program and legacy rows carry one; the body enumerates whatever is
+ * attached, so the same template is truthful for both. Returns true only
+ * when Resend accepted it; the caller clears the stored bytes ONLY then, so
+ * a failed send keeps the artifacts recoverable from the row. Worst case
+ * 10 MB + 1 MB ≈ 14.7 MB base64, inside Resend's 40 MB message cap; timeout
+ * is 60 s for the larger payloads.
  */
 export async function sendArchiveRetentionEmail(
   row: SubmissionRow,
-  archive: { name: string; data: Buffer }
+  files: { name: string; data: Buffer }[]
 ): Promise<boolean> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
@@ -38,25 +46,24 @@ export async function sendArchiveRetentionEmail(
       body: JSON.stringify({
         from: TROY_FROM,
         to: [adminRecipient()],
-        subject: `[aiwebsite] /work submission artifact: ${row.title}`,
+        subject: `[aiwebsite] /work submission files: ${row.title}`,
         text: [
-          `Retention copy of the original upload behind a published /work card.`,
+          `Retention copy of the original files behind a published /work card.`,
           ``,
           `Title: ${row.title}`,
-          `Kind: ${row.kind}`,
+          `Kind: ${kindLabel(row.kind)}`,
           `Submitted by: ${row.submitterEmail}`,
-          `File: ${archive.name} (${archive.data.length} bytes)`,
-          `SHA-256: ${row.archiveSha256 ?? "n/a"}`,
+          ...files.map((f) => `File: ${f.name} (${f.data.length} bytes)`),
+          `Package SHA-256: ${row.archiveSha256 ?? "n/a"}`,
+          ...(row.mdSha256 ? [`SKILL.md SHA-256: ${row.mdSha256}`] : []),
           `Submitted: ${row.createdAt.toISOString()}`,
           ``,
-          `The copy stored on the site row is cleared once this email sends; this attachment is the retained artifact.`,
+          `The stored copies on the site row are cleared once this email sends; the attachments here are the retained originals.`,
         ].join("\n"),
-        attachments: [
-          {
-            filename: archive.name,
-            content: archive.data.toString("base64"),
-          },
-        ],
+        attachments: files.map((f) => ({
+          filename: f.name,
+          content: f.data.toString("base64"),
+        })),
       }),
       signal: AbortSignal.timeout(60_000),
     });
@@ -78,9 +85,9 @@ export async function sendArchiveRetentionEmail(
 export async function deliverArchiveRetention(
   row: SubmissionRow
 ): Promise<void> {
-  const archive = await archiveDataById(row.id);
-  if (!archive) return; // already delivered, or a pre-retention row
-  if (await sendArchiveRetentionEmail(row, archive))
+  const files = await archiveDataById(row.id);
+  if (files.length === 0) return; // already delivered, or a pre-retention row
+  if (await sendArchiveRetentionEmail(row, files))
     await clearArchiveData(row.id);
 }
 
@@ -94,7 +101,7 @@ export async function notifyPublished(
     `A team work submission passed the editorial panel and is published on /work.`,
     ``,
     `Title: ${card.title}`,
-    `Kind: ${row.kind}`,
+    `Kind: ${kindLabel(row.kind)}`,
     `Submitted by: ${row.submitterEmail}`,
     `Card: ${link}`,
     ``,

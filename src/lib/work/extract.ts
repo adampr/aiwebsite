@@ -296,7 +296,31 @@ export async function inspectArchive(
   };
 }
 
-/** A bare .md upload for kind "skill": validated the same way, corpus of one. */
+/**
+ * Corpus for a two-file CoWork Skill submission (§5.16): the standalone
+ * SKILL.md is the reviewed document (slot 0, its text wins as skillMdText),
+ * then the package's text files, skipping byte-identical duplicates of the
+ * standalone .md, up to the total cap. Pure so scripts/work-tests.ts can
+ * exercise it.
+ */
+export function mergeSkillCorpus(
+  mdDoc: ExtractOk,
+  pkg: ExtractOk
+): { path: string; text: string }[] {
+  const corpus: { path: string; text: string }[] = [
+    { path: mdDoc.docPath, text: mdDoc.docText },
+  ];
+  let total = mdDoc.docText.length;
+  for (const f of pkg.corpus) {
+    if (f.text === mdDoc.docText) continue;
+    if (total + f.text.length > WORK_CAPS.corpusTotalMaxChars) continue;
+    corpus.push(f);
+    total += f.text.length;
+  }
+  return corpus;
+}
+
+/** A standalone .md (the Skill's SKILL.md): validated the same way, corpus of one. */
 export function inspectBareMd(
   name: string,
   bytes: Buffer

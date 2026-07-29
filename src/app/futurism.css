@@ -950,3 +950,23 @@ footer li a { display: inline-flex; min-height: 24px; align-items: center; }
   html { scroll-behavior: auto; }
   .rise { opacity: 1 !important; transform: none !important; }
 }
+
+/* ------------------------------------------------------------
+   Team submission dialog (§5.16) — the /work staff-only modal.
+   Native <dialog>: Tailwind's reset does not style the element
+   or its ::backdrop, so the shell lives here.
+   ------------------------------------------------------------ */
+.work-dialog {
+  background: var(--xl-bg-2);
+  color: inherit;
+  border: 1px solid var(--xl-line);
+  padding: var(--sp-8);
+  width: min(calc(100vw - 2rem), 36rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto; /* one scrolling unit; no nested scroll traps on phones */
+  margin: auto; /* native top-layer centering */
+}
+.work-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}

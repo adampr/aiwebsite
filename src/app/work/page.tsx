@@ -47,6 +47,9 @@ export default function WorkPage() {
           a tour of the lab. Tron Netter, in the corner, will answer questions
           about any of it.
         </p>
+        {/* Staff-only submit entry (§5.16): client island, renders only for
+            signed-in @xl.net accounts; opens the submission dialog. */}
+        <StaffSubmitLink variant="top" />
       </section>
 
       <hr className="horizon" />

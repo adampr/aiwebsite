@@ -67,7 +67,7 @@ export const WORK_CAPS = {
  * constant "Built". */
 export const CATEGORY_BADGES = [
   "Claude Skill",
-  "CoWork skill",
+  "CoWork Skill",
   "Internal tool",
   "Browser app",
   "Automation",
@@ -91,6 +91,13 @@ export const BANNED_ADVERBS = [
 ];
 
 export type WorkKind = "skill" | "program";
+
+/** User-facing kind names (owner directive 2026-07-29: "Skill" is a noun and
+ * capitalized; "Code program" is AI-agnostic). DB enum values never change. */
+export const KIND_LABELS: Record<WorkKind, string> = {
+  skill: "CoWork Skill",
+  program: "Code program",
+};
 export function isWorkKind(v: unknown): v is WorkKind {
   return v === "skill" || v === "program";
 }
@@ -128,10 +135,15 @@ export const MISSING_ARCH_DOC_MESSAGE =
   "flows between them, at least a few paragraphs. Add the file and resubmit.";
 
 export const MISSING_SKILL_DOC_MESSAGE =
-  "Your skill package needs its SKILL.md before the panel can review it. " +
-  "Include the SKILL.md at the top level of the package (or upload the .md " +
-  "file directly). It should carry the skill's name, description, and " +
+  "Your Skill package needs its SKILL.md at the top level before the panel " +
+  "can review it. It should carry the Skill's name, description, and " +
   "instructions, at least a few paragraphs. Add the file and resubmit.";
+
+export const MISSING_SKILL_MD_MESSAGE =
+  "A CoWork Skill submission needs both files: the packaged .skill (or .zip) " +
+  "AND its SKILL.md on its own. The .md should carry the Skill's name, " +
+  "description, and instructions, at least a few paragraphs. Attach it and " +
+  "resubmit.";
 
 export const SECRETS_DETECTED_MESSAGE =
   "Your upload contains files that look like credentials, so it was not " +

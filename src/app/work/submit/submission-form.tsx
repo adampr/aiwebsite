@@ -1,0 +1,306 @@
+"use client";
+
+// The one submission form (§5.16), shared by the /work dialog and the
+// /work/submit page so validation and microcopy cannot fork. The client
+// never gates anything: every check here is a convenience copy of a
+// server-enforced rule.
+//
+// context="page": success shows a notice above the form, fields reset, and
+// onSubmitted fires (the page refreshes its status list).
+// context="dialog": success REPLACES the form in place (the dialog stays
+// open so the handoff link is read); state is never reset on dialog close,
+// so a typed draft survives an accidental Esc.
+
+import Link from "next/link";
+import { useRef, useState } from "react";
+
+const QUEUED_NOTICE =
+  "Received. The panel is briefly unavailable; use Retry on your submissions page in a few minutes.";
+const OK_NOTICE =
+  "Received. The panel is reviewing; you will get an email either way.";
+
+interface SubmissionFormProps {
+  context: "page" | "dialog";
+  onSubmitted?: () => void;
+  onBusyChange?: (busy: boolean) => void;
+  onClose?: () => void; // dialog only
+}
+
+export function SubmissionForm({
+  context,
+  onSubmitted,
+  onBusyChange,
+  onClose,
+}: SubmissionFormProps) {
+  const [kind, setKind] = useState<"skill" | "program">("skill");
+  const [title, setTitle] = useState("");
+  const [blurb, setBlurb] = useState("");
+  const [attribution, setAttribution] = useState("");
+  const [pkg, setPkg] = useState<File | null>(null);
+  const [skillMd, setSkillMd] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [serverError, setServerError] = useState<string | null>(null);
+  const [serverPaths, setServerPaths] = useState<string[]>([]);
+  const [done, setDone] = useState<null | { queued: boolean }>(null);
+  const pkgRef = useRef<HTMLInputElement>(null);
+  const mdRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const setBusyBoth = (b: boolean) => {
+    setBusy(b);
+    onBusyChange?.(b);
+  };
+
+  function resetForm() {
+    setTitle("");
+    setBlurb("");
+    setAttribution("");
+    setPkg(null);
+    setSkillMd(null);
+    setFieldErrors({});
+    setServerError(null);
+    setServerPaths([]);
+    if (pkgRef.current) pkgRef.current.value = "";
+    if (mdRef.current) mdRef.current.value = "";
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setServerError(null);
+    setServerPaths([]);
+    const errs: Record<string, string> = {};
+    if (!pkg)
+      errs.pkg =
+        kind === "program"
+          ? "Attach the .zip of your program."
+          : "Attach the Skill package (.skill or .zip).";
+    if (kind === "skill" && !skillMd) errs.skillMd = "Attach the SKILL.md file.";
+    setFieldErrors(errs);
+    if (Object.keys(errs).length > 0) {
+      (errs.pkg ? pkgRef : mdRef).current?.focus();
+      return;
+    }
+    setBusyBoth(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    const timeout = setTimeout(() => ctrl.abort(), 90_000);
+    try {
+      const form = new FormData();
+      form.set("kind", kind);
+      form.set("title", title);
+      form.set("blurb", blurb);
+      form.set("attribution", attribution);
+      form.set("file", pkg as File);
+      if (kind === "skill" && skillMd) form.set("skillMd", skillMd);
+      const res = await fetch("/api/work/submissions", {
+        method: "POST",
+        body: form,
+        signal: ctrl.signal,
+      });
+      const data = (await res.json().catch(() => null)) as {
+        error?: { code?: string; message?: string; paths?: string[] };
+        queued?: string | null;
+      } | null;
+      if (!res.ok) {
+        // Server 422s carry instructional copy; render it verbatim.
+        setServerError(
+          data?.error?.message ?? "Something went wrong. Try again shortly."
+        );
+        setServerPaths(data?.error?.paths ?? []);
+        return;
+      }
+      setDone({ queued: Boolean(data?.queued) });
+      if (context === "page") resetForm();
+      onSubmitted?.();
+    } catch {
+      setServerError(
+        "The upload did not complete. Check your connection and try again; your entries are still here."
+      );
+    } finally {
+      clearTimeout(timeout);
+      abortRef.current = null;
+      setBusyBoth(false);
+    }
+  }
+
+  const inputCls = "w-full rounded-lg border bg-transparent px-3 py-2 text-sm";
+  const inputStyle = { borderColor: "var(--xl-line)" } as const;
+  const labelCls = "mono text-xs uppercase tracking-[0.2em] text-light";
+
+  // Dialog success state replaces the form; the notice carries the handoff.
+  if (done && context === "dialog") {
+    return (
+      <div className="space-y-5">
+        <p className="text-sm" role="status" tabIndex={-1} ref={(el) => el?.focus()}>
+          {done.queued ? QUEUED_NOTICE : OK_NOTICE}
+        </p>
+        <div className="flex flex-wrap gap-4">
+          <Link href="/work/submit" className="btn no-underline">
+            Track it on your submissions page
+          </Link>
+          <button
+            type="button"
+            className="btn btn--text"
+            onClick={() => {
+              setDone(null);
+              resetForm();
+            }}
+          >
+            Submit another
+          </button>
+          {onClose && (
+            <button type="button" className="btn btn--text" onClick={onClose}>
+              Close
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-5">
+      {done && context === "page" && (
+        <p className="text-sm" role="status">
+          {done.queued ? QUEUED_NOTICE : OK_NOTICE}
+        </p>
+      )}
+      <div className="flex gap-4">
+        {(
+          [
+            ["skill", "CoWork Skill"],
+            ["program", "Code program"],
+          ] as const
+        ).map(([value, label]) => (
+          <label key={value} className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              name="kind"
+              checked={kind === value}
+              onChange={() => setKind(value)}
+            />
+            {label}
+          </label>
+        ))}
+      </div>
+      <div>
+        <label className={labelCls}>Title</label>
+        <input
+          className={inputCls}
+          style={inputStyle}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          minLength={4}
+          maxLength={60}
+          required
+          placeholder="What the tool is called"
+        />
+      </div>
+      <div>
+        <label className={labelCls}>One paragraph</label>
+        <textarea
+          className={inputCls}
+          style={inputStyle}
+          value={blurb}
+          onChange={(e) => setBlurb(e.target.value)}
+          minLength={80}
+          maxLength={900}
+          rows={4}
+          required
+          placeholder="What it does, who uses it, what it replaced (80 to 900 characters). Context only: the card's claims come from your documents."
+        />
+      </div>
+      <div>
+        <label className={labelCls}>
+          {kind === "program"
+            ? "Program .zip (must include architecture.md or equivalent)"
+            : "Skill package (.skill or .zip)"}
+        </label>
+        <input
+          ref={pkgRef}
+          type="file"
+          className="mt-2 block w-full text-sm"
+          accept={kind === "program" ? ".zip" : ".skill,.zip"}
+          aria-invalid={Boolean(fieldErrors.pkg)}
+          onChange={(e) => setPkg(e.target.files?.[0] ?? null)}
+        />
+        {fieldErrors.pkg && (
+          <p className="mt-1 text-xs text-red-400">{fieldErrors.pkg}</p>
+        )}
+        <p className="mt-2 text-xs text-faint">
+          {kind === "program"
+            ? "The zip needs an architecture.md (or ARCHITECTURE.md, design.md, or a README.md with an Architecture section) at the top level or one folder deep: what it does, its components, how data flows. Max 10 MB."
+            : "The packaged Skill with SKILL.md at the top level. Max 10 MB."}
+        </p>
+      </div>
+      {kind === "skill" && (
+        <div>
+          <label className={labelCls}>SKILL.md (the Skill&apos;s .md file)</label>
+          <input
+            ref={mdRef}
+            type="file"
+            className="mt-2 block w-full text-sm"
+            accept=".md,.mdx,.markdown"
+            aria-invalid={Boolean(fieldErrors.skillMd)}
+            onChange={(e) => setSkillMd(e.target.files?.[0] ?? null)}
+          />
+          {fieldErrors.skillMd && (
+            <p className="mt-1 text-xs text-red-400">{fieldErrors.skillMd}</p>
+          )}
+          <p className="mt-2 text-xs text-faint">
+            The same SKILL.md on its own, so the panel reads the exact prose.
+            Max 1 MB.
+          </p>
+        </div>
+      )}
+      <p className="text-xs text-faint">
+        Uploads with credential files are rejected. Only document text is
+        kept for review; the original files are emailed to Adam when the card
+        publishes.
+      </p>
+      <div>
+        <label className={labelCls}>Public credit (optional)</label>
+        <input
+          className={inputCls}
+          style={inputStyle}
+          value={attribution}
+          onChange={(e) => setAttribution(e.target.value)}
+          maxLength={20}
+          placeholder="First name only. Empty publishes as the XL.net team."
+        />
+      </div>
+      {serverError && (
+        <div role="alert" className="text-sm text-red-400">
+          <p>{serverError}</p>
+          {serverPaths.length > 0 && (
+            <ul className="mono mt-1 text-xs">
+              {serverPaths.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-4">
+        <button type="submit" className="btn" disabled={busy}>
+          {busy ? "Uploading..." : "Submit for review"}
+        </button>
+        {busy && (
+          <button
+            type="button"
+            className="btn btn--text"
+            onClick={() => abortRef.current?.abort()}
+          >
+            Cancel upload
+          </button>
+        )}
+        {!busy && context === "dialog" && onClose && (
+          <button type="button" className="btn btn--text" onClick={onClose}>
+            Cancel
+          </button>
+        )}
+      </div>
+    </form>
+  );
+}

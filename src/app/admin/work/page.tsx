@@ -8,7 +8,11 @@ import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
 import { allSubmissions } from "@/lib/work/db";
-import { workSubmissionsEnabled } from "@/lib/work/config";
+import {
+  KIND_LABELS,
+  workSubmissionsEnabled,
+  type WorkKind,
+} from "@/lib/work/config";
 import { WorkAdminActions } from "./actions-client";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +46,9 @@ export default async function AdminWorkPage() {
                 <span className="rounded-full border px-2 text-xs">
                   {r.status}
                 </span>
-                <span className="text-faint">{r.kind}</span>
+                <span className="text-faint">
+                  {KIND_LABELS[r.kind as WorkKind] ?? r.kind}
+                </span>
                 <span className="text-faint">{r.submitterEmail}</span>
                 <span className="text-faint">
                   {r.createdAt.toISOString().slice(0, 16).replace("T", " ")}

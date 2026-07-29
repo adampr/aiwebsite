@@ -10,6 +10,7 @@ import {
   isWorkKind,
   MISSING_ARCH_DOC_MESSAGE,
   MISSING_SKILL_DOC_MESSAGE,
+  MISSING_SKILL_MD_MESSAGE,
   WORK_CAPS,
   workSubmissionsEnabled,
 } from "@/lib/work/config";
@@ -19,7 +20,11 @@ import {
   mySubmissions,
   sweepExpiredWork,
 } from "@/lib/work/db";
-import { inspectArchive, inspectBareMd } from "@/lib/work/extract";
+import {
+  inspectArchive,
+  inspectBareMd,
+  mergeSkillCorpus,
+} from "@/lib/work/extract";
 import { okJson, rateLimit, requireXlUser, workError } from "@/lib/work/http";
 import { kickPanel } from "@/lib/work/panel";
 import { statusView } from "@/lib/work/view";
@@ -115,51 +120,67 @@ export async function POST(req: Request): Promise<Response> {
     attribution = rawName;
   }
 
+  // The package: a .zip for a Code program, a .skill/.zip for a CoWork
+  // Skill. A CoWork Skill ALSO requires the standalone SKILL.md (owner
+  // directive: both files, both retained).
   const file = form.get("file");
   if (!(file instanceof File) || file.size === 0)
     return workError(
       "invalid_request",
       kind === "program"
         ? "Attach the .zip of your program."
-        : "Attach the skill package (.skill or .zip) or its .md file.",
+        : "Attach the Skill package (.skill or .zip).",
       400
     );
   const name = file.name || "upload";
-  const lower = name.toLowerCase();
-  const isMd = /\.(md|mdx|markdown)$/.test(lower);
-  const isZip = /\.(zip|skill)$/.test(lower);
-  if (kind === "program" && !isZip)
+  if (!/\.(zip|skill)$/.test(name.toLowerCase()))
     return workError(
       "invalid_request",
-      "A program submission must be a .zip archive.",
+      kind === "program"
+        ? "A Code program submission must be a .zip archive."
+        : "The Skill package must be a .skill or .zip file.",
       400
     );
-  if (kind === "skill" && !isZip && !isMd)
+  if (file.size > WORK_CAPS.uploadMaxBytes)
     return workError(
       "invalid_request",
-      "A skill submission must be a .skill or .zip package, or the skill's .md file.",
-      400
-    );
-  const maxBytes = isMd ? WORK_CAPS.skillMdMaxBytes : WORK_CAPS.uploadMaxBytes;
-  if (file.size > maxBytes)
-    return workError(
-      "invalid_request",
-      `That file is too large (limit ${Math.floor(maxBytes / 1_000_000)} MB).`,
+      `That file is too large (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB).`,
       400
     );
   const bytes = Buffer.from(await file.arrayBuffer());
-  if (bytes.length > maxBytes)
+  if (bytes.length > WORK_CAPS.uploadMaxBytes)
     return workError("invalid_request", "That file is too large.", 400);
-  if (isZip && !(bytes[0] === 0x50 && bytes[1] === 0x4b))
+  if (!(bytes[0] === 0x50 && bytes[1] === 0x4b))
     return workError(
       "invalid_request",
       "That file is not a zip archive. Export a plain .zip and resubmit.",
       400
     );
 
-  const extracted = isMd
-    ? inspectBareMd(name, bytes)
-    : await inspectArchive(bytes, kind);
+  let mdFile: { name: string; bytes: Buffer } | null = null;
+  if (kind === "skill") {
+    const md = form.get("skillMd");
+    if (!(md instanceof File) || md.size === 0)
+      return workError("missing_skill_md", MISSING_SKILL_MD_MESSAGE, 422, {
+        instructions: MISSING_SKILL_MD_MESSAGE,
+      });
+    const mdName = md.name || "SKILL.md";
+    if (!/\.(md|mdx|markdown)$/.test(mdName.toLowerCase()))
+      return workError(
+        "invalid_request",
+        "The Skill's document must be a .md file.",
+        400
+      );
+    if (md.size > WORK_CAPS.skillMdMaxBytes)
+      return workError(
+        "invalid_request",
+        "The SKILL.md is too large (limit 1 MB).",
+        400
+      );
+    mdFile = { name: mdName, bytes: Buffer.from(await md.arrayBuffer()) };
+  }
+
+  const extracted = await inspectArchive(bytes, kind);
   if (!extracted.ok) {
     // Owner requirement: reject and instruct. 422 carries the fix.
     return workError(extracted.code, extracted.message, 422, {
@@ -169,6 +190,28 @@ export async function POST(req: Request): Promise<Response> {
     });
   }
 
+  // The standalone SKILL.md is the reviewed document: its text wins as
+  // skillMdText and leads the corpus (mergeSkillCorpus).
+  let docText = extracted.docText;
+  let corpus = extracted.corpus;
+  let mdMeta: { name: string; sha256: string; bytes: number; data: Buffer } | undefined;
+  if (kind === "skill" && mdFile) {
+    const mdExtract = inspectBareMd(mdFile.name, mdFile.bytes);
+    if (!mdExtract.ok)
+      return workError(mdExtract.code, mdExtract.message, 422, {
+        ...(mdExtract.paths ? { paths: mdExtract.paths } : {}),
+        instructions: MISSING_SKILL_MD_MESSAGE,
+      });
+    docText = mdExtract.docText;
+    corpus = mergeSkillCorpus(mdExtract, extracted);
+    mdMeta = {
+      name: mdFile.name.slice(0, 200),
+      sha256: mdExtract.archiveSha256,
+      bytes: mdFile.bytes.length,
+      data: mdFile.bytes,
+    };
+  }
+
   const row = await createSubmission({
     userId: user.userId,
     email: user.email,
@@ -176,16 +219,17 @@ export async function POST(req: Request): Promise<Response> {
     kind,
     title,
     blurb,
-    architectureText: kind === "program" ? extracted.docText : null,
-    skillMdText: kind === "skill" ? extracted.docText : null,
+    architectureText: kind === "program" ? docText : null,
+    skillMdText: kind === "skill" ? docText : null,
     fileManifestJson: JSON.stringify(extracted.manifest),
-    corpusFilesJson: JSON.stringify(extracted.corpus),
+    corpusFilesJson: JSON.stringify(corpus),
     archiveName: name.slice(0, 200),
     archiveSha256: extracted.archiveSha256,
     archiveBytes: extracted.archiveBytes,
     // Retained until the owner retention email sends on publish (§5.16);
-    // non-published rows drop it with the row.
+    // non-published rows drop them with the row.
     archiveData: bytes,
+    md: mdMeta,
   });
 
   const kicked = await kickPanel(row.id);

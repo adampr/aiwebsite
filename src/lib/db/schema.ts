@@ -287,6 +287,13 @@ export const workSubmissions = pgTable(
     // every artifact that reached the public page. Non-published rows drop
     // it with the row (delete/sweep). ≤10 MB per row, transient.
     archiveData: bytea("archive_data"),
+    // Second original for CoWork Skill submissions (the standalone SKILL.md;
+    // owner directive 2026-07-29: BOTH files are required and retained).
+    // Same lifecycle as archive_data; NULL on program and legacy rows.
+    mdName: text("md_name"),
+    mdSha256: text("md_sha256"),
+    mdBytes: integer("md_bytes"),
+    mdData: bytea("md_data"),
     // Panel claim/fence trio + daily runs guard (turn-runner pattern).
     panelAttemptId: text("panel_attempt_id"),
     panelStartedAt: timestamp("panel_started_at", { withTimezone: true }),

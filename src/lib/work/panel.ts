@@ -267,7 +267,7 @@ async function runPanelInner(
   const evidence = await call(
     "evidence writer",
     `You are the evidence-focused writer on an editorial panel drafting a public showcase card for an internal tool built at XL.net, a Chicago managed-IT firm. ${UNTRUSTED_FRAME}`,
-    `${docs}\n\nSubmission kind: ${row.kind === "skill" ? "CoWork/Claude skill" : "Claude Code program"}. Working title: ${row.title}.\n\nBuild the claims inventory: 8 to 16 entries, each {"claim": one factual sentence about what the tool is or does, "quote": the exact supporting line from the documents}. Only claims a skeptical reader could verify against the quoted line. Then draft {"draftSummary": one paragraph (40-90 words) and "draftBody": [1-2 paragraphs]} using ONLY inventoried claims. Return {"claims": [...], "draftSummary": "...", "draftBody": [...]}.`
+    `${docs}\n\nSubmission kind: ${row.kind === "skill" ? "CoWork Skill" : "Code program"}. Working title: ${row.title}.\n\nBuild the claims inventory: 8 to 16 entries, each {"claim": one factual sentence about what the tool is or does, "quote": the exact supporting line from the documents}. Only claims a skeptical reader could verify against the quoted line. Then draft {"draftSummary": one paragraph (40-90 words) and "draftBody": [1-2 paragraphs]} using ONLY inventoried claims. Return {"claims": [...], "draftSummary": "...", "draftBody": [...]}.`
   );
   if (!evidence) {
     await failPanel(id, attemptId, "evidence writer call failed or over budget");

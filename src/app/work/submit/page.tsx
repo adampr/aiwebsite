@@ -33,10 +33,10 @@ export default async function WorkSubmitPage() {
         </span>
         <h1 className="mt-8">Submit a tool you built</h1>
         <p className="mx-auto mt-6 text-sm">
-          A CoWork skill or a Claude Code program, with the documents to back
-          it. An automated editorial panel drafts a /work card from those
-          documents, argues against it, and publishes only what it can
-          verify. You get an email either way.
+          A CoWork Skill (the .skill package plus its SKILL.md) or a Code
+          program (a .zip with its architecture.md). An automated editorial
+          panel drafts a /work card from those documents, argues against it,
+          and publishes only what it can verify. You get an email either way.
         </p>
       </div>
       {!allowed ? (
