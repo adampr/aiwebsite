@@ -72,7 +72,14 @@ page_check_urls=(
 # on every page pass, ALERT-ONLY — never rebuild-eligible. Tokens are "path"
 # or "path|minBytes". The rebuild-eligible set stays exactly page_check_urls
 # above. The heartbeat gate is consumed in check_freshness.
-synth_pages='/blog|60000 /texting|50000'
+# 2026-07-29: floors LOWERED after experimental.inlineCss was removed from
+# next.config.ts. The old values (60000 / 50000) were calibrated against pages
+# carrying three inlined copies of the Tailwind bundle; with CSS served as an
+# external chunk the same healthy pages are ~4x smaller, so the old floors would
+# have alerted on the fix WORKING. These are deliberately conservative — a floor
+# only has to be above an error stub — and are re-tightened from measured sizes
+# in deploy/synth-inventory.json, which synth-sweep reads from the dev box.
+synth_pages='/blog|27000 /texting|12000'
 synth_heartbeat_enabled='1'
 
 # ── Helpers ──────────────────────────────────────────────────────

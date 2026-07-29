@@ -31,9 +31,17 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  experimental: {
-    inlineCss: true,
-  },
+  // NOTE: experimental.inlineCss was REMOVED 2026-07-29 (growth-portfolio panel
+  // follow-up). It inlined the whole Tailwind bundle into the document — and,
+  // via a Next 16.2.11 defect in getGlobalErrorStyles, THREE times per response
+  // (once as <style>, twice more inside the RSC flight stream). Because this
+  // site's HTML is served no-store, that CSS was re-transferred on every single
+  // view and could never enter the browser cache; as an external chunk it is
+  // immutable/1-year. Measured on itsupportchicago (same stack, same defect):
+  // document 465,569 -> 143,278 B, <h1> byte offset 114,165 -> 7,610.
+  // Do NOT re-add it without re-reading reviews/ in packages/aicompany and
+  // re-running the page-size floors in deploy/synth-inventory.json — those
+  // floors were calibrated against the inflated bytes and had to be lowered.
 };
 
 export default nextConfig;

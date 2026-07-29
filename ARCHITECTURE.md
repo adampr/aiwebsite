@@ -520,7 +520,21 @@ aiwebsite/
 ├── public/                     favicons, brand assets, fx.js (<xl-dust> canvas particles)
 ├── eslint.config.mjs           ESLint 9 flat config: next/core-web-vitals + next/typescript;
 │                               ignores packages/**, drizzle/**, data/** (submodules lint upstream)
-├── next.config.ts              trailingSlash:false; experimental.inlineCss:true;
+├── next.config.ts              trailingSlash:false; NO experimental.inlineCss —
+│                               REMOVED 2026-07-29: it inlined the whole Tailwind
+│                               bundle into the document, and a Next 16.2.11 defect
+│                               in getGlobalErrorStyles (injectedCSS: new Set())
+│                               emitted it THREE times per response (once as
+│                               <style>, twice more in the RSC flight stream). This
+│                               site's HTML is no-store, so that CSS shipped on
+│                               every view and never cached; external chunks are
+│                               immutable/1-year. Measured on itsc (same stack):
+│                               document 465,569->143,278 B, <h1> offset
+│                               114,165->7,610. Re-adding it REQUIRES re-raising the
+│                               deploy/synth-inventory.json + deploy/watchdog.sh
+│                               page-size floors, which were lowered with this
+│                               change (they had been calibrated against the
+│                               inflated bytes, so the repair tripped them);
 │                               transpilePackages:["@aicompany/core"];
 │                               serverExternalPackages:["pdfjs-dist"] (pdf.js loads its
 │                               worker via an import relative to pdf.mjs — bundling it
