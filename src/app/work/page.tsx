@@ -678,10 +678,10 @@ export default function WorkPage() {
       </section>
 
       {/* Group: what we're testing */}
-      <section aria-label="What We're Testing" className="space-y-16">
+      <section aria-label="What We Have Built" className="space-y-16">
         <div className="text-center">
           <span className="sys-label sys-label--center">
-            05 · What We&apos;re Testing
+            05 · What We Have Built
           </span>
         </div>
 
@@ -2098,12 +2098,13 @@ export default function WorkPage() {
             path
           </p>
         </section>
-      </section>
 
-      {/* Group: team-submitted cards (§5.16). Renders nothing while empty
-          or if the DB read fails; the static exhibits above never depend
-          on it. */}
-      <CommunitySection />
+        {/* Team-submitted cards (§5.16) render inside this group (owner
+            directive 2026-07-30: no separate numbered section). Renders
+            nothing while empty or if the DB read fails; the static
+            exhibits above never depend on it. */}
+        <CommunitySection />
+      </section>
 
       {/* Staff-only submit entry point: client-side session check, invisible
           to everyone else (§5.16). */}

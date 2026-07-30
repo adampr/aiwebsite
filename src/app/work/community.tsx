@@ -1,5 +1,8 @@
-// "From the Team" section on /work (§5.16): panel-reviewed cards submitted
-// by XL.net staff, read from Postgres and rendered through this ONE template.
+// Team-submitted cards on /work (§5.16): panel-reviewed cards submitted by
+// XL.net staff, read from Postgres and rendered through this ONE template.
+// They render INSIDE group "05 - What We Have Built" (owner directive
+// 2026-07-30; no separate numbered group), introduced by an unnumbered
+// "From the Team" divider that carries the section-level provenance promise.
 // Every card field is a schema-validated plain string rendered as React text
 // nodes; submitted content has no path to markup. A DB failure or an empty
 // table renders NOTHING (the 24 hand-authored exhibits are unaffected and
@@ -57,10 +60,9 @@ export async function CommunitySection() {
   }
   if (cards.length === 0) return null;
   return (
-    <section aria-label="From the Team" className="space-y-16">
+    <>
       <div className="text-center">
-        <span className="sys-label sys-label--center">06 · From the Team</span>
-        <h2 className="mt-8">Tools our engineers built for their own work</h2>
+        <span className="sys-label sys-label--center">From the Team</span>
         <p className="mx-auto mt-6 max-w-3xl text-sm">
           XL.net staff submit tools they built, with the documents to back
           them. An automated editorial panel drafts each card, argues against
@@ -71,6 +73,6 @@ export async function CommunitySection() {
       {cards.map((item, i) => (
         <CommunityCard key={item.id} item={item} index={i} />
       ))}
-    </section>
+    </>
   );
 }
