@@ -18,6 +18,12 @@ import {
   wordCount,
 } from "../src/lib/work/lint";
 import { friendlyHeldReason } from "../src/lib/work/view";
+import {
+  inferKind,
+  parseSubmissionBody,
+  pickAttachments,
+  titleFromSubject,
+} from "../src/lib/work/email-parse";
 import staticTitles from "../src/lib/work/static-titles.json";
 
 const PROSE = "This tool ingests Autotask ticket exports and produces a scored summary for the service desk. ".repeat(12);
@@ -363,6 +369,80 @@ async function main() {
     "lint failed after repair:\ntitle must be 4-60 characters",
     "unrecognized format falls back to raw"
   );
+
+  // ---- email intake parsers (§5.16 email path) ----
+  assert.equal(titleFromSubject("Re: Fwd: RE:  Ticket Wizard  "), "Ticket Wizard");
+  assert.equal(titleFromSubject("FW[2]: Ticket Wizard"), "Ticket Wizard");
+  assert.equal(titleFromSubject("Ticket\r\nWizard"), "Ticket Wizard", "header injection collapsed");
+
+  const body = parseSubmissionBody(
+    [
+      "Kind: CoWork Skill",
+      "Credit: Adam",
+      "",
+      "This skill turns raw notes into tickets.",
+      "It replaced manual triage.",
+      "-- ",
+      "Adam | XL.net | 555-1212",
+    ].join("\r\n")
+  );
+  assert.equal(body.kind, "skill");
+  assert.equal(body.credit, "Adam");
+  assert.equal(body.kindRaw, null);
+  assert.equal(
+    body.blurb,
+    "This skill turns raw notes into tickets.\nIt replaced manual triage.",
+    "directives lifted, signature stripped"
+  );
+
+  const quoted = parseSubmissionBody(
+    "The description.\nOn Tue, Jul 29, Tron Netter wrote:\n> older text\n> more"
+  );
+  assert.equal(quoted.blurb, "The description.", "quoted history stripped");
+  const wrappedAttribution = parseSubmissionBody(
+    "The description.\nOn Tue, Jul 29, 2026 at 3:14 PM Tron Netter\n<Tron.Netter@ai.xl.net> wrote:\n> older text"
+  );
+  assert.equal(
+    wrappedAttribution.blurb,
+    "The description.",
+    "Gmail hard-wrapped attribution stripped"
+  );
+  assert.ok(
+    parseSubmissionBody(
+      "On Mondays the tool runs a sweep.\nMore of the description."
+    ).blurb.startsWith("On Mondays"),
+    "prose starting with On is kept"
+  );
+  assert.equal(
+    parseSubmissionBody("Desc.\n> quoted first line style").blurb,
+    "Desc.",
+    "bare quote marker stops the body"
+  );
+  assert.equal(
+    parseSubmissionBody("Kind: spreadsheet\nA description.").kindRaw,
+    "spreadsheet",
+    "unknown kind surfaced for the reply"
+  );
+  assert.equal(parseSubmissionBody("kind: code program\nx").kind, "program");
+  assert.equal(
+    parseSubmissionBody("-----Original Message-----\nFrom: someone@xl.net\nold").blurb,
+    "",
+    "outlook top-post separator stops the body"
+  );
+
+  const picked = pickAttachments([
+    { id: "1", filename: "tool.skill", size: 10 },
+    { id: "2", filename: "SKILL.md", size: 10 },
+    { id: "3", filename: "logo.png", size: 10 },
+    { id: "4", filename: null, size: 10 },
+  ]);
+  assert.equal(picked.archives.length, 1);
+  assert.equal(picked.mds.length, 1);
+
+  assert.equal(inferKind("tool.skill", false, null), "skill");
+  assert.equal(inferKind("tool.zip", true, null), "skill");
+  assert.equal(inferKind("tool.zip", false, null), "program");
+  assert.equal(inferKind("tool.skill", true, "program"), "program", "explicit kind wins");
 
   console.log("work-tests: all assertions passed.");
 }

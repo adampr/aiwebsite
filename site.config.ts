@@ -243,13 +243,22 @@ export const siteConfig = defineSiteConfig({
         const { TROY_ADDRESS, handleTroyInbound } = await import(
           "@/lib/governance/approval-inbound"
         );
-        if (!ctx.envelopeRecipients.includes(TROY_ADDRESS)) return "delegate";
-        void handleTroyInbound(ctx.emailId).catch((err: unknown) =>
-          console.log(
-            `[gov-approval] hook dispatch failed: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"}`
-          )
+        if (ctx.envelopeRecipients.includes(TROY_ADDRESS)) {
+          void handleTroyInbound(ctx.emailId).catch((err: unknown) =>
+            console.log(
+              `[gov-approval] hook dispatch failed: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"}`
+            )
+          );
+          return ctx.envelopeRecipients.length === 1 ? "handled" : "delegate";
+        }
+        // §5.16 email intake: staff mail to Tron.Netter carrying an archive
+        // attachment is a work submission; the intake branch claims it so
+        // the module never answers it conversationally. Everything else
+        // (including all non-xl.net mail) delegates to the normal pipeline.
+        const { maybeHandleWorkEmail } = await import(
+          "@/lib/work/email-intake"
         );
-        return ctx.envelopeRecipients.length === 1 ? "handled" : "delegate";
+        return maybeHandleWorkEmail(ctx);
       },
     },
     voice: {

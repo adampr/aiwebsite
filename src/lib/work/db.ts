@@ -42,7 +42,9 @@ export function isUuid(v: string): boolean {
 }
 
 export async function createSubmission(opts: {
-  userId: string;
+  /** Null on the email path (§5.16 email intake): there is no session; the
+   * FK is a best-effort link to a site account when one exists. */
+  userId: string | null;
   email: string;
   name: string | null;
   kind: WorkKind;
@@ -83,6 +85,17 @@ export async function createSubmission(opts: {
     })
     .returning(ROW_COLS);
   return row;
+}
+
+/** Site account for an email-path submitter, when one exists (best-effort
+ * FK linkage; the email path has no session). */
+export async function userIdForEmail(email: string): Promise<string | null> {
+  const rows = await db
+    .select({ id: schema.users.id })
+    .from(schema.users)
+    .where(sql`lower(${schema.users.email}) = ${email.toLowerCase()}`)
+    .limit(1);
+  return rows[0]?.id ?? null;
 }
 
 export async function submissionById(

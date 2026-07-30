@@ -15,7 +15,18 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-30 (latest: module pin v1.40.2 →
+Last verified against code: 2026-07-30 (latest: §5.16 **email intake** — mail
+to Tron.Netter@ai.xl.net from a DKIM-verified @xl.net sender carrying an
+archive attachment (.skill/.zip) is ingested as a team work submission through
+the same pipeline as the site form: new `src/lib/work/email-intake.ts` (hook
+adapter + handler) + `email-parse.ts` (pure parsers, covered by test:work),
+`channels.email.onInbound` in site.config.ts now branches Troy → work intake →
+delegate, `work_submissions.user_id` documented nullable (email path has no
+session; best-effort link via `userIdForEmail`). Trust model is the Troy
+approval-inbound gate applied to any @xl.net sender; unverified mail is
+dropped with a throttled admin WARN and NO reply, verified senders get Tron
+replies mirroring the route's 4xx bodies plus a receipt. No schema, env, or
+route change. Prior same day: module pin v1.40.2 →
 **v1.47.0** (walked MIGRATIONS v1.41.0–v1.47.0: outreach/SEO/attribution
 releases are all non-adopter bare-bumps here — no outreach, no scorecard, no
 recordConversions/aiAgentLog flags; v1.46.0 behavior notes accepted: attrib
@@ -829,7 +840,7 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/tron-netter/chat` | `createChatHandler` · `channels/chat` | §5.1 |
 | `POST /api/tron-netter/sms` | `createSmsHandler(siteConfig, {mountPath: "/api/tron-netter/sms"})` · `channels/sms` | §5.2 |
 | `POST /api/tron-netter/sms/status` | `createSmsStatusHandler` · `channels/sms` | §5.2/§5.12 |
-| `POST /api/webhooks/resend` | `createInboundEmailHandler` · `channels/email` (thin wrapper since v1.6; Troy.Netter@ai.xl.net budget-approval mail routes via `channels.email.onInbound` in site.config.ts — sole-recipient Troy mail is "handled", mixed recipients delegate so Tron still answers) | §5.3/§5.12 |
+| `POST /api/webhooks/resend` | `createInboundEmailHandler` · `channels/email` (thin wrapper since v1.6; `channels.email.onInbound` in site.config.ts routes Troy.Netter@ai.xl.net budget-approval mail — sole-recipient "handled", mixed delegate — then archive-carrying xl.net staff mail to Tron into the §5.16 work-submission email intake) | §5.3/§5.12/§5.16 |
 | `GET /api/account/export` | `createAccountExportHandler` · `account/data` (v1.6; extras: governance projects + contact submissions) | §5.13 |
 | `POST /api/account/delete` | `createAccountDeletionHandler` · `account/data` (v1.6; governance_projects cascade via users FK; beforeDelete removes contact_submissions by email) | §5.13 |
 | `GET /api/auth/google/start` / `GET /auth/google/callback` | `createOAuthStartHandler` / `createOAuthCallbackHandler` · `auth/oauth-google` | §5.5 |
@@ -946,6 +957,14 @@ fail-closed sender-authenticity gate (Authentication-Results parsing → memory 
   50/mailbox per 24 h) and failed sends fall back to the old throttled WARN notice.
   No config set on this host — module defaults (`forwardBlockedSenders: true`,
   `forwardBlockedTo` → alertEmail).
+- **Host `onInbound` hook routing (site.config.ts):** runs after Svix verification and
+  the body fetch, before every module filter. Branch order: (1) envelope recipients
+  include Troy.Netter@ai.xl.net → §5.12 approval handler (sole-recipient "handled",
+  mixed "delegate"); (2) else `maybeHandleWorkEmail` (§5.16 email intake): envelope
+  includes Tron's mailbox + From-address domain is xl.net + ≥1 `.skill`/`.zip`
+  attachment (one `receiving.get` to see attachments — the hook context carries none)
+  → "handled" and the intake handler runs fire-and-forget; (3) everything else
+  delegates to the module pipeline unchanged.
 
 ### 5.4 OAuth (Google + Microsoft), session, logout, health
 
@@ -2871,6 +2890,48 @@ ADMIN_EMAIL as an attachment (`sendArchiveRetentionEmail`, 60 s timeout,
 ≤10 MB ≈ 13.4 MB base64 inside Resend's 40 MB cap) and cleared only on a
 confirmed send; every list/poll/panel query excludes the column (`ROW_COLS`).
 Returns 202 `{id, status, queued}` and kicks the panel.
+
+**Email intake (2026-07-30)** — the second entry point into the SAME pipeline
+(`src/lib/work/email-intake.ts` + pure parsers in `email-parse.ts`, mounted
+from the §5.3 `onInbound` hook). Trigger (attachment shape, owner ruling): an
+inbound to **Tron.Netter@ai.xl.net** whose From-address domain is in
+`WORK_SUBMIT_DOMAINS` and which carries ≥1 `.skill`/`.zip` attachment is
+claimed from the module ("handled" — Tron never answers it conversationally);
+everything else delegates. Sender verification is the §5.12 Troy gate applied
+to ANY @xl.net sender, fail-closed and BEFORE any reply or side effect:
+delivery dedupe (email_id, `work_email_*` keys in governance_meta) → exactly
+ONE direct Authentication-Results header → `parseEmailAuthVerdict`
+DKIM-aligned → DKIM-covered Date fresh → message_id replay dedupe. Unverified
+mail gets NO reply; a throttled admin WARN (1/24h per reason) fires instead.
+Verified senders then hit the route's admission gates in the same order (kill
+switch, in-memory 10 attempts/hr keyed by address, durable daily quota via
+`countCreatedToday` with the admin cap by `isAdmin(email)`, `brainHealthy`),
+and every rejection from here on is a Tron reply (From
+`Tron Netter <Tron.Netter@ai.xl.net>`, threaded via In-Reply-To) carrying the
+route's 4xx copy plus a format reminder; the rate-limited notice and the
+paused notice are themselves throttled to 1/hr/sender (an outbound email is
+not a free 503). Field mapping: subject → title (Re:/Fwd: prefixes
+stripped); plain-text body → blurb after cutting quoted history/signatures
+("-- ", "> ", "On … wrote:" including Gmail's hard-wrapped 2-3 line
+attribution, Outlook dividers) and lifting optional directive
+lines `Kind: CoWork Skill|Code program` (else inferred: `.skill` or a
+standalone `.md` attachment → skill, bare `.zip` → program) and
+`Credit: <first name>` (same validation as the form; never derived from the
+sender — owner ruling). Exactly ONE archive attachment and, for skill, at most
+one `.md` (≤1 MB) are accepted; attachments download via the Resend signed-URL
+endpoint (`emails.receiving.attachments.get`), size-capped before and after,
+zip magic checked, bytes in memory only. From there the path is byte-for-byte
+the route's: duplicate-title guard, `inspectArchive`/`inspectBareMd`/
+`mergeSkillCorpus` with the docMissing rescue and never-rescued hard failures
+(doc-failure replies carry the route's `paths`/`candidatePaths` file lists),
+`createSubmission` (`user_id` = `userIdForEmail(sender)`, nullable — no
+session on this path), unique-index race catch, `kickPanel`, and a receipt
+reply: a running kick promises the publish/held email; a refused kick says
+the panel is briefly unavailable and instructs Retry at /work/submit
+(QUEUED_NOTICE parity — nothing auto-re-kicks a received row). Publish/held
+notifications are the shared notify.ts emails keyed off `submitter_email`.
+Dev boxes without `RESEND_API_KEY` delegate (the module logs the inbound as
+usual).
 
 **Panel job** (`panel.ts`, in-process `after()` like the governance
 turn-runner; no route deadline, claim/fence columns survive PM2 restarts).
