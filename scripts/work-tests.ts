@@ -18,6 +18,7 @@ import {
   wordCount,
 } from "../src/lib/work/lint";
 import { friendlyHeldReason } from "../src/lib/work/view";
+import { isFreshDate } from "../src/lib/governance/approval";
 import {
   inferKind,
   parseSubmissionBody,
@@ -429,6 +430,23 @@ async function main() {
     "",
     "outlook top-post separator stops the body"
   );
+  assert.equal(
+    parseSubmissionBody(
+      "My description of the tool.\n\n---------- Forwarded message ---------\nFrom: Someone <x@xl.net>\nforwarded content"
+    ).blurb,
+    "My description of the tool.",
+    "gmail forwarded-message marker stops the body"
+  );
+
+  // isFreshDate must accept Resend's JSON-quoted ISO Date header (2026-07-30
+  // prod incident: literal quotes in the value parsed as NaN = every real
+  // inbound dropped as stale_or_missing_date).
+  const nowMs = Date.parse("2026-07-30T23:00:00.000Z");
+  assert.ok(isFreshDate('"2026-07-30T22:19:47.000Z"', nowMs), "quoted ISO date accepted");
+  assert.ok(isFreshDate("2026-07-30T22:19:47.000Z", nowMs), "bare ISO date accepted");
+  assert.ok(isFreshDate("Wed, 30 Jul 2026 22:19:47 +0000", nowMs), "RFC 2822 date accepted");
+  assert.ok(!isFreshDate('"2026-07-01T00:00:00.000Z"', nowMs), "stale date still fails");
+  assert.ok(!isFreshDate('"not a date"', nowMs), "garbage still fails");
 
   const picked = pickAttachments([
     { id: "1", filename: "tool.skill", size: 10 },

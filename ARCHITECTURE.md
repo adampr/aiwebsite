@@ -2901,7 +2901,11 @@ everything else delegates. Sender verification is the §5.12 Troy gate applied
 to ANY @xl.net sender, fail-closed and BEFORE any reply or side effect:
 delivery dedupe (email_id, `work_email_*` keys in governance_meta) → exactly
 ONE direct Authentication-Results header → `parseEmailAuthVerdict`
-DKIM-aligned → DKIM-covered Date fresh → message_id replay dedupe. Unverified
+DKIM-aligned → DKIM-covered Date fresh → message_id replay dedupe. NOTE:
+Resend's receiving API re-serializes the Date header as a JSON-quoted ISO
+string (literal quotes in the value); `isFreshDate` strips one layer of
+wrapping quotes before parsing (2026-07-30 prod incident: every real inbound,
+Troy path included, was dropped as stale_or_missing_date until this fix). Unverified
 mail gets NO reply; a throttled admin WARN (1/24h per reason) fires instead.
 Verified senders then hit the route's admission gates in the same order (kill
 switch, in-memory 10 attempts/hr keyed by address, durable daily quota via
@@ -2913,7 +2917,9 @@ paused notice are themselves throttled to 1/hr/sender (an outbound email is
 not a free 503). Field mapping: subject → title (Re:/Fwd: prefixes
 stripped); plain-text body → blurb after cutting quoted history/signatures
 ("-- ", "> ", "On … wrote:" including Gmail's hard-wrapped 2-3 line
-attribution, Outlook dividers) and lifting optional directive
+attribution, Gmail's "---------- Forwarded message ----------" marker,
+Outlook dividers — so a description written above a forwarded skill email
+survives as the blurb) and lifting optional directive
 lines `Kind: CoWork Skill|Code program` (else inferred: `.skill` or a
 standalone `.md` attachment → skill, bare `.zip` → program) and
 `Credit: <first name>` (same validation as the form; never derived from the

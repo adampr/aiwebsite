@@ -171,6 +171,11 @@ export function sanitizeHeaderValue(raw: string, max = 200): string {
  * webhook after the dedupe TTL would otherwise verify cleanly. The Date
  * header is DKIM-covered; missing or older than maxAgeMs (or absurdly in the
  * future) fails closed.
+ *
+ * Resend's receiving API re-serializes the Date header as a JSON-quoted ISO
+ * string (literal quotes IN the value: `"2026-07-30T22:19:47.000Z"`), which
+ * Date.parse rejects; strip one layer of wrapping quotes first (2026-07-30
+ * prod incident: every real inbound died here as stale_or_missing_date).
  */
 export function isFreshDate(
   dateHeader: string | undefined,
@@ -178,7 +183,8 @@ export function isFreshDate(
   maxAgeMs = 48 * 3_600_000
 ): boolean {
   if (!dateHeader) return false;
-  const t = Date.parse(dateHeader);
+  const cleaned = dateHeader.trim().replace(/^"(.*)"$/s, "$1");
+  const t = Date.parse(cleaned);
   if (!Number.isFinite(t)) return false;
   return t <= nowMs + 3_600_000 && nowMs - t <= maxAgeMs;
 }

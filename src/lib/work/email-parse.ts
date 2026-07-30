@@ -85,6 +85,7 @@ export function parseSubmissionBody(raw: string): ParsedBody {
       isQuoteAttribution(lines, i) ||
       /^_{6,}\s*$/.test(line) ||
       /^-{3,}\s*Original Message\s*-{3,}\s*$/i.test(line) ||
+      /^-{4,}\s*Forwarded message\s*-{4,}/i.test(line) ||
       /^From:\s+\S/.test(line)
     )
       break;
