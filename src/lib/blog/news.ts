@@ -337,6 +337,11 @@ const OUTLET_NAMES: Record<string, string> = {
   "finance.yahoo.com": "Yahoo Finance",
   "news.yahoo.com": "Yahoo News",
   "yahoo.com": "Yahoo",
+  // 2026-07-30 (5th fallback recurrence, seen in the Alloyed regenerate):
+  // "News Ycombinator" shipped in live copy. aws.org is the American Welding
+  // Society (exact-host match; Amazon is aws.amazon.com, a different host).
+  "news.ycombinator.com": "Hacker News",
+  "aws.org": "American Welding Society",
 };
 
 /** True when a "Headline - Publisher" title suffix plausibly names the

@@ -1528,7 +1528,9 @@ gates, admin, RSS, sitemap, and the nightly job itself live in
   "Finance Yahoo", 4th recurrence, fixed with wire-distributor entries
   (PR Newswire, Business Wire, GlobeNewswire, ACCESS Newswire, PRWeb,
   EIN Presswire, Newsfile, openPR) plus finance.yahoo.com/news.yahoo.com/
-  yahoo.com) →
+  yahoo.com; same day, 5th recurrence: "News Ycombinator" shipped in the
+  Alloyed regenerate — news.ycombinator.com → "Hacker News" and aws.org →
+  "American Welding Society" added) →
   the "Headline - Publisher" suffix from the source's own Tavily title,
   accepted only when 1-5 Capitalized words AND `suffixNamesHost` ties it
   to the domain (squashed-letters or word-initials match; squash-prefix
