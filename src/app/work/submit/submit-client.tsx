@@ -2,8 +2,10 @@
 
 // /work/submit body (§5.16): the shared <SubmissionForm> plus the "your
 // submissions" status list with a 10 s poll while anything is active. The
-// list (Retry/Withdraw) lives ONLY here: this page is the deep-linkable,
-// emailed home of submission status.
+// list lives ONLY here: this page is the deep-linkable, emailed home of
+// submission status. Retry is available to everyone eligible; Withdraw is
+// ADMIN-ONLY (owner directive 2026-07-30), and non-admins get one footer
+// note naming the removal path instead.
 
 import { useCallback, useEffect, useState } from "react";
 import { HELD_NEXT_STEPS } from "@/lib/work/config";
@@ -30,7 +32,13 @@ const STATUS_COPY: Record<string, string> = {
   failed: "Review failed",
 };
 
-export function SubmitClient({ isAdmin = false }: { isAdmin?: boolean }) {
+export function SubmitClient({
+  isAdmin = false,
+  adminEmail = "adam@xl.net",
+}: {
+  isAdmin?: boolean;
+  adminEmail?: string;
+}) {
   const [rows, setRows] = useState<StatusRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,7 +83,19 @@ export function SubmitClient({ isAdmin = false }: { isAdmin?: boolean }) {
 
   async function withdraw(id: string) {
     if (!confirm("Withdraw this submission? This deletes it entirely.")) return;
-    await fetch(`/api/work/submissions/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/work/submissions/${id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      // A silent no-op button is worse than an error (rate limit, stale
+      // admin render): surface the body like retry() does.
+      const data = (await res.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      setError(data?.error?.message ?? "Withdraw failed.");
+    } else {
+      setError(null);
+    }
     void refresh();
   }
 
@@ -141,16 +161,31 @@ export function SubmitClient({ isAdmin = false }: { isAdmin?: boolean }) {
                     Retry review
                   </button>
                 )}
-                <button
-                  type="button"
-                  className="btn btn--text"
-                  onClick={() => void withdraw(r.id)}
-                >
-                  Withdraw
-                </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="btn btn--text"
+                    onClick={() => void withdraw(r.id)}
+                  >
+                    Withdraw
+                  </button>
+                )}
               </div>
             </div>
           ))}
+          {!isAdmin && (
+            <p className="mt-2 text-xs text-faint">
+              Retry review re-runs the panel on the files already uploaded;
+              it cannot pick up a replacement file. If you submitted the
+              wrong file or need a submission removed, email Adam (
+              {adminEmail}) with the submission title and he will clear it
+              so you can resubmit. A submission already under review keeps
+              running until it is removed, so if the wrong file might
+              publish, email right away; a published card can still be taken
+              down afterward. A submission under a different title does not
+              need to wait.
+            </p>
+          )}
         </div>
       )}
     </div>

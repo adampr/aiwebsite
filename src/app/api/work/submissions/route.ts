@@ -131,7 +131,7 @@ export async function POST(req: Request): Promise<Response> {
     return workError(
       "duplicate_title",
       clash.submitterEmail === user.email
-        ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check its row below; withdraw it first if you want to resubmit.`
+        ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it on your submissions page at /work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
         : `A teammate already has a submission titled "${title}" in review. Pick a different title, or check with them before resubmitting.`,
       409
     );
@@ -295,7 +295,7 @@ export async function POST(req: Request): Promise<Response> {
     if (err instanceof Error && err.message.includes("work_sub_active_title_uq"))
       return workError(
         "duplicate_title",
-        `A submission titled "${title}" is already in the pipeline. Check your submissions list below.`,
+        `A submission titled "${title}" is already in the pipeline. Check your submissions page at /work/submit.`,
         409
       );
     throw err;

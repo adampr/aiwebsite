@@ -97,12 +97,13 @@ export const FIRST_PARTY_NAMES = [
 ];
 
 /** The ONE held-outcome sentence every surface repeats (held-row UI, retry
- * 409, both emails). Three verbs because those are the three real outcomes:
- * approve as-is, admin re-run, delete. */
+ * 409, the submitter held email). Must read true for BOTH audiences:
+ * removal is admin-only (owner directive 2026-07-30), so it describes the
+ * process instead of instructing an action only admins can take. */
 export const HELD_NEXT_STEPS =
   "Adam reviews held cards and will publish the draft, run the review again, " +
-  "or remove it. To change the write-up yourself, withdraw the submission " +
-  "and submit again.";
+  "or remove it. Removing a submission is admin-only, so to change the " +
+  "write-up ask Adam to remove it, then submit the corrected version.";
 
 /** Frequency adverbs are banned in visible card copy (editorial rule 27). */
 export const BANNED_ADVERBS = [

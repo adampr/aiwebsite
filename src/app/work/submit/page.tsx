@@ -56,7 +56,12 @@ export default async function WorkSubmitPage() {
           </p>
         </div>
       ) : (
-        <SubmitClient isAdmin={isAdmin(session.email)} />
+        <SubmitClient
+          isAdmin={isAdmin(session.email)}
+          adminEmail={
+            process.env.ADMIN_EMAIL?.split(",")[0]?.trim() || "adam@xl.net"
+          }
+        />
       )}
     </div>
   );
