@@ -1,11 +1,12 @@
-// POST - re-kick the panel for a received/failed/stale submission (§5.16).
-// Owner-or-admin; the per-submission daily runs cap and every admission
-// guard apply exactly as on first kick.
+// POST - ADMIN-ONLY re-run of a held submission (§5.16, 2026-07-30 panel).
+// A fresh full panel under the current prompts: atomic held -> running claim
+// (fromHeld), all gates apply, the stored draft is discarded in favor of the
+// new run's synthesis. A refused admission leaves the row held, never in a
+// submitter-retryable status.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { after } from "next/server";
-import { HELD_NEXT_STEPS } from "@/lib/work/config";
 import { submissionById } from "@/lib/work/db";
 import { okJson, rateLimit, requireXlUser, workError } from "@/lib/work/http";
 import { kickPanel } from "@/lib/work/panel";
@@ -19,35 +20,25 @@ const QUEUED_COPY: Record<string, string> = {
   busy: "Another review is running. Retry in a few minutes.",
   brain: "The review pipeline is briefly offline. Retry shortly.",
   claim:
-    "This submission cannot be re-run right now (already running, finished, or at its daily retry limit).",
+    "This submission cannot be re-run right now (not held, or at its daily run limit).",
 };
 
 export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   const user = await requireXlUser();
   if (user instanceof Response) return user;
+  if (!user.admin) return workError("forbidden", "Admin only.", 403);
   const { id } = await ctx.params;
-  const limited = rateLimit(`work:retry:${user.userId}`, 60, 5);
+  const limited = rateLimit(`work:rerun:${user.userId}`, 60, 10);
   if (limited) return limited;
   const row = await submissionById(id);
-  if (!row || (row.submitterEmail !== user.email && !user.admin))
-    return workError("not_found", "That submission does not exist.", 404);
-  if (row.status === "published")
+  if (!row) return workError("not_found", "That submission does not exist.", 404);
+  if (row.status !== "held")
     return workError(
       "invalid_request",
-      "This submission is already published.",
+      "Only a held submission can be re-run.",
       409
     );
-  // Once held, ALWAYS held for submitter purposes: heldAt is never cleared,
-  // so a failed admin re-run cannot reopen retry-until-the-critic-blinks.
-  if (!user.admin && (row.status === "held" || row.heldAt))
-    return workError("held", `This submission is held for review. ${HELD_NEXT_STEPS}`, 409);
-  if (row.status === "held")
-    return workError(
-      "invalid_request",
-      "Use the admin re-run action for held submissions.",
-      409
-    );
-  const kicked = await kickPanel(id);
+  const kicked = await kickPanel(id, { fromHeld: true });
   if (kicked.run) {
     after(kicked.run);
     return okJson({ status: "running" });

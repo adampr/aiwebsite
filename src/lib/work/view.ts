@@ -11,9 +11,37 @@ export interface SubmissionStatusView {
   status: string;
   stage: string | null;
   error: string | null;
+  heldReason: string | null;
   slug: string | null;
   stale: boolean;
   createdAt: string;
+}
+
+// Plain-language labels for the machine-written panel_error checklist keys.
+// Falls back to the raw string when the format is unrecognized, so a future
+// panel.ts wording change degrades to raw text, never to nothing.
+const CHECK_LABELS: Record<string, string> = {
+  client_or_served_org_names: "Possible client or company names",
+  client_or_company_names: "Possible client or company names",
+  personal_names: "A person's name",
+  hostnames_or_ips: "Hostnames or IP addresses",
+  credentials_or_key_shaped_strings: "Credential-shaped text",
+  dollar_figures: "Dollar figures",
+  ticket_numbers: "Ticket numbers",
+  email_addresses: "Email addresses",
+  phone_numbers: "Phone numbers",
+};
+
+export function friendlyHeldReason(panelError: string | null): string | null {
+  if (!panelError) return null;
+  const lines = panelError.split("\n").slice(1); // drop the "hit:" header
+  const parsed: string[] = [];
+  for (const line of lines) {
+    const m = line.match(/^([a-z_]+)(?:\s*\([^)]*\))?:\s*(.*)$/);
+    if (!m) return panelError; // unrecognized format: show raw
+    parsed.push(`${CHECK_LABELS[m[1]] ?? m[1]}: ${m[2]}`);
+  }
+  return parsed.length > 0 ? parsed.join("\n") : panelError;
 }
 
 export function statusView(row: SubmissionRow): SubmissionStatusView {
@@ -39,7 +67,9 @@ export function statusView(row: SubmissionRow): SubmissionStatusView {
     kind: row.kind,
     status: row.status,
     stage,
-    error: row.status === "held" || row.status === "failed" ? row.panelError : null,
+    error: row.status === "failed" ? row.panelError : null,
+    heldReason:
+      row.status === "held" ? friendlyHeldReason(row.panelError) : null,
     slug: row.status === "published" ? row.slug : null,
     stale,
     createdAt: row.createdAt.toISOString(),

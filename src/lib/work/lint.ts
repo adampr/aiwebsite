@@ -205,6 +205,29 @@ export function lintCard(raw: unknown, ctx: LintContext): LintResult {
   };
 }
 
+/** True when a disclosure checklist answer means "nothing found". Models
+ * drift on the exact phrase (quotes, trailing period, "None."), and a
+ * drifted no-finding must not become a false hold. */
+export function isNoneFound(answer: string): boolean {
+  const norm = answer
+    .trim()
+    .replace(/^["'`]+|["'`.]+$/g, "")
+    .trim()
+    .toLowerCase();
+  return norm === "" || norm === "none found" || norm === "none";
+}
+
+/** Deterministic check that an adjudication quote actually appears in the
+ * submitted documents (whitespace-normalized, case-insensitive). The model
+ * proposes the clearing evidence; CODE verifies it, so the gate cannot be
+ * talked open by an invented quote. */
+export function quoteInCorpus(quote: string, corpusText: string): boolean {
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  const q = norm(quote);
+  if (q.length < 15) return false; // too short to be real evidence
+  return norm(corpusText).includes(q);
+}
+
 /** team-<slug> namespace guarantees disjointness from hand-authored ids. */
 export function slugForTitle(title: string): string {
   return (

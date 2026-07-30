@@ -304,6 +304,10 @@ export const workSubmissions = pgTable(
     panelTranscriptJson: text("panel_transcript_json"), // capped audit trail
     panelError: text("panel_error"),
     cardJson: text("card_json"),
+    // Set the first time a run holds this row; NEVER cleared. Bars submitter
+    // retry on any once-held submission (a failed admin re-run must not
+    // reopen retry-until-the-critic-blinks; 2026-07-30 panel ruling).
+    heldAt: timestamp("held_at", { withTimezone: true }),
     slug: text("slug"), // "team-<slugified-title>", disjoint from exhibit ids
     publishedAt: timestamp("published_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })

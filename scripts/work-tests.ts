@@ -10,7 +10,14 @@ import {
   mergeSkillCorpus,
   proseLength,
 } from "../src/lib/work/extract";
-import { lintCard, slugForTitle, wordCount } from "../src/lib/work/lint";
+import {
+  isNoneFound,
+  lintCard,
+  quoteInCorpus,
+  slugForTitle,
+  wordCount,
+} from "../src/lib/work/lint";
+import { friendlyHeldReason } from "../src/lib/work/view";
 import staticTitles from "../src/lib/work/static-titles.json";
 
 const PROSE = "This tool ingests Autotask ticket exports and produces a scored summary for the service desk. ".repeat(12);
@@ -224,6 +231,38 @@ async function main() {
 
   const extraKey = { ...goodCard(), statusBadge: "Live" };
   assert.ok(!lintCard(extraKey, ctx).ok, "unknown key rejected");
+
+  // ---- disclosure gate helpers (2026-07-30 calibration round) ----
+  assert.ok(isNoneFound("none found"));
+  assert.ok(isNoneFound(' "None found." '));
+  assert.ok(isNoneFound("None."));
+  assert.ok(isNoneFound(""));
+  assert.ok(!isNoneFound("Kaseya VSA9"));
+
+  const corpus = "The tool reads exports from Kaseya VSA 9 and SentinelOne agents nightly.";
+  assert.ok(
+    quoteInCorpus("reads exports from Kaseya VSA 9 and SentinelOne", corpus),
+    "real quote verifies"
+  );
+  assert.ok(
+    quoteInCorpus("READS   exports from kaseya vsa 9 and sentinelone", corpus),
+    "whitespace/case-insensitive"
+  );
+  assert.ok(!quoteInCorpus("Kaseya is our client", corpus), "invented quote fails");
+  assert.ok(!quoteInCorpus("Kaseya", corpus), "too-short quote fails");
+
+  const friendly = friendlyHeldReason(
+    'disclosure checklist hit:\nclient_or_served_org_names (upheld after adjudication): "Acme Corp"'
+  );
+  assert.ok(
+    friendly?.startsWith("Possible client or company names:"),
+    `friendly label applied: ${friendly}`
+  );
+  assert.equal(
+    friendlyHeldReason("lint failed after repair:\ntitle must be 4-60 characters"),
+    "lint failed after repair:\ntitle must be 4-60 characters",
+    "unrecognized format falls back to raw"
+  );
 
   console.log("work-tests: all assertions passed.");
 }

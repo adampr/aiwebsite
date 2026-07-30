@@ -15,11 +15,15 @@ import {
   workSubmissionsEnabled,
 } from "@/lib/work/config";
 import {
+  activeTitleClash,
   countCreatedToday,
   createSubmission,
   mySubmissions,
+  normalizeTitle,
+  publishedTitleClash,
   sweepExpiredWork,
 } from "@/lib/work/db";
+import staticTitles from "@/lib/work/static-titles.json";
 import {
   inspectArchive,
   inspectBareMd,
@@ -106,6 +110,29 @@ export async function POST(req: Request): Promise<Response> {
       `Description must be ${WORK_CAPS.blurbMinChars} to ${WORK_CAPS.blurbMaxChars} characters: what it does, who uses it, what it replaced.`,
       400
     );
+  // Duplicate-title guard (§5.16, 2026-07-30: the owner triple-submitted the
+  // same tool because nothing stopped him). One public page, one active
+  // submission per title, from anyone; failed rows never block.
+  const norm = normalizeTitle(title);
+  if (
+    staticTitles.titles.some((t: string) => normalizeTitle(t) === norm) ||
+    (await publishedTitleClash(title))
+  )
+    return workError(
+      "duplicate_title",
+      "A published /work card already uses this title. Pick a different title.",
+      409
+    );
+  const clash = await activeTitleClash(title);
+  if (clash)
+    return workError(
+      "duplicate_title",
+      clash.submitterEmail === user.email
+        ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check its row below; withdraw it first if you want to resubmit.`
+        : `A teammate already has a submission titled "${title}" in review. Pick a different title, or check with them before resubmitting.`,
+      409
+    );
+
   // Optional public credit: a single validated first name, never derived
   // from the OAuth profile. Empty = the card credits "the XL.net team".
   const rawName = String(form.get("attribution") ?? "").trim();
@@ -212,7 +239,9 @@ export async function POST(req: Request): Promise<Response> {
     };
   }
 
-  const row = await createSubmission({
+  let row;
+  try {
+    row = await createSubmission({
     userId: user.userId,
     email: user.email,
     name: attribution,
@@ -228,9 +257,20 @@ export async function POST(req: Request): Promise<Response> {
     archiveBytes: extracted.archiveBytes,
     // Retained until the owner retention email sends on publish (§5.16);
     // non-published rows drop them with the row.
-    archiveData: bytes,
-    md: mdMeta,
-  });
+      archiveData: bytes,
+      md: mdMeta,
+    });
+  } catch (err) {
+    // The partial unique index closes the double-click race the pre-check
+    // leaves open; map the violation to the same 409.
+    if (err instanceof Error && err.message.includes("work_sub_active_title_uq"))
+      return workError(
+        "duplicate_title",
+        `A submission titled "${title}" is already in the pipeline. Check your submissions list below.`,
+        409
+      );
+    throw err;
+  }
 
   // The row exists; a kick failure must degrade to "queued", never 500 the
   // submission out from under the user (2026-07-30 incident: a claim-query

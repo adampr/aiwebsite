@@ -7,6 +7,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { readSession } from "@aicompany/core/auth/session";
+import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
 import { workSubmissionsEnabled } from "@/lib/work/config";
 import { WORK_SUBMIT_DOMAINS } from "@/lib/work/http";
@@ -55,7 +56,7 @@ export default async function WorkSubmitPage() {
           </p>
         </div>
       ) : (
-        <SubmitClient />
+        <SubmitClient isAdmin={isAdmin(session.email)} />
       )}
     </div>
   );

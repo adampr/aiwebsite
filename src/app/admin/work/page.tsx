@@ -39,6 +39,7 @@ export default async function AdminWorkPage() {
           {rows.map((r) => (
             <div
               key={r.id}
+              id={`sub-${r.id}`}
               className="rounded-lg border border-[var(--xl-line,#333)] p-4 text-sm"
             >
               <div className="flex flex-wrap items-center gap-3">

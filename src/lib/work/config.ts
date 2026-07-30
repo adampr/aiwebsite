@@ -79,6 +79,28 @@ export const CATEGORY_BADGES = [
   "Documentation tool",
 ] as const;
 
+/** First-party names the disclosure critic must never flag (2026-07-30
+ * calibration: the pipeline held its own badge vocabulary and the owner's
+ * own offering name). Add here when XL.net ships a new named offering; the
+ * list is interpolated into the disclosure prompt. */
+export const FIRST_PARTY_NAMES = [
+  "XL.net",
+  "Secure+",
+  "Anthropic",
+  "Claude",
+  "Claude Skill",
+  "CoWork Skill",
+  "Claude Code",
+];
+
+/** The ONE held-outcome sentence every surface repeats (held-row UI, retry
+ * 409, both emails). Three verbs because those are the three real outcomes:
+ * approve as-is, admin re-run, delete. */
+export const HELD_NEXT_STEPS =
+  "Adam reviews held cards and will publish the draft, run the review again, " +
+  "or remove it. To change the write-up yourself, withdraw the submission " +
+  "and submit again.";
+
 /** Frequency adverbs are banned in visible card copy (editorial rule 27). */
 export const BANNED_ADVERBS = [
   "always",

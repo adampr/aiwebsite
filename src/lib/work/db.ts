@@ -213,14 +213,28 @@ export async function anotherPanelRunning(exceptId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-/** Atomic claim: only an unclaimed (or stale-claimed) non-terminal row can be
- * claimed; bumps the per-submission daily runs counter. */
+/** Atomic claim: only an unclaimed (or stale-claimed) non-terminal row can
+ * be claimed; bumps the per-submission daily runs counter. fromHeld is the
+ * admin re-run path ONLY: it claims a held row directly (held -> running,
+ * heartbeat staleness ignored since a held row has no live worker), so a
+ * refused admission never strands the row in a submitter-retryable status. */
 export async function claimPanel(
   id: string,
-  attemptId: string
+  attemptId: string,
+  opts?: { fromHeld?: boolean }
 ): Promise<boolean> {
   const staleBefore = new Date(Date.now() - WORK_CAPS.panelStaleMs);
   const today = new Date().toISOString().slice(0, 10);
+  const gate = opts?.fromHeld
+    ? and(eq(S.id, id), eq(S.status, "held"))
+    : and(
+        eq(S.id, id),
+        inArray(S.status, ["received", "failed", "running"]),
+        // Typed operators, NOT raw sql fragments: a Date inside sql`` skips
+        // drizzle's column mapping and crashes postgres.js (prod incident
+        // 2026-07-30, the first authenticated submit 500'd here).
+        or(isNull(S.panelHeartbeatAt), lt(S.panelHeartbeatAt, staleBefore))
+      );
   const res = await db
     .update(S)
     .set({
@@ -235,12 +249,7 @@ export async function claimPanel(
     })
     .where(
       and(
-        eq(S.id, id),
-        inArray(S.status, ["received", "failed", "running"]),
-        // Typed operators, NOT raw sql fragments: a Date inside sql`` skips
-        // drizzle's column mapping and crashes postgres.js (prod incident
-        // 2026-07-30, the first authenticated submit 500'd here).
-        or(isNull(S.panelHeartbeatAt), lt(S.panelHeartbeatAt, staleBefore)),
+        gate,
         or(
           sql`${S.panelRunsDate} IS DISTINCT FROM ${today}`,
           lt(S.panelRuns, WORK_CAPS.panelRunsPerSubmissionPerDay)
@@ -318,6 +327,7 @@ export async function finishHeld(
     .update(S)
     .set({
       status: "held",
+      heldAt: new Date(), // never cleared: bars submitter retry for good
       cardJson: draftCard ? JSON.stringify(draftCard) : null,
       panelError: reason.slice(0, 4000),
       panelTranscriptJson: transcriptJson.slice(
@@ -412,9 +422,11 @@ export async function clearArchiveData(id: string): Promise<void> {
     .where(eq(S.id, id));
 }
 
-/** Bounded sweep of non-published rows past retention, run opportunistically
- * from list/create requests (the governance sweepExpiredGlobal pattern; no
- * cron, no template-managed script edits). */
+/** Bounded sweep of expired rows, run opportunistically from list/create
+ * requests (the governance sweepExpiredGlobal pattern; no cron, no
+ * template-managed script edits). HELD rows are exempt: a held row is the
+ * admin's action queue and carries the only copy of the draft plus the
+ * retained originals; sweeping it would silently destroy both. */
 export async function sweepExpiredWork(limit = 25): Promise<number> {
   // ISO string, not a Date: raw sql`` params bypass drizzle's type mapping.
   const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
@@ -422,12 +434,54 @@ export async function sweepExpiredWork(limit = 25): Promise<number> {
     DELETE FROM work_submissions
     WHERE id IN (
       SELECT id FROM work_submissions
-      WHERE status <> 'published' AND updated_at < ${cutoff}
+      WHERE status NOT IN ('published', 'held') AND updated_at < ${cutoff}
       LIMIT ${limit}
     )
     RETURNING id
   `);
   return (res as unknown as unknown[]).length;
+}
+
+// ---- Duplicate-title guard (§5.16, 2026-07-30) ----
+
+/** Same normalization as the partial unique index in migration 0025. */
+export function normalizeTitle(title: string): string {
+  return title.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** An active (received/running/held) row from ANY submitter whose normalized
+ * title matches; /work is one public page, a duplicate is a duplicate. */
+export async function activeTitleClash(
+  title: string
+): Promise<{ id: string; submitterEmail: string; status: string } | null> {
+  const norm = normalizeTitle(title);
+  const rows = await db
+    .select({ id: S.id, submitterEmail: S.submitterEmail, status: S.status })
+    .from(S)
+    .where(
+      and(
+        inArray(S.status, ["received", "running", "held"]),
+        sql`lower(btrim(regexp_replace(${S.title}, '\s+', ' ', 'g'))) = ${norm}`
+      )
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/** A published community card already using this title. */
+export async function publishedTitleClash(title: string): Promise<boolean> {
+  const norm = normalizeTitle(title);
+  const rows = await db
+    .select({ id: S.id })
+    .from(S)
+    .where(
+      and(
+        eq(S.status, "published"),
+        sql`lower(btrim(regexp_replace(${S.title}, '\s+', ' ', 'g'))) = ${norm}`
+      )
+    )
+    .limit(1);
+  return rows.length > 0;
 }
 
 // ---- Daily budget ledger (work_usage) ----
@@ -456,6 +510,16 @@ export async function readTodayWorkUsage(): Promise<{
     brainCalls: rows[0]?.brainCalls ?? 0,
     panelRuns: rows[0]?.panelRuns ?? 0,
   };
+}
+
+/** Refund one panel run when admission fails after the spend (busy/claim
+ * refusals must not burn global budget; floor at 0). */
+export async function refundWorkRun(): Promise<void> {
+  await db.execute(sql`
+    UPDATE work_usage
+    SET panel_runs = GREATEST(panel_runs - 1, 0)
+    WHERE day = ${new Date().toISOString().slice(0, 10)}
+  `);
 }
 
 export async function trySpendWork(

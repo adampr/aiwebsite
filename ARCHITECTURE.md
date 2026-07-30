@@ -15,7 +15,34 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-30 (latest: blog peg-score press-release
+Last verified against code: 2026-07-30 (latest: §5.16 disclosure calibration +
+held workflow, panel round 4 (calibration + workflow specialists, counterpart
+critics; trigger = all three first real submissions held on vendor-name false
+positives, and the owner could not find his review queue): (1) the disclosure
+critic now runs on the SYNTHESIS output (what actually publishes), its
+org-names item is role-based (organizations XL.net SERVES are hits; commercial
+products/platforms the tool operates on are publishable, the 24-exhibit
+precedent), `FIRST_PARTY_NAMES` (config.ts) are never hits, and org-name hits
+get ONE adjudication call whose clearing quotes are verified IN CODE against
+the submitted docs (`quoteInCorpus`; unverifiable = upheld = held, fail
+closed); checklist answers are normalized (`isNoneFound`) so "None." is not a
+false hold. Worst case now 9 calls, still under the 10-call reservation.
+(2) Held workflow: new `held_at` column (migration 0025, NEVER cleared) bars
+submitter retry on any once-held row; admin-only `POST .../rerun` re-runs a
+held row via an atomic held→running claim (`claimPanel {fromHeld}`) so refused
+admissions never strand a retryable status, and kickPanel refunds the global
+panel_run on busy/claim refusals; held rows are EXEMPT from the 30-day sweep
+(they carry the only draft + retained originals); held-row UI shows a parsed
+plain-language reason + the shared `HELD_NEXT_STEPS` copy + an admin-only
+"Review in the admin queue" link to `/admin/work#sub-<id>`; the owner held
+email leads with that link ("Action needed" subject) and the submitter held
+email is skipped when submitter == ADMIN_EMAIL. (3) Duplicate-title guard:
+one active (received/running/held) submission per normalized title site-wide
++ static-exhibit + published-title checks at POST, backed by a partial unique
+expression index (migration 0025, HAND-ADDED SQL, self-clearing: deletes all
+but the oldest active row per title before building, which disposed of the
+owner's duplicate rows).
+Previous same day: blog peg-score press-release
 demotion (`-wire`/`-pr-speak`, url-aware pegScore) + OUTLET_NAMES wire/Yahoo
 entries + styleGuide disclosure-wording fix (the "I am an AI" mandate collided
 with the module prompt-leak scan; §5.11) + module pin v1.40.2 (regen re-gate

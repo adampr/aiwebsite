@@ -6,6 +6,7 @@
 // emailed home of submission status.
 
 import { useCallback, useEffect, useState } from "react";
+import { HELD_NEXT_STEPS } from "@/lib/work/config";
 import { SubmissionForm } from "./submission-form";
 
 interface StatusRow {
@@ -15,6 +16,7 @@ interface StatusRow {
   status: string;
   stage: string | null;
   error: string | null;
+  heldReason: string | null;
   slug: string | null;
   stale: boolean;
   createdAt: string;
@@ -24,11 +26,11 @@ const STATUS_COPY: Record<string, string> = {
   received: "Queued for review",
   running: "Panel reviewing",
   published: "Published",
-  held: "Held for a human look",
+  held: "Held for review",
   failed: "Review failed",
 };
 
-export function SubmitClient() {
+export function SubmitClient({ isAdmin = false }: { isAdmin?: boolean }) {
   const [rows, setRows] = useState<StatusRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,6 +109,24 @@ export function SubmitClient() {
                   <a href={`/work#${r.slug}`}>the Our Work page</a> (allow up
                   to 5 minutes).
                 </p>
+              )}
+              {r.status === "held" && (
+                <div className="mt-1 space-y-1">
+                  {r.heldReason && (
+                    <p className="mono whitespace-pre-wrap text-xs text-faint">
+                      {r.heldReason}
+                    </p>
+                  )}
+                  <p className="text-faint">{HELD_NEXT_STEPS}</p>
+                  {isAdmin && (
+                    <a
+                      href={`/admin/work#sub-${r.id}`}
+                      className="btn btn--text no-underline"
+                    >
+                      Review in the admin queue
+                    </a>
+                  )}
+                </div>
               )}
               {r.error && <p className="mt-1 text-faint">{r.error}</p>}
               <div className="mt-2 flex gap-4">

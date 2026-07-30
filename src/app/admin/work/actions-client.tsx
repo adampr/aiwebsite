@@ -41,20 +41,36 @@ export function WorkAdminActions({
   return (
     <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
       {status === "held" && (
-        <button
-          type="button"
-          disabled={busy}
-          className="rounded border px-2 py-1"
-          onClick={() =>
-            void act(
-              `/api/work/submissions/${id}/approve`,
-              "POST",
-              "Publish this held card as-is?"
-            )
-          }
-        >
-          Approve as-is
-        </button>
+        <>
+          <button
+            type="button"
+            disabled={busy}
+            className="rounded border px-2 py-1"
+            onClick={() =>
+              void act(
+                `/api/work/submissions/${id}/approve`,
+                "POST",
+                "Publish this held card as-is?"
+              )
+            }
+          >
+            Approve as-is
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            className="rounded border px-2 py-1"
+            onClick={() =>
+              void act(
+                `/api/work/submissions/${id}/rerun`,
+                "POST",
+                "Run the full panel again on this submission?"
+              )
+            }
+          >
+            Run the panel again
+          </button>
+        </>
       )}
       {(status === "failed" || status === "received") && (
         <button

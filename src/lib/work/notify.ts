@@ -4,7 +4,7 @@
 // status page loses nothing.
 
 import { adminRecipient, sendTroyEmail, TROY_FROM } from "@/lib/governance/budget";
-import { KIND_LABELS, type WorkKind } from "./config";
+import { HELD_NEXT_STEPS, KIND_LABELS, type WorkKind } from "./config";
 import { archiveDataById, clearArchiveData, type SubmissionRow } from "./db";
 import type { WorkCard } from "./lint";
 
@@ -125,8 +125,10 @@ export async function notifyHeld(
   draft: unknown
 ): Promise<void> {
   await sendTroyEmail({
-    subject: `[aiwebsite] /work submission held: ${row.title}`,
+    subject: `[aiwebsite] Action needed: /work submission held: ${row.title}`,
     text: [
+      `Review it at ${SITE}/admin/work#sub-${row.id} (approve as-is, run the panel again, or delete).`,
+      ``,
       `The editorial panel held a team work submission for a human decision.`,
       ``,
       `Title: ${row.title}`,
@@ -137,13 +139,24 @@ export async function notifyHeld(
       ``,
       `Draft card JSON:`,
       JSON.stringify(draft, null, 2).slice(0, 6000),
-      ``,
-      `Review at ${SITE}/admin/work (approve as-is or delete).`,
     ].join("\n"),
   });
+  // The owner reviewing his own submission does not need the colleague-
+  // voiced second email (the first real submitter WAS the owner).
+  if (row.submitterEmail.toLowerCase() === adminRecipient().toLowerCase())
+    return;
   await sendTroyEmail({
     to: row.submitterEmail,
-    subject: `Your /work submission needs a human look: ${row.title}`,
-    text: `The editorial panel held your card instead of publishing it. Adam has the draft and the panel notes and will follow up by email.`,
+    subject: `[aiwebsite] Your /work card is held for review: ${row.title}`,
+    text: [
+      `The editorial panel held your card instead of publishing it.`,
+      ``,
+      `Reason:`,
+      reason,
+      ``,
+      HELD_NEXT_STEPS,
+      ``,
+      `Your submissions: ${SITE}/work/submit`,
+    ].join("\n"),
   });
 }
