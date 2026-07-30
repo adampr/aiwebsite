@@ -28,7 +28,9 @@ export const WORK_CAPS = {
   // Quotas. Per-user submissions/day is counted from work_submissions rows
   // (durable across restarts); the attempts limiter is in-memory CPU
   // protection only.
-  submissionsPerUserPerDay: 2,
+  // Owner directive 2026-07-30: 20/day, and failed submissions do not count
+  // (enforced in countCreatedToday).
+  submissionsPerUserPerDay: 20,
   uploadAttemptsPerUserPerHour: 10,
   panelRunsPerSubmissionPerDay: 3,
   // Global daily budgets (work_usage ledger). A run is admitted only when

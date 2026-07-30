@@ -970,3 +970,130 @@ footer li a { display: inline-flex; min-height: 24px; align-items: center; }
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(2px);
 }
+
+/* /work staff entry chip (§5.16) — bordered utility strip so the
+   session-gated line reads as a control, not a stray caption. */
+.staff-bar {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2) var(--sp-4);
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  background: var(--xl-bg-1);
+  border: 1px solid var(--xl-line);
+  padding: var(--sp-3) var(--sp-6);
+  transition: border-color var(--dur-med) var(--ease-drift);
+}
+.staff-bar:hover { border-color: var(--xl-line-bright); }
+/* Links carry ink + underline (non-color cue); 24px rows on pointer
+   devices, 44px tap height on touch. */
+.staff-bar a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  color: var(--xl-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--xl-light-dim);
+  transition: color var(--dur-fast) var(--ease-drift);
+}
+.staff-bar a:hover { color: var(--xl-light); text-decoration-color: var(--xl-light); }
+@media (pointer: coarse) {
+  .staff-bar a { min-height: 44px; }
+}
+
+/* Submission form file affordance (§5.16) — full-width bordered click
+   target; the <label> wraps the visually hidden native input so click,
+   keyboard, and AT semantics stay native. Background is bg-0 by ruling:
+   both mount shells (.work-dialog, .panel--raised) are bg-2, so a bg-2
+   fill would be invisible; bg-0 reads as a sunken well in both themes. */
+.file-drop {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 100%;
+  min-height: 3.5rem;
+  padding: var(--sp-4) var(--sp-6);
+  background: var(--xl-bg-0);
+  border: 1px solid var(--xl-line-bright);
+  cursor: pointer;
+  transition: border-color var(--dur-med) var(--ease-drift),
+              box-shadow var(--dur-med) var(--ease-drift);
+}
+.file-drop:hover {
+  border-color: var(--xl-light);
+  box-shadow: 0 0 20px var(--xl-light-glow);
+}
+/* Visually hidden, still focusable (never display:none). */
+.file-drop > input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* Focus ring on the styled surface. :focus-within is the baseline; where
+   :has() exists, tighten to focus-visible so mouse clicks don't strand a
+   ring. */
+.file-drop:focus-within {
+  outline: 2px solid var(--xl-light-dim);
+  outline-offset: 2px;
+}
+@supports selector(:has(*)) {
+  .file-drop:focus-within { outline: none; }
+  .file-drop:has(input:focus-visible) {
+    outline: 2px solid var(--xl-light-dim);
+    outline-offset: 2px;
+  }
+}
+/* Programmatic validation focus lands on the hidden input without
+   :focus-visible; error+focus always paints a ring (WCAG 2.4.7). */
+.file-drop--error:focus-within {
+  outline: 2px solid var(--xl-danger);
+  outline-offset: 2px;
+}
+.file-drop-glyph {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  color: var(--xl-light-dim);
+  flex-shrink: 0;
+  transition: color var(--dur-fast) var(--ease-drift);
+}
+.file-drop:hover .file-drop-glyph { color: var(--xl-light); }
+.file-drop--filled .file-drop-glyph,
+.file-drop--filled:hover .file-drop-glyph { color: var(--xl-ok); }
+.file-drop-cta {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--xl-text);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color var(--dur-fast) var(--ease-drift);
+}
+.file-drop:hover .file-drop-cta { color: var(--xl-light); }
+.file-drop-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--xl-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-drop--error,
+.file-drop--error:hover {
+  border-color: var(--xl-danger);
+  box-shadow: none;
+}

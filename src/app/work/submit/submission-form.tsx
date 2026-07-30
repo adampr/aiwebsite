@@ -12,7 +12,7 @@
 // so a typed draft survives an accidental Esc.
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 
 const QUEUED_NOTICE =
   "Received. The panel is briefly unavailable; use Retry on your submissions page in a few minutes.";
@@ -46,6 +46,29 @@ export function SubmissionForm({
   const pkgRef = useRef<HTMLInputElement>(null);
   const mdRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const uid = useId();
+
+  // A landed file clears that field's error immediately (a red border with
+  // a green check until the next submit is a contradiction; design-critic
+  // ruling 2026-07-30).
+  const takePkg = (f: File | null) => {
+    setPkg(f);
+    if (f)
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next.pkg;
+        return next;
+      });
+  };
+  const takeMd = (f: File | null) => {
+    setSkillMd(f);
+    if (f)
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next.skillMd;
+        return next;
+      });
+  };
 
   const setBusyBoth = (b: boolean) => {
     setBusy(b);
@@ -212,23 +235,65 @@ export function SubmissionForm({
         />
       </div>
       <div>
-        <label className={labelCls}>
+        <span id={`${uid}-pkg-label`} className={labelCls}>
           {kind === "program"
             ? "Program .zip (must include architecture.md or equivalent)"
             : "Skill package (.skill or .zip)"}
+        </span>
+        <label
+          className={
+            "file-drop mt-2" +
+            (fieldErrors.pkg ? " file-drop--error" : "") +
+            (pkg ? " file-drop--filled" : "")
+          }
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            // The bordered zone invites drops; an unhandled drop would
+            // navigate the browser away and destroy the draft.
+            e.preventDefault();
+            const files = e.dataTransfer.files;
+            if (files?.length && pkgRef.current) {
+              pkgRef.current.files = files;
+              takePkg(files[0]);
+            }
+          }}
+        >
+          <input
+            ref={pkgRef}
+            type="file"
+            accept={kind === "program" ? ".zip" : ".skill,.zip"}
+            aria-labelledby={`${uid}-pkg-label`}
+            aria-describedby={
+              fieldErrors.pkg
+                ? `${uid}-pkg-error ${uid}-pkg-help`
+                : `${uid}-pkg-help`
+            }
+            aria-invalid={Boolean(fieldErrors.pkg)}
+            onChange={(e) => takePkg(e.target.files?.[0] ?? null)}
+          />
+          <span className="file-drop-glyph" aria-hidden="true">
+            {pkg ? "✓" : "+"}
+          </span>
+          {pkg ? (
+            <>
+              <span className="file-drop-name">{pkg.name}</span>
+              <span className="file-drop-cta">Replace</span>
+            </>
+          ) : (
+            <>
+              <span className="file-drop-cta">Choose file</span>
+              <span className="mono text-xs text-faint">
+                {kind === "program" ? ".zip" : ".skill or .zip"}
+              </span>
+            </>
+          )}
         </label>
-        <input
-          ref={pkgRef}
-          type="file"
-          className="mt-2 block w-full text-sm"
-          accept={kind === "program" ? ".zip" : ".skill,.zip"}
-          aria-invalid={Boolean(fieldErrors.pkg)}
-          onChange={(e) => setPkg(e.target.files?.[0] ?? null)}
-        />
         {fieldErrors.pkg && (
-          <p className="mt-1 text-xs text-red-400">{fieldErrors.pkg}</p>
+          <p id={`${uid}-pkg-error`} className="mt-1 text-xs text-red-400">
+            {fieldErrors.pkg}
+          </p>
         )}
-        <p className="mt-2 text-xs text-faint">
+        <p id={`${uid}-pkg-help`} className="mt-2 text-xs text-faint">
           {kind === "program"
             ? "The zip needs an architecture.md (or ARCHITECTURE.md, design.md, or a README.md with an Architecture section) at the top level or one folder deep: what it does, its components, how data flows. Max 10 MB."
             : "The packaged Skill with SKILL.md at the top level. Max 10 MB."}
@@ -236,19 +301,59 @@ export function SubmissionForm({
       </div>
       {kind === "skill" && (
         <div>
-          <label className={labelCls}>SKILL.md (the Skill&apos;s .md file)</label>
-          <input
-            ref={mdRef}
-            type="file"
-            className="mt-2 block w-full text-sm"
-            accept=".md,.mdx,.markdown"
-            aria-invalid={Boolean(fieldErrors.skillMd)}
-            onChange={(e) => setSkillMd(e.target.files?.[0] ?? null)}
-          />
+          <span id={`${uid}-md-label`} className={labelCls}>
+            SKILL.md (the Skill&apos;s .md file)
+          </span>
+          <label
+            className={
+              "file-drop mt-2" +
+              (fieldErrors.skillMd ? " file-drop--error" : "") +
+              (skillMd ? " file-drop--filled" : "")
+            }
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const files = e.dataTransfer.files;
+              if (files?.length && mdRef.current) {
+                mdRef.current.files = files;
+                takeMd(files[0]);
+              }
+            }}
+          >
+            <input
+              ref={mdRef}
+              type="file"
+              accept=".md,.mdx,.markdown"
+              aria-labelledby={`${uid}-md-label`}
+              aria-describedby={
+                fieldErrors.skillMd
+                  ? `${uid}-md-error ${uid}-md-help`
+                  : `${uid}-md-help`
+              }
+              aria-invalid={Boolean(fieldErrors.skillMd)}
+              onChange={(e) => takeMd(e.target.files?.[0] ?? null)}
+            />
+            <span className="file-drop-glyph" aria-hidden="true">
+              {skillMd ? "✓" : "+"}
+            </span>
+            {skillMd ? (
+              <>
+                <span className="file-drop-name">{skillMd.name}</span>
+                <span className="file-drop-cta">Replace</span>
+              </>
+            ) : (
+              <>
+                <span className="file-drop-cta">Choose file</span>
+                <span className="mono text-xs text-faint">.md</span>
+              </>
+            )}
+          </label>
           {fieldErrors.skillMd && (
-            <p className="mt-1 text-xs text-red-400">{fieldErrors.skillMd}</p>
+            <p id={`${uid}-md-error`} className="mt-1 text-xs text-red-400">
+              {fieldErrors.skillMd}
+            </p>
           )}
-          <p className="mt-2 text-xs text-faint">
+          <p id={`${uid}-md-help`} className="mt-2 text-xs text-faint">
             The same SKILL.md on its own, so the panel reads the exact prose.
             Max 1 MB.
           </p>

@@ -15,7 +15,22 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-29 (latest: §5.16 entry-point + two-file
+Last verified against code: 2026-07-30 (latest: §5.16 fixes + visual round
+(designer + counterpart critic): (1) PROD INCIDENT fix — the first
+authenticated submit 500'd: `claimPanel`/`sweepExpiredWork` passed JS Dates
+inside raw drizzle sql`` fragments, which bypass column type mapping and crash
+postgres.js; rewritten with typed operators (`or/isNull/lt/inArray`), and the
+POST route now wraps `kickPanel` so a kick failure degrades to queued instead
+of 500ing a created row. (2) Owner directives: per-user quota 2→20/day and
+FAILED submissions no longer count (`countCreatedToday` excludes
+status=failed). (3) `/api/work` joined the proxy.ts CSRF protected prefixes.
+(4) Staff entry is now a bordered `.staff-bar` chip (Staff badge +
+"Built something?" + links; bottom variant carries one link); file inputs are
+`.file-drop` bordered click targets (label wraps the visually hidden native
+input; bg-0 well on the bg-2 shells; drag-drop handled so a drop can never
+navigate away; choosing a file clears that field's error; error+focus paints
+a danger ring; aria-labelledby/describedby wiring). CSS in futurism.css.
+Previous 2026-07-29: §5.16 entry-point + two-file
 rework, panel round 2 (UX designer + engineer + editorial, counterpart critics) —
 (1) staff entry moved into the /work hero: `<StaffSubmitLink variant="top"/>`
 renders "Submit it for review · Your submissions" for signed-in @xl.net accounts
@@ -771,7 +786,7 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/auth/sms-prompt` | `createSmsPromptEventHandler` · `channels/texting` | §5.10 |
 | `POST /api/internal/track` | `createTrackHandler` · `tracking/track-api` | §5.6 |
 | `GET/POST /api/internal/issues` | `createIssuesHandler` · `issues/api` (module §5.15, v1.30) — issue-ledger ingest/read; fail-closed on `ISSUE_TRACKER_SECRET`. Written by this VM's watchdog drain over loopback, and by the dev-box synth sweep + `issues.mjs` over public HTTPS | §6 |
-| `src/proxy.ts` (Next 16 proxy convention, Node runtime) | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout` and `/api/governance`** | §5.6 |
+| `src/proxy.ts` (Next 16 proxy convention, Node runtime) | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout`, `/api/governance`, and `/api/work`** | §5.6 |
 | `GET/POST /api/admin/messages` | `createAdminMessagesHandler` · `admin/api` | §5.6 |
 | `POST /api/admin/mailbox/send` | `createAdminMailboxSendHandler` · `admin/api` | §5.6 |
 | `GET/POST /api/admin/knowledge/refresh` | `createAdminKnowledgeRefreshHandler` · `admin/api` (wrapper adds `runtime = "nodejs"`) | §5.6 |
@@ -2699,8 +2714,10 @@ just Next's ISR cache of it. Code: `src/lib/work/` (`config.ts` caps/copy,
 same notice inline. Admin = the module `isAdmin()` (ADMIN_EMAIL list).
 
 **Intake — `POST /api/work/submissions`** (multipart; nginx body cap 12m, route
-cap 10 MB, `.md` cap 1 MB). Order: kill switch → in-memory 10 attempts/user/hr
-→ durable 2 submissions/user/day (row count, survives restarts) →
+cap 10 MB, `.md` cap 1 MB; CSRF origin-checked via the proxy.ts protected
+prefixes). Order: kill switch → in-memory 10 attempts/user/hr
+→ durable 20 submissions/user/day (row count excluding status=failed, so a
+pipeline error never eats quota; survives restarts) →
 `brainHealthy()` preflight (no accepting into a dead pipeline) → field
 validation (kind `skill|program`, title 4-60, blurb 80-900, optional
 attribution = single first name `^[A-Za-z][A-Za-z'-]{1,19}$`, NEVER derived

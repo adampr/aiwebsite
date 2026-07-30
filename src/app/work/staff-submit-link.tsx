@@ -63,18 +63,26 @@ export function StaffSubmitLink({
 
   if (!staff) return null;
 
+  // The .staff-bar chip (design panel 2026-07-30): a bordered, badge-led
+  // utility strip with real object-hood, replacing the bare faint line the
+  // owner twice failed to find. The bottom instance carries ONE link (the
+  // submissions list lives on that same page).
   if (variant === "bottom")
     return (
-      <p className="mono text-center text-xs text-faint">
-        On the XL.net team and built something?{" "}
-        <Link href="/work/submit">Submit it for review.</Link>
-      </p>
+      <div className="flex justify-center">
+        <p className="staff-bar">
+          <span className="badge badge--light">Staff</span>
+          <span className="text-faint">Built something?</span>
+          <Link href="/work/submit">Submit it for review</Link>
+        </p>
+      </div>
     );
 
   return (
-    <div className="mt-6">
-      <p className="mono text-center text-xs text-faint">
-        On the XL.net team and built something?{" "}
+    <div className="mt-6 flex flex-col items-center">
+      <p className="staff-bar">
+        <span className="badge badge--light">Staff</span>
+        <span className="text-faint">Built something?</span>
         <a
           href="/work/submit"
           aria-haspopup="dialog"
@@ -89,9 +97,11 @@ export function StaffSubmitLink({
             dialogRef.current?.open();
           }}
         >
-          Submit it for review.
-        </a>{" "}
-        <span aria-hidden="true">·</span>{" "}
+          Submit it for review
+        </a>
+        <span aria-hidden="true" className="text-faint">
+          ·
+        </span>
         <Link href="/work/submit">Your submissions</Link>
       </p>
       {wantDialog && (

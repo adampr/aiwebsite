@@ -8,8 +8,12 @@ import {
   eq,
   getTableColumns,
   gte,
+  inArray,
   isNotNull,
+  isNull,
+  lt,
   ne,
+  or,
   sql,
 } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
@@ -102,14 +106,22 @@ export async function allSubmissions(limit = 100): Promise<SubmissionRow[]> {
   return db.select(ROW_COLS).from(S).orderBy(desc(S.createdAt)).limit(limit);
 }
 
-/** Durable per-user daily quota: counted from rows, survives restarts. */
+/** Durable per-user daily quota: counted from rows, survives restarts.
+ * Failed submissions do NOT count (owner directive 2026-07-30): a pipeline
+ * error must never eat someone's quota. */
 export async function countCreatedToday(email: string): Promise<number> {
   const dayStart = new Date();
   dayStart.setUTCHours(0, 0, 0, 0);
   const rows = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(S)
-    .where(and(eq(S.submitterEmail, email), gte(S.createdAt, dayStart)));
+    .where(
+      and(
+        eq(S.submitterEmail, email),
+        gte(S.createdAt, dayStart),
+        ne(S.status, "failed")
+      )
+    );
   return rows[0]?.n ?? 0;
 }
 
@@ -224,9 +236,15 @@ export async function claimPanel(
     .where(
       and(
         eq(S.id, id),
-        sql`${S.status} IN ('received', 'failed', 'running')`,
-        sql`(${S.panelHeartbeatAt} IS NULL OR ${S.panelHeartbeatAt} < ${staleBefore})`,
-        sql`(${S.panelRunsDate} IS DISTINCT FROM ${today} OR ${S.panelRuns} < ${WORK_CAPS.panelRunsPerSubmissionPerDay})`
+        inArray(S.status, ["received", "failed", "running"]),
+        // Typed operators, NOT raw sql fragments: a Date inside sql`` skips
+        // drizzle's column mapping and crashes postgres.js (prod incident
+        // 2026-07-30, the first authenticated submit 500'd here).
+        or(isNull(S.panelHeartbeatAt), lt(S.panelHeartbeatAt, staleBefore)),
+        or(
+          sql`${S.panelRunsDate} IS DISTINCT FROM ${today}`,
+          lt(S.panelRuns, WORK_CAPS.panelRunsPerSubmissionPerDay)
+        )
       )
     )
     .returning({ id: S.id });
@@ -398,7 +416,8 @@ export async function clearArchiveData(id: string): Promise<void> {
  * from list/create requests (the governance sweepExpiredGlobal pattern; no
  * cron, no template-managed script edits). */
 export async function sweepExpiredWork(limit = 25): Promise<number> {
-  const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+  // ISO string, not a Date: raw sql`` params bypass drizzle's type mapping.
+  const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
   const res = await db.execute(sql`
     DELETE FROM work_submissions
     WHERE id IN (

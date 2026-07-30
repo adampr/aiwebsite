@@ -26,6 +26,7 @@ export default createTrackingMiddleware(siteConfig, {
     "/api/auth/sms-prompt",
     "/api/checkout",
     "/api/governance",
+    "/api/work",
   ],
 });
 

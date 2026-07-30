@@ -232,7 +232,18 @@ export async function POST(req: Request): Promise<Response> {
     md: mdMeta,
   });
 
-  const kicked = await kickPanel(row.id);
+  // The row exists; a kick failure must degrade to "queued", never 500 the
+  // submission out from under the user (2026-07-30 incident: a claim-query
+  // bug turned every first submit into a bare 500).
+  let kicked: Awaited<ReturnType<typeof kickPanel>>;
+  try {
+    kicked = await kickPanel(row.id);
+  } catch (err) {
+    console.log(
+      `[work] kickPanel threw on ${row.id}: ${err instanceof Error ? err.message.slice(0, 200) : "unknown"}`
+    );
+    kicked = { outcome: { status: "refused", reason: "claim" } };
+  }
   if (kicked.run) after(kicked.run); // runPanel never throws
   return okJson(
     {
