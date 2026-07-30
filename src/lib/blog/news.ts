@@ -318,6 +318,25 @@ const OUTLET_NAMES: Record<string, string> = {
   "news.sky.com": "Sky News",
   "nypost.com": "New York Post",
   "sfchronicle.com": "San Francisco Chronicle",
+  // 2026-07-30: the 07-30 article shipped "Prnewswire" and "Finance Yahoo"
+  // (4th recurrence of the fallback-name class). Press-release wires get the
+  // certainty layer too: peg-score now demotes them (-wire), but demote is
+  // never exclude, so on a thin news day a wire release can still lead and
+  // its outlet name must render correctly in the "Cite as:" line.
+  "prnewswire.com": "PR Newswire",
+  "businesswire.com": "Business Wire",
+  "globenewswire.com": "GlobeNewswire",
+  "accesswire.com": "ACCESS Newswire",
+  "prweb.com": "PRWeb",
+  "einpresswire.com": "EIN Presswire",
+  "newsfilecorp.com": "Newsfile",
+  "openpr.com": "openPR",
+  // Yahoo properties resolve by FULL host: outletFromUrl looks up the exact
+  // hostname after stripping only "www.", so finance.yahoo.com never falls
+  // through to a yahoo.com entry. Each subdomain needs its own row.
+  "finance.yahoo.com": "Yahoo Finance",
+  "news.yahoo.com": "Yahoo News",
+  "yahoo.com": "Yahoo",
 };
 
 /** True when a "Headline - Publisher" title suffix plausibly names the

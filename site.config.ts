@@ -595,11 +595,29 @@ export const siteConfig = defineSiteConfig({
         "declarative sentences. Concrete nouns, named vendors, real numbers. " +
         "Admit uncertainty when the story is still developing. No hype words " +
         "(revolutionary, game-changing), no rhetorical questions, no " +
-        "exclamation marks, no em dashes. I never pretend to be human: when " +
-        "disclosure is relevant inside Tron's take, the wording is 'I am an " +
-        "AI', never the phrase 'as an AI'. The news body before Tron's take " +
-        "is neutral third person: the word 'I' appears only inside Tron's " +
-        "take.\n\n" +
+        "exclamation marks, no em dashes. " +
+        // 2026-07-30 (alloyed-announces-strategic-2026-07-30 contract FAIL):
+        // the sentence here used to MANDATE the literal wording 'I am an AI'
+        // for in-take disclosure, and the module's deterministic prompt-leak
+        // scan (gates.ts PROMPT_LEAK_PATTERNS, the anchored
+        // self-identification pattern) fails exactly that phrase, so this
+        // styleGuide was instructing the writer into a contract FAIL. The AI
+        // disclosure already renders on every article via
+        // authorship.disclosure (the byline block); the article text never
+        // needs it. The hedge keeps its function (my reading, not reported
+        // fact) with no self-identification phrase. Rule lives ONLY here
+        // (judge-seam dedup: the checklist has no AI-disclosure item).
+        // Replaces a 26-word rule with a 67-word rule (+41 judge-visible
+        // words): the replaced rule produced a live contract FAIL, and the
+        // added words are one binary ban plus one fixed hedge wording.
+        "I never pretend to be human, and the article text never " +
+        "self-identifies as an AI or a language model: the byline under " +
+        "every article already carries the AI disclosure. When Tron's take " +
+        "hedges a judgment, the hedge is 'that is my reading of the news, " +
+        "not a reported result'; the phrases 'I am an AI', 'I'm an AI', and " +
+        "'as an AI' never appear in the article. The news body before " +
+        "Tron's take is neutral third person: the word 'I' appears only " +
+        "inside Tron's take.\n\n" +
         // The template checklist (src/lib/blog/editorial-checklist.ts) rides
         // in the styleGuide so the writer drafts against it AND the rubric's
         // voiceAdherence dimension scores conformance to it (module §19.5).
@@ -692,9 +710,13 @@ export const siteConfig = defineSiteConfig({
       // after a failed repair (or straight away on a rubric-only failure),
       // ONE feedback-carrying fresh-writer regenerate re-gates in-run before
       // the terminal WARN (published indexed under posture publish_indexed
-      // since 2026-07-25). Costs up to 3 extra brain calls
-      // only on nights that would otherwise WARN; this host runs Phase B
-      // refresh disabled, so the shared 12-call ceiling has headroom.
+      // since 2026-07-25). Costs 3+ extra brain calls only on nights that
+      // would otherwise WARN. 2026-07-30: fact-check fix rounds exceeded the
+      // nominal 3 and starved BOTH regen re-gates at the 12-call ceiling
+      // (skipped -> failing draft kept and published indexed); module
+      // v1.40.2 guarantees an admitted regenerate finishes its re-gates via
+      // a bounded grace past the ceiling (WARN-floored, reported), so
+      // "headroom" is no longer an assumption this comment makes.
       maxRegenerates: 1,
       contract: {
         // 0 since 2026-07-14: the default (2) forces question-form H2s,

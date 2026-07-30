@@ -15,7 +15,12 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-30 (latest: §5.16 fixes + visual round
+Last verified against code: 2026-07-30 (latest: blog peg-score press-release
+demotion (`-wire`/`-pr-speak`, url-aware pegScore) + OUTLET_NAMES wire/Yahoo
+entries + styleGuide disclosure-wording fix (the "I am an AI" mandate collided
+with the module prompt-leak scan; §5.11) + module pin v1.40.2 (regen re-gate
+completion grace after the 07-30 ceiling starvation), all after the 07-30
+PR Newswire incident. Previous same-day: §5.16 fixes + visual round
 (designer + counterpart critic): (1) PROD INCIDENT fix — the first
 authenticated submit 500'd: `claimPanel`/`sweepExpiredWork` passed JS Dates
 inside raw drizzle sql`` fragments, which bypass column type mapping and crash
@@ -1285,6 +1290,26 @@ fixed formula is both unrankable templating and dedup-hostile). The styleGuide
 title rule was replaced in the same pass with its judge-verifiable subset
 (deleted outright 2026-07-26 — see round 5).
 
+**2026-07-30 disclosure-wording fix.** The styleGuide sentence that mandated the
+literal in-take disclosure wording "I am an AI" was replaced: the module's
+deterministic prompt-leak scan (gates.ts PROMPT_LEAK_PATTERNS, the anchored
+self-identification pattern) fails exactly that phrase, so the host prompt was
+instructing the writer into a contract FAIL (live case:
+alloyed-announces-strategic-2026-07-30). The per-article AI disclosure is carried
+by `authorship.disclosure` (the byline block, rendered on every article page);
+the styleGuide now bans "I am an AI" / "I'm an AI" / "as an AI" — and any
+self-identification as an AI or a language model — in article text, and fixes
+the take's opinion hedge as "that is my reading of the news, not a reported
+result" (verified clean against all 15 leak patterns). The rule lives only in
+the styleGuide (the checklist has no AI-disclosure item; judge-seam dedup).
+Upstream: documentation issue filed against the module (hosts must not mandate
+self-identification phrases in their styleGuide); deliberately NO scan
+carve-out — the deterministic gate cannot separate legitimate self-disclosure
+from a leak without semantics, and gate 2's fact-check prompt already exempts
+disclosure where semantics exist. Same-day module adoption: pin bumped to
+v1.40.2 (regen re-gate completion grace, module MIGRATIONS v1.40.2) after the
+07-30 night also starved both regen re-gates at the 12-call ceiling.
+
 **Round 5 (2026-07-26, solver+critic panel; module v1.29.0 + host commit in
 the same deploy).** Trigger: THIRD consecutive voiceAdherence=2 evaluation
 (07-25 nightly sum 19; 07-25 regenerate and 07-26 nightly both sum 23, avg
@@ -1434,12 +1459,43 @@ gates, admin, RSS, sitemap, and the nightly job itself live in
   (survey/poll, "study finds…", "N% of leaders…", leading Why/What/How,
   question-mark title, opinion/commentary, "the state of"); a fresh NAMED
   survey release gets a one-time +2 offset (its release IS the peg).
+  2026-07-30 (press-release demotion): `pegScore` also takes the item's
+  `url` (rankByPeg passes it) — **−4 `-wire`** when the host is (or is a
+  subdomain of) a paid press-release distributor (prnewswire.com,
+  businesswire.com, globenewswire.com, accesswire.com, prweb.com,
+  einpresswire.com, newsfilecorp.com, openpr.com), and **−3 `-pr-speak`**
+  when an announce-family verb (announces/unveils/launches/introduces/
+  partners/releases) co-occurs with ≥2 marketing markers ("strategic
+  partnership/collaboration/alliance"; purpose infinitives "to deliver/
+  empower/enable/transform/revolutionize/accelerate/unlock/streamline";
+  buzzwords end-to-end/next-gen/industry-leading/best-in-class/cutting-edge/
+  state-of-the-art/award-winning/world-class/first-of-its-kind/AI-powered/
+  seamless; corporate suffixes LLC/Inc/Ltd/Corp/GmbH; "is proud/pleased/
+  excited/thrilled to"). Rationale: self-announcement PR headlines are
+  peg-perfect by construction (+actor +event-verb +fresh) — a PR Newswire
+  release won 2026-07-30 at peg 5 over peg-4 journalism and failed the
+  rubric (readability 2, voiceAdherence 2); `-pr-speak` catches the same
+  release syndicated on non-wire hosts (finance.yahoo.com carried it
+  verbatim). Neither signal feeds the named-release offset or the
+  scorer-internal pegless check that gates it (every PR is a fresh named
+  announcement — the offset would cancel the demotion). Downstream,
+  `top.peg.pegless` is derived as pegScore < 0 (fetch-ai-news.mjs), so a
+  wire demotion that lands the total negative DOES mark the story pegless
+  and triggers report-of-record framing on a wire-led thin night —
+  deliberate; the `-pr-speak`-only syndication path (typically +2) stays
+  non-pegless and gets no framing. Known residuals for a wire-led thin
+  day: REPORT_OF_RECORD_BRIEF is survey-worded ("reports the findings" —
+  wrong category for a partnership announcement), and any generalized PR
+  brief wording must stay neutral for the checkTopic offLimits haystack.
+  A real launch covered BY journalism ("OpenAI launches GPT-6…" on
+  techcrunch.com) matches neither signal.
   **Demotion, never exclusion** — a peg-less day still leads with its best
   story; every score and any top-story change is logged to stderr. The file
   gains `top.peg {score, pegless}` and `headlines[].pegScore` (news.ts is
   tolerant of old files without them). Tests: `npm run test:peg`
   (`scripts/peg-score-tests.mjs`, pins the 2026-07-22 survey headline as
-  negative and the named-release offset). `newsCalendarEntries()` turns
+  negative, the named-release offset, and the 2026-07-30 wire release below
+  that night's peg-4 stories with a covered-launch non-regression). `newsCalendarEntries()` turns
   the top story into a **one-entry `topics.calendar`** (slug carries the date, so a
   consumed entry never blocks the next day; a fresh calendar slug is always chosen
   before the strategist and still passes the full topic gate); when
@@ -1466,7 +1522,13 @@ gates, admin, RSS, sitemap, and the nightly job itself live in
   the sheet, and the fact-check gate verifies named facts against the
   sheet, so the name must live there. Since 2026-07-27 ("Pbs"/"Latimes"/
   "Greenwichtime" shipped, 3rd fallback-name recurrence) the label is
-  layered: OUTLET_NAMES hostname map (~40 entries, the certainty layer) →
+  layered: OUTLET_NAMES hostname map (~50 entries, the certainty layer;
+  lookup is the EXACT hostname minus a leading "www.", so subdomain
+  properties need their own rows — 2026-07-30 shipped "Prnewswire" and
+  "Finance Yahoo", 4th recurrence, fixed with wire-distributor entries
+  (PR Newswire, Business Wire, GlobeNewswire, ACCESS Newswire, PRWeb,
+  EIN Presswire, Newsfile, openPR) plus finance.yahoo.com/news.yahoo.com/
+  yahoo.com) →
   the "Headline - Publisher" suffix from the source's own Tavily title,
   accepted only when 1-5 Capitalized words AND `suffixNamesHost` ties it
   to the domain (squashed-letters or word-initials match; squash-prefix
