@@ -15,7 +15,24 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-30 (latest: /work group 05 renamed
+Last verified against code: 2026-07-30 (latest: module pin v1.40.2 →
+**v1.47.0** (walked MIGRATIONS v1.41.0–v1.47.0: outreach/SEO/attribution
+releases are all non-adopter bare-bumps here — no outreach, no scorecard, no
+recordConversions/aiAgentLog flags; v1.46.0 behavior notes accepted: attrib
+cookie hardens + Claude-User/Perplexity-User/MistralAI-User no longer count
+as human page views, expect a small step-down in 30 d visits/'direct';
+v1.46.1 template re-render done, NGINX_XFP deliberately NOT set per the
+v1.46.2 retraction; v1.47.0 additive `blog_posts.attention_dismissed` column
+= drizzle migration 0026, db:migrate runs on the VM before cutover as
+usual). v1.47.0 brings the /admin/blog needs-attention overhaul (module
+architecture.md §19.10 v1.47, normative there): shared class evaluator
+(gate/parked/prune-flagged/prune-noindexed/zero-view/stuck-draft),
+unpublished rows excluded, stuck-draft posture-aware (2 d under our
+publish_indexed), per-row "Dismiss notice" snapshot + "Dismissed (N)"
+disclosure with Restore, nightly dismissal-hygiene sweep at the §19.5
+reconcile tail (report line `attention:` when it cleans), and RELATIVE
+admin form 303s (fixes the localhost bounce reported on itsc). Prior
+same-day: /work group 05 renamed
 "What We're Testing" → "What We Have Built" and the team-submitted cards
 collapsed into it (owner directive; the separate "06 · From the Team" numbered
 group is gone, its provenance intro survives as an unnumbered divider above
@@ -51,7 +68,8 @@ Previous same day: blog peg-score press-release
 demotion (`-wire`/`-pr-speak`, url-aware pegScore) + OUTLET_NAMES wire/Yahoo
 entries + styleGuide disclosure-wording fix (the "I am an AI" mandate collided
 with the module prompt-leak scan; §5.11) + module pin v1.40.2 (regen re-gate
-completion grace after the 07-30 ceiling starvation), all after the 07-30
+completion grace after the 07-30 ceiling starvation; superseded the same day
+by the v1.47.0 pin — see Last-verified note), all after the 07-30
 PR Newswire incident. Previous same-day: §5.16 fixes + visual round
 (designer + counterpart critic): (1) PROD INCIDENT fix — the first
 authenticated submit 500'd: `claimPanel`/`sweepExpiredWork` passed JS Dates
