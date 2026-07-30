@@ -60,15 +60,7 @@ export function SubmissionForm({
         return next;
       });
   };
-  const takeMd = (f: File | null) => {
-    setSkillMd(f);
-    if (f)
-      setFieldErrors((prev) => {
-        const next = { ...prev };
-        delete next.skillMd;
-        return next;
-      });
-  };
+  const takeMd = (f: File | null) => setSkillMd(f);
 
   const setBusyBoth = (b: boolean) => {
     setBusy(b);
@@ -98,10 +90,11 @@ export function SubmissionForm({
         kind === "program"
           ? "Attach the .zip of your program."
           : "Attach the Skill package (.skill or .zip).";
-    if (kind === "skill" && !skillMd) errs.skillMd = "Attach the SKILL.md file.";
+    // The SKILL.md field is optional (the package may carry the doc); only
+    // the server can see inside the archive, so no client check exists.
     setFieldErrors(errs);
     if (Object.keys(errs).length > 0) {
-      (errs.pkg ? pkgRef : mdRef).current?.focus();
+      pkgRef.current?.focus();
       return;
     }
     setBusyBoth(true);
@@ -296,20 +289,16 @@ export function SubmissionForm({
         <p id={`${uid}-pkg-help`} className="mt-2 text-xs text-faint">
           {kind === "program"
             ? "The zip needs an architecture.md (or ARCHITECTURE.md, design.md, or a README.md with an Architecture section) at the top level or one folder deep: what it does, its components, how data flows. Max 10 MB."
-            : "The packaged Skill with SKILL.md at the top level. Max 10 MB."}
+            : "Two shapes work: a .skill or .zip with SKILL.md at the top level or one folder deep, or one .zip holding both the .skill and its .md file. If the .md is in the package, the second upload is optional. Max 10 MB."}
         </p>
       </div>
       {kind === "skill" && (
         <div>
           <span id={`${uid}-md-label`} className={labelCls}>
-            SKILL.md (the Skill&apos;s .md file)
+            SKILL.md (optional if it is already in your package)
           </span>
           <label
-            className={
-              "file-drop mt-2" +
-              (fieldErrors.skillMd ? " file-drop--error" : "") +
-              (skillMd ? " file-drop--filled" : "")
-            }
+            className={"file-drop mt-2" + (skillMd ? " file-drop--filled" : "")}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();
@@ -325,12 +314,7 @@ export function SubmissionForm({
               type="file"
               accept=".md,.mdx,.markdown"
               aria-labelledby={`${uid}-md-label`}
-              aria-describedby={
-                fieldErrors.skillMd
-                  ? `${uid}-md-error ${uid}-md-help`
-                  : `${uid}-md-help`
-              }
-              aria-invalid={Boolean(fieldErrors.skillMd)}
+              aria-describedby={`${uid}-md-help`}
               onChange={(e) => takeMd(e.target.files?.[0] ?? null)}
             />
             <span className="file-drop-glyph" aria-hidden="true">
@@ -344,18 +328,14 @@ export function SubmissionForm({
             ) : (
               <>
                 <span className="file-drop-cta">Choose file</span>
-                <span className="mono text-xs text-faint">.md</span>
+                <span className="mono text-xs text-faint">.md (optional)</span>
               </>
             )}
           </label>
-          {fieldErrors.skillMd && (
-            <p id={`${uid}-md-error`} className="mt-1 text-xs text-red-400">
-              {fieldErrors.skillMd}
-            </p>
-          )}
           <p id={`${uid}-md-help`} className="mt-2 text-xs text-faint">
-            The same SKILL.md on its own, so the panel reads the exact prose.
-            Max 1 MB.
+            Skip this if your package already carries the SKILL.md. Attach it
+            only when you want the panel to review this exact text; a file
+            attached here wins over the copy inside the package. Max 1 MB.
           </p>
         </div>
       )}

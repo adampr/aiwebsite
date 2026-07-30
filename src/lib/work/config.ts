@@ -28,16 +28,19 @@ export const WORK_CAPS = {
   // Quotas. Per-user submissions/day is counted from work_submissions rows
   // (durable across restarts); the attempts limiter is in-memory CPU
   // protection only.
-  // Owner directive 2026-07-30: 20/day, and failed submissions do not count
-  // (enforced in countCreatedToday).
+  // Owner directives 2026-07-30: 20/day regular staff, 200/day for admins,
+  // and failed submissions do not count (enforced in countCreatedToday).
   submissionsPerUserPerDay: 20,
+  submissionsPerAdminPerDay: 200,
   uploadAttemptsPerUserPerHour: 10,
   panelRunsPerSubmissionPerDay: 3,
   // Global daily budgets (work_usage ledger). A run is admitted only when
   // brainCallsWorstCasePerRun still fits under the call cap, so a started
-  // run can always finish: 6 runs x 10 worst-case calls = the 60 default.
-  brainCallsPerDayDefault: 60,
-  panelRunsPerDayDefault: 6,
+  // run can always finish. Sized so the GLOBAL caps never bite before the
+  // per-user quotas (owner directive 2026-07-30 after hitting the old 6/day
+  // global): 240 runs x 10 worst-case calls = 2400. Env-overridable.
+  brainCallsPerDayDefault: 2400,
+  panelRunsPerDayDefault: 240,
   brainCallsWorstCasePerRun: 10,
   brainTurnTimeoutMs: 90_000,
   // A running claim whose heartbeat is older than this is an orphan
@@ -159,15 +162,23 @@ export const MISSING_ARCH_DOC_MESSAGE =
   "flows between them, at least a few paragraphs. Add the file and resubmit.";
 
 export const MISSING_SKILL_DOC_MESSAGE =
-  "Your Skill package needs its SKILL.md at the top level before the panel " +
-  "can review it. It should carry the Skill's name, description, and " +
-  "instructions, at least a few paragraphs. Add the file and resubmit.";
+  "The panel could not find your Skill's SKILL.md anywhere in what you " +
+  "uploaded. Fix it any of three ways: put SKILL.md at the top level of the " +
+  "package, zip the .skill together with its .md file into one .zip, or " +
+  "attach the .md in the second upload field. It should carry the Skill's " +
+  "name, description, and instructions, at least a few paragraphs. Note a " +
+  "SKILL.md over 2 MB inside a package cannot be read; attach it in the " +
+  "second field instead (limit 1 MB) or trim it. Then resubmit.";
 
-export const MISSING_SKILL_MD_MESSAGE =
-  "A CoWork Skill submission needs both files: the packaged .skill (or .zip) " +
-  "AND its SKILL.md on its own. The .md should carry the Skill's name, " +
-  "description, and instructions, at least a few paragraphs. Attach it and " +
-  "resubmit.";
+export const SKILL_DOC_TOO_SHORT_MESSAGE =
+  "The panel found your Skill's document but it is too short to review. It " +
+  "needs the Skill's name, description, and instructions, at least a few " +
+  "paragraphs. Expand it and resubmit.";
+
+export const AMBIGUOUS_SKILL_DOC_MESSAGE =
+  "Several .md files could be the Skill's document and none is named " +
+  "SKILL.md. Rename the one the panel should review to SKILL.md, or attach " +
+  "it in the second upload field, then resubmit.";
 
 export const SECRETS_DETECTED_MESSAGE =
   "Your upload contains files that look like credentials, so it was not " +

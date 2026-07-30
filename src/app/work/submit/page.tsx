@@ -34,8 +34,8 @@ export default async function WorkSubmitPage() {
         </span>
         <h1 className="mt-8">Submit a tool you built</h1>
         <p className="mx-auto mt-6 text-sm">
-          A CoWork Skill (the .skill package plus its SKILL.md) or a Code
-          program (a .zip with its architecture.md). An automated editorial
+          A CoWork Skill (the .skill with its SKILL.md, in one upload or
+          two) or a Code program (a .zip with its architecture.md). An automated editorial
           panel drafts a /work card from those documents, argues against it,
           and publishes only what it can verify. You get an email either way.
         </p>

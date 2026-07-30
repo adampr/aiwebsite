@@ -4,13 +4,12 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+import { createHash } from "node:crypto";
 import { after } from "next/server";
 import { brainHealthy } from "@/lib/governance/brain";
 import {
   isWorkKind,
   MISSING_ARCH_DOC_MESSAGE,
-  MISSING_SKILL_DOC_MESSAGE,
-  MISSING_SKILL_MD_MESSAGE,
   WORK_CAPS,
   workSubmissionsEnabled,
 } from "@/lib/work/config";
@@ -28,6 +27,7 @@ import {
   inspectArchive,
   inspectBareMd,
   mergeSkillCorpus,
+  skillDocFailureMessage,
 } from "@/lib/work/extract";
 import { okJson, rateLimit, requireXlUser, workError } from "@/lib/work/http";
 import { kickPanel } from "@/lib/work/panel";
@@ -64,10 +64,13 @@ export async function POST(req: Request): Promise<Response> {
     WORK_CAPS.uploadAttemptsPerUserPerHour
   );
   if (limited) return limited;
-  if ((await countCreatedToday(user.email)) >= WORK_CAPS.submissionsPerUserPerDay)
+  const dailyQuota = user.admin
+    ? WORK_CAPS.submissionsPerAdminPerDay
+    : WORK_CAPS.submissionsPerUserPerDay;
+  if ((await countCreatedToday(user.email)) >= dailyQuota)
     return workError(
       "quota",
-      `The limit is ${WORK_CAPS.submissionsPerUserPerDay} submissions per person per day. Try again tomorrow.`,
+      `The limit is ${dailyQuota} submissions per person per day (failed submissions do not count). Try again tomorrow.`,
       429
     );
   if (!(await brainHealthy()))
@@ -184,59 +187,85 @@ export async function POST(req: Request): Promise<Response> {
       400
     );
 
+  // The standalone SKILL.md is OPTIONAL (owner directive 2026-07-30): a
+  // package that already carries the doc needs no second upload.
   let mdFile: { name: string; bytes: Buffer } | null = null;
   if (kind === "skill") {
     const md = form.get("skillMd");
-    if (!(md instanceof File) || md.size === 0)
-      return workError("missing_skill_md", MISSING_SKILL_MD_MESSAGE, 422, {
-        instructions: MISSING_SKILL_MD_MESSAGE,
-      });
-    const mdName = md.name || "SKILL.md";
-    if (!/\.(md|mdx|markdown)$/.test(mdName.toLowerCase()))
-      return workError(
-        "invalid_request",
-        "The Skill's document must be a .md file.",
-        400
-      );
-    if (md.size > WORK_CAPS.skillMdMaxBytes)
-      return workError(
-        "invalid_request",
-        "The SKILL.md is too large (limit 1 MB).",
-        400
-      );
-    mdFile = { name: mdName, bytes: Buffer.from(await md.arrayBuffer()) };
+    if (md instanceof File && md.size > 0) {
+      const mdName = md.name || "SKILL.md";
+      if (!/\.(md|mdx|markdown)$/.test(mdName.toLowerCase()))
+        return workError(
+          "invalid_request",
+          "The Skill's document must be a .md file.",
+          400
+        );
+      if (md.size > WORK_CAPS.skillMdMaxBytes)
+        return workError(
+          "invalid_request",
+          "The SKILL.md is too large (limit 1 MB).",
+          400
+        );
+      mdFile = { name: mdName, bytes: Buffer.from(await md.arrayBuffer()) };
+    }
   }
 
   const extracted = await inspectArchive(bytes, kind);
   if (!extracted.ok) {
-    // Owner requirement: reject and instruct. 422 carries the fix.
+    // Hard failures (secrets, invalid archive, too complex, program doc
+    // rules): reject and instruct; NEVER rescued by a standalone .md (a
+    // clean standalone must not launder a dirty archive).
     return workError(extracted.code, extracted.message, 422, {
       ...(extracted.paths ? { paths: extracted.paths } : {}),
-      instructions:
-        kind === "program" ? MISSING_ARCH_DOC_MESSAGE : MISSING_SKILL_DOC_MESSAGE,
+      ...(extracted.code === "missing_architecture_doc" ||
+      (extracted.code === "doc_too_short" && kind === "program")
+        ? { instructions: MISSING_ARCH_DOC_MESSAGE }
+        : {}),
     });
   }
 
-  // The standalone SKILL.md is the reviewed document: its text wins as
-  // skillMdText and leads the corpus (mergeSkillCorpus).
+  // Reviewed-doc precedence for kind=skill: a standalone upload always wins;
+  // else the package's resolved doc; else the doc-resolution failure is
+  // recoverable ONLY by a standalone, so with neither it rejects here.
   let docText = extracted.docText;
   let corpus = extracted.corpus;
   let mdMeta: { name: string; sha256: string; bytes: number; data: Buffer } | undefined;
-  if (kind === "skill" && mdFile) {
-    const mdExtract = inspectBareMd(mdFile.name, mdFile.bytes);
-    if (!mdExtract.ok)
-      return workError(mdExtract.code, mdExtract.message, 422, {
-        ...(mdExtract.paths ? { paths: mdExtract.paths } : {}),
-        instructions: MISSING_SKILL_MD_MESSAGE,
+  if (kind === "skill") {
+    if (mdFile) {
+      const mdExtract = inspectBareMd(mdFile.name, mdFile.bytes);
+      if (!mdExtract.ok)
+        return workError(mdExtract.code, mdExtract.message, 422, {
+          ...(mdExtract.paths ? { paths: mdExtract.paths } : {}),
+          instructions: mdExtract.message,
+        });
+      docText = mdExtract.docText;
+      corpus = mergeSkillCorpus(mdExtract, extracted);
+      mdMeta = {
+        name: mdFile.name.slice(0, 200),
+        sha256: mdExtract.archiveSha256,
+        bytes: mdFile.bytes.length,
+        data: mdFile.bytes,
+      };
+    } else if (extracted.docMissing) {
+      const message = skillDocFailureMessage(extracted.docMissing);
+      return workError(`skill_doc_${extracted.docMissing}`, message, 422, {
+        ...(extracted.candidatePaths ? { paths: extracted.candidatePaths } : {}),
+        instructions: message,
       });
-    docText = mdExtract.docText;
-    corpus = mergeSkillCorpus(mdExtract, extracted);
-    mdMeta = {
-      name: mdFile.name.slice(0, 200),
-      sha256: mdExtract.archiveSha256,
-      bytes: mdFile.bytes.length,
-      data: mdFile.bytes,
-    };
+    } else if (extracted.docRawBytes) {
+      // Doc came from inside the package: retention still carries it as its
+      // own attachment (md_* backfilled from the untruncated raw bytes).
+      const docBase =
+        extracted.docPath.split("!/").pop()?.split("/").pop() ?? "SKILL.md";
+      mdMeta = {
+        name: docBase.slice(0, 200),
+        sha256: createHash("sha256")
+          .update(extracted.docRawBytes)
+          .digest("hex"),
+        bytes: extracted.docRawBytes.length,
+        data: extracted.docRawBytes,
+      };
+    }
   }
 
   let row;

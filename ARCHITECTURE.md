@@ -2846,14 +2846,20 @@ requirement, reject-and-instruct): kind `program` needs
 `architecture|arch|design|readme-architecture.(md|mdx|markdown|txt)` at depth
 ≤1, or a `README.md` (depth ≤1) with an `#..### Architecture|How it works|Design`
 heading; kind `skill` accepts a `.skill`/`.zip` package with `SKILL.md` at
-depth ≤1. Kind `skill` (a CoWork Skill, since the 2026-07-29 rework) requires
-BOTH files: the `.skill`/`.zip` package (field `file`, ≤10 MB, SKILL.md at
-depth ≤1 still required inside) AND the standalone SKILL.md (field `skillMd`,
-≤1 MB, `inspectBareMd`); missing either → 422 (`MISSING_SKILL_MD_MESSAGE` /
-`MISSING_SKILL_DOC_MESSAGE`). The standalone `.md` is the REVIEWED document:
-its text wins as `skill_md_text` and leads the corpus (`mergeSkillCorpus`:
-standalone doc at slot 0, then package `.md/.txt` texts, byte-identical
-duplicates skipped, total ≤80k). Docs must clear 600 chars of prose after
+depth ≤1. Kind `skill` (a CoWork Skill): the package (field `file`,
+.skill/.zip, ≤10 MB) is required; the standalone SKILL.md (field `skillMd`,
+≤1 MB) is OPTIONAL since 2026-07-30. Reviewed-doc precedence, first hit wins:
+(1) the standalone upload (its text wins as `skill_md_text`, corpus via
+`mergeSkillCorpus`); (2) exact SKILL.md at depth ≤1 in the package; (3)
+exactly ONE non-boilerplate `.md` at depth ≤1 clearing the prose floor; (4)
+SKILL.md at depth ≤1 inside the single lazily-opened inner archive (see the
+header note: one level, one archive, all guards rerun, combined entry cap,
+"!/" display paths); (5) 422 (`skill_doc_missing|too_short|ambiguous`,
+candidates in `paths`). Doc-resolution failures are rescuable ONLY by a valid
+standalone; secrets/invalid/too-complex are always fatal. md_* is populated
+from whichever source won (standalone bytes, or the in-package doc's
+untruncated `docRawBytes`), so retention always emails the `.md` as its own
+attachment. Docs must clear 600 chars of prose after
 stripping code fences/front matter; failures 422 with the exact fix
 (`MISSING_ARCH_DOC_MESSAGE` / `MISSING_SKILL_DOC_MESSAGE`). Legacy
 pre-rework single-file skill rows are untouched (Retry re-reads stored text,

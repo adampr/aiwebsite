@@ -97,11 +97,17 @@ async function main() {
     "skill"
   );
   assert.ok(skillPkg.ok, "skill package with SKILL.md accepted");
+  // New contract (2026-07-30): doc-resolution failure on the skill kind is
+  // ok-with-docMissing (rescuable by a standalone .md), not a hard error;
+  // boilerplate readme.md never qualifies by uniqueness.
   const skillMissing = await inspectArchive(
     await zipOf({ "myskill/readme.md": PROSE }),
     "skill"
   );
-  assert.ok(!skillMissing.ok && skillMissing.code === "missing_skill_doc");
+  assert.ok(
+    skillMissing.ok && skillMissing.docMissing === "missing",
+    "doc-less skill package is ok-with-docMissing"
+  );
 
   const secretFile = await inspectArchive(
     await zipOf({ "architecture.md": PROSE, ".env": "X=1" }),
@@ -231,6 +237,100 @@ async function main() {
 
   const extraKey = { ...goodCard(), statusBadge: "Live" };
   assert.ok(!lintCard(extraKey, ctx).ok, "unknown key rejected");
+
+  // ---- wrapper-zip shapes (2026-07-30 owner directive) ----
+  const innerSkillBytes = await zipOf({
+    "SKILL.md": PROSE,
+    "references/notes.md": "Reference notes that ride the corpus along.",
+  });
+  async function wrapperOf(extra: Record<string, string>): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file("my-skill.skill", innerSkillBytes);
+    for (const [p, t] of Object.entries(extra)) zip.file(p, t);
+    return zip.generateAsync({ type: "nodebuffer" });
+  }
+
+  // Owner's shape: wrapper zip with .skill + a differently-named .md.
+  const wrapped = await inspectArchive(
+    await wrapperOf({ "secure-audit.md": PROSE + " wrapper doc." }),
+    "skill"
+  );
+  assert.ok(wrapped.ok && !wrapped.docMissing, "wrapper .skill + .md accepted");
+  if (wrapped.ok) {
+    assert.equal(wrapped.docPath, "secure-audit.md", "outer .md wins by uniqueness");
+    assert.ok(wrapped.docRawBytes, "raw doc bytes surfaced for retention");
+  }
+
+  // Wrapper with ONLY the .skill: doc resolved from inside it (lazy open).
+  const skillOnly = await inspectArchive(await wrapperOf({}), "skill");
+  assert.ok(skillOnly.ok && !skillOnly.docMissing, "wrapper .skill-only accepted");
+  if (skillOnly.ok) {
+    assert.equal(skillOnly.docPath, "my-skill.skill!/SKILL.md");
+    assert.ok(
+      skillOnly.corpus.some((c) => c.path === "my-skill.skill!/references/notes.md"),
+      "inner texts ride the corpus with prefixed paths"
+    );
+  }
+
+  // Bare package with an opaque asset zip still passes (lazy rule: the
+  // inner archive is never opened when the outer level resolves the doc).
+  const bareWithAsset = await inspectArchive(
+    await (async () => {
+      const zip = new JSZip();
+      zip.file("SKILL.md", PROSE);
+      zip.file("assets.zip", await zipOf({ ".env": "SECRET=1" }));
+      return zip.generateAsync({ type: "nodebuffer" });
+    })(),
+    "skill"
+  );
+  assert.ok(
+    bareWithAsset.ok && !bareWithAsset.docMissing,
+    "bare package with asset zip unchanged (inner stays opaque)"
+  );
+
+  // Secret INSIDE the opened inner archive rejects with a prefixed path.
+  const dirtyInner = await (async () => {
+    const innerDirty = await zipOf({ "SKILL.md": PROSE, ".env": "X=1" });
+    const zip = new JSZip();
+    zip.file("my-skill.skill", innerDirty);
+    return zip.generateAsync({ type: "nodebuffer" });
+  })();
+  const dirty = await inspectArchive(dirtyInner, "skill");
+  assert.ok(!dirty.ok && dirty.code === "secrets_detected", "inner secret rejected");
+  assert.ok(
+    !dirty.ok && dirty.paths?.some((p) => p === "my-skill.skill!/.env"),
+    "inner secret path is prefixed"
+  );
+
+  // Short boilerplate-adjacent .md does not dead-end resolution: floor-gated
+  // candidacy falls through to the inner SKILL.md.
+  const shortNotes = await inspectArchive(
+    await wrapperOf({ "NOTES.md": "short note" }),
+    "skill"
+  );
+  assert.ok(shortNotes.ok && !shortNotes.docMissing, "short .md falls through");
+  if (shortNotes.ok) assert.equal(shortNotes.docPath, "my-skill.skill!/SKILL.md");
+
+  // Two qualifying outer .mds, none named SKILL.md, no resolvable inner doc:
+  // ambiguous with candidate paths.
+  const ambiguous = await inspectArchive(
+    await zipOf({ "one.md": PROSE, "two.md": PROSE + " different." }),
+    "skill"
+  );
+  assert.ok(ambiguous.ok && ambiguous.docMissing === "ambiguous", "ambiguity flagged");
+  if (ambiguous.ok)
+    assert.equal(ambiguous.candidatePaths?.length, 2, "candidates listed");
+
+  // Doc-less package + standalone .md: mergeSkillCorpus rescues (slot 0 =
+  // the standalone).
+  if (ambiguous.ok) {
+    const standalone = inspectBareMd("SKILL.md", Buffer.from(PROSE + " standalone."));
+    assert.ok(standalone.ok);
+    if (standalone.ok) {
+      const rescued = mergeSkillCorpus(standalone, ambiguous);
+      assert.equal(rescued[0].path, "SKILL.md", "standalone leads doc-less corpus");
+    }
+  }
 
   // ---- disclosure gate helpers (2026-07-30 calibration round) ----
   assert.ok(isNoneFound("none found"));

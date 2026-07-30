@@ -105,6 +105,9 @@ export async function notifyPublished(
     `Submitted by: ${row.submitterEmail}`,
     `Card: ${link}`,
     ``,
+    `Published description (the card's first paragraph):`,
+    card.summary,
+    ``,
     `It can take up to 5 minutes to appear (page revalidation).`,
     `To remove it: /admin/work has the delete action, or DELETE /api/work/submissions/${row.id}.`,
   ].join("\n");
