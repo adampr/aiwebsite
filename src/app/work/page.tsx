@@ -2099,6 +2099,98 @@ export default function WorkPage() {
           </p>
         </section>
 
+        {/* 25. RFP Response */}
+        <section id="rfp-response" className="panel panel--lightline rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Proposal knowledge base</span>
+          </div>
+          <h2 className="mt-6">RFP Response</h2>
+          <p className="mt-2 text-sm text-faint">
+            The corpus is on version two because five of its facts turned out
+            to be wrong.
+          </p>
+          <p className="mt-4 text-sm">
+            RFP Response is a section of this site, visible to signed-in
+            XL.net staff, holding the knowledge base an XL.net proposal is
+            written from. Seventy-eight facts are live across six categories,
+            six of them recording something the firm does not do, does not
+            hold, or has not done. Behind them sit the rate card in force,
+            with 11 line items and a 15-user minimum for fully managed work,
+            and 20 intake questions, 14 of them required. The counts on the
+            overview are read from the records rather than typed in. The
+            compliance rules a finished proposal has to satisfy are written
+            as code in the same repository, and the corpus is what they read.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Corrections Do Not Overwrite
+              </h3>
+              <p className="mt-3 text-sm">
+                Five facts were wrong until 24 July 2026. Both readings stayed
+                on file: the wrong one entered at version one and was retired
+                when version two landed, and the corrected one carries the
+                date it changed and a pointer to the record it replaced. A
+                proposal written before that date still resolves against what
+                it actually cited. The seed file argues for keeping them
+                rather than starting clean, on the grounds that a tidy corpus
+                would leave the staleness check with nothing true to find.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                A Kind on Every Question
+              </h3>
+              <p className="mt-3 text-sm">
+                Twenty intake questions live in the database rather than in a
+                checklist file, so one the corpus already answers can be
+                filtered out before it is put to anyone. Fourteen are
+                required. Each carries a kind: a fact question is the sort
+                whose answer would belong to the firm, and a choice belongs to
+                one proposal and stays there. The pricing questions point at
+                no fact even where a matching one exists, because which
+                services sit inside the recurring fee is settled per client.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                What the Port Left Out
+              </h3>
+              <p className="mt-3 text-sm">
+                The reference records came over with their contact fields
+                unwritten: the phone and email columns empty, the name and
+                title reading as withheld. A repository does not forget, and
+                third-party contact details outlive any decision to remove
+                them. The section itself is kept out of the way as well,
+                rendered per request rather than from a cache, marked not to
+                be indexed, and absent from the sitemap. The shell checks the
+                sign-in, and then each page checks for itself.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            An XL.net proposal starts from the opposite position to{" "}
+            <a href="#script-master">Script Master</a>, which builds from a
+            profile someone fills in about a machine it never touches. Here
+            the environment is the firm itself, written down one row at a time
+            before anyone asks for a proposal, and a claim with no row behind
+            it has nowhere to come from.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            78 live facts, six carrying a negative · knowledge base at version
+            two, five facts corrected · 11 rate card line items, a 15-user
+            minimum · 20 intake questions, 14 of them required · contact
+            fields left unwritten · ported off prisma and sqlite onto this
+            site&apos;s postgres
+          </p>
+        </section>
+
         {/* Team-submitted cards (§5.16) render inside this group (owner
             directive 2026-07-30: no separate numbered section). Renders
             nothing while empty or if the DB read fails; the static
