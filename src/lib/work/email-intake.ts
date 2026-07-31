@@ -192,6 +192,17 @@ export async function maybeHandleWorkEmail(
     }
     const { archives } = pickAttachments(email.attachments ?? []);
     if (archives.length === 0) return "delegate";
+    // Bare detached dispatch, NEVER Next after(): the module's webhook route
+    // ACKs Svix and detaches (void handleInbound) BEFORE this hook runs, so
+    // by now the response has closed. after() registered here would enqueue
+    // onto a paused callback queue gated on a close event that already fired
+    // (verified against next 16.2.11 after-context.js): the callback never
+    // runs, the intake silently dies, and the fallback catch is unreachable
+    // because after() does not throw while the ALS store is still
+    // propagated (panel blocker finding, 2026-07-31). The consequence, that
+    // revalidatePath is silently dropped in this detached context, is
+    // handled at the publish step instead (panel.ts revalidateWorkPage:
+    // loopback on-demand ISR, request-scope-independent).
     void handleWorkEmail(ctx.emailId, sender, email).catch((err: unknown) =>
       log(
         `handler dispatch failed: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"}`
@@ -340,17 +351,26 @@ export async function handleWorkEmail(
   }
 
   // ── Fields ───────────────────────────────────────────────────────
-  const title = titleFromSubject(subjectRaw);
+  const parsed = parseSubmissionBody(email.text ?? "");
+  // An explicit "Title:"/"Skill Name:" body line beats the subject:
+  // forwarded skill emails arrive with subjects like "Fwd: skill to our
+  // work" while the body names the tool (owner report 2026-07-31, the
+  // first real submission published under its subject line).
+  const title =
+    parsed.title !== null
+      ? sanitizeHeaderValue(parsed.title, 200).trim()
+      : titleFromSubject(subjectRaw);
   if (
     title.length < WORK_CAPS.titleMinChars ||
     title.length > WORK_CAPS.titleMaxChars
   ) {
     await reject(
-      `The subject line becomes the card title, and it must be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters. Yours came out as "${title.slice(0, 80)}".`
+      parsed.title !== null
+        ? `The title line in the body ("Title:", "Skill Name:", and similar) becomes the card title, and it must be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters. Yours came out as "${title.slice(0, 80)}".`
+        : `The subject line becomes the card title, and it must be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters. Yours came out as "${title.slice(0, 80)}". A "Title:" line in the body overrides the subject.`
     );
     return;
   }
-  const parsed = parseSubmissionBody(email.text ?? "");
   if (parsed.kindRaw !== null) {
     await reject(
       `I did not recognize the kind "${parsed.kindRaw}". Use "Kind: CoWork Skill" or "Kind: Code program", or drop the line to let the attachments decide.`
@@ -362,7 +382,7 @@ export async function handleWorkEmail(
     parsed.blurb.length > WORK_CAPS.blurbMaxChars
   ) {
     await reject(
-      `The email body becomes the description, and it must be ${WORK_CAPS.blurbMinChars} to ${WORK_CAPS.blurbMaxChars} characters of plain text: what it does, who uses it, what it replaced. Yours came out at ${parsed.blurb.length} characters (quoted history and signatures are stripped automatically).`
+      `The email body becomes the description, and it must be ${WORK_CAPS.blurbMinChars} to ${WORK_CAPS.blurbMaxChars} characters of plain text: what it does, who uses it, what it replaced. Yours came out at ${parsed.blurb.length} characters (quoted history, signatures, and "Title:"/"Kind:"/"Credit:" lines are stripped automatically).`
     );
     return;
   }
@@ -416,7 +436,7 @@ export async function handleWorkEmail(
     (await publishedTitleClash(title))
   ) {
     await reject(
-      "A published /work card already uses this title. Pick a different title (the subject line) and resend."
+      `A published /work card already uses this title. Pick a different title (the subject line, or a "Title:" line in the body) and resend.`
     );
     return;
   }

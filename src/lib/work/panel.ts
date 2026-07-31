@@ -453,14 +453,68 @@ async function runPanelInner(
   const card = lint.card as WorkCard;
   const slug = await finishPublished(id, attemptId, card, transcriptJson());
   if (!slug) return; // superseded by a newer claim; that run owns the row
-  try {
-    const { revalidatePath } = await import("next/cache");
-    revalidatePath("/work");
-  } catch {
-    // ISR (revalidate = 300 on /work) is the self-healing floor
-  }
+  await revalidateWorkPage();
   await notifyPublished(row, card, slug);
   // Owner retention: the original upload rides the row until this email
   // confirms; a failed send keeps the bytes recoverable.
   await deliverArchiveRetention(row);
+}
+
+/** Refresh the public /work page after a publish, from ANY execution
+ * context. Layer 1, revalidatePath: flushes only when the panel runs inside
+ * a live work unit (the request-scoped paths: form submit, admin retry and
+ * rerun all wrap the runner in after(), whose queue executes under
+ * withExecuteRevalidates). On the email path the panel runs fully detached
+ * (the module webhook ACKs and detaches BEFORE the onInbound hook), so the
+ * pending revalidation is queued on a long-flushed response and silently
+ * dropped; that is how the first real email submission sat invisible behind
+ * ISR (owner report 2026-07-31).
+ * Layer 2 therefore does what revalidatePath cannot from a detached
+ * context: a loopback on-demand ISR request. Next compares the
+ * x-prerender-revalidate header against the build's previewModeId
+ * (checkIsOnDemandRevalidate) and force-regenerates the cache entry,
+ * answering x-nextjs-cache: REVALIDATED. Both layers are best-effort; any
+ * failure leaves the ISR revalidate=300 floor as the self-healing fallback. */
+async function revalidateWorkPage(): Promise<void> {
+  try {
+    const { revalidatePath } = await import("next/cache");
+    revalidatePath("/work");
+  } catch {
+    // outside any request scope entirely; the loopback below still runs
+  }
+  try {
+    const [{ readFile }, { join }] = await Promise.all([
+      import("node:fs/promises"),
+      import("node:path"),
+    ]);
+    const manifest = JSON.parse(
+      await readFile(
+        join(process.cwd(), ".next", "prerender-manifest.json"),
+        "utf8"
+      )
+    ) as { preview?: { previewModeId?: string } };
+    const secret = manifest.preview?.previewModeId;
+    if (!secret) {
+      console.log(
+        "[work] loopback revalidate skipped: no previewModeId in prerender-manifest.json; ISR floor applies"
+      );
+      return;
+    }
+    const res = await fetch(
+      `http://127.0.0.1:${process.env.PORT || "3000"}/work`,
+      {
+        headers: { "x-prerender-revalidate": secret },
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+    await res.arrayBuffer().catch(() => undefined); // release the socket
+    if (res.headers.get("x-nextjs-cache") !== "REVALIDATED")
+      console.log(
+        `[work] loopback revalidate: status=${res.status} cache=${res.headers.get("x-nextjs-cache") ?? "-"}; ISR floor applies`
+      );
+  } catch (err) {
+    console.log(
+      `[work] loopback revalidate failed: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"}; ISR floor applies`
+    );
+  }
 }

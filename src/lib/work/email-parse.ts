@@ -18,10 +18,10 @@ export const MD_RE = /\.(md|mdx|markdown)$/i;
  * second round trip. */
 export const FORMAT_REMINDER = [
   `How email submissions work:`,
-  `- Subject: the card title (${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters).`,
+  `- Subject: the card title (${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters). A "Title:" or "Skill Name:" line in the body overrides the subject, so a forwarded email with a generic subject can still name the card.`,
   `- Body: your one-paragraph description (${WORK_CAPS.blurbMinChars} to ${WORK_CAPS.blurbMaxChars} characters): what it does, who uses it, what it replaced.`,
   `- Attach ONE package: a .skill or .zip for a CoWork Skill (plus its SKILL.md as a second attachment if the package does not carry it), or a .zip for a Code program (must contain an architecture doc).`,
-  `- Optional body lines: "Kind: CoWork Skill" or "Kind: Code program" (otherwise inferred from the attachments), and "Credit: <first name>" for a public credit (otherwise the card credits the XL.net team).`,
+  `- Optional body lines: "Title: <card title>" (or "Skill Name:"; overrides the subject, first one wins), "Kind: CoWork Skill" or "Kind: Code program" (otherwise inferred from the attachments), and "Credit: <first name>" for a public credit (otherwise the card credits the XL.net team).`,
   ``,
   `The web form at https://ai.xl.net/work/submit does the same thing with inline errors.`,
 ].join("\n");
@@ -41,6 +41,11 @@ export function titleFromSubject(subjectRaw: string): string {
 
 export interface ParsedBody {
   blurb: string;
+  /** Explicit card title from a "Title:"/"Skill Name:" body line, or null
+   * when absent. Overrides the subject at the call site (owner report
+   * 2026-07-31: the first real forwarded submission published under its
+   * subject, "skill to our work", while the body named the tool). */
+  title: string | null;
   /** Recognized Kind: override, or null when absent. */
   kind: WorkKind | null;
   /** Raw value of an unrecognized Kind: line (reply names it), else null. */
@@ -55,6 +60,38 @@ const KIND_VALUES: Record<string, WorkKind> = {
   program: "program",
   "code program": "program",
 };
+
+/** Label variants that name the card. Kept tight: only labels that
+ * unambiguously mean "this is the tool's name" lift out of the blurb;
+ * anything else ("Description:", "Relation to Role:") stays prose. Bare
+ * "Name:" is deliberately ABSENT: it is a standard contact-block field
+ * ("Name: Jane Doe") and would title the card after the sender (panel
+ * critic finding 2026-07-31). Bare "Title:" stays because the format
+ * reminder teaches it; the signature job-title collision ("Title: Senior
+ * Systems Engineer") is mitigated by first-match-wins plus the receipt
+ * email echoing the chosen title. */
+const TITLE_LABELS = new Set([
+  "title",
+  "card title",
+  "skill name",
+  "program name",
+  "tool name",
+]);
+
+/** One directive line. Gmail renders a bolded label as
+ * "*Skill Name: *Outage Checker": emphasis markers hug the label and can
+ * land after the colon, so the matcher tolerates * and _ around both the
+ * label and the value. Gmail rich-text conversion can also emit U+00A0
+ * inside the label, which must still match (else the original
+ * subject-fallback bug silently returns). The label is capped at 15
+ * characters so ordinary prose with a long lead-in
+ * ("Relation to Role: ...") never matches. */
+const DIRECTIVE_RE =
+  /^\s*[*_]{0,2}\s*([A-Za-z][A-Za-z \u00A0]{0,14}?)\s*[*_]{0,2}\s*:\s*(.*)$/;
+
+function directiveValue(raw: string): string {
+  return raw.replace(/^[\s*_\u00A0]+/, "").replace(/[\s*_\u00A0]+$/, "");
+}
 
 /** Gmail's "On <date> <name> <addr> wrote:" attribution, including the
  * hard-wrapped form: real Gmail plain text wraps long attributions across
@@ -79,6 +116,7 @@ function isQuoteAttribution(lines: string[], i: number): boolean {
 export function parseSubmissionBody(raw: string): ParsedBody {
   const lines = raw.replace(/\r\n/g, "\n").split("\n");
   const kept: string[] = [];
+  let title: string | null = null;
   let kind: WorkKind | null = null;
   let kindRaw: string | null = null;
   let credit: string | null = null;
@@ -94,17 +132,35 @@ export function parseSubmissionBody(raw: string): ParsedBody {
       /^From:\s+\S/.test(line)
     )
       break;
-    const directive = /^\s*(kind|credit)\s*:\s*(.*)$/i.exec(line);
+    const directive = DIRECTIVE_RE.exec(line);
     if (directive) {
-      const value = directive[2].trim();
-      if (directive[1].toLowerCase() === "kind") {
+      const label = directive[1]
+        .replace(/\u00A0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+      const value = directiveValue(directive[2]).trim();
+      if (label === "kind") {
         const mapped = KIND_VALUES[value.toLowerCase()] ?? null;
         if (mapped) kind = mapped;
         else kindRaw = value.slice(0, 60);
-      } else {
-        credit = value.slice(0, 60);
+        continue;
       }
-      continue;
+      if (label === "credit") {
+        credit = value.slice(0, 60);
+        continue;
+      }
+      if (TITLE_LABELS.has(label)) {
+        // FIRST match wins (unlike Kind/Credit): a signature job-title
+        // line ("Title: Senior Systems Engineer") late in the body must
+        // not silently beat an explicit "Skill Name:" line above it
+        // (panel critic finding 2026-07-31). An empty value ("Title:"
+        // alone) is ignored so the subject stays authoritative rather
+        // than failing length validation on "".
+        if (value && title === null) title = value.slice(0, 200);
+        continue;
+      }
+      // Unrecognized label: ordinary prose, stays in the blurb.
     }
     kept.push(line);
   }
@@ -112,7 +168,7 @@ export function parseSubmissionBody(raw: string): ParsedBody {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  return { blurb, kind, kindRaw, credit };
+  return { blurb, title, kind, kindRaw, credit };
 }
 
 export interface AttachmentMeta {

@@ -15,7 +15,23 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-30 (latest: §5.16 **email intake** — mail
+Last verified against code: 2026-07-31 (latest: §5.16 email intake fixes from
+the first real submission — a `Title:`/`Skill Name:` body directive now names
+the card, overriding the subject (Gmail bold markers tolerated; forwarded
+emails kept publishing under "Fwd:"-stripped subjects); the publish step now
+calls `revalidateWorkPage()` (panel.ts): `revalidatePath` (flushes on the
+request-scoped paths — form submit, admin retry/rerun — which wrap the
+runner in `after()`) plus a loopback
+on-demand ISR GET of `/work` with the `x-prerender-revalidate` header set to
+the build's `previewModeId` from `.next/prerender-manifest.json`, which
+regenerates the page from ANY context — the email path runs fully detached
+(the module webhook ACKs before the hook), where `revalidatePath` is
+silently dropped and the first email-published card sat invisible behind the
+5-minute ISR window; publish emails no longer claim a flat "up to 5
+minutes". NOTE: never dispatch the intake handler via Next `after()` — the
+response is already closed when the hook runs, so the callback queue never
+starts and the intake dies silently (panel blocker finding, verified against
+next 16.2.11). Previous 2026-07-30: §5.16 **email intake** — mail
 to Tron.Netter@ai.xl.net from a DKIM-verified @xl.net sender carrying an
 archive attachment (.skill/.zip) is ingested as a team work submission through
 the same pipeline as the site form: new `src/lib/work/email-intake.ts` (hook
@@ -963,8 +979,15 @@ fail-closed sender-authenticity gate (Authentication-Results parsing → memory 
   mixed "delegate"); (2) else `maybeHandleWorkEmail` (§5.16 email intake): envelope
   includes Tron's mailbox + From-address domain is xl.net + ≥1 `.skill`/`.zip`
   attachment (one `receiving.get` to see attachments — the hook context carries none)
-  → "handled" and the intake handler runs fire-and-forget; (3) everything else
-  delegates to the module pipeline unchanged.
+  → "handled" and the intake handler runs as a bare detached promise. It must
+  NOT be wrapped in Next `after()`: the module webhook ACKs Svix and detaches
+  (`void handleInbound`) before the hook runs, so the response is already
+  closed and an after() callback registered here joins a paused queue gated
+  on a close event that already fired — the intake would die silently (panel
+  blocker finding 2026-07-31, verified against next 16.2.11). The detached
+  context also silently drops `revalidatePath`, which is why the publish step
+  uses the loopback on-demand ISR request instead (§5.16 `revalidateWorkPage`);
+  (3) everything else delegates to the module pipeline unchanged.
 
 ### 5.4 OAuth (Google + Microsoft), session, logout, health
 
@@ -2917,16 +2940,29 @@ and every rejection from here on is a Tron reply (From
 `Tron Netter <Tron.Netter@ai.xl.net>`, threaded via In-Reply-To) carrying the
 route's 4xx copy plus a format reminder; the rate-limited notice and the
 paused notice are themselves throttled to 1/hr/sender (an outbound email is
-not a free 503). Field mapping: subject → title (Re:/Fwd: prefixes
-stripped); plain-text body → blurb after cutting quoted history/signatures
-("-- ", "> ", "On … wrote:" including Gmail's hard-wrapped 2-3 line
-attribution, Gmail's "---------- Forwarded message ----------" marker,
-Outlook dividers — so a description written above a forwarded skill email
-survives as the blurb) and lifting optional directive
-lines `Kind: CoWork Skill|Code program` (else inferred: `.skill` or a
-standalone `.md` attachment → skill, bare `.zip` → program) and
-`Credit: <first name>` (same validation as the form; never derived from the
-sender — owner ruling). Exactly ONE archive attachment and, for skill, at most
+not a free 503). Field mapping: title = a `Title:`/`Skill Name:` (also
+`Card Title:`/`Program Name:`/`Tool Name:`; bare `Name:` deliberately
+excluded — it is a contact-block field and would title the card after the
+sender) body directive when present, else subject with Re:/Fwd: prefixes
+stripped (2026-07-31: the first real forwarded submission published under
+its subject, "skill to our work", while the body carried
+"Skill Name: Outage Checker" — the body line now wins; the FIRST matching
+directive wins so a signature "Title: <job title>" cannot beat an explicit
+line above it, and empty directive values are ignored so the subject stays
+authoritative); plain-text body → blurb after cutting quoted
+history/signatures ("-- ", "> ", "On … wrote:" including Gmail's
+hard-wrapped 2-3 line attribution, Gmail's
+"---------- Forwarded message ----------" marker, Outlook dividers — so a
+description written above a forwarded skill email survives as the blurb) and
+lifting optional directive lines `Kind: CoWork Skill|Code program` (else
+inferred: `.skill` or a standalone `.md` attachment → skill, bare `.zip` →
+program) and `Credit: <first name>` (same validation as the form; never
+derived from the sender — owner ruling). Directive matching tolerates
+Gmail's bold rendering (`*Skill Name: *Outage Checker`: emphasis markers hug
+the label and can land after the colon) and U+00A0 inside the label (Gmail
+rich-text conversion); labels are capped at 15 characters (so
+"Relation to Role:" never matches at all) and unrecognized short labels
+("Description:", "Name:") stay in the blurb as prose. Exactly ONE archive attachment and, for skill, at most
 one `.md` (≤1 MB) are accepted; attachments download via the Resend signed-URL
 endpoint (`emails.receiving.attachments.get`), size-capped before and after,
 zip magic checked, bytes in memory only. From there the path is byte-for-byte
@@ -2977,8 +3013,14 @@ the 24 hand-authored exhibits; `scripts/work-static-snapshot.mjs --check`
 fails build:check on drift, `--write` regenerates) + published rows. Lint
 fail → ONE repair call with the violations named → re-lint → else `held`.
 Pass → fenced publish: slug `team-<slugified-title>` (namespace-disjoint from
-the hand-authored anchors, DB-unique), `revalidatePath("/work")` in try/catch
-(ISR 300 s is the self-healing floor), Resend emails to owner + submitter
+the hand-authored anchors, DB-unique), `revalidateWorkPage()` (two
+best-effort layers: `revalidatePath("/work")`, which flushes on the
+request-scoped paths (form submit, admin retry/rerun) where the panel runs
+inside a route's `after()`, then a
+loopback on-demand ISR GET of `/work` with `x-prerender-revalidate` set to
+the build's `previewModeId` from `.next/prerender-manifest.json`, which
+regenerates the page even from the email path's detached context; ISR 300 s
+stays the self-healing floor), Resend emails to owner + submitter
 (`notify.ts`, governance `sendTroyEmail`). ~8 calls/run, worst case 10;
 ledger `work_usage` (day PK), caps `WORK_BRAIN_DAILY_CAP` (60) /
 `WORK_PANEL_RUNS_DAILY_CAP` (6). Every exit path lands `published`, `held`

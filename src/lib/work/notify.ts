@@ -108,7 +108,7 @@ export async function notifyPublished(
     `Published description (the card's first paragraph):`,
     card.summary,
     ``,
-    `It can take up to 5 minutes to appear (page revalidation).`,
+    `The page refreshes at publish time; if /work is already open in a tab, reload it. If the card is still missing, the automatic refresh failed and the page rebuilds on the first visit after its 5-minute cache window, so allow two reloads a few minutes apart.`,
     `To remove it: /admin/work has the delete action, or DELETE /api/work/submissions/${row.id}.`,
   ].join("\n");
   await sendTroyEmail({
@@ -118,7 +118,7 @@ export async function notifyPublished(
   await sendTroyEmail({
     to: row.submitterEmail,
     subject: `Your /work submission is live: ${card.title}`,
-    text: `The editorial panel reviewed your submission from the documents you provided, and the card is published.\n\n${link}\n\nIt can take up to 5 minutes to appear. Reply to this email if something on the card reads wrong.`,
+    text: `The editorial panel reviewed your submission from the documents you provided, and the card is published.\n\n${link}\n\nIf /work was already open, reload the page to see it (a stale copy can survive a few minutes; reload once more if it has not appeared). Reply to this email if something on the card reads wrong.`,
   });
 }
 

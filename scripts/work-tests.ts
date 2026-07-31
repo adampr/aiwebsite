@@ -438,6 +438,79 @@ async function main() {
     "gmail forwarded-message marker stops the body"
   );
 
+  // Title directive (owner report 2026-07-31: the first real forwarded
+  // submission published under its subject, "skill to our work"; the body's
+  // Gmail-bolded "*Skill Name: *Outage Checker" line must name the card).
+  const named = parseSubmissionBody(
+    [
+      "I just created a skill in Claude Cowork. Please see its details below.",
+      "",
+      "*Skill Name: *Outage Checker",
+      "",
+      "*Description:* Outage Checker looks at all of your open tickets.",
+      "",
+      "*Relation to Role: *This helps reduce time spent troubleshooting.",
+    ].join("\n")
+  );
+  assert.equal(named.title, "Outage Checker", "Gmail-bold Skill Name lifted");
+  assert.ok(!named.blurb.includes("Skill Name"), "title line leaves the blurb");
+  assert.ok(
+    named.blurb.includes("*Description:*") &&
+      named.blurb.includes("*Relation to Role: *"),
+    "unrecognized labels stay in the blurb as prose"
+  );
+  assert.equal(
+    parseSubmissionBody("Title: Ticket Wizard\nA description.").title,
+    "Ticket Wizard",
+    "plain Title line lifted"
+  );
+  assert.equal(
+    parseSubmissionBody("A description with no name line.").title,
+    null,
+    "no directive = subject stays authoritative"
+  );
+  assert.equal(
+    parseSubmissionBody("Title:\nA description.").title,
+    null,
+    "empty Title line ignored, not an empty title"
+  );
+  assert.equal(
+    parseSubmissionBody("*Kind:* code program\nx").kind,
+    "program",
+    "bolded Kind still recognized"
+  );
+  // Signature collisions (critic findings 2026-07-31): a job-title line in
+  // an uncut signature must not beat an explicit directive above it, and a
+  // bare contact-block "Name:" line must not name the card at all.
+  const signature = parseSubmissionBody(
+    [
+      "Skill Name: Outage Checker",
+      "",
+      "A fine description of the tool.",
+      "",
+      "Thanks,",
+      "John Smith",
+      "Title: Senior Systems Engineer",
+      "XL.net",
+    ].join("\n")
+  );
+  assert.equal(
+    signature.title,
+    "Outage Checker",
+    "first title directive wins over a signature job-title line"
+  );
+  const contact = parseSubmissionBody("A description.\nName: Jane Doe");
+  assert.equal(contact.title, null, "bare Name: is not a title label");
+  assert.ok(
+    contact.blurb.includes("Name: Jane Doe"),
+    "contact-block line stays in the blurb"
+  );
+  assert.equal(
+    parseSubmissionBody("Skill\u00A0Name: Outage Checker\nDesc.").title,
+    "Outage Checker",
+    "Gmail non-breaking space inside the label still matches"
+  );
+
   // isFreshDate must accept Resend's JSON-quoted ISO Date header (2026-07-30
   // prod incident: literal quotes in the value parsed as NaN = every real
   // inbound dropped as stale_or_missing_date).
