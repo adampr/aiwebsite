@@ -4,7 +4,7 @@
 // pattern). NO EM DASHES in any string (site rule).
 
 import { sanitizeHeaderValue } from "@/lib/governance/approval";
-import { WORK_CAPS, type WorkKind } from "./config";
+import { TITLE_KIND_PREFIX_RE, WORK_CAPS, type WorkKind } from "./config";
 
 // ".ski" accepted alongside ".skill": Windows/Outlook forwarding chains
 // rename attachments to DOS 8.3 short names (real inbounds 2026-07-30:
@@ -28,15 +28,44 @@ export const FORMAT_REMINDER = [
 
 /** Subject -> candidate card title: reply/forward prefixes stripped
  * (repeatedly, any nesting), whitespace collapsed. Validation happens at the
- * call site against WORK_CAPS. */
+ * call site against WORK_CAPS. 2026-07-31 additions, all conservative:
+ * zero-width characters go FIRST (ECMAScript \s includes U+FEFF, so
+ * sanitizeHeaderValue's \s+ collapse would turn a mid-word BOM into a
+ * space before a later strip could see it); leading bracket tags up to 40
+ * chars ([EXTERNAL], [EXT], list tags) unwrap interleaved with Re/Fwd; one
+ * trailing 1-3 digit "(n)" copy counter drops ("(2024)" and mid-title
+ * parentheticals are kept). The "Title:" body line is the escape hatch for
+ * any intended title that looks like a transport artifact. */
 export function titleFromSubject(subjectRaw: string): string {
-  let s = sanitizeHeaderValue(subjectRaw, 200);
+  let s = sanitizeHeaderValue(
+    subjectRaw.replace(/[\u200B-\u200D\u2060\uFEFF]/g, ""),
+    200
+  );
   for (let i = 0; i < 8; i++) {
-    const next = s.replace(/^(re|fw|fwd)\s*(\[\d+\])?\s*:\s*/i, "");
+    const next = s
+      .replace(/^(re|fw|fwd)\s*(\[\d+\])?\s*:\s*/i, "")
+      .replace(/^\[[^\[\]]{1,40}\]\s*/, "");
     if (next === s) break;
-    s = next;
+    s = next.trim();
   }
-  return s.trim();
+  return s.replace(/\s*\(\d{1,3}\)\s*$/, "").trim();
+}
+
+/** Strip leading category/kind prefixes from a SUBJECT-DERIVED title
+ * ("Claude Skill: Slack Knowledge Assistant" published as a card title,
+ * 2026-07-31). Subject lines are transport surfaces, so the strip is
+ * silent; authored titles (the form field, a "Title:" body line) are
+ * rejected with instructions instead, at their call sites. Repeats to
+ * unwrap nesting ("Claude Skill: Skill: X"); an over-strip to under 4
+ * chars fails the existing length gate with its instructive message. */
+export function stripKindPrefix(title: string): string {
+  let s = title.trim();
+  for (let i = 0; i < 3; i++) {
+    const next = s.replace(TITLE_KIND_PREFIX_RE, "");
+    if (next === s) break;
+    s = next.trim();
+  }
+  return s;
 }
 
 export interface ParsedBody {

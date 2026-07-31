@@ -23,8 +23,13 @@ import {
   inferKind,
   parseSubmissionBody,
   pickAttachments,
+  stripKindPrefix,
   titleFromSubject,
 } from "../src/lib/work/email-parse";
+import {
+  HOUSE_RULES,
+  TITLE_KIND_PREFIX_RE,
+} from "../src/lib/work/config";
 import staticTitles from "../src/lib/work/static-titles.json";
 
 const PROSE = "This tool ingests Autotask ticket exports and produces a scored summary for the service desk. ".repeat(12);
@@ -245,6 +250,57 @@ async function main() {
   const extraKey = { ...goodCard(), statusBadge: "Live" };
   assert.ok(!lintCard(extraKey, ctx).ok, "unknown key rejected");
 
+  // ---- meta-commentary gate (2026-07-31 incident: four published cards
+  // were ABOUT the review instead of about the tool) ----
+  const meta = goodCard();
+  meta.summary =
+    sentence(50) + " No supporting source document was submitted for this card.";
+  assert.ok(!lintCard(meta, ctx).ok, "process meta-commentary in summary rejected");
+
+  const metaFacet = goodCard();
+  metaFacet.facets[0].label = "Editorial Decision";
+  assert.ok(!lintCard(metaFacet, ctx).ok, "meta facet label rejected");
+
+  const metaFooter = goodCard();
+  metaFooter.footerLine = ["evidence unavailable", "source review required"];
+  assert.ok(!lintCard(metaFooter, ctx).ok, "meta footer fragments rejected");
+
+  const docTool = goodCard();
+  docTool.summary =
+    sentence(40) +
+    " The documented workflow searches SweetProcess documentation and cites the source of each answer in the reply.";
+  assert.ok(
+    lintCard(docTool, ctx).ok,
+    `document vocabulary about the tool stays legal: ${lintCard(docTool, ctx).violations.join("; ")}`
+  );
+
+  const metaTitle = goodCard();
+  metaTitle.title = "Editorial Calendar Builder";
+  assert.ok(
+    lintCard(metaTitle, ctx).ok,
+    "meta vocabulary in a submitter-chosen title is not a meta-commentary violation"
+  );
+
+  const titlePrefix = goodCard();
+  titlePrefix.title = "Claude Skill: Export Scorer";
+  assert.ok(
+    !lintCard(titlePrefix, ctx).ok,
+    "category-prefixed title rejected by the lint backstop"
+  );
+
+  // The HOUSE_RULES split (docs-blind stages get style rules only) must be
+  // byte-identical to the pre-split literal, or every writer prompt shifts.
+  assert.equal(
+    HOUSE_RULES,
+    "House copy rules, all mandatory: no em dashes or en dashes anywhere; no " +
+      "frequency adverbs (always, never, often, usually, frequently, rarely, " +
+      "constantly, typically, regularly); no URLs, email addresses, or phone " +
+      "numbers; no HTML or markdown markup; plain factual prose; past tense for " +
+      "anything that ran; every claim must be supported by the submitted " +
+      "documents; claims must not outrun the evidence.",
+    "HOUSE_RULES concatenation is byte-identical to the pre-split literal"
+  );
+
   // ---- wrapper-zip shapes (2026-07-30 owner directive) ----
   const innerSkillBytes = await zipOf({
     "SKILL.md": PROSE,
@@ -375,6 +431,62 @@ async function main() {
   assert.equal(titleFromSubject("Re: Fwd: RE:  Ticket Wizard  "), "Ticket Wizard");
   assert.equal(titleFromSubject("FW[2]: Ticket Wizard"), "Ticket Wizard");
   assert.equal(titleFromSubject("Ticket\r\nWizard"), "Ticket Wizard", "header injection collapsed");
+
+  // Subject hygiene (2026-07-31): gateway bracket tags, copy counters,
+  // zero-width characters. The BOM case pins the strip ORDER: ECMAScript \s
+  // includes U+FEFF, so stripping after the sanitize \s+ collapse would
+  // leave "Out age Checker".
+  assert.equal(
+    titleFromSubject("[EXTERNAL] Fwd: [xl-net] Outage Checker"),
+    "Outage Checker"
+  );
+  assert.equal(titleFromSubject("Re: Ticket Wizard (2)"), "Ticket Wizard");
+  assert.equal(
+    titleFromSubject("Quarterly Report (2024)"),
+    "Quarterly Report (2024)",
+    "4-digit parenthetical is not a copy counter"
+  );
+  assert.equal(
+    titleFromSubject("Legit (parenthetical) name"),
+    "Legit (parenthetical) name"
+  );
+  assert.equal(
+    titleFromSubject("Out\u{FEFF}age Checker"),
+    "Outage Checker",
+    "BOM stripped before the \\s+ collapse can turn it into a space"
+  );
+  assert.equal(titleFromSubject("Zero\u{200B}width Wizard"), "Zerowidth Wizard");
+
+  // Category/kind prefix stripping (subject-derived titles only; authored
+  // titles are rejected at their call sites using the raw regex).
+  assert.equal(
+    stripKindPrefix("Claude Skill: Slack Knowledge Assistant"),
+    "Slack Knowledge Assistant"
+  );
+  assert.equal(stripKindPrefix("skill: outage-checker"), "outage-checker");
+  assert.equal(stripKindPrefix("CoWork Skill - License Tracker"), "License Tracker");
+  assert.equal(stripKindPrefix("Code program: TPS Count"), "TPS Count");
+  assert.equal(
+    stripKindPrefix("Claude Skill: Skill: Outage Checker"),
+    "Outage Checker",
+    "nested prefixes strip"
+  );
+  assert.equal(
+    stripKindPrefix("Skill Builder Dashboard"),
+    "Skill Builder Dashboard",
+    "badge word without separator kept"
+  );
+  assert.equal(stripKindPrefix("Automation Station"), "Automation Station");
+  assert.equal(
+    stripKindPrefix("Autotask: CI Intake"),
+    "Autotask: CI Intake",
+    "non-badge lead word kept"
+  );
+  assert.ok(
+    TITLE_KIND_PREFIX_RE.test("Claude Skill: X") &&
+      !TITLE_KIND_PREFIX_RE.test("Autotask: CI Intake"),
+    "raw regex backs the reject paths (form field, Title: body line)"
+  );
 
   const body = parseSubmissionBody(
     [

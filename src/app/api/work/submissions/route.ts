@@ -10,6 +10,7 @@ import { brainHealthy } from "@/lib/governance/brain";
 import {
   isWorkKind,
   MISSING_ARCH_DOC_MESSAGE,
+  TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
   workSubmissionsEnabled,
 } from "@/lib/work/config";
@@ -101,6 +102,15 @@ export async function POST(req: Request): Promise<Response> {
     return workError(
       "invalid_request",
       `Title must be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters.`,
+      400
+    );
+  // A typed title is authored, so a category prefix is rejected with
+  // instructions, never silently rewritten (2026-07-31 incident: email
+  // subjects are stripped instead, they are transport artifacts).
+  if (TITLE_KIND_PREFIX_RE.test(title))
+    return workError(
+      "invalid_request",
+      "The title should be just the tool's name; the card's badge already shows the kind. Remove the category prefix and resubmit.",
       400
     );
   const blurb = String(form.get("blurb") ?? "").trim();

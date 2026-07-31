@@ -6,7 +6,12 @@
 // not the glyph; a mechanical patch would leave the tell).
 
 import staticTitles from "./static-titles.json";
-import { BANNED_ADVERBS, CATEGORY_BADGES, WORK_CAPS } from "./config";
+import {
+  BANNED_ADVERBS,
+  CATEGORY_BADGES,
+  TITLE_KIND_PREFIX_RE,
+  WORK_CAPS,
+} from "./config";
 
 export interface WorkCard {
   title: string;
@@ -30,11 +35,66 @@ export function wordCount(s: string): number {
   return s.split(/\s+/).filter(Boolean).length;
 }
 
+/** Process meta-commentary collocations (2026-07-31 incident: four cards
+ * published whose copy was ABOUT the review instead of about the tool,
+ * "No supporting source document was submitted for this card"). Every
+ * pattern is a multi-word collocation or a word with zero legitimate
+ * occurrences across the 24 hand-authored exhibits and the one good
+ * community card; bare "document", "documentation", "review", "verified",
+ * "draft", "pending" stay legal because real cards use them about the tool
+ * ("documented workflow", "searches SweetProcess documentation"). Applied
+ * to every visible field EXCEPT the title: titles are submitter-chosen
+ * names, and a tool really could be called "Editorial Calendar Builder". */
+const META_COMMENTARY_PATTERNS: { re: RegExp; label: string }[] = [
+  { re: /\bth(?:is|e|at) card\b/i, label: "the card referring to itself" },
+  { re: /\bcritic(?:s|'s)?\b/i, label: "review vocabulary (critic)" },
+  { re: /\beditorial\b/i, label: "review vocabulary (editorial)" },
+  { re: /\bpublication\b/i, label: "review vocabulary (publication)" },
+  { re: /\bunverified\b/i, label: "verification-status language" },
+  {
+    re: /\bnot (?:be )?(?:verified|confirmed|validated|substantiated|established)\b/i,
+    label: "verification-status language",
+  },
+  {
+    re: /\bsource (?:document|file|evidence|review|material|artifact|skill)s?\b/i,
+    label: "evidence-status language",
+  },
+  {
+    re: /\bsupporting (?:source )?(?:document|artifact|file|material|evidence)s?\b/i,
+    label: "evidence-status language",
+  },
+  {
+    re: /\bsubmitted (?:draft|material|evidence|file|document|description)s?\b/i,
+    label: "submission-process language",
+  },
+  {
+    re: /\bno\b[^.!?]{0,80}\b(?:was|were) submitted\b/i,
+    label: "submission-process language",
+  },
+  { re: /\bthe submission\b/i, label: "submission-process language" },
+  { re: /\bwithheld\b/i, label: "evidence-status language" },
+  { re: /\bprovisional(?:ly)?\b/i, label: "evidence-status language" },
+  {
+    re: /\bevidence (?:was |is |remained )?(?:unavailable|pending|absent|missing|needed)\b/i,
+    label: "evidence-status language",
+  },
+  {
+    re: /\bpending (?:source|evidence|review|verification)\b/i,
+    label: "evidence-status language",
+  },
+  {
+    re: /\baccompan(?:ied|y|ying) the (?:draft|submission|card)\b/i,
+    label: "submission-process language",
+  },
+];
+
 /** String bans applied to every visible field. Narrow by design (critic
  * ruling): tag-shaped sequences, not bare angle brackets; scheme'd URLs and
  * www., not bare domains; contact shapes (emails, phone numbers) because the
- * panel must never mint a contact path the company does not run. */
-function stringViolations(field: string, s: string): string[] {
+ * panel must never mint a contact path the company does not run. Exported
+ * for the ops rerun script, which must run the same bans on an operator
+ * title before writing it. */
+export function stringViolations(field: string, s: string): string[] {
   const v: string[] = [];
   if (/—|–/.test(s)) v.push(`${field}: contains an em or en dash`);
   if (/<\/?[a-zA-Z]/.test(s) || /&#/.test(s))
@@ -48,6 +108,15 @@ function stringViolations(field: string, s: string): string[] {
   for (const adverb of BANNED_ADVERBS) {
     if (new RegExp(`\\b${adverb}\\b`, "i").test(s))
       v.push(`${field}: contains the frequency adverb "${adverb}"`);
+  }
+  if (field !== "title") {
+    for (const { re, label } of META_COMMENTARY_PATTERNS) {
+      const m = re.exec(s);
+      if (m)
+        v.push(
+          `${field}: ${label} ("${m[0]}"). Cards describe the tool for a reader; they never discuss the review, the submission, or whether evidence exists. If the material cannot support a claim, drop the claim; do not write about the gap.`
+        );
+    }
   }
   return v;
 }
@@ -79,6 +148,12 @@ export function lintCard(raw: unknown, ctx: LintContext): LintResult {
   )
     violations.push(
       `title must be ${WORK_CAPS.titleMinChars}-${WORK_CAPS.titleMaxChars} characters`
+    );
+  // Backstop only: both intakes strip or reject category prefixes before a
+  // row exists, so a fire here means a new intake path skipped that step.
+  if (TITLE_KIND_PREFIX_RE.test(title))
+    violations.push(
+      `title "${title}" starts with a category prefix that duplicates the badge; the title must be the bare tool name`
     );
 
   const categoryBadge =

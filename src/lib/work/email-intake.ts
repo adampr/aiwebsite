@@ -32,6 +32,7 @@ import { brainHealthy } from "@/lib/governance/brain";
 import { claimMetaOnce, getMeta, setMeta } from "@/lib/governance/db";
 import {
   MISSING_ARCH_DOC_MESSAGE,
+  TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
   workSubmissionsEnabled,
 } from "./config";
@@ -48,6 +49,7 @@ import {
   inferKind,
   parseSubmissionBody,
   pickAttachments,
+  stripKindPrefix,
   titleFromSubject,
   type AttachmentMeta,
 } from "./email-parse";
@@ -356,10 +358,20 @@ export async function handleWorkEmail(
   // forwarded skill emails arrive with subjects like "Fwd: skill to our
   // work" while the body names the tool (owner report 2026-07-31, the
   // first real submission published under its subject line).
-  const title =
-    parsed.title !== null
-      ? sanitizeHeaderValue(parsed.title, 200).trim()
-      : titleFromSubject(subjectRaw);
+  const authoredTitle =
+    parsed.title !== null ? sanitizeHeaderValue(parsed.title, 200).trim() : null;
+  // Category prefixes ("Claude Skill: X") duplicate the card's badge. An
+  // AUTHORED title (the body line) is the submitter's choice, so it is
+  // rejected with instructions, never silently rewritten; a subject-derived
+  // title is a transport artifact and is silently stripped (2026-07-31
+  // incident: "Claude Skill: Slack Knowledge Assistant" published verbatim).
+  if (authoredTitle !== null && TITLE_KIND_PREFIX_RE.test(authoredTitle)) {
+    await reject(
+      `The title should be just the tool's name; the card's badge already shows the kind. Remove the category prefix from your title line ("${authoredTitle.slice(0, 80)}") and resend.`
+    );
+    return;
+  }
+  const title = authoredTitle ?? stripKindPrefix(titleFromSubject(subjectRaw));
   if (
     title.length < WORK_CAPS.titleMinChars ||
     title.length > WORK_CAPS.titleMaxChars

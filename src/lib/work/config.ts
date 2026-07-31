@@ -69,7 +69,8 @@ export const WORK_CAPS = {
 
 /** Badge slot 2 vocabulary: a category, never a claim (editorial rule).
  * The status badge is NOT model-chosen: every community card renders the
- * constant "Built". */
+ * constant "Built". Adding a badge here? Extend TITLE_KIND_PREFIX_RE below
+ * so a "New Badge: X" title prefix is caught at intake and lint. */
 export const CATEGORY_BADGES = [
   "Claude Skill",
   "CoWork Skill",
@@ -81,6 +82,37 @@ export const CATEGORY_BADGES = [
   "Report generator",
   "Documentation tool",
 ] as const;
+
+/** Category/kind prefixes that duplicate the badge when they lead a title
+ * ("Claude Skill: Slack Knowledge Assistant", 2026-07-31 incident). Covers
+ * every CATEGORY_BADGES value plus bare "skill", "program", "tool"; a
+ * separator (colon, or a spaced hyphen/middot) is required so titles that
+ * merely contain badge words ("Skill Builder Dashboard", "Automation
+ * Station") never match. Shared by intake stripping (subject-derived
+ * titles), intake rejection (authored titles), and the lint backstop. */
+export const TITLE_KIND_PREFIX_RE =
+  /^\s*(?:(?:claude|cowork|co work)\s+skill|skill|code\s+program|program|internal\s+tool|browser\s+app|automation|cli\s+tool|integration|report\s+generator|documentation\s+tool|tool)\s*(?::\s*|\s[-·]\s)/i;
+
+/** Panel prompt rule strings (2026-07-31 meta-commentary incident): the
+ * style rules and the evidence rules are separate because the editorial
+ * critic and the repair stage are docs-blind by design; feeding a stage an
+ * evidence mandate it cannot execute is what produced the published
+ * "no supporting source document was submitted" cards. Stages that see the
+ * documents get HOUSE_RULES; docs-blind stages get HOUSE_STYLE_RULES only.
+ * The concatenation is asserted byte-identical to the pre-split literal in
+ * scripts/work-tests.ts; edit with that test in mind. */
+export const HOUSE_STYLE_RULES =
+  "House copy rules, all mandatory: no em dashes or en dashes anywhere; no " +
+  "frequency adverbs (always, never, often, usually, frequently, rarely, " +
+  "constantly, typically, regularly); no URLs, email addresses, or phone " +
+  "numbers; no HTML or markdown markup; plain factual prose; past tense for " +
+  "anything that ran.";
+
+export const HOUSE_EVIDENCE_RULES =
+  "every claim must be supported by the submitted " +
+  "documents; claims must not outrun the evidence.";
+
+export const HOUSE_RULES = `${HOUSE_STYLE_RULES.slice(0, -1)}; ${HOUSE_EVIDENCE_RULES}`;
 
 /** First-party names the disclosure critic must never flag (2026-07-30
  * calibration: the pipeline held its own badge vocabulary and the owner's

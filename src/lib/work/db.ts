@@ -396,6 +396,82 @@ export async function approveHeld(id: string): Promise<string | null> {
   return res.length > 0 ? slug : null;
 }
 
+/** Ops lever (2026-07-31 meta-commentary incident): pull a PUBLISHED card
+ * back to held so claimPanel({fromHeld}) can re-run it. Published-status
+ * gated, so a double invocation is a no-op; heldAt is set and never cleared
+ * (same bar as finishHeld). The card drops off /work on the next render,
+ * which is intended: the bad copy comes down first. cardJson is nulled
+ * DELIBERATELY: approveHeld publishes stored drafts verbatim with no
+ * re-gate, so leaving the incident copy on the row would let one admin
+ * click republish it; with null, approveHeld refuses until a fresh run
+ * stores a new draft. The note lands in panelError but claimPanel nulls it
+ * on the next claim; the durable audit trail is the operator's close-out
+ * email and pre-repair dump, not this row. */
+export async function holdPublishedForRerun(
+  id: string,
+  note: string
+): Promise<boolean> {
+  const res = await db
+    .update(S)
+    .set({
+      status: "held",
+      heldAt: new Date(),
+      cardJson: null,
+      panelError: note.slice(0, 4000),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(S.id, id), eq(S.status, "published")))
+    .returning({ id: S.id });
+  return res.length > 0;
+}
+
+/** Ops retitle before a re-run: the synthesis prompt pins the card title to
+ * row.title, so the row must carry the intended title BEFORE the panel
+ * runs. No status gate: used on held rows pre-re-run. */
+export async function setSubmissionTitle(
+  id: string,
+  title: string
+): Promise<boolean> {
+  const res = await db
+    .update(S)
+    .set({ title, updatedAt: new Date() })
+    .where(eq(S.id, id))
+    .returning({ id: S.id });
+  return res.length > 0;
+}
+
+/** Retitle-only repair for a published card whose COPY is good but whose
+ * title is a transport artifact ("skill to our work", 2026-07-31): rewrites
+ * row.title, cardJson.title, and the slug, no brain calls, body untouched.
+ * The caller validates the new title (length, string bans, static and
+ * published clashes) before calling. */
+export async function retitlePublishedCard(
+  id: string,
+  title: string
+): Promise<{ oldSlug: string | null; slug: string } | null> {
+  const row = await submissionById(id);
+  if (!row || row.status !== "published" || !row.cardJson) return null;
+  let card: WorkCard;
+  try {
+    card = JSON.parse(row.cardJson) as WorkCard;
+  } catch {
+    return null;
+  }
+  card.title = title;
+  const slug = await uniqueSlug(title, id);
+  const res = await db
+    .update(S)
+    .set({
+      title,
+      cardJson: JSON.stringify(card),
+      slug,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(S.id, id), eq(S.status, "published")))
+    .returning({ id: S.id });
+  return res.length > 0 ? { oldSlug: row.slug, slug } : null;
+}
+
 export async function deleteSubmission(id: string): Promise<SubmissionRow | null> {
   const rows = await db.delete(S).where(eq(S.id, id)).returning(ROW_COLS);
   return rows[0] ?? null;

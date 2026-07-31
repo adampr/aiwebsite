@@ -20,6 +20,7 @@
     "upgrade:check": "tsx packages/aicompany/cli/upgrade-check.ts",
     "test:governance": "tsx scripts/governance-tests.ts",
     "test:work": "tsx scripts/work-tests.ts",
+    "work:rerun": "tsx scripts/work-panel-rerun.ts",
     "test:peg": "node scripts/peg-score-tests.mjs",
     "qa:hi-speed": "node scripts/qa/hi-speed-test.mjs"
   },

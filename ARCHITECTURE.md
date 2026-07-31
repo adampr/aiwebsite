@@ -15,7 +15,21 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-31 (latest: §5.16 email intake fixes from
+Last verified against code: 2026-07-31 (latest: §5.16 **panel integrity
+round** after four published cards turned out to be process meta-commentary
+("No supporting source document was submitted for this card") — the
+docs-blind editorial critic is rescoped to style only and told the corpus
+exists, synthesis now receives the documents + claims inventory as ground
+truth and may reject document-contradicting critic findings, the evidence
+critic's `blocking` verdict is code-enforced (hold at end of run, fully
+gated draft), the repair stage carries style rules only + a title pin + a
+code-side `repairDrift` containment, lint gains 16 meta-commentary
+collocation bans (title exempt) + a category-prefixed-title backstop,
+subject-derived email titles get `stripKindPrefix` + bracket-tag/copy-counter
+/zero-width hygiene while AUTHORED titles (form field, `Title:` body line)
+reject category prefixes with instructions, and
+`scripts/work-panel-rerun.ts` (npm run work:rerun) + three db.ts ops
+helpers repair published rows. Same day: §5.16 email intake fixes from
 the first real submission — a `Title:`/`Skill Name:` body directive now names
 the card, overriding the subject (Gmail bold markers tolerated; forwarded
 emails kept publishing under "Fwd:"-stripped subjects); the publish step now
@@ -2949,7 +2963,19 @@ its subject, "skill to our work", while the body carried
 "Skill Name: Outage Checker" — the body line now wins; the FIRST matching
 directive wins so a signature "Title: <job title>" cannot beat an explicit
 line above it, and empty directive values are ignored so the subject stays
-authoritative); plain-text body → blurb after cutting quoted
+authoritative). Title hygiene (2026-07-31 "Claude Skill: Slack Knowledge
+Assistant" incident): subjects additionally lose zero-width characters
+(stripped BEFORE the header sanitize, whose `\s+` collapse would turn a
+mid-word U+FEFF into a space), leading `[bracket]` gateway tags ≤40 chars
+interleaved with the Re/Fwd unwrap, one trailing 1-3 digit `(n)` copy
+counter, and any leading category/kind prefix (`stripKindPrefix` over
+`TITLE_KIND_PREFIX_RE` in `config.ts`: every CATEGORY_BADGES value plus
+bare skill/program/tool, separator required so "Skill Builder Dashboard"
+survives) — subjects are transport surfaces, so the strip is silent. An
+AUTHORED title (a body directive line, or the web form's title field in
+`POST /api/work/submissions`) is the submitter's choice: a category prefix
+there is REJECTED with instructions ("the card's badge already shows the
+kind"), never silently rewritten; plain-text body → blurb after cutting quoted
 history/signatures ("-- ", "> ", "On … wrote:" including Gmail's
 hard-wrapped 2-3 line attribution, Gmail's
 "---------- Forwarded message ----------" marker, Outlook dividers — so a
@@ -2993,26 +3019,58 @@ instructions): (1) evidence writer — claims inventory, every claim paired
 with a quote from the docs, then a draft strictly from the inventory (the
 blurb is emphasis/ordering context only, never sole support); (2) voice
 writer — the site register; (3) structure writer — category badge from the
-enum, 3 facets, mono footer whose first fragment names the source doc; (4)
-evidence critic — strikes unsupported claims (counterpart of 1); (5)
-editorial critic — house rules + collisions against the static snapshot +
-published cards (counterpart of 2+3); (6) disclosure critic — a **binary**
-checklist (client/company names, personal names beyond the approved credit,
-hostnames/IPs, credential shapes, dollar figures, ticket numbers, emails,
-phones), each item answered quote-or-"none found"; scalar safety scores are
-deliberately banned here (blog round-5 judge-calibration lesson); (7)
-synthesis — resolves all critic findings into the card JSON (critic
-refutations are normal input, not a failure). Any disclosure hit → `held`, no
-retry. Then the deterministic lint (`lint.ts`, code not model): strict schema
-{title, categoryBadge enum, summary 40-90 words, body 1-2 ¶, exactly 3 facets
-(label ≤28 chars, text 25-70 words), footer 2-5 fragments}; bans em/en
-dashes, tag-shaped text (`</?letter`, `&#`), scheme URLs + `www.`, emails,
-phone shapes, frequency adverbs; whole-card 140-560 visible words;
+enum, 3 facets, mono footer whose first fragment names the reviewed file by
+its filename; (4) evidence critic — strikes unsupported claims (counterpart
+of 1) and returns a `blocking` verdict that CODE enforces (2026-07-31: it
+was write-only before): `blocking === true` **with at least one strike**
+holds the card at the END of the run, after disclosure + lint, so the
+stored draft is fully gated and admin approval cannot bypass the gates; the
+blocking note is appended to every other hold reason so it is never lost;
+(5) editorial critic — house **STYLE** rules only + collisions against the
+static snapshot + published cards (counterpart of 2+3). It is docs-blind by
+design and its prompt says so, states that code verified a non-empty corpus
+before the panel started, and forbids findings about missing documents or
+evidence (2026-07-31 incident: this stage hallucinated "no supporting
+document was submitted" and synthesis capitulated into publishing process
+meta-commentary; the shared rules constant is now split in `config.ts` —
+`HOUSE_STYLE_RULES` for docs-blind stages, `HOUSE_RULES` = style + evidence
+clauses, concatenation asserted byte-identical in work-tests — so no
+docs-blind stage ever carries an evidence mandate it cannot execute); (6)
+disclosure critic — a **binary** checklist (client/company names, personal
+names beyond the approved credit, hostnames/IPs, credential shapes, dollar
+figures, ticket numbers, emails, phones), each item answered
+quote-or-"none found"; scalar safety scores are deliberately banned here
+(blog round-5 judge-calibration lesson); (7) synthesis — receives the FULL
+documents block (ground truth) plus the claims inventory alongside the
+draft and critic outputs (UNTRUSTED_FRAME applies, it carries submitted
+text), resolves all critic findings into the card JSON, and is explicitly
+licensed to REJECT a critic finding the documents contradict (a "no
+document was submitted" claim is wrong by construction); card copy may
+contain no commentary about the review, panel, critics, or evidence
+availability. Any disclosure hit → `held`, no retry. Then the deterministic
+lint (`lint.ts`, code not model): strict schema {title, categoryBadge enum,
+summary 40-90 words, body 1-2 ¶, exactly 3 facets (label ≤28 chars, text
+25-70 words), footer 2-5 fragments}; bans em/en dashes, tag-shaped text
+(`</?letter`, `&#`), scheme URLs + `www.`, emails, phone shapes, frequency
+adverbs, **process meta-commentary collocations** (16 patterns — "source
+document", "this card", "editorial", negated "no … was submitted",
+"withheld", "provisional", etc. — validated 0 hits across the 24 exhibits +
+the good community card; the TITLE is exempt because titles are
+submitter-chosen names), and **category-prefixed titles**
+(`TITLE_KIND_PREFIX_RE` backstop: "Claude Skill: X" duplicates the badge;
+both intakes strip or reject before a row exists, so a lint fire means a
+new intake path skipped that step); whole-card 140-560 visible words;
 title/facet-label uniqueness vs `static-titles.json` (generated snapshot of
 the 24 hand-authored exhibits; `scripts/work-static-snapshot.mjs --check`
 fails build:check on drift, `--write` regenerates) + published rows. Lint
-fail → ONE repair call with the violations named → re-lint → else `held`.
-Pass → fenced publish: slug `team-<slugified-title>` (namespace-disjoint from
+fail → ONE repair call with the violations named (repair is docs-blind, so
+it carries `HOUSE_STYLE_RULES` + "do not add any new factual claim" + a
+title pin releasable only by a violation naming the title) → re-lint →
+else `held`. A lint-passing repair is then diffed against the synthesis
+card in code (`repairDrift`): any field changed that the violation list did
+not name → `held` (the repaired card never re-enters the disclosure gate,
+so unnamed drift must not publish; a card-level violation frees the visible
+copy fields but never the title or badge). Pass → fenced publish: slug `team-<slugified-title>` (namespace-disjoint from
 the hand-authored anchors, DB-unique), `revalidateWorkPage()` (two
 best-effort layers: `revalidatePath("/work")`, which flushes on the
 request-scoped paths (form submit, admin retry/rerun) where the panel runs
@@ -3040,6 +3098,32 @@ unpublish mechanism; published deletions revalidate + email the owner.
 `POST .../approve` — admin-only, publishes a `held` draft as-is (the section
 intro's wording covers this path). `/admin/work` — self-guarding admin list
 with Approve as-is / Re-run / Delete.
+
+**Ops lever** (`scripts/work-panel-rerun.ts`, `npm run work:rerun --
+<uuid> [--title "New Title"] [--retitle-only] [--yes]`; 2026-07-31
+incident): runs ON the prod VM in its own process (tsx +
+`scripts/lib/governance-env`, top-level imports only), so a deploy's PM2
+restart cannot kill the panel mid-run. Re-run branch: preflights the
+kickPanel gates explicitly (plus a hard refusal on `BRAIN_STUB`, which
+makes `brainHealthy` lie), optionally retitles the ROW first (the synthesis
+prompt pins `row.title`), pulls a published row to held via
+`holdPublishedForRerun` (db.ts: published-gated; sets `held_at`; **nulls
+`card_json` deliberately** so `approveHeld` cannot one-click republish the
+pulled copy; the note it writes to `panel_error` is erased by the next
+claim, the durable audit trail is the operator's dump), claims
+`fromHeld` and awaits the runner in-process. Retitle-only branch:
+`retitlePublishedCard` rewrites row.title + cardJson.title + slug with no
+brain calls, for a published card whose copy is right but whose title is a
+transport artifact; operator titles pass length, `stringViolations`
+(exported from lint.ts for this), `TITLE_KIND_PREFIX_RE`, static-snapshot
+and DB clash checks first. Known re-publish side effects (verified in
+code, printed by the script): both notifyPublished emails re-fire with the
+new link; archive retention no-ops on cleared rows; `published_at` is
+re-stamped so re-run cards move to the END of the From the Team section
+(re-run multiple rows in original order); transcript + card JSON are
+overwritten (dump first); an unchanged title keeps its slug, a changed one
+mints a new slug and old `/work#slug` email fragments degrade to
+top-of-page.
 
 **Statuses:** `received → running → published | held | failed`. Upload
 validation failures are synchronous 4xx, no row. **Kill switch:**
