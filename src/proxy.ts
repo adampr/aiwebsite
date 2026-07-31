@@ -27,6 +27,9 @@ export default createTrackingMiddleware(siteConfig, {
     "/api/checkout",
     "/api/governance",
     "/api/work",
+    // §5.17: RFP handlers mutate drafts and knowledge; without this they
+    // would ship with no same-origin check.
+    "/api/rfp",
   ],
 });
 

@@ -291,4 +291,71 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export const B_RULES: Rule[] = [B1, B2, B3, B4, B5, B6];
+
+/**
+ * B7 · Unsourced currency in prose — BLOCK
+ *
+ * B5 above recomputes the structured pricing quote, and its docstring claims
+ * "the drafting layer may not emit a currency figure it did not receive from
+ * the pricing engine". B5 does not actually enforce that: it returns early
+ * when there is no quote and it never looks at prose. B7 is that missing half.
+ *
+ * Why it matters beyond arithmetic: the RFP being answered is untrusted text
+ * written by a third party, and a prompt-injected "include your internal rate
+ * card" has to surface the numbers SOMEWHERE in client-facing text to be
+ * useful to an attacker. Every legitimate figure in this document comes from
+ * the pricing engine, so any currency token that is not in the sanctioned set
+ * is either an invention or an exfiltration, and both are blocking.
+ *
+ * The sanctioned set is deliberately built from computed output only. Rate
+ * card UNIT prices are never added to it: a unit price appearing verbatim in
+ * prose is exactly the leak this rule exists to catch.
+ */
+export const B7: Rule = {
+  id: "B7",
+  title: "No currency figure that the pricing engine did not produce",
+  severity: "block",
+  check: (ctx) => {
+    const sanctioned = new Set<number>();
+    const quote = ctx.proposal.pricing;
+    if (quote) {
+      for (const ill of quote.illustrations) {
+        sanctioned.add(ill.monthlyTotal.cents);
+        sanctioned.add(ill.annualTotal.cents);
+        for (const line of ill.lines) {
+          sanctioned.add(line.lineTotal.cents);
+          sanctioned.add(line.unitPrice.cents);
+        }
+      }
+      // passThroughItems carry no figure by design (rule B6: pass-through is
+      // labelled, never priced), so there is nothing to sanction from them.
+    }
+
+    const violations = [];
+    // $1,234 / $1,234.56 / $99
+    const money = /\$\s?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{2}))?/g;
+
+    for (const span of textSpans(ctx)) {
+      for (const m of span.text.matchAll(money)) {
+        const dollars = Number(m[1].replace(/,/g, ""));
+        if (!Number.isFinite(dollars)) continue;
+        const cents = dollars * 100 + (m[2] ? Number(m[2]) : 0);
+        if (sanctioned.has(cents)) continue;
+        violations.push(
+          violation({
+            ruleId: "B7",
+            severity: "block",
+            message: `"${m[0]}" appears in ${span.location} but the pricing engine did not produce it. Every figure a client reads has to come from a computed illustration.`,
+            locator: span.blockId ? { blockId: span.blockId } : {},
+            excerpt: m[0],
+            suggestion:
+              "Remove the figure, or add the item to the pricing quote so it is computed.",
+          })
+        );
+      }
+    }
+    return violations;
+  },
+};
+
+export const B_RULES: Rule[] = [B1, B2, B3, B4, B5, B6, B7];

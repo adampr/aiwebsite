@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Script from "next/script";
-import { ChatWidget } from "@aicompany/core/components/chat-widget";
 import {
   toChatWidgetProps,
   toSmsPromptCardProps,
@@ -16,6 +15,7 @@ import { siteConfig } from "site.config";
 import { FuturismFx } from "@/components/futurism-fx";
 import { EmailLink } from "@/components/email-link";
 import { StaffRfpLink } from "@/components/staff-rfp-link";
+import { ChatWidgetMount } from "@/components/chat-widget-mount";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -222,7 +222,7 @@ export default function RootLayout({
             </div>
           </div>
         </footer>
-        <ChatWidget {...toChatWidgetProps(siteConfig)} />
+        <ChatWidgetMount {...toChatWidgetProps(siteConfig)} />
         <SmsPromptCard {...toSmsPromptCardProps(siteConfig)} />
         <FuturismFx />
         <Script src="/fx.js" strategy="afterInteractive" />

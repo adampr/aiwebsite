@@ -2,6 +2,7 @@
 // card, and the intake questionnaire.
 
 import { requireRfpPage } from "@/lib/rfp/access";
+import { KnowledgeNav } from "./nav";
 import {
   correctedFacts,
   currentKbVersion,
@@ -59,6 +60,8 @@ export default async function RfpKnowledgePage() {
 
   return (
     <div className="space-y-12">
+      <KnowledgeNav admin={gate.user.admin} />
+
       <div>
         <span className="sys-label">Knowledge base · v{kb}</span>
         <p className="mt-4 max-w-2xl">

@@ -35,7 +35,10 @@ import {
   timestamp,
   index,
   unique,
+  uuid,
+  serial,
 } from "drizzle-orm/pg-core";
+import { users } from "./schema";
 
 /** Knowledge-base versions. The seq is what every fact's introducedInKb points at. */
 export const rfpKbVersions = pgTable(
@@ -166,4 +169,239 @@ export const rfpQuestions = pgTable(
     askOrder: integer("ask_order").notNull(),
   },
   (t) => [index("rfp_questions_ask_order_idx").on(t.askOrder)]
+);
+
+/* ==========================================================================
+   RFP workspace (§5.17 round 2). The six tables above are the seeded
+   knowledge base and keep semantic text PKs. Everything below is created by
+   users at runtime with no semantic id, so it uses uuid().defaultRandom() —
+   matching governanceProjects / workSubmissions in schema.ts.
+
+   OWNERSHIP. Every root table carries BOTH owner_user_id (the FK, for
+   referential truth and account-export/delete) and owner_email (denormalized,
+   lowercased). The email is what the visibility predicate compares, because
+   it survives a users-row deletion and because the session carries it
+   directly. Child rows are reachable only through their parent's id, never by
+   their own, so ownership is always exactly one join away.
+   ========================================================================== */
+
+/** An uploaded or pasted RFP. Original file bytes are NOT stored, only text. */
+export const rfpDocuments = pgTable(
+  "rfp_documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerUserId: uuid("owner_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ownerEmail: text("owner_email").notNull(),
+    title: text("title").notNull(),
+    clientName: text("client_name"),
+    // "pdf" | "docx" | "md" | "txt" | "paste"
+    sourceKind: text("source_kind").notNull(),
+    sourceName: text("source_name"),
+    sourceSha256: text("source_sha256"),
+    sourceBytes: integer("source_bytes"),
+    /** Extracted plain text. Capped at CAPS.rfpSourceMaxChars, never the raw file. */
+    rawText: text("raw_text").notNull(),
+    /** screenInjection() dropped lines on ingest. A review signal, not a block. */
+    injectionFlagged: boolean("injection_flagged").notNull().default(false),
+    /** JSON StructureNode[] — the client's own labels, verbatim (rule C4). */
+    structureJson: text("structure_json"),
+    structureConfirmedAt: timestamp("structure_confirmed_at", {
+      withTimezone: true,
+    }),
+    dueDate: timestamp("due_date", { withTimezone: true }),
+    // "new" | "extracted" | "confirmed" | "archived"
+    status: text("status").notNull().default("new"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("rfp_documents_owner_idx").on(t.ownerEmail, t.createdAt),
+    index("rfp_documents_status_idx").on(t.status, t.updatedAt),
+  ]
+);
+
+/** One atomic ask from the client's RFP. Coverage is judged per row. */
+export const rfpRequirements = pgTable(
+  "rfp_requirements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => rfpDocuments.id, { onDelete: "cascade" }),
+    /** The client's own section label, verbatim. Never normalized (rule C4). */
+    structureLabel: text("structure_label").notNull(),
+    text: text("text").notNull(),
+    ordinal: integer("ordinal").notNull(),
+    // "question" | "attachment" | "statement"
+    kind: text("kind").notNull().default("question"),
+    mandatory: boolean("mandatory").notNull().default(true),
+    /** "covered" | "gap-acknowledged" | "uncovered" */
+    coverageState: text("coverage_state").notNull().default("uncovered"),
+    coverageNote: text("coverage_note"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("rfp_requirements_doc_idx").on(t.documentId, t.ordinal)]
+);
+
+/**
+ * A drafted response.
+ *
+ * sections_json holds the whole section/block IR rather than section and block
+ * tables. Every edit (human or Tron) lands as ONE fenced UPDATE, which is what
+ * makes a failed generation incapable of leaving a half-written document, and
+ * the validators run on the in-memory model anyway, never on rows.
+ */
+export const rfpProposals = pgTable(
+  "rfp_proposals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => rfpDocuments.id, { onDelete: "cascade" }),
+    ownerUserId: uuid("owner_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ownerEmail: text("owner_email").notNull(),
+    title: text("title").notNull(),
+    // "draft" | "in-review" | "approved" | "sent" | "superseded"
+    status: text("status").notNull().default("draft"),
+    /** Optimistic-concurrency fence. Every write bumps it. */
+    rev: integer("rev").notNull().default(0),
+    draftedAgainstKbVersion: integer("drafted_against_kb_version")
+      .notNull()
+      .default(0),
+    /** JSON ResolvedSection[] — the drafted content. */
+    sectionsJson: text("sections_json").notNull().default("[]"),
+    /** JSON GateResult from the last run. Null = never gated. */
+    gateJson: text("gate_json"),
+    gateRanAt: timestamp("gate_ran_at", { withTimezone: true }),
+    /** Set from the SESSION at approval, never from a form field. */
+    approvedBy: text("approved_by"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    // Generation claim state (governance turn pattern): started_at non-null =
+    // a run is in flight; the attempt nonce fences a stale worker's write.
+    genStartedAt: timestamp("gen_started_at", { withTimezone: true }),
+    genAttemptId: text("gen_attempt_id"),
+    genHeartbeatAt: timestamp("gen_heartbeat_at", { withTimezone: true }),
+    genProgress: text("gen_progress"),
+    genError: text("gen_error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("rfp_proposals_owner_idx").on(t.ownerEmail, t.updatedAt),
+    index("rfp_proposals_doc_idx").on(t.documentId),
+    index("rfp_proposals_status_idx").on(t.status, t.updatedAt),
+  ]
+);
+
+/**
+ * Append-only activity log (§5.17).
+ *
+ * Records SHAPE, never content: ids, keys, counts, rule ids. No RFP text, no
+ * draft prose, no fact statements, no money. Denials are logged as well as
+ * successes, because a horizontal-privilege probe shows up only as a run of
+ * denied reads. There is deliberately no update or delete helper.
+ */
+export const rfpActivity = pgTable(
+  "rfp_activity",
+  {
+    id: serial("id").primaryKey(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    actorEmail: text("actor_email").notNull(),
+    actorAdmin: boolean("actor_admin").notNull().default(false),
+    /** Closed vocabulary — see RFP_ACTIONS in src/lib/rfp/activity.ts. */
+    action: text("action").notNull(),
+    // "document" | "proposal" | "fact" | "section"
+    subjectKind: text("subject_kind"),
+    subjectId: text("subject_id"),
+    /** "ok" | "denied" | "error" */
+    outcome: text("outcome").notNull().default("ok"),
+    /** Small JSON of non-confidential shape data. Capped on write. */
+    metaJson: text("meta_json"),
+  },
+  (t) => [
+    index("rfp_activity_at_idx").on(t.at),
+    index("rfp_activity_actor_idx").on(t.actorEmail, t.at),
+    index("rfp_activity_subject_idx").on(t.subjectKind, t.subjectId, t.at),
+  ]
+);
+
+/**
+ * Proposed knowledge, scoped to the person who wrote it (§5.17).
+ *
+ * WHY THIS IS A SEPARATE TABLE, not `visibility` columns on rfp_facts.
+ * Private facts sharing a key with a shared fact would create duplicate keys
+ * in one corpus, and the two fact readers disagree on duplicates:
+ * `factByKey` (content-model/knowledge.ts) uses .find() so FIRST wins, while
+ * rule A6 builds `new Map(negativeFacts(...))` so LAST wins. One unapproved
+ * private row keyed like a shared negative fact would therefore replace that
+ * fact's statement AND its remediation suggestion inside a BLOCK message,
+ * putting unreviewed user text in front of the drafter as the fix to apply.
+ *
+ * Keeping proposals out of rfp_facts also means: the seed's ON CONFLICT
+ * target keeps working, `factsById` stays unscoped (it must resolve EVERY
+ * cited id, including another user's, or an admin auditing their document
+ * gets a spurious A5 "cites a fact that does not exist"), and a rejection
+ * cannot make an id vanish from someone else's live draft.
+ *
+ * Approval INSERTS a real row into rfp_facts with a new id at a new KB
+ * version. That matches the corpus rule that corrections rebuild rather than
+ * patch, and it means an approved fact's id has never been anything else.
+ */
+export const rfpKnowledgeProposals = pgTable(
+  "rfp_knowledge_proposals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerUserId: uuid("owner_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    ownerEmail: text("owner_email").notNull(),
+    /**
+     * "fact"   — a durable truth about XL.net; promotable to the shared base.
+     * "choice" — a decision about ONE proposal. Never promotable: a choice
+     *            promoted to a fact poisons every future draft.
+     */
+    kind: text("kind").notNull().default("choice"),
+    factKey: text("fact_key"),
+    category: text("category").notNull().default("general"),
+    statement: text("statement").notNull(),
+    detail: text("detail"),
+    // "affirmative" | "negative"
+    polarity: text("polarity").notNull().default("affirmative"),
+    /** The RFP this arose from, when it came from a draft gap. */
+    documentId: uuid("document_id").references(() => rfpDocuments.id, {
+      onDelete: "set null",
+    }),
+    // "private" | "submitted" | "approved" | "returned"
+    status: text("status").notNull().default("private"),
+    /** Set on approval: the rfp_facts.id that was minted from this row. */
+    promotedFactId: text("promoted_fact_id"),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewNote: text("review_note"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("rfp_kprop_owner_idx").on(t.ownerEmail, t.status),
+    index("rfp_kprop_status_idx").on(t.status, t.createdAt),
+    index("rfp_kprop_doc_idx").on(t.documentId),
+  ]
 );

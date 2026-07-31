@@ -4,15 +4,31 @@
 // and src/lib/governance/db.ts. Selects are explicit column allowlists, not
 // SELECT *, so a column added later cannot silently widen what a page renders.
 
-import { asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
 import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  sql,
+} from "drizzle-orm";
+import { db } from "@/lib/db";
+import { users } from "@/lib/db/schema";
+import {
+  rfpActivity,
+  rfpDocuments,
   rfpFacts,
   rfpKbVersions,
+  rfpKnowledgeProposals,
+  rfpProposals,
   rfpQuestions,
   rfpRateCardItems,
   rfpRateCards,
+  rfpRequirements,
 } from "@/lib/db/rfp-schema";
+import type { RfpUser } from "./access";
 
 export type FactRow = typeof rfpFacts.$inferSelect;
 export type QuestionRow = typeof rfpQuestions.$inferSelect;
@@ -133,4 +149,424 @@ export function usd(cents: number): string {
   const dollars = Math.floor(abs / 100);
   const rest = String(abs % 100).padStart(2, "0");
   return `${sign}$${dollars.toLocaleString("en-US")}.${rest}`;
+}
+
+/* ==========================================================================
+   RFP workspace reads and writes (§5.17 round 2).
+
+   OWNERSHIP IS ENFORCED HERE, NOT IN ROUTES. Every accessor below takes the
+   principal and applies scope itself. Admin-sees-all is a SEPARATE, clearly
+   named function rather than a boolean that skips a where clause, because the
+   two are different queries and a flag is one typo from leaking everything.
+
+   Another user's object id yields null (rendered as 404), never 403: a 403
+   confirms the row exists, which is the one bit an id-walking probe wants.
+   ========================================================================== */
+
+
+export type DocumentRow = typeof rfpDocuments.$inferSelect;
+export type ProposalRow = typeof rfpProposals.$inferSelect;
+export type RequirementRow = typeof rfpRequirements.$inferSelect;
+export type KnowledgeProposalRow = typeof rfpKnowledgeProposals.$inferSelect;
+
+
+/**
+ * Resolve the users-row id for an email, or null.
+ *
+ * owner_email is the authoritative ownership field (it is what the visibility
+ * predicate compares, and it survives a users-row deletion). owner_user_id is
+ * the referential nicety, so it must never be able to fail a write: a session
+ * can outlive its users row by up to the 30-day cookie TTL, and inserting an
+ * id that is no longer there would 500 every create for that person.
+ */
+async function ownerUserIdFor(email: string): Promise<string | null> {
+  try {
+    const rows = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email.toLowerCase()))
+      .limit(1);
+    return rows[0]?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const own = (user: RfpUser) => eq(rfpDocuments.ownerEmail, user.email.toLowerCase());
+
+/** The caller's own RFPs, newest activity first. */
+export async function listMyDocuments(user: RfpUser): Promise<DocumentRow[]> {
+  return db
+    .select()
+    .from(rfpDocuments)
+    .where(own(user))
+    .orderBy(desc(rfpDocuments.updatedAt));
+}
+
+/** EVERY RFP. Admin only — the caller must have checked, and we check again. */
+export async function listAllDocuments(user: RfpUser): Promise<DocumentRow[]> {
+  if (!user.admin) throw new Error("listAllDocuments: caller is not an admin");
+  return db
+    .select()
+    .from(rfpDocuments)
+    .orderBy(desc(rfpDocuments.updatedAt));
+}
+
+/**
+ * One RFP the caller may see. Null when it does not exist OR belongs to
+ * someone else and the caller is not an admin — the caller cannot tell which,
+ * which is the point.
+ */
+export async function getDocument(
+  user: RfpUser,
+  id: string
+): Promise<DocumentRow | null> {
+  if (!isUuid(id)) return null;
+  const rows = await db
+    .select()
+    .from(rfpDocuments)
+    .where(
+      user.admin
+        ? eq(rfpDocuments.id, id)
+        : and(eq(rfpDocuments.id, id), own(user))
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/** A malformed id must not reach Postgres as a uuid cast (it throws 22P02). */
+export function isUuid(v: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+}
+
+export async function createDocument(
+  user: RfpUser,
+  input: {
+    title: string;
+    clientName: string | null;
+    sourceKind: string;
+    sourceName: string | null;
+    sourceSha256: string | null;
+    sourceBytes: number | null;
+    rawText: string;
+    injectionFlagged: boolean;
+  }
+): Promise<DocumentRow> {
+  const [row] = await db
+    .insert(rfpDocuments)
+    .values({
+      ownerUserId: await ownerUserIdFor(user.email),
+      ownerEmail: user.email.toLowerCase(),
+      title: input.title.slice(0, 300),
+      clientName: input.clientName?.slice(0, 200) ?? null,
+      sourceKind: input.sourceKind,
+      sourceName: input.sourceName?.slice(0, 300) ?? null,
+      sourceSha256: input.sourceSha256,
+      sourceBytes: input.sourceBytes,
+      rawText: input.rawText,
+      injectionFlagged: input.injectionFlagged,
+      status: "extracted",
+    })
+    .returning();
+  return row!;
+}
+
+export async function listRequirements(
+  documentId: string
+): Promise<RequirementRow[]> {
+  if (!isUuid(documentId)) return [];
+  return db
+    .select()
+    .from(rfpRequirements)
+    .where(eq(rfpRequirements.documentId, documentId))
+    .orderBy(rfpRequirements.ordinal);
+}
+
+export async function replaceRequirements(
+  documentId: string,
+  rows: {
+    structureLabel: string;
+    text: string;
+    ordinal: number;
+    kind: string;
+    mandatory: boolean;
+  }[]
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(rfpRequirements)
+      .where(eq(rfpRequirements.documentId, documentId));
+    if (rows.length)
+      await tx
+        .insert(rfpRequirements)
+        .values(rows.map((r) => ({ ...r, documentId })));
+  });
+}
+
+/* ---- proposals (drafts) ------------------------------------------------ */
+
+export async function getProposalForDocument(
+  documentId: string
+): Promise<ProposalRow | null> {
+  if (!isUuid(documentId)) return null;
+  const rows = await db
+    .select()
+    .from(rfpProposals)
+    .where(eq(rfpProposals.documentId, documentId))
+    .orderBy(desc(rfpProposals.createdAt))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function createProposal(
+  user: RfpUser,
+  documentId: string,
+  title: string,
+  kbVersion: number
+): Promise<ProposalRow> {
+  const [row] = await db
+    .insert(rfpProposals)
+    .values({
+      documentId,
+      ownerUserId: await ownerUserIdFor(user.email),
+      ownerEmail: user.email.toLowerCase(),
+      title: title.slice(0, 300),
+      draftedAgainstKbVersion: kbVersion,
+    })
+    .returning();
+  return row!;
+}
+
+/**
+ * Fenced write. Succeeds only if `rev` is still what the caller read, so two
+ * people editing the same draft cannot silently overwrite each other and a
+ * stale generation worker cannot land on a document that moved underneath it.
+ */
+export async function writeProposalSections(
+  proposalId: string,
+  expectedRev: number,
+  sectionsJson: string,
+  extra: Partial<{
+    gateJson: string | null;
+    gateRanAt: Date | null;
+    genProgress: string | null;
+    genError: string | null;
+    genStartedAt: Date | null;
+  }> = {}
+): Promise<boolean> {
+  const res = await db
+    .update(rfpProposals)
+    .set({
+      sectionsJson,
+      rev: expectedRev + 1,
+      updatedAt: new Date(),
+      ...extra,
+    })
+    .where(
+      and(eq(rfpProposals.id, proposalId), eq(rfpProposals.rev, expectedRev))
+    )
+    .returning({ id: rfpProposals.id });
+  return res.length > 0;
+}
+
+/* ---- knowledge proposals ------------------------------------------------ */
+
+/** The caller's own proposed knowledge, any status. */
+export async function listMyKnowledge(
+  user: RfpUser
+): Promise<KnowledgeProposalRow[]> {
+  return db
+    .select()
+    .from(rfpKnowledgeProposals)
+    .where(eq(rfpKnowledgeProposals.ownerEmail, user.email.toLowerCase()))
+    .orderBy(desc(rfpKnowledgeProposals.createdAt));
+}
+
+/** Everything awaiting an admin decision. Admin only. */
+export async function listPendingKnowledge(
+  user: RfpUser
+): Promise<KnowledgeProposalRow[]> {
+  if (!user.admin) throw new Error("listPendingKnowledge: caller is not an admin");
+  return db
+    .select()
+    .from(rfpKnowledgeProposals)
+    .where(eq(rfpKnowledgeProposals.status, "submitted"))
+    .orderBy(rfpKnowledgeProposals.createdAt);
+}
+
+export async function createKnowledgeProposal(
+  user: RfpUser,
+  input: {
+    kind: "fact" | "choice";
+    factKey: string | null;
+    category: string;
+    statement: string;
+    detail: string | null;
+    polarity: "affirmative" | "negative";
+    documentId: string | null;
+    submit: boolean;
+  }
+): Promise<KnowledgeProposalRow> {
+  const [row] = await db
+    .insert(rfpKnowledgeProposals)
+    .values({
+      ownerUserId: await ownerUserIdFor(user.email),
+      ownerEmail: user.email.toLowerCase(),
+      kind: input.kind,
+      factKey: input.factKey?.slice(0, 120) ?? null,
+      category: input.category.slice(0, 60),
+      statement: input.statement.slice(0, 2000),
+      detail: input.detail?.slice(0, 2000) ?? null,
+      polarity: input.polarity,
+      documentId: input.documentId,
+      status: input.submit ? "submitted" : "private",
+    })
+    .returning();
+  return row!;
+}
+
+export async function getKnowledgeProposal(
+  user: RfpUser,
+  id: string
+): Promise<KnowledgeProposalRow | null> {
+  if (!isUuid(id)) return null;
+  const rows = await db
+    .select()
+    .from(rfpKnowledgeProposals)
+    .where(
+      user.admin
+        ? eq(rfpKnowledgeProposals.id, id)
+        : and(
+            eq(rfpKnowledgeProposals.id, id),
+            eq(rfpKnowledgeProposals.ownerEmail, user.email.toLowerCase())
+          )
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Approve proposed knowledge into the shared base.
+ *
+ * INSERTS a brand new rfp_facts row at a new KB version. It never flips a
+ * flag on an existing row and never mutates the proposal into a fact,
+ * because an approved fact's id must never have been anything else: rule C1's
+ * staleness sweep and every stored citation key off that id.
+ *
+ * Only `kind === "fact"` is promotable. A choice is a decision about one
+ * proposal; promoting it would assert it about the company forever.
+ */
+export async function approveKnowledge(
+  admin: RfpUser,
+  id: string,
+  confidence: "confirmed" | "needs-adam"
+): Promise<{ ok: true; factId: string } | { ok: false; reason: string }> {
+  if (!admin.admin) throw new Error("approveKnowledge: caller is not an admin");
+  const prop = await getKnowledgeProposal(admin, id);
+  if (!prop) return { ok: false, reason: "not_found" };
+  if (prop.status !== "submitted")
+    return { ok: false, reason: "not_awaiting_review" };
+  if (prop.kind !== "fact")
+    return { ok: false, reason: "a choice is never promotable to a fact" };
+  if (!prop.factKey) return { ok: false, reason: "missing fact key" };
+
+  const nextSeq = (await currentKbVersion()) + 1;
+  const factId = `fact_${prop.factKey.replace(/[^a-z0-9]+/gi, "_")}_v${nextSeq}`;
+  const now = new Date();
+
+  await db.transaction(async (tx) => {
+    await tx.insert(rfpKbVersions).values({
+      id: `kb_${nextSeq}`,
+      seq: nextSeq,
+      createdAt: now,
+      note: `Approved knowledge from ${prop.ownerEmail}`,
+    });
+    await tx.insert(rfpFacts).values({
+      id: factId,
+      key: prop.factKey!,
+      category: prop.category,
+      statement: prop.statement,
+      polarity: prop.polarity,
+      detail: prop.detail,
+      sourceUrl: null,
+      verifiedAt: null,
+      correctedAt: null,
+      supersedes: null,
+      introducedInKb: nextSeq,
+      retiredInKb: null,
+      confidence,
+    });
+    await tx
+      .update(rfpKnowledgeProposals)
+      .set({
+        status: "approved",
+        promotedFactId: factId,
+        reviewedBy: admin.email,
+        reviewedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(rfpKnowledgeProposals.id, id));
+  });
+
+  return { ok: true, factId };
+}
+
+export async function returnKnowledge(
+  admin: RfpUser,
+  id: string,
+  note: string
+): Promise<boolean> {
+  if (!admin.admin) throw new Error("returnKnowledge: caller is not an admin");
+  if (!isUuid(id)) return false;
+  const res = await db
+    .update(rfpKnowledgeProposals)
+    .set({
+      status: "returned",
+      reviewedBy: admin.email,
+      reviewedAt: new Date(),
+      reviewNote: note.slice(0, 1000),
+      updatedAt: new Date(),
+    })
+    .where(eq(rfpKnowledgeProposals.id, id))
+    .returning({ id: rfpKnowledgeProposals.id });
+  return res.length > 0;
+}
+
+/**
+ * The drafting snapshot for ONE user: the shared corpus plus that user's own
+ * private knowledge. Never another user's. Private rows arrive as
+ * confidence "needs-adam" so the drafter treats them as provisional.
+ */
+export async function knowledgeForUser(user: RfpUser): Promise<{
+  shared: FactRow[];
+  mine: KnowledgeProposalRow[];
+}> {
+  const [shared, mine] = await Promise.all([
+    liveFacts(),
+    db
+      .select()
+      .from(rfpKnowledgeProposals)
+      .where(
+        and(
+          eq(rfpKnowledgeProposals.ownerEmail, user.email.toLowerCase()),
+          eq(rfpKnowledgeProposals.kind, "fact"),
+          inArray(rfpKnowledgeProposals.status, ["private", "submitted"])
+        )
+      ),
+  ]);
+  return { shared, mine };
+}
+
+/* ---- activity ----------------------------------------------------------- */
+
+export async function recentActivity(
+  user: RfpUser,
+  limit = 200
+): Promise<(typeof rfpActivity.$inferSelect)[]> {
+  if (!user.admin) throw new Error("recentActivity: caller is not an admin");
+  return db
+    .select()
+    .from(rfpActivity)
+    .orderBy(desc(rfpActivity.at))
+    .limit(Math.min(limit, 500));
 }

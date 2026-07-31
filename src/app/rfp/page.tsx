@@ -118,9 +118,15 @@ export default async function RfpOverviewPage() {
             alone.
           </li>
         </ul>
-        <p className="mt-6">
-          <Link href="/rfp/knowledge" className="btn btn--primary">
-            Open the knowledge base
+        <p className="mt-6 flex flex-wrap gap-3">
+          <Link href="/rfp/new" className="btn btn--primary">
+            Start an RFP
+          </Link>
+          <Link href="/rfp/list" className="btn btn--text">
+            Your RFPs
+          </Link>
+          <Link href="/rfp/knowledge" className="btn btn--text">
+            Knowledge base
           </Link>
         </p>
       </div>
@@ -128,10 +134,10 @@ export default async function RfpOverviewPage() {
       <div className="panel">
         <span className="sys-label">Not here yet</span>
         <p className="mt-4 text-sm">
-          Uploading an RFP, drafting against it, the compliance gate, and
-          export to Word and PDF are built and tested, and are not wired into
-          this section yet. They arrive with the review screen. What is here is
-          the knowledge base those steps read from.
+          Export to Word and PDF is still to come, and so is the pricing
+          section: every figure a client reads has to come from the computed
+          rate card rather than from a draft, so it is wired last and
+          deliberately.
         </p>
       </div>
     </div>

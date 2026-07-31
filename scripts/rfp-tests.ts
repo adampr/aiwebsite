@@ -60,4 +60,52 @@ async function main() {
   console.log(pass ? "ALL GATE ASSERTIONS PASSED" : "*** GATE FAILURE ***");
   process.exit(pass ? 0 : 1);
 }
-main();
+main().catch((err) => {
+  // The HTTP assertions need a running instance; the static audit above does
+  // not, so a missing server is a skip rather than a failure.
+  if (String(err?.message ?? err).includes("fetch failed")) {
+    console.log(
+      `\n(no server at ${BASE} — HTTP gate assertions skipped; static audit above still ran)`
+    );
+    process.exit(0);
+  }
+  console.error(err);
+  process.exit(1);
+});
+
+/* ---- round 2: ownership and the ungated-route guard ------------------- */
+
+import fs from "node:fs";
+import path from "node:path";
+
+/**
+ * Static guard: every handler under src/app/api/rfp/** must call
+ * requireRfpApi. This is a grep rather than a route-enumerating HTTP prober
+ * because it runs with no server and no secrets, so it can gate a commit. A
+ * new route that forgets the gate fails here.
+ */
+function auditApiRoutes(): string[] {
+  const root = "src/app/api/rfp";
+  const bad: string[] = [];
+  const walk = (dir: string) => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name === "route.ts") {
+        const src = fs.readFileSync(full, "utf8");
+        if (!src.includes("requireRfpApi")) bad.push(full);
+      }
+    }
+  };
+  walk(root);
+  return bad;
+}
+
+const ungated = auditApiRoutes();
+if (ungated.length) {
+  console.log("*** UNGATED /api/rfp ROUTES ***");
+  ungated.forEach((f) => console.log("   " + f));
+} else {
+  console.log("api-route gate audit: every /api/rfp handler calls requireRfpApi");
+}

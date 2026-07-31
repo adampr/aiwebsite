@@ -615,3 +615,22 @@
   }
   .workbar, .staff-bar, .btn { display: none; }
 }
+
+/* RFP workspace (§5.17 round 2). The rail scrolls itself at lg so the draft
+   can be read straight down without the two columns fighting. The offsets are
+   measured for THIS section's workbar, which carries a .tabstrip (44px rows)
+   and is therefore taller than the governance one .docpane was tuned for. */
+@media (min-width: 1024px) {
+  .rfp-page .rfp-rail {
+    position: sticky;
+    top: 11.25rem;
+    max-height: calc(100dvh - 12.75rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+/* Anchor targets clear the sticky header + workbar at every width. */
+.rfp-page [id^="sec-"] { scroll-margin-top: 6.5rem; }
+@media (min-width: 768px) {
+  .rfp-page [id^="sec-"] { scroll-margin-top: 12rem; }
+}

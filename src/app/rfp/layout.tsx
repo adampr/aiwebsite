@@ -84,7 +84,7 @@ export default async function RfpLayout({
             {result.user.email}
           </span>
         </div>
-        <RfpTabs />
+        <RfpTabs admin={result.user.admin} />
       </div>
 
       {children}

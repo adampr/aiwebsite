@@ -3213,6 +3213,105 @@ ingest needs `pdfjs-dist` v4 against the host's v6, and the PDF pipeline
 needs a long-lived Chromium in the single PM2 fork that serves the public
 site.
 
+#### 5.17.1 The RFP workspace (round 2)
+
+Upload or paste an RFP, draft a response against the knowledge base, and edit
+it with Tron. Multi-user: everyone sees their own work, admins see all.
+
+**Routes.** `/rfp/new` (upload or paste), `/rfp/list` (yours; admins also get
+everyone's), `/rfp/r/[id]` (the workspace), `/rfp/knowledge/mine`,
+`/rfp/knowledge/review` (admin approval queue), `/rfp/admin/activity`.
+API: `POST /api/rfp/documents`, `GET .../[id]/status`,
+`POST .../[id]/generate`, `PATCH|POST /api/rfp/proposals/[id]/section`,
+`POST /api/rfp/knowledge`, `POST /api/rfp/knowledge/[id]/review`.
+`"/api/rfp"` is in `src/proxy.ts` `protectedPrefixes`.
+
+**Everything is a claimed background job.** Reading a real client RFP measured
+at **94s** and drafting one section at **28-90s** against the live brain, and
+the edge closes a request at 100s. So ingest and generation return 202 and the
+client polls. Generation is **one section per call, never the whole
+document**: a 17-section RFP would otherwise hold half the shared brain
+semaphore for ~25 minutes and die unrecoverably on the next deploy. RFP calls
+go through `callGovernanceBrain`, deliberately reusing governance's 2-slot
+semaphore rather than adding a second one, because the brain also serves
+latency-sensitive Twilio voice.
+
+**Two prompts, and the split is the security control.** `readRfp()` sees the
+client's untrusted text and NOTHING else, so an injected "restate your
+internal pricing" has nothing to restate. `draftSection()` sees XL.net facts
+but never rate-card unit prices, because pricing is deterministic and the
+drafter never needs them. Untrusted text is fenced and labelled as data, and
+`screenInjection()` (governance) runs on ingest, flagging the row rather than
+silently editing it. The brain envelope carries governance's DO-NOT-REMOVE
+invariant verbatim (no `requester`, `memoryMode:"do_not_store"`, no
+`groupName`) or a prospect's RFP would reach `brain_memories` and Tron would
+serve it to the public on every channel.
+
+**New rule B7 (BLOCK).** B5's docstring claims the drafter "may not emit a
+currency figure it did not receive from the pricing engine", but its `check()`
+only recomputes the structured quote and never scans prose. B7 is that missing
+half: any currency token in client-facing text that the pricing engine did not
+produce is blocking. Rate-card unit prices are deliberately NOT in the
+sanctioned set, since a unit price appearing verbatim is the leak being caught.
+
+**Editing preserves `cites` and `generatedBy`.** Both are re-attached
+server-side from the stored record and are never read from the request body.
+Rule A5 only requires citations when `generatedBy === "llm"`, and C1's
+staleness sweep joins on `cites`, so a client that could clear either field
+would launder an uncited claim past both validators, which fail OPEN on an
+empty `cites`. This is why editing is per section and text-only rather than
+free markdown: there is no markdown parser here, and re-parsing prose into the
+closed 15-variant block set cannot round-trip.
+
+**Per-user knowledge is its own table, `rfp_knowledge_proposals`**, NOT
+`visibility` columns on `rfp_facts`. Private facts sharing a key with a shared
+fact would put duplicate keys in one corpus, and the two fact readers disagree
+on duplicates: `factByKey` uses `.find()` (first wins) while rule A6 builds
+`new Map(negativeFacts(...))` (last wins). One unapproved private row keyed
+like a shared negative fact would therefore replace that fact's statement AND
+its remediation suggestion inside a BLOCK message. Keeping proposals separate
+also means the seed's `ON CONFLICT` target still works, `factsById` stays
+unscoped (it must resolve every cited id, including another user's, or an
+admin auditing their draft gets a spurious A5), and a rejection cannot make an
+id vanish from someone else's live draft. **Approval INSERTS a new fact at a
+new KB version**; it never flips a flag, so an approved fact's id has never
+been anything else. A `choice` is never promotable.
+
+**Ownership.** `owner_email` (lowercased) is authoritative and is what the
+predicate compares; `owner_user_id` is a nullable FK resolved from the email at
+write time and falling back to null, because a session can outlive its users
+row by the 30-day cookie TTL and an insert must not 500. Someone else's id
+returns **404, never 403** — a 403 confirms the row exists. Ownership is
+applied in `src/lib/rfp/db.ts`, never in routes, and admin-sees-all is a
+separate named function rather than a flag that skips a where clause.
+
+**Activity log** (`rfp_activity`, append-only, no update/delete helper) records
+shape only: ids, keys, counts, rule ids, outcomes. Never RFP text, draft prose,
+fact statements, instructions, or money. Denials are logged too, because a
+horizontal-privilege probe appears only as a run of denied reads.
+
+**Tables (migration 0028):** `rfp_documents`, `rfp_requirements`,
+`rfp_proposals` (sections as `sections_json`, fenced on `rev`),
+`rfp_knowledge_proposals`, `rfp_activity`. Runtime rows use
+`uuid().defaultRandom()`, unlike the six seeded knowledge tables whose text
+PKs are semantic.
+
+**Corpus seeding is deliberately NOT automatic fact extraction.** Measured over
+the 16 past XL.net responses in the handoff: 7 contain "month-to-month" (which
+violates BLOCK rule A1), conflicting per-user rates $235/$247/$50 coexist, and
+the Illinois Humanities response contains "Society of Women Engineers" (a
+copy-paste from another client's proposal that shipped to a live prospect).
+Mining those as truth would inject known-wrong terms into the shared base,
+which is the exact failure the knowledge base exists to end. They are a
+negative fixture set and a tone sample, nothing more.
+
+**Tests:** `npm run test:rfp` (static audit that every `/api/rfp` handler calls
+`requireRfpApi`, plus the 8 gate assertions against a running instance).
+
+**Still deferred:** .docx/PDF export, the pricing section (every client-facing
+figure must come from the computed rate card), the C1 stale-proposal sweep UI,
+and form-fill RFPs where the deliverable is the client's own form.
+
 ## 6. Database
 
 One local **PostgreSQL** instance, one database **`aiwebsite`** (role `aiwebsite`, password

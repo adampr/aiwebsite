@@ -972,10 +972,16 @@ async function pdfToText(buf: Buffer): Promise<ExtractResult> {
  * visible); `.pdf` goes through pdf.js text extraction (deadline + page
  * capped); `.md`/`.txt` are read as UTF-8. The result is normalized and
  * capped at CAPS.styleSampleMaxChars.
+ *
+ * `maxChars` overrides that cap for callers whose documents are legitimately
+ * longer (§5.17: a real client RFP runs 12k-20k+ chars, and silently losing
+ * the back half of one is the worst failure this function can have). It
+ * defaults to the governance cap, so the style-sample path is byte-identical.
  */
 export async function extractStyleSampleText(
   filename: string,
-  buf: Buffer
+  buf: Buffer,
+  maxChars: number = CAPS.styleSampleMaxChars
 ): Promise<ExtractResult> {
   const lower = filename.toLowerCase();
   if (!STYLE_SAMPLE_EXTENSIONS.some((ext) => lower.endsWith(ext)))
@@ -1048,7 +1054,7 @@ export async function extractStyleSampleText(
 
   const clean = normalize(text);
   if (clean.length < 40) return { ok: false, message: UNREADABLE };
-  return { ok: true, text: clean.slice(0, CAPS.styleSampleMaxChars), frame };
+  return { ok: true, text: clean.slice(0, maxChars), frame };
 }
 
 /** Display-safe file name: basename only, control chars out, length-capped. */
