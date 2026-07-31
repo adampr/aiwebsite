@@ -45,14 +45,22 @@ import {
   userIdForEmail,
 } from "./db";
 import {
+  archiveDeclaredNames,
+  docDeclaredNames,
   FORMAT_REMINDER,
   inferKind,
+  isPlaceholderSubject,
+  isSenderIdentity,
+  nameKey,
   parseSubmissionBody,
   pickAttachments,
+  senderIdentityTokens,
   stripKindPrefix,
   titleFromSubject,
+  validateWeakTitle,
   type AttachmentMeta,
 } from "./email-parse";
+import { inferTitleFromEmail } from "./title-infer";
 import {
   inspectArchive,
   inspectBareMd,
@@ -145,6 +153,87 @@ async function warnAdmin(
     ].join("\n"),
   });
   if (sent) await setMeta(stampKey, new Date().toISOString());
+}
+
+/** Characters that would break out of the quoting in a downstream prompt, or
+ * read as markup on the card. A resolved title carrying these is rejected
+ * (authored) or stripped (subject-derived) BEFORE the title reaches panel.ts,
+ * which additionally JSON-quotes it at every interpolation site. Apostrophes
+ * are legal: "Tech's Helper" is a real title. */
+const HOSTILE_TITLE_CHARS = /["`<>{}|\\]/;
+const HOSTILE_TITLE_CHARS_G = /["`<>{}|\\]/g;
+
+function outOfBand(t: string): boolean {
+  return t.length < WORK_CAPS.titleMinChars || t.length > WORK_CAPS.titleMaxChars;
+}
+
+/** The duplicate-title rejection copy, or null when the title is free. Split
+ * out of the admission flow because it now runs at two points: in place for a
+ * title resolved from the subject or a body directive, and again the moment a
+ * weak title resolves after archive inspection. */
+async function titleGuardMessage(
+  title: string,
+  sender: string
+): Promise<string | null> {
+  const norm = normalizeTitle(title);
+  if (
+    staticTitles.titles.some((t: string) => normalizeTitle(t) === norm) ||
+    (await publishedTitleClash(title))
+  )
+    return `A published /work card already uses this title. Pick a different title (the subject line, or a "Title:" line in the body) and resend.`;
+  const clash = await activeTitleClash(title);
+  if (clash)
+    return clash.submitterEmail === sender
+      ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
+      : `A teammate already has a submission titled "${title}" in review. Pick a different title, or check with them before resubmitting.`;
+  return null;
+}
+
+/** Byte-identical to the brainHealthy rejection above: an inference that could
+ * not run is an outage, and must never be reported to a submitter as "I could
+ * not find a name in your email". */
+const PIPELINE_OFFLINE =
+  "The review pipeline is briefly offline, so nothing was accepted. Resend this email shortly.";
+
+/** The hourly limit on reading a name out of a message. Names the
+ * deterministic fix instead of promising recovery, because resending shortly
+ * hits the same wall for up to an hour. */
+const TITLE_THROTTLED = [
+  `You have sent several submissions without a subject line in the last hour, and reading the name out of the message is limited to a few per hour. Nothing was stored. Everything else about your email was fine.`,
+  ``,
+  `Name this one yourself and it goes straight through: put the name in the subject line, or add a line like "Title: Patching Visualizer" to the body. Then resend.`,
+].join("\n");
+
+/** The reply that replaces the form-validation lecture the owner received.
+ * Branches on WHY the subject was unusable, because "you had no subject" and
+ * "your subject was 118 characters" need different fixes. */
+function noTitleMessage(subjectRaw: string, subjectStripped: string): string {
+  const example = `Name: Patching Visualizer`;
+  const tail = `Everything else about your email was fine.`;
+  if (subjectStripped.length > WORK_CAPS.titleMaxChars)
+    return [
+      `The usable part of your subject line runs to ${subjectStripped.length} characters and a card title has to be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars}, so I looked through your message for a shorter name and could not settle on one. ${tail}`,
+      ``,
+      `Resend with a shorter subject, or put a line like "Title: Patching Visualizer" at the top of the body.`,
+    ].join("\n");
+  // Mirrors subjectUsable: a forwarded placeholder ("Fwd: (no subject)") is
+  // inside the length band, so without the second check this branch told the
+  // submitter their 12-character subject was too short and to lengthen it.
+  if (
+    subjectStripped.length > 0 &&
+    !isPlaceholderSubject(subjectRaw) &&
+    !isPlaceholderSubject(subjectStripped)
+  )
+    return [
+      `Your subject line came out as "${subjectStripped.slice(0, 80)}", and a card title has to be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters. I looked through your message for the name of the tool as well and could not settle on one. ${tail}`,
+      ``,
+      `Give it a longer subject, or start the body with a line like "${example}", or put a "Title:" line in the body. Then resend.`,
+    ].join("\n");
+  return [
+    `This email had no usable subject line, so I looked through your message for the name of the tool and could not settle on one. ${tail}`,
+    ``,
+    `Name it either way you like: put the name in the subject line, or start the body with a line like "${example}". A "Title:" line anywhere in the body works too. Then resend.`,
+  ].join("\n");
 }
 
 function adminRecipient(): string {
@@ -371,18 +460,44 @@ export async function handleWorkEmail(
     );
     return;
   }
-  const title = authoredTitle ?? stripKindPrefix(titleFromSubject(subjectRaw));
-  if (
-    title.length < WORK_CAPS.titleMinChars ||
-    title.length > WORK_CAPS.titleMaxChars
-  ) {
+  // Characters that would break out of the quoting in a downstream prompt or
+  // read as markup. An AUTHORED title is rejected with instructions (house
+  // rule: never silently rewrite the submitter's choice); a subject is a
+  // transport surface and is stripped silently.
+  if (authoredTitle !== null && HOSTILE_TITLE_CHARS.test(authoredTitle)) {
     await reject(
-      parsed.title !== null
-        ? `The title line in the body ("Title:", "Skill Name:", and similar) becomes the card title, and it must be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters. Yours came out as "${title.slice(0, 80)}".`
-        : `The subject line becomes the card title, and it must be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters. Yours came out as "${title.slice(0, 80)}". A "Title:" line in the body overrides the subject.`
+      `A card title cannot contain quotation marks, angle brackets, braces, backticks, or backslashes. Yours was "${authoredTitle.slice(0, 80)}". Take those out of your title line and resend.`
     );
     return;
   }
+  if (authoredTitle !== null && outOfBand(authoredTitle)) {
+    await reject(
+      `The title line in the body ("Title:", "Skill Name:", and similar) becomes the card title, and it must be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters. Yours came out as "${authoredTitle.slice(0, 80)}". Fix that one line and resend.`
+    );
+    return;
+  }
+  // Hostile characters come out BEFORE the kind-prefix strip, or a quoted
+  // subject ("Skill: Slack Knowledge Assistant") re-exposes a category prefix
+  // that then fails the publish lint after a panel run was already spent
+  // (verification finding 2026-07-31). Whitespace is recollapsed last.
+  const subjectStripped = stripKindPrefix(
+    titleFromSubject(subjectRaw).replace(HOSTILE_TITLE_CHARS_G, "")
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+  // isPlaceholderSubject runs against BOTH the raw header and the
+  // transport-stripped value: real forwards arrive as "Fwd: (no subject)" and
+  // only reduce to the bare placeholder after titleFromSubject.
+  const subjectUsable =
+    !isPlaceholderSubject(subjectRaw) &&
+    !isPlaceholderSubject(subjectStripped) &&
+    !outOfBand(subjectStripped);
+  // An unusable subject no longer rejects on its own: it falls through to the
+  // weak-candidate rungs below (owner directive 2026-07-31). null here means
+  // "not resolved yet", never "the submission is bad".
+  let title: string | null = authoredTitle ?? (subjectUsable ? subjectStripped : null);
+  let titleSource: "authored" | "subject" | "corroborated" | "inferred" =
+    authoredTitle !== null ? "authored" : "subject";
   if (parsed.kindRaw !== null) {
     await reject(
       `I did not recognize the kind "${parsed.kindRaw}". Use "Kind: CoWork Skill" or "Kind: Code program", or drop the line to let the attachments decide.`
@@ -442,24 +557,15 @@ export async function handleWorkEmail(
   }
 
   // ── Duplicate-title guard (route parity) ─────────────────────────
-  const norm = normalizeTitle(title);
-  if (
-    staticTitles.titles.some((t: string) => normalizeTitle(t) === norm) ||
-    (await publishedTitleClash(title))
-  ) {
-    await reject(
-      `A published /work card already uses this title. Pick a different title (the subject line, or a "Title:" line in the body) and resend.`
-    );
-    return;
-  }
-  const clash = await activeTitleClash(title);
-  if (clash) {
-    await reject(
-      clash.submitterEmail === sender
-        ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
-        : `A teammate already has a submission titled "${title}" in review. Pick a different title, or check with them before resubmitting.`
-    );
-    return;
+  // Runs HERE for an already-resolved title, so a clash still costs no
+  // download; a weakly-resolved title cannot exist yet and is guarded a
+  // second time the moment it resolves, below.
+  if (title !== null) {
+    const dup = await titleGuardMessage(title, sender);
+    if (dup) {
+      await reject(dup);
+      return;
+    }
   }
 
   // ── Download the originals (signed-URL endpoint; bytes stay in memory,
@@ -560,6 +666,69 @@ export async function handleWorkEmail(
     }
   }
 
+  // ── Weak title resolution ────────────────────────────────────────
+  // Deliberately placed HERE, after inspectArchive and after the skill/md
+  // branch finalizes docText (a standalone SKILL.md only lands above), and
+  // after the blurb, credit and attachment gates. So no brain budget is ever
+  // spent on a submission about to fail on "not a zip", a missing
+  // architecture doc, the secret scan, or the attachment count; docText is
+  // available to corroborate at zero cost; and the rejection copy can
+  // honestly say everything else about the email was fine. That sentence is
+  // load-bearing on this ordering.
+  if (title === null) {
+    const senderTokens = senderIdentityTokens(fromRaw, sender);
+    const candidates = parsed.titleCandidates.filter(
+      (c) => !isSenderIdentity(c.value, senderTokens)
+    );
+    const declared = [
+      ...docDeclaredNames(docText),
+      ...archiveDeclaredNames(
+        pkgName,
+        extracted.manifest.map((m) => m.path)
+      ),
+    ].map(nameKey);
+    // A corroborated candidate clears the SAME gate a model answer does
+    // (house rules, hostile characters, sender identity); a candidate that
+    // fails falls through to the brain rung rather than being rewritten.
+    const hit = candidates
+      .filter((c) => declared.includes(nameKey(c.value)))
+      .map((c) => validateWeakTitle(c.value, senderTokens))
+      .find((r) => r.ok);
+    if (hit && hit.ok) {
+      // The submitter's own package corroborates the name. No brain call.
+      title = hit.title;
+      titleSource = "corroborated";
+    } else {
+      const got = await inferTitleFromEmail({
+        emailId,
+        sender,
+        fromRaw,
+        blurb: parsed.blurb,
+        docText,
+        kind,
+        packageName: pkgName,
+      });
+      if (!got.ok) {
+        await reject(
+          got.reason === "unavailable"
+            ? PIPELINE_OFFLINE
+            : got.reason === "throttled"
+              ? TITLE_THROTTLED
+              : noTitleMessage(subjectRaw, subjectStripped)
+        );
+        return;
+      }
+      title = got.title;
+      titleSource = "inferred";
+    }
+    log(`title ${titleSource} len=${title.length} by=${hashKey(sender)}`);
+    const dup = await titleGuardMessage(title, sender);
+    if (dup) {
+      await reject(dup);
+      return;
+    }
+  }
+
   // ── Persist + kick (route parity) ────────────────────────────────
   let row;
   try {
@@ -627,11 +796,34 @@ export async function handleWorkEmail(
           ``,
           `Open ${SITE}/work/submit in a few minutes and press Retry to start the review. Once it runs, you will get an email when the card publishes or is held.`,
         ];
+  // A title the submitter did not write is disclosed in the receipt, near the
+  // top, because renaming and removing are both admin-only. The copy says
+  // "once it publishes" and NOT "before the panel finishes": the retitle tool
+  // refuses on a row with a live panel heartbeat, and retitling a card is
+  // only supported once the row is published, so naming the running window
+  // would point at the one moment the lever is blocked (verification
+  // finding 2026-07-31). No reply-to-rename lever is promised either, because
+  // none exists (an attachment-free reply delegates to the module's ordinary
+  // conversation path).
+  const disclosure =
+    titleSource === "corroborated" || titleSource === "inferred"
+      ? sender.toLowerCase() === adminRecipient().toLowerCase()
+        ? [
+            ``,
+            `About that title: this email had no usable subject line, so I took the card name from your message. Renaming and removing are both admin-only, so it is yours to change once the card publishes.`,
+          ]
+        : [
+            ``,
+            `About that title: your email had no usable subject line, so I took the card name from your message. Renaming and removing are both admin-only, so if it should be called something else, tell Adam and he can retitle the card once it publishes.`,
+          ]
+      : [];
   await sendTronEmail({
     to: sender,
     subject: replySubject,
     headers: replyHeaders,
-    text: [...receipt, ``, `- Tron Netter`].join("\n"),
+    text: [receipt[0], ...disclosure, ...receipt.slice(1), ``, `- Tron Netter`].join(
+      "\n"
+    ),
   });
   if (kicked.run) await kicked.run(); // runPanel never throws
 }

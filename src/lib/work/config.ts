@@ -43,6 +43,10 @@ export const WORK_CAPS = {
   panelRunsPerDayDefault: 240,
   brainCallsWorstCasePerRun: 10,
   brainTurnTimeoutMs: 90_000,
+  // Title inference (§5.16 email path) produces one line of output, so it must
+  // not hold a slot on the voice-shared brain for the 90 s a panel stage gets.
+  titleInferTimeoutMs: 20_000,
+  titleInferPerSenderPerHour: 3,
   // A running claim whose heartbeat is older than this is an orphan
   // (PM2 restart mid-panel) and is reclaimable via retry.
   panelStaleMs: 240_000,

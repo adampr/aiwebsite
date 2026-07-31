@@ -20,11 +20,20 @@ import {
 import { friendlyHeldReason } from "../src/lib/work/view";
 import { isFreshDate } from "../src/lib/governance/approval";
 import {
+  archiveDeclaredNames,
+  docDeclaredNames,
   inferKind,
+  isPlaceholderSubject,
+  isSenderIdentity,
+  looksLikeAWorkName,
+  nameKey,
   parseSubmissionBody,
   pickAttachments,
+  senderIdentityTokens,
   stripKindPrefix,
   titleFromSubject,
+  validateInferredTitle,
+  validateWeakTitle,
 } from "../src/lib/work/email-parse";
 import {
   HOUSE_RULES,
@@ -616,6 +625,307 @@ async function main() {
   assert.ok(
     contact.blurb.includes("Name: Jane Doe"),
     "contact-block line stays in the blurb"
+  );
+  // The assertion that keeps the prior critic's ruling alive as the rules
+  // widen around it: the weak-candidate path added 2026-07-31 must not turn
+  // this fixture into a card named after the sender. "A description." is a
+  // non-salutation line before it, so the Name: line is out of heading
+  // position and emits nothing.
+  assert.equal(
+    contact.titleCandidates.length,
+    0,
+    "bare Name: after prose emits no weak candidate either"
+  );
+
+  // ── Title resolution for humans (2026-07-31 owner directive) ──────
+  // A real submission was rejected for having no subject while its body
+  // opened "Name: Patching Visualizer". NOTE the honest limit of this file:
+  // the inference prompt itself is untestable here, so every branch below can
+  // be green while the model still returns low confidence on real informal
+  // mail. The first genuinely subject-less inbound is the actual test.
+  const incidentBody = [
+    "Name: Patching Visualizer",
+    "",
+    "Created a skill for CS that solves a real Kaseya pain point.",
+    "",
+    "The problem: Kaseya doesn't produce a patch report you'd actually want to put in front of a client.",
+    "",
+    "The flow: Generate the 3 reports, run them through the skill, pull the finished one-pager.",
+  ].join("\n");
+  const incident = parseSubmissionBody(incidentBody);
+  assert.deepEqual(
+    incident.titleCandidates,
+    [{ value: "Patching Visualizer", source: "name-line" }],
+    "the incident body yields exactly one name-line candidate"
+  );
+  assert.equal(incident.title, null, "a weak candidate never sets the title");
+  assert.ok(
+    incident.blurb.includes("Name: Patching Visualizer"),
+    "a weak name line is never lifted out of the blurb"
+  );
+  assert.deepEqual(
+    parseSubmissionBody(
+      "Hi Tron,\n\nName: Patching Visualizer\n\nCreated a skill for CS."
+    ).titleCandidates,
+    [{ value: "Patching Visualizer", source: "name-line" }],
+    "a greeting does not push the name out of heading position"
+  );
+  assert.equal(
+    parseSubmissionBody(
+      "Name: Jane Doe\nTitle: Senior Systems Engineer\nEmail: jane@xl.net\nA description."
+    ).titleCandidates.length,
+    0,
+    "a Name: inside a contact block emits no candidate"
+  );
+  assert.deepEqual(
+    parseSubmissionBody(
+      "Patching Visualizer\n\nCreated a skill for CS that solves a Kaseya pain point.\n"
+    ).titleCandidates,
+    [{ value: "Patching Visualizer", source: "first-line" }],
+    "a bare heading line above the description is a first-line candidate"
+  );
+  assert.equal(
+    parseSubmissionBody("Hi Tron,\n\nHere is a thing.").titleCandidates.length,
+    0,
+    "a greeting is not itself a candidate"
+  );
+
+  // The signature job-title bug the critics confirmed live: with no directive
+  // above it, "Title: Senior Systems Engineer" in an uncut signature became
+  // the card title. No existing assertion covered this shape.
+  const jobTitle = parseSubmissionBody(
+    [
+      "A fine description of the tool.",
+      "",
+      "Thanks,",
+      "John Smith",
+      "Title: Senior Systems Engineer",
+      "XL.net",
+    ].join("\n")
+  );
+  assert.equal(
+    jobTitle.title,
+    null,
+    "a bare Title: under a signature name line does not title the card"
+  );
+  assert.ok(
+    jobTitle.blurb.includes("Title: Senior Systems Engineer"),
+    "the suppressed job-title line stays in the blurb as prose"
+  );
+
+  // The suppressor must NEVER defeat the escape hatch FORMAT_REMINDER
+  // advertises. Every fixture below is a legitimate top-of-body "Title:" that
+  // an earlier draft of the contact-block rule silently dropped, which would
+  // have republished the incident it was meant to fix (verification round).
+  for (const [name, body] of [
+    [
+      "signature with a Phone: line under a one-line blurb",
+      "Title: Patching Visualizer\n\nA fine description of the tool it is.\n\nAdam Radulovic\nSystems Engineer\nPhone: (312) 555-1212",
+    ],
+    [
+      "adjacent Kind: and Company: lines",
+      "Title: Patching Visualizer\nKind: CoWork Skill\nCompany: XL.net\n\nA fine description.",
+    ],
+    [
+      "comma-less greeting directly above",
+      "Hey Tron\n\nTitle: Patching Visualizer\n\nA fine description of the tool.",
+    ],
+    [
+      "an ordinary header line above the directive",
+      "New Work Submission\n\nTitle: Patching Visualizer\n\nA fine description of the tool it is.\n\nThanks,\nAdam",
+    ],
+  ] as const)
+    assert.equal(
+      parseSubmissionBody(body).title,
+      "Patching Visualizer",
+      `a legitimate top-of-body Title: survives: ${name}`
+    );
+  // ...while the signature job-title, which only ever appears AFTER content
+  // and under a sign-off, still does not.
+  assert.equal(
+    parseSubmissionBody(
+      "A fine description of the tool.\n\nRegards,\nJohn Smith\nTitle: Senior Systems Engineer\nXL.net"
+    ).title,
+    null,
+    "a job title under a sign-off is still suppressed"
+  );
+
+  // A weak candidate must survive an ordinary signature: the 4-line lookahead
+  // an earlier draft used reached past a short blurb into the sender's
+  // signature and forced the free corroboration rung onto a brain call.
+  assert.deepEqual(
+    parseSubmissionBody(
+      "Name: Patching Visualizer\n\nA fine description of the tool it is.\n\nAdam Radulovic\nXL.net\nPhone: (312) 555-1212"
+    ).titleCandidates,
+    [{ value: "Patching Visualizer", source: "name-line" }],
+    "a signature does not suppress a heading-position name line"
+  );
+
+  // Placeholder subjects. Screening the RAW header alone left the bug live:
+  // real forwards only reduce to the bare placeholder after titleFromSubject.
+  const stripped = (s: string) => stripKindPrefix(titleFromSubject(s));
+  for (const s of [
+    "(no subject)",
+    "no subject",
+    "(none)",
+    "(sin asunto)",
+    "(kein Betreff)",
+    "<no subject>",
+    "(Untitled)",
+    "无主题",
+  ])
+    assert.ok(isPlaceholderSubject(s), `placeholder recognized: ${s}`);
+  for (const s of [
+    "[EXTERNAL] (no subject)",
+    "Fwd: (no subject)",
+    "Re: (no subject)",
+    "Fwd: [EXTERNAL] (no subject)",
+    "[EXT] (none)",
+  ])
+    assert.ok(
+      isPlaceholderSubject(stripped(s)),
+      `placeholder recognized after transport strip: ${s}`
+    );
+  for (const s of [
+    "Outage Checker",
+    "(none) Outage Checker",
+    "Note: no subject line here",
+    "Test",
+    "Fwd: Patching Visualizer",
+  ])
+    assert.ok(
+      !isPlaceholderSubject(s) && !isPlaceholderSubject(stripped(s)),
+      `real subject not treated as a placeholder: ${s}`
+    );
+
+  for (const bad of [
+    "https://example.com/tool",
+    "someone@xl.net",
+    "Hi Tron",
+    "Created a skill for CS that solves a real Kaseya pain point.",
+    "one two three four five six seven",
+    "patching-visualizer",
+    "Skill: Patching Visualizer",
+    "x".repeat(61),
+    "Report 12345",
+  ])
+    assert.ok(!looksLikeAWorkName(bad), `shape gate rejects: ${bad}`);
+  for (const good of ["Patching Visualizer", "Outage Checker", "Tech's Helper"])
+    assert.ok(looksLikeAWorkName(good), `shape gate accepts: ${good}`);
+
+  const senderTokens = senderIdentityTokens(
+    "Adam Radulovic <adam.radulovic@xl.net>",
+    "adam.radulovic@xl.net"
+  );
+  for (const own of ["Adam Radulovic", "Radulovic Adam", "Adam"])
+    assert.ok(isSenderIdentity(own, senderTokens), `sender identity: ${own}`);
+  assert.ok(
+    !isSenderIdentity("Patching Visualizer", senderTokens),
+    "a tool name is not the sender's identity"
+  );
+
+  // Corroboration. The front-matter scan is anchored so a nested
+  // "author:\n  name: Jane Doe" never corroborates a person.
+  const declared = docDeclaredNames(
+    "---\nname: patching-visualizer\nauthor:\n  name: Jane Doe\n---\n\n# Patch Status One-Pager\n\nprose\n"
+  );
+  assert.deepEqual(declared, ["patching-visualizer", "Patch Status One-Pager"]);
+  assert.ok(
+    !declared.some((d) => nameKey(d) === nameKey("Jane Doe")),
+    "a nested author name is not a declared doc name"
+  );
+  assert.ok(
+    !docDeclaredNames("Some prose naming Jane Doe in passing.").length,
+    "prose alone declares nothing"
+  );
+  assert.equal(
+    nameKey("patching-visualizer"),
+    nameKey("Patching Visualizer"),
+    "slug and title compare equal"
+  );
+  assert.ok(
+    archiveDeclaredNames("patching-visualizer.skill", [
+      "patching-visualizer/SKILL.md",
+      "patching-visualizer/assets/a.md",
+    ]).some((d) => nameKey(d) === nameKey("Patching Visualizer")),
+    "package filename and sole top-level directory corroborate"
+  );
+
+  // A model-proposed title. The model SELECTS, it never AUTHORS: every answer
+  // must be a verbatim span of the submitter's own words, and nothing here
+  // ever truncates (truncation is a silent rename, and renaming is
+  // admin-only).
+  const vOpts = { sourceText: incidentBody, senderTokens };
+  assert.deepEqual(validateInferredTitle("Patching Visualizer", vOpts), {
+    ok: true,
+    title: "Patching Visualizer",
+  });
+  assert.deepEqual(
+    validateInferredTitle("Patching Visualizer", {
+      ...vOpts,
+      sourceText: "the patching-visualizer skill builds it",
+    }),
+    { ok: true, title: "Patching Visualizer" },
+    "grounding sees through a hyphen"
+  );
+  for (const [bad, reason] of [
+    ["Kaseya Patch Reporter", "ungrounded"],
+    ["Visual", "ungrounded"],
+    ["x".repeat(61), "shape"],
+    ["patching-visualizer", "shape"],
+    ["Skill: Patching Visualizer", "shape"],
+    ["<b>Patching</b>", "shape"],
+    ["https://x.test/a", "shape"],
+  ] as const)
+    assert.deepEqual(
+      validateInferredTitle(bad, vOpts),
+      { ok: false, reason },
+      `inferred title rejected (${reason}): ${bad}`
+    );
+  assert.deepEqual(
+    validateInferredTitle("Always On Monitor", {
+      ...vOpts,
+      sourceText: "we call it Always On Monitor",
+    }),
+    { ok: false, reason: "house_rules" },
+    "a banned frequency adverb is caught before it can become a held card"
+  );
+  assert.deepEqual(
+    validateInferredTitle("Patch — Visualizer", {
+      ...vOpts,
+      sourceText: "we call it Patch — Visualizer",
+    }),
+    { ok: false, reason: "house_rules" },
+    "an em dash never reaches a card title, even when it is grounded"
+  );
+  assert.deepEqual(
+    validateInferredTitle("Adam Radulovic", {
+      ...vOpts,
+      sourceText: "Adam Radulovic wrote this",
+    }),
+    { ok: false, reason: "sender_identity" },
+    "the sender's own name is never the card title"
+  );
+  // The corroborated rung shares this gate. It once did not, so a candidate
+  // carrying an en dash (Word autocorrects " - " into " – ") corroborated
+  // against the package slug, since nameKey collapses punctuation on both
+  // sides; it reached the card, failed the publish lint, and the repair
+  // prompt then let the MODEL rename it.
+  assert.deepEqual(
+    validateWeakTitle("Patch Manager – Pro", senderTokens),
+    { ok: false, reason: "house_rules" },
+    "an en dash is caught on the corroborated rung too"
+  );
+  assert.ok(
+    nameKey("Patch Manager – Pro") === nameKey("patch-manager-pro"),
+    "and it would otherwise have corroborated against the package slug"
+  );
+  // sanitizeHeaderValue runs on this path as well, so the exotic line
+  // terminators JSON.stringify leaves unescaped downstream cannot survive.
+  assert.deepEqual(
+    validateWeakTitle("Patching Visualizer", senderTokens),
+    { ok: true, title: "Patching Visualizer" },
+    "U+2028 is collapsed before the title can reach a prompt"
   );
   assert.equal(
     parseSubmissionBody("Skill\u00A0Name: Outage Checker\nDesc.").title,

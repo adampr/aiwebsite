@@ -69,10 +69,14 @@ function corpusOf(row: SubmissionRow): CorpusFile[] {
   return doc ? [{ path, text: doc }] : [];
 }
 
-function buildWorkEnvelope(opts: {
+export function buildWorkEnvelope(opts: {
   sessionId: string;
   system: string;
   user: string;
+  /** Overrides only the identity purpose line; every other field, above all
+   * the DO-NOT-REMOVE privacy invariant below, is shared by construction so
+   * a second caller cannot drift from it. */
+  purpose?: string;
 }): Record<string, unknown> {
   return {
     sessionId: opts.sessionId,
@@ -84,6 +88,7 @@ function buildWorkEnvelope(opts: {
     brainIdentity: {
       ...(siteConfig.persona.identity as Record<string, unknown>),
       purpose:
+        opts.purpose ??
         "Tron Netter acting as an editorial panelist: reviewing an internal tool submission from its documents and drafting public showcase copy.",
     },
     memoryMode: "do_not_store",
@@ -95,26 +100,37 @@ function buildWorkEnvelope(opts: {
   };
 }
 
-async function callPanelBrain(
+/** Why a call produced no JSON. The panel treats every reason the same (null),
+ * but the title-inference caller must not tell a submitter "I could not find a
+ * name in your email" when the truth is that the brain was over budget or
+ * unreachable (panel critic finding 2026-07-31). */
+export type WorkBrainResult =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; reason: "budget" | "transport" | "parse" };
+
+export async function callPanelBrain(
   sessionId: string,
   system: string,
   user: string,
-  brainCap: number
-): Promise<Record<string, unknown> | null> {
-  if (!(await trySpendWork("brain_calls", 1, brainCap))) return null;
+  brainCap: number,
+  timeoutMs: number = WORK_CAPS.brainTurnTimeoutMs,
+  purpose?: string
+): Promise<WorkBrainResult> {
+  if (!(await trySpendWork("brain_calls", 1, brainCap)))
+    return { ok: false, reason: "budget" };
   try {
     const res = await callBrain(
       siteConfig,
-      buildWorkEnvelope({ sessionId, system, user }),
-      { timeoutMs: WORK_CAPS.brainTurnTimeoutMs }
+      buildWorkEnvelope({ sessionId, system, user, purpose }),
+      { timeoutMs }
     );
-    if (!res.ok) return null;
+    if (!res.ok) return { ok: false, reason: "transport" };
     const answer = extractAnswer(await res.json())?.trim();
-    if (!answer) return null;
+    if (!answer) return { ok: false, reason: "transport" };
     const jsonText = answer.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
-    return JSON.parse(jsonText) as Record<string, unknown>;
+    return { ok: true, value: JSON.parse(jsonText) as Record<string, unknown> };
   } catch {
-    return null;
+    return { ok: false, reason: "parse" };
   }
 }
 
@@ -313,7 +329,8 @@ async function runPanelInner(
     user: string
   ): Promise<Record<string, unknown> | null> => {
     await beat();
-    const out = await callPanelBrain(sessionId, system, user, brainCap);
+    const res = await callPanelBrain(sessionId, system, user, brainCap);
+    const out = res.ok ? res.value : null;
     transcript.push({ stage, output: out });
     stageIdx++;
     return out;
@@ -332,7 +349,7 @@ async function runPanelInner(
   const evidence = await call(
     "evidence writer",
     `You are the evidence-focused writer on an editorial panel drafting a public showcase card for an internal tool built at XL.net, a Chicago managed-IT firm. ${UNTRUSTED_FRAME}`,
-    `${docs}\n\nSubmission kind: ${row.kind === "skill" ? "CoWork Skill" : "Code program"}. Working title: ${row.title}.\n\nBuild the claims inventory: 8 to 16 entries, each {"claim": one factual sentence about what the tool is or does, "quote": the exact supporting line from the documents}. Only claims a skeptical reader could verify against the quoted line. Then draft {"draftSummary": one paragraph (40-90 words) and "draftBody": [1-2 paragraphs]} using ONLY inventoried claims. Return {"claims": [...], "draftSummary": "...", "draftBody": [...]}.`
+    `${docs}\n\nSubmission kind: ${row.kind === "skill" ? "CoWork Skill" : "Code program"}. Working title: ${JSON.stringify(row.title)}.\n\nBuild the claims inventory: 8 to 16 entries, each {"claim": one factual sentence about what the tool is or does, "quote": the exact supporting line from the documents}. Only claims a skeptical reader could verify against the quoted line. Then draft {"draftSummary": one paragraph (40-90 words) and "draftBody": [1-2 paragraphs]} using ONLY inventoried claims. Return {"claims": [...], "draftSummary": "...", "draftBody": [...]}.`
   );
   if (!evidence) {
     await failPanel(id, attemptId, "evidence writer call failed or over budget");
@@ -425,7 +442,7 @@ async function runPanelInner(
   const synth = await call(
     "synthesis",
     `You are the synthesis editor of the panel. Merge the draft and every critic finding into the final card. The submitted documents are included below and they are the ground truth. Resolve every evidence strike by removing the claim or re-grounding it in an exact document line. Apply every editorial fix the documents do not contradict. A critic finding that contradicts the documents, for example a claim that no document was submitted, that evidence is unavailable, or that a source is missing, is wrong: reject it and keep the copy grounded in the documents. The card describes the tool for the public page; card copy must contain no commentary about this review, the panel, critics, editorial decisions, evidence availability, or required follow-up. Total visible copy ${WORK_CAPS.cardMinWords}-${WORK_CAPS.cardMaxWords} words. ${UNTRUSTED_FRAME} ${HOUSE_RULES} Return ONLY the card JSON, schema: ${schemaSpec}`,
-    `${docs}\n\nDraft:\n${JSON.stringify(draft).slice(0, 8000)}\n\nClaims inventory from the evidence writer:\n${JSON.stringify(evidence.claims ?? []).slice(0, 6000)}\n\nEvidence critic:\n${JSON.stringify(evidenceCritic ?? {}).slice(0, 6000)}\n\nEditorial critic:\n${JSON.stringify(editorialCritic ?? {}).slice(0, 6000)}\n\nTitle must remain "${row.title}" unless it collides with an existing card title (taken titles: ${takenTitles}).`
+    `${docs}\n\nDraft:\n${JSON.stringify(draft).slice(0, 8000)}\n\nClaims inventory from the evidence writer:\n${JSON.stringify(evidence.claims ?? []).slice(0, 6000)}\n\nEvidence critic:\n${JSON.stringify(evidenceCritic ?? {}).slice(0, 6000)}\n\nEditorial critic:\n${JSON.stringify(editorialCritic ?? {}).slice(0, 6000)}\n\nTitle must remain ${JSON.stringify(row.title)} unless it collides with an existing card title (taken titles: ${takenTitles}).`
   );
   if (!synth) {
     await failPanel(id, attemptId, "synthesis call failed or over budget");
@@ -529,7 +546,7 @@ async function runPanelInner(
     repairViolations = lint.violations;
     const repair = await call(
       "repair",
-      `You are the synthesis editor. Your previous card failed the deterministic lint. Fix EXACTLY the listed violations and change nothing else. Do not add any new factual claim. Title must remain "${row.title}" unless a violation names the title. ${HOUSE_STYLE_RULES} Return ONLY the corrected card JSON, schema: ${schemaSpec}`,
+      `You are the synthesis editor. Your previous card failed the deterministic lint. Fix EXACTLY the listed violations and change nothing else. Do not add any new factual claim. Title must remain ${JSON.stringify(row.title)} unless a violation names the title. ${HOUSE_STYLE_RULES} Return ONLY the corrected card JSON, schema: ${schemaSpec}`,
       `Previous card:\n${JSON.stringify(synth).slice(0, 8000)}\n\nViolations:\n${lint.violations.join("\n")}`
     );
     repaired = repair !== null;
