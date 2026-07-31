@@ -15,7 +15,11 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-31 (latest: §5.16 **panel integrity
+Last verified against code: 2026-07-31 (latest: §5.17 **RFP Response** —
+staff-gated `/rfp` knowledge base ported from the Proposal Studio handoff;
+gate is provider+domain, not domain alone, because `MICROSOFT_TENANT_ID` is
+`common` and Entra `mail` is forgeable; 6 `rfp_*` tables, migration 0027;
+no client PII and no CHF fixture seeded. Previous: §5.16 **panel integrity
 round** after four published cards turned out to be process meta-commentary
 ("No supporting source document was submitted for this card") — the
 docs-blind editorial critic is rescoped to style only and told the corpus
@@ -672,6 +676,9 @@ aiwebsite/
 │                               GOOGLE-OAUTH-SETUP.md, generated seed-persona-memories.sql,
 │                               post-install.sh — the host hook that installs the
 │                               aiwebsite-governance units, §9.7)
+├── src/lib/rfp/                RFP Response (§5.17): access.ts gate, db.ts reads,
+│                               content-model/ + validators/ staged from the handoff
+├── src/lib/db/rfp-schema.ts    the six rfp_* tables, re-exported from schema.ts
 ├── drizzle/migrations/         committed migration history (introspected baseline + diffs, §6)
 ├── drizzle.config.ts           schema ./src/lib/db/schema.ts → ./drizzle/migrations, dialect postgresql
 ├── public/                     favicons, brand assets, fx.js (<xl-dust> canvas particles)
@@ -3135,6 +3142,71 @@ content and its Postgres backup); everything else sweeps at 30 days.
 /work `lastmod = max(hand-maintained floor, latest published_at)`, DB failure
 falls back to the floor (never null, never regresses).
 
+### 5.17 RFP Response (`/rfp`) — host-owned, staff-gated
+
+The XL.net proposal knowledge base, ported from the **XL.net Proposal Studio**
+handoff (a pnpm/TypeScript monorepo that shipped on Prisma + SQLite). Visible
+only to signed-in XL.net staff.
+
+**Routes.** `/rfp` (overview + counts), `/rfp/knowledge` (corrected facts, rate
+card, all live facts, intake questions). Both `dynamic = "force-dynamic"` +
+`revalidate = 0` and `robots: {index:false, follow:false}`; absent from
+`src/app/sitemap.ts`; `seo.extraRobotsDisallow: ["/rfp"]` puts a `Disallow`
+in all 12 robots.txt groups (`aiBotsAllowed` emits one per AI crawler).
+
+**The gate (`src/lib/rfp/access.ts`) — read this before changing it.**
+Admission is `provider === "google" AND emailDomain === "xl.net"`, exact label
+equality. It is deliberately NOT a domain-only check and deliberately NOT
+`src/lib/work/http.ts`'s `requireXlUser()`:
+
+- `MICROSOFT_TENANT_ID` is `common`, so the Microsoft authority accepts any
+  Entra tenant plus personal accounts, and `oauth-microsoft.ts` reads Graph
+  `/me` `mail` in preference to `userPrincipalName`. Per Microsoft's Graph
+  reference `mail` carries **no** verified-domain requirement and is writable
+  via `PATCH /users/{id}` (the published nOAuth technique); UPN cannot be
+  forged because it must sit on a verified domain. A domain-only gate would
+  therefore admit anyone willing to create a free tenant.
+- `xl.net` is a Google Workspace domain (MX only `aspmx.l.google.com`, SPF
+  includes `_spf.google.com`, no Microsoft mail records), so staff sign in
+  with Google and the provider requirement costs them nothing. It changes
+  nothing for members of the public who sign in with Microsoft elsewhere.
+- `provider` is set server-side from the users row and covered by the session
+  HMAC, so it is not client-supplied.
+- Subdomains do NOT pass: `@ai.xl.net` is this system's own automation
+  identity. Suffix tests are banned (`endsWith("xl.net")` admits
+  `evilxl.net`).
+
+The layout gates, but a layout is not an authorization boundary for route
+handlers or server actions, so every page re-checks (same reasoning as
+`src/app/admin/layout.tsx`). `npm run test:rfp` asserts all of this against a
+running instance; case 5 (validly-signed `@xl.net` via Microsoft must be
+REFUSED) is the one that matters.
+
+**Data (§6, migration 0027).** Six `rfp_*` tables. Three conventions differ
+from the rest of the schema, each deliberate: `text` PKs with no default
+(ids are semantic: `fact_<key>_v<seq>`), structured values stay `text`
+holding JSON rather than `jsonb` (host has zero jsonb columns against 16
+`text("*_json")` ones), and `timestamptz` throughout (the stale-fact sweep
+compares bare Dates; a naive timestamp would shift both sides by the server
+offset and silently drop rows).
+
+**Seeding.** `npx tsx scripts/rfp-seed.ts`, idempotent (every write upserts
+against a real unique constraint). Deliberately NOT a migration: `db:migrate`
+runs unattended at cutover and a bad fact must not fail a deploy. Seeds
+XL.net's own facts (with their real v1/v2 correction history, which is what
+makes the stale-fact sweep meaningful), rate card, and intake questions.
+**Does NOT seed** client contact PII (`rfp_references.contact_*` ship NULL)
+or the CHF proposal fixture (a real prospect's document, and deliberately a
+FAILING fixture whose assertion is that the gate rejects it).
+
+**Staged, not yet wired:** `src/lib/rfp/content-model/` (the typed IR) and
+`src/lib/rfp/validators/` (25 compliance rules) are ported and typecheck but
+have no route yet; they are the substrate for the review screen. Ingest,
+drafting, the compliance gate UI, and export to .docx/PDF are deferred —
+ingest needs `pdfjs-dist` v4 against the host's v6, and the PDF pipeline
+needs a long-lived Chromium in the single PM2 fork that serves the public
+site.
+
 ## 6. Database
 
 One local **PostgreSQL** instance, one database **`aiwebsite`** (role `aiwebsite`, password
@@ -3405,6 +3477,26 @@ channel** (realtime voice sessions inject visible memories, not the prompt doc).
 crawl never touches them (it only replaces `source_type='site_crawl'` rows).
 
 ---
+
+### 6.x RFP Response tables (`rfp_*`, migration 0027)
+
+Six tables behind the staff-gated `/rfp` section (§5.17). All additive; the
+migration creates tables and indexes only and takes no locks on existing
+tables.
+
+| table | holds |
+|---|---|
+| `rfp_kb_versions` | knowledge-base versions; `seq` is the natural key facts point at (UNIQUE, and the seed's conflict target) |
+| `rfp_facts` | the fact corpus AND its correction history. A correction is not an update: the wrong row keeps `retired_in_kb`, a NEW row carries `corrected_at` + `supersedes`. Indexed on `corrected_at`, `key`, `polarity`, and `supersedes` (the last is not in the upstream schema; the stale-fact sweep needs both directions) |
+| `rfp_references` | client references. `contact_*` columns are third-party PII, nullable, and NOT seeded. Retired rather than deleted so a reference named in a sent proposal stays resolvable |
+| `rfp_rate_cards` | rate cards. `minimum_monthly_fee_cents` is `bigint mode:"number"` — required, not stylistic: a plain bigint returns a JS BigInt and the Money guard throws |
+| `rfp_rate_card_items` | line items, UNIQUE `(rate_card_id, code)` |
+| `rfp_questions` | the intake questionnaire |
+
+Deviations from this file's other tables, all deliberate and all explained in
+`src/lib/db/rfp-schema.ts`: `text` PKs with no default (semantic ids), JSON in
+`text` not `jsonb` (host convention), `rfp_` prefix (matches `governance_*` /
+`work_*`, and retires `references` as a PostgreSQL reserved word).
 
 ## 7. The brain contract (what the site depends on)
 

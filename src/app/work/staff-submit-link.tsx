@@ -19,23 +19,8 @@
 
 import Link from "next/link";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { probeStaff } from "@/components/staff-probe";
 import type { WorkSubmitDialogHandle } from "./work-submit-dialog";
-
-let staffProbe: Promise<boolean> | null = null;
-function probeStaff(): Promise<boolean> {
-  staffProbe ??= fetch("/api/auth/session", { cache: "no-store" })
-    .then((r) => (r.ok ? r.json() : null))
-    .then(
-      (d: { authenticated?: boolean; user?: { email?: string } } | null) =>
-        Boolean(
-          d?.authenticated &&
-            typeof d.user?.email === "string" &&
-            d.user.email.toLowerCase().endsWith("@xl.net")
-        )
-    )
-    .catch(() => false);
-  return staffProbe;
-}
 
 const LazyDialog = lazy(() =>
   import("./work-submit-dialog").then((m) => ({ default: m.WorkSubmitDialog }))

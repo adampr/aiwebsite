@@ -342,3 +342,9 @@ export const contactSubmissions = pgTable("contact_submissions", {
   ipAddress: inet("ip_address"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+// RFP Response knowledge base (§5.17). Kept in its own file: 6 foreign-domain
+// tables with their own id/JSON conventions would bury this file's job, which
+// is the composed site tables plus the module's registry. drizzle-kit reads
+// exported pgTable objects, so the re-export is what puts them in migrations.
+export * from "./rfp-schema";

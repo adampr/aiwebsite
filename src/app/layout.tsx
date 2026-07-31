@@ -15,6 +15,7 @@ import { OrgJsonLdScript } from "@aicompany/core/seo/org-jsonld";
 import { siteConfig } from "site.config";
 import { FuturismFx } from "@/components/futurism-fx";
 import { EmailLink } from "@/components/email-link";
+import { StaffRfpLink } from "@/components/staff-rfp-link";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -105,6 +106,7 @@ export default function RootLayout({
               <Link href="/governance">Governance</Link>
               <Link href="/blog">AI News</Link>
               <Link href="/contact">Contact</Link>
+              <StaffRfpLink />
               <ThemeToggle />
               <UserMenu {...toUserMenuProps(siteConfig)} />
             </div>

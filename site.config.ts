@@ -867,6 +867,11 @@ export const siteConfig = defineSiteConfig({
       certifications: ["SOC 2 Type II", "ISO 27001:2022"],
     },
     aiBotsAllowed: true,
+    // /rfp is staff-gated (§5.17). aiBotsAllowed emits an "allow: /" group for
+    // eleven AI crawlers, so without this the section would be explicitly
+    // opened to them. The gate is the control and robots.txt is only a
+    // request, but there is no reason to advertise the path to a crawler.
+    extraRobotsDisallow: ["/rfp"],
   },
 
   theme: { darkFirst: true },

@@ -22,7 +22,8 @@
     "test:work": "tsx scripts/work-tests.ts",
     "work:rerun": "tsx scripts/work-panel-rerun.ts",
     "test:peg": "node scripts/peg-score-tests.mjs",
-    "qa:hi-speed": "node scripts/qa/hi-speed-test.mjs"
+    "qa:hi-speed": "node scripts/qa/hi-speed-test.mjs",
+    "test:rfp": "tsx scripts/rfp-tests.ts"
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",

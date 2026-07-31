@@ -533,3 +533,85 @@
 @media (max-width: 1023px) {
   .transcript-scroll--promoted { max-height: 32vh; }
 }
+
+/* ------------------------------------------------------------
+   RFP Response (/rfp) - host additive layer (§5.17).
+   The section reuses .workbar / .tabstrip / .panel / .table / .stat;
+   only the gaps are filled here.
+   ------------------------------------------------------------ */
+
+/* .tabstrip styles `button` and keys selection off aria-selected/aria-pressed.
+   The section sub-nav is <Link>s, so they need the same treatment. */
+.tabstrip a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--sp-4);
+  font-size: var(--text-xs);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--xl-text-dim);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.tabstrip a:hover { color: var(--xl-text); }
+.tabstrip a[aria-current="page"] {
+  color: var(--xl-text);
+  box-shadow: inset 0 -1px 0 var(--xl-light);
+}
+
+/* The 62ch global prose cap is right for marketing pages and wrong inside a
+   data panel, which is the full-width bug /work hit (f22fec4). */
+.rfp-page .panel p,
+.rfp-page .stat + .stat,
+.rfp-page td p { max-width: none; }
+
+/* Hairline-separated rows inside ONE panel. A panel per fact would be 2rem of
+   padding times twenty. */
+.rfp-row {
+  border-top: 1px solid var(--xl-line);
+  padding: var(--sp-4) 0;
+}
+
+/* The staff nav entry: a separator plus position, because the global nav is
+   otherwise a flat list of public links and this one is not public. */
+.nav-staff { display: inline-flex; align-items: center; gap: var(--sp-6); }
+.nav-staff-sep {
+  width: 1px;
+  height: 1em;
+  background: var(--xl-line-bright);
+  display: inline-block;
+}
+
+/* .table has no mobile story; every /rfp table is wide. */
+@media (max-width: 700px) {
+  .table--stack thead { display: none; }
+  .table--stack tr {
+    display: block;
+    border-bottom: 1px solid var(--xl-line);
+    padding: var(--sp-4) 0;
+  }
+  .table--stack td { display: block; border: none; padding: 2px 0; }
+  .table--stack td::before {
+    content: attr(data-label);
+    display: block;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--xl-text-faint);
+  }
+}
+
+/* Save-as-PDF is the realistic leak path, and this costs nothing on screen. */
+@media print {
+  .rfp-page::before {
+    content: "XL.net internal · commercial material · do not distribute";
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 9pt;
+    border-bottom: 1px solid #000;
+    margin-bottom: 12pt;
+  }
+  .workbar, .staff-bar, .btn { display: none; }
+}
