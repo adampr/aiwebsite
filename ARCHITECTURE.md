@@ -2895,7 +2895,10 @@ Returns 202 `{id, status, queued}` and kicks the panel.
 (`src/lib/work/email-intake.ts` + pure parsers in `email-parse.ts`, mounted
 from the §5.3 `onInbound` hook). Trigger (attachment shape, owner ruling): an
 inbound to **Tron.Netter@ai.xl.net** whose From-address domain is in
-`WORK_SUBMIT_DOMAINS` and which carries ≥1 `.skill`/`.zip` attachment is
+`WORK_SUBMIT_DOMAINS` and which carries ≥1 `.skill`/`.zip`/`.ski` attachment
+(`.ski` = Windows 8.3-truncated `.skill`, seen on real Outlook forwards
+2026-07-30; the filename is only the trigger, the bytes still clear the zip
+magic check and full archive inspection) is
 claimed from the module ("handled" — Tron never answers it conversationally);
 everything else delegates. Sender verification is the §5.12 Troy gate applied
 to ANY @xl.net sender, fail-closed and BEFORE any reply or side effect:

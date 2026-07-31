@@ -6,7 +6,12 @@
 import { sanitizeHeaderValue } from "@/lib/governance/approval";
 import { WORK_CAPS, type WorkKind } from "./config";
 
-export const ARCHIVE_RE = /\.(zip|skill)$/i;
+// ".ski" accepted alongside ".skill": Windows/Outlook forwarding chains
+// rename attachments to DOS 8.3 short names (real inbounds 2026-07-30:
+// "OUTAGE_1.SKI", "SD-DAI~1.SKI"), truncating the extension. The filename is
+// only the TRIGGER; the downloaded bytes still pass the zip magic check and
+// the full inspectArchive hardening, so the looser match adds no exposure.
+export const ARCHIVE_RE = /\.(zip|skill|ski)$/i;
 export const MD_RE = /\.(md|mdx|markdown)$/i;
 
 /** Appended to every validation-failure reply so the fix never needs a
@@ -128,14 +133,15 @@ export function pickAttachments(atts: AttachmentMeta[]): {
   };
 }
 
-/** Kind resolution: an explicit Kind: line wins; else a .skill package or a
- * standalone .md attachment means CoWork Skill; a bare .zip is a program. */
+/** Kind resolution: an explicit Kind: line wins; else a .skill/.ski package
+ * or a standalone .md attachment means CoWork Skill; a bare .zip is a
+ * program. */
 export function inferKind(
   packageName: string,
   hasMd: boolean,
   override: WorkKind | null
 ): WorkKind {
   if (override) return override;
-  if (/\.skill$/i.test(packageName) || hasMd) return "skill";
+  if (/\.(skill|ski)$/i.test(packageName) || hasMd) return "skill";
   return "program";
 }

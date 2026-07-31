@@ -456,7 +456,14 @@ async function main() {
   ]);
   assert.equal(picked.archives.length, 1);
   assert.equal(picked.mds.length, 1);
+  // Windows 8.3 short names from real forwards (2026-07-30 incident).
+  assert.equal(
+    pickAttachments([{ id: "1", filename: "SD-DAI~1.SKI", size: 10 }]).archives.length,
+    1,
+    "8.3-truncated .SKI recognized as the package"
+  );
 
+  assert.equal(inferKind("OUTAGE_1.SKI", false, null), "skill");
   assert.equal(inferKind("tool.skill", false, null), "skill");
   assert.equal(inferKind("tool.zip", true, null), "skill");
   assert.equal(inferKind("tool.zip", false, null), "program");
