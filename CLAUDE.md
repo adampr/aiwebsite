@@ -49,6 +49,45 @@ committed — no exceptions.** Real values live only in the dev box's `.env`
 
 This rule is mirrored in `.cursor/rules/no-secrets.mdc` — keep the two in sync.
 
+## Deploying (required)
+
+**Deploy with `bash scripts/deploy-safe.sh`, not `deploy/deploy.sh` directly.**
+
+`deploy/deploy.sh` ships the **working directory**, not a git archive: its
+`sync_dir()` rsyncs the tree excluding only `.git`, `node_modules`, `.next`,
+`.env` and `data`. Anything uncommitted in this checkout goes to production as
+it is. On 2026-07-31 that came one command away from shipping another
+session's half-built feature plus an unapplied migration; it was caught by a
+person noticing, which is not a control.
+
+`scripts/deploy-safe.sh` refuses on a dirty tree, warns on unpushed commits,
+prints the commit about to ship, then execs the real script with your args.
+`--dirty-ok` exists for the deliberate case and should be rare. The guard is a
+wrapper because `deploy/deploy.sh` is template-rendered from `@aicompany/core`
+and verifies its own stamp, so a guard inside it would fail the drift check.
+
+**Several sessions share this checkout.** Before deploying, `git status` and
+confirm the uncommitted paths are yours. If they are not, wait.
+
+## Local servers (required)
+
+**Never `pkill -f "next start"` (or any pattern matching a running command).**
+The pattern matches the shell executing it, so the shell kills itself, the
+compound command stops there, and everything after it is skipped silently.
+That is how a full deploy run once vanished leaving no log file. Kill by port:
+
+```bash
+bash scripts/dev-servers.sh          # every Next server, with a verdict
+bash scripts/dev-servers.sh --clean  # stop only unsupervised, unused ones
+bash scripts/dev-servers.sh --check  # also report crash-looping systemd units
+```
+
+`--clean` never touches a watchdog-supervised server or one with a live
+connection. **A stale server on a test port serves an OLD build**, which makes
+a correct fix look broken; check the port owner before debugging a fix that
+"did not work". Bind ad-hoc servers to loopback (`next start -H 127.0.0.1`) so
+a forgotten one is not listening on the public interface.
+
 ## Other conventions
 
 - `.env.example` is the authoritative env template: every variable the code reads

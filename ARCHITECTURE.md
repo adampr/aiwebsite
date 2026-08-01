@@ -4177,6 +4177,17 @@ are installed only when `BLOG_ENABLED=1`):
 
 ---
 
+**Deploy safety wrapper (host-owned).** `scripts/deploy-safe.sh` is the
+intended entry point; `deploy/deploy.sh` is what it execs. The wrapper refuses
+on a dirty working tree, because `sync_dir()` rsyncs the tree rather than a git
+archive, so uncommitted work in a shared checkout would ship to production
+verbatim. `--dirty-ok` overrides. It is a wrapper rather than an edit because
+`deploy/deploy.sh` carries an `aicompany-template:` stamp and verifies it, so
+an in-place guard would trip the drift check. `scripts/dev-servers.sh` is the
+companion for local servers: it inventories every `next-server` with its port,
+cwd and supervision state, stops only unsupervised idle ones, and (`--check`)
+reports crash-looping systemd user units.
+
 ## 10. Environment variables (single shared `.env`, site + brain + deploy)
 
 Generate secrets with `openssl rand -hex 32`. `.env.example` is the authoritative template —
