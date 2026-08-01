@@ -15,7 +15,23 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-01 (latest: §5.17.1 **RFP round 3 — the
+Last verified against code: 2026-08-01 second pass (module pin v1.47.0 → v1.48.0
+fab5841 — BLOG SELF-DEFEATING-LOOP FIXES + ISSUE-LEDGER CLI TRUTHING, module
+MIGRATIONS v1.48.0: the writer catalog now hands canonical prefixed paths
+instead of bare /slug hrefs the contract gate then flagged nightly; the WARN
+email/admin gate detail can no longer hide the failing issue behind auto-fixed
+ones (GateResult.blocking[]); the repair prompt receives blocking-only issues
+and word-count overshoots get a bounded trim exception; prompt-facing
+link-debt/add-link URLs are now site-relative (absolute ones were invisible to
+BOTH link counters — this host runs minInternalLinks with maxRegenerates 1, so
+the v1.29 add-link EXCEPTION could never actually satisfy the gate);
+recordIssue had thrown (swallowed) in every CLI process since v1.30, so blog
+nightly/digest WARNs NEVER reached reported_issues — now registered+self-
+registering, with OK runs auto-resolving the stable blog-nightly/blog-digest
+episodes. Bare pin: no schema (attention_dismissed arrived with v1.47.0), no
+env, no re-render; scripts/blog-fix-links.ts re-run post-deploy for the v1.48
+non-canonical-path pass. Owner ruling 2026-08-01: 3-day soak waived fleet-wide
+for this release); previous 2026-08-01 (latest: §5.17.1 **RFP round 3 — the
 "Not here yet" list is built and the panel is gone**: the pricing section
 (quantities in via `PUT .../pricing`, every figure computed by
 `src/lib/rfp/quote.ts` from the rate card in force, stored as
