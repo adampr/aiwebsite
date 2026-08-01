@@ -8,20 +8,27 @@
 //
 // Body: { sectionLabel, sectionTitle }
 
+import crypto from "node:crypto";
 import { after } from "next/server";
 import { draftSection, brainHealthy } from "@/lib/rfp/brain";
 import { logRfpActivity } from "@/lib/rfp/activity";
 import {
+  clearGenClaim,
+  completeGeneration,
   createProposal,
   currentKbVersion,
+  genClaimActive,
   getDocument,
   getProposalForDocument,
+  heartbeatGeneration,
   knowledgeForUser,
   listRequirements,
   writeProposalSections,
   type FactRow,
 } from "@/lib/rfp/db";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
+
+const HEARTBEAT_MS = 60 * 1000;
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -77,7 +84,7 @@ export async function POST(
       await currentKbVersion()
     );
   }
-  if (proposal.genStartedAt)
+  if (genClaimActive(proposal))
     return rfpError(
       "busy",
       "A section is already being drafted for this RFP.",
@@ -86,21 +93,36 @@ export async function POST(
 
   const proposalId = proposal.id;
   const rev = proposal.rev;
+  const attemptId = crypto.randomUUID();
   const existing: DraftSectionRecord[] = JSON.parse(
     proposal.sectionsJson || "[]"
   );
 
-  // Claim, so a second click cannot start a duplicate run.
+  // Claim, so a second click cannot start a duplicate run. Reclaiming a
+  // stale attempt goes through the same CAS: the new attempt id is what
+  // invalidates the dead worker's eventual write.
   const claimed = await writeProposalSections(
     proposalId,
     rev,
     proposal.sectionsJson || "[]",
-    { genStartedAt: new Date(), genProgress: label || title, genError: null }
+    {
+      genStartedAt: new Date(),
+      genAttemptId: attemptId,
+      genHeartbeatAt: new Date(),
+      genProgress: label || title,
+      genError: null,
+    }
   );
   if (!claimed)
     return rfpError("busy", "That draft changed. Reload and try again.", 409);
 
   after(async () => {
+    // Life sign while queued behind the semaphore and while drafting; fenced
+    // on the attempt id, so a reclaimed attempt's timer updates nothing.
+    const heartbeat = setInterval(() => {
+      heartbeatGeneration(proposalId, attemptId).catch(() => {});
+    }, HEARTBEAT_MS);
+    let landed = false;
     try {
       const reqs = await listRequirements(doc.id);
       const forSection = reqs
@@ -140,37 +162,54 @@ export async function POST(
         asFacts
       );
 
-      const fresh = await getProposalForDocument(doc.id);
-      const currentRev = fresh?.rev ?? rev + 1;
-      const sections: DraftSectionRecord[] = JSON.parse(
-        fresh?.sectionsJson || JSON.stringify(existing)
-      );
-
-      if (drafted) {
-        const record: DraftSectionRecord = {
-          label,
-          title,
-          paragraphs: drafted.paragraphs,
-          cites: drafted.cites,
-          gaps: drafted.gaps,
-          generatedBy: "llm",
-          updatedAt: new Date().toISOString(),
-        };
-        const at = sections.findIndex((s) => s.label === label && s.title === title);
-        if (at >= 0) sections[at] = record;
-        else sections.push(record);
-      }
-
-      await writeProposalSections(
-        proposalId,
-        currentRev,
-        JSON.stringify(sections),
-        {
-          genStartedAt: null,
-          genProgress: null,
-          genError: drafted ? null : "The drafting service returned nothing.",
+      // Land the result, but only while the claim is still THIS attempt's.
+      // An edit mid-run bumps rev (retry with the fresh document); a reclaim
+      // swaps the attempt id (drop the result, the reclaiming run owns it).
+      for (let tries = 0; tries < 3; tries++) {
+        const fresh = await getProposalForDocument(doc.id);
+        if (!fresh || fresh.genAttemptId !== attemptId) break;
+        const sections: DraftSectionRecord[] = JSON.parse(
+          fresh.sectionsJson || JSON.stringify(existing)
+        );
+        if (drafted) {
+          const record: DraftSectionRecord = {
+            label,
+            title,
+            paragraphs: drafted.paragraphs,
+            cites: drafted.cites,
+            gaps: drafted.gaps,
+            generatedBy: "llm",
+            updatedAt: new Date().toISOString(),
+          };
+          // Identity is LABEL alone, as everywhere else (workspace join,
+          // section/gap routes, resolve-draft); matching on title too made
+          // a retitled node land a duplicate label.
+          const at = sections.findIndex((s) => s.label === label);
+          if (at >= 0) sections[at] = record;
+          else sections.push(record);
         }
-      );
+        landed = await completeGeneration(
+          proposalId,
+          fresh.rev,
+          attemptId,
+          JSON.stringify(sections),
+          drafted
+            ? {}
+            : { genError: "The drafting service returned nothing." }
+        );
+        if (landed) break;
+      }
+      // Rev CAS lost three times (or the claim moved on): the result is
+      // dropped, but the claim must not sit until the stale horizon with no
+      // error — clear it, fenced on the attempt id only.
+      if (!landed)
+        await clearGenClaim(
+          proposalId,
+          attemptId,
+          drafted
+            ? "The draft finished but could not be saved. Draft this section again."
+            : "The drafting service returned nothing."
+        );
 
       await logRfpActivity({
         actorEmail: user.email,
@@ -188,14 +227,11 @@ export async function POST(
       });
     } catch (err) {
       console.error("[rfp] generate failed:", err);
-      const fresh = await getProposalForDocument(doc.id).catch(() => null);
-      if (fresh)
-        await writeProposalSections(
-          proposalId,
-          fresh.rev,
-          fresh.sectionsJson,
-          { genStartedAt: null, genError: "Drafting failed." }
-        ).catch(() => {});
+      await clearGenClaim(proposalId, attemptId, "Drafting failed.").catch(
+        () => {}
+      );
+    } finally {
+      clearInterval(heartbeat);
     }
   });
 

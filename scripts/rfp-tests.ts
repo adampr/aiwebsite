@@ -109,3 +109,46 @@ if (ungated.length) {
 } else {
   console.log("api-route gate audit: every /api/rfp handler calls requireRfpApi");
 }
+
+/**
+ * Second static guard: authentication is not authorization. Every route
+ * under proposals/[id] or documents/[id] must also LOOK UP the row through
+ * an ownership-scoped accessor (getOwnedProposal / getDocument), or a new
+ * route could authenticate and then operate on anyone's row by id.
+ */
+function auditOwnershipLookups(): string[] {
+  const root = "src/app/api/rfp";
+  const bad: string[] = [];
+  const walk = (dir: string) => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name === "route.ts" && /\[id\]/.test(full)) {
+        const src = fs.readFileSync(full, "utf8");
+        // approveKnowledge/returnKnowledge are admin-checked inside
+        // src/lib/rfp/db.ts (throw on non-admin), so they count as scoped.
+        if (
+          !src.includes("getOwnedProposal") &&
+          !src.includes("getDocument") &&
+          !src.includes("getKnowledgeProposal") &&
+          !src.includes("approveKnowledge") &&
+          !src.includes("returnKnowledge")
+        )
+          bad.push(full);
+      }
+    }
+  };
+  walk(root);
+  return bad;
+}
+
+const unowned = auditOwnershipLookups();
+if (unowned.length) {
+  console.log("*** /api/rfp [id] ROUTES WITHOUT AN OWNERSHIP LOOKUP ***");
+  unowned.forEach((f) => console.log("   " + f));
+} else {
+  console.log(
+    "ownership audit: every [id] handler resolves its row through a scoped accessor"
+  );
+}

@@ -26,6 +26,7 @@
 // and `timestamp without time zone` would shift both by the server offset and
 // silently drop rows from the sweep.
 
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -35,6 +36,7 @@ import {
   timestamp,
   index,
   unique,
+  uniqueIndex,
   uuid,
   serial,
 } from "drizzle-orm/pg-core";
@@ -211,7 +213,8 @@ export const rfpDocuments = pgTable(
       withTimezone: true,
     }),
     dueDate: timestamp("due_date", { withTimezone: true }),
-    // "new" | "extracted" | "confirmed" | "archived"
+    // "reading" | "extracted" | "read_failed". Stamped "reading" at insert;
+    // the background readRfp worker moves it to "extracted" or "read_failed".
     status: text("status").notNull().default("new"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -283,6 +286,19 @@ export const rfpProposals = pgTable(
     /** JSON GateResult from the last run. Null = never gated. */
     gateJson: text("gate_json"),
     gateRanAt: timestamp("gate_ran_at", { withTimezone: true }),
+    /**
+     * JSON QuoteInputs — the human-entered quantities (user counts, tiers).
+     * Kept separately from the computed quote so the quote can be rebuilt
+     * deterministically, and so what was ENTERED stays distinguishable from
+     * what was COMPUTED.
+     */
+    pricingInputsJson: text("pricing_inputs_json"),
+    /**
+     * JSON PricingQuote — engine output only (content-model/pricing). Unit
+     * prices are snapshotted into it at build time so a later rate-card
+     * change cannot retroactively alter a quote that has been shown.
+     */
+    pricingJson: text("pricing_json"),
     /** Set from the SESSION at approval, never from a form field. */
     approvedBy: text("approved_by"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
@@ -303,6 +319,13 @@ export const rfpProposals = pgTable(
   (t) => [
     index("rfp_proposals_owner_idx").on(t.ownerEmail, t.updatedAt),
     index("rfp_proposals_doc_idx").on(t.documentId),
+    // ONE active proposal per document. Two racing first-generate calls
+    // (the ?draft=all handoff in two tabs) both passed the check-then-insert
+    // without this; the loser's worker then drafted onto an orphan row no
+    // read ever returned. createProposal converges on conflict.
+    uniqueIndex("rfp_proposals_doc_active_uq")
+      .on(t.documentId)
+      .where(sql`status <> 'superseded'`),
     index("rfp_proposals_status_idx").on(t.status, t.updatedAt),
   ]
 );

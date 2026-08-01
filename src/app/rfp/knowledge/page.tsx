@@ -217,9 +217,10 @@ export default async function RfpKnowledgePage() {
       <section>
         <h2 className="doc-h">Intake questions</h2>
         <p className="mt-2 text-sm text-faint">
-          Asked when a proposal needs something the knowledge base cannot
-          answer. A fact question can promote into the corpus once confirmed; a
-          choice is per proposal and never does.
+          The reference questionnaire for what a proposal cannot answer from
+          the knowledge base alone. The workspace asks its own open questions
+          per draft; a fact answer can promote into the corpus once confirmed,
+          a choice is per proposal and never does.
         </p>
         <div className="mt-4 overflow-x-auto">
           <table className="table table--stack">

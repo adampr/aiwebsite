@@ -15,7 +15,27 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-07-31 (latest: §5.16 **email title ladder** —
+Last verified against code: 2026-08-01 (latest: §5.17.1 **RFP round 3 — the
+"Not here yet" list is built and the panel is gone**: the pricing section
+(quantities in via `PUT .../pricing`, every figure computed by
+`src/lib/rfp/quote.ts` from the rate card in force, stored as
+`pricing_inputs_json` + `pricing_json`, migration 0029), export to Word and
+PDF (`GET .../export?format=docx|pdf`, `docx` pkg + `pdfkit` — no Chromium;
+refused while the gate fails or gaps are open), the 26 ported compliance
+rules now RUN at runtime (`src/lib/rfp/resolve-draft.ts` lifts the draft into
+`ResolvedProposal`; gate stored on the row and enforced at export), and the
+governance builder's interaction pattern ported into the workspace: draft the
+whole response with one button (still one section per call underneath), then
+answer the open questions ONE AT A TIME — pricing answers apply instantly,
+gap answers are woven in by the new `resolveGap()` brain turn — with the
+changed section flashing and scrolling into view. Also fixed: the
+generate poll watched a document status that never says "drafting" (now the
+status route reports proposal gen state, rev-gated), a crashed drafting
+worker left `gen_started_at` set forever (4-minute stale-claim reclaim +
+`gen_attempt_id` fencing), and `.tabstrip`'s unlayered `display:flex` beat
+Tailwind's layered `lg:hidden` so both tabstrips rendered at every width
+(`--mobile`/`--rail` variants in globals.css). New deps: `pdfkit` (+
+`serverExternalPackages`). Previous: §5.16 **email title ladder** —
 a real submission with no subject line, whose body opened
 "Name: Patching Visualizer", was rejected with a format lecture; owner
 directive: humans email this, so stop demanding rigid structure. Title
@@ -3343,13 +3363,18 @@ makes the stale-fact sweep meaningful), rate card, and intake questions.
 or the CHF proposal fixture (a real prospect's document, and deliberately a
 FAILING fixture whose assertion is that the gate rejects it).
 
-**Staged, not yet wired:** `src/lib/rfp/content-model/` (the typed IR) and
-`src/lib/rfp/validators/` (25 compliance rules) are ported and typecheck but
-have no route yet; they are the substrate for the review screen. Ingest,
-drafting, the compliance gate UI, and export to .docx/PDF are deferred —
-ingest needs `pdfjs-dist` v4 against the host's v6, and the PDF pipeline
-needs a long-lived Chromium in the single PM2 fork that serves the public
-site.
+**The typed IR is live at runtime (round 3).** `src/lib/rfp/content-model/`
+and the 26 validators are no longer staged: `src/lib/rfp/resolve-draft.ts`
+lifts the runtime draft shape into a real `ResolvedProposal` (each paragraph
+one ProseBlock carrying the section's `cites`/`generatedBy` — exactly what
+rules A5/C1 join on; `contentHash` computed with rule C2's own field set so
+C2 verifies the adapter), and `src/lib/rfp/gate-run.ts` assembles the
+ValidationContext from Postgres. The gate runs from the Checks pane
+(`POST .../gate`, stored in `gate_json`) and again inside export, where it is
+enforced. PDF turned out not to need Chromium: `pdfkit` with the built-in
+Helvetica metrics renders the response (the package is in
+`serverExternalPackages` — it reads its .afm font metrics from its own
+package dir via fs, and bundling breaks that path).
 
 #### 5.17.1 The RFP workspace (round 2)
 
@@ -3361,7 +3386,11 @@ everyone's), `/rfp/r/[id]` (the workspace), `/rfp/knowledge/mine`,
 `/rfp/knowledge/review` (admin approval queue), `/rfp/admin/activity`.
 API: `POST /api/rfp/documents`, `GET .../[id]/status`,
 `POST .../[id]/generate`, `PATCH|POST /api/rfp/proposals/[id]/section`,
-`POST /api/rfp/knowledge`, `POST /api/rfp/knowledge/[id]/review`.
+`PUT /api/rfp/proposals/[id]/pricing` (quantities in, computed quote out),
+`POST .../[id]/gap` (answer one drafted gap; writes), `POST .../[id]/gate`
+(run + store the compliance gate; reads), `GET .../[id]/export?format=docx|pdf`
+(streams, never stores), `POST /api/rfp/knowledge`,
+`POST /api/rfp/knowledge/[id]/review`.
 `"/api/rfp"` is in `src/proxy.ts` `protectedPrefixes`.
 
 **Everything is a claimed background job.** Reading a real client RFP measured
@@ -3428,11 +3457,15 @@ shape only: ids, keys, counts, rule ids, outcomes. Never RFP text, draft prose,
 fact statements, instructions, or money. Denials are logged too, because a
 horizontal-privilege probe appears only as a run of denied reads.
 
-**Tables (migration 0028):** `rfp_documents`, `rfp_requirements`,
+**Tables (migration 0028; + 0029):** `rfp_documents`, `rfp_requirements`,
 `rfp_proposals` (sections as `sections_json`, fenced on `rev`),
 `rfp_knowledge_proposals`, `rfp_activity`. Runtime rows use
 `uuid().defaultRandom()`, unlike the six seeded knowledge tables whose text
-PKs are semantic.
+PKs are semantic. Migration 0029 adds `rfp_proposals.pricing_inputs_json`
+(what the human ENTERED — quantities and choices) and `pricing_json` (what
+the engine COMPUTED — a `PricingQuote` with unit prices snapshotted at build
+time, so a later rate-card change cannot retroactively alter a shown quote).
+Both additive, both `text` holding JSON per host convention.
 
 **Corpus seeding is deliberately NOT automatic fact extraction.** Measured over
 the 16 past XL.net responses in the handoff: 7 contain "month-to-month" (which
@@ -3446,9 +3479,125 @@ negative fixture set and a tone sample, nothing more.
 **Tests:** `npm run test:rfp` (static audit that every `/api/rfp` handler calls
 `requireRfpApi`, plus the 8 gate assertions against a running instance).
 
-**Still deferred:** .docx/PDF export, the pricing section (every client-facing
-figure must come from the computed rate card), the C1 stale-proposal sweep UI,
-and form-fill RFPs where the deliverable is the client's own form.
+#### 5.17.2 Round 3: pricing, export, and the guided flow
+
+**Pricing is quantities-in, figures-out.** `PUT .../pricing` accepts ONLY
+quantities and choices (`QuoteInputs`: fully managed users, the
+headcount-only flag + estimated M365 split, XL Secure+ computers, Datto tier
+and users, vuln-scan sessions/year, onboarding yes/no — clamped by
+`parseQuoteInputs`). `src/lib/rfp/quote.ts` is the single place a
+`PricingQuote` is constructed at runtime: illustrations through
+`buildIllustration` (B2's 15-user floor applied there), a SECOND
+illustration whenever the RFP states headcount and the split is unconfirmed
+(rule B4 — the split one is labelled an estimate, and with no estimate the
+quote stays not-ready rather than inventing a ratio), and one-time/per-session
+items (onboarding = one month of BASE floored managed service, Datto setup,
+vuln-scan cadence) as ENGINE-AUTHORED `notes` computed from integer cents —
+never illustration lines, because `monthlyTotal` sums every line and a
+one-time fee inside it would state a wrong month. A request-supplied dollar
+figure has nowhere to land. The workspace renders the stored quote as the
+"Investment" section under the drafted sections; the activity log records
+counts only (`proposal.pricing_set`), never money.
+
+**Export runs the gate on the exact content being emitted.** Both emitters
+(`src/lib/rfp/export.ts`) consume one `ExportView` built from the same
+`ResolvedProposal` the gate checked, so cross-format parity is structural
+and neither format does arithmetic. Export refuses (409, with the
+violations) while the gate fails, any drafted gap is open, or the pricing
+questionnaire has unanswered inputs — an untouched questionnaire refuses
+identically (the engine's own `missing[]`; absent answers are not gate
+violations, so the gate alone cannot see them). A proposal does not go out
+with declared unanswered questions. The gate result lands in `gate_json` on
+every run, and EVERY content write (sections, pricing, generation landing)
+nulls `gate_json`/`gate_ran_at`, so a stored "passing" can never describe a
+draft that has since changed. `proposal.export` logs format + byte count.
+`resolvedTextSpans` includes the pricing strings the emitters print
+(illustration labels/basis, notes, pass-through label/detail), so the
+D1/D2/B2 scans cover everything client-facing; rule B7 sanctions the
+computed figures inside the engine's own notes. Gate assembly resolves
+`pending_*` citations against the PROPOSAL OWNER's private knowledge, not
+the caller's, so an admin gating a user's draft cannot trip a spurious A5
+block.
+
+**The guided flow (the governance builder's pattern, ported).** After ingest
+the form hands off with `?draft=all` and the workspace drafts every section
+with ONE button — the loop is client-driven, still one section per generate
+call underneath (the semaphore reasoning above is unchanged; a mid-run
+deploy loses one section, not seventeen), with per-section progress and a
+stop button. Open questions then surface ONE AT A TIME in the rail's
+Questions pane: pricing questions apply instantly (no brain call); a
+section-gap answer goes to `POST .../gap`, where the new `resolveGap()`
+brain turn (same envelope invariants: `do_not_store`, no requester, no
+groupName; the ANSWER is fenced through `screenInjection` because pasting
+client text into it is the natural use, and the recorded gap QUESTION is
+fenced too — it is model output derived from the client's RFP) weaves it
+into the section, the answered gap is removed from the record, and
+`cites`/`generatedBy` carry over exactly as the edit path does. After the
+60-90s brain call the route re-reads THE SAME ROW it validated
+(`getProposalById`, never newest-for-document) and re-checks sent-status
+before writing. The updated section flashes
+(`doc-sec--changed`/`doc-sec--flash`, the shared classes, with a remount key
+so repeat changes re-animate) and scrolls into view. `remember: true` also
+files the answer as a PRIVATE row in `rfp_knowledge_proposals` (kind
+`fact`, auto-slugged key) so the asker's future drafts stop asking; it
+reaches the shared corpus only through the existing admin approval.
+
+**Generation state is fenced by attempt, not hope.** The status route now
+reports the PROPOSAL's gen state (`gen.inFlight` via `genClaimActive()` in
+`src/lib/rfp/db.ts` — the same predicate the generate route's 409 check
+uses, so the poller and the claim can never disagree) plus the draft
+content rev-gated on `?rev=` so the 3s poll stays small until something
+changed. The old workspace polled `doc.status` for a `"drafting"` value
+that never exists and gave up after one tick. A generate claim writes
+`gen_attempt_id`, and the worker heartbeats `gen_heartbeat_at` every 60s —
+staleness is measured against the NEWER of started/heartbeat, because the
+brain call sits behind the shared 2-slot semaphore whose queue wait is
+unbounded and wall-clock-since-claim alone would reclaim a healthy queued
+worker and drop its finished draft. A claim silent past 4 minutes is dead
+and reclaimable; the worker's completion write lands only
+`WHERE gen_attempt_id = mine` (a reclaimed worker that wakes up writes
+nothing), and a completion that loses its rev CAS repeatedly clears the
+claim via `clearGenClaim` (attempt-fenced, no rev) with an error instead of
+wedging until the horizon. **One ACTIVE proposal per document** (partial
+unique index `rfp_proposals_doc_active_uq`, `status <> 'superseded'`,
+migration 0030 — which first converges any pre-existing duplicates
+non-destructively): two racing first-generate calls (the `?draft=all`
+handoff in two tabs) previously both inserted and the loser drafted onto an
+orphan row no read ever returned; `createProposal` now converges on
+conflict. The workspace treats a transport-failed poll as UNKNOWN, never as
+"the run finished" (that misread cascaded 409s through every remaining
+section), requires two consecutive reachable-idle polls before a follower
+tab declares another tab's run over, and every mutation fetch is
+rejection-guarded so a network blip cannot strand the workbar mid-run.
+
+**Workspace mechanics worth knowing before changing them.** Document status
+is `"reading"` at insert, `"extracted"`/`"read_failed"` from the background
+worker (the ingest poll exits on `extracted` alone; requirements can
+legitimately be zero). The rail has ONE pane source of truth (`pane`);
+`mobile` only toggles draft-vs-rail below lg — rendering off both once
+stacked two panes whenever they disagreed. The action bar (`.rfp-runbar`)
+is sticky and carries the notices, because the flash choreography
+auto-scrolls the window and anything only at the top of the page is
+off-viewport exactly when a notice lands or the stop button is needed;
+`showChanged` never scrolls while the user is typing. Pricing questions are
+skippable (export still enforces completeness), a zero M365 estimate keeps
+the split question open with a "client confirmed" alternative, and a weave
+ends with a receipt line in the Questions pane because on mobile the flash
+happens in the hidden draft column. `.tabstrip` breakpoint behavior uses
+the `--mobile`/`--rail` variant classes in globals.css: `.tabstrip`'s own
+unlayered `display:flex` beats Tailwind's layered display utilities, so
+`lg:hidden` on a tabstrip silently never applied.
+
+**Still deferred:** the C1 stale-proposal sweep UI; form-fill RFPs where
+the deliverable is the client's own form (a structure-less RFP gets no
+pricing panel either — the workspace's draft column requires extracted
+structure); parallel gap weaves (answers are one 60-90s sync call at a
+time); drafted/questions status on the `/rfp/list` rows; focus management
+across question advances. Declared-but-unused surface waiting on those:
+`RFP_ACTIONS` `document.confirm_structure`/`document.delete`/
+`proposal.create`/`proposal.approve`/`knowledge.edit`, the
+`rfp_requirements.coverage_state`/`coverage_note` columns, and the
+`approved_by`/`approved_at` proposal flow.
 
 ## 6. Database
 

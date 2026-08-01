@@ -264,6 +264,95 @@ export async function draftSection(
 }
 
 /**
+ * Turn 4: weave an answered gap into its section.
+ *
+ * The drafter recorded a gap because no fact supported an answer; a human has
+ * now supplied one. The answer is the human's text, but it is fenced anyway,
+ * because "paste the client's question back" is the natural way to use this
+ * box. Same prohibitions as revision: no prices, no contract lengths — an
+ * answered gap that needs a figure gets its figure from the pricing engine,
+ * not from prose.
+ *
+ * Returns the revised paragraphs; the CALLER removes the gap from the record
+ * and preserves cites/generatedBy, exactly as the edit path does.
+ */
+export async function resolveGap(
+  proposalId: string,
+  sectionTitle: string,
+  currentParagraphs: string[],
+  gapQuestion: string,
+  answer: string,
+  facts: FactRow[]
+): Promise<{ paragraphs: string[]; note: string } | null> {
+  const factLines = facts
+    .slice(0, 40)
+    .map((f) => `- id=${f.id} [${f.polarity}] ${f.statement}`)
+    .join("\n");
+
+  const system = [
+    "One section of an XL.net RFP response recorded an open question, and a",
+    "human at XL.net has now answered it. Weave the answer into the section.",
+    "",
+    "You may reword and reorder paragraphs so the answer reads as part of the",
+    "section, and you must remove any hedging that existed only because the",
+    "question was open.",
+    "",
+    "You may NOT:",
+    "- introduce any price, rate, dollar figure, percentage, or contract length",
+    "- go beyond what the answer and the facts below actually say",
+    "- contradict a fact marked [negative]",
+    "- add an em dash, or marketing filler",
+    "",
+    "If the answer cannot be woven under those rules, return the text",
+    "unchanged and explain why in `note`.",
+    "",
+    'Reply with JSON only: {"paragraphs": [string], "note": string}',
+  ].join("\n");
+
+  const user = [
+    `SECTION: ${sectionTitle}`,
+    "",
+    "CURRENT TEXT:",
+    ...currentParagraphs.map((p, i) => `[${i + 1}] ${p}`),
+    "",
+    // The gap question is model output DERIVED from the client's fenced RFP
+    // text, so a hostile RFP can steer an instruction into it. It gets the
+    // same fence as the answer: recorded data, never trusted framing.
+    "THE OPEN QUESTION WAS:",
+    `${UNTRUSTED_OPEN}\n${screenInjection(gapQuestion).clean.slice(0, 500)}\n${UNTRUSTED_CLOSE}`,
+    "",
+    "THE ANSWER FROM XL.net:",
+    `${UNTRUSTED_OPEN}\n${screenInjection(answer).clean.slice(0, 2000)}\n${UNTRUSTED_CLOSE}`,
+    "",
+    "FACTS YOU MAY RELY ON:",
+    factLines || "(none)",
+  ].join("\n");
+
+  const raw = await callGovernanceBrain(
+    envelope({
+      sessionId: `rfpgap_${proposalId}`,
+      promptId: newId("rfpgap"),
+      system,
+      user,
+    }),
+    90_000
+  );
+  const parsed = parseJson(raw ?? "") as {
+    paragraphs: string[];
+    note: string;
+  } | null;
+  if (!parsed || !Array.isArray(parsed.paragraphs)) return null;
+
+  return {
+    paragraphs: parsed.paragraphs
+      .filter((p) => typeof p === "string" && p.trim())
+      .slice(0, 12)
+      .map((p) => p.slice(0, 4000)),
+    note: String(parsed.note ?? "").slice(0, 600),
+  };
+}
+
+/**
  * Turn 3: revise one section on a human's instruction (Tron editing).
  *
  * Returns a PROPOSAL, never a write. The caller previews it and the human

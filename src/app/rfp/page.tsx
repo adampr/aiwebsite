@@ -48,10 +48,12 @@ export default async function RfpOverviewPage() {
       <div>
         <span className="sys-label">Overview</span>
         <p className="mt-4 max-w-2xl">
-          The structured knowledge base behind XL.net proposal writing: the
-          facts a proposal may assert, the rate card its pricing must come
-          from, and the intake questions that fill the gaps. Nothing here is
-          sent anywhere. It is the source the drafting work reads from.
+          Give it an RFP and it drafts the response: every section against the
+          structured knowledge base below, pricing computed from the rate card
+          in force, the questions it cannot answer asked one at a time, and
+          the finished document exported to Word or PDF once the compliance
+          checks pass. Facts a proposal may assert live here; a draft never
+          invents one.
         </p>
       </div>
 
@@ -78,22 +80,27 @@ export default async function RfpOverviewPage() {
         <span className="sys-label">Where it stands</span>
         <ul className="mt-4 space-y-3 text-sm">
           <li>
-            <strong>{counts.live} facts</strong> are live, of which{" "}
-            <strong>{counts.negative}</strong>{" "}
-            are negative. A negative fact is a record, not an absence: it is
-            what stops a draft inventing a capability because nothing said
-            otherwise.
+            <strong>
+              {counts.live} fact{counts.live === 1 ? " is" : "s are"}
+            </strong>{" "}
+            live, of which <strong>{counts.negative}</strong>{" "}
+            {counts.negative === 1 ? "is" : "are"} negative. A negative fact
+            is a record, not an absence: it is what stops a draft inventing a
+            capability because nothing said otherwise.
           </li>
           <li>
-            <strong>{counts.corrected} facts</strong> have been corrected since
-            the corpus was first written. The wrong versions are retired rather
-            than deleted, so a proposal that cited one stays resolvable.
+            <strong>
+              {counts.corrected} fact{counts.corrected === 1 ? " has" : "s have"}
+            </strong>{" "}
+            been corrected since the corpus was first written. The wrong
+            versions are retired rather than deleted, so a proposal that cited
+            one stays resolvable.
           </li>
           {counts.unconfirmed > 0 && (
             <li>
               <strong>{counts.unconfirmed}</strong>{" "}
-              are marked as needing confirmation. They are usable in a draft
-              and they surface as open questions.
+              {counts.unconfirmed === 1 ? "is" : "are"} marked as needing
+              confirmation. Usable in a draft, and flagged until confirmed.
             </li>
           )}
           <li>
@@ -131,15 +138,6 @@ export default async function RfpOverviewPage() {
         </p>
       </div>
 
-      <div className="panel">
-        <span className="sys-label">Not here yet</span>
-        <p className="mt-4 text-sm">
-          Export to Word and PDF is still to come, and so is the pricing
-          section: every figure a client reads has to come from the computed
-          rate card rather than from a draft, so it is wired last and
-          deliberately.
-        </p>
-      </div>
     </div>
   );
 }

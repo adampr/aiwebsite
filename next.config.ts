@@ -8,7 +8,10 @@ const nextConfig: NextConfig = {
   // pdf.js resolves its worker via a dynamic import relative to pdf.mjs
   // ("./pdf.worker.mjs"); bundling it into .next/server/chunks breaks that
   // resolution and every PDF extraction throws. Run it from node_modules.
-  serverExternalPackages: ["pdfjs-dist"],
+  // pdfkit reads its standard-font .afm metrics from its own package dir via
+  // fs at runtime; bundling relocates the code away from those files and the
+  // first doc.font() call throws. Run both from node_modules.
+  serverExternalPackages: ["pdfjs-dist", "pdfkit"],
   // @aicompany/core's admin blog API (packages/aicompany/src/admin/api/blog.ts,
   // submodule — not editable here) spawns node_modules/.bin/tsx via
   // path.join(process.cwd(), ...), which makes Turbopack's file tracing walk

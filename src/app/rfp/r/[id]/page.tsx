@@ -7,6 +7,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requireRfpPage } from "@/lib/rfp/access";
 import {
+  genClaimActive,
   getDocument,
   getProposalForDocument,
   listRequirements,
@@ -26,19 +27,24 @@ export const metadata: Metadata = {
 
 export default async function RfpWorkspacePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ draft?: string }>;
 }) {
-  const gate = await requireRfpPage("/rfp/list");
+  // The login redirect carries THIS workspace's path, not the list: a
+  // signed-out deep link should land back where it pointed.
+  const { id } = await params;
+  const gate = await requireRfpPage(`/rfp/r/${id}`);
   if (!gate.ok) return null;
 
-  const { id } = await params;
   const doc = await getDocument(gate.user, id);
   if (!doc) notFound();
 
-  const [requirements, proposal] = await Promise.all([
+  const [requirements, proposal, sp] = await Promise.all([
     listRequirements(doc.id),
     getProposalForDocument(doc.id),
+    searchParams,
   ]);
 
   const structure: { label: string; title: string }[] = doc.structureJson
@@ -86,8 +92,18 @@ export default async function RfpWorkspacePage({
           kind: r.kind,
         }))}
         sections={sections}
-        busy={Boolean(proposal?.genStartedAt)}
+        rev={proposal?.rev ?? 0}
+        pricing={proposal?.pricingJson ? JSON.parse(proposal.pricingJson) : null}
+        pricingInputs={
+          proposal?.pricingInputsJson
+            ? JSON.parse(proposal.pricingInputsJson)
+            : null
+        }
+        gateResult={proposal?.gateJson ? JSON.parse(proposal.gateJson) : null}
+        busy={proposal ? genClaimActive(proposal) : false}
         genError={proposal?.genError ?? null}
+        autoDraft={sp.draft === "all"}
+        docStatus={doc.status}
       />
     </div>
   );

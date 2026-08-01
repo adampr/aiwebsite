@@ -9,6 +9,13 @@
 // user walking another's ids) shows up ONLY as a run of denied reads, so a
 // success-only log would be blind to the attack it exists to catch.
 //
+// SECTION STRUCTURE LABELS ARE TREATED AS KEYS. `meta.section` carries the
+// client's verbatim label ("4.2", "F.", occasionally a short phrase) because
+// it is the section's identifier everywhere else in the system; the
+// generate/edit/revise/gap paths all log it. A label is the closest thing a
+// section has to an id, and correlating activity per section needs it. Body
+// text, requirement text, and answers remain banned.
+//
 // There is deliberately no update and no delete helper. Best-effort by
 // design: a logging failure must never fail the user's action, but it does
 // console.error so a broken log is visible in pm2 output.
@@ -26,7 +33,10 @@ export const RFP_ACTIONS = [
   "proposal.generate",
   "proposal.section_edit",
   "proposal.tron_revise",
+  "proposal.gap_resolve",
+  "proposal.pricing_set",
   "proposal.gate_run",
+  "proposal.export",
   "proposal.approve",
   "knowledge.propose",
   "knowledge.submit",

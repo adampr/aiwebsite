@@ -109,6 +109,29 @@ export function resolvedTextSpans(
     { location: "letter", field: "signature.title", text: resolved.letter.signature.title },
   );
 
+  // Pricing strings the emitters print are client-facing text and scan like
+  // any other (D1/D2, B2's hedge scan). The COMPUTED figures inside them are
+  // engine output; rule B7's sanctioned set accounts for note figures
+  // explicitly, so scanning here does not turn the engine's own numbers into
+  // violations.
+  if (resolved.pricing) {
+    resolved.pricing.illustrations.forEach((ill, i) => {
+      spans.push(
+        { location: "pricing", field: `illustrations[${i}].label`, text: ill.label },
+        { location: "pricing", field: `illustrations[${i}].basis`, text: ill.basis },
+      );
+    });
+    resolved.pricing.passThroughItems.forEach((pt, i) => {
+      spans.push(
+        { location: "pricing", field: `passThroughItems[${i}].label`, text: pt.label },
+        { location: "pricing", field: `passThroughItems[${i}].detail`, text: pt.detail },
+      );
+    });
+    resolved.pricing.notes.forEach((note, i) =>
+      spans.push({ location: "pricing", field: `notes[${i}]`, text: note }),
+    );
+  }
+
   spans.push({ location: "back-cover", field: "headline", text: resolved.backCover.headline });
   if (resolved.backCover.subhead) {
     spans.push({ location: "back-cover", field: "subhead", text: resolved.backCover.subhead });

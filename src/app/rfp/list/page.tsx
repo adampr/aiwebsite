@@ -122,9 +122,11 @@ function DocTable({
                 >
                   {d.status === "extracted"
                     ? "Read"
-                    : d.status === "read_failed"
-                      ? "Could not read"
-                      : d.status}
+                    : d.status === "reading" || d.status === "new"
+                      ? "Reading"
+                      : d.status === "read_failed"
+                        ? "Could not read"
+                        : d.status}
                 </span>
               </td>
               <td data-label="Last touched" className="text-faint">

@@ -305,7 +305,7 @@ export const STABLE_FACTS: Fact[] = [
     category: "commercial",
     statement:
       "The no-lock-in argument is phrased \"we have to keep earning it, quarter after quarter.\"",
-    detail: "Not \"every month\" — that wording belongs to the superseded month-to-month claim.",
+    detail: "Not \"every month\": that wording belongs to the superseded month-to-month claim.",
   }),
   fact({
     key: "contract.multi-year",

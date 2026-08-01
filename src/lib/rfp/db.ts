@@ -12,6 +12,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  ne,
   sql,
 } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -70,6 +71,15 @@ export async function liveFacts(): Promise<FactRow[]> {
     .from(rfpFacts)
     .where(isNull(rfpFacts.retiredInKb))
     .orderBy(asc(rfpFacts.key));
+}
+
+/**
+ * EVERY fact row, retired included. The gate's C1 sweep must resolve a
+ * superseded citation to the row that replaced it, so it needs the full
+ * history, not the live view.
+ */
+export async function allFacts(): Promise<FactRow[]> {
+  return db.select().from(rfpFacts).orderBy(asc(rfpFacts.key));
 }
 
 /**
@@ -265,7 +275,11 @@ export async function createDocument(
       sourceBytes: input.sourceBytes,
       rawText: input.rawText,
       injectionFlagged: input.injectionFlagged,
-      status: "extracted",
+      // "reading" until the background readRfp finishes; the after() worker
+      // stamps "extracted" (or "read_failed"). Inserting "extracted" here
+      // used to make the ingest poll's status check meaningless, which is
+      // why it once needed a fragile requirements>0 side-channel.
+      status: "reading",
     })
     .returning();
   return row!;
@@ -312,29 +326,64 @@ export async function getProposalForDocument(
   const rows = await db
     .select()
     .from(rfpProposals)
-    .where(eq(rfpProposals.documentId, documentId))
+    .where(
+      and(
+        eq(rfpProposals.documentId, documentId),
+        ne(rfpProposals.status, "superseded")
+      )
+    )
     .orderBy(desc(rfpProposals.createdAt))
     .limit(1);
   return rows[0] ?? null;
 }
 
+/**
+ * By id, UNSCOPED — for re-reads AFTER an ownership check has passed on the
+ * same id (the gap route's post-brain-call refresh). Never call this with an
+ * id from a request that has not been through getOwnedProposal.
+ */
+export async function getProposalById(id: string): Promise<ProposalRow | null> {
+  if (!isUuid(id)) return null;
+  const rows = await db
+    .select()
+    .from(rfpProposals)
+    .where(eq(rfpProposals.id, id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Create-or-converge: one ACTIVE proposal per document. A partial unique
+ * index (rfp_proposals_doc_active_uq, status <> 'superseded', migration
+ * 0030) backs this — two racing first-generate calls (the ?draft=all
+ * handoff in two tabs is the realistic trigger) previously BOTH inserted,
+ * and every later read bound to the newest row while the loser's worker
+ * drafted onto an invisible orphan. Now the loser's insert violates the
+ * index and converges on the winner's row.
+ */
 export async function createProposal(
   user: RfpUser,
   documentId: string,
   title: string,
   kbVersion: number
 ): Promise<ProposalRow> {
-  const [row] = await db
-    .insert(rfpProposals)
-    .values({
-      documentId,
-      ownerUserId: await ownerUserIdFor(user.email),
-      ownerEmail: user.email.toLowerCase(),
-      title: title.slice(0, 300),
-      draftedAgainstKbVersion: kbVersion,
-    })
-    .returning();
-  return row!;
+  try {
+    const [row] = await db
+      .insert(rfpProposals)
+      .values({
+        documentId,
+        ownerUserId: await ownerUserIdFor(user.email),
+        ownerEmail: user.email.toLowerCase(),
+        title: title.slice(0, 300),
+        draftedAgainstKbVersion: kbVersion,
+      })
+      .returning();
+    return row!;
+  } catch (err) {
+    const existing = await getProposalForDocument(documentId);
+    if (existing) return existing;
+    throw err;
+  }
 }
 
 /**
@@ -352,6 +401,8 @@ export async function writeProposalSections(
     genProgress: string | null;
     genError: string | null;
     genStartedAt: Date | null;
+    genAttemptId: string | null;
+    genHeartbeatAt: Date | null;
   }> = {}
 ): Promise<boolean> {
   const res = await db
@@ -360,10 +411,192 @@ export async function writeProposalSections(
       sectionsJson,
       rev: expectedRev + 1,
       updatedAt: new Date(),
+      // A content write stales any stored gate verdict; a Checks pane
+      // showing "passing" for a draft that has since changed would lie.
+      gateJson: null,
+      gateRanAt: null,
       ...extra,
     })
     .where(
       and(eq(rfpProposals.id, proposalId), eq(rfpProposals.rev, expectedRev))
+    )
+    .returning({ id: rfpProposals.id });
+  return res.length > 0;
+}
+
+/**
+ * One proposal the caller may see. Same null-means-404 contract as
+ * getDocument. Ownership lives here, not in routes.
+ */
+export async function getOwnedProposal(
+  user: RfpUser,
+  id: string
+): Promise<ProposalRow | null> {
+  if (!isUuid(id)) return null;
+  const rows = await db
+    .select()
+    .from(rfpProposals)
+    .where(
+      user.admin
+        ? eq(rfpProposals.id, id)
+        : and(
+            eq(rfpProposals.id, id),
+            eq(rfpProposals.ownerEmail, user.email.toLowerCase())
+          )
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Fenced write of the pricing inputs + computed quote. Same CAS as
+ * writeProposalSections: pricing changes bump `rev`, so a generation worker
+ * or a second editor cannot silently interleave with a quote rebuild.
+ */
+export async function writeProposalPricing(
+  proposalId: string,
+  expectedRev: number,
+  pricingInputsJson: string,
+  pricingJson: string | null
+): Promise<boolean> {
+  const res = await db
+    .update(rfpProposals)
+    .set({
+      pricingInputsJson,
+      pricingJson,
+      rev: expectedRev + 1,
+      updatedAt: new Date(),
+      gateJson: null,
+      gateRanAt: null,
+    })
+    .where(
+      and(eq(rfpProposals.id, proposalId), eq(rfpProposals.rev, expectedRev))
+    )
+    .returning({ id: rfpProposals.id });
+  return res.length > 0;
+}
+
+/** Store a gate run. Does NOT bump rev: the gate reads, it never edits. */
+export async function writeProposalGate(
+  proposalId: string,
+  gateJson: string
+): Promise<void> {
+  await db
+    .update(rfpProposals)
+    .set({ gateJson, gateRanAt: new Date(), updatedAt: new Date() })
+    .where(eq(rfpProposals.id, proposalId));
+}
+
+/**
+ * A claim with no LIFE SIGN for this long is dead, not busy. The brain call
+ * is capped at 120s, but it sits behind a shared 2-slot semaphore whose
+ * queue wait is unbounded, so staleness is measured against the newer of
+ * genStartedAt and genHeartbeatAt (the worker heartbeats every 60s while it
+ * queues and drafts) — wall-clock-since-claim alone would reclaim a healthy
+ * queued worker and drop its finished draft. Before the horizon existed at
+ * all, one crashed `after()` made a proposal undraftable forever: every
+ * later generate saw genStartedAt set and returned 409. The attempt id
+ * fences the other side: a reclaimed worker that wakes up writes nothing.
+ */
+const STALE_CLAIM_MS = 4 * 60 * 1000;
+
+export function genClaimActive(
+  p: Pick<ProposalRow, "genStartedAt" | "genHeartbeatAt">,
+  now = Date.now()
+): boolean {
+  if (!p.genStartedAt) return false;
+  const lastSign = Math.max(
+    p.genStartedAt.getTime(),
+    p.genHeartbeatAt?.getTime() ?? 0
+  );
+  return now - lastSign < STALE_CLAIM_MS;
+}
+
+/**
+ * Heartbeat for a live generation attempt, fenced on the attempt id. The
+ * brain call sits behind a shared 2-slot semaphore whose queue wait is
+ * unbounded, so wall-clock-since-claim alone would reclaim a HEALTHY queued
+ * worker; staleness is measured against the newer of started/heartbeat.
+ */
+export async function heartbeatGeneration(
+  proposalId: string,
+  attemptId: string
+): Promise<void> {
+  await db
+    .update(rfpProposals)
+    .set({ genHeartbeatAt: new Date() })
+    .where(
+      and(
+        eq(rfpProposals.id, proposalId),
+        eq(rfpProposals.genAttemptId, attemptId)
+      )
+    );
+}
+
+/**
+ * Clear a generation claim WITHOUT touching sections. Fenced on the attempt
+ * id only (no rev CAS): no other writer touches the gen columns without
+ * first changing the attempt id, so this cannot race, and it is the escape
+ * hatch when the completion write loses its rev CAS repeatedly — otherwise
+ * the claim would sit until the stale horizon with no error recorded.
+ */
+export async function clearGenClaim(
+  proposalId: string,
+  attemptId: string,
+  genError: string | null
+): Promise<void> {
+  await db
+    .update(rfpProposals)
+    .set({
+      genStartedAt: null,
+      genAttemptId: null,
+      genHeartbeatAt: null,
+      genProgress: null,
+      genError,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(rfpProposals.id, proposalId),
+        eq(rfpProposals.genAttemptId, attemptId)
+      )
+    );
+}
+
+/**
+ * Completion write for a generation attempt. Lands ONLY while the claim
+ * still belongs to this attempt: a worker that hung past the stale-claim
+ * horizon and was reclaimed writes nothing, rather than clobbering the
+ * reclaiming attempt's sections or clearing its in-flight marker.
+ */
+export async function completeGeneration(
+  proposalId: string,
+  expectedRev: number,
+  attemptId: string,
+  sectionsJson: string,
+  extra: Partial<{ genError: string | null }> = {}
+): Promise<boolean> {
+  const res = await db
+    .update(rfpProposals)
+    .set({
+      sectionsJson,
+      rev: expectedRev + 1,
+      genStartedAt: null,
+      genAttemptId: null,
+      genHeartbeatAt: null,
+      genProgress: null,
+      genError: null,
+      gateJson: null,
+      gateRanAt: null,
+      updatedAt: new Date(),
+      ...extra,
+    })
+    .where(
+      and(
+        eq(rfpProposals.id, proposalId),
+        eq(rfpProposals.rev, expectedRev),
+        eq(rfpProposals.genAttemptId, attemptId)
+      )
     )
     .returning({ id: rfpProposals.id });
   return res.length > 0;
@@ -530,6 +763,29 @@ export async function returnKnowledge(
     .where(eq(rfpKnowledgeProposals.id, id))
     .returning({ id: rfpKnowledgeProposals.id });
   return res.length > 0;
+}
+
+/**
+ * Private knowledge rows for a specific OWNER (by email), for resolving a
+ * draft's `pending_*` citations no matter who runs the gate. An admin
+ * gating another user's draft must see the DRAFTER's private rows — using
+ * the caller's would hard-block rule A5 on citations that are perfectly
+ * resolvable, and persist that wrong verdict onto the owner's proposal.
+ * Read-only fact resolution: nothing here widens whose drafts see the rows.
+ */
+export async function knowledgeProposalsForOwner(
+  ownerEmail: string
+): Promise<KnowledgeProposalRow[]> {
+  return db
+    .select()
+    .from(rfpKnowledgeProposals)
+    .where(
+      and(
+        eq(rfpKnowledgeProposals.ownerEmail, ownerEmail.toLowerCase()),
+        eq(rfpKnowledgeProposals.kind, "fact"),
+        inArray(rfpKnowledgeProposals.status, ["private", "submitted"])
+      )
+    );
 }
 
 /**

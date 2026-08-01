@@ -11,35 +11,18 @@
 // validators that exist to catch exactly that. Both fail OPEN when cites is
 // empty, which is why this is enforced here rather than trusted to a form.
 
-import { and, eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { rfpProposals } from "@/lib/db/rfp-schema";
 import { reviseSection, brainHealthy } from "@/lib/rfp/brain";
 import { logRfpActivity } from "@/lib/rfp/activity";
-import { isUuid, knowledgeForUser, writeProposalSections } from "@/lib/rfp/db";
+import {
+  getOwnedProposal,
+  knowledgeForUser,
+  writeProposalSections,
+} from "@/lib/rfp/db";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
 import type { DraftSectionRecord } from "../../../documents/[id]/generate/route";
-import type { RfpUser } from "@/lib/rfp/access";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-async function loadOwned(user: RfpUser, id: string) {
-  if (!isUuid(id)) return null;
-  const rows = await db
-    .select()
-    .from(rfpProposals)
-    .where(
-      user.admin
-        ? eq(rfpProposals.id, id)
-        : and(
-            eq(rfpProposals.id, id),
-            eq(rfpProposals.ownerEmail, user.email.toLowerCase())
-          )
-    )
-    .limit(1);
-  return rows[0] ?? null;
-}
 
 /** PATCH — save a human edit to one section's paragraphs. */
 export async function PATCH(
@@ -51,7 +34,7 @@ export async function PATCH(
   const user = gate.user;
 
   const { id } = await params;
-  const proposal = await loadOwned(user, id);
+  const proposal = await getOwnedProposal(user, id);
   if (!proposal) return notFound();
   if (proposal.status === "sent")
     return rfpError(
@@ -119,7 +102,7 @@ export async function POST(
   const user = gate.user;
 
   const { id } = await params;
-  const proposal = await loadOwned(user, id);
+  const proposal = await getOwnedProposal(user, id);
   if (!proposal) return notFound();
 
   let body: { label?: string; instruction?: string };

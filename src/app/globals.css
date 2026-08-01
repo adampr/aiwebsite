@@ -195,6 +195,16 @@
   color: var(--xl-light);
   box-shadow: inset 0 -1px 0 var(--xl-light);
 }
+/* Breakpoint variants live HERE, not as lg:hidden utilities on the element:
+   .tabstrip's own display:flex is unlayered CSS and beats Tailwind's layered
+   display utilities regardless of order, so a lg:hidden on a tabstrip
+   silently never applied (the /rfp workspace shipped that way). */
+.tabstrip--mobile { display: flex; }
+.tabstrip--rail { display: none; }
+@media (min-width: 1024px) {
+  .tabstrip--mobile { display: none; }
+  .tabstrip--rail { display: flex; }
+}
 
 /* Inline jump links (change summary, open confirm items). */
 .linklike {
@@ -628,6 +638,20 @@
     overflow-y: auto;
     overscroll-behavior: contain;
   }
+}
+/* The workspace action bar (draft-all progress, stop, export, notices)
+   sticks below the site header + section workbar: the flash choreography
+   auto-scrolls the window, so anything only at the top of the page is
+   guaranteed off-viewport exactly when a notice lands or the stop button
+   is needed mid-run. */
+.rfp-page .rfp-runbar {
+  position: sticky;
+  top: 4.5rem;
+  z-index: 30;
+  background: var(--xl-bg-1);
+}
+@media (min-width: 768px) {
+  .rfp-page .rfp-runbar { top: 11.25rem; }
 }
 /* Anchor targets clear the sticky header + workbar at every width. */
 .rfp-page [id^="sec-"] { scroll-margin-top: 6.5rem; }

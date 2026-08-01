@@ -329,6 +329,21 @@ export const B7: Rule = {
       }
       // passThroughItems carry no figure by design (rule B6: pass-through is
       // labelled, never priced), so there is nothing to sanction from them.
+
+      // The engine's own notes carry COMPUTED one-time/per-session figures
+      // (onboarding, Datto setup, vuln-scan cadence). Those strings are now
+      // in the scan surface (resolvedTextSpans includes pricing), so their
+      // figures are sanctioned from the quote object itself — an engine
+      // number citing itself, not a prose escape hatch: prose repeating one
+      // of these figures stays sanctioned only because the engine produced
+      // it, which is B7's definition.
+      for (const note of quote.notes) {
+        for (const m of note.matchAll(/\$\s?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{2}))?/g)) {
+          const dollars = Number(m[1].replace(/,/g, ""));
+          if (Number.isFinite(dollars))
+            sanctioned.add(dollars * 100 + (m[2] ? Number(m[2]) : 0));
+        }
+      }
     }
 
     const violations = [];

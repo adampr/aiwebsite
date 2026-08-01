@@ -66,22 +66,28 @@ export function NewRfpForm() {
       })
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null);
-      if (s?.status === "extracted" && s.requirements > 0) {
+      // "extracted" alone is the exit: a document CAN legitimately extract
+      // zero requirements, and waiting on a count here once left the user
+      // staring at "reading" for six minutes after the read had finished.
+      if (s?.status === "extracted") {
         clearTimeout(slowTimer);
-        router.push(`/rfp/r/${id}`);
+        router.push(`/rfp/r/${id}?draft=all`);
         return;
       }
       if (s?.status === "read_failed") {
         clearTimeout(slowTimer);
         setPhase("failed");
         setMessage(
-          "The RFP was saved but could not be read for its structure. Open it and try again."
+          "The RFP was saved but could not be read for its structure. That is usually a brief drafting-service outage. Start it again from New RFP; pasting the same text works."
         );
         return;
       }
     }
     clearTimeout(slowTimer);
-    router.push(`/rfp/r/${id}`);
+    setPhase("failed");
+    setMessage(
+      "Still reading after six minutes. The RFP is saved; it appears under Your RFPs when the read finishes."
+    );
   }
 
   if (phase === "reading") {
@@ -110,7 +116,7 @@ export function NewRfpForm() {
           className="input"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Cordia Senior Living, managed IT"
+          placeholder="Client name, managed IT"
         />
       </div>
 
@@ -145,7 +151,8 @@ export function NewRfpForm() {
           />
         )}
         <p className="mt-2 text-xs text-faint">
-          PDF, Word .docx, or pasted text. Nothing leaves XL.net.
+          PDF, Word .docx, or pasted text. Read only to draft this response;
+          never stored in Tron&apos;s public memory.
         </p>
       </div>
 
