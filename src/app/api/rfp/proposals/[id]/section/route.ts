@@ -19,10 +19,68 @@ import {
   writeProposalSections,
 } from "@/lib/rfp/db";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
+import { extractStyleSampleText } from "@/lib/governance/style-sample";
+import { screenInjection } from "@/lib/governance/research";
 import type { DraftSectionRecord } from "../../../documents/[id]/generate/route";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+/** Same ceiling as RFP ingest: well under the 12m nginx cap. */
+const MAX_ATTACH_BYTES = 8_000_000;
+const MAX_ATTACH_CHARS = 20_000;
+const TEXT_EXTENSIONS = /\.(txt|md|csv|log|json)$/i;
+const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|bmp|heic|svg)$/i;
+
+/**
+ * Turn an attached file into fenced text for the revision turn.
+ * PDF and .docx go through the same extractor as RFP ingest; plain-text
+ * formats (txt, md, csv, log, json) are decoded directly. Images are
+ * refused HONESTLY: the drafting service reads text only, and pretending
+ * otherwise would silently drop the content.
+ */
+async function extractAttachment(
+  file: File
+): Promise<
+  | { ok: true; name: string; text: string; injectionHits: number }
+  | { ok: false; message: string }
+> {
+  if (file.size > MAX_ATTACH_BYTES)
+    return { ok: false, message: "That file is over 8 MB." };
+  const name = file.name.slice(0, 200);
+  if (IMAGE_EXTENSIONS.test(name))
+    return {
+      ok: false,
+      message:
+        "Images cannot be read yet; the drafting service is text-only. Export the content as PDF, Word, or text and attach that.",
+    };
+  const buf = Buffer.from(await file.arrayBuffer());
+  if (TEXT_EXTENSIONS.test(name)) {
+    const text = buf.toString("utf8").slice(0, MAX_ATTACH_CHARS).trim();
+    if (!text)
+      return { ok: false, message: "That file has no readable text." };
+    return { ok: true, name, text, injectionHits: screenInjection(text).hits.length };
+  }
+  if (/\.(pdf|docx)$/i.test(name)) {
+    const extracted = await extractStyleSampleText(name, buf, MAX_ATTACH_CHARS);
+    if (!extracted.ok)
+      return {
+        ok: false,
+        message:
+          "Could not read that file. Scanned PDFs with no text layer are the usual cause.",
+      };
+    return {
+      ok: true,
+      name,
+      text: extracted.text,
+      injectionHits: screenInjection(extracted.text).hits.length,
+    };
+  }
+  return {
+    ok: false,
+    message: "Attach a PDF, Word .docx, or a text file (.txt, .md, .csv, .log, .json).",
+  };
+}
 
 /** PATCH — save a human edit to one section's paragraphs. */
 export async function PATCH(
@@ -105,14 +163,50 @@ export async function POST(
   const proposal = await getOwnedProposal(user, id);
   if (!proposal) return notFound();
 
-  let body: { label?: string; instruction?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return rfpError("invalid_request", "Send JSON.", 400);
+  // JSON for a plain instruction; multipart when a document rides along.
+  let label = "";
+  let instruction = "";
+  let attachment: { name: string; text: string } | undefined;
+  let attachInjectionHits = 0;
+  const ctype = req.headers.get("content-type") ?? "";
+  if (ctype.includes("multipart/form-data")) {
+    const declared = Number(req.headers.get("content-length") ?? "0");
+    if (declared > 8_500_000)
+      return rfpError("too_large", "That file is over 8 MB.", 413);
+    let form: FormData;
+    try {
+      form = await req.formData();
+    } catch {
+      return rfpError("invalid_request", "Send the file as form data.", 400);
+    }
+    label = String(form.get("label") ?? "");
+    instruction = String(form.get("instruction") ?? "").trim().slice(0, 8000);
+    // Checked BEFORE extraction: an instructionless request should not pay
+    // for parsing an 8 MB pdf, and it should fail with the same message the
+    // JSON branch gives rather than an attachment-shaped one.
+    if (instruction.length < 3)
+      return rfpError("invalid_request", "Say what you want changed.", 400);
+    const file = form.get("file");
+    // No size floor: a 0-byte file is a FAILED upload, and letting it fall
+    // through would answer as if nothing were attached while the UI said
+    // the document was read. extractAttachment refuses it honestly.
+    if (file instanceof File) {
+      const extracted = await extractAttachment(file);
+      if (!extracted.ok)
+        return rfpError("invalid_request", extracted.message, 400);
+      attachment = { name: extracted.name, text: extracted.text };
+      attachInjectionHits = extracted.injectionHits;
+    }
+  } else {
+    let body: { label?: string; instruction?: string };
+    try {
+      body = await req.json();
+    } catch {
+      return rfpError("invalid_request", "Send JSON.", 400);
+    }
+    label = String(body.label ?? "");
+    instruction = String(body.instruction ?? "").trim();
   }
-  const label = String(body.label ?? "");
-  const instruction = String(body.instruction ?? "").trim();
   if (instruction.length < 3)
     return rfpError("invalid_request", "Say what you want changed.", 400);
 
@@ -133,7 +227,8 @@ export async function POST(
     `${section.label} ${section.title}`,
     section.paragraphs,
     instruction,
-    shared
+    shared,
+    attachment
   );
   if (!result)
     return rfpError(
@@ -149,8 +244,16 @@ export async function POST(
     subjectKind: "proposal",
     subjectId: proposal.id,
     // The instruction itself is user text and may quote the client's RFP, so
-    // only its length is recorded.
-    meta: { section: label, instructionChars: instruction.length },
+    // only its length is recorded. Same for the attachment: shape, not text.
+    // Shape only. The hit COUNT is the same review signal ingest keeps on
+    // rfp_documents.injection_flagged: a stripped attempt should not vanish
+    // without trace, and a count is not content.
+    meta: {
+      section: label,
+      instructionChars: instruction.length,
+      attachedChars: attachment?.text.length ?? 0,
+      attachedInjectionHits: attachInjectionHits,
+    },
   });
 
   return rfpOk({

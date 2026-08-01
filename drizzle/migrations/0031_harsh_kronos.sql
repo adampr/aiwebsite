@@ -1,0 +1,1 @@
+ALTER TABLE "rfp_documents" ADD COLUMN "archived_at" timestamp with time zone;

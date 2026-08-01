@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireRfpPage } from "@/lib/rfp/access";
 import { listAllDocuments, listMyDocuments } from "@/lib/rfp/db";
+import { RowActions } from "./row-actions";
 import { logRfpActivity } from "@/lib/rfp/activity";
 import { when } from "@/lib/rfp/time";
 
@@ -21,7 +22,10 @@ export default async function RfpListPage() {
 
   const mine = await listMyDocuments(user);
   const all = user.admin ? await listAllDocuments(user) : [];
-  const others = all.filter((d) => d.ownerEmail !== user.email.toLowerCase());
+  const others = all.filter(
+    (d) => d.ownerEmail !== user.email.toLowerCase() && !d.archivedAt
+  );
+  const archived = all.filter((d) => d.archivedAt);
 
   // An admin reading everyone's work is a thing the log should show.
   if (user.admin && others.length)
@@ -54,7 +58,7 @@ export default async function RfpListPage() {
           </p>
         </div>
       ) : (
-        <DocTable rows={mine} />
+        <DocTable rows={mine} isAdmin={user.admin} />
       )}
 
       {user.admin && (
@@ -70,7 +74,22 @@ export default async function RfpListPage() {
             </div>
           ) : (
             <div className="mt-4">
-              <DocTable rows={others} showOwner />
+              <DocTable rows={others} showOwner isAdmin />
+            </div>
+          )}
+
+          <h3 className="doc-h mt-10">Archive</h3>
+          <p className="mt-2 text-sm text-faint">
+            RFPs their owners moved out of the way. Restore one to put it
+            back in its owner&apos;s list.
+          </p>
+          {archived.length === 0 ? (
+            <div className="panel mt-4">
+              <p className="text-faint">Nothing archived.</p>
+            </div>
+          ) : (
+            <div className="mt-4">
+              <DocTable rows={archived} showOwner isAdmin />
             </div>
           )}
         </section>
@@ -82,9 +101,11 @@ export default async function RfpListPage() {
 function DocTable({
   rows,
   showOwner = false,
+  isAdmin = false,
 }: {
   rows: Awaited<ReturnType<typeof listMyDocuments>>;
   showOwner?: boolean;
+  isAdmin?: boolean;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -96,6 +117,9 @@ function DocTable({
             {showOwner && <th>Owner</th>}
             <th>Status</th>
             <th>Last touched</th>
+            <th>
+              <span className="sr-only">Actions</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -131,6 +155,13 @@ function DocTable({
               </td>
               <td data-label="Last touched" className="text-faint">
                 {when(d.updatedAt)}
+              </td>
+              <td data-label="Actions">
+                <RowActions
+                  id={d.id}
+                  archived={Boolean(d.archivedAt)}
+                  canDelete={isAdmin}
+                />
               </td>
             </tr>
           ))}

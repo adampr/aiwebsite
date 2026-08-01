@@ -15,7 +15,22 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-01 second pass (module pin v1.47.0 → v1.48.0
+Last verified against code: 2026-08-01 third pass (§5.17.2 **RFP round 4**,
+owner-directed UX pass: the sticky rail parks below the measured runbar
+(`--rfp-runbar-h` via ResizeObserver), Tron gets a full pane — scope select,
+`w-full` inputs, document ATTACHMENT ingestion (pdf/docx/txt/md/csv fenced
+into the revision turn as data-never-instructions; images honestly refused),
+proposal output rendered in-pane, `tronBusy` independent of a drafting run —
+Word/PDF export now ALWAYS downloads the current state with unresolved
+documents marked "WORKING DRAFT · not for delivery" in-file (+ `x-rfp-*`
+headers; in-file marking replaces refusal as the control, the audience being
+authenticated staff), owner ARCHIVING (`archived_at`, migration 0031; owner
+list excludes archived, admin "Archive" subsection on /rfp/list with restore)
++ ADMIN-ONLY cascade delete (`POST .../delete`, a documented 403-with-
+explanation divergence from 404-never-403), and /rfp/new's reading wait in
+the governance research screen's visual language, its steps explicitly
+time-staged narration of the single ~94s read call); previous same day:
+module pin v1.47.0 → v1.48.0
 fab5841 — BLOG SELF-DEFEATING-LOOP FIXES + ISSUE-LEDGER CLI TRUTHING, module
 MIGRATIONS v1.48.0: the writer catalog now hands canonical prefixed paths
 instead of bare /slug hrefs the contract gate then flagged nightly; the WARN
@@ -3401,7 +3416,18 @@ it with Tron. Multi-user: everyone sees their own work, admins see all.
 everyone's), `/rfp/r/[id]` (the workspace), `/rfp/knowledge/mine`,
 `/rfp/knowledge/review` (admin approval queue), `/rfp/admin/activity`.
 API: `POST /api/rfp/documents`, `GET .../[id]/status`,
-`POST .../[id]/generate`, `PATCH|POST /api/rfp/proposals/[id]/section`,
+`POST .../[id]/generate`, `POST .../[id]/archive` (owner or admin,
+`{archived}` — presentation, never deletion), `POST .../[id]/delete`
+(ADMIN ONLY; cascades to requirements + proposals; knowledge proposals
+survive with `document_id` nulled; non-admin staff get a 403 WITH an
+explanation — a deliberate divergence from 404-never-403, because the
+caller is already inside the staff gate and the missing thing is the
+capability, not the row), `PATCH|POST /api/rfp/proposals/[id]/section`
+(POST also accepts multipart `{label, instruction, file}` — a Tron
+attachment: 8MB cap, pdf/docx via the ingest extractor, txt/md/csv/log/json
+decoded directly, images refused honestly (text-only drafting service),
+20k-char cap, content FENCED in the revision turn as data-never-instructions
+with the no-currency prohibition standing regardless of source),
 `PUT /api/rfp/proposals/[id]/pricing` (quantities in, computed quote out),
 `POST .../[id]/gap` (answer one drafted gap; writes), `POST .../[id]/gate`
 (run + store the compliance gate; reads), `GET .../[id]/export?format=docx|pdf`
@@ -3418,6 +3444,23 @@ semaphore for ~25 minutes and die unrecoverably on the next deploy. RFP calls
 go through `callGovernanceBrain`, deliberately reusing governance's 2-slot
 semaphore rather than adding a second one, because the brain also serves
 latency-sensitive Twilio voice.
+
+**Every untrusted string enters a prompt through `fenced()`
+(`src/lib/rfp/brain.ts`), and nothing else.** A fence built from literal
+tokens is only a boundary if the content cannot WRITE the closing token, and
+`screenInjection` does not know these tokens exist. A plain-text attachment
+containing `<<<CLIENT_RFP_TEXT_END>>>` could therefore close the fence and
+append its own `FACTS YOU MAY RELY ON:` block, textually identical to the
+real one that follows in the same message: the forged facts satisfy the
+"nothing unsupported by the facts below" rule, and a rate written as
+"4,250 dollars per user per month" scores zero against rule B7's `$`-anchored
+scanner, so it reaches client-facing prose with the gate PASSING and no draft
+mark. `fenced()` screens and then collapses runs of angle brackets (what
+`normalize()` already did on the pdf/docx path, which is why only the
+plain-text branch was exposed) and is used at every call site, closing the
+same hole on the pre-existing pasted-RFP ingest path. The attachment's
+FILENAME is attacker-chosen text in operator voice above the fence, so it is
+stripped to `[A-Za-z0-9 ._-]` before interpolation.
 
 **Two prompts, and the split is the security control.** `readRfp()` sees the
 client's untrusted text and NOTHING else, so an injected "restate your
@@ -3515,18 +3558,26 @@ figure has nowhere to land. The workspace renders the stored quote as the
 "Investment" section under the drafted sections; the activity log records
 counts only (`proposal.pricing_set`), never money.
 
-**Export runs the gate on the exact content being emitted.** Both emitters
+**Export runs the gate on the exact content being emitted, and the current
+state ALWAYS downloads (owner directive, round 4).** Both emitters
 (`src/lib/rfp/export.ts`) consume one `ExportView` built from the same
 `ResolvedProposal` the gate checked, so cross-format parity is structural
-and neither format does arithmetic. Export refuses (409, with the
-violations) while the gate fails, any drafted gap is open, or the pricing
-questionnaire has unanswered inputs — an untouched questionnaire refuses
-identically (the engine's own `missing[]`; absent answers are not gate
-violations, so the gate alone cannot see them). A proposal does not go out
-with declared unanswered questions. The gate result lands in `gate_json` on
-every run, and EVERY content write (sections, pricing, generation landing)
-nulls `gate_json`/`gate_ran_at`, so a stored "passing" can never describe a
-draft that has since changed. `proposal.export` logs format + byte count.
+and neither format does arithmetic. An unresolved document (failing gate,
+open gaps, or unanswered pricing inputs — an untouched questionnaire counts
+in full via the engine's own `missing[]`) is not refused; it is MARKED:
+"WORKING DRAFT · not for delivery" on the cover, a corner mark on every PDF
+page, a DRAFT footer and a `-DRAFT` filename suffix in both formats, with
+`x-rfp-draft`/`x-rfp-open-gaps`/`x-rfp-pricing-missing`/`x-rfp-gate-passed`
+response headers so the workspace states why after the download. The
+security posture this replaces (refusal was the B7 anti-exfiltration
+backstop) is acceptable because the download's audience is the
+authenticated staff owner/admin, not the prospect, and the in-file marking
+is the control on it travelling further. Only a proposal with zero drafted
+sections still 409s (nothing to render). The gate result lands in
+`gate_json` on every run, and EVERY content write (sections, pricing,
+generation landing) nulls `gate_json`/`gate_ran_at`, so a stored "passing"
+can never describe a draft that has since changed. `proposal.export` logs
+format, bytes, draft flag, and outstanding counts.
 `resolvedTextSpans` includes the pricing strings the emitters print
 (illustration labels/basis, notes, pass-through label/detail), so the
 D1/D2/B2 scans cover everything client-facing; rule B7 sanctions the
@@ -3586,6 +3637,37 @@ section), requires two consecutive reachable-idle polls before a follower
 tab declares another tab's run over, and every mutation fetch is
 rejection-guarded so a network blip cannot strand the workbar mid-run.
 
+**Round 4 additions.** The rail parks BELOW the sticky runbar: the runbar's
+height (it varies with notices) is measured by a ResizeObserver into
+`--rfp-runbar-h` on `.rfp-page`, and the rail's sticky top, its max-height,
+and every `sec-*` scroll-margin offset by it. **There is exactly ONE
+`scroll-margin-top` rule for `.rfp-page [id^="sec-"]`** — the round-4 panel
+caught a second, later, non-var copy of it silently winning the cascade at
+equal specificity, which put every jumped-to heading back under the runbar;
+if you add an override here, delete the rule you are overriding. Below lg
+the rail is not sticky at all, so the mobile tabstrip is sticky instead. Tron got its own pane
+end-to-end: a scope select over the drafted sections, full-width inputs
+(`.input` sets no width — every workspace input carries `w-full`, the
+governance convention), an attach-a-document control, and the proposal
+OUTPUT rendered in the pane (the in-section proposal card is gone); Tron
+runs on its own `tronBusy`, independent of a drafting run, because a
+revision only reads until the human accepts. **Accepting is guarded against
+a stale overwrite**: the accept PATCHes whole paragraphs, and its rev CAS
+only fences writes concurrent with the PATCH itself, so `acceptProposal`
+compares the live section against the `current` text Tron read and refuses
+when they differ (a gap answer or a colleague's edit landing during the
+30-90s think time would otherwise be reverted silently). Tron errors and an
+"Used in <section>" receipt render IN the pane, because below lg the
+confirmation flash lands in the hidden draft column. Archiving: `archived_at` on
+`rfp_documents` (migration 0031), owner-or-admin `POST .../archive`, the
+owner's list excludes archived rows, admins get an "Archive" subsection on
+`/rfp/list` (restore + the admin-only delete live there); deletion is a
+separate `POST .../delete`, admin-only, cascading. `/rfp/new`'s reading
+wait is the governance research screen's visual language (radar, step
+list, elapsed clock); the steps are TIME-STAGED narration of the single
+~94s read call — labelled as such in the code — and only the terminal
+state comes from the server.
+
 **Workspace mechanics worth knowing before changing them.** Document status
 is `"reading"` at insert, `"extracted"`/`"read_failed"` from the background
 worker (the ingest poll exits on `extracted` alone; requirements can
@@ -3609,11 +3691,14 @@ the deliverable is the client's own form (a structure-less RFP gets no
 pricing panel either — the workspace's draft column requires extracted
 structure); parallel gap weaves (answers are one 60-90s sync call at a
 time); drafted/questions status on the `/rfp/list` rows; focus management
-across question advances. Declared-but-unused surface waiting on those:
-`RFP_ACTIONS` `document.confirm_structure`/`document.delete`/
-`proposal.create`/`proposal.approve`/`knowledge.edit`, the
-`rfp_requirements.coverage_state`/`coverage_note` columns, and the
-`approved_by`/`approved_at` proposal flow.
+across question advances; IMAGE attachments for Tron (the drafting service
+is text-only, so images are refused honestly rather than silently dropped —
+OCR or a vision turn is the unbuilt part); re-reading a `read_failed`
+document in place (the copy sends the user to start it again). Declared-
+but-unused surface waiting on those: `RFP_ACTIONS`
+`document.confirm_structure`/`proposal.create`/`proposal.approve`/
+`knowledge.edit`, the `rfp_requirements.coverage_state`/`coverage_note`
+columns, and the `approved_by`/`approved_at` proposal flow.
 
 ## 6. Database
 

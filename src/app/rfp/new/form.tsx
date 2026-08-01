@@ -7,10 +7,128 @@
 // so this posts, gets a 202, and then polls the document row. The wait is
 // narrated honestly rather than hidden behind a spinner that implies seconds.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Phase = "empty" | "file" | "sending" | "reading" | "failed";
+
+/** Step glyph, borrowed from the governance research screen. */
+function Glyph({ state }: { state: "pending" | "active" | "done" }) {
+  if (state === "done")
+    return (
+      <svg viewBox="0 0 16 16" className="h-4 w-4 shrink-0" aria-hidden="true">
+        <path
+          d="M3 8.5 6.5 12 13 4.5"
+          fill="none"
+          stroke="var(--xl-ok)"
+          strokeWidth="1.5"
+        />
+      </svg>
+    );
+  if (state === "active")
+    return (
+      <span
+        className="dot shrink-0"
+        style={{ color: "var(--xl-light)" }}
+        aria-hidden="true"
+      />
+    );
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4 shrink-0" aria-hidden="true">
+      <circle
+        cx="8"
+        cy="8"
+        r="4"
+        fill="none"
+        stroke="var(--xl-line-bright)"
+        strokeWidth="1"
+      />
+    </svg>
+  );
+}
+
+/**
+ * The reading wait, in the governance research screen's visual language:
+ * radar, a step list, an elapsed clock. The read is ONE model call with no
+ * intermediate signal, so the steps advance on elapsed time — they narrate
+ * the phases of that one call in the order it performs them, and only the
+ * final state comes from the server.
+ */
+function ReadingScreen({ elapsed, slow }: { elapsed: number; slow: boolean }) {
+  const steps = [
+    { label: "RFP saved", at: 0 },
+    { label: "Reading it end to end", at: 1 },
+    { label: "Pulling out the client's structure, labels verbatim", at: 45 },
+    { label: "Listing every ask, one requirement at a time", at: 80 },
+  ];
+  const mm = Math.floor(elapsed / 60);
+  const ss = String(elapsed % 60).padStart(2, "0");
+  return (
+    <div className="panel panel--lightline" role="status" aria-live="polite">
+      <div className="flex flex-col items-start gap-8 sm:flex-row">
+        <div className="radar mx-auto shrink-0" aria-hidden="true">
+          <i className="radar-blip" style={{ left: "62%", top: "34%" }} />
+          <i
+            className="radar-blip radar-blip--sand"
+            style={{ left: "30%", top: "58%" }}
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <span className="sys-label">Tron is reading</span>
+          <h2 className="mt-4">Every ask, in the client&apos;s own words</h2>
+          <p className="mt-4 text-sm">
+            A real RFP takes one to three minutes. You can leave; it keeps
+            reading, and the RFP appears under Your RFPs when it is done.
+            Stay, and drafting starts by itself.
+          </p>
+          <ul className="mt-6 space-y-3">
+            {steps.map((step, i) => {
+              const next = steps[i + 1];
+              const state: "pending" | "active" | "done" =
+                elapsed >= step.at && (!next || elapsed < next.at)
+                  ? i === 0
+                    ? "done"
+                    : "active"
+                  : elapsed >= (next?.at ?? Infinity) || i === 0
+                    ? "done"
+                    : "pending";
+              return (
+                <li
+                  key={step.label}
+                  className="flex items-center gap-3"
+                  aria-current={state === "active" ? "step" : undefined}
+                >
+                  <Glyph state={state} />
+                  <span
+                    className="text-sm"
+                    style={
+                      state === "pending"
+                        ? { color: "var(--xl-text-faint)" }
+                        : undefined
+                    }
+                  >
+                    {step.label}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          {/* aria-hidden: the clock changes every second and would make the
+              live region announce the whole panel once per second, burying
+              the step transitions that actually matter. */}
+          <p
+            className="mono mt-6 text-xs"
+            style={{ color: "var(--xl-text-faint)" }}
+            aria-hidden="true"
+          >
+            {mm}:{ss}
+            {slow ? " · long RFPs genuinely take this long" : ""}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function NewRfpForm() {
   const router = useRouter();
@@ -20,7 +138,14 @@ export function NewRfpForm() {
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [slow, setSlow] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (phase !== "reading") return;
+    const t = window.setInterval(() => setElapsed((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [phase]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -35,6 +160,10 @@ export function NewRfpForm() {
   async function submit() {
     setPhase("sending");
     setMessage("");
+    // A retry is a FRESH read: without this the clock resumes at the failed
+    // attempt's 6:00 and every step renders as already done.
+    setElapsed(0);
+    setSlow(false);
     const body = new FormData();
     if (file) body.set("file", file);
     else body.set("text", text);
@@ -86,25 +215,12 @@ export function NewRfpForm() {
     clearTimeout(slowTimer);
     setPhase("failed");
     setMessage(
-      "Still reading after six minutes. The RFP is saved; it appears under Your RFPs when the read finishes."
+      "Still reading after six minutes. The RFP is saved under Your RFPs; open it once its status shows Read, and start drafting from there."
     );
   }
 
   if (phase === "reading") {
-    return (
-      <div className="panel panel--raised" role="status" aria-live="polite">
-        <p>
-          Reading the RFP. Pulling out its structure and every question it
-          asks.
-        </p>
-        {slow && (
-          <p className="mt-3 text-sm text-faint">
-            Still reading. A long RFP takes a couple of minutes, and this page
-            moves on by itself when it is done.
-          </p>
-        )}
-      </div>
-    );
+    return <ReadingScreen elapsed={elapsed} slow={slow} />;
   }
 
   return (

@@ -35,6 +35,10 @@ import {
 } from "./content-model";
 
 export type ExportView = {
+  /** True when the compliance gate, open questions, or pricing are
+   *  unresolved: the file downloads anyway (owner directive: the current
+   *  state is always downloadable) and SAYS what it is. */
+  draft: boolean;
   coverTitle: string;
   clientName: string;
   proposalTitle: string;
@@ -49,11 +53,13 @@ export type ExportView = {
 /** The one place presentation-level pricing sentences are authored. */
 export function buildExportView(
   resolved: ResolvedProposal,
-  rateCard: RateCard
+  rateCard: RateCard,
+  draft: boolean
 ): ExportView {
   const quote = resolved.pricing;
   const anyMinimum = quote?.illustrations.some((i) => i.minimumApplied) ?? false;
   return {
+    draft,
     coverTitle: resolved.cover.title,
     clientName: resolved.cover.clientName,
     proposalTitle: resolved.proposal.title,
@@ -109,6 +115,21 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
       children: [new TextRun({ text: view.coverTitle })],
       spacing: { after: 120 },
     }),
+    ...(view.draft
+      ? [
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: "WORKING DRAFT · not for delivery",
+                bold: true,
+                size: 20,
+                color: "B45309",
+              }),
+            ],
+            spacing: { after: 120 },
+          }),
+        ]
+      : []),
     new Paragraph({
       children: [
         new TextRun({ text: view.clientName, bold: true, size: 28 }),
@@ -254,7 +275,11 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
               new Paragraph({
                 alignment: AlignmentType.CENTER,
                 children: [
-                  new TextRun({ text: "XL.net · ", size: 16, color: "777777" }),
+                  new TextRun({
+                    text: view.draft ? "DRAFT · XL.net · " : "XL.net · ",
+                    size: 16,
+                    color: "777777",
+                  }),
                   new TextRun({
                     children: [PageNumber.CURRENT],
                     size: 16,
@@ -289,6 +314,11 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       right: PAGE.margin,
     },
     info: { Title: `${view.clientName}: ${view.coverTitle}`, Author: "XL.net" },
+    // Pages are buffered so the corner draft mark can be stamped AFTER the
+    // content flow ends. Stamping from a `pageAdded` handler mutated the
+    // live flow state mid-paragraph (font, size, x/y), which silently
+    // rendered the rest of an auto-paginated section at 8pt.
+    bufferPages: true,
   });
   const chunks: Buffer[] = [];
   doc.on("data", (c: Buffer) => chunks.push(c));
@@ -302,6 +332,15 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
 
   doc.font("Helvetica-Bold").fontSize(22).text(view.coverTitle);
   doc.moveDown(0.3);
+  if (view.draft) {
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .fillColor("#b45309")
+      .text("WORKING DRAFT · not for delivery");
+    doc.fillColor("black");
+    doc.moveDown(0.3);
+  }
   doc.font("Helvetica-Bold").fontSize(14).text(view.clientName);
   doc.moveDown(0.3);
   doc
@@ -410,6 +449,24 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     }
   }
 
+  // Stamp the corner mark on every page AFTER the flow is finished, so it
+  // cannot disturb the text state the content was written with.
+  if (view.draft) {
+    const range = doc.bufferedPageRange();
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i);
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(8)
+        .fillColor("#b45309")
+        .text("WORKING DRAFT", PAGE.width - PAGE.margin - 90, 24, {
+          width: 90,
+          align: "right",
+        });
+    }
+    doc.flushPages();
+  }
+
   doc.end();
   return done;
 }
@@ -420,5 +477,5 @@ export function exportFileName(view: ExportView, format: "docx" | "pdf"): string
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
-  return `${base || "rfp-response"}-response.${format}`;
+  return `${base || "rfp-response"}-response${view.draft ? "-DRAFT" : ""}.${format}`;
 }

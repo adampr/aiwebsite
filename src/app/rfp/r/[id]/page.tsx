@@ -104,6 +104,7 @@ export default async function RfpWorkspacePage({
         genError={proposal?.genError ?? null}
         autoDraft={sp.draft === "all"}
         docStatus={doc.status}
+        archived={Boolean(doc.archivedAt)}
       />
     </div>
   );

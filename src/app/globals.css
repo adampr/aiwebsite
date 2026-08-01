@@ -633,8 +633,12 @@
 @media (min-width: 1024px) {
   .rfp-page .rfp-rail {
     position: sticky;
-    top: 11.25rem;
-    max-height: calc(100dvh - 12.75rem);
+    /* Below the runbar, whose height the workspace measures into
+       --rfp-runbar-h (it varies with notices and wrapping). Without the
+       offset the two sticky elements share 11.25rem and the runbar covers
+       the rail's tabs. */
+    top: calc(11.25rem + var(--rfp-runbar-h, 0px));
+    max-height: calc(100dvh - 12.75rem - var(--rfp-runbar-h, 0px));
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -653,8 +657,40 @@
 @media (min-width: 768px) {
   .rfp-page .rfp-runbar { top: 11.25rem; }
 }
-/* Anchor targets clear the sticky header + workbar at every width. */
-.rfp-page [id^="sec-"] { scroll-margin-top: 6.5rem; }
+/* Below lg the rail does not stick, so the pane switcher must: from deep in
+   a long draft, Questions/Checks/Tron were a full-page scroll away. Sits
+   directly under the runbar, which is itself sticky. */
+@media (max-width: 1023px) {
+  .rfp-page .tabstrip--mobile {
+    position: sticky;
+    top: calc(4.5rem + var(--rfp-runbar-h, 0px));
+    z-index: 25;
+    background: var(--xl-bg-1);
+  }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  .rfp-page .tabstrip--mobile { top: calc(11.25rem + var(--rfp-runbar-h, 0px)); }
+}
+
+/* Anchor targets clear the sticky header + workbar at every width, AND the
+   workspace runbar when one is mounted (--rfp-runbar-h is unset elsewhere,
+   so the 0px fallback is the plain header+workbar case). This is the ONLY
+   scroll-margin rule for these ids: a second, later, non-var copy would win
+   the cascade at equal specificity and silently park every jumped-to
+   heading under the runbar. */
+.rfp-page [id^="sec-"] { scroll-margin-top: calc(6.5rem + var(--rfp-runbar-h, 0px)); }
 @media (min-width: 768px) {
-  .rfp-page [id^="sec-"] { scroll-margin-top: 12rem; }
+  .rfp-page [id^="sec-"] { scroll-margin-top: calc(12rem + var(--rfp-runbar-h, 0px)); }
+}
+/* Below lg the pane switcher is sticky too (the rail is not), so jumps must
+   clear it as well: 44px button row + its 1px bottom border. */
+@media (max-width: 1023px) {
+  .rfp-page [id^="sec-"] {
+    scroll-margin-top: calc(6.5rem + 45px + var(--rfp-runbar-h, 0px));
+  }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  .rfp-page [id^="sec-"] {
+    scroll-margin-top: calc(12rem + 45px + var(--rfp-runbar-h, 0px));
+  }
 }

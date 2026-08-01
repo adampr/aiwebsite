@@ -204,22 +204,88 @@ async function ownerUserIdFor(email: string): Promise<string | null> {
 
 const own = (user: RfpUser) => eq(rfpDocuments.ownerEmail, user.email.toLowerCase());
 
-/** The caller's own RFPs, newest activity first. */
+/** The caller's own ACTIVE RFPs, newest activity first. Archived rows leave
+ *  this list (that is what archiving means) but stay readable by id, and an
+ *  admin sees them in the Archive subsection of /rfp/list. */
 export async function listMyDocuments(user: RfpUser): Promise<DocumentRow[]> {
   return db
     .select()
     .from(rfpDocuments)
-    .where(own(user))
+    .where(and(own(user), isNull(rfpDocuments.archivedAt)))
     .orderBy(desc(rfpDocuments.updatedAt));
 }
 
-/** EVERY RFP. Admin only — the caller must have checked, and we check again. */
+/** EVERY RFP, archived included. Admin only — the caller must have checked,
+ *  and we check again. The list page splits active from archived itself. */
 export async function listAllDocuments(user: RfpUser): Promise<DocumentRow[]> {
   if (!user.admin) throw new Error("listAllDocuments: caller is not an admin");
   return db
     .select()
     .from(rfpDocuments)
     .orderBy(desc(rfpDocuments.updatedAt));
+}
+
+/**
+ * Archive or restore one RFP. An owner archives their OWN (it leaves their
+ * list, which is the point); an admin can archive or restore anyone's.
+ *
+ * RESTORING IS AN ADMIN ACTION IN PRACTICE: once archived, the row is gone
+ * from the owner's list, so the owner has nowhere to click Restore. The
+ * predicate still permits it so the capability is not lost if an owner-side
+ * archive view is added. Never destructive — the row and its draft stay
+ * readable by id, and the admin list shows archived rows in a subsection.
+ */
+export async function setDocumentArchived(
+  user: RfpUser,
+  id: string,
+  archived: boolean
+): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  const res = await db
+    .update(rfpDocuments)
+    .set({ archivedAt: archived ? new Date() : null, updatedAt: new Date() })
+    .where(
+      user.admin
+        ? eq(rfpDocuments.id, id)
+        : and(eq(rfpDocuments.id, id), own(user))
+    )
+    .returning({ id: rfpDocuments.id });
+  return res.length > 0;
+}
+
+/**
+ * How many knowledge proposals point at this document. Read BEFORE a delete:
+ * the cascade nulls their document_id rather than removing them (they are
+ * promotable company facts), so afterwards nothing can find them again.
+ */
+export async function countKnowledgeForDocument(
+  documentId: string
+): Promise<number> {
+  if (!isUuid(documentId)) return 0;
+  const rows = await db
+    .select({ id: rfpKnowledgeProposals.id })
+    .from(rfpKnowledgeProposals)
+    .where(eq(rfpKnowledgeProposals.documentId, documentId));
+  return rows.length;
+}
+
+/**
+ * Delete one RFP outright, ADMIN ONLY: the document row cascades to its
+ * requirements and proposals (schema FKs), taking the draft with it. The
+ * activity log keeps the shape-only trail; knowledge proposals that
+ * referenced the document survive with document_id set null.
+ */
+export async function deleteDocument(
+  admin: RfpUser,
+  id: string
+): Promise<boolean> {
+  if (!admin.admin) throw new Error("deleteDocument: caller is not an admin");
+  if (!isUuid(id)) return false;
+  const res = await db
+    .delete(rfpDocuments)
+    .where(eq(rfpDocuments.id, id))
+    .returning({ id: rfpDocuments.id });
+  return res.length > 0;
 }
 
 /**

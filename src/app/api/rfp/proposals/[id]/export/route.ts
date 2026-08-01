@@ -1,11 +1,14 @@
 // GET /api/rfp/proposals/[id]/export?format=docx|pdf — emit the response.
 //
-// Export is the moment a draft becomes a thing a client could read, so the
-// compliance gate runs HERE, on the exact content being emitted, and a
-// failing gate refuses the download (409 with the violations). Open gaps
-// refuse too: a proposal does not go out with declared unanswered questions
-// in it. The gate result is stored either way, so the Checks pane shows the
-// same verdict the export enforced. Generated on demand and streamed, never
+// The CURRENT STATE always downloads (owner directive): the compliance gate
+// runs here on the exact content being emitted, and an unresolved document
+// is not refused, it is MARKED — "WORKING DRAFT · not for delivery" on the
+// cover, a corner mark on every PDF page, a DRAFT footer and -DRAFT
+// filename suffix in .docx. The x-rfp-* response headers carry what is
+// outstanding so the workspace says why the file is a draft. Only a
+// proposal with zero drafted sections refuses (there is nothing to render).
+// The gate result is stored on every run, so the Checks pane and the file's
+// own marking can never disagree. Generated on demand and streamed, never
 // stored — the same contract as governance downloads.
 
 import { logRfpActivity } from "@/lib/rfp/activity";
@@ -14,7 +17,7 @@ import { buildExportView, exportFileName, renderRfpDocx, renderRfpPdf } from "@/
 import { buildGateInput } from "@/lib/rfp/gate-run";
 import { buildQuote, parseQuoteInputs } from "@/lib/rfp/quote";
 import { resolveDraft, runDraftGate } from "@/lib/rfp/resolve-draft";
-import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
+import { notFound, requireRfpApi, rfpError } from "@/lib/rfp/http";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -58,13 +61,9 @@ export async function GET(
 
   const openGaps = input.sections.reduce((n, s) => n + s.gaps.length, 0);
 
-  // The pricing questionnaire must be finished before export: the engine's
-  // own missing[] says the quote is not complete enough to send, and the
-  // gate cannot see unanswered questions (they are absent inputs, not
-  // violations). An untouched questionnaire refuses the same way — the
-  // workspace shows those questions as open, and a document that quietly
-  // exported without its Investment section while the pane counts five
-  // open questions would be the tool contradicting itself.
+  // Unanswered pricing inputs are draft-markers the gate cannot see (they
+  // are absent answers, not violations); the engine's own missing[] is the
+  // authority, and an untouched questionnaire counts in full.
   const pricingMissing = buildQuote(
     input.rateCard,
     parseQuoteInputs(
@@ -73,50 +72,15 @@ export async function GET(
     proposal.id
   ).missing;
 
-  if (!result.passed || openGaps > 0 || pricingMissing.length > 0) {
-    await logRfpActivity({
-      actorEmail: user.email,
-      actorAdmin: user.admin,
-      action: "proposal.export",
-      subjectKind: "proposal",
-      subjectId: proposal.id,
-      outcome: "denied",
-      meta: {
-        format,
-        passed: result.passed,
-        openGaps,
-        pricingMissing: pricingMissing.length,
-        failedRules: result.failedRules.join(","),
-      },
-    });
-    return rfpOk(
-      {
-        error: "not_ready",
-        message:
-          openGaps > 0
-            ? `${openGaps} open question${openGaps === 1 ? "" : "s"} still need${openGaps === 1 ? "s" : ""} an answer before this can go out.`
-            : pricingMissing.length > 0
-              ? `The pricing questionnaire is not finished: ${pricingMissing.length} answer${pricingMissing.length === 1 ? "" : "s"} still missing. The Questions pane walks through them.`
-              : "The compliance gate is failing. Fix the blocking findings first.",
-        gate: {
-          passed: result.passed,
-          failedRules: result.failedRules,
-          violations: result.violations.slice(0, 20).map((v) => ({
-            ruleId: v.ruleId,
-            severity: v.severity,
-            message: v.message,
-          })),
-          errors: result.errors,
-        },
-        openGaps,
-        pricingMissing,
-      },
-      409
-    );
-  }
+  // The current state ALWAYS downloads (owner directive). An unresolved
+  // draft is not refused; it is MARKED: "WORKING DRAFT · not for delivery"
+  // on the cover, a per-page corner mark in the PDF, a DRAFT footer in the
+  // .docx. The response headers carry what is outstanding so the workspace
+  // can say why the file is a draft.
+  const draft = !result.passed || openGaps > 0 || pricingMissing.length > 0;
 
   const { resolved } = resolveDraft(input);
-  const view = buildExportView(resolved, input.rateCard);
+  const view = buildExportView(resolved, input.rateCard, draft);
 
   const buffer =
     format === "docx" ? await renderRfpDocx(view) : await renderRfpPdf(view);
@@ -128,7 +92,15 @@ export async function GET(
     action: "proposal.export",
     subjectKind: "proposal",
     subjectId: proposal.id,
-    meta: { format, sections: input.sections.length, bytes: buffer.length },
+    meta: {
+      format,
+      sections: input.sections.length,
+      bytes: buffer.length,
+      draft,
+      openGaps,
+      pricingMissing: pricingMissing.length,
+      failedRules: result.failedRules.join(","),
+    },
   });
 
   return new Response(new Uint8Array(buffer), {
@@ -140,6 +112,10 @@ export async function GET(
           : "application/pdf",
       "content-disposition": `attachment; filename="${filename}"`,
       "cache-control": "no-store, private",
+      "x-rfp-draft": draft ? "1" : "0",
+      "x-rfp-open-gaps": String(openGaps),
+      "x-rfp-pricing-missing": String(pricingMissing.length),
+      "x-rfp-gate-passed": result.passed ? "1" : "0",
     },
   });
 }

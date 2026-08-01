@@ -218,6 +218,13 @@
       "when": 1785585109766,
       "tag": "0030_long_vance_astro",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1785592736237,
+      "tag": "0031_harsh_kronos",
+      "breakpoints": true
     }
   ]
 }

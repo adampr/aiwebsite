@@ -28,6 +28,8 @@ export const RFP_ACTIONS = [
   "document.create",
   "document.extract",
   "document.confirm_structure",
+  "document.archive",
+  "document.unarchive",
   "document.delete",
   "proposal.create",
   "proposal.generate",

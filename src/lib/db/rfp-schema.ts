@@ -207,6 +207,12 @@ export const rfpDocuments = pgTable(
     rawText: text("raw_text").notNull(),
     /** screenInjection() dropped lines on ingest. A review signal, not a block. */
     injectionFlagged: boolean("injection_flagged").notNull().default(false),
+    /**
+     * Owner-set. An archived RFP leaves the owner's list but stays fully
+     * readable (and un-archivable); admins see archived rows in their own
+     * subsection. Never a delete: deletion is a separate admin-only action.
+     */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     /** JSON StructureNode[] — the client's own labels, verbatim (rule C4). */
     structureJson: text("structure_json"),
     structureConfirmedAt: timestamp("structure_confirmed_at", {

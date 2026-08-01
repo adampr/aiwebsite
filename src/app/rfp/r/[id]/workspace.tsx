@@ -199,6 +199,7 @@ export function Workspace({
   genError,
   autoDraft,
   docStatus,
+  archived,
 }: {
   documentId: string;
   proposalId: string | null;
@@ -213,6 +214,7 @@ export function Workspace({
   genError: string | null;
   autoDraft: boolean;
   docStatus: string;
+  archived: boolean;
 }) {
   const router = useRouter();
   const [sections, setSectionsState] = useState<Section[]>(initialSections);
@@ -252,6 +254,18 @@ export function Workspace({
   const [editText, setEditText] = useState("");
   const [scope, setScope] = useState<string | null>(null);
   const [instruction, setInstruction] = useState("");
+  // Tron runs independently of drafting: the brain semaphore takes both, a
+  // revision only READS until the human accepts, and waiting a 25-minute
+  // run to ask for a reword would be absurd.
+  const [tronBusy, setTronBusy] = useState(false);
+  const [tronFile, setTronFile] = useState<File | null>(null);
+  // Tron-originated errors belong beside the Tron controls, not only in the
+  // page-level runbar the user is not looking at.
+  const [tronError, setTronError] = useState("");
+  // Receipt after an accept: on mobile the flash lands in the HIDDEN draft
+  // column, so without this the output just vanishes (same reason the gap
+  // flow has lastWoven).
+  const [tronApplied, setTronApplied] = useState<string | null>(null);
   const [proposal, setProposal] = useState<{
     label: string;
     proposed: string[];
@@ -277,6 +291,26 @@ export function Workspace({
   // Narration for a run driven by ANOTHER tab (the status route's
   // gen.progress); a returning user must see the run, not a dead button.
   const [followProgress, setFollowProgress] = useState<string | null>(null);
+
+  // The sticky rail and the section scroll-margins sit BELOW the sticky
+  // runbar, whose height varies (notices, wrapping). Measure it into a CSS
+  // variable the stylesheet offsets by; without this the two sticky
+  // elements share one offset and the runbar covers the rail's tabs.
+  const runbarRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = runbarRef.current;
+    const page = el?.closest<HTMLElement>(".rfp-page");
+    if (!el || !page) return;
+    const apply = () =>
+      page.style.setProperty("--rfp-runbar-h", `${el.offsetHeight + 16}px`);
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      page.style.removeProperty("--rfp-runbar-h");
+    };
+  }, []);
 
   // ---- guided questions ----
   const [answerText, setAnswerText] = useState("");
@@ -392,7 +426,7 @@ export function Workspace({
       error: p.gen?.error ?? null,
       changed,
     };
-  }, [documentId]);
+  }, [documentId, setSections]);
 
   /**
    * Adopt a mutation response's rev ONLY when it is exactly the next one:
@@ -702,14 +736,6 @@ export function Workspace({
       setNotice("The server could not be reached.");
       return;
     }
-    if (res.status === 409) {
-      const d = await res.json().catch(() => null);
-      if (d?.gate) setGateResult(d.gate as GateResult);
-      setNotice(d?.message ?? "Not ready to export yet.");
-      const toQuestions = d?.openGaps > 0 || d?.pricingMissing?.length > 0;
-      showPane(toQuestions ? "questions" : "checks");
-      return;
-    }
     if (!res.ok) {
       const d = await res.json().catch(() => null);
       setNotice(d?.message ?? "The export failed.");
@@ -724,14 +750,39 @@ export function Workspace({
     a.download = name;
     a.click();
     URL.revokeObjectURL(a.href);
+    // The current state always downloads; when it went out marked as a
+    // draft, say exactly why so finishing it is one glance away.
+    if (res.headers.get("x-rfp-draft") === "1") {
+      const gaps = Number(res.headers.get("x-rfp-open-gaps") ?? "0");
+      const missing = Number(res.headers.get("x-rfp-pricing-missing") ?? "0");
+      const gateOk = res.headers.get("x-rfp-gate-passed") === "1";
+      const parts: string[] = [];
+      if (gaps > 0) parts.push(`${gaps} open question${gaps === 1 ? "" : "s"}`);
+      if (missing > 0)
+        parts.push(`${missing} pricing answer${missing === 1 ? "" : "s"}`);
+      if (!gateOk) parts.push("failing checks");
+      setNotice(
+        `Downloaded as a WORKING DRAFT: ${parts.join(", ") || "unresolved items"} outstanding. The Questions and Checks panes walk through them.`
+      );
+      // The export just ran and stored a gate result; without this the notice
+      // can say "failing checks" while the Checks pane still shows nothing.
+      if (!gateOk) void runChecks();
+    }
   }
 
   async function saveEdit(label: string) {
     if (!proposalId) return;
+    // The SAME caps the PATCH applies server-side. Without them a 13th
+    // paragraph is silently dropped on the server while the client keeps it,
+    // and because adoptRev advances past that write the rev-gated poll never
+    // re-sends sections — the divergence never heals, and Tron's staleness
+    // guard then refuses every proposal on that section forever.
     const paragraphs = editText
       .split(/\n{2,}/)
       .map((p) => p.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .slice(0, 12)
+      .map((p) => p.slice(0, 4000));
     const res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -758,42 +809,71 @@ export function Workspace({
 
   async function askTron() {
     if (!proposalId || !scope || instruction.trim().length < 3) return;
-    setBusy(true);
+    setTronBusy(true);
     setNotice("");
-    const res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ label: scope, instruction }),
-    }).catch(() => null);
-    setBusy(false);
+    setTronError("");
+    setTronApplied(null);
+    // A new request supersedes the open proposal; leaving it on screen with
+    // a live "Use this" invites accepting section A's old text while B is
+    // in flight.
+    setProposal(null);
+    let res: Response | null;
+    if (tronFile) {
+      const form = new FormData();
+      form.set("label", scope);
+      form.set("instruction", instruction);
+      form.set("file", tronFile);
+      res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
+        method: "POST",
+        body: form,
+      }).catch(() => null);
+    } else {
+      res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: scope, instruction }),
+      }).catch(() => null);
+    }
+    setTronBusy(false);
     if (!res) {
-      setNotice("The server could not be reached. Nothing has been changed.");
+      setTronError("The server could not be reached. Nothing has been changed.");
       return;
     }
     if (!res.ok) {
       const d = await res.json().catch(() => null);
-      setNotice(d?.message ?? "Tron did not answer. Nothing has been changed.");
+      setTronError(
+        d?.message ?? "Tron did not answer. Nothing has been changed."
+      );
       return;
     }
     const d = await res.json();
+    // The proposal renders right HERE in the Tron pane; accepting it is
+    // what flashes the section.
     setProposal({
       label: scope,
       proposed: d.proposed,
       current: d.current,
       note: d.note,
     });
-    // The proposal card renders inside the section's panel in the doc
-    // column, which is hidden on mobile and often off-screen on desktop.
-    setMobile("draft");
-    window.setTimeout(() => {
-      document
-        .getElementById(`sec-${scope}`)
-        ?.scrollIntoView({ block: "start" });
-    }, 60);
   }
 
   async function acceptProposal() {
     if (!proposal || !proposalId) return;
+    // The section may have moved since Tron read it (a gap answer woven in,
+    // a colleague's edit, the user's own). Accepting would overwrite that
+    // silently, because the PATCH sends whole paragraphs and its rev CAS
+    // only fences writes concurrent with the PATCH itself.
+    const live = sectionsRef.current.find((x) => x.label === proposal.label);
+    const changedSince =
+      live !== undefined &&
+      (live.paragraphs.length !== proposal.current.length ||
+        live.paragraphs.some((p, i) => p !== proposal.current[i]));
+    if (changedSince) {
+      setTronError(
+        "This section changed after Tron read it. Using this would undo that change. Ask Tron again so it reads the current text; if it keeps saying this, reload the page."
+      );
+      return;
+    }
     const res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -803,7 +883,13 @@ export function Workspace({
       }),
     }).catch(() => null);
     if (!res || !res.ok) {
-      setNotice(res ? "That change was not saved." : "The server could not be reached.");
+      const d = res ? await res.json().catch(() => null) : null;
+      setTronError(
+        d?.message ??
+          (res
+            ? "That change was not saved."
+            : "The server could not be reached.")
+      );
       return;
     }
     const d = await res.json().catch(() => null);
@@ -815,8 +901,11 @@ export function Workspace({
       )
     );
     showChanged([proposal.label]);
+    setTronApplied(proposal.label);
     setProposal(null);
     setInstruction("");
+    setTronFile(null);
+    setTronError("");
   }
 
   const blocks =
@@ -843,7 +932,14 @@ export function Workspace({
           live. Sticky, because the auto-scroll choreography guarantees the
           top of the page is off-viewport exactly when a notice lands or the
           stop button is needed mid-run. */}
-      <div className="panel mb-6 rfp-runbar">
+      <div className="panel mb-6 rfp-runbar" ref={runbarRef}>
+        {archived && (
+          <p className="mb-3 text-sm">
+            <span className="badge badge--warn">Archived</span>{" "}
+            This RFP is out of its owner&apos;s list. It still opens, drafts,
+            and exports; an admin restores it from the Archive on Your RFPs.
+          </p>
+        )}
         {notice && (
           <p className="mb-3 text-sm" role="status">
             {notice}
@@ -920,6 +1016,12 @@ export function Workspace({
             >
               {checking ? "Checking" : "Run checks"}
             </button>
+            {(queue.length > 0 || (gateResult && !gateResult.passed)) &&
+              sections.length > 0 && (
+                <span className="text-xs text-faint">
+                  exports marked WORKING DRAFT
+                </span>
+              )}
             <button
               type="button"
               className="btn btn--text"
@@ -1099,7 +1201,7 @@ export function Workspace({
                     {sec && isEditing && (
                       <div className="mt-4 space-y-3">
                         <textarea
-                          className="input min-h-64"
+                          className="input min-h-64 w-full"
                           value={editText}
                           onChange={(e) => setEditText(e.target.value)}
                         />
@@ -1121,38 +1223,6 @@ export function Workspace({
                             onClick={() => setEditing(null)}
                           >
                             Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {proposal?.label === node.label && (
-                      <div className="panel panel--raised mt-4">
-                        <span className="sys-label">Tron proposed a change</span>
-                        {proposal.note && (
-                          <p className="mt-3 text-sm text-faint">
-                            {proposal.note}
-                          </p>
-                        )}
-                        <div className="mt-4 space-y-3">
-                          {proposal.proposed.map((p, i) => (
-                            <p key={i}>{p}</p>
-                          ))}
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-3">
-                          <button
-                            type="button"
-                            className="btn btn--primary"
-                            onClick={acceptProposal}
-                          >
-                            Use this
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn--text"
-                            onClick={() => setProposal(null)}
-                          >
-                            Discard
                           </button>
                         </div>
                       </div>
@@ -1422,7 +1492,7 @@ export function Workspace({
                         }}
                       >
                         <textarea
-                          className="input min-h-28"
+                          className="input min-h-28 w-full"
                           value={answerText}
                           onChange={(e) => setAnswerText(e.target.value)}
                           placeholder="Answer in plain language. It gets woven into the section, not pasted."
@@ -1530,17 +1600,17 @@ export function Workspace({
                 {!gateResult ? (
                   <p className="mt-3 text-sm">
                     {totalGaps === 0
-                      ? "The compliance rules run against the finished document before anything can leave. Run them from the bar above."
-                      : `${totalGaps} open question${totalGaps === 1 ? "" : "s"} across the draft. A proposal does not go out with them open; the Questions pane walks through them.`}
+                      ? "The compliance rules have not run on this draft yet. Run them from the bar above."
+                      : `${totalGaps} open question${totalGaps === 1 ? "" : "s"} across the draft. Until they are answered, exports are marked WORKING DRAFT; the Questions pane walks through them.`}
                   </p>
                 ) : (
                   <>
                     <p className="mt-3 text-sm">
                       {gateResult.passed
                         ? queue.length > 0
-                          ? `The rules pass, but ${queue.length} open question${queue.length === 1 ? "" : "s"} still block${queue.length === 1 ? "s" : ""} export.`
+                          ? `The rules pass. ${queue.length} open question${queue.length === 1 ? "" : "s"} remain${queue.length === 1 ? "s" : ""}; until answered, exports are marked WORKING DRAFT.`
                           : "Passing. Nothing blocks export."
-                        : `${blocks.length} blocking finding${blocks.length === 1 ? "" : "s"}${warns.length ? ` and ${warns.length} advisory` : ""}. Export refuses until the blocking ones are fixed.`}
+                        : `${blocks.length} blocking finding${blocks.length === 1 ? "" : "s"}${warns.length ? ` and ${warns.length} advisory` : ""}. Until fixed, exports are marked WORKING DRAFT.`}
                     </p>
                     <div className="mt-4 space-y-3 max-h-[50vh] overflow-y-auto">
                       {[...blocks, ...warns].map((v, i) => (
@@ -1577,42 +1647,160 @@ export function Workspace({
             {pane === "tron" && (
               <>
                 <span className="sys-label">Ask Tron for a change</span>
-                {scope ? (
-                  <p className="mt-3 text-sm">
-                    Scope: <span className="mono">{scope}</span>{" "}
-                    <button
-                      type="button"
-                      className="linklike"
-                      onClick={() => setScope(null)}
-                    >
-                      clear
-                    </button>
+                {sections.length === 0 ? (
+                  <p className="mt-3 text-sm text-faint">
+                    Nothing to revise yet. Tron reworks text that has already
+                    been drafted; draft a section first.
                   </p>
                 ) : (
-                  <p className="mt-3 text-sm text-faint">
-                    Pick a section with &quot;Ask Tron&quot; first, so the change
-                    lands somewhere specific.
+                  <>
+                {run?.active && (
+                  <p className="mt-3 text-xs text-faint">
+                    Drafting is running. Tron still works on the sections
+                    already drafted.
                   </p>
                 )}
+                <label className="mt-4 block text-sm">
+                  <span className="text-faint">Section</span>
+                  <select
+                    className="input mt-1 w-full"
+                    value={scope ?? ""}
+                    onChange={(e) => {
+                      setScope(e.target.value || null);
+                      setProposal(null);
+                      setTronError("");
+                      setTronApplied(null);
+                    }}
+                  >
+                    <option value="">Pick a section</option>
+                    {sections.map((sec) => (
+                      <option key={sec.label} value={sec.label}>
+                        {sec.label} {sec.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <textarea
-                  className="input mt-4 min-h-32"
+                  className="input mt-4 min-h-32 w-full"
                   value={instruction}
                   onChange={(e) => setInstruction(e.target.value)}
                   placeholder="Tighten this to three sentences and lead with the response time."
+                  aria-label="What should change"
                 />
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <label className="btn btn--text cursor-pointer">
+                    {tronFile ? "Swap document" : "Attach a document"}
+                    <input
+                      type="file"
+                      className="sr-only"
+                      accept=".pdf,.docx,.txt,.md,.csv,.log,.json"
+                      onChange={(e) =>
+                        setTronFile(e.target.files?.[0] ?? null)
+                      }
+                    />
+                  </label>
+                  {tronFile && (
+                    <span className="mono text-xs">
+                      {tronFile.name}{" "}
+                      <button
+                        type="button"
+                        className="linklike"
+                        onClick={() => setTronFile(null)}
+                      >
+                        remove
+                      </button>
+                    </span>
+                  )}
+                </div>
                 <p className="mt-2 text-xs text-faint">
-                  Tron can reword, tighten, and reorder. It will not add a
+                  Tron can reword, tighten, reorder, and work from an attached
+                  PDF, Word, or text file as you direct. It will not add a
                   price, a contract length, or a claim the knowledge base does
-                  not support.
+                  not support. Images cannot be read yet.
                 </p>
                 <button
                   type="button"
                   className="btn btn--primary mt-4"
-                  disabled={busy || !scope || instruction.trim().length < 3}
+                  disabled={tronBusy || !scope || instruction.trim().length < 3}
                   onClick={askTron}
                 >
-                  {busy ? "Thinking" : "Propose a change"}
+                  {tronBusy ? "Thinking" : "Propose a change"}
                 </button>
+                {tronBusy && (
+                  <p className="mt-3 text-sm text-faint" role="status">
+                    Reading the section{tronFile ? " and your document" : ""}.
+                    Under a minute.
+                  </p>
+                )}
+                {tronError && (
+                  <p className="mt-3 text-sm" role="alert">
+                    {tronError}
+                  </p>
+                )}
+                {tronApplied && !proposal && (
+                  <p className="mt-3 text-xs text-faint" role="status">
+                    Used in <span className="mono">{tronApplied}</span>.{" "}
+                    <button
+                      type="button"
+                      className="linklike"
+                      onClick={() => {
+                        setMobile("draft");
+                        window.setTimeout(() => {
+                          document
+                            .getElementById(`sec-${tronApplied}`)
+                            ?.scrollIntoView({ block: "start" });
+                        }, 60);
+                      }}
+                    >
+                      View the section
+                    </button>
+                  </p>
+                )}
+
+                {proposal && (
+                  <div className="mt-6 border-t pt-4" style={{ borderColor: "var(--xl-line)" }}>
+                    <span className="sys-label">
+                      Proposed for {proposal.label}
+                    </span>
+                    {proposal.note && (
+                      <p className="mt-3 text-sm text-faint">{proposal.note}</p>
+                    )}
+                    <div className="mt-3 max-h-[40vh] space-y-3 overflow-y-auto text-sm">
+                      {proposal.proposed.map((p, i) => (
+                        <p key={i}>{p}</p>
+                      ))}
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        className="btn btn--primary"
+                        disabled={tronBusy}
+                        onClick={acceptProposal}
+                      >
+                        Use this
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--text"
+                        onClick={() => setProposal(null)}
+                      >
+                        Discard
+                      </button>
+                    </div>
+                    <details className="mt-3">
+                      <summary className="linklike text-xs">
+                        The text it replaces
+                      </summary>
+                      <div className="mt-2 space-y-2 text-xs text-faint">
+                        {proposal.current.map((p, i) => (
+                          <p key={i}>{p}</p>
+                        ))}
+                      </div>
+                    </details>
+                  </div>
+                )}
+                  </>
+                )}
               </>
             )}
           </div>
@@ -1708,7 +1896,7 @@ function PricingAnswer({
       }}
     >
       <input
-        className="input"
+        className="input w-full"
         inputMode="numeric"
         pattern="[0-9]*"
         value={value}
@@ -1776,7 +1964,7 @@ function PricingForm({
     <label className="block text-sm">
       <span className="text-faint">{label}</span>
       <input
-        className="input mt-1"
+        className="input mt-1 w-full"
         inputMode="numeric"
         value={form[key] === null ? "" : String(form[key])}
         onChange={(e) =>
@@ -1820,7 +2008,7 @@ function PricingForm({
       <label className="block text-sm">
         <span className="text-faint">Datto SaaS Protection</span>
         <select
-          className="input mt-1"
+          className="input mt-1 w-full"
           value={form.dattoRetention ?? ""}
           onChange={(e) =>
             setForm((f) => ({
