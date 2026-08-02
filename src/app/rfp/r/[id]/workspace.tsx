@@ -1927,6 +1927,14 @@ export function Workspace({
                     <div>
                       <div className="rfpdoc-metalabel">Contact</div>
                       {ownerEmail}
+                      {/* The reference cover carries the phone under the
+                          email; directory furniture, not a claim. */}
+                      {signature.phone && (
+                        <>
+                          <br />
+                          {signature.phone}
+                        </>
+                      )}
                     </div>
                     <div>
                       <div className="rfpdoc-metalabel">Date</div>
@@ -2150,6 +2158,18 @@ export function Workspace({
                 <PageFoot />
               </section>
 
+              {/* Part divider — the reference's numbered break page (ghost
+                  numeral, bar, title, deck, three-square colophon). Claim-free
+                  furniture: numerals are render-order, never RFP labels; no
+                  sec-* id (a real RFP could label a section "01" and the jump
+                  would collide); no flash key (nothing can update it). */}
+              <DividerSheet
+                num="01"
+                title="Response to the Request for Proposal"
+                deck="The sections of this response, as read from the request."
+                clientName={clientName}
+              />
+
               {structure.map((node) => {
                 const sec = sections.find((s) => s.label === node.label);
                 const isEditing = editing === node.label;
@@ -2309,6 +2329,16 @@ export function Workspace({
                 );
               })}
 
+              {/* The reference gives pricing its own numbered break ("04
+                  Pricing & Terms" there; second break here). The deck restates
+                  the engine property the empty state below already asserts. */}
+              <DividerSheet
+                num="02"
+                title="Investment"
+                deck="Pricing for the services in this proposal, computed from the rate card."
+                clientName={clientName}
+              />
+
               {/* ---- Investment: engine output, printed on the paper. The
                   flash-keyed div is INSIDE the page card so the adjust form
                   below shares the sheet without sharing the remount key. ---- */}
@@ -2408,7 +2438,7 @@ export function Workspace({
                           </table>
                         </div>
                         {ill.minimumApplied && (
-                          <p className="rfpdoc-faint mt-2 text-sm">
+                          <p className="rfpdoc-caption mt-2">
                             The monthly minimum applies to the fully managed
                             line, so it is billed at the flat minimum rather
                             than the per-user product.
@@ -2423,7 +2453,7 @@ export function Workspace({
                       </p>
                     ))}
                     {pricing.notes.map((n, i) => (
-                      <p className="rfpdoc-muted text-sm" key={i}>
+                      <p className="rfpdoc-caption" key={i}>
                         {n}
                       </p>
                     ))}
@@ -2529,6 +2559,52 @@ export function Workspace({
         </section>
       </div>
     </>
+  );
+}
+
+/**
+ * A numbered part-break sheet in the reference's divider style: faint
+ * running header, ghost outline numeral, blue bar, Archivo title, serif
+ * deck, three-square colophon. Static furniture — no id, no flash key, and
+ * the numeral/squares are decorative (aria-hidden); the title carries the
+ * accessible meaning.
+ */
+function DividerSheet({
+  num,
+  title,
+  deck,
+  clientName,
+}: {
+  num: string;
+  title: string;
+  deck: string;
+  clientName: string | null;
+}) {
+  return (
+    <section
+      className="rfpdoc-page rfpdoc-page--sheet"
+      aria-label={`Part ${Number(num)}: ${title}`}
+    >
+      <div className="rfpdoc-divider">
+        <div className="rfpdoc-divider-head">
+          XL.net · Proposal{clientName ? ` for ${clientName}` : ""}
+        </div>
+        <div className="rfpdoc-divider-body">
+          <div className="rfpdoc-num" aria-hidden="true">
+            {num}
+          </div>
+          <div className="rfpdoc-bar rfpdoc-bar--blue" />
+          <h3 className="rfpdoc-divider-title">{title}</h3>
+          <p className="rfpdoc-divider-deck">{deck}</p>
+        </div>
+        <div className="rfpdoc-divider-marks" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+      <PageFoot />
+    </section>
   );
 }
 

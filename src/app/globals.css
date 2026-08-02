@@ -724,6 +724,11 @@ select.input option {
   line-height: 1.68;
   display: grid;
   gap: 1.25rem;
+  /* Container for the PAGES' own cqw padding: a size container cannot
+     resolve container units against itself, so .rfpdoc-page's padding
+     resolves against this wrapper (same width as the pages minus the 2px
+     of borders). Children of a page still resolve against the page. */
+  container-type: inline-size;
 }
 .rfpdoc p { max-width: none; color: #31324c; }
 /* Each block is one sheet of the proposal: white paper, hairline frame,
@@ -732,7 +737,11 @@ select.input option {
 .rfpdoc .rfpdoc-page {
   background: #ffffff;
   border: 1px solid #e3e4ef;
-  padding: clamp(1.25rem, 3.5vw, 2.75rem);
+  /* Sheet-proportional margins like the reference's ~10% page margin
+     (8cqw against the .rfpdoc container, since a container cannot resolve
+     cqw against itself); the old 3.5vw sized off the viewport, half of
+     which is not the pane. */
+  padding: clamp(1.25rem, 8cqw, 5.25rem);
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -771,7 +780,9 @@ select.input option {
   padding-bottom: 14px;
   margin-bottom: 26px;
 }
-.rfpdoc .rfpdoc-letter { max-width: 40rem; }
+/* The reference letter page sets a denser 14px body (measured off the
+   render; the signature block is already 14px, so the page reads uniform). */
+.rfpdoc .rfpdoc-letter { max-width: 40rem; font-size: 14px; line-height: 1.55; }
 .rfpdoc .rfpdoc-letter-name { font-weight: 600; color: #15163b; }
 /* The standard XL.net signature block, colors from the source email
    (signature.ts SIGNATURE_COLORS): navy person lines, gray contact line,
@@ -891,6 +902,83 @@ select.input option {
 /* AFTER the base rule or it is dead CSS at equal specificity (the R4
    lesson): the navy closing sheet's bar must read blue on navy. */
 .rfpdoc .rfpdoc-bar--blue { background: #3d7fd9; }
+/* ---- Section divider sheets (reference pages 3/10: the numbered part
+   breaks). Flex space-between spreads head / numeral block / squares over
+   the full sheet; the PDF's centering comes from that, not auto margins. */
+.rfpdoc .rfpdoc-divider {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+/* Running header: the reference's #8a8ca6 fails contrast at 11px; #767892
+   is the same screen concession the pagefoot documents above. */
+.rfpdoc .rfpdoc-divider-head {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #767892;
+}
+/* Padding keeps the composition breathing below 640px, where the sheet
+   loses its fixed aspect and space-between has nothing to distribute. */
+.rfpdoc .rfpdoc-divider-body { padding-block: clamp(28px, 6cqw, 56px); }
+/* The ghost numeral. Base declaration is the no-text-stroke fallback (a
+   solid ghost tint still reads as the device); supporting browsers get the
+   reference's near-white fill with the navy outline. */
+.rfpdoc .rfpdoc-num {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-weight: 700;
+  /* cqw resolves against the page's CONTENT box, the basis the existing
+     scales calibrate to (cover 7.4cqw = 50/670): 150/670 = 22.4cqw. */
+  font-size: clamp(96px, 22.4cqw, 150px);
+  line-height: 1;
+  letter-spacing: 0;
+  color: #d6d8f4;
+  user-select: none;
+}
+@supports (-webkit-text-stroke: 2px #2f31c5) {
+  .rfpdoc .rfpdoc-num {
+    color: #eef0fb;
+    -webkit-text-stroke: 2px #2f31c5;
+    paint-order: stroke fill;
+  }
+}
+.rfpdoc .rfpdoc-divider-body .rfpdoc-bar { margin: clamp(16px, 4.2cqw, 28px) 0; }
+/* Divider title sits between the cover title (7.4cqw/50) and the section
+   head (4.2cqw/28). Explicit transform: futurism.css uppercases bare h3. */
+.rfpdoc .rfpdoc-divider-title {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-weight: 700;
+  font-size: clamp(23px, 6.3cqw, 42px);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: #15163b;
+  max-width: 86%;
+}
+.rfpdoc .rfpdoc-divider-deck {
+  font-size: 16px;
+  line-height: 1.6;
+  color: #5b5d78;
+  max-width: 35rem;
+  margin-top: clamp(12px, 2.4cqw, 20px);
+}
+/* The three-square colophon above the footer: navy, blue, hairline gray. */
+.rfpdoc .rfpdoc-divider-marks { display: flex; gap: 12px; }
+.rfpdoc .rfpdoc-divider-marks span { width: 10px; height: 10px; }
+.rfpdoc .rfpdoc-divider-marks span:nth-child(1) { background: #2f31c5; }
+.rfpdoc .rfpdoc-divider-marks span:nth-child(2) { background: #3d7fd9; }
+.rfpdoc .rfpdoc-divider-marks span:nth-child(3) { background: #e3e4ef; }
+/* Table footnote voice from the reference: italic serif, one step down.
+   #5b5d78 not the reference's #8a8ca6 — these lines carry pricing
+   provenance and the print gray fails AA at 13px. */
+.rfpdoc .rfpdoc-caption {
+  font-style: italic;
+  font-size: 13px;
+  color: #5b5d78;
+}
 .rfpdoc .rfpdoc-h {
   font-family: Archivo, var(--font-ui), sans-serif;
   font-weight: 700;

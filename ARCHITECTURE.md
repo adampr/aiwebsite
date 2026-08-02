@@ -15,7 +15,14 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-02 sixth pass (RFP workspace
+Last verified against code: 2026-08-02 seventh pass (RFP workspace
+§5.17 round 8 **divider sheets + reference fidelity pass** — two
+numbered part-break sheets in the CoWork divider style ("01" before the
+sections, "02" before Investment; ghost outline numeral, blue bar,
+Archivo title, serif deck, three-square colophon, faint running header),
+sheet-proportional page padding via a `container-type` wrapper, italic
+pricing captions, 14px letter body, cover contact phone); previous
+same-day sixth pass (RFP workspace
 §5.17.4 **cover letter drafts LAST + standard XL.net signature block** —
 the letter is a drafted `__letter` record in sections_json, summarized
 from the finished sections by `draftCoverLetter()` at the end of every
@@ -3767,7 +3774,54 @@ stays true; expiry also drops the flash key, which remounts a section, so
 the timer must never be extended past casual-edit latitude without
 checking where `editing`/`editText` live (parent state — a remount keeps
 text but drops focus). Docx/pdf emitters still render the plainer round-3
-style (deferred, not silently absent).
+style (deferred, not silently absent; the deferred delta now also includes
+the round-8 part dividers below).
+
+**Round 8 additions (reference-fidelity pass, panel-reviewed).** The pane
+gains the reference render's numbered PART DIVIDER sheets (reference PDF
+pages 3/10: "01 Response to Requested Services" / "02 Proposal
+Requirements"), as `DividerSheet` furniture in workspace.tsx: full
+`--sheet` pages placed (1) between the cover letter and the first section
+sheet ("01 · Response to the Request for Proposal", deck "The sections of
+this response, as read from the request." — deliberately NOT "in the
+order the request presents them": structure order is model-extracted, so
+order fidelity is not a host guarantee) and (2) before Investment ("02 ·
+Investment", deck restating the engine property the pricing empty state
+already asserts). Anatomy: faint 11px/0.2em running header "XL.net ·
+Proposal for {client}" (#767892, the pagefoot's documented screen
+concession — the reference's #8a8ca6 fails AA at this size), ghost
+numeral (`.rfpdoc-num`, Archivo 700 clamp(96px,18.1cqw,150px), fill
+#eef0fb + `-webkit-text-stroke` 2px #2f31c5 behind an `@supports` guard
+with a solid #d6d8f4 fallback), the existing 64x4 `.rfpdoc-bar--blue`
+with clamped 28px block margins, clamp(23px,5cqw,42px) Archivo title
+(explicit `text-transform: none` — futurism.css uppercases bare h3),
+16px/35rem serif deck, and a three-square colophon (10px squares, 12px
+gap, #2f31c5/#3d7fd9/#e3e4ef) pinned above the standard footer by the
+divider's `space-between` column. Dividers are claim-free furniture:
+numerals are render-order ("01"/"02"), never RFP labels; they carry NO
+`sec-*` id (an RFP could label a section "01" and hijack the jump), no
+flash key, and no receipt entry; numeral and squares are `aria-hidden`,
+the `aria-label` is "Part N: {title}". A prefix-derived grouping
+heuristic (one divider per "A."/"B." label group) was proposed and
+REJECTED by the counterview panel for v1: part titles cannot be authored
+by the host and "Part A" is a third style belonging to neither reference.
+Also in this pass: `.rfpdoc` became a `container-type: inline-size`
+wrapper so `.rfpdoc-page` gets sheet-proportional padding
+`clamp(1.25rem, 8cqw, 5.25rem)` (a size container cannot resolve cqw
+against itself — on the page the units would silently mean svw);
+pricing notes and the minimum-applied line render as `.rfpdoc-caption`
+(italic 13px #5b5d78 — the reference's #8a8ca6 print gray fails AA and
+these lines carry pricing provenance); the letter page body is 14px/1.55
+(`.rfpdoc-letter`, measured off the reference; the signature block was
+already 14px); the cover Contact cell adds the owner's directory phone
+under the email. Panel rejections recorded for the next pass: the cover
+surround stays white (pixel-sampling showed the reference's cover mat IS
+white + hairline — a proposed #ececf1 gray was a raster artifact and
+would have broken the pagefoot's AA commitment), tables keep hairline +
+zebra (the CoWork handoff render, the tables' cited source, uses both),
+and content/pricing sheets are NOT forced to full page height (the pane
+is a working editor; a 17-section RFP would open on ~14,000px of empty
+stubs).
 
 Admin corpus editing on /rfp/knowledge:
 corrections INSERT at a new KB version and retire the old row (never
