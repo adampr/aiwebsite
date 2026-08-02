@@ -45,6 +45,11 @@ export const RFP_ACTIONS = [
   "knowledge.approve",
   "knowledge.return",
   "knowledge.edit",
+  "knowledge.correct",
+  "knowledge.retire",
+  "knowledge.add",
+  "ratecard.edit",
+  "question.edit",
   "admin.view_all",
   "access.denied",
 ] as const;

@@ -41,7 +41,10 @@ export async function POST(
     action: "proposal.gate_run",
     subjectKind: "proposal",
     subjectId: proposal.id,
-    outcome: result.passed ? "ok" : "error",
+    // A failing gate is a SUCCESSFUL run that found violations; "error" is
+    // reserved for a rule that crashed. Logging findings as errors made the
+    // admin activity view look broken every time the gate did its job.
+    outcome: result.errors.length > 0 ? "error" : "ok",
     meta: {
       passed: result.passed,
       violations: result.violations.length,

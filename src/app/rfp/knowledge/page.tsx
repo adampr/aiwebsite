@@ -3,6 +3,7 @@
 
 import { requireRfpPage } from "@/lib/rfp/access";
 import { KnowledgeNav } from "./nav";
+import { AddFact, FactActions, MinimumsEdit, QuestionEdit, RatePrice } from "./edit";
 import {
   correctedFacts,
   currentKbVersion,
@@ -22,6 +23,7 @@ function day(d: Date | null): string {
 export default async function RfpKnowledgePage() {
   const gate = await requireRfpPage("/rfp/knowledge");
   if (!gate.ok) return null;
+  const admin = gate.user.admin;
 
   let kb: number;
   let facts: Awaited<ReturnType<typeof liveFacts>>;
@@ -125,6 +127,15 @@ export default async function RfpKnowledgePage() {
               {card.minimumFullyManagedUsers} fully managed users, floor{" "}
               {usd(card.minimumMonthlyFeeCents)} per month. The floor is its own
               figure, not the per-user rate multiplied out.
+              {admin && (
+                <>
+                  {" "}
+                  <MinimumsEdit
+                    minimumFullyManagedUsers={card.minimumFullyManagedUsers}
+                    minimumMonthlyFeeCents={card.minimumMonthlyFeeCents}
+                  />
+                </>
+              )}
             </p>
             <div className="mt-4 overflow-x-auto">
               <table className="table table--stack">
@@ -150,6 +161,18 @@ export default async function RfpKnowledgePage() {
                       </td>
                       <td data-label="Unit price" className="mono">
                         {usd(item.unitPriceCents)}
+                        {admin && (
+                          <>
+                            {" "}
+                            <RatePrice
+                              code={item.code}
+                              cents={item.unitPriceCents}
+                              computed={["onboarding", "m365-license"].includes(
+                                item.code
+                              )}
+                            />
+                          </>
+                        )}
                       </td>
                       <td data-label="Unit" className="text-faint">
                         {item.unit}
@@ -165,10 +188,15 @@ export default async function RfpKnowledgePage() {
 
       {/* --- facts ------------------------------------------------------ */}
       <section>
-        <h2 className="doc-h">All live facts</h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 className="doc-h">All live facts</h2>
+          {admin && <AddFact />}
+        </div>
         <p className="mt-2 text-sm text-faint">
           {facts.length} records. Negative facts are marked: they are records,
           not absences.
+          {admin &&
+            " Corrections create a new version and retire the old; nothing here edits in place."}
         </p>
         <div className="mt-4 overflow-x-auto">
           <table className="table table--stack">
@@ -178,6 +206,11 @@ export default async function RfpKnowledgePage() {
                 <th>Statement</th>
                 <th>Category</th>
                 <th>Flags</th>
+                {admin && (
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -206,6 +239,17 @@ export default async function RfpKnowledgePage() {
                       <span className="badge badge--light">Corrected</span>
                     )}
                   </td>
+                  {admin && (
+                    <td data-label="Actions">
+                      <FactActions
+                        id={f.id}
+                        statement={f.statement}
+                        detail={f.detail}
+                        polarity={f.polarity}
+                        category={f.category}
+                      />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -229,6 +273,11 @@ export default async function RfpKnowledgePage() {
                 <th>Question</th>
                 <th>Kind</th>
                 <th>Category</th>
+                {admin && (
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -249,6 +298,15 @@ export default async function RfpKnowledgePage() {
                   <td data-label="Category" className="text-faint text-xs">
                     {q.category}
                   </td>
+                  {admin && (
+                    <td data-label="Actions">
+                      <QuestionEdit
+                        id={q.id}
+                        text={q.text}
+                        required={q.required}
+                      />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

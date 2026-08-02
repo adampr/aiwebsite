@@ -229,8 +229,8 @@ export async function draftSection(
     "",
     "RULES, all of them blocking:",
     "1. Every factual claim must trace to a fact id listed below, and you must",
-    "   return the ids you used in `cites`. If no fact supports an answer, do",
-    "   NOT write a plausible sentence. Record it in `gaps` instead.",
+    "   return the ids you used in `cites`. Never write a plausible but",
+    "   unsupported sentence.",
     '2. A fact marked [negative] is a record that XL.net does NOT do that thing.',
     "   Never claim the opposite, and never soften it into a maybe.",
     "3. Never state a price, a rate, a dollar figure, or a contract length.",
@@ -238,6 +238,15 @@ export async function draftSection(
     "4. No em dashes. Use a comma, a full stop, or a middot.",
     '5. Do not write marketing filler ("industry-leading", "world-class",',
     '   "seamless", "cutting-edge"). Plain declarative sentences only.',
+    "",
+    "WHEN NO FACT COVERS AN ASK, in order of preference:",
+    "a. Omit the claim. Most asks are answered well by what the facts do say.",
+    "b. Say plainly that the specific detail is confirmed during discovery.",
+    "c. ONLY IF the section cannot honestly ship without a company fact that",
+    "   is missing, record ONE gap. Gaps are expensive: each interrupts a",
+    "   person mid-flow, and most sections need ZERO. Never more than two.",
+    "   Never ask about the CLIENT's environment (their headcount, systems,",
+    "   or preferences) — that is discovery, not a gap.",
     "",
     "Reply with JSON only:",
     '{"paragraphs": [string], "cites": [string],',
@@ -277,9 +286,11 @@ export async function draftSection(
     cites: (Array.isArray(parsed.cites) ? parsed.cites : [])
       .filter((c) => typeof c === "string" && knownIds.has(c))
       .slice(0, 40),
+    // Two, not ten: the old cap let one 17-section RFP surface 76 questions
+    // where the benchmark tool asks four or five for the whole document.
     gaps: (Array.isArray(parsed.gaps) ? parsed.gaps : [])
       .filter((g) => g && typeof g.question === "string")
-      .slice(0, 10)
+      .slice(0, 2)
       .map((g) => ({
         question: String(g.question).slice(0, 500),
         why: String(g.why ?? "").slice(0, 500),

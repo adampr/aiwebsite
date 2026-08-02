@@ -15,7 +15,28 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-01 third pass (§5.17.2 **RFP round 4**,
+Last verified against code: 2026-08-02 (§5.17.2 **RFP round 5**, owner
+feedback pass: the workspace matches the governance builder's arrangement —
+questions LEFT, document RIGHT in a sticky self-scrolling pane — and the
+document renders in the **Proposal Studio handoff's own visual language**
+(`.rfpdoc` in globals.css: white letter paper, Archivo + Source Serif 4,
+navy #2f31c5, concentric-circle cover; values taken from the handoff's
+chf.render.dc.html; fonts added to the runtime Google Fonts import).
+Question volume cut toward the CoWork benchmark: the drafting prompt now
+prefers ZERO gaps (omit > confirmed-in-discovery > gap, never >2, never
+client-environment questions), the server cap fell 10→2 per section, and
+the workspace DEDUPES gap questions by normalized text into one question
+with N section targets, woven per target on one answer. Admin editing
+landed on /rfp/knowledge: fact Correct/Retire/Add through the correction
+machinery (new row at a new KB version — correctFact/retireFact/addFact),
+rate-card unit-price + minimums (PATCH /api/rfp/ratecard), intake question
+text/required (PATCH /api/rfp/questions/[id]); all admin-only, all logged
+shape-only. Absolute timestamps render in the VIEWER's timezone via
+<LocalTime> (server-renders UTC, swaps post-mount); `select.input` and its
+options paint from theme vars (native popups were white-on-light);
+`proposal.gate_run` logs outcome "error" only when a RULE crashed — a
+failing gate is a successful run. Previous: 2026-08-01 third pass
+(§5.17.2 **RFP round 4**,
 owner-directed UX pass: the sticky rail parks below the measured runbar
 (`--rfp-runbar-h` via ResizeObserver), Tron gets a full pane — scope select,
 `w-full` inputs, document ATTACHMENT ingestion (pdf/docx/txt/md/csv fenced
@@ -3636,6 +3657,33 @@ conflict. The workspace treats a transport-failed poll as UNKNOWN, never as
 section), requires two consecutive reachable-idle polls before a follower
 tab declares another tab's run over, and every mutation fetch is
 rejection-guarded so a network blip cannot strand the workbar mid-run.
+
+**Round 5 additions (owner feedback pass).** The workspace mirrors the
+governance builder's arrangement: the QUESTIONS rail sits LEFT (5fr) and
+the DOCUMENT right (7fr, `lg:order` utilities keep the document first in
+the DOM for the mobile Draft tab), rendered inside `.rfp-docpane` — sticky,
+self-scrolling, jumps scroll the PANE on desktop and the window below lg
+(`jumpTo`). The document itself is `.rfpdoc`: the Proposal Studio handoff's
+visual language verbatim (white letter paper, Archivo + Source Serif 4 from
+the runtime Google Fonts import, ink #15163b, navy #2f31c5, hairline
+#e3e4ef, the concentric-circle cover, navy section rules, serif tables) — a
+deliberate LIGHT island inside the dark site because it previews the
+printed proposal; the change grammar re-colors to blue on paper. The
+handoff reference lives in ~/Downloads/xlnet-proposal-studio-COMPLETE.zip
+(out/chf.render.dc.html is the fidelity reference); the docx/pdf EMITTERS
+still render the plainer round-3 style — moving them into the same family
+is declared deferred work, not silently absent. Gap questions DEDUPE by
+normalized text into one entry with N section targets; answering weaves
+every target sequentially (per-target progress; `remember` files once).
+The drafting prompt prefers zero gaps and the server caps 2 per section
+(was 10 — one 17-section RFP once surfaced 76 questions against the
+benchmark tool's four or five). Admin corpus editing on /rfp/knowledge:
+corrections INSERT at a new KB version and retire the old row (never
+update-in-place — C1, the corrected-facts page, and old citations depend
+on it); rate-card edits are safe against history because quotes snapshot
+unit prices; intake questions edit text/required only (kind is the
+promotion switch and stays fixed). `<LocalTime>` renders absolute times in
+the viewer's timezone. `select.input` + options paint from theme vars.
 
 **Round 4 additions.** The rail parks BELOW the sticky runbar: the runbar's
 height (it varies with notices) is measured by a ResizeObserver into

@@ -89,10 +89,13 @@ export async function allFacts(): Promise<FactRow[]> {
  * retired row it supersedes: a superseded fact's correctedAt is null.
  */
 export async function correctedFacts(): Promise<FactRow[]> {
+  // LIVE corrections only: after a correct-then-correct chain the retired
+  // intermediate correction also carries correctedAt, and listing it made
+  // the panel read as though two competing fixes were in force.
   return db
     .select()
     .from(rfpFacts)
-    .where(isNotNull(rfpFacts.correctedAt))
+    .where(and(isNotNull(rfpFacts.correctedAt), isNull(rfpFacts.retiredInKb)))
     .orderBy(desc(rfpFacts.correctedAt));
 }
 
@@ -877,6 +880,229 @@ export async function knowledgeForUser(user: RfpUser): Promise<{
       ),
   ]);
   return { shared, mine };
+}
+
+/* ---- admin corpus editing (§5.17.2 round 5) ----------------------------- */
+
+const factSlug = (s: string) => s.replace(/[^a-z0-9]+/gi, "_");
+
+/** One fact row by id, live or retired. ADMIN corpus operations only. */
+export async function getFactById(id: string): Promise<FactRow | null> {
+  const rows = await db
+    .select()
+    .from(rfpFacts)
+    .where(eq(rfpFacts.id, id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Correct a live fact: INSERT the corrected row at a new KB version and
+ * retire the wrong one. Never an UPDATE — the whole correction machinery
+ * (rule C1's stale sweep, the corrected-facts page, resolvable citations in
+ * old proposals) depends on the wrong version keeping its id and the new
+ * version having never been anything else.
+ */
+export async function correctFact(
+  admin: RfpUser,
+  factId: string,
+  input: {
+    statement: string;
+    detail: string | null;
+    polarity: "affirmative" | "negative";
+    category: string;
+  }
+): Promise<{ ok: true; factId: string } | { ok: false; reason: string }> {
+  if (!admin.admin) throw new Error("correctFact: caller is not an admin");
+  const old = await getFactById(factId);
+  if (!old) return { ok: false, reason: "not_found" };
+  if (old.retiredInKb !== null)
+    return { ok: false, reason: "already_retired" };
+
+  const nextSeq = (await currentKbVersion()) + 1;
+  const newId = `fact_${factSlug(old.key)}_v${nextSeq}`;
+  const now = new Date();
+
+  await db.transaction(async (tx) => {
+    await tx.insert(rfpKbVersions).values({
+      id: `kb_${nextSeq}`,
+      seq: nextSeq,
+      createdAt: now,
+      note: `Correction of ${old.key} by ${admin.email}`,
+    });
+    await tx.insert(rfpFacts).values({
+      id: newId,
+      key: old.key,
+      category: input.category.slice(0, 60),
+      statement: input.statement.slice(0, 2000),
+      polarity: input.polarity,
+      detail: input.detail?.slice(0, 2000) ?? null,
+      sourceUrl: old.sourceUrl,
+      verifiedAt: now,
+      correctedAt: now,
+      supersedes: old.id,
+      introducedInKb: nextSeq,
+      retiredInKb: null,
+      confidence: "confirmed",
+    });
+    // Guarded on still-live: two admins correcting the same fact race here,
+    // and the loser must fail the WHOLE transaction rather than double-retire
+    // (or leave two live versions of one key).
+    const retired = await tx
+      .update(rfpFacts)
+      .set({ retiredInKb: nextSeq })
+      .where(and(eq(rfpFacts.id, old.id), isNull(rfpFacts.retiredInKb)))
+      .returning({ id: rfpFacts.id });
+    if (retired.length === 0)
+      throw new Error("correctFact: fact was retired concurrently");
+  });
+
+  return { ok: true, factId: newId };
+}
+
+/** Retire a live fact without replacement (it stops being citable). */
+export async function retireFact(
+  admin: RfpUser,
+  factId: string
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!admin.admin) throw new Error("retireFact: caller is not an admin");
+  const old = await getFactById(factId);
+  if (!old) return { ok: false, reason: "not_found" };
+  if (old.retiredInKb !== null)
+    return { ok: false, reason: "already_retired" };
+
+  const nextSeq = (await currentKbVersion()) + 1;
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    await tx.insert(rfpKbVersions).values({
+      id: `kb_${nextSeq}`,
+      seq: nextSeq,
+      createdAt: now,
+      note: `Retired ${old.key} by ${admin.email}`,
+    });
+    const retired = await tx
+      .update(rfpFacts)
+      .set({ retiredInKb: nextSeq })
+      .where(and(eq(rfpFacts.id, old.id), isNull(rfpFacts.retiredInKb)))
+      .returning({ id: rfpFacts.id });
+    if (retired.length === 0)
+      throw new Error("retireFact: fact was retired concurrently");
+  });
+  return { ok: true };
+}
+
+/** Add a brand-new fact directly (admin path; users go through proposals). */
+export async function addFact(
+  admin: RfpUser,
+  input: {
+    key: string;
+    category: string;
+    statement: string;
+    detail: string | null;
+    polarity: "affirmative" | "negative";
+  }
+): Promise<{ ok: true; factId: string } | { ok: false; reason: string }> {
+  if (!admin.admin) throw new Error("addFact: caller is not an admin");
+  const key = input.key.trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{2,119}$/.test(key))
+    return { ok: false, reason: "bad_key" };
+  const dupes = await db
+    .select({ id: rfpFacts.id })
+    .from(rfpFacts)
+    .where(and(eq(rfpFacts.key, key), isNull(rfpFacts.retiredInKb)))
+    .limit(1);
+  if (dupes.length) return { ok: false, reason: "key_in_use" };
+
+  const nextSeq = (await currentKbVersion()) + 1;
+  const now = new Date();
+  const id = `fact_${factSlug(key)}_v${nextSeq}`;
+  await db.transaction(async (tx) => {
+    await tx.insert(rfpKbVersions).values({
+      id: `kb_${nextSeq}`,
+      seq: nextSeq,
+      createdAt: now,
+      note: `Added ${key} by ${admin.email}`,
+    });
+    await tx.insert(rfpFacts).values({
+      id,
+      key,
+      category: input.category.slice(0, 60),
+      statement: input.statement.slice(0, 2000),
+      polarity: input.polarity,
+      detail: input.detail?.slice(0, 2000) ?? null,
+      sourceUrl: null,
+      verifiedAt: now,
+      correctedAt: null,
+      supersedes: null,
+      introducedInKb: nextSeq,
+      retiredInKb: null,
+      confidence: "confirmed",
+    });
+  });
+  return { ok: true, factId: id };
+}
+
+/**
+ * Edit a rate-card line's unit price, or the card's minimums. Safe against
+ * history by design: quotes SNAPSHOT unit prices at build time, so a change
+ * here never rewrites a quote that has been shown.
+ */
+export async function updateRateCard(
+  admin: RfpUser,
+  input:
+    | { kind: "item"; code: string; unitPriceCents: number }
+    | {
+        kind: "minimums";
+        minimumFullyManagedUsers: number;
+        minimumMonthlyFeeCents: number;
+      }
+): Promise<boolean> {
+  if (!admin.admin) throw new Error("updateRateCard: caller is not an admin");
+  const card = await currentRateCard();
+  if (!card) return false;
+  if (input.kind === "item") {
+    const res = await db
+      .update(rfpRateCardItems)
+      .set({ unitPriceCents: Math.max(0, Math.floor(input.unitPriceCents)) })
+      .where(
+        and(
+          eq(rfpRateCardItems.rateCardId, card.id),
+          eq(rfpRateCardItems.code, input.code)
+        )
+      )
+      .returning({ code: rfpRateCardItems.code });
+    return res.length > 0;
+  }
+  const res = await db
+    .update(rfpRateCards)
+    .set({
+      minimumFullyManagedUsers: Math.max(
+        0,
+        Math.floor(input.minimumFullyManagedUsers)
+      ),
+      minimumMonthlyFeeCents: Math.max(
+        0,
+        Math.floor(input.minimumMonthlyFeeCents)
+      ),
+    })
+    .where(eq(rfpRateCards.id, card.id))
+    .returning({ id: rfpRateCards.id });
+  return res.length > 0;
+}
+
+/** Edit an intake question's text or required flag. */
+export async function updateQuestion(
+  admin: RfpUser,
+  id: string,
+  input: { text: string; required: boolean }
+): Promise<boolean> {
+  if (!admin.admin) throw new Error("updateQuestion: caller is not an admin");
+  const res = await db
+    .update(rfpQuestions)
+    .set({ text: input.text.slice(0, 500), required: input.required })
+    .where(eq(rfpQuestions.id, id))
+    .returning({ id: rfpQuestions.id });
+  return res.length > 0;
 }
 
 /* ---- activity ----------------------------------------------------------- */

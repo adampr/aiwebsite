@@ -6,7 +6,7 @@ import { requireRfpPage } from "@/lib/rfp/access";
 import { listAllDocuments, listMyDocuments } from "@/lib/rfp/db";
 import { RowActions } from "./row-actions";
 import { logRfpActivity } from "@/lib/rfp/activity";
-import { when } from "@/lib/rfp/time";
+import { When } from "@/components/when";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -154,7 +154,7 @@ function DocTable({
                 </span>
               </td>
               <td data-label="Last touched" className="text-faint">
-                {when(d.updatedAt)}
+                <When iso={d.updatedAt.toISOString()} />
               </td>
               <td data-label="Actions">
                 <RowActions

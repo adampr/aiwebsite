@@ -12,7 +12,7 @@ import {
   getProposalForDocument,
   listRequirements,
 } from "@/lib/rfp/db";
-import { when } from "@/lib/rfp/time";
+import { When } from "@/components/when";
 import { Workspace } from "./workspace";
 import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/route";
 
@@ -64,7 +64,7 @@ export default async function RfpWorkspacePage({
         <p className="mt-2 text-sm text-faint">
           {requirements.length} requirement
           {requirements.length === 1 ? "" : "s"} · {structure.length} section
-          {structure.length === 1 ? "" : "s"} · updated {when(doc.updatedAt)}
+          {structure.length === 1 ? "" : "s"} · updated <When iso={doc.updatedAt.toISOString()} />
           {doc.ownerEmail !== gate.user.email.toLowerCase() && (
             <> · owned by {doc.ownerEmail}</>
           )}
@@ -105,6 +105,8 @@ export default async function RfpWorkspacePage({
         autoDraft={sp.draft === "all"}
         docStatus={doc.status}
         archived={Boolean(doc.archivedAt)}
+        clientName={doc.clientName}
+        docTitle={doc.title}
       />
     </div>
   );

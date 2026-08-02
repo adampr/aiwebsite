@@ -6,7 +6,7 @@
 import type { Metadata } from "next";
 import { requireRfpPage } from "@/lib/rfp/access";
 import { recentActivity } from "@/lib/rfp/db";
-import { exact } from "@/lib/rfp/time";
+import { LocalTime } from "@/components/local-time";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -61,7 +61,7 @@ export default async function ActivityPage() {
                 {rows.map((r) => (
                   <tr key={r.id}>
                     <td data-label="Time" className="text-faint text-xs">
-                      {exact(r.at)}
+                      <LocalTime iso={r.at.toISOString()} withTime />
                     </td>
                     <td data-label="Who" className="mono text-xs">
                       {r.actorEmail}

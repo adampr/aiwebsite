@@ -126,14 +126,18 @@ function auditOwnershipLookups(): string[] {
       if (entry.isDirectory()) walk(full);
       else if (entry.name === "route.ts" && /\[id\]/.test(full)) {
         const src = fs.readFileSync(full, "utf8");
-        // approveKnowledge/returnKnowledge are admin-checked inside
-        // src/lib/rfp/db.ts (throw on non-admin), so they count as scoped.
+        // approveKnowledge/returnKnowledge/correctFact/retireFact/
+        // updateQuestion are admin-checked inside src/lib/rfp/db.ts (throw
+        // on non-admin), and getFactById serves admin-gated corpus routes
+        // (facts are shared, not owned), so they count as scoped.
         if (
           !src.includes("getOwnedProposal") &&
           !src.includes("getDocument") &&
           !src.includes("getKnowledgeProposal") &&
           !src.includes("approveKnowledge") &&
-          !src.includes("returnKnowledge")
+          !src.includes("returnKnowledge") &&
+          !src.includes("getFactById") &&
+          !src.includes("updateQuestion")
         )
           bad.push(full);
       }

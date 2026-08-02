@@ -8,7 +8,7 @@ import type { Metadata } from "next";
 import { requireRfpPage } from "@/lib/rfp/access";
 import { KnowledgeNav } from "../nav";
 import { listMyKnowledge } from "@/lib/rfp/db";
-import { when } from "@/lib/rfp/time";
+import { When } from "@/components/when";
 import { AddKnowledge } from "./add";
 
 export const dynamic = "force-dynamic";
@@ -67,7 +67,7 @@ export default async function MyKnowledgePage() {
                     <span className="mono text-xs text-faint">{r.factKey}</span>
                   )}
                   <span className="ml-auto text-xs text-faint">
-                    {when(r.createdAt)}
+                    <When iso={r.createdAt.toISOString()} />
                   </span>
                 </div>
                 <p className="mt-2">{r.statement}</p>

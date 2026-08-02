@@ -4,11 +4,13 @@
 // changes trains people to stop reading dates, so this is used only where
 // freshness is the question being asked.
 
+// No pinned zone: in client components this is the VIEWER's timezone.
+// Server components must not use these for absolute times — they format in
+// the VM's zone; use <LocalTime> (src/components/local-time.tsx) instead.
 const ABS = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "short",
   day: "numeric",
-  timeZone: "UTC",
 });
 
 const ABS_TIME = new Intl.DateTimeFormat("en-US", {
@@ -17,7 +19,7 @@ const ABS_TIME = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   hour: "2-digit",
   minute: "2-digit",
-  timeZone: "UTC",
+  timeZoneName: "short",
 });
 
 export function when(d: Date | string | null): string {
@@ -40,8 +42,8 @@ export function when(d: Date | string | null): string {
   return ABS.format(date);
 }
 
-/** Absolute with a clock. Used only where two events in one day must be told apart. */
+/** Absolute with a clock, in the runtime's zone (CLIENT components only). */
 export function exact(d: Date | string | null): string {
   if (!d) return "";
-  return `${ABS_TIME.format(typeof d === "string" ? new Date(d) : d)} UTC`;
+  return ABS_TIME.format(typeof d === "string" ? new Date(d) : d);
 }

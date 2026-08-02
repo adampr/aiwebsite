@@ -74,8 +74,11 @@ type OpenQuestion =
   | {
       kind: "gap";
       key: string;
-      label: string;
-      sectionTitle: string;
+      /** Every section holding this question, deduped by normalized text:
+       *  one answer is woven into each of them. `raw` is THAT section's own
+       *  wording — the server matches gap text exactly, so "SOC 2" and
+       *  "SOC-2" variants must each be sent as their section recorded them. */
+      targets: { label: string; sectionTitle: string; raw: string }[];
       text: string;
       why: string;
     };
@@ -200,6 +203,8 @@ export function Workspace({
   autoDraft,
   docStatus,
   archived,
+  clientName,
+  docTitle,
 }: {
   documentId: string;
   proposalId: string | null;
@@ -215,6 +220,8 @@ export function Workspace({
   autoDraft: boolean;
   docStatus: string;
   archived: boolean;
+  clientName: string | null;
+  docTitle: string;
 }) {
   const router = useRouter();
   const [sections, setSectionsState] = useState<Section[]>(initialSections);
@@ -328,23 +335,48 @@ export function Workspace({
 
   const covered = new Set(sections.map((s) => s.label));
   const undrafted = structure.filter((n) => !covered.has(n.label));
-  const totalGaps = sections.reduce((n, s) => n + s.gaps.length, 0);
 
-  const queue: OpenQuestion[] = [
-    ...pricingQuestions(inputs),
-    ...sections.flatMap((s) =>
-      s.gaps.map(
-        (g): OpenQuestion => ({
+  // Gap questions dedupe by normalized text: seventeen sections asking the
+  // same certification question is ONE question with seventeen targets, not
+  // seventeen interruptions. (The benchmark tool asks a handful for a whole
+  // document; the queue must read the same way.)
+  const gapEntries = new Map<
+    string,
+    Extract<OpenQuestion, { kind: "gap" }>
+  >();
+  for (const sec of sections) {
+    for (const g of sec.gaps) {
+      const norm = g.question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const existing = gapEntries.get(norm);
+      if (existing) {
+        if (!existing.targets.some((t) => t.label === sec.label))
+          existing.targets.push({
+            label: sec.label,
+            sectionTitle: sec.title,
+            raw: g.question,
+          });
+      } else {
+        gapEntries.set(norm, {
           kind: "gap",
-          key: `g:${s.label}:${g.question}`,
-          label: s.label,
-          sectionTitle: s.title,
+          key: `g:${norm}`,
+          targets: [
+            { label: sec.label, sectionTitle: sec.title, raw: g.question },
+          ],
           text: g.question,
           why: g.why,
-        })
-      )
-    ),
+        });
+      }
+    }
+  }
+  const queue: OpenQuestion[] = [
+    ...pricingQuestions(inputs),
+    ...gapEntries.values(),
   ];
+  // ONE vocabulary for "question" everywhere on screen: the deduped count.
+  // (The raw per-section sum once sat in the Checks pane next to a deduped
+  // tab badge, reading as a contradiction.)
+  const gapQuestionCount = gapEntries.size;
+  const gapSectionCount = sections.filter((s) => s.gaps.length > 0).length;
   const open = queue.filter((q) => !skipped.has(q.key));
   const current = open[0] ?? null;
   const [answeredCount, setAnsweredCount] = useState(0);
@@ -355,28 +387,48 @@ export function Workspace({
    * not yank the viewport away from a textarea (the governance builder's
    * "the user may be typing" rule, applied to the window).
    */
-  const showChanged = useCallback((labels: string[]) => {
-    if (!labels.length) return;
-    setHighlights(new Set(labels));
-    setFlashKey((k) => k + 1);
-    const typing = ["TEXTAREA", "INPUT"].includes(
-      document.activeElement?.tagName ?? ""
+  const jumpTo = useCallback((label: string) => {
+    const el = document.getElementById(
+      label === "__pricing" ? "sec-__pricing" : `sec-${label}`
     );
-    if (typing) return;
-    const first = labels[0];
-    window.setTimeout(() => {
-      const el = document.getElementById(
-        first === "__pricing" ? "sec-__pricing" : `sec-${first}`
-      );
-      const reduce = window.matchMedia(
-        "(prefers-reduced-motion: reduce)"
-      ).matches;
-      el?.scrollIntoView({
+    if (!el) return;
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+    const pane = el.closest(".rfp-docpane");
+    // Desktop: the document scrolls inside its own sticky pane (the
+    // governance rule — never yank the window while someone is answering).
+    if (pane && window.matchMedia("(min-width: 1024px)").matches) {
+      const top =
+        pane.scrollTop +
+        el.getBoundingClientRect().top -
+        pane.getBoundingClientRect().top -
+        16;
+      pane.scrollTo({
+        top: Math.max(top, 0),
+        behavior: reduce ? "auto" : "smooth",
+      });
+    } else {
+      el.scrollIntoView({
         block: "start",
         behavior: reduce ? "auto" : "smooth",
       });
-    }, 60);
+    }
   }, []);
+
+  const showChanged = useCallback(
+    (labels: string[]) => {
+      if (!labels.length) return;
+      setHighlights(new Set(labels));
+      setFlashKey((k) => k + 1);
+      const typing = ["TEXTAREA", "INPUT"].includes(
+        document.activeElement?.tagName ?? ""
+      );
+      if (typing) return;
+      window.setTimeout(() => jumpTo(labels[0]), 60);
+    },
+    [jumpTo]
+  );
 
   /**
    * One poll of the document status; applies fresh sections when rev moved.
@@ -653,54 +705,86 @@ export function Workspace({
     if (d.quote) showChanged(["__pricing"]);
   }
 
-  /** Answer the current gap question: the brain weaves it into the section. */
+  /**
+   * Answer the current gap question. One answer, EVERY section holding the
+   * question: the weave runs per target (each is a 60-90s brain call, so
+   * progress is narrated per section), and a single failure stops the loop
+   * with the remaining targets still queued.
+   */
+  const [weaveProgress, setWeaveProgress] = useState<string | null>(null);
+  // Questions whose answer already filed a knowledge row: a RETRY after a
+  // partial failure must not file a duplicate.
+  const rememberedRef = useRef<Set<string>>(new Set());
   async function answerGap(q: Extract<OpenQuestion, { kind: "gap" }>) {
     if (!proposalId || answerText.trim().length < 2) return;
     setWeaving(q.key);
     setNotice("");
-    const res = await fetch(`/api/rfp/proposals/${proposalId}/gap`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        label: q.label,
-        question: q.text,
-        answer: answerText.trim(),
-        remember,
-      }),
-    }).catch(() => null);
-    setWeaving(null);
-    if (!res) {
-      // The weave is a long synchronous call; the edge can close the
-      // connection while the server still lands the write. Check before
-      // claiming failure.
-      const st = await pollOnce();
-      if (st.changed.length) {
-        showChanged(st.changed);
-        setNotice("The connection dropped, but the answer landed.");
-        setAnswerText("");
-      } else {
+    const done: string[] = [];
+    // remember=true only files the knowledge row once; repeating it per
+    // section (or per retry) would create duplicate proposals.
+    let rememberThis = remember && !rememberedRef.current.has(q.key);
+    for (let i = 0; i < q.targets.length; i++) {
+      const target = q.targets[i];
+      setWeaveProgress(
+        q.targets.length > 1
+          ? `${target.label} · ${i + 1} of ${q.targets.length}`
+          : target.label
+      );
+      const res = await fetch(`/api/rfp/proposals/${proposalId}/gap`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          label: target.label,
+          question: target.raw,
+          answer: answerText.trim(),
+          remember: rememberThis,
+        }),
+      }).catch(() => null);
+      if (rememberThis) rememberedRef.current.add(q.key);
+      rememberThis = false;
+      if (!res) {
+        // The weave is a long synchronous call; the edge can close the
+        // connection while the server still lands the write. Check before
+        // claiming failure.
+        const st = await pollOnce();
+        if (st.changed.length) {
+          showChanged(st.changed);
+          done.push(target.label);
+          continue;
+        }
         setNotice(
           "The connection dropped while weaving. The answer may still land; reload in a minute if the section does not update."
         );
+        break;
       }
-      return;
+      if (!res.ok) {
+        // 404 "no longer open" = this target was ALREADY woven (an earlier
+        // partial run, or another tab). That is completion, not failure.
+        if (res.status === 404) {
+          done.push(target.label);
+          continue;
+        }
+        const d = await res.json().catch(() => null);
+        setNotice(d?.message ?? "The answer could not be woven in.");
+        break;
+      }
+      const d = await res.json();
+      setSections((prev) =>
+        prev.map((s) => (s.label === target.label ? d.section : s))
+      );
+      adoptRev(d.rev);
+      setGateResult(null);
+      done.push(target.label);
+      showChanged([target.label]);
+      if (d.note && q.targets.length === 1) setNotice(d.note);
     }
-    if (!res.ok) {
-      const d = await res.json().catch(() => null);
-      setNotice(d?.message ?? "The answer could not be woven in.");
-      return;
+    setWeaving(null);
+    setWeaveProgress(null);
+    if (done.length === q.targets.length) {
+      setAnsweredCount((n) => n + 1);
+      setAnswerText("");
+      setLastWoven(done.join(", "));
     }
-    const d = await res.json();
-    setSections((prev) =>
-      prev.map((s) => (s.label === q.label ? d.section : s))
-    );
-    adoptRev(d.rev);
-    setGateResult(null);
-    setAnsweredCount((n) => n + 1);
-    setAnswerText("");
-    setLastWoven(q.label);
-    showChanged([q.label]);
-    if (d.note) setNotice(d.note);
   }
 
   async function runChecks(): Promise<GateResult | null> {
@@ -757,7 +841,11 @@ export function Workspace({
       const missing = Number(res.headers.get("x-rfp-pricing-missing") ?? "0");
       const gateOk = res.headers.get("x-rfp-gate-passed") === "1";
       const parts: string[] = [];
-      if (gaps > 0) parts.push(`${gaps} open question${gaps === 1 ? "" : "s"}`);
+      // The header counts raw per-section gaps; the screen speaks in deduped
+      // questions, so prefer the client's own count when it has one.
+      const qCount = gapQuestionCount > 0 ? gapQuestionCount : gaps;
+      if (gaps > 0)
+        parts.push(`${qCount} open question${qCount === 1 ? "" : "s"}`);
       if (missing > 0)
         parts.push(`${missing} pricing answer${missing === 1 ? "" : "s"}`);
       if (!gateOk) parts.push("failing checks");
@@ -1058,332 +1146,10 @@ export function Workspace({
         )}
       </nav>
 
-      <div className="lg:grid lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:items-start lg:gap-8">
-        {/* ---- the draft ---- */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-start lg:gap-8">
+        {/* ---- the rail (left at lg, like governance's question pane) ---- */}
         <div
-          className={`${mobile === "draft" ? "block" : "hidden"} lg:block min-w-0`}
-        >
-          {structure.length === 0 ? (
-            <div className="panel">
-              {docStatus === "read_failed" ? (
-                <p className="text-faint">
-                  This RFP was saved but could not be read for its structure.
-                  That is usually a brief drafting-service outage, not a
-                  problem with the document. Start it again from New RFP;
-                  pasting the same text works.
-                </p>
-              ) : docStatus !== "extracted" ? (
-                <p className="text-faint" role="status">
-                  Still reading this RFP. Reload in a minute; drafting starts
-                  once the structure is out.
-                </p>
-              ) : (
-                <p className="text-faint">
-                  No section structure was found in this RFP. That usually
-                  means it is a form to fill in rather than a document to
-                  write, which this workspace cannot draft yet. The
-                  requirements it did find are listed under Coverage.
-                </p>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {structure.map((node) => {
-                const sec = sections.find((s) => s.label === node.label);
-                const isEditing = editing === node.label;
-                const changed = highlights.has(node.label);
-                return (
-                  <div
-                    className={`panel${changed ? " doc-sec--changed doc-sec--flash" : ""}`}
-                    key={changed ? `${node.label}-${flashKey}` : node.label}
-                    id={`sec-${node.label}`}
-                  >
-                    <div className="flex flex-wrap items-baseline justify-between gap-3">
-                      <div className="min-w-0">
-                        <span className="sys-label">{node.label}</span>
-                        <h3 className="doc-h mt-2">
-                          {node.title}
-                          {changed && <span className="doc-chip">Updated</span>}
-                        </h3>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3">
-                        {sec && (
-                          <span className="text-xs text-faint">
-                            {when(sec.updatedAt)}
-                          </span>
-                        )}
-                        {!sec ? (
-                          <button
-                            type="button"
-                            className="btn btn--text"
-                            disabled={busy}
-                            onClick={() => generate(node.label, node.title)}
-                          >
-                            {run?.active &&
-                            run.current === `${node.label} ${node.title}`.trim()
-                              ? "Drafting"
-                              : "Draft this"}
-                          </button>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              className="btn btn--text"
-                              onClick={() => {
-                                setEditing(node.label);
-                                setEditText(sec.paragraphs.join("\n\n"));
-                              }}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn--text"
-                              onClick={() => {
-                                setScope(node.label);
-                                showPane("tron");
-                              }}
-                            >
-                              Ask Tron
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {run?.active &&
-                      run.current === `${node.label} ${node.title}`.trim() &&
-                      !sec && (
-                        <p className="mt-4 text-sm text-faint" role="status">
-                          Reading the section and the facts behind it. This
-                          takes about a minute.
-                        </p>
-                      )}
-
-                    {sec && !isEditing && (
-                      <div className="mt-4 space-y-3">
-                        {sec.paragraphs.map((p, i) => (
-                          <p key={i}>{p}</p>
-                        ))}
-                        {sec.gaps.length > 0 && (
-                          <div className="panel panel--lightline-sand mt-4">
-                            <span className="sys-label">
-                              Needs an answer before this can go out
-                            </span>
-                            <ul className="mt-3 space-y-2 text-sm">
-                              {sec.gaps.map((g, i) => (
-                                <li key={i}>
-                                  {g.question}
-                                  {g.why && (
-                                    <span className="text-faint"> · {g.why}</span>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                            <button
-                              type="button"
-                              className="btn btn--text mt-3"
-                              onClick={() => {
-                                showPane("questions");
-                              }}
-                            >
-                              Answer these
-                            </button>
-                          </div>
-                        )}
-                        <p className="text-xs text-faint">
-                          {sec.cites.length} fact
-                          {sec.cites.length === 1 ? "" : "s"} cited
-                        </p>
-                      </div>
-                    )}
-
-                    {sec && isEditing && (
-                      <div className="mt-4 space-y-3">
-                        <textarea
-                          className="input min-h-64 w-full"
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                        />
-                        <p className="text-xs text-faint">
-                          Blank line between paragraphs. The facts this section
-                          cites are kept.
-                        </p>
-                        <div className="flex gap-3">
-                          <button
-                            type="button"
-                            className="btn btn--primary"
-                            onClick={() => saveEdit(node.label)}
-                          >
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn--text"
-                            onClick={() => setEditing(null)}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {/* ---- the pricing section: engine output, printed ---- */}
-              <div
-                className={`panel${highlights.has("__pricing") ? " doc-sec--changed doc-sec--flash" : ""}`}
-                key={
-                  highlights.has("__pricing")
-                    ? `__pricing-${flashKey}`
-                    : "__pricing"
-                }
-                id="sec-__pricing"
-              >
-                <div className="flex flex-wrap items-baseline justify-between gap-3">
-                  <div className="min-w-0">
-                    <span className="sys-label">Pricing</span>
-                    <h3 className="doc-h mt-2">
-                      Investment
-                      {highlights.has("__pricing") && (
-                        <span className="doc-chip">Updated</span>
-                      )}
-                    </h3>
-                  </div>
-                </div>
-                {!pricing ? (
-                  <div className="mt-4">
-                    <p className="text-sm text-faint">
-                      Every figure here is computed from the rate card, never
-                      drafted. It builds as the pricing questions are
-                      answered.
-                    </p>
-                    <button
-                      type="button"
-                      className="btn btn--text mt-3"
-                      onClick={() => {
-                        showPane("questions");
-                      }}
-                    >
-                      Answer the pricing questions
-                    </button>
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-6">
-                    {pricing.illustrations.map((ill) => (
-                      <div key={ill.id}>
-                        <h4 className="text-sm font-medium">{ill.label}</h4>
-                        <p className="mt-1 text-xs text-faint">{ill.basis}</p>
-                        <div className="mt-3 overflow-x-auto">
-                          <table className="table text-sm">
-                            <thead>
-                              <tr>
-                                <th className="text-left">Service</th>
-                                <th className="text-right">Qty</th>
-                                <th className="text-right">Unit</th>
-                                <th className="text-right">Monthly</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {ill.lines.map((l) => (
-                                <tr key={l.id}>
-                                  <td>{l.label}</td>
-                                  <td className="text-right mono">
-                                    {l.quantity}
-                                  </td>
-                                  <td className="text-right mono">
-                                    {l.unitPrice.cents === 0
-                                      ? ""
-                                      : fmtCents(l.unitPrice.cents)}
-                                  </td>
-                                  <td className="text-right mono">
-                                    {fmtCents(l.lineTotal.cents)}
-                                  </td>
-                                </tr>
-                              ))}
-                              <tr>
-                                <td className="font-medium">Monthly total</td>
-                                <td />
-                                <td />
-                                <td className="text-right mono font-medium">
-                                  {fmtCents(ill.monthlyTotal.cents)}
-                                </td>
-                              </tr>
-                              <tr>
-                                <td className="font-medium">Annual total</td>
-                                <td />
-                                <td />
-                                <td className="text-right mono font-medium">
-                                  {fmtCents(ill.annualTotal.cents)}
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                        {ill.minimumApplied && (
-                          <p className="mt-2 text-xs text-faint">
-                            The monthly minimum applies to the fully managed
-                            line, so it is billed at the flat minimum rather
-                            than the per-user product.
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                    {pricing.passThroughItems.map((pt) => (
-                      <p className="text-sm" key={pt.label}>
-                        <span className="font-medium">{pt.label}</span> ·{" "}
-                        <span className="text-faint">{pt.detail}</span>
-                      </p>
-                    ))}
-                    {pricing.notes.map((n, i) => (
-                      <p className="text-sm text-faint" key={i}>
-                        {n}
-                      </p>
-                    ))}
-                    <details>
-                      <summary className="linklike text-sm">
-                        Adjust quantities
-                      </summary>
-                      <PricingForm
-                        inputs={inputs}
-                        busy={busy}
-                        onSave={async (next) => {
-                          if (!proposalId) return;
-                          setBusy(true);
-                          const res = await fetch(
-                            `/api/rfp/proposals/${proposalId}/pricing`,
-                            {
-                              method: "PUT",
-                              headers: { "content-type": "application/json" },
-                              body: JSON.stringify(next),
-                            }
-                          ).catch(() => null);
-                          setBusy(false);
-                          if (!res || !res.ok) {
-                            const d = res ? await res.json().catch(() => null) : null;
-                            setNotice(d?.message ?? "Not saved.");
-                            return;
-                          }
-                          const d = await res.json();
-                          setInputs(next);
-                          setPricing(d.quote ?? null);
-                          adoptRev(d.rev);
-                          setGateResult(null);
-                          showChanged(["__pricing"]);
-                        }}
-                      />
-                    </details>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ---- the rail ---- */}
-        <div
-          className={`${mobile !== "draft" ? "block" : "hidden"} lg:block rfp-rail min-w-0 mt-8 lg:mt-0`}
+          className={`${mobile !== "draft" ? "block" : "hidden"} lg:block rfp-rail min-w-0`}
         >
           <nav className="tabstrip tabstrip--rail" aria-label="Rail">
             {(["questions", "coverage", "checks", "tron"] as const).map((k) => (
@@ -1420,11 +1186,10 @@ export function Workspace({
                           className="linklike"
                           onClick={() => {
                             setMobile("draft");
-                            window.setTimeout(() => {
-                              document
-                                .getElementById(`sec-${lastWoven}`)
-                                ?.scrollIntoView({ block: "start" });
-                            }, 60);
+                            window.setTimeout(
+                              () => jumpTo(lastWoven.split(", ")[0]),
+                              60
+                            );
                           }}
                         >
                           View the section
@@ -1432,17 +1197,19 @@ export function Workspace({
                       </p>
                     )}
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <span className="sys-label">
-                        Question{" "}
-                        {String(answeredCount + 1).padStart(2, "0")}
-                      </span>
+                      <span className="sys-label">Question</span>
                       <span className="text-xs text-faint">
-                        {open.length - 1} more after this
+                        {open.length} open
+                        {answeredCount > 0
+                          ? ` · ${answeredCount} answered`
+                          : ""}
                       </span>
                     </div>
                     {current.kind === "gap" && (
                       <p className="mt-3 text-xs text-faint mono">
-                        {current.label} {current.sectionTitle}
+                        {current.targets
+                          .map((t) => `${t.label} ${t.sectionTitle}`.trim())
+                          .join(" · ")}
                       </p>
                     )}
                     <p className="mt-3">{current.text}</p>
@@ -1459,8 +1226,8 @@ export function Workspace({
                     {weaving === current.key ? (
                       <p className="mt-4 text-sm" role="status" aria-live="polite">
                         Weaving your answer into{" "}
-                        <span className="mono">{(current as Extract<OpenQuestion, { kind: "gap" }>).label}</span>. The
-                        section updates when it lands · about a minute.
+                        <span className="mono">{weaveProgress}</span>. Each
+                        section updates as it lands · about a minute apiece.
                       </p>
                     ) : current.kind === "pricing" ? (
                       <>
@@ -1599,9 +1366,9 @@ export function Workspace({
                 <span className="sys-label">Checks</span>
                 {!gateResult ? (
                   <p className="mt-3 text-sm">
-                    {totalGaps === 0
+                    {gapQuestionCount === 0
                       ? "The compliance rules have not run on this draft yet. Run them from the bar above."
-                      : `${totalGaps} open question${totalGaps === 1 ? "" : "s"} across the draft. Until they are answered, exports are marked WORKING DRAFT; the Questions pane walks through them.`}
+                      : `${gapQuestionCount} open question${gapQuestionCount === 1 ? "" : "s"} across ${gapSectionCount} section${gapSectionCount === 1 ? "" : "s"}. Until answered, exports are marked WORKING DRAFT; the Questions pane walks through them.`}
                   </p>
                 ) : (
                   <>
@@ -1634,11 +1401,11 @@ export function Workspace({
                     </div>
                   </>
                 )}
-                {totalGaps > 0 && gateResult && (
+                {gapQuestionCount > 0 && gateResult && (
                   <p className="mt-4 text-sm text-faint">
-                    Plus {totalGaps} open question
-                    {totalGaps === 1 ? "" : "s"} on the sections, answered in
-                    the Questions pane.
+                    Plus {gapQuestionCount} open question
+                    {gapQuestionCount === 1 ? "" : "s"} on the sections,
+                    answered in the Questions pane.
                   </p>
                 )}
               </>
@@ -1745,11 +1512,7 @@ export function Workspace({
                       className="linklike"
                       onClick={() => {
                         setMobile("draft");
-                        window.setTimeout(() => {
-                          document
-                            .getElementById(`sec-${tronApplied}`)
-                            ?.scrollIntoView({ block: "start" });
-                        }, 60);
+                        window.setTimeout(() => jumpTo(tronApplied), 60);
                       }}
                     >
                       View the section
@@ -1805,6 +1568,377 @@ export function Workspace({
             )}
           </div>
         </div>
+        {/* ---- the document (right at lg, like governance's doc pane).
+            The RAIL precedes it in the DOM (see below-moved markup): at lg
+            the visual order is rail-left/doc-right AND the keyboard order
+            matches — an order-utility swap once ran focus through dozens of
+            per-section buttons before the guided flow. ---- */}
+        <section
+          className={`${mobile === "draft" ? "block" : "hidden"} lg:block min-w-0 rfp-docpane`}
+          aria-label="The document. Updates as you answer."
+        >
+          {highlights.size > 0 && (
+            <p className="rfp-doc-receipt mb-3 text-sm">
+              Updated just now:{" "}
+              {[...highlights].map((h, i) => (
+                <span key={h}>
+                  {i > 0 && " · "}
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => jumpTo(h)}
+                  >
+                    {h === "__pricing" ? "Investment" : h}
+                  </button>
+                </span>
+              ))}
+            </p>
+          )}
+          {structure.length === 0 ? (
+            <div className="panel">
+              {docStatus === "read_failed" ? (
+                <p className="text-faint">
+                  This RFP was saved but could not be read for its structure.
+                  That is usually a brief drafting-service outage, not a
+                  problem with the document. Start it again from New RFP;
+                  pasting the same text works.
+                </p>
+              ) : docStatus !== "extracted" ? (
+                <p className="text-faint" role="status">
+                  Still reading this RFP. Reload in a minute; drafting starts
+                  once the structure is out.
+                </p>
+              ) : (
+                <p className="text-faint">
+                  No section structure was found in this RFP. That usually
+                  means it is a form to fill in rather than a document to
+                  write, which this workspace cannot draft yet. The
+                  requirements it did find are listed under Coverage.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="rfpdoc">
+              {/* Cover, in the proposal template's own language. */}
+              <header className="rfpdoc-cover">
+                <div className="rfpdoc-kicker">XL.net Proposal</div>
+                <h3 className="rfpdoc-title mt-4">{docTitle}</h3>
+                <div className="rfpdoc-bar mt-6" />
+                <p className="rfpdoc-muted mt-5" style={{ maxWidth: "34rem" }}>
+                  Prepared{clientName ? (
+                    <>
+                      {" "}for <strong style={{ color: "#15163b" }}>{clientName}</strong>
+                    </>
+                  ) : null}{" "}
+                  by XL.net. This is the working document: it drafts,
+                  answers, and prices itself here, then exports to Word or
+                  PDF.
+                </p>
+              </header>
+
+              {structure.map((node) => {
+                const sec = sections.find((s) => s.label === node.label);
+                const isEditing = editing === node.label;
+                const changed = highlights.has(node.label);
+                return (
+                  <section
+                    className={`mb-10${changed ? " doc-sec--changed doc-sec--flash" : ""}`}
+                    key={changed ? `${node.label}-${flashKey}` : node.label}
+                    id={`sec-${node.label}`}
+                  >
+                    <div className="rfpdoc-sechead">
+                      <div className="min-w-0">
+                        <div className="rfpdoc-kicker">{node.label || "Section"}</div>
+                        <h3 className="rfpdoc-h mt-1">
+                          {node.title}
+                          {changed && <span className="doc-chip">Updated</span>}
+                        </h3>
+                      </div>
+                      <div className="rfpdoc-actions flex flex-wrap items-center gap-4">
+                        {sec && (
+                          <span className="rfpdoc-faint">
+                            {when(sec.updatedAt)}
+                          </span>
+                        )}
+                        {!sec ? (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => generate(node.label, node.title)}
+                          >
+                            {run?.active &&
+                            run.current === `${node.label} ${node.title}`.trim()
+                              ? "Drafting"
+                              : "Draft this"}
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditing(node.label);
+                                setEditText(sec.paragraphs.join("\n\n"));
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setScope(node.label);
+                                showPane("tron");
+                              }}
+                            >
+                              Ask Tron
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {run?.active &&
+                      run.current === `${node.label} ${node.title}`.trim() &&
+                      !sec && (
+                        <p className="rfpdoc-faint mt-4 text-sm" role="status">
+                          Reading the section and the facts behind it. This
+                          takes about a minute.
+                        </p>
+                      )}
+                    {!sec && !run?.active && (
+                      <p className="rfpdoc-faint mt-4 text-sm italic">
+                        Not drafted yet.
+                      </p>
+                    )}
+
+                    {sec && !isEditing && (
+                      <div className="mt-4 space-y-3">
+                        {sec.paragraphs.map((p, i) => (
+                          <p key={i}>{p}</p>
+                        ))}
+                        {sec.gaps.length > 0 && (
+                          <div className="rfpdoc-gaps mt-4">
+                            <div className="rfpdoc-kicker rfpdoc-kicker--warn">
+                              Needs an answer before this can go out
+                            </div>
+                            <ul className="mt-2 space-y-1 text-sm">
+                              {sec.gaps.map((g, i) => (
+                                <li key={i}>
+                                  {g.question}
+                                  {g.why && (
+                                    <span className="rfpdoc-faint"> · {g.why}</span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                            <div className="rfpdoc-actions mt-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  showPane("questions");
+                                }}
+                              >
+                                Answer these
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        <p className="rfpdoc-faint text-xs">
+                          {sec.cites.length} fact
+                          {sec.cites.length === 1 ? "" : "s"} cited
+                        </p>
+                      </div>
+                    )}
+
+                    {sec && isEditing && (
+                      <div className="mt-4 space-y-3">
+                        <textarea
+                          className="input min-h-64 w-full"
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                        />
+                        <p className="rfpdoc-faint text-xs">
+                          Blank line between paragraphs. The facts this section
+                          cites are kept.
+                        </p>
+                        <div className="rfpdoc-actions flex gap-4">
+                          <button
+                            type="button"
+                            onClick={() => saveEdit(node.label)}
+                          >
+                            Save
+                          </button>
+                          <button type="button" onClick={() => setEditing(null)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+
+              {/* ---- Investment: engine output, printed on the paper ---- */}
+              <section
+                className={`mb-4${highlights.has("__pricing") ? " doc-sec--changed doc-sec--flash" : ""}`}
+                key={
+                  highlights.has("__pricing")
+                    ? `__pricing-${flashKey}`
+                    : "__pricing"
+                }
+                id="sec-__pricing"
+              >
+                <div className="rfpdoc-sechead">
+                  <div className="min-w-0">
+                    <div className="rfpdoc-kicker">Pricing</div>
+                    <h3 className="rfpdoc-h mt-1">
+                      Investment
+                      {highlights.has("__pricing") && (
+                        <span className="doc-chip">Updated</span>
+                      )}
+                    </h3>
+                  </div>
+                </div>
+                {!pricing ? (
+                  <div className="mt-4">
+                    <p className="rfpdoc-faint text-sm italic">
+                      Every figure here is computed from the rate card, never
+                      drafted. It builds as the pricing questions are
+                      answered.
+                    </p>
+                    <div className="rfpdoc-actions mt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          showPane("questions");
+                        }}
+                      >
+                        Answer the pricing questions
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-6">
+                    {pricing.illustrations.map((ill) => (
+                      <div key={ill.id}>
+                        <h4
+                          className="rfpdoc-h"
+                          style={{ fontSize: "15px" }}
+                        >
+                          {ill.label}
+                        </h4>
+                        <p className="rfpdoc-muted mt-1 text-sm">{ill.basis}</p>
+                        <div className="mt-3 overflow-x-auto">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Service</th>
+                                <th style={{ textAlign: "right" }}>Qty</th>
+                                <th style={{ textAlign: "right" }}>Unit</th>
+                                <th style={{ textAlign: "right" }}>Monthly</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {ill.lines.map((l) => (
+                                <tr key={l.id}>
+                                  <td>{l.label}</td>
+                                  <td style={{ textAlign: "right" }}>
+                                    {l.quantity}
+                                  </td>
+                                  <td style={{ textAlign: "right" }}>
+                                    {l.unitPrice.cents === 0
+                                      ? ""
+                                      : fmtCents(l.unitPrice.cents)}
+                                  </td>
+                                  <td style={{ textAlign: "right" }}>
+                                    {fmtCents(l.lineTotal.cents)}
+                                  </td>
+                                </tr>
+                              ))}
+                              <tr className="rfpdoc-total">
+                                <td>Monthly total</td>
+                                <td />
+                                <td />
+                                <td style={{ textAlign: "right" }}>
+                                  {fmtCents(ill.monthlyTotal.cents)}
+                                </td>
+                              </tr>
+                              <tr className="rfpdoc-total">
+                                <td>Annual total</td>
+                                <td />
+                                <td />
+                                <td style={{ textAlign: "right" }}>
+                                  {fmtCents(ill.annualTotal.cents)}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                        {ill.minimumApplied && (
+                          <p className="rfpdoc-faint mt-2 text-sm">
+                            The monthly minimum applies to the fully managed
+                            line, so it is billed at the flat minimum rather
+                            than the per-user product.
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                    {pricing.passThroughItems.map((pt) => (
+                      <p className="text-sm" key={pt.label}>
+                        <strong style={{ color: "#15163b" }}>{pt.label}:</strong>{" "}
+                        <span className="rfpdoc-muted">{pt.detail}</span>
+                      </p>
+                    ))}
+                    {pricing.notes.map((n, i) => (
+                      <p className="rfpdoc-muted text-sm" key={i}>
+                        {n}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {/* Outside the flash-keyed section: the wash remounts its key,
+                  and a remount mid-edit wiped this form's state. */}
+              {pricing && (
+                <div className="rfpdoc-adjust">
+                    <details>
+                      <summary className="linklike text-sm">
+                        Adjust quantities
+                      </summary>
+                      <PricingForm
+                        inputs={inputs}
+                        busy={busy}
+                        onSave={async (next) => {
+                          if (!proposalId) return;
+                          setBusy(true);
+                          const res = await fetch(
+                            `/api/rfp/proposals/${proposalId}/pricing`,
+                            {
+                              method: "PUT",
+                              headers: { "content-type": "application/json" },
+                              body: JSON.stringify(next),
+                            }
+                          ).catch(() => null);
+                          setBusy(false);
+                          if (!res || !res.ok) {
+                            const d = res ? await res.json().catch(() => null) : null;
+                            setNotice(d?.message ?? "Not saved.");
+                            return;
+                          }
+                          const d = await res.json();
+                          setInputs(next);
+                          setPricing(d.quote ?? null);
+                          adoptRev(d.rev);
+                          setGateResult(null);
+                          showChanged(["__pricing"]);
+                        }}
+                      />
+                    </details>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       </div>
     </>
   );
