@@ -24,7 +24,8 @@
     "test:peg": "node scripts/peg-score-tests.mjs",
     "qa:hi-speed": "node scripts/qa/hi-speed-test.mjs",
     "test:rfp": "tsx scripts/rfp-tests.ts",
-    "test:staffcount": "tsx scripts/rfp-staff-count-tests.ts"
+    "test:staffcount": "tsx scripts/rfp-staff-count-tests.ts",
+    "test:rfpletter": "tsx scripts/rfp-letter-tests.ts"
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",

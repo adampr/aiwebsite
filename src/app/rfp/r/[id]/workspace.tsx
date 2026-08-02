@@ -37,6 +37,8 @@ import {
   type QuoteInputs,
 } from "@/lib/rfp/quote";
 import { parseStaffRange, type StatedStaff } from "@/lib/rfp/staff-count";
+import { DEFAULT_LETTER_BODY, LETTER_LABEL, LETTER_TITLE } from "@/lib/rfp/letter";
+import { COMPANY_SIGNATURE, type PersonSignature } from "@/lib/rfp/signature";
 import type { PricingQuote } from "@/lib/rfp/content-model";
 import type { GateResult } from "@/lib/rfp/validators/gate";
 
@@ -246,6 +248,7 @@ export function Workspace({
   statedStaff,
   preparedBy,
   ownerEmail,
+  signature,
 }: {
   documentId: string;
   proposalId: string | null;
@@ -266,6 +269,7 @@ export function Workspace({
   statedStaff: StatedStaff | null;
   preparedBy: string;
   ownerEmail: string;
+  signature: PersonSignature;
 }) {
   const router = useRouter();
   const [sections, setSectionsState] = useState<Section[]>(initialSections);
@@ -358,7 +362,11 @@ export function Workspace({
     active: boolean;
     done: number;
     total: number;
+    /** Display name only; never a reserved label. */
     current: string;
+    /** The raw label, for identity checks — a client section titled
+     *  "Cover Letter" must not light the letter card's Drafting state. */
+    currentLabel: string;
     failures: string[];
   } | null>(null);
   const stopRef = useRef(false);
@@ -424,6 +432,20 @@ export function Workspace({
 
   const covered = new Set(sections.map((s) => s.label));
   const undrafted = structure.filter((n) => !covered.has(n.label));
+  // The letter record shares the sections array under its reserved label;
+  // every count a person reads must exclude it or "18 of 17" appears.
+  const letterSec = sections.find((s) => s.label === LETTER_LABEL) ?? null;
+  const draftedCount = sections.filter(
+    (s) => s.label !== LETTER_LABEL
+  ).length;
+  // ISO timestamps compare lexicographically. Gap weaves, Tron accepts, and
+  // single-section redrafts all change content under the letter without
+  // redrafting it; the hint keeps a stale summary from reading as current.
+  const letterStale =
+    letterSec !== null &&
+    sections.some(
+      (s) => s.label !== LETTER_LABEL && s.updatedAt > letterSec.updatedAt
+    );
 
   // Cover and letter furniture date, en-US long form like the export's.
   // Server and viewer can straddle midnight, so the spans carry
@@ -629,11 +651,13 @@ export function Workspace({
       revRef.current = rev;
   }, []);
 
-  /** Draft one section: 202 then poll to completion. */
+  /** Draft one section: 202 then poll to completion. `force` is the letter
+   *  redraft button's explicit consent to replace a hand-edited letter. */
   const draftOne = useCallback(
     async (
       label: string,
-      title: string
+      title: string,
+      force = false
     ): Promise<{ error: string | null; busy: boolean }> => {
       // Every fetch in this file goes through a rejection guard: an
       // unhandled rejection here would unwind draftAll past its cleanup and
@@ -641,7 +665,7 @@ export function Workspace({
       const res = await fetch(`/api/rfp/documents/${documentId}/generate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sectionLabel: label, sectionTitle: title }),
+        body: JSON.stringify({ sectionLabel: label, sectionTitle: title, force }),
       }).catch(() => null);
       if (!res)
         return { error: "The server could not be reached.", busy: false };
@@ -649,7 +673,11 @@ export function Workspace({
         const d = await res.json().catch(() => null);
         return {
           error: d?.message ?? "That section could not be drafted.",
-          busy: res.status === 409,
+          // Only a real claim conflict stops a draft-all run; the letter's
+          // own 409s (not_ready, human_letter) are per-target failures, and
+          // reading them as busy produced a false "another draft is already
+          // running" notice.
+          busy: res.status === 409 && d?.error === "busy",
         };
       }
       // One section measured 28-90s. Poll the PROPOSAL's gen state (the old
@@ -680,25 +708,57 @@ export function Workspace({
     [documentId, pollOnce, showChanged]
   );
 
-  /** The CoWork loop: every undrafted section, one call at a time. */
+  /** The CoWork loop: every undrafted section, one call at a time, and the
+   *  cover letter LAST (owner directive 2026-08-02): it is the high-level
+   *  summary of the finished response, and drafted first it had nothing to
+   *  summarize. Any run that lands a section redrafts it so it never
+   *  summarizes a document newer than itself; a human-edited letter is never
+   *  overwritten by the loop. */
   const draftAll = useCallback(async () => {
     const remaining = structure.filter(
       (n) => !sections.some((s) => s.label === n.label)
     );
-    if (!remaining.length) return;
+    const letterRec = sections.find((s) => s.label === LETTER_LABEL);
+    const draftedNow = sections.filter(
+      (s) => s.label !== LETTER_LABEL
+    ).length;
+    const letterAtEnd =
+      (remaining.length > 0 || draftedNow > 0) &&
+      letterRec?.generatedBy !== "human" &&
+      (remaining.length > 0 || !letterRec);
+    if (!remaining.length && !letterAtEnd) return;
+    const targets = [
+      ...remaining,
+      ...(letterAtEnd ? [{ label: LETTER_LABEL, title: LETTER_TITLE }] : []),
+    ];
     stopRef.current = false;
     setBusy(true);
     setNotice("");
     const failures: string[] = [];
     let stoppedByBusy = false;
-    for (let i = 0; i < remaining.length; i++) {
+    for (let i = 0; i < targets.length; i++) {
       if (stopRef.current) break;
-      const node = remaining[i];
+      const node = targets[i];
+      // The letter guard re-checks LIVE state at its turn, not the closure
+      // from click time: an edit made while section 9 of 17 was drafting
+      // stamped the letter human, and the loop must honor that. The server
+      // enforces the same rule; this skip just avoids a noisy failure line.
+      if (
+        node.label === LETTER_LABEL &&
+        sectionsRef.current.find((s) => s.label === LETTER_LABEL)
+          ?.generatedBy === "human"
+      )
+        continue;
+      const display =
+        node.label === LETTER_LABEL
+          ? LETTER_TITLE
+          : `${node.label} ${node.title}`.trim();
       setRun({
         active: true,
         done: i,
-        total: remaining.length,
-        current: `${node.label} ${node.title}`.trim(),
+        total: targets.length,
+        current: display,
+        currentLabel: node.label,
         failures,
       });
       const { error: err, busy: wasBusy } = await draftOne(
@@ -712,7 +772,7 @@ export function Workspace({
         stoppedByBusy = true;
         break;
       }
-      if (err) failures.push(`${node.label || node.title}: ${err}`);
+      if (err) failures.push(`${display}: ${err}`);
     }
     setRun((r) =>
       r ? { ...r, active: false, done: r.total, failures } : null
@@ -790,17 +850,22 @@ export function Workspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function generate(label: string, title: string) {
+  async function generate(label: string, title: string, force = false) {
     setBusy(true);
     setNotice("");
     setRun({
       active: true,
       done: 0,
       total: 1,
-      current: `${label} ${title}`.trim(),
+      // Same display mapping as draftAll: the reserved label must never
+      // surface in the runbar, and the letter card's Drafting state keys
+      // on currentLabel.
+      current:
+        label === LETTER_LABEL ? LETTER_TITLE : `${label} ${title}`.trim(),
+      currentLabel: label,
       failures: [],
     });
-    const { error: err } = await draftOne(label, title);
+    const { error: err } = await draftOne(label, title, force);
     setRun(null);
     setBusy(false);
     if (err) setNotice(err);
@@ -1208,7 +1273,7 @@ export function Workspace({
               </p>
             ) : (
               <p className="text-sm text-faint">
-                {sections.length} of {structure.length || sections.length}{" "}
+                {draftedCount} of {structure.length || draftedCount}{" "}
                 sections drafted
                 {queue.length > 0 && (
                   <>
@@ -1230,16 +1295,19 @@ export function Workspace({
               >
                 Stop after this section
               </button>
-            ) : undrafted.length > 0 ? (
+            ) : undrafted.length > 0 ||
+              (draftedCount > 0 && !letterSec) ? (
               <button
                 type="button"
                 className="btn btn--primary"
                 disabled={busy}
                 onClick={() => void draftAll()}
               >
-                {sections.length === 0
+                {draftedCount === 0
                   ? "Draft the whole response"
-                  : `Draft the ${undrafted.length} remaining`}
+                  : undrafted.length > 0
+                    ? `Draft the ${undrafted.length} remaining`
+                    : "Draft the cover letter"}
               </button>
             ) : null}
             <button
@@ -1510,7 +1578,7 @@ export function Workspace({
             {pane === "coverage" && (
               <>
                 <span className="sys-label">
-                  {sections.length} of {structure.length} sections drafted
+                  {draftedCount} of {structure.length} sections drafted
                 </span>
                 <p className="mt-3 text-sm text-faint">
                   Every ask the client made, in their words and their order.
@@ -1626,7 +1694,9 @@ export function Workspace({
                     <option value="">Pick a section</option>
                     {sections.map((sec) => (
                       <option key={sec.label} value={sec.label}>
-                        {sec.label} {sec.title}
+                        {sec.label === LETTER_LABEL
+                          ? LETTER_TITLE
+                          : `${sec.label} ${sec.title}`}
                       </option>
                     ))}
                   </select>
@@ -1690,7 +1760,11 @@ export function Workspace({
                 )}
                 {tronApplied && !proposal && (
                   <p className="mt-3 text-xs text-faint" role="status">
-                    Used in <span className="mono">{tronApplied}</span>.{" "}
+                    Used in{" "}
+                    <span className="mono">
+                      {tronApplied === LETTER_LABEL ? LETTER_TITLE : tronApplied}
+                    </span>
+                    .{" "}
                     <button
                       type="button"
                       className="linklike"
@@ -1707,7 +1781,10 @@ export function Workspace({
                 {proposal && (
                   <div className="mt-6 border-t pt-4" style={{ borderColor: "var(--xl-line)" }}>
                     <span className="sys-label">
-                      Proposed for {proposal.label}
+                      Proposed for{" "}
+                      {proposal.label === LETTER_LABEL
+                        ? LETTER_TITLE
+                        : proposal.label}
                     </span>
                     {proposal.note && (
                       <p className="mt-3 text-sm text-faint">{proposal.note}</p>
@@ -1776,7 +1853,11 @@ export function Workspace({
                     className="linklike"
                     onClick={() => jumpTo(h)}
                   >
-                    {h === "__pricing" ? "Investment" : secKicker(h)}
+                    {h === "__pricing"
+                      ? "Investment"
+                      : h === LETTER_LABEL
+                        ? LETTER_TITLE
+                        : secKicker(h)}
                   </button>
                 ))}
               </p>
@@ -1856,40 +1937,215 @@ export function Workspace({
                 <PageFoot />
               </header>
 
-              {/* Page 2 — the cover letter: the personal page, addressed to
-                  the client, signed by whoever owns this draft. Kept
-                  claim-free on purpose: company claims belong in drafted,
-                  cited sections, not in host furniture. */}
-              <section className="rfpdoc-page" aria-label="Cover letter">
-                <div className="rfpdoc-pagehead">
-                  <img
-                    className="rfpdoc-logo rfpdoc-logo--sm"
-                    src="/brand/xlnet-logo.png"
-                    alt="XL.net"
-                  />
-                  <span className="rfpdoc-kicker">Cover Letter</span>
-                </div>
-                <div className="rfpdoc-letter">
-                  <p suppressHydrationWarning>{dateLabel}</p>
-                  {clientName && (
-                    <p className="rfpdoc-letter-name mt-5">{clientName}</p>
+              {/* Page 2 — the cover letter. Its body DRAFTS, under the
+                  reserved "__letter" record, and drafts LAST: a high-level
+                  summary of the finished sections (owner directive
+                  2026-08-02; drafted first it was two sentences). Date,
+                  addressee, salutation, and the standard XL.net signature
+                  block stay host furniture. */}
+              <section
+                className="rfpdoc-page"
+                aria-label="Cover letter"
+                id={`sec-${LETTER_LABEL}`}
+              >
+                <div
+                  className={
+                    highlights.has(LETTER_LABEL)
+                      ? "doc-sec--changed doc-sec--flash"
+                      : undefined
+                  }
+                  key={`c-${flashSeq.current.get(LETTER_LABEL) ?? 0}`}
+                >
+                  <div className="rfpdoc-pagehead">
+                    <img
+                      className="rfpdoc-logo rfpdoc-logo--sm"
+                      src="/brand/xlnet-logo.png"
+                      alt="XL.net"
+                    />
+                    <span className="rfpdoc-kicker">
+                      Cover Letter
+                      {highlights.has(LETTER_LABEL) && (
+                        <span className="doc-chip">Updated</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="rfpdoc-actions mt-2 flex flex-wrap items-center gap-4">
+                    {letterSec && (
+                      <span className="rfpdoc-faint">
+                        {when(letterSec.updatedAt)}
+                      </span>
+                    )}
+                    {letterSec ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditing(LETTER_LABEL);
+                            setEditText(letterSec.paragraphs.join("\n\n"));
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setScope(LETTER_LABEL);
+                            showPane("tron");
+                          }}
+                        >
+                          Ask Tron
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            generate(LETTER_LABEL, LETTER_TITLE, true)
+                          }
+                        >
+                          {run?.active && run.currentLabel === LETTER_LABEL
+                            ? "Drafting"
+                            : letterSec.generatedBy === "human"
+                              ? "Redraft (replaces your edit)"
+                              : "Redraft from the sections"}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busy || draftedCount === 0}
+                        onClick={() => generate(LETTER_LABEL, LETTER_TITLE)}
+                      >
+                        {run?.active && run.currentLabel === LETTER_LABEL
+                          ? "Drafting"
+                          : "Draft the cover letter"}
+                      </button>
+                    )}
+                  </div>
+                  {run?.active && run.currentLabel === LETTER_LABEL && (
+                    <p className="rfpdoc-faint mt-3 text-sm" role="status">
+                      Reading the drafted sections and summarizing them.
+                      This takes about a minute.
+                    </p>
                   )}
-                  {/* The addressee line above already names the client;
-                      restating it read "Dear The Children's..." */}
-                  <p className="mt-6">Dear evaluation team,</p>
-                  <p className="mt-4">
-                    Thank you for the opportunity to respond to your Request
-                    for Proposal. The pages that follow address your document
-                    in its own structure, section by section, together with
-                    our pricing.
-                  </p>
-                  <p className="mt-4">
-                    We welcome the opportunity to discuss this proposal with
-                    you.
-                  </p>
-                  <p className="mt-6">Regards,</p>
-                  <p className="rfpdoc-letter-name mt-5">{preparedBy}</p>
-                  <p className="rfpdoc-muted">XL.net · {ownerEmail}</p>
+                  {!letterSec && !run?.active && (
+                    <p className="rfpdoc-faint mt-3 text-xs italic">
+                      The letter drafts last, as a summary of the whole
+                      response, once the sections below are written.
+                    </p>
+                  )}
+                  {letterStale && !run?.active && (
+                    <p className="rfpdoc-faint mt-3 text-xs" role="status">
+                      Sections have changed since this letter was drafted.
+                    </p>
+                  )}
+                  <div className="rfpdoc-letter mt-4">
+                    <p suppressHydrationWarning>{dateLabel}</p>
+                    {clientName && (
+                      <p className="rfpdoc-letter-name mt-5">{clientName}</p>
+                    )}
+                    {/* The addressee line above already names the client;
+                        restating it read "Dear The Children's..." */}
+                    <p className="mt-6">Dear evaluation team,</p>
+                    {editing === LETTER_LABEL && letterSec ? (
+                      <div className="mt-4 space-y-3">
+                        <textarea
+                          className="input min-h-64 w-full"
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                        />
+                        <p className="rfpdoc-faint text-xs">
+                          Blank line between paragraphs. The facts the letter
+                          rests on are kept.
+                        </p>
+                        <div className="rfpdoc-actions flex gap-4">
+                          <button
+                            type="button"
+                            onClick={() => saveEdit(LETTER_LABEL)}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditing(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      // .length, not ??: a cleared edit stores [] and the
+                      // EXPORT falls back to the default body, so the
+                      // preview must too or screen and file diverge.
+                      (letterSec?.paragraphs.length
+                        ? letterSec.paragraphs
+                        : DEFAULT_LETTER_BODY
+                      ).map((p, i) => (
+                        <p className="mt-4" key={i}>
+                          {p}
+                        </p>
+                      ))
+                    )}
+                    <p className="mt-6 rfpdoc-sig-person">Regards,</p>
+                    <div className="rfpdoc-sig mt-5">
+                      {/* The source signature does NOT bold the name. */}
+                      <p className="rfpdoc-sig-person">
+                        {signature.name}
+                        {signature.linkedinUrl && (
+                          <>
+                            {" "}
+                            <a
+                              className="rfpdoc-sig-link"
+                              href={signature.linkedinUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {"{LinkedIn}"}
+                            </a>
+                          </>
+                        )}
+                      </p>
+                      {signature.title && (
+                        <p className="rfpdoc-sig-person">{signature.title}</p>
+                      )}
+                      <p className="rfpdoc-sig-contact">
+                        {signature.phone
+                          ? signature.fax
+                            ? `${signature.phone} ph | fax ${signature.fax}`
+                            : `${signature.phone} ph`
+                          : ownerEmail}
+                      </p>
+                      <p className="mt-3">
+                        <a
+                          className="rfpdoc-sig-co"
+                          href={COMPANY_SIGNATURE.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {COMPANY_SIGNATURE.name}
+                        </a>
+                      </p>
+                      <p className="rfpdoc-sig-tagline">
+                        <span className="rfpdoc-sig-tagline-o">
+                          {COMPANY_SIGNATURE.tagline.orange}
+                        </span>
+                        <span className="rfpdoc-sig-tagline-n">
+                          {COMPANY_SIGNATURE.tagline.navy}
+                        </span>
+                      </p>
+                      {COMPANY_SIGNATURE.articles.map((a) => (
+                        <p className="mt-2" key={a.url}>
+                          <a
+                            className="rfpdoc-sig-article"
+                            href={a.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {a.title}
+                          </a>
+                        </p>
+                      ))}
+                    </div>
+                  </div>
                 </div>
                 <PageFoot />
               </section>

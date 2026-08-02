@@ -22,6 +22,7 @@ import {
   AlignmentType,
   BorderStyle,
   Document,
+  ExternalHyperlink,
   Footer,
   HeightRule,
   Packer,
@@ -41,6 +42,7 @@ import {
   type RateCard,
   type ResolvedProposal,
 } from "./content-model";
+import { COMPANY_SIGNATURE, SIGNATURE_COLORS } from "./signature";
 
 const INK = "15163B";
 const NAVY = "2F31C5";
@@ -59,6 +61,22 @@ export type ExportView = {
   dateLabel: string;
   preparedBy: string;
   contactEmail: string;
+  /** The cover letter: drafted last as a summary of the sections, closed by
+   *  the standard XL.net signature block (per-person lines from resolved). */
+  letter: {
+    addressee: string[];
+    salutation: string;
+    body: string[];
+    closing: string;
+    signature: {
+      name: string;
+      title: string;
+      email: string;
+      phone: string;
+      fax: string;
+      linkedinUrl: string;
+    };
+  };
   sections: { label: string; title: string; paragraphs: string[] }[];
   pricing: PricingQuote | null;
   minimumSentence: string | null;
@@ -80,6 +98,13 @@ export function buildExportView(
     dateLabel: resolved.cover.dateLabel,
     preparedBy: resolved.letter.signature.name,
     contactEmail: resolved.letter.signature.email,
+    letter: {
+      addressee: resolved.letter.addressee,
+      salutation: resolved.letter.salutation,
+      body: resolved.letter.body,
+      closing: resolved.letter.closing,
+      signature: resolved.letter.signature,
+    },
     sections: resolved.sections.map((s) => ({
       label: s.structureLabel,
       title: s.title,
@@ -95,6 +120,15 @@ export function buildExportView(
 }
 
 const money = (m: Parameters<typeof formatMoney>[0]) => formatMoney(m);
+
+/** "#1f497d" → "1F497D" (docx wants bare uppercase hex). */
+const hex = (c: string) => c.replace("#", "").toUpperCase();
+
+/** "847.242.1299 ph | fax 847.686.0201", degrading with what is known. */
+export function signaturePhoneLine(sig: ExportView["letter"]["signature"]): string | null {
+  if (!sig.phone) return null;
+  return sig.fax ? `${sig.phone} ph | fax ${sig.fax}` : `${sig.phone} ph`;
+}
 
 function illustrationRows(ill: PricingIllustration): string[][] {
   return ill.lines.map((l) => [
@@ -229,6 +263,145 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
         }),
       ],
     }),
+    new Paragraph({ children: [], spacing: { after: 240 } })
+  );
+
+  // ---- Cover letter: drafted last, signed with the standard XL.net block.
+  const sig = view.letter.signature;
+  const phoneLine = signaturePhoneLine(sig);
+  const sigLine = (
+    runs: (TextRun | ExternalHyperlink)[],
+    opts: { before?: number; after?: number } = {}
+  ) =>
+    new Paragraph({
+      children: runs,
+      spacing: { before: opts.before ?? 0, after: opts.after ?? 20 },
+    });
+  const sigLink = (text: string, url: string, color: string, size = 18) =>
+    new ExternalHyperlink({
+      link: url,
+      children: [
+        new TextRun({
+          text,
+          bold: true,
+          size,
+          font: "Tahoma",
+          color,
+          underline: {},
+        }),
+      ],
+    });
+
+  children.push(
+    kicker("Cover Letter"),
+    new Paragraph({
+      children: [
+        new TextRun({ text: view.dateLabel, size: 20, font: "Georgia", color: MUTED }),
+      ],
+      spacing: { after: 120 },
+    }),
+    ...view.letter.addressee.map(
+      (line) =>
+        new Paragraph({
+          children: [
+            new TextRun({ text: line, bold: true, size: 22, font: "Arial", color: INK }),
+          ],
+          spacing: { after: 60 },
+        })
+    ),
+    new Paragraph({
+      children: [
+        new TextRun({ text: view.letter.salutation, size: 22, font: "Georgia", color: "31324C" }),
+      ],
+      spacing: { before: 120, after: 160 },
+    }),
+    ...view.letter.body.map(
+      (p) =>
+        new Paragraph({
+          children: [
+            new TextRun({ text: p, size: 22, font: "Georgia", color: "31324C" }),
+          ],
+          spacing: { after: 160, line: 330 },
+        })
+    ),
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: view.letter.closing,
+          size: 20,
+          font: "Tahoma",
+          color: hex(SIGNATURE_COLORS.person),
+        }),
+      ],
+      spacing: { before: 120, after: 160 },
+    }),
+    sigLine([
+      new TextRun({
+        text: sig.name + (sig.linkedinUrl ? " " : ""),
+        size: 20,
+        font: "Tahoma",
+        color: hex(SIGNATURE_COLORS.person),
+      }),
+      ...(sig.linkedinUrl
+        ? [
+            new ExternalHyperlink({
+              link: sig.linkedinUrl,
+              children: [
+                new TextRun({
+                  text: "{LinkedIn}",
+                  size: 20,
+                  font: "Tahoma",
+                  color: hex(SIGNATURE_COLORS.link),
+                  underline: {},
+                }),
+              ],
+            }),
+          ]
+        : []),
+    ]),
+    ...(sig.title
+      ? [
+          sigLine([
+            new TextRun({
+              text: sig.title,
+              size: 18,
+              font: "Tahoma",
+              color: hex(SIGNATURE_COLORS.person),
+            }),
+          ]),
+        ]
+      : []),
+    sigLine([
+      new TextRun({
+        text: phoneLine ?? sig.email,
+        size: 18,
+        font: "Tahoma",
+        color: hex(SIGNATURE_COLORS.contact),
+      }),
+    ]),
+    sigLine(
+      [sigLink(COMPANY_SIGNATURE.name, COMPANY_SIGNATURE.url, hex(SIGNATURE_COLORS.link), 20)],
+      { before: 120 }
+    ),
+    sigLine([
+      new TextRun({
+        text: COMPANY_SIGNATURE.tagline.orange,
+        bold: true,
+        size: 18,
+        font: "Tahoma",
+        color: hex(SIGNATURE_COLORS.taglineOrange),
+      }),
+      new TextRun({
+        text: COMPANY_SIGNATURE.tagline.navy,
+        bold: true,
+        size: 18,
+        font: "Tahoma",
+        color: hex(SIGNATURE_COLORS.taglineNavy),
+      }),
+    ]),
+    ...COMPANY_SIGNATURE.articles.map((a) =>
+      sigLine([sigLink(a.title, a.url, hex(SIGNATURE_COLORS.taglineNavy))])
+    ),
     new Paragraph({ children: [], spacing: { after: 240 } })
   );
 
@@ -510,6 +683,97 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
   doc.fillColor("black");
   doc.y += 24;
   doc.x = PAGE.margin;
+
+  // ---- Cover letter: drafted last, signed with the standard XL.net block.
+  // Helvetica stands in for the signature's Tahoma (built-in metrics only).
+  {
+    const sig = view.letter.signature;
+    KICK("Cover Letter");
+    doc.moveDown(0.4);
+    doc
+      .font("Times-Roman")
+      .fontSize(10)
+      .fillColor("#5b5d78")
+      .text(view.dateLabel, { width: CONTENT_W });
+    doc.moveDown(0.4);
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("#15163b");
+    for (const line of view.letter.addressee)
+      doc.text(line, { width: CONTENT_W });
+    doc.moveDown(0.5);
+    doc
+      .font("Times-Roman")
+      .fontSize(11)
+      .fillColor("#31324c")
+      .text(view.letter.salutation, { width: CONTENT_W });
+    doc.moveDown(0.6);
+    for (const p of view.letter.body) {
+      ensureRoom(40);
+      doc.text(p, { width: CONTENT_W, lineGap: 2.5 });
+      doc.moveDown(0.6);
+    }
+    // The signature block never splits across a page break.
+    ensureRoom(170);
+    doc
+      .font("Helvetica")
+      .fontSize(9.5)
+      .fillColor(SIGNATURE_COLORS.person)
+      .text(view.letter.closing);
+    doc.moveDown(0.8);
+    // The source signature does NOT bold the name.
+    doc
+      .font("Helvetica")
+      .fontSize(10)
+      .fillColor(SIGNATURE_COLORS.person)
+      .text(sig.name + (sig.linkedinUrl ? " " : ""), {
+        continued: Boolean(sig.linkedinUrl),
+        underline: false,
+      });
+    if (sig.linkedinUrl)
+      doc
+        .font("Helvetica")
+        .fillColor(SIGNATURE_COLORS.link)
+        .text("{LinkedIn}", { link: sig.linkedinUrl, underline: true });
+    if (sig.title)
+      doc
+        .font("Helvetica")
+        .fontSize(9)
+        .fillColor(SIGNATURE_COLORS.person)
+        .text(sig.title, { underline: false });
+    doc
+      .font("Helvetica")
+      .fontSize(9)
+      .fillColor(SIGNATURE_COLORS.contact)
+      .text(signaturePhoneLine(sig) ?? sig.email, { underline: false });
+    doc.moveDown(0.6);
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .fillColor(SIGNATURE_COLORS.link)
+      .text(COMPANY_SIGNATURE.name, {
+        link: COMPANY_SIGNATURE.url,
+        underline: true,
+      });
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(9)
+      .fillColor(SIGNATURE_COLORS.taglineOrange)
+      .text(COMPANY_SIGNATURE.tagline.orange, {
+        continued: true,
+        link: null,
+        underline: false,
+      })
+      .fillColor(SIGNATURE_COLORS.taglineNavy)
+      .text(COMPANY_SIGNATURE.tagline.navy, { link: null, underline: false });
+    for (const a of COMPANY_SIGNATURE.articles)
+      doc
+        .font("Helvetica-Bold")
+        .fontSize(8.5)
+        .fillColor(SIGNATURE_COLORS.taglineNavy)
+        .text(a.title, { width: CONTENT_W, link: a.url, underline: true });
+    doc.fillColor("black");
+    doc.moveDown(1);
+    doc.x = PAGE.margin;
+  }
 
   for (const sec of view.sections) {
     SECHEAD(sec.label ? `Section ${sec.label}` : "Section", sec.title);

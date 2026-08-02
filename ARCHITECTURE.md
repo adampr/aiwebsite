@@ -15,7 +15,14 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-02 fifth pass (RFP workspace §5.17.2
+Last verified against code: 2026-08-02 sixth pass (RFP workspace
+§5.17.4 **cover letter drafts LAST + standard XL.net signature block** —
+the letter is a drafted `__letter` record in sections_json, summarized
+from the finished sections by `draftCoverLetter()` at the end of every
+draft-all run; `src/lib/rfp/signature.ts` single-sources the owner's
+email-signature block for the workspace letter page and both exports,
+which now render the full letter; letter body joins the gate's scan
+surface); previous same-day fifth pass (RFP workspace §5.17.2
 **CoWork page anatomy** — the document pane renders the full reference
 render page-for-page: discrete sheets with running footers, arc-mark
 cover, claim-free cover letter, per-section pages, navy closing sheet;
@@ -3914,6 +3921,102 @@ helper that disappears once edited. Residual accepted risk: grounding
 proves provenance, not meaning — a grounded sentence about the wrong
 population ("we plan to grow to 500 users") prices wrong if staff do not
 read the visible quote; that quote is the designed mitigation.
+
+#### 5.17.4 The cover letter drafts LAST, and signs with the standard XL.net block
+
+Owner directive 2026-08-02: the cover letter is the high-level summary of
+the whole response, so it is drafted AFTER every section (drafted first it
+had nothing to summarize and came out two sentences), and every XL.netter
+signs it with the same email-signature block, varying only the personal
+lines.
+
+**Storage: a reserved record, not a new column.** The letter lives in
+`sections_json` under the reserved label `__letter`
+(`src/lib/rfp/letter.ts`: `LETTER_LABEL`, `LETTER_TITLE`,
+`DEFAULT_LETTER_BODY`, `splitSections()`). That buys it the whole section
+machinery unchanged — the generate claim/heartbeat/CAS, the rev-gated
+status poll, human edit (PATCH) and Tron revision (POST) on the section
+route, the flash-and-jump choreography — all keyed by label. Everything
+that iterates REAL sections splits it out: `resolveDraft()` routes its
+paragraphs into `ResolvedLetter.body` (never a trailing pseudo-section),
+the workspace excludes it from every visible count ("18 of 17" must not
+appear), and coverage/structure joins never see it. The label is
+unforgeable from outside: `readRfp()` strips leading underscores from
+client structure labels and requirement structureLabels, and the generate
+route 400s any other `__`-prefixed label.
+
+**Drafting (Turn 2b, `draftCoverLetter()` in `src/lib/rfp/brain.ts`).**
+Same envelope invariants (`do_not_store`, no requester, no groupName). It
+sees ONLY the client name, the RFP title, and the drafted sections — read
+FRESH at drafting time, not claim time, and passed through `fenced()`
+because section text is model output derived from the client's untrusted
+document (same standing as a recorded gap question). The client name and
+title sit above the fence in operator voice, so they are collapsed to a
+single line with fence-token runs stripped (punctuation stays: "O'Brien &
+Co, Inc." is a legitimate name); `draftSection`'s requirement lines get
+the same single-line collapse. The per-section excerpt budget scales with
+section count (22k split across all of them, 400-2000 chars each) so the
+24k fence cap never silently drops the tail sections of a large RFP.
+Rules mirror `draftSection` (no prices, no em dashes, no filler, no
+verbatim copying) plus the summary constraint: no capability or commitment
+the sections do not state, with exactly two furniture truths allowed (the
+response follows the client's structure; pricing is set out inside). It
+returns body paragraphs only; salutation, closing, and signature are host
+furniture. The record's `cites` are the deterministic union of the
+sections' cites — recorded PROVENANCE, not a validated control: no
+validator reads them; the letter's claims are covered transitively by the
+sections' own cited blocks plus the span scans. Gaps are always empty.
+The route 409s `not_ready` with no drafted section, and 409s
+`human_letter` when the stored letter is hand-edited and the request did
+not send `force: true` — the letter page's redraft button (relabelled
+"Redraft (replaces your edit)") is the only sender of `force`, so no
+automated run, stale tab, or direct POST can clobber a human's letter.
+The PATCH route stamps `generatedBy: "human"` on the letter record only —
+the ONE label-scoped carve-out from its carry-over invariant, safe because
+the letter never becomes blocks so A5/C1 never read it. In the workspace,
+`draftAll()` appends the letter as the LAST target of every run that
+lands a section, redrafts an `llm` letter so it never summarizes a stale
+document, and re-checks live state at the letter's turn so a mid-run hand
+edit is honored; the runbar offers "Draft the cover letter" when sections
+exist but the letter does not, and the letter card shows a staleness hint
+when any section's `updatedAt` postdates the letter's. `draftOne`
+classifies a 409 as run-stopping busy only when the body's error code is
+`busy`. Run state carries `currentLabel` alongside the display string so
+the letter card's Drafting state keys on the label, never on a title a
+client section could share. Unit suite: `npm run test:rfpletter`
+(`scripts/rfp-letter-tests.ts`) pins the reserved-label strip,
+`splitSections`, and the signature resolver.
+
+**Gate coverage.** `ResolvedLetter` gains `body: string[]` (drafted
+paragraphs, or `DEFAULT_LETTER_BODY` when none — also the fallback when a
+hand edit clears the body to `[]`, in the workspace and both emitters
+alike) and `resolvedTextSpans()` scans it (`letter`/`body[i]`), so D1/D2
+style scans and B7's currency sweep cover the letter like any section
+prose, and rule C2's `contentHash` includes it. A5/C1 are block-scoped
+and do not apply to the letter body; the prompt's summary constraint, the
+span scans, and human review (protected by the `human_letter` guard
+above) carry it.
+
+**Signature (`src/lib/rfp/signature.ts`).** Pure data, single-sourced for
+the workspace letter page and both emitters: `COMPANY_SIGNATURE` (XL.net
+link, the two-tone "XLerate Your Business" tagline, the two Forbes
+bylines) and `SIGNATURE_COLORS`, both taken verbatim from the owner's
+Gmail signature — including the details a careless port gets wrong: the
+signer's NAME is not bold in the source, and the anchors are literal
+`color:blue`. `signatureFor(email, displayName)` resolves the personal
+lines (name, title, phone "x ph | fax y", LinkedIn) from a per-email
+directory — Adam's entry is seeded; an unlisted signer gets their profile
+name, no title/phone lines, and their email standing in for the phone
+line. The signing identity is the PROPOSAL owner (the identity the gate
+and export use; the page falls back to the document owner before a
+proposal exists), so an admin drafting on another user's document signs
+consistently on screen and in the file. `ResolvedSignature` gains
+`fax`/`linkedinUrl`; the letter closing is "Regards," (the signature's
+own closing). Both export formats (`ExportView.letter`) now render the
+full cover letter between the cover block and the sections: date line,
+addressee, salutation, drafted body, and the signature block with real
+hyperlinks (docx `ExternalHyperlink`, pdfkit `link:`), Tahoma
+approximated by Helvetica in the PDF.
 
 ## 6. Database
 

@@ -13,6 +13,7 @@ import {
   listRequirements,
 } from "@/lib/rfp/db";
 import { ownerDisplayName } from "@/lib/rfp/gate-run";
+import { signatureFor } from "@/lib/rfp/signature";
 import { When } from "@/components/when";
 import { Workspace } from "./workspace";
 import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/route";
@@ -42,12 +43,18 @@ export default async function RfpWorkspacePage({
   const doc = await getDocument(gate.user, id);
   if (!doc) notFound();
 
-  const [requirements, proposal, sp, preparedBy] = await Promise.all([
+  const [requirements, proposal, sp] = await Promise.all([
     listRequirements(doc.id),
     getProposalForDocument(doc.id),
     searchParams,
-    ownerDisplayName(doc.ownerEmail),
   ]);
+
+  // The letter signs as the PROPOSAL owner — the identity the gate and the
+  // export sign with (an admin drafting on another user's document creates
+  // the proposal under their own email). Before any proposal exists the
+  // document owner stands in.
+  const signerEmail = proposal?.ownerEmail ?? doc.ownerEmail;
+  const preparedBy = await ownerDisplayName(signerEmail);
 
   const structure: { label: string; title: string }[] = doc.structureJson
     ? JSON.parse(doc.structureJson)
@@ -119,7 +126,8 @@ export default async function RfpWorkspacePage({
             : null
         }
         preparedBy={preparedBy}
-        ownerEmail={doc.ownerEmail}
+        ownerEmail={signerEmail}
+        signature={signatureFor(signerEmail, preparedBy)}
       />
     </div>
   );

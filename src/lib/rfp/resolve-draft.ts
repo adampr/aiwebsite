@@ -32,6 +32,8 @@ import {
   type Section,
 } from "./content-model";
 import { runGate, type GateResult } from "./validators/gate";
+import { DEFAULT_LETTER_BODY, splitSections } from "./letter";
+import { signatureFor } from "./signature";
 import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/route";
 
 const blockId = (label: string, i: number) =>
@@ -107,14 +109,21 @@ export function resolveDraft(input: DraftGateInput): {
 } {
   const { doc, proposal } = input;
 
+  // The letter record shares sectionsJson under its reserved label; it is
+  // routed into the letter furniture below, never into the section list,
+  // where it would render as a trailing pseudo-section.
+  const { letter: letterRecord, sections: drafted } = splitSections(
+    input.sections
+  );
+
   // Sections in the CLIENT's order (rule C4). A drafted section whose label
   // is no longer in the structure still renders, after the structured ones.
   const ordered: DraftSectionRecord[] = [];
   for (const node of input.structure) {
-    const sec = input.sections.find((s) => s.label === node.label);
+    const sec = drafted.find((s) => s.label === node.label);
     if (sec) ordered.push(sec);
   }
-  for (const sec of input.sections)
+  for (const sec of drafted)
     if (!ordered.includes(sec)) ordered.push(sec);
 
   const sections: Section[] = ordered.map((sec, ordinal) => {
@@ -173,14 +182,30 @@ export function resolveDraft(input: DraftGateInput): {
     letter: {
       dateLabel,
       addressee: [clientName],
-      salutation: `Dear ${clientName} evaluation team,`,
-      closing: "Sincerely,",
-      signature: {
-        name: input.ownerName,
-        title: "XL.net",
-        email: proposal.ownerEmail,
-        phone: "",
-      },
+      // The addressee line above already names the client; restating it
+      // read "Dear The Children's..." (same fix as the workspace page).
+      salutation: "Dear evaluation team,",
+      body: letterRecord?.paragraphs.length
+        ? letterRecord.paragraphs
+        : DEFAULT_LETTER_BODY,
+      // "Regards," is the closing of the standard XL.net signature block
+      // (owner's email signature, 2026-08-02); the signature module carries
+      // the per-person lines under it.
+      closing: "Regards,",
+      signature: (() => {
+        const sig = signatureFor(proposal.ownerEmail, input.ownerName);
+        return {
+          name: sig.name,
+          // Empty when the signer has no directory entry: the company half
+          // of the signature block names XL.net already, so a placeholder
+          // title would just duplicate it.
+          title: sig.title ?? "",
+          email: sig.email,
+          phone: sig.phone ?? "",
+          fax: sig.fax ?? "",
+          linkedinUrl: sig.linkedinUrl ?? "",
+        };
+      })(),
     },
     backCover: {
       headline: "XL.net",

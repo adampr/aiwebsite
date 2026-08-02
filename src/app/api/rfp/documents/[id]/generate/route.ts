@@ -10,7 +10,13 @@
 
 import crypto from "node:crypto";
 import { after } from "next/server";
-import { draftSection, brainHealthy } from "@/lib/rfp/brain";
+import {
+  draftCoverLetter,
+  draftSection,
+  brainHealthy,
+  type DraftedSection,
+} from "@/lib/rfp/brain";
+import { LETTER_LABEL, LETTER_TITLE, splitSections } from "@/lib/rfp/letter";
 import { logRfpActivity } from "@/lib/rfp/activity";
 import {
   clearGenClaim,
@@ -57,14 +63,22 @@ export async function POST(
   const doc = await getDocument(user, id);
   if (!doc) return notFound();
 
-  let body: { sectionLabel?: string; sectionTitle?: string };
+  let body: { sectionLabel?: string; sectionTitle?: string; force?: boolean };
   try {
     body = await req.json();
   } catch {
     return rfpError("invalid_request", "Send JSON.", 400);
   }
   const label = String(body.sectionLabel ?? "").slice(0, 120);
-  const title = String(body.sectionTitle ?? "").slice(0, 300);
+  // "__" labels are reserved for host furniture records in sectionsJson.
+  // Only the letter is draftable; readRfp strips the prefix from client
+  // labels, so anything else arriving here is a forged request.
+  const isLetter = label === LETTER_LABEL;
+  if (label.startsWith("__") && !isLetter)
+    return rfpError("invalid_request", "No such section.", 400);
+  const title = isLetter
+    ? LETTER_TITLE
+    : String(body.sectionTitle ?? "").slice(0, 300);
   if (!label && !title)
     return rfpError("invalid_request", "Name the section to draft.", 400);
 
@@ -122,6 +136,32 @@ export async function POST(
     proposal.sectionsJson || "[]"
   );
 
+  // The letter is drafted LAST by design (owner directive 2026-08-02): it
+  // summarizes the drafted sections, so with none drafted there is nothing
+  // to write and the old two-sentence letter was the result.
+  if (isLetter && splitSections(existing).sections.length === 0)
+    return rfpError(
+      "not_ready",
+      "Draft the response sections first. The cover letter is written last, as a summary of them.",
+      409
+    );
+
+  // A hand-edited letter is only replaced on an EXPLICIT ask (the letter
+  // page's redraft button sends force). The draft-all loop never sends it,
+  // so no automated run — this tab's or a stale second tab's — can clobber
+  // a human's reviewed letter. Server-side because the client's own guard
+  // reads state that can be minutes old.
+  if (
+    isLetter &&
+    !body.force &&
+    splitSections(existing).letter?.generatedBy === "human"
+  )
+    return rfpError(
+      "human_letter",
+      "The cover letter was edited by hand. Use the letter's redraft button to replace it.",
+      409
+    );
+
   // Claim, so a second click cannot start a duplicate run. Reclaiming a
   // stale attempt goes through the same CAS: the new attempt id is what
   // invalidates the dead worker's eventual write.
@@ -133,7 +173,9 @@ export async function POST(
       genStartedAt: new Date(),
       genAttemptId: attemptId,
       genHeartbeatAt: new Date(),
-      genProgress: label || title,
+      // The letter's reserved label must never surface in a progress line
+      // ("Drafting __letter"); its title reads right everywhere.
+      genProgress: isLetter ? title : label || title,
       genError: null,
     }
   );
@@ -148,43 +190,79 @@ export async function POST(
     }, HEARTBEAT_MS);
     let landed = false;
     try {
-      const reqs = await listRequirements(doc.id);
-      const forSection = reqs
-        .filter((r) => !label || r.structureLabel === label)
-        .map((r) => r.text);
+      let drafted: DraftedSection | null = null;
+      if (isLetter) {
+        // The letter drafts from the sections AS THEY ARE NOW, not as they
+        // were at claim time: in the draft-all run it is the last step, and
+        // the whole point is summarizing what just landed.
+        const now = await getProposalForDocument(doc.id);
+        const current = splitSections(
+          JSON.parse(now?.sectionsJson || "[]") as DraftSectionRecord[]
+        ).sections;
+        const letter = current.length
+          ? await draftCoverLetter(
+              proposalId,
+              doc.clientName,
+              doc.title,
+              current.map((s) => ({
+                label: s.label,
+                title: s.title,
+                paragraphs: s.paragraphs,
+              }))
+            )
+          : null;
+        if (letter)
+          drafted = {
+            paragraphs: letter.paragraphs,
+            // A summary's support is the sections it summarizes: the union
+            // of their citations, deterministic, never model-chosen. This is
+            // recorded PROVENANCE, not a validated control: A5/C1 are
+            // block-scoped and never read the letter record (resolve-draft
+            // routes it into furniture); the letter's claims are covered
+            // transitively by the sections' own cited blocks plus the span
+            // scans (D1/D2/B7) over the letter body.
+            cites: [...new Set(current.flatMap((s) => s.cites))].slice(0, 60),
+            gaps: [],
+          };
+      } else {
+        const reqs = await listRequirements(doc.id);
+        const forSection = reqs
+          .filter((r) => !label || r.structureLabel === label)
+          .map((r) => r.text);
 
-      // The user's own private knowledge is included for THEIR draft only,
-      // mapped onto the fact shape with needs-adam confidence so the drafter
-      // treats it as provisional. Nobody else's private knowledge is visible.
-      const { shared, mine } = await knowledgeForUser(user);
-      const asFacts: FactRow[] = [
-        ...shared,
-        ...mine.map(
-          (m) =>
-            ({
-              id: `pending_${m.id}`,
-              key: m.factKey ?? "pending",
-              category: m.category,
-              statement: m.statement,
-              polarity: m.polarity,
-              detail: m.detail,
-              sourceUrl: null,
-              verifiedAt: null,
-              correctedAt: null,
-              supersedes: null,
-              introducedInKb: 0,
-              retiredInKb: null,
-              confidence: "needs-adam",
-            }) as FactRow
-        ),
-      ];
+        // The user's own private knowledge is included for THEIR draft only,
+        // mapped onto the fact shape with needs-adam confidence so the drafter
+        // treats it as provisional. Nobody else's private knowledge is visible.
+        const { shared, mine } = await knowledgeForUser(user);
+        const asFacts: FactRow[] = [
+          ...shared,
+          ...mine.map(
+            (m) =>
+              ({
+                id: `pending_${m.id}`,
+                key: m.factKey ?? "pending",
+                category: m.category,
+                statement: m.statement,
+                polarity: m.polarity,
+                detail: m.detail,
+                sourceUrl: null,
+                verifiedAt: null,
+                correctedAt: null,
+                supersedes: null,
+                introducedInKb: 0,
+                retiredInKb: null,
+                confidence: "needs-adam",
+              }) as FactRow
+          ),
+        ];
 
-      const drafted = await draftSection(
-        proposalId,
-        { label, title },
-        forSection,
-        asFacts
-      );
+        drafted = await draftSection(
+          proposalId,
+          { label, title },
+          forSection,
+          asFacts
+        );
+      }
 
       // Land the result, but only while the claim is still THIS attempt's.
       // An edit mid-run bumps rev (retry with the fresh document); a reclaim

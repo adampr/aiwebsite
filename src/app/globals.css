@@ -773,6 +773,29 @@ select.input option {
 }
 .rfpdoc .rfpdoc-letter { max-width: 40rem; }
 .rfpdoc .rfpdoc-letter-name { font-weight: 600; color: #15163b; }
+/* The standard XL.net signature block, colors from the source email
+   (signature.ts SIGNATURE_COLORS): navy person lines, gray contact line,
+   two-tone bold tagline, bold navy article links. */
+.rfpdoc .rfpdoc-sig { font-size: 14px; line-height: 1.6; }
+.rfpdoc .rfpdoc-sig p { margin: 0; }
+/* The source signature does NOT bold the name; anchors there are literal
+   color:blue. */
+.rfpdoc .rfpdoc-sig-person { color: #1f497d; }
+.rfpdoc .rfpdoc-sig-contact { color: #333333; }
+.rfpdoc .rfpdoc-sig-link { color: #0000ff; text-decoration: underline; }
+.rfpdoc .rfpdoc-sig-co {
+  color: #0000ff;
+  font-weight: 700;
+  text-decoration: underline;
+}
+.rfpdoc .rfpdoc-sig-tagline { font-weight: 700; }
+.rfpdoc .rfpdoc-sig-tagline-o { color: #e36c0a; }
+.rfpdoc .rfpdoc-sig-tagline-n { color: #245590; }
+.rfpdoc .rfpdoc-sig-article {
+  color: #245590;
+  font-weight: 700;
+  text-decoration: underline;
+}
 .rfpdoc .rfpdoc-lede {
   font-size: 18px;
   line-height: 1.55;

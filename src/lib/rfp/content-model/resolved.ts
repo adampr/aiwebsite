@@ -40,14 +40,21 @@ export type ResolvedSignature = {
   title: string;
   email: string;
   phone: string;
+  /** "847.686.0201", rendered as "<phone> ph | fax <fax>". Empty when unknown. */
+  fax: string;
+  /** LinkedIn profile URL, rendered as a {LinkedIn} link after the name. */
+  linkedinUrl: string;
 };
 
-/** Cover-letter furniture. The letter's body paragraphs are blocks in the first section. */
+/** Cover-letter furniture plus its drafted body (§5.17.4: the letter is
+ *  drafted LAST, as a summary of the finished sections). */
 export type ResolvedLetter = {
   dateLabel: string;
   /** Addressee block, one line per array entry. */
   addressee: string[];
   salutation: string;
+  /** Body paragraphs: the drafted letter, or the short default when none. */
+  body: string[];
   closing: string;
   signature: ResolvedSignature;
 };
@@ -101,6 +108,12 @@ export function resolvedTextSpans(
 
   resolved.letter.addressee.forEach((line, i) =>
     spans.push({ location: "letter", field: `addressee[${i}]`, text: line }),
+  );
+  // The drafted letter body is LLM output rendered client-facing, so it is
+  // in the scan surface like any section prose: D1/D2 style scans and B7's
+  // currency sweep all cover it.
+  resolved.letter.body.forEach((p, i) =>
+    spans.push({ location: "letter", field: `body[${i}]`, text: p }),
   );
   spans.push(
     { location: "letter", field: "salutation", text: resolved.letter.salutation },

@@ -12,6 +12,7 @@
 // empty, which is why this is enforced here rather than trusted to a form.
 
 import { reviseSection, brainHealthy } from "@/lib/rfp/brain";
+import { LETTER_LABEL } from "@/lib/rfp/letter";
 import { logRfpActivity } from "@/lib/rfp/activity";
 import {
   getOwnedProposal,
@@ -122,7 +123,14 @@ export async function PATCH(
     paragraphs,
     // cites and generatedBy deliberately NOT taken from the body. See header.
     cites: sections[at].cites,
-    generatedBy: sections[at].generatedBy,
+    // THE ONE carve-out from the header invariant, and it is label-scoped,
+    // server-side, and safe: the letter record never becomes blocks
+    // (resolve-draft routes it into furniture), so A5/C1 never read its
+    // generatedBy and nothing is laundered. The stamp is what lets the
+    // generate route and draft-all refuse to clobber a hand-edited letter.
+    // Real sections keep the stored value exactly as before.
+    generatedBy:
+      label === LETTER_LABEL ? "human" : sections[at].generatedBy,
     updatedAt: new Date().toISOString(),
   };
 
@@ -224,7 +232,11 @@ export async function POST(
   const { shared } = await knowledgeForUser(user);
   const result = await reviseSection(
     proposal.id,
-    `${section.label} ${section.title}`,
+    // The letter's reserved label is an internal key, not a name Tron
+    // should read ("SECTION: __letter Cover Letter").
+    section.label === LETTER_LABEL
+      ? section.title
+      : `${section.label} ${section.title}`,
     section.paragraphs,
     instruction,
     shared,
