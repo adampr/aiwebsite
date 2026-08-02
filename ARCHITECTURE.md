@@ -29,7 +29,11 @@ the workspace DEDUPES gap questions by normalized text into one question
 with N section targets, woven per target on one answer. Admin editing
 landed on /rfp/knowledge: fact Correct/Retire/Add through the correction
 machinery (new row at a new KB version — correctFact/retireFact/addFact),
-rate-card unit-price + minimums (PATCH /api/rfp/ratecard), intake question
+rate-card lines fully editable except their CODE (label, unit price, unit,
+note; PATCH /api/rfp/ratecard — the code is the identity the quote engine
+and rule B1 resolve lines by, and label/note are em-dash-checked at the
+door since the gate cannot re-scan a rate card; the two engine-derived
+lines keep computed prices but editable text) + minimums, intake question
 text/required (PATCH /api/rfp/questions/[id]); all admin-only, all logged
 shape-only. Absolute timestamps render in the VIEWER's timezone via
 <LocalTime> (server-renders UTC, swaps post-mount); `select.input` and its

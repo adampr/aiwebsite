@@ -308,23 +308,34 @@ export function AddFact() {
   );
 }
 
-export function RatePrice({
+export function RateItemEdit({
   code,
+  label,
   cents,
+  unit,
+  note,
   computed,
 }: {
   code: string;
+  label: string;
   cents: number;
-  /** A zero-priced line whose figure the engine derives; not editable. */
+  unit: string;
+  note: string | null;
+  /** A line whose figure the engine derives (onboarding, pass-through
+   *  licensing): its text stays editable, its price does not. */
   computed: boolean;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState((cents / 100).toFixed(2));
+  const [form, setForm] = useState({
+    label,
+    price: (cents / 100).toFixed(2),
+    unit,
+    note: note ?? "",
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  if (computed) return <span className="text-faint text-xs">computed</span>;
   if (!editing)
     return (
       <button
@@ -335,49 +346,93 @@ export function RatePrice({
         Edit
       </button>
     );
+
+  async function save() {
+    const body: Record<string, unknown> = {
+      code,
+      label: form.label,
+      unit: form.unit,
+      note: form.note.trim() === "" ? null : form.note,
+    };
+    if (!computed) {
+      const dollars = Number(form.price);
+      if (!Number.isFinite(dollars) || dollars < 0) {
+        setError("Price must be a number, in dollars.");
+        return;
+      }
+      body.unitPriceCents = Math.round(dollars * 100);
+    }
+    setBusy(true);
+    setError("");
+    const err = await post("/api/rfp/ratecard", body, "PATCH");
+    setBusy(false);
+    if (err) return setError(err);
+    setEditing(false);
+    router.refresh();
+  }
+
   return (
-    <span className="inline-flex items-center gap-2">
-      <input
-        className="input w-24"
-        inputMode="decimal"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        aria-label={`New price for ${code}`}
-      />
-      <button
-        type="button"
-        className="linklike text-xs"
-        disabled={busy}
-        onClick={async () => {
-          const dollars = Number(value);
-          if (!Number.isFinite(dollars) || dollars < 0) {
-            setError("A number, in dollars.");
-            return;
-          }
-          setBusy(true);
-          setError("");
-          const err = await post(
-            "/api/rfp/ratecard",
-            { code, unitPriceCents: Math.round(dollars * 100) },
-            "PATCH"
-          );
-          setBusy(false);
-          if (err) return setError(err);
-          setEditing(false);
-          router.refresh();
-        }}
-      >
-        Save
-      </button>
-      <button
-        type="button"
-        className="linklike text-xs text-faint"
-        onClick={() => setEditing(false)}
-      >
-        Cancel
-      </button>
-      {error && <span className="badge badge--warn text-xs">{error}</span>}
-    </span>
+    <div className="mt-2 space-y-2" style={{ minWidth: "16rem" }}>
+      <label className="block text-xs text-faint">
+        Label
+        <input
+          className="input mt-1 w-full"
+          value={form.label}
+          onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+        />
+      </label>
+      <div className="flex flex-wrap gap-3">
+        <label className="block text-xs text-faint">
+          Price $
+          <input
+            className="input mt-1 w-24"
+            inputMode="decimal"
+            value={computed ? "computed" : form.price}
+            disabled={computed}
+            onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+          />
+        </label>
+        <label className="block text-xs text-faint">
+          Unit
+          <input
+            className="input mt-1 w-32"
+            value={form.unit}
+            onChange={(e) => setForm((f) => ({ ...f, unit: e.target.value }))}
+          />
+        </label>
+      </div>
+      <label className="block text-xs text-faint">
+        Note (what the drafter and the client see)
+        <textarea
+          className="input mt-1 min-h-16 w-full"
+          value={form.note}
+          onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+        />
+      </label>
+      <p className="text-xs text-faint">
+        The code <span className="mono">{code}</span> is this line&apos;s{" "}
+        identity in the pricing engine and cannot change. Quotes already
+        shown keep the values they were built with.
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          className="btn btn--primary"
+          disabled={busy || form.label.trim().length < 2 || !form.unit.trim()}
+          onClick={() => void save()}
+        >
+          {busy ? "Saving" : "Save"}
+        </button>
+        <button
+          type="button"
+          className="btn btn--text"
+          onClick={() => setEditing(false)}
+        >
+          Cancel
+        </button>
+        {error && <span className="badge badge--warn text-xs">{error}</span>}
+      </div>
+    </div>
   );
 }
 

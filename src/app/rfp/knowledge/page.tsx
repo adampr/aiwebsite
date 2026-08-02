@@ -3,7 +3,7 @@
 
 import { requireRfpPage } from "@/lib/rfp/access";
 import { KnowledgeNav } from "./nav";
-import { AddFact, FactActions, MinimumsEdit, QuestionEdit, RatePrice } from "./edit";
+import { AddFact, FactActions, MinimumsEdit, QuestionEdit, RateItemEdit } from "./edit";
 import {
   correctedFacts,
   currentKbVersion,
@@ -145,6 +145,11 @@ export default async function RfpKnowledgePage() {
                     <th>Code</th>
                     <th>Unit price</th>
                     <th>Unit</th>
+                    {admin && (
+                      <th>
+                        <span className="sr-only">Actions</span>
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -160,23 +165,27 @@ export default async function RfpKnowledgePage() {
                         {item.code}
                       </td>
                       <td data-label="Unit price" className="mono">
-                        {usd(item.unitPriceCents)}
-                        {admin && (
-                          <>
-                            {" "}
-                            <RatePrice
-                              code={item.code}
-                              cents={item.unitPriceCents}
-                              computed={["onboarding", "m365-license"].includes(
-                                item.code
-                              )}
-                            />
-                          </>
-                        )}
+                        {["onboarding", "m365-license"].includes(item.code)
+                          ? "computed"
+                          : usd(item.unitPriceCents)}
                       </td>
                       <td data-label="Unit" className="text-faint">
                         {item.unit}
                       </td>
+                      {admin && (
+                        <td data-label="Actions">
+                          <RateItemEdit
+                            code={item.code}
+                            label={item.label}
+                            cents={item.unitPriceCents}
+                            unit={item.unit}
+                            note={item.note}
+                            computed={["onboarding", "m365-license"].includes(
+                              item.code
+                            )}
+                          />
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

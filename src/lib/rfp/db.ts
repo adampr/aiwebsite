@@ -1043,14 +1043,23 @@ export async function addFact(
 }
 
 /**
- * Edit a rate-card line's unit price, or the card's minimums. Safe against
- * history by design: quotes SNAPSHOT unit prices at build time, so a change
- * here never rewrites a quote that has been shown.
+ * Edit a rate-card line (any field except its CODE — the code is the
+ * identity the quote engine and rule B1 look lines up by, and rewriting it
+ * would orphan every reference), or the card's minimums. Safe against
+ * history by design: quotes SNAPSHOT unit prices and labels at build time,
+ * so a change here never rewrites a quote that has been shown.
  */
 export async function updateRateCard(
   admin: RfpUser,
   input:
-    | { kind: "item"; code: string; unitPriceCents: number }
+    | {
+        kind: "item";
+        code: string;
+        label?: string;
+        unitPriceCents?: number;
+        unit?: string;
+        note?: string | null;
+      }
     | {
         kind: "minimums";
         minimumFullyManagedUsers: number;
@@ -1061,9 +1070,22 @@ export async function updateRateCard(
   const card = await currentRateCard();
   if (!card) return false;
   if (input.kind === "item") {
+    const set: Partial<{
+      label: string;
+      unitPriceCents: number;
+      unit: string;
+      note: string | null;
+    }> = {};
+    if (input.label !== undefined) set.label = input.label.slice(0, 300);
+    if (input.unitPriceCents !== undefined)
+      set.unitPriceCents = Math.max(0, Math.floor(input.unitPriceCents));
+    if (input.unit !== undefined) set.unit = input.unit.slice(0, 40);
+    if (input.note !== undefined)
+      set.note = input.note === null ? null : input.note.slice(0, 500);
+    if (Object.keys(set).length === 0) return false;
     const res = await db
       .update(rfpRateCardItems)
-      .set({ unitPriceCents: Math.max(0, Math.floor(input.unitPriceCents)) })
+      .set(set)
       .where(
         and(
           eq(rfpRateCardItems.rateCardId, card.id),
