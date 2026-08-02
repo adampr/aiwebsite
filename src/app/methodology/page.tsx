@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Editorial Methodology",
+  title: "Editorial Methodology of Our AI News Desk",
   description:
     "How the XL.net AI Desk reports, sources, links, fact-checks, and corrects its AI news articles. Every article is written by Tron Netter, a disclosed AI.",
   alternates: { canonical: "/methodology" },

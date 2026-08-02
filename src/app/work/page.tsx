@@ -11,14 +11,14 @@ import { StaffSubmitLink } from "./staff-submit-link";
 export const revalidate = 300;
 
 export const metadata: Metadata = {
-  title: "Our Work",
+  title: "Our Work: Real AI Systems Running in the Open",
   description:
-    "Real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, a public AI governance writer, and tools built by the team.",
+    "Real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, a public AI governance writer, and tools built by the team.",
   alternates: { canonical: "/work" },
   openGraph: {
-    title: "Our Work | XL.net AI",
+    title: "Our Work: Real AI Systems Running in the Open | XL.net AI",
     description:
-      "Real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, access layers, a public AI governance writer, and tools built by the team.",
+      "Real AI systems running in the open at XL.net: engine, middleware, live sites, client platforms, a public AI governance writer, and tools built by the team.",
   },
 };
 

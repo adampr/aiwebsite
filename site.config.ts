@@ -17,6 +17,7 @@ import { createGeminiTtsSynthesizer } from "@aicompany/core/blog/audio-tts";
 import type { BrainIdentity } from "@aicompany/core/config/types";
 import { newsCalendarEntries, newsDataProvider, newsSeedHints } from "@/lib/blog/news";
 import { NEWS_ARTICLE_CHECKLIST } from "@/lib/blog/editorial-checklist";
+import { HERO_MOTIFS, HERO_FALLBACK_SUBJECT, heroAlt } from "@/lib/blog/heroes";
 // Side-effect import: registerTables() must have run in every module graph
 // that executes module code (the table registry in @aicompany/core/db/client
 // is module-scope state, and each Next entrypoint bundles its own instance of
@@ -739,6 +740,14 @@ export const siteConfig = defineSiteConfig({
         // say the same thing; the styleGuide sentence that compensated for
         // the contradiction was deleted in the same commit.
         quotableClaim: "attributed",
+        // v1.49 meta length bands (owner mandate 2026-08-02): the gate
+        // measures the BARE post title; SERPs render it through the root
+        // template `%s | XL.net AI` (+12 chars), so the host band is the
+        // fleet 45–60 RENDERED target minus the suffix. Descriptions stay
+        // on the module default [140,160]; floors advisory
+        // (enforceLengthFloors false), ceilings block on generation only,
+        // refresh exempt.
+        titleLength: [33, 48],
       },
     },
     // 2026-07-26 (module v1.29): tag repeated identical failures in the
@@ -810,20 +819,14 @@ export const siteConfig = defineSiteConfig({
           "Primary: near-black deep space blue (#0b0e17) and dark slate. " +
           "Accents: ice cyan (#a5d8e6), warm sand (#d6b891), white highlights.",
       },
-      subjects: [
-        { pattern: /regulat|policy|law|court|antitrust|copyright/i,
-          subject: "balanced scales and structured document forms woven into circuit traces" },
-        { pattern: /chip|gpu|hardware|semiconductor|datacenter|compute/i,
-          subject: "isometric silicon dies and glowing interconnect lattices" },
-        { pattern: /agent|robot|automat/i,
-          subject: "orchestrated nodes passing glowing task tokens along branching paths" },
-        { pattern: /funding|acquisition|valuation|ipo|invest/i,
-          subject: "ascending abstract bar forms and converging light streams" },
-        { pattern: /model|launch|release|benchmark|open.?source/i,
-          subject: "an unfolding lattice of neural pathways radiating from a bright core" },
-      ],
-      fallbackSubject:
-        "an abstract constellation of data streams converging into a single bright signal",
+      // Motifs moved VERBATIM to src/lib/blog/heroes.ts (2026-08-02) so the
+      // descriptive-alt seam matches the exact pattern list that picks the
+      // painted subject — alt and image can never disagree.
+      subjects: HERO_MOTIFS.map(({ pattern, subject }) => ({ pattern, subject })),
+      fallbackSubject: HERO_FALLBACK_SUBJECT,
+      // Deterministic descriptive alt (motif-mapped, roleplay-host pattern);
+      // replaces the module default `Illustration: ${title}` boilerplate.
+      alt: heroAlt,
     }),
     // Fallback for pre-v1.3.0 posts without a stored hero; wide wordmark
     // keeps link shares from being bare.
@@ -834,7 +837,9 @@ export const siteConfig = defineSiteConfig({
     },
     // Voiced for Tron (clears the §19.1 clone-smell WARN on all-default copy).
     copy: {
-      indexTitle: "AI News, read by Tron Netter",
+      // 41 bare + 12-char ` | XL.net AI` template suffix = 53 rendered —
+      // inside the 45–60 rendered band (v1.49 meta mandate 2026-08-02).
+      indexTitle: "AI News for Business, read by Tron Netter",
       indexTagline:
         "Every night I read the day's AI news and write up the one story a " +
         "business owner should actually care about. I'm XL.net's AI agent, " +

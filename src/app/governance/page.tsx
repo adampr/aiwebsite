@@ -16,10 +16,10 @@ export const metadata: Metadata = {
   // Absolute: the layout template's " | XL.net AI" suffix would push the
   // framework names past SERP truncation (~60 chars).
   title: {
-    absolute: "Free AI Governance Builder | NIST AI RMF, EU AI Act, ISO 42001",
+    absolute: "Free AI Governance Builder—NIST AI RMF, EU AI Act, ISO 42001",
   },
   description:
-    "Free AI governance builder: draft an AI acceptable use policy (AI usage policy), an FFIEC-aligned bank AI policy suite, or a document set for NIST AI RMF, the EU AI Act, or ISO/IEC 42001.",
+    "Free AI governance builder: draft an AI acceptable use policy, an FFIEC-aligned bank AI policy suite, or document sets for NIST AI RMF, EU AI Act, or ISO 42001.",
   alternates: { canonical: "/governance" },
 };
 
@@ -38,7 +38,7 @@ const appJsonLd = JSON.stringify({
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
   provider: { "@type": "Organization", "@id": `${siteConfig.site.baseUrl}/#org` },
   description:
-    "Draft an AI acceptable use policy (AUP), an FFIEC-aligned bank AI policy suite, or a governance document set mapped to NIST AI RMF, the EU AI Act, or ISO/IEC 42001. Tron Netter researches your company first and drafts with you, live.",
+    "Draft an AI acceptable use policy, a bank AI policy suite, or document sets for NIST AI RMF, the EU AI Act, or ISO 42001. Tron Netter drafts with you, live.",
 }).replace(/</g, "\\u003c");
 
 const SESSION_STEPS = [

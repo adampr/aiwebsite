@@ -15,7 +15,27 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-02 (§5.17.2 **RFP round 5**, owner
+Last verified against code: 2026-08-02 second pass (module pin v1.48.0 →
+**v1.49.0** — META LENGTH BANDS, owner mandate: meta titles 45–60 chars
+RENDERED, descriptions 140–160, images carry alt. Root-caused in the module
+(panel-designed, 3 analysts + 3 counterview refuters): quality.contract gains
+titleLength / metaDescriptionLength / enforceLengthFloors — one source of
+truth for the contract gate (generation path only; ceilings + empty-meta
+blocking, floors advisory, Phase-B refresh exempt), the writer prompt schema,
+and the §19.30 meta-rewrite loop. Host adoption: quality.contract.titleLength
+[33, 48] budgets the root template's +12 ` | XL.net AI` suffix into the
+45–60 rendered target; same-session copy pass fixed root default title,
+governance title + both descriptions, /work, /builders, /contact, /privacy,
+/methodology metas into band (og mirrors synced); blog.copy.indexTitle →
+"AI News for Business, read by Tron Netter" (53 rendered); hero images gain
+a deterministic motif-mapped descriptive alt via the module `alt` seam
+(src/lib/blog/heroes.ts — motifs moved verbatim from site.config so alt and
+painted subject can never disagree). /texting + /sms-terms + A2P consent
+copy untouched; published post metas unchanged pending owner-approved
+backfill. Audit: `node packages/aicompany/scripts/check-page-meta.mjs` —
+0 over-ceiling/empty, 1 deliberate advisory (the exempt "Privacy Policy"
+utility title), 3 honest UNCHECKED dynamics. No schema/env/template change.);
+previous same-day (§5.17.2 **RFP round 5**, owner
 feedback pass: the workspace matches the governance builder's arrangement —
 questions LEFT, document RIGHT in a sticky self-scrolling pane — and the
 document renders in the **Proposal Studio handoff's own visual language**
@@ -1827,7 +1847,14 @@ source states; v1.2.3 scopes the belief contraPositions check to ENDORSEMENTS (r
 consistently lands ~1425–1450 on busy news days; trimming triggered the oscillation).
 **v1.3.0 (adopted 2026-07-13): nightly hero images via the module adapter** (module §19.26)
 — `blog.heroImage: createGeminiHeroGenerator(...)` in site.config.ts (futurism palette,
-news-topic subject motifs, `GOOGLE_GEMINI_API_KEY` from the host env — this host's
+news-topic subject motifs — since 2026-08-02 the pattern/subject pairs live VERBATIM in
+`src/lib/blog/heroes.ts` (import-safe: data + pure functions only) together with a
+per-motif descriptive `alt`, wired via the adapter's `alt` option (`heroAlt`,
+deterministic from title+metaDescription — the same match-string as the module's
+pickSubject, so the alt can never disagree with the painted subject; generic fallback
+alt paired with `fallbackSubject`; replaces the module-default `Illustration: ${title}`
+boilerplate; roleplay-host `src/lib/blog-heroes.ts` pattern) —
+`GOOGLE_GEMINI_API_KEY` from the host env — this host's
 canonical Gemini var, same one the brain planner reads; the initial wiring read
 `GEMINI_API_KEY`, which was never in this host's env, and the first backfill ran
 image-less until fixed 2026-07-13; no new module env var),

@@ -20,7 +20,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "XL.net AI | Showcasing AI Innovation",
+    default: "XL.net AI | Showcasing AI Innovation in Managed IT Services",
     template: "%s | XL.net AI",
   },
   description:

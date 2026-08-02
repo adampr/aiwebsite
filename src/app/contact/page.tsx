@@ -3,14 +3,14 @@ import Link from "next/link";
 import { EmailLink } from "@/components/email-link";
 
 export const metadata: Metadata = {
-  title: "Contact Us",
+  title: "Contact Us: Email, Call, or Text Tron Netter",
   description:
-    "Reach XL.net AI directly: email, call, or text Tron Netter, or chat on the site. No forms, no waiting.",
+    "Reach XL.net AI directly: email, call, or text Tron Netter, our AI agent, or chat on the site. Available 24/7 with no forms and no waiting for a reply.",
   alternates: { canonical: "/contact" },
   openGraph: {
-    title: "Contact Us | XL.net AI",
+    title: "Contact Us: Email, Call, or Text Tron Netter | XL.net AI",
     description:
-      "Reach XL.net AI directly: email, call, or text Tron Netter, or chat on the site. No forms, no waiting.",
+      "Reach XL.net AI directly: email, call, or text Tron Netter, our AI agent, or chat on the site. Available 24/7 with no forms and no waiting for a reply.",
   },
 };
 

@@ -5,7 +5,7 @@ import { siteConfig } from "site.config";
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description:
-    "How XL.net AI collects, uses, and protects your data across the site, chat, SMS, email, and voice channels.",
+    "How XL.net AI collects, uses, and protects your data across the site, chat, SMS, email, and voice channels, plus retention rules for AI governance projects.",
   alternates: { canonical: "/privacy" },
 };
 

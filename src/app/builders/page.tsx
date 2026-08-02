@@ -3,14 +3,14 @@ import Link from "next/link";
 import { CheckoutButton } from "@/components/checkout-button";
 
 export const metadata: Metadata = {
-  title: "AI Builders",
+  title: "AI Builders: Learn to Build AI Workflows Safely",
   description:
-    "Become an AI Builder: learn to build your own AI workflows and automations the smart and safe way, taught by the XL.net team. Weekly cohort or four-hour workshop.",
+    "Become an AI Builder: learn to build your own AI workflows and automations the smart, safe way, taught by the XL.net team. Weekly cohort or four-hour workshop.",
   alternates: { canonical: "/builders" },
   openGraph: {
-    title: "AI Builders | XL.net AI",
+    title: "AI Builders: Learn to Build AI Workflows Safely | XL.net AI",
     description:
-      "Become an AI Builder: learn to build your own AI workflows and automations the smart and safe way, taught by the XL.net team.",
+      "Become an AI Builder: learn to build your own AI workflows and automations the smart, safe way, taught by the XL.net team. Weekly cohort or four-hour workshop.",
   },
 };
 
