@@ -30,7 +30,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { when } from "@/lib/rfp/time";
-import type { QuoteInputs } from "@/lib/rfp/quote";
+import {
+  parseInputsSource,
+  parseQuoteInputs,
+  type FmuSource,
+  type QuoteInputs,
+} from "@/lib/rfp/quote";
+import { parseStaffRange, type StatedStaff } from "@/lib/rfp/staff-count";
 import type { PricingQuote } from "@/lib/rfp/content-model";
 import type { GateResult } from "@/lib/rfp/validators/gate";
 
@@ -66,6 +72,8 @@ type OpenQuestion =
       input: "number" | "choice" | "yesno";
       choices?: { value: string; label: string }[];
       prefill?: number | null;
+      /** Grounded RFP sentence shown as context (escaped text, never markup). */
+      context?: string;
       /** Requires at least this value in the number input. */
       min?: number;
       /** Alternative one-click answer (e.g. "the split is confirmed"). */
@@ -95,17 +103,47 @@ const EMPTY_INPUTS: QuoteInputs = {
   includeOnboarding: null,
 };
 
-function pricingQuestions(inputs: QuoteInputs): OpenQuestion[] {
+function pricingQuestions(
+  inputs: QuoteInputs,
+  statedStaff: StatedStaff | null
+): OpenQuestion[] {
   const qs: OpenQuestion[] = [];
-  if (inputs.fullyManagedUsers === null)
-    qs.push({
-      kind: "pricing",
-      key: "p:fullyManagedUsers",
-      field: "fullyManagedUsers",
-      text: "How many people need full IT support (fully managed users)?",
-      why: "The quantity the monthly service and the monthly minimum are computed from.",
-      input: "number",
-    });
+  if (inputs.fullyManagedUsers === null) {
+    // An RFP that stated a single staff count never reaches here: the count
+    // was seeded at proposal creation (owner ruling 2026-08-02: stated staff
+    // IS the user count until staff says otherwise). A stated RANGE still
+    // asks, one prefilled tap, because picking an endpoint silently would be
+    // authoring a number the client anchors on. The prefill comes from the
+    // SAME parse that grounded the range, never from "any big number in the
+    // sentence" (a founding year or street address must not win).
+    const range =
+      statedStaff && statedStaff.count === null
+        ? parseStaffRange(statedStaff.quote)
+        : null;
+    if (range)
+      qs.push({
+        kind: "pricing",
+        key: "p:fullyManagedUsers",
+        field: "fullyManagedUsers",
+        text: "The RFP states a range for staff count. Which number should this quote use?",
+        why: "The stated range is shown below. The larger number is prefilled. You can change the count later in the rate card.",
+        input: "number",
+        prefill: range.hi,
+        context: statedStaff!.quote,
+      });
+    else
+      qs.push({
+        kind: "pricing",
+        key: "p:fullyManagedUsers",
+        field: "fullyManagedUsers",
+        text: "How many people need full IT support (fully managed users)?",
+        why: "The quantity the monthly service and the monthly minimum are computed from.",
+        input: "number",
+        // Defense for a proposal that predates extraction: the grounded
+        // count is at least offered, never silently applied.
+        prefill: statedStaff?.count ?? undefined,
+      });
+  }
   // A zero estimate stays OPEN (matches the quote engine's needsSplit): the
   // two-view rule cannot be satisfied by an estimate of zero, only by a
   // real estimate or a confirmed split, and silently accepting 0 used to
@@ -205,6 +243,7 @@ export function Workspace({
   archived,
   clientName,
   docTitle,
+  statedStaff,
 }: {
   documentId: string;
   proposalId: string | null;
@@ -222,6 +261,7 @@ export function Workspace({
   archived: boolean;
   clientName: string | null;
   docTitle: string;
+  statedStaff: StatedStaff | null;
 }) {
   const router = useRouter();
   const [sections, setSectionsState] = useState<Section[]>(initialSections);
@@ -241,7 +281,24 @@ export function Workspace({
   const [proposalId, setProposalId] = useState(initialProposalId);
   const [pricing, setPricing] = useState<PricingQuote | null>(initialPricing);
   const [inputs, setInputs] = useState<QuoteInputs>(
-    initialInputs ?? EMPTY_INPUTS
+    initialInputs ??
+      // Pre-proposal display seed only: the server writes the real seed at
+      // proposal creation. This keeps the already-answered user-count
+      // question from flashing before the first section is drafted.
+      (statedStaff && statedStaff.count !== null
+        ? { ...EMPTY_INPUTS, fullyManagedUsers: statedStaff.count }
+        : EMPTY_INPUTS)
+  );
+  // Where the fully managed count came from. Server-derived: every PUT and
+  // poll response re-states it, and the client always adopts the server's
+  // verdict (a locally mirrored flip could keep a stale "From the RFP"
+  // badge on a hand-edited number).
+  const [fmuSource, setFmuSource] = useState<FmuSource>(
+    initialInputs
+      ? parseInputsSource(initialInputs)
+      : statedStaff && statedStaff.count !== null
+        ? "rfp"
+        : null
   );
   const [gateResult, setGateResult] = useState<GateResult | null>(initialGate);
   // `pane` is the ONE source of truth for which rail pane renders; `mobile`
@@ -369,7 +426,7 @@ export function Workspace({
     }
   }
   const queue: OpenQuestion[] = [
-    ...pricingQuestions(inputs),
+    ...pricingQuestions(inputs, statedStaff),
     ...gapEntries.values(),
   ];
   // ONE vocabulary for "question" everywhere on screen: the deduped count.
@@ -467,7 +524,13 @@ export function Workspace({
         .map((n) => n.label);
       setSections(next);
       if (p.pricing !== undefined) setPricing(p.pricing);
-      if (p.pricingInputs) setInputs(p.pricingInputs);
+      if (p.pricingInputs) {
+        // Adopt provenance with the inputs: a second tab that edited the
+        // count must retire this tab's "From the RFP" reading on poll, not
+        // on reload.
+        setInputs(parseQuoteInputs(p.pricingInputs));
+        setFmuSource(parseInputsSource(p.pricingInputs));
+      }
       revRef.current = p.rev;
       setProposalId(p.id);
     }
@@ -696,7 +759,15 @@ export function Workspace({
       return;
     }
     const d = await res.json();
-    setInputs(next);
+    // The SERVER's inputs-and-provenance verdict wins over the local next:
+    // provenance ("From the RFP") is route-derived, and mirroring the flip
+    // here could disagree with what actually persisted.
+    if (d.inputs) {
+      setInputs(parseQuoteInputs(d.inputs));
+      setFmuSource(parseInputsSource(d.inputs));
+    } else {
+      setInputs(next);
+    }
     setPricing(d.quote ?? null);
     adoptRev(d.rev);
     setGateResult(null);
@@ -1167,6 +1238,23 @@ export function Workspace({
           <div className="panel mt-4">
             {pane === "questions" && (
               <>
+                {/* Provenance, not a question: never in the queue, never in
+                    the open count, never blocks the done state. Renders in
+                    both the current-question and done branches (a pre-export
+                    review must still see where the count came from), never
+                    in the draft-first empty state. */}
+                {fmuSource === "rfp" &&
+                  statedStaff &&
+                  inputs.fullyManagedUsers !== null &&
+                  sections.length > 0 && (
+                    <StatedStaffRow
+                      count={inputs.fullyManagedUsers}
+                      statedStaff={statedStaff}
+                      headcountOnly={inputs.statesHeadcountOnly}
+                      busy={busy}
+                      onAnswer={answerPricing}
+                    />
+                  )}
                 {sections.length === 0 ? (
                   <>
                     <span className="sys-label">Questions</span>
@@ -1215,6 +1303,12 @@ export function Workspace({
                     <p className="mt-3">{current.text}</p>
                     {current.why && (
                       <p className="mt-2 text-xs text-faint">{current.why}</p>
+                    )}
+                    {current.kind === "pricing" && current.context && (
+                      // Grounded RFP sentence, plain escaped text only.
+                      <p className="mt-2 text-xs text-faint">
+                        The RFP says: “{current.context}”
+                      </p>
                     )}
 
                     {run?.active && (
@@ -1904,10 +1998,14 @@ export function Workspace({
                     <details>
                       <summary className="linklike text-sm">
                         Adjust quantities
+                        {fmuSource === "rfp"
+                          ? " · user count from the RFP"
+                          : ""}
                       </summary>
                       <PricingForm
                         inputs={inputs}
                         busy={busy}
+                        fmuSource={fmuSource}
                         onSave={async (next) => {
                           if (!proposalId) return;
                           setBusy(true);
@@ -1926,7 +2024,14 @@ export function Workspace({
                             return;
                           }
                           const d = await res.json();
-                          setInputs(next);
+                          // Server verdict on inputs + provenance, same as
+                          // answerPricing.
+                          if (d.inputs) {
+                            setInputs(parseQuoteInputs(d.inputs));
+                            setFmuSource(parseInputsSource(d.inputs));
+                          } else {
+                            setInputs(next);
+                          }
                           setPricing(d.quote ?? null);
                           adoptRev(d.rev);
                           setGateResult(null);
@@ -1951,6 +2056,88 @@ function fmtCents(cents: number): string {
   const dollars = Math.floor(abs / 100);
   const rest = String(abs % 100).padStart(2, "0");
   return `${sign}$${dollars.toLocaleString("en-US")}.${rest}`;
+}
+
+/**
+ * Provenance for an RFP-sourced user count. NOT a question: never in the
+ * queue, never in the open count, never a blocker for the done state — the
+ * count is already applied, this row only says where it came from and keeps
+ * the correction one step away. The quote is the only attacker-controlled
+ * string on screen; it renders as a plain escaped text node, nothing else.
+ */
+function StatedStaffRow({
+  count,
+  statedStaff,
+  headcountOnly,
+  busy,
+  onAnswer,
+}: {
+  count: number;
+  statedStaff: StatedStaff;
+  headcountOnly: boolean;
+  busy: boolean;
+  onAnswer: (
+    q: Extract<OpenQuestion, { kind: "pricing" }>,
+    value: number | string | boolean,
+    extra?: Partial<QuoteInputs>
+  ) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const q: Extract<OpenQuestion, { kind: "pricing" }> = {
+    kind: "pricing",
+    key: "p:fullyManagedUsers",
+    field: "fullyManagedUsers",
+    text: "How many people need full IT support (fully managed users)?",
+    why: "",
+    input: "number",
+    prefill: count,
+  };
+  return (
+    <div className="mb-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="sys-label">Pricing basis</span>
+      </div>
+      <p className="mt-3 text-sm">
+        Fully managed users: {count}.{" "}
+        {statedStaff.basis === "users"
+          ? "The RFP states a supported user count."
+          : "Taken from the RFP."}
+      </p>
+      <p className="mt-2 text-xs text-faint">
+        The RFP says: “{statedStaff.quote}”
+      </p>
+      {headcountOnly ? (
+        <p className="mt-2 text-xs text-faint">
+          You marked this as total staff. The split question below must be
+          resolved before export.
+        </p>
+      ) : statedStaff.basis === "staff" ? (
+        <p className="mt-2 text-xs text-faint">
+          Stated staff is assumed to equal fully managed users. Change the
+          number if the supported population differs.
+        </p>
+      ) : null}
+      {editing ? (
+        <PricingAnswer
+          q={q}
+          busy={busy}
+          headcountOnlySet={headcountOnly}
+          onAnswer={async (qq, v, extra) => {
+            await onAnswer(qq, v, extra);
+            setEditing(false);
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          className="btn btn--text mt-2"
+          onClick={() => setEditing(true)}
+        >
+          Change this number
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** The one-at-a-time pricing answer control. Sends quantities, never money. */
@@ -2082,10 +2269,12 @@ function PricingAnswer({
 function PricingForm({
   inputs,
   busy,
+  fmuSource,
   onSave,
 }: {
   inputs: QuoteInputs;
   busy: boolean;
+  fmuSource: FmuSource;
   onSave: (next: QuoteInputs) => Promise<void>;
 }) {
   const [form, setForm] = useState<QuoteInputs>(inputs);
@@ -2110,6 +2299,12 @@ function PricingForm({
   return (
     <div className="mt-4 space-y-3">
       {numField("Supported users (fully managed unless split below)", "fullyManagedUsers")}
+      {fmuSource === "rfp" && (
+        <p className="text-xs text-faint">
+          This count was taken from the RFP text. Changing it makes it a
+          staff entry.
+        </p>
+      )}
       <label className="flex items-start gap-2 text-xs text-faint">
         <input
           type="checkbox"

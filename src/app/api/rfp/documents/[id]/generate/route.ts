@@ -75,13 +75,37 @@ export async function POST(
       503
     );
 
+  // No proposal before extraction lands: a proposal created against a
+  // half-read document would miss the stated-staff seed below, resurrecting
+  // the "how many users" question on an RFP that answers it.
+  if (doc.status !== "extracted")
+    return rfpError(
+      "busy",
+      "Still reading the RFP. Try again once the structure is out.",
+      409
+    );
+
   let proposal = await getProposalForDocument(doc.id);
   if (!proposal) {
+    // Owner ruling 2026-08-02: a stated staff count IS the fully managed
+    // user count until staff says otherwise, so the workspace never asks
+    // for a number the RFP already states. statesHeadcountOnly stays false
+    // (single illustration); the manual checkbox re-arms B4 untouched.
+    // fullyManagedUsersSource is read by the workspace for provenance and
+    // deliberately does NOT survive parseQuoteInputs, so a client PUT can
+    // never mint it (the pricing route re-derives it instead).
+    const seed = doc.statedStaffCount
+      ? JSON.stringify({
+          fullyManagedUsers: doc.statedStaffCount,
+          fullyManagedUsersSource: "rfp",
+        })
+      : null;
     proposal = await createProposal(
       user,
       doc.id,
       doc.title,
-      await currentKbVersion()
+      await currentKbVersion(),
+      seed
     );
   }
   if (genClaimActive(proposal))

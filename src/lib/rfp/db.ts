@@ -434,7 +434,13 @@ export async function createProposal(
   user: RfpUser,
   documentId: string,
   title: string,
-  kbVersion: number
+  kbVersion: number,
+  // Seeded pricing inputs (the document's grounded stated-staff count).
+  // Creation-time only, never an update: an existing proposal's inputs are
+  // never overwritten, and two racing creators compute the identical seed
+  // from the same immutable document row before the unique index converges
+  // them.
+  seedPricingInputsJson?: string | null
 ): Promise<ProposalRow> {
   try {
     const [row] = await db
@@ -445,6 +451,7 @@ export async function createProposal(
         ownerEmail: user.email.toLowerCase(),
         title: title.slice(0, 300),
         draftedAgainstKbVersion: kbVersion,
+        pricingInputsJson: seedPricingInputsJson ?? null,
       })
       .returning();
     return row!;

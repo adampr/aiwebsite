@@ -15,7 +15,10 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-02 third pass (module pin v1.49.0 →
+Last verified against code: 2026-08-02 fourth pass (§5.17.3 **stated staff
+count** — readRfp extracts + grounds the RFP's own headcount, migration 0032,
+proposal seeding, provenance row; the user-count question no longer asked when
+the RFP states it); previous same-day third pass (module pin v1.49.0 →
 **v1.50.0** — META BACKFILL CLI + FLOORS PROMOTED: owner ruling same-day
 overrides the panel's advisory-first week — `enforceLengthFloors: true`
 (floor misses now BLOCK on the generation path; posture publish_indexed
@@ -3790,6 +3793,88 @@ but-unused surface waiting on those: `RFP_ACTIONS`
 `document.confirm_structure`/`proposal.create`/`proposal.approve`/
 `knowledge.edit`, the `rfp_requirements.coverage_state`/`coverage_note`
 columns, and the `approved_by`/`approved_at` proposal flow.
+
+#### 5.17.3 Stated staff count: the workspace stops asking what the RFP states
+
+Owner ruling 2026-08-02: when the RFP states a total staff count, "assume it
+is the same thing" as the fully managed user count — the workspace must not
+open with "how many users". Panel-designed (UX lead + extraction-safety +
+pricing-domain specialists, adversarial counter-panel, all three verdicts
+holds-with-changes applied).
+
+**Extraction (Turn 1 only).** `readRfp()`'s JSON contract gains
+`statedStaff: {count: number|null, quote: string, basis: "staff"|"users"}
+| null` — count in digits SELECTED from the one verbatim sentence in
+`quote`; a stated range returns `count: null` with the range sentence; the
+prompt forbids summing per-location numbers, converting words to digits, and
+picking between conflicting totals. No new brain call and no change to the
+two-turn security split.
+
+**Grounding (`src/lib/rfp/staff-count.ts`, select-never-author enforced in
+code).** `groundStatedStaff()` re-verifies the claim against the EXACT inner
+fenced string the model saw (`fenceInner()` builds both). Checks, any
+failure discarding the whole object to null: G1 quote non-empty
+(format-chars stripped, 300-char cap); G2 normalized quote is a substring of
+the normalized doc text; G6 population noun in the quote; G3 `basis:"users"`
+only if the quote itself says users/seats, else coerced to "staff"; G4
+integer 1..10,000; G5 the digits appear in the quote as a standalone token
+whose left boundary excludes `$ € £ #` and digits and which is not followed
+by `%`; G7 (range case) the quote must yield an explicit ascending in-bounds
+range pair. The normalizer strips `\p{Cf}` bidi/format controls on BOTH
+sides (a bidi-wrapped count cannot render differently than it grounded) and
+merges thousands separators ONLY for comma-against-digits,
+comma+line-break (PDF reflow), and Unicode number spaces — NEVER plain
+ASCII space or comma+space ("Phase 1 200 users" / "Section 4, 120 staff"
+must not mint 1200/4120). `npm run test:staffcount`
+(`scripts/rfp-staff-count-tests.ts`, pure) pins both directions. The
+discard reason lands in the `document.extract` activity meta
+(`statedStaff: ok|range|none|G2|…`), shape only.
+
+**Storage (migration 0032).** Three nullable `rfp_documents` columns:
+`stated_staff_count`, `stated_staff_quote`, `stated_staff_basis`, written in
+the SAME update that stamps `status:"extracted"` (no window where a proposal
+is created against an extracted doc missing its count). No backfill: older
+documents keep today's question exactly (columns stay NULL).
+
+**Seeding.** `POST .../generate` now 409s ("Still reading the RFP") unless
+`doc.status === "extracted"`, then seeds the lazily created proposal's
+`pricing_inputs_json` with `{fullyManagedUsers: count,
+fullyManagedUsersSource: "rfp"}` when a count exists. `statesHeadcountOnly`
+stays false — single illustration, B4 does not engage (the accepted owner
+default; the manual headcount checkbox re-arms the whole B4 machinery, split
+question, two illustrations and export block, unchanged). Seed happens ONLY
+at creation; existing inputs are never overwritten. NOTE the accepted
+commercial exposure: under this default a genuinely headcount-only RFP
+quotes one illustration at headcount × rate, and the onboarding one-time fee
+scales with the same count.
+
+**Provenance is server-derived.** `fullyManagedUsersSource: "rfp"|"staff"`
+lives inside `pricing_inputs_json` but OUTSIDE `QuoteInputs` —
+`parseQuoteInputs()` cannot yield it, so a PUT body cannot smuggle it. The
+pricing route re-derives it (`parseInputsSource`): stored value arriving
+back unchanged keeps the stored source, any change flips to "staff",
+and the response echoes `inputs` + source so the CLIENT ADOPTS THE SERVER'S
+VERDICT (both PUT call sites and the status poll) — a locally mirrored flip
+could keep a stale "From the RFP" badge on a hand-edited number in a second
+tab. Never read by `buildQuote` or any dollar math.
+
+**Workspace.** With the count seeded, `pricingQuestions()` simply never
+emits the first question. A pinned "Pricing basis" provenance row (NOT a
+question: never in the queue, the open count, or the done state) renders
+while source is "rfp" and sections exist, showing the applied count, the
+grounded quote as a plain escaped text node (the only attacker-controlled
+string on screen), the assumption line ("Stated staff is assumed to equal
+fully managed users…", suppressed for `basis:"users"` and swapped for a
+split-pending line once the headcount checkbox is ticked), and a "Change
+this number" inline editor reusing `PricingAnswer` (checkbox included). The
+RANGE case still asks, one prefilled tap: prefill = the high endpoint from
+`parseStaffRange()` — the SAME parse G7 validated, never "largest number in
+the sentence" (a founding year or street address must not win) — with the
+quote shown as context. The rate-card form gets a "count from the RFP"
+helper that disappears once edited. Residual accepted risk: grounding
+proves provenance, not meaning — a grounded sentence about the wrong
+population ("we plan to grow to 500 users") prices wrong if staff do not
+read the visible quote; that quote is the designed mitigation.
 
 ## 6. Database
 

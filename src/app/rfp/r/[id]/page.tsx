@@ -107,6 +107,15 @@ export default async function RfpWorkspacePage({
         archived={Boolean(doc.archivedAt)}
         clientName={doc.clientName}
         docTitle={doc.title}
+        statedStaff={
+          doc.statedStaffQuote
+            ? {
+                count: doc.statedStaffCount,
+                quote: doc.statedStaffQuote,
+                basis: doc.statedStaffBasis === "users" ? "users" : "staff",
+              }
+            : null
+        }
       />
     </div>
   );

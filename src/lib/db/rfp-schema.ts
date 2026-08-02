@@ -215,6 +215,17 @@ export const rfpDocuments = pgTable(
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     /** JSON StructureNode[] — the client's own labels, verbatim (rule C4). */
     structureJson: text("structure_json"),
+    /**
+     * The client's stated organization size, extracted by readRfp and
+     * GROUNDED (src/lib/rfp/staff-count.ts) before it lands here. count NULL
+     * with quote non-NULL = the RFP states a range. All three stay NULL for
+     * documents extracted before migration 0032 (no backfill) and whenever
+     * any grounding check discards the model's claim.
+     */
+    statedStaffCount: integer("stated_staff_count"),
+    statedStaffQuote: text("stated_staff_quote"),
+    // "staff" | "users"
+    statedStaffBasis: text("stated_staff_basis"),
     structureConfirmedAt: timestamp("structure_confirmed_at", {
       withTimezone: true,
     }),

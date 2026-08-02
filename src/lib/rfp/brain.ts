@@ -25,6 +25,7 @@ import { siteConfig } from "site.config";
 // completions and defeat the limit governance set at 2.
 import { callGovernanceBrain } from "@/lib/governance/brain";
 import { screenInjection } from "@/lib/governance/research";
+import { groundStatedStaff, type StatedStaff } from "./staff-count";
 import type { FactRow } from "./db";
 
 export { newId };
@@ -50,11 +51,14 @@ const UNTRUSTED_CLOSE = "<<<CLIENT_RFP_TEXT_END>>>";
  * only the plain-text branch was exposed. Doing it HERE covers every caller,
  * including the pasted-RFP ingest path that has always had this hole.
  */
-function fenced(text: string, max: number): string {
-  const clean = screenInjection(text)
+function fenceInner(text: string, max: number): string {
+  return screenInjection(text)
     .clean.replace(/<{3,}|>{3,}/g, "")
     .slice(0, max);
-  return `${UNTRUSTED_OPEN}\n${clean}\n${UNTRUSTED_CLOSE}`;
+}
+
+function fenced(text: string, max: number): string {
+  return `${UNTRUSTED_OPEN}\n${fenceInner(text, max)}\n${UNTRUSTED_CLOSE}`;
 }
 
 function envelope(opts: {
@@ -111,6 +115,10 @@ function parseJson(raw: string): unknown {
 
 export type ReadRfpResult = {
   clientName: string | null;
+  /** Grounded stated organization size, or null. See staff-count.ts. */
+  statedStaff: StatedStaff | null;
+  /** Grounding check that discarded the model's statedStaff claim, if any. */
+  statedStaffDiscarded?: string;
   structure: { label: string; title: string }[];
   requirements: {
     structureLabel: string;
@@ -148,14 +156,35 @@ export async function readRfp(
     "Split compound asks. One numbered paragraph containing three questions is",
     "three requirements, not one.",
     "",
+    "If the document states the size of the client's own organization, report",
+    "it as statedStaff. SELECT, never compute:",
+    "- count must be a number written in digits inside quote. Never estimate,",
+    "  never sum per-location numbers, never convert words to digits.",
+    "- quote is the ONE sentence containing that number, copied verbatim from",
+    "  the document, at most 300 characters.",
+    '- basis is "users" when the figure is a supported-user, seat, or',
+    '  computer-user count; "staff" when it is total staff, employees,',
+    "  headcount, or FTEs. When the document states both, prefer the users",
+    "  figure.",
+    "- If the document states a range, set count to null and copy the range",
+    "  sentence as quote.",
+    "- If totals conflict, or only per-location numbers exist with no stated",
+    "  total, or the number appears only in words, use statedStaff: null.",
+    "",
     "Reply with JSON only:",
     '{"clientName": string|null,',
+    ' "statedStaff": {"count": number|null, "quote": string,',
+    '   "basis": "staff"|"users"}|null,',
     ' "structure": [{"label": string, "title": string}],',
     ' "requirements": [{"structureLabel": string, "text": string,',
     '   "kind": "question"|"attachment"|"statement", "mandatory": boolean}]}',
   ].join("\n");
 
-  const user = fenced(clean, 60_000);
+  // Grounding must check the EXACT inner text the model saw between the
+  // fence tokens; building the fence from the same string keeps the two
+  // incapable of drifting.
+  const inner = fenceInner(clean, 60_000);
+  const user = `${UNTRUSTED_OPEN}\n${inner}\n${UNTRUSTED_CLOSE}`;
 
   const raw = await callGovernanceBrain(
     envelope({
@@ -169,9 +198,16 @@ export async function readRfp(
   const parsed = parseJson(raw ?? "") as ReadRfpResult | null;
   if (!parsed || !Array.isArray(parsed.requirements)) return null;
 
+  // Select-never-author: the model's statedStaff claim survives only if every
+  // grounding check passes against the exact fenced text; otherwise the
+  // workspace asks, exactly as it did before this field existed.
+  const grounded = groundStatedStaff(parsed.statedStaff, inner);
+
   return {
     clientName:
       typeof parsed.clientName === "string" ? parsed.clientName.slice(0, 200) : null,
+    statedStaff: grounded.staff,
+    statedStaffDiscarded: grounded.discarded,
     structure: (Array.isArray(parsed.structure) ? parsed.structure : [])
       .filter((s) => s && typeof s.label === "string")
       .slice(0, 80)

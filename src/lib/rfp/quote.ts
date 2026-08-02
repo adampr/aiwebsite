@@ -86,6 +86,24 @@ const int = (v: unknown, max: number): number | null => {
   return Math.min(Math.floor(n), max);
 };
 
+/**
+ * Where the fully-managed count came from. Lives INSIDE pricing_inputs_json
+ * but deliberately OUTSIDE QuoteInputs: parseQuoteInputs() can never yield
+ * it, so a request body cannot smuggle provenance — the pricing route
+ * re-derives it (stored value unchanged keeps the stored source; any change
+ * flips it to "staff"). null = legacy/manual, rendered as staff-entered.
+ * Never read by buildQuote or any dollar math.
+ */
+export type FmuSource = "rfp" | "staff" | null;
+
+export function parseInputsSource(raw: unknown): FmuSource {
+  const v =
+    raw && typeof raw === "object"
+      ? (raw as Record<string, unknown>).fullyManagedUsersSource
+      : null;
+  return v === "rfp" || v === "staff" ? v : null;
+}
+
 /** Parse untrusted request/stored JSON into well-formed inputs. */
 export function parseQuoteInputs(raw: unknown): QuoteInputs {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;

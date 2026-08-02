@@ -170,11 +170,17 @@ export async function POST(req: Request): Promise<Response> {
           mandatory: r.mandatory,
         }))
       );
+      // Stated staff lands in the SAME update that stamps "extracted", so a
+      // proposal can never be created against an extracted document whose
+      // count has not landed yet.
       await db
         .update(rfpDocuments)
         .set({
           clientName: result.clientName,
           structureJson: JSON.stringify(result.structure),
+          statedStaffCount: result.statedStaff?.count ?? null,
+          statedStaffQuote: result.statedStaff?.quote ?? null,
+          statedStaffBasis: result.statedStaff?.basis ?? null,
           status: "extracted",
           updatedAt: new Date(),
         })
@@ -188,6 +194,13 @@ export async function POST(req: Request): Promise<Response> {
         meta: {
           requirements: result.requirements.length,
           structureNodes: result.structure.length,
+          // Shape only, never the client's text: "ok"/"range"/"none", or the
+          // grounding check that discarded the model's claim (for tuning).
+          statedStaff: result.statedStaff
+            ? result.statedStaff.count === null
+              ? "range"
+              : "ok"
+            : (result.statedStaffDiscarded ?? "none"),
         },
       });
     } catch (err) {

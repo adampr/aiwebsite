@@ -10,7 +10,12 @@
 import { logRfpActivity } from "@/lib/rfp/activity";
 import { currentRateCard, getOwnedProposal, writeProposalPricing } from "@/lib/rfp/db";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
-import { buildQuote, parseQuoteInputs, toRateCard } from "@/lib/rfp/quote";
+import {
+  buildQuote,
+  parseInputsSource,
+  parseQuoteInputs,
+  toRateCard,
+} from "@/lib/rfp/quote";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -41,6 +46,19 @@ export async function PUT(
   }
   const inputs = parseQuoteInputs(body);
 
+  // Provenance is server-derived, never client-asserted: parseQuoteInputs
+  // cannot yield fullyManagedUsersSource, so the only way "rfp" survives a
+  // save is the stored count arriving back unchanged. Any other value is a
+  // staff entry from here on.
+  const stored = proposal.pricingInputsJson
+    ? (JSON.parse(proposal.pricingInputsJson) as unknown)
+    : null;
+  const storedSource = parseInputsSource(stored);
+  const nextSource =
+    inputs.fullyManagedUsers === parseQuoteInputs(stored).fullyManagedUsers
+      ? storedSource
+      : "staff";
+
   const cardView = await currentRateCard();
   if (!cardView)
     return rfpError(
@@ -54,7 +72,7 @@ export async function PUT(
   const ok = await writeProposalPricing(
     proposal.id,
     proposal.rev,
-    JSON.stringify(inputs),
+    JSON.stringify({ ...inputs, fullyManagedUsersSource: nextSource }),
     built.ready ? JSON.stringify(built.quote) : null
   );
   if (!ok)
@@ -84,5 +102,9 @@ export async function PUT(
     ready: built.ready,
     missing: built.missing,
     rev: proposal.rev + 1,
+    // The client adopts the SERVER's verdict on inputs and provenance; a
+    // client mirroring the flip locally could keep a stale "From the RFP"
+    // chip on a hand-edited number.
+    inputs: { ...inputs, fullyManagedUsersSource: nextSource },
   });
 }

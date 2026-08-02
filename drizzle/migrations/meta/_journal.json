@@ -225,6 +225,13 @@
       "when": 1785592736237,
       "tag": "0031_harsh_kronos",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1785696818130,
+      "tag": "0032_hard_emma_frost",
+      "breakpoints": true
     }
   ]
 }
