@@ -744,10 +744,13 @@ export const siteConfig = defineSiteConfig({
         // measures the BARE post title; SERPs render it through the root
         // template `%s | XL.net AI` (+12 chars), so the host band is the
         // fleet 45–60 RENDERED target minus the suffix. Descriptions stay
-        // on the module default [140,160]; floors advisory
-        // (enforceLengthFloors false), ceilings block on generation only,
-        // refresh exempt.
+        // on the module default [140,160]; ceilings block on generation
+        // only, refresh exempt. Floors promoted to BLOCKING same-day by
+        // owner ruling 2026-08-02 (panel's advisory-first week overridden);
+        // posture publish_indexed means a terminal miss still publishes
+        // with a WARN, so the burn-topic risk is roleplay-only.
         titleLength: [33, 48],
+        enforceLengthFloors: true,
       },
     },
     // 2026-07-26 (module v1.29): tag repeated identical failures in the

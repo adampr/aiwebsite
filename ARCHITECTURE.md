@@ -15,7 +15,19 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-02 second pass (module pin v1.48.0 →
+Last verified against code: 2026-08-02 third pass (module pin v1.49.0 →
+**v1.50.0** — META BACKFILL CLI + FLOORS PROMOTED: owner ruling same-day
+overrides the panel's advisory-first week — `enforceLengthFloors: true`
+(floor misses now BLOCK on the generation path; posture publish_indexed
+means a terminal miss still publishes with a WARN, so no burn-topic risk
+here). v1.50.0 ships `scripts/blog-fix-meta.ts`, the owner-approved
+ONE-TIME backfill over PUBLISHED rows (dry-run default; `--apply` rewrites
+via the §19.30 band-backfill prompt variant + checkRewrittenMeta under the
+host bands; applies through the normal material-update path — IndexNow
+recrawl intended; never stamps the CTR loop's meta_rewritten_at /
+meta_rewrite_note). VM usage from app root:
+`npx tsx packages/aicompany/scripts/blog-fix-meta.ts` then `--apply`.
+No schema/env/template change.); previous same-day (module pin v1.48.0 →
 **v1.49.0** — META LENGTH BANDS, owner mandate: meta titles 45–60 chars
 RENDERED, descriptions 140–160, images carry alt. Root-caused in the module
 (panel-designed, 3 analysts + 3 counterview refuters): quality.contract gains
