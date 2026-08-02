@@ -12,6 +12,7 @@ import {
   getProposalForDocument,
   listRequirements,
 } from "@/lib/rfp/db";
+import { ownerDisplayName } from "@/lib/rfp/gate-run";
 import { When } from "@/components/when";
 import { Workspace } from "./workspace";
 import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/route";
@@ -41,10 +42,11 @@ export default async function RfpWorkspacePage({
   const doc = await getDocument(gate.user, id);
   if (!doc) notFound();
 
-  const [requirements, proposal, sp] = await Promise.all([
+  const [requirements, proposal, sp, preparedBy] = await Promise.all([
     listRequirements(doc.id),
     getProposalForDocument(doc.id),
     searchParams,
+    ownerDisplayName(doc.ownerEmail),
   ]);
 
   const structure: { label: string; title: string }[] = doc.structureJson
@@ -116,6 +118,8 @@ export default async function RfpWorkspacePage({
               }
             : null
         }
+        preparedBy={preparedBy}
+        ownerEmail={doc.ownerEmail}
       />
     </div>
   );

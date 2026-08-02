@@ -1,10 +1,8 @@
-/* Google Fonts import lives here (not in futurism.css) because CSS requires
-   @import before all other rules; when futurism.css is pulled in via
-   `@import ... layer(base)` below, an @import inside it lands mid-layer and
-   is invalid (build warned "Unknown at rule: @import"). Kept as a runtime
-   @import rather than next/font on purpose: next/font downloads fonts at
-   build time, which would add a deploy-time network failure mode on the VM. */
-@import url('https://fonts.googleapis.com/css2?family=Julius+Sans+One&family=Manrope:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Archivo:wght@500;600;700&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap');
+/* Webfonts load via <link> tags in src/app/layout.tsx, NOT from here: a
+   remote @import at this position was silently dropped by the CSS build
+   (prod chunks shipped with zero fonts.googleapis references and the whole
+   site fell back to system fonts). If you add a font family, update the
+   layout.tsx <link> href. */
 @import "tailwindcss";
 /* Elegant Futurism design system (tokens, themes, type, components, motion).
    Imported into the base layer so Tailwind utilities in components still win
@@ -654,6 +652,20 @@
   z-index: 30;
   background: var(--xl-bg-1);
 }
+/* Below md the full panel is nearly half a phone viewport, so it scrolls
+   with the page UNLESS a run is live (--live: the Stop button and run
+   status must stay reachable mid-run — the flash choreography scrolls the
+   window). Its sticky top is the MEASURED workbar height (the section
+   workbar is sticky top:0 at this width and taller than 4.5rem, which the
+   old hardcoded offset slid under). The workspace zeroes --rfp-runbar-h
+   while the bar is not sticky. */
+@media (max-width: 767px) {
+  .rfp-page .rfp-runbar { position: static; }
+  .rfp-page .rfp-runbar--live {
+    position: sticky;
+    top: var(--rfp-workbar-h, 4.5rem);
+  }
+}
 @media (min-width: 768px) {
   .rfp-page .rfp-runbar { top: 11.25rem; }
 }
@@ -694,42 +706,168 @@ select.input option {
     top: 0;
     z-index: 5;
     background: var(--xl-bg-1);
-    padding-bottom: 0.5rem;
   }
 }
+/* The wrapper stays mounted (it is the status live region); only the line
+   inside comes and goes, so an empty region costs no height. */
+.rfp-doc-receipt > p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  padding-bottom: 0.5rem;
+}
 .rfpdoc {
-  background: #ffffff;
-  border: 1px solid #e3e4ef;
   color: #31324c;
   font-family: "Source Serif 4", Georgia, serif;
   font-size: 15px;
   line-height: 1.68;
-  padding: clamp(1.25rem, 4vw, 3rem);
+  display: grid;
+  gap: 1.25rem;
 }
 .rfpdoc p { max-width: none; color: #31324c; }
+/* Each block is one sheet of the proposal: white paper, hairline frame,
+   the handoff's running footer pinned to the bottom edge. --sheet pages
+   (cover, closing) hold the letter aspect so they read as full pages. */
+.rfpdoc .rfpdoc-page {
+  background: #ffffff;
+  border: 1px solid #e3e4ef;
+  padding: clamp(1.25rem, 3.5vw, 2.75rem);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* Type on the paper scales with the SHEET (cqw), not the viewport: the
+     pane is ~half the viewport at lg, so vw-based clamps undersized every
+     title against the reference render. */
+  container-type: inline-size;
+}
+@media (min-width: 640px) {
+  .rfpdoc .rfpdoc-page--sheet { aspect-ratio: 17 / 22; }
+}
+.rfpdoc .rfpdoc-pagefoot { margin-top: auto; padding-top: 2.25rem; }
+.rfpdoc .rfpdoc-pagefoot > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-top: 1px solid #e3e4ef;
+  padding-top: 8px;
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  /* Screen concession: the reference's #8a8ca6 is a 300dpi print gray,
+     3.3:1 at 9px on screen; this holds >=4.5:1 and carries Confidential. */
+  color: #767892;
+}
+.rfpdoc .rfpdoc-logo { height: 56px; width: auto; align-self: flex-start; }
+.rfpdoc .rfpdoc-logo--sm { height: 40px; align-self: auto; }
+/* The letter page's header: logo left, kicker right, over the navy rule. */
+.rfpdoc .rfpdoc-pagehead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  border-bottom: 2px solid #2f31c5;
+  padding-bottom: 14px;
+  margin-bottom: 26px;
+}
+.rfpdoc .rfpdoc-letter { max-width: 40rem; }
+.rfpdoc .rfpdoc-letter-name { font-weight: 600; color: #15163b; }
+.rfpdoc .rfpdoc-lede {
+  font-size: 18px;
+  line-height: 1.55;
+  color: #5b5d78;
+  max-width: 34rem;
+}
+.rfpdoc .rfpdoc-lede strong { color: #15163b; font-weight: 600; }
+/* The submitted-by / contact grid along a sheet's bottom edge. */
+.rfpdoc .rfpdoc-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  border-top: 1px solid #e3e4ef;
+  padding-top: 22px;
+  font-size: 14px;
+  color: #15163b;
+  line-height: 1.5;
+}
+.rfpdoc .rfpdoc-meta > div { overflow-wrap: anywhere; }
+@media (max-width: 520px) {
+  .rfpdoc .rfpdoc-meta { grid-template-columns: 1fr; gap: 14px; }
+}
+.rfpdoc .rfpdoc-metalabel {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8a8ca6;
+  margin-bottom: 6px;
+}
+/* The closing sheet's navy field and its furniture. */
+.rfpdoc .rfpdoc-navy {
+  background: #2f31c5;
+  color: #ffffff;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: clamp(1.25rem, 3vw, 2.5rem);
+}
+.rfpdoc .rfpdoc-navy p { color: inherit; }
+.rfpdoc .rfpdoc-navy-logo {
+  height: clamp(64px, 16cqw, 110px);
+  width: auto;
+  align-self: flex-start;
+}
+.rfpdoc .rfpdoc-headline {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-weight: 700;
+  font-size: clamp(24px, 6.2cqw, 42px);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  max-width: 34rem;
+}
+.rfpdoc .rfpdoc-navy-lede {
+  font-size: 16px;
+  line-height: 1.6;
+  color: #d9dff7;
+  max-width: 26rem;
+}
+.rfpdoc .rfpdoc-meta--navy {
+  border-top-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+.rfpdoc .rfpdoc-meta--navy .rfpdoc-metalabel { color: #9fb6f0; }
 .rfpdoc .rfpdoc-kicker {
   font-family: Archivo, var(--font-ui), sans-serif;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500; /* the reference renders through the Archivo 500 file */
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: #3d7fd9;
 }
 .rfpdoc .rfpdoc-kicker--faint { color: #8a8ca6; }
+.rfpdoc .rfpdoc-kicker--cover { font-size: 12px; letter-spacing: 0.24em; }
 .rfpdoc .rfpdoc-title {
   font-family: Archivo, var(--font-ui), sans-serif;
   font-weight: 700;
-  font-size: clamp(26px, 3.2vw, 38px);
+  font-size: clamp(26px, 7.4cqw, 50px);
   line-height: 1.1;
   letter-spacing: -0.01em;
+  text-transform: none;
   color: #15163b;
 }
 /* The cover's corner ornament owns the top-right; the title must not run
-   underneath it (the handoff caps its cover title at 6.6in for the same
-   reason). */
-.rfpdoc .rfpdoc-cover .rfpdoc-title { max-width: 76%; }
+   underneath it. The handoff caps its cover title at 6.6in of a 7.6in
+   sheet (~86%) — 76% double-wrapped the title into single words. */
+.rfpdoc .rfpdoc-cover .rfpdoc-title { max-width: 86%; }
 .rfpdoc .rfpdoc-cover .rfpdoc-kicker { max-width: 76%; }
 .rfpdoc .rfpdoc-bar { width: 64px; height: 4px; background: #2f31c5; }
+/* AFTER the base rule or it is dead CSS at equal specificity (the R4
+   lesson): the navy closing sheet's bar must read blue on navy. */
+.rfpdoc .rfpdoc-bar--blue { background: #3d7fd9; }
 .rfpdoc .rfpdoc-h {
   font-family: Archivo, var(--font-ui), sans-serif;
   font-weight: 700;
@@ -738,14 +876,19 @@ select.input option {
   letter-spacing: 0;
   text-transform: none;
 }
+/* Content-page heads follow the handoff: small blue kicker over a large
+   Archivo title, no rule underneath (the navy rule belongs to the letter
+   page's header). Workspace actions sit right, in quiet caps. */
 .rfpdoc .rfpdoc-sechead {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem 1rem;
-  border-bottom: 2px solid #2f31c5;
-  padding-bottom: 10px;
+}
+.rfpdoc .rfpdoc-sechead .rfpdoc-h {
+  font-size: clamp(20px, 4.2cqw, 28px);
+  line-height: 1.2;
 }
 .rfpdoc .rfpdoc-muted { color: #5b5d78; }
 .rfpdoc .rfpdoc-faint { color: #8a8ca6; }
@@ -760,7 +903,12 @@ select.input option {
 .rfpdoc .rfpdoc-actions button {
   background: none;
   border: none;
-  padding: 0;
+  /* Hit area without layout shift: the bare 10px caps measured 17px tall,
+     far under the 24px minimum target size, with Edit and Ask Tron
+     adjacent. Padding grows the target; the negative margin cancels the
+     visual footprint so the printed look holds. */
+  padding: 8px 6px;
+  margin: -8px -6px;
   cursor: pointer;
   color: #5b5d78; /* ~4.9:1 on white; #8a8ca6 stays for non-interactive metadata */
 }
@@ -781,9 +929,9 @@ select.input option {
   color: #ffffff;
   text-align: left;
   border-bottom: none;
-  padding: 7px 10px;
+  padding: 12px 14px;
 }
-.rfpdoc td { border-bottom: 1px solid #e3e4ef; padding: 7px 10px; }
+.rfpdoc td { border-bottom: 1px solid #e3e4ef; padding: 12px 14px; }
 .rfpdoc tbody tr:nth-child(even) td { background: #f9fafd; }
 .rfpdoc td:first-child { font-weight: 600; color: #15163b; }
 .rfpdoc tr.rfpdoc-total td {
@@ -801,16 +949,21 @@ select.input option {
   padding: 12px 16px;
 }
 .rfpdoc .rfpdoc-kicker--warn { color: #b45309; }
-/* Cover ornament: the handoff's concentric circles, clipped to the corner.
-   The cover bleeds to the paper's edge (negative margin = paper padding). */
+/* The cover sheet's inner frame: the handoff's arc-mark style, concentric
+   circles clipped to the top-right corner, content spread over the full
+   page height (logo / title block / submitted-by grid). */
 .rfpdoc .rfpdoc-cover {
   position: relative;
   overflow: hidden;
-  border-bottom: 1px solid #e3e4ef;
-  margin: calc(clamp(1.25rem, 4vw, 3rem) * -1);
-  margin-bottom: 2.5rem;
-  padding: clamp(1.25rem, 4vw, 3rem);
+  border: 1px solid #e3e4ef;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: clamp(1.25rem, 3vw, 2.5rem);
 }
+.rfpdoc .rfpdoc-cover > * { position: relative; }
 .rfpdoc .rfpdoc-cover::before,
 .rfpdoc .rfpdoc-cover::after {
   content: "";
@@ -818,12 +971,18 @@ select.input option {
   border-radius: 50%;
   pointer-events: none;
 }
+/* Proportional to the sheet, like the reference (6.4in circle on a 6.7in
+   cover ≈ 95%): fixed-px circles were half scale on a desktop pane and
+   swallowed the kicker in navy on a phone one. Centered on the corner via
+   translate(50%,-50%), so the visible quarter-radius is half the width. */
 .rfpdoc .rfpdoc-cover::before {
-  top: -180px; right: -180px; width: 360px; height: 360px;
+  top: 0; right: 0; width: 95%; aspect-ratio: 1;
+  transform: translate(50%, -50%);
   background: #2f31c5;
 }
 .rfpdoc .rfpdoc-cover::after {
-  top: -135px; right: -135px; width: 270px; height: 270px;
+  top: 0; right: 0; width: 72%; aspect-ratio: 1;
+  transform: translate(50%, -50%);
   border: 2px solid #3d7fd9;
 }
 /* Change grammar on paper: navy/blue accents instead of the site's cyan. */
@@ -874,7 +1033,7 @@ select.input option {
 @media (max-width: 1023px) {
   .rfp-page .tabstrip--mobile {
     position: sticky;
-    top: calc(4.5rem + var(--rfp-runbar-h, 0px));
+    top: calc(var(--rfp-workbar-h, 4.5rem) + var(--rfp-runbar-h, 0px));
     z-index: 25;
     background: var(--xl-bg-1);
   }

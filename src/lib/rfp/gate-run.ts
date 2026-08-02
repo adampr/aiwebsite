@@ -26,7 +26,7 @@ import type { GateResult } from "./validators/gate";
 import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/route";
 import type { PricingQuote } from "./content-model";
 
-async function ownerDisplayName(email: string): Promise<string> {
+export async function ownerDisplayName(email: string): Promise<string> {
   try {
     const rows = await db
       .select({ name: users.displayName })

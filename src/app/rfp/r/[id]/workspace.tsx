@@ -244,6 +244,8 @@ export function Workspace({
   clientName,
   docTitle,
   statedStaff,
+  preparedBy,
+  ownerEmail,
 }: {
   documentId: string;
   proposalId: string | null;
@@ -262,6 +264,8 @@ export function Workspace({
   clientName: string | null;
   docTitle: string;
   statedStaff: StatedStaff | null;
+  preparedBy: string;
+  ownerEmail: string;
 }) {
   const router = useRouter();
   const [sections, setSectionsState] = useState<Section[]>(initialSections);
@@ -340,7 +344,14 @@ export function Workspace({
 
   // ---- the live-update choreography (governance pattern) ----
   const [highlights, setHighlights] = useState<Set<string>>(new Set());
-  const [flashKey, setFlashKey] = useState(0);
+  // Per-label flash sequence. The keyed div's key reads this map
+  // UNCONDITIONALLY, so a key only changes when a NEW flash lands on that
+  // label (replaying the wash) — never when the 15s expiry clears the
+  // highlight set. Keying off the highlight itself made expiry remount the
+  // section, which detached a focused edit textarea mid-sentence and reset
+  // the pricing table's horizontal scroll.
+  const flashSeq = useRef(new Map<string, number>());
+  const flashCounter = useRef(0);
 
   // ---- draft-all run state ----
   const [run, setRun] = useState<{
@@ -361,20 +372,41 @@ export function Workspace({
   // variable the stylesheet offsets by; without this the two sticky
   // elements share one offset and the runbar covers the rail's tabs.
   const runbarRef = useRef<HTMLDivElement | null>(null);
+  // Whether a run is live drives the runbar's MOBILE stickiness (below md
+  // the full panel walled off ~46% of a phone viewport; it now scrolls
+  // away unless the Stop button must stay reachable), so the measurement
+  // re-applies when that flips. --rfp-runbar-h must read 0 while the bar
+  // is not sticky or the tabstrip and scroll margins offset for a bar that
+  // scrolled away. The section workbar IS sticky below md and taller than
+  // the old hardcoded 4.5rem, so its real height is measured too.
+  const runbarLive = Boolean(run?.active || followProgress);
   useEffect(() => {
     const el = runbarRef.current;
     const page = el?.closest<HTMLElement>(".rfp-page");
     if (!el || !page) return;
-    const apply = () =>
-      page.style.setProperty("--rfp-runbar-h", `${el.offsetHeight + 16}px`);
+    const apply = () => {
+      const sticky = getComputedStyle(el).position === "sticky";
+      page.style.setProperty(
+        "--rfp-runbar-h",
+        sticky ? `${el.offsetHeight + 16}px` : "0px"
+      );
+      const wb = document.querySelector<HTMLElement>(".workbar");
+      if (wb)
+        page.style.setProperty("--rfp-workbar-h", `${wb.offsetHeight}px`);
+    };
     apply();
     const ro = new ResizeObserver(apply);
     ro.observe(el);
+    const wb = document.querySelector<HTMLElement>(".workbar");
+    if (wb) ro.observe(wb);
+    window.addEventListener("resize", apply);
     return () => {
       ro.disconnect();
+      window.removeEventListener("resize", apply);
       page.style.removeProperty("--rfp-runbar-h");
+      page.style.removeProperty("--rfp-workbar-h");
     };
-  }, []);
+  }, [runbarLive]);
 
   // ---- guided questions ----
   const [answerText, setAnswerText] = useState("");
@@ -392,6 +424,27 @@ export function Workspace({
 
   const covered = new Set(sections.map((s) => s.label));
   const undrafted = structure.filter((n) => !covered.has(n.label));
+
+  // Cover and letter furniture date, en-US long form like the export's.
+  // Server and viewer can straddle midnight, so the spans carry
+  // suppressHydrationWarning.
+  const dateLabel = new Date().toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  // The handoff's content pages set their kicker as "Section 1.1"; RFP
+  // structure labels are usually bare ("8", "3.1", "IV") but sometimes
+  // arrive already worded, so only prefix when it reads as a bare label.
+  // Roman numerals are tested as numerals first: "III" and "VII" contain
+  // 3+ letters and would otherwise render bare beside "Section II".
+  const secKicker = (label: string) => {
+    const t = label.trim();
+    if (!t) return "Section";
+    if (/^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/i.test(t))
+      return `Section ${t}`;
+    return /[a-z]{3,}/i.test(t) ? t : `Section ${t}`;
+  };
 
   // Gap questions dedupe by normalized text: seventeen sections asking the
   // same certification question is ONE question with seventeen targets, not
@@ -473,11 +526,33 @@ export function Workspace({
     }
   }, []);
 
+  // "Updated just now" must stay true: the receipt and the section chips
+  // expire on a timer instead of sitting there until the next change.
+  const highlightTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (highlightTimer.current !== null)
+        window.clearTimeout(highlightTimer.current);
+    },
+    []
+  );
   const showChanged = useCallback(
     (labels: string[]) => {
       if (!labels.length) return;
-      setHighlights(new Set(labels));
-      setFlashKey((k) => k + 1);
+      // MERGE, don't replace: one answer can weave into several sections
+      // over 60-90s each, and draft-all lands sections one poll at a time.
+      // Replacing made the receipt name only the LAST section of a
+      // multi-target change. Everything merged clears together, 15s after
+      // the latest change, which is what "just now" means.
+      setHighlights((prev) => new Set([...prev, ...labels]));
+      flashCounter.current += 1;
+      for (const l of labels) flashSeq.current.set(l, flashCounter.current);
+      if (highlightTimer.current !== null)
+        window.clearTimeout(highlightTimer.current);
+      highlightTimer.current = window.setTimeout(() => {
+        setHighlights(new Set());
+        highlightTimer.current = null;
+      }, 15000);
       const typing = ["TEXTAREA", "INPUT"].includes(
         document.activeElement?.tagName ?? ""
       );
@@ -1091,7 +1166,10 @@ export function Workspace({
           live. Sticky, because the auto-scroll choreography guarantees the
           top of the page is off-viewport exactly when a notice lands or the
           stop button is needed mid-run. */}
-      <div className="panel mb-6 rfp-runbar" ref={runbarRef}>
+      <div
+        className={`panel mb-6 rfp-runbar${runbarLive ? " rfp-runbar--live" : ""}`}
+        ref={runbarRef}
+      >
         {archived && (
           <p className="mb-3 text-sm">
             <span className="badge badge--warn">Archived</span>{" "}
@@ -1449,6 +1527,18 @@ export function Workspace({
                       >
                         {covered.has(r.structureLabel) ? "Drafted" : "Not yet"}
                       </span>
+                      {/* A route INTO the paper: without this, coverage was
+                          dead text and the sheet was a scroll hunt away. */}
+                      <button
+                        type="button"
+                        className="linklike text-xs"
+                        onClick={() => {
+                          setMobile("draft");
+                          window.setTimeout(() => jumpTo(r.structureLabel), 60);
+                        }}
+                      >
+                        View the section
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -1671,23 +1761,27 @@ export function Workspace({
           className={`${mobile === "draft" ? "block" : "hidden"} lg:block min-w-0 rfp-docpane`}
           aria-label="The document. Updates as you answer."
         >
-          {highlights.size > 0 && (
-            <p className="rfp-doc-receipt mb-3 text-sm">
-              Updated just now:{" "}
-              {[...highlights].map((h, i) => (
-                <span key={h}>
-                  {i > 0 && " · "}
+          {/* Permanently mounted status region: the sticky receipt renders
+              inside it, so a change is ANNOUNCED (the pane's aria-label
+              promises "updates as you answer") and expiry empties the
+              region without unmounting it. */}
+          <div className="rfp-doc-receipt" role="status">
+            {highlights.size > 0 && (
+              <p className="mb-3 text-sm">
+                <span className="sys-label">Updated just now</span>
+                {[...highlights].map((h) => (
                   <button
+                    key={h}
                     type="button"
                     className="linklike"
                     onClick={() => jumpTo(h)}
                   >
-                    {h === "__pricing" ? "Investment" : h}
+                    {h === "__pricing" ? "Investment" : secKicker(h)}
                   </button>
-                </span>
-              ))}
-            </p>
-          )}
+                ))}
+              </p>
+            )}
+          </div>
           {structure.length === 0 ? (
             <div className="panel">
               {docStatus === "read_failed" ? (
@@ -1713,22 +1807,92 @@ export function Workspace({
             </div>
           ) : (
             <div className="rfpdoc">
-              {/* Cover, in the proposal template's own language. */}
-              <header className="rfpdoc-cover">
-                <div className="rfpdoc-kicker">XL.net Proposal</div>
-                <h3 className="rfpdoc-title mt-4">{docTitle}</h3>
-                <div className="rfpdoc-bar mt-6" />
-                <p className="rfpdoc-muted mt-5" style={{ maxWidth: "34rem" }}>
-                  Prepared{clientName ? (
-                    <>
-                      {" "}for <strong style={{ color: "#15163b" }}>{clientName}</strong>
-                    </>
-                  ) : null}{" "}
-                  by XL.net. This is the working document: it drafts,
-                  answers, and prices itself here, then exports to Word or
-                  PDF.
-                </p>
+              {/* Page 1 — the cover, in the handoff's arc-mark style:
+                  corner circles, logo, kicker over the title, accent bar,
+                  serif lede, and the submitted-by grid on the bottom edge. */}
+              <header
+                className="rfpdoc-page rfpdoc-page--sheet"
+                aria-label="Cover page"
+              >
+                <div className="rfpdoc-cover">
+                  <img
+                    className="rfpdoc-logo"
+                    src="/brand/xlnet-logo.png"
+                    alt="XL.net"
+                  />
+                  <div>
+                    <div className="rfpdoc-kicker rfpdoc-kicker--cover">
+                      Managed IT Services Proposal
+                    </div>
+                    <h3 className="rfpdoc-title mt-5">{docTitle}</h3>
+                    <div className="rfpdoc-bar mt-7" />
+                    <p className="rfpdoc-lede mt-6">
+                      Prepared
+                      {clientName ? (
+                        <>
+                          {" "}for <strong>{clientName}</strong>
+                        </>
+                      ) : null}{" "}
+                      in response to the Request for Proposal.
+                    </p>
+                  </div>
+                  <div className="rfpdoc-meta">
+                    <div>
+                      <div className="rfpdoc-metalabel">Submitted by</div>
+                      XL.net Inc.
+                      <br />
+                      {preparedBy}
+                    </div>
+                    <div>
+                      <div className="rfpdoc-metalabel">Contact</div>
+                      {ownerEmail}
+                    </div>
+                    <div>
+                      <div className="rfpdoc-metalabel">Date</div>
+                      <span suppressHydrationWarning>{dateLabel}</span>
+                    </div>
+                  </div>
+                </div>
+                <PageFoot />
               </header>
+
+              {/* Page 2 — the cover letter: the personal page, addressed to
+                  the client, signed by whoever owns this draft. Kept
+                  claim-free on purpose: company claims belong in drafted,
+                  cited sections, not in host furniture. */}
+              <section className="rfpdoc-page" aria-label="Cover letter">
+                <div className="rfpdoc-pagehead">
+                  <img
+                    className="rfpdoc-logo rfpdoc-logo--sm"
+                    src="/brand/xlnet-logo.png"
+                    alt="XL.net"
+                  />
+                  <span className="rfpdoc-kicker">Cover Letter</span>
+                </div>
+                <div className="rfpdoc-letter">
+                  <p suppressHydrationWarning>{dateLabel}</p>
+                  {clientName && (
+                    <p className="rfpdoc-letter-name mt-5">{clientName}</p>
+                  )}
+                  {/* The addressee line above already names the client;
+                      restating it read "Dear The Children's..." */}
+                  <p className="mt-6">Dear evaluation team,</p>
+                  <p className="mt-4">
+                    Thank you for the opportunity to respond to your Request
+                    for Proposal. The pages that follow address your document
+                    in its own structure, section by section, together with
+                    our pricing.
+                  </p>
+                  <p className="mt-4">
+                    We welcome the opportunity to discuss this proposal with
+                    you.
+                  </p>
+                  <p className="mt-6">Regards,</p>
+                  <p className="rfpdoc-letter-name mt-5">{preparedBy}</p>
+                  <p className="rfpdoc-muted">XL.net · {ownerEmail}</p>
+                </div>
+                <PageFoot />
+              </section>
 
               {structure.map((node) => {
                 const sec = sections.find((s) => s.label === node.label);
@@ -1736,13 +1900,19 @@ export function Workspace({
                 const changed = highlights.has(node.label);
                 return (
                   <section
-                    className={`mb-10${changed ? " doc-sec--changed doc-sec--flash" : ""}`}
-                    key={changed ? `${node.label}-${flashKey}` : node.label}
+                    className="rfpdoc-page"
+                    key={node.label}
                     id={`sec-${node.label}`}
+                  >
+                  <div
+                    className={
+                      changed ? "doc-sec--changed doc-sec--flash" : undefined
+                    }
+                    key={`c-${flashSeq.current.get(node.label) ?? 0}`}
                   >
                     <div className="rfpdoc-sechead">
                       <div className="min-w-0">
-                        <div className="rfpdoc-kicker">{node.label || "Section"}</div>
+                        <div className="rfpdoc-kicker">{secKicker(node.label)}</div>
                         <h3 className="rfpdoc-h mt-1">
                           {node.title}
                           {changed && <span className="doc-chip">Updated</span>}
@@ -1800,7 +1970,17 @@ export function Workspace({
                       )}
                     {!sec && !run?.active && (
                       <p className="rfpdoc-faint mt-4 text-sm italic">
-                        Not drafted yet.
+                        Not drafted yet.{" "}
+                        <button
+                          type="button"
+                          className="linklike"
+                          disabled={busy}
+                          onClick={() => generate(node.label, node.title)}
+                        >
+                          Draft this section
+                        </button>{" "}
+                        writes it from the RFP&apos;s own wording and the
+                        fact base.
                       </p>
                     )}
 
@@ -1867,20 +2047,24 @@ export function Workspace({
                         </div>
                       </div>
                     )}
+                  </div>
+                  <PageFoot />
                   </section>
                 );
               })}
 
-              {/* ---- Investment: engine output, printed on the paper ---- */}
-              <section
-                className={`mb-4${highlights.has("__pricing") ? " doc-sec--changed doc-sec--flash" : ""}`}
-                key={
-                  highlights.has("__pricing")
-                    ? `__pricing-${flashKey}`
-                    : "__pricing"
-                }
-                id="sec-__pricing"
-              >
+              {/* ---- Investment: engine output, printed on the paper. The
+                  flash-keyed div is INSIDE the page card so the adjust form
+                  below shares the sheet without sharing the remount key. ---- */}
+              <section className="rfpdoc-page" id="sec-__pricing">
+                <div
+                  className={
+                    highlights.has("__pricing")
+                      ? "doc-sec--changed doc-sec--flash"
+                      : undefined
+                  }
+                  key={`c-${flashSeq.current.get("__pricing") ?? 0}`}
+                >
                 <div className="rfpdoc-sechead">
                   <div className="min-w-0">
                     <div className="rfpdoc-kicker">Pricing</div>
@@ -1989,12 +2173,12 @@ export function Workspace({
                     ))}
                   </div>
                 )}
-              </section>
+                </div>
 
-              {/* Outside the flash-keyed section: the wash remounts its key,
+              {/* Outside the flash-keyed div: the wash remounts its key,
                   and a remount mid-edit wiped this form's state. */}
               {pricing && (
-                <div className="rfpdoc-adjust">
+                <div className="rfpdoc-adjust mt-6">
                     <details>
                       <summary className="linklike text-sm">
                         Adjust quantities
@@ -2041,11 +2225,66 @@ export function Workspace({
                     </details>
                 </div>
               )}
+              <PageFoot />
+              </section>
+
+              {/* Last page — the closing sheet: solid navy, white wordmark,
+                  the flat-fee line, and the contact grid. */}
+              <footer
+                className="rfpdoc-page rfpdoc-page--sheet"
+                aria-label="Closing page"
+              >
+                <div className="rfpdoc-navy">
+                  <img
+                    className="rfpdoc-navy-logo"
+                    src="/brand/xlnet-logo-white-wordmark.png"
+                    alt="XL.net"
+                  />
+                  <div>
+                    <div className="rfpdoc-headline">
+                      Because our fee is flat, our incentive is to prevent
+                      issues, not to bill for them.
+                    </div>
+                    <div className="rfpdoc-bar rfpdoc-bar--blue mt-7" />
+                    <p className="rfpdoc-navy-lede mt-6">
+                      We welcome the opportunity to discuss this proposal
+                      {clientName ? <> with {clientName}</> : null}.
+                    </p>
+                  </div>
+                  <div className="rfpdoc-meta rfpdoc-meta--navy">
+                    <div>
+                      <div className="rfpdoc-metalabel">Contact</div>
+                      {preparedBy}
+                    </div>
+                    <div>
+                      <div className="rfpdoc-metalabel">Email</div>
+                      {ownerEmail}
+                    </div>
+                    <div>
+                      <div className="rfpdoc-metalabel">Web</div>
+                      xl.net
+                    </div>
+                  </div>
+                </div>
+                <PageFoot />
+              </footer>
             </div>
           )}
         </section>
       </div>
     </>
+  );
+}
+
+/** The handoff's per-sheet footer: hairline rule, running title, mark. */
+function PageFoot() {
+  return (
+    <div className="rfpdoc-pagefoot">
+      <div>
+        <span>XL.net · Managed IT Services Proposal</span>
+        <span>Confidential</span>
+      </div>
+    </div>
   );
 }
 

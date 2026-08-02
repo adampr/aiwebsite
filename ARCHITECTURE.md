@@ -15,10 +15,18 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-02 fourth pass (§5.17.3 **stated staff
-count** — readRfp extracts + grounds the RFP's own headcount, migration 0032,
-proposal seeding, provenance row; the user-count question no longer asked when
-the RFP states it); previous same-day third pass (module pin v1.49.0 →
+Last verified against code: 2026-08-02 fifth pass (RFP workspace §5.17.2
+**CoWork page anatomy** — the document pane renders the full reference
+render page-for-page: discrete sheets with running footers, arc-mark
+cover, claim-free cover letter, per-section pages, navy closing sheet;
+`ownerDisplayName` exported from gate-run.ts and threaded to the
+workspace; proposal logo PNGs added under `public/brand/`; site-wide
+webfont fix — the globals.css @import was dropped by the CSS build, fonts
+now load via layout.tsx <link> tags); previous same-day fourth pass
+(§5.17.3 **stated staff count** — readRfp extracts + grounds the RFP's
+own headcount, migration 0032, proposal seeding, provenance row; the
+user-count question no longer asked when the RFP states it); previous
+same-day third pass (module pin v1.49.0 →
 **v1.50.0** — META BACKFILL CLI + FLOORS PROMOTED: owner ruling same-day
 overrides the panel's advisory-first week — `enforceLengthFloors: true`
 (floor misses now BLOCK on the generation path; posture publish_indexed
@@ -3723,7 +3731,38 @@ normalized text into one entry with N section targets; answering weaves
 every target sequentially (per-target progress; `remember` files once).
 The drafting prompt prefers zero gaps and the server caps 2 per section
 (was 10 — one 17-section RFP once surfaced 76 questions against the
-benchmark tool's four or five). Admin corpus editing on /rfp/knowledge:
+benchmark tool's four or five).
+
+**Round 6 additions (full CoWork page anatomy).** `.rfpdoc` is no longer
+one continuous paper: it is a grid of discrete SHEETS (`.rfpdoc-page`,
+white, hairline-framed, each ending in the handoff's running footer
+"XL.net · Managed IT Services Proposal | Confidential"; `--sheet` variants
+hold a 17/22 letter aspect at ≥640px). Page anatomy mirrors the reference
+render page-for-page: (1) arc-mark COVER (corner circles, color logo
+`/brand/xlnet-logo.png`, kicker, Archivo title — `text-transform: none`
+matters, futurism.css uppercases bare h1-h3 — accent bar, serif lede,
+submitted-by/contact/date grid), (2) a claim-free COVER LETTER sheet
+(logo + kicker header over the 2px navy rule, en-US long date rendered
+`suppressHydrationWarning`, addressee, salutation, transactional body,
+`preparedBy` signature — `ownerDisplayName()` is now exported from
+gate-run.ts and passed with `ownerEmail` as Workspace props), (3) one
+sheet per structure section (kicker `Section N` via a bare-label
+heuristic, larger Archivo titles, no navy underline — the reference keeps
+that rule for the letter header only), (4) the Investment sheet (the
+flash-keyed div moved INSIDE the page card so the hoisted adjust form can
+share the sheet without sharing the remount key), (5) a solid-navy
+CLOSING sheet (white wordmark `/brand/xlnet-logo-white-wordmark.png`,
+flat-fee headline, welcome line, contact grid). Host furniture stays
+claim-free by design: certifications/percentages/dates belong in drafted,
+cited sections only. The "Updated just now" receipt names sheets
+("Section 8", "Investment") and self-expires after 15s so "just now"
+stays true; expiry also drops the flash key, which remounts a section, so
+the timer must never be extended past casual-edit latitude without
+checking where `editing`/`editText` live (parent state — a remount keeps
+text but drops focus). Docx/pdf emitters still render the plainer round-3
+style (deferred, not silently absent).
+
+Admin corpus editing on /rfp/knowledge:
 corrections INSERT at a new KB version and retire the old row (never
 update-in-place — C1, the corrected-facts page, and old citations depend
 on it); rate-card edits are safe against history because quotes snapshot

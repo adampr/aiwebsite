@@ -64,6 +64,24 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript(true) }} />
+        {/* Webfonts as real <link> tags: the former globals.css @import was
+            silently DROPPED by the CSS build (prod chunks contained zero
+            fonts.googleapis references, so the whole site rendered in
+            fallback fonts). Family list must stay in sync with the roles in
+            futurism.css (display/ui/mono) plus the RFP paper pair
+            (Archivo, Source Serif 4). Still not next/font on purpose: that
+            downloads fonts at build time and adds a deploy-time network
+            failure mode on the VM. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+          rel="preconnect"
+          href="https://fonts.gstatic.com"
+          crossOrigin="anonymous"
+        />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Julius+Sans+One&family=Manrope:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Archivo:wght@500;600;700&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&display=swap"
+        />
         <noscript>
           <style>{`.rise{opacity:1 !important;transform:none !important}`}</style>
         </noscript>
