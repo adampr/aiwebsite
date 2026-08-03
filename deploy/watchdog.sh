@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@9e8b6c7b3590739b1bf335ccfbf732f8344974d67b302954540a5011c0f67e29
+# aicompany-template: watchdog.sh.tpl@18988e347057041f39ff717db7e52a0592ca9ee1112475f17d18989346a85337
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -50,6 +50,15 @@ notify_from="ai.xl.net Watchdog <noreply@ai.xl.net>"
 site_health_url="http://127.0.0.1:3000/api/health"
 brain_health_url="http://127.0.0.1:3211/health"
 skills_health_url="http://127.0.0.1:3213/health"
+# Service names are DEFINED ONCE and used at both the restart_and_alert call
+# site and the matching clear_deploy_defer site. The ledger key is
+# "deploy-defer-$service_name" verbatim — spaces and parens included — so a
+# resolve site that spells the name differently resolves NOTHING, silently
+# (an unknown key is `ok:true, resolved:0` in the NDJSON batch path, never a
+# 404). One definition per service is what makes that drift impossible.
+svc_brain="brain-api (PM2)"
+svc_skills="skills-host (PM2)"
+svc_site="aiwebsite (Next.js/PM2)"
 backup_heartbeat_file="/var/lib/aiwebsite/last-backup-ok"
 # persona.knowledgeFile is config-driven — read the deployed config snapshot
 # (same source of truth the crawler writes to) so a host with a non-default
@@ -129,6 +138,52 @@ record_issue() { # 1=severity-prefixed subject 2=body 3=issue key 4=emailed 0|1 
     --arg ts "$(date -u +%FT%TZ)" \
     '{action:(if $r=="1" then "resolve" else "record" end),source:$src,key:$k,severity:$sev,subject:($s|.[0:300]),detail:($b|.[0:4000]),emailed:($e=="1"),seenAt:$ts} + (if $r=="1" then {resolvedBy:(if ($by|length)>0 then $by else "auto" end),note:($s|.[0:300])} else {} end)' \
     >> "$rf" 2>/dev/null || true
+  return 0
+}
+
+# ── Deferred-repair episode state (§5.15 / §9.5, v1.53.0) ─────────
+# A `deploy-defer-*` row asserts "a repair is OWED but was withheld", never
+# "the service is broken". So its resolution signal is: the deploy marker is
+# GONE, and the same check that opened the episode now passes. Before v1.53.0
+# nothing ever resolved these keys — only `restart-*` and `page-render-*`
+# self-healed — so every deploy that reloaded a gated service left a permanent
+# row. 31 of them were closed BY HAND across the fleet in the week to
+# 2026-08-03, none by machine.
+#
+# Gated on `[ -e "$deploy_marker" ]` and deliberately NOT on
+# `deploy_in_progress`: those two disagree in exactly the case that matters.
+# deploy_in_progress is ALSO false for a marker that still exists but has aged
+# past the TTL, and setup-vm.sh removes the marker only on success — a crashed
+# deploy deliberately leaves it to age out (§9.5). A half-deployed box is the
+# one state a human must still look at, so a stale marker must never
+# auto-resolve.
+#
+# State lives in /var/run beside the marker/pid/lock: root-only by
+# construction, needs no directory (so no setup-vm change and no group-write
+# question), and being tmpfs is CORRECT — a reboot restarts every service, so a
+# defer recorded before a reboot must not be closed by a green probe after one.
+defer_stamp() { # 1=issue key
+  echo "/var/run/aiwebsite-deploy-defer-$(printf '%s' "${1:-}" | tr '/:. ' '____')"
+}
+
+mark_deploy_defer() { # 1=issue key
+  local f; f=$(defer_stamp "${1:-}")
+  : > "$f" 2>/dev/null || log "WARN: could not stamp deploy-defer episode ${1:-}"
+  return 0
+}
+
+# 1=issue key  2=recovery sentence — this BECOMES the resolved row's note
+# (record_issue writes note:($s|.[0:300]) from arg 1), so it must state what
+# was actually observed and never claim more.
+clear_deploy_defer() {
+  local f; f=$(defer_stamp "${1:-}")
+  [ -e "$f" ] || return 0             # never deferred here ⇒ never resolve, never spam
+  [ -e "$deploy_marker" ] && return 0 # marker present (fresh OR stale) ⇒ the debt stands
+  record_issue "WARN ${2:-}" \
+    "self-healed: the deploy marker cleared and the check that opened this episode passed on a later pass." \
+    "${1:-}" 0 1 "auto:deploy-window-cleared"
+  rm -f "$f" 2>/dev/null || true
+  log "RESOLVE: ${1:-} — deploy marker gone and check green"
   return 0
 }
 
@@ -214,6 +269,10 @@ restart_and_alert() {
   # never silently swallowed; only the repair ACTION waits.
   if [[ "$gate_on_deploy" == "true" ]] && deploy_in_progress; then
     log "DEFER: $service_name repair action skipped — deploy in progress (marker <${deploy_grace_seconds}s); alerting only"
+    # Stamp BEFORE the send_email: the failure direction must be a stray stamp
+    # (harmless — clear_deploy_defer only ever resolves a key that was opened)
+    # rather than a row with no stamp, which is the v1.52 bug itself.
+    mark_deploy_defer "deploy-defer-$service_name"
     send_email \
       "WARN $service_name failed during deploy — repair deferred" \
       "Service: $service_name\nAction: DEFERRED while a deploy holds the mutex marker (a watchdog pm2 restart/rebuild would race the deploy on the app tree).\nThe watchdog repairs automatically once the deploy window — or its 30-min TTL — clears, if the failure persists.\n\nDetails:\n$details" \
@@ -346,6 +405,7 @@ check_pages() {
     # (throttled 24h) so a human is not blind to page errors during the window.
     if deploy_in_progress; then
       log "DEFER: page rebuild skipped — deploy in progress (marker <${deploy_grace_seconds}s); alerting only"
+      mark_deploy_defer "page-render-deploy-defer"
       send_email \
         "WARN Page errors during deploy — rebuild deferred" \
         "Pages returning errors:\n$detail_list\n\nA clean rebuild would race the in-progress deploy's build on the same tree, so it is deferred. If pages are still broken after the deploy window — or its 30-min TTL — the watchdog rebuilds and escalates automatically." \
@@ -394,6 +454,14 @@ check_pages() {
     fi
   else
     log "OK: All page checks passed"
+    # Resolved from the PAGE loop, never from $site_health_url. The health
+    # endpoint is the pre-gate this function already passed to get here
+    # (see the early return above), so it is green on every pass that can open
+    # a page-render defer — itsupportchicago's 2026-08-02 episode is exactly
+    # that shape: /api/health served "status":"ok" for 72 minutes while / and
+    # /login timed out. Resolving on health alone would have closed the row on
+    # the same pass that opened it.
+    clear_deploy_defer "page-render-deploy-defer" "page checks passing again after a deploy-window deferral"
   fi
 }
 
@@ -688,6 +756,12 @@ while true; do
       es_name="${es_names[$esi]}"
       if es_health_one "$esi"; then
         es_fail_counts[$esi]=0
+        # Fourth deploy-defer key family: a gateOnDeploy service defers as
+        # "svc-<name>" (roleplay ships voice with gateOnDeploy true), so it
+        # mints deploy-defer-svc-voice and needs the same resolution path as
+        # the three PM2 services. $es_name is the SAME variable the defer site
+        # uses, so the two can never drift.
+        clear_deploy_defer "deploy-defer-svc-$es_name" "svc-$es_name healthy again after a deploy-window deferral"
       elif es_in_cooldown "$esi"; then
         log "INFO: svc-$es_name health failed during start cooldown — not counted"
       else
@@ -754,10 +828,12 @@ while true; do
   if [[ -z "$brain_response" ]] || ! echo "$brain_response" | grep -q '"ok":true'; then
     log "FAIL: brain-api health check failed: $brain_response"
     any_failure=true
-    restart_and_alert "brain-api (PM2)" \
+    restart_and_alert "$svc_brain" \
       "run_as_pm2_user 'pm2 restart brain-api'" \
       "Health URL: $brain_health_url\nResponse: ${brain_response:-<empty>}" \
       "true"
+  else
+    clear_deploy_defer "deploy-defer-$svc_brain" "$svc_brain healthy again after a deploy-window deferral"
   fi
 
   # 5. skills-host (:3213)
@@ -765,10 +841,12 @@ while true; do
   if [[ -z "$skills_response" ]] || ! echo "$skills_response" | grep -q '"ok":true'; then
     log "FAIL: skills-host health check failed: $skills_response"
     any_failure=true
-    restart_and_alert "skills-host (PM2)" \
+    restart_and_alert "$svc_skills" \
       "run_as_pm2_user 'pm2 restart skills-host'" \
       "Health URL: $skills_health_url\nResponse: ${skills_response:-<empty>}" \
       "true"
+  else
+    clear_deploy_defer "deploy-defer-$svc_skills" "$svc_skills healthy again after a deploy-window deferral"
   fi
 
   # 6. Next.js site (:3000) -- check last since it depends on postgres + brain
@@ -779,12 +857,13 @@ while true; do
     any_failure=true
 
     pm2_status=$(run_as_pm2_user "pm2 jlist" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 || echo "unknown")
-    restart_and_alert "aiwebsite (Next.js/PM2)" \
+    restart_and_alert "$svc_site" \
       "run_as_pm2_user 'pm2 restart aiwebsite'" \
       "Health URL: $site_health_url\nResponse: ${site_response:-<empty>}\nPM2 status: $pm2_status" \
       "true"
   else
     site_healthy=true
+    clear_deploy_defer "deploy-defer-$svc_site" "$svc_site healthy again after a deploy-window deferral"
   fi
 
   # 7. Livelock defenses armed? (v1.15.0 §9.5 — 2026-07-22 aiwebsite outage)
