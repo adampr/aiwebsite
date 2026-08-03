@@ -16,6 +16,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import { isAdmin } from "@aicompany/core/auth/guard";
 import { db, schema } from "@/lib/db";
 import { WORK_CAPS, type WorkKind } from "./config";
 import type { WorkCard } from "./lint";
@@ -61,14 +62,24 @@ export async function createSubmission(opts: {
   // The standalone SKILL.md (CoWork Skill kind only).
   md?: { name: string; sha256: string; bytes: number; data: Buffer };
   /** §5.16 updates: the published card this row proposes to replace. A row
-   * with parentId set can never publish from the panel; it parks as
-   * pending_approval for the admin swap. */
+   * with parentId set parks as pending_approval for the admin swap, unless
+   * autoApprove was stamped at intake. */
   parentId?: string | null;
+  /** §5.16 admin web auto-approve: web-session verified-admin lane ONLY.
+   * The email lane must NEVER pass it: a spoofed From under domain DKIM
+   * would turn a forged email into a live card swap. Guarded by a throw
+   * here and by the work_sub_auto_approve_parent_ck CHECK in the DB. */
+  autoApprove?: boolean;
 }): Promise<SubmissionRow> {
+  if (opts.autoApprove && !opts.parentId)
+    throw new Error(
+      "autoApprove is only meaningful on an update row (parentId required)"
+    );
   const [row] = await db
     .insert(S)
     .values({
       parentId: opts.parentId ?? null,
+      autoApprove: opts.autoApprove ?? false,
       archiveData: opts.archiveData,
       mdName: opts.md?.name ?? null,
       mdSha256: opts.md?.sha256 ?? null,
@@ -249,9 +260,12 @@ export async function claimPanel(
 ): Promise<boolean> {
   const staleBefore = new Date(Date.now() - WORK_CAPS.panelStaleMs);
   const today = new Date().toISOString().slice(0, 10);
-  // fromHeld (admin re-run) also claims pending_approval update rows: a
-  // passing re-run lands back in pending_approval, so a re-run can never
-  // sneak a swap past the approval click.
+  // fromHeld (admin re-run) also claims pending_approval update rows. For
+  // teammate/email updates a passing re-run lands back in pending_approval,
+  // so a re-run can never sneak a swap past the approval click. A NEVER-HELD
+  // admin web auto-approve row re-runs with the same authority it was
+  // submitted with (a passing re-run swaps); any once-held row falls back to
+  // the click because finishUpdateRow requires heldAt IS NULL.
   const gate = opts?.fromHeld
     ? and(eq(S.id, id), inArray(S.status, ["held", "pending_approval"]))
     : and(
@@ -385,9 +399,15 @@ export type SupersedeResult =
   | { ok: true; slug: string; card: WorkCard; parent: SubmissionRow }
   | { ok: false; reason: "not_eligible" | "conflict" };
 
-/** The ONE code path that swaps an approved update live (§5.16). Called only
- * from the admin approve route (a real request context, so revalidatePath
- * works). Single transaction, both rows locked in id order:
+/** The ONE primitive that swaps an approved update live (§5.16). Exactly two
+ * callers: the admin approve route (click authority is the fence there; no
+ * attempt id passed) and finishUpdateRow below (the admin web auto-approve
+ * lane, which MUST pass its panel attempt id: without that fence a zombie
+ * run from a superseded claim could swap a card a newer run owns, the exact
+ * class the panel_attempt_id fencing exists to prevent). When
+ * expectedAttemptId is given, the in-transaction re-check also requires the
+ * row to still carry that attempt AND to be an autoApprove row.
+ * Single transaction, both rows locked in id order:
  * parent -> superseded (slug freed FIRST: work_sub_slug_uq is not
  * deferrable, so the statement order is load-bearing), child -> published
  * with the parent's slug and publishedAt (the card keeps its deep link and
@@ -398,7 +418,8 @@ export type SupersedeResult =
  * publish is how duplicate live cards get minted (refutation FATAL,
  * 2026-08-03). */
 export async function publishWithSupersede(
-  childId: string
+  childId: string,
+  expectedAttemptId?: string
 ): Promise<SupersedeResult> {
   const pre = await submissionById(childId);
   if (
@@ -428,7 +449,17 @@ export async function publishWithSupersede(
       !child ||
       (child.status !== "pending_approval" && child.status !== "held") ||
       child.parentId !== parentId ||
-      !child.cardJson
+      !child.cardJson ||
+      // Auto-approve lane only: the swap is fenced on the claiming attempt,
+      // and only a NEVER-HELD row stamped autoApprove at intake may swap
+      // without the admin click (heldAt re-checked INSIDE the txn: the gate
+      // read it outside, and a conflict park in that gap must not be
+      // swept past). An || anywhere in this predicate would let a spoofed
+      // adam@xl.net EMAIL update publish itself; keep it strictly AND.
+      (expectedAttemptId !== undefined &&
+        (child.panelAttemptId !== expectedAttemptId ||
+          !child.autoApprove ||
+          child.heldAt !== null))
     )
       return { ok: false, reason: "not_eligible" as const };
     if (!parent || parent.status !== "published" || !parent.slug) {
@@ -465,6 +496,92 @@ export async function publishWithSupersede(
       .where(eq(S.id, childId));
     return { ok: true as const, slug, card, parent };
   });
+}
+
+export type UpdateFinishResult =
+  | { outcome: "superseded_claim" }
+  | { outcome: "parked"; row: SubmissionRow }
+  | { outcome: "swapped"; slug: string; card: WorkCard; parent: SubmissionRow }
+  | { outcome: "conflict"; row: SubmissionRow }
+  | { outcome: "raced" };
+
+/** Terminal write for an update row's PASSING panel run (§5.16), factored
+ * out of panel.ts so the real-DB test suite can exercise every interleave
+ * with no brain and no email. Side effects (notify, revalidate, retention)
+ * stay in panel.ts, keyed off the returned outcome.
+ *
+ * Sequence: park first (finishPendingApproval, fenced on attemptId - a
+ * superseded claim stops here and never touches the swap), then gate, then
+ * swap through publishWithSupersede WITH the attempt fence.
+ *
+ * The auto gate is strictly AND, never ||:
+ * - parentId: SET NULL can orphan a child that still carries the flag; an
+ *   orphan must never reach the swap.
+ * - autoApprove: stamped only by the web update route under a
+ *   Google-verified admin session. isAdmin(submitterEmail) alone would make
+ *   every DKIM-spoofable adam@xl.net EMAIL update publish itself.
+ * - heldAt IS NULL: a row that has EVER been held (gate failure, conflict
+ *   park) has passed through a human-attention state; a later passing
+ *   re-run must park for the click, not retry until the critic blinks.
+ * - isAdmin re-check: an admin de-listed between submit and finish falls
+ *   back to the park, the safe direction.
+ *
+ * Outcomes: "superseded_claim" = a newer claim owns the row, that run owns
+ * all side effects. "parked" = ordinary pending_approval park (notify
+ * pending). "swapped" = live swap done (notify + revalidate + retention).
+ * "conflict" = target card gone, row parked held with UPDATE_CONFLICT_NOTE
+ * (notify held). "raced" = a concurrent actor (admin approve, reject,
+ * delete, rerun claim) won between park and swap; the winner owns every
+ * side effect, so the caller must do NOTHING (a notification here would
+ * email a falsehood about a row that is already live, deleted, or
+ * re-running). */
+export async function finishUpdateRow(
+  id: string,
+  attemptId: string,
+  card: WorkCard,
+  transcriptJson: string
+): Promise<UpdateFinishResult> {
+  const parked = await finishPendingApproval(
+    id,
+    attemptId,
+    card,
+    transcriptJson
+  );
+  if (!parked) return { outcome: "superseded_claim" };
+  const row = await submissionById(id);
+  if (!row) return { outcome: "raced" }; // deleted between park and re-read
+  if (
+    !row.parentId ||
+    !row.autoApprove ||
+    row.heldAt !== null ||
+    !isAdmin(row.submitterEmail)
+  )
+    // "parked" only if the row genuinely still waits under OUR attempt; a
+    // concurrent actor that already moved it (e.g. a click conflict-parked
+    // it held in the park->re-read gap) owns the messaging, and a pending
+    // email about a row in another state would be false.
+    return row.status === "pending_approval" && row.panelAttemptId === attemptId
+      ? { outcome: "parked", row }
+      : { outcome: "raced" };
+  const res = await publishWithSupersede(id, attemptId);
+  if (res.ok)
+    return { outcome: "swapped", slug: res.slug, card: res.card, parent: res.parent };
+  if (res.reason === "conflict") {
+    const held = await submissionById(id);
+    return held ? { outcome: "conflict", row: held } : { outcome: "raced" };
+  }
+  // not_eligible straight after our own successful park cannot come from the
+  // row's intrinsic state (we just wrote pending_approval with a parseable
+  // card): a concurrent actor won the interleave. Re-read and only fall back
+  // to "parked" if the row genuinely still waits under our attempt.
+  const now = await submissionById(id);
+  if (
+    now &&
+    now.status === "pending_approval" &&
+    now.panelAttemptId === attemptId
+  )
+    return { outcome: "parked", row: now };
+  return { outcome: "raced" };
 }
 
 export type RollbackResult =
@@ -581,7 +698,16 @@ export async function failPanel(
       panelStartedAt: null,
       updatedAt: new Date(),
     })
-    .where(and(eq(S.id, id), eq(S.panelAttemptId, attemptId)));
+    // status running is load-bearing, not decorative: the runner's catch
+    // calls this after ANY throw, including one thrown by a post-publish
+    // side effect (retention email's DB reads). Without the predicate that
+    // throw demotes an already-published row to failed - for a swapped
+    // update child that vaporizes the live card with the parent stranded
+    // superseded, which no route can recover (refutation MAJOR,
+    // 2026-08-03 auto-approve round).
+    .where(
+      and(eq(S.id, id), eq(S.panelAttemptId, attemptId), eq(S.status, "running"))
+    );
 }
 
 /** Admin approve of a held card: publish the stored draft as-is. */
@@ -685,8 +811,25 @@ export async function retitlePublishedCard(
   return res.length > 0 ? { oldSlug: row.slug, slug } : null;
 }
 
-export async function deleteSubmission(id: string): Promise<SubmissionRow | null> {
-  const rows = await db.delete(S).where(eq(S.id, id)).returning(ROW_COLS);
+/** Hard delete. Callers that decided on a STALE read (reject, plain admin
+ * delete) must pass the status they observed: the auto-approve lane makes
+ * pending_approval -> published an unsignalled machine transition, so a
+ * click racing the swap could otherwise hard-delete a just-published child
+ * and strand its parent superseded with no rollback child (unrecoverable
+ * in-app). A null return means the row changed state (or vanished) since
+ * the caller looked; the caller should 409, not retry blindly. */
+export async function deleteSubmission(
+  id: string,
+  opts?: { expectStatus?: string }
+): Promise<SubmissionRow | null> {
+  const rows = await db
+    .delete(S)
+    .where(
+      opts?.expectStatus
+        ? and(eq(S.id, id), eq(S.status, opts.expectStatus))
+        : eq(S.id, id)
+    )
+    .returning(ROW_COLS);
   return rows[0] ?? null;
 }
 

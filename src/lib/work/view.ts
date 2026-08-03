@@ -2,7 +2,7 @@
 // user's data: routes only call these on rows the caller owns (or as admin).
 
 import { WORK_CAPS } from "./config";
-import type { SubmissionRow } from "./db";
+import { UPDATE_CONFLICT_NOTE, type SubmissionRow } from "./db";
 
 export interface SubmissionStatusView {
   id: string;
@@ -17,6 +17,12 @@ export interface SubmissionStatusView {
   createdAt: string;
   /** §5.16: this row proposes to replace a published card. */
   isUpdate: boolean;
+  /** §5.16 admin web auto-approve: a passing panel run swaps this row live
+   * itself, so pending_approval is a moments-long transit state, not a wait.
+   * The client keeps polling and shows "Publishing" instead of "Waiting for
+   * approval" (which would otherwise freeze on screen: the poll used to stop
+   * on park, recreating the exact annoyance the auto lane removes). */
+  autoApprove: boolean;
 }
 
 // Plain-language labels for the machine-written panel_error checklist keys.
@@ -78,12 +84,23 @@ export function statusView(row: SubmissionRow): SubmissionStatusView {
     heldReason:
       row.status === "held"
         ? row.parentId
-          ? "This proposed update is waiting on Adam. The live card stays up meanwhile."
+          ? // A conflict park is a dead end, not a wait: the target card is
+            // gone and Approve is suppressed, so "waiting on Adam" would
+            // misstate it (the auto lane makes this a normal machine
+            // outcome the submitting admin actually sees).
+            row.panelError === UPDATE_CONFLICT_NOTE
+            ? "This update could not be applied because the card it targeted is no longer on /work. Adam has been notified."
+            : "This proposed update is waiting on Adam. The live card stays up meanwhile."
           : friendlyHeldReason(row.panelError)
         : null,
     slug: row.status === "published" ? row.slug : null,
     stale,
     createdAt: row.createdAt.toISOString(),
     isUpdate: !!row.parentId,
+    // heldAt is part of the projection, not just the gate: a once-held auto
+    // row parks BY DESIGN (heldAt one-shot), and without this conjunct the
+    // client would show "Publishing" forever on a row that is waiting for
+    // the click (refutation MAJOR, 2026-08-03).
+    autoApprove: !!row.parentId && row.autoApprove && row.heldAt === null,
   };
 }

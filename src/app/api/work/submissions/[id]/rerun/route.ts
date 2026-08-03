@@ -32,8 +32,12 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   if (limited) return limited;
   const row = await submissionById(id);
   if (!row) return workError("not_found", "That submission does not exist.", 404);
-  // pending_approval (§5.16 updates) re-runs like held: the fresh run lands
-  // back in pending_approval, so a re-run can never sneak a swap.
+  // pending_approval (§5.16 updates) re-runs like held. For teammate/email
+  // updates and for ANY once-held row, the fresh run lands back in
+  // pending_approval, so a re-run cannot sneak a swap past the click. A
+  // NEVER-held admin web auto row is the documented exception: a passing
+  // re-run swaps, with the authority it was submitted with (finishUpdateRow
+  // heldAt gate; ARCHITECTURE.md §5.16).
   if (row.status !== "held" && row.status !== "pending_approval")
     return workError(
       "invalid_request",

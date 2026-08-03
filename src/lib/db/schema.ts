@@ -319,6 +319,18 @@ export const workSubmissions = pgTable(
     parentId: uuid("parent_id").references((): AnyPgColumn => workSubmissions.id, {
       onDelete: "set null",
     }),
+    // §5.16 admin web auto-approve: stamped true ONLY by the web update route
+    // under a Google-verified admin session (isRfpProvider + exact-domain
+    // parse; the Microsoft common-tenant lane can forge isAdmin-passing
+    // sessions, see src/lib/rfp/access.ts). A true value lets a PASSING panel
+    // run swap the update live without the /admin/work click. The email lane
+    // (DKIM-spoofable From) must never arm it; migration 0034 adds a CHECK
+    // (auto_approve = false OR parent_id IS NOT NULL) and createSubmission
+    // throws on autoApprove without parentId, so a leaked option fails loudly.
+    // NOTE: the CHECK is hand-written SQL invisible to drizzle (snapshot has
+    // checkConstraints: {}); `drizzle-kit push` would silently drop a
+    // security control — deploys must keep using `drizzle-kit migrate`.
+    autoApprove: boolean("auto_approve").notNull().default(false),
     // Stamped on the parent when an approved update replaces it
     // (status "superseded", slug freed); cleared again on rollback.
     supersededAt: timestamp("superseded_at", { withTimezone: true }),

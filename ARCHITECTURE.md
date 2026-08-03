@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-03 email-naturalness pass (§5.16 NATURAL-EMAIL INTAKE + TRON SIGNATURE — owner ruling after a real bounce: the email lane had deterministic gates the form never surfaces, and intake replies signed a bare '- Tron Netter'. Blurb band email-only 0-4000 stored VERBATIM (context-only; form keeps 80-900 with its live counter), panel prompts carry it via lint.ts blurbPromptBlock: own <<<DESCRIPTION>>> region named untrusted by UNTRUSTED_FRAME, marker runs neutralized, sliced at 2000 with a truncation line, empty-blurb sentinel. Kind: and Credit: lines can no longer bounce a submission (exact vocabulary lifts incl. 'claude skill'; fuzzyKind honors short label-like values disclosed in the receipt, negators never lift; CREDIT_RE-shaped credits lift, everything else degrades to creditIgnored + receipt note). Several .md attachments resolve via pickSkillDoc (unique SKILL.md wins, disclosed); only real ambiguity rejects. FORMAT_REMINDER retired for a one-line FORM_POINTER with no parity claim, suppressed on wait-class and update-path rejects; every reject now ends with Tron's FULL signature from src/lib/tron-signature.ts, a host mirror of the module's unexported signatureBlock() pinned by test:work on BOTH sides (exact rendered output + sha256 of the module function source). warnAdmin stays unsigned, notify.ts is Troy-persona. Receipt gains 'Also:' adaptation notes between body and signature. /work/submit teaches the email lane in one short paragraph. All fail-closed gates untouched.); previously 2026-08-03 third pass (§5.16 ADMIN-MEDIATED CARD UPDATES — owner ruling: a submitter proposes a new version of a published From the Team card by email (strong "Update Card:" directive or "Update: <title>" subject) or web (POST /api/work/submissions/[id]/update, /work/submit?update=<id>); the update is a NEW row with parent_id (migration 0033: parent_id SET NULL FK + superseded_at + work_sub_parent_active_uq one-in-flight partial index + active-title index recreated with pending_approval), runs the full panel with the predecessor excluded from taken-titles/lint (excludeId), and parks at the new status pending_approval — structurally NO path from panel success to published for a parent_id row. Only the admin approve route swaps (publishWithSupersede: one txn, parent → superseded + slug freed FIRST, child inherits slug + published_at so deep links and /work order survive, updated_at moves the sitemap via greatest()); parent-not-published conflict parks the child held, never publishes standalone. Reject route (notified discard), DELETE = rollback on a swapped-in child (parent restored in-txn), parent deletes refused while any child incl. FAILED is unresolved (SET NULL + Retry would bypass the approval stop), superseded rows undeletable (rollback reservoir), work-panel-rerun.ts refuses update rows and parents with in-flight children. Email lane can only CREATE proposals — emailed admin identity is spoofable From under domain DKIM, so approval only ever rides an OAuth admin session; bare "Update:" stays prose (injection foot-gun); body-directive updates with a subject naming a different tool reject (pasted-release-notes shape). New: isUniqueViolation() walks drizzle's err.cause chain — the old message-only checks NEVER fired (latent 500-instead-of-409 on the double-click race, found by the new DB flow test npm run test:workupdate). Full runbook at the end of §5.16.); previously 2026-08-03 second pass (LLMS.TXT SUMMARY NOW CARRIES THE PERFORMANCE STATISTICS — OWNER RULING. The module panel (C5) blocked them by default: an agent reading llms.txt quotes it as bare fact, stripped of page context and of the link back to whatever substantiates it, which turns a machine-readable channel into an FTC-substantiation surface. The panel named the escape explicitly — 'putting numbers here is an owner decision with substantiation attached, not a copy choice' — and the owner ruled 2026-08-03 that the figures are accurate for XL.net and may be published. They ship ATTRIBUTED rather than bare: 'XL.net reports a 79.8% reduction in IT issues and 99.3% customer satisfaction across its managed IT clients, with 24/7 AI-powered support.' The attribution is the part that survives an agent quoting one sentence out of the file — a bare '99.3%' is unsourced, 'XL.net reports 99.3%' carries its own owner. Figures are verbatim-consistent with the homepage stat band (79.8% / 24/7 / 99.3%); if either surface changes, change both — two surfaces stating different numbers is worse than either alone.); previously 2026-08-03 (LLMS.TXT ENABLED — module pin v1.60.0 -> v1.61.0, owner directive to enable llms.txt fleet-wide. This host previously had NO seo.llmsTxt block at all, so /llms.txt 404'd — configured behaviour, not a defect (the module defaults llmsTxt.enabled false and requires host-authored summary copy). Now: seo.llmsTxt with an authored summary, and src/app/llms.txt/route.ts using the MODULE handler with force-dynamic — never hand-rolled, because the module handler is what emits X-Robots-Tag: noindex and this file is a duplicate-content aggregate of canonical article pages; force-dynamic is load-bearing because createLlmsTxt() reads the latest published articles from the DB on every request, which is precisely why no nightly regeneration pipeline was built (module panel C2: a nightly static writer would raise worst-case staleness from the ~1h CDN window to ~24h). BLOCKING COPY RULE (module panel seat 5): the summary carries NO performance statistics — this site's homepage leads with '79.8% reduction in IT issues' and '99.3% customer satisfaction', and an agent reading llms.txt quotes it as bare fact stripped of page context and of the link to whatever substantiates it, which is an FTC-substantiation exposure via a machine-readable channel (same class D4 put outside machine authorship). Structure and coverage only; adding numbers is an owner decision with substantiation attached. Also: /llms.txt added to deploy/synth-inventory.json (class warn) so the */15 sweep probes it — 96x/day, which is what answers the 'nightly' half of the directive — and expectLlmsTxt: true declared in deploy/seo-scorecard.json for the §21 llms-txt-served + llms-txt-links-ok rows. No schema, no env, no template change beyond the routine re-render.); previously 2026-08-03 (blog news seam, roundup-aggregator
+Last verified against code: 2026-08-03 email-naturalness pass (§5.16 NATURAL-EMAIL INTAKE + TRON SIGNATURE — owner ruling after a real bounce: the email lane had deterministic gates the form never surfaces, and intake replies signed a bare '- Tron Netter'. Blurb band email-only 0-4000 stored VERBATIM (context-only; form keeps 80-900 with its live counter), panel prompts carry it via lint.ts blurbPromptBlock: own <<<DESCRIPTION>>> region named untrusted by UNTRUSTED_FRAME, marker runs neutralized, sliced at 2000 with a truncation line, empty-blurb sentinel. Kind: and Credit: lines can no longer bounce a submission (exact vocabulary lifts incl. 'claude skill'; fuzzyKind honors short label-like values disclosed in the receipt, negators never lift; CREDIT_RE-shaped credits lift, everything else degrades to creditIgnored + receipt note). Several .md attachments resolve via pickSkillDoc (unique SKILL.md wins, disclosed); only real ambiguity rejects. FORMAT_REMINDER retired for a one-line FORM_POINTER with no parity claim, suppressed on wait-class and update-path rejects; every reject now ends with Tron's FULL signature from src/lib/tron-signature.ts, a host mirror of the module's unexported signatureBlock() pinned by test:work on BOTH sides (exact rendered output + sha256 of the module function source). warnAdmin stays unsigned, notify.ts is Troy-persona. Receipt gains 'Also:' adaptation notes between body and signature. /work/submit teaches the email lane in one short paragraph. All fail-closed gates untouched.); previously 2026-08-03 fourth pass (§5.16 ADMIN WEB AUTO-APPROVE — owner ruling: the admin approving his own web-form update is ceremony, so a work_submissions.auto_approve flag (migration 0034: boolean NOT NULL DEFAULT false + CHECK auto_approve=false OR parent_id IS NOT NULL) is stamped at intake by the web update route ONLY when verifiedWebAdmin passes: isAdmin AND provider google AND exact-label xl.net domain via the /rfp primitives (with MICROSOFT_TENANT_ID=common a Microsoft session bearing any admin email is mintable by a free Entra tenant — the nOAuth forgery documented in src/lib/rfp/access.ts — so domain+isAdmin alone would hand live publication to strangers; a 3-panelist design round flagged this FATAL). Panel finish for parent_id rows now goes through finishUpdateRow (db.ts): attempt-fenced park first, then IF autoApprove AND heldAt IS NULL AND isAdmin(submitter) re-checked, publishWithSupersede(id, attemptId) — the swap primitive gained an optional attempt fence that also requires autoApprove AND heldAt IS NULL inside the locked txn; outcomes swapped (revalidate + unconditional owner audit email notifyUpdateAutoPublished + retention), conflict (held + UPDATE_CONFLICT_NOTE + notifyUpdateConflictHeld), parked (teammate/email lanes unchanged: notifyUpdatePending + click), raced (a concurrent approve/reject/delete/rerun won; winner owns ALL side effects, no email). Email lane can structurally never arm the flag (createSubmission throws without parentId + the DB CHECK + regression tests). Approve route answers a stale click on an already-swapped row with 200 alreadySwapped; reject + plain DELETE are now status-conditional (deleteSubmission expectStatus) because pending_approval→published became an unsignalled machine transition and a stale click could strand a parent. statusView projects autoApprove (client keeps polling, badge "Publishing") and gives conflict-parked updates a dead-end line instead of "waiting on Adam". Once-held rows ALWAYS fall back to the click (heldAt one-shot). ADMIN_EMAIL is now publication authority — noted in .env.example.); previously 2026-08-03 third pass (§5.16 ADMIN-MEDIATED CARD UPDATES — owner ruling: a submitter proposes a new version of a published From the Team card by email (strong "Update Card:" directive or "Update: <title>" subject) or web (POST /api/work/submissions/[id]/update, /work/submit?update=<id>); the update is a NEW row with parent_id (migration 0033: parent_id SET NULL FK + superseded_at + work_sub_parent_active_uq one-in-flight partial index + active-title index recreated with pending_approval), runs the full panel with the predecessor excluded from taken-titles/lint (excludeId), and parks at the new status pending_approval — structurally NO path from panel success to published for a parent_id row. Only the admin approve route swaps (publishWithSupersede: one txn, parent → superseded + slug freed FIRST, child inherits slug + published_at so deep links and /work order survive, updated_at moves the sitemap via greatest()); parent-not-published conflict parks the child held, never publishes standalone. Reject route (notified discard), DELETE = rollback on a swapped-in child (parent restored in-txn), parent deletes refused while any child incl. FAILED is unresolved (SET NULL + Retry would bypass the approval stop), superseded rows undeletable (rollback reservoir), work-panel-rerun.ts refuses update rows and parents with in-flight children. Email lane can only CREATE proposals — emailed admin identity is spoofable From under domain DKIM, so approval only ever rides an OAuth admin session; bare "Update:" stays prose (injection foot-gun); body-directive updates with a subject naming a different tool reject (pasted-release-notes shape). New: isUniqueViolation() walks drizzle's err.cause chain — the old message-only checks NEVER fired (latent 500-instead-of-409 on the double-click race, found by the new DB flow test npm run test:workupdate). Full runbook at the end of §5.16.); previously 2026-08-03 second pass (LLMS.TXT SUMMARY NOW CARRIES THE PERFORMANCE STATISTICS — OWNER RULING. The module panel (C5) blocked them by default: an agent reading llms.txt quotes it as bare fact, stripped of page context and of the link back to whatever substantiates it, which turns a machine-readable channel into an FTC-substantiation surface. The panel named the escape explicitly — 'putting numbers here is an owner decision with substantiation attached, not a copy choice' — and the owner ruled 2026-08-03 that the figures are accurate for XL.net and may be published. They ship ATTRIBUTED rather than bare: 'XL.net reports a 79.8% reduction in IT issues and 99.3% customer satisfaction across its managed IT clients, with 24/7 AI-powered support.' The attribution is the part that survives an agent quoting one sentence out of the file — a bare '99.3%' is unsourced, 'XL.net reports 99.3%' carries its own owner. Figures are verbatim-consistent with the homepage stat band (79.8% / 24/7 / 99.3%); if either surface changes, change both — two surfaces stating different numbers is worse than either alone.); previously 2026-08-03 (LLMS.TXT ENABLED — module pin v1.60.0 -> v1.61.0, owner directive to enable llms.txt fleet-wide. This host previously had NO seo.llmsTxt block at all, so /llms.txt 404'd — configured behaviour, not a defect (the module defaults llmsTxt.enabled false and requires host-authored summary copy). Now: seo.llmsTxt with an authored summary, and src/app/llms.txt/route.ts using the MODULE handler with force-dynamic — never hand-rolled, because the module handler is what emits X-Robots-Tag: noindex and this file is a duplicate-content aggregate of canonical article pages; force-dynamic is load-bearing because createLlmsTxt() reads the latest published articles from the DB on every request, which is precisely why no nightly regeneration pipeline was built (module panel C2: a nightly static writer would raise worst-case staleness from the ~1h CDN window to ~24h). BLOCKING COPY RULE (module panel seat 5): the summary carries NO performance statistics — this site's homepage leads with '79.8% reduction in IT issues' and '99.3% customer satisfaction', and an agent reading llms.txt quotes it as bare fact stripped of page context and of the link to whatever substantiates it, which is an FTC-substantiation exposure via a machine-readable channel (same class D4 put outside machine authorship). Structure and coverage only; adding numbers is an owner decision with substantiation attached. Also: /llms.txt added to deploy/synth-inventory.json (class warn) so the */15 sweep probes it — 96x/day, which is what answers the 'nightly' half of the directive — and expectLlmsTxt: true declared in deploy/seo-scorecard.json for the §21 llms-txt-served + llms-txt-links-ok rows. No schema, no env, no template change beyond the routine re-render.); previously 2026-08-03 (blog news seam, roundup-aggregator
 WARN round: `-roundup`/`-index-url` peg demotion + time-window `+number`
 strip in `scripts/lib/peg-score.mjs`; `cleanTitle`/`keywordsFromTitle`/
 `slugify` extracted to `scripts/lib/title-keywords.mjs` with temporal
@@ -3531,9 +3531,11 @@ delete). **Retention:** published rows live until deleted (they ARE the page
 content and its Postgres backup); held, pending_approval (the approval queue,
 still carrying the retained originals) and superseded (the rollback
 reservoir) rows are sweep-exempt; everything else sweeps at 30 days.
-**Tests:** `npm run test:work` (extract + lint + parse, no DB/brain) and
-`npm run test:workupdate` (the update state machine against a real DB:
-swap, rollback, conflict-park, delete guard, index races). **Sitemap:**
+**Tests:** `npm run test:work` (extract + lint + parse + statusView
+projections, no DB/brain) and `npm run test:workupdate` (the update state
+machine against a real DB: swap, rollback, conflict-park, delete guard,
+index races, and the auto-approve lane: flag guards, fenced finishUpdateRow
+outcomes, heldAt one-shot, admin re-check, status-conditional delete). **Sitemap:**
 /work `lastmod = max(hand-maintained floor, latest greatest(published_at,
 updated_at) over published rows)` — `greatest` because an approved update
 swap keeps the card's `published_at` (ordering) while `updated_at` carries
@@ -3594,11 +3596,19 @@ quotas, duplicate-title guards, update-path gates). What changed:
 **Admin-mediated updates (2026-08-03, owner ruling).** A submitter (or an
 admin on their behalf) proposes a NEW VERSION of a published community card;
 the live card never changes until the admin approves the swap on
-`/admin/work`. Design was a 3-designer panel + 3-refuter panel; the two
-FATALs both closed (see the delete guard and the CLI guard below).
+`/admin/work` — with ONE carve-out (second owner ruling, same day): an
+update submitted through the WEB form under a Google-verified admin session
+publishes itself when the panel passes (see the auto-approve bullet).
+Design was a 3-designer panel + 3-refuter panel; the two FATALs both closed
+(see the delete guard and the CLI guard below). The auto-approve round was
+its own 3-panelist design review (security / state-machine / UX) whose
+findings all shipped.
 
-- **Data model** (migration 0033): `parent_id uuid` FK →
-  `work_submissions.id` `ON DELETE SET NULL` + `superseded_at timestamptz`.
+- **Data model** (migrations 0033 + 0034): `parent_id uuid` FK →
+  `work_submissions.id` `ON DELETE SET NULL` + `superseded_at timestamptz`
+  + `auto_approve boolean NOT NULL DEFAULT false` with CHECK
+  `work_sub_auto_approve_parent_ck` (`auto_approve = false OR parent_id IS
+  NOT NULL`).
   An update is a NEW row with `parent_id` set, NEVER an in-place mutation.
   Partial unique index `work_sub_parent_active_uq` (`parent_id` WHERE status
   IN received/running/held/pending_approval): one in-flight update per card.
@@ -3613,8 +3623,11 @@ FATALs both closed (see the delete guard and the CLI guard below).
   former live card after a swap (slug freed, `superseded_at` stamped,
   cardJson kept: it is the only surviving copy of the old card, the bytes
   were cleared at its own retention email). In panel.ts the publish exit
-  branches on `row.parentId` — there is structurally NO code path from panel
-  success to `published` for an update row.
+  branches on `row.parentId`: an update row reaches `published` ONLY through
+  `publishWithSupersede` — never through `finishPublished` — and only two
+  callers exist: the admin approve route (click authority) and
+  `finishUpdateRow` for the auto-approve lane below (attempt-fenced,
+  autoApprove-stamped rows only).
 - **Email intake:** strong directives only — `Update Card:` / `Updates
   Card:` / `Card Update:` / `Replace Card:` body labels (bare `Update:`
   stays prose; same reasoning as bare `Name:`), or subject `Update: <title>`
@@ -3640,12 +3653,52 @@ FATALs both closed (see the delete guard and the CLI guard below).
   `/work/submit?update=<id>` renders the form in update mode (title/kind
   locked; invalid or foreign ids silently fall back to create mode);
   buttons on own published rows at `/work/submit` and on `/admin/work`.
-- **The swap** — `publishWithSupersede(childId)` (db.ts), called ONLY from
-  the admin approve route (real request context, so `revalidatePath` works;
-  plus the exported `revalidateWorkPage()` loopback as layer 2). One
+- **Auto-approve lane (2026-08-03 owner ruling, migration 0034).** The web
+  update route stamps `autoApprove: verifiedWebAdmin(user)` at intake:
+  `isAdmin` AND `isRfpProvider` (Google only) AND exact-label xl.net domain
+  via the /rfp `emailDomain` parse. Provider matters: with
+  `MICROSOFT_TENANT_ID=common` a Microsoft session bearing ANY admin email
+  is mintable by a free Entra tenant (the nOAuth forgery, argument at the
+  head of `src/lib/rfp/access.ts`), so `isAdmin` + domain alone would make
+  the forgeable lane the auto-publishing one. On panel pass,
+  `finishUpdateRow(id, attemptId, card, transcript)` (db.ts) parks first
+  (attempt-fenced `finishPendingApproval`; a superseded claim stops here),
+  re-checks `parentId && autoApprove && heldAt IS NULL &&
+  isAdmin(submitterEmail)` (strictly AND — `isAdmin` alone would let a
+  DKIM-spoofable admin EMAIL publish itself; heldAt makes any once-held row
+  fall back to the click forever; the isAdmin re-check parks a de-listed
+  admin), then swaps via `publishWithSupersede(id, attemptId)`. Outcomes:
+  `swapped` → `revalidateWorkPage()` (both layers work: the runner sits in
+  the route's `after()`) + `notifyUpdateAutoPublished` + retention;
+  `conflict` → held + `UPDATE_CONFLICT_NOTE` + `notifyUpdateConflictHeld`;
+  `parked` → the ordinary pending flow (also the crash-recovery fallback —
+  /admin/work marks a parked auto row and Approve publishes it); `raced` →
+  a concurrent approve/reject/delete/rerun claim won and owns ALL side
+  effects, the panel does NOTHING (anything it said would be false).
+  `failPanel` now carries a `status = 'running'` predicate: the runner's
+  catch fires on ANY throw including post-publish side effects, and without
+  the predicate a retention-email DB blip after a committed swap would
+  demote the published child to failed and vaporize the live card
+  unrecoverably (refutation MAJOR); the swapped branch's side effects are
+  additionally try/caught, and the approve route's `alreadySwapped` answer
+  re-attempts a crashed retention email. The
+  email lane can structurally never arm the flag: `createSubmission` throws
+  on `autoApprove` without `parentId`, the DB CHECK refuses it, and
+  regression tests pin both. ADMIN_EMAIL is thereby publication authority
+  (noted in `.env.example`): a listed address + Google session publishes
+  card updates with no second person.
+- **The swap** — `publishWithSupersede(childId, expectedAttemptId?)`
+  (db.ts), called ONLY from the admin approve route (click authority, no
+  fence arg; real request context, so `revalidatePath` works; plus the
+  exported `revalidateWorkPage()` loopback as layer 2) and from
+  `finishUpdateRow` (which MUST pass its panel attempt id: inside the txn
+  the fence also requires `panel_attempt_id` match AND `auto_approve` AND
+  `heldAt IS NULL`, so a zombie run from a superseded claim can never swap
+  and the once-held one-shot is atomic in the primitive, not just in the
+  gate pre-read). One
   transaction, both rows locked in id order: re-check child
-  (pending_approval|held, parentId, cardJson) and parent (published, slug
-  non-null) INSIDE the txn; parent → superseded + slug NULL first
+  (pending_approval|held, parentId, cardJson, fence when given) and parent
+  (published, slug non-null) INSIDE the txn; parent → superseded + slug NULL first
   (`work_sub_slug_uq` is not deferrable — statement order is load-bearing),
   child → published with the parent's slug and `published_at` (deep links
   and /work position survive; `updated_at` moves the sitemap). Parent not
@@ -3657,7 +3710,14 @@ FATALs both closed (see the delete guard and the CLI guard below).
   admin-facing).
 - **Reject** — `POST /api/work/submissions/[id]/reject` (admin-only): valid
   on pending_approval or held updates; deletes the row and emails the
-  submitter. Delete on an update row = the silent variant.
+  submitter. Delete on an update row = the silent variant. Both reject and
+  the plain-delete path are STATUS-CONDITIONAL (`deleteSubmission(id,
+  {expectStatus})`): auto-approve made pending_approval → published an
+  unsignalled machine transition, and a click decided on a stale page could
+  otherwise hard-delete a just-swapped child and strand its parent
+  superseded with no rollback child; a zero-row delete answers 409 "reload
+  and look again". The approve route likewise answers a stale click on an
+  already-swapped row with 200 `alreadySwapped` instead of a refusal.
 - **DELETE route extras:** a parent with an unresolved child (received/
   running/held/pending_approval/**failed** — failed included because SET
   NULL + Retry would otherwise publish the update standalone with no
@@ -3670,18 +3730,34 @@ FATALs both closed (see the delete guard and the CLI guard below).
 - **Retry/rerun:** retry 409s on pending_approval ("waiting for Adam");
   rerun accepts held + pending_approval (`claimPanel fromHeld` widened) and
   a passing re-run lands back in pending_approval — a re-run can never
-  sneak a swap. `scripts/work-panel-rerun.ts` refuses any row with
+  sneak a swap past the click for teammate/email updates or for ANY
+  once-held row (`heldAt IS NULL` in the auto gate); a NEVER-held admin web
+  auto row re-runs with the authority it was submitted with, so a passing
+  re-run swaps (documented decision, not an accident). The auto lane's
+  revalidation also depends on `scripts/work-panel-rerun.ts` continuing to
+  refuse update rows (no detached execution context for auto rows exists).
+  The CLI refuses any row with
   `parent_id` set (re-running a swapped-in child would strand the card off
   /work: its parent is superseded, so approval conflict-parks forever —
   refutation FATAL; roll back first) and any parent with an in-flight
   child.
 - **Notifications** (notify.ts): `notifyUpdatePending` (admin
-  action-needed + submitter receipt), `notifyUpdateApproved` (submitter;
-  owner audit when another listed admin approved, with rollback — not
-  delete — undo guidance; the ORIGINAL card's submitter when someone else
-  proposed the update), `notifyUpdateRejected`, `notifyRollback`,
-  update-aware `notifyHeld`. Tron receipts state the gate: the live card
-  only changes after the admin approves.
+  action-needed + submitter receipt; SKIPPED entirely on an auto swap — an
+  "action needed" email about a card already live would be false),
+  `notifyUpdateApproved` (submitter; owner audit when another listed admin
+  approved, with rollback — not delete — undo guidance; the ORIGINAL
+  card's submitter when someone else proposed the update),
+  `notifyUpdateAutoPublished` (auto lane: the owner copy is UNCONDITIONAL
+  — the one publish with no human click must never be the one with no
+  mail trail — and the wording never says "approved"; a second listed
+  admin gets the submitter copy; parent-submitter rule as above; plus a
+  structured `[work] auto-approved update swapped live` log line),
+  `notifyUpdateConflictHeld` (auto lane conflict: names the dead end,
+  never "waiting for approval"), `notifyUpdateRejected`, `notifyRollback`,
+  update-aware `notifyHeld`. Tron receipts state the gate: for email-lane
+  submissions the live card only changes after the admin approves —
+  unchanged and still true, because the email lane can never arm
+  auto_approve.
 - **`isUniqueViolation(err, ...indexNames)`** (db.ts): drizzle wraps
   postgres errors ("Failed query: ...") with the real PostgresError in
   `err.cause`, so the old `err.message.includes(index)` catches never fired
@@ -3698,13 +3774,19 @@ stays pinned. Tron replies with a receipt; the panel re-runs the full
 editorial review on the new files; when it passes you get "Action needed:
 /work update awaiting approval". Open the link (`/admin/work#sub-<id>`),
 compare "Proposed card JSON" against "View the live card", click **Approve
-update** — the live card is replaced within 5 minutes. Your own updates take
-the same click; nothing swaps by itself, ever.
+update** — the live card is replaced within 5 minutes. Your own EMAIL
+updates still take the same click (an emailed identity is spoofable, so
+nothing that arrives by mail ever swaps by itself); a web-form update
+submitted while signed in as admin with Google is the one exception and
+publishes by itself when the panel passes.
 By website: `/admin/work` → the published card → **Submit an update** (or
 the same button on your own row at `/work/submit`); the form opens with
-title and kind locked; attach the new files, submit; when the panel passes,
-the row shows "pending approval" and the approval email arrives; click
-**Approve update**. Someone else's update: same screen — **Approve update**
+title and kind locked; attach the new files, submit. If you are the admin
+(Google sign-in), the card publishes automatically when the panel passes:
+the status strip shows "Publishing", you get a confirmation email, and
+**Roll back to previous version** is the undo. A teammate's submission (or
+any once-held one, including yours) instead shows "pending approval" and
+the approval email arrives; click **Approve update**. Someone else's update: same screen — **Approve update**
 swaps it live, **Reject update** deletes the proposal and emails the
 submitter, **Delete** discards it silently; a held update offers "Approve
 update as-is" / "Run the panel again" / "Reject update" (approve/re-run are
@@ -4557,7 +4639,8 @@ work_submissions   id uuid PK, user_id uuid NULL FK users ON DELETE SET NULL (pu
                    must NOT silently unpublish them — attribution is denormalized),
                    submitter_email/kind/title/blurb text NOT NULL,
                    submitter_name text NULL (validated first name; NULL = team credit),
-                   status text default 'received' (received|running|published|held|failed),
+                   status text default 'received'
+                   (received|running|published|held|failed|pending_approval|superseded),
                    architecture_text/skill_md_text/file_manifest_json/corpus_files_json,
                    archive_name/archive_sha256/archive_bytes (provenance),
                    archive_data bytea NULL (migration 0023: the original upload, retained
@@ -4571,6 +4654,15 @@ work_submissions   id uuid PK, user_id uuid NULL FK users ON DELETE SET NULL (pu
                    panel_runs + panel_runs_date (3/day guard), panel_progress_json,
                    panel_transcript_json (≤60k audit trail), panel_error,
                    card_json, slug (unique, 'team-*' namespace), published_at,
+                   held_at (set-once retry poison, migration 0025),
+                   parent_id uuid NULL self-FK ON DELETE SET NULL + superseded_at
+                   (migration 0033: update lineage + the rollback reservoir; partial
+                   unique indexes work_sub_parent_active_uq and the recreated
+                   work_sub_active_title_uq are migration-only, drizzle cannot model
+                   partial indexes),
+                   auto_approve boolean NOT NULL default false (migration 0034: admin
+                   web auto-approve stamp + CHECK work_sub_auto_approve_parent_ck
+                   auto_approve = false OR parent_id IS NOT NULL),
                    created_at/updated_at
                    -- §5.16, migration 0022; one row carries everything so hard DELETE
                    -- (admin-only remove/unpublish) removes the whole submission

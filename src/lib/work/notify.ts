@@ -260,6 +260,88 @@ export async function notifyUpdateApproved(
     });
 }
 
+/** §5.16 admin web auto-approve: a verified-admin web update passed the
+ * panel and swapped itself live (nobody clicked approve). The owner copy is
+ * UNCONDITIONAL: this is the one lane where no human acted at publish time,
+ * so it must never be the one lane with no mail trail (notify-on-every-
+ * publish invariant). Wording never says "approved": nobody approved. */
+export async function notifyUpdateAutoPublished(
+  row: SubmissionRow,
+  card: WorkCard,
+  slug: string,
+  parent: SubmissionRow
+): Promise<void> {
+  const link = `${SITE}/work#${slug}`;
+  const owner = adminRecipient().toLowerCase();
+  const submitter = row.submitterEmail.toLowerCase();
+  const undo = `To undo it: "Roll back to previous version" on /admin/work restores the old card. To remove the card entirely, roll back first, then delete the restored card.`;
+  await sendTroyEmail({
+    subject: `[aiwebsite] /work card updated: ${card.title}`,
+    text: [
+      submitter === owner
+        ? `Your update to the published team card "${card.title}" passed the editorial panel and replaced the live card. Admin web submissions publish on pass; no approval step was needed.`
+        : `${row.submitterEmail} submitted an update to the published team card "${card.title}" through the web form; it passed the editorial panel and published automatically (admin web submissions publish on pass). The new version replaces it within 5 minutes.`,
+      ``,
+      link,
+      ``,
+      `If /work was already open, reload the page to see it (a stale copy can survive a few minutes; reload once more if it has not appeared).`,
+      ``,
+      undo,
+    ].join("\n"),
+  });
+  // A second listed admin used the auto lane: they get the submitter copy,
+  // the owner keeps the audit copy above.
+  if (submitter !== owner)
+    await sendTroyEmail({
+      to: row.submitterEmail,
+      subject: `Your /work update is live: ${card.title}`,
+      text: [
+        `Your update to "${card.title}" passed the editorial panel and replaced the live card (admin web submissions publish on pass).`,
+        ``,
+        link,
+        ``,
+        `If /work was already open, reload the page to see it (a stale copy can survive a few minutes; reload once more if it has not appeared). Reply to this email if something on the card reads wrong.`,
+      ].join("\n"),
+    });
+  // The original card's submitter learns their card changed, same rule as
+  // the clicked-approve path.
+  const parentEmail = parent.submitterEmail.toLowerCase();
+  if (parentEmail !== submitter && parentEmail !== owner)
+    await sendTroyEmail({
+      to: parent.submitterEmail,
+      subject: `Your /work card was updated: ${card.title}`,
+      // "reviewed", never "approved": nobody clicked approve on this lane.
+      text: `A reviewed update replaced your published card "${card.title}" with a new version under the same link: ${link}\n\nReply to this email if that is unexpected.`,
+    });
+}
+
+/** §5.16 admin web auto-approve, conflict park: the update passed the panel
+ * but its target card was no longer published when the swap ran, so nothing
+ * was replaced and nothing new was published. notifyHeld's update copy
+ * ("the live card stays up, approving publishes the draft") is false here:
+ * the target is gone and /admin/work suppresses Approve on a conflict park.
+ * Admin-only (the auto lane's submitter is always an admin). */
+export async function notifyUpdateConflictHeld(
+  row: SubmissionRow,
+  card: WorkCard
+): Promise<void> {
+  const selfSubmitted =
+    row.submitterEmail.toLowerCase() === adminRecipient().toLowerCase();
+  await sendTroyEmail({
+    subject: `[aiwebsite] Action needed: /work update could not publish: ${card.title}`,
+    text: [
+      `Review it at ${SITE}/admin/work#sub-${row.id} (delete it, or resubmit the tool as a new card).`,
+      ``,
+      `${selfSubmitted ? "Your update" : `An update proposed by ${row.submitterEmail}`} passed the editorial panel, but the card it targeted was no longer published when the swap ran, so nothing was replaced and nothing new was published. The draft is held with its content intact.`,
+      ``,
+      `This held update cannot be approved because its target is gone. If the tool should still be on /work, submit it again as a new card.`,
+      ``,
+      `Title: ${card.title}`,
+      `Proposed by: ${row.submitterEmail}`,
+    ].join("\n"),
+  });
+}
+
 /** §5.16 updates: the admin rejected the proposal; the live card is
  * untouched and the proposal row is gone. */
 export async function notifyUpdateRejected(

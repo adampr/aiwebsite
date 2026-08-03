@@ -4,6 +4,7 @@
 import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { checkRateLimit } from "@aicompany/core/lib/rate-limit";
+import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
 import { siteConfig } from "site.config";
 
 /** The submitting audience is XL.net staff; a constant in code (not env) so
@@ -14,7 +15,33 @@ export interface WorkUser {
   userId: string;
   email: string;
   emailDomain: string;
+  provider: string;
   admin: boolean;
+}
+
+/** §5.16 auto-approve stamp predicate: may THIS session's update swap live
+ * on panel pass without the /admin/work click?
+ *
+ * Deliberately STRONGER than requireXlUser's domain gate. `admin` alone is
+ * an ADMIN_EMAIL string compare over the session email, and with
+ * MICROSOFT_TENANT_ID=common the Microsoft lane will mint a session bearing
+ * any email a free Entra tenant claims (the published nOAuth forgery; the
+ * full argument lives at the head of src/lib/rfp/access.ts). So the stamp
+ * additionally requires the /rfp predicate: a provider that verifies its
+ * email claim (Google) AND an exact-label domain parse (requireXlUser's
+ * split("@")[1] idiom is ambiguous on double-@ addresses). Reuses the rfp
+ * primitives rather than copying the lists, so a future hardening there
+ * moves here too. Email-lane submissions never see this predicate: they
+ * carry no session at all, and createSubmission + a DB CHECK refuse the
+ * flag outside a parentId row. */
+export function verifiedWebAdmin(user: WorkUser): boolean {
+  const domain = emailDomain(user.email);
+  return (
+    user.admin &&
+    isRfpProvider(user.provider) &&
+    domain !== null &&
+    WORK_SUBMIT_DOMAINS.includes(domain)
+  );
 }
 
 export function workError(
@@ -49,6 +76,7 @@ export async function requireUser(): Promise<WorkUser | Response> {
     userId: session.userId,
     email: session.email,
     emailDomain: session.email.split("@")[1]?.toLowerCase() ?? "",
+    provider: session.provider,
     admin: isAdmin(session.email),
   };
 }

@@ -4,8 +4,12 @@
 //   transactional swap (publishWithSupersede). The branch keys on parentId,
 //   not on how the row got held, so a held update can never be published
 //   standalone beside its live predecessor (refutation FATAL, 2026-08-03).
-// This route is the ONLY code path that swaps an update live; it runs in a
-// real request context, so revalidatePath works (the email path never can).
+// Two code paths swap an update live: this route (click authority, no
+// attempt fence needed) and panel finishUpdateRow (the admin web
+// auto-approve lane, fenced on its panel attempt). Because the auto lane
+// publishes without a click, a stale /admin/work view can show Approve on a
+// row that already swapped; that lands here as not_eligible and is answered
+// honestly below instead of with the generic refusal.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -38,6 +42,22 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
           "The live card this update targeted is no longer published, so nothing was replaced. The update is now held; delete it, or submit the tool again as a new card if it should still be on /work.",
           409
         );
+      // The auto-approve lane makes "clicked Approve on an already-swapped
+      // row" a normal event (stale admin page); report what actually
+      // happened instead of a refusal that reads like a failure.
+      const now = await submissionById(id);
+      if (now?.parentId && now.status === "published" && now.slug) {
+        // Crash-recovery sweep-up: if the auto lane died between its swap
+        // and the retention email, the bytes are still on the row; this is
+        // a no-op once they were delivered and cleared.
+        await deliverArchiveRetention(now);
+        return okJson({
+          status: "published",
+          slug: now.slug,
+          updated: true,
+          alreadySwapped: true,
+        });
+      }
       return workError(
         "invalid_request",
         "Only a held submission or an update awaiting approval can be approved.",

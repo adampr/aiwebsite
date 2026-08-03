@@ -1073,6 +1073,7 @@ async function main() {
     cardJson: null,
     heldAt: new Date(),
     parentId: null as string | null,
+    autoApprove: false,
     supersededAt: null,
     slug: null,
     publishedAt: null,
@@ -1093,6 +1094,81 @@ async function main() {
     "held update rows get the canned line, never the raw panel_error"
   );
   assert.equal(updView.isUpdate, true, "statusView projects isUpdate");
+
+  // §5.16 auto-approve projections: a conflict-parked update gets the
+  // dead-end line (not "waiting on Adam"), and autoApprove reaches the
+  // client only on update rows (drives poll liveness + the Publishing
+  // badge).
+  const { UPDATE_CONFLICT_NOTE } = await import("../src/lib/work/db");
+  const conflictView = statusView({
+    ...baseRow,
+    parentId: "00000000-0000-0000-0000-000000000002",
+    panelError: UPDATE_CONFLICT_NOTE,
+  });
+  assert.ok(
+    conflictView.heldReason?.includes("no longer on /work"),
+    "conflict-parked updates get the dead-end line"
+  );
+  assert.ok(
+    !conflictView.heldReason?.includes("waiting on Adam"),
+    "conflict park is not described as a wait"
+  );
+  const autoView = statusView({
+    ...baseRow,
+    status: "pending_approval",
+    parentId: "00000000-0000-0000-0000-000000000002",
+    autoApprove: true,
+    heldAt: null,
+  });
+  assert.equal(autoView.autoApprove, true, "autoApprove projected on updates");
+  assert.equal(
+    statusView({ ...baseRow, autoApprove: true, heldAt: null }).autoApprove,
+    false,
+    "autoApprove never projects on a non-update row"
+  );
+  assert.equal(
+    statusView({
+      ...baseRow,
+      status: "pending_approval",
+      parentId: "00000000-0000-0000-0000-000000000002",
+      autoApprove: true,
+    }).autoApprove,
+    false,
+    "a once-held auto row never shows Publishing (heldAt one-shot, refutation MAJOR)"
+  );
+
+  // §5.16 verifiedWebAdmin: the auto-approve stamp predicate is strictly
+  // AND over admin + Google provider + exact-label domain (the Microsoft
+  // common-tenant lane can forge isAdmin-passing sessions).
+  const { verifiedWebAdmin } = await import("../src/lib/work/http");
+  const webAdmin = {
+    userId: "u",
+    email: "someone@xl.net",
+    emailDomain: "xl.net",
+    provider: "google",
+    admin: true,
+  };
+  assert.equal(verifiedWebAdmin(webAdmin), true, "google admin on xl.net stamps");
+  assert.equal(
+    verifiedWebAdmin({ ...webAdmin, provider: "microsoft" }),
+    false,
+    "microsoft session never stamps (nOAuth forgery)"
+  );
+  assert.equal(
+    verifiedWebAdmin({ ...webAdmin, admin: false }),
+    false,
+    "non-admin never stamps"
+  );
+  assert.equal(
+    verifiedWebAdmin({ ...webAdmin, email: "a@xl.net@evil.com" }),
+    false,
+    "double-@ address never stamps (exact-label parse)"
+  );
+  assert.equal(
+    verifiedWebAdmin({ ...webAdmin, email: "tron.netter@ai.xl.net" }),
+    false,
+    "subdomain never stamps"
+  );
 
   // ── §5.16 natural-email round (2026-08-03): signature + softened gates ──
 

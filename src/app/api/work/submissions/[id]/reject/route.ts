@@ -30,7 +30,16 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
       "Only a pending or held update can be rejected.",
       409
     );
-  await deleteSubmission(id);
+  // Status-conditional: the auto-approve lane can publish this row between
+  // our read and this delete, and hard-deleting a just-published child
+  // strands its parent superseded with no rollback child.
+  const deleted = await deleteSubmission(id, { expectStatus: row.status });
+  if (!deleted)
+    return workError(
+      "conflict",
+      "This update changed state since the page loaded (it may have just published). Reload /admin/work and look again.",
+      409
+    );
   await notifyUpdateRejected(row, user.email);
   return okJson({ rejected: true });
 }

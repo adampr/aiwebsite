@@ -23,6 +23,7 @@ interface StatusRow {
   stale: boolean;
   createdAt: string;
   isUpdate: boolean;
+  autoApprove: boolean;
 }
 
 /** §5.16 update mode: the published card the form proposes to replace. */
@@ -70,7 +71,13 @@ export function SubmitClient({
     return () => clearTimeout(t);
   }, [refresh]);
   const anyActive = rows.some(
-    (r) => r.status === "received" || r.status === "running"
+    (r) =>
+      r.status === "received" ||
+      r.status === "running" ||
+      // §5.16 auto-approve: pending_approval is a moments-long transit for
+      // an admin web update (the panel swaps it itself). Keep polling so the
+      // strip flips to Published instead of freezing on a glimpsed park.
+      (r.status === "pending_approval" && r.autoApprove)
   );
   useEffect(() => {
     if (!anyActive) return;
@@ -135,7 +142,9 @@ export function SubmitClient({
               <div className="flex flex-wrap items-center gap-3">
                 <span className="font-medium">{r.title}</span>
                 <span className="badge badge--light">
-                  {STATUS_COPY[r.status] ?? r.status}
+                  {r.status === "pending_approval" && r.autoApprove
+                    ? "Publishing"
+                    : (STATUS_COPY[r.status] ?? r.status)}
                 </span>
                 {r.stage && <span className="text-faint">{r.stage}</span>}
               </div>
@@ -146,12 +155,17 @@ export function SubmitClient({
                   to 5 minutes).
                 </p>
               )}
-              {r.status === "pending_approval" && (
-                <p className="mt-1 text-faint">
-                  Passed review. Waiting for Adam to approve the swap; the
-                  live card is unchanged until then.
-                </p>
-              )}
+              {r.status === "pending_approval" &&
+                (r.autoApprove ? (
+                  <p className="mt-1 text-faint">
+                    Passed review. Publishing the new version now.
+                  </p>
+                ) : (
+                  <p className="mt-1 text-faint">
+                    Passed review. Waiting for Adam to approve the swap; the
+                    live card is unchanged until then.
+                  </p>
+                ))}
               {r.status === "superseded" && (
                 <p className="mt-1 text-faint">
                   An approved update replaced this card. The live version is
@@ -165,7 +179,11 @@ export function SubmitClient({
                       {r.heldReason}
                     </p>
                   )}
-                  <p className="text-faint">{HELD_NEXT_STEPS}</p>
+                  {/* A conflict park is a dead end: publish and re-run are
+                      impossible, so the generic next-steps line would lie. */}
+                  {!r.heldReason?.startsWith(
+                    "This update could not be applied"
+                  ) && <p className="text-faint">{HELD_NEXT_STEPS}</p>}
                   {isAdmin && (
                     <a
                       href={`/admin/work#sub-${r.id}`}

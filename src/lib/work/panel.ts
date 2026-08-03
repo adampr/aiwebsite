@@ -33,8 +33,8 @@ import {
   claimPanel,
   failPanel,
   finishHeld,
-  finishPendingApproval,
   finishPublished,
+  finishUpdateRow,
   heartbeat,
   publishedTitleAndFacetSets,
   readTodayWorkUsage,
@@ -48,6 +48,8 @@ import {
   deliverArchiveRetention,
   notifyHeld,
   notifyPublished,
+  notifyUpdateAutoPublished,
+  notifyUpdateConflictHeld,
   notifyUpdatePending,
 } from "./notify";
 
@@ -620,15 +622,50 @@ async function runPanelInner(
     );
     return;
   }
-  // §5.16 updates: a passing update row parks for the admin swap decision.
-  // Structurally NO path from panel success to published for a parentId row:
-  // no revalidate (nothing public changed), no retention email (the bytes
-  // ride the row until the swap actually publishes them).
+  // §5.16 updates: a passing update row reaches published ONLY through
+  // publishWithSupersede. finishUpdateRow parks it (attempt-fenced) and, for
+  // the ONE authorized lane (autoApprove stamped under a Google-verified
+  // admin web session, never held, submitter still admin), runs the swap
+  // itself with the attempt fence; every other update waits for the
+  // /admin/work click. On "raced" a concurrent actor (approve click, reject,
+  // delete, rerun claim) won the interleave and owns ALL side effects; doing
+  // anything here would email a falsehood about a row that is already live,
+  // deleted, or re-running.
   if (row.parentId) {
-    const parked = await finishPendingApproval(id, attemptId, card, transcriptJson());
-    if (!parked) return; // superseded by a newer claim; that run owns the row
-    await notifyUpdatePending(row, card, await submissionById(row.parentId));
-    return;
+    const fin = await finishUpdateRow(id, attemptId, card, transcriptJson());
+    switch (fin.outcome) {
+      case "superseded_claim":
+      case "raced":
+        return;
+      case "swapped": {
+        // Structured audit line: this is the one publish with no human click.
+        console.log(
+          `[work] auto-approved update swapped live: sub=${id} parent=${row.parentId} slug=${fin.slug} submitter=${row.submitterEmail}`
+        );
+        // The swap is COMMITTED; nothing after it may unwind to the
+        // runner's catch (failPanel). Its status predicate makes that a
+        // no-op anyway, but a demote attempt on a published row should
+        // never even be reached (refutation MAJOR, 2026-08-03). ISR floor
+        // covers a failed revalidate; the approve route's alreadySwapped
+        // branch re-attempts a failed retention email.
+        try {
+          await revalidateWorkPage();
+          await notifyUpdateAutoPublished(row, card, fin.slug, fin.parent);
+          await deliverArchiveRetention(row);
+        } catch (err) {
+          console.log(
+            `[work] post-swap side effect failed on ${id}: ${err instanceof Error ? err.message.slice(0, 200) : "unknown"}`
+          );
+        }
+        return;
+      }
+      case "conflict":
+        await notifyUpdateConflictHeld(fin.row, card);
+        return;
+      case "parked":
+        await notifyUpdatePending(row, card, await submissionById(row.parentId));
+        return;
+    }
   }
   const slug = await finishPublished(id, attemptId, card, transcriptJson());
   if (!slug) return; // superseded by a newer claim; that run owns the row

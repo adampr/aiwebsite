@@ -239,6 +239,13 @@
       "when": 1785788656712,
       "tag": "0033_update_supersede",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1785795588854,
+      "tag": "0034_auto_approve",
+      "breakpoints": true
     }
   ]
 }

@@ -87,7 +87,23 @@ export default async function AdminWorkPage() {
                   <span className="text-faint">
                     {r.createdAt.toISOString().slice(0, 16).replace("T", " ")}
                   </span>
+                  {/* Provenance of INTAKE, not of the publish actor: a
+                      crash-parked or once-held auto row published by the
+                      click keeps the flag, and no stored bit records who
+                      published. */}
+                  {isUpdate && r.autoApprove && r.status === "published" && (
+                    <span className="rounded-full border px-2 text-xs text-faint">
+                      auto-approve lane
+                    </span>
+                  )}
                 </div>
+                {isUpdate && r.autoApprove && r.status === "pending_approval" && (
+                  <p className="mt-2 text-xs text-faint">
+                    {r.heldAt
+                      ? "This admin web update was held earlier, so it parked for your click instead of auto-publishing (once-held rows always do). Approve publishes it now."
+                      : "This admin web update is parked instead of auto-published (the submitter is no longer a listed admin, or the process restarted mid-finish). Approve publishes it now."}
+                  </p>
+                )}
                 {isUpdate && r.status === "pending_approval" && (
                   <p className="mt-2 text-xs text-faint">
                     Proposed update to a live card:{" "}
