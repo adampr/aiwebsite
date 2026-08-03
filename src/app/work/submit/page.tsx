@@ -65,6 +65,14 @@ export default async function WorkSubmitPage({
           panel drafts a /work card from those documents, argues against it,
           and publishes only what it can verify. You get an email either way.
         </p>
+        <p className="mx-auto mt-4 text-xs text-faint">
+          Prefer email? Send the package to Tron.Netter@ai.xl.net from your
+          xl.net address with a normal note; Tron works out the rest and
+          replies with what he did. Optional lines if you want control:
+          {" "}&quot;Title:&quot;, &quot;Kind:&quot;, &quot;Credit:&quot;, and
+          {" "}&quot;Update Card: (its exact title)&quot; to update a card you
+          published.
+        </p>
       </div>
       {!allowed ? (
         <div className="panel panel--raised">

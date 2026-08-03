@@ -35,6 +35,26 @@ export function wordCount(s: string): number {
   return s.split(/\s+/).filter(Boolean).length;
 }
 
+/** §5.16 natural-email round (2026-08-03): the description region of every
+ * panel prompt. Pure so tests can pin it. Marker runs are neutralized (the
+ * title-infer framed() idiom) so pasted text cannot close the data region
+ * and address the model as an operator, the text is sliced at the prompt
+ * cap with an explicit truncation line (the stored blurb stays verbatim up
+ * to the email cap), and an empty blurb renders a sentinel instead of a
+ * dangling label. The frame in panel.ts declares this region untrusted
+ * alongside the documents. */
+export function blurbPromptBlock(blurb: string): string {
+  const safe = blurb.replace(/<{3,}|>{3,}/g, "[markers]");
+  const sliced = safe.slice(0, WORK_CAPS.blurbPromptMaxChars);
+  const body = sliced.trim()
+    ? sliced +
+      (safe.length > sliced.length
+        ? "\n[description truncated for review; the full text stays with the submission]"
+        : "")
+    : "(none provided; the attached documents are the whole context)";
+  return `<<<DESCRIPTION>>>\n${body}\n<<<END DESCRIPTION>>>`;
+}
+
 /** Process meta-commentary collocations (2026-07-31 incident: four cards
  * published whose copy was ABOUT the review instead of about the tool,
  * "No supporting source document was submitted for this card"). Every

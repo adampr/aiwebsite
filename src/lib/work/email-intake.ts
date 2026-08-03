@@ -48,16 +48,18 @@ import {
   userIdForEmail,
   type SubmissionRow,
 } from "./db";
+import { tronSignature } from "@/lib/tron-signature";
 import {
   archiveDeclaredNames,
   docDeclaredNames,
-  FORMAT_REMINDER,
+  FORM_POINTER,
   inferKind,
   isPlaceholderSubject,
   isSenderIdentity,
   nameKey,
   parseSubmissionBody,
   pickAttachments,
+  pickSkillDoc,
   senderIdentityTokens,
   stripKindPrefix,
   titleFromSubject,
@@ -390,7 +392,16 @@ export async function handleWorkEmail(
     replyHeaders["References"] = clean;
   }
   const replySubject = `Re: ${sanitizeHeaderValue(subjectRaw, 150) || "Your /work submission"}`;
-  const reject = async (message: string): Promise<void> => {
+  // Rejection shape (2026-08-03 natural-email round): preamble, the ONE
+  // targeted fix, an optional one-line form pointer, and Tron's full
+  // signature (owner ruling: the normal signature is in ALL emails Tron
+  // sends). pointer: false on wait-class rejects (paused, throttled, quota,
+  // pipeline offline) where the form hits the same wall, and on update-path
+  // rejects whose fix is email-specific.
+  const reject = async (
+    message: string,
+    opts?: { pointer?: boolean }
+  ): Promise<void> => {
     await sendTronEmail({
       to: sender,
       subject: replySubject,
@@ -399,10 +410,9 @@ export async function handleWorkEmail(
         `I could not accept this as a /work submission. Nothing was stored.`,
         ``,
         message,
+        ...(opts?.pointer === false ? [] : [``, FORM_POINTER]),
         ``,
-        FORMAT_REMINDER,
-        ``,
-        `- Tron Netter`,
+        tronSignature(),
       ].join("\n"),
     });
   };
@@ -420,7 +430,8 @@ export async function handleWorkEmail(
       }).allowed
     )
       await reject(
-        "Submissions are paused right now. Published cards are unaffected. Try again later."
+        "Submissions are paused right now. Published cards are unaffected. Try again later.",
+        { pointer: false }
       );
     else log("paused; notice throttled");
     return;
@@ -432,7 +443,10 @@ export async function handleWorkEmail(
   if (!attempts.allowed) {
     // One notice per hour per sender: a flood must not become a reply flood.
     if (checkRateLimit(`work:email:rlnotice:${sender}`, { windowSec: 3600, max: 1 }).allowed)
-      await reject("Too many submission attempts this hour. Give it a moment and resend.");
+      await reject(
+        "Too many submission attempts this hour. Give it a moment and resend.",
+        { pointer: false }
+      );
     else log("rate limited; notice throttled");
     return;
   }
@@ -441,19 +455,22 @@ export async function handleWorkEmail(
     : WORK_CAPS.submissionsPerUserPerDay;
   if ((await countCreatedToday(sender)) >= dailyQuota) {
     await reject(
-      `The limit is ${dailyQuota} submissions per person per day (failed submissions do not count). Try again tomorrow.`
+      `The limit is ${dailyQuota} submissions per person per day (failed submissions do not count). Try again tomorrow.`,
+      { pointer: false }
     );
     return;
   }
   if (!(await brainHealthy())) {
-    await reject(
-      "The review pipeline is briefly offline, so nothing was accepted. Resend this email shortly."
-    );
+    await reject(PIPELINE_OFFLINE, { pointer: false });
     return;
   }
 
   // ── Fields ───────────────────────────────────────────────────────
   const parsed = parseSubmissionBody(email.text ?? "");
+  // Receipt notes (2026-08-03 natural-email round): everything the intake
+  // adapted instead of bouncing is disclosed here, between the receipt body
+  // and the signature.
+  const notes: string[] = [];
   // An explicit "Title:"/"Skill Name:" body line beats the subject:
   // forwarded skill emails arrive with subjects like "Fwd: skill to our
   // work" while the body names the tool (owner report 2026-07-31, the
@@ -481,14 +498,16 @@ export async function handleWorkEmail(
     const normVal = normalizeTitle(updateValue);
     if (staticTitles.titles.some((t: string) => normalizeTitle(t) === normVal)) {
       await reject(
-        `"${updateValue.slice(0, 80)}" is one of the hand-authored cards on /work, and those do not change through submissions. Ask Adam to change that card directly.`
+        `"${updateValue.slice(0, 80)}" is one of the hand-authored cards on /work, and those do not change through submissions. Ask Adam to change that card directly.`,
+        { pointer: false }
       );
       return;
     }
     predecessor = await resolveUpdateTarget(updateValue);
     if (!predecessor) {
       await reject(
-        `I could not match "${updateValue.slice(0, 80)}" to a published card on ${SITE}/work. To update a card, copy its exact title from that page into the "Update Card:" line and resend. If you meant to submit a brand new tool, remove that line and resend.`
+        `I could not match "${updateValue.slice(0, 80)}" to a published card on ${SITE}/work. To update a card, copy its exact title from that page into the "Update Card:" line and resend. If you meant to submit a brand new tool, remove that line and resend.`,
+        { pointer: false }
       );
       return;
     }
@@ -500,7 +519,8 @@ export async function handleWorkEmail(
       !isAdmin(sender)
     ) {
       await reject(
-        `Updates to a published card are accepted from the person who submitted it, or from Adam. Ask them to send the update, or ask Adam to submit it for you.`
+        `Updates to a published card are accepted from the person who submitted it, or from Adam. Ask them to send the update, or ask Adam to submit it for you.`,
+        { pointer: false }
       );
       return;
     }
@@ -511,7 +531,8 @@ export async function handleWorkEmail(
       nameKey(authoredTitle) !== nameKey(predecessor.title)
     ) {
       await reject(
-        `An update keeps the published card's title, and renaming a card is admin only. Remove the "Title:" line and resend, or ask Adam if the card should be renamed.`
+        `An update keeps the published card's title, and renaming a card is admin only. Remove the "Title:" line and resend, or ask Adam if the card should be renamed.`,
+        { pointer: false }
       );
       return;
     }
@@ -519,7 +540,8 @@ export async function handleWorkEmail(
     // attachment-shape conflicts reject after the attachments are known.
     if (parsed.kind !== null && parsed.kind !== predecessor.kind) {
       await reject(
-        `The published card "${predecessor.title}" is a ${predecessor.kind === "skill" ? "CoWork Skill" : "Code program"}, so an update to it must be one too. Attach the matching package type and resend.`
+        `The published card "${predecessor.title}" is a ${predecessor.kind === "skill" ? "CoWork Skill" : "Code program"}, so an update to it must be one too. Attach the matching package type and resend.`,
+        { pointer: false }
       );
       return;
     }
@@ -584,7 +606,8 @@ export async function handleWorkEmail(
     !` ${nameKey(subjectStripped)} `.includes(` ${nameKey(predecessor!.title)} `)
   ) {
     await reject(
-      `Your subject line ("${subjectStripped.slice(0, 80)}") names something other than the card your "Update Card:" line points at ("${predecessor!.title}"). If this is an update to that card, make the subject mention it (or start the subject with "Update: ${predecessor!.title}") and resend. If this is a brand new tool, remove the "Update Card:" line and resend.`
+      `Your subject line ("${subjectStripped.slice(0, 80)}") names something other than the card your "Update Card:" line points at ("${predecessor!.title}"). If this is an update to that card, make the subject mention it (or start the subject with "Update: ${predecessor!.title}") and resend. If this is a brand new tool, remove the "Update Card:" line and resend.`,
+      { pointer: false }
     );
     return;
   }
@@ -597,37 +620,57 @@ export async function handleWorkEmail(
     : (authoredTitle ?? (subjectUsable ? subjectStripped : null));
   let titleSource: "authored" | "subject" | "corroborated" | "inferred" =
     authoredTitle !== null || isUpdate ? "authored" : "subject";
-  if (parsed.kindRaw !== null) {
+  // Natural-email band (2026-08-03): the body is stored VERBATIM as the
+  // description (context-only; the card is written from the documents), so
+  // only an extreme length rejects. Everything else is accepted with a
+  // receipt note; the panel prompt slices at blurbPromptMaxChars.
+  if (parsed.blurb.length > WORK_CAPS.emailBlurbMaxChars) {
     await reject(
-      `I did not recognize the kind "${parsed.kindRaw}". Use "Kind: CoWork Skill" or "Kind: Code program", or drop the line to let the attachments decide.`
+      `The email body becomes the stored description, and by email up to ${WORK_CAPS.emailBlurbMaxChars} characters are kept. Yours came out at ${parsed.blurb.length} characters after quoted history, signatures, and directive lines were stripped. Tighten it and resend; the panel writes the card from your attached documents either way, so a few paragraphs are plenty.`,
+      { pointer: false }
     );
     return;
   }
-  if (
-    parsed.blurb.length < WORK_CAPS.blurbMinChars ||
-    parsed.blurb.length > WORK_CAPS.blurbMaxChars
-  ) {
-    await reject(
-      `The email body becomes the description, and it must be ${WORK_CAPS.blurbMinChars} to ${WORK_CAPS.blurbMaxChars} characters of plain text: what it does, who uses it, what it replaced. Yours came out at ${parsed.blurb.length} characters (quoted history, signatures, and "Title:"/"Kind:"/"Credit:" lines are stripped automatically).`
+  if (parsed.blurb.length > WORK_CAPS.blurbMaxChars)
+    notes.push(
+      `Also: your description came out at ${parsed.blurb.length} characters. The web form caps descriptions at 900, but by email I kept your full text with the submission; the panel writes the card from your attached documents either way.`
     );
-    return;
-  }
-  let attribution: string | null = null;
-  if (parsed.credit) {
-    if (!/^[A-Za-z][A-Za-z'-]{1,19}$/.test(parsed.credit)) {
-      await reject(
-        "The public credit must be a single first name, letters only, 2 to 20 characters. Drop the Credit: line to publish as the XL.net team."
-      );
-      return;
-    }
-    attribution = parsed.credit;
-  }
+  else if (parsed.blurb.length === 0)
+    notes.push(
+      `Also: this email had no description in the body, so the panel works entirely from the attached documents.`
+    );
+  else if (parsed.blurb.length < WORK_CAPS.blurbMinChars)
+    notes.push(
+      `Also: the body carried only a short note, so the panel leans on the attached documents for the card.`
+    );
+  if (parsed.kindRaw !== null)
+    notes.push(
+      `Also: I could not read your "Kind:" line ("${parsed.kindRaw}") as "CoWork Skill" or "Code program", so the attachments decided the kind. The line stayed in your description.`
+    );
+  if (parsed.kindInferred !== null && parsed.kind !== null)
+    notes.push(
+      `Also: I read your "Kind:" line ("${parsed.kindInferred}") as ${parsed.kind === "skill" ? "CoWork Skill" : "Code program"}. The line stayed in your description.`
+    );
+  if (parsed.creditIgnored !== null)
+    notes.push(
+      `Also: I read your "Credit:" line ("${parsed.creditIgnored}") as part of the description, not as a public credit; a public credit is a single first name, so the card credits the XL.net team. If it should carry a personal credit, tell Adam.`
+    );
+  // The parser lifts only accept-shaped credits (CREDIT_RE), so an email
+  // Credit: line can never bounce a submission; prose values landed in
+  // creditIgnored above.
+  const attribution: string | null = parsed.credit;
 
   // ── Attachments ──────────────────────────────────────────────────
   const { archives, mds } = pickAttachments(email.attachments ?? []);
   if (archives.length !== 1) {
+    const names = archives
+      .slice(0, 5)
+      .map((a) => `"${sanitizeHeaderValue(a.filename ?? "unnamed", 60)}"`)
+      .join(", ");
     await reject(
-      `Attach exactly ONE package (.skill or .zip); this email carries ${archives.length}.`
+      archives.length === 0
+        ? `Attach ONE package (.skill or .zip) and resend.`
+        : `I need exactly ONE package attachment (.skill or .zip) so there is no doubt what gets reviewed, and this email carries ${archives.length}: ${names}. If the extras are samples or data, fold them into the one package; if they are separate tools, send one email per tool.`
     );
     return;
   }
@@ -643,7 +686,8 @@ export async function handleWorkEmail(
     (/\.(skill|ski)$/i.test(pkgName) || mds.length > 0)
   ) {
     await reject(
-      `The published card "${predecessor!.title}" is a Code program, so an update to it must be one too. Attach the matching package type (.zip with its architecture doc) and resend.`
+      `The published card "${predecessor!.title}" is a Code program, so an update to it must be one too. Attach the matching package type (.zip with its architecture doc) and resend.`,
+      { pointer: false }
     );
     return;
   }
@@ -658,13 +702,22 @@ export async function handleWorkEmail(
   }
   let mdAtt: AttachmentMeta | null = null;
   if (kind === "skill" && mds.length > 0) {
-    if (mds.length > 1) {
+    const picked = pickSkillDoc(mds);
+    if (!picked) {
+      const list = mds
+        .slice(0, 5)
+        .map((m) => `"${sanitizeHeaderValue(m.filename ?? "unnamed", 60)}"`)
+        .join(", ");
       await reject(
-        "Several .md attachments could be the Skill's document. Attach exactly one (the SKILL.md the panel should review)."
+        `Several .md attachments could be the Skill's document (${list}) and none is named SKILL.md. Attach exactly one, or rename the right one to SKILL.md, and resend.`
       );
       return;
     }
-    mdAtt = mds[0];
+    mdAtt = picked.pick;
+    if (picked.noted)
+      notes.push(
+        `Also: several .md files were attached; I used "${sanitizeHeaderValue(mdAtt.filename ?? "SKILL.md", 60)}" as the Skill's document.`
+      );
     if (mdAtt.size > WORK_CAPS.skillMdMaxBytes) {
       await reject("The SKILL.md attachment is too large (limit 1 MB).");
       return;
@@ -695,7 +748,7 @@ export async function handleWorkEmail(
   const bytes = await downloadAttachment(emailId, pkg.id, WORK_CAPS.uploadMaxBytes);
   if (!bytes) {
     await reject(
-      "I could not download the package attachment. Resend the email, or use the form instead."
+      "I could not download the package attachment. Resend the email."
     );
     return;
   }
@@ -714,7 +767,7 @@ export async function handleWorkEmail(
     );
     if (!mdBytes) {
       await reject(
-        "I could not download the .md attachment. Resend the email, or use the form instead."
+        "I could not download the .md attachment. Resend the email."
       );
       return;
     }
@@ -836,7 +889,8 @@ export async function handleWorkEmail(
             ? PIPELINE_OFFLINE
             : got.reason === "throttled"
               ? TITLE_THROTTLED
-              : noTitleMessage(subjectRaw, subjectStripped)
+              : noTitleMessage(subjectRaw, subjectStripped),
+          got.reason === "unavailable" ? { pointer: false } : undefined
         );
         return;
       }
@@ -883,7 +937,8 @@ export async function handleWorkEmail(
       await reject(
         isUpdate
           ? `An update to "${title}" is already in the pipeline, and only one can be open at a time. Check ${SITE}/work/submit, or ask Adam to clear the pending one.`
-          : `A submission titled "${title}" is already in the pipeline. Check ${SITE}/work/submit.`
+          : `A submission titled "${title}" is already in the pipeline. Check ${SITE}/work/submit.`,
+        isUpdate ? { pointer: false } : undefined
       );
       return;
     }
@@ -891,7 +946,8 @@ export async function handleWorkEmail(
       `createSubmission failed: ${err instanceof Error ? err.message.slice(0, 150) : "unknown"}`
     );
     await reject(
-      "Something went wrong on my end saving the submission. Resend this email shortly."
+      "Something went wrong on my end saving the submission. Resend this email shortly.",
+      { pointer: false }
     );
     return;
   }
@@ -970,9 +1026,14 @@ export async function handleWorkEmail(
     to: sender,
     subject: replySubject,
     headers: replyHeaders,
-    text: [receipt[0], ...disclosure, ...receipt.slice(1), ``, `- Tron Netter`].join(
-      "\n"
-    ),
+    text: [
+      receipt[0],
+      ...disclosure,
+      ...receipt.slice(1),
+      ...notes.flatMap((n) => [``, n]),
+      ``,
+      tronSignature(),
+    ].join("\n"),
   });
   if (kicked.run) await kicked.run(); // runPanel never throws
 }

@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-03 third pass (§5.16 ADMIN-MEDIATED CARD UPDATES — owner ruling: a submitter proposes a new version of a published From the Team card by email (strong "Update Card:" directive or "Update: <title>" subject) or web (POST /api/work/submissions/[id]/update, /work/submit?update=<id>); the update is a NEW row with parent_id (migration 0033: parent_id SET NULL FK + superseded_at + work_sub_parent_active_uq one-in-flight partial index + active-title index recreated with pending_approval), runs the full panel with the predecessor excluded from taken-titles/lint (excludeId), and parks at the new status pending_approval — structurally NO path from panel success to published for a parent_id row. Only the admin approve route swaps (publishWithSupersede: one txn, parent → superseded + slug freed FIRST, child inherits slug + published_at so deep links and /work order survive, updated_at moves the sitemap via greatest()); parent-not-published conflict parks the child held, never publishes standalone. Reject route (notified discard), DELETE = rollback on a swapped-in child (parent restored in-txn), parent deletes refused while any child incl. FAILED is unresolved (SET NULL + Retry would bypass the approval stop), superseded rows undeletable (rollback reservoir), work-panel-rerun.ts refuses update rows and parents with in-flight children. Email lane can only CREATE proposals — emailed admin identity is spoofable From under domain DKIM, so approval only ever rides an OAuth admin session; bare "Update:" stays prose (injection foot-gun); body-directive updates with a subject naming a different tool reject (pasted-release-notes shape). New: isUniqueViolation() walks drizzle's err.cause chain — the old message-only checks NEVER fired (latent 500-instead-of-409 on the double-click race, found by the new DB flow test npm run test:workupdate). Full runbook at the end of §5.16.); previously 2026-08-03 second pass (LLMS.TXT SUMMARY NOW CARRIES THE PERFORMANCE STATISTICS — OWNER RULING. The module panel (C5) blocked them by default: an agent reading llms.txt quotes it as bare fact, stripped of page context and of the link back to whatever substantiates it, which turns a machine-readable channel into an FTC-substantiation surface. The panel named the escape explicitly — 'putting numbers here is an owner decision with substantiation attached, not a copy choice' — and the owner ruled 2026-08-03 that the figures are accurate for XL.net and may be published. They ship ATTRIBUTED rather than bare: 'XL.net reports a 79.8% reduction in IT issues and 99.3% customer satisfaction across its managed IT clients, with 24/7 AI-powered support.' The attribution is the part that survives an agent quoting one sentence out of the file — a bare '99.3%' is unsourced, 'XL.net reports 99.3%' carries its own owner. Figures are verbatim-consistent with the homepage stat band (79.8% / 24/7 / 99.3%); if either surface changes, change both — two surfaces stating different numbers is worse than either alone.); previously 2026-08-03 (LLMS.TXT ENABLED — module pin v1.60.0 -> v1.61.0, owner directive to enable llms.txt fleet-wide. This host previously had NO seo.llmsTxt block at all, so /llms.txt 404'd — configured behaviour, not a defect (the module defaults llmsTxt.enabled false and requires host-authored summary copy). Now: seo.llmsTxt with an authored summary, and src/app/llms.txt/route.ts using the MODULE handler with force-dynamic — never hand-rolled, because the module handler is what emits X-Robots-Tag: noindex and this file is a duplicate-content aggregate of canonical article pages; force-dynamic is load-bearing because createLlmsTxt() reads the latest published articles from the DB on every request, which is precisely why no nightly regeneration pipeline was built (module panel C2: a nightly static writer would raise worst-case staleness from the ~1h CDN window to ~24h). BLOCKING COPY RULE (module panel seat 5): the summary carries NO performance statistics — this site's homepage leads with '79.8% reduction in IT issues' and '99.3% customer satisfaction', and an agent reading llms.txt quotes it as bare fact stripped of page context and of the link to whatever substantiates it, which is an FTC-substantiation exposure via a machine-readable channel (same class D4 put outside machine authorship). Structure and coverage only; adding numbers is an owner decision with substantiation attached. Also: /llms.txt added to deploy/synth-inventory.json (class warn) so the */15 sweep probes it — 96x/day, which is what answers the 'nightly' half of the directive — and expectLlmsTxt: true declared in deploy/seo-scorecard.json for the §21 llms-txt-served + llms-txt-links-ok rows. No schema, no env, no template change beyond the routine re-render.); previously 2026-08-03 (blog news seam, roundup-aggregator
+Last verified against code: 2026-08-03 email-naturalness pass (§5.16 NATURAL-EMAIL INTAKE + TRON SIGNATURE — owner ruling after a real bounce: the email lane had deterministic gates the form never surfaces, and intake replies signed a bare '- Tron Netter'. Blurb band email-only 0-4000 stored VERBATIM (context-only; form keeps 80-900 with its live counter), panel prompts carry it via lint.ts blurbPromptBlock: own <<<DESCRIPTION>>> region named untrusted by UNTRUSTED_FRAME, marker runs neutralized, sliced at 2000 with a truncation line, empty-blurb sentinel. Kind: and Credit: lines can no longer bounce a submission (exact vocabulary lifts incl. 'claude skill'; fuzzyKind honors short label-like values disclosed in the receipt, negators never lift; CREDIT_RE-shaped credits lift, everything else degrades to creditIgnored + receipt note). Several .md attachments resolve via pickSkillDoc (unique SKILL.md wins, disclosed); only real ambiguity rejects. FORMAT_REMINDER retired for a one-line FORM_POINTER with no parity claim, suppressed on wait-class and update-path rejects; every reject now ends with Tron's FULL signature from src/lib/tron-signature.ts, a host mirror of the module's unexported signatureBlock() pinned by test:work on BOTH sides (exact rendered output + sha256 of the module function source). warnAdmin stays unsigned, notify.ts is Troy-persona. Receipt gains 'Also:' adaptation notes between body and signature. /work/submit teaches the email lane in one short paragraph. All fail-closed gates untouched.); previously 2026-08-03 third pass (§5.16 ADMIN-MEDIATED CARD UPDATES — owner ruling: a submitter proposes a new version of a published From the Team card by email (strong "Update Card:" directive or "Update: <title>" subject) or web (POST /api/work/submissions/[id]/update, /work/submit?update=<id>); the update is a NEW row with parent_id (migration 0033: parent_id SET NULL FK + superseded_at + work_sub_parent_active_uq one-in-flight partial index + active-title index recreated with pending_approval), runs the full panel with the predecessor excluded from taken-titles/lint (excludeId), and parks at the new status pending_approval — structurally NO path from panel success to published for a parent_id row. Only the admin approve route swaps (publishWithSupersede: one txn, parent → superseded + slug freed FIRST, child inherits slug + published_at so deep links and /work order survive, updated_at moves the sitemap via greatest()); parent-not-published conflict parks the child held, never publishes standalone. Reject route (notified discard), DELETE = rollback on a swapped-in child (parent restored in-txn), parent deletes refused while any child incl. FAILED is unresolved (SET NULL + Retry would bypass the approval stop), superseded rows undeletable (rollback reservoir), work-panel-rerun.ts refuses update rows and parents with in-flight children. Email lane can only CREATE proposals — emailed admin identity is spoofable From under domain DKIM, so approval only ever rides an OAuth admin session; bare "Update:" stays prose (injection foot-gun); body-directive updates with a subject naming a different tool reject (pasted-release-notes shape). New: isUniqueViolation() walks drizzle's err.cause chain — the old message-only checks NEVER fired (latent 500-instead-of-409 on the double-click race, found by the new DB flow test npm run test:workupdate). Full runbook at the end of §5.16.); previously 2026-08-03 second pass (LLMS.TXT SUMMARY NOW CARRIES THE PERFORMANCE STATISTICS — OWNER RULING. The module panel (C5) blocked them by default: an agent reading llms.txt quotes it as bare fact, stripped of page context and of the link back to whatever substantiates it, which turns a machine-readable channel into an FTC-substantiation surface. The panel named the escape explicitly — 'putting numbers here is an owner decision with substantiation attached, not a copy choice' — and the owner ruled 2026-08-03 that the figures are accurate for XL.net and may be published. They ship ATTRIBUTED rather than bare: 'XL.net reports a 79.8% reduction in IT issues and 99.3% customer satisfaction across its managed IT clients, with 24/7 AI-powered support.' The attribution is the part that survives an agent quoting one sentence out of the file — a bare '99.3%' is unsourced, 'XL.net reports 99.3%' carries its own owner. Figures are verbatim-consistent with the homepage stat band (79.8% / 24/7 / 99.3%); if either surface changes, change both — two surfaces stating different numbers is worse than either alone.); previously 2026-08-03 (LLMS.TXT ENABLED — module pin v1.60.0 -> v1.61.0, owner directive to enable llms.txt fleet-wide. This host previously had NO seo.llmsTxt block at all, so /llms.txt 404'd — configured behaviour, not a defect (the module defaults llmsTxt.enabled false and requires host-authored summary copy). Now: seo.llmsTxt with an authored summary, and src/app/llms.txt/route.ts using the MODULE handler with force-dynamic — never hand-rolled, because the module handler is what emits X-Robots-Tag: noindex and this file is a duplicate-content aggregate of canonical article pages; force-dynamic is load-bearing because createLlmsTxt() reads the latest published articles from the DB on every request, which is precisely why no nightly regeneration pipeline was built (module panel C2: a nightly static writer would raise worst-case staleness from the ~1h CDN window to ~24h). BLOCKING COPY RULE (module panel seat 5): the summary carries NO performance statistics — this site's homepage leads with '79.8% reduction in IT issues' and '99.3% customer satisfaction', and an agent reading llms.txt quotes it as bare fact stripped of page context and of the link to whatever substantiates it, which is an FTC-substantiation exposure via a machine-readable channel (same class D4 put outside machine authorship). Structure and coverage only; adding numbers is an owner decision with substantiation attached. Also: /llms.txt added to deploy/synth-inventory.json (class warn) so the */15 sweep probes it — 96x/day, which is what answers the 'nightly' half of the directive — and expectLlmsTxt: true declared in deploy/seo-scorecard.json for the §21 llms-txt-served + llms-txt-links-ok rows. No schema, no env, no template change beyond the routine re-render.); previously 2026-08-03 (blog news seam, roundup-aggregator
 WARN round: `-roundup`/`-index-url` peg demotion + time-window `+number`
 strip in `scripts/lib/peg-score.mjs`; `cleanTitle`/`keywordsFromTitle`/
 `slugify` extracted to `scripts/lib/title-keywords.mjs` with temporal
@@ -3219,8 +3219,14 @@ Verified senders then hit the route's admission gates in the same order (kill
 switch, in-memory 10 attempts/hr keyed by address, durable daily quota via
 `countCreatedToday` with the admin cap by `isAdmin(email)`, `brainHealthy`),
 and every rejection from here on is a Tron reply (From
-`Tron Netter <Tron.Netter@ai.xl.net>`, threaded via In-Reply-To) carrying the
-route's 4xx copy plus a format reminder; the rate-limited notice and the
+`Tron Netter <Tron.Netter@ai.xl.net>`, threaded via In-Reply-To) with the
+2026-08-03 natural-email shape: the "Nothing was stored" preamble, ONE
+targeted fix, an optional one-line `FORM_POINTER` (suppressed with
+`{ pointer: false }` on wait-class rejects: paused, throttled, quota,
+pipeline offline, and on update-path rejects whose fix is email-specific),
+and Tron's full signature. The old seven-bullet FORMAT_REMINDER is retired
+(it buried each reject's fix under a wall of rules; the owner's bounced
+1503-char email showed it). The rate-limited notice and the
 paused notice are themselves throttled to 1/hr/sender (an outbound email is
 not a free 503).
 
@@ -3243,7 +3249,7 @@ placeholder subject FALLS THROUGH instead of rejecting:
    an over-broad first draft silently ate legitimate titles and would have
    republished the very incident this round fixes: it NEVER applies in
    heading position (a job title does not open an email, and `Title:` is the
-   escape hatch `FORMAT_REMINDER` advertises), the contact-label scan reaches
+   escape hatch `noTitleMessage` advertises), the contact-label scan reaches
    only the nearest **2** non-empty lines either side (labels in a contact
    block are adjacent; 4 reached past a one-paragraph blurb into the
    signature), and the "bare 2-3 word Title-Case name directly above" rule
@@ -3533,6 +3539,57 @@ updated_at) over published rows)` — `greatest` because an approved update
 swap keeps the card's `published_at` (ordering) while `updated_at` carries
 the swap time; DB failure falls back to the floor (never null, never
 regresses).
+
+**Natural-email intake + Tron signature (2026-08-03, owner ruling).** People
+write ordinary email; the deterministic gates the web form never surfaces
+(its fields physically constrain input) must not bounce them. Fail-closed
+gates are UNTOUCHED (DKIM block, secret scan, zip hardening, size caps,
+quotas, duplicate-title guards, update-path gates). What changed:
+
+- **Description (blurb) band, email only:** stored VERBATIM from 0 to
+  `WORK_CAPS.emailBlurbMaxChars` (4000); only above that rejects. The form
+  keeps 80-900 (live counter; deliberate route divergence). The blurb is
+  context-only (cards are written from the documents), which is what makes
+  this low-risk. Panel prompts carry it via `blurbPromptBlock` (lint.ts):
+  fenced in its own `<<<DESCRIPTION>>>` region named untrusted by
+  UNTRUSTED_FRAME, marker runs neutralized (title-infer framed() idiom),
+  sliced at `blurbPromptMaxChars` (2000) with an explicit truncation line,
+  empty blurb renders a sentinel. Under-80 and over-900 bodies are accepted
+  with a receipt note instead of bouncing.
+- **`Kind:` line never rejects:** exact vocabulary (now incl. "claude
+  skill") lifts; short label-like values (max 3 words / 30 chars, never
+  with a negator, exactly one side matching) are honored via
+  `fuzzyKind` with the line KEPT in the blurb and a receipt disclosure
+  (`kindInferred`); anything else stays prose (`kindRaw`) and the
+  attachments decide, receipt-noted. Empty `Kind:` is a dangling label,
+  dropped silently.
+- **`Credit:` line never rejects:** the parser lifts ONLY accept-shaped
+  values (`CREDIT_RE`, byte-equal to the route's gate), so a lifted credit
+  cannot bounce; everything else ("Jane Doe", non-ASCII, prose) stays in
+  the blurb as `creditIgnored` with a receipt note (the card credits the
+  team; tell Adam for a personal credit).
+- **Several `.md` attachments:** `pickSkillDoc` selects deterministically
+  (exactly one named SKILL.md, any case) with a receipt note; only genuine
+  ambiguity rejects, listing the sanitized filenames. Multiple archives
+  still reject (picking one would choose content for the sender), now
+  naming the files.
+- **Receipt notes:** every adaptation above is disclosed as an "Also:" line
+  between the receipt body and the signature.
+- **Tron's signature (owner ruling: in ALL emails Tron sends):**
+  `tronSignature()` in `src/lib/tron-signature.ts` is a host MIRROR of the
+  module's unexported `signatureBlock()`
+  (packages/aicompany/src/channels/email-inbound.ts §5.3/§18), built from
+  the same resolved siteConfig fields; rendered for this site it is the
+  6-line block (name / "AI Agent, XL.net AI" / mailbox / "(872) 350-4325 ·
+  Call or Text" / baseUrl / memory-disclosure line). Used by reject() and
+  the acceptance receipt; `warnAdmin` stays unsigned (module precedent for
+  operator alerts); notify.ts mails are Troy-persona and out of scope.
+  KEEP IN SYNC on module upgrades: `npm run test:work` pins BOTH the
+  mirror's exact output AND a sha256 of the module function's source, so
+  drift on either side fails the suite (re-sync, then re-pin).
+- `/work/submit` teaches the email lane in one short paragraph (send the
+  package to Tron with a normal note; optional `Title:`/`Kind:`/`Credit:`/
+  `Update Card:` lines).
 
 **Admin-mediated updates (2026-08-03, owner ruling).** A submitter (or an
 admin on their behalf) proposes a NEW VERSION of a published community card;

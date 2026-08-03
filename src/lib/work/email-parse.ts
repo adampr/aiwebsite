@@ -15,19 +15,15 @@ import { stringViolations } from "./lint";
 export const ARCHIVE_RE = /\.(zip|skill|ski)$/i;
 export const MD_RE = /\.(md|mdx|markdown)$/i;
 
-/** Appended to every validation-failure reply so the fix never needs a
- * second round trip. */
-export const FORMAT_REMINDER = [
-  `How email submissions work:`,
-  `- Write the email normally. The subject line becomes the card title (${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters), and no subject is fine: if your subject is empty or your mail client sent a placeholder, I read the name out of your message instead, and the reply tells you which title I used.`,
-  `- Body: your one-paragraph description (${WORK_CAPS.blurbMinChars} to ${WORK_CAPS.blurbMaxChars} characters): what it does, who uses it, what it replaced.`,
-  `- Attach ONE package: a .skill or .zip for a CoWork Skill (plus its SKILL.md as a second attachment if the package does not carry it), or a .zip for a Code program (must contain an architecture doc).`,
-  `- Want to be certain of the title? Put "Title: <the name>" on a line by itself in the body ("Skill Name:", "Card Title:", "Program Name:" and "Tool Name:" work too). That beats the subject, and the first one wins.`,
-  `- Also optional: "Kind: CoWork Skill" or "Kind: Code program" (otherwise the attachments decide), and "Credit: <first name>" for a public credit (otherwise the card credits the XL.net team).`,
-  `- To update a published card you submitted, add a line like "Update Card: <the live card's exact title>" and attach the full new package. The card keeps its title and stays up until Adam approves the reviewed update.`,
-  ``,
-  `The web form at https://ai.xl.net/work/submit does the same thing with inline errors.`,
-].join("\n");
+/** One-line alternative-channel pointer for rejection replies (2026-08-03
+ * natural-email round: the old seven-bullet FORMAT_REMINDER buried each
+ * reject's targeted fix under a wall of rules, which is what the owner's
+ * bounced email showed). Every reject branch carries its own fix; this only
+ * offers the form, with no parity claim (the email band is deliberately
+ * wider than the form's). Suppressed on wait-class rejects where the form
+ * would hit the same wall. */
+export const FORM_POINTER =
+  "If the form is easier, you can also submit at https://ai.xl.net/work/submit.";
 
 /** Subject -> candidate card title: reply/forward prefixes stripped
  * (repeatedly, any nesting), whitespace collapsed. Validation happens at the
@@ -137,10 +133,19 @@ export interface ParsedBody {
   title: string | null;
   /** Recognized Kind: override, or null when absent. */
   kind: WorkKind | null;
-  /** Raw value of an unrecognized Kind: line (reply names it), else null. */
+  /** Raw value of an unrecognized Kind: line (receipt notes that the
+   * attachments decided; the line stays in the blurb), else null. */
   kindRaw: string | null;
-  /** Raw value of a Credit: line (validated at the call site), else null. */
+  /** Raw value of a Kind: line honored via fuzzyKind (an inference, so the
+   * receipt discloses it; the line stays in the blurb), else null. */
+  kindInferred: string | null;
+  /** Lifted Credit: value; by construction always matches CREDIT_RE, so it
+   * can never bounce downstream. Null when absent or non-name-shaped. */
   credit: string | null;
+  /** Raw value of a Credit: line that was NOT name-shaped (stays in the
+   * blurb as prose; the receipt notes the card credits the team), else
+   * null. */
+  creditIgnored: string | null;
   /** WEAK title candidates in body order, at most one per source. These are
    * NOT titles: they still have to be corroborated by the package or
    * confirmed by the model. The lines they come from stay in the blurb. */
@@ -150,9 +155,35 @@ export interface ParsedBody {
 const KIND_VALUES: Record<string, WorkKind> = {
   skill: "skill",
   "cowork skill": "skill",
+  "claude skill": "skill",
   program: "program",
   "code program": "program",
 };
+
+/** Fuzzy Kind: disambiguation for label-like values ("a skill", "Claude
+ * skill thing", "skill."). Deliberately narrow (2026-08-03 refutation
+ * round): only short values (at most 3 words and 30 chars), never values
+ * carrying a negator ("not a skill" must not lift skill), and only when
+ * exactly ONE side matches. Returns null for everything else; the caller
+ * keeps the line in the blurb and discloses in the receipt either way. */
+export function fuzzyKind(value: string): WorkKind | null {
+  const v = value.trim();
+  if (!v || v.length > 30 || v.split(/\s+/).length > 3) return null;
+  if (/\b(?:not?|non|never|isn'?t)\b/i.test(v)) return null;
+  const hasSkill = /\bskills?\b/i.test(v);
+  const hasProgram = /\bprograms?\b|\bcode\b/i.test(v);
+  if (hasSkill === hasProgram) return null;
+  return hasSkill ? "skill" : "program";
+}
+
+/** The public-credit shape (byte-equal to the intake and web-route accept
+ * gate): a single first name, ASCII letters, 2-20 chars. The parser lifts
+ * ONLY values that will be accepted, so an email Credit: line can never
+ * bounce a submission; everything else stays in the blurb as prose and the
+ * receipt notes it (refutation round 2026-08-03: "Credit: Jane Doe" used to
+ * lift into a guaranteed reject, the closer-to-correct-the-harsher-the-
+ * outcome inversion). */
+export const CREDIT_RE = /^[A-Za-z][A-Za-z'-]{1,19}$/;
 
 /** Label variants that name the card. Kept tight: only labels that
  * unambiguously mean "this is the tool's name" lift out of the blurb;
@@ -490,7 +521,9 @@ export function parseSubmissionBody(raw: string): ParsedBody {
   let title: string | null = null;
   let kind: WorkKind | null = null;
   let kindRaw: string | null = null;
+  let kindInferred: string | null = null;
   let credit: string | null = null;
+  let creditIgnored: string | null = null;
   let updateTarget: string | null = null;
   for (let i = 0; i < region.length; i++) {
     const line = region[i];
@@ -503,14 +536,37 @@ export function parseSubmissionBody(raw: string): ParsedBody {
         .toLowerCase();
       const value = directiveValue(directive[2]).trim();
       if (label === "kind") {
-        const mapped = KIND_VALUES[value.toLowerCase()] ?? null;
-        if (mapped) kind = mapped;
-        else kindRaw = value.slice(0, 60);
-        continue;
+        // Exact vocabulary lifts the line out of the blurb (the sender used
+        // the documented form). A fuzzy match is honored but DISCLOSED and
+        // the authored line stays in the blurb; anything else stays too and
+        // the attachments decide (2026-08-03 natural-email round: the old
+        // behavior hard-rejected any unrecognized value). An empty value is
+        // a dangling label, dropped silently (the Update Card: rule).
+        if (!value) continue;
+        const mapped = KIND_VALUES[value.toLowerCase().replace(/\.$/, "")] ?? null;
+        if (mapped) {
+          kind = mapped;
+          continue;
+        }
+        const fuzzy = fuzzyKind(value);
+        if (fuzzy) {
+          kind = fuzzy;
+          kindInferred = value.slice(0, 60);
+        } else {
+          kindRaw = value.slice(0, 60);
+        }
+        // falls through: the authored line stays in the blurb
       }
       if (label === "credit") {
-        credit = value.slice(0, 60);
-        continue;
+        // Only accept-shaped values lift (see CREDIT_RE); prose stays in
+        // the blurb with a receipt note instead of bouncing the submission.
+        if (!value) continue;
+        if (CREDIT_RE.test(value)) {
+          credit = value;
+          continue;
+        }
+        creditIgnored = value.slice(0, 60);
+        // falls through: the authored line stays in the blurb
       }
       if (UPDATE_LABELS.has(label)) {
         // FIRST match wins (the Title: rule); an empty value stays prose so
@@ -524,7 +580,7 @@ export function parseSubmissionBody(raw: string): ParsedBody {
         // Senior Systems Engineer" in an uncut signature titled the card
         // (panel critic finding 2026-07-31, confirmed against the parser).
         // NEVER suppressed in heading position: a job title does not open an
-        // email, and FORMAT_REMINDER teaches "Title:" as THE way to be
+        // email, and noTitleMessage teaches "Title:" as THE way to be
         // certain of the name, so suppressing it at the top of a body would
         // defeat the escape hatch this same change advertises (verification
         // finding). The unambiguous labels ("Skill Name:", "Card Title:",
@@ -584,7 +640,31 @@ export function parseSubmissionBody(raw: string): ParsedBody {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  return { blurb, title, kind, kindRaw, credit, updateTarget, titleCandidates };
+  return {
+    blurb,
+    title,
+    kind,
+    kindRaw,
+    kindInferred,
+    credit,
+    creditIgnored,
+    updateTarget,
+    titleCandidates,
+  };
+}
+
+/** §5.16 natural-email round: pick the Skill's document among several .md
+ * attachments deterministically. One attachment: that one. Several with
+ * exactly one named SKILL.md (any case): that one, with a receipt note
+ * (deterministic selection is not authoring). Anything else is ambiguous
+ * and the caller rejects with the file list. */
+export function pickSkillDoc(
+  mds: AttachmentMeta[]
+): { pick: AttachmentMeta; noted: boolean } | null {
+  if (mds.length === 1) return { pick: mds[0], noted: false };
+  const exact = mds.filter((m) => /^skill\.md$/i.test(m.filename ?? ""));
+  if (exact.length === 1) return { pick: exact[0], noted: true };
+  return null;
 }
 
 export type InferredTitleCheck =
