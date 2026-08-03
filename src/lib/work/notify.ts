@@ -3,6 +3,7 @@
 // card; the submitter is notified on both terminal states so closing the
 // status page loses nothing.
 
+import { isAdmin } from "@aicompany/core/auth/guard";
 import { adminRecipient, sendTroyEmail, TROY_FROM } from "@/lib/governance/budget";
 import { HELD_NEXT_STEPS, KIND_LABELS, type WorkKind } from "./config";
 import { archiveDataById, clearArchiveData, type SubmissionRow } from "./db";
@@ -127,12 +128,17 @@ export async function notifyHeld(
   reason: string,
   draft: unknown
 ): Promise<void> {
+  const isUpdate = !!row.parentId;
   await sendTroyEmail({
-    subject: `[aiwebsite] Action needed: /work submission held: ${row.title}`,
+    subject: isUpdate
+      ? `[aiwebsite] Action needed: /work update held: ${row.title}`
+      : `[aiwebsite] Action needed: /work submission held: ${row.title}`,
     text: [
       `Review it at ${SITE}/admin/work#sub-${row.id} (approve as-is, run the panel again, or delete).`,
       ``,
-      `The editorial panel held a team work submission for a human decision.`,
+      isUpdate
+        ? `The editorial panel held a proposed update to a published card for a human decision. The live card stays up while it waits, and approving publishes the draft in place of the live card.`
+        : `The editorial panel held a team work submission for a human decision.`,
       ``,
       `Title: ${row.title}`,
       `Submitted by: ${row.submitterEmail}`,
@@ -150,9 +156,13 @@ export async function notifyHeld(
     return;
   await sendTroyEmail({
     to: row.submitterEmail,
-    subject: `[aiwebsite] Your /work card is held for review: ${row.title}`,
+    subject: isUpdate
+      ? `[aiwebsite] Your /work update is held for review: ${row.title}`
+      : `[aiwebsite] Your /work card is held for review: ${row.title}`,
     text: [
-      `The editorial panel held your card instead of publishing it.`,
+      isUpdate
+        ? `The editorial panel held your proposed update instead of passing it on. The live card stays up while it waits.`
+        : `The editorial panel held your card instead of publishing it.`,
       ``,
       `Reason:`,
       reason,
@@ -162,4 +172,129 @@ export async function notifyHeld(
       `Your submissions: ${SITE}/work/submit`,
     ].join("\n"),
   });
+}
+
+/** §5.16 updates: a proposed update passed the panel and waits for the admin
+ * swap click. parent may be null or unpublished (CLI-held mid-run); the copy
+ * degrades instead of linking nowhere. */
+export async function notifyUpdatePending(
+  row: SubmissionRow,
+  card: WorkCard,
+  parent: SubmissionRow | null
+): Promise<void> {
+  const liveLine =
+    parent && parent.status === "published" && parent.slug
+      ? `Live card: ${SITE}/work#${parent.slug}`
+      : `Live card: currently held or removed; check ${SITE}/admin/work`;
+  await sendTroyEmail({
+    subject: `[aiwebsite] Action needed: /work update awaiting approval: ${card.title}`,
+    text: [
+      `Review it at ${SITE}/admin/work#sub-${row.id} (Approve update, Reject update, or delete).`,
+      ``,
+      `A proposed update to a published /work card passed the editorial panel. Nothing changes on the site until you approve it.`,
+      ``,
+      `Card: ${card.title}`,
+      liveLine,
+      `Proposed by: ${row.submitterEmail}`,
+      ``,
+      `Updated description (the proposed card's first paragraph):`,
+      card.summary,
+      ``,
+      `Approve replaces the live card with this version within 5 minutes. Reject discards the proposal and emails the submitter. The live card stays up either way until you act.`,
+    ].join("\n"),
+  });
+  if (isAdmin(row.submitterEmail)) return; // the approver IS the submitter
+  await sendTroyEmail({
+    to: row.submitterEmail,
+    subject: `Your /work update passed review and is waiting for approval: ${card.title}`,
+    text: [
+      `The editorial panel reviewed your update to "${card.title}" and passed it. It now waits for Adam's approval; the live card does not change until he approves the swap.`,
+      ``,
+      `You will get another email when it goes live or if it is not approved. Track it at ${SITE}/work/submit.`,
+    ].join("\n"),
+  });
+}
+
+/** §5.16 updates: the swap ran; the new version is live under the old link. */
+export async function notifyUpdateApproved(
+  row: SubmissionRow,
+  card: WorkCard,
+  slug: string,
+  opts: { approverEmail: string; parent: SubmissionRow }
+): Promise<void> {
+  const link = `${SITE}/work#${slug}`;
+  if (row.submitterEmail.toLowerCase() !== opts.approverEmail.toLowerCase())
+    await sendTroyEmail({
+      to: row.submitterEmail,
+      subject: `Your /work update is live: ${card.title}`,
+      text: [
+        `Your update to "${card.title}" was approved and the new version has replaced the old card.`,
+        ``,
+        link,
+        ``,
+        `If /work was already open, reload the page to see it (a stale copy can survive a few minutes; reload once more if it has not appeared). Reply to this email if something on the card reads wrong.`,
+      ].join("\n"),
+    });
+  // Owner audit copy when another listed admin approved. Undo guidance names
+  // rollback, NOT delete: DELETE on this row now performs the rollback.
+  if (opts.approverEmail.toLowerCase() !== adminRecipient().toLowerCase())
+    await sendTroyEmail({
+      subject: `[aiwebsite] /work card updated: ${card.title}`,
+      text: [
+        `${opts.approverEmail} approved an update to the published team card "${card.title}". The new version replaces it within 5 minutes: ${link}`,
+        ``,
+        `To undo it: "Roll back to previous version" on /admin/work restores the old card. To remove the card entirely, roll back first, then delete the restored card.`,
+      ].join("\n"),
+    });
+  // The original card's submitter learns their card changed when someone
+  // else (the admin on their behalf, or a co-owner flow) proposed it.
+  const parentEmail = opts.parent.submitterEmail.toLowerCase();
+  if (
+    parentEmail !== row.submitterEmail.toLowerCase() &&
+    parentEmail !== opts.approverEmail.toLowerCase()
+  )
+    await sendTroyEmail({
+      to: opts.parent.submitterEmail,
+      subject: `Your /work card was updated: ${card.title}`,
+      text: `An approved update replaced your published card "${card.title}" with a new version under the same link: ${link}\n\nReply to this email if that is unexpected.`,
+    });
+}
+
+/** §5.16 updates: the admin rejected the proposal; the live card is
+ * untouched and the proposal row is gone. */
+export async function notifyUpdateRejected(
+  row: SubmissionRow,
+  actorEmail: string
+): Promise<void> {
+  if (row.submitterEmail.toLowerCase() === actorEmail.toLowerCase()) return;
+  await sendTroyEmail({
+    to: row.submitterEmail,
+    subject: `Your /work update was not approved: ${row.title}`,
+    text: [
+      `Your proposed update to "${row.title}" was reviewed and not published. The live card stays as it is, and the proposal has been removed.`,
+      ``,
+      `If you want to try again, revise the files and submit a new update the same way. Reply to this email or ask Adam if you want to know what to change.`,
+    ].join("\n"),
+  });
+}
+
+/** §5.16 updates: an approved swap was rolled back; the previous version is
+ * live again and the update row is gone. */
+export async function notifyRollback(
+  child: SubmissionRow,
+  parent: SubmissionRow,
+  slug: string,
+  actorEmail: string
+): Promise<void> {
+  if (actorEmail.toLowerCase() !== adminRecipient().toLowerCase())
+    await sendTroyEmail({
+      subject: `[aiwebsite] /work card rolled back: ${parent.title}`,
+      text: `${actorEmail} rolled back the update to the published team card "${parent.title}". The previous version of the card was restored: ${SITE}/work#${slug} (updates within 5 minutes).`,
+    });
+  if (child.submitterEmail.toLowerCase() !== actorEmail.toLowerCase())
+    await sendTroyEmail({
+      to: child.submitterEmail,
+      subject: `Your /work update was rolled back: ${parent.title}`,
+      text: `Your update to "${parent.title}" was rolled back and the previous version of the card was restored. The update row is gone from your submissions page. Reply to this email or ask Adam if you want to know why.`,
+    });
 }

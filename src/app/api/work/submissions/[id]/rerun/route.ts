@@ -32,10 +32,12 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   if (limited) return limited;
   const row = await submissionById(id);
   if (!row) return workError("not_found", "That submission does not exist.", 404);
-  if (row.status !== "held")
+  // pending_approval (§5.16 updates) re-runs like held: the fresh run lands
+  // back in pending_approval, so a re-run can never sneak a swap.
+  if (row.status !== "held" && row.status !== "pending_approval")
     return workError(
       "invalid_request",
-      "Only a held submission can be re-run.",
+      "Only a held submission or a pending update can be re-run.",
       409
     );
   const kicked = await kickPanel(id, { fromHeld: true });

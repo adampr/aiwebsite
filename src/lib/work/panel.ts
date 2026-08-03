@@ -33,6 +33,7 @@ import {
   claimPanel,
   failPanel,
   finishHeld,
+  finishPendingApproval,
   finishPublished,
   heartbeat,
   publishedTitleAndFacetSets,
@@ -47,6 +48,7 @@ import {
   deliverArchiveRetention,
   notifyHeld,
   notifyPublished,
+  notifyUpdatePending,
 } from "./notify";
 
 interface CorpusFile {
@@ -337,8 +339,11 @@ async function runPanelInner(
   };
   const transcriptJson = () => JSON.stringify(transcript);
 
+  // Update rows exclude their own predecessor (§5.16): the pinned title and
+  // facets would otherwise self-clash in the taken-titles prompt sets, the
+  // synthesis title pin, and the lint context, holding every update.
   const { publishedTitles, publishedFacetLabels } =
-    await publishedTitleAndFacetSets();
+    await publishedTitleAndFacetSets(row.parentId ?? undefined);
   const takenTitles = [...staticTitles.titles, ...publishedTitles].join("; ");
   const takenFacets = [
     ...staticTitles.facetLabels,
@@ -610,6 +615,16 @@ async function runPanelInner(
     );
     return;
   }
+  // §5.16 updates: a passing update row parks for the admin swap decision.
+  // Structurally NO path from panel success to published for a parentId row:
+  // no revalidate (nothing public changed), no retention email (the bytes
+  // ride the row until the swap actually publishes them).
+  if (row.parentId) {
+    const parked = await finishPendingApproval(id, attemptId, card, transcriptJson());
+    if (!parked) return; // superseded by a newer claim; that run owns the row
+    await notifyUpdatePending(row, card, await submissionById(row.parentId));
+    return;
+  }
   const slug = await finishPublished(id, attemptId, card, transcriptJson());
   if (!slug) return; // superseded by a newer claim; that run owns the row
   await revalidateWorkPage();
@@ -634,7 +649,7 @@ async function runPanelInner(
  * (checkIsOnDemandRevalidate) and force-regenerates the cache entry,
  * answering x-nextjs-cache: REVALIDATED. Both layers are best-effort; any
  * failure leaves the ISR revalidate=300 floor as the self-healing fallback. */
-async function revalidateWorkPage(): Promise<void> {
+export async function revalidateWorkPage(): Promise<void> {
   try {
     const { revalidatePath } = await import("next/cache");
     revalidatePath("/work");

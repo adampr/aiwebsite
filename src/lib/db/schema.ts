@@ -21,6 +21,7 @@ import {
   date,
   index,
   uniqueIndex,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 // drizzle-orm has no built-in pg bytea (same workaround as the module's
@@ -308,6 +309,19 @@ export const workSubmissions = pgTable(
     // retry on any once-held submission (a failed admin re-run must not
     // reopen retry-until-the-critic-blinks; 2026-07-30 panel ruling).
     heldAt: timestamp("held_at", { withTimezone: true }),
+    // Update lineage (§5.16 admin-mediated updates): the published card this
+    // row proposes to replace, set at intake and kept after the swap for
+    // provenance and rollback. SET NULL, not CASCADE: the DELETE route
+    // refuses to remove a parent while any child is unresolved, so nulling
+    // can only happen on deliberate cleanup. A row with parent_id set can
+    // NEVER publish from the panel; it parks as pending_approval and only
+    // publishWithSupersede (admin approve) can swap it live.
+    parentId: uuid("parent_id").references((): AnyPgColumn => workSubmissions.id, {
+      onDelete: "set null",
+    }),
+    // Stamped on the parent when an approved update replaces it
+    // (status "superseded", slug freed); cleared again on rollback.
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
     slug: text("slug"), // "team-<slugified-title>", disjoint from exhibit ids
     publishedAt: timestamp("published_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -321,6 +335,10 @@ export const workSubmissions = pgTable(
     index("work_sub_user_idx").on(t.userId),
     index("work_sub_status_idx").on(t.status, t.publishedAt),
     uniqueIndex("work_sub_slug_uq").on(t.slug),
+    index("work_sub_parent_idx").on(t.parentId),
+    // The partial one-in-flight-update-per-parent unique index
+    // (work_sub_parent_active_uq) and the active-title index are
+    // migration-only (0033/0025): drizzle cannot model partial indexes.
   ]
 );
 

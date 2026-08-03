@@ -15,6 +15,8 @@ export interface SubmissionStatusView {
   slug: string | null;
   stale: boolean;
   createdAt: string;
+  /** §5.16: this row proposes to replace a published card. */
+  isUpdate: boolean;
 }
 
 // Plain-language labels for the machine-written panel_error checklist keys.
@@ -53,7 +55,7 @@ export function statusView(row: SubmissionRow): SubmissionStatusView {
       stageCount?: number;
     } | null;
     if (row.status === "running" && progress?.stage)
-      stage = `${progress.stage} (${(progress.stageIndex ?? 0) + 1} of ${progress.stageCount ?? 7})`;
+      stage = `${progress.stage} (${(progress.stageIndex ?? 0) + 1} of ${progress.stageCount ?? 9})`;
   } catch {
     stage = null;
   }
@@ -68,10 +70,20 @@ export function statusView(row: SubmissionRow): SubmissionStatusView {
     status: row.status,
     stage,
     error: row.status === "failed" ? row.panelError : null,
+    // Held UPDATE rows get a canned line: panel_error can carry admin-only
+    // instructions (the conflict-park note), and rendering those to the
+    // submitter hands them steps they cannot take (refutation finding,
+    // 2026-08-03). The full reason still reaches the admin on /admin/work
+    // and in the held email.
     heldReason:
-      row.status === "held" ? friendlyHeldReason(row.panelError) : null,
+      row.status === "held"
+        ? row.parentId
+          ? "This proposed update is waiting on Adam. The live card stays up meanwhile."
+          : friendlyHeldReason(row.panelError)
+        : null,
     slug: row.status === "published" ? row.slug : null,
     stale,
     createdAt: row.createdAt.toISOString(),
+    isUpdate: !!row.parentId,
   };
 }

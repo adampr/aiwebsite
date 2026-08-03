@@ -37,6 +37,13 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
       "This submission is already published.",
       409
     );
+  // §5.16 updates: a passed update is the admin's queue, not a retry target.
+  if (row.status === "pending_approval")
+    return workError(
+      "pending",
+      "This update passed review and is waiting for Adam to approve the swap.",
+      409
+    );
   // Once held, ALWAYS held for submitter purposes: heldAt is never cleared,
   // so a failed admin re-run cannot reopen retry-until-the-critic-blinks.
   if (!user.admin && (row.status === "held" || row.heldAt))

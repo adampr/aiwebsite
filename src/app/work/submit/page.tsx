@@ -9,9 +9,10 @@ import { redirect } from "next/navigation";
 import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
-import { workSubmissionsEnabled } from "@/lib/work/config";
+import { workSubmissionsEnabled, type WorkKind } from "@/lib/work/config";
+import { isUuid, submissionById } from "@/lib/work/db";
 import { WORK_SUBMIT_DOMAINS } from "@/lib/work/http";
-import { SubmitClient } from "./submit-client";
+import { SubmitClient, type UpdateTarget } from "./submit-client";
 
 export const dynamic = "force-dynamic";
 
@@ -20,12 +21,37 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function WorkSubmitPage() {
+export default async function WorkSubmitPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ update?: string }>;
+}) {
   const session = await readSession(siteConfig);
   if (!session) redirect(`/login?redirect=${encodeURIComponent("/work/submit")}`);
   const domain = session.email.split("@")[1]?.toLowerCase() ?? "";
   const allowed = WORK_SUBMIT_DOMAINS.includes(domain);
   const enabled = workSubmissionsEnabled(process.env);
+  const admin = isAdmin(session.email);
+  // ?update=<id> opens the form in update mode (§5.16). Same discipline as
+  // the API's single 404: an id that is missing, unpublished, or not owned
+  // silently falls back to the ordinary create form, revealing nothing.
+  let updateTarget: UpdateTarget | null = null;
+  const updateParam = (await searchParams).update;
+  if (allowed && updateParam && isUuid(updateParam)) {
+    const row = await submissionById(updateParam);
+    if (
+      row &&
+      row.status === "published" &&
+      row.cardJson &&
+      (row.submitterEmail.toLowerCase() === session.email.toLowerCase() ||
+        admin)
+    )
+      updateTarget = {
+        id: row.id,
+        title: row.title,
+        kind: row.kind as WorkKind,
+      };
+  }
   return (
     <div className="mx-auto max-w-2xl space-y-8 pt-12">
       <div className="text-center">
@@ -57,10 +83,11 @@ export default async function WorkSubmitPage() {
         </div>
       ) : (
         <SubmitClient
-          isAdmin={isAdmin(session.email)}
+          isAdmin={admin}
           adminEmail={
             process.env.ADMIN_EMAIL?.split(",")[0]?.trim() || "adam@xl.net"
           }
+          updateTarget={updateTarget}
         />
       )}
     </div>

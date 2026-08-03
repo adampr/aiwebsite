@@ -1,30 +1,23 @@
-// POST (create + kick panel) / GET (list mine) - team work submissions
-// (§5.16). @xl.net accounts only. Upload bytes are inspected in memory and
-// discarded; only extracted text persists.
+// POST - propose an UPDATE to a published community card (§5.16
+// admin-mediated updates, 2026-08-03). Creates a NEW row with parent_id set;
+// title and kind are PINNED to the predecessor (renames stay admin-CLI-only)
+// and the panel result parks as pending_approval. Nothing on this route can
+// change the live card: only the admin approve route swaps.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { createHash } from "node:crypto";
 import { after } from "next/server";
 import { brainHealthy } from "@/lib/governance/brain";
-import {
-  isWorkKind,
-  MISSING_ARCH_DOC_MESSAGE,
-  TITLE_KIND_PREFIX_RE,
-  WORK_CAPS,
-  workSubmissionsEnabled,
-} from "@/lib/work/config";
+import { WORK_CAPS, workSubmissionsEnabled, type WorkKind } from "@/lib/work/config";
 import {
   activeTitleClash,
   countCreatedToday,
   createSubmission,
   isUniqueViolation,
-  mySubmissions,
-  normalizeTitle,
   publishedTitleClash,
-  sweepExpiredWork,
+  submissionById,
 } from "@/lib/work/db";
-import staticTitles from "@/lib/work/static-titles.json";
 import {
   inspectArchive,
   inspectBareMd,
@@ -33,23 +26,13 @@ import {
 } from "@/lib/work/extract";
 import { okJson, rateLimit, requireXlUser, workError } from "@/lib/work/http";
 import { kickPanel } from "@/lib/work/panel";
-import { statusView } from "@/lib/work/view";
 
-export async function GET(): Promise<Response> {
-  const user = await requireXlUser();
-  if (user instanceof Response) return user;
-  const limited = rateLimit(`work:list:${user.userId}`, 60, 30);
-  if (limited) return limited;
-  try {
-    await sweepExpiredWork(25);
-  } catch {
-    // sweep is best-effort on the read path
-  }
-  const rows = await mySubmissions(user.email);
-  return okJson({ submissions: rows.map(statusView) });
-}
+type Ctx = { params: Promise<{ id: string }> };
 
-export async function POST(req: Request): Promise<Response> {
+const NOT_FOUND = () =>
+  workError("not_found", "That submission does not exist.", 404);
+
+export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   const user = await requireXlUser();
   if (user instanceof Response) return user;
   if (!workSubmissionsEnabled(process.env))
@@ -58,8 +41,8 @@ export async function POST(req: Request): Promise<Response> {
       "Submissions are paused right now. Published cards are unaffected.",
       503
     );
-  // In-memory CPU guard against upload hammering; the durable daily quota
-  // is row-counted below.
+  // SHARED limiter pool with creates: an update is an ordinary submission
+  // for quota purposes (it burns a full panel run).
   const limited = rateLimit(
     `work:submit:${user.userId}`,
     3600,
@@ -82,36 +65,44 @@ export async function POST(req: Request): Promise<Response> {
       503
     );
 
+  // Predecessor + ownership, ONE identical 404 for missing, unpublished,
+  // and not-owned (the [id] GET precedent: no existence or ownership
+  // oracle). Checked before the form is read.
+  const { id } = await ctx.params;
+  const row = await submissionById(id);
+  if (
+    !row ||
+    row.status !== "published" ||
+    !row.cardJson ||
+    (row.submitterEmail.toLowerCase() !== user.email.toLowerCase() &&
+      !user.admin)
+  )
+    return NOT_FOUND();
+  const kind = row.kind as WorkKind;
+
   let form: FormData;
   try {
     form = await req.formData();
   } catch {
     return workError(
       "invalid_request",
-      "Send the submission as multipart form data.",
+      "Send the update as multipart form data.",
       400
     );
   }
-  const kind = form.get("kind");
-  if (!isWorkKind(kind))
-    return workError("invalid_request", "Pick a submission kind.", 400);
-  const title = String(form.get("title") ?? "").trim();
-  if (
-    title.length < WORK_CAPS.titleMinChars ||
-    title.length > WORK_CAPS.titleMaxChars
-  )
+  // Title and kind are pinned; a typed value is a conflict, never silently
+  // ignored (the email path's R4/R5 rule).
+  if (String(form.get("title") ?? "").trim())
     return workError(
       "invalid_request",
-      `Title must be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters.`,
+      "An update keeps the published card's title, and renaming a card is admin only. Remove the title field, or ask Adam if the card should be renamed.",
       400
     );
-  // A typed title is authored, so a category prefix is rejected with
-  // instructions, never silently rewritten (2026-07-31 incident: email
-  // subjects are stripped instead, they are transport artifacts).
-  if (TITLE_KIND_PREFIX_RE.test(title))
+  const sentKind = String(form.get("kind") ?? "").trim();
+  if (sentKind && sentKind !== kind)
     return workError(
       "invalid_request",
-      "The title should be just the tool's name; the card's badge already shows the kind. Remove the category prefix and resubmit.",
+      `The published card "${row.title}" is a ${kind === "skill" ? "CoWork Skill" : "Code program"}, so an update to it must be one too. Resubmit with the matching package type.`,
       400
     );
   const blurb = String(form.get("blurb") ?? "").trim();
@@ -121,34 +112,9 @@ export async function POST(req: Request): Promise<Response> {
   )
     return workError(
       "invalid_request",
-      `Description must be ${WORK_CAPS.blurbMinChars} to ${WORK_CAPS.blurbMaxChars} characters: what it does, who uses it, what it replaced.`,
+      `Description must be ${WORK_CAPS.blurbMinChars} to ${WORK_CAPS.blurbMaxChars} characters: what changed and what it does now.`,
       400
     );
-  // Duplicate-title guard (§5.16, 2026-07-30: the owner triple-submitted the
-  // same tool because nothing stopped him). One public page, one active
-  // submission per title, from anyone; failed rows never block.
-  const norm = normalizeTitle(title);
-  if (
-    staticTitles.titles.some((t: string) => normalizeTitle(t) === norm) ||
-    (await publishedTitleClash(title))
-  )
-    return workError(
-      "duplicate_title",
-      "A published /work card already uses this title. Pick a different title.",
-      409
-    );
-  const clash = await activeTitleClash(title);
-  if (clash)
-    return workError(
-      "duplicate_title",
-      clash.submitterEmail === user.email
-        ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it on your submissions page at /work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
-        : `A teammate already has a submission titled "${title}" in review. Pick a different title, or check with them before resubmitting.`,
-      409
-    );
-
-  // Optional public credit: a single validated first name, never derived
-  // from the OAuth profile. Empty = the card credits "the XL.net team".
   const rawName = String(form.get("attribution") ?? "").trim();
   let attribution: string | null = null;
   if (rawName) {
@@ -161,16 +127,32 @@ export async function POST(req: Request): Promise<Response> {
     attribution = rawName;
   }
 
-  // The package: a .zip for a Code program, a .skill/.zip for a CoWork
-  // Skill. A CoWork Skill ALSO requires the standalone SKILL.md (owner
-  // directive: both files, both retained).
+  // One in-flight update per card: the pinned title trips the active-title
+  // guard on any unresolved sibling; exceptId keeps the predecessor itself
+  // out of the published check.
+  if (await publishedTitleClash(row.title, { exceptId: id }))
+    return workError(
+      "duplicate_title",
+      "Another published card now uses this title. Ask Adam to sort the titles out before updating.",
+      409
+    );
+  const clash = await activeTitleClash(row.title);
+  if (clash)
+    return workError(
+      "duplicate_title",
+      clash.submitterEmail.toLowerCase() === user.email.toLowerCase()
+        ? `You already have an update to "${row.title}" in the pipeline (status: ${clash.status}). Check it at /work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to replace it with this version.`
+        : `A teammate already has an update to "${row.title}" in review. Only one update per card can be open at a time, so check with them or wait until theirs is decided.`,
+      409
+    );
+
   const file = form.get("file");
   if (!(file instanceof File) || file.size === 0)
     return workError(
       "invalid_request",
       kind === "program"
-        ? "Attach the .zip of your program."
-        : "Attach the Skill package (.skill or .zip).",
+        ? "Attach the .zip of the updated program."
+        : "Attach the updated Skill package (.skill or .zip).",
       400
     );
   const name = file.name || "upload";
@@ -178,7 +160,7 @@ export async function POST(req: Request): Promise<Response> {
     return workError(
       "invalid_request",
       kind === "program"
-        ? "A Code program submission must be a .zip archive."
+        ? "A Code program update must be a .zip archive."
         : "The Skill package must be a .skill or .zip file.",
       400
     );
@@ -197,9 +179,6 @@ export async function POST(req: Request): Promise<Response> {
       "That file is not a zip archive. Export a plain .zip and resubmit.",
       400
     );
-
-  // The standalone SKILL.md is OPTIONAL (owner directive 2026-07-30): a
-  // package that already carries the doc needs no second upload.
   let mdFile: { name: string; bytes: Buffer } | null = null;
   if (kind === "skill") {
     const md = form.get("skillMd");
@@ -222,25 +201,15 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const extracted = await inspectArchive(bytes, kind);
-  if (!extracted.ok) {
-    // Hard failures (secrets, invalid archive, too complex, program doc
-    // rules): reject and instruct; NEVER rescued by a standalone .md (a
-    // clean standalone must not launder a dirty archive).
+  if (!extracted.ok)
     return workError(extracted.code, extracted.message, 422, {
       ...(extracted.paths ? { paths: extracted.paths } : {}),
-      ...(extracted.code === "missing_architecture_doc" ||
-      (extracted.code === "doc_too_short" && kind === "program")
-        ? { instructions: MISSING_ARCH_DOC_MESSAGE }
-        : {}),
     });
-  }
-
-  // Reviewed-doc precedence for kind=skill: a standalone upload always wins;
-  // else the package's resolved doc; else the doc-resolution failure is
-  // recoverable ONLY by a standalone, so with neither it rejects here.
   let docText = extracted.docText;
   let corpus = extracted.corpus;
-  let mdMeta: { name: string; sha256: string; bytes: number; data: Buffer } | undefined;
+  let mdMeta:
+    | { name: string; sha256: string; bytes: number; data: Buffer }
+    | undefined;
   if (kind === "skill") {
     if (mdFile) {
       const mdExtract = inspectBareMd(mdFile.name, mdFile.bytes);
@@ -264,8 +233,6 @@ export async function POST(req: Request): Promise<Response> {
         instructions: message,
       });
     } else if (extracted.docRawBytes) {
-      // Doc came from inside the package: retention still carries it as its
-      // own attachment (md_* backfilled from the untruncated raw bytes).
       const docBase =
         extracted.docPath.split("!/").pop()?.split("/").pop() ?? "SKILL.md";
       mdMeta = {
@@ -279,60 +246,59 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
-  let row;
+  let child;
   try {
-    row = await createSubmission({
-    userId: user.userId,
-    email: user.email,
-    name: attribution,
-    kind,
-    title,
-    blurb,
-    architectureText: kind === "program" ? docText : null,
-    skillMdText: kind === "skill" ? docText : null,
-    fileManifestJson: JSON.stringify(extracted.manifest),
-    corpusFilesJson: JSON.stringify(corpus),
-    archiveName: name.slice(0, 200),
-    archiveSha256: extracted.archiveSha256,
-    archiveBytes: extracted.archiveBytes,
-    // Retained until the owner retention email sends on publish (§5.16);
-    // non-published rows drop them with the row.
+    child = await createSubmission({
+      userId: user.userId,
+      email: user.email,
+      name: attribution,
+      kind,
+      title: row.title,
+      blurb,
+      architectureText: kind === "program" ? docText : null,
+      skillMdText: kind === "skill" ? docText : null,
+      fileManifestJson: JSON.stringify(extracted.manifest),
+      corpusFilesJson: JSON.stringify(corpus),
+      archiveName: name.slice(0, 200),
+      archiveSha256: extracted.archiveSha256,
+      archiveBytes: extracted.archiveBytes,
       archiveData: bytes,
       md: mdMeta,
+      parentId: id,
     });
   } catch (err) {
-    // The partial unique index closes the double-click race the pre-check
-    // leaves open; map the violation to the same 409. isUniqueViolation
-    // walks the cause chain: drizzle wraps the PostgresError, so a bare
-    // message check never fired (latent bug fixed 2026-08-03).
-    if (isUniqueViolation(err, "work_sub_active_title_uq"))
+    if (
+      isUniqueViolation(
+        err,
+        "work_sub_active_title_uq",
+        "work_sub_parent_active_uq"
+      )
+    )
       return workError(
         "duplicate_title",
-        `A submission titled "${title}" is already in the pipeline. Check your submissions page at /work/submit.`,
+        `An update for "${row.title}" is already in review, and only one can be open at a time. Check /work/submit, or ask Adam to clear the pending one.`,
         409
       );
     throw err;
   }
 
-  // The row exists; a kick failure must degrade to "queued", never 500 the
-  // submission out from under the user (2026-07-30 incident: a claim-query
-  // bug turned every first submit into a bare 500).
   let kicked: Awaited<ReturnType<typeof kickPanel>>;
   try {
-    kicked = await kickPanel(row.id);
+    kicked = await kickPanel(child.id);
   } catch (err) {
     console.log(
-      `[work] kickPanel threw on ${row.id}: ${err instanceof Error ? err.message.slice(0, 200) : "unknown"}`
+      `[work] kickPanel threw on ${child.id}: ${err instanceof Error ? err.message.slice(0, 200) : "unknown"}`
     );
     kicked = { outcome: { status: "refused", reason: "claim" } };
   }
-  if (kicked.run) after(kicked.run); // runPanel never throws
+  if (kicked.run) after(kicked.run);
   return okJson(
     {
-      id: row.id,
+      id: child.id,
       status: kicked.outcome.status === "running" ? "running" : "received",
       queued:
         kicked.outcome.status === "refused" ? kicked.outcome.reason : null,
+      updates: id,
     },
     202
   );

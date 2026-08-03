@@ -42,6 +42,7 @@ import {
   workSubmissionsEnabled,
 } from "../src/lib/work/config";
 import {
+  activeUpdateChild,
   holdPublishedForRerun,
   normalizeTitle,
   publishedTitleClash,
@@ -73,6 +74,36 @@ async function main(): Promise<void> {
 
   const row = await submissionById(id);
   if (!row) die(`no submission ${id}`);
+
+  // §5.16 updates (2026-08-03): NEVER re-run a swapped-in update child.
+  // holdPublishedForRerun would pull it to held, the re-run parks it
+  // pending_approval, and approval then conflict-parks forever because its
+  // parent is superseded, not published: the card is stranded off /work
+  // with no in-app recovery (refutation FATAL). Roll back first (Delete on
+  // the published update row in /admin/work restores the previous
+  // version), then re-run the restored parent.
+  if (row.parentId)
+    die(
+      row.status === "published"
+        ? `this row is a swapped-in update of ${row.parentId}; re-running it would strand the card. Roll back first ("Roll back to previous version" on /admin/work), then re-run the restored card.`
+        : `this row is an update proposal for ${row.parentId}; use /admin/work (Run the panel again / Approve / Reject) instead of this script.`
+    );
+  // A superseded row is the rollback reservoir, not a live card.
+  if (row.status === "superseded")
+    die(
+      "this row was replaced by an approved update and is kept for rollback; re-run the published update row's card instead (or roll back first)."
+    );
+  // A parent with an in-flight update: pulling it to held would collide
+  // with the child in the active-title unique index (raw DB error), and a
+  // retitle would desync the child's pinned title. Resolve the update
+  // first.
+  {
+    const child = await activeUpdateChild(row.id);
+    if (child)
+      die(
+        `an update to this card is in the pipeline (${child.id}, status ${child.status}); approve, reject, or delete it on /admin/work first.`
+      );
+  }
 
   console.log(`[work-rerun] id=${row.id}`);
   console.log(`[work-rerun] status=${row.status} kind=${row.kind}`);

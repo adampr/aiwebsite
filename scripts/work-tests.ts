@@ -964,6 +964,136 @@ async function main() {
   assert.equal(inferKind("tool.zip", false, null), "program");
   assert.equal(inferKind("tool.skill", true, "program"), "program", "explicit kind wins");
 
+  // ── §5.16 admin-mediated updates: directive parsing (2026-08-03) ──
+
+  // Strong labels lift the line out of the blurb; first match wins.
+  for (const label of ["Update Card", "Updates Card", "Card Update", "Replace Card"]) {
+    const p = parseSubmissionBody(`${label}: Outage Checker\n\n${PROSE}`);
+    assert.equal(p.updateTarget, "Outage Checker", `${label}: recognized`);
+    assert.ok(
+      !p.blurb.includes("Outage Checker"),
+      `${label}: line lifted out of the blurb`
+    );
+  }
+  {
+    const p = parseSubmissionBody(
+      `Update Card: First Target\nUpdate Card: Second Target\n\n${PROSE}`
+    );
+    assert.equal(p.updateTarget, "First Target", "first update directive wins");
+  }
+  // Bare "Update:" is PROSE, never a directive (silent-conversion FATAL
+  // class; same reasoning as bare "Name:").
+  {
+    const p = parseSubmissionBody(`Update: now handles PDFs too\n\n${PROSE}`);
+    assert.equal(p.updateTarget, null, "bare Update: stays prose");
+    assert.ok(
+      p.blurb.includes("Update: now handles PDFs too"),
+      "bare Update: line stays in the blurb"
+    );
+  }
+  // A dangling label with no value never claims the submission.
+  assert.equal(
+    parseSubmissionBody(`Update Card:\n\n${PROSE}`).updateTarget,
+    null,
+    "empty Update Card: value ignored"
+  );
+  // Gmail bold markers around the label still match (DIRECTIVE_RE shape).
+  assert.equal(
+    parseSubmissionBody(`*Update Card: *Outage Checker\n\n${PROSE}`).updateTarget,
+    "Outage Checker",
+    "bolded update directive recognized"
+  );
+
+  // Subject rung: separator REQUIRED, so a card named "Update Broadcaster"
+  // never matches; "Update:" and "Update - " forms do.
+  const { UPDATE_SUBJECT_RE } = await import("../src/lib/work/email-parse");
+  assert.ok(UPDATE_SUBJECT_RE.test("Update: Outage Checker"));
+  assert.ok(UPDATE_SUBJECT_RE.test("Updates: Outage Checker"));
+  assert.ok(UPDATE_SUBJECT_RE.test("Update - Outage Checker"));
+  assert.ok(!UPDATE_SUBJECT_RE.test("Update Broadcaster"), "no separator, no match");
+  assert.ok(!UPDATE_SUBJECT_RE.test("Outage Checker Update"), "suffix never matches");
+  assert.equal(
+    UPDATE_SUBJECT_RE.exec("Update: Outage Checker")?.[1],
+    "Outage Checker"
+  );
+  // The rung runs on titleFromSubject output, so transport prefixes unwrap.
+  assert.equal(
+    UPDATE_SUBJECT_RE.exec(titleFromSubject("Fwd: Update: Outage Checker"))?.[1],
+    "Outage Checker",
+    "forwarded update subject still resolves"
+  );
+
+  // F2 subject-mismatch shape: padded nameKey containment lets descriptive
+  // subjects through while a different tool's name fails containment.
+  const contains = (subject: string, predTitle: string) =>
+    ` ${nameKey(subject)} `.includes(` ${nameKey(predTitle)} `);
+  assert.ok(
+    contains("Outage Checker v2 update", "Outage Checker"),
+    "descriptive subject naming the card passes"
+  );
+  assert.ok(
+    contains("Update: Outage Checker", "Outage Checker"),
+    "update-prefixed subject passes"
+  );
+  assert.ok(
+    !contains("Patch Rollup Notifier", "Outage Checker"),
+    "a different tool's subject fails containment"
+  );
+
+  // The held-update canned line replaces raw panel_error for submitters
+  // (conflict-park notes carry admin-only instructions).
+  const { statusView } = await import("../src/lib/work/view");
+  const baseRow = {
+    id: "00000000-0000-0000-0000-000000000001",
+    userId: null,
+    submitterEmail: "a@xl.net",
+    submitterName: null,
+    kind: "skill",
+    title: "T",
+    blurb: "b",
+    status: "held",
+    architectureText: null,
+    skillMdText: null,
+    fileManifestJson: null,
+    corpusFilesJson: null,
+    archiveName: null,
+    archiveSha256: null,
+    archiveBytes: null,
+    mdName: null,
+    mdSha256: null,
+    mdBytes: null,
+    panelAttemptId: null,
+    panelStartedAt: null,
+    panelHeartbeatAt: null,
+    panelRuns: 0,
+    panelRunsDate: null,
+    panelProgressJson: null,
+    panelTranscriptJson: null,
+    panelError: "update approval conflict: admin-only instructions here",
+    cardJson: null,
+    heldAt: new Date(),
+    parentId: null as string | null,
+    supersededAt: null,
+    slug: null,
+    publishedAt: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  assert.ok(
+    statusView({ ...baseRow }).heldReason?.includes("admin-only instructions"),
+    "non-update held rows still surface the panel reason"
+  );
+  const updView = statusView({
+    ...baseRow,
+    parentId: "00000000-0000-0000-0000-000000000002",
+  });
+  assert.ok(
+    updView.heldReason !== null &&
+      !updView.heldReason.includes("admin-only instructions"),
+    "held update rows get the canned line, never the raw panel_error"
+  );
+  assert.equal(updView.isUpdate, true, "statusView projects isUpdate");
+
   console.log("work-tests: all assertions passed.");
 }
 

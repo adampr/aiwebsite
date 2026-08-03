@@ -232,6 +232,13 @@
       "when": 1785696818130,
       "tag": "0032_hard_emma_frost",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1785788656712,
+      "tag": "0033_update_supersede",
+      "breakpoints": true
     }
   ]
 }

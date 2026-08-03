@@ -171,7 +171,13 @@ export type WorkStatus =
   | "running"
   | "published"
   | "held"
-  | "failed";
+  | "failed"
+  // §5.16 updates: an update row that passed the panel and waits for the
+  // admin swap click; nothing public changes until approval.
+  | "pending_approval"
+  // A former published card replaced by an approved update; the rollback
+  // reservoir. Renders nowhere (publishedCards filters status=published).
+  | "superseded";
 
 /** Kill switch (governanceEnabled pattern: default ON, set "0" to stop
  * intake and panel admission; already-published cards keep rendering). */

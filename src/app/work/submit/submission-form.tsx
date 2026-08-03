@@ -18,12 +18,22 @@ const QUEUED_NOTICE =
   "Received. The panel is briefly unavailable; use Retry on your submissions page in a few minutes.";
 const OK_NOTICE =
   "Received. The panel is reviewing; you will get an email either way.";
+const OK_NOTICE_UPDATE =
+  "Received. The panel is reviewing your update; if it passes, it waits for Adam's approval before the live card changes.";
 
 interface SubmissionFormProps {
   context: "page" | "dialog";
   onSubmitted?: () => void;
   onBusyChange?: (busy: boolean) => void;
   onClose?: () => void; // dialog only
+  /** §5.16 update mode: the published card being updated. Title and kind
+   * are pinned server-side; the form shows them locked and never sends
+   * either field (the update route 400s on a typed value). */
+  updateTarget?: {
+    id: string;
+    title: string;
+    kind: "skill" | "program";
+  } | null;
 }
 
 export function SubmissionForm({
@@ -31,8 +41,10 @@ export function SubmissionForm({
   onSubmitted,
   onBusyChange,
   onClose,
+  updateTarget = null,
 }: SubmissionFormProps) {
-  const [kind, setKind] = useState<"skill" | "program">("skill");
+  const [kindState, setKind] = useState<"skill" | "program">("skill");
+  const kind = updateTarget ? updateTarget.kind : kindState;
   const [title, setTitle] = useState("");
   const [blurb, setBlurb] = useState("");
   const [attribution, setAttribution] = useState("");
@@ -103,17 +115,24 @@ export function SubmissionForm({
     const timeout = setTimeout(() => ctrl.abort(), 90_000);
     try {
       const form = new FormData();
-      form.set("kind", kind);
-      form.set("title", title);
+      if (!updateTarget) {
+        form.set("kind", kind);
+        form.set("title", title);
+      }
       form.set("blurb", blurb);
       form.set("attribution", attribution);
       form.set("file", pkg as File);
       if (kind === "skill" && skillMd) form.set("skillMd", skillMd);
-      const res = await fetch("/api/work/submissions", {
-        method: "POST",
-        body: form,
-        signal: ctrl.signal,
-      });
+      const res = await fetch(
+        updateTarget
+          ? `/api/work/submissions/${updateTarget.id}/update`
+          : "/api/work/submissions",
+        {
+          method: "POST",
+          body: form,
+          signal: ctrl.signal,
+        }
+      );
       const data = (await res.json().catch(() => null)) as {
         error?: { code?: string; message?: string; paths?: string[] };
         queued?: string | null;
@@ -179,40 +198,62 @@ export function SubmissionForm({
     <form onSubmit={submit} className="space-y-5">
       {done && context === "page" && (
         <p className="text-sm" role="status">
-          {done.queued ? QUEUED_NOTICE : OK_NOTICE}
+          {done.queued
+            ? QUEUED_NOTICE
+            : updateTarget
+              ? OK_NOTICE_UPDATE
+              : OK_NOTICE}
         </p>
       )}
-      <div className="flex gap-4">
-        {(
-          [
-            ["skill", "CoWork Skill"],
-            ["program", "Code program"],
-          ] as const
-        ).map(([value, label]) => (
-          <label key={value} className="flex items-center gap-2 text-sm">
+      {updateTarget ? (
+        <div className="space-y-2">
+          <p className="text-sm">
+            Updating the published card{" "}
+            <span className="font-medium">{updateTarget.title}</span> (
+            {updateTarget.kind === "skill" ? "CoWork Skill" : "Code program"}
+            ).
+          </p>
+          <p className="text-xs text-faint">
+            Updates keep the card&apos;s title and kind; renaming stays admin
+            only. Attach the full new package, not a changelog. The live card
+            stays up until Adam approves the reviewed update.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="flex gap-4">
+            {(
+              [
+                ["skill", "CoWork Skill"],
+                ["program", "Code program"],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value} className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="kind"
+                  checked={kind === value}
+                  onChange={() => setKind(value)}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div>
+            <label className={labelCls}>Title</label>
             <input
-              type="radio"
-              name="kind"
-              checked={kind === value}
-              onChange={() => setKind(value)}
+              className={inputCls}
+              style={inputStyle}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              minLength={4}
+              maxLength={60}
+              required
+              placeholder="What the tool is called"
             />
-            {label}
-          </label>
-        ))}
-      </div>
-      <div>
-        <label className={labelCls}>Title</label>
-        <input
-          className={inputCls}
-          style={inputStyle}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          minLength={4}
-          maxLength={60}
-          required
-          placeholder="What the tool is called"
-        />
-      </div>
+          </div>
+        </>
+      )}
       <div>
         <label className={labelCls}>One paragraph</label>
         <textarea
@@ -369,7 +410,11 @@ export function SubmissionForm({
       )}
       <div className="flex flex-wrap items-center gap-4">
         <button type="submit" className="btn" disabled={busy}>
-          {busy ? "Uploading..." : "Submit for review"}
+          {busy
+            ? "Uploading..."
+            : updateTarget
+              ? "Submit update"
+              : "Submit for review"}
         </button>
         {busy && (
           <button

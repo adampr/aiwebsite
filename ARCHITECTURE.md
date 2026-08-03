@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-03 second pass (LLMS.TXT SUMMARY NOW CARRIES THE PERFORMANCE STATISTICS — OWNER RULING. The module panel (C5) blocked them by default: an agent reading llms.txt quotes it as bare fact, stripped of page context and of the link back to whatever substantiates it, which turns a machine-readable channel into an FTC-substantiation surface. The panel named the escape explicitly — 'putting numbers here is an owner decision with substantiation attached, not a copy choice' — and the owner ruled 2026-08-03 that the figures are accurate for XL.net and may be published. They ship ATTRIBUTED rather than bare: 'XL.net reports a 79.8% reduction in IT issues and 99.3% customer satisfaction across its managed IT clients, with 24/7 AI-powered support.' The attribution is the part that survives an agent quoting one sentence out of the file — a bare '99.3%' is unsourced, 'XL.net reports 99.3%' carries its own owner. Figures are verbatim-consistent with the homepage stat band (79.8% / 24/7 / 99.3%); if either surface changes, change both — two surfaces stating different numbers is worse than either alone.); previously 2026-08-03 (LLMS.TXT ENABLED — module pin v1.60.0 -> v1.61.0, owner directive to enable llms.txt fleet-wide. This host previously had NO seo.llmsTxt block at all, so /llms.txt 404'd — configured behaviour, not a defect (the module defaults llmsTxt.enabled false and requires host-authored summary copy). Now: seo.llmsTxt with an authored summary, and src/app/llms.txt/route.ts using the MODULE handler with force-dynamic — never hand-rolled, because the module handler is what emits X-Robots-Tag: noindex and this file is a duplicate-content aggregate of canonical article pages; force-dynamic is load-bearing because createLlmsTxt() reads the latest published articles from the DB on every request, which is precisely why no nightly regeneration pipeline was built (module panel C2: a nightly static writer would raise worst-case staleness from the ~1h CDN window to ~24h). BLOCKING COPY RULE (module panel seat 5): the summary carries NO performance statistics — this site's homepage leads with '79.8% reduction in IT issues' and '99.3% customer satisfaction', and an agent reading llms.txt quotes it as bare fact stripped of page context and of the link to whatever substantiates it, which is an FTC-substantiation exposure via a machine-readable channel (same class D4 put outside machine authorship). Structure and coverage only; adding numbers is an owner decision with substantiation attached. Also: /llms.txt added to deploy/synth-inventory.json (class warn) so the */15 sweep probes it — 96x/day, which is what answers the 'nightly' half of the directive — and expectLlmsTxt: true declared in deploy/seo-scorecard.json for the §21 llms-txt-served + llms-txt-links-ok rows. No schema, no env, no template change beyond the routine re-render.); previously 2026-08-03 (blog news seam, roundup-aggregator
+Last verified against code: 2026-08-03 third pass (§5.16 ADMIN-MEDIATED CARD UPDATES — owner ruling: a submitter proposes a new version of a published From the Team card by email (strong "Update Card:" directive or "Update: <title>" subject) or web (POST /api/work/submissions/[id]/update, /work/submit?update=<id>); the update is a NEW row with parent_id (migration 0033: parent_id SET NULL FK + superseded_at + work_sub_parent_active_uq one-in-flight partial index + active-title index recreated with pending_approval), runs the full panel with the predecessor excluded from taken-titles/lint (excludeId), and parks at the new status pending_approval — structurally NO path from panel success to published for a parent_id row. Only the admin approve route swaps (publishWithSupersede: one txn, parent → superseded + slug freed FIRST, child inherits slug + published_at so deep links and /work order survive, updated_at moves the sitemap via greatest()); parent-not-published conflict parks the child held, never publishes standalone. Reject route (notified discard), DELETE = rollback on a swapped-in child (parent restored in-txn), parent deletes refused while any child incl. FAILED is unresolved (SET NULL + Retry would bypass the approval stop), superseded rows undeletable (rollback reservoir), work-panel-rerun.ts refuses update rows and parents with in-flight children. Email lane can only CREATE proposals — emailed admin identity is spoofable From under domain DKIM, so approval only ever rides an OAuth admin session; bare "Update:" stays prose (injection foot-gun); body-directive updates with a subject naming a different tool reject (pasted-release-notes shape). New: isUniqueViolation() walks drizzle's err.cause chain — the old message-only checks NEVER fired (latent 500-instead-of-409 on the double-click race, found by the new DB flow test npm run test:workupdate). Full runbook at the end of §5.16.); previously 2026-08-03 second pass (LLMS.TXT SUMMARY NOW CARRIES THE PERFORMANCE STATISTICS — OWNER RULING. The module panel (C5) blocked them by default: an agent reading llms.txt quotes it as bare fact, stripped of page context and of the link back to whatever substantiates it, which turns a machine-readable channel into an FTC-substantiation surface. The panel named the escape explicitly — 'putting numbers here is an owner decision with substantiation attached, not a copy choice' — and the owner ruled 2026-08-03 that the figures are accurate for XL.net and may be published. They ship ATTRIBUTED rather than bare: 'XL.net reports a 79.8% reduction in IT issues and 99.3% customer satisfaction across its managed IT clients, with 24/7 AI-powered support.' The attribution is the part that survives an agent quoting one sentence out of the file — a bare '99.3%' is unsourced, 'XL.net reports 99.3%' carries its own owner. Figures are verbatim-consistent with the homepage stat band (79.8% / 24/7 / 99.3%); if either surface changes, change both — two surfaces stating different numbers is worse than either alone.); previously 2026-08-03 (LLMS.TXT ENABLED — module pin v1.60.0 -> v1.61.0, owner directive to enable llms.txt fleet-wide. This host previously had NO seo.llmsTxt block at all, so /llms.txt 404'd — configured behaviour, not a defect (the module defaults llmsTxt.enabled false and requires host-authored summary copy). Now: seo.llmsTxt with an authored summary, and src/app/llms.txt/route.ts using the MODULE handler with force-dynamic — never hand-rolled, because the module handler is what emits X-Robots-Tag: noindex and this file is a duplicate-content aggregate of canonical article pages; force-dynamic is load-bearing because createLlmsTxt() reads the latest published articles from the DB on every request, which is precisely why no nightly regeneration pipeline was built (module panel C2: a nightly static writer would raise worst-case staleness from the ~1h CDN window to ~24h). BLOCKING COPY RULE (module panel seat 5): the summary carries NO performance statistics — this site's homepage leads with '79.8% reduction in IT issues' and '99.3% customer satisfaction', and an agent reading llms.txt quotes it as bare fact stripped of page context and of the link to whatever substantiates it, which is an FTC-substantiation exposure via a machine-readable channel (same class D4 put outside machine authorship). Structure and coverage only; adding numbers is an owner decision with substantiation attached. Also: /llms.txt added to deploy/synth-inventory.json (class warn) so the */15 sweep probes it — 96x/day, which is what answers the 'nightly' half of the directive — and expectLlmsTxt: true declared in deploy/seo-scorecard.json for the §21 llms-txt-served + llms-txt-links-ok rows. No schema, no env, no template change beyond the routine re-render.); previously 2026-08-03 (blog news seam, roundup-aggregator
 WARN round: `-roundup`/`-index-url` peg demotion + time-window `+number`
 strip in `scripts/lib/peg-score.mjs`; `cleanTitle`/`keywordsFromTitle`/
 `slugify` extracted to `scripts/lib/title-keywords.mjs` with temporal
@@ -3516,15 +3516,144 @@ overwritten (dump first); an unchanged title keeps its slug, a changed one
 mints a new slug and old `/work#slug` email fragments degrade to
 top-of-page.
 
-**Statuses:** `received → running → published | held | failed`. Upload
+**Statuses:** `received → running → published | held | failed`, plus the two
+update states below (`pending_approval`, `superseded`). Upload
 validation failures are synchronous 4xx, no row. **Kill switch:**
 `WORK_SUBMISSIONS_ENABLED` (`!== "0"`, governance semantics) stops intake +
 admission; published cards keep rendering (removal is an explicit owner
 delete). **Retention:** published rows live until deleted (they ARE the page
-content and its Postgres backup); everything else sweeps at 30 days.
-**Tests:** `npm run test:work` (extract + lint, no DB/brain). **Sitemap:**
-/work `lastmod = max(hand-maintained floor, latest published_at)`, DB failure
-falls back to the floor (never null, never regresses).
+content and its Postgres backup); held, pending_approval (the approval queue,
+still carrying the retained originals) and superseded (the rollback
+reservoir) rows are sweep-exempt; everything else sweeps at 30 days.
+**Tests:** `npm run test:work` (extract + lint + parse, no DB/brain) and
+`npm run test:workupdate` (the update state machine against a real DB:
+swap, rollback, conflict-park, delete guard, index races). **Sitemap:**
+/work `lastmod = max(hand-maintained floor, latest greatest(published_at,
+updated_at) over published rows)` — `greatest` because an approved update
+swap keeps the card's `published_at` (ordering) while `updated_at` carries
+the swap time; DB failure falls back to the floor (never null, never
+regresses).
+
+**Admin-mediated updates (2026-08-03, owner ruling).** A submitter (or an
+admin on their behalf) proposes a NEW VERSION of a published community card;
+the live card never changes until the admin approves the swap on
+`/admin/work`. Design was a 3-designer panel + 3-refuter panel; the two
+FATALs both closed (see the delete guard and the CLI guard below).
+
+- **Data model** (migration 0033): `parent_id uuid` FK →
+  `work_submissions.id` `ON DELETE SET NULL` + `superseded_at timestamptz`.
+  An update is a NEW row with `parent_id` set, NEVER an in-place mutation.
+  Partial unique index `work_sub_parent_active_uq` (`parent_id` WHERE status
+  IN received/running/held/pending_approval): one in-flight update per card.
+  `work_sub_active_title_uq` recreated with `pending_approval` in its active
+  set (belt-and-braces: the pinned title occupies the title slot too, which
+  also structurally blocks `holdPublishedForRerun` on a parent while a child
+  is in flight). `failed` is deliberately OUT of the parent index (a failure
+  must not block a corrected resubmission) but IN the delete guard (below).
+- **States:** `pending_approval` = update passed the full panel, parked for
+  the swap click (`finishPendingApproval`: no slug, no published_at, no
+  revalidate, no retention email, `held_at` untouched). `superseded` =
+  former live card after a swap (slug freed, `superseded_at` stamped,
+  cardJson kept: it is the only surviving copy of the old card, the bytes
+  were cleared at its own retention email). In panel.ts the publish exit
+  branches on `row.parentId` — there is structurally NO code path from panel
+  success to `published` for an update row.
+- **Email intake:** strong directives only — `Update Card:` / `Updates
+  Card:` / `Card Update:` / `Replace Card:` body labels (bare `Update:`
+  stays prose; same reasoning as bare `Name:`), or subject `Update: <title>`
+  / `Update - <title>` (separator required, matched after
+  `titleFromSubject`). Body directive beats subject; first wins. Runs AFTER
+  the DKIM + admission gates, BEFORE the title ladder (which is skipped:
+  title and kind are PINNED from the predecessor). Resolution
+  (`resolveUpdateTarget`): published rows only, normalized-title match wins
+  over slug match; static-titles reject; unresolved rejects loudly and
+  NEVER falls through to a create. Ownership: predecessor's
+  `submitter_email` (case-insensitive) or `isAdmin(sender)` — checked
+  before any download. A differing `Title:` line rejects (renames stay
+  admin-CLI-only); a conflicting `Kind:`/attachment shape rejects; a
+  body-directive update whose usable subject does not contain the
+  predecessor's nameKey rejects (the pasted-release-notes shape). The email
+  lane can only CREATE proposals: an emailed admin identity is a spoofable
+  From under domain DKIM, so approval never rides email — there is no
+  reply-to-approve lever.
+- **Web intake:** `POST /api/work/submissions/[id]/update` (multipart, same
+  guards/order as create, shared limiter + quota). Predecessor gate is ONE
+  identical 404 for missing/unpublished/not-owned (no oracle). Non-empty
+  `title`/`kind` form fields 400 (never silently ignored). Entry:
+  `/work/submit?update=<id>` renders the form in update mode (title/kind
+  locked; invalid or foreign ids silently fall back to create mode);
+  buttons on own published rows at `/work/submit` and on `/admin/work`.
+- **The swap** — `publishWithSupersede(childId)` (db.ts), called ONLY from
+  the admin approve route (real request context, so `revalidatePath` works;
+  plus the exported `revalidateWorkPage()` loopback as layer 2). One
+  transaction, both rows locked in id order: re-check child
+  (pending_approval|held, parentId, cardJson) and parent (published, slug
+  non-null) INSIDE the txn; parent → superseded + slug NULL first
+  (`work_sub_slug_uq` is not deferrable — statement order is load-bearing),
+  child → published with the parent's slug and `published_at` (deep links
+  and /work position survive; `updated_at` moves the sitemap). Parent not
+  published → child parks `held` with `UPDATE_CONFLICT_NOTE`; NOTHING ever
+  publishes standalone (refutation FATAL: standalone publish mints
+  duplicate live cards). The approve route branches on `parentId`, so a
+  held update can never reach legacy `approveHeld`. statusView shows held
+  updates a canned line, not `panel_error` (the conflict note is
+  admin-facing).
+- **Reject** — `POST /api/work/submissions/[id]/reject` (admin-only): valid
+  on pending_approval or held updates; deletes the row and emails the
+  submitter. Delete on an update row = the silent variant.
+- **DELETE route extras:** a parent with an unresolved child (received/
+  running/held/pending_approval/**failed** — failed included because SET
+  NULL + Retry would otherwise publish the update standalone with no
+  approval stop; refutation FATAL F1) refuses 409. DELETE on a published
+  update child whose parent is superseded = **ROLLBACK**: child deleted,
+  parent restored (status/slug/`superseded_at` cleared) in one txn, card
+  never leaves /work; `/admin/work` labels it "Roll back to previous
+  version". DELETE on a superseded row refuses 409 (it is the rollback
+  reservoir; full removal = roll back, then delete the restored card).
+- **Retry/rerun:** retry 409s on pending_approval ("waiting for Adam");
+  rerun accepts held + pending_approval (`claimPanel fromHeld` widened) and
+  a passing re-run lands back in pending_approval — a re-run can never
+  sneak a swap. `scripts/work-panel-rerun.ts` refuses any row with
+  `parent_id` set (re-running a swapped-in child would strand the card off
+  /work: its parent is superseded, so approval conflict-parks forever —
+  refutation FATAL; roll back first) and any parent with an in-flight
+  child.
+- **Notifications** (notify.ts): `notifyUpdatePending` (admin
+  action-needed + submitter receipt), `notifyUpdateApproved` (submitter;
+  owner audit when another listed admin approved, with rollback — not
+  delete — undo guidance; the ORIGINAL card's submitter when someone else
+  proposed the update), `notifyUpdateRejected`, `notifyRollback`,
+  update-aware `notifyHeld`. Tron receipts state the gate: the live card
+  only changes after the admin approves.
+- **`isUniqueViolation(err, ...indexNames)`** (db.ts): drizzle wraps
+  postgres errors ("Failed query: ...") with the real PostgresError in
+  `err.cause`, so the old `err.message.includes(index)` catches never fired
+  (latent bug found by the 2026-08-03 flow test — the double-click race
+  mapped to a 500, not the 409). All intake catches now walk the cause
+  chain.
+
+**Updating a published From the Team card (admin runbook).**
+By email: from your xl.net mailbox, mail Tron.Netter@ai.xl.net with the new
+package attached (same kind as the live card), a line `Update Card: <exact
+live card title>` in the body (or subject `Update: <exact title>`), and the
+new description as the body text (80-900 chars). No `Title:` line; the title
+stays pinned. Tron replies with a receipt; the panel re-runs the full
+editorial review on the new files; when it passes you get "Action needed:
+/work update awaiting approval". Open the link (`/admin/work#sub-<id>`),
+compare "Proposed card JSON" against "View the live card", click **Approve
+update** — the live card is replaced within 5 minutes. Your own updates take
+the same click; nothing swaps by itself, ever.
+By website: `/admin/work` → the published card → **Submit an update** (or
+the same button on your own row at `/work/submit`); the form opens with
+title and kind locked; attach the new files, submit; when the panel passes,
+the row shows "pending approval" and the approval email arrives; click
+**Approve update**. Someone else's update: same screen — **Approve update**
+swaps it live, **Reject update** deletes the proposal and emails the
+submitter, **Delete** discards it silently; a held update offers "Approve
+update as-is" / "Run the panel again" / "Reject update" (approve/re-run are
+suppressed when its target is no longer live). Undo: the updated card's row
+shows **Roll back to previous version**. Full removal of an updated card:
+roll back first, then delete the restored card.
 
 ### 5.17 RFP Response (`/rfp`) — host-owned, staff-gated
 

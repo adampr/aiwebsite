@@ -22,6 +22,14 @@ interface StatusRow {
   slug: string | null;
   stale: boolean;
   createdAt: string;
+  isUpdate: boolean;
+}
+
+/** §5.16 update mode: the published card the form proposes to replace. */
+export interface UpdateTarget {
+  id: string;
+  title: string;
+  kind: "skill" | "program";
 }
 
 const STATUS_COPY: Record<string, string> = {
@@ -30,14 +38,18 @@ const STATUS_COPY: Record<string, string> = {
   published: "Published",
   held: "Held for review",
   failed: "Review failed",
+  pending_approval: "Waiting for approval",
+  superseded: "Replaced by an update",
 };
 
 export function SubmitClient({
   isAdmin = false,
   adminEmail = "adam@xl.net",
+  updateTarget = null,
 }: {
   isAdmin?: boolean;
   adminEmail?: string;
+  updateTarget?: UpdateTarget | null;
 }) {
   const [rows, setRows] = useState<StatusRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -102,7 +114,11 @@ export function SubmitClient({
   return (
     <div className="space-y-8">
       <div className="panel panel--raised">
-        <SubmissionForm context="page" onSubmitted={() => void refresh()} />
+        <SubmissionForm
+          context="page"
+          onSubmitted={() => void refresh()}
+          updateTarget={updateTarget}
+        />
       </div>
 
       {rows.length > 0 && (
@@ -128,6 +144,18 @@ export function SubmitClient({
                   Live on{" "}
                   <a href={`/work#${r.slug}`}>the Our Work page</a> (allow up
                   to 5 minutes).
+                </p>
+              )}
+              {r.status === "pending_approval" && (
+                <p className="mt-1 text-faint">
+                  Passed review. Waiting for Adam to approve the swap; the
+                  live card is unchanged until then.
+                </p>
+              )}
+              {r.status === "superseded" && (
+                <p className="mt-1 text-faint">
+                  An approved update replaced this card. The live version is
+                  on the Our Work page under the same title.
                 </p>
               )}
               {r.status === "held" && (
@@ -161,22 +189,38 @@ export function SubmitClient({
                     Retry review
                   </button>
                 )}
-                {isAdmin && (
-                  <button
-                    type="button"
-                    className="btn btn--text"
-                    onClick={() => void withdraw(r.id)}
+                {r.status === "published" && (
+                  <a
+                    href={`/work/submit?update=${r.id}`}
+                    className="btn btn--text no-underline"
                   >
-                    Withdraw
-                  </button>
+                    Submit an update
+                  </a>
                 )}
+                {/* Withdraw is hidden on published rows: DELETE on a
+                    swapped-in update is a ROLLBACK, and /admin/work carries
+                    the properly-labelled lever (refutation finding). */}
+                {isAdmin &&
+                  r.status !== "published" &&
+                  r.status !== "superseded" && (
+                    <button
+                      type="button"
+                      className="btn btn--text"
+                      onClick={() => void withdraw(r.id)}
+                    >
+                      Withdraw
+                    </button>
+                  )}
               </div>
             </div>
           ))}
           {!isAdmin && (
             <p className="mt-2 text-xs text-faint">
               Retry review re-runs the panel on the files already uploaded;
-              it cannot pick up a replacement file. If you submitted the
+              it cannot pick up a replacement file. To ship a new version of
+              a card that already published, use Submit an update on its
+              row: the update is reviewed like any submission, and the live
+              card only changes after Adam approves it. If you submitted the
               wrong file or need a submission removed, email Adam (
               {adminEmail}) with the submission title and he will clear it
               so you can resubmit. A submission already under review keeps

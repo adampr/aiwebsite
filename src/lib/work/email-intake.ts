@@ -35,14 +35,18 @@ import {
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
   workSubmissionsEnabled,
+  type WorkKind,
 } from "./config";
 import {
   activeTitleClash,
   countCreatedToday,
   createSubmission,
+  isUniqueViolation,
   normalizeTitle,
   publishedTitleClash,
+  resolveUpdateTarget,
   userIdForEmail,
+  type SubmissionRow,
 } from "./db";
 import {
   archiveDeclaredNames,
@@ -57,6 +61,7 @@ import {
   senderIdentityTokens,
   stripKindPrefix,
   titleFromSubject,
+  UPDATE_SUBJECT_RE,
   validateWeakTitle,
   type AttachmentMeta,
 } from "./email-parse";
@@ -173,19 +178,25 @@ function outOfBand(t: string): boolean {
  * weak title resolves after archive inspection. */
 async function titleGuardMessage(
   title: string,
-  sender: string
+  sender: string,
+  update?: { exceptId: string }
 ): Promise<string | null> {
   const norm = normalizeTitle(title);
   if (
     staticTitles.titles.some((t: string) => normalizeTitle(t) === norm) ||
-    (await publishedTitleClash(title))
+    (await publishedTitleClash(title, { exceptId: update?.exceptId }))
   )
     return `A published /work card already uses this title. Pick a different title (the subject line, or a "Title:" line in the body) and resend.`;
   const clash = await activeTitleClash(title);
-  if (clash)
+  if (clash) {
+    if (update)
+      return clash.submitterEmail === sender
+        ? `You already have an update to "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to replace it with this version.`
+        : `A teammate already has an update to "${title}" in review. Only one update per card can be open at a time, so check with them or wait until theirs is decided.`;
     return clash.submitterEmail === sender
       ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
       : `A teammate already has a submission titled "${title}" in review. Pick a different title, or check with them before resubmitting.`;
+  }
   return null;
 }
 
@@ -449,12 +460,80 @@ export async function handleWorkEmail(
   // first real submission published under its subject line).
   const authoredTitle =
     parsed.title !== null ? sanitizeHeaderValue(parsed.title, 200).trim() : null;
+
+  // ── §5.16 update intent (admin-mediated updates, 2026-08-03) ─────
+  // A strong "Update Card:" body directive, or an "Update: <title>" subject
+  // (separator required), marks this as a proposed REPLACEMENT of a
+  // published card. Resolution runs AFTER the fail-closed DKIM and
+  // admission gates above, BEFORE any download: an unresolvable directive
+  // rejects loudly and NEVER falls through to a create (a silent conversion
+  // in either direction is the refutation FATAL class). Everything an
+  // update produces still stops at pending_approval; nothing on this path
+  // can swap a live card.
+  const subjectUpdateMatch = UPDATE_SUBJECT_RE.exec(
+    titleFromSubject(subjectRaw)
+  );
+  const updateValue =
+    parsed.updateTarget ??
+    (subjectUpdateMatch ? subjectUpdateMatch[1].trim() : null);
+  let predecessor: SubmissionRow | null = null;
+  if (updateValue !== null) {
+    const normVal = normalizeTitle(updateValue);
+    if (staticTitles.titles.some((t: string) => normalizeTitle(t) === normVal)) {
+      await reject(
+        `"${updateValue.slice(0, 80)}" is one of the hand-authored cards on /work, and those do not change through submissions. Ask Adam to change that card directly.`
+      );
+      return;
+    }
+    predecessor = await resolveUpdateTarget(updateValue);
+    if (!predecessor) {
+      await reject(
+        `I could not match "${updateValue.slice(0, 80)}" to a published card on ${SITE}/work. To update a card, copy its exact title from that page into the "Update Card:" line and resend. If you meant to submit a brand new tool, remove that line and resend.`
+      );
+      return;
+    }
+    // Ownership before any download or inspection: the predecessor's
+    // submitter, or an admin submitting on a colleague's behalf. The
+    // rejection never echoes the owner's address (not public).
+    if (
+      predecessor.submitterEmail.toLowerCase() !== sender.toLowerCase() &&
+      !isAdmin(sender)
+    ) {
+      await reject(
+        `Updates to a published card are accepted from the person who submitted it, or from Adam. Ask them to send the update, or ask Adam to submit it for you.`
+      );
+      return;
+    }
+    // Updates never rename: a differing Title: line is a conflict, an
+    // equal one is redundant and ignored (renames stay admin-CLI-only).
+    if (
+      authoredTitle !== null &&
+      nameKey(authoredTitle) !== nameKey(predecessor.title)
+    ) {
+      await reject(
+        `An update keeps the published card's title, and renaming a card is admin only. Remove the "Title:" line and resend, or ask Adam if the card should be renamed.`
+      );
+      return;
+    }
+    // Kind is pinned too; an explicit conflicting Kind: line rejects now,
+    // attachment-shape conflicts reject after the attachments are known.
+    if (parsed.kind !== null && parsed.kind !== predecessor.kind) {
+      await reject(
+        `The published card "${predecessor.title}" is a ${predecessor.kind === "skill" ? "CoWork Skill" : "Code program"}, so an update to it must be one too. Attach the matching package type and resend.`
+      );
+      return;
+    }
+  }
+  const isUpdate = predecessor !== null;
   // Category prefixes ("Claude Skill: X") duplicate the card's badge. An
   // AUTHORED title (the body line) is the submitter's choice, so it is
   // rejected with instructions, never silently rewritten; a subject-derived
   // title is a transport artifact and is silently stripped (2026-07-31
   // incident: "Claude Skill: Slack Knowledge Assistant" published verbatim).
-  if (authoredTitle !== null && TITLE_KIND_PREFIX_RE.test(authoredTitle)) {
+  // On an update the title is pinned to the predecessor and any authored
+  // line was already handled above (equal ignored, differing rejected), so
+  // the authored-title shape gates are create-path only.
+  if (!isUpdate && authoredTitle !== null && TITLE_KIND_PREFIX_RE.test(authoredTitle)) {
     await reject(
       `The title should be just the tool's name; the card's badge already shows the kind. Remove the category prefix from your title line ("${authoredTitle.slice(0, 80)}") and resend.`
     );
@@ -464,13 +543,13 @@ export async function handleWorkEmail(
   // read as markup. An AUTHORED title is rejected with instructions (house
   // rule: never silently rewrite the submitter's choice); a subject is a
   // transport surface and is stripped silently.
-  if (authoredTitle !== null && HOSTILE_TITLE_CHARS.test(authoredTitle)) {
+  if (!isUpdate && authoredTitle !== null && HOSTILE_TITLE_CHARS.test(authoredTitle)) {
     await reject(
       `A card title cannot contain quotation marks, angle brackets, braces, backticks, or backslashes. Yours was "${authoredTitle.slice(0, 80)}". Take those out of your title line and resend.`
     );
     return;
   }
-  if (authoredTitle !== null && outOfBand(authoredTitle)) {
+  if (!isUpdate && authoredTitle !== null && outOfBand(authoredTitle)) {
     await reject(
       `The title line in the body ("Title:", "Skill Name:", and similar) becomes the card title, and it must be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters. Yours came out as "${authoredTitle.slice(0, 80)}". Fix that one line and resend.`
     );
@@ -492,12 +571,32 @@ export async function handleWorkEmail(
     !isPlaceholderSubject(subjectRaw) &&
     !isPlaceholderSubject(subjectStripped) &&
     !outOfBand(subjectStripped);
+  // §5.16 updates: a BODY-directive update whose subject names a different
+  // tool is the pasted-release-notes shape (an "Update Card:" line inside
+  // quoted prose converting an intended create; refutation F2). The padded
+  // nameKey containment lets ordinary descriptive subjects through
+  // ("Outage Checker v2 update" contains "outage checker") while a
+  // different tool's name rejects loudly instead of converting silently.
+  if (
+    isUpdate &&
+    parsed.updateTarget !== null &&
+    subjectUsable &&
+    !` ${nameKey(subjectStripped)} `.includes(` ${nameKey(predecessor!.title)} `)
+  ) {
+    await reject(
+      `Your subject line ("${subjectStripped.slice(0, 80)}") names something other than the card your "Update Card:" line points at ("${predecessor!.title}"). If this is an update to that card, make the subject mention it (or start the subject with "Update: ${predecessor!.title}") and resend. If this is a brand new tool, remove the "Update Card:" line and resend.`
+    );
+    return;
+  }
   // An unusable subject no longer rejects on its own: it falls through to the
   // weak-candidate rungs below (owner directive 2026-07-31). null here means
-  // "not resolved yet", never "the submission is bad".
-  let title: string | null = authoredTitle ?? (subjectUsable ? subjectStripped : null);
+  // "not resolved yet", never "the submission is bad". On an update the
+  // title is PINNED to the predecessor: the ladder never runs.
+  let title: string | null = isUpdate
+    ? predecessor!.title
+    : (authoredTitle ?? (subjectUsable ? subjectStripped : null));
   let titleSource: "authored" | "subject" | "corroborated" | "inferred" =
-    authoredTitle !== null ? "authored" : "subject";
+    authoredTitle !== null || isUpdate ? "authored" : "subject";
   if (parsed.kindRaw !== null) {
     await reject(
       `I did not recognize the kind "${parsed.kindRaw}". Use "Kind: CoWork Skill" or "Kind: Code program", or drop the line to let the attachments decide.`
@@ -534,7 +633,23 @@ export async function handleWorkEmail(
   }
   const pkg = archives[0];
   const pkgName = pkg.filename ?? "upload.zip";
-  const kind = inferKind(pkgName, mds.length > 0, parsed.kind);
+  // §5.16 updates: kind is pinned to the predecessor; an attachment shape
+  // that cannot be that kind (a .skill/.ski or standalone .md on a Code
+  // program card) is a conflict, not an override. A bare .zip is valid for
+  // both kinds and inherits the pin.
+  if (
+    isUpdate &&
+    predecessor!.kind === "program" &&
+    (/\.(skill|ski)$/i.test(pkgName) || mds.length > 0)
+  ) {
+    await reject(
+      `The published card "${predecessor!.title}" is a Code program, so an update to it must be one too. Attach the matching package type (.zip with its architecture doc) and resend.`
+    );
+    return;
+  }
+  const kind = isUpdate
+    ? (predecessor!.kind as WorkKind)
+    : inferKind(pkgName, mds.length > 0, parsed.kind);
   if (pkg.size > WORK_CAPS.uploadMaxBytes) {
     await reject(
       `That package is too large (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB).`
@@ -559,9 +674,16 @@ export async function handleWorkEmail(
   // ── Duplicate-title guard (route parity) ─────────────────────────
   // Runs HERE for an already-resolved title, so a clash still costs no
   // download; a weakly-resolved title cannot exist yet and is guarded a
-  // second time the moment it resolves, below.
+  // second time the moment it resolves, below. An update carries its
+  // predecessor's pinned title, which must not clash against the
+  // predecessor itself (exceptId); the active-row check then catches a
+  // second in-flight update to the same card.
   if (title !== null) {
-    const dup = await titleGuardMessage(title, sender);
+    const dup = await titleGuardMessage(
+      title,
+      sender,
+      isUpdate ? { exceptId: predecessor!.id } : undefined
+    );
     if (dup) {
       await reject(dup);
       return;
@@ -748,14 +870,20 @@ export async function handleWorkEmail(
       archiveBytes: extracted.archiveBytes,
       archiveData: bytes,
       md: mdMeta,
+      parentId: predecessor?.id ?? null,
     });
   } catch (err) {
     if (
-      err instanceof Error &&
-      err.message.includes("work_sub_active_title_uq")
+      isUniqueViolation(
+        err,
+        "work_sub_active_title_uq",
+        "work_sub_parent_active_uq"
+      )
     ) {
       await reject(
-        `A submission titled "${title}" is already in the pipeline. Check ${SITE}/work/submit.`
+        isUpdate
+          ? `An update to "${title}" is already in the pipeline, and only one can be open at a time. Check ${SITE}/work/submit, or ask Adam to clear the pending one.`
+          : `A submission titled "${title}" is already in the pipeline. Check ${SITE}/work/submit.`
       );
       return;
     }
@@ -784,8 +912,29 @@ export async function handleWorkEmail(
   // automatically; the site path surfaces this as QUEUED_NOTICE with a Retry
   // instruction, so the receipt must too (panel parity finding, 2026-07-30).
   const kindLabel = kind === "skill" ? "CoWork Skill" : "Code program";
-  const receipt =
-    kicked.outcome.status === "running"
+  // Update receipts state the approval gate plainly: the live card never
+  // changes on this path without the admin's click on /admin/work, whoever
+  // sent the mail (isAdmin(sender) only varies the wording, never the gate:
+  // an emailed admin identity is a spoofable From under domain DKIM).
+  const receipt = isUpdate
+    ? kicked.outcome.status === "running"
+      ? isAdmin(sender)
+        ? [
+            `Got it. The update to "${title}" is in review. Updates always wait for your click: when the review finishes, approve it at ${SITE}/admin/work.`,
+            ``,
+            `The live card stays up until then. Track it at ${SITE}/work/submit.`,
+          ]
+        : [
+            `Got it. Your update to "${title}" is in and the editorial panel is reviewing it now.`,
+            ``,
+            `The live card stays up while the update is reviewed. If the panel passes it, Adam gets an approval email and the card only changes after he approves the swap. You will get an email at each step. Track it at ${SITE}/work/submit.`,
+          ]
+      : [
+          `Got it. Your update to "${title}" is stored, but the review panel is briefly unavailable, so the review has not started.`,
+          ``,
+          `Open ${SITE}/work/submit in a few minutes and press Retry to start the review. The live card stays up the whole time, and if the review passes, the swap still waits for Adam's approval.`,
+        ]
+    : kicked.outcome.status === "running"
       ? [
           `Got it. "${title}" is in as a ${kindLabel} submission and the editorial panel is reviewing it now.`,
           ``,

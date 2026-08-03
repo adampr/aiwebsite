@@ -24,6 +24,7 @@ export const FORMAT_REMINDER = [
   `- Attach ONE package: a .skill or .zip for a CoWork Skill (plus its SKILL.md as a second attachment if the package does not carry it), or a .zip for a Code program (must contain an architecture doc).`,
   `- Want to be certain of the title? Put "Title: <the name>" on a line by itself in the body ("Skill Name:", "Card Title:", "Program Name:" and "Tool Name:" work too). That beats the subject, and the first one wins.`,
   `- Also optional: "Kind: CoWork Skill" or "Kind: Code program" (otherwise the attachments decide), and "Credit: <first name>" for a public credit (otherwise the card credits the XL.net team).`,
+  `- To update a published card you submitted, add a line like "Update Card: <the live card's exact title>" and attach the full new package. The card keeps its title and stays up until Adam approves the reviewed update.`,
   ``,
   `The web form at https://ai.xl.net/work/submit does the same thing with inline errors.`,
 ].join("\n");
@@ -121,6 +122,14 @@ export function stripKindPrefix(title: string): string {
 
 export interface ParsedBody {
   blurb: string;
+  /** Value of a strong update directive ("Update Card:" family), or null.
+   * The line is lifted out of the blurb; resolution against published cards
+   * happens at the call site. Bare "Update:" is deliberately NOT a
+   * directive: it is one of the most common prose line-openers in exactly
+   * this correspondence genre, and a matcher on it silently converts an
+   * ordinary status line into a replacement proposal (refutation FATAL
+   * class, 2026-08-03; same reasoning as bare "Name:" above). */
+  updateTarget: string | null;
   /** Explicit card title from a "Title:"/"Skill Name:" body line, or null
    * when absent. Overrides the subject at the call site (owner report
    * 2026-07-31: the first real forwarded submission published under its
@@ -163,6 +172,21 @@ const TITLE_LABELS = new Set([
   "program name",
   "tool name",
 ]);
+
+/** Strong update-directive labels (§5.16 admin-mediated updates). Multiword
+ * only: bare "update"/"updates" stays prose (see ParsedBody.updateTarget).
+ * All fit DIRECTIVE_RE's 15-char label cap. */
+const UPDATE_LABELS = new Set([
+  "update card",
+  "updates card",
+  "card update",
+  "replace card",
+]);
+
+/** Subject rung for updates: "Update: <title>" / "Update - <title>". The
+ * separator is REQUIRED so a card legitimately named "Update Broadcaster"
+ * never matches. Run against titleFromSubject output at the call site. */
+export const UPDATE_SUBJECT_RE = /^updates?\s*(?::|\s[-·]\s)\s*(.+)$/i;
 
 /** WEAK name labels (2026-07-31 owner directive: a human wrote "Name: Patching
  * Visualizer" with no subject line and got a form-validation lecture). These
@@ -467,6 +491,7 @@ export function parseSubmissionBody(raw: string): ParsedBody {
   let kind: WorkKind | null = null;
   let kindRaw: string | null = null;
   let credit: string | null = null;
+  let updateTarget: string | null = null;
   for (let i = 0; i < region.length; i++) {
     const line = region[i];
     const directive = DIRECTIVE_RE.exec(line);
@@ -485,6 +510,12 @@ export function parseSubmissionBody(raw: string): ParsedBody {
       }
       if (label === "credit") {
         credit = value.slice(0, 60);
+        continue;
+      }
+      if (UPDATE_LABELS.has(label)) {
+        // FIRST match wins (the Title: rule); an empty value stays prose so
+        // a dangling "Update Card:" label never claims the submission.
+        if (value && updateTarget === null) updateTarget = value.slice(0, 200);
         continue;
       }
       if (TITLE_LABELS.has(label)) {
@@ -553,7 +584,7 @@ export function parseSubmissionBody(raw: string): ParsedBody {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  return { blurb, title, kind, kindRaw, credit, titleCandidates };
+  return { blurb, title, kind, kindRaw, credit, updateTarget, titleCandidates };
 }
 
 export type InferredTitleCheck =
