@@ -2,7 +2,14 @@
   "slug": "aiwebsite",
   "profile": "publisher",
   "baseUrl": "https://ai.xl.net",
-  "moneyPages": ["/", "/work", "/builders", "/governance", "/contact"],
+  "moneyPages": [
+    "/",
+    "/work",
+    "/builders",
+    "/governance",
+    "/contact"
+  ],
   "thinContentFloor": 400,
-  "attestations": {}
+  "attestations": {},
+  "expectLlmsTxt": true
 }

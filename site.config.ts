@@ -874,6 +874,29 @@ export const siteConfig = defineSiteConfig({
       legalName: "XL.net",
       certifications: ["SOC 2 Type II", "ISO 27001:2022"],
     },
+    // /llms.txt (module §19.1) — enabled fleet-wide by owner directive
+    // 2026-08-03. Served by the module handler at src/app/llms.txt/route.ts,
+    // which appends the latest published articles automatically and emits
+    // X-Robots-Tag: noindex (these aggregates are never the canonical pages).
+    //
+    // COPY RULE (2026-08-03 panel, C5 — blocking): this summary describes what
+    // the site IS and what it COVERS. It carries NO performance statistics and
+    // no superlatives, deliberately. The homepage leads with "79.8% reduction
+    // in IT issues" and "99.3% customer satisfaction"; an agent reading
+    // llms.txt will quote whatever is here as bare fact, stripped of the page
+    // context and the link back to whatever substantiates it. That is an
+    // FTC-substantiation exposure created by a machine-readable channel, and
+    // it is the same class D4 put permanently outside machine authorship.
+    // Putting numbers here is an owner decision with substantiation attached,
+    // not a copy choice — structure and coverage only.
+    llmsTxt: {
+      enabled: true,
+      summary:
+        "XL.net AI documents how XL.net applies artificial intelligence to managed IT " +
+        "services for small and mid-size businesses in the Chicago area. The site covers " +
+        "the AI systems XL.net runs in production, the team that builds them, the " +
+        "governance model those systems operate under, and ongoing AI news and analysis.",
+    },
     aiBotsAllowed: true,
     // /rfp is staff-gated (§5.17). aiBotsAllowed emits an "allow: /" group for
     // eleven AI crawlers, so without this the section would be explicitly
