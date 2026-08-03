@@ -879,23 +879,32 @@ export const siteConfig = defineSiteConfig({
     // which appends the latest published articles automatically and emits
     // X-Robots-Tag: noindex (these aggregates are never the canonical pages).
     //
-    // COPY RULE (2026-08-03 panel, C5 — blocking): this summary describes what
-    // the site IS and what it COVERS. It carries NO performance statistics and
-    // no superlatives, deliberately. The homepage leads with "79.8% reduction
-    // in IT issues" and "99.3% customer satisfaction"; an agent reading
-    // llms.txt will quote whatever is here as bare fact, stripped of the page
-    // context and the link back to whatever substantiates it. That is an
-    // FTC-substantiation exposure created by a machine-readable channel, and
-    // it is the same class D4 put permanently outside machine authorship.
-    // Putting numbers here is an owner decision with substantiation attached,
-    // not a copy choice — structure and coverage only.
+    // COPY RULE (2026-08-03 panel, C5) and the OWNER RULING THAT SUPERSEDES ITS
+    // DEFAULT. The panel blocked performance statistics here, on the grounds
+    // that an agent reading llms.txt quotes it as bare fact — stripped of page
+    // context and of the link back to whatever substantiates it — which makes
+    // a machine-readable channel an FTC-substantiation surface. The panel
+    // stated the escape explicitly: "putting numbers here is an owner decision
+    // with substantiation attached, not a copy choice".
+    //
+    // OWNER RULING 2026-08-03: the figures are accurate for XL.net and may be
+    // published here. They are included ATTRIBUTED — named as XL.net's own
+    // measured results, with the metric each one denotes stated in the same
+    // clause, and matching the homepage verbatim (79.8% / 99.3% / 24/7). The
+    // attribution is the part that survives an agent quoting one sentence out
+    // of the file: a bare "99.3%" is unsourced, "XL.net reports 99.3% customer
+    // satisfaction" carries its own owner. Keep them verbatim-consistent with
+    // the homepage — two surfaces stating different numbers is worse than
+    // either alone.
     llmsTxt: {
       enabled: true,
       summary:
         "XL.net AI documents how XL.net applies artificial intelligence to managed IT " +
         "services for small and mid-size businesses in the Chicago area. The site covers " +
         "the AI systems XL.net runs in production, the team that builds them, the " +
-        "governance model those systems operate under, and ongoing AI news and analysis.",
+        "governance model those systems operate under, and ongoing AI news and analysis. " +
+        "XL.net reports a 79.8% reduction in IT issues and 99.3% customer satisfaction " +
+        "across its managed IT clients, with 24/7 AI-powered support.",
     },
     aiBotsAllowed: true,
     // /rfp is staff-gated (§5.17). aiBotsAllowed emits an "allow: /" group for
