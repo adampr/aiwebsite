@@ -15,7 +15,12 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-02 seventh pass (RFP workspace
+Last verified against code: 2026-08-03 (blog news seam, roundup-aggregator
+WARN round: `-roundup`/`-index-url` peg demotion + time-window `+number`
+strip in `scripts/lib/peg-score.mjs`; `cleanTitle`/`keywordsFromTitle`/
+`slugify` extracted to `scripts/lib/title-keywords.mjs` with temporal
+stopwords + `test:keywords` suite; §5.11 module-boundary ruling paragraph —
+host-level, no module release); previous 2026-08-02 seventh pass (RFP workspace
 §5.17 round 8 **divider sheets + reference fidelity pass** — two
 numbered part-break sheets in the CoWork divider style ("01" before the
 sections, "02" before Investment; ghost outline numeral, blue bar,
@@ -1557,6 +1562,59 @@ fixed formula is both unrankable templating and dedup-hostile). The styleGuide
 title rule was replaced in the same pass with its judge-verifiable subset
 (deleted outright 2026-07-26 — see round 5).
 
+**2026-08-03 module-boundary ruling (roundup-aggregator WARN "models-today").**
+Third sourcing-class incident: a rolling aggregator index page ("New Models
+Today — AI & LLM Releases Last 24 Hours", pricepertoken.com) won the peg
+ranking at 6 (+actor from a mid-title Capitalized token, +event-verb from
+"Releases", +number from the "24" in "Last 24 Hours", +fresh), its junk
+primary keyword "models today" rode into the slug, and the resulting
+four-development roundup failed the rubric (min 3 but sum 19 < 21) and
+published INDEXED under `publish_indexed`. Ruled HOST-LEVEL: every module
+stage behaved as designed given a doomed topic. `checkTopic` passed the entry
+because the topic gate is deterministic by design (offLimits / protected /
+grounding / dedup — no editorial quality judgment; verified `{ok:true}`
+against this host's live knob values), the rubric correctly failed it, the
+ladder ran to spec (repair skipped rubric-only, anchored near-miss REVISE
+regenerate ran and was not adopted), and indexing a degraded verdict is this
+host's explicit `publish_indexed` posture (2026-07-25 rankability ruling),
+not a module defect. A module-side guard (a roundup-shape rejection in
+`checkTopic`) was considered and REJECTED as the wrong layer, on four
+verified grounds. (1) Exclusion risk: a rejected calendar entry is
+consumed-rejected and falls to the strategist, and `checkTopic` re-verifies
+strategist output post-parse — so the same detector can also reject all
+three strategist attempts ("strategist topics rejected three times by the
+topic gate — run skipped"), and on a thin all-digest news day the night
+publishes NOTHING, violating demote-never-exclude, which the host peg seam
+satisfies by construction. (2) Cost: up to three extra strategist calls plus
+their re-verifies against the 12-call ceiling that already starved both
+regen re-gates on 2026-07-30. (3) Determinism and grounding: the replacement
+story would be chosen by the LLM strategist from the seedHints ("starting
+points, not a menu" — the same pegScore-sorted headline list, hint #1 being
+the just-rejected aggregator), not by the corpus-pinned peg ranking; and a
+strategist topic's model-authored title is a weaker Tavily retrieval key
+than the verbatim source headline the calendar path carries. (4) Module
+scope: a roundup-shaped-title rejection cannot ship as a module default at
+all — the module's own recurring `signatureFormats` feature mandates the
+format name in the title ("Propose the next edition of the recurring ...
+format ... The title must contain ..."), i.e. digest-shaped titles are a
+first-class module product, and a curated host calendar (itsc) may
+legitimately schedule one. Demote-never-exclude therefore requires
+re-ranking inside the layer that holds the full scored corpus: the host
+peg-score seam, where the `-wire`/`-pr-speak` precedents already live. No
+module knob was added: `topics.offLimits` already exists as belt-and-braces
+but stays `[]` (offLimits scans the concatenated title+keywords+DESCRIPTION
+haystack, where the RANKABILITY_BRIEF wording must stay neutral, and a hit
+burns strategist attempts). Upstream candidate (documentation, not code): IF
+the module ever grows a first-class live-news topic-provider seam,
+aggregator/roundup demotion belongs in it as a scored class beside wire
+demotion, because such pages are peg-perfect by construction and recur
+under many titles ("Week in Review", "Last 24 Hours", "AI Update",
+"Briefing", "This Week in"). Neither itsc (hand-curated calendar +
+strategist over a vendor dataSource; mineQueries/trending off — nothing
+machine-mined reaches its topic seam) nor roleplay (hand-authored evergreen
+calendar, no news retrieval) shares the exposure, so the fix ships with no
+module release.
+
 **2026-07-30 disclosure-wording fix.** The styleGuide sentence that mandated the
 literal in-take disclosure wording "I am an AI" was replaced: the module's
 deterministic prompt-leak scan (gates.ts PROMPT_LEAK_PATTERNS, the anchored
@@ -1756,13 +1814,47 @@ gates, admin, RSS, sitemap, and the nightly job itself live in
   brief wording must stay neutral for the checkTopic offLimits haystack.
   A real launch covered BY journalism ("OpenAI launches GPT-6…" on
   techcrunch.com) matches neither signal.
+  2026-08-03 (roundup/aggregator demotion): **−3 `-roundup`** (fires once,
+  `.some` over the signature list) when the title carries a
+  roundup/digest/listicle signature — a digest noun in compilation-label
+  position only, i.e. title-terminal or before a separator
+  (roundup/recap/digest/briefing/bulletin/newsletter — mid-sentence digest
+  nouns are product/agency news: "Google adds AI email digests to Gmail",
+  "CISA bulletin warns…"); the week-in-review family ("Week In Review",
+  "Week Ending August 1", "Week 31"); title-initial "This Week in …"
+  (mid-sentence "begins this week in all member states" is hard news); a
+  bare rolling window without a definite article ("Last 24 Hours" — hours/
+  days only, and "exploited in the last 48 hours" is journalism, hence the
+  `(?<!\bthe\s)` lookbehind); or a listicle lead ("Top 10 …", "10 Most
+  Powerful … Companies" — a bare leading count like "3 states sue…" never
+  matches, the count needs a listicle noun/superlative). Plus **−2
+  `-index-url`** when the URL path is a dateless section index: ≤2
+  segments, opening with a section word (news/blog/category/tag/topic/
+  section/updates), final segment lowercase-letters-and-hyphens with ≤2
+  hyphen tokens ("/news/model-releases" hits; dated paths and long story
+  slugs like "/news/alloyed-announces-…-110000123.html" never do). The
+  "+number" signal now tests a haystack with rolling time-window phrases
+  stripped ("last/past/previous/next/coming/rolling/trailing N
+  hours/days/weeks/months/years") so "Last 24 Hours" earns nothing while
+  "Q2 2026" still counts. Rationale: an aggregator index page is
+  peg-perfect by construction — pricepertoken.com/news/model-releases
+  ("New Models Today — AI & LLM Releases Last 24 Hours") won 2026-08-03 at
+  peg 6 over the night's real peg-5 story, its junk keyword "models today"
+  became the slug, and the resulting four-item roundup failed the rubric
+  (sum 19 < 21) and published INDEXED. Both signals sit AFTER the
+  named-release offset and outside it (same trap as `-wire`: an aggregator
+  title is a fresh named "Releases" headline, so the offset would undo the
+  demotion exactly); demoted roundups typically land at 0/+1, below every
+  real story but above the pegless (<0) framing threshold.
   **Demotion, never exclusion** — a peg-less day still leads with its best
   story; every score and any top-story change is logged to stderr. The file
   gains `top.peg {score, pegless}` and `headlines[].pegScore` (news.ts is
   tolerant of old files without them). Tests: `npm run test:peg`
   (`scripts/peg-score-tests.mjs`, pins the 2026-07-22 survey headline as
-  negative, the named-release offset, and the 2026-07-30 wire release below
-  that night's peg-4 stories with a covered-launch non-regression). `newsCalendarEntries()` turns
+  negative, the named-release offset, the 2026-07-30 wire release below
+  that night's peg-4 stories with a covered-launch non-regression, and the
+  2026-08-03 aggregator below the California story with keep-line guards
+  for "report:"/trailing-"Today"/mid-sentence-digest-noun hard news). `newsCalendarEntries()` turns
   the top story into a **one-entry `topics.calendar`** (slug carries the date, so a
   consumed entry never blocks the next day; a fresh calendar slug is always chosen
   before the strategist and still passes the full topic gate); when
@@ -1815,7 +1907,15 @@ gates, admin, RSS, sitemap, and the nightly job itself live in
   and commas/semicolons end runs; first run of 2+ tokens wins; an
   orphaned single-token entity rejoins its action across a connective
   but yields to the head noun phrase across a preposition; primary ≤4
-  tokens and ≤38 chars so the 42-char slug never cuts mid-word) — the
+  tokens and ≤38 chars so the 42-char slug never cuts mid-word; since
+  2026-08-03 stopwords also include temporal deictics and duration nouns —
+  today/tonight/yesterday/tomorrow/hour(s)/week(s); day/days deliberately
+  excluded because "zero day"/"Demo Day" are entity phrases — after an
+  aggregator title produced primary "models today"). `cleanTitle`,
+  `keywordsFromTitle`, and `slugify` now live in
+  `scripts/lib/title-keywords.mjs` (pure ESM, importable without the fetch
+  script's top-level Tavily call) pinned by `npm run test:keywords`
+  (`scripts/title-keywords-tests.mjs`, regression corpus 07-24→08-03) — the
   07-27 primary "panic around chinese" straddled a preposition, cut the
   noun phrase mid-way, and its lowercase nationality leaked verbatim into
   the meta description. `top.title` deliberately STAYS the verbatim

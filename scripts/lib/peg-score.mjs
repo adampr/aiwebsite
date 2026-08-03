@@ -83,6 +83,78 @@ const PR_MARKERS = [
   /\bis\s+(?:proud|pleased|excited|thrilled)\s+to\b/i,
 ];
 
+/** Rolling time-window phrases ("Last 24 Hours", "Past 7 Days"). The digits
+ *  describe a page's refresh window, not a reported fact: 2026-08-03 the
+ *  "+number" signal fired on the "24" in "AI & LLM Releases Last 24 Hours"
+ *  and helped an aggregator index page out-peg a real story. Used (global)
+ *  only to strip the phrase from the number-signal haystack — never .test()
+ *  a global regex, lastIndex is stateful. */
+const TIME_WINDOW_G =
+  /\b(?:last|past|previous|next|coming|rolling|trailing)\s+\d{1,3}\s+(?:hours?|days?|weeks?|months?|years?)\b/gi;
+
+/** Roundup/digest/listicle title signatures (2026-08-03): a rolling
+ *  aggregator page ("New Models Today — AI & LLM Releases Last 24 Hours",
+ *  pricepertoken.com/news/model-releases) is peg-perfect by construction
+ *  (named actor + "Releases" + fresh) and won the night, then failed the
+ *  rubric (sum 19) as a keyword-driven roundup. Any one signature marks the
+ *  title as an index of stories rather than a story. Deliberately absent:
+ *  "report" (CrowdStrike report: ... is journalism), "today" (real headlines
+ *  end in "Fines Start Today"), and bare leading numbers ("3 states sue ..."
+ *  is hard news — the listicle shapes below need the listicle noun/superlative). */
+const ROUNDUP_PATTERNS = [
+  // digest nouns, in compilation-label position ONLY (title-terminal or
+  // before a separator): "AI and Quantum Computing Briefing", "Morning AI
+  // Briefing: ...". A mid-sentence digest noun is product or agency news
+  // ("Google adds AI email digests to Gmail", "CISA bulletin warns of
+  // AI-generated phishing surge", "Apple's AI recap feature misquotes BBC
+  // headlines") and must not be demoted.
+  /\b(?:round-?ups?|recaps?|digests?|briefings?|bulletins?|newsletters?)(?=\s*(?:$|[:|—–-]))/i,
+  // week-in-review family: "Week In Review", "Week Ending August 1", "Week 31"
+  /\bweek\s+(?:in\s+review|ending|\d{1,2}\b)/i,
+  // anchored: "EU AI Act enforcement begins this week in all member states"
+  // is hard news; only a title that OPENS "This Week in ..." is a digest
+  /^this\s+week\s+in\b/i,
+  // rolling window WITHOUT the definite article: aggregators label bare
+  // windows ("Last 24 Hours", "Past 7 Days"); journalism writes "down for
+  // the past 12 hours" / "exploited in the last 48 hours" (hours/days only —
+  // months/years appear in real reporting: "over the past 12 months")
+  /(?<!\bthe\s)\b(?:last|past|rolling|trailing)\s+\d{1,3}\s+(?:hours?|days?)\b/i,
+  // listicle lead: "Top 10 ...", "10 Most Powerful ... Companies"
+  /^(?:the\s+)?top\s+\d{1,3}\b/i,
+  /^(?:the\s+)?\d{1,3}\s+(?:most|best|essential|key|great(?:est)?|leading|powerful|hottest|biggest|smartest|fastest|things|ways|tips|tools|trends|lessons|takeaways|reasons|signs|predictions|questions|examples|stats)\b/i,
+];
+
+/** Path segments that name a site section, not an article. */
+const SECTION_WORDS = new Set([
+  "news", "blog", "category", "categories", "tag", "tags",
+  "topic", "topics", "section", "sections", "updates",
+]);
+
+/**
+ * True when the URL looks like a section-index page rather than an article:
+ * a 1-2 segment path opening with a section word whose final segment is a
+ * short dateless label ("/news/model-releases", "/news"). Article slugs are
+ * long and usually carry digits (date or story id), so
+ * "/news/alloyed-announces-strategic-partnership-110000123.html" and
+ * "/2026/07/29/slug" never match. Kept deliberately narrow (<=2 hyphen
+ * tokens, lowercase letters/hyphens only) — a false positive here demotes a
+ * real article by 2.
+ */
+function isSectionIndexUrl(url) {
+  if (!url) return false;
+  let pathname;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  const segments = pathname.toLowerCase().split("/").filter(Boolean);
+  if (segments.length === 0 || segments.length > 2) return false;
+  if (!SECTION_WORDS.has(segments[0])) return false;
+  const last = segments[segments.length - 1];
+  return /^[a-z][a-z-]*$/.test(last) && last.split("-").length <= 2;
+}
+
 /** True when the item's URL is hosted on a wire domain (any subdomain). */
 function isWireHost(url) {
   if (!url) return false;
@@ -132,7 +204,11 @@ export function pegScore(title, { publishedAt, now = Date.now(), url } = {}) {
     score += 2;
     signals.push("+event-verb");
   }
-  if (/(?:\$\s?[\d,.]+|\d+(?:\.\d+)?\s?%|\b\d{2,}\b)/.test(title)) {
+  // Time-window digits ("Last 24 Hours") are page-refresh metadata, not
+  // reporting specificity — strip the phrase before looking for a number.
+  // Real numbers elsewhere in the title ("Q2 2026", "$3.5B") still count.
+  const numberHaystack = title.replace(TIME_WINDOW_G, " ");
+  if (/(?:\$\s?[\d,.]+|\d+(?:\.\d+)?\s?%|\b\d{2,}\b)/.test(numberHaystack)) {
     score += 1;
     signals.push("+number");
   }
@@ -174,6 +250,25 @@ export function pegScore(title, { publishedAt, now = Date.now(), url } = {}) {
   if (PR_VERB.test(title) && PR_MARKERS.filter((re) => re.test(title)).length >= 2) {
     score -= 3;
     signals.push("-pr-speak");
+  }
+
+  // Roundup/digest/listicle demotion (2026-08-03): an aggregator index page
+  // is a fresh named "Releases" headline by construction, so — same trap as
+  // -wire — the named-release offset would undo this exactly. Deliberately
+  // placed AFTER that offset and excluded from it. Fires once regardless of
+  // how many signatures match (an index page matches several). Demotion,
+  // never exclusion: on a thin news day a roundup may still lead (typically
+  // landing at 0/+1 — news.ts report-of-record framing needs a negative total).
+  if (ROUNDUP_PATTERNS.some((re) => re.test(title))) {
+    score -= 3;
+    signals.push("-roundup");
+  }
+  // URL half of the same demotion: a dateless section-index path hosts a
+  // rolling page, not an article. Smaller magnitude than -wire because this
+  // is shape inference, not a known-bad host list.
+  if (isSectionIndexUrl(url)) {
+    score -= 2;
+    signals.push("-index-url");
   }
 
   return { score, signals };
