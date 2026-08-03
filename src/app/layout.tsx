@@ -101,6 +101,10 @@ export default function RootLayout({
               className="flex items-center gap-3 no-underline"
               aria-label="XL.net AI home"
             >
+              {/* Decorative: the wrapping <Link> carries aria-label="XL.net AI
+                  home" and the wordmark <img> beside it carries alt="XL.net" —
+                  a third announcement of the same brand would be noise
+                  (WCAG H2; aicompany §21.15). */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/xl-icon.svg" alt="" className="h-8 w-8" />
               {/* eslint-disable-next-line @next/next/no-img-element */}
