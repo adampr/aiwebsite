@@ -679,11 +679,14 @@ export async function companiesOverview(): Promise<CompanyOverview[]> {
       createdAt: C.createdAt,
       createdByEmail: C.createdByEmail,
       apolloLastImportAt: C.apolloLastImportAt,
-      people: sql<number>`(SELECT count(*)::int FROM company_people p WHERE p.company_id = ${C.id})`,
-      docs: sql<number>`(SELECT count(*)::int FROM company_governance_docs d WHERE d.company_id = ${C.id})`,
-      published: sql<number>`(SELECT count(*)::int FROM work_submissions w WHERE w.company_id = ${C.id} AND w.status = 'published')`,
-      admins: sql<number>`(SELECT count(*)::int FROM company_admins a WHERE a.company_id = ${C.id})`,
-      pendingRequests: sql<number>`(SELECT count(*)::int FROM company_admin_requests r WHERE r.company_id = ${C.id} AND r.status = 'pending' AND r.expires_at > now())`,
+      // companies.id must be spelled out: drizzle renders ${C.id} inside a
+      // select() sql fragment as unqualified "id", which a correlated
+      // subquery resolves against the INNER table (42883 uuid = integer).
+      people: sql<number>`(SELECT count(*)::int FROM company_people p WHERE p.company_id = companies.id)`,
+      docs: sql<number>`(SELECT count(*)::int FROM company_governance_docs d WHERE d.company_id = companies.id)`,
+      published: sql<number>`(SELECT count(*)::int FROM work_submissions w WHERE w.company_id = companies.id AND w.status = 'published')`,
+      admins: sql<number>`(SELECT count(*)::int FROM company_admins a WHERE a.company_id = companies.id)`,
+      pendingRequests: sql<number>`(SELECT count(*)::int FROM company_admin_requests r WHERE r.company_id = companies.id AND r.status = 'pending' AND r.expires_at > now())`,
     })
     .from(C)
     .orderBy(asc(C.domain));
