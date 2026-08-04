@@ -926,7 +926,10 @@ export const siteConfig = defineSiteConfig({
     // eleven AI crawlers, so without this the section would be explicitly
     // opened to them. The gate is the control and robots.txt is only a
     // request, but there is no reason to advertise the path to a crawler.
-    extraRobotsDisallow: ["/rfp"],
+    // "/roadmap/" with the trailing slash: portal CHILDREN are disallowed
+    // (they are noindex anyway; this saves the crawl), while the /roadmap
+    // teaser itself stays crawlable (§5.18).
+    extraRobotsDisallow: ["/rfp", "/roadmap/"],
   },
 
   theme: { darkFirst: true },
