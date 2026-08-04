@@ -2,8 +2,9 @@
    file is imported by src/app/roadmap/page.tsx and the (steps) layout, never
    globals.css. ROUND-4 NODE GRAMMAR (owner ruling; the runway node IS the
    state, no visible words): hollow = not started, static cyan outline = up
-   next, pulsing cyan<->flare fill = working, solid cyan = done/live, warn
-   double-diamond = attention. Sr-only spans inside the stop links carry
+   next, gray-core diamond = examined (ran, nothing to show), pulsing
+   cyan<->flare fill = working, solid cyan = done/live, warn double-diamond
+   = attention. Sr-only spans inside the stop links carry
    state non-visually (never color-only, WCAG 1.4.1). NOTE the deliberate
    grammar exception: /governance uses sand = done; this runway went all-cyan
    per the owner's four-color ladder.
@@ -125,6 +126,23 @@ a.rmp-stop:focus-visible {
   box-shadow: 0 0 8px var(--xl-light-glow);
 }
 
+/* EXAMINED (round 5): the system RAN and there is nothing to show yet -
+   directory stamped-zero (Apollo searched, none found) and dkim
+   checked-but-unverifiable. Hollow base + a small neutral CORE: background
+   fills the 9px padding box, the inset ring paints a 2px bg-1 moat over it,
+   leaving a ~5px gray core. A SHAPE cue (partial vs empty vs full fill), in
+   the attention-ring tradition - never color-only. A FULL gray fill was
+   rejected: light-theme --xl-line-bright (L .60 C .04) vs done cyan
+   (L .49 C .11) is a chroma-only gap at 11px, confusable with the
+   completion claim (the round-4 up-next trap again). The working forms
+   override cleanly: .rmp-node[data-working] is (0,2,0) vs this (0,1,0) for
+   background, and the pulse keyframes' box-shadow values replace the inset
+   ring entirely while animating. */
+.rmp-node--examined {
+  background: var(--xl-line-bright);
+  box-shadow: inset 0 0 0 2px var(--xl-bg-1);
+}
+
 /* WORKING (round 4): directory import in flight (island-toggled
    data-working; an ATTRIBUTE, never a class - React refresh would wipe a
    classList mutation of its managed className) or the dkim check running
@@ -172,9 +190,10 @@ a.rmp-stop:focus-visible {
   outline-offset: 2px;
 }
 
-/* Step 05 unconfirmed (DKIM verdict "unknown", check completed)
-   intentionally has NO node rule: it reuses the hollow neutral base; the
-   sr-only span says "Unconfirmed". The teaser's node 01 wears the STATIC
+/* Step 05 unconfirmed is now (round 5) ONLY the failed-lookup case (dkim
+   reason "dns-error", transient 60s cache): it reuses the hollow neutral
+   base with sr "Unconfirmed". Completed-but-unverifiable checks wear
+   .rmp-node--examined instead. The teaser's node 01 wears the STATIC
    up-next treatment (the old shimmer read as activity; pulse now
    exclusively means working). */
 

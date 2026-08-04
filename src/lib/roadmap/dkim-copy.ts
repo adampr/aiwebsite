@@ -148,7 +148,23 @@ export function dkimCopy(check: DkimCheck): DkimCopy {
         emailable: true,
       };
     default:
-      // other-provider
+      // other-provider. mxVendor "amazon" = EVERY MX exchange is Amazon's
+      // inbound-smtp shape (strict; a bare .amazonaws.com suffix would
+      // invent facts for self-hosted EC2 mail servers).
+      if (check.mxVendor === "amazon") {
+        return {
+          heading: "Set up DKIM in Amazon SES or WorkMail",
+          intro: `Incoming mail for ${d} routes through Amazon (SES or WorkMail). Amazon uses randomized DKIM record names, so an outside check cannot confirm signing; the console can.`,
+          steps: [
+            `In the AWS console, open Amazon SES (or WorkMail), select the ${d} identity, and open its Authentication or DKIM tab.`,
+            `If Easy DKIM is not enabled, enable it; the console shows three CNAME records to add at your DNS host.`,
+            `Once the console shows DKIM as verified, mail from ${d} is signed. The Recheck here will still say it cannot verify from outside; the console's word is the one that counts.`,
+            GATEWAY_CAVEAT,
+          ],
+          outro: "",
+          emailable: true,
+        };
+      }
       return {
         heading: "Ask your mail provider about DKIM",
         intro: `Your domain ${d} does not use Microsoft 365 or Google Workspace mail routing, so we cannot check its DKIM selectors from outside.`,

@@ -168,6 +168,10 @@ export function DirectoryCard(props: Props) {
     const sr = document.getElementById("rmp-sr-directory");
     const srText = sr?.firstChild;
     const WORKING = ", Checking now, import running";
+    // Capture the server phrase so the guarded restore puts back whatever
+    // was really there (", Up next", ", Searched, none found on Apollo",
+    // ", Done"...) instead of a hardcoded literal (both sessions converged
+    // on this fix; a recheck can run on a Done/Live directory).
     let prev: string | null = null;
     if (working) {
       node?.setAttribute("data-working", "");
@@ -180,9 +184,10 @@ export function DirectoryCard(props: Props) {
       node?.removeAttribute("data-working");
       if (
         srText?.nodeType === Node.TEXT_NODE &&
-        srText.nodeValue === WORKING
+        srText.nodeValue === WORKING &&
+        prev !== null
       ) {
-        srText.nodeValue = prev ?? ", Not started";
+        srText.nodeValue = prev;
       }
     };
   }, [working]);

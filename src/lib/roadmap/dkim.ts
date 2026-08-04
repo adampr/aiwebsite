@@ -65,6 +65,11 @@ export type DkimCheck = {
   verdict: DkimVerdict;
   reason: DkimReason;
   selector?: string;
+  /** Set ONLY when EVERY MX exchange matches Amazon's inbound-smtp shape
+   * (never a bare .amazonaws.com suffix test: EC2/ELB hosts would invent an
+   * "Amazon mail" claim for self-hosted servers). Copy-only nicety; verdict
+   * and reason are untouched. */
+  mxVendor?: "amazon";
   checkedAt: number; // epoch ms
   fromCache: boolean;
   timedOut?: boolean;
@@ -165,7 +170,11 @@ async function wildcardActive(port: DnsPort, domain: string): Promise<boolean> {
 async function resolveProvider(
   port: DnsPort,
   domain: string
-): Promise<{ provider: DkimProvider | "mixed"; error?: "no-mx" | "dns-error" }> {
+): Promise<{
+  provider: DkimProvider | "mixed";
+  error?: "no-mx" | "dns-error";
+  vendor?: "amazon";
+}> {
   try {
     const mx = await port.resolveMx(domain);
     const exchanges = mx
@@ -185,7 +194,12 @@ async function resolveProvider(
     // Any foreign exchange (gateways like Proofpoint/Mimecast, or leftovers)
     // means a gateway may sign d=domain under its own selector: never
     // eligible for a "missing" verdict.
-    return { provider: "other" };
+    const isSesInbound = (e: string) =>
+      /(^|\.)inbound-smtp\.[a-z0-9-]+\.amazonaws\.com$/.test(e);
+    return {
+      provider: "other",
+      vendor: exchanges.every(isSesInbound) ? ("amazon" as const) : undefined,
+    };
   } catch (err) {
     if (isAuthNegative(err)) return { provider: "none", error: "no-mx" };
     return { provider: "none", error: "dns-error" };
@@ -316,7 +330,8 @@ export async function checkDkimWith(
       return done("other", "unknown", "wildcard-dns");
     return done("other", "ok", "other-selector-live", hit.sel);
   }
-  return done("other", "unknown", "other-provider");
+  const otherResult = done("other", "unknown", "other-provider");
+  return cls.vendor ? { ...otherResult, mxVendor: cls.vendor } : otherResult;
 }
 
 // ---- cache + budget wrapper ----

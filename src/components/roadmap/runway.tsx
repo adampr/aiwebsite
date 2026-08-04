@@ -5,7 +5,10 @@
 //
 // Round 4 (owner ruling): THE NODE CARRIES THE STATE - no visible state
 // words. The color grammar, enforced in roadmap.css:
-//   hollow neutral   = not started (and dkim "unconfirmed"; sr text differs)
+//   hollow neutral   = not started (and dkim "unconfirmed" after a FAILED
+//                      lookup only; sr text differs)
+//   gray-core diamond = examined: the system RAN and found nothing to show
+//                      (directory stamped-zero; dkim checked-unverifiable)
 //   cyan outline     = up next (STATIC; the pulse now means working only)
 //   pulsing cyan<->flare fill = working (directory import / dkim check)
 //   solid cyan       = done (and scorecard "live"; sr text differs)
@@ -25,6 +28,9 @@
 //    on it when its poll episode ends without a verdict, demoting the pulse
 //    to the static working form. The selector is scoped to
 //    .rmp-node--working, so the stamp is inert after any verdict refresh.
+//    KNOWN sr edge: data-gave-up is a visual-only demotion; the sr phrase
+//    stays ", Checking now" (accepted; the card's role=status line carries
+//    the give-up wording).
 //
 // The frontier ("up next") is computed over the first four steps only; dkim
 // is a verdict step and never takes it. The 04-to-05 segment lights when
@@ -42,7 +48,15 @@ type NodeState =
   | "done"
   | "live"
   | "attention"
+  /** dkim ONLY, narrowed to reason "dns-error": the lookup FAILED (60s
+   * cache), so there is genuinely nothing to claim - hollow + transient. */
   | "unconfirmed"
+  /** Round 5: the system RAN and there is nothing to show - directory
+   * stamped-zero. One visual with "checked" (gray-core diamond). */
+  | "examined"
+  /** dkim completed-but-unverifiable (other-provider/no-mx/mx-mixed/
+   * wildcard-dns): same visual as examined, its own sr phrase. */
+  | "checked"
   | "working";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
@@ -55,13 +69,21 @@ function srStateText(s: NodeState): string {
   if (s === "upnext") return "Up next"; // NEVER "In progress" (owner ruling)
   if (s === "attention") return "Needs attention";
   if (s === "unconfirmed") return "Unconfirmed";
+  // Role-NEUTRAL on purpose (refuter): members cannot "add people by hand";
+  // the imperative lives on the admin card's CTA, not here.
+  if (s === "examined") return "Searched, none found on Apollo";
+  if (s === "checked") return "Checked, could not verify from outside";
   if (s === "working") return "Checking now";
   return "Not started";
 }
 
-/** Node class per state; dim renders the bare hollow base. */
+/** Node class per state; dim and the failed-lookup unconfirmed render the
+ * bare hollow base; examined/checked share the gray-core visual (their
+ * distinction is sr-only, the done/live precedent). */
 function nodeClass(s: NodeState): string {
   if (s === "dim" || s === "unconfirmed") return "rmp-node";
+  if (s === "examined" || s === "checked")
+    return "rmp-node rmp-node--examined";
   return `rmp-node rmp-node--${s}`;
 }
 
@@ -91,10 +113,22 @@ export function RoadmapRunway({ status }: { status: RoadmapStatus | null }) {
       if (status.dkim.timedOut === true) return "working";
       if (status.dkim.verdict === "ok") return "done";
       if (status.dkim.verdict === "missing") return "attention";
-      return "unconfirmed";
+      // A COMPLETED check that concluded "cannot verify from outside" is
+      // EXAMINED; a FAILED lookup (dns-error, transient 60s cache) keeps
+      // the hollow unconfirmed state - claiming "checked" for it would lie.
+      return status.dkim.reason === "dns-error" ? "unconfirmed" : "checked";
     }
+    // Precedence: working > done > up next (frontier) > examined > dim. Up
+    // next beats examined so the runway never loses its single wayfinding
+    // ring; the adjacent card still tells the searched-zero story in words.
     if (reached[key]) return key === "scorecard" ? "live" : "done";
     if (key === frontierKey) return "upnext";
+    if (
+      key === "directory" &&
+      status.directory.everImported &&
+      status.directory.people === 0
+    )
+      return "examined";
     return "dim";
   }
 
@@ -166,11 +200,16 @@ export function RoadmapRunway({ status }: { status: RoadmapStatus | null }) {
                 <span className="rmp-stop-text">
                   <span className="rmp-stop-num">{step.num}</span>
                   <span className="rmp-stop-title">{step.title}</span>
+                  {/* ONE expression = ONE text fiber: the DirectoryCard
+                      island rewrites this span's firstChild.nodeValue, and
+                      a two-node child list (static ", " + phrase) would
+                      point it at the wrong node (refuter-verified against
+                      renderToString output). */}
                   <span
                     className="sr-only"
                     id={step.key === "directory" ? "rmp-sr-directory" : undefined}
                   >
-                    , {srStateText(states[i])}
+                    {", " + srStateText(states[i])}
                   </span>
                 </span>
               </Link>

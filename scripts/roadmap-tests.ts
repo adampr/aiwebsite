@@ -317,4 +317,31 @@ ok("reverify binding is deterministic and email-scoped", () => {
   assert.match(reverifyBinding("a@b.com"), /^[0-9a-f]{64}$/);
 });
 
+await (async () => {
+  // Round 5: the Amazon vendor hint requires EVERY exchange to be the strict
+  // inbound-smtp shape; a bare .amazonaws.com host (self-hosted EC2 mail)
+  // must NOT claim Amazon routing.
+  let r = await checkDkimWith(
+    fakePort({ "MX:a.com": { mx: [{ exchange: "inbound-smtp.us-east-1.amazonaws.com", priority: 10 }] } }),
+    "a.com"
+  );
+  assert.equal(r.reason, "other-provider");
+  assert.equal(r.mxVendor, "amazon");
+  r = await checkDkimWith(
+    fakePort({ "MX:a.com": { mx: [{ exchange: "ec2-1-2-3-4.compute-1.amazonaws.com", priority: 10 }] } }),
+    "a.com"
+  );
+  assert.equal(r.mxVendor, undefined);
+  r = await checkDkimWith(
+    fakePort({ "MX:a.com": { mx: [
+      { exchange: "inbound-smtp.us-east-1.amazonaws.com", priority: 10 },
+      { exchange: "mail.other.com", priority: 20 },
+    ] } }),
+    "a.com"
+  );
+  assert.equal(r.mxVendor, undefined);
+  passed += 3;
+  console.log("ok - dkim: strict SES inbound-smtp vendor matcher (3 pins)");
+})();
+
 console.log(`\nroadmap-tests (incl. dkim): ${passed} checks passed`);
