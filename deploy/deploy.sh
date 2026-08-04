@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@d7f6a62c8d2fd44bd8c4f973d2ac5743bdc5c7054d704e9737b679fcc5853f1c
+# aicompany-template: deploy.sh.tpl@615dbac0734540fece4db8a21103e6bd6be4f69abb2ad5fd3480a1611ddd6596
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -109,8 +109,15 @@ echo "  stamps OK"
 # host whose module bump was actually tested, and v1.30.0 reached production
 # precisely because nothing between "template edited" and "script running on
 # the VM" ever parsed the output. Fail closed here, before anything is rsynced.
-# nginx.conf is exempt — validating it needs an nginx binary plus server
-# context, so the VM's own `nginx -t` remains its gate.
+# nginx.conf is exempt from THIS check (it is not a shell script), but it is no
+# longer unvalidated. Both halves of the old excuse here — "validating it needs
+# an nginx binary plus server context, so the VM's own nginx -t remains its
+# gate" — were false: nginx is installed on the dev box (/usr/sbin/nginx, just
+# not on the interactive PATH) and server context is a 9-line wrapper, while the
+# VM-side gate was an inert `A && B` that never gated. Since v1.64.0 CI runs a
+# real `nginx -t` on every rendered fixture and setup-vm.sh's gate is an `if !`
+# that aborts. Do not read this exemption as "nginx.conf is somebody else's
+# problem" — that reading is how v1.62.0 shipped an invalid config.
 echo ">>> Syntax-checking rendered deploy scripts..."
 bad_syntax=0
 for f in "$repo_dir"/deploy/*.sh; do
@@ -345,7 +352,11 @@ run_remote "cd $app_dir && bash deploy/setup-vm.sh"
 
 echo ""
 echo ">>> Verifying..."
-run_remote "curl -fsS http://127.0.0.1:3000/api/health && echo && curl -fsS http://127.0.0.1:3211/health | head -c 300 && echo"
+# `set -o pipefail` on the REMOTE shell (v1.64.0): without it `curl … | head`
+# reports head's status, so a FAILING brain health probe exited 0 and this
+# verification silently passed. The remote shell does not inherit the local
+# `set -euo pipefail`.
+run_remote "set -o pipefail; curl -fsS http://127.0.0.1:3000/api/health && echo && curl -fsS http://127.0.0.1:3211/health | head -c 300 && echo"
 # Extra services (v1.4.0): an `if` guard, NOT `[ -f … ] && verify || true` —
 # that form exits 0 on both missing-manifest AND verify failure, making the
 # check decorative. With `if`, a verify failure propagates through

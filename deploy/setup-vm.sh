@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@ba28189cf8693e0e1aea17133f663ca2f2b57bf5230598397006631fcf7e7f15
+# aicompany-template: setup-vm.sh.tpl@aee76c3ac0634039826d65f7563e1f6ee6f951694bffaf776d2da47605faacce
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -95,7 +95,15 @@ sudo apt-get install -y -qq build-essential python3 libpq-dev pkg-config jq rsyn
 #    anon pages or earlyoom's swap gate never trips)
 if ! sudo swapon --show=NAME --noheadings | grep -q '^/swapfile$'; then
   sudo fallocate -l 4G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
-  sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+  # NOT `chmod && mkswap && swapon` (v1.64.0): under `set -euo pipefail` an
+  # AND-list whose FIRST command fails does not abort, so a failed chmod or
+  # mkswap silently skipped swapon and the deploy continued with NO swap —
+  # which matters because earlyoom's SIGTERM leg is an AND of low RAM and low
+  # SwapFree, so a swapless box degenerates to "kill at 15% RAM". Same defect
+  # class as the nginx gate below.
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile
+  sudo swapon /swapfile
 fi
 # v1.29.1: the guard above is existence-only — a pre-hardening legacy
 # /swapfile (e.g. 2G) passes it forever, and at typical utilization its
@@ -265,6 +273,89 @@ sudo systemctl reload postgresql || true
 if ! command -v nginx &>/dev/null; then
   sudo apt-get install -y nginx
 fi
+# Fleet-wide log_format (v1.64.0) — installed BEFORE the site config, because
+# nginx parses sequentially and a reference to an undeclared format is fatal
+# (`[emerg] unknown log format`). Debian's /etc/nginx/nginx.conf includes
+# conf.d/*.conf BEFORE sites-enabled/*, both inside http{} — verified on the
+# fleet; re-verify if a host's nginx.conf is ever hand-edited.
+#
+# WHY A SHARED FILE AND NOT THE SITE TEMPLATE: `log_format` is an http-context
+# directive. v1.62.0 put it inside server{} and nginx rejected the whole config
+# (`[emerg] "log_format" directive is not allowed here`) — it reached production
+# and left the box one restart from nginx failing to start. Declaring it from a
+# per-site template in http context is equally broken: two slugs on one VM would
+# each declare `aic_combined` and collide (`[emerg] duplicate "log_format" name`).
+#
+# The 00- prefix is deliberate: nginx globs conf.d alphabetically and a format
+# must parse before any use, so this stays first even if a host later drops
+# another file in. THE FILENAME IS SLUG-AGNOSTIC ON PURPOSE. Co-located slugs must converge on one
+# identical file, never install two. Content is byte-identical for every host.
+#
+# WHY $host EXISTS AT ALL: each vhost answers for ai.xl.net *and* EXTRA_DOMAINS,
+# so without it two domains' traffic is indistinguishable in one log — which is
+# exactly how a 2026-08-03 session spent hours diagnosing a roleplay.xl.net
+# "6% sitemap 404 rate" that was really roleplayxl.net, the outreach sending
+# domain, correctly answering 404. Appended, never interleaved: every existing
+# positional grep in the runbooks keeps working.
+echo ">>> Installing fleet-wide nginx log format (conf.d, http context)..."
+sudo mkdir -p /etc/nginx/conf.d
+# ASSERT the include order rather than trusting it. nginx resolves a format name
+# at PARSE time, so conf.d must be included before sites-enabled or the site
+# config is fatal (`unknown log format`). Both were verified on the fleet — but
+# /etc/nginx/nginx.conf is a pristine dpkg conffile on every host AND
+# unattended-upgrades is enabled, so dpkg is licensed to replace it silently
+# (it prompts only for LOCALLY MODIFIED conffiles). This is the one assumption
+# the design rests on and nothing else would notice it changing.
+confd_ln="$(grep -n 'include */etc/nginx/conf\.d/\*\.conf' /etc/nginx/nginx.conf | head -1 | cut -d: -f1 || true)"
+sites_ln="$(grep -n 'include */etc/nginx/sites-enabled/\*' /etc/nginx/nginx.conf | head -1 | cut -d: -f1 || true)"
+if [ -z "$confd_ln" ] || [ -z "$sites_ln" ] || [ "$confd_ln" -ge "$sites_ln" ]; then
+  echo "!!! /etc/nginx/nginx.conf does not include conf.d BEFORE sites-enabled"
+  echo "!!!   conf.d=${confd_ln:-absent} sites-enabled=${sites_ln:-absent}"
+  echo "!!! The site config references log_format aic_combined, which would be"
+  echo "!!! undefined at parse time. Refusing to install a config that cannot load."
+  exit 1
+fi
+
+# Back up the current site config BEFORE overwriting it. If the new one fails
+# `nginx -t` we restore this and prove the restore is valid, so a rejected
+# config never survives on disk. v1.62.0's did: the deploy "succeeded", nginx
+# kept the old config in memory, and the box sat one reboot from not starting.
+# Was the tree ALREADY invalid before we touched it? (N1) Without this, a host
+# whose /etc/nginx broke for an unrelated reason — a hand-added conf.d file, an
+# unattended-upgraded nginx.conf, a drop-in naming a deleted upstream — would
+# have every future deploy, including an urgent app fix, aborted by the new gate.
+# Fail closed on damage WE cause; stay out of the way of damage we did not.
+nginx_baseline_ok=1
+sudo nginx -t >/dev/null 2>&1 || nginx_baseline_ok=0
+if [ "$nginx_baseline_ok" = 0 ]; then
+  echo "!!! WARNING: nginx -t was ALREADY FAILING before this deploy."
+  echo "!!!   Not installing or reloading nginx config; the deploy CONTINUES."
+  echo "!!!   /etc/nginx needs a human — run 'sudo nginx -t' on this box."
+  sudo systemctl is-active --quiet nginx || echo "!!!   AND nginx is NOT RUNNING."
+else
+nginx_backup="$(mktemp -d)"
+fmt_conf=/etc/nginx/conf.d/00-aicompany-log-format.conf
+if [ -f /etc/nginx/sites-available/aiwebsite ]; then
+  sudo cp /etc/nginx/sites-available/aiwebsite "$nginx_backup/site"
+fi
+if [ -d /etc/nginx/aiwebsite.d ]; then
+  sudo cp -a /etc/nginx/aiwebsite.d "$nginx_backup/dropins"
+fi
+# The format file is snapshotted and written INSIDE the guarded branch too. An
+# earlier revision wrote it before the backup and never rolled it back — so if
+# the format file was itself what broke `nginx -t`, restoring the site config
+# could not fix it and the script would abort having left the box worse than it
+# found it, reporting "restore also fails, needs a human".
+if [ -f "$fmt_conf" ]; then sudo cp "$fmt_conf" "$nginx_backup/fmt"; fi
+sudo tee /etc/nginx/conf.d/00-aicompany-log-format.conf >/dev/null <<'AIC_LOG_FORMAT'
+# Managed by @aicompany/core setup-vm.sh — do not edit by hand.
+# Shared by every aicompany site on this box; the name must stay unique.
+log_format aic_combined '$remote_addr - $remote_user [$time_local] '
+                        '"$request" $status $body_bytes_sent '
+                        '"$http_referer" "$http_user_agent" '
+                        'host=$host up=$upstream_status '
+                        'urt=$upstream_response_time rt=$request_time';
+AIC_LOG_FORMAT
 sudo cp "$app_dir/deploy/nginx.conf" /etc/nginx/sites-available/aiwebsite
 # Host nginx drop-ins (v1.4.0): committed deploy/nginx.d/* are installed to
 # /etc/nginx/aiwebsite.d/ BEFORE the conf test — the rendered server block
@@ -279,7 +370,53 @@ if [ -d "$app_dir/deploy/nginx.d" ]; then
 fi
 sudo ln -sf /etc/nginx/sites-available/aiwebsite /etc/nginx/sites-enabled/aiwebsite
 sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t && sudo systemctl reload nginx
+# `nginx -t && reload` was the shape here until v1.64.0, and it was INERT:
+# under `set -euo pipefail`, `set -e` does NOT abort on `A && B` when A fails and
+# the compound is not the last command. So a bad config short-circuited, the
+# reload was silently skipped, and the deploy reported success — which is exactly
+# how v1.62.0's invalid config reached production while this very line ran.
+# Verified: `bash -c 'set -e; false && echo x; echo REACHED'` prints REACHED.
+if ! sudo nginx -t; then
+  echo "!!! nginx -t REJECTED the new config — restoring the previous one"
+  if [ -f "$nginx_backup/site" ]; then
+    sudo cp "$nginx_backup/site" /etc/nginx/sites-available/aiwebsite
+  else
+    sudo rm -f /etc/nginx/sites-available/aiwebsite /etc/nginx/sites-enabled/aiwebsite
+  fi
+  if [ -d "$nginx_backup/dropins" ]; then
+    sudo rsync -a --delete "$nginx_backup/dropins/" /etc/nginx/aiwebsite.d/
+  fi
+  if [ -f "$nginx_backup/fmt" ]; then
+    sudo cp "$nginx_backup/fmt" "$fmt_conf"
+  else
+    sudo rm -f "$fmt_conf"   # we created it this run; leave no trace
+  fi
+  if sudo nginx -t; then
+    echo "    previous config restored and valid — deploy ABORTED before cutover"
+  else
+    echo "    !!! RESTORE ALSO FAILS nginx -t — /etc/nginx needs a human NOW"
+  fi
+  # nginx was never reloaded, so it is still serving the last-loaded config —
+  # UNLESS the watchdog restarted it during the invalid window. It restarts nginx
+  # unconditionally every 60s and is NOT deploy-gated (only the pm2 apps are), so
+  # this is a live executioner, not a hypothetical. Say which world we are in;
+  # deploy.sh's own banner claims "the old build is still serving" and would lie.
+  if sudo systemctl is-active --quiet nginx; then
+    echo "    nginx is RUNNING (serving its last valid loaded config)"
+  else
+    echo "    !!! nginx is NOT RUNNING — the site is DOWN. Fix /etc/nginx and start it."
+  fi
+  # `sudo rm -rf` (not bare rm) and `|| true`: `sudo cp -a` puts root-owned
+  # content in this dir, so an unprivileged rm exits 1 and — under `set -e` —
+  # would kill the deploy on the SUCCESS path below, after the reload. It does
+  # not bite today only because rsync happens to leave aiwebsite.d unprivileged;
+  # setup-vm's own `sudo mkdir -p` on a fresh provision makes it root-owned.
+  sudo rm -rf "$nginx_backup" || true
+  exit 1
+fi
+sudo systemctl reload nginx
+sudo rm -rf "$nginx_backup" || true
+fi   # end: nginx config was installed only when the baseline tree was valid
 
 # ── App install & build (staged, v1.13.0 §9.2) ───────────────────
 cd "$app_dir"
