@@ -1,14 +1,22 @@
 // Team-submitted cards on /work (§5.16): panel-reviewed cards submitted by
-// XL.net staff, read from Postgres and rendered through this ONE template.
-// They render INSIDE group "05 - What We Have Built" (owner directive
-// 2026-07-30; no separate numbered group), introduced by an unnumbered
-// "From the Team" divider that carries the section-level provenance promise.
-// Every card field is a schema-validated plain string rendered as React text
-// nodes; submitted content has no path to markup. A DB failure or an empty
-// table renders NOTHING (the 24 hand-authored exhibits are unaffected and
-// the page never breaks on this section's account).
+// XL.net staff, rendered through this ONE template. They render INSIDE
+// group "05 - What We Have Built" (owner directive 2026-07-30; no separate
+// numbered group), introduced by an unnumbered "From the Team" divider that
+// carries the section-level provenance promise. Every card field is a
+// schema-validated plain string rendered as React text nodes; submitted
+// content has no path to markup.
+//
+// Pagination round (2026-08-04): this component is now PRESENTATIONAL -
+// the page owns the single guarded publishedCards() fetch (newest first)
+// and passes the rows here and to the registry, so the index can never
+// advertise cards this section failed to render. An empty list renders
+// NOTHING (the 25 hand-authored exhibits are unaffected and the page never
+// breaks on this section's account). data-team-divider / data-work-card
+// are the pager island's hooks for hiding the divider on static-only pages;
+// alternation starts with a PLAIN panel because the 25th static exhibit
+// (rfp-response) is lightline - index-0-lightline double-striped the seam.
 
-import { publishedCards, type PublishedCard } from "@/lib/work/db";
+import type { PublishedCard } from "@/lib/work/db";
 
 function CommunityCard({ item, index }: { item: PublishedCard; index: number }) {
   const { card } = item;
@@ -19,8 +27,9 @@ function CommunityCard({ item, index }: { item: PublishedCard; index: number }) 
   return (
     <section
       id={item.slug}
+      data-work-card="team"
       className={
-        index % 2 === 0 ? "panel panel--lightline rise" : "panel rise"
+        index % 2 === 0 ? "panel rise" : "panel panel--lightline rise"
       }
     >
       <div className="flex flex-wrap items-center gap-4">
@@ -50,18 +59,11 @@ function CommunityCard({ item, index }: { item: PublishedCard; index: number }) 
   );
 }
 
-export async function CommunitySection() {
-  let cards: PublishedCard[] = [];
-  try {
-    cards = await publishedCards();
-  } catch {
-    // render nothing; the static exhibits above are the page
-    return null;
-  }
+export function CommunitySection({ cards }: { cards: PublishedCard[] }) {
   if (cards.length === 0) return null;
   return (
     <>
-      <div className="text-center">
+      <div className="text-center" data-team-divider>
         <span className="sys-label sys-label--center">From the Team</span>
         <p className="mx-auto mt-6 max-w-3xl text-sm">
           XL.net staff submit tools they built, with the documents to back

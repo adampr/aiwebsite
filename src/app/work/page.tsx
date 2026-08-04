@@ -2,6 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CommunitySection } from "./community";
 import { StaffSubmitLink } from "./staff-submit-link";
+import { WorkRegistry } from "./registry";
+import { WorkPager } from "./pager";
+import { publishedCards, type PublishedCard } from "@/lib/work/db";
+import staticTitles from "@/lib/work/static-titles.json";
 
 // Team-submitted cards (§5.16) publish to this page without a deploy, so a
 // hard-coded count in the metadata would go false on the first publish;
@@ -32,7 +36,17 @@ function BuildersChip() {
   );
 }
 
-export default function WorkPage() {
+export default async function WorkPage() {
+  // ONE guarded fetch feeds the registry, the pager counts, and the team
+  // section, so the index can never list a card the body failed to render.
+  // DB down or empty -> team=[] -> statics-only page, exactly today's
+  // degradation (§5.16: the hand-authored exhibits never depend on the DB).
+  let team: PublishedCard[] = [];
+  try {
+    team = await publishedCards();
+  } catch {
+    // the 25 static exhibits are the page
+  }
   return (
     <div className="work-page mx-auto max-w-5xl space-y-16">
       {/* Manifesto strip */}
@@ -54,9 +68,25 @@ export default function WorkPage() {
 
       <hr className="horizon" />
 
+      {/* Works registry + console pager (2026-08-04): the registry is the
+          always-complete anchor index of every exhibit; the pager island
+          windows the card sequence below it (Show 5/10/25/All, default 10).
+          Both are additive chrome - the 25 static card sections stay
+          byte-identical, and with JS off the pager strip never appears and
+          every card renders visible. */}
+      <WorkRegistry team={team} />
+      <WorkPager
+        staticCount={staticTitles.exhibits.length}
+        teamCount={team.length}
+      />
+
       {/* Group: the engine */}
-      <section aria-label="The Engine" className="space-y-16">
-        <div className="text-center">
+      <section
+        aria-label="The Engine"
+        className="space-y-16"
+        id="works-start"
+      >
+        <div className="text-center" data-bay-head>
           <span className="sys-label sys-label--center">01 · The Engine</span>
         </div>
 
@@ -121,7 +151,7 @@ export default function WorkPage() {
 
       {/* Group: what it runs */}
       <section aria-label="What It Runs" className="space-y-16">
-        <div className="text-center">
+        <div className="text-center" data-bay-head>
           <span className="sys-label sys-label--center">02 · What It Runs</span>
         </div>
 
@@ -386,7 +416,7 @@ export default function WorkPage() {
 
       {/* Group: client delivery */}
       <section aria-label="Client Delivery" className="space-y-16">
-        <div className="text-center">
+        <div className="text-center" data-bay-head>
           <span className="sys-label sys-label--center">
             03 · Client Delivery
           </span>
@@ -530,7 +560,7 @@ export default function WorkPage() {
 
       {/* Group: the access layer */}
       <section aria-label="The Access Layer" className="space-y-16">
-        <div className="text-center">
+        <div className="text-center" data-bay-head>
           <span className="sys-label sys-label--center">
             04 · The Access Layer
           </span>
@@ -679,7 +709,7 @@ export default function WorkPage() {
 
       {/* Group: what we're testing */}
       <section aria-label="What We Have Built" className="space-y-16">
-        <div className="text-center">
+        <div className="text-center" data-bay-head>
           <span className="sys-label sys-label--center">
             05 · What We Have Built
           </span>
@@ -2193,10 +2223,15 @@ export default function WorkPage() {
 
         {/* Team-submitted cards (§5.16) render inside this group (owner
             directive 2026-07-30: no separate numbered section). Renders
-            nothing while empty or if the DB read fails; the static
-            exhibits above never depend on it. */}
-        <CommunitySection />
+            nothing while empty; the DB read is guarded in WorkPage above,
+            so the static exhibits never depend on it. */}
+        <CommunitySection cards={team} />
       </section>
+
+      {/* Bottom pager strip portal target: the island fills it only when
+          there is more than one page; :empty keeps it out of the layout
+          otherwise. */}
+      <div id="work-pager-foot" className="work-pager-foot" />
 
       {/* Staff-only submit entry point: client-side session check, invisible
           to everyone else (§5.16). */}

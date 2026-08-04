@@ -163,15 +163,20 @@ export interface PublishedCard {
   docPath: string;
 }
 
-/** Published cards for the public /work section, oldest publish first so the
- * section grows downward like the hand-authored narrative. */
+/** Published cards for the public /work section, newest publish first so a
+ * fresh publish surfaces at the top of the team run (pagination round,
+ * 2026-08-04; previously oldest-first). Uncapped on purpose: the display
+ * path paginates client-side over the full set, and the panel's uniqueness
+ * consumer (publishedTitleAndFacetSets) must see EVERY published title and
+ * facet label — the old .limit(50) silently blinded that gate past 50 cards.
+ * Watch item: the taken-titles/facets prompt strings grow with card count
+ * (~25-30 KB at ~275 cards). */
 export async function publishedCards(): Promise<PublishedCard[]> {
   const rows = await db
     .select(ROW_COLS)
     .from(S)
     .where(and(eq(S.status, "published"), isNotNull(S.cardJson)))
-    .orderBy(S.publishedAt)
-    .limit(50);
+    .orderBy(desc(S.publishedAt));
   const out: PublishedCard[] = [];
   for (const r of rows) {
     try {
@@ -411,8 +416,8 @@ export type SupersedeResult =
  * parent -> superseded (slug freed FIRST: work_sub_slug_uq is not
  * deferrable, so the statement order is load-bearing), child -> published
  * with the parent's slug and publishedAt (the card keeps its deep link and
- * its slot in /work's oldest-first order; updatedAt carries the swap time
- * for the sitemap). If the parent is no longer published (deleted, pulled,
+ * its slot in /work's newest-first display order; updatedAt carries the
+ * swap time for the sitemap). If the parent is no longer published (deleted, pulled,
  * or superseded by a rival), the child is parked held with
  * UPDATE_CONFLICT_NOTE and NOTHING publishes standalone: a standalone
  * publish is how duplicate live cards get minted (refutation FATAL,

@@ -130,5 +130,154 @@
     "script-master",
     "ticket-reply-composer",
     "rfp-response"
+  ],
+  "bays": [
+    {
+      "n": "01",
+      "name": "The Engine"
+    },
+    {
+      "n": "02",
+      "name": "What It Runs"
+    },
+    {
+      "n": "03",
+      "name": "Client Delivery"
+    },
+    {
+      "n": "04",
+      "name": "The Access Layer"
+    },
+    {
+      "n": "05",
+      "name": "What We Have Built"
+    }
+  ],
+  "exhibits": [
+    {
+      "id": "brain",
+      "title": "Software Brain",
+      "bay": "01"
+    },
+    {
+      "id": "aicompany",
+      "title": "@aicompany/core",
+      "bay": "02"
+    },
+    {
+      "id": "aiwebsite",
+      "title": "ai.xl.net",
+      "bay": "02"
+    },
+    {
+      "id": "governance",
+      "title": "AI Governance Writer",
+      "bay": "02"
+    },
+    {
+      "id": "itsupportchicago",
+      "title": "IT Support Chicago",
+      "bay": "02"
+    },
+    {
+      "id": "qbr-machine",
+      "title": "QBR Machine",
+      "bay": "03"
+    },
+    {
+      "id": "onboarding-toolkit",
+      "title": "Onboarding Toolkit",
+      "bay": "03"
+    },
+    {
+      "id": "lakehouse",
+      "title": "XL Lakehouse",
+      "bay": "04"
+    },
+    {
+      "id": "api-gateway",
+      "title": "XL API Gateway",
+      "bay": "04"
+    },
+    {
+      "id": "roleplay",
+      "title": "Roleplay",
+      "bay": "05"
+    },
+    {
+      "id": "leo-netter",
+      "title": "Leo Netter",
+      "bay": "05"
+    },
+    {
+      "id": "spamslayer",
+      "title": "SpamSlayer",
+      "bay": "05"
+    },
+    {
+      "id": "ticketscribe",
+      "title": "TicketScribe",
+      "bay": "05"
+    },
+    {
+      "id": "ticket-summaries",
+      "title": "Autotask Ticket Summaries",
+      "bay": "05"
+    },
+    {
+      "id": "follow-up-emails",
+      "title": "Auto-Draft Follow-Up Emails",
+      "bay": "05"
+    },
+    {
+      "id": "beacon",
+      "title": "Beacon",
+      "bay": "05"
+    },
+    {
+      "id": "morning-brief",
+      "title": "Morning Brief",
+      "bay": "05"
+    },
+    {
+      "id": "sp-writer",
+      "title": "SP Writer",
+      "bay": "05"
+    },
+    {
+      "id": "kaseya-ap-builder",
+      "title": "Kaseya AP Builder",
+      "bay": "05"
+    },
+    {
+      "id": "tps-client-count",
+      "title": "TPS Client Count",
+      "bay": "05"
+    },
+    {
+      "id": "log-analyzer",
+      "title": "Log Analyzer",
+      "bay": "05"
+    },
+    {
+      "id": "autotask-ci-intake",
+      "title": "Autotask CI Intake",
+      "bay": "05"
+    },
+    {
+      "id": "script-master",
+      "title": "Script Master",
+      "bay": "05"
+    },
+    {
+      "id": "ticket-reply-composer",
+      "title": "Ticket Reply Composer",
+      "bay": "05"
+    },
+    {
+      "id": "rfp-response",
+      "title": "RFP Response",
+      "bay": "05"
+    }
   ]
 }

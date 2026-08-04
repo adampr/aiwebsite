@@ -373,6 +373,182 @@ code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
   outline-offset: 4px;
 }
 
+/* ------------------------------------------------------------
+   /work registry + console pager (pagination round 2026-08-04)
+
+   CASCADE NOTE (load-bearing): this file is imported layer(base)
+   (globals.css), so Tailwind utilities in later layers BEAT any normal
+   declaration here. The !important flags below are REQUIRED, not
+   belt-and-braces - they are what wins against space-y-16 margins and
+   utility classes on the same elements.
+
+   HIDING NOTE (load-bearing): the pager hides cards with
+   hidden="until-found", which the UA implements as content-visibility:
+   hidden. An author-origin content-visibility declaration on those
+   elements would OVERRIDE the UA rule and un-hide every card (author
+   styles beat UA styles for the same property) - never set
+   content-visibility on .work-page panels without :not([hidden]).
+   In Chromium the hidden element keeps its own border/padding/margin
+   box, hence the zeroing rule; Safari treats it as plain hidden. */
+
+/* Hidden (paged-out) cards: kill the box so 200 hidden panels paint
+   nothing - no hairline ghosts, no phantom scroll height. */
+.work-page section.panel[hidden] {
+  margin: 0 !important;
+  border: 0 !important;
+  padding: 0 !important;
+}
+/* Seam: the last visible panel before a trailing hidden run keeps its
+   space-y margin, doubling the gap to the next bay; drop it when no
+   visible panel follows among its siblings. */
+.work-page section[aria-label] > section.panel:not(:has(~ section.panel:not([hidden]))) {
+  margin-block-end: 0 !important;
+}
+/* A bay with every card paged out collapses entirely (its header div is
+   hidden by the island; the wrapper must not keep its space-y slot). */
+.work-page .pager-empty {
+  margin: 0 !important;
+}
+
+/* Deep-link landing: clear the fixed nav and glow the target panel. */
+.work-page section.panel[id] {
+  scroll-margin-top: 6rem;
+  outline: none;
+}
+.work-page section.panel:target {
+  border-color: var(--xl-light-dim);
+  box-shadow: 0 0 20px var(--xl-light-glow);
+}
+
+/* Registry: the always-complete mono index. */
+.work-registry {
+  border-top: 1px solid var(--xl-line);
+  padding-top: var(--sp-6);
+}
+.work-registry-skip {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.work-registry-skip:focus-visible {
+  position: static;
+  width: auto; height: auto;
+  clip-path: none;
+  display: inline-block;
+  margin-bottom: var(--sp-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--xl-light);
+  outline: 1px solid var(--xl-light-dim);
+  outline-offset: 4px;
+}
+.work-registry-group { margin-top: var(--sp-6); }
+.work-registry-group:first-of-type { margin-top: 0; }
+.work-registry-group ul {
+  list-style: none;
+  margin: var(--sp-3) 0 0;
+  padding: 0;
+  columns: 18rem;
+  column-gap: var(--sp-8);
+}
+.work-registry-group li { break-inside: avoid; }
+.work-registry-group li a {
+  display: block;
+  padding: 2px 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--xl-light-dim);
+  transition: color var(--dur-fast) var(--ease-drift);
+}
+.work-registry-group li a:hover { color: var(--xl-light); }
+.work-registry-group li a:focus-visible {
+  outline: 1px solid var(--xl-light-dim);
+  outline-offset: 2px;
+}
+.work-registry-n { color: var(--xl-text-faint); }
+
+/* Console pager strip: display:none until the island activates
+   (html.pager-active), so no-JS visitors never see dead chrome. */
+.work-pager { display: none; }
+html.pager-active .work-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4) var(--sp-8);
+  border-top: 1px solid var(--xl-line);
+  border-bottom: 1px solid var(--xl-line);
+  padding: var(--sp-3) var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+.work-pager-foot:empty { display: none; }
+.work-pager-sizes {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+.work-pager-sizes legend {
+  float: left;
+  margin-right: var(--sp-2);
+  color: var(--xl-text-faint);
+}
+.work-pager-size {
+  cursor: pointer;
+  color: var(--xl-light-dim);
+  transition: color var(--dur-fast) var(--ease-drift);
+}
+.work-pager-size:hover { color: var(--xl-light); }
+.work-pager-size.is-active {
+  color: var(--xl-light);
+  text-shadow: 0 0 12px var(--xl-light-glow);
+  border-bottom: 1px solid var(--xl-light);
+  padding-bottom: 2px;
+}
+.work-pager-size:has(input:focus-visible) {
+  outline: 1px solid var(--xl-light-dim);
+  outline-offset: 4px;
+}
+.work-pager-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.work-pager-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  padding: var(--sp-2) var(--sp-2);
+  color: var(--xl-light-dim);
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-drift);
+}
+.work-pager-btn:hover { color: var(--xl-light); }
+.work-pager-btn:focus-visible {
+  outline: 1px solid var(--xl-light-dim);
+  outline-offset: 2px;
+}
+.work-pager-btn[aria-disabled="true"] {
+  color: var(--xl-text-faint);
+  cursor: default;
+}
+.work-pager-readout { color: var(--xl-text-faint); }
+
 /* Hairline divider, fading */
 .rule {
   border: none;
