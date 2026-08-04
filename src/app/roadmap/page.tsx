@@ -1,16 +1,18 @@
 // /roadmap hub (§5.18): dual-render, governance/page.tsx pattern. Signed-out
 // visitors get the crawlable teaser (never a redirect); signed-in users get
-// their state: the untrusted-provider screen, the ineligible-domain
-// explainer, the bootstrap card, or the company status board. NO company
-// data ever renders signed-out or to an untrusted session. Metadata is
-// session-aware: the teaser is the indexable marketing surface, every
-// signed-in render is noindex.
+// their state via readRoadmapHubView (round 2): the staff explainer, the
+// one-shot silent Google re-verify bounce, the "One last check" verification
+// screen, the ineligible-domain explainer, the bootstrap card, or the
+// company status board. NO company data ever renders signed-out or to an
+// untrusted session. Metadata is session-aware: the teaser is the indexable
+// marketing surface, every signed-in render is noindex.
 
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { readSession } from "@aicompany/core/auth/session";
 import { siteConfig } from "site.config";
-import { readRoadmapPrincipal } from "@/lib/roadmap/access";
+import { readRoadmapHubView } from "@/lib/roadmap/access";
 import { ROADMAP_STEPS } from "@/lib/roadmap/config";
 import { roadmapStatus } from "@/lib/roadmap/status";
 import {
@@ -21,6 +23,8 @@ import { RoadmapRunway } from "@/components/roadmap/runway";
 import { RequestAdminAccess } from "@/components/roadmap/request-admin";
 import { BootstrapCard } from "@/components/roadmap/bootstrap-card";
 import { ConfirmIdentity } from "@/components/roadmap/confirm-identity";
+import { DkimStep } from "@/components/roadmap/dkim-step";
+import { StaffPanel } from "@/components/roadmap/staff-panel";
 import "./roadmap.css";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +42,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "Your AI Roadmap: From Knowledge Workers to AI Builders",
     description:
-      "A private four-step roadmap for your company: put an AI governance document on file, list your team, submit AI-built work for editorial review, and watch builders emerge on your scorecard.",
+      "A private five-step roadmap for your company: put an AI governance document on file, list your team, submit AI-built work for editorial review, watch builders emerge on your scorecard, and verify email from your domain.",
     alternates: { canonical: "/roadmap" },
   };
 }
@@ -46,7 +50,7 @@ export async function generateMetadata(): Promise<Metadata> {
 const FAQ = [
   {
     q: "Is it free?",
-    a: "Yes. Sign in with your work email and walk the four steps at no cost. No card, no trial clock.",
+    a: "Yes. Sign in with your work email and walk the five steps at no cost. No card, no trial clock.",
   },
   {
     q: "Who can see our data?",
@@ -77,10 +81,10 @@ function Teaser() {
           From knowledge workers to <span className="glow">AI builders</span>
         </h1>
         <p className="mx-auto mt-6 max-w-3xl text-lg">
-          A private roadmap for your whole company: four steps from an AI
+          A private roadmap for your whole company: five steps from an AI
           governance document on file to a scorecard of the builders on your
-          team, with every piece of AI-built work reviewed and published along
-          the way.
+          team and verified email from your domain, with every piece of
+          AI-built work reviewed and published along the way.
         </p>
         <div className="mt-10 flex flex-wrap justify-center gap-6">
           <Link
@@ -91,7 +95,7 @@ function Teaser() {
           </Link>
         </div>
         <p className="mono mx-auto mt-6 max-w-2xl text-xs" style={faint}>
-          free · private to your company · four steps
+          free · private to your company · five steps
         </p>
       </section>
 
@@ -100,7 +104,7 @@ function Teaser() {
       <section>
         <div className="text-center">
           <span className="sys-label sys-label--center">The Runway</span>
-          <h2 className="mt-6">Four stations, one line</h2>
+          <h2 className="mt-6">Five stations, one line</h2>
         </div>
         <div className="mx-auto mt-12 max-w-4xl">
           <RoadmapRunway status={null} />
@@ -155,16 +159,41 @@ function Teaser() {
   );
 }
 
-export default async function RoadmapHubPage() {
-  const result = await readRoadmapPrincipal();
+type Search = { searchParams: Promise<{ verify?: string }> };
 
-  if (!result.ok) {
-    if (result.reason === "unauthenticated") return <Teaser />;
-    // Untrusted provider: no company data, not even the name.
-    return <ConfirmIdentity email={result.email} redirect="/roadmap" />;
+export default async function RoadmapHubPage({ searchParams }: Search) {
+  const view = await readRoadmapHubView();
+
+  if (view.kind === "anonymous") return <Teaser />;
+
+  if (view.kind === "staff") {
+    return (
+      <StaffPanel email={view.email} showAdminLink={view.showAdminLink} />
+    );
   }
 
-  const p = result.principal;
+  if (view.kind === "unverified") {
+    // One-shot silent Google re-verify: a server-side bounce BEFORE any HTML
+    // renders. The reverify route sets its own guard cookie, so a failed
+    // round trip returns with attempted=true (and possibly
+    // ?verify=google_unverified) and lands on the screen below, never a
+    // loop.
+    if (view.silentEligible && !view.attempted) {
+      redirect("/api/auth/reverify?redirect=/roadmap");
+    }
+    const { verify } = await searchParams;
+    // Untrusted provider: no company data, not even the name.
+    return (
+      <ConfirmIdentity
+        email={view.email}
+        reservedDomain={view.reservedDomain}
+        attempted={view.attempted}
+        verifyFlag={verify === "google_unverified"}
+      />
+    );
+  }
+
+  const p = view.principal;
 
   if (!p.domainEligible) {
     return (
@@ -204,7 +233,7 @@ export default async function RoadmapHubPage() {
   }
 
   // Member or admin of a company: the status board.
-  const status = await roadmapStatus(p.company.id);
+  const status = await roadmapStatus(p.company.id, p.company.domain);
   const isAdmin = p.companyRole === "admin";
   let pending: { requestedAt: string; expiresAt: string } | null = null;
   if (!isAdmin) {
@@ -240,6 +269,12 @@ export default async function RoadmapHubPage() {
     scorecard: status.scorecard.live
       ? `${status.scorecard.contributors} ${status.scorecard.contributors === 1 ? "builder" : "builders"} so far`
       : "Waiting on the first published work",
+    dkim:
+      status.dkim.verdict === "ok"
+        ? "DKIM verified"
+        : status.dkim.verdict === "missing"
+          ? "DKIM not set up yet"
+          : "Needs a manual check",
   } as const;
 
   return (
@@ -271,24 +306,44 @@ export default async function RoadmapHubPage() {
       </section>
 
       <section className="grid gap-6 sm:grid-cols-2">
-        {ROADMAP_STEPS.map((step) => (
-          <div key={step.key} className="panel rise">
-            <div className="flex items-baseline justify-between gap-4">
-              <span className="sys-label">{step.num}</span>
-              <span className="mono text-xs" style={faint}>
-                {stepLines[step.key]}
-              </span>
-            </div>
-            <h3 className="mt-4">{step.title}</h3>
-            <p className="mt-4 text-sm">{step.blurb}</p>
-            <Link
-              href={step.href}
-              className="btn btn--text mt-5 no-underline"
+        {ROADMAP_STEPS.map((step) =>
+          step.key === "dkim" ? (
+            // Step 05 has NO (steps) page: this panel IS its surface. The
+            // island opens the instructions dialog and owns recheck/email.
+            <div
+              key={step.key}
+              id="step-dkim"
+              className="panel rise sm:col-span-2"
             >
-              Open step {step.num} <span aria-hidden="true">→</span>
-            </Link>
-          </div>
-        ))}
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="sys-label">{step.num}</span>
+                <span className="mono text-xs" style={faint}>
+                  {stepLines[step.key]}
+                </span>
+              </div>
+              <h3 className="mt-4">{step.title}</h3>
+              <p className="mt-4 text-sm">{step.blurb}</p>
+              <DkimStep initial={status.dkim} email={p.email} />
+            </div>
+          ) : (
+            <div key={step.key} className="panel rise">
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="sys-label">{step.num}</span>
+                <span className="mono text-xs" style={faint}>
+                  {stepLines[step.key]}
+                </span>
+              </div>
+              <h3 className="mt-4">{step.title}</h3>
+              <p className="mt-4 text-sm">{step.blurb}</p>
+              <Link
+                href={step.href}
+                className="btn btn--text mt-5 no-underline"
+              >
+                Open step {step.num} <span aria-hidden="true">→</span>
+              </Link>
+            </div>
+          )
+        )}
       </section>
 
       {!isAdmin && (

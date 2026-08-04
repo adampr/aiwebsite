@@ -6,6 +6,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { countGovernanceDocs, countPeople } from "@/lib/roadmap/db";
+import { checkDkim, type DkimCheck } from "@/lib/roadmap/dkim";
 
 const W = schema.workSubmissions;
 
@@ -15,10 +16,19 @@ export type RoadmapStatus = {
   work: { done: boolean; published: number };
   /** Never "done": a scorecard is ongoing. live = at least one builder. */
   scorecard: { live: boolean; contributors: number };
+  /** Step 05 verdict (§5.18 round 2): the DNS-visible DKIM state for the
+   * company's email domain. Budget-bounded so the hub render never blocks on
+   * slow DNS; a timed-out check degrades to verdict "unknown". */
+  dkim: DkimCheck;
 };
 
-export async function roadmapStatus(companyId: string): Promise<RoadmapStatus> {
-  const [docs, people, workRows] = await Promise.all([
+export async function roadmapStatus(
+  companyId: string,
+  domain: string
+): Promise<RoadmapStatus> {
+  // checkDkim rides the SAME Promise.all so the DNS probe overlaps the DB
+  // queries instead of adding to the render's critical path.
+  const [docs, people, workRows, dkim] = await Promise.all([
     countGovernanceDocs(companyId),
     countPeople(companyId),
     db
@@ -28,6 +38,7 @@ export async function roadmapStatus(companyId: string): Promise<RoadmapStatus> {
       })
       .from(W)
       .where(and(eq(W.companyId, companyId), eq(W.status, "published"))),
+    checkDkim(domain, { budgetMs: 2500 }),
   ]);
   const published = workRows[0]?.published ?? 0;
   const contributors = workRows[0]?.contributors ?? 0;
@@ -36,5 +47,6 @@ export async function roadmapStatus(companyId: string): Promise<RoadmapStatus> {
     directory: { done: people >= 1, people },
     work: { done: published >= 1, published },
     scorecard: { live: contributors >= 1, contributors },
+    dkim,
   };
 }

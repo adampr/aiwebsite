@@ -54,6 +54,7 @@ import {
 import { signSession } from "@aicompany/core/auth/session";
 import { logStage } from "@aicompany/core/lib/log";
 import type { SiteConfig } from "@aicompany/core/config/types";
+import { REVERIFY_COOKIE, reverifyBinding } from "@/lib/auth/reverify";
 
 /** ONLY boolean true or the exact string "true" count as verified. */
 export function strictClaimTrue(v: unknown): boolean {
@@ -226,6 +227,40 @@ export function createHardenedCallbackHandler(
     });
 
     const params = new URL(req.url).searchParams;
+    // §5.18 silent re-verify (aix_rv present = this round-trip was started
+    // by /api/auth/reverify on behalf of an EXISTING session).
+    const jar = await cookies();
+    const rvCookie = jar.get(REVERIFY_COOKIE)?.value ?? null;
+    const containedTarget = async (): Promise<string> => {
+      const raw = await consumeOAuthRedirect(config);
+      const validated = raw ? validateRedirect(config, raw) : "/roadmap";
+      // "/" is validateRedirect's rejection sentinel, not a destination in
+      // this lane: the whole point is landing back where verification began.
+      return validated === "/" ? "/roadmap" : validated;
+    };
+    // CONTAINED ERROR BRANCH - scoped to exactly the prompt=none failure
+    // shape (an error param while the guard cookie is set). Google answers
+    // login_required / interaction_required when it cannot proceed
+    // invisibly; bouncing that to /login?error would strand a SIGNED-IN
+    // user on the login page, which is the reported bug. Every OTHER
+    // failure (invalid_state, exchange, userinfo) keeps today's
+    // /login?error path: invalid_state is the CSRF control's signal and
+    // must stay user-visible.
+    if (rvCookie !== null && params.get("error")) {
+      logStage({
+        slug,
+        channel: "auth",
+        stage: "dropped",
+        ok: false,
+        detail: `${provider} silent reverify declined: ${params.get("error")?.slice(0, 40)}`,
+      });
+      // Keep aix_rv: it is the loop guard; the hub now renders the
+      // verification screen instead of redirecting again.
+      return Response.redirect(
+        new URL(await containedTarget(), config.site.baseUrl),
+        302
+      );
+    }
     const code = params.get("code");
     const state = params.get("state");
     if (!code || !state) return fail("missing_params");
@@ -279,6 +314,35 @@ export function createHardenedCallbackHandler(
     }
     if (!email) return fail("no_email");
 
+    // §5.18 IDENTITY BINDING: a silent-reverify round-trip may only refresh
+    // the session it was started for. login_hint is non-binding in OIDC, so
+    // a browser signed into a DIFFERENT Google account would otherwise get
+    // that account silently swapped into this session with zero UI. On
+    // mismatch: no upsert, no cookie write - the existing session stays -
+    // and the user lands on the verification screen (aix_rv retained stops
+    // the redirect loop).
+    if (rvCookie !== null && reverifyBinding(email) !== rvCookie) {
+      logStage({
+        slug,
+        channel: "auth",
+        stage: "dropped",
+        ok: false,
+        detail: `${provider} silent reverify account mismatch; session untouched`,
+      });
+      await insertAuthLog(config, {
+        userId: null,
+        email,
+        provider,
+        req,
+        success: false,
+        failureReason: "silent reverify account mismatch",
+      });
+      return Response.redirect(
+        new URL(await containedTarget(), config.site.baseUrl),
+        302
+      );
+    }
+
     try {
       const lowered = email.toLowerCase();
       const reason = await config.auth.rejectEmail?.(lowered);
@@ -305,15 +369,26 @@ export function createHardenedCallbackHandler(
         provider: user.authProvider,
         ...(mv ? { mv: true } : {}),
       });
-      const jar = await cookies();
       jar.set(config.auth.sessionCookieName, token, sessionCookieOptions(config));
 
       const requestedRaw = await consumeOAuthRedirect(config);
       const requested = requestedRaw
         ? validateRedirect(config, requestedRaw)
         : null;
-      const redirect =
+      let redirect =
         config.auth.postLoginRedirect?.(user, requested) ?? requested ?? "/";
+      // §5.18 reverify lifecycle: delete the guard ONLY when mv was actually
+      // minted (success-without-mv must not re-arm the auto-redirect - that
+      // would loop full OAuth rounds); on success-without-mv, flag the
+      // return so the verification screen can say what happened instead of
+      // silently re-rendering itself after a manual attempt.
+      if (rvCookie !== null) {
+        if (mv) {
+          jar.delete(REVERIFY_COOKIE);
+        } else if (redirect.startsWith("/") && !redirect.includes("verify=")) {
+          redirect += `${redirect.includes("?") ? "&" : "?"}verify=google_unverified`;
+        }
+      }
       logStage({
         slug,
         channel: "auth",

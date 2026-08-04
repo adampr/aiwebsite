@@ -100,3 +100,221 @@ ok("scopeOf maps company_id to the scope axis", () => {
 });
 
 console.log(`\nroadmap-tests: ${passed} checks passed`);
+
+// ---- DKIM detection (§5.18 round 2): checkDkimWith against a fake port ----
+// Each case pins a verdict rule the refutation panel flagged: false-missing
+// on mixed/foreign MX, CNAME-presence never equals ok, wildcard zones veto
+// both ok and revoked, indeterminate errors never produce missing.
+import { checkDkimWith, type DnsPort } from "../src/lib/roadmap/dkim";
+import { reverifyBinding } from "../src/lib/auth/reverify";
+
+type FakeAnswer =
+  | { mx: { exchange: string; priority: number }[] }
+  | { txt: string[][] }
+  | { cname: string[] }
+  | { err: string };
+
+function fakePort(table: Record<string, FakeAnswer>): DnsPort {
+  const answer = (key: string): FakeAnswer =>
+    table[key] ?? { err: "ENOTFOUND" };
+  const reject = (code: string) => {
+    const e = new Error(code) as Error & { code: string };
+    e.code = code;
+    return Promise.reject(e);
+  };
+  return {
+    resolveMx(name) {
+      const a = answer(`MX:${name}`);
+      return "mx" in a ? Promise.resolve(a.mx) : reject((a as { err: string }).err);
+    },
+    resolveTxt(name) {
+      const a = answer(`TXT:${name}`);
+      return "txt" in a ? Promise.resolve(a.txt) : reject((a as { err: string }).err);
+    },
+    resolveCname(name) {
+      const a = answer(`CNAME:${name}`);
+      return "cname" in a
+        ? Promise.resolve(a.cname)
+        : reject((a as { err: string }).err);
+    },
+    cancel() {},
+  };
+}
+
+const M365_MX = { mx: [{ exchange: "co-com.mail.protection.outlook.com", priority: 0 }] };
+const GOOGLE_MX = { mx: [{ exchange: "aspmx.l.google.com", priority: 1 }, { exchange: "alt1.aspmx.l.google.com", priority: 5 }] };
+const VALID_KEY = { txt: [["v=DKIM1; k=rsa; p=", "MIIBIjANBgkq"]] }; // split chunks concatenate
+
+await (async () => {
+  // m365 clean ok
+  let r = await checkDkimWith(
+    fakePort({
+      "MX:co.com": M365_MX,
+      "TXT:selector1._domainkey.co.com": VALID_KEY,
+    }),
+    "co.com"
+  );
+  assert.equal(r.verdict, "ok");
+  assert.equal(r.reason, "m365-selector-live");
+  assert.equal(r.selector, "selector1");
+  passed++; console.log("ok - dkim: m365 valid key -> ok");
+
+  // m365 no cnames -> missing with the add-records remediation
+  r = await checkDkimWith(fakePort({ "MX:co.com": M365_MX }), "co.com");
+  assert.equal(r.verdict, "missing");
+  assert.equal(r.reason, "m365-no-cnames");
+  passed++; console.log("ok - dkim: m365 nothing published -> missing/no-cnames");
+
+  // m365 CNAMEs installed but chain dead -> missing/cname-dead (and NEVER ok:
+  // CNAME presence does not prove signing)
+  r = await checkDkimWith(
+    fakePort({
+      "MX:co.com": M365_MX,
+      "CNAME:selector1._domainkey.co.com": { cname: ["selector1-co-com._domainkey.t.onmicrosoft.com"] },
+      "CNAME:selector2._domainkey.co.com": { cname: ["selector2-co-com._domainkey.t.onmicrosoft.com"] },
+    }),
+    "co.com"
+  );
+  assert.equal(r.verdict, "missing");
+  assert.equal(r.reason, "m365-cname-dead");
+  passed++; console.log("ok - dkim: m365 cname without keys -> missing/cname-dead");
+
+  // google ok via split TXT concatenation
+  r = await checkDkimWith(
+    fakePort({
+      "MX:g.com": GOOGLE_MX,
+      "TXT:google._domainkey.g.com": VALID_KEY,
+    }),
+    "g.com"
+  );
+  assert.equal(r.verdict, "ok");
+  assert.equal(r.reason, "google-selector-live");
+  passed++; console.log("ok - dkim: google split-chunk key -> ok");
+
+  // google authoritative absence -> missing
+  r = await checkDkimWith(fakePort({ "MX:g.com": GOOGLE_MX }), "g.com");
+  assert.equal(r.verdict, "missing");
+  assert.equal(r.reason, "google-absent");
+  passed++; console.log("ok - dkim: google absent -> missing");
+
+  // revoked key (empty p=) with clean canary -> missing/key-revoked
+  r = await checkDkimWith(
+    fakePort({
+      "MX:g.com": GOOGLE_MX,
+      "TXT:google._domainkey.g.com": { txt: [["v=DKIM1; p="]] },
+    }),
+    "g.com"
+  );
+  assert.equal(r.verdict, "missing");
+  assert.equal(r.reason, "key-revoked");
+  passed++; console.log("ok - dkim: empty p= -> missing/key-revoked");
+
+  // wildcard zone fakes the revocation -> unknown, never missing
+  const wildcardTable: Record<string, FakeAnswer> = {
+    "MX:w.com": GOOGLE_MX,
+    "TXT:google._domainkey.w.com": { txt: [["v=DKIM1; p="]] },
+  };
+  const wildPort = fakePort(wildcardTable);
+  const origTxt = wildPort.resolveTxt.bind(wildPort);
+  wildPort.resolveTxt = (name) =>
+    name.startsWith("xl-dkim-canary-")
+      ? Promise.resolve([["v=DKIM1; p="]])
+      : origTxt(name);
+  r = await checkDkimWith(wildPort, "w.com");
+  assert.equal(r.verdict, "unknown");
+  assert.equal(r.reason, "wildcard-dns");
+  passed++; console.log("ok - dkim: wildcard zone vetoes revocation -> unknown");
+
+  // wildcard zone also vetoes ok
+  const wildOk = fakePort({ "MX:w.com": GOOGLE_MX, "TXT:google._domainkey.w.com": VALID_KEY });
+  const origTxt2 = wildOk.resolveTxt.bind(wildOk);
+  wildOk.resolveTxt = (name) =>
+    name.startsWith("xl-dkim-canary-") ? Promise.resolve([["parked"]]) : origTxt2(name);
+  r = await checkDkimWith(wildOk, "w.com");
+  assert.equal(r.verdict, "unknown");
+  assert.equal(r.reason, "wildcard-dns");
+  passed++; console.log("ok - dkim: wildcard zone vetoes ok -> unknown");
+
+  // mixed providers mid-migration -> unknown, never missing
+  r = await checkDkimWith(
+    fakePort({
+      "MX:m.com": { mx: [
+        { exchange: "co-com.mail.protection.outlook.com", priority: 10 },
+        { exchange: "aspmx.l.google.com", priority: 20 },
+      ] },
+    }),
+    "m.com"
+  );
+  assert.equal(r.verdict, "unknown");
+  assert.equal(r.reason, "mx-mixed");
+  passed++; console.log("ok - dkim: mixed MX -> unknown/mx-mixed");
+
+  // foreign gateway alongside a Google leftover -> other, never missing
+  r = await checkDkimWith(
+    fakePort({
+      "MX:p.com": { mx: [
+        { exchange: "mx0a-000.pphosted.com", priority: 10 },
+        { exchange: "aspmx.l.google.com", priority: 20 },
+      ] },
+    }),
+    "p.com"
+  );
+  assert.equal(r.provider, "other");
+  assert.equal(r.verdict, "unknown");
+  passed++; console.log("ok - dkim: gateway + leftover google MX -> other/unknown");
+
+  // indeterminate selector error -> unknown, never missing
+  r = await checkDkimWith(
+    fakePort({
+      "MX:t.com": GOOGLE_MX,
+      "TXT:google._domainkey.t.com": { err: "ETIMEOUT" },
+    }),
+    "t.com"
+  );
+  assert.equal(r.verdict, "unknown");
+  assert.equal(r.reason, "dns-error");
+  passed++; console.log("ok - dkim: selector timeout -> unknown/dns-error");
+
+  // no MX / null MX -> unknown/no-mx
+  r = await checkDkimWith(fakePort({ "MX:n.com": { err: "ENODATA" } }), "n.com");
+  assert.equal(r.reason, "no-mx");
+  r = await checkDkimWith(fakePort({ "MX:n.com": { mx: [{ exchange: ".", priority: 0 }] } }), "n.com");
+  assert.equal(r.reason, "no-mx");
+  passed++; console.log("ok - dkim: no MX / null MX -> unknown/no-mx");
+
+  // other provider, common-selector hit -> ok
+  r = await checkDkimWith(
+    fakePort({
+      "MX:o.com": { mx: [{ exchange: "mail.o.com", priority: 10 }] },
+      "TXT:default._domainkey.o.com": VALID_KEY,
+    }),
+    "o.com"
+  );
+  assert.equal(r.verdict, "ok");
+  assert.equal(r.reason, "other-selector-live");
+  passed++; console.log("ok - dkim: other provider selector hit -> ok");
+
+  // other provider, all misses -> unknown (absence proves nothing)
+  r = await checkDkimWith(
+    fakePort({ "MX:o.com": { mx: [{ exchange: "mail.o.com", priority: 10 }] } }),
+    "o.com"
+  );
+  assert.equal(r.verdict, "unknown");
+  assert.equal(r.reason, "other-provider");
+  passed++; console.log("ok - dkim: other provider no hits -> unknown");
+
+  // malformed input -> unknown, no queries assumed
+  r = await checkDkimWith(fakePort({}), "not a domain");
+  assert.equal(r.verdict, "unknown");
+  passed++; console.log("ok - dkim: malformed domain -> unknown");
+})();
+
+// ---- reverify binding ----
+ok("reverify binding is deterministic and email-scoped", () => {
+  process.env.SESSION_COOKIE_SECRET ??= "x".repeat(32);
+  assert.equal(reverifyBinding("A@b.com"), reverifyBinding("a@B.COM"));
+  assert.notEqual(reverifyBinding("a@b.com"), reverifyBinding("c@b.com"));
+  assert.match(reverifyBinding("a@b.com"), /^[0-9a-f]{64}$/);
+});
+
+console.log(`\nroadmap-tests (incl. dkim): ${passed} checks passed`);

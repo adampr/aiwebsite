@@ -29,6 +29,15 @@ export const ROADMAP_CAPS = {
   directoryWritesPerUserPerHour: 60,
   docWritesPerUserPerHour: 6,
   portalReadsPerUserPerHour: 240,
+  // DKIM step 05 (§5.18 round 2). Status reads get their own key (a cache
+  // miss triggers outbound DNS); the per-company recheck cap bounds a
+  // tenant's total DNS traffic regardless of headcount; the email caps are
+  // tight because the route sends mail.
+  dkimStatusReadsPerUserPerHour: 60,
+  dkimRechecksPerUserPerHour: 6,
+  dkimRechecksPerCompanyPerHour: 12,
+  dkimEmailsPerUserPerDay: 3,
+  dkimEmailsPerCompanyPerDay: 10,
   // Governance doc upload (nginx allows 12m server-wide; this is the
   // route-enforced true limit).
   docUploadMaxBytes: 10_000_000,
@@ -110,6 +119,19 @@ export const ROADMAP_STEPS = [
     blurb:
       "Watch builders emerge: published work counted per person in your " +
       "directory. Published cards only, never drafts or attempts.",
+  },
+  // Step 05 (§5.18 round 2): a verdict step, not a task step. It has NO
+  // (steps) page - the hub panel opens a dialog - so href is a hub anchor
+  // (the caching gate bans new child paths). The runway gives it its own
+  // states (attention/unconfirmed) and excludes it from frontier logic.
+  {
+    key: "dkim",
+    num: "05",
+    title: "Verified Email",
+    href: "/roadmap#step-dkim",
+    blurb:
+      "Prove mail from your domain is really yours. DKIM signing lets " +
+      "email submissions from your team reach your roadmap directly.",
   },
 ] as const;
 

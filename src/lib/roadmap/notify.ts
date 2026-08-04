@@ -116,6 +116,28 @@ export async function notifyRequestApproved(opts: {
   });
 }
 
+/** DKIM setup instructions to the SESSION'S OWN address only (§5.18 step
+ * 05). Returns the send outcome: this is the one notify whose result the
+ * user is told about (the dialog renders "Sent to {email}" or a failure),
+ * so best-effort fire-and-forget would lie to them. */
+export async function notifyDkimInstructions(opts: {
+  to: string;
+  companyDomain: string;
+  instructionsText: string;
+}): Promise<boolean> {
+  return sendRoadmapEmail({
+    to: [opts.to.toLowerCase()],
+    subject: `DKIM setup steps for ${opts.companyDomain}`,
+    text: [
+      `Here are the DKIM setup steps you asked for from your AI Roadmap.`,
+      ``,
+      opts.instructionsText,
+      ``,
+      `When the DNS change is in, open ${SITE}/roadmap and hit Recheck on the Verified Email step.`,
+    ].join("\n"),
+  });
+}
+
 /** Import summary to the triggering admin plus the owner (§9.7). */
 export async function notifyApolloImport(opts: {
   adminEmail: string;

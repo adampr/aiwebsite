@@ -41,7 +41,10 @@ export {
   SHARED_TENANT_SUFFIXES,
   isCompanyEligibleDomain,
 } from "@/lib/roadmap/domains";
-import { isCompanyEligibleDomain } from "@/lib/roadmap/domains";
+import {
+  isCompanyEligibleDomain,
+  RESERVED_DOMAINS as RESERVED_DOMAINS_LIST,
+} from "@/lib/roadmap/domains";
 
 /**
  * Is this session's email claim VERIFIED enough to be a tenancy key?
@@ -83,6 +86,97 @@ export type RoadmapPrincipal = {
 export type RoadmapDenial =
   | { ok: false; reason: "unauthenticated" }
   | { ok: false; reason: "untrusted_provider"; email: string };
+
+/** Providers eligible for the SILENT re-verify redirect (§5.18 round 2). A
+ * constant in code, google-only: Microsoft joins ONLY after all three gates
+ * hold: (1) the Entra optional claims (email + xms_edov) are configured on
+ * the app registration, (2) an observed real login has minted mv=true, and
+ * (3) the reverify route grows a Microsoft authorize-URL arm. */
+export const SILENT_REVERIFY_PROVIDERS = ["google"] as const;
+
+/**
+ * Staff = the /rfp trust anchor: provider google AND exact-label xl.net
+ * (src/lib/rfp/access.ts header for the full argument; provider rides under
+ * the session HMAC and is set server-side, so it is not client-supplied).
+ * mv is NOT required. That is safe ONLY because the staff surface renders
+ * zero tenant data and grants zero authority: it extends the no-mv
+ * google+xl.net trust from ADMIN_EMAIL to the whole staff domain purely to
+ * pick an EXPLAINER screen. INVARIANT: anything added to the staff panel
+ * that reads data or performs an action must re-derive its own gate
+ * (requireGlobalAdmin or a trusted principal), never this predicate.
+ */
+export function isStaffSession(s: SessionData): boolean {
+  return isRfpProvider(s.provider) && emailDomain(s.email) === "xl.net";
+}
+
+export type RoadmapHubView =
+  | { kind: "anonymous" }
+  | { kind: "staff"; email: string; showAdminLink: boolean }
+  | {
+      kind: "unverified";
+      email: string;
+      provider: string;
+      /** May the hub fire the one-shot silent re-verify redirect? */
+      silentEligible: boolean;
+      /** The aix_rv guard cookie is present: an attempt already ran. */
+      attempted: boolean;
+      /** xl.net/ai.xl.net: the email-link option is structurally dead
+       * (magic links are never minted for staff domains) - render the
+       * Google-only verify screen. */
+      reservedDomain: boolean;
+    }
+  | { kind: "principal"; principal: RoadmapPrincipal };
+
+/**
+ * HUB-RENDER classification ONLY (§5.18 round 2, the re-login fix). Never
+ * used by APIs, step pages, or server actions - those keep the require*
+ * guards and the strict mv gate. Ordering is the fix: staff BEFORE the
+ * trusted check (catches pre-hardening staff sessions) AND before the
+ * principal path (xl.net is RESERVED, so a trusted staff session would
+ * otherwise land in the "use your work email" explainer).
+ */
+export async function readRoadmapHubView(): Promise<RoadmapHubView> {
+  const session = await readSession(siteConfig);
+  if (!session) return { kind: "anonymous" };
+  if (isStaffSession(session)) {
+    return {
+      kind: "staff",
+      email: session.email,
+      showAdminLink: isAdmin(session.email),
+    };
+  }
+  if (!isTrustedSession(session)) {
+    const { cookies } = await import("next/headers");
+    const jar = await cookies();
+    const domain = emailDomain(session.email);
+    return {
+      kind: "unverified",
+      email: session.email,
+      provider: session.provider,
+      silentEligible: (SILENT_REVERIFY_PROVIDERS as readonly string[]).includes(
+        session.provider?.trim().toLowerCase() ?? ""
+      ),
+      attempted: jar.get("aix_rv") !== undefined,
+      reservedDomain:
+        domain !== null &&
+        (RESERVED_DOMAINS_LIST as readonly string[]).includes(domain),
+    };
+  }
+  const result = await readRoadmapPrincipal();
+  if (!result.ok) {
+    // isTrustedSession passed above, so the only reachable denial shapes are
+    // race artifacts; render them as unverified rather than crash.
+    return {
+      kind: "unverified",
+      email: session.email,
+      provider: session.provider,
+      silentEligible: false,
+      attempted: true,
+      reservedDomain: false,
+    };
+  }
+  return { kind: "principal", principal: result.principal };
+}
 
 /**
  * The single decision. Returns the principal or a typed denial; callers

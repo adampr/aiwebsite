@@ -54,6 +54,20 @@
   animation: rmp-pulse 2.4s ease-in-out infinite;
 }
 
+/* Step 05 attention (DKIM verdict "missing"): a steady warn-colored outline.
+   Deliberately NO pulse - pulsing is the frontier's invitation and stays
+   unique to it; attention is a flag, not a heartbeat. */
+.rmp-node--attention {
+  border-color: var(--xl-warn);
+  outline: 1px solid var(--xl-warn);
+  outline-offset: 2px;
+}
+
+/* Step 05 unconfirmed (DKIM verdict "unknown") intentionally has NO node
+   rule: it reuses the dim/neutral base (.rmp-node), and the badge text plus
+   the sr-only narration carry the state. Same for .rmp-state--unconfirmed
+   and .rmp-state--dim: the neutral .rmp-state base IS their styling. */
+
 /* Teaser zero state: node 01 shimmers as the invitation. */
 .rmp-node--shimmer {
   border-color: var(--xl-light-dim);
@@ -131,6 +145,11 @@
   box-shadow: 0 0 8px var(--xl-light-glow);
 }
 
+.rmp-state--attention {
+  color: var(--xl-warn);
+  border-color: var(--xl-warn);
+}
+
 /* Segments: one luminous hairline; a segment lights only when BOTH adjacent
    steps are done. Mobile: vertical left rail. */
 .rmp-seg {
@@ -160,8 +179,15 @@
   }
 }
 
-/* Desktop: horizontal line through the four diamonds. */
-@media (min-width: 768px) {
+/* Desktop: horizontal line through the five diamonds. Five-node fit: the
+   breakpoint moved md (768px) -> lg (1024px) when step 05 landed, and
+   .rmp-stop-text tightened 11rem -> 9rem. Math: 5 stops x 9rem max-width
+   (border-box, padding included) + 4 segments x 2rem min-width = 53rem =
+   848px. The narrowest horizontal container is the teaser's max-w-4xl wrap
+   (56rem = 896px), and at the 1024px breakpoint the viewport minus page
+   gutters still exceeds 848px, so the runway never overflows. Below 1024px
+   the vertical rail (base styles above) carries all five stops. */
+@media (min-width: 1024px) {
   .rmp-runway {
     flex-direction: row;
     align-items: flex-start;
@@ -181,7 +207,7 @@
     align-items: center;
     row-gap: 0.35rem;
     text-align: center;
-    max-width: 11rem;
+    max-width: 9rem;
     padding: 0 0.75rem;
   }
 
@@ -250,6 +276,28 @@
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* ---- Step 05 dialog ----------------------------------------------------- */
+
+/* Native <dialog> shell for the DKIM instructions (§5.18 round 2). Same
+   recipe idiom as the /work submission dialog (futurism.css .work-dialog):
+   Tailwind's reset styles neither the element nor its ::backdrop, so the
+   shell lives here. Slightly wider (38rem) for the numbered instructions. */
+.rmp-dialog {
+  background: var(--xl-bg-2);
+  color: inherit;
+  border: 1px solid var(--xl-line);
+  padding: var(--sp-8);
+  width: min(calc(100vw - 2rem), 38rem);
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto; /* one scrolling unit; no nested scroll traps on phones */
+  margin: auto; /* native top-layer centering */
+}
+
+.rmp-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
 }
 
 /* ---- Small shared bits ------------------------------------------------- */

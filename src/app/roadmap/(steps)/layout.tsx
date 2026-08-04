@@ -40,13 +40,13 @@ export default async function RoadmapStepsLayout({
   const gate = await requireRoadmapPage("/roadmap");
 
   if (!gate.ok) {
-    // Untrusted provider: the hub owns the full "Confirm it is you" flow;
-    // this shell explains and points there. No company data, not even a
-    // name.
+    // Untrusted provider: the hub owns the full "One last check"
+    // verification flow; this shell explains and points there. No company
+    // data, not even a name.
     return (
       <Denial
-        title="Confirm it is you"
-        body="Your sign-in method could not verify your email address, and company roadmaps are private to verified company addresses. The roadmap page has two quick ways to confirm."
+        title="One last check"
+        body="You are signed in and your session is fine, but we confirm once that your email address really belongs to your account before showing company data. The roadmap page runs that quick check."
       />
     );
   }
