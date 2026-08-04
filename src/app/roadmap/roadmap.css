@@ -1,9 +1,12 @@
 /* Your AI Roadmap (§5.18) presentation. Every class is rmp-prefixed; this
    file is imported by src/app/roadmap/page.tsx and the (steps) layout, never
-   globals.css. Color grammar from /governance: cyan (--xl-light) = in
-   motion, sand (--xl-sand) = done; state is NEVER color-only (a bare mono
-   state word sits beside every node; signed-in stops are links whose visible
-   text narrates itself).
+   globals.css. ROUND-4 NODE GRAMMAR (owner ruling; the runway node IS the
+   state, no visible words): hollow = not started, static cyan outline = up
+   next, pulsing cyan<->flare fill = working, solid cyan = done/live, warn
+   double-diamond = attention. Sr-only spans inside the stop links carry
+   state non-visually (never color-only, WCAG 1.4.1). NOTE the deliberate
+   grammar exception: /governance uses sand = done; this runway went all-cyan
+   per the owner's four-color ladder.
 
    CASCADE NOTE (round 3, refuter-verified): this file is UNLAYERED and so
    beats futurism.css, which is imported layer(base). Never set a `transition`
@@ -60,10 +63,17 @@ a.rmp-stop:focus-visible .rmp-stop-title {
   color: var(--xl-light);
 }
 
+/* Hover/focus = GEOMETRY + title color, never node color: state cyan lives
+   ON the node now (round 4), and in light theme --xl-light-dim is visually
+   the same dark cyan as --xl-light, so any hover repaint would impersonate
+   the up-next outline. The 160ms transition lives here (no .rise on nodes,
+   so it is cascade-safe). */
+.rmp-node {
+  transition: transform 160ms var(--ease-drift);
+}
 a.rmp-stop:hover .rmp-node,
 a.rmp-stop:focus-visible .rmp-node {
-  border-color: var(--xl-light);
-  box-shadow: 0 0 10px var(--xl-light-glow);
+  transform: rotate(45deg) scale(1.3);
 }
 
 a.rmp-stop:focus-visible {
@@ -88,29 +98,69 @@ a.rmp-stop:focus-visible {
   background: var(--xl-bg-1);
 }
 
-.rmp-node--done {
-  border-color: var(--xl-sand);
-  background: var(--xl-sand);
-  box-shadow: 0 0 12px var(--xl-sand-glow);
-}
-
+/* Round 4 node-color ladder (owner ruling: the node IS the state; no
+   visible words - sr-only spans carry it non-visually):
+     hollow neutral = not started / unconfirmed
+     static cyan outline + halo = up next (pulse now means working ONLY)
+     pulsing cyan<->flare fill = working
+     solid cyan = done AND live (Live vs Done is sr-only; the glow width
+       difference is flourish, never a claimed differentiator)
+   Sand leaves the runway (grammar exception vs /governance noted where the
+   old comment claimed sand = done). */
+.rmp-node--done,
 .rmp-node--live {
   border-color: var(--xl-light);
   background: var(--xl-light);
-  box-shadow: 0 0 14px var(--xl-light-glow);
+  box-shadow: 0 0 12px var(--xl-light-glow);
+}
+.rmp-node--live {
+  box-shadow: 0 0 16px 2px var(--xl-light-glow);
 }
 
 .rmp-node--upnext {
+  /* 2px border: in light theme the hue gap vs the neutral outline is small
+     at 11px, so weight is the second cue (refuter finding). */
   border-color: var(--xl-light);
-  animation: rmp-pulse 2.4s ease-in-out infinite;
+  border-width: 2px;
+  box-shadow: 0 0 8px var(--xl-light-glow);
 }
 
-/* DKIM-only Initializing (round 3): the 800ms status race timed out and a
-   detached check is still running. Dim-cyan border + shimmer; static under
-   reduced motion. */
-.rmp-node--init {
-  border-color: var(--xl-light-dim);
-  animation: rmp-shimmer 3.2s ease-in-out infinite;
+/* WORKING (round 4): directory import in flight (island-toggled
+   data-working; an ATTRIBUTE, never a class - React refresh would wipe a
+   classList mutation of its managed className) or the dkim check running
+   (server-known .rmp-node--working). Pulses fill between cyan and the
+   near-white flare token (futurism.css; NEVER literal #fff - invisible on
+   light paper). data-gave-up (dkim island, poll ended without a verdict)
+   demotes to the static form; scoped to --working so it is inert after any
+   verdict refresh. Static form (also reduced motion): solid cyan + offset
+   dim ring - distinct from done (no ring), attention (warn ring, hollow),
+   and up next (hollow). */
+.rmp-node--working,
+.rmp-node[data-working] {
+  border-color: var(--xl-light);
+  background: var(--xl-light);
+  animation: rmp-node-work 1.8s ease-in-out infinite;
+}
+@keyframes rmp-node-work {
+  0%,
+  100% {
+    background: var(--xl-light);
+    border-color: var(--xl-light);
+    box-shadow: 0 0 10px var(--xl-light-glow);
+  }
+  50% {
+    background: var(--xl-flare);
+    border-color: var(--xl-flare);
+    box-shadow: 0 0 16px 3px var(--xl-flare-glow);
+  }
+}
+.rmp-node--working[data-gave-up] {
+  animation: none;
+  background: var(--xl-light);
+  border-color: var(--xl-light);
+  outline: 1px solid var(--xl-light-dim);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
 /* Step 05 attention (DKIM verdict "missing"): a steady warn-colored outline.
@@ -122,37 +172,11 @@ a.rmp-stop:focus-visible {
   outline-offset: 2px;
 }
 
-/* Step 05 unconfirmed (DKIM verdict "unknown", check completed) intentionally
-   has NO node rule: it reuses the dim/neutral base (.rmp-node), and the state
-   word carries the state (.rmp-state--unconfirmed dims the word itself).
-   .rmp-state--dim keeps the neutral .rmp-state base as its styling. */
-
-/* Teaser zero state: node 01 shimmers as the invitation. */
-.rmp-node--shimmer {
-  border-color: var(--xl-light-dim);
-  animation: rmp-shimmer 3.2s ease-in-out infinite;
-}
-
-@keyframes rmp-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 var(--xl-light-glow);
-  }
-  50% {
-    box-shadow: 0 0 14px 3px var(--xl-light-glow);
-  }
-}
-
-@keyframes rmp-shimmer {
-  0%,
-  100% {
-    opacity: 0.45;
-  }
-  50% {
-    opacity: 1;
-    box-shadow: 0 0 10px var(--xl-light-glow);
-  }
-}
+/* Step 05 unconfirmed (DKIM verdict "unknown", check completed)
+   intentionally has NO node rule: it reuses the hollow neutral base; the
+   sr-only span says "Unconfirmed". The teaser's node 01 wears the STATIC
+   up-next treatment (the old shimmer read as activity; pulse now
+   exclusively means working). */
 
 .rmp-stop-text {
   display: flex;
@@ -185,27 +209,6 @@ a.rmp-stop:focus-visible {
   letter-spacing: 0.22em;
   color: var(--xl-text-faint);
   white-space: nowrap;
-}
-
-.rmp-state--upnext {
-  color: var(--xl-light);
-}
-
-.rmp-state--done {
-  color: var(--xl-sand);
-}
-
-.rmp-state--live {
-  color: var(--xl-light);
-  text-shadow: 0 0 10px var(--xl-light-glow);
-}
-
-.rmp-state--attention {
-  color: var(--xl-warn);
-}
-
-.rmp-state--unconfirmed {
-  color: var(--xl-text-dim);
 }
 
 /* Initializing (DKIM island + directory busy card + dkim runway node): the
@@ -245,8 +248,10 @@ a.rmp-stop:focus-visible {
 }
 
 .rmp-seg--lit {
-  background: var(--xl-sand);
-  box-shadow: 0 0 8px var(--xl-sand-glow);
+  /* Round 4: lit segments follow the node ladder (sand -> cyan) so the
+     completed lightline reads as one hue. */
+  background: var(--xl-light);
+  box-shadow: 0 0 8px var(--xl-light-glow);
   transform: scaleY(0);
   transform-origin: top;
   animation: rmp-grow-y 0.5s ease forwards;
@@ -330,9 +335,25 @@ a.rmp-stop:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rmp-node--upnext,
-  .rmp-node--shimmer,
-  .rmp-node--init,
+  /* Nodes: animation off ONLY. transform: none here was a latent bug - it
+     clobbered the base rotate(45deg) and rendered the animated nodes as
+     SQUARES (round-4 refuter finding). Segments alone drop their transform
+     (their animation IS a transform). */
+  .rmp-node,
+  .rmp-node--working,
+  .rmp-node[data-working] {
+    animation: none;
+    transition: none;
+  }
+  .rmp-node--working,
+  .rmp-node[data-working] {
+    /* Static working form: solid cyan + offset dim ring. */
+    background: var(--xl-light);
+    border-color: var(--xl-light);
+    outline: 1px solid var(--xl-light-dim);
+    outline-offset: 2px;
+    box-shadow: none;
+  }
   .rmp-seg--lit {
     animation: none;
     transform: none;

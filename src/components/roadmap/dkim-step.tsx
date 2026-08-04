@@ -127,6 +127,19 @@ export function DkimStep({
     })();
   }
 
+  // Round 4: the runway's dkim node (#rmp-node-dkim, server-rendered with
+  // .rmp-node--working while timedOut) must stop PROMISING activity once the
+  // poll episode ends without a verdict: stamp data-gave-up, which demotes
+  // the pulse to the static working form. The CSS selector is scoped to
+  // .rmp-node--working, so a stale stamp is inert after any verdict refresh;
+  // an explicit Recheck clears gaveUp and the stamp with it.
+  useEffect(() => {
+    const node = document.getElementById("rmp-node-dkim");
+    if (!node) return;
+    if (initializing && gaveUp) node.setAttribute("data-gave-up", "");
+    else node.removeAttribute("data-gave-up");
+  }, [initializing, gaveUp]);
+
   // Arm the poll once per mount when the SSR state is already Initializing.
   // useRef StrictMode guard; deliberately no cleanup cancel (StrictMode's
   // immediate unmount would kill the only episode).
@@ -279,7 +292,9 @@ export function DkimStep({
       {initializing ? (
         <div className="mt-4">
           <span className="rmp-state rmp-state--init">Initializing...</span>
-          <p className="mt-3 text-sm">
+          {/* role=status: the one announcement channel for the check's
+              resolution (WCAG 4.1.3); the runway is never a live region. */}
+          <p className="mt-3 text-sm" role="status">
             {gaveUp
               ? "Still checking. Reload this page in a moment for the result."
               : "Checking your domain's setup. Reload this page in a moment for the result."}

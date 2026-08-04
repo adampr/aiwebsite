@@ -86,6 +86,36 @@ export function DirectoryCard(props: Props) {
   // refresh, ending the busy state even though `kicked` stays true).
   const busy = kicked && !props.everImported && props.people === 0;
 
+  // Round 4: while busy, the RUNWAY's directory node pulses too. The node is
+  // server-owned DOM (#rmp-node-directory), so the toggle is a data
+  // ATTRIBUTE, never a class (React refresh would wipe a classList mutation
+  // of its managed className), and the sr span (#rmp-sr-directory) is
+  // updated via the existing TEXT NODE's nodeValue - NEVER textContent,
+  // which orphans React's text fiber and breaks later refresh updates. The
+  // restore is guarded: if a refresh already rewrote the phrase (governance
+  // completing mid-import, or the import finishing), the fresh server text
+  // must win. Known accepted edge: a concurrent refresh mid-import can
+  // reclaim the sr phrase while the node still pulses.
+  useEffect(() => {
+    const node = document.getElementById("rmp-node-directory");
+    const sr = document.getElementById("rmp-sr-directory");
+    const srText = sr?.firstChild;
+    const WORKING = ", Checking now, import running";
+    if (busy) {
+      node?.setAttribute("data-working", "");
+      if (srText?.nodeType === Node.TEXT_NODE) srText.nodeValue = WORKING;
+    }
+    return () => {
+      node?.removeAttribute("data-working");
+      if (
+        srText?.nodeType === Node.TEXT_NODE &&
+        srText.nodeValue === WORKING
+      ) {
+        srText.nodeValue = ", Not started";
+      }
+    };
+  }, [busy]);
+
   if (busy) {
     return (
       <div className="panel rise rmp-card" aria-busy="true">
@@ -94,7 +124,9 @@ export function DirectoryCard(props: Props) {
           <span className="rmp-state rmp-state--init">Initializing...</span>
         </div>
         <h3 className="mt-4">{props.title}</h3>
-        <p className="mt-4 text-sm">
+        {/* role=status: the one announcement channel for the import's
+            resolution (WCAG 4.1.3); the runway is never a live region. */}
+        <p className="mt-4 text-sm" role="status">
           Searching Apollo, a business directory, for people listed at{" "}
           {props.domain}.
         </p>
