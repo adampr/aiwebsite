@@ -79,7 +79,7 @@ const FAQ = [
   },
   {
     q: "What happens to my data?",
-    a: "Your project is deleted 30 days after your last activity, drafts and research included, and every visit resets that clock. You can download everything before then.",
+    a: "Your project is deleted 30 days after your last activity, drafts and research included, and every visit resets that clock. You can download everything before then. If you attach a copy of a document to your company's AI Roadmap, that copy belongs to the company workspace and is kept until an administrator removes it.",
   },
   {
     q: "What if Tron gets something wrong?",
