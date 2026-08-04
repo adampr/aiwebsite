@@ -344,4 +344,56 @@ await (async () => {
   console.log("ok - dkim: strict SES inbound-smtp vendor matcher (3 pins)");
 })();
 
+await (async () => {
+  // "resend" in OTHER_SELECTORS: ESP key published under SES inbound MX
+  // (the real itsupportchicago.net topology) -> ok, and a valid hit renders
+  // without the mxVendor copy hint (verdict is no longer Amazon-unverifiable).
+  const SES_MX = { mx: [{ exchange: "inbound-smtp.us-east-1.amazonaws.com", priority: 10 }] };
+  let r = await checkDkimWith(
+    fakePort({ "MX:r.com": SES_MX, "TXT:resend._domainkey.r.com": VALID_KEY }),
+    "r.com"
+  );
+  assert.equal(r.verdict, "ok");
+  assert.equal(r.reason, "other-selector-live");
+  assert.equal(r.selector, "resend");
+  assert.equal(r.mxVendor, undefined);
+  passed++; console.log("ok - dkim: resend selector hit under SES MX -> ok");
+
+  // wildcard canary still vetoes a resend hit -> unknown, never ok
+  const wildResend = fakePort({ "MX:r.com": SES_MX, "TXT:resend._domainkey.r.com": VALID_KEY });
+  const origTxt3 = wildResend.resolveTxt.bind(wildResend);
+  wildResend.resolveTxt = (name) =>
+    name.startsWith("xl-dkim-canary-") ? Promise.resolve([["parked"]]) : origTxt3(name);
+  r = await checkDkimWith(wildResend, "r.com");
+  assert.equal(r.verdict, "unknown");
+  assert.equal(r.reason, "wildcard-dns");
+  passed++; console.log("ok - dkim: wildcard zone vetoes resend hit -> unknown");
+
+  // revoked resend key (p= empty) in the other lane -> unknown/other-provider
+  // (the other lane has no revoked branch; absence proves nothing there)
+  r = await checkDkimWith(
+    fakePort({ "MX:r.com": SES_MX, "TXT:resend._domainkey.r.com": { txt: [["v=DKIM1; p="]] } }),
+    "r.com"
+  );
+  assert.equal(r.verdict, "unknown");
+  assert.equal(r.reason, "other-provider");
+  // Pinned: this path still carries the vendor hint, so the dialog shows the
+  // Amazon console copy for a Resend customer mid key rotation. Known and
+  // accepted (the other lane has no revoked branch); a change that flips this
+  // copy on or off should be deliberate, not incidental.
+  assert.equal(r.mxVendor, "amazon");
+  passed += 2;
+  console.log("ok - dkim: revoked resend key -> unknown, never missing (+ amazon copy pin)");
+
+  // pure-M365 MX with a published resend key: OTHER_SELECTORS must NOT be
+  // probed outside the other lane -> the M365 verdict is untouched (missing)
+  r = await checkDkimWith(
+    fakePort({ "MX:co.com": M365_MX, "TXT:resend._domainkey.co.com": VALID_KEY }),
+    "co.com"
+  );
+  assert.equal(r.verdict, "missing");
+  assert.equal(r.reason, "m365-no-cnames");
+  passed++; console.log("ok - dkim: resend key does not green an M365 tenant");
+})();
+
 console.log(`\nroadmap-tests (incl. dkim): ${passed} checks passed`);

@@ -49,6 +49,7 @@ export function dkimCopy(check: DkimCheck): DkimCopy {
               ]
             : [
                 `Confirm with your mail provider that DKIM signing is enabled for ${d}.`,
+                `If this key belongs to a sending service (such as Resend or SendGrid), it covers the mail that service sends. Mail your team sends from its own mailboxes needs its own signing; confirm that with your mailbox provider too.`,
               ],
       outro:
         "Once signing is on, email submissions from your domain reach your company's roadmap directly.",

@@ -283,7 +283,7 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
       status.dkim.timedOut === true
         ? "Checking now"
         : status.dkim.verdict === "ok"
-          ? "DKIM verified"
+          ? "DKIM records live"
           : status.dkim.verdict === "missing"
             ? "DKIM not set up yet"
             : "Needs a manual check",

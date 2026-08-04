@@ -107,7 +107,7 @@ const M365_MX_SUFFIXES = [
 ];
 const GOOGLE_MX_SUFFIXES = [".google.com", ".googlemail.com"];
 
-const OTHER_SELECTORS = ["default", "dkim", "s1", "s2", "k1", "mail"];
+const OTHER_SELECTORS = ["default", "dkim", "s1", "s2", "k1", "mail", "resend"];
 
 type KeyState = "valid" | "revoked" | "absent" | "indeterminate";
 
