@@ -173,8 +173,16 @@ export function DirectoryCard(props: Props) {
     // ", Done"...) instead of a hardcoded literal (both sessions converged
     // on this fix; a recheck can run on a Done/Live directory).
     let prev: string | null = null;
+    // The hover tooltip reads the CELL's data-state (round 6); swap it in
+    // step with the pulse and restore the captured prior value.
+    const cell = node?.closest(".rmp-node-cell");
+    let prevTip: string | null = null;
     if (working) {
       node?.setAttribute("data-working", "");
+      if (cell) {
+        prevTip = cell.getAttribute("data-state");
+        cell.setAttribute("data-state", "Checking now");
+      }
       if (srText?.nodeType === Node.TEXT_NODE) {
         prev = srText.nodeValue;
         srText.nodeValue = WORKING;
@@ -182,6 +190,9 @@ export function DirectoryCard(props: Props) {
     }
     return () => {
       node?.removeAttribute("data-working");
+      if (cell && cell.getAttribute("data-state") === "Checking now" && prevTip !== null) {
+        cell.setAttribute("data-state", prevTip);
+      }
       if (
         srText?.nodeType === Node.TEXT_NODE &&
         srText.nodeValue === WORKING &&

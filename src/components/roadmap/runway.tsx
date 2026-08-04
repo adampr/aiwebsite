@@ -194,7 +194,17 @@ export function RoadmapRunway({ status }: { status: RoadmapStatus | null }) {
             <Fragment key={step.key}>
               {i > 0 && segFor(i, false)}
               <Link href={step.href} className="rmp-stop">
-                <span className="rmp-node-cell" aria-hidden="true">
+                {/* data-state feeds the pure-CSS hover/focus tooltip (round
+                    6, owner ask): the same phrase assistive tech hears. The
+                    cell is aria-hidden, so the tooltip never duplicates the
+                    sr span. The DirectoryCard island swaps it to "Checking
+                    now" alongside data-working and restores the prior value
+                    (same capture pattern as the sr text). */}
+                <span
+                  className="rmp-node-cell"
+                  aria-hidden="true"
+                  data-state={srStateText(states[i])}
+                >
                   <span id={nodeId} className={nodeClass(states[i])} />
                 </span>
                 <span className="rmp-stop-text">

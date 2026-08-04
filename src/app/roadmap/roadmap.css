@@ -88,6 +88,49 @@ a.rmp-stop:focus-visible {
   justify-content: center;
   height: 1.5rem;
   width: 1.5rem;
+  position: relative;
+}
+
+/* State tooltip (round 6, owner ask): hovering or focusing a stop pops the
+   state phrase over the diamond. Pure CSS off data-state (set server-side;
+   the DirectoryCard island swaps it while its import runs). Lives on the
+   CELL, not the node: the node is rotated 45deg and would rotate the text.
+   The cell is aria-hidden, so this is presentation only - the sr span in
+   the stop link is the accessible channel. Vertical rail (mobile): to the
+   RIGHT of the node (above would clip at the container edge); horizontal
+   (lg): centered above. */
+.rmp-node-cell[data-state]::after {
+  content: attr(data-state);
+  position: absolute;
+  left: calc(100% + 0.6rem);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  padding: 0.3rem 0.55rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.625rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--xl-text);
+  background: var(--xl-bg-2);
+  border: 1px solid var(--xl-line-bright);
+  box-shadow: 0 4px 18px oklch(0 0 0 / 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--ease-drift);
+}
+a.rmp-stop:hover .rmp-node-cell[data-state]::after,
+a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
+  opacity: 1;
+}
+@media (min-width: 1024px) {
+  .rmp-node-cell[data-state]::after {
+    left: 50%;
+    top: auto;
+    bottom: calc(100% + 0.5rem);
+    transform: translateX(-50%);
+  }
 }
 
 .rmp-node {
@@ -376,6 +419,9 @@ a.rmp-stop:focus-visible {
   .rmp-seg--lit {
     animation: none;
     transform: none;
+  }
+  .rmp-node-cell[data-state]::after {
+    transition: none;
   }
 
   /* Initializing keeps a STATIC dim hairline under the word. */
