@@ -23,7 +23,12 @@ export const ROADMAP_CAPS = {
   adminRequestPerUserPerDay: 2,
   adminRequestPerCompanyPerDay: 5,
   adminApprovePerUserPerHour: 10,
-  apolloImportsPerCompanyPerHour: 2, // doubles as the double-click fence
+  // 3, not 2 (round 3): the directory AUTO-init draws from this same bucket
+  // (one fence, no bypass lane) and a failed auto-kick must never cost the
+  // admin their manual retries; the auto lane additionally has its own
+  // 1/h sub-limit below.
+  apolloImportsPerCompanyPerHour: 3,
+  apolloAutoKicksPerCompanyPerHour: 1,
   apolloPagesPerImport: 5, // hard cap; a partial import reports itself
   apolloPeoplePerPage: 100,
   directoryWritesPerUserPerHour: 60,
@@ -33,7 +38,10 @@ export const ROADMAP_CAPS = {
   // miss triggers outbound DNS); the per-company recheck cap bounds a
   // tenant's total DNS traffic regardless of headcount; the email caps are
   // tight because the route sends mail.
-  dkimStatusReadsPerUserPerHour: 60,
+  // 120 (round 3): the Initializing poll loop reads status up to 10 times
+  // per episode; reads are cheap (concurrent polls join the in-flight
+  // resolution and cache hits do no DNS).
+  dkimStatusReadsPerUserPerHour: 120,
   dkimRechecksPerUserPerHour: 6,
   dkimRechecksPerCompanyPerHour: 12,
   dkimEmailsPerUserPerDay: 3,
@@ -92,6 +100,7 @@ export const ROADMAP_STEPS = [
     blurb:
       "Put an AI governance document on file: upload your own, attach one " +
       "you built in the Governance Builder, or create one now.",
+    cta: { todo: "Upload or create your policy", done: "Review your documents" },
   },
   {
     key: "directory",
@@ -101,6 +110,7 @@ export const ROADMAP_STEPS = [
     blurb:
       "List the people on this journey. Import your team from Apollo or " +
       "add them by hand; your company admin keeps it current.",
+    cta: { todo: "Add your team", done: "Review your team" },
   },
   {
     key: "work",
@@ -110,6 +120,7 @@ export const ROADMAP_STEPS = [
     blurb:
       "Ship something built with AI and submit it. An editorial panel " +
       "reviews it and publishes it to your company's private Your Work page.",
+    cta: { todo: "Submit your first build", done: "See what is published" },
   },
   {
     key: "scorecard",
@@ -119,6 +130,7 @@ export const ROADMAP_STEPS = [
     blurb:
       "Watch builders emerge: published work counted per person in your " +
       "directory. Published cards only, never drafts or attempts.",
+    cta: { todo: "See who is building", done: "See who is building" },
   },
   // Step 05 (§5.18 round 2): a verdict step, not a task step. It has NO
   // (steps) page - the hub panel opens a dialog - so href is a hub anchor
@@ -136,3 +148,11 @@ export const ROADMAP_STEPS = [
 ] as const;
 
 export type RoadmapStepKey = (typeof ROADMAP_STEPS)[number]["key"];
+
+/** The ONE sessionStorage guard key for the directory auto-init kick (round
+ * 3). Keyed by DOMAIN, not company id (the client never sees the uuid).
+ * Every surface that can kick imports THIS constant; a second spelling is
+ * how same-tab double imports happen. */
+export function apolloKickGuardKey(domain: string): string {
+  return `rmp:apollo-kick:${domain}`;
+}

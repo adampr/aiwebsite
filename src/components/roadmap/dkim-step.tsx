@@ -8,13 +8,35 @@
 // router.refresh() so the server-rendered runway and panel line resync to
 // the same fresh verdict. Escape closes natively (no onCancel preventDefault:
 // nothing here is ever mid-upload). No em dashes.
+//
+// Round 3, Initializing: the status read races DNS on an 800ms budget, so a
+// cold-cache render commonly arrives with timedOut === true while the
+// detached check still runs. While the current check is timedOut this
+// island shows INITIALIZING... and polls GET /api/roadmap/dkim/status on a
+// chained schedule (2s x5 then 4s x5, ~30s), skipping ticks while the tab
+// is hidden and stopping on any 429. The first non-timedOut check is
+// adopted with ONE router.refresh(). Give-up sets an EPISODE-level flag and
+// never refreshes on a still-timedOut synthetic (nothing new to show). The
+// initializing copy instructs a reload, so it is honest without JS and
+// needs no <noscript>. The CTA button stays ENABLED throughout (the
+// dialog's unknown/dns-error copy covers a pending check), and the dialog's
+// Recheck is only ever disabled during its own in-flight fetch.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { DkimCheck } from "@/lib/roadmap/dkim";
 import { dkimCopy } from "@/lib/roadmap/dkim-copy";
 
 type Notice = { role: "status" | "alert"; text: string } | null;
+
+/** 2s x5 then 4s x5: 10 polls, ~30s of wall clock per episode. */
+const POLL_DELAYS_MS = [
+  2000, 2000, 2000, 2000, 2000, 4000, 4000, 4000, 4000, 4000,
+] as const;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function panelLine(check: DkimCheck): string {
   if (check.verdict === "ok")
@@ -61,9 +83,80 @@ export function DkimStep({
   const [rechecking, setRechecking] = useState(false);
   const [sending, setSending] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  // Episode-level give-up: the poll bound was reached (or a 429 landed)
+  // while the check was still a timedOut synthetic. Cleared ONLY by an
+  // explicit Recheck click, never by a fresh timedOut initial prop.
+  const [gaveUp, setGaveUp] = useState(false);
+  // Bumping the episode cancels any running poll loop.
+  const episodeRef = useRef(0);
 
   const copy = dkimCopy(check);
   const busy = rechecking || sending;
+  const initializing = check.timedOut === true;
+
+  function startPolling() {
+    const ep = ++episodeRef.current;
+    void (async () => {
+      for (const delay of POLL_DELAYS_MS) {
+        await sleep(delay);
+        if (episodeRef.current !== ep) return;
+        // Pause while hidden: skip the fetch, keep the wall-clock bound.
+        if (document.hidden) continue;
+        try {
+          const res = await fetch("/api/roadmap/dkim/status");
+          if (episodeRef.current !== ep) return;
+          if (res.status === 429) break; // stop polling; give up below
+          if (!res.ok) continue;
+          const fresh = (await res.json()) as DkimCheck;
+          if (episodeRef.current !== ep) return;
+          if (fresh.timedOut !== true) {
+            setCheck(fresh);
+            // ONE refresh: the server-rendered runway and card line resync
+            // to the resolved verdict.
+            router.refresh();
+            return;
+          }
+        } catch {
+          // transient network trouble: let the loop keep going
+        }
+      }
+      if (episodeRef.current !== ep) return;
+      // Bound reached (or 429) while still timedOut. NO router.refresh():
+      // the latest check is still a timedOut synthetic, nothing new to show.
+      setGaveUp(true);
+    })();
+  }
+
+  // Arm the poll once per mount when the SSR state is already Initializing.
+  // useRef StrictMode guard; deliberately no cleanup cancel (StrictMode's
+  // immediate unmount would kill the only episode).
+  const pollArmed = useRef(false);
+  useEffect(() => {
+    if (pollArmed.current) return;
+    pollArmed.current = true;
+    if (initial.timedOut === true) startPolling();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Prop resync (refuter-pinned): adopt a fresh `initial` ONLY when the
+  // dialog is NOT open AND the new initial is NOT a timedOut synthetic OR
+  // it differs in verdict from current. A new timedOut synthetic must NOT
+  // clear gaveUp and must NOT re-arm the poll. Deferred a tick (codebase
+  // pattern: open-items-resolver) so the effect body stays setState-free;
+  // the updater itself is pure and compares against the CURRENT check.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      if (dialogRef.current?.open) return;
+      setCheck((cur) => {
+        if (initial.timedOut === true && initial.verdict === cur.verdict)
+          return cur;
+        return initial; // adopt; gaveUp and the poll are untouched here
+      });
+      // A resolved server verdict makes any running poll moot.
+      if (initial.timedOut !== true) episodeRef.current++;
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [initial]);
 
   function open() {
     const d = dialogRef.current;
@@ -85,9 +178,16 @@ export function DkimStep({
       if (res.ok) {
         const fresh = (await res.json()) as DkimCheck;
         setCheck(fresh);
+        // An explicit Recheck starts a fresh episode: clear give-up, and if
+        // THIS response is itself timedOut, re-enter polling.
+        setGaveUp(false);
         // The runway and the panel's mono line are server-rendered from the
         // same cache this recheck just refilled; resync them.
         router.refresh();
+        if (fresh.timedOut === true) {
+          startPolling();
+          return;
+        }
         if (fresh.verdict === "missing") {
           setNotice({
             role: "status",
@@ -176,16 +276,32 @@ export function DkimStep({
 
   return (
     <div>
-      <p className="mt-4 text-sm">{panelLine(check)}</p>
-      <button
-        type="button"
-        className={
-          check.verdict === "ok" ? "btn btn--text mt-5" : "btn mt-5"
-        }
-        onClick={open}
-      >
+      {initializing ? (
+        <div className="mt-4">
+          <span className="rmp-state rmp-state--init">Initializing...</span>
+          <p className="mt-3 text-sm">
+            {gaveUp
+              ? "Still checking. Reload this page in a moment for the result."
+              : "Checking your domain's setup. Reload this page in a moment for the result."}
+          </p>
+        </div>
+      ) : (
+        <p className="mt-4 text-sm">{panelLine(check)}</p>
+      )}
+      {/* rmp-card-cta: the uniform overlay pattern - this button is the dkim
+          card's single interactive element and its ::after stretches over
+          the card. The <dialog> it opens is top-layer, so it renders and
+          receives clicks above the overlay. NEVER disabled during
+          Initializing: it opens the dialog, whose unknown/dns-error copy
+          already covers a pending check. */}
+      <button type="button" className="rmp-card-cta" onClick={open}>
         {panelButtonLabel(check)}
-        {check.verdict === "ok" && <span aria-hidden="true"> →</span>}
+        {check.verdict === "ok" && (
+          <span className="rmp-arrow" aria-hidden="true">
+            {" "}
+            →
+          </span>
+        )}
       </button>
 
       <dialog

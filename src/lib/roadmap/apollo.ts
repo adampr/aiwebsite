@@ -64,7 +64,26 @@ function personPhone(p: ApolloPerson): string | null {
   return n?.sanitized_number || n?.raw_number || null;
 }
 
-export async function runApolloImport(opts: {
+// Per-company in-flight dedup (round 3): two tabs auto-kicking at once must
+// collapse into ONE Apollo run (upserts are idempotent either way; this
+// protects the page budget and the hourly limiter's spirit). Valid because
+// this host runs a single PM2 fork (same caveat as the dkim cache).
+const inflightImports = new Map<string, Promise<ApolloImportResult>>();
+
+export function runApolloImport(opts: {
+  companyId: string;
+  companyDomain: string;
+}): Promise<ApolloImportResult> {
+  const existing = inflightImports.get(opts.companyId);
+  if (existing) return existing;
+  const run = runApolloImportInner(opts).finally(() =>
+    inflightImports.delete(opts.companyId)
+  );
+  inflightImports.set(opts.companyId, run);
+  return run;
+}
+
+async function runApolloImportInner(opts: {
   companyId: string;
   companyDomain: string;
 }): Promise<ApolloImportResult> {
@@ -123,11 +142,23 @@ export async function runApolloImport(opts: {
       contacts?: ApolloPerson[];
       pagination?: { page?: number; total_pages?: number };
     } | null;
+    // A 200 with an unparseable or shape-less body is a FAILURE, not an
+    // empty result: it must never stamp apollo_last_import_at (the stamp is
+    // the auto-kick once-flag, and a transient error page would suppress
+    // auto-init for the company forever; round-3 refutation finding).
+    if (!body || (!Array.isArray(body.people) && !Array.isArray(body.contacts))) {
+      console.log(
+        `[roadmap] apollo page ${page} returned an unparseable body for company ${opts.companyId}`
+      );
+      if (page === 1) return { outcome: "api_error" };
+      partial = true;
+      break;
+    }
     const people = [
-      ...(body?.people ?? []),
-      ...(body?.contacts ?? []),
+      ...(body.people ?? []),
+      ...(body.contacts ?? []),
     ];
-    if (!body || people.length === 0) break;
+    if (people.length === 0) break;
 
     for (const p of people) {
       const name = personName(p);

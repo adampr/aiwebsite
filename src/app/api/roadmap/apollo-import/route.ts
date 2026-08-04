@@ -17,12 +17,37 @@ import {
   roadmapError,
 } from "@/lib/roadmap/http";
 
-export async function POST(): Promise<Response> {
+export async function POST(req: Request): Promise<Response> {
   const gate = await requireCompanyAdmin();
   if (!gate.ok) return gate.response;
   const p = gate.principal;
   const disabled = requireRoadmapWritesEnabled();
   if (disabled) return disabled;
+  // Round 3: a paused company must not receive system-initiated PII imports
+  // (the guards check membership, not status; this route enforces it).
+  if (p.company.status !== "active")
+    return roadmapError(
+      "company_paused",
+      "Imports are paused for your company right now. Contact XL.net.",
+      403
+    );
+  // trigger is an ADVISORY label (client-supplied): "auto" can only REDUCE
+  // service (its own tighter sub-limit + audit-trail note), never grant.
+  let trigger: "auto" | "manual" = "manual";
+  try {
+    const body = (await req.json()) as { trigger?: unknown };
+    if (body?.trigger === "auto") trigger = "auto";
+  } catch {
+    trigger = "manual";
+  }
+  if (trigger === "auto") {
+    const autoLimited = rateLimit(
+      `roadmap:apollo:auto:${p.company.id}`,
+      3600,
+      ROADMAP_CAPS.apolloAutoKicksPerCompanyPerHour
+    );
+    if (autoLimited) return autoLimited;
+  }
   const limited = rateLimit(
     `roadmap:apollo:${p.company.id}`,
     3600,
@@ -47,6 +72,7 @@ export async function POST(): Promise<Response> {
       502
     );
   await notifyApolloImport({
+    trigger,
     adminEmail: p.email,
     companyDomain: p.company.domain,
     added: result.added,

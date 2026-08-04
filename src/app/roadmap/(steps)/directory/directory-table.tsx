@@ -6,9 +6,18 @@
 // always the server's. Members get the same table read-only. Removal is
 // two-click, with the suppression checkbox defaulting ON for Apollo-sourced
 // rows so a removed person is not resurrected by the next import.
+//
+// Round 3 auto-init parity: when the server says autoInit (admin + zero
+// people + never imported + active + Apollo configured), this island kicks
+// ONE {trigger:"auto"} import through the same runImport path and busy UI,
+// fenced by the SAME sessionStorage key the hub card uses
+// (apolloKickGuardKey), so hub -> step navigation cannot double-kick.
+// Auto-lane failures degrade SILENTLY to the normal manual state; the
+// Import button stays the retry lever.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { apolloKickGuardKey } from "@/lib/roadmap/config";
 
 export type DirectoryPerson = {
   id: string;
@@ -55,10 +64,12 @@ export function DirectoryTable({
   people,
   isAdmin,
   domain,
+  autoInit,
 }: {
   people: DirectoryPerson[];
   isAdmin: boolean;
   domain: string;
+  autoInit: boolean;
 }) {
   const router = useRouter();
   const [importBusy, setImportBusy] = useState(false);
@@ -78,29 +89,62 @@ export function DirectoryTable({
     return data?.error?.message ?? "Something went wrong. Try again shortly.";
   }
 
-  async function runImport() {
+  async function runImport(trigger: "manual" | "auto" = "manual") {
     setImportBusy(true);
     setImportNote(null);
     setImportErr(null);
     try {
-      const res = await fetch("/api/roadmap/apollo-import", {
-        method: "POST",
-      });
+      const res = await fetch(
+        "/api/roadmap/apollo-import",
+        trigger === "auto"
+          ? {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ trigger: "auto" }),
+            }
+          : { method: "POST" }
+      );
       if (!res.ok) {
-        setImportErr(await readError(res));
+        // Auto lane: 429/403/503 and friends degrade SILENTLY to the normal
+        // manual state (no error banner); the button is the retry lever.
+        if (trigger === "manual") setImportErr(await readError(res));
         return;
       }
       const data = (await res.json().catch(() => null)) as ImportResult | null;
       setImportNote(importLine(data ?? {}, domain));
       router.refresh();
     } catch {
-      setImportErr(
-        "Something went wrong. Check your connection and try again."
-      );
+      if (trigger === "manual")
+        setImportErr(
+          "Something went wrong. Check your connection and try again."
+        );
     } finally {
       setImportBusy(false);
     }
   }
+
+  // The auto-kick (round 3): once per mount (StrictMode ref guard), fenced
+  // by the shared per-domain sessionStorage key, pre-set synchronously
+  // BEFORE the POST so a concurrent surface cannot kick again.
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (!autoInit || autoRan.current) return;
+    autoRan.current = true;
+    try {
+      const key = apolloKickGuardKey(domain);
+      if (window.sessionStorage.getItem(key) !== null) return;
+      window.sessionStorage.setItem(key, String(Date.now()));
+    } catch {
+      // No sessionStorage means no reload fence: do not kick.
+      return;
+    }
+    // Deferred a tick (codebase pattern: open-items-resolver) so the effect
+    // body stays setState-free; the guard above already ran synchronously.
+    // No cleanup cancel: StrictMode's immediate unmount would eat the only
+    // kick (the ref guard blocks the remount's attempt).
+    window.setTimeout(() => void runImport("auto"), 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoInit, domain]);
 
   async function addPerson(e: React.FormEvent) {
     e.preventDefault();
@@ -204,7 +248,7 @@ export function DirectoryTable({
             className="btn mt-4"
             disabled={importBusy}
             aria-busy={importBusy}
-            onClick={runImport}
+            onClick={() => void runImport("manual")}
           >
             {importBusy ? "Importing..." : "Import from Apollo"}
           </button>
@@ -218,6 +262,12 @@ export function DirectoryTable({
               {importErr}
             </p>
           )}
+          {/* Persistent review duty (round 3): always visible in the import
+              area, not only after a run. */}
+          <p className="mt-3 text-xs text-faint">
+            Review the results and remove anyone you are not authorized to
+            list. Removals survive future imports.
+          </p>
         </div>
       )}
 

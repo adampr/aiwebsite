@@ -2,15 +2,23 @@
 
 // "Set up {domain} workspace" island (§5.18). The click is the explicit
 // bootstrap act; the visible copy above the button carries both required
-// disclosures (first-signer-becomes-admin, XL.net visibility). On success
-// the page refreshes into the status board; "exists" means someone else
-// raced the bootstrap, which resolves the same way (viewer becomes a
-// member).
+// disclosures (first-signer-becomes-admin, XL.net visibility), plus the
+// Apollo auto-init disclosure when the import lane is configured (round 3:
+// the hub may kick a directory import on the admin's first visit, so the
+// consent copy must precede the bootstrap click). On success the page
+// refreshes into the status board; "exists" means someone else raced the
+// bootstrap, which resolves the same way (viewer becomes a member).
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export function BootstrapCard({ domain }: { domain: string }) {
+export function BootstrapCard({
+  domain,
+  apolloEnabled,
+}: {
+  domain: string;
+  apolloEnabled: boolean;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +63,15 @@ export function BootstrapCard({ domain }: { domain: string }) {
         XL.net administrators can view and manage every company workspace in
         order to operate and support the service.
       </p>
+      {apolloEnabled && (
+        <p className="mt-3 text-sm">
+          We may also start your company directory automatically from
+          Apollo, a business directory: names, work emails, and phone
+          numbers of people publicly listed at{" "}
+          {domain}. You can remove anyone afterwards, and removed people
+          stay removed.
+        </p>
+      )}
       <button
         type="button"
         className="btn btn--primary mt-6"

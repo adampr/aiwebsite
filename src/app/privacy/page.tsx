@@ -62,9 +62,11 @@ export default function PrivacyPage() {
           workspace in order to operate and support the service. It is never
           public, and we exclude it from search engines. Directory entries can
           be imported from Apollo, a third-party business directory, or added
-          by your administrator; each entry is labeled with its source, we
-          never contact the people listed, and an administrator can remove an
-          entry at any time. When an Apollo-sourced entry is removed we keep a
+          by your administrator, and the directory may be populated
+          automatically from Apollo when a company administrator first opens
+          it; each entry is labeled with its source, we never contact the
+          people listed, and an administrator can remove an entry at any
+          time. When an Apollo-sourced entry is removed we keep a
           one-way fingerprint of the email address so future imports do not
           restore it. To have yourself removed from a company directory,
           contact your company&apos;s administrator or Tron.Netter@ai.xl.net.

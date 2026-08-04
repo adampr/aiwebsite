@@ -140,6 +140,9 @@ export async function notifyDkimInstructions(opts: {
 
 /** Import summary to the triggering admin plus the owner (§9.7). */
 export async function notifyApolloImport(opts: {
+  /** Advisory audit label: "auto" = the directory initialized itself on the
+   * admin's page view (round 3); "manual" = the Import button. */
+  trigger?: "auto" | "manual";
   adminEmail: string;
   companyDomain: string;
   added: number;
@@ -153,7 +156,9 @@ export async function notifyApolloImport(opts: {
     to: Array.from(new Set([opts.adminEmail.toLowerCase(), adminRecipient()])),
     subject: `Apollo import for ${opts.companyDomain}${opts.partial ? " (partial)" : ""}`,
     text: [
-      `Apollo directory import for ${opts.companyDomain}:`,
+      opts.trigger === "auto"
+        ? `Apollo directory import for ${opts.companyDomain} (started automatically on the company admin's first directory view):`
+        : `Apollo directory import for ${opts.companyDomain}:`,
       ``,
       `Added: ${opts.added}`,
       `Updated: ${opts.updated}`,

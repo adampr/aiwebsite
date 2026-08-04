@@ -468,6 +468,17 @@ export async function upsertApolloPerson(opts: {
   return "added";
 }
 
+/** The durable auto-kick once-flag (round 3): non-null after any COMPLETE
+ * import run, including complete zero-result runs. */
+export async function apolloImportStamp(companyId: string): Promise<Date | null> {
+  const rows = await db
+    .select({ at: C.apolloLastImportAt })
+    .from(C)
+    .where(eq(C.id, companyId))
+    .limit(1);
+  return rows[0]?.at ?? null;
+}
+
 export async function stampApolloImport(
   companyId: string,
   count: number

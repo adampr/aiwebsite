@@ -1,8 +1,15 @@
 /* Your AI Roadmap (§5.18) presentation. Every class is rmp-prefixed; this
    file is imported by src/app/roadmap/page.tsx and the (steps) layout, never
    globals.css. Color grammar from /governance: cyan (--xl-light) = in
-   motion, sand (--xl-sand) = done; state is NEVER color-only (a text badge
-   sits beside every node, and a visually-hidden list narrates). */
+   motion, sand (--xl-sand) = done; state is NEVER color-only (a bare mono
+   state word sits beside every node; signed-in stops are links whose visible
+   text narrates itself).
+
+   CASCADE NOTE (round 3, refuter-verified): this file is UNLAYERED and so
+   beats futurism.css, which is imported layer(base). Never set a `transition`
+   property on an element that also carries .rise (e.g. .rmp-card): it would
+   clobber the .rise entrance transition entirely. Transitions live only on
+   pseudo-elements and inner elements. */
 
 /* ---- The Lightline Runway ---------------------------------------------- */
 
@@ -13,11 +20,55 @@
   padding: 0.5rem 0;
 }
 
+/* Track end caps: a fading hairline leading into the first node and out of
+   the last. MUST stay shrinkable (flex-basis 2.5rem, min-width AND
+   min-height 0): the horizontal budget below has no room for two fixed
+   2.5rem caps. Vertical (base) mode: a short fading rail segment. */
+.rmp-runway::before,
+.rmp-runway::after {
+  content: "";
+  flex: 0 1 2.5rem;
+  min-width: 0;
+  min-height: 0;
+  width: 1px;
+  margin-left: calc(0.75rem - 0.5px);
+  background: linear-gradient(to bottom, transparent, var(--xl-line));
+}
+
+.rmp-runway::after {
+  background: linear-gradient(to bottom, var(--xl-line), transparent);
+}
+
 .rmp-stop {
   display: grid;
   grid-template-columns: 1.5rem 1fr;
   column-gap: 0.9rem;
   align-items: start;
+}
+
+/* Signed-in stops are real links (round 3): min 44px touch target, no
+   underline (the state word and node carry the affordance), light-up on
+   hover/focus. The teaser keeps plain div stops. */
+a.rmp-stop {
+  text-decoration: none;
+  min-height: 44px;
+  color: inherit;
+}
+
+a.rmp-stop:hover .rmp-stop-title,
+a.rmp-stop:focus-visible .rmp-stop-title {
+  color: var(--xl-light);
+}
+
+a.rmp-stop:hover .rmp-node,
+a.rmp-stop:focus-visible .rmp-node {
+  border-color: var(--xl-light);
+  box-shadow: 0 0 10px var(--xl-light-glow);
+}
+
+a.rmp-stop:focus-visible {
+  outline: 1px solid var(--xl-light-dim);
+  outline-offset: 6px;
 }
 
 .rmp-node-cell {
@@ -49,9 +100,17 @@
   box-shadow: 0 0 14px var(--xl-light-glow);
 }
 
-.rmp-node--frontier {
+.rmp-node--upnext {
   border-color: var(--xl-light);
   animation: rmp-pulse 2.4s ease-in-out infinite;
+}
+
+/* DKIM-only Initializing (round 3): the 800ms status race timed out and a
+   detached check is still running. Dim-cyan border + shimmer; static under
+   reduced motion. */
+.rmp-node--init {
+  border-color: var(--xl-light-dim);
+  animation: rmp-shimmer 3.2s ease-in-out infinite;
 }
 
 /* Step 05 attention (DKIM verdict "missing"): a steady warn-colored outline.
@@ -63,10 +122,10 @@
   outline-offset: 2px;
 }
 
-/* Step 05 unconfirmed (DKIM verdict "unknown") intentionally has NO node
-   rule: it reuses the dim/neutral base (.rmp-node), and the badge text plus
-   the sr-only narration carry the state. Same for .rmp-state--unconfirmed
-   and .rmp-state--dim: the neutral .rmp-state base IS their styling. */
+/* Step 05 unconfirmed (DKIM verdict "unknown", check completed) intentionally
+   has NO node rule: it reuses the dim/neutral base (.rmp-node), and the state
+   word carries the state (.rmp-state--unconfirmed dims the word itself).
+   .rmp-state--dim keeps the neutral .rmp-state base as its styling. */
 
 /* Teaser zero state: node 01 shimmers as the invitation. */
 .rmp-node--shimmer {
@@ -116,38 +175,64 @@
   color: var(--xl-text);
 }
 
-/* Text state badge: never color-only, but color still reinforces. */
+/* Text state word (round 3: the badge pills are dead): a bare tracked mono
+   word, no border, no padding, no radius. Never color-only: the word IS the
+   state, color reinforces. */
 .rmp-state {
   font-family: var(--font-mono, monospace);
-  font-size: 0.65rem;
+  font-size: 0.625rem;
   text-transform: uppercase;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.22em;
   color: var(--xl-text-faint);
-  border: 1px solid var(--xl-line);
-  border-radius: 999px;
-  padding: 0.1rem 0.55rem;
   white-space: nowrap;
 }
 
-.rmp-state--frontier {
+.rmp-state--upnext {
   color: var(--xl-light);
-  border-color: var(--xl-light-dim);
 }
 
 .rmp-state--done {
   color: var(--xl-sand);
-  border-color: var(--xl-sand);
 }
 
 .rmp-state--live {
   color: var(--xl-light);
-  border-color: var(--xl-light);
-  box-shadow: 0 0 8px var(--xl-light-glow);
+  text-shadow: 0 0 10px var(--xl-light-glow);
 }
 
 .rmp-state--attention {
   color: var(--xl-warn);
-  border-color: var(--xl-warn);
+}
+
+.rmp-state--unconfirmed {
+  color: var(--xl-text-dim);
+}
+
+/* Initializing (DKIM island + directory busy card + dkim runway node): the
+   literal text is "INITIALIZING..." with the dots as characters; an animated
+   sweep hairline runs under the word (static dim hairline under reduced
+   motion). */
+.rmp-state--init {
+  position: relative;
+  color: var(--xl-light);
+}
+
+.rmp-state--init::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.3em;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--xl-light), transparent)
+    0% 0 / 45% 100% no-repeat;
+  animation: rmp-sweep 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes rmp-sweep {
+  to {
+    background-position: 100% 0;
+  }
 }
 
 /* Segments: one luminous hairline; a segment lights only when BOTH adjacent
@@ -181,16 +266,33 @@
 
 /* Desktop: horizontal line through the five diamonds. Five-node fit: the
    breakpoint moved md (768px) -> lg (1024px) when step 05 landed, and
-   .rmp-stop-text tightened 11rem -> 9rem. Math: 5 stops x 9rem max-width
-   (border-box, padding included) + 4 segments x 2rem min-width = 53rem =
-   848px. The narrowest horizontal container is the teaser's max-w-4xl wrap
-   (56rem = 896px), and at the 1024px breakpoint the viewport minus page
-   gutters still exceeds 848px, so the runway never overflows. Below 1024px
-   the vertical rail (base styles above) carries all five stops. */
+   .rmp-stop-text tightened 11rem -> 9rem. Math (round 3, with end caps): 5
+   stops x 9rem max-width (border-box, padding included) + 4 segments x 2rem
+   min-width = 53rem = 848px hard minimum; the two end caps are flex: 0 1
+   2.5rem with min-width 0, so they only occupy leftover space and shrink
+   toward 0 rather than overflow. The narrowest horizontal container is the
+   teaser's max-w-4xl wrap (56rem = 896px): 896 - 848 = 48px leftover, so
+   the caps render at ~24px each there and at their full 40px in wider
+   containers. Fixed 2.5rem caps would need 848 + 80 = 928px and WOULD
+   overflow the teaser wrap; keep them shrinkable. Below 1024px the vertical
+   rail (base styles above) carries all five stops. */
 @media (min-width: 1024px) {
   .rmp-runway {
     flex-direction: row;
     align-items: flex-start;
+  }
+
+  .rmp-runway::before,
+  .rmp-runway::after {
+    width: auto;
+    height: 1px;
+    margin-left: 0;
+    margin-top: calc(0.75rem - 0.5px);
+    background: linear-gradient(to right, transparent, var(--xl-line));
+  }
+
+  .rmp-runway::after {
+    background: linear-gradient(to right, var(--xl-line), transparent);
   }
 
   .rmp-stop {
@@ -228,12 +330,129 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rmp-node--frontier,
+  .rmp-node--upnext,
   .rmp-node--shimmer,
+  .rmp-node--init,
   .rmp-seg--lit {
     animation: none;
     transform: none;
   }
+
+  /* Initializing keeps a STATIC dim hairline under the word. */
+  .rmp-state--init::after {
+    animation: none;
+    background: var(--xl-light-dim);
+  }
+
+  .rmp-arrow {
+    transition: none;
+  }
+
+  .rmp-card:hover .rmp-arrow,
+  .rmp-card:has(.rmp-card-cta:focus-visible) .rmp-arrow {
+    transform: none;
+  }
+}
+
+/* ---- Action-center cards (round 3) ------------------------------------- */
+
+/* Stretched-overlay pattern: the card is a plain div; its ONE interactive
+   element (the bottom CTA) carries an ::after overlay stretched over the
+   whole card, so the full card is clickable with a single tab stop whose
+   accessible name is the verb. Known trade-off (panel-accepted): card text
+   is not mouse-selectable, because the overlay sits above it.
+   CASCADE RULE (refuter-verified): do NOT set `transition` on .rmp-card -
+   this unlayered rule would clobber the layered .rise entrance transition.
+   Transitions live only on .rmp-card::before (opacity), .rmp-card-cta
+   (color/underline), and .rmp-arrow (transform); border and background
+   changes on the card itself snap, accepted. */
+.rmp-card {
+  position: relative;
+}
+
+/* :has(.rmp-card-cta) keeps the directory card's BUSY panel (which has no
+   CTA and no overlay) inert under the pointer. */
+.rmp-card:has(.rmp-card-cta):hover,
+.rmp-card:has(.rmp-card-cta:focus-visible) {
+  border-color: var(--xl-light-dim);
+  background: var(--xl-bg-2);
+}
+
+/* Lightline top edge: 1px cyan-to-transparent gradient + glow, fading in. */
+.rmp-card::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  right: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--xl-light), transparent 70%);
+  box-shadow: 0 0 10px var(--xl-light-glow);
+  opacity: 0;
+  transition: opacity var(--dur-med) var(--ease-drift);
+  pointer-events: none;
+}
+
+.rmp-card:has(.rmp-card-cta):hover::before,
+.rmp-card:has(.rmp-card-cta:focus-visible)::before {
+  opacity: 1;
+}
+
+/* The CTA: btn--text register (mono, tracked, uppercase) with a hairline
+   underline that brightens and glows on hover. Element-agnostic: it is a
+   <Link> on cards 01/03/04 and a <button> on the dkim card and directory
+   idle card. MUST stay position: static so its ::after overlay resolves its
+   containing block at the positioned .rmp-card. */
+.rmp-card-cta {
+  display: inline-block;
+  margin-top: 1.25rem;
+  padding: 0.35rem 0 0.3rem;
+  border: 0;
+  border-bottom: 1px solid var(--xl-light-dim);
+  background: none;
+  cursor: pointer;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  text-align: left;
+  text-decoration: none;
+  color: var(--xl-text);
+  transition: color var(--dur-med) var(--ease-drift),
+    border-color var(--dur-med) var(--ease-drift),
+    box-shadow var(--dur-med) var(--ease-drift);
+}
+
+/* The whole-card hit area. */
+.rmp-card-cta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+
+.rmp-card:hover .rmp-card-cta,
+.rmp-card-cta:focus-visible {
+  color: var(--xl-light);
+  border-bottom-color: var(--xl-light);
+  /* bottom-only spread: the underline's glow, not a box halo */
+  box-shadow: 0 8px 8px -8px var(--xl-light-glow);
+}
+
+/* Focus: the card lights like hover via :has() above; this outline is the
+   plain fallback so keyboard focus is always visible even without :has(). */
+.rmp-card-cta:focus-visible {
+  outline: 1px solid var(--xl-light-dim);
+  outline-offset: 4px;
+}
+
+.rmp-arrow {
+  display: inline-block;
+  transition: transform var(--dur-med) var(--ease-drift);
+}
+
+.rmp-card:hover .rmp-arrow,
+.rmp-card:has(.rmp-card-cta:focus-visible) .rmp-arrow {
+  transform: translateX(4px);
 }
 
 /* ---- Step strip (the (steps) shell nav) -------------------------------- */

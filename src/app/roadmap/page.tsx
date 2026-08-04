@@ -13,7 +13,7 @@ import { redirect } from "next/navigation";
 import { readSession } from "@aicompany/core/auth/session";
 import { siteConfig } from "site.config";
 import { readRoadmapHubView } from "@/lib/roadmap/access";
-import { ROADMAP_STEPS } from "@/lib/roadmap/config";
+import { ROADMAP_STEPS, roadmapEnabled } from "@/lib/roadmap/config";
 import { roadmapStatus } from "@/lib/roadmap/status";
 import {
   deniedAdminRequestInWindow,
@@ -23,6 +23,7 @@ import { RoadmapRunway } from "@/components/roadmap/runway";
 import { RequestAdminAccess } from "@/components/roadmap/request-admin";
 import { BootstrapCard } from "@/components/roadmap/bootstrap-card";
 import { ConfirmIdentity } from "@/components/roadmap/confirm-identity";
+import { DirectoryCard } from "@/components/roadmap/directory-card";
 import { DkimStep } from "@/components/roadmap/dkim-step";
 import { StaffPanel } from "@/components/roadmap/staff-panel";
 import "./roadmap.css";
@@ -218,6 +219,9 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
     );
   }
 
+  const apolloEnabled =
+    !!process.env.APOLLO_API_KEY && roadmapEnabled(process.env);
+
   if (!p.company) {
     return (
       <div className="space-y-10 pt-8">
@@ -227,14 +231,24 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
             No workspace for <span className="glow">{p.emailDomain}</span> yet
           </h1>
         </div>
-        <BootstrapCard domain={p.emailDomain} />
+        <BootstrapCard domain={p.emailDomain} apolloEnabled={apolloEnabled} />
       </div>
     );
   }
 
-  // Member or admin of a company: the status board.
-  const status = await roadmapStatus(p.company.id, p.company.domain);
+  // Member or admin of a company: the action center.
+  const company = p.company;
+  const status = await roadmapStatus(company.id, company.domain);
   const isAdmin = p.companyRole === "admin";
+  // Directory auto-init (round 3): kick an Apollo import from the hub for an
+  // admin whose company has never had a COMPLETE run. Server-side predicate
+  // only; the client adds the sessionStorage fence.
+  const autoInit =
+    isAdmin &&
+    status.directory.people === 0 &&
+    !status.directory.everImported &&
+    company.status === "active" &&
+    apolloEnabled;
   let pending: { requestedAt: string; expiresAt: string } | null = null;
   if (!isAdmin) {
     const open = await openAdminRequest(p.company.id, p.userId);
@@ -250,19 +264,12 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
     }
   }
 
-  const counts = [
-    { value: status.governance.docs, label: "Governance docs" },
-    { value: status.directory.people, label: "People listed" },
-    { value: status.work.published, label: "Works published" },
-    { value: status.scorecard.contributors, label: "Builders" },
-  ];
+  // Count lines live on the cards; the directory card computes its own
+  // (DirectoryCard owns every step-02 state).
   const stepLines = {
     governance: status.governance.done
       ? `${status.governance.docs} on file`
       : "Nothing on file yet",
-    directory: status.directory.done
-      ? `${status.directory.people} ${status.directory.people === 1 ? "person" : "people"} listed`
-      : "No one listed yet",
     work: status.work.done
       ? `${status.work.published} published`
       : "Nothing published yet",
@@ -270,11 +277,20 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
       ? `${status.scorecard.contributors} ${status.scorecard.contributors === 1 ? "builder" : "builders"} so far`
       : "Waiting on the first published work",
     dkim:
-      status.dkim.verdict === "ok"
-        ? "DKIM verified"
-        : status.dkim.verdict === "missing"
-          ? "DKIM not set up yet"
-          : "Needs a manual check",
+      status.dkim.timedOut === true
+        ? "Checking now"
+        : status.dkim.verdict === "ok"
+          ? "DKIM verified"
+          : status.dkim.verdict === "missing"
+            ? "DKIM not set up yet"
+            : "Needs a manual check",
+  } as const;
+  // CTA labels come from the SAME status booleans as stepLines so the two
+  // can never disagree.
+  const stepDone = {
+    governance: status.governance.done,
+    work: status.work.done,
+    scorecard: status.scorecard.live,
   } as const;
 
   return (
@@ -296,54 +312,84 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
         <RoadmapRunway status={status} />
       </section>
 
-      <section className="grid gap-10 text-center sm:grid-cols-4">
-        {counts.map((c) => (
-          <div key={c.label} className="stat">
-            <div className="stat-value">{c.value}</div>
-            <div className="stat-label">{c.label}</div>
-          </div>
-        ))}
+      {/* One faint mono line replaced the 4-stat monument section: a
+          deliberate panel ruling (round 3) - the cards now carry the counts,
+          so a second numeric surface was noise. */}
+      <section>
+        <p className="mono text-center text-xs" style={faint}>
+          {status.governance.docs} docs · {status.directory.people} people ·{" "}
+          {status.work.published} published ·{" "}
+          {status.scorecard.contributors} builders
+        </p>
       </section>
 
+      {/* Action-center cards (round 3): stretched-overlay pattern. Each card
+          has exactly ONE interactive element, the bottom CTA, whose ::after
+          stretches over the whole card (one tab stop, accessible name = the
+          verb). Card text is not mouse-selectable under the overlay:
+          accepted trade-off. The runway above is the single state surface;
+          cards carry counts and verbs, never state badges. */}
       <section className="grid gap-6 sm:grid-cols-2">
-        {ROADMAP_STEPS.map((step) =>
-          step.key === "dkim" ? (
+        {ROADMAP_STEPS.map((step) => {
+          if (step.key === "dkim") {
             // Step 05 has NO (steps) page: this panel IS its surface. The
-            // island opens the instructions dialog and owns recheck/email.
-            <div
-              key={step.key}
-              id="step-dkim"
-              className="panel rise sm:col-span-2"
-            >
-              <div className="flex items-baseline justify-between gap-4">
-                <span className="sys-label">{step.num}</span>
-                <span className="mono text-xs" style={faint}>
-                  {stepLines[step.key]}
-                </span>
-              </div>
-              <h3 className="mt-4">{step.title}</h3>
-              <p className="mt-4 text-sm">{step.blurb}</p>
-              <DkimStep initial={status.dkim} email={p.email} />
-            </div>
-          ) : (
-            <div key={step.key} className="panel rise">
-              <div className="flex items-baseline justify-between gap-4">
-                <span className="sys-label">{step.num}</span>
-                <span className="mono text-xs" style={faint}>
-                  {stepLines[step.key]}
-                </span>
-              </div>
-              <h3 className="mt-4">{step.title}</h3>
-              <p className="mt-4 text-sm">{step.blurb}</p>
-              <Link
-                href={step.href}
-                className="btn btn--text mt-5 no-underline"
+            // island opens the instructions dialog and owns recheck/email;
+            // its button is the card's one interactive element.
+            return (
+              <div
+                key={step.key}
+                id="step-dkim"
+                className="panel rise rmp-card sm:col-span-2"
               >
-                Open step {step.num} <span aria-hidden="true">→</span>
+                <div className="flex items-baseline justify-between gap-4">
+                  <span className="sys-label">{step.num}</span>
+                  <span className="mono text-xs" style={faint}>
+                    {stepLines[step.key]}
+                  </span>
+                </div>
+                <h3 className="mt-4">{step.title}</h3>
+                <p className="mt-4 text-sm">{step.blurb}</p>
+                <DkimStep initial={status.dkim} email={p.email} />
+              </div>
+            );
+          }
+          if (step.key === "directory") {
+            return (
+              <DirectoryCard
+                key={step.key}
+                autoInit={autoInit}
+                isAdmin={isAdmin}
+                people={status.directory.people}
+                everImported={status.directory.everImported}
+                domain={company.domain}
+                href={step.href}
+                num={step.num}
+                title={step.title}
+                blurb={step.blurb}
+                ctaTodo={step.cta.todo}
+                ctaDone={step.cta.done}
+              />
+            );
+          }
+          return (
+            <div key={step.key} className="panel rise rmp-card">
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="sys-label">{step.num}</span>
+                <span className="mono text-xs" style={faint}>
+                  {stepLines[step.key]}
+                </span>
+              </div>
+              <h3 className="mt-4">{step.title}</h3>
+              <p className="mt-4 text-sm">{step.blurb}</p>
+              <Link href={step.href} className="rmp-card-cta">
+                {stepDone[step.key] ? step.cta.done : step.cta.todo}{" "}
+                <span className="rmp-arrow" aria-hidden="true">
+                  →
+                </span>
               </Link>
             </div>
-          )
-        )}
+          );
+        })}
       </section>
 
       {!isAdmin && (

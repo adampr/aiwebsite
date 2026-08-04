@@ -5,7 +5,8 @@
 
 import type { Metadata } from "next";
 import { requireRoadmapPage } from "@/lib/roadmap/access";
-import { listPeople } from "@/lib/roadmap/db";
+import { roadmapEnabled } from "@/lib/roadmap/config";
+import { apolloImportStamp, listPeople } from "@/lib/roadmap/db";
 import { DirectoryTable } from "./directory-table";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,21 @@ export default async function RoadmapDirectoryPage() {
   const company = gate.principal.company;
   const isAdmin = p.companyRole === "admin";
 
-  const people = await listPeople(company.id);
+  const [people, importStamp] = await Promise.all([
+    listPeople(company.id),
+    apolloImportStamp(company.id),
+  ]);
+
+  // Auto-init parity with the hub (round 3): the SAME server predicate. The
+  // shared sessionStorage guard key (apolloKickGuardKey) makes hub -> step
+  // navigation not double-kick.
+  const autoInit =
+    isAdmin &&
+    people.length === 0 &&
+    importStamp === null &&
+    company.status === "active" &&
+    roadmapEnabled(process.env) &&
+    !!process.env.APOLLO_API_KEY;
 
   return (
     <div className="space-y-10">
@@ -47,6 +62,7 @@ export default async function RoadmapDirectoryPage() {
         }))}
         isAdmin={isAdmin}
         domain={company.domain}
+        autoInit={autoInit}
       />
     </div>
   );
