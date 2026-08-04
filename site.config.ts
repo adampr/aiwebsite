@@ -445,6 +445,11 @@ export const siteConfig = defineSiteConfig({
   oversight: {
     bccEmail: "adam@xl.net",
     alertEmail: "adam@xl.net",
+    // §5.12 v1.65.0 — ADDITIONAL recipient for alert-class mail, used only
+    // when the primary send failed or the alert is itself a delivery-failure
+    // report. Never a re-route. Deliberately a DIFFERENT mail provider from
+    // alertEmail: a fallback sharing the primary's MX fails with it.
+    fallbackAlertEmail: "adam.radulovic@gmail.com",
     mailFrom: "Tron Netter <Tron.Netter@ai.xl.net>",
     aiDisclosure: true,
     newConversationAlert: false,

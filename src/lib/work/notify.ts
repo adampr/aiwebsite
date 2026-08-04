@@ -4,9 +4,11 @@
 // status page loses nothing.
 
 import { isAdmin } from "@aicompany/core/auth/guard";
+import { sendEmail } from "@aicompany/core/email/send";
+import { siteConfig } from "site.config";
 import { adminRecipient, sendTroyEmail, TROY_FROM } from "@/lib/governance/budget";
 import { HELD_NEXT_STEPS, KIND_LABELS, type WorkKind } from "./config";
-import { archiveDataById, clearArchiveData, type SubmissionRow } from "./db";
+import { archiveDataById, type SubmissionRow } from "./db";
 import type { WorkCard } from "./lint";
 
 function kindLabel(kind: string): string {
@@ -20,11 +22,13 @@ const SITE = "https://ai.xl.net";
  * ONE email, sent when the card is successfully posted (auto-publish AND
  * admin approve). CoWork Skill rows carry two files (package + SKILL.md);
  * program and legacy rows carry one; the body enumerates whatever is
- * attached, so the same template is truthful for both. Returns true only
- * when Resend accepted it; the caller clears the stored bytes ONLY then, so
- * a failed send keeps the artifacts recoverable from the row. Worst case
+ * attached, so the same template is truthful for both. Worst case
  * 10 MB + 1 MB ≈ 14.7 MB base64, inside Resend's 40 MB message cap; timeout
  * is 60 s for the larger payloads.
+ *
+ * The return value is Resend's ACCEPT (202), and that is all it can ever be.
+ * It is NOT evidence of delivery, and NOTHING may delete data on the strength
+ * of it — see deliverArchiveRetention.
  */
 export async function sendArchiveRetentionEmail(
   row: SubmissionRow,
@@ -59,7 +63,7 @@ export async function sendArchiveRetentionEmail(
           ...(row.mdSha256 ? [`SKILL.md SHA-256: ${row.mdSha256}`] : []),
           `Submitted: ${row.createdAt.toISOString()}`,
           ``,
-          `The stored copies on the site row are cleared once this email sends; the attachments here are the retained originals.`,
+          `A copy of these files also remains on the submission row (since 2026-08-04 they are no longer deleted after this email — a bounced retention email used to destroy the only copy).`,
         ].join("\n"),
         attachments: files.map((f) => ({
           filename: f.name,
@@ -81,15 +85,56 @@ export async function sendArchiveRetentionEmail(
   }
 }
 
-/** Fetch the retained upload, email it to the owner, and clear the stored
- * bytes only on a confirmed send. Called from every publish path. */
+/**
+ * Fetch the retained upload and email it to the owner. Called from every
+ * publish path.
+ *
+ * THE STORED BYTES ARE NEVER CLEARED HERE. Until 2026-08-04 this cleared them
+ * whenever `sendArchiveRetentionEmail` returned true — but that return value is
+ * Resend's 202 ACCEPT, not a delivery. The old comment claimed "only on a
+ * confirmed send"; there was no confirmation anywhere in the path.
+ *
+ * That cost real data. On 2026-08-03 two submissions ("Kickoff Agenda",
+ * "Project Plan") were accepted by Resend, bounced minutes later with
+ * Transient/ContentRejected — the recipient's provider refusing the .skill
+ * attachments — and their archive_data/md_data had already been NULLed. The
+ * email WAS the retention copy. With no backups configured, those uploads are
+ * permanently gone.
+ *
+ * Keeping the bytes is close to free and was measured, not assumed: the 10
+ * published rows hold 116,536 bytes TOTAL (max 26,756) against an 11 MB
+ * per-row ceiling nothing has approached. Published rows are already exempt
+ * from sweepExpiredWork, so this is stable rather than a leak into a sweeper.
+ *
+ * Rejected alternatives: clearing on a real delivery confirmation needs an
+ * email.delivered webhook the module does not handle, a new column for the
+ * Resend id (the POST response is discarded), and id→row correlation — and
+ * degenerates to this behaviour for every row whose event is lost. Clearing on
+ * a timer is the same silent loss, later.
+ */
 export async function deliverArchiveRetention(
   row: SubmissionRow
 ): Promise<void> {
   const files = await archiveDataById(row.id);
-  if (files.length === 0) return; // already delivered, or a pre-retention row
-  if (await sendArchiveRetentionEmail(row, files))
-    await clearArchiveData(row.id);
+  if (files.length === 0) return; // pre-retention row
+  if (await sendArchiveRetentionEmail(row, files)) return;
+  // A failed retention send used to be a bare console.log — invisible to the
+  // operator and to the §5.15 ledger, so the ONLY signal that an archive copy
+  // never went out was a bounce webhook nobody correlated. Route it through the
+  // module send seam: a `WARN ` subject to oversight.alertEmail auto-mirrors
+  // into reported_issues, so it shows up in the mandated build-start triage.
+  await sendEmail(siteConfig, {
+    to: siteConfig.oversight.alertEmail,
+    subject: `[aiwebsite] WARN /work retention email failed to send`,
+    text:
+      `The retention copy of the uploaded files behind a published /work card ` +
+      `was NOT accepted by the mail vendor.\n\n` +
+      `Title:  ${row.title}\n` +
+      `Row id: ${row.id}\n` +
+      `Files:  ${files.map((f) => `${f.name} (${f.data.length} bytes)`).join(", ")}\n\n` +
+      `The bytes are STILL on the row — nothing was deleted. Re-send or ` +
+      `download them before any future retention change.`,
+  });
 }
 
 export async function notifyPublished(
