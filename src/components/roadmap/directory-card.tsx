@@ -13,16 +13,27 @@
 // Auto-lane failures (429/403/503/network/not_configured/apollo_down)
 // degrade SILENTLY to the idle card: the step page's manual button is the
 // retry lever, never an error banner on the hub. No em dashes.
+//
+// Round 5 (owner ask): admins get a "Recheck database" button on the idle
+// card that re-runs the Apollo import from the hub (manual lane, same
+// admin-gated route, the 3/h/company limiter is the fence). It is the
+// card's deliberate SECOND interactive element, raised above the stretched
+// overlay via .rmp-card-action (see roadmap.css). Unlike the auto lane, a
+// clicked recheck reports its outcome: success renders the shared
+// importLine (apollo-copy.ts, the step page renders the same line) and
+// failures speak, because silence after a click reads as a broken button.
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apolloKickGuardKey } from "@/lib/roadmap/config";
+import { importLine, type ImportResult } from "@/lib/roadmap/apollo-copy";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 
 type Props = {
   autoInit: boolean;
+  canRecheck: boolean;
   isAdmin: boolean;
   people: number;
   everImported: boolean;
@@ -38,7 +49,59 @@ type Props = {
 export function DirectoryCard(props: Props) {
   const router = useRouter();
   const [kicked, setKicked] = useState(false);
+  const [recheckBusy, setRecheckBusy] = useState(false);
+  const [note, setNote] = useState<{
+    role: "status" | "alert";
+    text: string;
+  } | null>(null);
   const ran = useRef(false);
+
+  async function recheck() {
+    setRecheckBusy(true);
+    setNote(null);
+    try {
+      const res = await fetch("/api/roadmap/apollo-import", {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = (await res.json().catch(() => null)) as
+          | ImportResult
+          | null;
+        setNote({
+          role: "status",
+          text: importLine(
+            data ?? {},
+            props.domain,
+            "Add your team by hand instead."
+          ),
+        });
+        // The count line, CTA, and runway node are server-rendered; resync
+        // them to the fresh rows.
+        router.refresh();
+        return;
+      }
+      if (res.status === 429) {
+        setNote({ role: "status", text: "Give it a minute, then try again." });
+        return;
+      }
+      const body = (await res.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      setNote({
+        role: "alert",
+        text:
+          body?.error?.message ??
+          "The recheck could not run just now. Try again shortly.",
+      });
+    } catch {
+      setNote({
+        role: "alert",
+        text: "The recheck could not run just now. Check your connection and try again.",
+      });
+    } finally {
+      setRecheckBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!props.autoInit || ran.current) return;
@@ -86,24 +149,32 @@ export function DirectoryCard(props: Props) {
   // refresh, ending the busy state even though `kicked` stays true).
   const busy = kicked && !props.everImported && props.people === 0;
 
-  // Round 4: while busy, the RUNWAY's directory node pulses too. The node is
-  // server-owned DOM (#rmp-node-directory), so the toggle is a data
-  // ATTRIBUTE, never a class (React refresh would wipe a classList mutation
-  // of its managed className), and the sr span (#rmp-sr-directory) is
-  // updated via the existing TEXT NODE's nodeValue - NEVER textContent,
-  // which orphans React's text fiber and breaks later refresh updates. The
-  // restore is guarded: if a refresh already rewrote the phrase (governance
-  // completing mid-import, or the import finishing), the fresh server text
-  // must win. Known accepted edge: a concurrent refresh mid-import can
-  // reclaim the sr phrase while the node still pulses.
+  // Round 4 (+ round 5 recheck): while an import is in flight, the RUNWAY's
+  // directory node pulses too. The node is server-owned DOM
+  // (#rmp-node-directory), so the toggle is a data ATTRIBUTE, never a class
+  // (React refresh would wipe a classList mutation of its managed
+  // className), and the sr span (#rmp-sr-directory) is updated via the
+  // existing TEXT NODE's nodeValue - NEVER textContent, which orphans
+  // React's text fiber and breaks later refresh updates. The restore is
+  // guarded: if a refresh already rewrote the phrase (governance completing
+  // mid-import, or the import finishing), the fresh server text must win.
+  // Round 5: the restore puts back the CAPTURED previous phrase, not a
+  // hardcoded "Not started" - a recheck can run on a Done/Live directory.
+  // Known accepted edge: a concurrent refresh mid-import can reclaim the sr
+  // phrase while the node still pulses.
+  const working = busy || recheckBusy;
   useEffect(() => {
     const node = document.getElementById("rmp-node-directory");
     const sr = document.getElementById("rmp-sr-directory");
     const srText = sr?.firstChild;
     const WORKING = ", Checking now, import running";
-    if (busy) {
+    let prev: string | null = null;
+    if (working) {
       node?.setAttribute("data-working", "");
-      if (srText?.nodeType === Node.TEXT_NODE) srText.nodeValue = WORKING;
+      if (srText?.nodeType === Node.TEXT_NODE) {
+        prev = srText.nodeValue;
+        srText.nodeValue = WORKING;
+      }
     }
     return () => {
       node?.removeAttribute("data-working");
@@ -111,10 +182,10 @@ export function DirectoryCard(props: Props) {
         srText?.nodeType === Node.TEXT_NODE &&
         srText.nodeValue === WORKING
       ) {
-        srText.nodeValue = ", Not started";
+        srText.nodeValue = prev ?? ", Not started";
       }
     };
-  }, [busy]);
+  }, [working]);
 
   if (busy) {
     return (
@@ -173,6 +244,32 @@ export function DirectoryCard(props: Props) {
         <p className="mt-3 text-sm">
           Your company admin can initialize this from Apollo.
         </p>
+      )}
+      {props.canRecheck && (
+        <div className="mt-4">
+          {/* The card's second interactive element (round 5, owner ask):
+              .rmp-card-action raises it above the stretched overlay, which
+              would otherwise swallow its clicks. */}
+          <button
+            type="button"
+            className="btn rmp-card-action"
+            disabled={recheckBusy}
+            aria-busy={recheckBusy}
+            onClick={() => void recheck()}
+          >
+            {recheckBusy ? "Rechecking..." : "Recheck database"}
+          </button>
+          {note && (
+            <p
+              role={note.role}
+              className={`mono mt-3 text-xs ${
+                note.role === "alert" ? "text-red-400" : "text-faint"
+              }`}
+            >
+              {note.text}
+            </p>
+          )}
+        </div>
       )}
       <Link href={props.href} className="rmp-card-cta">
         {cta}{" "}

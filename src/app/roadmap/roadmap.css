@@ -380,8 +380,10 @@ a.rmp-stop:focus-visible {
 /* Stretched-overlay pattern: the card is a plain div; its ONE interactive
    element (the bottom CTA) carries an ::after overlay stretched over the
    whole card, so the full card is clickable with a single tab stop whose
-   accessible name is the verb. Known trade-off (panel-accepted): card text
-   is not mouse-selectable, because the overlay sits above it.
+   accessible name is the verb. Round-5 exception: the directory card adds
+   an admin-only second element via .rmp-card-action below. Known trade-off
+   (panel-accepted): card text is not mouse-selectable, because the overlay
+   sits above it.
    CASCADE RULE (refuter-verified): do NOT set `transition` on .rmp-card -
    this unlayered rule would clobber the layered .rise entrance transition.
    Transitions live only on .rmp-card::before (opacity), .rmp-card-cta
@@ -464,6 +466,17 @@ a.rmp-stop:focus-visible {
 .rmp-card-cta:focus-visible {
   outline: 1px solid var(--xl-light-dim);
   outline-offset: 4px;
+}
+
+/* Round 5: the directory card's SECOND interactive element, the admin-only
+   "Recheck database" button (owner ask). The overlay (.rmp-card-cta::after)
+   paints later in tree order, so this button needs a positioned box with
+   z-index to receive its own clicks; everything else on the card stays
+   under the overlay. Two tab stops on that card, and hovering the button
+   still lights the card + CTA via the :has() rules above: both accepted. */
+.rmp-card-action {
+  position: relative;
+  z-index: 1;
 }
 
 .rmp-arrow {

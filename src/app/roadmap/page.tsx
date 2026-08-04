@@ -249,6 +249,9 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
     !status.directory.everImported &&
     company.status === "active" &&
     apolloEnabled;
+  // Round 5 (owner ask): the hub card's manual "Recheck database" lever.
+  // Render predicate only; the admin-gated import route re-checks all of it.
+  const canRecheck = isAdmin && company.status === "active" && apolloEnabled;
   let pending: { requestedAt: string; expiresAt: string } | null = null;
   if (!isAdmin) {
     const open = await openAdminRequest(p.company.id, p.userId);
@@ -324,11 +327,13 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
       </section>
 
       {/* Action-center cards (round 3): stretched-overlay pattern. Each card
-          has exactly ONE interactive element, the bottom CTA, whose ::after
+          has ONE interactive element, the bottom CTA, whose ::after
           stretches over the whole card (one tab stop, accessible name = the
-          verb). Card text is not mouse-selectable under the overlay:
-          accepted trade-off. The runway above is the single state surface;
-          cards carry counts and verbs, never state badges. */}
+          verb). Round-5 exception: the directory card adds an admin-only
+          "Recheck database" button raised above the overlay
+          (.rmp-card-action). Card text is not mouse-selectable under the
+          overlay: accepted trade-off. The runway above is the single state
+          surface; cards carry counts and verbs, never state badges. */}
       <section className="grid gap-6 sm:grid-cols-2">
         {ROADMAP_STEPS.map((step) => {
           if (step.key === "dkim") {
@@ -358,6 +363,7 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
               <DirectoryCard
                 key={step.key}
                 autoInit={autoInit}
+                canRecheck={canRecheck}
                 isAdmin={isAdmin}
                 people={status.directory.people}
                 everImported={status.directory.everImported}

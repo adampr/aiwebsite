@@ -18,6 +18,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apolloKickGuardKey } from "@/lib/roadmap/config";
+import { importLine, type ImportResult } from "@/lib/roadmap/apollo-copy";
 
 export type DirectoryPerson = {
   id: string;
@@ -29,36 +30,9 @@ export type DirectoryPerson = {
 
 type ApiError = { error?: { code?: string; message?: string } };
 
-type ImportResult = {
-  outcome?: string;
-  partial?: boolean;
-  found?: number;
-  added?: number;
-  updated?: number;
-  keptManual?: number;
-  skippedSuppressed?: number;
-};
-
 const inputCls =
   "w-full rounded-lg border bg-transparent px-2 py-1 text-sm";
 const inputStyle = { borderColor: "var(--xl-line)" } as const;
-
-function importLine(r: ImportResult, domain: string): string {
-  const found = r.found ?? 0;
-  if (found === 0)
-    return `Apollo found no people for ${domain}. Add people manually below.`;
-  const parts = [`${r.added ?? 0} added`];
-  if (r.updated) parts.push(`${r.updated} updated`);
-  if (r.keptManual) parts.push(`${r.keptManual} already present`);
-  if (r.skippedSuppressed)
-    parts.push(
-      `${r.skippedSuppressed} skipped as previously removed`
-    );
-  const line = `Apollo found ${found} people for ${domain} · ${parts.join(" · ")}`;
-  return r.partial
-    ? `Partial import (Apollo stopped answering partway): ${line}. Run it again later to pick up the rest.`
-    : line;
-}
 
 export function DirectoryTable({
   people,
@@ -111,7 +85,9 @@ export function DirectoryTable({
         return;
       }
       const data = (await res.json().catch(() => null)) as ImportResult | null;
-      setImportNote(importLine(data ?? {}, domain));
+      setImportNote(
+        importLine(data ?? {}, domain, "Add people manually below.")
+      );
       router.refresh();
     } catch {
       if (trigger === "manual")
