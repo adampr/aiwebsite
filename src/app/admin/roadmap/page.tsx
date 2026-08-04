@@ -173,8 +173,9 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
             </tbody>
           </table>
           <p className="mt-2 text-xs text-faint">
-            Held and pending rows are reviewed on{" "}
-            <Link href="/admin/work">/admin/work</Link> as usual.
+            Held and pending rows are reviewed, and published cards
+            arranged, on <Link href="/admin/work">/admin/work</Link> as
+            usual.
           </p>
         </section>
       </div>

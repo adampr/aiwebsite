@@ -4,6 +4,7 @@
 
 import {
   and,
+  asc,
   desc,
   eq,
   getTableColumns,
@@ -191,13 +192,19 @@ export interface PublishedCard {
  * consumer (publishedTitleAndFacetSets) must see EVERY published title and
  * facet label — the old .limit(50) silently blinded that gate past 50 cards.
  * Watch item: the taken-titles/facets prompt strings grow with card count
- * (~25-30 KB at ~275 cards). */
+ * (~25-30 KB at ~275 cards).
+ *
+ * Admin curation (§5.16 reorder): display_rank ASC leads — Postgres ASC
+ * defaults to NULLS LAST, which this ordering depends on — so an arranged
+ * lane holds its admin-chosen spots (dense 1..k) while unranked rows,
+ * including every row in a never-arranged lane, keep the newest-first
+ * order via the published_at DESC tie-break. */
 export async function publishedCards(scope: WorkScope): Promise<PublishedCard[]> {
   const rows = await db
     .select(ROW_COLS)
     .from(S)
     .where(and(inScope(scope), eq(S.status, "published"), isNotNull(S.cardJson)))
-    .orderBy(desc(S.publishedAt));
+    .orderBy(asc(S.displayRank), desc(S.publishedAt));
   const out: PublishedCard[] = [];
   for (const r of rows) {
     try {
@@ -542,6 +549,11 @@ export async function publishWithSupersede(
         status: "published",
         slug,
         publishedAt: parent.publishedAt ?? new Date(),
+        // Rank from the LOCKED parent row, never the pre-transaction read: a
+        // reorder can rewrite the parent's rank in the gap. The update
+        // replaces the card in place, spot included (same rule as slug and
+        // publishedAt above).
+        displayRank: parent.displayRank,
         panelError: null,
         updatedAt: new Date(),
       })
@@ -676,6 +688,12 @@ export async function rollbackSwappedUpdate(
       .set({
         status: "published",
         slug,
+        // The CHILD's rank is the card's live spot: a reorder after the swap
+        // re-ranked the published child while this superseded parent's own
+        // rank went stale (publishedCards never saw it), so restoring the
+        // stale value could collide with another row's rank and move the
+        // card. With no reorder in between the two are equal anyway.
+        displayRank: child.displayRank,
         supersededAt: null,
         updatedAt: new Date(),
       })
@@ -875,6 +893,11 @@ export async function holdPublishedForRerun(
       status: "held",
       heldAt: new Date(),
       cardJson: null,
+      // The one published -> held -> published round trip (via approveHeld,
+      // which stamps a fresh publishedAt): a retained rank would resurrect
+      // stale and jump whichever card the admin has since moved into that
+      // spot, so the row re-enters unranked (§5.16 reorder).
+      displayRank: null,
       panelError: note.slice(0, 4000),
       updatedAt: new Date(),
     })
@@ -928,6 +951,105 @@ export async function retitlePublishedCard(
     .where(and(eq(S.id, id), eq(S.status, "published")))
     .returning({ id: S.id });
   return res.length > 0 ? { oldSlug: row.slug, slug } : null;
+}
+
+export type ReorderResult =
+  | { ok: true; spot: number; laneSize: number; companyId: string | null }
+  | { ok: false; reason: "not_published" | "conflict" };
+
+/** Admin reorder (§5.16): move a published card to a 1-based spot within its
+ * OWN lane and rewrite the lane's display_rank dense 1..k. The lane comes
+ * from the row alone (the §5.18 tenancy rule: no caller-supplied scope can
+ * reach another tenant's rows). One transaction; the lane's published rows
+ * are locked FOR UPDATE in ascending id order — the same acquisition order
+ * as publishWithSupersede and rollbackSwappedUpdate, so a reorder racing a
+ * swap (the auto-approve lane runs with no human present) or a second
+ * reorder serializes instead of deadlocking. The target must still be in
+ * the locked set (a swap/hold/delete can win the gap: "conflict", caller
+ * 409s). An overshooting spot clamps to the lane end — the race that
+ * produces it is benign and the admin's toward-the-end intent survives —
+ * so only malformed input (non-integer, < 1) is a caller-side 422.
+ * Rows publishedCards would drop (unparseable card_json) get no rank and
+ * count toward nothing: spot numbers here must mean what the page shows. */
+export async function reorderPublishedCard(
+  id: string,
+  spot: number
+): Promise<ReorderResult> {
+  const pre = await submissionById(id);
+  if (!pre || pre.status !== "published")
+    return { ok: false, reason: "not_published" };
+  const scope: WorkScope = { companyId: pre.companyId };
+  return db.transaction(async (tx) => {
+    // Locking select, REPEATED until two consecutive reads return the same
+    // id set (refutation finding, 2026-08-04): READ COMMITTED re-evaluation
+    // drops rows that LEFT the lane while we waited on their locks, but
+    // never discovers rows that ENTERED it — a swap/rollback that held its
+    // locks first commits a freshly published child (or re-published
+    // parent) carrying an inherited rank, and a single-read rewrite would
+    // hand that same rank to a different row. The second read's fresh
+    // statement snapshot sees the committed newcomer and locks it too;
+    // membership only churns while lane writers commit ahead of us, so the
+    // set stabilizes almost immediately (bound is a backstop, not a path).
+    const lockLane = () =>
+      tx
+        .select(ROW_COLS)
+        .from(S)
+        .where(
+          and(inScope(scope), eq(S.status, "published"), isNotNull(S.cardJson))
+        )
+        .orderBy(S.id)
+        .for("update");
+    let locked = await lockLane();
+    for (let tries = 0; ; tries++) {
+      const again = await lockLane();
+      const same =
+        again.length === locked.length &&
+        again.every((r, i) => r.id === locked[i].id);
+      locked = again;
+      if (same) break;
+      if (tries >= 5) return { ok: false as const, reason: "conflict" as const };
+    }
+    // Mirror publishedCards' skip-malformed behavior so spot n on the
+    // console is spot n on the page.
+    const lane = locked.filter((r) => {
+      try {
+        JSON.parse(r.cardJson!);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    // Display order, re-derived under lock: rank ASC NULLS LAST, then
+    // newest publish first (the publishedCards clause), id as a
+    // deterministic final tie-break.
+    lane.sort((a, b) => {
+      const ra = a.displayRank ?? Number.MAX_SAFE_INTEGER;
+      const rb = b.displayRank ?? Number.MAX_SAFE_INTEGER;
+      if (ra !== rb) return ra - rb;
+      const pa = (a.publishedAt ?? a.createdAt).getTime();
+      const pb = (b.publishedAt ?? b.createdAt).getTime();
+      if (pa !== pb) return pb - pa;
+      return a.id < b.id ? -1 : 1;
+    });
+    const idx = lane.findIndex((r) => r.id === id);
+    if (idx < 0) return { ok: false as const, reason: "conflict" as const };
+    const target = Math.min(Math.max(1, Math.floor(spot)), lane.length) - 1;
+    const [row] = lane.splice(idx, 1);
+    lane.splice(target, 0, row);
+    for (let i = 0; i < lane.length; i++) {
+      if (lane[i].displayRank === i + 1) continue;
+      await tx
+        .update(S)
+        .set({ displayRank: i + 1, updatedAt: new Date() })
+        .where(eq(S.id, lane[i].id));
+    }
+    return {
+      ok: true as const,
+      spot: target + 1,
+      laneSize: lane.length,
+      companyId: pre.companyId,
+    };
+  });
 }
 
 /** Hard delete. Callers that decided on a STALE read (reject, plain admin

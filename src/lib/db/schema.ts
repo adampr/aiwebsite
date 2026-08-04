@@ -352,6 +352,17 @@ export const workSubmissions = pgTable(
     }),
     slug: text("slug"), // "team-<slugified-title>", disjoint from exhibit ids
     publishedAt: timestamp("published_at", { withTimezone: true }),
+    // Admin curation order within a lane (§5.16 reorder, migration 0036).
+    // NULL = never arranged: publishedCards orders by display_rank ASC (NULLS
+    // LAST is the Postgres ASC default), then published_at DESC, so an
+    // untouched lane keeps the newest-first showcase and an arranged lane
+    // holds its admin-chosen spots while new publishes gather below the
+    // arranged block, newest first among themselves. Dense 1..k
+    // per lane, rewritten whole-lane by reorderPublishedCard; the update
+    // swap copies the parent's rank to the child, rollback restores the
+    // child's rank (the live spot) to the parent, holdPublishedForRerun
+    // NULLs it (a resurrected stale rank would jump the current holder).
+    displayRank: integer("display_rank"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

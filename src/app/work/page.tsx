@@ -415,6 +415,72 @@ export default async function WorkPage() {
             <span className="sr-only"> (opens in a new tab)</span>
           </a>
         </section>
+
+        {/* 6. Roleplay */}
+        <section id="roleplay" className="panel rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · public
+            </span>
+            <span className="badge badge--light">Sign-in with approval</span>
+          </div>
+          <h2 className="mt-6">Roleplay</h2>
+          <p className="mt-2 text-sm text-faint">
+            A public multi-user AI playground running directly on the Brain SDK.
+          </p>
+          <p className="mt-4 text-sm">
+            roleplay.xl.net is our external-tenant experiment: what happens
+            when the Software Brain powers a product that isn&apos;t about
+            XL.net at all.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Brain SDK In-Process
+              </h3>
+              <p className="mt-3 text-sm">
+                The Software Brain&apos;s orchestrator, memory, and voice
+                packages run inside the app itself to power multi-user AI
+                roleplay.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Realtime Voice
+              </h3>
+              <p className="mt-3 text-sm">
+                Live voice via STT/TTS and the xAI realtime API, so characters
+                can speak, not just type.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Gated and Isolated
+              </h3>
+              <p className="mt-3 text-sm">
+                Google sign-in with admin approval gates entry, and the
+                tenant&apos;s data lives in its own isolated databases: your
+                data stays yours.
+              </p>
+            </div>
+          </div>
+          <p className="mono mt-6 text-xs text-faint">
+            Brain SDK in-process · realtime voice · Google sign-in + approval ·
+            isolated per-tenant databases
+          </p>
+          <a
+            href="https://roleplay.xl.net"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn mt-6 no-underline"
+          >
+            Visit roleplay.xl.net
+            <span className="sr-only"> (opens in a new tab)</span>
+          </a>
+        </section>
       </section>
 
       {/* Group: client delivery */}
@@ -425,8 +491,8 @@ export default async function WorkPage() {
           </span>
         </div>
 
-        {/* 6. QBR Machine */}
-        <section id="qbr-machine" className="panel rise">
+        {/* 7. QBR Machine */}
+        <section id="qbr-machine" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -493,8 +559,8 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 7. Onboarding Toolkit */}
-        <section id="onboarding-toolkit" className="panel panel--lightline rise">
+        {/* 8. Onboarding Toolkit */}
+        <section id="onboarding-toolkit" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -569,8 +635,8 @@ export default async function WorkPage() {
           </span>
         </div>
 
-        {/* 8. XL Lakehouse */}
-        <section id="lakehouse" className="panel rise">
+        {/* 9. XL Lakehouse */}
+        <section id="lakehouse" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -636,8 +702,8 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 9. XL API Gateway */}
-        <section id="api-gateway" className="panel panel--lightline rise">
+        {/* 10. XL API Gateway */}
+        <section id="api-gateway" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
               <span className="dot" /> In development
@@ -717,72 +783,6 @@ export default async function WorkPage() {
             05 · What We Have Built
           </span>
         </div>
-
-        {/* 10. Roleplay */}
-        <section id="roleplay" className="panel rise">
-          <div className="flex flex-wrap items-center gap-4">
-            <span className="badge badge--ok">
-              <span className="dot" /> Live · public
-            </span>
-            <span className="badge badge--light">Sign-in with approval</span>
-          </div>
-          <h2 className="mt-6">Roleplay</h2>
-          <p className="mt-2 text-sm text-faint">
-            A public multi-user AI playground running directly on the Brain SDK.
-          </p>
-          <p className="mt-4 text-sm">
-            roleplay.xl.net is our external-tenant experiment: what happens
-            when the Software Brain powers a product that isn&apos;t about
-            XL.net at all.
-          </p>
-          <div className="mt-8 grid gap-6 md:grid-cols-3">
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">01 · </span>
-                Brain SDK In-Process
-              </h3>
-              <p className="mt-3 text-sm">
-                The Software Brain&apos;s orchestrator, memory, and voice
-                packages run inside the app itself to power multi-user AI
-                roleplay.
-              </p>
-            </div>
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">02 · </span>
-                Realtime Voice
-              </h3>
-              <p className="mt-3 text-sm">
-                Live voice via STT/TTS and the xAI realtime API, so characters
-                can speak, not just type.
-              </p>
-            </div>
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">03 · </span>
-                Gated and Isolated
-              </h3>
-              <p className="mt-3 text-sm">
-                Google sign-in with admin approval gates entry, and the
-                tenant&apos;s data lives in its own isolated databases: your
-                data stays yours.
-              </p>
-            </div>
-          </div>
-          <p className="mono mt-6 text-xs text-faint">
-            Brain SDK in-process · realtime voice · Google sign-in + approval ·
-            isolated per-tenant databases
-          </p>
-          <a
-            href="https://roleplay.xl.net"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn mt-6 no-underline"
-          >
-            Visit roleplay.xl.net
-            <span className="sr-only"> (opens in a new tab)</span>
-          </a>
-        </section>
 
         {/* 11. Leo Netter */}
         <section id="leo-netter" className="panel panel--lightline rise">

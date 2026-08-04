@@ -7,7 +7,8 @@
 // content has no path to markup.
 //
 // Pagination round (2026-08-04): this component is now PRESENTATIONAL -
-// the page owns the single guarded publishedCards() fetch (newest first)
+// the page owns the single guarded publishedCards() fetch (arranged spots
+// first, then newest first — §5.16 reorder)
 // and passes the rows here and to the registry, so the index can never
 // advertise cards this section failed to render. An empty list renders
 // NOTHING (the 25 hand-authored exhibits are unaffected and the page never

@@ -6,11 +6,11 @@
     "ai.xl.net",
     "AI Governance Writer",
     "IT Support Chicago",
+    "Roleplay",
     "QBR Machine",
     "Onboarding Toolkit",
     "XL Lakehouse",
     "XL API Gateway",
-    "Roleplay",
     "Leo Netter",
     "SpamSlayer",
     "TicketScribe",
@@ -43,6 +43,9 @@
     "Maximum Autonomy",
     "Hardened Sandbox",
     "Fully Separate",
+    "Brain SDK In-Process",
+    "Realtime Voice",
+    "Gated and Isolated",
     "Gap Analysis",
     "Asset Strategy",
     "QBR Deck",
@@ -55,9 +58,6 @@
     "Deploy",
     "Govern Access",
     "Route Traffic",
-    "Brain SDK In-Process",
-    "Realtime Voice",
-    "Gated and Isolated",
     "Slack DMs Only",
     "Rough Edges First",
     "Architecture Is Canonical",
@@ -110,11 +110,11 @@
     "aiwebsite",
     "governance",
     "itsupportchicago",
+    "roleplay",
     "qbr-machine",
     "onboarding-toolkit",
     "lakehouse",
     "api-gateway",
-    "roleplay",
     "leo-netter",
     "spamslayer",
     "ticketscribe",
@@ -180,6 +180,11 @@
       "bay": "02"
     },
     {
+      "id": "roleplay",
+      "title": "Roleplay",
+      "bay": "02"
+    },
+    {
       "id": "qbr-machine",
       "title": "QBR Machine",
       "bay": "03"
@@ -198,11 +203,6 @@
       "id": "api-gateway",
       "title": "XL API Gateway",
       "bay": "04"
-    },
-    {
-      "id": "roleplay",
-      "title": "Roleplay",
-      "bay": "05"
     },
     {
       "id": "leo-netter",

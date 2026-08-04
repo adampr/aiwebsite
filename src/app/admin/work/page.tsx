@@ -10,7 +10,8 @@ import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
 import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
-import { allSubmissions, submissionById } from "@/lib/work/db";
+import { allSubmissions, publishedCards, submissionById } from "@/lib/work/db";
+import { companyById } from "@/lib/roadmap/db";
 import {
   KIND_LABELS,
   workSubmissionsEnabled,
@@ -54,6 +55,42 @@ export default async function AdminWorkPage() {
     if (parent) byId.set(parent.id, parent);
   }
   const enabled = workSubmissionsEnabled(process.env);
+  // Lane spots for the Move control (§5.16 reorder), derived from
+  // publishedCards — the exact function the public pages render from, so
+  // "Spot 3 of 7" here is spot 3 on the page (it drops malformed-cardJson
+  // rows; an ad-hoc count would not). One call per lane present among the
+  // listed published rows; lanes are small.
+  const laneIds = [
+    ...new Set(
+      rows.filter((r) => r.status === "published").map((r) => r.companyId)
+    ),
+  ];
+  const laneSpots = new Map<string, { spot: number; laneSize: number }>();
+  for (const companyId of laneIds) {
+    try {
+      const lane = await publishedCards({ companyId });
+      lane.forEach((c, i) =>
+        laneSpots.set(c.id, { spot: i + 1, laneSize: lane.length })
+      );
+    } catch {
+      // no spots -> no Move control; the rest of the console still works
+    }
+  }
+  // Lane chips: every row names its lane so two "Spot 1" labels can never
+  // be ambiguous. Company name lookups, one per distinct company.
+  const companyNames = new Map<string, string>();
+  for (const cid of [
+    ...new Set(
+      rows.map((r) => r.companyId).filter((c): c is string => c !== null)
+    ),
+  ]) {
+    try {
+      const company = await companyById(cid);
+      if (company) companyNames.set(cid, company.name);
+    } catch {
+      // chip falls back to "company lane"
+    }
+  }
   return (
     <div className="space-y-6">
       <div>
@@ -61,7 +98,10 @@ export default async function AdminWorkPage() {
         <p className="mt-1 text-sm text-faint">
           Team-built tools submitted for the /work page. The editorial panel
           publishes what passes its gate; held rows wait here for a decision,
-          and updates that pass wait here for the swap approval.
+          and updates that pass wait here for the swap approval. Move arranges
+          a published card within its lane (/work team cards or one
+          company&apos;s roadmap page); once a lane has been arranged, new
+          publishes gather below the arranged cards, newest first.
           Intake is {enabled ? "enabled" : "PAUSED (WORK_SUBMISSIONS_ENABLED=0)"}.
         </p>
       </div>
@@ -90,6 +130,11 @@ export default async function AdminWorkPage() {
                   <span className="font-medium">{r.title}</span>
                   <span className="rounded-full border px-2 text-xs">
                     {STATUS_CHIP[r.status] ?? r.status}
+                  </span>
+                  <span className="rounded-full border px-2 text-xs text-faint">
+                    {r.companyId === null
+                      ? "/work"
+                      : (companyNames.get(r.companyId) ?? "company lane")}
                   </span>
                   <span className="text-faint">
                     {KIND_LABELS[r.kind as WorkKind] ?? r.kind}
@@ -168,6 +213,8 @@ export default async function AdminWorkPage() {
                   isUpdate={isUpdate}
                   targetLive={targetLive}
                   parentSuperseded={parentSuperseded}
+                  spot={laneSpots.get(r.id)?.spot ?? null}
+                  laneSize={laneSpots.get(r.id)?.laneSize ?? null}
                 />
               </div>
             );

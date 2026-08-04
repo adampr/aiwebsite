@@ -9,7 +9,8 @@
 // emits bays + exhibits from page.tsx, so these rows can never drift from
 // the frozen card copy). Team rows come from the page's single guarded
 // publishedCards() fetch, in the exact order CommunitySection renders them
-// (newest first), so registry numbering and DOM order never disagree.
+// (admin-arranged spots first, then newest first — §5.16 reorder), so
+// registry numbering and DOM order never disagree.
 // Numbering is presentational and continuous across the whole sequence,
 // padded to one uniform width per render (a new publish renumbers team
 // rows; the anchors, not the numbers, are the stable contract).

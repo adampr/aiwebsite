@@ -1,0 +1,1 @@
+ALTER TABLE "work_submissions" ADD COLUMN "display_rank" integer;

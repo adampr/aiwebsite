@@ -17,8 +17,11 @@ import {
   deleteSubmission,
   finishPendingApproval,
   finishUpdateRow,
+  holdPublishedForRerun,
   liveDescendantId,
   publishWithSupersede,
+  publishedCards,
+  reorderPublishedCard,
   publishedTitleClash,
   publishedTitleAndFacetSets,
   resolveUpdateTarget,
@@ -47,6 +50,10 @@ const card = (title: string): WorkCard => ({
 
 async function cleanup() {
   await db.delete(S).where(like(S.title, "ZZTEST%"));
+  // After the rows: the company FK is RESTRICT (§5.18).
+  await db
+    .delete(schema.companies)
+    .where(eq(schema.companies.domain, "zztest-reorder.example"));
 }
 
 async function mkRow(over: Record<string, unknown> = {}) {
@@ -566,6 +573,185 @@ async function main() {
   const recovered = await publishWithSupersede(auto3.id);
   assert.ok(recovered.ok, "unfenced click approves a stranded auto row");
   assert.equal((await submissionById(auto3.id))?.status, "published");
+
+  // 21. Reorder (§5.16 display_rank): all-NULL parity, dense re-rank,
+  // NULLS LAST placement for new publishes, clamp, not-published guard.
+  await cleanup();
+  async function seedPublished(
+    letter: string,
+    whenIso: string,
+    companyId: string | null = null
+  ) {
+    const r = await mkRow({ title: `ZZTEST Reorder ${letter}`, companyId });
+    await db
+      .update(S)
+      .set({
+        status: "published",
+        slug: `team-zztest-reorder-${letter.toLowerCase()}`,
+        publishedAt: new Date(whenIso),
+        cardJson: JSON.stringify(card(`ZZTEST Reorder ${letter}`)),
+      })
+      .where(eq(S.id, r.id));
+    return r.id;
+  }
+  const laneOrder = async (companyId: string | null = null) =>
+    (await publishedCards({ companyId })).map((x) => x.id);
+  const laneRanks = async (companyId: string | null = null) => {
+    const cards = await publishedCards({ companyId });
+    const ranks: (number | null)[] = [];
+    for (const c of cards) ranks.push((await submissionById(c.id))!.displayRank);
+    return ranks;
+  };
+
+  const ra = await seedPublished("A", "2026-01-01T00:00:00Z");
+  const rb = await seedPublished("B", "2026-01-02T00:00:00Z");
+  const rc = await seedPublished("C", "2026-01-03T00:00:00Z");
+  assert.deepEqual(
+    await laneOrder(),
+    [rc, rb, ra],
+    "all-NULL lane keeps newest-first parity"
+  );
+
+  const moved = await reorderPublishedCard(rc, 3);
+  assert.ok(moved.ok && moved.spot === 3 && moved.laneSize === 3, "move ok");
+  assert.deepEqual(await laneOrder(), [rb, ra, rc], "C moved to the end");
+  assert.deepEqual(await laneRanks(), [1, 2, 3], "dense 1..k after first move");
+
+  const rd = await seedPublished("D", "2026-01-04T00:00:00Z");
+  assert.deepEqual(
+    await laneOrder(),
+    [rb, ra, rc, rd],
+    "new publish appends after the ranked block (NULLS LAST)"
+  );
+
+  const clamped = await reorderPublishedCard(rd, 99);
+  assert.ok(
+    clamped.ok && clamped.spot === 4 && clamped.laneSize === 4,
+    "overshooting spot clamps to the lane end"
+  );
+  assert.deepEqual(await laneRanks(), [1, 2, 3, 4], "clamp densifies the lane");
+
+  const promoted = await reorderPublishedCard(rd, 1);
+  assert.ok(promoted.ok && promoted.spot === 1);
+  assert.deepEqual(await laneOrder(), [rd, rb, ra, rc], "promote to spot 1");
+
+  const heldRow = await mkRow({ title: "ZZTEST Reorder Held" });
+  await db
+    .update(S)
+    .set({
+      status: "held",
+      heldAt: new Date(),
+      cardJson: JSON.stringify(card("ZZTEST Reorder Held")),
+    })
+    .where(eq(S.id, heldRow.id));
+  const refused = await reorderPublishedCard(heldRow.id, 1);
+  assert.ok(
+    !refused.ok && refused.reason === "not_published",
+    "non-published rows cannot be moved"
+  );
+
+  // The panel's uniqueness gate consumes publishedCards as SETS: a reorder
+  // must never change the membership it sees.
+  const setsBefore = await publishedTitleAndFacetSets({ companyId: null });
+  await reorderPublishedCard(ra, 1);
+  const setsAfter = await publishedTitleAndFacetSets({ companyId: null });
+  assert.deepEqual(
+    [...setsAfter.publishedTitles].sort(),
+    [...setsBefore.publishedTitles].sort(),
+    "reorder is invisible to the title uniqueness sets"
+  );
+
+  // 22. Tenancy isolation: ranks are lane-relative; a company-lane move
+  // never touches public-lane ranks, and vice versa.
+  const [comp] = await db
+    .insert(schema.companies)
+    .values({
+      domain: "zztest-reorder.example",
+      name: "ZZTEST Reorder Co",
+      createdByEmail: "zztest@zztest-reorder.example",
+    })
+    .returning({ id: schema.companies.id });
+  const ce1 = await seedPublished("Co1", "2026-01-01T00:00:00Z", comp.id);
+  const ce2 = await seedPublished("Co2", "2026-01-02T00:00:00Z", comp.id);
+  const publicBefore = {
+    order: await laneOrder(),
+    ranks: await laneRanks(),
+  };
+  const companyMove = await reorderPublishedCard(ce1, 1);
+  assert.ok(
+    companyMove.ok &&
+      companyMove.laneSize === 2 &&
+      companyMove.companyId === comp.id,
+    "company-lane move sees only its own lane"
+  );
+  assert.deepEqual(await laneOrder(comp.id), [ce1, ce2]);
+  assert.deepEqual(
+    { order: await laneOrder(), ranks: await laneRanks() },
+    publicBefore,
+    "company-lane move leaves the public lane byte-identical"
+  );
+  const companyBefore = {
+    order: await laneOrder(comp.id),
+    ranks: await laneRanks(comp.id),
+  };
+  await reorderPublishedCard(rb, 1);
+  assert.deepEqual(
+    { order: await laneOrder(comp.id), ranks: await laneRanks(comp.id) },
+    companyBefore,
+    "public-lane move leaves the company lane byte-identical"
+  );
+
+  // 23. Swap inheritance + rollback rank: the update child takes the
+  // parent's spot; rollback restores the CHILD's current spot (a reorder
+  // between swap and rollback re-ranks the live child while the superseded
+  // parent's rank goes stale).
+  const rbRank = (await submissionById(rb))!.displayRank;
+  assert.equal(rbRank, 1, "precondition: B sits at spot 1");
+  const upd = await mkRow({
+    parentId: rb,
+    title: "ZZTEST Reorder B",
+    email: "zztest-updater@xl.net",
+  });
+  await db
+    .update(S)
+    .set({
+      status: "pending_approval",
+      cardJson: JSON.stringify(card("ZZTEST Reorder B")),
+    })
+    .where(eq(S.id, upd.id));
+  const swapRanked = await publishWithSupersede(upd.id);
+  assert.ok(swapRanked.ok, "ranked swap publishes");
+  assert.equal(
+    (await submissionById(upd.id))?.displayRank,
+    rbRank,
+    "swap inherits the locked parent's rank"
+  );
+  const moveLive = await reorderPublishedCard(upd.id, 3);
+  assert.ok(moveLive.ok && moveLive.spot === 3);
+  const liveRank = (await submissionById(upd.id))!.displayRank;
+  const rolledRanked = await rollbackSwappedUpdate(upd.id);
+  assert.ok(rolledRanked.ok, "rollback after reorder");
+  assert.equal(
+    (await submissionById(rb))?.displayRank,
+    liveRank,
+    "rollback restores the live spot, not the stale pre-reorder one"
+  );
+  const publicRanks = (await laneRanks()).filter((r) => r !== null);
+  assert.deepEqual(
+    publicRanks,
+    publicRanks.map((_, i) => i + 1).slice(0, publicRanks.length),
+    "no duplicate or gapped ranks after swap + reorder + rollback"
+  );
+
+  // 24. holdPublishedForRerun clears the rank: the one published -> held ->
+  // published round trip must re-enter unranked, never resurrect a stale
+  // spot over whichever card the admin has since moved there.
+  assert.ok(await holdPublishedForRerun(rb, "zztest hold"));
+  assert.equal(
+    (await submissionById(rb))?.displayRank,
+    null,
+    "held-for-rerun rows drop their rank"
+  );
 
   await cleanup();
   console.log("update-flow-test: all assertions passed.");

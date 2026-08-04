@@ -1,8 +1,9 @@
 "use client";
 
 // /work console pager (pagination round, 2026-08-04): windows the ONE
-// works sequence (25 static exhibits in bay order, then team cards newest
-// first) behind a "Show 5 / 10 / 25 / All" mono strip below the registry.
+// works sequence (25 static exhibits in bay order, then team cards in lane
+// display order) behind a "Show 5 / 10 / 25 / All" mono strip below the
+// registry.
 //
 // Mechanism and safety contract, in order of importance:
 // - The server always renders EVERY card; this island only toggles

@@ -1203,6 +1203,7 @@ async function main() {
     supersededAt: null,
     slug: null,
     publishedAt: null,
+    displayRank: null as number | null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };

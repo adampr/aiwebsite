@@ -1,9 +1,11 @@
 "use client";
 
-// Approve / reject / retry / delete buttons for /admin/work (§5.16). The API
-// routes enforce admin; this island only reflects outcomes. Update rows
-// (isUpdate) get swap-aware labels and confirms: Approve replaces a live
-// card, Delete on a swapped-in child performs a ROLLBACK.
+// Approve / reject / retry / delete / move buttons for /admin/work (§5.16).
+// The API routes enforce admin; this island only reflects outcomes. Update
+// rows (isUpdate) get swap-aware labels and confirms: Approve replaces a
+// live card, Delete on a swapped-in child performs a ROLLBACK. Published
+// rows get the lane reorder control (spot/laneSize props, advisory display
+// only — the route re-derives everything under lock).
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -15,6 +17,8 @@ export function WorkAdminActions({
   isUpdate = false,
   targetLive = false,
   parentSuperseded = false,
+  spot = null,
+  laneSize = null,
 }: {
   id: string;
   status: string;
@@ -22,17 +26,35 @@ export function WorkAdminActions({
   isUpdate?: boolean;
   targetLive?: boolean;
   parentSuperseded?: boolean;
+  /** 1-based lane display position (§5.16 reorder); null = not rankable. */
+  spot?: number | null;
+  laneSize?: number | null;
 }) {
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [spotInput, setSpotInput] = useState("");
 
-  async function act(path: string, method: string, confirmText?: string) {
+  async function act(
+    path: string,
+    method: string,
+    confirmText?: string,
+    body?: unknown
+  ) {
     if (confirmText && !confirm(confirmText)) return;
     setBusy(true);
     setMsg(null);
     try {
-      const res = await fetch(path, { method });
+      const res = await fetch(
+        path,
+        body === undefined
+          ? { method }
+          : {
+              method,
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(body),
+            }
+      );
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as {
           error?: { message?: string };
@@ -189,6 +211,48 @@ export function WorkAdminActions({
               ? "Unpublish (delete)"
               : "Delete"}
         </button>
+      )}
+      {/* Reorder (§5.16): reversible, so no confirm() — that is the
+          destructive-act marker on this island. The route re-derives the
+          lane under lock and clamps an overshoot, so a stale spot label
+          only ever costs a second click. */}
+      {status === "published" && spot !== null && laneSize !== null && (
+        <span className="flex items-center gap-2">
+          <span className="text-faint">
+            Spot {spot} of {laneSize} ·
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={laneSize}
+            value={spotInput}
+            placeholder={String(spot)}
+            onChange={(e) => setSpotInput(e.target.value)}
+            aria-label={`Move to spot (1 to ${laneSize})`}
+            className="w-14 rounded border bg-transparent px-1 py-0.5"
+          />
+          <button
+            type="button"
+            disabled={busy}
+            className="rounded border px-2 py-1"
+            title="Moving a card arranges its lane; new publishes then gather below the arranged cards, newest first."
+            onClick={() => {
+              const n = Number(spotInput);
+              if (spotInput.trim() === "" || !Number.isInteger(n) || n < 1) {
+                setMsg("Enter a spot number of 1 or more.");
+                return;
+              }
+              void act(
+                `/api/work/submissions/${id}/reorder`,
+                "POST",
+                undefined,
+                { spot: n }
+              );
+            }}
+          >
+            Move
+          </button>
+        </span>
       )}
       {status === "published" && slug && (
         <>
