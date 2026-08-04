@@ -5009,6 +5009,14 @@ requireCompanyMember, domain from the principal): GET
 recipient HARDCODED to the session's own address, returns the REAL send
 outcome - 502 send_failed - because the dialog reports it).
 
+`GET /.well-known/microsoft-identity-association.json` (host route) serves
+the Entra publisher-domain association file ({associatedApplications:
+[{applicationId: MICROSOFT_CLIENT_ID}]}, content-type application/json, no
+redirect) so the app registration can verify ai.xl.net as its publisher
+domain and the OAuth consent screen drops the "unverified" banner. One-time
+portal step: App registration, Branding and properties, Publisher domain,
+verify ai.xl.net.
+
 RE-LOGIN FIX (owner report: a signed-in pre-hardening session hit the
 confirm wall reading as a login prompt; a trusted staff session hit the
 "use your work email" explainer). `readRoadmapHubView()` (access.ts) is a
