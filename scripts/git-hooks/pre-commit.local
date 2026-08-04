@@ -94,4 +94,19 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -q '\.tsx$'; then
   fi
 fi
 
+# Roadmap caching gate (§5.18, 2026-08-04): company-private pages must stay
+# force-dynamic, unindexed, and revalidation-free. Structural leak class, so
+# it fails closed like the jsx gate.
+if git diff --cached --name-only --diff-filter=ACMR | grep -qE '^src/app/(roadmap|admin/roadmap|api/roadmap|sitemap)'; then
+  if [ ! -r scripts/check-roadmap-caching.mjs ]; then
+    echo "BLOCKED: scripts/check-roadmap-caching.mjs is missing — the roadmap caching gate" >&2
+    echo "  cannot run, and a gate that did not run is not a pass. Restore it." >&2
+    exit 1
+  fi
+  if ! node scripts/check-roadmap-caching.mjs >&2; then
+    echo "BLOCKED: roadmap caching gate (see above)." >&2
+    exit 1
+  fi
+fi
+
 exit 0

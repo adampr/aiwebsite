@@ -86,6 +86,16 @@ if ! node "$(dirname "$0")/check-jsx-spacing.mjs" --module; then
   exit 1
 fi
 
+# Roadmap caching gate (added 2026-08-04, §5.18): company-private pages must
+# be force-dynamic + unindexed with no revalidation machinery; a cached
+# authenticated render is a cross-tenant leak. Same fail-closed posture as
+# the jsx gate.
+if ! node "$(dirname "$0")/check-roadmap-caching.mjs"; then
+  echo "" >&2
+  echo "check-build-warnings: FAILED — roadmap caching gate (see above); do not deploy." >&2
+  exit 1
+fi
+
 # /work static-snapshot gate (added 2026-07-29, §5.16). The team-submission
 # lint checks title/facet uniqueness against a generated snapshot of the
 # hand-authored /work exhibits; editing a static card without regenerating it

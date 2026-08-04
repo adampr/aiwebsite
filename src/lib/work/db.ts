@@ -21,8 +21,20 @@ import { db, schema } from "@/lib/db";
 import { WORK_CAPS, type WorkKind } from "./config";
 import type { WorkCard } from "./lint";
 import { slugForTitle } from "./lint";
+// Type-only (erased at runtime): scope.ts imports roadmap/db which imports
+// this file, so a value import here would cycle.
+import type { WorkScope } from "./scope";
 
 const S = schema.workSubmissions;
+
+/** §5.18 tenancy predicate. REQUIRED on every read that feeds a rendered
+ * surface or a uniqueness gate: null = the public /work lane (company_id IS
+ * NULL, all pre-roadmap rows), a companyId = that company's private lane. */
+function inScope(scope: WorkScope) {
+  return scope.companyId === null
+    ? isNull(S.companyId)
+    : eq(S.companyId, scope.companyId);
+}
 
 // Every list/poll/panel read EXCLUDES archive_data (the transient original
 // upload, ≤10 MB): only the retention-email step ever selects it, via
@@ -70,14 +82,23 @@ export async function createSubmission(opts: {
    * would turn a forged email into a live card swap. Guarded by a throw
    * here and by the work_sub_auto_approve_parent_ck CHECK in the DB. */
   autoApprove?: boolean;
+  /** §5.18 tenancy: REQUIRED (no default) so every intake path states its
+   * lane. null = public /work; a company id = that company's private Your
+   * Work. Company update rows are impossible (0035 CHECK + throw here). */
+  companyId: string | null;
 }): Promise<SubmissionRow> {
   if (opts.autoApprove && !opts.parentId)
     throw new Error(
       "autoApprove is only meaningful on an update row (parentId required)"
     );
+  if (opts.companyId && opts.parentId)
+    throw new Error(
+      "company-lane update rows are not supported (work_sub_company_no_update_ck)"
+    );
   const [row] = await db
     .insert(S)
     .values({
+      companyId: opts.companyId,
       parentId: opts.parentId ?? null,
       autoApprove: opts.autoApprove ?? false,
       archiveData: opts.archiveData,
@@ -171,11 +192,11 @@ export interface PublishedCard {
  * facet label — the old .limit(50) silently blinded that gate past 50 cards.
  * Watch item: the taken-titles/facets prompt strings grow with card count
  * (~25-30 KB at ~275 cards). */
-export async function publishedCards(): Promise<PublishedCard[]> {
+export async function publishedCards(scope: WorkScope): Promise<PublishedCard[]> {
   const rows = await db
     .select(ROW_COLS)
     .from(S)
-    .where(and(eq(S.status, "published"), isNotNull(S.cardJson)))
+    .where(and(inScope(scope), eq(S.status, "published"), isNotNull(S.cardJson)))
     .orderBy(desc(S.publishedAt));
   const out: PublishedCard[] = [];
   for (const r of rows) {
@@ -208,11 +229,14 @@ export async function publishedCards(): Promise<PublishedCard[]> {
 /** excludeId (§5.16 updates): an update row's pinned title and facets must
  * not self-clash against its own predecessor in the panel's taken-titles
  * prompt sets or the lint context; every other caller omits it. */
-export async function publishedTitleAndFacetSets(excludeId?: string): Promise<{
+export async function publishedTitleAndFacetSets(
+  scope: WorkScope,
+  excludeId?: string
+): Promise<{
   publishedTitles: string[];
   publishedFacetLabels: string[];
 }> {
-  const cards = (await publishedCards()).filter((c) => c.id !== excludeId);
+  const cards = (await publishedCards(scope)).filter((c) => c.id !== excludeId);
   return {
     publishedTitles: cards.map((c) => c.card.title.toLowerCase()),
     publishedFacetLabels: cards.flatMap((c) =>
@@ -229,7 +253,9 @@ export async function latestPublishedAt(): Promise<Date | null> {
   const rows = await db
     .select({ at: sql<Date | null>`max(greatest(published_at, updated_at))` })
     .from(S)
-    .where(eq(S.status, "published"));
+    // The sitemap is a PUBLIC surface: company-lane publishes must never
+    // move (or leak through) /work's lastmod (§5.18).
+    .where(and(eq(S.status, "published"), isNull(S.companyId)));
   return rows[0]?.at ?? null;
 }
 
@@ -321,7 +347,16 @@ export async function heartbeat(
     .where(and(eq(S.id, id), eq(S.panelAttemptId, attemptId)));
 }
 
-async function uniqueSlug(title: string, id: string): Promise<string> {
+async function uniqueSlug(
+  title: string,
+  id: string,
+  companyId: string | null
+): Promise<string> {
+  // Company-lane slugs are NON-DERIVABLE from the title (§5.18): slugs are
+  // globally unique, so a title-derived company slug colliding with a public
+  // one would leak (via the -2 suffix) that a card of that name exists in
+  // another tenant. The row id prefix carries no such inference.
+  if (companyId !== null) return `team-${id.slice(0, 8)}`;
   const base = slugForTitle(title);
   for (let i = 0; i < 5; i++) {
     const candidate = i === 0 ? base : `${base}-${i + 1}`;
@@ -341,7 +376,12 @@ export async function finishPublished(
   card: WorkCard,
   transcriptJson: string
 ): Promise<string | null> {
-  const slug = await uniqueSlug(card.title, id);
+  const pre = await db
+    .select({ companyId: S.companyId })
+    .from(S)
+    .where(eq(S.id, id))
+    .limit(1);
+  const slug = await uniqueSlug(card.title, id, pre[0]?.companyId ?? null);
   const res = await db
     .update(S)
     .set({
@@ -455,6 +495,13 @@ export async function publishWithSupersede(
       (child.status !== "pending_approval" && child.status !== "held") ||
       child.parentId !== parentId ||
       !child.cardJson ||
+      // §5.18: the update lane is staff-only. A NULL-company child pointing
+      // at a COMPANY parent would swap a private card onto the public page
+      // (the child publishes with company_id NULL); the update route refuses
+      // company parents, and this in-transaction re-check makes sure no
+      // future caller can mint a cross-scope swap.
+      child.companyId !== null ||
+      parent?.companyId != null ||
       // Auto-approve lane only: the swap is fenced on the claiming attempt,
       // and only a NEVER-HELD row stamped autoApprove at intake may swap
       // without the admin click (heldAt re-checked INSIDE the txn: the gate
@@ -725,7 +772,7 @@ export async function approveHeld(id: string): Promise<string | null> {
   } catch {
     return null;
   }
-  const slug = await uniqueSlug(card.title, id);
+  const slug = await uniqueSlug(card.title, id, row.companyId ?? null);
   const res = await db
     .update(S)
     .set({
@@ -802,7 +849,7 @@ export async function retitlePublishedCard(
     return null;
   }
   card.title = title;
-  const slug = await uniqueSlug(title, id);
+  const slug = await uniqueSlug(title, id, row.companyId ?? null);
   const res = await db
     .update(S)
     .set({
@@ -920,10 +967,13 @@ export function normalizeTitle(title: string): string {
   return title.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-/** An active (received/running/held) row from ANY submitter whose normalized
- * title matches; /work is one public page, a duplicate is a duplicate. */
+/** An active (received/running/held) row from ANY submitter IN THIS SCOPE
+ * whose normalized title matches; each lane is one page, a duplicate is a
+ * duplicate — but two tenants may both build an "Outage Checker" (the 0035
+ * per-tenant unique index is the backstop). */
 export async function activeTitleClash(
-  title: string
+  title: string,
+  scope: WorkScope
 ): Promise<{ id: string; submitterEmail: string; status: string } | null> {
   const norm = normalizeTitle(title);
   const rows = await db
@@ -931,6 +981,7 @@ export async function activeTitleClash(
     .from(S)
     .where(
       and(
+        inScope(scope),
         inArray(S.status, ["received", "running", "held", "pending_approval"]),
         sql`lower(btrim(regexp_replace(${S.title}, '\s+', ' ', 'g'))) = ${norm}`
       )
@@ -944,6 +995,7 @@ export async function activeTitleClash(
  * not clash against the predecessor itself; every other caller omits it. */
 export async function publishedTitleClash(
   title: string,
+  scope: WorkScope,
   opts?: { exceptId?: string }
 ): Promise<boolean> {
   const norm = normalizeTitle(title);
@@ -952,6 +1004,7 @@ export async function publishedTitleClash(
     .from(S)
     .where(
       and(
+        inScope(scope),
         eq(S.status, "published"),
         ...(opts?.exceptId ? [ne(S.id, opts.exceptId)] : []),
         sql`lower(btrim(regexp_replace(${S.title}, '\s+', ' ', 'g'))) = ${norm}`
@@ -966,11 +1019,19 @@ export async function publishedTitleClash(
  * card and slug-match another; deterministic precedence, never ambiguity).
  * Static exhibits are the caller's problem: this only sees the DB. */
 export async function resolveUpdateTarget(
-  value: string
+  value: string,
+  scope: WorkScope
 ): Promise<SubmissionRow | null> {
   const norm = normalizeTitle(value);
   if (!norm) return null;
-  const published = and(eq(S.status, "published"), isNotNull(S.cardJson));
+  // Scope-filtered even though company updates are rejected in v1 (belt and
+  // braces): a company sender's "Update Card:" must never resolve a PUBLIC
+  // card into its update path.
+  const published = and(
+    inScope(scope),
+    eq(S.status, "published"),
+    isNotNull(S.cardJson)
+  );
   const byTitle = await db
     .select(ROW_COLS)
     .from(S)
@@ -989,6 +1050,75 @@ export async function resolveUpdateTarget(
     .where(and(published, or(eq(S.slug, v), eq(S.slug, `team-${v}`))))
     .limit(1);
   return bySlug[0] ?? null;
+}
+
+// ---- Company-scoped reads (§5.18) ----
+
+/** EXISTS probe for the "Your Work" nav island: trusted same-domain session
+ * AND at least one published company card. */
+export async function hasPublishedCompanyWork(
+  companyId: string
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: S.id })
+    .from(S)
+    .where(and(eq(S.companyId, companyId), eq(S.status, "published")))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/** Durable per-company daily quota (countCreatedToday shape; failed rows
+ * excluded so a pipeline error never eats a company's quota). */
+export async function countCreatedTodayForCompany(
+  companyId: string
+): Promise<number> {
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(S)
+    .where(
+      and(
+        eq(S.companyId, companyId),
+        gte(S.createdAt, dayStart),
+        ne(S.status, "failed")
+      )
+    );
+  return rows[0]?.n ?? 0;
+}
+
+export type CompanySubmissionMeta = {
+  id: string;
+  title: string;
+  kind: string;
+  status: string;
+  submitterEmail: string;
+  createdAt: Date;
+  publishedAt: Date | null;
+};
+
+/** Company-admin "in review" list: METADATA ONLY (title/status/dates/
+ * submitter), never held or failed content, panel errors, or card drafts.
+ * The one sanctioned company-wide submissions lister — allSubmissions stays
+ * global and is only reachable from the GA-gated /admin/work. */
+export async function companySubmissions(
+  companyId: string,
+  limit = 50
+): Promise<CompanySubmissionMeta[]> {
+  return db
+    .select({
+      id: S.id,
+      title: S.title,
+      kind: S.kind,
+      status: S.status,
+      submitterEmail: S.submitterEmail,
+      createdAt: S.createdAt,
+      publishedAt: S.publishedAt,
+    })
+    .from(S)
+    .where(eq(S.companyId, companyId))
+    .orderBy(desc(S.createdAt))
+    .limit(limit);
 }
 
 // ---- Daily budget ledger (work_usage) ----

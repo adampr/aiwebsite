@@ -1,6 +1,8 @@
-// POST (create + kick panel) / GET (list mine) - team work submissions
-// (§5.16). @xl.net accounts only. Upload bytes are inspected in memory and
-// discarded; only extracted text persists.
+// POST (create + kick panel) / GET (list mine) - work submissions (§5.16 +
+// §5.18). ONE endpoint, two audiences: @xl.net staff (public /work lane) and
+// trusted sessions of registered roadmap companies (their private Your Work
+// lane); requireWorkUser resolves the scope. Upload bytes are inspected in
+// memory and discarded; only extracted text persists.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -31,12 +33,14 @@ import {
   mergeSkillCorpus,
   skillDocFailureMessage,
 } from "@/lib/work/extract";
-import { okJson, rateLimit, requireXlUser, workError } from "@/lib/work/http";
+import { okJson, rateLimit, requireWorkUser, workError } from "@/lib/work/http";
 import { kickPanel } from "@/lib/work/panel";
+import { ROADMAP_CAPS } from "@/lib/roadmap/config";
+import { countCreatedTodayForCompany } from "@/lib/work/db";
 import { statusView } from "@/lib/work/view";
 
 export async function GET(): Promise<Response> {
-  const user = await requireXlUser();
+  const user = await requireWorkUser();
   if (user instanceof Response) return user;
   const limited = rateLimit(`work:list:${user.userId}`, 60, 30);
   if (limited) return limited;
@@ -50,8 +54,9 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  const user = await requireXlUser();
+  const user = await requireWorkUser();
   if (user instanceof Response) return user;
+  const isCompanyLane = user.scope.companyId !== null;
   if (!workSubmissionsEnabled(process.env))
     return workError(
       "disabled",
@@ -59,20 +64,38 @@ export async function POST(req: Request): Promise<Response> {
       503
     );
   // In-memory CPU guard against upload hammering; the durable daily quota
-  // is row-counted below.
+  // is row-counted below. Client caps are deliberately tighter (§5.18): the
+  // brain is one shared resource and the roadmap ledger bounds the whole
+  // client population, so per-actor quotas stay small.
   const limited = rateLimit(
     `work:submit:${user.userId}`,
     3600,
-    WORK_CAPS.uploadAttemptsPerUserPerHour
+    isCompanyLane
+      ? ROADMAP_CAPS.clientUploadAttemptsPerUserPerHour
+      : WORK_CAPS.uploadAttemptsPerUserPerHour
   );
   if (limited) return limited;
-  const dailyQuota = user.admin
-    ? WORK_CAPS.submissionsPerAdminPerDay
-    : WORK_CAPS.submissionsPerUserPerDay;
+  // isAdmin elevation is staff-lane-only by construction: a client admin is
+  // a company admin, not an ADMIN_EMAIL entry.
+  const dailyQuota = isCompanyLane
+    ? ROADMAP_CAPS.clientSubmissionsPerUserPerDay
+    : user.admin
+      ? WORK_CAPS.submissionsPerAdminPerDay
+      : WORK_CAPS.submissionsPerUserPerDay;
   if ((await countCreatedToday(user.email)) >= dailyQuota)
     return workError(
       "quota",
       `The limit is ${dailyQuota} submissions per person per day (failed submissions do not count). Try again tomorrow.`,
+      429
+    );
+  if (
+    isCompanyLane &&
+    (await countCreatedTodayForCompany(user.scope.companyId as string)) >=
+      ROADMAP_CAPS.companySubmissionsPerDay
+  )
+    return workError(
+      "quota",
+      `Your company reached its ${ROADMAP_CAPS.companySubmissionsPerDay} submissions for today (failed submissions do not count). Try again tomorrow.`,
       429
     );
   if (!(await brainHealthy()))
@@ -128,21 +151,26 @@ export async function POST(req: Request): Promise<Response> {
   // same tool because nothing stopped him). One public page, one active
   // submission per title, from anyone; failed rows never block.
   const norm = normalizeTitle(title);
+  // Hand-authored exhibit titles are a /work-only concept; company lanes
+  // check only their own scope.
   if (
-    staticTitles.titles.some((t: string) => normalizeTitle(t) === norm) ||
-    (await publishedTitleClash(title))
+    (!isCompanyLane &&
+      staticTitles.titles.some((t: string) => normalizeTitle(t) === norm)) ||
+    (await publishedTitleClash(title, user.scope))
   )
     return workError(
       "duplicate_title",
-      "A published /work card already uses this title. Pick a different title.",
+      "A published card already uses this title. Pick a different title.",
       409
     );
-  const clash = await activeTitleClash(title);
+  const clash = await activeTitleClash(title, user.scope);
   if (clash)
     return workError(
       "duplicate_title",
       clash.submitterEmail === user.email
-        ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it on your submissions page at /work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
+        ? isCompanyLane
+          ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it on your company's roadmap page at /roadmap/work.`
+          : `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it on your submissions page at /work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
         : `A teammate already has a submission titled "${title}" in review. Pick a different title, or check with them before resubmitting.`,
       409
     );
@@ -155,7 +183,9 @@ export async function POST(req: Request): Promise<Response> {
     if (!/^[A-Za-z][A-Za-z'-]{1,19}$/.test(rawName))
       return workError(
         "invalid_request",
-        "The public credit must be a single first name, letters only, 2 to 20 characters. Leave it empty to publish as the XL.net team.",
+        isCompanyLane
+          ? "The credit must be a single first name, letters only, 2 to 20 characters. Leave it empty to publish under your company's team credit."
+          : "The public credit must be a single first name, letters only, 2 to 20 characters. Leave it empty to publish as the XL.net team.",
         400
       );
     attribution = rawName;
@@ -282,6 +312,7 @@ export async function POST(req: Request): Promise<Response> {
   let row;
   try {
     row = await createSubmission({
+    companyId: user.scope.companyId,
     userId: user.userId,
     email: user.email,
     name: attribution,
@@ -308,7 +339,7 @@ export async function POST(req: Request): Promise<Response> {
     if (isUniqueViolation(err, "work_sub_active_title_uq"))
       return workError(
         "duplicate_title",
-        `A submission titled "${title}" is already in the pipeline. Check your submissions page at /work/submit.`,
+        `A submission titled "${title}" is already in the pipeline. Check ${isCompanyLane ? "your company's roadmap page at /roadmap/work" : "your submissions page at /work/submit"}.`,
         409
       );
     throw err;

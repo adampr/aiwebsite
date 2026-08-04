@@ -31,9 +31,11 @@ const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
     return "bytea";
   },
 });
+import { companies } from "./roadmap-schema";
 import {
   makeAdminEmailsTable,
   makeAuthLogsTable,
+  makeMagicLinksTable,
   makeBlogAudioTable,
   makeBlogHeroImagesTable,
   makeBlogMetricsTable,
@@ -334,6 +336,20 @@ export const workSubmissions = pgTable(
     // Stamped on the parent when an approved update replaces it
     // (status "superseded", slug freed); cleared again on rollback.
     supersededAt: timestamp("superseded_at", { withTimezone: true }),
+    // §5.18 tenancy axis: NULL = the original public /work lane (every
+    // pre-roadmap row keeps its meaning, zero backfill); set = the row
+    // belongs to that company's private "Your Work" page. RESTRICT, not
+    // CASCADE/SET NULL: SET NULL would promote private cards into the public
+    // lane, CASCADE would mass-delete on an accidental company delete —
+    // offboarding is an explicit ordered purge (submissions, then the
+    // company row). Migration 0035 CHECK (work_sub_company_no_update_ck):
+    // company_id IS NULL OR parent_id IS NULL — the update lane is
+    // staff-only in v1, which transitively (0034 CHECK) makes company
+    // auto_approve doubly impossible. The CHECK covers only the child side;
+    // the update route refuses company PARENTS in code.
+    companyId: uuid("company_id").references(() => companies.id, {
+      onDelete: "restrict",
+    }),
     slug: text("slug"), // "team-<slugified-title>", disjoint from exhibit ids
     publishedAt: timestamp("published_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -348,9 +364,11 @@ export const workSubmissions = pgTable(
     index("work_sub_status_idx").on(t.status, t.publishedAt),
     uniqueIndex("work_sub_slug_uq").on(t.slug),
     index("work_sub_parent_idx").on(t.parentId),
+    index("work_sub_company_idx").on(t.companyId, t.status, t.publishedAt),
     // The partial one-in-flight-update-per-parent unique index
     // (work_sub_parent_active_uq) and the active-title index are
-    // migration-only (0033/0025): drizzle cannot model partial indexes.
+    // migration-only (0033/0025, re-scoped per-company in 0035): drizzle
+    // cannot model partial indexes.
   ]
 );
 
@@ -378,3 +396,13 @@ export const contactSubmissions = pgTable("contact_submissions", {
 // is the composed site tables plus the module's registry. drizzle-kit reads
 // exported pgTable objects, so the re-export is what puts them in migrations.
 export * from "./rfp-schema";
+
+// Your AI Roadmap tenancy tables (§5.18) — same own-file rationale. The
+// magic_links table (module factory, registered in index.ts since
+// auth.providers.magicLink) lives below so drizzle-kit emits it.
+export * from "./roadmap-schema";
+
+// Magic-link sign-in tokens (module §5.5): hashed single-use 15-minute
+// tokens. Registered with the module client in index.ts; enabled 2026-08-04
+// as the roadmap's provider-agnostic trusted sign-in lane (§5.18).
+export const magicLinks = makeMagicLinksTable();

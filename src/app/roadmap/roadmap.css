@@ -1,0 +1,270 @@
+/* Your AI Roadmap (§5.18) presentation. Every class is rmp-prefixed; this
+   file is imported by src/app/roadmap/page.tsx and the (steps) layout, never
+   globals.css. Color grammar from /governance: cyan (--xl-light) = in
+   motion, sand (--xl-sand) = done; state is NEVER color-only (a text badge
+   sits beside every node, and a visually-hidden list narrates). */
+
+/* ---- The Lightline Runway ---------------------------------------------- */
+
+.rmp-runway {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0.5rem 0;
+}
+
+.rmp-stop {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr;
+  column-gap: 0.9rem;
+  align-items: start;
+}
+
+.rmp-node-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5rem;
+  width: 1.5rem;
+}
+
+.rmp-node {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  transform: rotate(45deg);
+  border: 1px solid var(--xl-line-bright);
+  background: var(--xl-bg-1);
+}
+
+.rmp-node--done {
+  border-color: var(--xl-sand);
+  background: var(--xl-sand);
+  box-shadow: 0 0 12px var(--xl-sand-glow);
+}
+
+.rmp-node--live {
+  border-color: var(--xl-light);
+  background: var(--xl-light);
+  box-shadow: 0 0 14px var(--xl-light-glow);
+}
+
+.rmp-node--frontier {
+  border-color: var(--xl-light);
+  animation: rmp-pulse 2.4s ease-in-out infinite;
+}
+
+/* Teaser zero state: node 01 shimmers as the invitation. */
+.rmp-node--shimmer {
+  border-color: var(--xl-light-dim);
+  animation: rmp-shimmer 3.2s ease-in-out infinite;
+}
+
+@keyframes rmp-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--xl-light-glow);
+  }
+  50% {
+    box-shadow: 0 0 14px 3px var(--xl-light-glow);
+  }
+}
+
+@keyframes rmp-shimmer {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 10px var(--xl-light-glow);
+  }
+}
+
+.rmp-stop-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.6rem;
+  row-gap: 0.15rem;
+  min-height: 1.5rem;
+}
+
+.rmp-stop-num {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  color: var(--xl-text-faint);
+}
+
+.rmp-stop-title {
+  font-size: 0.85rem;
+  color: var(--xl-text);
+}
+
+/* Text state badge: never color-only, but color still reinforces. */
+.rmp-state {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--xl-text-faint);
+  border: 1px solid var(--xl-line);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+  white-space: nowrap;
+}
+
+.rmp-state--frontier {
+  color: var(--xl-light);
+  border-color: var(--xl-light-dim);
+}
+
+.rmp-state--done {
+  color: var(--xl-sand);
+  border-color: var(--xl-sand);
+}
+
+.rmp-state--live {
+  color: var(--xl-light);
+  border-color: var(--xl-light);
+  box-shadow: 0 0 8px var(--xl-light-glow);
+}
+
+/* Segments: one luminous hairline; a segment lights only when BOTH adjacent
+   steps are done. Mobile: vertical left rail. */
+.rmp-seg {
+  width: 1px;
+  height: 1.75rem;
+  margin-left: calc(0.75rem - 0.5px);
+  background: var(--xl-line);
+}
+
+.rmp-seg--lit {
+  background: var(--xl-sand);
+  box-shadow: 0 0 8px var(--xl-sand-glow);
+  transform: scaleY(0);
+  transform-origin: top;
+  animation: rmp-grow-y 0.5s ease forwards;
+}
+
+@keyframes rmp-grow-y {
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes rmp-grow-x {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Desktop: horizontal line through the four diamonds. */
+@media (min-width: 768px) {
+  .rmp-runway {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .rmp-stop {
+    grid-template-columns: none;
+    grid-template-rows: 1.5rem auto;
+    justify-items: center;
+    row-gap: 0.5rem;
+    column-gap: 0;
+    flex: none;
+  }
+
+  .rmp-stop-text {
+    flex-direction: column;
+    align-items: center;
+    row-gap: 0.35rem;
+    text-align: center;
+    max-width: 11rem;
+    padding: 0 0.75rem;
+  }
+
+  .rmp-seg {
+    flex: 1 1 0;
+    height: 1px;
+    width: auto;
+    min-width: 2rem;
+    margin-left: 0;
+    margin-top: calc(0.75rem - 0.5px);
+  }
+
+  .rmp-seg--lit {
+    transform: scaleX(0);
+    transform-origin: left;
+    animation-name: rmp-grow-x;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rmp-node--frontier,
+  .rmp-node--shimmer,
+  .rmp-seg--lit {
+    animation: none;
+    transform: none;
+  }
+}
+
+/* ---- Step strip (the (steps) shell nav) -------------------------------- */
+
+.rmp-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.5rem;
+  border-bottom: 1px solid var(--xl-line);
+  padding-bottom: 0.85rem;
+}
+
+.rmp-strip a {
+  text-decoration: none;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--xl-text-faint);
+}
+
+.rmp-strip a:hover {
+  color: var(--xl-text);
+}
+
+.rmp-strip a[aria-current="page"] {
+  color: var(--xl-light);
+  text-shadow: 0 0 12px var(--xl-light-glow);
+}
+
+.rmp-strip-hub {
+  margin-right: 0.5rem;
+}
+
+.rmp-strip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* ---- Small shared bits ------------------------------------------------- */
+
+/* Scorecard ratio bar: a hairline that fills to the builders ratio. */
+.rmp-ratio {
+  position: relative;
+  height: 2px;
+  background: var(--xl-line);
+  overflow: hidden;
+}
+
+.rmp-ratio > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--xl-light);
+  box-shadow: 0 0 10px var(--xl-light-glow);
+}

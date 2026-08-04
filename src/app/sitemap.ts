@@ -30,6 +30,9 @@ const STATIC_LASTMOD: Record<string, string> = {
   "/work": "2026-07-31",
   "/builders": "2026-07-23",
   "/governance": "2026-07-21",
+  // §5.18: the /roadmap TEASER only — portal child paths are noindex and
+  // the check-roadmap-caching gate bans any child-path string in this file.
+  "/roadmap": "2026-08-04",
   "/contact": "2026-07-13",
   "/methodology": "2026-07-25",
   "/privacy": "2026-07-16",
@@ -64,6 +67,7 @@ const staticEntries = (workDate: Date) => createSitemap(siteConfig, [
   { path: "/work", lastModified: workDate },
   { path: "/builders", lastModified: lm("/builders") },
   { path: "/governance", lastModified: lm("/governance") },
+  { path: "/roadmap", lastModified: lm("/roadmap") },
   { path: "/contact", lastModified: lm("/contact") },
   { path: "/methodology", lastModified: lm("/methodology") },
   { path: "/privacy", lastModified: lm("/privacy") },

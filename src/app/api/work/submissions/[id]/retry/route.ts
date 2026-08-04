@@ -7,7 +7,13 @@ export const dynamic = "force-dynamic";
 import { after } from "next/server";
 import { HELD_NEXT_STEPS } from "@/lib/work/config";
 import { submissionById } from "@/lib/work/db";
-import { okJson, rateLimit, requireXlUser, workError } from "@/lib/work/http";
+import {
+  okJson,
+  rateLimit,
+  requireWorkUser,
+  verifiedWebAdmin,
+  workError,
+} from "@/lib/work/http";
 import { kickPanel } from "@/lib/work/panel";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -23,13 +29,16 @@ const QUEUED_COPY: Record<string, string> = {
 };
 
 export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
-  const user = await requireXlUser();
+  // requireWorkUser (§5.18): company submitters may retry their own failed
+  // rows exactly like staff; ownership rules below are unchanged.
+  const user = await requireWorkUser();
   if (user instanceof Response) return user;
+  const isVerifiedAdmin = verifiedWebAdmin(user);
   const { id } = await ctx.params;
   const limited = rateLimit(`work:retry:${user.userId}`, 60, 5);
   if (limited) return limited;
   const row = await submissionById(id);
-  if (!row || (row.submitterEmail !== user.email && !user.admin))
+  if (!row || (row.submitterEmail !== user.email && !isVerifiedAdmin))
     return workError("not_found", "That submission does not exist.", 404);
   if (row.status === "published")
     return workError(
@@ -46,8 +55,16 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
     );
   // Once held, ALWAYS held for submitter purposes: heldAt is never cleared,
   // so a failed admin re-run cannot reopen retry-until-the-critic-blinks.
-  if (!user.admin && (row.status === "held" || row.heldAt))
-    return workError("held", `This submission is held for review. ${HELD_NEXT_STEPS}`, 409);
+  // The admin elevation is provider-checked (§5.18): bare isAdmin is
+  // forgeable via the Microsoft common-tenant lane.
+  if (!isVerifiedAdmin && (row.status === "held" || row.heldAt))
+    return workError(
+      "held",
+      user.scope.companyId !== null
+        ? "This submission is held for review. The XL.net team reviews held cards and will publish the draft, run the review again, or remove it."
+        : `This submission is held for review. ${HELD_NEXT_STEPS}`,
+      409
+    );
   if (row.status === "held")
     return workError(
       "invalid_request",

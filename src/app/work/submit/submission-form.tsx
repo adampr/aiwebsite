@@ -34,6 +34,14 @@ interface SubmissionFormProps {
     title: string;
     kind: "skill" | "program";
   } | null;
+  /** §5.18 company reuse: where "track it" points. Defaults keep every /work
+   * usage byte-identical; /roadmap/work passes its own values. */
+  trackHref?: string;
+  /** Credit fallback named in the attribution placeholder. */
+  creditTeamName?: string;
+  /** The retention fine print (the staff default names Adam; company copy
+   * must not). */
+  retentionLine?: string;
 }
 
 export function SubmissionForm({
@@ -42,6 +50,9 @@ export function SubmissionForm({
   onBusyChange,
   onClose,
   updateTarget = null,
+  trackHref = "/work/submit",
+  creditTeamName = "the XL.net team",
+  retentionLine = "Uploads with credential files are rejected. Only document text is kept for review; the original files are emailed to Adam when the card publishes.",
 }: SubmissionFormProps) {
   const [kindState, setKind] = useState<"skill" | "program">("skill");
   const kind = updateTarget ? updateTarget.kind : kindState;
@@ -171,7 +182,7 @@ export function SubmissionForm({
           {done.queued ? QUEUED_NOTICE : OK_NOTICE}
         </p>
         <div className="flex flex-wrap gap-4">
-          <Link href="/work/submit" className="btn no-underline">
+          <Link href={trackHref} className="btn no-underline">
             Track it on your submissions page
           </Link>
           <button
@@ -380,11 +391,7 @@ export function SubmissionForm({
           </p>
         </div>
       )}
-      <p className="text-xs text-faint">
-        Uploads with credential files are rejected. Only document text is
-        kept for review; the original files are emailed to Adam when the card
-        publishes.
-      </p>
+      <p className="text-xs text-faint">{retentionLine}</p>
       <div>
         <label className={labelCls}>Public credit (optional)</label>
         <input
@@ -393,7 +400,7 @@ export function SubmissionForm({
           value={attribution}
           onChange={(e) => setAttribution(e.target.value)}
           maxLength={20}
-          placeholder="First name only. Empty publishes as the XL.net team."
+          placeholder={`First name only. Empty publishes as ${creditTeamName}.`}
         />
       </div>
       {serverError && (

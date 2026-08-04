@@ -15,6 +15,7 @@ import { siteConfig } from "site.config";
 import { FuturismFx } from "@/components/futurism-fx";
 import { EmailLink } from "@/components/email-link";
 import { StaffRfpLink } from "@/components/staff-rfp-link";
+import { YourWorkLink } from "@/components/your-work-link";
 import { ChatWidgetMount } from "@/components/chat-widget-mount";
 import "./globals.css";
 
@@ -126,8 +127,10 @@ export default function RootLayout({
               <Link href="/work">Our Work</Link>
               <Link href="/builders">AI Builders</Link>
               <Link href="/governance">Governance</Link>
+              <Link href="/roadmap">Your AI Roadmap</Link>
               <Link href="/blog">AI News</Link>
               <Link href="/contact">Contact</Link>
+              <YourWorkLink />
               <StaffRfpLink />
               <ThemeToggle />
               <UserMenu {...toUserMenuProps(siteConfig)} />
@@ -165,7 +168,7 @@ export default function RootLayout({
               </div>
               <div className="sm:col-span-3 lg:col-span-1">
                 <span className="sys-label">Links</span>
-                <ul className="mt-4 grid gap-y-2 text-sm sm:grid-flow-col sm:grid-cols-[max-content_max-content] sm:grid-rows-6 sm:gap-x-10">
+                <ul className="mt-4 grid gap-y-2 text-sm sm:grid-flow-col sm:grid-cols-[max-content_max-content] sm:grid-rows-7 sm:gap-x-10">
                   <li>
                     <Link href="/">Home</Link>
                   </li>
@@ -177,6 +180,9 @@ export default function RootLayout({
                   </li>
                   <li>
                     <Link href="/governance">AI Governance</Link>
+                  </li>
+                  <li>
+                    <Link href="/roadmap">Your AI Roadmap</Link>
                   </li>
                   <li>
                     <Link href="/blog">AI News</Link>

@@ -1,0 +1,260 @@
+// The /roadmap access gate (ARCHITECTURE.md §5.18). ONE definition of who may
+// see a company workspace; every page, layout, route handler and server
+// action under /roadmap calls a require* from this file. No caller
+// re-implements the predicate. Modeled on src/lib/rfp/access.ts: constants in
+// code (never env), the strict emailDomain() parser, exact label equality,
+// typed denials.
+//
+// WHY "SIGNED IN" IS NOT ENOUGH HERE
+//
+// Membership is COMPUTED: session email domain == companies.domain. So the
+// email claim IS the tenancy boundary, and both OAuth lanes can lie about it
+// out of the box:
+//  - Microsoft: MICROSOFT_TENANT_ID=common + Graph /me `mail` being
+//    PATCH-writable is the published nOAuth forgery (full argument at the
+//    head of src/lib/rfp/access.ts).
+//  - Google: the module's callback discards `email_verified`. The /rfp
+//    Google-trust argument is DOMAIN-SPECIFIC (xl.net is a Google Workspace
+//    domain); for arbitrary client domains a Google account can carry an
+//    unverified email.
+// So the roadmap trusts only sessions whose email was VERIFIED at sign-in:
+// the host-owned hardened callbacks (src/lib/auth/oauth-hardened.ts) stamp
+// an HMAC-covered per-login `mv: true` claim when the provider proved
+// mailbox/domain ownership (Google `email_verified`, Microsoft `xms_edov`),
+// and magic-link sign-in proves mailbox control by construction. The claim
+// is per-login, never a stored users-row flag: a stored flag would let a
+// later forged login inherit an earlier genuine verification.
+
+import { readSession, type SessionData } from "@aicompany/core/auth/session";
+import { isAdmin } from "@aicompany/core/auth/guard";
+import { redirect } from "next/navigation";
+import { siteConfig } from "site.config";
+import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
+import { companyAdminRole, companyForDomainRow } from "@/lib/roadmap/db";
+
+export { emailDomain };
+// Domain classification lives in domains.ts (pure, cycle-free: the roadmap
+// db and the email intake need it without importing this gate).
+export {
+  RESERVED_DOMAINS,
+  FREEMAIL_DOMAINS,
+  SHARED_TENANT_SUFFIXES,
+  isCompanyEligibleDomain,
+} from "@/lib/roadmap/domains";
+import { isCompanyEligibleDomain } from "@/lib/roadmap/domains";
+
+/**
+ * Is this session's email claim VERIFIED enough to be a tenancy key?
+ *
+ * - magic-link: proves mailbox control by construction.
+ * - google / microsoft: only with the per-login `mv: true` claim from the
+ *   hardened callbacks (strict-normalized email_verified / xms_edov; a
+ *   session minted before the hardened callbacks shipped, or via an
+ *   unverified account, has no claim and is untrusted here while remaining
+ *   signed in for every public feature).
+ * Adding a provider here is a security decision, not a convenience.
+ */
+export function isTrustedSession(s: SessionData): boolean {
+  const p = s.provider?.trim().toLowerCase();
+  if (p === "magic-link") return true;
+  if (p === "google" || p === "microsoft") return s.mv === true;
+  return false;
+}
+
+export type RoadmapPrincipal = {
+  userId: string;
+  email: string;
+  emailDomain: string;
+  provider: string;
+  /** Untrusted sessions never reach a principal. */
+  trusted: true;
+  /** false = consumer/reserved domain: can browse, can never bootstrap. */
+  domainEligible: boolean;
+  company: {
+    id: string;
+    domain: string;
+    name: string;
+    status: string;
+  } | null;
+  companyRole: "admin" | "member" | null;
+  globalAdmin: boolean;
+};
+
+export type RoadmapDenial =
+  | { ok: false; reason: "unauthenticated" }
+  | { ok: false; reason: "untrusted_provider"; email: string };
+
+/**
+ * The single decision. Returns the principal or a typed denial; callers
+ * choose how to render it (a page explains, an API returns JSON). An
+ * untrusted session yields NO company data, not even the company's name.
+ */
+export async function readRoadmapPrincipal(): Promise<
+  { ok: true; principal: RoadmapPrincipal } | RoadmapDenial
+> {
+  const session = await readSession(siteConfig);
+  if (!session) return { ok: false, reason: "unauthenticated" };
+  if (!isTrustedSession(session)) {
+    return { ok: false, reason: "untrusted_provider", email: session.email };
+  }
+
+  const domain = emailDomain(session.email);
+  if (domain === null) {
+    // A trusted session with an unparseable address gets the consumer-domain
+    // treatment: signed in, trusted, no workspace possible.
+    return {
+      ok: true,
+      principal: {
+        userId: session.userId,
+        email: session.email,
+        emailDomain: "",
+        provider: session.provider,
+        trusted: true,
+        domainEligible: false,
+        company: null,
+        companyRole: null,
+        globalAdmin: isGlobalAdminSession(session),
+      },
+    };
+  }
+
+  const eligible = isCompanyEligibleDomain(domain);
+  const company = eligible ? await companyForDomainRow(domain) : null;
+  // The role predicate is ALWAYS (company_id AND user_id); a grant for some
+  // other company must never follow this user here.
+  const role = company
+    ? (await companyAdminRole(company.id, session.userId))
+      ? ("admin" as const)
+      : ("member" as const)
+    : null;
+
+  return {
+    ok: true,
+    principal: {
+      userId: session.userId,
+      email: session.email,
+      emailDomain: domain,
+      provider: session.provider,
+      trusted: true,
+      domainEligible: eligible,
+      company,
+      companyRole: role,
+      globalAdmin: isGlobalAdminSession(session),
+    },
+  };
+}
+
+/** verifiedWebAdmin semantics (src/lib/work/http.ts): ADMIN_EMAIL membership
+ * alone is forgeable via the Microsoft common-tenant lane, so global-admin
+ * power additionally requires the Google provider and an exact-label xl.net
+ * domain. Bare isAdmin appears nowhere in this feature. */
+function isGlobalAdminSession(s: SessionData): boolean {
+  return (
+    isAdmin(s.email) &&
+    isRfpProvider(s.provider) &&
+    emailDomain(s.email) === "xl.net"
+  );
+}
+
+/**
+ * Page/layout/server-action guard. Redirects a signed-out visitor to login;
+ * returns the principal or denial otherwise so pages explain themselves
+ * rather than bouncing a session they have already satisfied (rfp doctrine).
+ */
+export async function requireRoadmapPage(
+  redirectTo: string
+): Promise<
+  | { ok: true; principal: RoadmapPrincipal }
+  | Exclude<RoadmapDenial, { reason: "unauthenticated" }>
+> {
+  const result = await readRoadmapPrincipal();
+  if (!result.ok && result.reason === "unauthenticated") {
+    redirect(`/login?redirect=${encodeURIComponent(redirectTo)}`);
+  }
+  return result as
+    | { ok: true; principal: RoadmapPrincipal }
+    | Exclude<RoadmapDenial, { reason: "unauthenticated" }>;
+}
+
+function denialResponse(reason: string, status: number): Response {
+  return Response.json(
+    { error: { code: reason } },
+    { status, headers: { "cache-control": "no-store, private" } }
+  );
+}
+
+/** Route-handler guard: the principal, or a Response to return as-is. */
+export async function requireRoadmapUser(): Promise<
+  { ok: true; principal: RoadmapPrincipal } | { ok: false; response: Response }
+> {
+  const result = await readRoadmapPrincipal();
+  if (result.ok) return result;
+  return {
+    ok: false,
+    response: denialResponse(
+      result.reason,
+      result.reason === "unauthenticated" ? 401 : 403
+    ),
+  };
+}
+
+/** Member of an active company (or a global admin acting on any company via
+ * /admin/roadmap, which passes companyId explicitly and never through here).
+ * companyId ALWAYS comes from the server-derived principal, never a request
+ * param. */
+export async function requireCompanyMember(): Promise<
+  | { ok: true; principal: RoadmapPrincipal & { company: NonNullable<RoadmapPrincipal["company"]> } }
+  | { ok: false; response: Response }
+> {
+  const result = await requireRoadmapUser();
+  if (!result.ok) return result;
+  const p = result.principal;
+  if (!p.company) {
+    return { ok: false, response: denialResponse("no_company", 403) };
+  }
+  return {
+    ok: true,
+    principal: p as RoadmapPrincipal & {
+      company: NonNullable<RoadmapPrincipal["company"]>;
+    },
+  };
+}
+
+export async function requireCompanyAdmin(): Promise<
+  | { ok: true; principal: RoadmapPrincipal & { company: NonNullable<RoadmapPrincipal["company"]> } }
+  | { ok: false; response: Response }
+> {
+  const result = await requireCompanyMember();
+  if (!result.ok) return result;
+  if (result.principal.companyRole !== "admin") {
+    return { ok: false, response: denialResponse("not_company_admin", 403) };
+  }
+  return result;
+}
+
+/** Global-admin guard for /admin/roadmap surfaces and cross-company request
+ * params. Reads the session directly (a global admin needs no roadmap trust
+ * claim: the provider requirement IS the anti-forgery control, and staff
+ * sessions predate the hardened callbacks). */
+export async function requireGlobalAdmin(): Promise<
+  | { ok: true; email: string; userId: string }
+  | { ok: false; response: Response }
+> {
+  const session = await readSession(siteConfig);
+  if (!session) {
+    return { ok: false, response: denialResponse("unauthenticated", 401) };
+  }
+  if (!isGlobalAdminSession(session)) {
+    return { ok: false, response: denialResponse("forbidden", 403) };
+  }
+  return { ok: true, email: session.email, userId: session.userId };
+}
+
+/** Page variant: redirect signed-out, boolean for signed-in. */
+export async function readGlobalAdminPage(): Promise<{
+  email: string;
+} | null> {
+  const session = await readSession(siteConfig);
+  if (!session || !isGlobalAdminSession(session)) return null;
+  return { email: session.email };
+}

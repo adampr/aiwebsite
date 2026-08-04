@@ -414,7 +414,13 @@ export const siteConfig = defineSiteConfig({
   },
 
   auth: {
-    providers: { google: true, microsoft: true, magicLink: false },
+    // magicLink enabled 2026-08-04 (§5.18): the provider-agnostic trusted
+    // sign-in lane for client companies (proves mailbox control; Microsoft
+    // sessions without the xms_edov claim fall back to it). Requires the
+    // magic_links table in registerTables. Staff domains are blocked at the
+    // host-mounted REQUEST route, NOT via rejectEmail here — rejectEmail is
+    // provider-global and would lock staff out of Google/Microsoft too.
+    providers: { google: true, microsoft: true, magicLink: true },
     // Historical cookie name — existing sessions must survive adoption.
     sessionCookieName: "aix_session",
     sessionTtlDays: 30,
@@ -439,7 +445,11 @@ export const siteConfig = defineSiteConfig({
     ],
     // Host-owned admin pages (module renders these after the pages above,
     // same 44px nav targets). /admin/governance: §5.12 usage review console.
-    extraNav: [{ label: "Governance", href: "/admin/governance" }],
+    // /admin/roadmap: §5.18 client-company workspace console.
+    extraNav: [
+      { label: "Governance", href: "/admin/governance" },
+      { label: "Roadmap", href: "/admin/roadmap" },
+    ],
   },
 
   oversight: {

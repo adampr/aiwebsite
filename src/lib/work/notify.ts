@@ -142,6 +142,43 @@ export async function notifyPublished(
   card: WorkCard,
   slug: string
 ): Promise<void> {
+  // §5.18 company lane: different links (the private Your Work page is
+  // force-dynamic, so no ISR-reload caveats), and the submitter copy never
+  // names Adam, /admin/work, /work/submit, or the public page.
+  if (row.companyId !== null) {
+    const { scopeContext, scopeOf } = await import("./scope");
+    const sctx = await scopeContext(scopeOf(row));
+    const link = `${SITE}/roadmap/work#${slug}`;
+    await sendTroyEmail({
+      subject: `[aiwebsite] Your Work card published (${sctx.companyDomain ?? "company"}): ${card.title}`,
+      text: [
+        `A client company work submission passed the editorial panel and is published on that company's private Your Work page.`,
+        ``,
+        `Company: ${sctx.orgName} (${sctx.companyDomain ?? "unknown domain"})`,
+        `Title: ${card.title}`,
+        `Kind: ${kindLabel(row.kind)}`,
+        `Submitted by: ${row.submitterEmail}`,
+        `Card (signed-in company members and admins only): ${link}`,
+        ``,
+        `Published description (the card's first paragraph):`,
+        card.summary,
+        ``,
+        `To remove it: /admin/roadmap company detail, or DELETE /api/work/submissions/${row.id}.`,
+      ].join("\n"),
+    });
+    await sendTroyEmail({
+      to: row.submitterEmail,
+      subject: `Your work submission is live: ${card.title}`,
+      text: [
+        `The editorial panel reviewed your submission from the documents you provided, and the card is published on your company's Your Work page.`,
+        ``,
+        link,
+        ``,
+        `Published submissions are credited to your name and counted on your company's scorecard, which everyone at ${sctx.companyDomain ?? "your company"} who signs in can see. Reply to this email if something on the card reads wrong.`,
+      ].join("\n"),
+    });
+    return;
+  }
   const link = `${SITE}/work#${slug}`;
   const text = [
     `A team work submission passed the editorial panel and is published on /work.`,
@@ -173,6 +210,43 @@ export async function notifyHeld(
   reason: string,
   draft: unknown
 ): Promise<void> {
+  // §5.18 company lane (updates are staff-only, so this is never an update
+  // row): owner copy keeps the /admin/work review link; the submitter copy
+  // names the team, never Adam, and points at the roadmap page.
+  if (row.companyId !== null) {
+    await sendTroyEmail({
+      subject: `[aiwebsite] Action needed: company work submission held: ${row.title}`,
+      text: [
+        `Review it at ${SITE}/admin/work#sub-${row.id} (approve as-is, run the panel again, or delete).`,
+        ``,
+        `The editorial panel held a CLIENT COMPANY work submission for a human decision. It would publish to that company's private Your Work page.`,
+        ``,
+        `Title: ${row.title}`,
+        `Submitted by: ${row.submitterEmail}`,
+        ``,
+        `Reason:`,
+        reason,
+        ``,
+        `Draft card JSON:`,
+        JSON.stringify(draft, null, 2).slice(0, 6000),
+      ].join("\n"),
+    });
+    await sendTroyEmail({
+      to: row.submitterEmail,
+      subject: `Your work submission is held for review: ${row.title}`,
+      text: [
+        `The editorial review held your card instead of publishing it.`,
+        ``,
+        `Reason:`,
+        reason,
+        ``,
+        `The XL.net team reviews held cards and will publish the draft, run the review again, or remove it. Reply to this email if you want to send a corrected version.`,
+        ``,
+        `Your submissions: ${SITE}/roadmap/work`,
+      ].join("\n"),
+    });
+    return;
+  }
   const isUpdate = !!row.parentId;
   await sendTroyEmail({
     subject: isUpdate

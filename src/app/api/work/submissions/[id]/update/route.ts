@@ -89,6 +89,13 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       !user.admin)
   )
     return NOT_FOUND();
+  // §5.18: the update lane is staff-only in v1. A company card must NEVER be
+  // an update target: the child would carry company_id NULL (the 0035 CHECK
+  // forbids anything else), so a passing swap would publish company-derived
+  // content onto the PUBLIC /work page. publishWithSupersede re-checks this
+  // inside its transaction; same 404 shape as the email lane's rejection so
+  // this route is no oracle for company card ids.
+  if (row.companyId !== null) return NOT_FOUND();
   const kind = row.kind as WorkKind;
 
   let form: FormData;
@@ -141,13 +148,13 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   // One in-flight update per card: the pinned title trips the active-title
   // guard on any unresolved sibling; exceptId keeps the predecessor itself
   // out of the published check.
-  if (await publishedTitleClash(row.title, { exceptId: id }))
+  if (await publishedTitleClash(row.title, { companyId: null }, { exceptId: id }))
     return workError(
       "duplicate_title",
       "Another published card now uses this title. Ask Adam to sort the titles out before updating.",
       409
     );
-  const clash = await activeTitleClash(row.title);
+  const clash = await activeTitleClash(row.title, { companyId: null });
   if (clash)
     return workError(
       "duplicate_title",
@@ -260,6 +267,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   let child;
   try {
     child = await createSubmission({
+      companyId: null, // staff lane by construction (company parents 404 above)
       userId: user.userId,
       email: user.email,
       name: attribution,

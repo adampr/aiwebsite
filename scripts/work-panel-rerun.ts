@@ -127,9 +127,9 @@ async function main(): Promise<void> {
     const norm = normalizeTitle(newTitle);
     if (staticTitles.titles.some((t: string) => normalizeTitle(t) === norm))
       die(`--title collides with a hand-authored /work exhibit title`);
-    if (await publishedTitleClash(newTitle))
+    if (await publishedTitleClash(newTitle, { companyId: null }))
       die(`--title collides with a published community card`);
-    const clash = await activeTitleClash(newTitle);
+    const clash = await activeTitleClash(newTitle, { companyId: null });
     if (clash && clash.id !== id)
       die(`--title collides with in-pipeline submission ${clash.id} (${clash.status})`);
   }

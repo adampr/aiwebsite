@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { loginErrorMessages } from "@aicompany/core/auth/login-errors";
 
@@ -62,12 +62,96 @@ function LoginCard() {
             {errorMessage}
           </p>
         )}
+
+        <MagicLinkForm redirectTo={redirectTo} />
       </div>
 
       <p className="text-center text-xs" style={{ color: "var(--xl-text-faint)" }}>
         We only use your name and email address to create your account. We never
         post on your behalf or access anything else.
       </p>
+    </div>
+  );
+}
+
+// Magic-link lane (§5.18): the API always answers {ok:true} for a valid
+// address (anti-enumeration), so the confirmation copy hedges on delivery
+// instead of asserting it. 429 gets a friendly line; the module limits are
+// 3/h per email and 10/h per IP.
+function MagicLinkForm({ redirectTo }: { redirectTo: string }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/auth/email/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email,
+          redirect: redirectTo || undefined,
+        }),
+      });
+      if (res.ok) {
+        setSent(true);
+        return;
+      }
+      if (res.status === 429) {
+        setError(
+          "Too many sign-in links requested for now. Wait a few minutes and try again, or sign in with Google or Microsoft."
+        );
+        return;
+      }
+      setError("Something went wrong. Try again shortly.");
+    } catch {
+      setError("Something went wrong. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t pt-4" style={{ borderColor: "var(--xl-line)" }}>
+      <p className="text-center text-xs" style={{ color: "var(--xl-text-faint)" }}>
+        Or have a sign-in link emailed to you.
+      </p>
+      {sent ? (
+        <p className="mt-3 text-center text-sm" role="status">
+          Check your email for a sign-in link. If no email arrives within a
+          few minutes, sign in with Google or try again later.
+        </p>
+      ) : (
+        <form onSubmit={submit} className="mt-3 space-y-3">
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@yourcompany.com"
+            aria-label="Email address for a sign-in link"
+            className="w-full rounded-lg border bg-transparent px-3 py-2 text-sm"
+            style={{ borderColor: "var(--xl-line)" }}
+          />
+          <button
+            type="submit"
+            className="btn w-full"
+            disabled={busy}
+            aria-busy={busy}
+          >
+            {busy ? "Sending..." : "Email me a sign-in link"}
+          </button>
+          {error && (
+            <p className="text-center text-sm" style={{ color: "#e5484d" }} role="alert">
+              {error}
+            </p>
+          )}
+        </form>
+      )}
     </div>
   );
 }

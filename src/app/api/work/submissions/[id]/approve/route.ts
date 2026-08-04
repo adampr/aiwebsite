@@ -14,7 +14,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { approveHeld, publishWithSupersede, submissionById } from "@/lib/work/db";
-import { okJson, rateLimit, requireXlUser, workError } from "@/lib/work/http";
+import {
+  okJson,
+  rateLimit,
+  requireXlUser,
+  verifiedWebAdmin,
+  workError,
+} from "@/lib/work/http";
 import {
   deliverArchiveRetention,
   notifyUpdateApproved,
@@ -26,7 +32,11 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   const user = await requireXlUser();
   if (user instanceof Response) return user;
-  if (!user.admin) return workError("forbidden", "Admin only.", 403);
+  // verifiedWebAdmin, not bare isAdmin (§5.18): approve now reaches
+  // company-private rows, and a forged-Entra ADMIN_EMAIL session (nOAuth,
+  // src/lib/rfp/access.ts) must not be able to publish anything. This also
+  // closes the pre-existing staff-side hole on this route.
+  if (!verifiedWebAdmin(user)) return workError("forbidden", "Admin only.", 403);
   const { id } = await ctx.params;
   const limited = rateLimit(`work:approve:${user.userId}`, 60, 10);
   if (limited) return limited;
@@ -87,11 +97,14 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
       "Only a held submission with a stored draft can be approved.",
       409
     );
-  try {
-    const { revalidatePath } = await import("next/cache");
-    revalidatePath("/work");
-  } catch {
-    // ISR revalidate=300 is the floor
+  // Company pages are force-dynamic (§5.18): only the public lane flushes.
+  if (row.companyId === null) {
+    try {
+      const { revalidatePath } = await import("next/cache");
+      revalidatePath("/work");
+    } catch {
+      // ISR revalidate=300 is the floor
+    }
   }
   // Owner retention email (original upload attachment) on this publish path
   // too; clears the stored bytes only on a confirmed send.

@@ -1074,6 +1074,7 @@ async function main() {
     heldAt: new Date(),
     parentId: null as string | null,
     autoApprove: false,
+    companyId: null as string | null,
     supersededAt: null,
     slug: null,
     publishedAt: null,

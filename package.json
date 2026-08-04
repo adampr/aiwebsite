@@ -20,6 +20,7 @@
     "upgrade:check": "tsx packages/aicompany/cli/upgrade-check.ts",
     "test:governance": "tsx scripts/governance-tests.ts",
     "test:work": "tsx scripts/work-tests.ts",
+    "test:roadmap": "tsx scripts/roadmap-tests.ts",
     "test:workupdate": "tsx scripts/work-update-flow-tests.ts",
     "work:rerun": "tsx scripts/work-panel-rerun.ts",
     "test:peg": "node scripts/peg-score-tests.mjs",

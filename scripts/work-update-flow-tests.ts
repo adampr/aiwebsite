@@ -48,6 +48,7 @@ async function cleanup() {
 
 async function mkRow(over: Record<string, unknown> = {}) {
   const row = await createSubmission({
+    companyId: null,
     userId: null,
     email: "zztest@xl.net",
     name: null,
@@ -84,36 +85,36 @@ async function main() {
     .where(eq(S.id, parent.id));
 
   // resolveUpdateTarget: by title, by slug, by slug minus team-.
-  assert.equal((await resolveUpdateTarget(TITLE))?.id, parent.id, "by title");
+  assert.equal((await resolveUpdateTarget(TITLE, { companyId: null }))?.id, parent.id, "by title");
   assert.equal(
-    (await resolveUpdateTarget("  zztest  update   flow probe "))?.id,
+    (await resolveUpdateTarget("  zztest  update   flow probe ", { companyId: null }))?.id,
     parent.id,
     "normalized title"
   );
   assert.equal(
-    (await resolveUpdateTarget("team-zztest-update-flow-probe"))?.id,
+    (await resolveUpdateTarget("team-zztest-update-flow-probe", { companyId: null }))?.id,
     parent.id,
     "by slug"
   );
   assert.equal(
-    (await resolveUpdateTarget("zztest-update-flow-probe"))?.id,
+    (await resolveUpdateTarget("zztest-update-flow-probe", { companyId: null }))?.id,
     parent.id,
     "by slug minus team-"
   );
-  assert.equal(await resolveUpdateTarget("ZZTEST no such card"), null);
+  assert.equal(await resolveUpdateTarget("ZZTEST no such card", { companyId: null }), null);
 
   // publishedTitleClash exceptId carve-out.
-  assert.equal(await publishedTitleClash(TITLE), true);
+  assert.equal(await publishedTitleClash(TITLE, { companyId: null }), true);
   assert.equal(
-    await publishedTitleClash(TITLE, { exceptId: parent.id }),
+    await publishedTitleClash(TITLE, { companyId: null }, { exceptId: parent.id }),
     false,
     "exceptId excludes the predecessor"
   );
 
   // excludeId keeps the pinned title/facets out of the panel sets.
-  const withSets = await publishedTitleAndFacetSets();
+  const withSets = await publishedTitleAndFacetSets({ companyId: null });
   assert.ok(withSets.publishedTitles.includes(TITLE.toLowerCase()));
-  const exSets = await publishedTitleAndFacetSets(parent.id);
+  const exSets = await publishedTitleAndFacetSets({ companyId: null }, parent.id);
   assert.ok(!exSets.publishedTitles.includes(TITLE.toLowerCase()));
   assert.ok(!exSets.publishedFacetLabels.includes("zztest facet one"));
 
@@ -121,7 +122,7 @@ async function main() {
   const child = await mkRow({ parentId: parent.id });
   assert.equal(child.parentId, parent.id, "parentId persisted");
   // The pinned title trips the active-title guard for a SECOND update.
-  assert.ok(await activeTitleClash(TITLE), "in-flight update occupies the title");
+  assert.ok(await activeTitleClash(TITLE, { companyId: null }), "in-flight update occupies the title");
   await db
     .update(S)
     .set({ status: "running", panelAttemptId: "att1" })
@@ -135,7 +136,7 @@ async function main() {
   assert.equal(c?.slug, null, "no slug before the swap");
   assert.equal(c?.heldAt, null, "heldAt untouched by pending_approval");
   // pending_approval still occupies the one-in-flight slot (index + clash).
-  assert.ok(await activeTitleClash(TITLE), "pending_approval occupies the title");
+  assert.ok(await activeTitleClash(TITLE, { companyId: null }), "pending_approval occupies the title");
   let dupCaught: unknown = null;
   try {
     await mkRow({ parentId: parent.id });

@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
+import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
 import { allSubmissions, submissionById } from "@/lib/work/db";
 import {
   KIND_LABELS,
@@ -25,8 +26,18 @@ const STATUS_CHIP: Record<string, string> = {
 };
 
 export default async function AdminWorkPage() {
+  // Provider-checked (§5.18): this console now lists COMPANY-private rows
+  // alongside staff ones, and bare isAdmin is forgeable via the Microsoft
+  // common-tenant lane (nOAuth; src/lib/rfp/access.ts). Same predicate as
+  // verifiedWebAdmin, applied to the page read itself.
   const session = await readSession(siteConfig);
-  if (!session || !isAdmin(session.email)) redirect("/login");
+  if (
+    !session ||
+    !isAdmin(session.email) ||
+    !isRfpProvider(session.provider) ||
+    emailDomain(session.email) !== "xl.net"
+  )
+    redirect("/login");
   const rows = await allSubmissions(100);
   const byId = new Map(rows.map((r) => [r.id, r]));
   // Parents older than the 100-row window would otherwise render a false

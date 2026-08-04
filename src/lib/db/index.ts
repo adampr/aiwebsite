@@ -6,9 +6,10 @@
 import { db, getDb, registerTables } from "@aicompany/core/db/client";
 import * as schema from "./schema";
 
-// magicLinks is deliberately omitted — auth.providers.magicLink is off.
 registerTables({
   users: schema.users,
+  // magic-link sign-in (§5.18): auth.providers.magicLink is on.
+  magicLinks: schema.magicLinks,
   authLogs: schema.authLogs,
   pageVisits: schema.pageVisits,
   ipOrgs: schema.ipOrgs,

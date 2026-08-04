@@ -18,8 +18,19 @@ export interface WorkSubmitDialogHandle {
   open: () => void;
 }
 
-export const WorkSubmitDialog = forwardRef<WorkSubmitDialogHandle>(
-  function WorkSubmitDialog(_props, ref) {
+export interface WorkSubmitDialogProps {
+  /** §5.18 company reuse: copy overrides with staff defaults, so every
+   * /work usage stays byte-identical. */
+  intro?: string;
+  trackHref?: string;
+  creditTeamName?: string;
+  retentionLine?: string;
+}
+
+export const WorkSubmitDialog = forwardRef<
+  WorkSubmitDialogHandle,
+  WorkSubmitDialogProps
+>(function WorkSubmitDialog(props, ref) {
     const dialogRef = useRef<HTMLDialogElement>(null);
     const busyRef = useRef(false);
     const [, setBusyTick] = useState(false);
@@ -59,9 +70,8 @@ export const WorkSubmitDialog = forwardRef<WorkSubmitDialogHandle>(
           </button>
         </div>
         <p className="mt-3 text-sm text-faint">
-          An automated editorial panel drafts a /work card from your
-          documents, argues against it, and publishes only what it can
-          verify. You get an email either way.
+          {props.intro ??
+            "An automated editorial panel drafts a /work card from your documents, argues against it, and publishes only what it can verify. You get an email either way."}
         </p>
         <div className="mt-6">
           <SubmissionForm
@@ -71,6 +81,9 @@ export const WorkSubmitDialog = forwardRef<WorkSubmitDialogHandle>(
               busyRef.current = b;
               setBusyTick(b);
             }}
+            trackHref={props.trackHref}
+            creditTeamName={props.creditTeamName}
+            retentionLine={props.retentionLine}
           />
         </div>
       </dialog>

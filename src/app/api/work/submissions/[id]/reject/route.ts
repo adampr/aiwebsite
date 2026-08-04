@@ -6,7 +6,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { deleteSubmission, submissionById } from "@/lib/work/db";
-import { okJson, rateLimit, requireXlUser, workError } from "@/lib/work/http";
+import {
+  okJson,
+  rateLimit,
+  requireXlUser,
+  verifiedWebAdmin,
+  workError,
+} from "@/lib/work/http";
 import { notifyUpdateRejected } from "@/lib/work/notify";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -14,7 +20,9 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   const user = await requireXlUser();
   if (user instanceof Response) return user;
-  if (!user.admin) return workError("forbidden", "Admin only.", 403);
+  // Provider-checked (§5.18): bare isAdmin is forgeable via the Microsoft
+  // common-tenant lane (src/lib/rfp/access.ts).
+  if (!verifiedWebAdmin(user)) return workError("forbidden", "Admin only.", 403);
   const { id } = await ctx.params;
   const limited = rateLimit(`work:reject:${user.userId}`, 60, 10);
   if (limited) return limited;

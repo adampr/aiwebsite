@@ -5,6 +5,10 @@ import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { checkRateLimit } from "@aicompany/core/lib/rate-limit";
 import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
+import { isTrustedSession } from "@/lib/roadmap/access";
+import { companyForDomainRow } from "@/lib/roadmap/db";
+import { roadmapEnabled } from "@/lib/roadmap/config";
+import type { WorkScope } from "@/lib/work/scope";
 import { siteConfig } from "site.config";
 
 /** The submitting audience is XL.net staff; a constant in code (not env) so
@@ -102,4 +106,64 @@ export function rateLimit(
   const r = checkRateLimit(key, { windowSec, max });
   if (r.allowed) return null;
   return workError("rate_limited", "Too many requests. Give it a moment.", 429);
+}
+
+/**
+ * §5.18: the ONE submit endpoint serves two audiences. xl.net sessions get
+ * the internal scope with byte-identical behavior (no trust requirement:
+ * staff sessions predate the hardened callbacks and their lane publishes to
+ * XL.net's own page). Any other domain resolves against registered
+ * companies; a company scope REQUIRES a trusted session (google/microsoft
+ * with the mail-verified claim, or magic-link), because a common-tenant
+ * Microsoft session can carry any forged domain and here that would be
+ * cross-tenant read/write.
+ */
+export async function requireWorkUser(): Promise<
+  (WorkUser & { scope: WorkScope }) | Response
+> {
+  const session = await readSession(siteConfig);
+  if (!session)
+    return workError(
+      "unauthenticated",
+      "Sign in to submit or view work submissions.",
+      401
+    );
+  const user: WorkUser = {
+    userId: session.userId,
+    email: session.email,
+    emailDomain: emailDomain(session.email) ?? "",
+    provider: session.provider,
+    admin: isAdmin(session.email),
+  };
+  if (WORK_SUBMIT_DOMAINS.includes(user.emailDomain)) {
+    return { ...user, scope: { companyId: null } };
+  }
+  const company = user.emailDomain
+    ? await companyForDomainRow(user.emailDomain)
+    : null;
+  if (!company)
+    return workError(
+      "wrong_domain",
+      `Work submissions are open to xl.net staff and companies on the AI Roadmap. You are signed in as ${user.email}; if your company has a roadmap workspace, sign in with your work email, or set one up at /roadmap.`,
+      403
+    );
+  if (!isTrustedSession(session))
+    return workError(
+      "untrusted_provider",
+      "Confirm it is you first: your sign-in method could not verify your email address. Open /roadmap and follow the confirmation step (an email link or a Google sign-in), then try again.",
+      403
+    );
+  if (company.status !== "active")
+    return workError(
+      "company_paused",
+      "Submissions for your company are paused right now. Your company admin can contact XL.net.",
+      403
+    );
+  if (!roadmapEnabled(process.env))
+    return workError(
+      "disabled",
+      "Roadmap submissions are paused right now. Try again later.",
+      503
+    );
+  return { ...user, scope: { companyId: company.id } };
 }

@@ -1,0 +1,129 @@
+// /roadmap/approve-admin?req=<uuid> (§5.18): the landing page for the
+// admin-access approval email. GET NEVER mutates (mail scanners prefetch
+// links); the row is loaded in every branch and the request's company,
+// requester, and even existence are disclosed ONLY to a viewer who passes
+// the approver predicate - everyone else gets one identical generic screen,
+// so a forwarded link is no oracle. Approval itself is the POST route, which
+// re-derives the predicate server-side.
+export const dynamic = "force-dynamic";
+
+import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+import { readSession } from "@aicompany/core/auth/session";
+import { isAdmin } from "@aicompany/core/auth/guard";
+import { siteConfig } from "site.config";
+import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
+import { readRoadmapPrincipal } from "@/lib/roadmap/access";
+import { adminRequestById, companyById } from "@/lib/roadmap/db";
+import { ApproveButton } from "./approve-button";
+
+export const metadata: Metadata = {
+  title: "Approve admin access",
+  robots: { index: false, follow: false },
+};
+
+type Search = { searchParams: Promise<{ req?: string }> };
+
+type RequestRow = NonNullable<Awaited<ReturnType<typeof adminRequestById>>>;
+
+/** Module-scope so the render body stays pure (react-hooks/purity). */
+function liveRequest(row: RequestRow | null): RequestRow | null {
+  if (!row || row.status !== "pending") return null;
+  return row.expiresAt.getTime() > Date.now() ? row : null;
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mx-auto max-w-lg space-y-6 pt-12">
+      <span className="sys-label">AI Roadmap</span>
+      <h1 className="text-2xl font-bold">Admin access approval</h1>
+      {children}
+    </div>
+  );
+}
+
+const GENERIC = (
+  <Shell>
+    <p className="text-sm">
+      This approval link is not valid for the account you are signed in as.
+    </p>
+    <p className="text-sm" style={{ color: "var(--xl-text-faint)" }}>
+      Approvals need a signed-in approver: a current company admin for the
+      workspace the request belongs to, or XL.net. If you administer a company
+      here, make sure you are signed in with a verified method (Google or an
+      email link), then open the link from the email again.
+    </p>
+  </Shell>
+);
+
+export default async function ApproveAdminPage({ searchParams }: Search) {
+  const { req } = await searchParams;
+  const requestId = typeof req === "string" ? req : "";
+  const session = await readSession(siteConfig);
+  if (!session)
+    redirect(
+      `/login?redirect=${encodeURIComponent(`/roadmap/approve-admin?req=${requestId}`)}`
+    );
+
+  // Load in EVERY branch (identical work for unknown/expired/foreign ids).
+  const row = requestId ? await adminRequestById(requestId) : null;
+  const live = liveRequest(row);
+
+  // Approver predicates.
+  const staffAdmin = isAdmin(session.email);
+  const globalAdmin =
+    staffAdmin &&
+    isRfpProvider(session.provider) &&
+    emailDomain(session.email) === "xl.net";
+  let companyApprover = false;
+  if (!globalAdmin && live) {
+    const principal = await readRoadmapPrincipal();
+    companyApprover =
+      principal.ok &&
+      principal.principal.companyRole === "admin" &&
+      principal.principal.company?.id === live.companyId;
+  }
+
+  // A listed admin on the wrong provider gets the fix, not a dead end. This
+  // discloses nothing about the request (staff identity is the viewer's own).
+  if (staffAdmin && !globalAdmin && !companyApprover) {
+    const back = `/roadmap/approve-admin?req=${encodeURIComponent(requestId)}`;
+    return (
+      <Shell>
+        <p className="text-sm">
+          Approvals need a Google sign-in for this account. Sign in with Google
+          and this page will show the request.
+        </p>
+        <a
+          className="btn no-underline"
+          href={`/api/auth/google/start?redirect=${encodeURIComponent(back)}`}
+        >
+          Sign in with Google
+        </a>
+      </Shell>
+    );
+  }
+
+  if (!live || !(globalAdmin || companyApprover)) return GENERIC;
+
+  const company = await companyById(live.companyId);
+  return (
+    <Shell>
+      <div className="panel panel--raised space-y-4">
+        <p className="text-sm">
+          <span className="font-medium">{live.requesterEmail}</span> is asking
+          to become a company admin for{" "}
+          <span className="font-medium">{company?.name ?? "this company"}</span>
+          {company ? ` (${company.domain})` : ""}.
+        </p>
+        <p className="text-sm" style={{ color: "var(--xl-text-faint)" }}>
+          Requested {live.createdAt.toLocaleDateString("en-US")} · expires{" "}
+          {live.expiresAt.toLocaleDateString("en-US")}. Any one recipient of
+          the request email can approve it. Approving lets them manage the
+          company directory, governance documents, and requests like this one.
+        </p>
+        <ApproveButton requestId={live.id} />
+      </div>
+    </Shell>
+  );
+}

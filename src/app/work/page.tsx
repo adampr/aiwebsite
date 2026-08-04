@@ -5,6 +5,7 @@ import { StaffSubmitLink } from "./staff-submit-link";
 import { WorkRegistry } from "./registry";
 import { WorkPager } from "./pager";
 import { publishedCards, type PublishedCard } from "@/lib/work/db";
+import { INTERNAL_SCOPE } from "@/lib/work/scope";
 import staticTitles from "@/lib/work/static-titles.json";
 
 // Team-submitted cards (§5.16) publish to this page without a deploy, so a
@@ -43,7 +44,9 @@ export default async function WorkPage() {
   // degradation (§5.16: the hand-authored exhibits never depend on the DB).
   let team: PublishedCard[] = [];
   try {
-    team = await publishedCards();
+    // INTERNAL_SCOPE (§5.18): the public page renders ONLY the staff lane;
+    // company cards are company_id-scoped and never appear here.
+    team = await publishedCards(INTERNAL_SCOPE);
   } catch {
     // the 25 static exhibits are the page
   }

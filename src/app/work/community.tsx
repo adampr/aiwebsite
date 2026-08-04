@@ -16,48 +16,11 @@
 // alternation starts with a PLAIN panel because the 25th static exhibit
 // (rfp-response) is lightline - index-0-lightline double-striped the seam.
 
+// The card template itself lives in src/components/work-card.tsx (§5.18:
+// the company /roadmap/work page renders through the SAME component, with a
+// company defaultCredit; the default keeps this page byte-identical).
 import type { PublishedCard } from "@/lib/work/db";
-
-function CommunityCard({ item, index }: { item: PublishedCard; index: number }) {
-  const { card } = item;
-  const credit = item.submitterName
-    ? `submitted by ${item.submitterName}`
-    : "submitted by the XL.net team";
-  const footer = [...card.footerLine, credit].join(" · ");
-  return (
-    <section
-      id={item.slug}
-      data-work-card="team"
-      className={
-        index % 2 === 0 ? "panel rise" : "panel panel--lightline rise"
-      }
-    >
-      <div className="flex flex-wrap items-center gap-4">
-        <span className="badge">Built</span>
-        <span className="badge badge--light">{card.categoryBadge}</span>
-      </div>
-      <h2 className="mt-6">{card.title}</h2>
-      <p className="mt-4 text-sm">{card.summary}</p>
-      {card.body.map((p, i) => (
-        <p key={i} className="mt-4 text-sm">
-          {p}
-        </p>
-      ))}
-      <div className="mt-8 grid gap-6 md:grid-cols-3">
-        {card.facets.map((f, i) => (
-          <div key={i} className="border-t border-[var(--xl-line)] pt-4">
-            <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-              <span className="text-faint">{`0${i + 1} · `}</span>
-              {f.label}
-            </h3>
-            <p className="mt-3 text-sm">{f.text}</p>
-          </div>
-        ))}
-      </div>
-      <p className="mono mt-6 text-xs text-faint">{footer}</p>
-    </section>
-  );
-}
+import { CommunityCard } from "@/components/work-card";
 
 export function CommunitySection({ cards }: { cards: PublishedCard[] }) {
   if (cards.length === 0) return null;

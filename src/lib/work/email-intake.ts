@@ -40,6 +40,7 @@ import {
 import {
   activeTitleClash,
   countCreatedToday,
+  countCreatedTodayForCompany,
   createSubmission,
   isUniqueViolation,
   normalizeTitle,
@@ -48,7 +49,16 @@ import {
   userIdForEmail,
   type SubmissionRow,
 } from "./db";
+import type { WorkScope } from "./scope";
 import { tronSignature } from "@/lib/tron-signature";
+import { emailDomain } from "@/lib/rfp/access";
+import { ROADMAP_CAPS, roadmapBrainDailyCap, roadmapEnabled } from "@/lib/roadmap/config";
+import {
+  companyForDomainRow,
+  readTodayRoadmapUsage,
+  recordRoadmapBrainCall,
+  type CompanyRow,
+} from "@/lib/roadmap/db";
 import {
   archiveDeclaredNames,
   docDeclaredNames,
@@ -133,14 +143,18 @@ async function sendTronEmail(opts: {
   }
 }
 
-/** Throttled WARN to the admin (1/24h per reason class), never to the
- * unverified sender (approval-inbound warnAdmin pattern, own stamp keys). */
+/** Throttled WARN to the admin (1/24h per reason class PER SENDER DOMAIN:
+ * one client's broken M365 DKIM must not mask every other company's failures
+ * for a day, §5.18), never to the unverified sender (approval-inbound
+ * warnAdmin pattern, own stamp keys). This WARN doubles as the client
+ * DKIM-onboarding signal. */
 async function warnAdmin(
   reason: string,
   fromRaw: string,
-  subjectRaw: string
+  subjectRaw: string,
+  senderDomain: string
 ): Promise<void> {
-  const stampKey = `work_email_reject_${reason}`;
+  const stampKey = `work_email_reject_${reason}_${hashKey(senderDomain || "unknown")}`;
   const stamp = await getMeta(stampKey);
   if (stamp && Date.now() - Date.parse(stamp) < 23.5 * 3_600_000) {
     log(`rejected (${reason}); WARN throttled`);
@@ -148,15 +162,16 @@ async function warnAdmin(
   }
   const sent = await sendTronEmail({
     to: adminRecipient(),
-    subject: `[aiwebsite] WARN work-submission email dropped (${reason})`,
+    subject: `[aiwebsite] WARN work-submission email dropped (${reason}, ${senderDomain || "unknown domain"})`,
     text: [
-      `An email to Tron.Netter@ai.xl.net looked like a /work submission (xl.net sender + archive attachment) but was dropped without reply.`,
+      `An email to Tron.Netter@ai.xl.net looked like a work submission (registered sender domain + archive attachment) but was dropped without reply.`,
       ``,
       `Reason: ${reason}`,
+      `Sender domain: ${senderDomain || "unknown"}`,
       `From: ${sanitizeHeaderValue(fromRaw, 120)}`,
       `Subject: ${sanitizeHeaderValue(subjectRaw, 120)}`,
       ``,
-      `Submissions by email only act on DKIM-verified xl.net senders and never reply to anyone else. If this was a real teammate, have them resend from their xl.net mailbox (not a forward); this notice repeats at most once per day per reason.`,
+      `Submissions by email only act on DKIM-verified senders at xl.net or a registered roadmap company domain, and never reply to anyone else. If this was a real submitter, have them resend directly from that mailbox (not a forward). A client domain that keeps failing DKIM usually needs its mail system's DKIM records set up (for Microsoft 365: the selector1/selector2 CNAMEs plus enabling DKIM in Defender). This notice repeats at most once per day per reason per domain.`,
     ].join("\n"),
   });
   if (sent) await setMeta(stampKey, new Date().toISOString());
@@ -181,22 +196,30 @@ function outOfBand(t: string): boolean {
 async function titleGuardMessage(
   title: string,
   sender: string,
+  scope: WorkScope,
   update?: { exceptId: string }
 ): Promise<string | null> {
+  const isCompany = scope.companyId !== null;
+  const trackUrl = isCompany ? `${SITE}/roadmap/work` : `${SITE}/work/submit`;
   const norm = normalizeTitle(title);
+  // Hand-authored exhibits are /work-only; company lanes clash only within
+  // their own scope (§5.18).
   if (
-    staticTitles.titles.some((t: string) => normalizeTitle(t) === norm) ||
-    (await publishedTitleClash(title, { exceptId: update?.exceptId }))
+    (!isCompany &&
+      staticTitles.titles.some((t: string) => normalizeTitle(t) === norm)) ||
+    (await publishedTitleClash(title, scope, { exceptId: update?.exceptId }))
   )
-    return `A published /work card already uses this title. Pick a different title (the subject line, or a "Title:" line in the body) and resend.`;
-  const clash = await activeTitleClash(title);
+    return `A published card already uses this title. Pick a different title (the subject line, or a "Title:" line in the body) and resend.`;
+  const clash = await activeTitleClash(title, scope);
   if (clash) {
     if (update)
       return clash.submitterEmail === sender
         ? `You already have an update to "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to replace it with this version.`
         : `A teammate already has an update to "${title}" in review. Only one update per card can be open at a time, so check with them or wait until theirs is decided.`;
     return clash.submitterEmail === sender
-      ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
+      ? isCompany
+        ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it at ${trackUrl}.`
+        : `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
       : `A teammate already has a submission titled "${title}" in review. Pick a different title, or check with them before resubmitting.`;
   }
   return null;
@@ -282,7 +305,39 @@ export async function maybeHandleWorkEmail(
     if (!ctx.envelopeRecipients.includes(TRON_ADDRESS)) return "delegate";
     const sender = extractAddress(ctx.email.from);
     const domain = sender.split("@")[1] ?? "";
-    if (!WORK_SUBMIT_DOMAINS.includes(domain)) return "delegate";
+    const staffLane = WORK_SUBMIT_DOMAINS.includes(domain);
+    if (!staffLane) {
+      // §5.18 company branch. The claim-time From is spoofable, so this is a
+      // HINT only (the handler re-resolves after DKIM); it exists to bound
+      // the receiving.get spend to registered domains. The strict parser and
+      // the freemail re-check inside companyForDomainRow both apply.
+      const strictDomain = emailDomain(sender);
+      if (!strictDomain) return "delegate";
+      if (!roadmapEnabled(process.env)) return "delegate"; // kill switch:
+      // Tron answers conversationally, never a silent drop.
+      // Pre-DKIM flood bound, company branch ONLY (staff mail was never
+      // bounded pre-DKIM and must stay byte-identical): forged-From spam at
+      // a registered domain must not farm receiving.get. Over the cap the
+      // mail is DROPPED, not delegated: delegation would convert the
+      // fail-closed no-reply posture into conversational replies to the
+      // flood, and would let a spoofer route a client's real mail into chat.
+      const flood = checkRateLimit(`work:email:detect:${strictDomain}`, {
+        windowSec: 3600,
+        max: ROADMAP_CAPS.companyEmailDetectPerDomainPerHour,
+      });
+      if (!flood.allowed) {
+        void warnAdmin(
+          "detect_flood",
+          ctx.email.from ?? "",
+          ctx.email.subject ?? "",
+          strictDomain
+        ).catch(() => undefined);
+        log(`detect flood cap hit for ${strictDomain}; dropping`);
+        return "handled";
+      }
+      const company = await companyForDomainRow(strictDomain);
+      if (!company) return "delegate";
+    }
     if (!/^[a-zA-Z0-9_-]{8,80}$/.test(ctx.emailId)) return "delegate";
     const resend = new Resend(key);
     const { data: email, error } = await resend.emails.receiving.get(
@@ -341,6 +396,7 @@ export async function handleWorkEmail(
 ): Promise<void> {
   const fromRaw = email.from ?? "";
   const subjectRaw = email.subject ?? "";
+  const senderDomain = emailDomain(sender) ?? sender.split("@")[1] ?? "";
 
   // Delivery dedupe FIRST (email_id is server-assigned per delivery) so
   // webhook redeliveries process once.
@@ -362,17 +418,23 @@ export async function handleWorkEmail(
     await warnAdmin(
       arCount === 0 ? "no_auth_results" : "duplicate_auth_results",
       fromRaw,
-      subjectRaw
+      subjectRaw,
+      senderDomain
     );
     return;
   }
   const verdict = parseEmailAuthVerdict(headers, sender, siteConfig);
   if (!verdict.authenticated) {
-    await warnAdmin(`auth_${verdict.reason ?? "failed"}`, fromRaw, subjectRaw);
+    await warnAdmin(
+      `auth_${verdict.reason ?? "failed"}`,
+      fromRaw,
+      subjectRaw,
+      senderDomain
+    );
     return;
   }
   if (!isFreshDate(headerLookup(headers, "date"), Date.now())) {
-    await warnAdmin("stale_or_missing_date", fromRaw, subjectRaw);
+    await warnAdmin("stale_or_missing_date", fromRaw, subjectRaw, senderDomain);
     return;
   }
   const messageId = email.message_id || "";
@@ -384,33 +446,93 @@ export async function handleWorkEmail(
     return;
   }
 
-  // Verified staff from here on: every rejection replies with the fix.
+  // ── Lane resolution from the VERIFIED sender domain (§5.18) ─────────
+  // Always the From-address domain through the strict parser, NEVER the
+  // DKIM header.d (resolving on d= would route a subsidiary's mail into a
+  // parent tenant). xl.net = staff lane, byte-identical behavior; a
+  // registered active company = that company's private lane.
+  const staffLane =
+    senderDomain !== "" && WORK_SUBMIT_DOMAINS.includes(senderDomain);
+  let company: CompanyRow | null = null;
+  if (!staffLane) {
+    // Company-lane strict alignment recheck: parseEmailAuthVerdict accepts
+    // parent-domain signatures (From corp.client.com, d=client.com), which
+    // is fine for one fixed staff domain but crosses the exact-label tenancy
+    // rule here. Require a dkim=pass whose header.d equals the From domain
+    // exactly; anything else is treated as unverified (no reply, WARN).
+    const ar = headerLookup(headers, "authentication-results") ?? "";
+    const passDomains = [...ar.matchAll(/dkim=pass[^;]*?header\.d=([^\s;]+)/gi)]
+      .map((m) => m[1].trim().toLowerCase().replace(/\.$/, ""));
+    if (!passDomains.includes(senderDomain)) {
+      await warnAdmin("auth_subdomain_alignment", fromRaw, subjectRaw, senderDomain);
+      return;
+    }
+    company = await companyForDomainRow(senderDomain);
+    if (!company) {
+      // Claimed at detect (a company existed) but gone by verification:
+      // verified sender, so one throttled neutral line is safe.
+      if (
+        checkRateLimit(`work:email:rlnotice:${sender}`, {
+          windowSec: 3600,
+          max: 1,
+        }).allowed
+      )
+        await sendTronEmail({
+          to: sender,
+          subject: `Re: ${sanitizeHeaderValue(subjectRaw, 150) || "Your submission"}`,
+          text: `Email submissions are not set up for your organization right now. Nothing was stored.\n\n${tronSignature()}`,
+        });
+      return;
+    }
+  }
+  const isCompanyLane = company !== null;
+
+  // Verified sender from here on: every rejection replies with the fix.
   const replyHeaders: Record<string, string> = {};
   if (messageId) {
     const clean = sanitizeHeaderValue(messageId, 250);
     replyHeaders["In-Reply-To"] = clean;
     replyHeaders["References"] = clean;
   }
-  const replySubject = `Re: ${sanitizeHeaderValue(subjectRaw, 150) || "Your /work submission"}`;
+  const replySubject = `Re: ${sanitizeHeaderValue(subjectRaw, 150) || (isCompanyLane ? "Your work submission" : "Your /work submission")}`;
+  // §5.18: a per-company hourly bound on OUTBOUND replies, checked before
+  // every company-lane send (a compromised org rotating senders must not
+  // become a reply flood; each fresh sender would otherwise earn its own
+  // rlnotice budget). Over the bound: log and go silent.
+  const companyReplyAllowed = (): boolean => {
+    if (!company) return true;
+    const ok = checkRateLimit(`work:email:companyreply:${company.id}`, {
+      windowSec: 3600,
+      max: ROADMAP_CAPS.companyEmailRepliesPerHour,
+    }).allowed;
+    if (!ok) log(`company reply bound hit for ${company.id}; going silent`);
+    return ok;
+  };
   // Rejection shape (2026-08-03 natural-email round): preamble, the ONE
   // targeted fix, an optional one-line form pointer, and Tron's full
   // signature (owner ruling: the normal signature is in ALL emails Tron
   // sends). pointer: false on wait-class rejects (paused, throttled, quota,
   // pipeline offline) where the form hits the same wall, and on update-path
   // rejects whose fix is email-specific.
+  const companyPointer = `You can also submit on the web: sign in at ${SITE}/roadmap/work with your work email.`;
   const reject = async (
     message: string,
     opts?: { pointer?: boolean }
   ): Promise<void> => {
+    if (!companyReplyAllowed()) return;
     await sendTronEmail({
       to: sender,
       subject: replySubject,
       headers: replyHeaders,
       text: [
-        `I could not accept this as a /work submission. Nothing was stored.`,
+        isCompanyLane
+          ? `I could not accept this as a work submission. Nothing was stored.`
+          : `I could not accept this as a /work submission. Nothing was stored.`,
         ``,
         message,
-        ...(opts?.pointer === false ? [] : [``, FORM_POINTER]),
+        ...(opts?.pointer === false
+          ? []
+          : [``, isCompanyLane ? companyPointer : FORM_POINTER]),
         ``,
         tronSignature(),
       ].join("\n"),
@@ -418,6 +540,21 @@ export async function handleWorkEmail(
   };
 
   // ── Admission, in the route's order ──────────────────────────────
+  // §5.18: suspended company / roadmap kill switch, neutral + throttled.
+  if (isCompanyLane && (company!.status !== "active" || !roadmapEnabled(process.env))) {
+    if (
+      checkRateLimit(`work:email:rlnotice:${sender}`, {
+        windowSec: 3600,
+        max: 1,
+      }).allowed
+    )
+      await reject(
+        "Email submissions are paused for your organization right now. Nothing was stored. Your company admin can contact XL.net.",
+        { pointer: false }
+      );
+    else log("company paused; notice throttled");
+    return;
+  }
   if (!workSubmissionsEnabled(process.env)) {
     // Route-order parity keeps the kill switch first, but the route's paused
     // response is a free 503 while this one is an outbound email: cap the
@@ -438,7 +575,9 @@ export async function handleWorkEmail(
   }
   const attempts = checkRateLimit(`work:submit:email:${sender}`, {
     windowSec: 3600,
-    max: WORK_CAPS.uploadAttemptsPerUserPerHour,
+    max: isCompanyLane
+      ? ROADMAP_CAPS.clientUploadAttemptsPerUserPerHour
+      : WORK_CAPS.uploadAttemptsPerUserPerHour,
   });
   if (!attempts.allowed) {
     // One notice per hour per sender: a flood must not become a reply flood.
@@ -450,12 +589,27 @@ export async function handleWorkEmail(
     else log("rate limited; notice throttled");
     return;
   }
-  const dailyQuota = isAdmin(sender)
-    ? WORK_CAPS.submissionsPerAdminPerDay
-    : WORK_CAPS.submissionsPerUserPerDay;
+  // isAdmin elevation is staff-lane-only: an emailed admin identity at a
+  // client domain is a DKIM-valid but meaningless coincidence.
+  const dailyQuota = isCompanyLane
+    ? ROADMAP_CAPS.clientSubmissionsPerUserPerDay
+    : isAdmin(sender)
+      ? WORK_CAPS.submissionsPerAdminPerDay
+      : WORK_CAPS.submissionsPerUserPerDay;
   if ((await countCreatedToday(sender)) >= dailyQuota) {
     await reject(
       `The limit is ${dailyQuota} submissions per person per day (failed submissions do not count). Try again tomorrow.`,
+      { pointer: false }
+    );
+    return;
+  }
+  if (
+    isCompanyLane &&
+    (await countCreatedTodayForCompany(company!.id)) >=
+      ROADMAP_CAPS.companySubmissionsPerDay
+  ) {
+    await reject(
+      `Your company reached its ${ROADMAP_CAPS.companySubmissionsPerDay} submissions for today (failed submissions do not count). Try again tomorrow.`,
       { pointer: false }
     );
     return;
@@ -494,6 +648,17 @@ export async function handleWorkEmail(
     parsed.updateTarget ??
     (subjectUpdateMatch ? subjectUpdateMatch[1].trim() : null);
   let predecessor: SubmissionRow | null = null;
+  // §5.18: the update lane is staff-only in v1 (the approval half is
+  // xl.net-admin-shaped, and the 0035 CHECK forbids company update rows).
+  // A company-lane update directive rejects LOUDLY; silent update->create
+  // conversion stays the FATAL class it is.
+  if (updateValue !== null && isCompanyLane) {
+    await reject(
+      `Updating a published card by email is not available for company submissions yet. To ship a new version, submit it as a new card under a different title, or ask XL.net to remove the old card first.`,
+      { pointer: false }
+    );
+    return;
+  }
   if (updateValue !== null) {
     const normVal = normalizeTitle(updateValue);
     if (staticTitles.titles.some((t: string) => normalizeTitle(t) === normVal)) {
@@ -503,7 +668,7 @@ export async function handleWorkEmail(
       );
       return;
     }
-    predecessor = await resolveUpdateTarget(updateValue);
+    predecessor = await resolveUpdateTarget(updateValue, { companyId: null });
     if (!predecessor) {
       await reject(
         `I could not match "${updateValue.slice(0, 80)}" to a published card on ${SITE}/work. To update a card, copy its exact title from that page into the "Update Card:" line and resend. If you meant to submit a brand new tool, remove that line and resend.`,
@@ -653,7 +818,9 @@ export async function handleWorkEmail(
     );
   if (parsed.creditIgnored !== null)
     notes.push(
-      `Also: I read your "Credit:" line ("${parsed.creditIgnored}") as part of the description, not as a public credit; a public credit is a single first name, so the card credits the XL.net team. If it should carry a personal credit, tell Adam.`
+      isCompanyLane
+        ? `Also: I read your "Credit:" line ("${parsed.creditIgnored}") as part of the description, not as a credit; a credit is a single first name, so the card carries your company's team credit. If it should carry a personal credit, reply to this email.`
+        : `Also: I read your "Credit:" line ("${parsed.creditIgnored}") as part of the description, not as a public credit; a public credit is a single first name, so the card credits the XL.net team. If it should carry a personal credit, tell Adam.`
     );
   // The parser lifts only accept-shaped credits (CREDIT_RE), so an email
   // Credit: line can never bounce a submission; prose values landed in
@@ -735,6 +902,7 @@ export async function handleWorkEmail(
     const dup = await titleGuardMessage(
       title,
       sender,
+      { companyId: company?.id ?? null },
       isUpdate ? { exceptId: predecessor!.id } : undefined
     );
     if (dup) {
@@ -874,6 +1042,26 @@ export async function handleWorkEmail(
       title = hit.title;
       titleSource = "corroborated";
     } else {
+      // §5.18 company lane: title inference burns a real brain call that
+      // creates NO row, so the per-submission quotas never see it. Bound it
+      // per company per day and against the roadmap ledger's headroom, and
+      // mirror the actual call into that ledger (work_usage is debited
+      // inside the call as always).
+      if (isCompanyLane) {
+        const coCap = checkRateLimit(`work:titleinfer:co:${company!.id}`, {
+          windowSec: 86_400,
+          max: ROADMAP_CAPS.companyTitleInfersPerDay,
+        });
+        if (!coCap.allowed) {
+          await reject(noTitleMessage(subjectRaw, subjectStripped));
+          return;
+        }
+        const usage = await readTodayRoadmapUsage();
+        if (usage.brainCalls + 1 > roadmapBrainDailyCap(process.env)) {
+          await reject(PIPELINE_OFFLINE, { pointer: false });
+          return;
+        }
+      }
       const got = await inferTitleFromEmail({
         emailId,
         sender,
@@ -883,6 +1071,13 @@ export async function handleWorkEmail(
         kind,
         packageName: pkgName,
       });
+      if (isCompanyLane && got.ok) {
+        try {
+          await recordRoadmapBrainCall();
+        } catch {
+          // mirror only; never a gate
+        }
+      }
       if (!got.ok) {
         await reject(
           got.reason === "unavailable"
@@ -898,7 +1093,7 @@ export async function handleWorkEmail(
       titleSource = "inferred";
     }
     log(`title ${titleSource} len=${title.length} by=${hashKey(sender)}`);
-    const dup = await titleGuardMessage(title, sender);
+    const dup = await titleGuardMessage(title, sender, { companyId: company?.id ?? null });
     if (dup) {
       await reject(dup);
       return;
@@ -909,6 +1104,7 @@ export async function handleWorkEmail(
   let row;
   try {
     row = await createSubmission({
+      companyId: company?.id ?? null,
       userId: await userIdForEmail(sender),
       email: sender,
       name: attribution,
@@ -937,7 +1133,7 @@ export async function handleWorkEmail(
       await reject(
         isUpdate
           ? `An update to "${title}" is already in the pipeline, and only one can be open at a time. Check ${SITE}/work/submit, or ask Adam to clear the pending one.`
-          : `A submission titled "${title}" is already in the pipeline. Check ${SITE}/work/submit.`,
+          : `A submission titled "${title}" is already in the pipeline. Check ${isCompanyLane ? `${SITE}/roadmap/work` : `${SITE}/work/submit`}.`,
         isUpdate ? { pointer: false } : undefined
       );
       return;
@@ -991,16 +1187,28 @@ export async function handleWorkEmail(
           `Open ${SITE}/work/submit in a few minutes and press Retry to start the review. The live card stays up the whole time, and if the review passes, the swap still waits for Adam's approval.`,
         ]
     : kicked.outcome.status === "running"
-      ? [
-          `Got it. "${title}" is in as a ${kindLabel} submission and the editorial panel is reviewing it now.`,
-          ``,
-          `You will get an email when the card publishes or is held for review. Track it at ${SITE}/work/submit.`,
-        ]
-      : [
-          `Got it. "${title}" is stored as a ${kindLabel} submission, but the review panel is briefly unavailable, so the review has not started.`,
-          ``,
-          `Open ${SITE}/work/submit in a few minutes and press Retry to start the review. Once it runs, you will get an email when the card publishes or is held.`,
-        ];
+      ? isCompanyLane
+        ? [
+            `Got it. "${title}" is in as a ${kindLabel} submission and the editorial panel is reviewing it now.`,
+            ``,
+            `If it passes, it publishes to your company's private Your Work page and is credited to you on your company's scorecard, which everyone at ${senderDomain} who signs in can see. You will get an email when the card publishes or is held for review. Track it at ${SITE}/roadmap/work.`,
+          ]
+        : [
+            `Got it. "${title}" is in as a ${kindLabel} submission and the editorial panel is reviewing it now.`,
+            ``,
+            `You will get an email when the card publishes or is held for review. Track it at ${SITE}/work/submit.`,
+          ]
+      : isCompanyLane
+        ? [
+            `Got it. "${title}" is stored as a ${kindLabel} submission, but the review panel is briefly unavailable, so the review has not started.`,
+            ``,
+            `Sign in at ${SITE}/roadmap/work in a few minutes and press Retry to start the review. Once it runs, you will get an email when the card publishes or is held.`,
+          ]
+        : [
+            `Got it. "${title}" is stored as a ${kindLabel} submission, but the review panel is briefly unavailable, so the review has not started.`,
+            ``,
+            `Open ${SITE}/work/submit in a few minutes and press Retry to start the review. Once it runs, you will get an email when the card publishes or is held.`,
+          ];
   // A title the submitter did not write is disclosed in the receipt, near the
   // top, because renaming and removing are both admin-only. The copy says
   // "once it publishes" and NOT "before the panel finishes": the retitle tool
@@ -1017,10 +1225,15 @@ export async function handleWorkEmail(
             ``,
             `About that title: this email had no usable subject line, so I took the card name from your message. Renaming and removing are both admin-only, so it is yours to change once the card publishes.`,
           ]
-        : [
-            ``,
-            `About that title: your email had no usable subject line, so I took the card name from your message. Renaming and removing are both admin-only, so if it should be called something else, tell Adam and he can retitle the card once it publishes.`,
-          ]
+        : isCompanyLane
+          ? [
+              ``,
+              `About that title: your email had no usable subject line, so I took the card name from your message. If it should be called something else, reply to this email and the XL.net team can retitle the card once it publishes.`,
+            ]
+          : [
+              ``,
+              `About that title: your email had no usable subject line, so I took the card name from your message. Renaming and removing are both admin-only, so if it should be called something else, tell Adam and he can retitle the card once it publishes.`,
+            ]
       : [];
   await sendTronEmail({
     to: sender,

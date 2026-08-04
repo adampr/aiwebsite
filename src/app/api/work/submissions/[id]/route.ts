@@ -22,7 +22,13 @@ import {
   rollbackSwappedUpdate,
   submissionById,
 } from "@/lib/work/db";
-import { okJson, rateLimit, requireXlUser, workError } from "@/lib/work/http";
+import {
+  okJson,
+  rateLimit,
+  requireWorkUser,
+  verifiedWebAdmin,
+  workError,
+} from "@/lib/work/http";
 import { notifyRollback } from "@/lib/work/notify";
 import { statusView } from "@/lib/work/view";
 
@@ -32,21 +38,26 @@ const NOT_FOUND = () =>
   workError("not_found", "That submission does not exist.", 404);
 
 export async function GET(_req: Request, ctx: Ctx): Promise<Response> {
-  const user = await requireXlUser();
+  const user = await requireWorkUser();
   if (user instanceof Response) return user;
   const { id } = await ctx.params;
   const limited = rateLimit(`work:poll:${user.userId}`, 60, 30);
   if (limited) return limited;
   const row = await submissionById(id);
-  if (!row || (row.submitterEmail !== user.email && !user.admin))
+  // Owner-or-verified-admin. verifiedWebAdmin, not bare isAdmin (§5.18):
+  // company-private rows are now reachable here, and the Microsoft
+  // common-tenant lane can mint an isAdmin-passing session (nOAuth; see
+  // src/lib/rfp/access.ts). The provider check closes that for staff rows
+  // too.
+  if (!row || (row.submitterEmail !== user.email && !verifiedWebAdmin(user)))
     return NOT_FOUND();
   return okJson({ submission: statusView(row) });
 }
 
 export async function DELETE(_req: Request, ctx: Ctx): Promise<Response> {
-  const user = await requireXlUser();
+  const user = await requireWorkUser();
   if (user instanceof Response) return user;
-  if (!user.admin)
+  if (!verifiedWebAdmin(user))
     return workError(
       "forbidden",
       "Only an admin can remove a submission. Ask Adam to remove it for you.",
@@ -112,11 +123,13 @@ export async function DELETE(_req: Request, ctx: Ctx): Promise<Response> {
       409
     );
   if (wasPublished) {
-    try {
-      const { revalidatePath } = await import("next/cache");
-      revalidatePath("/work");
-    } catch {
-      // ISR revalidate=300 is the floor
+    if (row.companyId === null) {
+      try {
+        const { revalidatePath } = await import("next/cache");
+        revalidatePath("/work");
+      } catch {
+        // ISR revalidate=300 is the floor
+      }
     }
     // Removals of public content are visible to the owner: reachable when
     // ADMIN_EMAIL holds more than one entry (adminRecipient() is the first),
