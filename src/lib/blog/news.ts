@@ -342,6 +342,27 @@ const OUTLET_NAMES: Record<string, string> = {
   // Society (exact-host match; Amazon is aws.amazon.com, a different host).
   "news.ycombinator.com": "Hacker News",
   "aws.org": "American Welding Society",
+  // 2026-08-04 (6th fallback-name recurrence, Qwen3.8-Max article): five
+  // wrong names in live copy, spanning three fallback layers. "Technode"
+  // and "Aibusiness" were title-case last resorts (CamelCase / two-word
+  // brands the fallback cannot derive); "QZ" came from the no-vowel
+  // initialism branch (the brand is Quartz — a domain whose letters are NOT
+  // the brand still needs a row); "News Cgtn" is the Yahoo-class subdomain
+  // miss (bare cgtn.com would initialism-derive CGTN correctly;
+  // news.cgtn.com cannot, so both hosts get rows); "Technology Org" is the
+  // first wrong SUFFIX-layer name: the outlet's own feed suffix drops the
+  // brand's dot and suffixNamesHost rightly tied it to the host. All five
+  // are map gaps per the outletFromUrl doc rule; the fallback heuristics
+  // are deliberately unchanged (cleverness cap: suffixNamesHost squash>=4).
+  // The last-resort layers now WARN to stderr (see outletFromUrl) so the
+  // 7th recurrence is caught in the nightly log BEFORE it ships in copy.
+  "technode.global": "TechNode",
+  "technode.com": "TechNode",
+  "qz.com": "Quartz",
+  "aibusiness.com": "AI Business",
+  "news.cgtn.com": "CGTN",
+  "cgtn.com": "CGTN",
+  "technology.org": "Technology.org",
 };
 
 /** True when a "Headline - Publisher" title suffix plausibly names the
@@ -384,11 +405,22 @@ function outletFromUrl(url: string, sourceTitle?: string): string {
       /\s[-–—|]\s((?:The\s+)?[A-Z][\w.&'’]*(?:\s+[A-Z&][\w.&'’]*){0,4})\s*$/,
     );
     if (suffix && suffixNamesHost(suffix[1]!, base)) return suffix[1]!;
-    if (/^[bcdfghjklmnpqrstvwxz]{2,6}$/.test(base)) return base.toUpperCase();
-    return base
+    // Last-resort layers below are HEURISTIC GUESSES, not brand facts —
+    // every wrong live-copy outlet name to date (6 recurrences) came from
+    // them, and every one was caught by a human reading the published
+    // article. The warn line puts the map gap in the nightly log (the
+    // fetch script and blog run both write there) so it is patched BEFORE
+    // the next article instead of after.
+    if (/^[bcdfghjklmnpqrstvwxz]{2,6}$/.test(base)) {
+      console.warn(`outlet-name fallback (map gap): ${host} -> "${base.toUpperCase()}" — add an OUTLET_NAMES entry`);
+      return base.toUpperCase();
+    }
+    const guessed = base
       .split(/[-.]/)
       .map((p) => (p ? p[0]!.toUpperCase() + p.slice(1) : p))
       .join(" ");
+    console.warn(`outlet-name fallback (map gap): ${host} -> "${guessed}" — add an OUTLET_NAMES entry`);
+    return guessed;
   } catch {
     return url;
   }
