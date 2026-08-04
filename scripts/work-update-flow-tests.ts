@@ -11,11 +11,13 @@ import { eq, like } from "drizzle-orm";
 import {
   activeTitleClash,
   activeUpdateChild,
+  canProposeUpdate,
   isUniqueViolation,
   createSubmission,
   deleteSubmission,
   finishPendingApproval,
   finishUpdateRow,
+  liveDescendantId,
   publishWithSupersede,
   publishedTitleClash,
   publishedTitleAndFacetSets,
@@ -23,6 +25,7 @@ import {
   rollbackSwappedUpdate,
   submissionById,
   latestPublishedAt,
+  updateChainEmails,
 } from "../src/lib/work/db";
 import type { WorkCard } from "../src/lib/work/lint";
 
@@ -118,8 +121,12 @@ async function main() {
   assert.ok(!exSets.publishedTitles.includes(TITLE.toLowerCase()));
   assert.ok(!exSets.publishedFacetLabels.includes("zztest facet one"));
 
-  // 2. An update child, panel-passed -> pending_approval.
-  const child = await mkRow({ parentId: parent.id });
+  // 2. An update child, panel-passed -> pending_approval. Submitted by a
+  // DIFFERENT teammate: chain ownership (2026-08-04) is exercised below.
+  const child = await mkRow({
+    parentId: parent.id,
+    email: "zztest-updater@xl.net",
+  });
   assert.equal(child.parentId, parent.id, "parentId persisted");
   // The pinned title trips the active-title guard for a SECOND update.
   assert.ok(await activeTitleClash(TITLE, { companyId: null }), "in-flight update occupies the title");
@@ -183,6 +190,86 @@ async function main() {
   // 5. Double-approve is idempotent-refused.
   const again = await publishWithSupersede(child.id);
   assert.ok(!again.ok && again.reason === "not_eligible", "second approve refused");
+
+  // 5b. Chain ownership (2026-08-04): the swap made the UPDATER's row the
+  // published one; the original author must keep the right to update.
+  const tip = await submissionById(child.id);
+  assert.ok(tip, "swapped child readable");
+  if (tip) {
+    const chain = await updateChainEmails(tip);
+    assert.ok(chain.has("zztest@xl.net"), "chain reaches the original author");
+    assert.ok(chain.has("zztest-updater@xl.net"), "chain includes the tip");
+    assert.equal(
+      await canProposeUpdate(tip, "ZZTEST@XL.NET", false),
+      true,
+      "original author may update the swapped-in version (case-insensitive)"
+    );
+    assert.equal(
+      await canProposeUpdate(tip, "zztest-stranger@xl.net", false),
+      false,
+      "a stranger may not"
+    );
+    assert.equal(
+      await canProposeUpdate(tip, "zztest-stranger@xl.net", true),
+      true,
+      "an admin always may"
+    );
+  }
+  assert.equal(
+    await liveDescendantId(parent.id),
+    child.id,
+    "superseded parent resolves its live version"
+  );
+  assert.equal(
+    await liveDescendantId(child.id),
+    null,
+    "the published tip has no live descendant"
+  );
+
+  // 5c. Second-generation update: the swapped-in child is itself updatable
+  // (the "update it once and the option is gone" report, 2026-08-04).
+  const grand = await mkRow({
+    parentId: child.id,
+    email: "zztest-author3@xl.net",
+  });
+  await db
+    .update(S)
+    .set({ status: "running", panelAttemptId: "attg" })
+    .where(eq(S.id, grand.id));
+  assert.ok(
+    await finishPendingApproval(grand.id, "attg", card(TITLE), "[]"),
+    "grandchild parks pending_approval"
+  );
+  const swapped2 = await publishWithSupersede(grand.id);
+  assert.ok(swapped2.ok, "second-generation swap succeeds");
+  if (swapped2.ok) {
+    assert.equal(swapped2.slug, "team-zztest-update-flow-probe", "slug carried again");
+    const g = await submissionById(grand.id);
+    const c4 = await submissionById(child.id);
+    assert.equal(g?.status, "published");
+    assert.equal(c4?.status, "superseded");
+    if (g) {
+      const chain2 = await updateChainEmails(g);
+      assert.ok(
+        chain2.has("zztest@xl.net") && chain2.has("zztest-updater@xl.net"),
+        "two-hop chain reaches every prior submitter"
+      );
+    }
+    assert.equal(
+      await liveDescendantId(parent.id),
+      grand.id,
+      "live-descendant walk crosses generations"
+    );
+  }
+  // Roll the grandchild back so step 6 exercises the original single-hop
+  // rollback exactly as before.
+  const rolledGrand = await rollbackSwappedUpdate(grand.id);
+  assert.ok(rolledGrand.ok, "grandchild rollback succeeds");
+  assert.equal(
+    (await submissionById(child.id))?.status,
+    "published",
+    "child restored by grandchild rollback"
+  );
 
   // 6. Rollback restores the parent.
   const rolled = await rollbackSwappedUpdate(child.id);

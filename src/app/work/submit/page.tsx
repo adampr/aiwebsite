@@ -10,7 +10,7 @@ import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
 import { workSubmissionsEnabled, type WorkKind } from "@/lib/work/config";
-import { isUuid, submissionById } from "@/lib/work/db";
+import { canProposeUpdate, isUuid, submissionById } from "@/lib/work/db";
 import { WORK_SUBMIT_DOMAINS } from "@/lib/work/http";
 import { SubmitClient, type UpdateTarget } from "./submit-client";
 
@@ -39,12 +39,14 @@ export default async function WorkSubmitPage({
   const updateParam = (await searchParams).update;
   if (allowed && updateParam && isUuid(updateParam)) {
     const row = await submissionById(updateParam);
+    // Chain ownership, matching the POST gate (2026-08-04): the published
+    // row belongs to the LAST updater, but every submitter in the card's
+    // supersede chain keeps the right to propose the next version.
     if (
       row &&
       row.status === "published" &&
       row.cardJson &&
-      (row.submitterEmail.toLowerCase() === session.email.toLowerCase() ||
-        admin)
+      (await canProposeUpdate(row, session.email, admin))
     )
       updateTarget = {
         id: row.id,

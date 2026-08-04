@@ -17,6 +17,7 @@ import { brainHealthy } from "@/lib/governance/brain";
 import { WORK_CAPS, workSubmissionsEnabled, type WorkKind } from "@/lib/work/config";
 import {
   activeTitleClash,
+  canProposeUpdate,
   countCreatedToday,
   createSubmission,
   isUniqueViolation,
@@ -81,12 +82,14 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   // oracle). Checked before the form is read.
   const { id } = await ctx.params;
   const row = await submissionById(id);
+  // Ownership is CHAIN ownership (2026-08-04): every approved swap makes the
+  // updater's row the published one, so a submitterEmail-only check would
+  // hand the card to the last updater and lock the original author out.
   if (
     !row ||
     row.status !== "published" ||
     !row.cardJson ||
-    (row.submitterEmail.toLowerCase() !== user.email.toLowerCase() &&
-      !user.admin)
+    !(await canProposeUpdate(row, user.email, user.admin))
   )
     return NOT_FOUND();
   // §5.18: the update lane is staff-only in v1. A company card must NEVER be

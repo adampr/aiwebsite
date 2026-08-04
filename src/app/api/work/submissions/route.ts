@@ -21,6 +21,7 @@ import {
   countCreatedToday,
   createSubmission,
   isUniqueViolation,
+  liveDescendantId,
   mySubmissions,
   normalizeTitle,
   publishedTitleClash,
@@ -51,7 +52,21 @@ export async function GET(): Promise<Response> {
     // sweep is best-effort on the read path
   }
   const rows = await mySubmissions(user.email);
-  return okJson({ submissions: rows.map(statusView) });
+  // Superseded rows carry a pointer to the card's LIVE version (§5.16 chain
+  // ownership, 2026-08-04): when the last update came from someone else, the
+  // published row is not in this list, and without currentId the submitter
+  // has no surface that offers updating their card again.
+  const views = await Promise.all(
+    rows.map(async (r) =>
+      statusView(
+        r,
+        r.status === "superseded"
+          ? { currentId: await liveDescendantId(r.id) }
+          : undefined
+      )
+    )
+  );
+  return okJson({ submissions: views });
 }
 
 export async function POST(req: Request): Promise<Response> {

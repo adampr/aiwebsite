@@ -24,6 +24,7 @@ interface StatusRow {
   createdAt: string;
   isUpdate: boolean;
   autoApprove: boolean;
+  currentId: string | null;
 }
 
 /** §5.16 update mode: the published card the form proposes to replace. */
@@ -215,6 +216,22 @@ export function SubmitClient({
                     Submit an update
                   </a>
                 )}
+                {/* Chain ownership (§5.16, 2026-08-04): when the live
+                    version belongs to someone else (say Adam updated this
+                    card on the submitter's behalf), it is not in this list,
+                    and this superseded row is the submitter's ONLY surface.
+                    Hidden when the live row is theirs: that row above
+                    already carries the link. */}
+                {r.status === "superseded" &&
+                  r.currentId &&
+                  !rows.some((o) => o.id === r.currentId) && (
+                    <a
+                      href={`/work/submit?update=${r.currentId}`}
+                      className="btn btn--text no-underline"
+                    >
+                      Submit an update
+                    </a>
+                  )}
                 {/* Withdraw is hidden on published rows: DELETE on a
                     swapped-in update is a ROLLBACK, and /admin/work carries
                     the properly-labelled lever (refutation finding). */}

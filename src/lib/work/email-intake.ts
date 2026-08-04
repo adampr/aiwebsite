@@ -40,6 +40,7 @@ import {
 } from "./config";
 import {
   activeTitleClash,
+  canProposeUpdate,
   countCreatedToday,
   countCreatedTodayForCompany,
   createSubmission,
@@ -701,15 +702,14 @@ export async function handleWorkEmail(
       );
       return;
     }
-    // Ownership before any download or inspection: the predecessor's
-    // submitter, or an admin submitting on a colleague's behalf. The
-    // rejection never echoes the owner's address (not public).
-    if (
-      predecessor.submitterEmail.toLowerCase() !== sender.toLowerCase() &&
-      !isAdmin(sender)
-    ) {
+    // Ownership before any download or inspection: anyone who submitted a
+    // version in the card's supersede chain (an approved swap makes the
+    // updater's row the published one, so submitter-only would lock the
+    // original author out after Adam updates on their behalf), or an admin.
+    // The rejection never echoes the owner's address (not public).
+    if (!(await canProposeUpdate(predecessor, sender, isAdmin(sender)))) {
       await reject(
-        `Updates to a published card are accepted from the person who submitted it, or from Adam. Ask them to send the update, or ask Adam to submit it for you.`,
+        `Updates to a published card are accepted from anyone who submitted a version of it, or from Adam. Ask them to send the update, or ask Adam to submit it for you.`,
         { pointer: false }
       );
       return;

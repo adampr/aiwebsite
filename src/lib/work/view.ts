@@ -17,6 +17,11 @@ export interface SubmissionStatusView {
   createdAt: string;
   /** §5.16: this row proposes to replace a published card. */
   isUpdate: boolean;
+  /** §5.16 chain ownership (2026-08-04): on a superseded row, the id of the
+   * card's current LIVE version, so the list can offer "Submit an update"
+   * even when the last update came from someone else (whose published row
+   * is not in this submitter's list). Null everywhere else. */
+  currentId: string | null;
   /** §5.16 admin web auto-approve: a passing panel run swaps this row live
    * itself, so pending_approval is a moments-long transit state, not a wait.
    * The client keeps polling and shows "Publishing" instead of "Waiting for
@@ -52,7 +57,10 @@ export function friendlyHeldReason(panelError: string | null): string | null {
   return parsed.length > 0 ? parsed.join("\n") : panelError;
 }
 
-export function statusView(row: SubmissionRow): SubmissionStatusView {
+export function statusView(
+  row: SubmissionRow,
+  opts?: { currentId?: string | null }
+): SubmissionStatusView {
   let stage: string | null = null;
   try {
     const progress = JSON.parse(row.panelProgressJson ?? "null") as {
@@ -97,6 +105,7 @@ export function statusView(row: SubmissionRow): SubmissionStatusView {
     stale,
     createdAt: row.createdAt.toISOString(),
     isUpdate: !!row.parentId,
+    currentId: opts?.currentId ?? null,
     // heldAt is part of the projection, not just the gate: a once-held auto
     // row parks BY DESIGN (heldAt one-shot), and without this conjunct the
     // client would show "Publishing" forever on a row that is waiting for

@@ -711,6 +711,73 @@ export async function activeUpdateChild(
   return rows[0] ?? null;
 }
 
+/** Every submitter email in a card's supersede chain, the given row
+ * included, lowercased (§5.16 chain ownership, 2026-08-04). Each approved
+ * swap makes the updater's row the published one, so anchoring ownership on
+ * submitter_email alone hands the card to the LAST updater and locks the
+ * original author out (Adam updating a colleague's card on their behalf is
+ * an advertised path). parent_id is SET NULL by deletes, so a broken link
+ * simply ends the walk: ownership never crosses a deleted generation. */
+export async function updateChainEmails(
+  row: SubmissionRow
+): Promise<Set<string>> {
+  const emails = new Set<string>([row.submitterEmail.toLowerCase()]);
+  let parentId = row.parentId;
+  // Bounded walk: chains grow one generation per approved swap; 100 is far
+  // beyond any real card and keeps a cyclic-data bug from spinning forever.
+  for (let hops = 0; parentId && hops < 100; hops++) {
+    const rows = await db
+      .select({ submitterEmail: S.submitterEmail, parentId: S.parentId })
+      .from(S)
+      .where(eq(S.id, parentId))
+      .limit(1);
+    const parent = rows[0];
+    if (!parent) break;
+    emails.add(parent.submitterEmail.toLowerCase());
+    parentId = parent.parentId;
+  }
+  return emails;
+}
+
+/** May this user propose an update to this published card? Admins always;
+ * otherwise anyone who submitted a version in its supersede chain. Callers
+ * fold a refusal into their existing 404/reject shape. */
+export async function canProposeUpdate(
+  row: SubmissionRow,
+  email: string,
+  admin: boolean
+): Promise<boolean> {
+  if (admin) return true;
+  if (row.submitterEmail.toLowerCase() === email.toLowerCase()) return true;
+  return (await updateChainEmails(row)).has(email.toLowerCase());
+}
+
+/** The live (published) descendant of a superseded row, walking the swap
+ * chain downward (§5.16). Feeds the status list's "Submit an update" link on
+ * superseded rows: without it, a submitter whose card was last updated by
+ * someone else has NO surface that offers updating again. At most one
+ * published-or-superseded child exists per generation (the update route only
+ * targets published rows, and rollback deletes the child it undoes); failed
+ * children are skipped by the status filter. */
+export async function liveDescendantId(id: string): Promise<string | null> {
+  let cur = id;
+  for (let hops = 0; hops < 100; hops++) {
+    const rows = await db
+      .select({ id: S.id, status: S.status })
+      .from(S)
+      .where(
+        and(eq(S.parentId, cur), inArray(S.status, ["published", "superseded"]))
+      )
+      .orderBy(desc(S.createdAt))
+      .limit(1);
+    const child = rows[0];
+    if (!child) return null;
+    if (child.status === "published") return child.id;
+    cur = child.id;
+  }
+  return null;
+}
+
 export async function finishHeld(
   id: string,
   attemptId: string,
