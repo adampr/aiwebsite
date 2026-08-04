@@ -51,6 +51,20 @@ export async function sendArchiveRetentionEmail(
       body: JSON.stringify({
         from: TROY_FROM,
         to: [adminRecipient()],
+        // DELIBERATE §1 CARVE-OUT — do NOT add an oversight BCC here, and do
+        // NOT "fix" this by calling oversightBcc().
+        //
+        // This is the one sender whose BODY IS a third party's confidential
+        // material: the submitter's original uploaded archive, in full, as an
+        // attachment. It is addressed to adminRecipient() (ADMIN_EMAIL), and it
+        // is safe today only because ADMIN_EMAIL happens to equal
+        // oversight.bccEmail — nothing in code or config pins that equality.
+        // The day ADMIN_EMAIL becomes ops@xl.net, a generic BCC here would
+        // start fanning every client company's source files to a second
+        // mailbox that never agreed to receive them.
+        //
+        // The recipient IS the overseer by construction here, so there is
+        // nothing for a BCC to add — only something for it to leak.
         subject: `[aiwebsite] /work submission files: ${row.title}`,
         text: [
           `Retention copy of the original files behind a published /work card.`,

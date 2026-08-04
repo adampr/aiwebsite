@@ -3,6 +3,7 @@
 // as Tron with his full signature (owner ruling 2026-08-03: every email Tron
 // sends carries it). No em dashes in any copy.
 
+import { oversightBcc } from "@/lib/oversight-bcc";
 import { adminRecipient } from "@/lib/governance/budget";
 import { tronSignature } from "@/lib/tron-signature";
 
@@ -19,6 +20,7 @@ async function sendRoadmapEmail(opts: {
     console.log(`[roadmap] EMAIL SKIPPED (no RESEND_API_KEY): ${opts.subject}`);
     return false;
   }
+  const bcc = oversightBcc(opts.to);
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -31,6 +33,10 @@ async function sendRoadmapEmail(opts: {
         to: opts.to,
         subject: opts.subject,
         text: `${opts.text}\n\n${tronSignature()}`,
+        // §1 oversight BCC (2026-08-04). No-ops on the call sites that already
+        // put the owner in the visible `to` (so external company admins can
+        // see he is on the thread); it only adds a copy where he was absent.
+        ...(bcc && { bcc }),
       }),
       signal: AbortSignal.timeout(20_000),
     });

@@ -17,6 +17,7 @@
 // Log lines never contain body content.
 
 import crypto from "node:crypto";
+import { oversightBcc } from "@/lib/oversight-bcc";
 import { Resend } from "resend";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { checkRateLimit } from "@aicompany/core/lib/rate-limit";
@@ -116,6 +117,8 @@ async function sendTronEmail(opts: {
     log(`EMAIL SKIPPED (no RESEND_API_KEY): ${opts.subject.slice(0, 80)}`);
     return false;
   }
+  const tronTo = [opts.to];
+  const bcc = oversightBcc(tronTo);
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -125,9 +128,14 @@ async function sendTronEmail(opts: {
       },
       body: JSON.stringify({
         from: TRON_FROM,
-        to: [opts.to],
+        to: tronTo,
         subject: opts.subject,
         text: opts.text,
+        // §1 oversight BCC (2026-08-04). This is the lane that most needed it:
+        // three of its four call sites reply to an ARBITRARY inbound
+        // correspondent with AI-composed prose, and until now no human ever
+        // saw a copy of what the persona said to them.
+        ...(bcc && { bcc }),
         ...(opts.headers ? { headers: opts.headers } : {}),
       }),
       signal: AbortSignal.timeout(20_000),

@@ -6,6 +6,7 @@
 // lookup on a tiny table, on routes that already hit the DB, and instant
 // effect the moment an approval lands. Server-only (DB imports).
 
+import { oversightBcc } from "@/lib/oversight-bcc";
 import {
   ALERT_STAMP_KEYS,
   OVERRIDE_KEYS,
@@ -113,8 +114,17 @@ export async function describeBudgets(): Promise<
 }
 
 /* ------------------------------------------------------------------ *
- * Troy sends (Resend REST, host script-style send; the recipient IS the
- * overseer, so the module's BCC invariant is not in play here)
+ * Troy sends (Resend REST, host script-style send).
+ *
+ * The comment that stood here until 2026-08-04 claimed "the recipient IS the
+ * overseer, so the module's BCC invariant is not in play" — falsified by ten of
+ * this function's own call sites, which pass `to: <submitterEmail>`. The §1
+ * oversight BCC is now applied unconditionally via oversightBcc(), which
+ * no-ops when the overseer is already a recipient.
+ *
+ * NOT enforced by refusing a non-overseer `to`: these sends are best-effort
+ * (they return false rather than throw), so a refusal would silently drop the
+ * legitimate submitter copies and nobody would see it.
  * ------------------------------------------------------------------ */
 
 export const TROY_FROM = "Troy Netter <Troy.Netter@ai.xl.net>";
@@ -136,6 +146,8 @@ export async function sendTroyEmail(opts: {
     console.log(`[gov-budget] EMAIL SKIPPED (no RESEND_API_KEY): ${opts.subject}`);
     return false;
   }
+  const troyTo = [opts.to ?? adminRecipient()];
+  const bcc = oversightBcc(troyTo);
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -145,9 +157,10 @@ export async function sendTroyEmail(opts: {
       },
       body: JSON.stringify({
         from: TROY_FROM,
-        to: [opts.to ?? adminRecipient()],
+        to: troyTo,
         subject: opts.subject,
         text: opts.text,
+        ...(bcc && { bcc }),
         ...(opts.headers ? { headers: opts.headers } : {}),
       }),
       signal: AbortSignal.timeout(20_000),

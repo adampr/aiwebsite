@@ -745,8 +745,36 @@ managed DB — just PM2, nginx, Postgres, and cloudflared on a single box.
 
 ### Human-oversight invariants (do not remove when rebuilding)
 
-- **Every outbound email is BCC'd to `adam@xl.net`** (`OUTBOUND_BCC_EMAIL`; enforced by
-  @aicompany/core's email sender — a module §1 default-on invariant).
+- **Every outbound email is BCC'd to `adam@xl.net`** (`oversight.bccEmail`), by one of
+  two mechanisms — and until 2026-08-04 the second did not exist, so the claim as
+  previously written here was **false**:
+  1. mail sent through `@aicompany/core`'s `sendEmail` — the module §1 default-on
+     invariant, which drops the BCC only when the recipient IS `bccEmail`; and
+  2. this host's **four raw Resend senders**, which bypass that seam entirely
+     (`governance/budget.ts`, `work/email-intake.ts`, `roadmap/notify.ts`,
+     `work/notify.ts`) and now apply it via `src/lib/oversight-bcc.ts`.
+     Exactly ONE host call site routes through the module seam
+     (`work/notify.ts:126`); the host is ~99% off-seam, which is how 20 call
+     sites shipped with no oversight copy. Three lanes could reach a
+     non-overseer with no human copy at all: `/work` submitter notifications,
+     `email-intake`'s AI-composed replies to arbitrary inbound correspondents,
+     and the roadmap approval outcome.
+  **`oversightBcc()` normalises both sides through `extractAddress`** rather
+  than comparing raw strings: `adminRecipient()` does not lowercase or unwrap
+  `Display Name <addr>`, so `ADMIN_EMAIL="Adam <adam@xl.net>"` would defeat a
+  naive compare, add a duplicate BCC and — if Resend rejects duplicates — throw
+  away the owner's own alert mail. The overlap is removed by set difference, so
+  a duplicate is impossible by construction rather than by comparison. (The
+  module's claim that Resend rejects duplicate to/bcc addresses dates to its
+  initial commit and is **UNVERIFIED** against the live API; nothing here
+  depends on it either way.)
+  **ONE DELIBERATE EXCEPTION:** `sendArchiveRetentionEmail` takes NO oversight
+  BCC. Its body IS a third party's confidential uploaded archive, it is already
+  addressed to the overseer, and a generic BCC there would fan every client
+  company's source files to a second mailbox the day `ADMIN_EMAIL` diverges
+  from `oversight.bccEmail`. The carve-out is written at the call site.
+  (§20 cold outreach also has no per-message BCC by module design — not
+  applicable here: this host has no outreach block.)
 - **Tron Netter has no tools and no internet** on public channels: every brain call passes
   `disabledTools` = the brain's full tool list, and `memoryMode: "do_not_store"`.
 - Public knowledge is limited to the two crawled sites; the persona prompt enforces this.
