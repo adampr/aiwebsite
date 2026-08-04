@@ -216,22 +216,21 @@ export function SubmitClient({
                     Submit an update
                   </a>
                 )}
-                {/* Chain ownership (§5.16, 2026-08-04): when the live
-                    version belongs to someone else (say Adam updated this
-                    card on the submitter's behalf), it is not in this list,
-                    and this superseded row is the submitter's ONLY surface.
-                    Hidden when the live row is theirs: that row above
-                    already carries the link. */}
-                {r.status === "superseded" &&
-                  r.currentId &&
-                  !rows.some((o) => o.id === r.currentId) && (
-                    <a
-                      href={`/work/submit?update=${r.currentId}`}
-                      className="btn btn--text no-underline"
-                    >
-                      Submit an update
-                    </a>
-                  )}
+                {/* Chain ownership (§5.16, 2026-08-04): a superseded row
+                    links to updating the card's LIVE version. Shown even
+                    when the live row is also in this list (owner feedback,
+                    same day): the original row is where people look for
+                    their card, and a dedupe that hides the button there
+                    recreates the "no option to update again" confusion.
+                    Both buttons land on the same update form. */}
+                {r.status === "superseded" && r.currentId && (
+                  <a
+                    href={`/work/submit?update=${r.currentId}`}
+                    className="btn btn--text no-underline"
+                  >
+                    Submit an update
+                  </a>
+                )}
                 {/* Withdraw is hidden on published rows: DELETE on a
                     swapped-in update is a ROLLBACK, and /admin/work carries
                     the properly-labelled lever (refutation finding). */}
