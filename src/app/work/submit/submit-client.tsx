@@ -119,23 +119,6 @@ export function SubmitClient({
     void refresh();
   }
 
-  // ONE entry per card (owner feedback 2026-08-04, round-11 follow-up #2):
-  // when an update of yours replaced your own card, the live row IS the
-  // card's entry, and the superseded generation showing beside it under the
-  // same title reads as a duplicate. Hidden ONLY when the live version is
-  // also in this list; a card whose last update came from someone else
-  // keeps its superseded row - that row (and its Submit an update button)
-  // is the submitter's only surface. The DB rows all stay: superseded is
-  // the rollback reservoir and is undeletable by design.
-  const visible = rows.filter(
-    (r) =>
-      !(
-        r.status === "superseded" &&
-        r.currentId &&
-        rows.some((o) => o.id === r.currentId)
-      )
-  );
-
   return (
     <div className="space-y-8">
       <div className="panel panel--raised">
@@ -146,13 +129,13 @@ export function SubmitClient({
         />
       </div>
 
-      {visible.length > 0 && (
+      {rows.length > 0 && (
         <div className="panel space-y-4">
           <h2 className="mono text-xs uppercase tracking-[0.2em] text-light">
             Your submissions
           </h2>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          {visible.map((r) => (
+          {rows.map((r) => (
             <div
               key={r.id}
               className="border-t border-[var(--xl-line)] pt-3 text-sm"

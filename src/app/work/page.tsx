@@ -481,6 +481,60 @@ export default async function WorkPage() {
             <span className="sr-only"> (opens in a new tab)</span>
           </a>
         </section>
+
+        {/* 7. Leo Netter */}
+        <section id="leo-netter" className="panel panel--lightline rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge">
+              <span className="dot" /> Internal test
+            </span>
+          </div>
+          <h2 className="mt-6">Leo Netter</h2>
+          <p className="mt-2 text-sm text-faint">
+            The AI teammate we test on ourselves first.
+          </p>
+          <p className="mt-4 text-sm">
+            Leo Netter is our internal test bot: a memory-bearing assistant
+            built on the Brain SDK, deployed to the people most likely to
+            complain about it: us.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Slack DMs Only
+              </h3>
+              <p className="mt-3 text-sm">
+                It lives only in Slack DMs for the XL.net team and never talks
+                to customers.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Rough Edges First
+              </h3>
+              <p className="mt-3 text-sm">
+                It exists so we hit the rough edges of a memory-bearing AI
+                teammate before anyone else does.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Architecture Is Canonical
+              </h3>
+              <p className="mt-3 text-sm">
+                Every behavior, tool, and test is written into the
+                architecture document before code lands.
+              </p>
+            </div>
+          </div>
+          <p className="mono mt-6 text-xs text-faint">
+            Slack DM-only · internal to the XL.net team · architecture-is-canonical
+            governance
+          </p>
+        </section>
       </section>
 
       {/* Group: client delivery */}
@@ -491,8 +545,8 @@ export default async function WorkPage() {
           </span>
         </div>
 
-        {/* 7. QBR Machine */}
-        <section id="qbr-machine" className="panel panel--lightline rise">
+        {/* 8. QBR Machine */}
+        <section id="qbr-machine" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -559,8 +613,8 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 8. Onboarding Toolkit */}
-        <section id="onboarding-toolkit" className="panel rise">
+        {/* 9. Onboarding Toolkit */}
+        <section id="onboarding-toolkit" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -635,8 +689,8 @@ export default async function WorkPage() {
           </span>
         </div>
 
-        {/* 9. XL Lakehouse */}
-        <section id="lakehouse" className="panel panel--lightline rise">
+        {/* 10. XL Lakehouse */}
+        <section id="lakehouse" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -702,8 +756,8 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 10. XL API Gateway */}
-        <section id="api-gateway" className="panel rise">
+        {/* 11. XL API Gateway */}
+        <section id="api-gateway" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
               <span className="dot" /> In development
@@ -783,60 +837,6 @@ export default async function WorkPage() {
             05 · What We Have Built
           </span>
         </div>
-
-        {/* 11. Leo Netter */}
-        <section id="leo-netter" className="panel panel--lightline rise">
-          <div className="flex flex-wrap items-center gap-4">
-            <span className="badge">
-              <span className="dot" /> Internal test
-            </span>
-          </div>
-          <h2 className="mt-6">Leo Netter</h2>
-          <p className="mt-2 text-sm text-faint">
-            The AI teammate we test on ourselves first.
-          </p>
-          <p className="mt-4 text-sm">
-            Leo Netter is our internal test bot: a memory-bearing assistant
-            built on the Brain SDK, deployed to the people most likely to
-            complain about it: us.
-          </p>
-          <div className="mt-8 grid gap-6 md:grid-cols-3">
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">01 · </span>
-                Slack DMs Only
-              </h3>
-              <p className="mt-3 text-sm">
-                It lives only in Slack DMs for the XL.net team and never talks
-                to customers.
-              </p>
-            </div>
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">02 · </span>
-                Rough Edges First
-              </h3>
-              <p className="mt-3 text-sm">
-                It exists so we hit the rough edges of a memory-bearing AI
-                teammate before anyone else does.
-              </p>
-            </div>
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">03 · </span>
-                Architecture Is Canonical
-              </h3>
-              <p className="mt-3 text-sm">
-                Every behavior, tool, and test is written into the
-                architecture document before code lands.
-              </p>
-            </div>
-          </div>
-          <p className="mono mt-6 text-xs text-faint">
-            Slack DM-only · internal to the XL.net team · architecture-is-canonical
-            governance
-          </p>
-        </section>
 
         {/* 12. SpamSlayer */}
         <section id="spamslayer" className="panel rise">
