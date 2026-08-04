@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: restore-drill.sh.tpl@3bf4f3f68cc014a76c87db182a9b1b23f44c68bfbaf9100477a32016f6d7d2ef
+# aicompany-template: restore-drill.sh.tpl@cf34c1dd3eb05dc17a3ed0a8cd5775b82ca7293855689734c41c863fca8e56d0
 # Automated backup restore drill (§9.4): prove latest.sql.gz actually restores.
 # Installed as the aiwebsite-restore-drill systemd timer (quarterly). Restores
 # the latest bucket backup into a scratch database, sanity-checks row counts,
@@ -7,7 +7,7 @@
 # be restored is not a backup.
 set -uo pipefail
 
-bucket=""
+bucket="azblob://xlaiwebbackups/backups"
 scratch_db="aiwebsite_restore_drill"
 workdir="/var/backups/aiwebsite"
 env_file="/var/www/aiwebsite/.env"
@@ -70,7 +70,12 @@ case "$bucket" in
   azblob://*)
     az_account="$(echo "$bucket" | cut -d/ -f3)"
     az_container="$(echo "$bucket" | cut -d/ -f4)"
-    az storage blob download --auth-mode login --account-name "$az_account" --container-name "$az_container" \
+    # Key auth read at runtime from .env — see backup-db.sh for why (v1.66.0).
+    # A drill that cannot authenticate must FAIL, not silently pass: this is the
+    # only thing that proves the backups are restorable rather than merely written.
+    az_key=$(grep -E '^AZURE_STORAGE_KEY=' "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    [ -z "$az_key" ] && fail "AZURE_STORAGE_KEY is not set in $env_file — cannot download from $bucket"
+    az storage blob download --auth-mode key --account-key "$az_key" --account-name "$az_account" --container-name "$az_container" \
       --name latest.sql.gz --file "$dump" >/dev/null || fail "Could not download latest.sql.gz from $bucket"
     ;;
   *)

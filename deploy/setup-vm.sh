@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@aee76c3ac0634039826d65f7563e1f6ee6f951694bffaf776d2da47605faacce
+# aicompany-template: setup-vm.sh.tpl@4c5ff791629e7e8926634a489b34a4822ec329bd2e00db9074ef05bc14bc7575
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -981,7 +981,41 @@ sudo systemctl enable --now aiwebsite-knowledge.timer \
 # Backups are a §1 default-on invariant, but enabling the timer with no bucket
 # just produces nightly failure alerts — gate on BACKUP_BUCKET and leave a flag
 # the watchdog uses to decide whether the heartbeat check applies.
-if [ -n "" ]; then
+# azure-cli, ONLY for azblob:// hosts (v1.66.0). Gated three ways: on the
+# bucket scheme, so a gs:// host (itsupportchicago) installs nothing and its
+# deploy is byte-identical to before; on `command -v az`, because deploy.sh runs
+# this script on EVERY deploy and re-running the install would add minutes each
+# time; and on the apt-get succeeding, since it needs a THIRD-PARTY Microsoft
+# repo (azure-cli is not in Ubuntu's archive — verified: `apt-cache policy
+# azure-cli` is empty on 24.04).
+#
+# That third-party repo is a real, known liability on this fleet: roleplay still
+# carries /etc/apt/sources.list.d/nodesource.sources.disabled-403 from a vendor
+# repo that started 403ing and had to be disabled by hand. So the failure is
+# made LOUD here rather than left to the generic apt warning — a box that
+# silently loses `az` would take its backups down with it, and the whole point
+# of this release is to stop backups failing quietly.
+case "azblob://xlaiwebbackups/backups" in
+  azblob://*)
+    if ! command -v az >/dev/null 2>&1; then
+      echo ">>> Installing azure-cli (required by BACKUP_BUCKET=azblob://xlaiwebbackups/backups)..."
+      if curl -sLS https://packages.microsoft.com/keys/microsoft.asc \
+           | sudo gpg --dearmor --yes -o /usr/share/keyrings/microsoft.gpg \
+         && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" \
+           | sudo tee /etc/apt/sources.list.d/azure-cli.list >/dev/null \
+         && sudo apt-get update -qq \
+         && sudo apt-get install -y azure-cli; then
+        echo "    azure-cli installed: $(az version --query '\"azure-cli\"' -o tsv 2>/dev/null || echo unknown)"
+      else
+        echo "!!! azure-cli install FAILED — nightly backups to azblob://xlaiwebbackups/backups CANNOT run."
+        echo "!!! The Microsoft apt repo is third-party and has 403'd on this fleet before."
+        echo "!!! Deploy continues (the app is unaffected), but backups are DOWN until fixed."
+      fi
+    fi
+    ;;
+esac
+
+if [ -n "azblob://xlaiwebbackups/backups" ]; then
   sudo systemctl enable --now aiwebsite-backup.timer aiwebsite-restore-drill.timer
   sudo mkdir -p /var/lib/aiwebsite && sudo touch /var/lib/aiwebsite/backups-enabled
 else

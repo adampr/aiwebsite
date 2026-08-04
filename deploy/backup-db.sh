@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: backup-db.sh.tpl@393897147a8398bd6859be02d15cf40b922f0fe821044ff9eae0a75f45a1387c
+# aicompany-template: backup-db.sh.tpl@6f7e689c905e67baa8b00c41f188c992fd1bc2867eea645e948d1cc17a951648
 # Nightly pg_dump to a cloud bucket with failure alerting and a success
 # heartbeat (§9.4, from host B's hardened version). Failures email
 # adam@xl.net via Resend; success stamps /var/lib/aiwebsite/last-backup-ok,
@@ -10,7 +10,7 @@
 # account) or azblob://account/container (Azure Blob, needs az login/identity).
 set -euo pipefail
 
-bucket=""
+bucket="azblob://xlaiwebbackups/backups"
 timestamp=$(date +%Y%m%d_%H%M%S)
 filename="aiwebsite_$timestamp.sql.gz"
 workdir="/var/backups/aiwebsite"
@@ -86,15 +86,34 @@ case "$bucket" in
   azblob://*)
     az_account="$(echo "$bucket" | cut -d/ -f3)"
     az_container="$(echo "$bucket" | cut -d/ -f4)"
-    bucket_put()   { az storage blob upload --auth-mode login --account-name "$az_account" --container-name "$az_container" --overwrite --file "$1" --name "$2" >/dev/null; }
+    # KEY auth, not `--auth-mode login` (v1.66.0). Azure AD auth needs the VM to
+    # hold a Storage Blob Data Contributor role assignment, and granting that
+    # requires permissions above Contributor — i.e. a human in a portal, per
+    # host, to arm a default-on invariant. This fleet has no managed identity on
+    # any VM and no human in the loop, so AD auth meant backups stayed OFF.
+    #
+    # THE KEY IS READ AT RUNTIME FROM .env, NOT RENDERED. deploy/site-deploy.env
+    # is GIT-TRACKED (so is the rendered backup-db.sh), so making the key a
+    # render placeholder would COMMIT THE SECRET — render.mjs enforces this and
+    # will reject the template if anyone tries. Same grep idiom as RESEND_API_KEY
+    # above; .env is pushed separately by deploy.sh and is 0600 on the VM.
+    az_key=$(grep -E '^AZURE_STORAGE_KEY=' "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+    # Fail BEFORE pg_dump. With an empty --account-key, `--auth-mode key` falls
+    # back to an ARM key lookup and you get a multi-minute retry storm after
+    # having already spent the dump, instead of one clear error.
+    if [ -z "$az_key" ]; then
+      echo "AZURE_STORAGE_KEY is not set in $env_file — cannot upload to $bucket"
+      false
+    fi
+    bucket_put()   { az storage blob upload --auth-mode key --account-key "$az_key" --account-name "$az_account" --container-name "$az_container" --overwrite --file "$1" --name "$2" >/dev/null; }
     bucket_sweep() {
       local cutoff
       cutoff=$(date -d "$retention_days days ago" +%Y%m%d)
-      az storage blob list --auth-mode login --account-name "$az_account" --container-name "$az_container" --query '[].name' -o tsv | while read -r name; do
+      az storage blob list --auth-mode key --account-key "$az_key" --account-name "$az_account" --container-name "$az_container" --query '[].name' -o tsv | while read -r name; do
         local file_date
         file_date=$(basename "$name" | grep -oP '\d{8}' || true)
         if [ -n "$file_date" ] && [ "$file_date" -lt "$cutoff" ]; then
-          az storage blob delete --auth-mode login --account-name "$az_account" --container-name "$az_container" --name "$name" >/dev/null
+          az storage blob delete --auth-mode key --account-key "$az_key" --account-name "$az_account" --container-name "$az_container" --name "$name" >/dev/null
         fi
       done
     }
