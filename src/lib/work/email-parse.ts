@@ -6,6 +6,17 @@
 import { sanitizeHeaderValue } from "@/lib/governance/approval";
 import { TITLE_KIND_PREFIX_RE, WORK_CAPS, type WorkKind } from "./config";
 import { stringViolations } from "./lint";
+import {
+  nameKey,
+  SLUG_SHAPE_RE,
+  splitMachineEcho,
+  stripMachineEcho,
+} from "./names";
+
+// Re-exported so intake and tests keep a single import surface; the
+// definitions moved to names.ts (lint.ts needs them too, and this file
+// already imports FROM lint.ts).
+export { nameKey, splitMachineEcho, stripMachineEcho } from "./names";
 
 // ".ski" accepted alongside ".skill": Windows/Outlook forwarding chains
 // rename attachments to DOS 8.3 short names (real inbounds 2026-07-30:
@@ -296,17 +307,6 @@ export function isSalutationLine(line: string): boolean {
   return SALUTATIONS.has(words[0]) || SALUTATIONS.has(words.slice(0, 2).join(" "));
 }
 
-/** Comparison key for names: case, hyphens, underscores and punctuation all
- * collapse, so "patching-visualizer" (a package slug) and "Patching
- * Visualizer" (the card title) compare equal. Must be applied to BOTH sides of
- * every name comparison. */
-export function nameKey(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
-}
-
 /** Shape gate for anything that wants to become a card title without an
  * author saying so. REJECT-ONLY by house rule (see stripKindPrefix): a value
  * that fails is dropped, never rewritten into passing, because a silent
@@ -324,8 +324,46 @@ export function looksLikeAWorkName(v: string): boolean {
   if (TITLE_KIND_PREFIX_RE.test(s)) return false;
   if (isSalutationLine(s)) return false;
   // A package slug is a filename, not a card title.
-  if (/^[a-z0-9]+(?:-[a-z0-9]+)+$/.test(s)) return false;
+  if (SLUG_SHAPE_RE.test(s)) return false;
+  // A machine-name echo ("Outage Checker (outage-checker)") is the name
+  // stated twice. REJECT here rather than strip (house rule above): the
+  // dropped candidate falls to the brain rung, where grounding still lets
+  // the model select the clean head from the submitter's own text.
+  if (splitMachineEcho(s)) return false;
   return true;
+}
+
+/** Hostile characters for card titles: would break out of the quoting in a
+ * downstream prompt or read as markup. Rejected (authored) or stripped
+ * (subject-derived) BEFORE the title reaches panel.ts, which additionally
+ * JSON-quotes it at every interpolation site. Apostrophes are legal:
+ * "Tech's Helper" is a real title. */
+export const HOSTILE_TITLE_CHARS = /["`<>{}|\\]/;
+const HOSTILE_TITLE_CHARS_G = /["`<>{}|\\]/g;
+
+/** The FULL subject-to-title chain, extracted so tests can pin the ORDER
+ * (2026-07-31 lesson at the call site: hostile characters come out BEFORE
+ * the kind-prefix strip, or a quoted subject re-exposes a category prefix
+ * after a panel run was already spent; whitespace is recollapsed last). The
+ * kind-prefix and machine-echo strips interleave to a fixpoint: "Skill:
+ * Outage Checker (outage-checker)" needs the prefix gone before the echo
+ * comparison can see the true head. echoStripped reports whether the echo
+ * strip fired so the receipt can disclose the adaptation when the subject
+ * wins the title. */
+export function resolveSubjectTitle(subjectRaw: string): {
+  title: string;
+  echoStripped: boolean;
+} {
+  let s = titleFromSubject(subjectRaw).replace(HOSTILE_TITLE_CHARS_G, "");
+  let echoStripped = false;
+  for (let i = 0; i < 3; i++) {
+    const kindStripped = stripKindPrefix(s);
+    const next = stripMachineEcho(kindStripped);
+    if (next !== kindStripped) echoStripped = true;
+    if (next === s) break;
+    s = next.trim();
+  }
+  return { title: s.replace(/\s+/g, " ").trim(), echoStripped };
 }
 
 /** Identity tokens for the SENDER, so a weak candidate that is just the

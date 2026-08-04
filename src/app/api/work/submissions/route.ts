@@ -34,6 +34,7 @@ import {
   skillDocFailureMessage,
 } from "@/lib/work/extract";
 import { okJson, rateLimit, requireWorkUser, workError } from "@/lib/work/http";
+import { splitMachineEcho } from "@/lib/work/names";
 import { kickPanel } from "@/lib/work/panel";
 import { ROADMAP_CAPS } from "@/lib/roadmap/config";
 import { countCreatedTodayForCompany } from "@/lib/work/db";
@@ -135,6 +136,18 @@ export async function POST(req: Request): Promise<Response> {
     return workError(
       "invalid_request",
       "The title should be just the tool's name; the card's badge already shows the kind. Remove the category prefix and resubmit.",
+      400
+    );
+  // Machine-name echo (2026-08-04 incident: "Entra/M365 Security Analyzer
+  // (entra-m365-security-analyzer)" published as a card title). The email
+  // lanes strip this and disclose it in the receipt; the form REJECTS
+  // instead, deliberately: the fix is synchronous with the field still
+  // filled in, and the form has no disclosure channel, so a server-side
+  // strip would publish a card differing from what the screen showed.
+  if (splitMachineEcho(title))
+    return workError(
+      "invalid_request",
+      "The title says the same name twice, once in words and once again in parentheses. Keep just the name, drop the parenthetical repeat, and resubmit.",
       400
     );
   const blurb = String(form.get("blurb") ?? "").trim();

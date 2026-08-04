@@ -12,6 +12,7 @@ import {
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
 } from "./config";
+import { splitMachineEcho } from "./names";
 
 export interface WorkCard {
   title: string;
@@ -128,6 +129,21 @@ export function stringViolations(field: string, s: string): string[] {
   for (const adverb of BANNED_ADVERBS) {
     if (new RegExp(`\\b${adverb}\\b`, "i").test(s))
       v.push(`${field}: contains the frequency adverb "${adverb}"`);
+  }
+  if (field === "title") {
+    // Machine-name echo backstop (2026-08-04 incident). Title-only: a body
+    // paragraph may legitimately write "the export is named X (x-slug)".
+    // Because validateWeakTitle runs these bans, this one placement covers
+    // the corroborated and inferred rungs, the lintCard publish backstop,
+    // and the work:rerun --title operator lever. The message starts with
+    // "title" so repairDrift classifies a fire as a title violation, and it
+    // prescribes the deterministic fix so the repair model never invents a
+    // name.
+    const echo = splitMachineEcho(s);
+    if (echo)
+      v.push(
+        `${field}: ends with a parenthetical that repeats the tool's own name; state the name once and drop "(${echo.inner.slice(0, 60)})"`
+      );
   }
   if (field !== "title") {
     for (const { re, label } of META_COMMENTARY_PATTERNS) {

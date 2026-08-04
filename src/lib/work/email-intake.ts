@@ -65,14 +65,16 @@ import {
   docDeclaredNames,
   FORM_POINTER,
   inferKind,
+  HOSTILE_TITLE_CHARS,
   isPlaceholderSubject,
   isSenderIdentity,
   nameKey,
   parseSubmissionBody,
   pickAttachments,
   pickSkillDoc,
+  resolveSubjectTitle,
   senderIdentityTokens,
-  stripKindPrefix,
+  stripMachineEcho,
   titleFromSubject,
   UPDATE_SUBJECT_RE,
   validateWeakTitle,
@@ -185,13 +187,9 @@ async function warnAdmin(
   if (sent) await setMeta(stampKey, new Date().toISOString());
 }
 
-/** Characters that would break out of the quoting in a downstream prompt, or
- * read as markup on the card. A resolved title carrying these is rejected
- * (authored) or stripped (subject-derived) BEFORE the title reaches panel.ts,
- * which additionally JSON-quotes it at every interpolation site. Apostrophes
- * are legal: "Tech's Helper" is a real title. */
-const HOSTILE_TITLE_CHARS = /["`<>{}|\\]/;
-const HOSTILE_TITLE_CHARS_G = /["`<>{}|\\]/g;
+// HOSTILE_TITLE_CHARS moved to email-parse.ts (the extracted
+// resolveSubjectTitle chain needs it there); imported above for the
+// authored-title gate.
 
 function outOfBand(t: string): boolean {
   return t.length < WORK_CAPS.titleMinChars || t.length > WORK_CAPS.titleMaxChars;
@@ -637,8 +635,20 @@ export async function handleWorkEmail(
   // forwarded skill emails arrive with subjects like "Fwd: skill to our
   // work" while the body names the tool (owner report 2026-07-31, the
   // first real submission published under its subject line).
-  const authoredTitle =
+  const authoredRaw =
     parsed.title !== null ? sanitizeHeaderValue(parsed.title, 200).trim() : null;
+  // Machine-name echo strip (2026-08-04 incident: "Entra/M365 Security
+  // Analyzer (entra-m365-security-analyzer)" published verbatim). Stripping
+  // an AUTHORED title is legal here and only here because nameKey-proven
+  // self-duplication is not a rename: the update lane already ignores an
+  // authored Title: line on exactly this equality ("equal is redundant"),
+  // and the surviving head is a verbatim span of the submitter's own words
+  // (selection, not authoring). Runs BEFORE the update block so an update's
+  // "Title: X (x-slug)" line compares equal to the predecessor instead of
+  // bouncing on the rename message, and before the band gate so an over-60
+  // composite with a clean head is rescued instead of lectured. Disclosed
+  // via an "Also:" receipt note once the title resolves.
+  const authoredTitle = authoredRaw !== null ? stripMachineEcho(authoredRaw) : null;
 
   // ── §5.16 update intent (admin-mediated updates, 2026-08-03) ─────
   // A strong "Update Card:" body directive, or an "Update: <title>" subject
@@ -652,9 +662,16 @@ export async function handleWorkEmail(
   const subjectUpdateMatch = UPDATE_SUBJECT_RE.exec(
     titleFromSubject(subjectRaw)
   );
-  const updateValue =
+  // Update targets are lookup keys, never authored titles, so the
+  // machine-echo strip is safe here and keeps the lanes consistent:
+  // "Update: Outage Checker (outage-checker)" must resolve to the card the
+  // predecessor published as, not bounce on a name no card carries
+  // (refutation finding 2026-08-04).
+  const updateValueRaw =
     parsed.updateTarget ??
     (subjectUpdateMatch ? subjectUpdateMatch[1].trim() : null);
+  const updateValue =
+    updateValueRaw !== null ? stripMachineEcho(updateValueRaw) : null;
   let predecessor: SubmissionRow | null = null;
   // §5.18: the update lane is staff-only in v1 (the approval half is
   // xl.net-admin-shaped, and the 0035 CHECK forbids company update rows).
@@ -750,15 +767,13 @@ export async function handleWorkEmail(
     );
     return;
   }
-  // Hostile characters come out BEFORE the kind-prefix strip, or a quoted
-  // subject ("Skill: Slack Knowledge Assistant") re-exposes a category prefix
-  // that then fails the publish lint after a panel run was already spent
-  // (verification finding 2026-07-31). Whitespace is recollapsed last.
-  const subjectStripped = stripKindPrefix(
-    titleFromSubject(subjectRaw).replace(HOSTILE_TITLE_CHARS_G, "")
-  )
-    .replace(/\s+/g, " ")
-    .trim();
+  // The full chain (hostile chars before the kind-prefix strip, machine-echo
+  // strip interleaved, whitespace recollapsed last) lives in
+  // resolveSubjectTitle so tests pin the ORDER; see its doc comment for the
+  // 2026-07-31 ordering lesson. echoStripped drives the receipt disclosure
+  // below when the subject wins the title.
+  const { title: subjectStripped, echoStripped: subjectEchoStripped } =
+    resolveSubjectTitle(subjectRaw);
   // isPlaceholderSubject runs against BOTH the raw header and the
   // transport-stripped value: real forwards arrive as "Fwd: (no subject)" and
   // only reduce to the bare placeholder after titleFromSubject.
@@ -793,6 +808,23 @@ export async function handleWorkEmail(
     : (authoredTitle ?? (subjectUsable ? subjectStripped : null));
   let titleSource: "authored" | "subject" | "corroborated" | "inferred" =
     authoredTitle !== null || isUpdate ? "authored" : "subject";
+  // Disclose the machine-echo strip whenever the adapted value actually
+  // became the title (2026-08-03 rule: everything the intake adapted instead
+  // of bouncing is disclosed). A discarded subject gets no note, matching
+  // how discarded subjects are treated everywhere else.
+  if (
+    !isUpdate &&
+    title !== null &&
+    ((titleSource === "authored" && authoredTitle !== authoredRaw) ||
+      (titleSource === "subject" && subjectEchoStripped))
+  )
+    notes.push(
+      sender.toLowerCase() === adminRecipient().toLowerCase()
+        ? `Also: the title ended by repeating the same name in parentheses, so I dropped the repeat and the card is titled "${title.slice(0, 80)}". Renaming is admin-only, so it is yours to change once the card publishes.`
+        : isCompanyLane
+          ? `Also: the title ended by repeating the same name in parentheses, so I dropped the repeat and the card is titled "${title.slice(0, 80)}". If it should be called something else, reply to this email and the XL.net team can retitle the card once it publishes.`
+          : `Also: the title ended by repeating the same name in parentheses, so I dropped the repeat and the card is titled "${title.slice(0, 80)}". If it should be called something else, tell Adam and he can retitle the card once it publishes.`
+    );
   // Natural-email band (2026-08-03): the body is stored VERBATIM as the
   // description (context-only; the card is written from the documents), so
   // only an extreme length rejects. Everything else is accepted with a

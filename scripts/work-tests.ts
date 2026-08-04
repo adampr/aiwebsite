@@ -29,8 +29,11 @@ import {
   nameKey,
   parseSubmissionBody,
   pickAttachments,
+  resolveSubjectTitle,
   senderIdentityTokens,
+  splitMachineEcho,
   stripKindPrefix,
+  stripMachineEcho,
   titleFromSubject,
   validateInferredTitle,
   validateWeakTitle,
@@ -38,6 +41,7 @@ import {
 import {
   HOUSE_RULES,
   TITLE_KIND_PREFIX_RE,
+  WORK_CAPS,
 } from "../src/lib/work/config";
 import staticTitles from "../src/lib/work/static-titles.json";
 
@@ -222,6 +226,28 @@ async function main() {
   const adverb = goodCard();
   adverb.summary = sentence(59) + " It always works.";
   assert.ok(!lintCard(adverb, ctx).ok, "frequency adverb rejected");
+
+  // Machine-name echo backstop (2026-08-04 incident): title-only, and the
+  // violation must START with "title" so repairDrift classifies it. A body
+  // paragraph naming an export ("named X (x-slug)") must NOT fire.
+  const echoTitle = goodCard();
+  echoTitle.title = "Outage Checker (outage-checker)";
+  {
+    const res = lintCard(echoTitle, ctx);
+    assert.ok(!res.ok, "machine-echo title rejected by the publish lint");
+    assert.ok(
+      res.violations.some((v) => v.startsWith("title:")),
+      "echo violation is classified as a title violation"
+    );
+  }
+  const echoBody = goodCard();
+  echoBody.body = [
+    sentence(60) + " The export is named Outage Checker (outage-checker).",
+  ];
+  assert.ok(
+    lintCard(echoBody, ctx).ok,
+    `echo shape in a body paragraph is legal: ${lintCard(echoBody, ctx).violations.join("; ")}`
+  );
 
   const collide = goodCard();
   collide.title = staticTitles.titles[0];
@@ -931,6 +957,105 @@ async function main() {
     parseSubmissionBody("Skill\u00A0Name: Outage Checker\nDesc.").title,
     "Outage Checker",
     "Gmail non-breaking space inside the label still matches"
+  );
+
+  // ---- machine-name echo (2026-08-04 incident) ----
+  // The live card published as "Entra/M365 Security Analyzer
+  // (entra-m365-security-analyzer)": 59 characters, inside the 60 band, so
+  // the length gate passed it, and no other gate saw the trailing
+  // parenthetical as the same name twice. nameKey equality is the proof of
+  // redundancy.
+  const incidentTitle =
+    "Entra/M365 Security Analyzer (entra-m365-security-analyzer)";
+  assert.ok(
+    incidentTitle.length <= WORK_CAPS.titleMaxChars,
+    "the incident string is inside the band; that is why it published"
+  );
+  assert.equal(
+    stripMachineEcho(incidentTitle),
+    "Entra/M365 Security Analyzer",
+    "the incident string strips to its head"
+  );
+  assert.equal(stripMachineEcho("Outage Checker (outage-checker)"), "Outage Checker");
+  assert.equal(
+    stripMachineEcho("Patch O Matic (PATCH_O_MATIC)"),
+    "Patch O Matic",
+    "nameKey collapses case and underscores"
+  );
+  assert.equal(
+    stripMachineEcho("Foo Tool (foo-tool) (foo-tool)"),
+    "Foo Tool",
+    "stacked echoes strip to a fixpoint"
+  );
+  assert.equal(
+    stripMachineEcho("entra-analyzer (Entra Analyzer)"),
+    "Entra Analyzer",
+    "a slug-shaped head yields to the human-shaped parenthetical"
+  );
+  // Negatives, each pinned UNCHANGED: the strip must be provably lossless,
+  // so only exact nameKey equality of a TRAILING parenthetical fires.
+  for (const keep of [
+    "Quarterly Report (2024)",
+    "Legit (parenthetical) name",
+    "Patch Tool (Windows)",
+    "Tool (v2) (tool)", // non-trailing echo: documented residue
+    "Foo (skill-foo)", // fused kind token defeats equality: documented residue
+    "(no subject)",
+    "!!! (???)", // empty-nameKey guard
+    "Caf\u00E9 Tracker (cafe-tracker)", // nameKey does NOT fold diacritics: deliberate
+  ])
+    assert.equal(stripMachineEcho(keep), keep.trim(), `echo strip keeps: ${keep}`);
+  assert.deepEqual(splitMachineEcho("Outage Checker (outage-checker)"), {
+    head: "Outage Checker",
+    inner: "outage-checker",
+  });
+  assert.equal(splitMachineEcho("Patch Tool (Windows)"), null);
+  // Length guard (refutation finding 2026-08-04): lintCard runs string bans
+  // on RAW model output before the band violation stops anything, so a
+  // pathological stacked-echo string must return null instead of exhausting
+  // the stack through the mutual recursion.
+  const stacked = "a" + " (a)".repeat(5000);
+  assert.equal(splitMachineEcho(stacked), null, "oversized input never recurses");
+  assert.equal(stripMachineEcho(stacked), stacked, "oversized input unchanged");
+  {
+    const res = lintCard({ ...goodCard(), title: stacked }, ctx);
+    assert.ok(!res.ok, "an oversized echo title still fails lint (on the band)");
+  }
+  // The full subject chain: hostile chars, then kind prefix and echo strip
+  // interleaved to a fixpoint, whitespace last. Also pins the over-60
+  // rescue: an echo subject beyond titleMaxChars resolves at the subject
+  // rung with the submitter's own head instead of falling to a brain call.
+  assert.deepEqual(
+    resolveSubjectTitle('Skill: "Outage Checker (outage-checker)"'),
+    { title: "Outage Checker", echoStripped: true },
+    "hostile strip, then kind prefix, then echo"
+  );
+  assert.deepEqual(
+    resolveSubjectTitle("Fwd: Endpoint Compliance Reporter (endpoint-compliance-reporter)"),
+    { title: "Endpoint Compliance Reporter", echoStripped: true },
+    "an over-60 echo subject is rescued into the band"
+  );
+  assert.deepEqual(
+    resolveSubjectTitle("Re: Ticket Wizard"),
+    { title: "Ticket Wizard", echoStripped: false },
+    "echoStripped false when nothing fired"
+  );
+  assert.ok(
+    !looksLikeAWorkName("Outage Checker (outage-checker)"),
+    "weak candidates never carry an echo; the drop falls to the brain rung"
+  );
+  assert.deepEqual(
+    validateWeakTitle("Outage Checker (outage-checker)", senderTokens),
+    { ok: false, reason: "shape" },
+    "the corroborated rung rejects the echo shape"
+  );
+  assert.deepEqual(
+    validateInferredTitle("Patching Visualizer (patching-visualizer)", {
+      ...vOpts,
+      sourceText: "see Patching Visualizer (patching-visualizer) here",
+    }),
+    { ok: false, reason: "shape" },
+    "a grounded echo is still rejected; the model may select the bare head"
   );
 
   // isFreshDate must accept Resend's JSON-quoted ISO Date header (2026-07-30
