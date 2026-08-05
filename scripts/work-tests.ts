@@ -45,6 +45,14 @@ import {
 } from "../src/lib/work/config";
 import staticTitles from "../src/lib/work/static-titles.json";
 
+import {
+  classifyViolations,
+  grantFreesAnything,
+  mergeRepair,
+  repairDrift,
+  restoredFields,
+  storableDraft,
+} from "../src/lib/work/repair";
 const PROSE = "This tool ingests Autotask ticket exports and produces a scored summary for the service desk. ".repeat(12);
 
 async function zipOf(files: Record<string, string>): Promise<Buffer> {
@@ -325,6 +333,366 @@ async function main() {
 
   // The HOUSE_RULES split (docs-blind stages get style rules only) must be
   // byte-identical to the pre-split literal, or every writer prompt shifts.
+  // ---- repair containment (repair.ts, 2026-08-04 "Rippling Mileage Entry"
+  // incident: the one-shot repair paraphrased the summary while fixing an
+  // unrelated violation and the drift gate held a fine card; the publish
+  // candidate is now MERGED in code) ----
+
+  // T1: the shared violation->grant table, one representative string per row.
+  {
+    const one = (v: string) => classifyViolations([v]);
+    assert.deepEqual(one("summary must be 40-90 words (got 12)"), {
+      title: false, badge: false, summary: true, body: false, facets: false, footer: false,
+    });
+    assert.ok(one("body paragraph 1 exceeds 120 words").body);
+    assert.ok(one("body 2: contains an em or en dash").body);
+    assert.ok(one("facet 2 text must be 25-70 words (got 8)").facets);
+    assert.ok(one("facet 1 label: contains the frequency adverb \"always\"").facets);
+    assert.ok(one("facet labels must differ from each other").facets);
+    assert.ok(one('facet label "Scored Rows" collides with an existing /work facet title').facets);
+    assert.ok(one("footerLine must be 2-5 plain-string fragments").footer);
+    assert.ok(one("footer fragment 2 must be 1-60 characters").footer);
+    assert.ok(one("categoryBadge must be one of: Internal tool").badge);
+    assert.ok(one("title must be 4-60 characters").title);
+    assert.ok(one('title "Export Scorer" collides with an existing /work card').title);
+    assert.ok(one('title: ends with a parenthetical that repeats the tool\'s own name; state the name once and drop "(x)"').title);
+    const band = one("card visible copy must total 140-560 words (got 120)");
+    assert.deepEqual(band, {
+      title: false, badge: false, summary: true, body: true, facets: true, footer: true,
+    });
+    // Fail-closed rows: schema-level strings free NOTHING (the old
+    // else-bucket freed all visible copy on an unknown key).
+    assert.ok(!grantFreesAnything(one('unknown key "statusBadge"')));
+    assert.ok(!grantFreesAnything(one("card is not an object")));
+    assert.ok(!grantFreesAnything(one("some future string the table has never seen")));
+  }
+
+  // T2: catalog tripwire — every violation lintCard can emit must classify
+  // to the field it actually names, not merely to SOMETHING. A cross-routed
+  // string (a summary message freeing body) would silently hand the
+  // docs-blind repair the wrong rewrite license; a string that frees nothing
+  // makes its own violation unrepairable. Each case declares the fields its
+  // breakage should free, and the union is asserted exactly.
+  const GC = goodCard();
+  const cases: { card: Record<string, unknown>; frees: (keyof ReturnType<typeof classifyViolations>)[] }[] = [
+    { card: { ...goodCard(), title: "abc" }, frees: ["title"] },
+    { card: { ...goodCard(), title: "Claude Skill: Export Scorer" }, frees: ["title"] },
+    { card: { ...goodCard(), title: "Export Scorer (export-scorer)" }, frees: ["title"] },
+    { card: { ...goodCard(), title: "Log Analyzer" }, frees: ["title"] }, // static collision
+    { card: { ...goodCard(), categoryBadge: "Flagship product" }, frees: ["badge"] },
+    { card: { ...goodCard(), summary: sentence(10) }, frees: ["summary"] },
+    { card: { ...goodCard(), summary: sentence(50) + " It ran — fast." }, frees: ["summary"] },
+    { card: { ...goodCard(), summary: sentence(50) + " Visit https://x.example now." }, frees: ["summary"] },
+    { card: { ...goodCard(), summary: sentence(50) + " Mail tron@example.com today." }, frees: ["summary"] },
+    { card: { ...goodCard(), summary: sentence(50) + " Call 312 555 1212 now." }, frees: ["summary"] },
+    { card: { ...goodCard(), summary: sentence(50) + " It always ran." }, frees: ["summary"] },
+    { card: { ...goodCard(), summary: sentence(40) + " No supporting source document was submitted." }, frees: ["summary"] },
+    { card: { ...goodCard(), body: [sentence(121)] }, frees: ["body"] },
+    { card: { ...goodCard(), body: [sentence(60), sentence(60), sentence(60)] }, frees: ["body"] },
+    { card: { ...goodCard(), body: [sentence(60) + " <div>x</div>"] }, frees: ["body"] },
+    { card: { ...goodCard(), facets: GC.facets.slice(0, 2) }, frees: ["facets"] },
+    { card: { ...goodCard(), facets: GC.facets.map((f) => ({ ...f, label: "Scored Rows" })) }, frees: ["facets"] },
+    { card: { ...goodCard(), facets: GC.facets.map((f, i) => (i === 0 ? { ...f, label: "x".repeat(29) } : f)) }, frees: ["facets"] },
+    { card: { ...goodCard(), facets: GC.facets.map((f, i) => (i === 0 ? { ...f, text: sentence(8) } : f)) }, frees: ["facets"] },
+    { card: { ...goodCard(), facets: GC.facets.map((f, i) => (i === 0 ? { ...f, label: "Editorial Decision" } : f)) }, frees: ["facets"] },
+    { card: { ...goodCard(), footerLine: [] }, frees: ["footer"] },
+    { card: { ...goodCard(), footerLine: ["ok", "x".repeat(61)] }, frees: ["footer"] },
+    { card: { ...goodCard(), footerLine: ["ok", "evidence unavailable"] }, frees: ["footer"] },
+    {
+      card: { ...goodCard(), summary: sentence(40), body: [sentence(5)],
+        facets: GC.facets.map((f) => ({ ...f, text: sentence(25) })) },
+      frees: ["summary", "body", "facets", "footer"],
+    },
+  ];
+  {
+    for (const { card, frees } of cases) {
+      const violations = lintCard(card, ctx).violations;
+      assert.ok(violations.length > 0, `case produces a violation: ${JSON.stringify(card).slice(0, 80)}`);
+      const grant = classifyViolations(violations);
+      const freed = (Object.keys(grant) as (keyof typeof grant)[]).filter((k) => grant[k]);
+      assert.deepEqual(
+        freed.sort(),
+        [...frees].sort(),
+        `violations route to exactly the broken field(s): ${violations.join(" | ")}`
+      );
+    }
+    // Frees-nothing is reserved for schema-level strings: a violation that
+    // names a real copy defect must never land there (it would be
+    // unrepairable), and unknown keys must never free copy.
+    const unknownKey = lintCard({ ...goodCard(), statusBadge: "Live" }, ctx);
+    assert.deepEqual(unknownKey.violations, ['unknown key "statusBadge"']);
+    assert.ok(!grantFreesAnything(classifyViolations(unknownKey.violations)));
+    // Prefix integrity: submitted text is only ever interpolated mid-string,
+    // so a crafted title/label cannot occupy the classified prefix.
+    const craftedTitle = { ...goodCard(), title: "Summary Must Be Short" };
+    const craftedCtx = {
+      publishedTitles: ["summary must be short"],
+      publishedFacetLabels: [],
+    };
+    const craftedViolations = lintCard(craftedTitle, craftedCtx).violations;
+    assert.ok(craftedViolations.length > 0, "crafted title collides");
+    const craftedGrant = classifyViolations(craftedViolations);
+    assert.ok(craftedGrant.title && !craftedGrant.summary,
+      "adversarial title text classifies as a title violation, never summary");
+  }
+
+  // T3: incident regression — summary violation only; the repair fixes the
+  // summary but ALSO paraphrases body, retitles, and rewrites the footer.
+  // The merge keeps only the licensed fix; the backstop stays silent.
+  {
+    const synth = { ...goodCard(), summary: sentence(10) };
+    const violations = lintCard(synth, ctx).violations;
+    assert.deepEqual(violations, ["summary must be 40-90 words (got 10)"]);
+    const repair = {
+      ...goodCard(),
+      summary: sentence(60, "the workflow converted address events into mileage drafts for review"),
+      body: [sentence(80, "a paraphrased body the lint never licensed to change at all")],
+      title: "Hijacked Name",
+      footerLine: ["rewritten", "fragments"],
+    };
+    const merged = mergeRepair(synth, repair, violations);
+    assert.ok(merged, "merge produced a candidate");
+    if (merged) {
+      assert.equal(merged.summary, repair.summary);
+      assert.deepEqual(merged.body, synth.body);
+      assert.equal(merged.title, synth.title);
+      assert.deepEqual(merged.footerLine, synth.footerLine);
+      assert.deepEqual(merged.facets, synth.facets);
+      const relint = lintCard(merged, ctx);
+      assert.ok(relint.ok, `merged card passes: ${relint.violations.join("; ")}`);
+      assert.deepEqual(
+        relint.card && repairDrift(synth, relint.card, violations),
+        [],
+        "backstop unreachable on a correct merge"
+      );
+      assert.deepEqual(
+        restoredFields(synth, repair, violations).sort(),
+        ["body", "footerLine", "title"],
+        "restored-field FYI names exactly what the model tried to change"
+      );
+    }
+  }
+
+  // T4: the word-band grant frees all visible copy but never title/badge.
+  {
+    const synth = {
+      ...goodCard(),
+      summary: sentence(40),
+      body: [sentence(5)],
+      facets: goodCard().facets.map((f) => ({ ...f, text: sentence(25) })),
+    };
+    const violations = lintCard(synth, ctx).violations;
+    assert.deepEqual(violations, ["card visible copy must total 140-560 words (got 120)"]);
+    const repair = { ...synth, body: [sentence(60)], title: "Hijacked", categoryBadge: "Automation" };
+    const merged = mergeRepair(synth, repair, violations);
+    assert.ok(merged);
+    if (merged) {
+      assert.equal(merged.title, synth.title);
+      assert.equal(merged.categoryBadge, synth.categoryBadge);
+      assert.deepEqual(merged.body, repair.body);
+      assert.ok(lintCard(merged, ctx).ok);
+    }
+    // And the backstop still pins visible-never-frees-title.
+    const lied = lintCard({ ...synth, body: [sentence(60)], title: "Other Name Here" }, ctx);
+    assert.ok(lied.ok && lied.card);
+    if (lied.ok && lied.card)
+      assert.deepEqual(repairDrift(synth, lied.card, violations), [
+        "title changed without a title violation",
+      ]);
+  }
+
+  // T5: unknown-key-only violations free nothing; the merge drops the key
+  // structurally and a hostile repair value cannot reach any field.
+  {
+    const synth = { ...goodCard(), statusBadge: "Live" };
+    const violations = lintCard(synth, ctx).violations;
+    assert.deepEqual(violations, ['unknown key "statusBadge"']);
+    assert.ok(!grantFreesAnything(classifyViolations(violations)));
+    const merged = mergeRepair(synth, { title: "Hijacked", statusBadge: "Live" }, violations);
+    assert.ok(merged);
+    if (merged) {
+      assert.deepEqual(Object.keys(merged).sort(), [
+        "body", "categoryBadge", "facets", "footerLine", "summary", "title",
+      ]);
+      assert.equal(merged.title, synth.title);
+      assert.ok(lintCard(merged, ctx).ok, "unknown key fixed by merge construction alone");
+    }
+    assert.ok(
+      mergeRepair(synth, null, violations),
+      "frees-nothing grant tolerates a null repair (no model call is made)"
+    );
+  }
+
+  // T6: a wrong-shaped repair value in a FREED field holds with the
+  // accurate field-prefixed reason via the merged relint.
+  {
+    const synth = { ...goodCard(), footerLine: ["only one"] };
+    const violations = lintCard(synth, ctx).violations;
+    const merged = mergeRepair(synth, { ...synth, footerLine: "not an array" }, violations);
+    assert.ok(merged);
+    if (merged) {
+      const relint = lintCard(merged, ctx);
+      assert.ok(!relint.ok);
+      assert.ok(relint.violations.some((v) => v.startsWith("footerLine must be")));
+    }
+  }
+
+  // T7: a freeing grant with a non-object repair yields null (caller holds).
+  {
+    const synth = { ...goodCard(), summary: sentence(10) };
+    const violations = lintCard(synth, ctx).violations;
+    assert.equal(mergeRepair(synth, null, violations), null);
+    assert.equal(mergeRepair(synth, "prose apology", violations), null);
+    assert.equal(mergeRepair(synth, ["a card in an array"], violations), null);
+  }
+
+  // T8: a field missing from synth is always freed by its own violation and
+  // filled from the repair.
+  {
+    const synth: Record<string, unknown> = { ...goodCard() };
+    delete synth.footerLine;
+    const violations = lintCard(synth, ctx).violations;
+    assert.ok(classifyViolations(violations).footer);
+    const merged = mergeRepair(synth, { footerLine: ["from architecture.md", "one in, one out"] }, violations);
+    assert.ok(merged);
+    if (merged) assert.ok(lintCard(merged, ctx).ok);
+  }
+
+  // T9: a genuine cross-field conflict (licensed fix shrinks the card below
+  // the whole-card band) still holds, with the band violation named.
+  {
+    const synth = {
+      ...goodCard(),
+      summary: sentence(40),
+      body: [sentence(10)],
+      facets: [
+        { label: "Scored Rows", text: sentence(25) },
+        { label: "One Export In", text: sentence(75) },
+        { label: "Desk Handoff", text: sentence(25) },
+      ],
+    };
+    const violations = lintCard(synth, ctx).violations;
+    assert.deepEqual(violations, ["facet 2 text must be 25-70 words (got 75)"]);
+    const repair = {
+      ...synth,
+      facets: synth.facets.map((f, i) => (i === 1 ? { ...f, text: sentence(25) } : f)),
+    };
+    const merged = mergeRepair(synth, repair, violations);
+    assert.ok(merged);
+    if (merged) {
+      const relint = lintCard(merged, ctx);
+      assert.ok(!relint.ok);
+      assert.ok(
+        relint.violations.some((v) => v.startsWith("card visible copy must total")),
+        "merged-band conflict holds with the accurate reason"
+      );
+    }
+  }
+
+  // T10: trim symmetry — an untrimmed synth string can never fire the
+  // backstop after a correct merge (lintCard's trim matches norm()'s).
+  {
+    const synth = { ...goodCard(), title: " Export Scorer ", summary: sentence(10) };
+    const violations = lintCard(synth, ctx).violations;
+    const merged = mergeRepair(synth, { ...goodCard(), summary: sentence(60) }, violations);
+    assert.ok(merged);
+    if (merged) {
+      const relint = lintCard(merged, ctx);
+      assert.ok(relint.ok && relint.card);
+      if (relint.ok && relint.card)
+        assert.deepEqual(repairDrift(synth, relint.card, violations), []);
+    }
+  }
+
+  // T11: the backstop itself still detects a mis-merge (the incident string
+  // is now reachable only through a mergeRepair bug).
+  {
+    const synth = goodCard();
+    const bad = lintCard({ ...goodCard(), summary: sentence(55, "a silently paraphrased summary the merge should have restored") }, ctx);
+    assert.ok(bad.ok && bad.card);
+    if (bad.ok && bad.card)
+      assert.deepEqual(
+        repairDrift(synth, bad.card, ["facet 2 text must be 25-70 words (got 8)"]),
+        ["summary changed without a summary violation"]
+      );
+  }
+
+  // T12: a PARTIAL repair reply (only the fixed field, which models send
+  // despite the full-card schema) must not read as a rewrite attempt: the
+  // omitted unfreed fields keep synth's values and the owner FYI stays
+  // silent, or the round's own drift signal cries wolf on every terse reply.
+  {
+    const synth = { ...goodCard(), summary: sentence(10) };
+    const violations = lintCard(synth, ctx).violations;
+    const partial = { summary: sentence(60) };
+    const merged = mergeRepair(synth, partial, violations);
+    assert.ok(merged);
+    if (merged) {
+      assert.equal(merged.summary, partial.summary);
+      assert.equal(merged.title, synth.title);
+      assert.deepEqual(merged.body, synth.body);
+      assert.deepEqual(merged.footerLine, synth.footerLine);
+      assert.ok(lintCard(merged, ctx).ok, "partial reply still publishes");
+    }
+    assert.deepEqual(
+      restoredFields(synth, partial, violations),
+      [],
+      "an omitted field is an omission, never a reported rewrite attempt"
+    );
+    // A FREED field the repair omitted keeps synth's violating value and
+    // re-fails its own violation: never an absent key in the merged card.
+    const omitted = mergeRepair(synth, { title: "Export Scorer" }, violations);
+    assert.ok(omitted);
+    if (omitted) {
+      assert.equal(omitted.summary, synth.summary);
+      assert.ok(Object.keys(omitted).includes("summary"));
+      const relint = lintCard(omitted, ctx);
+      assert.ok(!relint.ok);
+      assert.ok(relint.violations.some((v) => v.startsWith("summary must be")));
+    }
+  }
+
+  // T13: the FYI compares canonically — key order and surrounding
+  // whitespace in an echoed field are not a rewrite attempt.
+  {
+    const synth = { ...goodCard(), summary: sentence(10) };
+    const violations = lintCard(synth, ctx).violations;
+    const echoed = {
+      ...goodCard(),
+      summary: sentence(60),
+      title: " Export Scorer ",
+      facets: goodCard().facets.map((f) => ({ text: f.text, label: f.label })),
+    };
+    assert.deepEqual(
+      restoredFields(synth, echoed, violations),
+      [],
+      "whitespace and key-order echoes are not drift"
+    );
+    const reworded = { ...goodCard(), summary: sentence(60), title: "Renamed Tool" };
+    assert.deepEqual(restoredFields(synth, reworded, violations), ["title"]);
+  }
+
+  // T14: storableDraft — approveHeld publishes a held draft verbatim, so a
+  // stored draft must always carry all six keys through a JSON round trip
+  // (an absent footerLine would throw where work-card.tsx spreads it).
+  {
+    const husk = { title: "Export Scorer", footerLine: "not an array" };
+    const stored = JSON.parse(JSON.stringify(storableDraft(husk)));
+    assert.deepEqual(Object.keys(stored).sort(), [
+      "body", "categoryBadge", "facets", "footerLine", "summary", "title",
+    ]);
+    assert.deepEqual(stored.footerLine, []);
+    assert.deepEqual([...stored.footerLine, "credit"], ["credit"], "renderer-safe");
+    assert.equal(stored.title, "Export Scorer", "present fields survive");
+    // Non-object synthesis output degrades to a complete empty card, never
+    // a bare "{}" whose approve click throws in slugForTitle.
+    const fromArray = JSON.parse(JSON.stringify(storableDraft(["not a card"])));
+    assert.deepEqual(Object.keys(fromArray).length, 6);
+    assert.equal(fromArray.title, "");
+    // A lint-passing card round-trips byte-identical.
+    assert.deepEqual(storableDraft(goodCard()), goodCard());
+  }
+
   assert.equal(
     HOUSE_RULES,
     "House copy rules, all mandatory: no em dashes or en dashes anywhere; no " +

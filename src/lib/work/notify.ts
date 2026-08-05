@@ -154,8 +154,21 @@ export async function deliverArchiveRetention(
 export async function notifyPublished(
   row: SubmissionRow,
   card: WorkCard,
-  slug: string
+  slug: string,
+  containedDriftFields: string[] = []
 ): Promise<void> {
+  // Owner-only FYI (§5.16 2026-08-04 containment round): when the repair
+  // stage tried to reword fields outside its violation grant and the merge
+  // discarded those edits, say so in the publish email — silence would hide
+  // the only human-visible signal that drift happens; a separate email
+  // would recreate the interrupt the merge removed. Never in submitter copy.
+  const containedNote =
+    containedDriftFields.length > 0
+      ? [
+          ``,
+          `Note: the automated repair step also tried to reword parts of the card outside the lint violations (${containedDriftFields.join(", ")}). Those changes were discarded and the panel's original text was kept. No action is needed.`,
+        ]
+      : [];
   // §5.18 company lane: different links (the private Your Work page is
   // force-dynamic, so no ISR-reload caveats), and the submitter copy never
   // names Adam, /admin/work, /work/submit, or the public page.
@@ -176,6 +189,7 @@ export async function notifyPublished(
         ``,
         `Published description (the card's first paragraph):`,
         card.summary,
+        ...containedNote,
         ``,
         `To remove it: /admin/roadmap company detail, or DELETE /api/work/submissions/${row.id}.`,
       ].join("\n"),
@@ -204,6 +218,7 @@ export async function notifyPublished(
     ``,
     `Published description (the card's first paragraph):`,
     card.summary,
+    ...containedNote,
     ``,
     `The page refreshes at publish time; if /work is already open in a tab, reload it. If the card is still missing, the automatic refresh failed and the page rebuilds on the first visit after its 5-minute cache window, so allow two reloads a few minutes apart.`,
     `To remove it: /admin/work has the delete action, or DELETE /api/work/submissions/${row.id}.`,
@@ -402,7 +417,8 @@ export async function notifyUpdateAutoPublished(
   row: SubmissionRow,
   card: WorkCard,
   slug: string,
-  parent: SubmissionRow
+  parent: SubmissionRow,
+  containedDriftFields: string[] = []
 ): Promise<void> {
   const link = `${SITE}/work#${slug}`;
   const owner = adminRecipient().toLowerCase();
@@ -416,6 +432,12 @@ export async function notifyUpdateAutoPublished(
         : `${row.submitterEmail} submitted an update to the published team card "${card.title}" through the web form; it passed the editorial panel and published automatically (admin web submissions publish on pass). The new version replaces it within 5 minutes.`,
       ``,
       link,
+      ...(containedDriftFields.length > 0
+        ? [
+            ``,
+            `Note: the automated repair step also tried to reword parts of the card outside the lint violations (${containedDriftFields.join(", ")}). Those changes were discarded and the panel's original text was kept. No action is needed.`,
+          ]
+        : []),
       ``,
       `If /work was already open, reload the page to see it (a stale copy can survive a few minutes; reload once more if it has not appeared).`,
       ``,
