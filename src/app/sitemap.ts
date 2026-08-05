@@ -27,7 +27,7 @@ export const revalidate = 3600;
 // without the content moving is a lie the crawler learns from.
 const STATIC_LASTMOD: Record<string, string> = {
   "/": "2026-07-23",
-  "/work": "2026-08-04",
+  "/work": "2026-08-05",
   "/builders": "2026-07-23",
   "/governance": "2026-07-21",
   // §5.18: the /roadmap TEASER only — portal child paths are noindex and

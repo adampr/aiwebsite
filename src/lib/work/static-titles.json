@@ -8,6 +8,8 @@
     "IT Support Chicago",
     "Roleplay",
     "Leo Netter",
+    "RFP Response",
+    "Your AI Roadmap",
     "QBR Machine",
     "Onboarding Toolkit",
     "XL Lakehouse",
@@ -24,8 +26,7 @@
     "Log Analyzer",
     "Autotask CI Intake",
     "Script Master",
-    "Ticket Reply Composer",
-    "RFP Response"
+    "Ticket Reply Composer"
   ],
   "facetLabels": [
     "Memory",
@@ -49,6 +50,12 @@
     "Slack DMs Only",
     "Rough Edges First",
     "Architecture Is Canonical",
+    "Neither Prompt Sees Both",
+    "No Figure Without the Engine",
+    "Checked Against What Ships",
+    "Keyed by a Proven Domain",
+    "Same Panel, Private Page",
+    "What the Import Keeps",
     "Gap Analysis",
     "Asset Strategy",
     "QBR Deck",
@@ -99,10 +106,7 @@
     "Stops Ride Inside the Script",
     "Interchangeable Parts",
     "Nine Presets or a Paragraph",
-    "Nowhere to Put an Address",
-    "Corrections Do Not Overwrite",
-    "A Kind on Every Question",
-    "What the Port Left Out"
+    "Nowhere to Put an Address"
   ],
   "anchorIds": [
     "brain",
@@ -112,6 +116,8 @@
     "itsupportchicago",
     "roleplay",
     "leo-netter",
+    "rfp-response",
+    "your-ai-roadmap",
     "qbr-machine",
     "onboarding-toolkit",
     "lakehouse",
@@ -128,8 +134,7 @@
     "log-analyzer",
     "autotask-ci-intake",
     "script-master",
-    "ticket-reply-composer",
-    "rfp-response"
+    "ticket-reply-composer"
   ],
   "bays": [
     {
@@ -187,6 +192,16 @@
     {
       "id": "leo-netter",
       "title": "Leo Netter",
+      "bay": "02"
+    },
+    {
+      "id": "rfp-response",
+      "title": "RFP Response",
+      "bay": "02"
+    },
+    {
+      "id": "your-ai-roadmap",
+      "title": "Your AI Roadmap",
       "bay": "02"
     },
     {
@@ -272,11 +287,6 @@
     {
       "id": "ticket-reply-composer",
       "title": "Ticket Reply Composer",
-      "bay": "05"
-    },
-    {
-      "id": "rfp-response",
-      "title": "RFP Response",
       "bay": "05"
     }
   ]

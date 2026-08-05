@@ -48,7 +48,7 @@ export default async function WorkPage() {
     // company cards are company_id-scoped and never appear here.
     team = await publishedCards(INTERNAL_SCOPE);
   } catch {
-    // the 25 static exhibits are the page
+    // the static exhibits are the page
   }
   return (
     <div className="work-page mx-auto max-w-5xl space-y-16">
@@ -74,7 +74,7 @@ export default async function WorkPage() {
       {/* Works registry + console pager (2026-08-04): the registry is the
           always-complete anchor index of every exhibit; the pager island
           windows the card sequence below it (Show 5/10/25/All, default 10).
-          Both are additive chrome - the 25 static card sections stay
+          Both are additive chrome - the static card sections stay
           byte-identical, and with JS off the pager strip never appears and
           every card renders visible. */}
       <WorkRegistry team={team} />
@@ -535,6 +535,179 @@ export default async function WorkPage() {
             governance
           </p>
         </section>
+
+        {/* 8. RFP Response */}
+        <section id="rfp-response" className="panel rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · internal
+            </span>
+            <span className="badge badge--light">Proposal workspace</span>
+          </div>
+          <h2 className="mt-6">RFP Response</h2>
+          <p className="mt-2 text-sm text-faint">
+            From an uploaded or pasted RFP to a priced, checked proposal, one
+            section at a time.
+          </p>
+          <p className="mt-4 text-sm">
+            RFP Response is the section of this site where an XL.net proposal
+            gets written, visible to signed-in XL.net staff. It reads the
+            client&apos;s document, then drafts each section through the{" "}
+            <a href="#brain">Software Brain</a> against a knowledge base of
+            facts the firm keeps about itself. Reading one real client RFP
+            measured at 94 seconds, and drafting runs one section per call, so
+            a deploy landing mid-run costs a section rather than the document.
+            A wrong fact in that knowledge base is retired and superseded
+            rather than edited in place, so a proposal written earlier still
+            resolves against what it actually cited.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Neither Prompt Sees Both
+              </h3>
+              <p className="mt-3 text-sm">
+                Drafting is two separate calls, and the split is the control.
+                The one that reads the client&apos;s document sees that
+                document and nothing else, so an instruction smuggled into an
+                RFP has nothing behind it to give away. The one that writes
+                sees the firm&apos;s own facts and never a rate-card unit
+                price.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                No Figure Without the Engine
+              </h3>
+              <p className="mt-3 text-sm">
+                Pricing takes counts and choices, and a deterministic engine
+                computes the quote from the rate card in force. The model is
+                never asked for a number, and a currency figure in the prose
+                that the engine did not produce is a blocking failure.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                Checked Against What Ships
+              </h3>
+              <p className="mt-3 text-sm">
+                Compliance rules live as code in this repository, and an
+                export runs them against the exact content being emitted, Word
+                and PDF alike. Editing a section or a price clears the stored
+                result, so a passing verdict can never describe a draft that
+                has since changed. An unresolved proposal still downloads,
+                carrying WORKING DRAFT · not for delivery on its cover, a
+                WORKING DRAFT corner mark on every PDF page, and DRAFT in its
+                filename.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            The cover letter drafts last, once there are sections for it to
+            summarize, and signs with the standard XL.net block, varying only
+            the personal lines above it. A letter someone has edited by hand
+            is replaced only by the button that says it will. The section
+            itself stays where proposals belong: signed-in XL.net staff only,
+            rendered per request, marked not to be indexed, and absent from
+            the sitemap.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            94-second read, then one section per call · gap questions capped
+            at two per section · counts in, figures computed · every export
+            re-runs the checks · WORKING DRAFT marking until it is resolved ·
+            cover letter written last
+          </p>
+        </section>
+
+        {/* 9. Your AI Roadmap */}
+        <section id="your-ai-roadmap" className="panel panel--lightline rise">
+          <div className="flex flex-wrap items-center gap-4">
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · client companies
+            </span>
+            <span className="badge badge--light">Client portal</span>
+          </div>
+          <h2 className="mt-6">Your AI Roadmap</h2>
+          <p className="mt-2 text-sm text-faint">
+            A company&apos;s own five steps, from a governance document on
+            file to a scorecard of its builders.
+          </p>
+          <p className="mt-4 text-sm">
+            A client company gets its own private corner of{" "}
+            <a href="#aiwebsite">ai.xl.net</a>, free, keyed to the domain of
+            its work email. Five steps sit on one line: an AI governance
+            document on file, a company directory, AI-built work submitted for
+            review, a scorecard of who is building, and verified email from
+            the company&apos;s own domain. No step is locked behind another,
+            and one company sees nothing of any other.
+          </p>
+          <div className="mt-8 grid gap-6 md:grid-cols-3">
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">01 · </span>
+                Keyed by a Proven Domain
+              </h3>
+              <p className="mt-3 text-sm">
+                There is no invite list. Who belongs to a workspace is worked
+                out on every lookup from the domain of an address proven at
+                sign-in, and the one authorization fact stored is who the
+                company admins are. A session without that proof gets no
+                company data, not even the name. Shared mailbox domains are
+                refused, since they would make strangers colleagues.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">02 · </span>
+                Same Panel, Private Page
+              </h3>
+              <p className="mt-3 text-sm">
+                Step 03 is the submission pipeline behind the team cards
+                further down this page, scoped to the company: the same
+                editorial panel reviews the build and what passes publishes to
+                the company&apos;s own work page. Step 05 is what opens the
+                email lane, because a submission can arrive by mail only once
+                mail from that domain proves where it came from.
+              </p>
+            </div>
+            <div className="border-t border-[var(--xl-line)] pt-4">
+              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
+                <span className="text-faint">03 · </span>
+                What the Import Keeps
+              </h3>
+              <p className="mt-3 text-sm">
+                Fill the directory from an Apollo import or by hand. What
+                persists is a name, an email address, a phone number, and the
+                import id; the raw response is never stored, and a row someone
+                edited by hand is not overwritten by a later import. Removing
+                an imported person can also record a fingerprint of the
+                address rather than the address, so the next import skips
+                them.
+              </p>
+            </div>
+          </div>
+          <p className="mt-8 text-sm">
+            Step 01 takes a governance document a company already has, or one
+            written in the <a href="#governance">AI Governance Writer</a> and
+            attached as a snapshot of the moment it was attached, which stands
+            on its own once the source project reaches the end of its own
+            30-day life. The scorecard counts published cards only, never
+            drafts or attempts, per person in the directory, under a
+            disclosure that stays on screen; a person with none stays on the
+            board rather than disappearing from it.
+          </p>
+          <p className="mono mt-6 text-xs text-faint">
+            five steps, none locked · one workspace per work-email domain ·
+            proof at sign-in or no company data · company cards never appear
+            on this page · published work only on the scorecard · free
+          </p>
+          <Link href="/roadmap" className="btn mt-6 no-underline">
+            See your AI Roadmap
+          </Link>
+        </section>
       </section>
 
       {/* Group: client delivery */}
@@ -545,7 +718,7 @@ export default async function WorkPage() {
           </span>
         </div>
 
-        {/* 8. QBR Machine */}
+        {/* 10. QBR Machine */}
         <section id="qbr-machine" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -613,7 +786,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 9. Onboarding Toolkit */}
+        {/* 11. Onboarding Toolkit */}
         <section id="onboarding-toolkit" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -689,7 +862,7 @@ export default async function WorkPage() {
           </span>
         </div>
 
-        {/* 10. XL Lakehouse */}
+        {/* 12. XL Lakehouse */}
         <section id="lakehouse" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -756,7 +929,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 11. XL API Gateway */}
+        {/* 13. XL API Gateway */}
         <section id="api-gateway" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
@@ -838,7 +1011,7 @@ export default async function WorkPage() {
           </span>
         </div>
 
-        {/* 12. SpamSlayer */}
+        {/* 14. SpamSlayer */}
         <section id="spamslayer" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -908,7 +1081,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 13. TicketScribe */}
+        {/* 15. TicketScribe */}
         <section id="ticketscribe" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -980,7 +1153,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 14. Autotask Ticket Summaries */}
+        {/* 16. Autotask Ticket Summaries */}
         <section id="ticket-summaries" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -1057,7 +1230,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 15. Auto-Draft Follow-Up Emails */}
+        {/* 17. Auto-Draft Follow-Up Emails */}
         <section id="follow-up-emails" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -1136,7 +1309,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 16. Beacon */}
+        {/* 18. Beacon */}
         <section id="beacon" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
@@ -1235,7 +1408,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 17. Morning Brief */}
+        {/* 19. Morning Brief */}
         <section id="morning-brief" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -1310,7 +1483,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 18. SP Writer */}
+        {/* 20. SP Writer */}
         <section id="sp-writer" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -1413,7 +1586,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 19. Kaseya AP Builder */}
+        {/* 21. Kaseya AP Builder */}
         <section id="kaseya-ap-builder" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -1535,7 +1708,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 20. TPS Client Count */}
+        {/* 22. TPS Client Count */}
         <section id="tps-client-count" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -1661,7 +1834,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 21. Log Analyzer */}
+        {/* 23. Log Analyzer */}
         <section id="log-analyzer" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -1830,7 +2003,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 22. Autotask CI Intake */}
+        {/* 24. Autotask CI Intake */}
         <section id="autotask-ci-intake" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -1929,7 +2102,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 23. Script Master */}
+        {/* 25. Script Master */}
         <section id="script-master" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
@@ -2034,7 +2207,7 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 24. Ticket Reply Composer */}
+        {/* 26. Ticket Reply Composer */}
         <section id="ticket-reply-composer" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
@@ -2129,98 +2302,6 @@ export default async function WorkPage() {
             closing line · a preset cause and five steps per category ·
             internal checklist, not for the customer · copy buttons, no send
             path
-          </p>
-        </section>
-
-        {/* 25. RFP Response */}
-        <section id="rfp-response" className="panel panel--lightline rise">
-          <div className="flex flex-wrap items-center gap-4">
-            <span className="badge badge--ok">
-              <span className="dot" /> Live · internal
-            </span>
-            <span className="badge badge--light">Proposal knowledge base</span>
-          </div>
-          <h2 className="mt-6">RFP Response</h2>
-          <p className="mt-2 text-sm text-faint">
-            The corpus is on version two because five of its facts turned out
-            to be wrong.
-          </p>
-          <p className="mt-4 text-sm">
-            RFP Response is a section of this site, visible to signed-in
-            XL.net staff, holding the knowledge base an XL.net proposal is
-            written from. Seventy-eight facts are live across six categories,
-            six of them recording something the firm does not do, does not
-            hold, or has not done. Behind them sit the rate card in force,
-            with 11 line items and a 15-user minimum for fully managed work,
-            and 20 intake questions, 14 of them required. The counts on the
-            overview are read from the records rather than typed in. The
-            compliance rules a finished proposal has to satisfy are written
-            as code in the same repository, and the corpus is what they read.
-          </p>
-          <div className="mt-8 grid gap-6 md:grid-cols-3">
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">01 · </span>
-                Corrections Do Not Overwrite
-              </h3>
-              <p className="mt-3 text-sm">
-                Five facts were wrong until 24 July 2026. Both readings stayed
-                on file: the wrong one entered at version one and was retired
-                when version two landed, and the corrected one carries the
-                date it changed and a pointer to the record it replaced. A
-                proposal written before that date still resolves against what
-                it actually cited. The seed file argues for keeping them
-                rather than starting clean, on the grounds that a tidy corpus
-                would leave the staleness check with nothing true to find.
-              </p>
-            </div>
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">02 · </span>
-                A Kind on Every Question
-              </h3>
-              <p className="mt-3 text-sm">
-                Twenty intake questions live in the database rather than in a
-                checklist file, so one the corpus already answers can be
-                filtered out before it is put to anyone. Fourteen are
-                required. Each carries a kind: a fact question is the sort
-                whose answer would belong to the firm, and a choice belongs to
-                one proposal and stays there. The pricing questions point at
-                no fact even where a matching one exists, because which
-                services sit inside the recurring fee is settled per client.
-              </p>
-            </div>
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">03 · </span>
-                What the Port Left Out
-              </h3>
-              <p className="mt-3 text-sm">
-                The reference records came over with their contact fields
-                unwritten: the phone and email columns empty, the name and
-                title reading as withheld. A repository does not forget, and
-                third-party contact details outlive any decision to remove
-                them. The section itself is kept out of the way as well,
-                rendered per request rather than from a cache, marked not to
-                be indexed, and absent from the sitemap. The shell checks the
-                sign-in, and then each page checks for itself.
-              </p>
-            </div>
-          </div>
-          <p className="mt-8 text-sm">
-            An XL.net proposal starts from the opposite position to{" "}
-            <a href="#script-master">Script Master</a>, which builds from a
-            profile someone fills in about a machine it never touches. Here
-            the environment is the firm itself, written down one row at a time
-            before anyone asks for a proposal, and a claim with no row behind
-            it has nowhere to come from.
-          </p>
-          <p className="mono mt-6 text-xs text-faint">
-            78 live facts, six carrying a negative · knowledge base at version
-            two, five facts corrected · 11 rate card line items, a 15-user
-            minimum · 20 intake questions, 14 of them required · contact
-            fields left unwritten · ported off prisma and sqlite onto this
-            site&apos;s postgres
           </p>
         </section>
 

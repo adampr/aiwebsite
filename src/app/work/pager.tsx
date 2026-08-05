@@ -1,7 +1,7 @@
 "use client";
 
 // /work console pager (pagination round, 2026-08-04): windows the ONE
-// works sequence (25 static exhibits in bay order, then team cards in lane
+// works sequence (the static exhibits in bay order, then team cards in lane
 // display order) behind a "Show 5 / 10 / 25 / All" mono strip below the
 // registry.
 //

@@ -13,9 +13,14 @@
 // advertise cards this section failed to render. An empty list renders
 // NOTHING (the 25 hand-authored exhibits are unaffected and the page never
 // breaks on this section's account). data-team-divider / data-work-card
-// are the pager island's hooks for hiding the divider on static-only pages;
-// alternation starts with a PLAIN panel because the 25th static exhibit
-// (rfp-response) is lightline - index-0-lightline double-striped the seam.
+// are the pager island's hooks for hiding the divider on static-only pages.
+//
+// SEAM PARITY (re-derived 2026-08-05, when rfp-response left slot 25 for bay
+// 02 and Ticket Reply Composer became the last static at an EVEN global
+// position, so it renders plain): the first team card must start LIGHTLINE or
+// the seam double-stripes plain-on-plain. The offset lives here, not in
+// work-card.tsx, because the company page (§5.18 /roadmap/work) opens its own
+// alternation with no statics above it and must keep starting plain.
 
 // The card template itself lives in src/components/work-card.tsx (§5.18:
 // the company /roadmap/work page renders through the SAME component, with a
@@ -37,7 +42,7 @@ export function CommunitySection({ cards }: { cards: PublishedCard[] }) {
         </p>
       </div>
       {cards.map((item, i) => (
-        <CommunityCard key={item.id} item={item} index={i} />
+        <CommunityCard key={item.id} item={item} index={i + 1} />
       ))}
     </>
   );
