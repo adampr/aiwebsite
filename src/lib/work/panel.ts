@@ -554,17 +554,23 @@ async function runPanelInner(
   const withBlocking = (reason: string): string =>
     blockingNote ? `${reason}\n${blockingNote}` : reason;
   if (otherHits.length > 0) {
+    // storableDraft: this hold runs BEFORE any lint, so synth's shape is
+    // unverified, and approveHeld publishes a stored draft verbatim. A
+    // missing field or a junk array element would render as a crash of the
+    // whole /work page after the admin's approve click. Same value to the
+    // email, so the admin approves exactly what the review copy showed.
+    const draft = storableDraft(synth);
     await finishHeld(
       id,
       attemptId,
-      synth,
+      draft,
       withBlocking(`disclosure checklist hit:\n${otherHits.join("\n")}`),
       transcriptJson()
     );
     await notifyHeld(
       row,
       withBlocking(`Disclosure checklist:\n${otherHits.join("\n")}`),
-      synth
+      draft
     );
     return;
   }
@@ -595,15 +601,12 @@ async function runPanelInner(
     !lint.ok &&
     (typeof synth !== "object" || synth === null || Array.isArray(synth))
   ) {
-    const reason = "synthesis returned a card that is not a JSON object";
-    await finishHeld(
-      id,
-      attemptId,
-      storableDraft(synth),
-      withBlocking(reason),
-      transcriptJson()
-    );
-    await notifyHeld(row, withBlocking(reason), synth);
+    const draft = storableDraft(synth);
+    const reason = `synthesis returned a card that is not a JSON object: ${JSON.stringify(
+      synth
+    ).slice(0, 300)}`;
+    await finishHeld(id, attemptId, draft, withBlocking(reason), transcriptJson());
+    await notifyHeld(row, withBlocking(reason), draft);
     return;
   }
   if (!lint.ok) {
@@ -658,11 +661,18 @@ async function runPanelInner(
         withBlocking(`lint failed after repair:\n${lint.violations.join("\n")}`),
         transcriptJson()
       );
+      // Three states, three narratives: a failed repair CALL is transient
+      // (budget, timeout, unparseable reply) and clears on Retry, which is
+      // the opposite advice from "the violations licensed no repair".
+      const narrative =
+        repair === null
+          ? "Lint violations after a failed repair call"
+          : repaired
+            ? "Lint violations after one repair attempt"
+            : "Lint violations, with no repair attempt licensed by the violations";
       await notifyHeld(
         row,
-        withBlocking(
-          `${repaired ? "Lint violations after one repair attempt" : "Lint violations, with no repair attempt licensed by the violations"}:\n${lint.violations.join("\n")}`
-        ),
+        withBlocking(`${narrative}:\n${lint.violations.join("\n")}`),
         draft
       );
       return;

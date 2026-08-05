@@ -9,7 +9,8 @@
 // only for fields the violation list frees, the synthesis card's own
 // disclosure-gated values restored verbatim everywhere else. Obedience is
 // structurally irrelevant; when the repair obeys, the merge equals its
-// output byte for byte.
+// output value for value (the literal below fixes the key order, so it is
+// not a byte match of a reply that ordered the six keys differently).
 //
 // Pure module (no DB, no brain) so scripts/work-tests.ts can import it.
 
@@ -52,8 +53,14 @@ export function classifyViolations(violations: string[]): RepairGrant {
     else if (s.startsWith("body")) g.body = true;
     else if (s.startsWith("facet")) g.facets = true;
     else if (s.startsWith("footer")) g.footer = true;
+    // The whole-card band counts summary + body + facet text ONLY (lint.ts),
+    // so a footer edit can never satisfy it: freeing the footer here would
+    // hand the docs-blind repair a rewrite license on a field the violation
+    // cannot implicate, and that copy would publish without the disclosure
+    // critic ever seeing it. A genuine footer defect emits its own footer
+    // violation.
     else if (s.startsWith("card visible copy"))
-      g.summary = g.body = g.facets = g.footer = true;
+      g.summary = g.body = g.facets = true;
   }
   return g;
 }
@@ -144,27 +151,43 @@ export function restoredFields(
 
 /** Shape a draft for STORAGE on a hold. `approveHeld` publishes a stored
  * draft verbatim with no re-lint — that is the owner's deliberate override,
- * so the fix is not to re-gate it but to guarantee the stored shape can
- * never crash a reader: an absent field would vanish from the JSON and
- * `work-card.tsx` spreads `card.footerLine`. Absent or wrong-typed fields
- * become typed empties, which read as visibly deficient in the owner's
- * review email (which carries the draft JSON) instead of throwing at render
- * time. Never used on the publish path: a card that reaches publish passed
- * lintCard, which guarantees every field already. */
+ * so the fix is not to re-gate it but to guarantee the stored shape cannot
+ * crash the card renderer: an absent field vanishes from the JSON and
+ * `work-card.tsx` spreads `card.footerLine`, and a junk ELEMENT inside a
+ * kept array throws just as hard (`f.label` on a null facet), which takes
+ * down the whole /work render because there is no error boundary above it.
+ * So the containers AND their elements are typed here: absent, wrong-typed
+ * and junk-element values degrade to empties, which read as visibly
+ * deficient in the owner's review email (which carries this same value)
+ * instead of throwing after the approve click. Extra keys nested inside a
+ * facet are kept, matching what lintCard itself permits. Never used on the
+ * publish path: a card that reaches publish passed lintCard, which
+ * guarantees every field already. */
 export function storableDraft(card: unknown): Record<string, unknown> {
   const c =
     typeof card === "object" && card !== null && !Array.isArray(card)
       ? (card as Record<string, unknown>)
       : {};
   const str = (x: unknown) => (typeof x === "string" ? x : "");
-  const arr = (x: unknown) => (Array.isArray(x) ? x : []);
+  const strs = (x: unknown) =>
+    Array.isArray(x) ? x.filter((v): v is string => typeof v === "string") : [];
+  const facets = (x: unknown) =>
+    Array.isArray(x)
+      ? x.filter(
+          (v): v is { label: string; text: string } =>
+            typeof v === "object" &&
+            v !== null &&
+            typeof (v as { label?: unknown }).label === "string" &&
+            typeof (v as { text?: unknown }).text === "string"
+        )
+      : [];
   return {
     title: str(c.title),
     categoryBadge: str(c.categoryBadge),
     summary: str(c.summary),
-    body: arr(c.body),
-    facets: arr(c.facets),
-    footerLine: arr(c.footerLine),
+    body: strs(c.body),
+    facets: facets(c.facets),
+    footerLine: strs(c.footerLine),
   };
 }
 

@@ -358,7 +358,11 @@ async function main() {
     assert.ok(one('title: ends with a parenthetical that repeats the tool\'s own name; state the name once and drop "(x)"').title);
     const band = one("card visible copy must total 140-560 words (got 120)");
     assert.deepEqual(band, {
-      title: false, badge: false, summary: true, body: true, facets: true, footer: true,
+    // The band counts summary + body + facet text only, so it must NOT free
+    // the footer: a footer edit cannot satisfy it, and freeing it would let
+    // the docs-blind repair publish footer copy the disclosure critic never
+    // saw.
+      title: false, badge: false, summary: true, body: true, facets: true, footer: false,
     });
     // Fail-closed rows: schema-level strings free NOTHING (the old
     // else-bucket freed all visible copy on an unknown key).
@@ -401,7 +405,7 @@ async function main() {
     {
       card: { ...goodCard(), summary: sentence(40), body: [sentence(5)],
         facets: GC.facets.map((f) => ({ ...f, text: sentence(25) })) },
-      frees: ["summary", "body", "facets", "footer"],
+      frees: ["summary", "body", "facets"],
     },
   ];
   {
@@ -685,6 +689,19 @@ async function main() {
     assert.deepEqual([...stored.footerLine, "credit"], ["credit"], "renderer-safe");
     assert.equal(stored.title, "Export Scorer", "present fields survive");
     // Non-object synthesis output degrades to a complete empty card, never
+    // Junk ELEMENTS inside a kept array throw as hard as an absent array:
+    // f.label on a null facet takes down the whole /work render, and there
+    // is no error boundary above it. Elements are typed, not just containers.
+    const junk = storableDraft({
+      ...goodCard(),
+      facets: [null, { label: {}, text: "x" }, { label: "Kept", text: "ok" }],
+      body: [{ para: "x" }, "kept paragraph"],
+      footerLine: [42, "kept fragment"],
+    });
+    assert.deepEqual(junk.facets, [{ label: "Kept", text: "ok" }], "junk facets dropped");
+    assert.deepEqual(junk.body, ["kept paragraph"], "non-string paragraphs dropped");
+    assert.deepEqual(junk.footerLine, ["kept fragment"], "non-string fragments dropped");
+    for (const f of junk.facets as { label: string }[]) assert.equal(typeof f.label, "string");
     // a bare "{}" whose approve click throws in slugForTitle.
     const fromArray = JSON.parse(JSON.stringify(storableDraft(["not a card"])));
     assert.deepEqual(Object.keys(fromArray).length, 6);
