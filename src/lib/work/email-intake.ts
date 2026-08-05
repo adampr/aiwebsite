@@ -1363,9 +1363,10 @@ export async function handleWorkEmail(
   log(
     `accepted ${row.id} kind=${kind} kick=${kicked.outcome.status} by=${hashKey(sender)}`
   );
-  // A refused kick leaves the row at "received" and NOTHING re-kicks it
-  // automatically; the site path surfaces this as QUEUED_NOTICE with a Retry
-  // instruction, so the receipt must too (panel parity finding, 2026-07-30).
+  // A refused kick leaves the row at "received"; the queue drain
+  // (src/lib/work/queue-drain.ts) re-kicks it automatically, so the receipt
+  // states the automatic start and keeps Retry as the manual fallback,
+  // matching QUEUED_NOTICE (parity finding 2026-07-30, inverted 2026-08-05).
   const kindLabel = kind === "skill" ? "CoWork Skill" : "Code program";
   // Update receipts state the approval gate plainly: the live card never
   // changes on this path without the admin's click on /admin/work, whoever
@@ -1387,7 +1388,7 @@ export async function handleWorkEmail(
       : [
           `Got it. Your update to "${title}" is stored, but the review panel is briefly unavailable, so the review has not started.`,
           ``,
-          `Open ${SITE}/work/submit in a few minutes and press Retry to start the review. The live card stays up the whole time, and if the review passes, the swap still waits for Adam's approval.`,
+          `The review starts automatically when the panel has capacity; there is nothing you need to do. The live card stays up the whole time, and if the review passes, the swap still waits for Adam's approval. You can watch it, or start the review by hand with Retry, at ${SITE}/work/submit.`,
         ]
     : kicked.outcome.status === "running"
       ? isCompanyLane
@@ -1405,12 +1406,12 @@ export async function handleWorkEmail(
         ? [
             `Got it. "${title}" is stored as a ${kindLabel} submission, but the review panel is briefly unavailable, so the review has not started.`,
             ``,
-            `Sign in at ${SITE}/roadmap/work in a few minutes and press Retry to start the review. Once it runs, you will get an email when the card publishes or is held.`,
+            `The review starts automatically when the panel has capacity; there is nothing you need to do. Once it runs, you will get an email when the card publishes or is held. You can watch it, or start the review by hand with Retry, at ${SITE}/roadmap/work.`,
           ]
         : [
             `Got it. "${title}" is stored as a ${kindLabel} submission, but the review panel is briefly unavailable, so the review has not started.`,
             ``,
-            `Open ${SITE}/work/submit in a few minutes and press Retry to start the review. Once it runs, you will get an email when the card publishes or is held.`,
+            `The review starts automatically when the panel has capacity; there is nothing you need to do. Once it runs, you will get an email when the card publishes or is held. You can watch it, or start the review by hand with Retry, at ${SITE}/work/submit.`,
           ];
   // A title the submitter did not write is disclosed in the receipt, near the
   // top, because renaming and removing are both admin-only. The copy says

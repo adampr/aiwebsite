@@ -21,9 +21,11 @@ import { WorkAdminActions } from "./actions-client";
 
 export const dynamic = "force-dynamic";
 
-// Raw status tokens never render: pending_approval reads as a phrase.
+// Raw status tokens never render: pending_approval reads as a phrase, and
+// received reads as the same "queued" concept the submitter surfaces use.
 const STATUS_CHIP: Record<string, string> = {
   pending_approval: "pending approval",
+  received: "queued",
 };
 
 export default async function AdminWorkPage() {

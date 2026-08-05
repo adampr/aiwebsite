@@ -73,7 +73,9 @@ export function RetrySubmission({ id }: { id: string }) {
         error?: { message?: string };
       } | null;
       if (res.ok) {
-        setNote("Re-queued; the panel is reviewing again.");
+        // The route returns ok only when a run actually started, so the
+        // note states the running state, never "re-queued".
+        setNote("The panel is reviewing again.");
         router.refresh();
         return;
       }

@@ -12,4 +12,10 @@ export async function register(): Promise<void> {
   const { siteConfig } = await import("site.config");
   const { runtimeCheck } = await import("@aicompany/core/config/check");
   runtimeCheck(siteConfig);
+  // §5.16 queue drain: re-kicks queued and deploy-orphaned work submissions
+  // through kickPanel's unchanged admission gates on a 60 s interval. The
+  // module gates itself (kill switch, supervised-checkout check) and logs
+  // why when it declines to start.
+  const { startWorkQueueDrain } = await import("@/lib/work/queue-drain");
+  startWorkQueueDrain();
 }

@@ -225,6 +225,42 @@ export function workPanelRunsDailyCap(env: NodeJS.ProcessEnv): number {
   return Number.isFinite(n) && n > 0 ? n : WORK_CAPS.panelRunsPerDayDefault;
 }
 
+/** Queue-drain kill switch (§5.16, 2026-08-05): stops ONLY the automatic
+ * re-kick timer; intake and the manual Retry lever keep working. The
+ * narrower lever next to WORK_SUBMISSIONS_ENABLED. Default ON. */
+export function workQueueDrainEnabled(env: NodeJS.ProcessEnv): boolean {
+  return env.WORK_QUEUE_DRAIN_ENABLED !== "0";
+}
+
+export type DrainAction = "stop" | "skip";
+
+/** Stop-vs-skip per kickPanel refusal reason for the §5.16 queue drain
+ * (design-panel table, 2026-08-05). Pure and here (not queue-drain.ts) so
+ * the no-DB test:work suite can pin it. Global conditions stop the pass;
+ * per-row or per-lane conditions skip to the next candidate. The two
+ * lane-dependent reasons: "budget" is the global work_usage ledger for
+ * internal rows (every later internal row would refuse identically, so
+ * stop) but the company's own roadmap ledger for company rows (must not
+ * stall the /work queue, so skip); "disabled" for a company row can mean
+ * only roadmapEnabled is off while work submissions stay on, so it skips
+ * too, while for an internal row it is the global kill switch. */
+export function drainAction(
+  reason: "disabled" | "deploy" | "budget" | "busy" | "claim" | "brain",
+  isCompanyRow: boolean
+): DrainAction {
+  switch (reason) {
+    case "deploy":
+    case "brain":
+    case "busy":
+      return "stop";
+    case "budget":
+    case "disabled":
+      return isCompanyRow ? "skip" : "stop";
+    case "claim":
+      return "skip";
+  }
+}
+
 /** The exact rejection copy for a program zip without an architecture doc
  * (owner requirement: reject and instruct). */
 export const MISSING_ARCH_DOC_MESSAGE =

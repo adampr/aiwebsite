@@ -14,8 +14,11 @@
 import Link from "next/link";
 import { useId, useRef, useState } from "react";
 
+// No Retry direction here: this string also serves the roadmap dialog,
+// whose tracking page renders Retry only for some rows; the automatic queue
+// drain (§5.16) is the primary path and the status lists carry the lever.
 const QUEUED_NOTICE =
-  "Received. The panel is briefly unavailable; use Retry on your submissions page in a few minutes.";
+  "Received. Your submission is queued and the review starts automatically when the panel has capacity. Once it runs, you will get an email when the card publishes or is held.";
 const OK_NOTICE =
   "Received. The panel is reviewing; you will get an email either way.";
 const OK_NOTICE_UPDATE =

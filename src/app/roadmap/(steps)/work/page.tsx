@@ -38,7 +38,7 @@ export const metadata: Metadata = {
 const faint = { color: "var(--xl-text-faint)" } as const;
 
 const STATUS_LABELS: Record<string, string> = {
-  received: "Received",
+  received: "Queued for review",
   running: "In review",
   held: "Held for review",
   pending_approval: "Awaiting approval",
@@ -134,7 +134,13 @@ export default async function RoadmapWorkPage() {
                 <span className="mono text-xs" style={faint}>
                   {fmtDate(row.createdAt)}
                 </span>
-                {row.status === "failed" && <RetrySubmission id={row.id} />}
+                {/* Queued rows get the manual lever too (the retry route
+                    already authorizes company submitters on their own rows;
+                    the missing button here made the queued email receipt's
+                    Retry pointer false, design-panel finding 2026-08-05). */}
+                {(row.status === "failed" || row.status === "received") && (
+                  <RetrySubmission id={row.id} />
+                )}
               </li>
             ))}
           </ul>

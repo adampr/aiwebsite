@@ -267,8 +267,10 @@ export function SubmitClient({
           ))}
           {!isAdmin && (
             <p className="mt-2 text-xs text-faint">
-              Retry review re-runs the panel on the files already uploaded;
-              it cannot pick up a replacement file. To ship a new version of
+              A queued review starts on its own as soon as the panel and
+              daily capacity are free; Retry review is the manual lever,
+              re-running the panel on the files already uploaded, and it
+              cannot pick up a replacement file. To ship a new version of
               a card that already published, use Submit an update on its
               row: the update is reviewed like any submission, and the live
               card only changes after Adam approves it. If you submitted the

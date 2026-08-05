@@ -8,6 +8,7 @@ import {
   desc,
   eq,
   getTableColumns,
+  gt,
   gte,
   inArray,
   isNotNull,
@@ -284,6 +285,61 @@ export async function anotherPanelRunning(exceptId: string): Promise<boolean> {
     )
     .limit(1);
   return rows.length > 0;
+}
+
+/** §5.16 queue drain (2026-08-05): the rows the automatic drain may kick.
+ * Two classes only: a review that never started (received; the intake kick
+ * was refused) and a worker that died mid-run (running with a NULL or stale
+ * heartbeat, the deploy-restart orphan). held_at IS NULL is load-bearing: an
+ * admin fromHeld re-run or an ops-script rerun of a pulled published card
+ * that dies (or is deliberately aborted) mid-run leaves running+heldAt, and
+ * the drain must never resume a run a human chose to stop. The age floor
+ * cedes every row's FIRST claim to the intake request that created it, whose
+ * response copy depends on its own kick outcome. failed rows are deliberately
+ * absent (unanimous design-panel ruling): a full run already happened, and a
+ * deterministic failure auto-retried by a timer would spend 3 runs a day
+ * until the 30-day sweep. companyId rides along because the drain's
+ * stop-vs-skip table is lane-dependent (a company lane's budget or roadmap
+ * kill switch must not stall the /work queue). createdAt rides along as the
+ * keyset cursor: a pass whose whole page was skipped (e.g. ten company rows
+ * of a paused tenant at the queue head) fetches the NEXT page with `after`
+ * instead of ending blind to every younger row behind them (refutation
+ * finding 2026-08-05). */
+export async function queuedWorkCandidates(
+  limit = 10,
+  after?: Date
+): Promise<
+  { id: string; status: string; companyId: string | null; createdAt: Date }[]
+> {
+  const staleBefore = new Date(Date.now() - WORK_CAPS.panelStaleMs);
+  const ageFloor = new Date(Date.now() - 30_000);
+  return db
+    .select({
+      id: S.id,
+      status: S.status,
+      companyId: S.companyId,
+      createdAt: S.createdAt,
+    })
+    .from(S)
+    .where(
+      and(
+        isNull(S.heldAt),
+        lt(S.createdAt, ageFloor),
+        ...(after ? [gt(S.createdAt, after)] : []),
+        or(
+          eq(S.status, "received"),
+          and(
+            eq(S.status, "running"),
+            or(
+              isNull(S.panelHeartbeatAt),
+              lt(S.panelHeartbeatAt, staleBefore)
+            )
+          )
+        )
+      )
+    )
+    .orderBy(asc(S.createdAt))
+    .limit(limit);
 }
 
 /** Atomic claim: only an unclaimed (or stale-claimed) non-terminal row can

@@ -1962,6 +1962,45 @@ async function main() {
     "whitespace-only blurb renders the sentinel"
   );
 
+  // 8. Queue drain (§5.16, 2026-08-05): the lane-aware stop-vs-skip table
+  // and the kill switch. Pinned exhaustively: a wrong entry either starves
+  // the queue behind one company row (stop where skip belongs) or churns
+  // spend-then-refund admission reads all day (skip where stop belongs).
+  {
+    const { drainAction, workQueueDrainEnabled } = await import(
+      "../src/lib/work/config"
+    );
+    // Type tripwire: drainAction must accept exactly kickPanel's refusal
+    // union; a new KickOutcome reason fails this assignment at compile time
+    // (type-only import, erased at runtime, so test:work stays DB-free).
+    type Refusal = Extract<
+      import("../src/lib/work/panel").KickOutcome,
+      { status: "refused" }
+    >["reason"];
+    const table: Record<Refusal, [internal: string, company: string]> = {
+      deploy: ["stop", "stop"],
+      brain: ["stop", "stop"],
+      busy: ["stop", "stop"],
+      budget: ["stop", "skip"],
+      disabled: ["stop", "skip"],
+      claim: ["skip", "skip"],
+    };
+    for (const [reason, [internal, company]] of Object.entries(table) as [
+      Refusal,
+      [string, string],
+    ][]) {
+      assert.equal(drainAction(reason, false), internal, `${reason} internal`);
+      assert.equal(drainAction(reason, true), company, `${reason} company`);
+    }
+    const env = (v?: string): NodeJS.ProcessEnv =>
+      (v === undefined
+        ? {}
+        : { WORK_QUEUE_DRAIN_ENABLED: v }) as unknown as NodeJS.ProcessEnv;
+    assert.ok(workQueueDrainEnabled(env()), "default on");
+    assert.ok(!workQueueDrainEnabled(env("0")), "0 disables");
+    assert.ok(workQueueDrainEnabled(env("1")), "1 stays on");
+  }
+
   console.log("work-tests: all assertions passed.");
 }
 
