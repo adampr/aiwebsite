@@ -165,14 +165,14 @@ export async function POST(req: Request): Promise<Response> {
       "The title says the same name twice, once in words and once again in parentheses. Keep just the name, drop the parenthetical repeat, and resubmit.",
       400
     );
+  // No minimum (owner directive 2026-08-05): the description is context-only
+  // and the panel writes the card from the submitted documents, so an empty
+  // description is fine. Only the storage cap is enforced.
   const blurb = String(form.get("blurb") ?? "").trim();
-  if (
-    blurb.length < WORK_CAPS.blurbMinChars ||
-    blurb.length > WORK_CAPS.blurbMaxChars
-  )
+  if (blurb.length > WORK_CAPS.blurbMaxChars)
     return workError(
       "invalid_request",
-      `Description must be ${WORK_CAPS.blurbMinChars} to ${WORK_CAPS.blurbMaxChars} characters: what it does, who uses it, what it replaced.`,
+      `Description can be up to ${WORK_CAPS.blurbMaxChars} characters (it is optional; the card is written from your documents).`,
       400
     );
   // Duplicate-title guard (§5.16, 2026-07-30: the owner triple-submitted the
@@ -249,12 +249,9 @@ export async function POST(req: Request): Promise<Response> {
   const bytes = Buffer.from(await file.arrayBuffer());
   if (bytes.length > WORK_CAPS.uploadMaxBytes)
     return workError("invalid_request", "That file is too large.", 400);
-  if (!(bytes[0] === 0x50 && bytes[1] === 0x4b))
-    return workError(
-      "invalid_request",
-      "That file is not a zip archive. Export a plain .zip and resubmit.",
-      400
-    );
+  // No magic-byte gate (owner directive 2026-08-05, same ruling as the email
+  // lane): inspectArchive attempts the parse and names what the bytes are
+  // when it fails.
 
   // The standalone SKILL.md is OPTIONAL (owner directive 2026-07-30): a
   // package that already carries the doc needs no second upload.

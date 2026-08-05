@@ -19,7 +19,10 @@ export const WORK_CAPS = {
   // .md/.txt files ascending by size until this total. Source code is never
   // included. The corpus is the panel's whole universe of verifiable claims.
   corpusTotalMaxChars: 80_000,
-  // Form fields.
+  // Form fields. The description has NO minimum anywhere (owner directive
+  // 2026-08-05: the submitted documents are sufficient to describe the tool;
+  // the description is context-only and never published). blurbMinChars
+  // survives ONLY as the email receipt's "short note" disclosure threshold.
   titleMinChars: 4,
   titleMaxChars: 60,
   blurbMinChars: 80,
@@ -162,6 +165,24 @@ export const BANNED_ADVERBS = [
   "typically",
   "regularly",
 ];
+
+/** TIER 1, never the reviewed SKILL doc by uniqueness: project furniture
+ * that says nothing about what the Skill is. Unchanged since 2026-07-30; a
+ * package carrying ONLY these resolves to no doc, which is the intent. */
+export const BOILERPLATE_MD_BASENAMES =
+  /^(readme|license|licence|changelog|contributing|code_of_conduct)\./i;
+
+/** TIER 2, DEMOTED, not excluded (owner directive 2026-08-05: extra files
+ * besides the Skill and its doc are to be ignored, not a reason to reject).
+ * These are set aside ONLY when a better candidate exists, so a Skill zipped
+ * alongside its architecture.md resolves to the other file instead of
+ * dead-ending as "ambiguous" - while a package whose ONLY document is an
+ * architecture doc keeps resolving to it exactly as before. Skill-kind only;
+ * for kind "program" an architecture doc IS the reviewed doc (matchesArchDoc).
+ * Shared by extract.ts (in-archive candidates) and email-parse.ts (attachment
+ * selection) so the two lanes cannot drift. */
+export const SUPPORT_MD_BASENAMES =
+  /^(architecture|arch|design|readme-architecture)\./i;
 
 export type WorkKind = "skill" | "program";
 

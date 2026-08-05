@@ -20,10 +20,12 @@ import { createHash } from "node:crypto";
 import JSZip from "jszip";
 import {
   AMBIGUOUS_SKILL_DOC_MESSAGE,
+  BOILERPLATE_MD_BASENAMES,
   MISSING_ARCH_DOC_MESSAGE,
   MISSING_SKILL_DOC_MESSAGE,
   SECRETS_DETECTED_MESSAGE,
   SKILL_DOC_TOO_SHORT_MESSAGE,
+  SUPPORT_MD_BASENAMES,
   WORK_CAPS,
   type WorkKind,
 } from "./config";
@@ -180,12 +182,60 @@ function matchesArchDoc(path: string, text: string): boolean {
   return false;
 }
 
+/** Diagnose bytes that failed to parse as a zip (owner directive 2026-08-05:
+ * "zip files should be inspected"). The old gate rejected on the first two
+ * bytes not being "PK" BEFORE any parse attempt, which also rejected real
+ * zips with prepended data (self-extractors, odd exporters); now the parse
+ * is always attempted (JSZip finds the central directory from the END of the
+ * buffer, so leading junk is fine) and this message explains what the bytes
+ * actually are when it fails. Pure so tests can pin each branch. */
+export function nonZipMessage(bytes: Buffer): string {
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b)
+    return (
+      "That package is gzip-compressed (a .tar.gz or .gz file), and only " +
+      ".zip (or .skill) packages can be read. Re-export it as a plain .zip " +
+      "and resubmit."
+    );
+  if (bytes.subarray(0, 4).toString("latin1") === "Rar!")
+    return (
+      "That package is a RAR archive, and only .zip (or .skill) packages " +
+      "can be read. Re-export it as a plain .zip and resubmit."
+    );
+  if (bytes[0] === 0x37 && bytes[1] === 0x7a && bytes[2] === 0xbc && bytes[3] === 0xaf)
+    return (
+      "That package is a 7-Zip archive, and only .zip (or .skill) packages " +
+      "can be read. Re-export it as a plain .zip and resubmit."
+    );
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b)
+    return (
+      "That package looks like a zip archive but could not be read; it may " +
+      "be truncated, or an encrypted or spanned zip. Re-export a plain " +
+      ".zip and resubmit."
+    );
+  return "That file could not be read as a zip archive. Export a plain .zip (or .skill package) and resubmit.";
+}
+
 const TEXT_EXT = /\.(md|mdx|markdown|txt)$/i;
 const MD_EXT = /\.(md|mdx|markdown)$/i;
 const INNER_ARCHIVE_EXT = /\.(skill|zip)$/i;
-/** Boilerplate basenames never become the reviewed doc by uniqueness. */
-const BOILERPLATE_MD =
-  /^(readme|license|licence|changelog|contributing|code_of_conduct)\./i;
+// Basename tiers live in config.ts (2026-08-05) so the email attachment
+// picker applies the same lists: BOILERPLATE never qualifies, SUPPORT is
+// demoted only when a better candidate exists.
+const BOILERPLATE_MD = BOILERPLATE_MD_BASENAMES;
+
+/** A leading YAML front-matter block declaring `name:` and `description:` at
+ * column 0 is the Claude Skill document signature. Used as the LAST
+ * deterministic tiebreak when several .md files could be the reviewed doc:
+ * exactly one carrying the signature wins; zero or several stays ambiguous.
+ * Anchored the same way as email-parse.ts docDeclaredNames (a nested
+ * "author:\n  name: ..." never matches). */
+export function hasSkillFrontmatter(text: string): boolean {
+  if (!/^---\r?\n/.test(text)) return false;
+  const rest = text.slice(text.indexOf("\n") + 1);
+  const end = rest.search(/^---\s*$/m);
+  const front = end === -1 ? rest.slice(0, 4000) : rest.slice(0, end);
+  return /^name:[ \t]*\S/m.test(front) && /^description:[ \t]*\S/m.test(front);
+}
 
 interface TextFile {
   path: string; // display path ("!/"-composed for inner entries)
@@ -297,8 +347,7 @@ export async function inspectArchive(
     return {
       ok: false,
       code: "invalid_archive",
-      message:
-        "That file could not be read as a zip archive. Export a plain .zip (or .skill package) and resubmit.",
+      message: nonZipMessage(bytes),
     };
   }
   const state: WalkState = {
@@ -384,15 +433,40 @@ export async function inspectArchive(
     // Exactly one non-boilerplate .md at depth <= 1 clearing the prose floor
     // (the floor gates candidacy so a stray short NOTES.md cannot dead-end a
     // wrapper whose inner SKILL.md is fine).
-    const candidates = state.texts.filter(
+    const qualifying = state.texts.filter(
       (t) =>
         MD_EXT.test(baseOf(t.path)) &&
         depthOf(t.path) <= 1 &&
         !BOILERPLATE_MD.test(baseOf(t.path)) &&
         proseLength(t.text) >= WORK_CAPS.archDocMinProseChars
     );
+    // The 2026-08-05 wideners (demote supporting names, then break a tie on
+    // the front-matter signature) turn outer sets that used to be AMBIGUOUS
+    // into a resolved doc. They are switched off when the package holds a
+    // single inner archive, because an outer ambiguity is exactly what hands
+    // the decision to the inner .skill below: widening here would resolve to
+    // an outer guess, skip the inner open, and leave the package's REAL
+    // SKILL.md out of the reviewed doc AND out of the evidence corpus. With
+    // the gate, no shape that reached the inner archive before this round
+    // stops reaching it, and the wideners still cover the flat packages they
+    // were added for.
+    const widenable = state.innerArchives.length !== 1;
+    const preferred = qualifying.filter(
+      (t) => !SUPPORT_MD_BASENAMES.test(baseOf(t.path))
+    );
+    // Demote (never exclude): set the supporting names aside only when a
+    // better candidate exists, so an architecture-doc-only package keeps
+    // resolving exactly as it did before.
+    const candidates =
+      widenable && preferred.length > 0 ? preferred : qualifying;
     if (candidates.length === 1) doc = candidates[0];
-    else if (candidates.length > 1) ambiguous = candidates.map((c) => c.path);
+    else if (candidates.length > 1) {
+      const signed = widenable
+        ? candidates.filter((c) => hasSkillFrontmatter(c.text))
+        : [];
+      if (signed.length === 1) doc = signed[0];
+      else ambiguous = candidates.map((c) => c.path);
+    }
   }
 
   // Lazy inner-archive open: only when the outer level did not resolve, and
@@ -401,8 +475,10 @@ export async function inspectArchive(
   if (!doc && !tooShort && state.innerArchives.length === 1) {
     const inner = state.innerArchives[0];
     if (inner.size <= WORK_CAPS.uploadMaxBytes) {
+      // No magic-byte pregate (2026-08-05, same ruling as the outer level):
+      // the parse itself decides whether the inner package reads as a zip.
       const out = await inflateCapped(inner.entry, WORK_CAPS.uploadMaxBytes);
-      if (out.kind !== "ok" || !(out.buf[0] === 0x50 && out.buf[1] === 0x4b))
+      if (out.kind !== "ok")
         return {
           ok: false,
           code: "invalid_archive",

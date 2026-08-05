@@ -117,7 +117,7 @@ export async function describeBudgets(): Promise<
  * Troy sends (Resend REST, host script-style send).
  *
  * The comment that stood here until 2026-08-04 claimed "the recipient IS the
- * overseer, so the module's BCC invariant is not in play" — falsified by ten of
+ * overseer, so the module's BCC invariant is not in play" - falsified by ten of
  * this function's own call sites, which pass `to: <submitterEmail>`. The §1
  * oversight BCC is now applied unconditionally via oversightBcc(), which
  * no-ops when the overseer is already a recipient.

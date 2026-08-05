@@ -266,17 +266,15 @@ export function SubmissionForm({
         </>
       )}
       <div>
-        <label className={labelCls}>One paragraph</label>
+        <label className={labelCls}>One paragraph (optional)</label>
         <textarea
           className={inputCls}
           style={inputStyle}
           value={blurb}
           onChange={(e) => setBlurb(e.target.value)}
-          minLength={80}
           maxLength={900}
           rows={4}
-          required
-          placeholder="What it does, who uses it, what it replaced (80 to 900 characters). Context only: the card's claims come from your documents."
+          placeholder="Optional context: what it does, who uses it, what it replaced (up to 900 characters). The card's claims come from your documents."
         />
       </div>
       <div>
