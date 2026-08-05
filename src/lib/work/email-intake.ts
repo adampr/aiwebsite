@@ -18,6 +18,7 @@
 
 import crypto from "node:crypto";
 import { oversightBcc } from "@/lib/oversight-bcc";
+import { ledgerReasonSlug, reportFailureEmailIssue } from "@/lib/report-issue";
 import { Resend } from "resend";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { checkRateLimit } from "@aicompany/core/lib/rate-limit";
@@ -83,6 +84,8 @@ import {
 } from "./email-parse";
 import { inferTitleFromEmail } from "./title-infer";
 import {
+  decodeUtf8Text,
+  hasSkillFrontmatter,
   inspectArchive,
   inspectBareMd,
   mergeSkillCorpus,
@@ -165,10 +168,27 @@ async function warnAdmin(
   subjectRaw: string,
   senderDomain: string
 ): Promise<void> {
+  // §5.15 mirror (2026-08-05): dropped-mail WARNs are episodic per
+  // (reason, domain) - the throttled repeats bump the count, so the triage
+  // row shows how often a domain keeps failing even when no email went out.
+  const mirror = (emailed: boolean): void =>
+    reportFailureEmailIssue({
+      key: `work-intake:dropped:${reason}:${senderDomain || "unknown"}`,
+      subject: `work-submission email dropped (${reason}, ${senderDomain || "unknown domain"})`,
+      detail: [
+        `An email that looked like a work submission was dropped without reply.`,
+        `Reason: ${reason}`,
+        `Sender domain: ${senderDomain || "unknown"}`,
+        `From: ${sanitizeHeaderValue(fromRaw, 120)}`,
+        `Subject: ${sanitizeHeaderValue(subjectRaw, 120)}`,
+      ].join("\n"),
+      emailed,
+    });
   const stampKey = `work_email_reject_${reason}_${hashKey(senderDomain || "unknown")}`;
   const stamp = await getMeta(stampKey);
   if (stamp && Date.now() - Date.parse(stamp) < 23.5 * 3_600_000) {
     log(`rejected (${reason}); WARN throttled`);
+    mirror(false);
     return;
   }
   const sent = await sendTronEmail({
@@ -186,6 +206,7 @@ async function warnAdmin(
     ].join("\n"),
   });
   if (sent) await setMeta(stampKey, new Date().toISOString());
+  mirror(sent);
 }
 
 // HOSTILE_TITLE_CHARS moved to email-parse.ts (the extracted
@@ -478,17 +499,32 @@ export async function handleWorkEmail(
     if (!company) {
       // Claimed at detect (a company existed) but gone by verification:
       // verified sender, so one throttled neutral line is safe.
+      let sent = false;
       if (
         checkRateLimit(`work:email:rlnotice:${sender}`, {
           windowSec: 3600,
           max: 1,
         }).allowed
       )
-        await sendTronEmail({
+        sent = await sendTronEmail({
           to: sender,
           subject: `Re: ${sanitizeHeaderValue(subjectRaw, 150) || "Your submission"}`,
           text: `Email submissions are not set up for your organization right now. Nothing was stored.\n\n${tronSignature()}`,
         });
+      // This reply predates reject() and returns before it exists, so it
+      // needs its own mirror; without one it is the single submitter-facing
+      // failure in this lane that never reaches the triage.
+      reportFailureEmailIssue({
+        key: `work-intake:reject:company-row-vanished:${senderDomain || "unknown"}`,
+        subject: `Company email submission refused, no company row (${senderDomain || "unknown domain"})`,
+        detail: [
+          `A DKIM-verified sender at a domain that HAD a registered company row when the inbound was claimed no longer resolves to one, so the submission was refused.`,
+          `Sender: ${sender}`,
+          `Subject: ${sanitizeHeaderValue(subjectRaw, 150) || "(none)"}`,
+          `Reply ${sent ? "sent" : "NOT sent (throttled or send failure)"}.`,
+        ].join("\n"),
+        emailed: sent,
+      });
       return;
     }
   }
@@ -526,23 +562,45 @@ export async function handleWorkEmail(
     message: string,
     opts?: { pointer?: boolean }
   ): Promise<void> => {
-    if (!companyReplyAllowed()) return;
-    await sendTronEmail({
-      to: sender,
-      subject: replySubject,
-      headers: replyHeaders,
-      text: [
-        isCompanyLane
-          ? `I could not accept this as a work submission. Nothing was stored.`
-          : `I could not accept this as a /work submission. Nothing was stored.`,
+    let sent = false;
+    if (companyReplyAllowed())
+      sent = await sendTronEmail({
+        to: sender,
+        subject: replySubject,
+        headers: replyHeaders,
+        text: [
+          isCompanyLane
+            ? `I could not accept this as a work submission. Nothing was stored.`
+            : `I could not accept this as a /work submission. Nothing was stored.`,
+          ``,
+          message,
+          ...(opts?.pointer === false
+            ? []
+            : [``, isCompanyLane ? companyPointer : FORM_POINTER]),
+          ``,
+          tronSignature(),
+        ].join("\n"),
+      });
+    // §5.15 mirror (owner directive 2026-08-05): every rejection reply is
+    // also an open issue, so the owner reviews bounced submissions in the
+    // triage instead of hunting mailboxes. EPISODIC per (reason class,
+    // lane): see report-issue.ts for why a per-email key would evict the
+    // rest of the triage. Recorded whether or not the reply went out, which
+    // is the case that most needs a record: a suppressed or failed reply is
+    // a failure the submitter never even learns about.
+    reportFailureEmailIssue({
+      key: `work-intake:reject:${ledgerReasonSlug(message)}:${senderDomain || "unknown"}`,
+      subject: `${isCompanyLane ? "Company" : "/work"} email submission rejected (${senderDomain || "unknown domain"})`,
+      detail: [
+        `Sender: ${sender}`,
+        `Lane: ${isCompanyLane ? `company (${senderDomain})` : "staff"}`,
+        `Subject: ${sanitizeHeaderValue(subjectRaw, 150) || "(none)"}`,
+        `Reply ${sent ? "sent to the submitter" : "NOT sent (reply suppressed by a throttle or bound, or the send failed)"}.`,
         ``,
+        `Reply body:`,
         message,
-        ...(opts?.pointer === false
-          ? []
-          : [``, isCompanyLane ? companyPointer : FORM_POINTER]),
-        ``,
-        tronSignature(),
       ].join("\n"),
+      emailed: sent,
     });
   };
 
@@ -908,26 +966,27 @@ export async function handleWorkEmail(
     return;
   }
   let mdAtt: AttachmentMeta | null = null;
+  // 2026-08-05 (owner directive after a real bounce: "ENTRA-~1.MD" +
+  // "architecture.md", none named SKILL.md): an unclear attachment pick no
+  // longer rejects up front. The decision defers past archive inspection:
+  // the package may carry its own SKILL.md (the extra attachments are then
+  // ignored with a note), and a front-matter scan of the attached files is
+  // the last deterministic rung before the ambiguity reject.
+  let deferredMds: AttachmentMeta[] | null = null;
   if (kind === "skill" && mds.length > 0) {
     const picked = pickSkillDoc(mds);
     if (!picked) {
-      const list = mds
-        .slice(0, 5)
-        .map((m) => `"${sanitizeHeaderValue(m.filename ?? "unnamed", 60)}"`)
-        .join(", ");
-      await reject(
-        `Several .md attachments could be the Skill's document (${list}) and none is named SKILL.md. Attach exactly one, or rename the right one to SKILL.md, and resend.`
-      );
-      return;
-    }
-    mdAtt = picked.pick;
-    if (picked.noted)
-      notes.push(
-        `Also: several .md files were attached; I used "${sanitizeHeaderValue(mdAtt.filename ?? "SKILL.md", 60)}" as the Skill's document.`
-      );
-    if (mdAtt.size > WORK_CAPS.skillMdMaxBytes) {
-      await reject("The SKILL.md attachment is too large (limit 1 MB).");
-      return;
+      deferredMds = mds;
+    } else {
+      mdAtt = picked.pick;
+      if (picked.noted)
+        notes.push(
+          `Also: several .md files were attached; I used "${sanitizeHeaderValue(mdAtt.filename ?? "SKILL.md", 60)}" as the Skill's document.`
+        );
+      if (mdAtt.size > WORK_CAPS.skillMdMaxBytes) {
+        await reject("The SKILL.md attachment is too large (limit 1 MB).");
+        return;
+      }
     }
   }
 
@@ -960,12 +1019,11 @@ export async function handleWorkEmail(
     );
     return;
   }
-  if (!(bytes[0] === 0x50 && bytes[1] === 0x4b)) {
-    await reject(
-      "That package is not a zip archive. Export a plain .zip and resend."
-    );
-    return;
-  }
+  // No magic-byte gate here (owner directive 2026-08-05 after a real
+  // submission bounced on it): inspectArchive attempts the parse regardless
+  // and, on failure, names what the bytes actually are (gzip, RAR, 7z,
+  // truncated zip). JSZip reads zips with prepended data, so this also
+  // rescues packages the two-byte sniff wrongly rejected.
   let mdFile: { name: string; bytes: Buffer } | null = null;
   if (mdAtt) {
     const mdBytes = await downloadAttachment(
@@ -998,6 +1056,111 @@ export async function handleWorkEmail(
           ].join("\n")
     );
     return;
+  }
+  // Deferred attachment ambiguity resolves HERE, with the package inspected
+  // (2026-08-05). Package resolved its own doc: the extra attachments are
+  // supporting material, ignored with a note. Package doc missing too: the
+  // attached candidates are downloaded (bounded) and exactly one carrying
+  // the Skill front-matter signature wins; otherwise the ambiguity finally
+  // rejects, with the file list.
+  if (kind === "skill" && deferredMds) {
+    if (!extracted.docMissing) {
+      notes.push(
+        `Also: several .md files were attached and none was clearly the Skill's document, so I used the Skill document inside your package and left the attached files out of the review.`
+      );
+    } else {
+      // Only files that were actually READ can be spoken about in the
+      // rejection. Oversized/empty ones and anything past the scan cap are
+      // tracked separately so the reply names the fix that matches the
+      // reason, instead of telling someone to rename a file when the real
+      // problem is that it is over 1 MB.
+      const scannable = deferredMds.filter(
+        (m) => m.size > 0 && m.size <= WORK_CAPS.skillMdMaxBytes
+      );
+      const oversize = deferredMds.filter(
+        (m) => m.size > WORK_CAPS.skillMdMaxBytes
+      );
+      const candidates = scannable.slice(0, 5);
+      const unscanned = scannable.length - candidates.length;
+      const signed: { name: string; bytes: Buffer }[] = [];
+      let downloadFailed = false;
+      for (const m of candidates) {
+        const b = await downloadAttachment(
+          emailId,
+          m.id,
+          WORK_CAPS.skillMdMaxBytes
+        );
+        if (!b) {
+          downloadFailed = true;
+          continue;
+        }
+        const text = decodeUtf8Text(b);
+        if (text !== null && hasSkillFrontmatter(text))
+          signed.push({ name: m.filename ?? "SKILL.md", bytes: b });
+        if (signed.length > 1) break; // two signatures is already ambiguous
+      }
+      if (signed.length === 1) {
+        mdFile = signed[0];
+        notes.push(
+          `Also: several .md files were attached; "${sanitizeHeaderValue(signed[0].name, 60)}" is the one carrying the Skill's name and description block, so I used it as the Skill's document.`
+        );
+      } else if (signed.length === 0 && downloadFailed) {
+        // A transport failure must never be reported as a naming problem:
+        // the non-deferred path has said "resend" for this since 2026-07-30
+        // and this path has to say the same thing.
+        await reject(
+          "I could not download the .md attachments to work out which one is the Skill's document. Resend the email."
+        );
+        return;
+      } else {
+        const list = deferredMds
+          .slice(0, 5)
+          .map((m) => `"${sanitizeHeaderValue(m.filename ?? "unnamed", 60)}"`)
+          .join(", ");
+        // The package half of the sentence has to match which docMissing
+        // this is: "missing" means no document in the package, while
+        // "too_short" and "ambiguous" mean it HAS one (or several) that did
+        // not resolve, and claiming otherwise sends the submitter looking
+        // for a file that is already there.
+        const pkgClause =
+          extracted.docMissing === "missing"
+            ? "the package does not carry one either"
+            : extracted.docMissing === "too_short"
+              ? "the document inside the package is too short to review"
+              : "the package holds several possible documents of its own";
+        const scanClause =
+          signed.length === 0
+            ? `none of the attached files I read carries`
+            : `more than one of the attached files carries`;
+        await reject(
+          [
+            `Several .md attachments could be the Skill's document (${list}), ${pkgClause}, and ${scanClause} a Skill front-matter block, so I could not settle on one. Rename the right one to SKILL.md and resend.`,
+            ...(oversize.length > 0
+              ? [
+                  ``,
+                  `${oversize.length === 1 ? "One attachment was" : `${oversize.length} attachments were`} over the 1 MB limit for the Skill's document and could not be read: ${oversize
+                    .slice(0, 5)
+                    .map((m) => `"${sanitizeHeaderValue(m.filename ?? "unnamed", 60)}"`)
+                    .join(", ")}. If the right one is in there, trim it or send it inside the package.`,
+                ]
+              : []),
+            ...(unscanned > 0
+              ? [
+                  ``,
+                  `I read the first ${candidates.length} .md attachments only, so ${unscanned} more went unexamined. Attaching just the Skill's document is the quickest fix.`,
+                ]
+              : []),
+            ...(extracted.candidatePaths?.length
+              ? [
+                  ``,
+                  `Inside the package: ${extracted.candidatePaths.slice(0, 20).join(", ")}`,
+                ]
+              : []),
+          ].join("\n")
+        );
+        return;
+      }
+    }
   }
   let docText = extracted.docText;
   let corpus = extracted.corpus;

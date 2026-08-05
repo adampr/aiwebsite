@@ -5,9 +5,11 @@
 import assert from "node:assert";
 import JSZip from "jszip";
 import {
+  hasSkillFrontmatter,
   inspectArchive,
   inspectBareMd,
   mergeSkillCorpus,
+  nonZipMessage,
   proseLength,
 } from "../src/lib/work/extract";
 import {
@@ -814,6 +816,89 @@ async function main() {
       assert.equal(rescued[0].path, "SKILL.md", "standalone leads doc-less corpus");
     }
   }
+
+  // ---- 2026-08-05 tolerance round: supporting names + front-matter ----
+  // A Skill zipped with its architecture.md no longer dead-ends: the
+  // supporting basename is set aside and the remaining candidate wins.
+  const withArch = await inspectArchive(
+    await zipOf({ "mytool.md": PROSE, "architecture.md": PROSE + " support." }),
+    "skill"
+  );
+  assert.ok(withArch.ok && !withArch.docMissing, "architecture.md set aside");
+  if (withArch.ok) assert.equal(withArch.docPath, "mytool.md");
+  // ...but DEMOTED, never excluded: a package whose only document IS the
+  // architecture doc still resolves to it, exactly as before this round.
+  const archOnly = await inspectArchive(await zipOf({ "architecture.md": PROSE }), "skill");
+  assert.ok(archOnly.ok && !archOnly.docMissing, "architecture-doc-only still resolves");
+  if (archOnly.ok) assert.equal(archOnly.docPath, "architecture.md");
+  // True boilerplate stays tier 1: readme-only resolves to nothing (the
+  // pre-existing contract this round must not widen).
+  const readmeOnly = await inspectArchive(await zipOf({ "readme.md": PROSE }), "skill");
+  assert.ok(readmeOnly.ok && readmeOnly.docMissing === "missing", "readme-only still missing");
+
+  // Front-matter tiebreak: several plausible docs, exactly one carrying the
+  // Skill signature (name: + description: in the leading YAML block).
+  const FM_DOC = `---\nname: Entra Analyzer\ndescription: Reviews Entra security posture.\n---\n\n${PROSE}`;
+  assert.ok(hasSkillFrontmatter(FM_DOC), "signature detected");
+  assert.ok(!hasSkillFrontmatter(PROSE), "plain prose has no signature");
+  assert.ok(
+    !hasSkillFrontmatter(`---\nauthor:\n  name: Jane\n  description: x\n---\n${PROSE}`),
+    "nested keys never match (column-0 anchor)"
+  );
+  const fmTiebreak = await inspectArchive(
+    await zipOf({ "entra.md": FM_DOC, "helper.md": PROSE + " helper." }),
+    "skill"
+  );
+  assert.ok(fmTiebreak.ok && !fmTiebreak.docMissing, "front-matter tiebreak resolves");
+  if (fmTiebreak.ok) assert.equal(fmTiebreak.docPath, "entra.md");
+  // Two signatures stays ambiguous (selection, never authoring).
+  const fmBoth = await inspectArchive(
+    await zipOf({ "a-skill.md": FM_DOC, "b-skill.md": FM_DOC + " other." }),
+    "skill"
+  );
+  assert.ok(fmBoth.ok && fmBoth.docMissing === "ambiguous", "two signatures stay ambiguous");
+
+  // The wideners must NEVER pre-empt the inner-archive open: with a single
+  // inner .skill present, an outer ambiguity still hands the decision inward,
+  // so the package's real SKILL.md stays the reviewed doc (refutation-round
+  // finding: widening here would silently review an outer guess instead, and
+  // the inner doc would not even reach the evidence corpus).
+  const wrapperWithOuterMds = await (async () => {
+    const zip = new JSZip();
+    zip.file("my-skill.skill", await zipOf({ "SKILL.md": PROSE + " inner." }));
+    zip.file("mytool.md", PROSE + " outer.");
+    zip.file("architecture.md", PROSE + " support.");
+    return zip.generateAsync({ type: "nodebuffer" });
+  })();
+  const inner = await inspectArchive(wrapperWithOuterMds, "skill");
+  assert.ok(inner.ok && !inner.docMissing, "wrapper still resolves");
+  if (inner.ok)
+    assert.equal(
+      inner.docPath,
+      "my-skill.skill!/SKILL.md",
+      "inner SKILL.md still wins over a demoted outer candidate"
+    );
+
+  // ---- 2026-08-05 zip-inspection round: parse decides, not magic bytes ----
+  assert.match(nonZipMessage(Buffer.from([0x1f, 0x8b, 0x08, 0x00])), /gzip/);
+  assert.match(nonZipMessage(Buffer.from("Rar!\x1a\x07\x00")), /RAR/);
+  assert.match(nonZipMessage(Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])), /7-Zip/);
+  assert.match(nonZipMessage(Buffer.from("PK\x03\x04 but truncated")), /truncated/);
+  assert.match(nonZipMessage(Buffer.from("hello world")), /could not be read as a zip/);
+  // Short buffers must not throw or misclassify (undefined byte comparisons).
+  assert.match(nonZipMessage(Buffer.alloc(0)), /could not be read as a zip/);
+  assert.match(nonZipMessage(Buffer.from([0x50])), /could not be read as a zip/);
+  const gz = await inspectArchive(Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0x00]), "skill");
+  assert.ok(!gz.ok && gz.code === "invalid_archive", "gzip rejects as invalid_archive");
+  assert.match(gz.ok ? "" : gz.message, /gzip/, "gzip named in the rejection");
+  // A real zip with prepended junk parses (JSZip reads the central directory
+  // from the end); the old two-byte sniff wrongly rejected these.
+  const prefixed = Buffer.concat([
+    Buffer.from("JUNK-PREFIX-8-BYTES-LONG"),
+    await zipOf({ "SKILL.md": PROSE }),
+  ]);
+  const prefixedOk = await inspectArchive(prefixed, "skill");
+  assert.ok(prefixedOk.ok && !prefixedOk.docMissing, "junk-prefixed zip still inspected");
 
   // ---- disclosure gate helpers (2026-07-30 calibration round) ----
   assert.ok(isNoneFound("none found"));
@@ -1799,6 +1884,52 @@ async function main() {
     null,
     "two exact matches = ambiguous"
   );
+  // 2026-08-05 tolerance round (real bounce: "ENTRA-~1.MD" +
+  // "architecture.md"): supporting basenames are set aside and a sole
+  // remaining candidate wins, disclosed.
+  {
+    const picked = pickSkillDoc([md("ENTRA-~1.MD"), md("architecture.md")]);
+    assert.equal(picked?.pick.filename, "ENTRA-~1.MD", "support name set aside");
+    assert.equal(picked?.noted, true, "support-name selection is disclosed");
+  }
+  assert.equal(
+    pickSkillDoc([md("entra.md"), md("readme.md"), md("design.md")])?.pick.filename,
+    "entra.md",
+    "several support names all set aside"
+  );
+
+  // 6b. Ledger reason slugs (2026-08-05): the failure-email mirror keys on
+  // the reply COPY, so two occurrences of the same failure must collapse to
+  // one episode while different failures stay apart. A per-message key would
+  // fill the 500-row triage window and evict every other open issue.
+  const { ledgerReasonSlug } = await import("../src/lib/report-issue");
+  assert.equal(
+    ledgerReasonSlug(`A published card already uses this title. Pick a different title.`),
+    ledgerReasonSlug(`A published card already uses this title. Pick a different title.`),
+    "identical copy = identical episode"
+  );
+  assert.equal(
+    ledgerReasonSlug(`I could not match "Outage Checker" to a published card on https://ai.xl.net/work.`),
+    ledgerReasonSlug(`I could not match "Patching Visualizer" to a published card on https://ai.xl.net/work.`),
+    "interpolated titles and URLs normalize to one episode"
+  );
+  assert.equal(
+    ledgerReasonSlug(`The limit is 20 submissions per person per day.`),
+    ledgerReasonSlug(`The limit is 200 submissions per person per day.`),
+    "interpolated numbers normalize to one episode"
+  );
+  assert.notEqual(
+    ledgerReasonSlug(`That package is not a zip archive.`),
+    ledgerReasonSlug(`Attach ONE package (.skill or .zip) and resend.`),
+    "different failures stay different episodes"
+  );
+  assert.ok(ledgerReasonSlug("").length > 0, "empty copy still yields a key");
+  assert.ok(ledgerReasonSlug("!!!").length > 0, "punctuation-only copy still yields a key");
+  assert.ok(
+    ledgerReasonSlug("x".repeat(500)).length <= 80,
+    "slug is bounded well under the recorder's 300-char key cap"
+  );
+
 
   // 7. blurbPromptBlock: fenced, sliced, marker-neutralized, sentinel.
   const { blurbPromptBlock } = await import("../src/lib/work/lint");

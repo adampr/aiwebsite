@@ -14,6 +14,7 @@
 import crypto from "node:crypto";
 import { Resend } from "resend";
 import { parseEmailAuthVerdict } from "@aicompany/core/memory/email-auth";
+import { reportFailureEmailIssue } from "@/lib/report-issue";
 import { siteConfig } from "site.config";
 import {
   ALERT_STAMP_KEYS,
@@ -67,10 +68,27 @@ async function warnAdmin(
   fromRaw: string,
   subjectRaw: string
 ): Promise<void> {
+  // §5.15 mirror (2026-08-05), same shape as the work lane's warnAdmin: the
+  // WARN is episodic per reason and the THROTTLED repeats bump `count`, so a
+  // sender retrying all day shows as one row with a rising count rather than
+  // going silent after the first notice.
+  const mirror = (emailed: boolean): void =>
+    reportFailureEmailIssue({
+      key: `governance:troy-dropped:${reason}`,
+      subject: `Mail to Troy.Netter dropped (${reason})`,
+      detail: [
+        `Mail addressed to Troy.Netter@ai.xl.net was dropped without reply.`,
+        `Reason: ${reason}`,
+        `From: ${sanitizeHeaderValue(fromRaw, 120)}`,
+        `Subject: ${sanitizeHeaderValue(subjectRaw, 120)}`,
+      ].join("\n"),
+      emailed,
+    });
   const stampKey = `troy_reject_${reason}`;
   const stamp = await getMeta(stampKey);
   if (stamp && Date.now() - Date.parse(stamp) < 23.5 * 3_600_000) {
     log(`rejected (${reason}); WARN throttled`);
+    mirror(false);
     return;
   }
   const sent = await sendTroyEmail({
@@ -86,6 +104,7 @@ async function warnAdmin(
     ].join("\n"),
   });
   if (sent) await setMeta(stampKey, new Date().toISOString());
+  mirror(sent);
 }
 
 /**
@@ -183,7 +202,7 @@ export async function handleTroyInbound(emailId: string): Promise<void> {
     const { commands, ignoredLines } = parseApprovalCommands(email.text ?? "");
     if (commands.length === 0) {
       log(`verified reply with no commands (ignored lines: ${ignoredLines})`);
-      await sendTroyEmail({
+      const sent = await sendTroyEmail({
         to: senderAddr,
         subject: replySubject,
         headers: replyHeaders,
@@ -192,6 +211,27 @@ export async function handleTroyInbound(emailId: string): Promise<void> {
           ``,
           REPLY_SYNTAX_BLOCK,
         ].join("\n"),
+      });
+      // §5.15 mirror (owner directive 2026-08-05): this failure reply is
+      // recorded as an open issue so the owner reviews it in the triage
+      // instead of hunting mailboxes. ONE episodic row (no email id in the
+      // key): the common benign trigger is an ordinary reply to a Troy-sent
+      // notice, since Troy's address also sends /work and governance mail,
+      // so keying per message would open a permanent row for every stray
+      // reply and crowd the 500-row triage window.
+      reportFailureEmailIssue({
+        key: `governance:budget-reply:no-command`,
+        subject: `Admin reply to Troy carried no budget command`,
+        detail: [
+          `A verified admin reply to Troy carried no budget command, so nothing changed.`,
+          sent
+            ? `Troy answered with the syntax block.`
+            : `Troy's reply did NOT go out, so the sender has no idea the command was not understood.`,
+          `From: ${sanitizeHeaderValue(fromRaw, 120)}`,
+          `Subject: ${sanitizeHeaderValue(subjectRaw, 150) || "(none)"}`,
+          `Ignored lines: ${ignoredLines}`,
+        ].join("\n"),
+        emailed: sent,
       });
       return;
     }

@@ -4,7 +4,13 @@
 // pattern). NO EM DASHES in any string (site rule).
 
 import { sanitizeHeaderValue } from "@/lib/governance/approval";
-import { TITLE_KIND_PREFIX_RE, WORK_CAPS, type WorkKind } from "./config";
+import {
+  BOILERPLATE_MD_BASENAMES,
+  SUPPORT_MD_BASENAMES,
+  TITLE_KIND_PREFIX_RE,
+  WORK_CAPS,
+  type WorkKind,
+} from "./config";
 import { stringViolations } from "./lint";
 import {
   nameKey,
@@ -21,8 +27,10 @@ export { nameKey, splitMachineEcho, stripMachineEcho } from "./names";
 // ".ski" accepted alongside ".skill": Windows/Outlook forwarding chains
 // rename attachments to DOS 8.3 short names (real inbounds 2026-07-30:
 // "OUTAGE_1.SKI", "SD-DAI~1.SKI"), truncating the extension. The filename is
-// only the TRIGGER; the downloaded bytes still pass the zip magic check and
-// the full inspectArchive hardening, so the looser match adds no exposure.
+// only the TRIGGER; the downloaded bytes still go through the full
+// inspectArchive hardening, so the looser match adds no exposure. (The
+// separate two-byte "PK" pre-sniff that used to run first was removed on
+// 2026-08-05; the parse itself is the gate now.)
 export const ARCHIVE_RE = /\.(zip|skill|ski)$/i;
 export const MD_RE = /\.(md|mdx|markdown)$/i;
 
@@ -694,14 +702,24 @@ export function parseSubmissionBody(raw: string): ParsedBody {
 /** §5.16 natural-email round: pick the Skill's document among several .md
  * attachments deterministically. One attachment: that one. Several with
  * exactly one named SKILL.md (any case): that one, with a receipt note
- * (deterministic selection is not authoring). Anything else is ambiguous
- * and the caller rejects with the file list. */
+ * (deterministic selection is not authoring). Else (2026-08-05, owner
+ * directive: extra files are ignored, not a reason to reject) supporting
+ * basenames (readme, architecture, design, ...) are set aside and exactly
+ * one remaining candidate wins, noted. Anything else returns null; the
+ * caller may still resolve the doc from the package or by content before
+ * rejecting with the file list. */
 export function pickSkillDoc(
   mds: AttachmentMeta[]
 ): { pick: AttachmentMeta; noted: boolean } | null {
   if (mds.length === 1) return { pick: mds[0], noted: false };
   const exact = mds.filter((m) => /^skill\.md$/i.test(m.filename ?? ""));
   if (exact.length === 1) return { pick: exact[0], noted: true };
+  const preferred = mds.filter(
+    (m) =>
+      !SUPPORT_MD_BASENAMES.test(m.filename ?? "") &&
+      !BOILERPLATE_MD_BASENAMES.test(m.filename ?? "")
+  );
+  if (preferred.length === 1) return { pick: preferred[0], noted: true };
   return null;
 }
 

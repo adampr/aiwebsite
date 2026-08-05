@@ -126,14 +126,13 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       `The published card "${row.title}" is a ${kind === "skill" ? "CoWork Skill" : "Code program"}, so an update to it must be one too. Resubmit with the matching package type.`,
       400
     );
+  // No minimum (owner directive 2026-08-05, same as the create route): the
+  // description is context-only; only the storage cap is enforced.
   const blurb = String(form.get("blurb") ?? "").trim();
-  if (
-    blurb.length < WORK_CAPS.blurbMinChars ||
-    blurb.length > WORK_CAPS.blurbMaxChars
-  )
+  if (blurb.length > WORK_CAPS.blurbMaxChars)
     return workError(
       "invalid_request",
-      `Description must be ${WORK_CAPS.blurbMinChars} to ${WORK_CAPS.blurbMaxChars} characters: what changed and what it does now.`,
+      `Description can be up to ${WORK_CAPS.blurbMaxChars} characters (it is optional; the card is written from your documents).`,
       400
     );
   const rawName = String(form.get("attribution") ?? "").trim();
@@ -194,12 +193,11 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   const bytes = Buffer.from(await file.arrayBuffer());
   if (bytes.length > WORK_CAPS.uploadMaxBytes)
     return workError("invalid_request", "That file is too large.", 400);
-  if (!(bytes[0] === 0x50 && bytes[1] === 0x4b))
-    return workError(
-      "invalid_request",
-      "That file is not a zip archive. Export a plain .zip and resubmit.",
-      400
-    );
+  // No magic-byte gate (owner directive 2026-08-05). This is the THIRD
+  // inspectArchive call site and it must move with the other two: a package
+  // the create lane accepts has to be acceptable as an update, or the same
+  // bytes publish a new card and bounce as a new version of it.
+  // inspectArchive attempts the parse and names what the bytes are.
   let mdFile: { name: string; bytes: Buffer } | null = null;
   if (kind === "skill") {
     const md = form.get("skillMd");
