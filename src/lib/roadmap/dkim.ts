@@ -1,4 +1,5 @@
-// DKIM readiness detection for roadmap step 05 (§5.18 round 2). Server-only;
+// DKIM readiness detection for the roadmap email lane (§5.18 round 2; a
+// sub-surface of step 04 since the six-step round). Server-only;
 // answers: "does the company's email domain publish a currently-usable DKIM
 // key at the selectors its mail provider actually signs with?" That is the
 // DNS-visible precondition for the email intake's strict-alignment gate

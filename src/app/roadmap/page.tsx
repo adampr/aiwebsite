@@ -13,7 +13,11 @@ import { redirect } from "next/navigation";
 import { readSession } from "@aicompany/core/auth/session";
 import { siteConfig } from "site.config";
 import { readRoadmapHubView } from "@/lib/roadmap/access";
-import { ROADMAP_STEPS, roadmapEnabled } from "@/lib/roadmap/config";
+import {
+  ROADMAP_STEPS,
+  isPaidStep,
+  roadmapEnabled,
+} from "@/lib/roadmap/config";
 import { roadmapStatus } from "@/lib/roadmap/status";
 import {
   deniedAdminRequestInWindow,
@@ -24,7 +28,6 @@ import { RequestAdminAccess } from "@/components/roadmap/request-admin";
 import { BootstrapCard } from "@/components/roadmap/bootstrap-card";
 import { ConfirmIdentity } from "@/components/roadmap/confirm-identity";
 import { DirectoryCard } from "@/components/roadmap/directory-card";
-import { DkimStep } from "@/components/roadmap/dkim-step";
 import { StaffPanel } from "@/components/roadmap/staff-panel";
 import "./roadmap.css";
 
@@ -43,7 +46,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "Your AI Roadmap: From Knowledge Workers to AI Builders",
     description:
-      "A private five-step roadmap for your company: put an AI governance document on file, list your team, submit AI-built work for editorial review, watch builders emerge on your scorecard, and verify email from your domain.",
+      "A private six-step roadmap for your company: governance on file, your team listed, AI-built work reviewed and published, builders on a scorecard, plus a paid workshop and monthly cohort.",
     alternates: { canonical: "/roadmap" },
   };
 }
@@ -51,7 +54,7 @@ export async function generateMetadata(): Promise<Metadata> {
 const FAQ = [
   {
     q: "Is it free?",
-    a: "Yes. Sign in with your work email and walk the five steps at no cost. No card, no trial clock.",
+    a: "The roadmap itself is free: sign in with your work email, no card, no trial clock. Two of the six steps are paid training, booked separately on our AI Builders page: the AI Builders Workshop ($995 for one four-hour session) and the AI Builder Cohort ($495 per month). Every other step works without buying either.",
   },
   {
     q: "Who can see our data?",
@@ -67,7 +70,7 @@ const FAQ = [
   },
   {
     q: "How does work get submitted?",
-    a: "Upload a build through the submission form, or email it to Tron from your work address. An automated editorial panel reviews every submission and publishes only what it can verify.",
+    a: "Upload a build through the submission form, or email it to Tron from your work address. Emailed submissions count only once your domain signs its mail (DKIM), and the submit step shows you how to check and set that up. An automated editorial panel reviews every submission and publishes only what it can verify.",
   },
 ] as const;
 
@@ -82,10 +85,10 @@ function Teaser() {
           From knowledge workers to <span className="glow">AI builders</span>
         </h1>
         <p className="mx-auto mt-6 max-w-3xl text-lg">
-          A private roadmap for your whole company: five steps from an AI
+          A private roadmap for your whole company: six steps from an AI
           governance document on file to a scorecard of the builders on your
-          team and verified email from your domain, with every piece of
-          AI-built work reviewed and published along the way.
+          team, with every piece of AI-built work reviewed and published
+          along the way, and training to grow the builders themselves.
         </p>
         <div className="mt-10 flex flex-wrap justify-center gap-6">
           <Link
@@ -96,7 +99,7 @@ function Teaser() {
           </Link>
         </div>
         <p className="mono mx-auto mt-6 max-w-2xl text-xs" style={faint}>
-          free · private to your company · five steps
+          six steps · four free, two paid training · private to your company
         </p>
       </section>
 
@@ -105,15 +108,24 @@ function Teaser() {
       <section>
         <div className="text-center">
           <span className="sys-label sys-label--center">The Runway</span>
-          <h2 className="mt-6">Five stations, one line</h2>
+          <h2 className="mt-6">Six stations, one line</h2>
         </div>
-        <div className="mx-auto mt-12 max-w-4xl">
+        {/* max-w-5xl, not 4xl: the six-stop horizontal runway needs 928px
+            and the 4xl wrap (896px) cannot hold it (roadmap.css lg math). */}
+        <div className="mx-auto mt-12 max-w-5xl">
           <RoadmapRunway status={null} />
         </div>
         <div className="mt-12 grid gap-6 sm:grid-cols-2">
           {ROADMAP_STEPS.map((step) => (
             <div key={step.key} className="panel rise">
-              <span className="sys-label">{step.num}</span>
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="sys-label">{step.num}</span>
+                {isPaidStep(step) && (
+                  <span className="mono text-xs" style={faint}>
+                    {step.fee} · booked separately
+                  </span>
+                )}
+              </div>
               <h3 className="mt-4">{step.title}</h3>
               <p className="mt-4 text-sm">{step.blurb}</p>
             </div>
@@ -279,15 +291,27 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
     scorecard: status.scorecard.live
       ? `${status.scorecard.contributors} ${status.scorecard.contributors === 1 ? "builder" : "builders"} so far`
       : "Waiting on the first published work",
-    dkim:
-      status.dkim.timedOut === true
-        ? "Checking now"
-        : status.dkim.verdict === "ok"
-          ? "DKIM records live"
-          : status.dkim.verdict === "missing"
-            ? "DKIM not set up yet"
-            : "Needs a manual check",
   } as const;
+  // The email lane's DKIM state, echoed on the work card (its controls live
+  // one click away on /roadmap/work). It renders for EVERY verdict, never
+  // just the informative two: "other-provider" is the fall-through for any
+  // domain that is not Microsoft 365 or Google Workspace, so gating it would
+  // leave those tenants with no DKIM signal anywhere on the hub. Wording is
+  // record-scoped by standing ruling (DNS proves publication, never that the
+  // provider's signing switch is on, and never that a gateway is not already
+  // signing under its own selector), and the two states that need an action
+  // name where that action lives. "not live yet" rather than "records not
+  // found": two of the four missing reasons (key-revoked, m365-cname-dead)
+  // are record-PRESENT states, and the dialog one click away says so in
+  // words ("the two DKIM records ... are installed", "a DKIM record exists").
+  const dkimLine =
+    status.dkim.timedOut === true
+      ? "Email lane · checking DKIM now · open this step"
+      : status.dkim.verdict === "ok"
+        ? "Email lane · DKIM records live"
+        : status.dkim.verdict === "missing"
+          ? "Email lane · DKIM not live yet · open this step"
+          : "Email lane · DKIM needs a manual check · open this step";
   // CTA labels come from the SAME status booleans as stepLines so the two
   // can never disagree.
   const stepDone = {
@@ -333,31 +357,12 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
           "Recheck database" button raised above the overlay
           (.rmp-card-action). Card text is not mouse-selectable under the
           overlay: accepted trade-off. The runway above is the single state
-          surface; cards carry counts and verbs, never state badges. */}
+          surface; cards carry counts and verbs, never state badges.
+          Branch order is load-bearing: directory, then work, then the paid
+          branch, and only then the generic return, whose stepLines/stepDone
+          lookups are exhaustive ONLY once the other keys have returned. */}
       <section className="grid gap-6 sm:grid-cols-2">
         {ROADMAP_STEPS.map((step) => {
-          if (step.key === "dkim") {
-            // Step 05 has NO (steps) page: this panel IS its surface. The
-            // island opens the instructions dialog and owns recheck/email;
-            // its button is the card's one interactive element.
-            return (
-              <div
-                key={step.key}
-                id="step-dkim"
-                className="panel rise rmp-card sm:col-span-2"
-              >
-                <div className="flex items-baseline justify-between gap-4">
-                  <span className="sys-label">{step.num}</span>
-                  <span className="mono text-xs" style={faint}>
-                    {stepLines[step.key]}
-                  </span>
-                </div>
-                <h3 className="mt-4">{step.title}</h3>
-                <p className="mt-4 text-sm">{step.blurb}</p>
-                <DkimStep initial={status.dkim} email={p.email} />
-              </div>
-            );
-          }
           if (step.key === "directory") {
             return (
               <DirectoryCard
@@ -375,6 +380,64 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
                 ctaTodo={step.cta.todo}
                 ctaDone={step.cta.done}
               />
+            );
+          }
+          if (step.key === "work") {
+            // The email lane's DKIM verdict rides THIS card now (the step
+            // that owns the lane), as one non-interactive line: the card
+            // keeps its single stretched-overlay CTA, and the controls
+            // (dialog, Recheck, email-me) live on /roadmap/work where the
+            // island can resolve a pending check. id="step-dkim" is the
+            // retired step-05 anchor, kept as a landing for old bookmarks;
+            // no sent email ever carried it, so it is a courtesy, not a
+            // contract. scroll-mt clears the sticky header.
+            return (
+              <div
+                key={step.key}
+                id="step-dkim"
+                className="panel rise rmp-card scroll-mt-24"
+              >
+                <div className="flex items-baseline justify-between gap-4">
+                  <span className="sys-label">{step.num}</span>
+                  <span className="mono text-xs" style={faint}>
+                    {stepLines.work}
+                  </span>
+                </div>
+                <h3 className="mt-4">{step.title}</h3>
+                <p className="mt-4 text-sm">{step.blurb}</p>
+                <p className="mono mt-3 text-xs" style={faint}>
+                  {dkimLine}
+                </p>
+                <Link href={step.href} className="rmp-card-cta">
+                  {stepDone.work ? step.cta.done : step.cta.todo}{" "}
+                  <span className="rmp-arrow" aria-hidden="true">
+                    →
+                  </span>
+                </Link>
+              </div>
+            );
+          }
+          if (isPaidStep(step)) {
+            // Bought on /builders, and this server cannot see a purchase, so
+            // the card states the price and says so plainly instead of
+            // pretending to know whether it is done.
+            return (
+              <div key={step.key} className="panel rise rmp-card">
+                <div className="flex items-baseline justify-between gap-4">
+                  <span className="sys-label">{step.num}</span>
+                  <span className="mono text-xs" style={faint}>
+                    {step.fee} · booked separately
+                  </span>
+                </div>
+                <h3 className="mt-4">{step.title}</h3>
+                <p className="mt-4 text-sm">{step.blurb}</p>
+                <Link href={step.href} className="rmp-card-cta">
+                  {step.cta.todo}{" "}
+                  <span className="rmp-arrow" aria-hidden="true">
+                    →
+                  </span>
+                </Link>
+              </div>
             );
           }
           return (

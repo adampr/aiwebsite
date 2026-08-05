@@ -1,4 +1,5 @@
-// GET - cached DKIM verdict for the caller's company domain (§5.18 step 05).
+// GET - cached DKIM verdict for the caller's company domain (§5.18, the
+// email-lane sub-surface of step 04).
 // Read-class: NOT gated by the kill switch (reads stay up). Domain ALWAYS
 // from the server-derived principal. Own rate key (distinct from portal
 // reads: a cache miss triggers outbound DNS).

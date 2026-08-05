@@ -1,10 +1,10 @@
 /* Your AI Roadmap (§5.18) presentation. Every class is rmp-prefixed; this
    file is imported by src/app/roadmap/page.tsx and the (steps) layout, never
    globals.css. ROUND-4 NODE GRAMMAR (owner ruling; the runway node IS the
-   state, no visible words): hollow = not started, static cyan outline = up
-   next, gray-core diamond = examined (ran, nothing to show), pulsing
-   cyan<->flare fill = working, solid cyan = done/live, warn double-diamond
-   = attention. Sr-only spans inside the stop links carry
+   state, no visible words): hollow = not started, dashed hollow = paid
+   offering booked off-portal, static cyan outline = up next, gray-core
+   diamond = examined (ran, nothing to show), pulsing cyan<->flare fill =
+   working, solid cyan = done/live. Sr-only spans inside the stop links carry
    state non-visually (never color-only, WCAG 1.4.1). NOTE the deliberate
    grammar exception: /governance uses sand = done; this runway went all-cyan
    per the owner's four-color ladder.
@@ -144,13 +144,15 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
 
 /* Round 4 node-color ladder (owner ruling: the node IS the state; no
    visible words - sr-only spans carry it non-visually):
-     hollow neutral = not started / unconfirmed
+     hollow neutral = not started
+     DASHED hollow = paid offering, booked off-portal (six-step round)
      static cyan outline + halo = up next (pulse now means working ONLY)
      pulsing cyan<->flare fill = working
      solid cyan = done AND live (Live vs Done is sr-only; the glow width
        difference is flourish, never a claimed differentiator)
    Sand leaves the runway (grammar exception vs /governance noted where the
-   old comment claimed sand = done). */
+   old comment claimed sand = done). The warn double-diamond (attention)
+   retired with the Verified Email step; it is reserved, not reassigned. */
 .rmp-node--done,
 .rmp-node--live {
   border-color: var(--xl-light);
@@ -169,10 +171,20 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   box-shadow: 0 0 8px var(--xl-light-glow);
 }
 
+/* OFFERED (six-step round): steps 03 and 06 are bought on /builders and the
+   purchase is invisible to this server, so they can never join the progress
+   ladder. A DASHED hollow diamond in the same neutral hue: a shape cue in
+   the examined/attention tradition, never a new colour, and never confusable
+   with "not started yet" (dim) which is a step you finish HERE. The visible
+   fee token beside the title and the sr phrase "Booked separately" carry the
+   meaning in the other two channels. */
+.rmp-node--offered {
+  border-style: dashed;
+}
+
 /* EXAMINED (round 5): the system RAN and there is nothing to show yet -
-   directory stamped-zero (Apollo searched, none found) and dkim
-   checked-but-unverifiable. Hollow base + a small neutral CORE: background
-   fills the 9px padding box, the inset ring paints a 2px bg-1 moat over it,
+   directory stamped-zero (Apollo searched, none found). Hollow base + a
+   small neutral CORE: background fills the 9px padding box, the inset ring paints a 2px bg-1 moat over it,
    leaving a ~5px gray core. A SHAPE cue (partial vs empty vs full fill), in
    the attention-ring tradition - never color-only. A FULL gray fill was
    rejected: light-theme --xl-line-bright (L .60 C .04) vs done cyan
@@ -186,17 +198,15 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   box-shadow: inset 0 0 0 2px var(--xl-bg-1);
 }
 
-/* WORKING (round 4): directory import in flight (island-toggled
-   data-working; an ATTRIBUTE, never a class - React refresh would wipe a
-   classList mutation of its managed className) or the dkim check running
-   (server-known .rmp-node--working). Pulses fill between cyan and the
-   near-white flare token (futurism.css; NEVER literal #fff - invisible on
-   light paper). data-gave-up (dkim island, poll ended without a verdict)
-   demotes to the static form; scoped to --working so it is inert after any
-   verdict refresh. Static form (also reduced motion): solid cyan + offset
-   dim ring - distinct from done (no ring), attention (warn ring, hollow),
-   and up next (hollow). */
-.rmp-node--working,
+/* WORKING (round 4): directory import in flight, island-toggled via
+   data-working - an ATTRIBUTE, never a class, because React refresh would
+   wipe a classList mutation of its managed className. Pulses fill between
+   cyan and the near-white flare token (futurism.css; NEVER literal #fff -
+   invisible on light paper). The server-rendered .rmp-node--working class
+   and its data-gave-up demotion left with the DKIM runway node (the DKIM
+   give-up now demotes its own INITIALIZING line on the work step). Static
+   form (reduced motion): solid cyan + offset dim ring, distinct from done
+   (no ring) and up next (hollow). */
 .rmp-node[data-working] {
   border-color: var(--xl-light);
   background: var(--xl-light);
@@ -215,30 +225,8 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
     box-shadow: 0 0 16px 3px var(--xl-flare-glow);
   }
 }
-.rmp-node--working[data-gave-up] {
-  animation: none;
-  background: var(--xl-light);
-  border-color: var(--xl-light);
-  outline: 1px solid var(--xl-light-dim);
-  outline-offset: 2px;
-  box-shadow: none;
-}
-
-/* Step 05 attention (DKIM verdict "missing"): a steady warn-colored outline.
-   Deliberately NO pulse - pulsing is the frontier's invitation and stays
-   unique to it; attention is a flag, not a heartbeat. */
-.rmp-node--attention {
-  border-color: var(--xl-warn);
-  outline: 1px solid var(--xl-warn);
-  outline-offset: 2px;
-}
-
-/* Step 05 unconfirmed is now (round 5) ONLY the failed-lookup case (dkim
-   reason "dns-error", transient 60s cache): it reuses the hollow neutral
-   base with sr "Unconfirmed". Completed-but-unverifiable checks wear
-   .rmp-node--examined instead. The teaser's node 01 wears the STATIC
-   up-next treatment (the old shimmer read as activity; pulse now
-   exclusively means working). */
+/* The teaser's node 01 wears the STATIC up-next treatment (the old shimmer
+   read as activity; pulse now exclusively means working). */
 
 .rmp-stop-text {
   display: flex;
@@ -261,6 +249,19 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   color: var(--xl-text);
 }
 
+/* Fee token on a paid stop (six-step round): the always-visible half of the
+   "booked separately" claim, so the honest reading never depends on hovering
+   the tooltip. aria-hidden in the markup, because a screen reader would
+   voice "$495/mo" as "slash m o"; the sr span says "Booked separately" and
+   the step card below speaks the price in words. */
+.rmp-stop-fee {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.625rem;
+  letter-spacing: 0.14em;
+  color: var(--xl-text-faint);
+  white-space: nowrap;
+}
+
 /* Text state word (round 3: the badge pills are dead): a bare tracked mono
    word, no border, no padding, no radius. Never color-only: the word IS the
    state, color reinforces. */
@@ -273,10 +274,12 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   white-space: nowrap;
 }
 
-/* Initializing (DKIM island + directory busy card + dkim runway node): the
+/* Initializing (DKIM island on the work step + directory busy card): the
    literal text is "INITIALIZING..." with the dots as characters; an animated
    sweep hairline runs under the word (static dim hairline under reduced
-   motion). */
+   motion). The sweep PROMISES live activity, so a caller whose poll episode
+   has given up must drop the --init modifier and keep the bare .rmp-state
+   word: an animation with nothing behind it is a lying state. */
 .rmp-state--init {
   position: relative;
   color: var(--xl-light);
@@ -331,18 +334,32 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   }
 }
 
-/* Desktop: horizontal line through the five diamonds. Five-node fit: the
-   breakpoint moved md (768px) -> lg (1024px) when step 05 landed, and
-   .rmp-stop-text tightened 11rem -> 9rem. Math (round 3, with end caps): 5
-   stops x 9rem max-width (border-box, padding included) + 4 segments x 2rem
-   min-width = 53rem = 848px hard minimum; the two end caps are flex: 0 1
-   2.5rem with min-width 0, so they only occupy leftover space and shrink
-   toward 0 rather than overflow. The narrowest horizontal container is the
-   teaser's max-w-4xl wrap (56rem = 896px): 896 - 848 = 48px leftover, so
-   the caps render at ~24px each there and at their full 40px in wider
-   containers. Fixed 2.5rem caps would need 848 + 80 = 928px and WOULD
-   overflow the teaser wrap; keep them shrinkable. Below 1024px the vertical
-   rail (base styles above) carries all five stops. */
+/* Desktop: horizontal line through the six diamonds. SIX-node fit (six-step
+   round): .rmp-stop-text tightened 9rem -> 8rem with padding 0.75rem ->
+   0.5rem, and the teaser's runway wrap widened max-w-4xl -> max-w-5xl in
+   page.tsx so both the teaser and the hub run the same 1024px container.
+   Breakpoint stays lg (1024px).
+
+   Math (border-box, padding included): 6 stops x 8rem (128px) + 5 segments x
+   2rem min-width (32px) = 768 + 160 = 928px hard minimum. layout.tsx's main
+   is max-w-7xl px-6, so at the 1024px breakpoint floor the content box is
+   1024 - 48 = 976px, and max-w-5xl (1024px) therefore renders at 976px
+   there. 976 - 928 = 48px of slack.
+
+   MEASURED at a 1024px viewport (chromium, shipped titles): the stops do NOT
+   all reach the 8rem cap, since "AI Governance" intrinsically wants 104.7px
+   and "AI Builder Cohort" 118.9px, so stops total 735.6 rather than 768.
+   735.6 + 160 (segments) + 80 (both caps at their full 2.5rem) = 975.6 in a
+   976px box: it fits with the caps UNCOMPRESSED and about 0.4px to spare.
+   The 928px figure is therefore the worst case, reached only if every title
+   grows past the cap; the caps absorb that 48px of growth by shrinking, so
+   keeping them SHRINKABLE (min-width: 0) is what buys the headroom. Verified
+   at 1024/1030/1104/1280/1440: no page overflow, even segments, six nodes
+   top-aligned, titles on two lines from stop 02 to stop 05.
+   Titles wrap to two centered lines inside the 112px text box ("AI Builders
+   / Workshop"); nodes stay top-aligned because the lg stop grid pins row 1
+   at 1.5rem and the runway is align-items: flex-start. Below 1024px the
+   vertical rail (base styles above) carries all six stops. */
 @media (min-width: 1024px) {
   .rmp-runway {
     flex-direction: row;
@@ -376,8 +393,8 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
     align-items: center;
     row-gap: 0.35rem;
     text-align: center;
-    max-width: 9rem;
-    padding: 0 0.75rem;
+    max-width: 8rem;
+    padding: 0 0.5rem;
   }
 
   .rmp-seg {
@@ -402,12 +419,10 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
      SQUARES (round-4 refuter finding). Segments alone drop their transform
      (their animation IS a transform). */
   .rmp-node,
-  .rmp-node--working,
   .rmp-node[data-working] {
     animation: none;
     transition: none;
   }
-  .rmp-node--working,
   .rmp-node[data-working] {
     /* Static working form: solid cyan + offset dim ring. */
     background: var(--xl-light);
@@ -488,9 +503,11 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
 
 /* The CTA: btn--text register (mono, tracked, uppercase) with a hairline
    underline that brightens and glows on hover. Element-agnostic: it is a
-   <Link> on cards 01/03/04 and a <button> on the dkim card and directory
-   idle card. MUST stay position: static so its ::after overlay resolves its
-   containing block at the positioned .rmp-card. */
+   <Link> on every step card and a <button> on the directory idle card.
+   MUST stay position: static so its ::after overlay resolves its containing
+   block at the positioned .rmp-card. NEVER put this class on a control
+   outside an .rmp-card: .panel is also position: relative, so the overlay
+   would blanket that panel and swallow the links inside it. */
 .rmp-card-cta {
   display: inline-block;
   margin-top: 1.25rem;
@@ -596,9 +613,10 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   padding: 0;
 }
 
-/* ---- Step 05 dialog ----------------------------------------------------- */
+/* ---- DKIM dialog ----------------------------------------------------- */
 
-/* Native <dialog> shell for the DKIM instructions (§5.18 round 2). Same
+/* Native <dialog> shell for the DKIM instructions (§5.18 round 2; the
+   email-lane sub-surface of step 04 since the six-step round). Same
    recipe idiom as the /work submission dialog (futurism.css .work-dialog):
    Tailwind's reset styles neither the element nor its ::backdrop, so the
    shell lives here. Slightly wider (38rem) for the numbered instructions. */

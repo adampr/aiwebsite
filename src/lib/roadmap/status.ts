@@ -23,9 +23,14 @@ export type RoadmapStatus = {
   work: { done: boolean; published: number };
   /** Never "done": a scorecard is ongoing. live = at least one builder. */
   scorecard: { live: boolean; contributors: number };
-  /** Step 05 verdict (§5.18 round 2): the DNS-visible DKIM state for the
-   * company's email domain. Budget-bounded so the hub render never blocks on
-   * slow DNS; a timed-out check degrades to verdict "unknown". */
+  /** The DNS-visible DKIM state for the company's email domain (§5.18
+   * round 2). No longer a step of its own: it is the prerequisite for the
+   * email lane of step 04, echoed as one line on the hub's work card and
+   * rendered in full by the DkimStep island on /roadmap/work, which calls
+   * checkDkim itself and shares this result through the module's in-memory
+   * cache (10 min for a real verdict, 60s for a dns-error). Budget-bounded
+   * so the hub render never blocks on slow DNS; a timed-out check degrades
+   * to verdict "unknown". */
   dkim: DkimCheck;
 };
 

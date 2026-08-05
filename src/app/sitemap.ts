@@ -32,7 +32,7 @@ const STATIC_LASTMOD: Record<string, string> = {
   "/governance": "2026-07-21",
   // §5.18: the /roadmap TEASER only — portal child paths are noindex and
   // the check-roadmap-caching gate bans any child-path string in this file.
-  "/roadmap": "2026-08-04",
+  "/roadmap": "2026-08-05",
   "/contact": "2026-07-13",
   "/methodology": "2026-07-25",
   "/privacy": "2026-07-16",

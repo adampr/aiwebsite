@@ -1,9 +1,16 @@
-// Roadmap step 3: Submit AI-Built Work (§5.18). Three zones: how work gets
-// in (the SHARED /work submission dialog + the email lane), the viewer's
+// Roadmap step 04: Submit AI-Built Work (§5.18). Three zones: how work gets
+// in (the SHARED /work submission dialog + the email lane, whose DKIM
+// prerequisite is the DkimStep island inside the email panel), the viewer's
 // own submissions in review (admins also see company submission METADATA,
 // never held or failed content), and the company's published cards through
 // the SAME card template as /work. Submitting is member-actionable; there
 // is no admin gate on building things.
+//
+// checkDkim rides this page's Promise.all rather than roadmapStatus() (which
+// would drag three unrelated queries in). It shares the module's in-memory
+// per-process cache with the hub (10 minutes for a real verdict, 60s for a
+// dns-error), so a hub visit warms this page and the second probe is usually
+// free.
 
 import type { Metadata } from "next";
 import { requireRoadmapPage } from "@/lib/roadmap/access";
@@ -14,7 +21,9 @@ import {
   type CompanySubmissionMeta,
   type PublishedCard,
 } from "@/lib/work/db";
+import { checkDkim } from "@/lib/roadmap/dkim";
 import { CommunityCard } from "@/components/work-card";
+import { DkimStep } from "@/components/roadmap/dkim-step";
 import { EmailLink } from "@/components/email-link";
 import { fmtDate } from "@/components/roadmap/dates";
 import { RetrySubmission, RoadmapSubmitEntry } from "./work-islands";
@@ -48,9 +57,10 @@ export default async function RoadmapWorkPage() {
   const company = gate.principal.company;
   const isAdmin = p.companyRole === "admin";
 
-  const [mine, cards] = await Promise.all([
+  const [mine, cards, dkim] = await Promise.all([
     mySubmissions(p.email),
     publishedCards({ companyId: company.id }),
+    checkDkim(company.domain, { budgetMs: 800 }),
   ]);
   let companyMeta: CompanySubmissionMeta[] = [];
   if (isAdmin) {
@@ -61,7 +71,7 @@ export default async function RoadmapWorkPage() {
   return (
     <div className="space-y-14">
       <section>
-        <span className="sys-label">Step 03 · Submit AI-Built Work</span>
+        <span className="sys-label">Step 04 · Submit AI-Built Work</span>
         <h1 className="mt-4">Ship it, then show it</h1>
         <p className="mt-4 max-w-3xl text-sm">
           Built something with AI? Submit it and an automated editorial panel
@@ -91,6 +101,12 @@ export default async function RoadmapWorkPage() {
               Send it from your {company.domain}{" "}
               address; that is how it reaches your company&apos;s roadmap.
             </p>
+            <p className="mt-3 text-xs" style={faint}>
+              This lane only: mail from {company.domain}{" "}
+              has to be DKIM-signed, which is how we know a submission really
+              came from your team. The form beside this one needs none of it.
+            </p>
+            <DkimStep initial={dkim} email={p.email} />
           </div>
         </div>
         <p className="mt-4 max-w-3xl text-xs" style={faint}>

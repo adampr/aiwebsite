@@ -1,4 +1,5 @@
-// Gate + shell for the four roadmap step pages (§5.18). force-dynamic and
+// Gate + shell for the four roadmap step pages (§5.18; steps 03 and 06 are
+// paid training on /builders and have no page here). force-dynamic and
 // noindex; NO revalidate export anywhere under src/app/roadmap (gate-script
 // rule). The layout renders denial screens itself (rfp doctrine: explain,
 // never bounce) and each step page ALSO calls requireRoadmapPage - defense

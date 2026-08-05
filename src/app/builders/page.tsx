@@ -68,8 +68,12 @@ export default function BuildersPage() {
         {/* Subgrid keeps the two cards' rows in lockstep (badge, title, price,
             list, CTA, fine print) so the checkout buttons align horizontally. */}
         <div className="grid gap-6 sm:grid-cols-2 sm:grid-rows-[auto_auto_auto_auto_1fr_auto_auto]">
-          {/* Workshop — primary */}
-          <div className="panel panel--lightline rise min-w-0 sm:row-span-7 sm:grid sm:grid-rows-subgrid">
+          {/* Workshop, primary. id + scroll-mt: /roadmap step 03 deep-links
+              here (config.ts href "/builders#workshop"). */}
+          <div
+            id="workshop"
+            className="panel panel--lightline rise min-w-0 scroll-mt-24 sm:row-span-7 sm:grid sm:grid-rows-subgrid"
+          >
             {soldOutVisible && workshopOpen ? (
               // Sold-out strip has no dot: the breathing dot is the "live,
               // bookable" signal and belongs only on the open session.
@@ -89,7 +93,7 @@ export default function BuildersPage() {
                 {workshopOpen ? "Next session: August 27" : "Next date: TBA"}
               </span>
             )}
-            <h3 className="mt-6">Virtual Workshop</h3>
+            <h3 className="mt-6">AI Builders Workshop</h3>
             <p className="mt-2 text-sm" style={{ color: "var(--xl-text-faint)" }}>
               Build real workflows in one morning.
             </p>
@@ -140,9 +144,10 @@ export default function BuildersPage() {
             </p>
           </div>
 
-          {/* Cohort */}
+          {/* Cohort. id + scroll-mt: /roadmap step 06 deep-links here. */}
           <div
-            className="panel rise min-w-0 sm:row-span-7 sm:grid sm:grid-rows-subgrid"
+            id="cohort"
+            className="panel rise min-w-0 scroll-mt-24 sm:row-span-7 sm:grid sm:grid-rows-subgrid"
             style={{ transitionDelay: "120ms" }}
           >
             {/* self-start stops the subgrid from stretching this badge to the

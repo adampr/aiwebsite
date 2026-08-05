@@ -48,7 +48,7 @@ export default async function RoadmapScorecardPage() {
   return (
     <div className="space-y-10">
       <section>
-        <span className="sys-label">Step 04 · Employee Scorecard</span>
+        <span className="sys-label">Step 05 · Employee Scorecard</span>
         <h1 className="mt-4">Watch builders emerge</h1>
       </section>
 

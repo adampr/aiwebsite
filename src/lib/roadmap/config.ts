@@ -34,10 +34,11 @@ export const ROADMAP_CAPS = {
   directoryWritesPerUserPerHour: 60,
   docWritesPerUserPerHour: 6,
   portalReadsPerUserPerHour: 240,
-  // DKIM step 05 (§5.18 round 2). Status reads get their own key (a cache
-  // miss triggers outbound DNS); the per-company recheck cap bounds a
-  // tenant's total DNS traffic regardless of headcount; the email caps are
-  // tight because the route sends mail.
+  // DKIM email-lane checks (§5.18 round 2; since the six-step round these
+  // are a sub-surface of Submit AI-Built Work, not their own step). Status
+  // reads get their own key (a cache miss triggers outbound DNS); the
+  // per-company recheck cap bounds a tenant's total DNS traffic regardless
+  // of headcount; the email caps are tight because the route sends mail.
   // 120 (round 3): the Initializing poll loop reads status up to 10 times
   // per episode; reads are cheap (concurrent polls join the in-flight
   // resolution and cache hits do no DNS).
@@ -89,8 +90,21 @@ export function apolloDailyCallCap(env: NodeJS.ProcessEnv): number {
   return Number.isFinite(n) && n > 0 ? n : ROADMAP_CAPS.apolloCallsPerDayDefault;
 }
 
-/** The four roadmap steps in progressive order. Rendering, status derivation,
- * and copy all iterate this one list so surfaces can never disagree. */
+/** The six roadmap steps in progressive order. Rendering, status derivation,
+ * and copy all iterate this one list so surfaces can never disagree.
+ *
+ * Steps 03 and 06 are PAID training sold on /builders (Ticket Tailor and
+ * Stripe). They carry a `fee` token and NOTHING else numeric: prices are
+ * volatile facts owned by /builders, so seat caps and session dates never
+ * appear here (a stale roadmap card would contradict the page it links to).
+ * They get no `(steps)` page because a purchase is invisible to this server
+ * (neither checkout is linked to a workspace), so there is nothing
+ * tenant-specific to render; /builders already owns the date windows and
+ * the checkout buttons. Consequently they can never compute "done" and stay
+ * outside frontier and segment state (runway.tsx).
+ *
+ * PRICE SWEEP: a price change has to move together in three places, this
+ * list's `fee` tokens, the /roadmap teaser FAQ answer, and /builders. */
 export const ROADMAP_STEPS = [
   {
     key: "governance",
@@ -113,18 +127,35 @@ export const ROADMAP_STEPS = [
     cta: { todo: "Add your team", done: "Review your team" },
   },
   {
-    key: "work",
+    key: "workshop",
     num: "03",
+    title: "AI Builders Workshop",
+    href: "/builders#workshop",
+    fee: "$995",
+    blurb:
+      "Train your first builders: a four-hour live virtual workshop where " +
+      "your team builds real AI workflows and automations they keep. Seats " +
+      "are limited and sold per session.",
+    // Availability-neutral on purpose: /builders swaps between a bookable
+    // session, a sold-out strip, and a "next date TBA" state, so a verb
+    // like "reserve seats" would go stale on its own clock. This one is
+    // also true for a company that already bought.
+    cta: { todo: "See dates and pricing", done: "See dates and pricing" },
+  },
+  {
+    key: "work",
+    num: "04",
     title: "Submit AI-Built Work",
     href: "/roadmap/work",
     blurb:
-      "Ship something built with AI and submit it. An editorial panel " +
-      "reviews it and publishes it to your company's private Your Work page.",
+      "Ship something built with AI and submit it on the site or by email. " +
+      "An editorial panel reviews it and publishes it to your company's " +
+      "private Your Work page.",
     cta: { todo: "Submit your first build", done: "See what is published" },
   },
   {
     key: "scorecard",
-    num: "04",
+    num: "05",
     title: "Employee Scorecard",
     href: "/roadmap/scorecard",
     blurb:
@@ -132,22 +163,29 @@ export const ROADMAP_STEPS = [
       "directory. Published cards only, never drafts or attempts.",
     cta: { todo: "See who is building", done: "See who is building" },
   },
-  // Step 05 (§5.18 round 2): a verdict step, not a task step. It has NO
-  // (steps) page - the hub panel opens a dialog - so href is a hub anchor
-  // (the caching gate bans new child paths). The runway gives it its own
-  // states (attention/unconfirmed) and excludes it from frontier logic.
   {
-    key: "dkim",
-    num: "05",
-    title: "Verified Email",
-    href: "/roadmap#step-dkim",
+    key: "cohort",
+    num: "06",
+    title: "AI Builder Cohort",
+    href: "/builders#cohort",
+    fee: "$495/mo",
     blurb:
-      "Prove mail from your domain is really yours. DKIM signing lets " +
-      "email submissions from your team reach your roadmap directly.",
+      "Keep your builders building: a weekly one-hour live group session " +
+      "in a small group, working AI into your real work month over month.",
+    cta: { todo: "See the cohort", done: "See the cohort" },
   },
 ] as const;
 
 export type RoadmapStepKey = (typeof ROADMAP_STEPS)[number]["key"];
+export type RoadmapStep = (typeof ROADMAP_STEPS)[number];
+/** A step you buy rather than complete. */
+export type PaidRoadmapStep = Extract<RoadmapStep, { fee: string }>;
+
+/** The ONE paid-step predicate. Every surface narrows through this rather
+ * than listing keys, so adding a paid step cannot leave a surface behind. */
+export function isPaidStep(step: RoadmapStep): step is PaidRoadmapStep {
+  return "fee" in step;
+}
 
 /** The ONE sessionStorage guard key for the directory auto-init kick (round
  * 3). Keyed by DOMAIN, not company id (the client never sees the uuid).

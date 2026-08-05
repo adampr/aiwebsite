@@ -1,4 +1,5 @@
-// DKIM instruction copy (§5.18 step 05): the ONE source both the dialog and
+// DKIM instruction copy (§5.18, the email-lane sub-surface of step 04):
+// the ONE source both the dialog and
 // the emailed instructions render from, so they can never drift. Client-safe
 // (pure strings). No em dashes. Refutation-hardened wording:
 //  - "ok" claims RECORDS PUBLISHED, never "your mail is verified" (DNS

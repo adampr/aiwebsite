@@ -1,13 +1,15 @@
 "use client";
 
-// Step 05 hub-panel island (§5.18 round 2): the DKIM step has NO (steps)
-// page; this action area IS its surface. A status line plus one button
-// opening a native <dialog> that renders dkimCopy(check) - the ONE copy
-// source shared with the instructions email, so this component never writes
-// its own instruction text. Recheck updates local state AND calls
-// router.refresh() so the server-rendered runway and panel line resync to
-// the same fresh verdict. Escape closes natively (no onCancel preventDefault:
-// nothing here is ever mid-upload). No em dashes.
+// DKIM island (§5.18 round 2; relocated in the six-step round). Verified
+// Email is no longer a step: DKIM is the prerequisite for ONE lane of step
+// 04, emailing work in, so this lives inside the "Email it to Tron" panel on
+// /roadmap/work and the hub only echoes the verdict as a line of text. A
+// status line plus one button opening a native <dialog> that renders
+// dkimCopy(check) - the ONE copy source shared with the instructions email,
+// so this component never writes its own instruction text. Recheck updates
+// local state AND calls router.refresh() so the server-rendered page resyncs
+// to the same fresh verdict. Escape closes natively (no onCancel
+// preventDefault: nothing here is ever mid-upload). No em dashes.
 //
 // Round 3, Initializing: the status read races DNS on an 800ms budget, so a
 // cold-cache render commonly arrives with timedOut === true while the
@@ -18,9 +20,13 @@
 // adopted with ONE router.refresh(). Give-up sets an EPISODE-level flag and
 // never refreshes on a still-timedOut synthetic (nothing new to show). The
 // initializing copy instructs a reload, so it is honest without JS and
-// needs no <noscript>. The CTA button stays ENABLED throughout (the
-// dialog's unknown/dns-error copy covers a pending check), and the dialog's
-// Recheck is only ever disabled during its own in-flight fetch.
+// needs no <noscript>. On give-up the INITIALIZING word drops its --init
+// modifier: that modifier animates a sweep hairline which PROMISES live
+// activity, and once the episode has stopped polling there is nothing behind
+// it (this replaced the runway node's data-gave-up demotion, which left with
+// the node). The CTA button stays ENABLED throughout (the dialog's
+// unknown/dns-error copy covers a pending check), and the dialog's Recheck
+// is only ever disabled during its own in-flight fetch.
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -42,7 +48,10 @@ function panelLine(check: DkimCheck): string {
   if (check.verdict === "ok")
     return "Signing records for your domain are published.";
   if (check.verdict === "missing")
-    return "Your domain is not signing its email yet.";
+    // Scoped to what was measured: DNS shows no live signing records. It
+    // must NOT say "your domain is not signing", which a gateway signing
+    // under its own selector would make false (dkim-copy's GATEWAY_CAVEAT).
+    return "We did not find published signing records for your domain.";
   return "We could not confirm your domain's signing setup from here.";
 }
 
@@ -126,19 +135,6 @@ export function DkimStep({
       setGaveUp(true);
     })();
   }
-
-  // Round 4: the runway's dkim node (#rmp-node-dkim, server-rendered with
-  // .rmp-node--working while timedOut) must stop PROMISING activity once the
-  // poll episode ends without a verdict: stamp data-gave-up, which demotes
-  // the pulse to the static working form. The CSS selector is scoped to
-  // .rmp-node--working, so a stale stamp is inert after any verdict refresh;
-  // an explicit Recheck clears gaveUp and the stamp with it.
-  useEffect(() => {
-    const node = document.getElementById("rmp-node-dkim");
-    if (!node) return;
-    if (initializing && gaveUp) node.setAttribute("data-gave-up", "");
-    else node.removeAttribute("data-gave-up");
-  }, [initializing, gaveUp]);
 
   // Arm the poll once per mount when the SSR state is already Initializing.
   // useRef StrictMode guard; deliberately no cleanup cancel (StrictMode's
@@ -291,7 +287,9 @@ export function DkimStep({
     <div>
       {initializing ? (
         <div className="mt-4">
-          <span className="rmp-state rmp-state--init">Initializing...</span>
+          <span className={"rmp-state" + (gaveUp ? "" : " rmp-state--init")}>
+            Initializing...
+          </span>
           {/* role=status: the one announcement channel for the check's
               resolution (WCAG 4.1.3); the runway is never a live region. */}
           <p className="mt-3 text-sm" role="status">
@@ -303,21 +301,17 @@ export function DkimStep({
       ) : (
         <p className="mt-4 text-sm">{panelLine(check)}</p>
       )}
-      {/* rmp-card-cta: the uniform overlay pattern - this button is the dkim
-          card's single interactive element and its ::after stretches over
-          the card. The <dialog> it opens is top-layer, so it renders and
-          receives clicks above the overlay. NEVER disabled during
+      {/* A plain btn, NEVER .rmp-card-cta: that class carries a stretched
+          ::after overlay meant for an .rmp-card, and the enclosing .panel is
+          also position: relative, so the overlay would blanket this panel and
+          swallow the mailto link beside it. NEVER disabled during
           Initializing: it opens the dialog, whose unknown/dns-error copy
           already covers a pending check. */}
-      <button type="button" className="rmp-card-cta" onClick={open}>
-        {panelButtonLabel(check)}
-        {check.verdict === "ok" && (
-          <span className="rmp-arrow" aria-hidden="true">
-            {" "}
-            →
-          </span>
-        )}
-      </button>
+      <div className="mt-4">
+        <button type="button" className="btn" onClick={open}>
+          {panelButtonLabel(check)}
+        </button>
+      </div>
 
       <dialog
         ref={dialogRef}
@@ -326,7 +320,9 @@ export function DkimStep({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <span className="sys-label">Your AI Roadmap / Verified Email</span>
+            <span className="sys-label">
+              Your AI Roadmap / Email it to Tron
+            </span>
             <h2
               id="rmp-dkim-title"
               ref={headingRef}

@@ -116,8 +116,9 @@ export async function notifyRequestApproved(opts: {
   });
 }
 
-/** DKIM setup instructions to the SESSION'S OWN address only (§5.18 step
- * 05). Returns the send outcome: this is the one notify whose result the
+/** DKIM setup instructions to the SESSION'S OWN address only (§5.18; the
+ * email-lane sub-surface of step 04). Returns the send outcome: this is the
+ * one notify whose result the
  * user is told about (the dialog renders "Sent to {email}" or a failure),
  * so best-effort fire-and-forget would lie to them. */
 export async function notifyDkimInstructions(opts: {
@@ -133,7 +134,9 @@ export async function notifyDkimInstructions(opts: {
       ``,
       opts.instructionsText,
       ``,
-      `When the DNS change is in, open ${SITE}/roadmap and hit Recheck on the Verified Email step.`,
+      `When the DNS change is in, open ${SITE}/roadmap/work, open the DKIM check in the "Email it to Tron" panel, and hit Recheck.`,
+      ``,
+      `If signing in lands you on the roadmap home instead, open the Submit AI-Built Work step from there.`,
     ].join("\n"),
   });
 }

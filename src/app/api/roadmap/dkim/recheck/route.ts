@@ -1,4 +1,4 @@
-// POST - fresh DKIM probe bypassing the cache (§5.18 step 05, the dialog's
+// POST - fresh DKIM probe bypassing the cache (§5.18 email lane, the dialog's
 // Recheck button). Mutates nothing (a DNS read), so NOT gated by the kill
 // switch. The per-company key bounds a tenant's total outbound DNS
 // regardless of headcount.

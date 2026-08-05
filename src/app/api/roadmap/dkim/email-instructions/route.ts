@@ -1,4 +1,4 @@
-// POST - email the DKIM setup instructions (§5.18 step 05). The recipient is
+// POST - email the DKIM setup instructions (§5.18 email lane). The recipient is
 // HARDCODED to the session's own address; the request body is ignored
 // entirely, so there is no relay and no target parameter. Sends mail, so it
 // IS gated by the kill switch and carries the tightest caps. The route
