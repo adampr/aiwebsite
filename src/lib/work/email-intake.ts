@@ -896,7 +896,7 @@ export async function handleWorkEmail(
   }
   if (parsed.blurb.length > WORK_CAPS.blurbMaxChars)
     notes.push(
-      `Also: your description came out at ${parsed.blurb.length} characters. The web form caps descriptions at 900, but by email I kept your full text with the submission; the panel writes the card from your attached documents either way.`
+      `Also: your description came out at ${parsed.blurb.length} characters. The web form caps descriptions at ${WORK_CAPS.blurbMaxChars}, but by email I kept your full text with the submission; the panel writes the card from your attached documents either way.`
     );
   else if (parsed.blurb.length === 0)
     notes.push(

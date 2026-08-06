@@ -275,9 +275,9 @@ export function SubmissionForm({
           style={inputStyle}
           value={blurb}
           onChange={(e) => setBlurb(e.target.value)}
-          maxLength={900}
+          maxLength={5000}
           rows={4}
-          placeholder="Optional context: what it does, who uses it, what it replaced (up to 900 characters). The card's claims come from your documents."
+          placeholder="Optional context: what it does, who uses it, what it replaced (up to 5000 characters). The card's claims come from your documents."
         />
       </div>
       <div>

@@ -26,12 +26,15 @@ export const WORK_CAPS = {
   titleMinChars: 4,
   titleMaxChars: 60,
   blurbMinChars: 80,
-  blurbMaxChars: 900,
+  // Raised 900 -> 5000 (owner directive 2026-08-06). Safe because the blurb
+  // is context-only and panel prompts slice at blurbPromptMaxChars.
+  blurbMaxChars: 5000,
   // Email intake only (§5.16 natural-email round, 2026-08-03): people write
-  // normally by email, so the acceptance band is far wider than the form's
-  // (which has a live counter). Stored VERBATIM (uncapped text column; the
+  // normally by email, so the acceptance band is wider than the form's
+  // (which enforces its cap live). Stored VERBATIM (uncapped text column; the
   // blurb is context-only, never published); panel prompts slice instead.
-  emailBlurbMaxChars: 4000,
+  // Raised with blurbMaxChars 2026-08-06 to keep the email band the wider one.
+  emailBlurbMaxChars: 10_000,
   // The slice of the description a panel prompt carries (lint.ts
   // blurbPromptBlock). Bounds description growth in the 80k-char prompt
   // corpus without trimming what is stored.
