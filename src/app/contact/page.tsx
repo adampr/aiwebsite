@@ -68,6 +68,81 @@ export default function ContactPage() {
         </section>
       </div>
 
+      {/* What Tron handles now vs. what he routes to a human */}
+      <section>
+        <span className="sys-label">Expectations</span>
+        <h2 className="mt-6">What Tron answers, and what he hands off</h2>
+        <p className="mt-4 text-sm">
+          Tron Netter is a real AI agent, not a chat widget that files a
+          ticket. He answers immediately, on any channel, at any hour — and
+          when a question needs a person, he says so rather than guessing.
+        </p>
+        <div className="mt-6 grid gap-6 sm:grid-cols-2">
+          <div className="panel">
+            <h3 className="text-base">Answered on the spot</h3>
+            <ul className="mt-3 space-y-2 text-sm">
+              <li>
+                How our AI-powered managed IT services work, and what is
+                actually automated versus human-supervised
+              </li>
+              <li>
+                What the <Link href="/builders">AI Builders</Link> program
+                covers and who each session is for
+              </li>
+              <li>
+                How we approach <Link href="/governance">AI governance</Link> —
+                data handling, model choice, and where humans stay in the loop
+              </li>
+              <li>
+                Examples from our <Link href="/work">work</Link>, including
+                what did not go to plan
+              </li>
+            </ul>
+          </div>
+          <div className="panel">
+            <h3 className="text-base">Routed to a person</h3>
+            <ul className="mt-3 space-y-2 text-sm">
+              <li>
+                Pricing for a specific environment, contracts, and anything
+                requiring a signature
+              </li>
+              <li>
+                Active incidents on a system we already manage — call or text,
+                do not wait on chat
+              </li>
+              <li>
+                Press and analyst enquiries, and partnership or vendor
+                proposals
+              </li>
+              <li>
+                Security disclosures, data-deletion requests, and anything
+                touching a named individual&apos;s records
+              </li>
+            </ul>
+          </div>
+        </div>
+        <p className="mt-6 text-sm">
+          Looking for traditional managed IT rather than the AI practice? XL.net
+          is the parent business and handles that directly at{" "}
+          <a href="https://www.xl.net" rel="noopener">
+            xl.net
+          </a>
+          . Interested in the roleplay training product instead? That is a
+          separate team at{" "}
+          <a href="https://roleplay.xl.net" rel="noopener">
+            roleplay.xl.net
+          </a>
+          .
+        </p>
+        <p className="mt-4 text-sm opacity-80">
+          However you reach us, the same agent answers. There is no queue, no
+          form, and no callback window — email, phone, text and chat all reach
+          Tron Netter directly, and every one of them is answered 24/7. If you
+          would rather talk to a human from the outset, say exactly that and he
+          will arrange it instead of trying to resolve it himself.
+        </p>
+      </section>
+
       {/* Chat with Tron Netter showcase */}
       <section className="panel--void beams relative text-center">
         <div className="relative z-10 mx-auto max-w-xl px-6">
