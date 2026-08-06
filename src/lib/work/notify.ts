@@ -11,6 +11,7 @@ import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 import { HELD_NEXT_STEPS, KIND_LABELS, type WorkKind } from "./config";
 import { archiveDataById, type SubmissionRow } from "./db";
 import { toDeliverableAttachment } from "./retention-encoding";
+import { screenPackageForMail, type ScreenResult } from "./mail-screen";
 import type { WorkCard } from "./lint";
 
 function kindLabel(kind: string): string {
@@ -38,6 +39,52 @@ const SITE = "https://ai.xl.net";
  * It is NOT evidence of delivery, and NOTHING may delete data on the strength
  * of it — see deliverArchiveRetention.
  */
+/** Screen every payload, replacing only a package the provider would
+ * refuse. Text docs (the standalone SKILL.md) are never screened: they
+ * carry no entries and deliver as-is. Failure returns the file untouched. */
+async function screenFiles(
+  files: { name: string; data: Buffer }[],
+  originalSha: string | null
+): Promise<{ file: { name: string; data: Buffer }; screen: ScreenResult | null }[]> {
+  const out: {
+    file: { name: string; data: Buffer };
+    screen: ScreenResult | null;
+  }[] = [];
+  for (const f of files) {
+    if (!looksLikeArchive(f.data)) {
+      out.push({ file: f, screen: null });
+      continue;
+    }
+    const screen = await screenPackageForMail(f.name, f.data, originalSha);
+    out.push({
+      file:
+        screen.kind === "screened"
+          ? { name: screenedName(f.name), data: screen.zip }
+          : f,
+      screen,
+    });
+  }
+  return out;
+}
+
+function looksLikeArchive(data: Buffer): boolean {
+  return (
+    data.length >= 4 &&
+    data[0] === 0x50 &&
+    data[1] === 0x4b &&
+    (data[2] === 0x03 || data[2] === 0x05 || data[2] === 0x07)
+  );
+}
+
+/** The screened copy never carries the original's filename: the name, the
+ * decode target and the in-zip README each say so independently. */
+function screenedName(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0
+    ? `${name.slice(0, dot)}.screened${name.slice(dot)}`
+    : `${name}.screened.zip`;
+}
+
 export async function sendArchiveRetentionEmail(
   row: SubmissionRow,
   files: { name: string; data: Buffer }[]
@@ -49,8 +96,17 @@ export async function sendArchiveRetentionEmail(
     );
     return false;
   }
-  const prepared = files.map(toDeliverableAttachment);
+  // Screen the package against the provider's blocked-type policy before
+  // armoring: the provider decodes the base64 text and refuses the whole
+  // message when a blocked type is inside (2026-08-06 evidence). A screen
+  // failure returns the original, so this can never reduce what is sent
+  // below today's behavior, and it never throws into the publish path.
+  const screened = await screenFiles(files, row.archiveSha256 ?? null);
+  const prepared = screened.map((s) => toDeliverableAttachment(s.file));
   const armored = prepared.filter((p) => p.encoded);
+  const partial = screened.find((s) => s.screen?.kind === "screened");
+  const partialScreen =
+    partial?.screen?.kind === "screened" ? partial.screen : null;
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -75,14 +131,21 @@ export async function sendArchiveRetentionEmail(
         //
         // The recipient IS the overseer by construction here, so there is
         // nothing for a BCC to add — only something for it to leak.
-        subject: `[aiwebsite] /work submission files: ${row.title}`,
+        // The subject and the lead line are the two fields a mailbox
+        // indexes, so a partial says so THERE, not only inside the
+        // attachment (refutation panel, 2026-08-06).
+        subject: partialScreen
+          ? `[aiwebsite] /work submission files (SCREENED COPY): ${row.title}`
+          : `[aiwebsite] /work submission files: ${row.title}`,
         // withTronSignature: this raw fetch bypasses sendGovernanceEmail (it needs
         // attachments, a 60s timeout, and the no-BCC carve-out above), so the
         // owner's always-signed ruling is applied here by hand.
         // Body lines and the attachments array both derive from `prepared`,
         // so what the mail says is attached can never desync from what is.
         text: withTronSignature([
-          `Retention copy of the original files behind a published /work card.`,
+          partialScreen
+            ? `SCREENED retention copy: some uploaded files are NOT attached.`
+            : `Retention copy of the original files behind a published /work card.`,
           ``,
           `Title: ${row.title}`,
           `Kind: ${kindLabel(row.kind)}`,
@@ -106,16 +169,36 @@ export async function sendArchiveRetentionEmail(
                 ``,
               ]
             : []),
-          `Package SHA-256${armored.length > 0 ? " (hash of the restored original file, not of the attached .b64.txt text)" : ""}: ${row.archiveSha256 ?? "n/a"}`,
+          ...(partialScreen
+            ? [
+                ``,
+                `Removed before sending, ${partialScreen.removed.length} of ${partialScreen.total} entries (${partialScreen.kept} kept):`,
+                ...partialScreen.removed.map(
+                  (r) =>
+                    `  ${r.path} (${r.declaredBytes} bytes declared, ${r.reason})`
+                ),
+                ``,
+                `SHA-256 of the attached screened copy: ${partialScreen.sha256}`,
+                `SHA-256 of the uploaded package, which is NOT attached: ${row.archiveSha256 ?? "n/a"}`,
+              ]
+            : [
+                `Package SHA-256${armored.length > 0 ? " (hash of the restored original file, not of the attached .b64.txt text)" : ""}: ${row.archiveSha256 ?? "n/a"}`,
+              ]),
           ...(row.mdSha256 ? [`SKILL.md SHA-256: ${row.mdSha256}`] : []),
           `Submitted: ${row.createdAt.toISOString()}`,
           ``,
           ...(armored.length > 0
             ? [
-                `The archive is attached as base64 text because mail providers block a list of file types inside archive attachments and bounce the whole message, and renaming the archive does not help; plain text passes. That blocking is what kept earlier retention copies from arriving.`,
+                `Archives are attached as base64 text because mail providers block a list of file types inside archive attachments and refuse the whole message when they find one. The provider decodes the text and screens what is inside, so entries it refuses are removed before sending rather than encoded around them.`,
               ]
             : []),
-          `A copy of these files also remains permanently on the submission row: since 2026-08-04 they are never deleted after this email, because a bounced retention email once destroyed the only copy.`,
+          ...(partialScreen
+            ? [
+                `The complete upload, including every entry listed above, is stored on submission row ${row.id}. Those bytes remain only on the server: retrieving them is an operator action there (npm run work:archive -- ${row.id}), and there is no second copy of them today.`,
+              ]
+            : [
+                `A copy of these files also remains permanently on the submission row: since 2026-08-04 they are never deleted after this email, because a bounced retention email once destroyed the only copy.`,
+              ]),
         ].join("\n")),
         attachments: prepared.map((p) => ({
           filename: p.attachedName,

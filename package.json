@@ -23,6 +23,7 @@
     "test:roadmap": "tsx scripts/roadmap-tests.ts",
     "test:workupdate": "tsx scripts/work-update-flow-tests.ts",
     "work:rerun": "tsx scripts/work-panel-rerun.ts",
+    "work:archive": "tsx scripts/work-archive-export.ts",
     "test:peg": "node scripts/peg-score-tests.mjs",
     "test:keywords": "node scripts/title-keywords-tests.mjs",
     "qa:hi-speed": "node scripts/qa/hi-speed-test.mjs",

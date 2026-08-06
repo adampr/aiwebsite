@@ -54,6 +54,20 @@ export function mailSafeName(name: string): string {
   return safe || "upload";
 }
 
+/** Same reduction for an in-archive path printed in the mail. Keeps `/`
+ * so the tree is still readable; everything else outside
+ * `[A-Za-z0-9._/-]` collapses. Entry paths are submitter-controlled and
+ * `normalizePath` (extract.ts) permits quotes, `$`, backticks and
+ * NEWLINES, so an unsanitized path printed beside the decode one-liner
+ * would forge body lines (refutation panel, 2026-08-06). */
+export function mailSafePath(path: string): string {
+  const safe = path
+    .replace(/[^A-Za-z0-9._/-]+/g, "_")
+    .replace(/^[/.]+/, "")
+    .slice(0, 200);
+  return safe || "entry";
+}
+
 /** Cheap, total binary sniff: zip magic (PK\x03\x04 / PK\x05\x06 /
  * PK\x07\x08 covers .zip, .skill and any zip under a text name) or a NUL
  * byte in the first 8 KB. Never parses, never throws; text with no NULs

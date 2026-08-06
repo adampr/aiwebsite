@@ -57,8 +57,17 @@ import {
 } from "../src/lib/work/repair";
 import {
   MAIL_SAFE_TEXT_EXT,
+  mailSafePath,
   toDeliverableAttachment,
 } from "../src/lib/work/retention-encoding";
+import {
+  blockedByBytes,
+  blockedByName,
+  finalExt,
+  GMAIL_BLOCKED_EXT,
+  PRECAUTION_BLOCKED_EXT,
+} from "../src/lib/work/blocked-types";
+import { screenPackageForMail } from "../src/lib/work/mail-screen";
 const PROSE = "This tool ingests Autotask ticket exports and produces a scored summary for the service desk. ".repeat(12);
 
 async function zipOf(files: Record<string, string>): Promise<Buffer> {
@@ -1905,13 +1914,36 @@ async function main() {
     // archives with blocked inner types, so raw upload bytes must never be
     // attached directly again.
     assert.ok(
-      retSlice.includes("files.map(toDeliverableAttachment)"),
+      /screened\.map\(\(s\) => toDeliverableAttachment\(s\.file\)\)/.test(
+        retSlice
+      ),
       "retention attachments go through the mail-safe encoder"
+    );
+    assert.ok(
+      retSlice.includes("await screenFiles("),
+      "the package is screened against the provider's blocked-type policy first"
     );
     assert.ok(
       !/attachments:\s*files\.map/.test(retSlice) &&
         !retSlice.includes("f.data.toString"),
       "raw upload bytes are never attached directly"
+    );
+    // The screen may only ever REPLACE a package with a screened copy or
+    // return the original: an "attach nothing" branch would turn a bounce
+    // (an alarm) into a silent loss.
+    const screenSrc = readFileSync("src/lib/work/mail-screen.ts", "utf8");
+    assert.ok(
+      !/kind:\s*"none"/.test(screenSrc),
+      "no failure path attaches nothing; every degrade returns the original"
+    );
+    assert.equal(
+      (screenSrc.match(/kind: "original"/g) ?? []).length >= 5,
+      true,
+      "every failure branch returns the original"
+    );
+    assert.ok(
+      screenSrc.includes("mailSafePath(e.name)"),
+      "entry paths are sanitized before they reach owner-facing copy"
     );
     assert.ok(
       retSlice.includes('openssl base64 -d -in "'),
@@ -2202,6 +2234,93 @@ async function main() {
       toDeliverableAttachment({ name: "-rf.zip", data: zipBytes }).attachedName,
       "rf.zip.b64.txt",
       "leading dash stripped so no name is option-like"
+    );
+  }
+
+  // Provider-policy screen (2026-08-06: the provider DECODES the base64
+  // armor and refuses the message when a blocked type is inside; the same
+  // package without its .ps1/.sh delivered). Blocklist, never allowlist:
+  // anything the policy does not name must survive into the copy.
+  {
+    assert.equal(finalExt("a/b/script.PS1"), "ps1", "final ext lowercased");
+    assert.equal(finalExt("a/.gitignore"), "", "dotfile has no extension");
+    assert.equal(finalExt("Makefile"), "", "extensionless name");
+    assert.equal(blockedByName("scripts/x.ps1"), "blocked_type");
+    assert.equal(blockedByName("scripts/x.sh"), "blocked_type_precaution");
+    assert.equal(blockedByName("bundle.tar.gz"), "unscreenable_container");
+    for (const keep of ["main.py", "q.sql", "app.go", "index.html", "a.md", "s.css", "r.rb"]) {
+      assert.equal(
+        blockedByName(keep),
+        null,
+        `${keep} is not on the provider list and must survive the screen`
+      );
+    }
+    assert.ok(
+      !PRECAUTION_BLOCKED_EXT.has("py") && !GMAIL_BLOCKED_EXT.has("py"),
+      "python is deliberately never withheld"
+    );
+    assert.equal(blockedByBytes(Buffer.from("#!/bin/sh\necho hi")), "executable_content");
+    assert.equal(blockedByBytes(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02])), "executable_content");
+    assert.equal(blockedByBytes(Buffer.from("# Notes\n\nplain markdown")), null);
+    assert.equal(mailSafePath('a b/"$(id)".md'), "a_b/_id_.md", "entry paths are shell-inert");
+    assert.equal(mailSafePath("x\ny.md"), "x_y.md", "newlines cannot forge body lines");
+
+    // A clean package is returned untouched: the screen may never reduce
+    // what today's code sends.
+    const clean = await zipOf({ "tool/SKILL.md": PROSE, "tool/q.sql": "select 1" });
+    assert.equal(
+      (await screenPackageForMail("tool.zip", clean, null)).kind,
+      "original",
+      "no blocked entries means the original is sent"
+    );
+    // The incident shape: a package carrying scripts.
+    const dirty = await zipOf({
+      "tool/SKILL.md": PROSE,
+      "tool/references/objects.md": PROSE,
+      "tool/scripts/export.ps1": "Write-Host 'x'\n",
+      "tool/scripts/export.sh": "echo x\n",
+    });
+    const res = await screenPackageForMail("tool.zip", dirty, "abc123");
+    assert.equal(res.kind, "screened", "blocked entries produce a screened copy");
+    if (res.kind === "screened") {
+      assert.equal(res.removed.length, 2, "both scripts removed");
+      assert.equal(res.kept, 2, "both docs kept");
+      assert.equal(res.total, 4);
+      assert.ok(/^[0-9a-f]{64}$/.test(res.sha256), "screened sha is a full hash");
+      const back = await JSZip.loadAsync(res.zip);
+      const names = Object.keys(back.files).filter((n) => !back.files[n].dir);
+      assert.ok(
+        names.includes("tool/SKILL.md") && names.includes("tool/references/objects.md"),
+        "kept entries survive byte-for-byte paths"
+      );
+      assert.ok(
+        !names.some((n) => n.endsWith(".ps1") || n.endsWith(".sh")),
+        "no blocked entry rides the screened copy"
+      );
+      assert.ok(
+        names.includes("_SCREENED-COPY-README.txt"),
+        "the artifact carries its own not-the-original statement"
+      );
+      const readme = await back.file("_SCREENED-COPY-README.txt")!.async("string");
+      assert.ok(
+        readme.startsWith("THIS IS NOT THE ORIGINAL PACKAGE."),
+        "README leads with the disclaimer"
+      );
+      assert.ok(readme.includes("export.ps1") && readme.includes("export.sh"));
+      assert.ok(!readme.includes("—"), "no em dashes in owner-facing copy");
+      const kept = await back.file("tool/SKILL.md")!.async("string");
+      assert.equal(kept, PROSE, "kept entry bytes are unmodified");
+    }
+    // Every failure path returns the original, never zero bytes.
+    assert.equal(
+      (await screenPackageForMail("x.zip", Buffer.from("not a zip at all"), null)).kind,
+      "original",
+      "an unparseable package degrades to the original, never to nothing"
+    );
+    assert.equal(
+      (await screenPackageForMail("x.zip", Buffer.alloc(0), null)).kind,
+      "original",
+      "empty bytes degrade to the original"
     );
   }
 
