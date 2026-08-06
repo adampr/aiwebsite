@@ -10,7 +10,7 @@ import { adminRecipient, sendGovernanceEmail } from "@/lib/governance/budget";
 import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 import { HELD_NEXT_STEPS, KIND_LABELS, type WorkKind } from "./config";
 import { archiveDataById, type SubmissionRow } from "./db";
-import { toDeliverableAttachment } from "./retention-encoding";
+import { mailSafeName, toDeliverableAttachment } from "./retention-encoding";
 import { screenPackageForMail, type ScreenResult } from "./mail-screen";
 import type { WorkCard } from "./lint";
 
@@ -150,15 +150,21 @@ export async function sendArchiveRetentionEmail(
           `Title: ${row.title}`,
           `Kind: ${kindLabel(row.kind)}`,
           `Submitted by: ${row.submitterEmail}`,
-          ...prepared.map((p) =>
-            p.encoded
-              ? `Attached: ${p.attachedName} (${p.attachedBytes} bytes, base64 text encoding the original upload ${p.originalName}, ${p.originalBytes} bytes)`
-              : `Attached: ${p.attachedName} (${p.attachedBytes} bytes, exactly as uploaded)`
-          ),
+          // The word "original" never describes a screened copy: it is
+          // built from the upload with entries removed, and a mailbox read
+          // six months from now is the one that has to get this right.
+          ...prepared.map((p, i) => {
+            const wasScreened = screened[i]?.screen?.kind === "screened";
+            if (!p.encoded)
+              return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, exactly as uploaded)`;
+            if (wasScreened)
+              return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, base64 text encoding a SCREENED COPY of the upload ${mailSafeName(files[i]?.name ?? p.originalName)}, ${files[i]?.data.length ?? 0} bytes)`;
+            return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, base64 text encoding the original upload ${p.originalName}, ${p.originalBytes} bytes)`;
+          }),
           ...(armored.length > 0
             ? [
                 ``,
-                `To restore an encoded original on macOS or Linux:`,
+                `To restore an encoded attachment on macOS or Linux:`,
                 // openssl, not base64: BSD/macOS base64 rejects --decode and
                 // its -d means debug there. Names are mailSafeName-sanitized
                 // at the encoding seam, so quoting them is paste-safe.

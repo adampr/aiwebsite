@@ -1945,6 +1945,17 @@ async function main() {
       screenSrc.includes("mailSafePath(e.name)"),
       "entry paths are sanitized before they reach owner-facing copy"
     );
+    // The word "original" may never describe a screened copy: the first
+    // live screened send called it "the original upload" (caught 2026-08-06
+    // by reading the delivered mail, not by a test).
+    assert.ok(
+      retSlice.includes("base64 text encoding a SCREENED COPY of the upload"),
+      "a screened attachment is never described as the original"
+    );
+    assert.ok(
+      !/encoded original on macOS/.test(retSlice),
+      "the decode heading says attachment, not original"
+    );
     assert.ok(
       retSlice.includes('openssl base64 -d -in "'),
       "the body carries the openssl decode one-liner (BSD/macOS base64 rejects --decode; openssl works on both)"
