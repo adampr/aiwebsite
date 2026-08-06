@@ -6126,7 +6126,11 @@ template-rendered; cwd = STAGE since v1.13.0: idempotently installs the
 PATHS — compliant with the v1.13.0 env/live-path contract; §8.1/§9.7) → re-copy
 the live `.env` into stage → heap-capped `next build` (in stage; `next build`
 CLEARS distDir at start, which is why it must never run in the live tree —
-the pre-v1.13.0 claim that output "swaps atomically" was false) →
+the pre-v1.13.0 claim that output "swaps atomically" was false; the build
+scope's `MemoryMax` comes from `STAGE_MEM_MAX_MB` in `deploy/site-deploy.env`,
+2048 → 2560 on 2026-08-06 after two consecutive cgroup-OOM build kills at
+2048M — Turbopack peaks grew past the old cap; the VM holds ~2.7 GB available
+so 2560 stays clear of global pressure) →
 `verify-relocatable` → `db:migrate` (from stage against the live DB, committed
 history — AFTER the build so a failed build leaves the DB untouched) →
 **`npm run config:check`** (AFTER migrate — its drift gate fails on
