@@ -14,7 +14,7 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { adminRecipient, sendTroyEmail } from "@/lib/governance/budget";
+import { adminRecipient, sendGovernanceEmail } from "@/lib/governance/budget";
 import {
   activeUpdateChild,
   deleteSubmission,
@@ -135,7 +135,7 @@ export async function DELETE(_req: Request, ctx: Ctx): Promise<Response> {
     // ADMIN_EMAIL holds more than one entry (adminRecipient() is the first),
     // so deletes by any other admin still notify. Not dead code.
     if (user.email !== adminRecipient())
-      await sendTroyEmail({
+      await sendGovernanceEmail({
         subject: `[aiwebsite] /work card removed: ${row.title}`,
         text: `${user.email} deleted the published team card "${row.title}" (${row.slug ?? "no slug"}). The page updates within 5 minutes.`,
       });

@@ -2,11 +2,12 @@
 // Tron.Netter@ai.xl.net from a DKIM-verified @xl.net sender carrying an
 // archive attachment enters the SAME pipeline as POST /api/work/submissions
 // (extract -> secret scan -> duplicate-title guard -> createSubmission ->
-// kickPanel). Mounted from site.config.ts channels.email.onInbound after the
-// Troy branch: an archive-shaped staff email is claimed ("handled") so the
-// module never answers it conversationally; everything else delegates.
+// kickPanel). Mounted FIRST in site.config.ts channels.email.onInbound
+// (before the §5.12 approval probe): an archive-shaped staff email is
+// claimed ("handled") so the module never answers it conversationally;
+// everything else delegates.
 //
-// Trust model (Troy approval-inbound pattern, §5.12): the From header is
+// Trust model (approval-inbound pattern, §5.12): the From header is
 // spoofable, so before ANY reply or side effect the sender must clear the
 // fail-closed gate — exactly ONE direct Authentication-Results header,
 // DKIM-aligned verdict pinned to the deployment authserv-id, DKIM-covered
@@ -53,7 +54,7 @@ import {
   type SubmissionRow,
 } from "./db";
 import type { WorkScope } from "./scope";
-import { withTronSignature } from "@/lib/tron-signature";
+import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 import { emailDomain } from "@/lib/rfp/access";
 import { ROADMAP_CAPS, roadmapBrainDailyCap, roadmapEnabled } from "@/lib/roadmap/config";
 import {
@@ -95,11 +96,15 @@ import { WORK_SUBMIT_DOMAINS } from "./http";
 import { kickPanel } from "./panel";
 import staticTitles from "./static-titles.json";
 
-/** Mirror of the Troy TROY_ADDRESS pattern: the mailbox is a code constant
- * (lowercased, envelope form) so the gate cannot drift silently. Must match
- * site.config.ts channels.email.mailbox. */
-export const TRON_ADDRESS = "tron.netter@ai.xl.net";
-const TRON_FROM = "Tron Netter <Tron.Netter@ai.xl.net>";
+/** The persona's envelope addresses (lowercased): the mailbox plus any
+ * retired aliases from channels.email.additionalMailboxes, so a submitter
+ * replying with a revised archive on a thread the retired address sent
+ * before 2026-08-06 is still ingested instead of answered conversationally.
+ * Config-derived so the gate cannot drift from site.config. */
+const INTAKE_ADDRESSES = [
+  siteConfig.channels.email.mailbox,
+  ...siteConfig.channels.email.additionalMailboxes,
+].map((a) => a.toLowerCase());
 const SITE = "https://ai.xl.net";
 
 function log(msg: string): void {
@@ -110,7 +115,7 @@ function hashKey(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex").slice(0, 32);
 }
 
-/** Resend send as Tron (sendTroyEmail shape; replies come from the mailbox
+/** Resend send as Tron (sendGovernanceEmail shape; replies come from the mailbox
  * the submitter actually wrote to). Tron's signature block is appended HERE,
  * at the seam, for every send including warnAdmin (owner ruling 2026-08-06:
  * signatures in EVERY outbound email; per-call-site appends are how unsigned
@@ -333,7 +338,8 @@ export async function maybeHandleWorkEmail(
   try {
     const key = process.env.RESEND_API_KEY;
     if (!key) return "delegate";
-    if (!ctx.envelopeRecipients.includes(TRON_ADDRESS)) return "delegate";
+    if (!ctx.envelopeRecipients.some((r) => INTAKE_ADDRESSES.includes(r.toLowerCase())))
+      return "delegate";
     const sender = extractAddress(ctx.email.from);
     const domain = sender.split("@")[1] ?? "";
     const staffLane = WORK_SUBMIT_DOMAINS.includes(domain);
@@ -438,7 +444,7 @@ export async function handleWorkEmail(
     return;
   }
 
-  // ── Fail-closed sender verification (Troy gate, any xl.net sender) ──
+  // ── Fail-closed sender verification (§5.12 gate, any xl.net sender) ──
   const headers = email.headers ?? null;
   const arCount = headers
     ? Object.keys(headers).filter(

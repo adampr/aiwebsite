@@ -1,5 +1,5 @@
 // Failure-email mirror into the module's reported_issues ledger (§5.15;
-// owner directive 2026-08-05). The work email intake and the Troy budget
+// owner directive 2026-08-05). The work email intake and the budget
 // lane reply to real people when a submission or command cannot be
 // processed, and until now those replies lived only in mailboxes: the owner
 // had to hunt them down and paste them back to know anything went wrong.

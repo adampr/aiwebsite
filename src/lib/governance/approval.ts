@@ -1,8 +1,11 @@
-// Troy approval loop: the PURE pieces (§5.12). Command grammar parsing,
+// Budget approval loop: the PURE pieces (§5.12). Command grammar parsing,
 // bounds validation, sender allowlisting, and header sanitization live here
-// with no node/DB imports so scripts/governance-tests.ts exercises every
-// branch. Email is a spoofable channel and these commands change runtime
-// spend limits: everything in this file leans strict and fail-closed.
+// with no node/DB imports so the test suites exercise every branch. Email is
+// a spoofable channel and these commands change runtime spend limits:
+// everything in this file leans strict and fail-closed. Since 2026-08-06
+// commands arrive at the persona mailbox like any other mail; untrusted
+// content selects only the LANE (probeApprovalMail), DKIM + ADMIN_EMAIL
+// select the AUTHORITY (whether a budget may change).
 // No em dashes in any string (site rule).
 
 import { BUDGET_CEILINGS, BUDGET_FLOOR } from "./config";
@@ -103,6 +106,65 @@ export function parseApprovalCommands(body: string): {
     ignoredLines++;
   }
   return { commands, ignoredLines };
+}
+
+/**
+ * Lane probe for mail arriving at the persona mailbox (§5.12, 2026-08-06
+ * one-persona refit). Pure and side-effect-free: it only decides whether an
+ * inbound LOOKS like budget-command mail, so channels.email.onInbound can
+ * route it into the approval lane instead of the conversational path. It
+ * grants nothing: authority stays with the DKIM + ADMIN_EMAIL gates in
+ * approval-inbound.ts.
+ *
+ * - "text_commands": the plain-text body parses at least one command (the
+ *   ONLY form ever applied).
+ * - "html_only_commands": no text command, but a quote-stripped, tag-stripped
+ *   projection of the HTML body carries a command-shaped line ABOVE the
+ *   first quoted-reply marker. NEVER applied; the lane answers with the
+ *   plain-text-only note instead of delegating, because a conversational
+ *   model could otherwise imply a cap changed when nothing did.
+ * - "none": ordinary mail; the conversational path answers it.
+ *
+ * QUOTE DISCIPLINE MIRRORS THE TEXT PARSER (refutation finding 2026-08-06:
+ * mail clients quote the whole prior thread in HTML, so without it every
+ * ordinary reply on a budget thread re-detects the OLD command line and the
+ * admin gets the plain-text lecture forever instead of a conversational
+ * answer): <blockquote> subtrees are dropped BEFORE projecting (iterated,
+ * so nesting converges; over-removal only delegates, which is safe), and
+ * the projected lines stop at the first QUOTE_MARKERS hit (catches
+ * Outlook's "-----Original Message-----" divider, which HTML renders as a
+ * plain line with no ">" prefix).
+ */
+export function probeApprovalMail(
+  text: string | null,
+  html: string | null
+): "text_commands" | "html_only_commands" | "none" {
+  if (parseApprovalCommands(text ?? "").commands.length > 0)
+    return "text_commands";
+  if (html) {
+    let h = html.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, "");
+    for (;;) {
+      const next = h.replace(/<blockquote\b[^>]*>[\s\S]*?<\/blockquote\s*>/gi, "");
+      if (next === h) break;
+      h = next;
+    }
+    const projected = h
+      .replace(/<\s*(br|\/p|\/div|\/tr|\/li)\b[^>]*>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&amp;/gi, "&");
+    for (const rawLine of projected.split("\n")) {
+      const line = rawLine.replace(/\r$/, "").trim();
+      if (QUOTE_MARKERS.some((m) => m.test(line))) break;
+      if (SET_RE.test(line) || RESET_RE.test(line))
+        return "html_only_commands";
+    }
+  }
+  return "none";
 }
 
 /**

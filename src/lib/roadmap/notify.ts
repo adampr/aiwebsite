@@ -6,9 +6,8 @@
 
 import { oversightBcc } from "@/lib/oversight-bcc";
 import { adminRecipient } from "@/lib/governance/budget";
-import { withTronSignature } from "@/lib/tron-signature";
+import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 
-const TRON_FROM = "Tron Netter <Tron.Netter@ai.xl.net>";
 const SITE = "https://ai.xl.net";
 
 async function sendRoadmapEmail(opts: {

@@ -439,7 +439,7 @@ async function cleanupDuties(): Promise<string[]> {
   // days (the Date-freshness check in approval-inbound.ts covers the DKIM
   // replay window this reopens) and audit rows at 180 days.
   await pruneUsage(90);
-  const prunedMsgs = await deleteMetaByPrefixOlderThan("troy_msg_", 14);
+  const prunedMsgs = await deleteMetaByPrefixOlderThan("gov_msg_", 14);
   const prunedAudit = await deleteMetaByPrefixOlderThan("budget_audit_", 180);
   if (prunedMsgs || prunedAudit)
     lines.push(`meta prune: ${prunedMsgs} dedupe keys, ${prunedAudit} audit rows`);

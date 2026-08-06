@@ -1,4 +1,4 @@
-// Runtime-mutable governance budgets + the Troy alert sender (§5.12).
+// Runtime-mutable governance budgets + the governance alert sender (§5.12).
 // Effective cap = governance_meta override (set via the email approval loop)
 // if present, else the env default; BOTH are clamped into
 // [BUDGET_FLOOR, ceiling], so neither a subverted approval nor a mistyped
@@ -7,7 +7,7 @@
 // effect the moment an approval lands. Server-only (DB imports).
 
 import { oversightBcc } from "@/lib/oversight-bcc";
-import { TROY_FROM, withTroySignature } from "@/lib/tron-signature";
+import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 import {
   ALERT_STAMP_KEYS,
   OVERRIDE_KEYS,
@@ -48,7 +48,7 @@ export async function effectiveTavilyDailyCap(): Promise<number> {
  * starve real users). Concurrency/quality guards (active projects,
  * answers per project, research runs per project) still apply: they
  * protect the box, not the wallet. Exempt spend is invisible to the
- * Troy usage reports by design.
+ * governance usage reports by design.
  * ------------------------------------------------------------------ */
 
 function adminEmailSet(): Set<string> {
@@ -115,7 +115,8 @@ export async function describeBudgets(): Promise<
 }
 
 /* ------------------------------------------------------------------ *
- * Troy sends (Resend REST, host script-style send).
+ * Governance/notice sends (Resend REST, host script-style send), as Tron -
+ * the one outbound persona (owner ruling 2026-08-06: exactly one persona).
  *
  * The comment that stood here until 2026-08-04 claimed "the recipient IS the
  * overseer, so the module's BCC invariant is not in play" - falsified by ten of
@@ -128,17 +129,13 @@ export async function describeBudgets(): Promise<
  * legitimate submitter copies and nobody would see it.
  * ------------------------------------------------------------------ */
 
-// Troy's identity lives in src/lib/tron-signature.ts (single source of truth
-// with his signature block); re-exported here for the existing importers.
-export { TROY_FROM };
-
 export function adminRecipient(): string {
   return (
     (process.env.ADMIN_EMAIL || "").split(",")[0]?.trim() || "adam@xl.net"
   );
 }
 
-export async function sendTroyEmail(opts: {
+export async function sendGovernanceEmail(opts: {
   to?: string;
   subject: string;
   text: string;
@@ -149,8 +146,8 @@ export async function sendTroyEmail(opts: {
     console.log(`[gov-budget] EMAIL SKIPPED (no RESEND_API_KEY): ${opts.subject}`);
     return false;
   }
-  const troyTo = [opts.to ?? adminRecipient()];
-  const bcc = oversightBcc(troyTo);
+  const sendTo = [opts.to ?? adminRecipient()];
+  const bcc = oversightBcc(sendTo);
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -159,12 +156,12 @@ export async function sendTroyEmail(opts: {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        from: TROY_FROM,
-        to: troyTo,
+        from: TRON_FROM,
+        to: sendTo,
         subject: opts.subject,
         // Owner ruling 2026-08-06 (signatures in EVERY outbound email):
         // signed at the seam so no call site, present or future, can forget.
-        text: withTroySignature(opts.text),
+        text: withTronSignature(opts.text),
         ...(bcc && { bcc }),
         ...(opts.headers ? { headers: opts.headers } : {}),
       }),
@@ -172,12 +169,12 @@ export async function sendTroyEmail(opts: {
     });
     if (!res.ok)
       console.log(
-        `[gov-budget] troy send failed ${res.status}: ${(await res.text()).slice(0, 150)}`
+        `[gov-budget] governance send failed ${res.status}: ${(await res.text()).slice(0, 150)}`
       );
     return res.ok;
   } catch (err) {
     console.log(
-      `[gov-budget] troy send threw: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"}`
+      `[gov-budget] governance send threw: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"}`
     );
     return false;
   }
@@ -223,7 +220,7 @@ export async function notifyBudgetHit(
       ``,
       `Further hits of this budget today are suppressed; this notice repeats at most once per day per budget.`,
     ];
-    const sent = await sendTroyEmail({
+    const sent = await sendGovernanceEmail({
       subject: `[aiwebsite] Governance budget hit: ${TARGET_LABELS[target]}`,
       text: lines.join("\n"),
     });

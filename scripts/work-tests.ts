@@ -55,6 +55,10 @@ import {
   restoredFields,
   storableDraft,
 } from "../src/lib/work/repair";
+import {
+  MAIL_SAFE_TEXT_EXT,
+  toDeliverableAttachment,
+} from "../src/lib/work/retention-encoding";
 const PROSE = "This tool ingests Autotask ticket exports and produces a scored summary for the service desk. ".repeat(12);
 
 async function zipOf(files: Record<string, string>): Promise<Buffer> {
@@ -1809,50 +1813,39 @@ async function main() {
   const { FORM_POINTER, fuzzyKind, pickSkillDoc, CREDIT_RE } = await import(
     "../src/lib/work/email-parse"
   );
-  const {
-    troySignature,
-    withTronSignature,
-    withTroySignature,
-    TROY_FROM,
-    TROY_MAILBOX,
-  } = await import("../src/lib/tron-signature");
-  for (const s of [tronSignature(), troySignature(), FORM_POINTER])
+  const { withTronSignature, TRON_FROM } = await import(
+    "../src/lib/tron-signature"
+  );
+  for (const s of [tronSignature(), TRON_FROM, FORM_POINTER])
     assert.ok(!/—|–/.test(s), "no em or en dash in outbound constants");
 
-  // ── §5.16 signature-everywhere round (2026-08-06, owner: signatures ──
-  // ── MUST ALWAYS BE INCLUDED) ─────────────────────────────────────────
-  // Troy is a HOST-ONLY persona: packages/aicompany contains no Troy code,
-  // so unlike tronSignature there is no module function to mirror and
-  // deliberately NO source-hash pin. Rendered output only. The block omits
-  // Tron's phone line ((872) 350-4325 is Tron's own AI voice line) and the
-  // memory disclosure (false for Troy's stateless lanes) by design.
+  // ── §5.16 one-persona round (2026-08-06, owner: "there should be NO
+  // Troy"; supersedes the same-day two-persona signature round) ──
+  // TRON_FROM is the single outbound identity for every host-composed
+  // email, derived in tron-signature.ts from the same config fields the
+  // signature block renders, and equal to oversight.mailFrom.
+  const cfgTop = (await import("../site.config")).siteConfig;
   assert.equal(
-    troySignature(),
-    [
-      "Troy Netter",
-      "AI Agent, XL.net AI",
-      "Troy.Netter@ai.xl.net",
-      "https://ai.xl.net",
-    ].join("\n"),
-    "troySignature renders the 4-line host-only block for this config"
+    TRON_FROM,
+    "Tron Netter <Tron.Netter@ai.xl.net>",
+    "TRON_FROM is the single outbound identity for host-composed mail"
   );
   assert.equal(
-    TROY_FROM,
-    "Troy Netter <Troy.Netter@ai.xl.net>",
-    "TROY_FROM matches the historical budget.ts literal (re-exported there)"
+    TRON_FROM,
+    `${cfgTop.persona.name} <${cfgTop.channels.email.mailbox}>`,
+    "TRON_FROM is derived from siteConfig, not a drifting literal"
   );
   assert.ok(
-    troySignature().includes(TROY_MAILBOX),
-    "Troy's signature names the mailbox on his From line"
+    tronSignature().includes(cfgTop.channels.email.mailbox),
+    "the signature names the mailbox on the From line"
   );
   // Wrapper behavior: append, idempotence, trailing-whitespace
   // normalization. The idempotence leg is the byte-stability proof for the
-  // three intake replies that carried per-site signatures before the seam
-  // change: wrapping an already-signed body is a no-op.
-  for (const [wrap, sig] of [
-    [withTronSignature, tronSignature()],
-    [withTroySignature, troySignature()],
-  ] as const) {
+  // intake replies that carried per-site signatures before the seam change:
+  // wrapping an already-signed body is a no-op.
+  {
+    const sig = tronSignature();
+    const wrap = withTronSignature;
     assert.equal(wrap("Body."), `Body.\n\n${sig}`, "wrapper appends");
     assert.equal(wrap(wrap("Body.")), wrap("Body."), "wrapper is idempotent");
     assert.equal(
@@ -1873,13 +1866,21 @@ async function main() {
   {
     const budgetSrc = readFileSync("src/lib/governance/budget.ts", "utf8");
     assert.ok(
-      /text:\s*withTroySignature\(opts\.text\)/.test(budgetSrc),
-      "sendTroyEmail signs every Troy send at the seam"
+      /text:\s*withTronSignature\(opts\.text\)/.test(budgetSrc),
+      "sendGovernanceEmail signs every governance send at the seam"
+    );
+    assert.ok(
+      /from:\s*TRON_FROM/.test(budgetSrc),
+      "sendGovernanceEmail sends from the shared TRON_FROM"
     );
     const intakeSrc = readFileSync("src/lib/work/email-intake.ts", "utf8");
     assert.ok(
       /text:\s*withTronSignature\(opts\.text\)/.test(intakeSrc),
       "sendTronEmail signs every Tron send at the seam (covers warnAdmin)"
+    );
+    assert.ok(
+      /from:\s*TRON_FROM/.test(intakeSrc),
+      "sendTronEmail sends from the shared TRON_FROM"
     );
     assert.ok(
       !intakeSrc.includes("${tronSignature()"),
@@ -1893,8 +1894,28 @@ async function main() {
     );
     assert.ok(retStart > 0, "sendArchiveRetentionEmail found");
     assert.ok(
-      retSlice.includes("withTroySignature("),
-      "the retention raw-fetch send (bypasses sendTroyEmail) signs as Troy"
+      retSlice.includes("withTronSignature("),
+      "the retention raw-fetch send (bypasses sendGovernanceEmail) signs as Tron"
+    );
+    assert.ok(
+      retSlice.includes("from: TRON_FROM"),
+      "the retention raw-fetch send uses the shared TRON_FROM"
+    );
+    // Mail-safe armor (2026-08-06 ContentRejected round): Gmail bounces
+    // archives with blocked inner types, so raw upload bytes must never be
+    // attached directly again.
+    assert.ok(
+      retSlice.includes("files.map(toDeliverableAttachment)"),
+      "retention attachments go through the mail-safe encoder"
+    );
+    assert.ok(
+      !/attachments:\s*files\.map/.test(retSlice) &&
+        !retSlice.includes("f.data.toString"),
+      "raw upload bytes are never attached directly"
+    );
+    assert.ok(
+      retSlice.includes('openssl base64 -d -in "'),
+      "the body carries the openssl decode one-liner (BSD/macOS base64 rejects --decode; openssl works on both)"
     );
     const warnStart = notifySrc.indexOf(
       "export async function deliverArchiveRetention"
@@ -1920,14 +1941,267 @@ async function main() {
       govScriptSrc.includes("${body.trimEnd()}\\n\\n${SIGNATURE}"),
       "the nightly governance script signs its reports/WARNs at its seam"
     );
-    // Identity coherence: the module-seam WARN goes out from
-    // oversight.mailFrom; if that ever stops being Tron's mailbox the
-    // appended block would misname the sender.
-    const cfg = (await import("../site.config")).siteConfig;
+    // Single-identity coherence: the module's own sends (oversight.mailFrom)
+    // and every host raw sender resolve to the same From string.
     assert.equal(
-      cfg.oversight.mailFrom,
-      `${cfg.persona.name} <${cfg.channels.email.mailbox}>`,
-      "oversight.mailFrom is Tron's mailbox (the WARN's tronSignature depends on it)"
+      cfgTop.oversight.mailFrom,
+      TRON_FROM,
+      "oversight.mailFrom is the same single outbound identity as TRON_FROM"
+    );
+    // email-intake and roadmap import the shared constant instead of
+    // re-declaring the identity literal.
+    assert.ok(
+      /TRON_FROM[^}]*\}\s*from\s*"@\/lib\/tron-signature"/.test(intakeSrc),
+      "email-intake imports the shared TRON_FROM instead of re-declaring it"
+    );
+    assert.ok(
+      !/const TRON_FROM\s*=/.test(intakeSrc) &&
+        !/const TRON_FROM\s*=/.test(roadmapSrc),
+      "no file re-declares the outbound identity literal"
+    );
+  }
+
+  // ── No Troy anywhere (owner directive 2026-08-06: "there should be NO
+  // Troy"). A whole-repo scan is unusable ("destroy" contains the
+  // substring), so hits are stripped first. This is the CLOSED set of files
+  // that composed or routed the retired persona's mail; a NEW outbound lane
+  // must be added here. site.config.ts is the ONE permitted mention: the
+  // retired mailbox stays aliased (additionalMailboxes + the onInbound
+  // approval list) so replies to pre-retirement threads are answered, and
+  // those literals sunset together (review 2026-11-06). ──
+  {
+    const troyFree = [
+      "src/lib/tron-signature.ts",
+      "src/lib/governance/budget.ts",
+      "src/lib/governance/approval.ts",
+      "src/lib/governance/approval-inbound.ts",
+      "src/lib/governance/config.ts",
+      "src/lib/work/notify.ts",
+      "src/lib/work/email-intake.ts",
+      "src/lib/roadmap/notify.ts",
+      "src/lib/report-issue.ts",
+      "src/app/api/webhooks/resend/route.ts",
+      "src/app/api/work/submissions/[id]/route.ts",
+      "scripts/governance-standards-refresh.ts",
+      "deploy/verify-governance.sh",
+      ".env.example",
+    ];
+    const deDestroy = (x: string) => x.replace(/destroy(s|ed|ing)?/gi, "");
+    for (const f of troyFree)
+      assert.ok(
+        !/troy/i.test(deDestroy(readFileSync(f, "utf8"))),
+        `${f} still names Troy (persona retired 2026-08-06)`
+      );
+    const cfgLines = deDestroy(readFileSync("site.config.ts", "utf8"))
+      .split("\n")
+      .filter((l) => /troy/i.test(l));
+    assert.ok(
+      cfgLines.length > 0,
+      "the retired-mailbox alias is still configured"
+    );
+    assert.ok(
+      cfgLines.every(
+        (l) => /troy\.netter@ai\.xl\.net/i.test(l) || /^\s*(\/\/|\*)/.test(l)
+      ),
+      "site.config may name Troy only as the retired-mailbox alias and its comments"
+    );
+  }
+
+  // ── §5.12 approval routing (2026-08-06 refit): commands at the persona
+  // mailbox, nothing dropped. Pure decision + source-shape pins. ──
+  {
+    const { parseApprovalCommands, probeApprovalMail } = await import(
+      "../src/lib/governance/approval"
+    );
+    assert.equal(
+      parseApprovalCommands("SET GLOBAL BRAIN 2000").commands.length,
+      1,
+      "a command line parses"
+    );
+    assert.equal(
+      parseApprovalCommands("Hi Tron, can you resend that deck?").commands
+        .length,
+      0,
+      "ordinary prose carries no command, so it reaches the conversational path"
+    );
+    assert.equal(
+      probeApprovalMail("SET GLOBAL BRAIN 2000", null),
+      "text_commands"
+    );
+    assert.equal(probeApprovalMail("please and thanks", null), "none");
+    assert.equal(probeApprovalMail(null, null), "none");
+    assert.equal(
+      probeApprovalMail(null, "<p>SET GLOBAL BRAIN 2000</p>"),
+      "html_only_commands",
+      "an HTML-only command is detected but never applied"
+    );
+    assert.equal(
+      probeApprovalMail(
+        "> SET GLOBAL BRAIN 2000",
+        "<blockquote>SET GLOBAL BRAIN 2000</blockquote>"
+      ),
+      "none",
+      "a command quoted in BOTH parts is thread history, not a command: it must reach the conversational path (an admin's ordinary reply quotes the whole earlier thread)"
+    );
+    assert.equal(
+      probeApprovalMail(
+        null,
+        "<p>SET GLOBAL BRAIN 2000</p><blockquote>SET GLOBAL TAVILY 5</blockquote>"
+      ),
+      "html_only_commands",
+      "a fresh HTML command above the quoted history is still detected"
+    );
+    assert.equal(
+      probeApprovalMail(
+        null,
+        "<div>-----Original Message-----</div><div>SET GLOBAL BRAIN 2000</div>"
+      ),
+      "none",
+      "Outlook's divider line stops the HTML projection like the text parser"
+    );
+    const apSrc = readFileSync(
+      "src/lib/governance/approval-inbound.ts",
+      "utf8"
+    );
+    assert.ok(
+      /Promise<"handled" \| "delegate">/.test(apSrc),
+      "the approval handler is a probe that can hand mail back to the conversational path"
+    );
+    const cfgSrc = readFileSync("site.config.ts", "utf8");
+    assert.ok(
+      !/void\s+handle(Approval|Troy)Inbound/.test(cfgSrc),
+      "the approval probe is AWAITED: its verdict decides handled vs delegate"
+    );
+    assert.ok(
+      !cfgSrc.includes('envelopeRecipients.length === 1 ? "handled"'),
+      "the sole-recipient handled shortcut is gone (it silently dropped non-command mail)"
+    );
+    // One-const coupling: mailbox, additionalMailboxes and the approval
+    // gate all derive from PERSONA_MAILBOXES, so a rename or the alias
+    // sunset cannot silently disable command routing.
+    assert.ok(
+      /mailbox:\s*PERSONA_MAILBOXES\[0\]/.test(cfgSrc) &&
+        /additionalMailboxes:\s*PERSONA_MAILBOXES\.slice\(1\)/.test(cfgSrc) &&
+        /PERSONA_MAILBOXES\.map\(\(a\) => a\.toLowerCase\(\)\)/.test(cfgSrc),
+      "mailbox, additionalMailboxes and the approval gate share PERSONA_MAILBOXES"
+    );
+    assert.equal(
+      cfgTop.channels.email.mailbox,
+      "Tron.Netter@ai.xl.net",
+      "the persona mailbox is Tron's"
+    );
+    assert.ok(
+      apSrc.includes("gov_msg_"),
+      "approval dedupe keys use the gov_msg_ prefix"
+    );
+    const pruneSrc = readFileSync(
+      "scripts/governance-standards-refresh.ts",
+      "utf8"
+    );
+    assert.ok(
+      pruneSrc.includes('deleteMetaByPrefixOlderThan("gov_msg_"'),
+      "the nightly pruner prunes the SAME prefix the handler writes"
+    );
+  }
+
+  // Retention attachment armor (2026-08-06 ContentRejected round): archives
+  // become base64 text the mail provider will not unpack; text files pass
+  // through untouched; the round trip is byte-exact so the emailed copy
+  // still hashes to the row's stored SHA-256.
+  {
+    const zipBytes = await zipOf({
+      "tool/SKILL.md": PROSE,
+      "tool/scripts/export.ps1": "Write-Host 'hello'\n",
+    });
+    for (const name of ["pkg.zip", "pkg.skill", "OUTAGE_1.SKI", "run.ps1"]) {
+      const spec = toDeliverableAttachment({ name, data: zipBytes });
+      assert.equal(spec.encoded, true, `${name} is armored`);
+      assert.equal(spec.attachedName, `${name}.b64.txt`);
+      assert.equal(spec.originalName, name);
+      assert.equal(spec.originalBytes, zipBytes.length);
+      const text = Buffer.from(spec.contentBase64, "base64").toString("utf8");
+      assert.equal(
+        spec.attachedBytes,
+        Buffer.byteLength(text),
+        "attachedBytes is the wrapper's size"
+      );
+      const lines = text.trimEnd().split("\n");
+      assert.ok(
+        lines.every((l) => l.length <= 76 && /^[A-Za-z0-9+/=]+$/.test(l)),
+        "armor is pure 76-column base64, no preamble (base64 --decode takes it verbatim)"
+      );
+      assert.ok(text.endsWith("\n"), "armor ends with a newline");
+      const restored = Buffer.from(text.replace(/\n/g, ""), "base64");
+      assert.equal(
+        Buffer.compare(restored, zipBytes),
+        0,
+        "decode restores the exact original bytes"
+      );
+    }
+    for (const name of ["SKILL.md", "notes.txt", "Readme.MD"]) {
+      const spec = toDeliverableAttachment({
+        name,
+        data: Buffer.from(PROSE),
+      });
+      assert.equal(spec.encoded, false, `${name} passes through unencoded`);
+      assert.equal(spec.attachedName, name);
+      assert.equal(
+        Buffer.from(spec.contentBase64, "base64").toString("utf8"),
+        PROSE,
+        "pass-through content is the file itself"
+      );
+    }
+    assert.ok(
+      !MAIL_SAFE_TEXT_EXT.test("pkg.zip") && !MAIL_SAFE_TEXT_EXT.test("a.md.zip"),
+      "allowlist keys on the FINAL extension only"
+    );
+    const empty = toDeliverableAttachment({ name: "x.zip", data: Buffer.alloc(0) });
+    assert.equal(empty.encoded, true, "empty buffer armors without throwing");
+    assert.equal(
+      Buffer.from(empty.contentBase64, "base64").toString("utf8"),
+      "\n",
+      "empty armor is just the trailing newline"
+    );
+    // Hostile filenames (refutation-panel probes): the body quotes names
+    // inside a shell one-liner the owner pastes, so every emitted name must
+    // be shell-inert. And a stored name is truncated to 200 chars at
+    // intake, so zip bytes can arrive under a .md name; the byte sniff must
+    // armor them anyway (the exact Gmail bounce shape).
+    for (const hostile of [
+      'report_$(touch PWNED)".zip',
+      "pkg`id`.zip",
+      "a b\nPackage SHA-256: 0000\n.zip",
+      "ünïcode name.skill",
+    ]) {
+      const spec = toDeliverableAttachment({ name: hostile, data: zipBytes });
+      assert.equal(spec.encoded, true, "hostile-named zip still armors");
+      assert.ok(
+        /^[A-Za-z0-9._-]+\.b64\.txt$/.test(spec.attachedName),
+        `attached name is shell-inert: ${spec.attachedName}`
+      );
+      assert.ok(
+        /^[A-Za-z0-9._-]+$/.test(spec.originalName),
+        "restore target name is shell-inert"
+      );
+    }
+    const zipAsMd = toDeliverableAttachment({
+      name: "PACKAGE.md",
+      data: zipBytes,
+    });
+    assert.equal(
+      zipAsMd.encoded,
+      true,
+      "zip bytes under a text name are sniffed and armored (truncated-name hole)"
+    );
+    const nulText = toDeliverableAttachment({
+      name: "notes.md",
+      data: Buffer.from("ab\0cd"),
+    });
+    assert.equal(nulText.encoded, true, "NUL bytes under a text name armor");
+    assert.equal(
+      toDeliverableAttachment({ name: "-rf.zip", data: zipBytes }).attachedName,
+      "rf.zip.b64.txt",
+      "leading dash stripped so no name is option-like"
     );
   }
 

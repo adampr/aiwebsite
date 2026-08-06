@@ -1,13 +1,13 @@
 // Email notices for team work submissions (§5.16), on the governance Resend
-// pattern (sendTroyEmail). Owner is notified on every publish and every held
+// pattern (sendGovernanceEmail). Owner is notified on every publish and every held
 // card; the submitter is notified on both terminal states so closing the
 // status page loses nothing.
 
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { sendEmail } from "@aicompany/core/email/send";
 import { siteConfig } from "site.config";
-import { adminRecipient, sendTroyEmail, TROY_FROM } from "@/lib/governance/budget";
-import { withTronSignature, withTroySignature } from "@/lib/tron-signature";
+import { adminRecipient, sendGovernanceEmail } from "@/lib/governance/budget";
+import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 import { HELD_NEXT_STEPS, KIND_LABELS, type WorkKind } from "./config";
 import { archiveDataById, type SubmissionRow } from "./db";
 import type { WorkCard } from "./lint";
@@ -50,7 +50,7 @@ export async function sendArchiveRetentionEmail(
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        from: TROY_FROM,
+        from: TRON_FROM,
         to: [adminRecipient()],
         // DELIBERATE §1 CARVE-OUT — do NOT add an oversight BCC here, and do
         // NOT "fix" this by calling oversightBcc().
@@ -67,10 +67,10 @@ export async function sendArchiveRetentionEmail(
         // The recipient IS the overseer by construction here, so there is
         // nothing for a BCC to add — only something for it to leak.
         subject: `[aiwebsite] /work submission files: ${row.title}`,
-        // withTroySignature: this raw fetch bypasses sendTroyEmail (it needs
+        // withTronSignature: this raw fetch bypasses sendGovernanceEmail (it needs
         // attachments, a 60s timeout, and the no-BCC carve-out above), so the
         // owner's always-signed ruling is applied here by hand.
-        text: withTroySignature([
+        text: withTronSignature([
           `Retention copy of the original files behind a published /work card.`,
           ``,
           `Title: ${row.title}`,
@@ -184,7 +184,7 @@ export async function notifyPublished(
     const { scopeContext, scopeOf } = await import("./scope");
     const sctx = await scopeContext(scopeOf(row));
     const link = `${SITE}/roadmap/work#${slug}`;
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       subject: `[aiwebsite] Your Work card published (${sctx.companyDomain ?? "company"}): ${card.title}`,
       text: [
         `A client company work submission passed the editorial panel and is published on that company's private Your Work page.`,
@@ -202,7 +202,7 @@ export async function notifyPublished(
         `To remove it: /admin/roadmap company detail, or DELETE /api/work/submissions/${row.id}.`,
       ].join("\n"),
     });
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       to: row.submitterEmail,
       subject: `Your work submission is live: ${card.title}`,
       text: [
@@ -231,11 +231,11 @@ export async function notifyPublished(
     `The page refreshes at publish time; if /work is already open in a tab, reload it. If the card is still missing, the automatic refresh failed and the page rebuilds on the first visit after its 5-minute cache window, so allow two reloads a few minutes apart.`,
     `To remove it: /admin/work has the delete action, or DELETE /api/work/submissions/${row.id}.`,
   ].join("\n");
-  await sendTroyEmail({
+  await sendGovernanceEmail({
     subject: `[aiwebsite] /work card published: ${card.title}`,
     text,
   });
-  await sendTroyEmail({
+  await sendGovernanceEmail({
     to: row.submitterEmail,
     subject: `Your /work submission is live: ${card.title}`,
     text: `The editorial panel reviewed your submission from the documents you provided, and the card is published.\n\n${link}\n\nIf /work was already open, reload the page to see it (a stale copy can survive a few minutes; reload once more if it has not appeared). Reply to this email if something on the card reads wrong.`,
@@ -251,7 +251,7 @@ export async function notifyHeld(
   // row): owner copy keeps the /admin/work review link; the submitter copy
   // names the team, never Adam, and points at the roadmap page.
   if (row.companyId !== null) {
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       subject: `[aiwebsite] Action needed: company work submission held: ${row.title}`,
       text: [
         `Review it at ${SITE}/admin/work#sub-${row.id} (approve as-is, run the panel again, or delete).`,
@@ -268,7 +268,7 @@ export async function notifyHeld(
         JSON.stringify(draft, null, 2).slice(0, 6000),
       ].join("\n"),
     });
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       to: row.submitterEmail,
       subject: `Your work submission is held for review: ${row.title}`,
       text: [
@@ -285,7 +285,7 @@ export async function notifyHeld(
     return;
   }
   const isUpdate = !!row.parentId;
-  await sendTroyEmail({
+  await sendGovernanceEmail({
     subject: isUpdate
       ? `[aiwebsite] Action needed: /work update held: ${row.title}`
       : `[aiwebsite] Action needed: /work submission held: ${row.title}`,
@@ -310,7 +310,7 @@ export async function notifyHeld(
   // voiced second email (the first real submitter WAS the owner).
   if (row.submitterEmail.toLowerCase() === adminRecipient().toLowerCase())
     return;
-  await sendTroyEmail({
+  await sendGovernanceEmail({
     to: row.submitterEmail,
     subject: isUpdate
       ? `[aiwebsite] Your /work update is held for review: ${row.title}`
@@ -342,7 +342,7 @@ export async function notifyUpdatePending(
     parent && parent.status === "published" && parent.slug
       ? `Live card: ${SITE}/work#${parent.slug}`
       : `Live card: currently held or removed; check ${SITE}/admin/work`;
-  await sendTroyEmail({
+  await sendGovernanceEmail({
     subject: `[aiwebsite] Action needed: /work update awaiting approval: ${card.title}`,
     text: [
       `Review it at ${SITE}/admin/work#sub-${row.id} (Approve update, Reject update, or delete).`,
@@ -360,7 +360,7 @@ export async function notifyUpdatePending(
     ].join("\n"),
   });
   if (isAdmin(row.submitterEmail)) return; // the approver IS the submitter
-  await sendTroyEmail({
+  await sendGovernanceEmail({
     to: row.submitterEmail,
     subject: `Your /work update passed review and is waiting for approval: ${card.title}`,
     text: [
@@ -380,7 +380,7 @@ export async function notifyUpdateApproved(
 ): Promise<void> {
   const link = `${SITE}/work#${slug}`;
   if (row.submitterEmail.toLowerCase() !== opts.approverEmail.toLowerCase())
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       to: row.submitterEmail,
       subject: `Your /work update is live: ${card.title}`,
       text: [
@@ -394,7 +394,7 @@ export async function notifyUpdateApproved(
   // Owner audit copy when another listed admin approved. Undo guidance names
   // rollback, NOT delete: DELETE on this row now performs the rollback.
   if (opts.approverEmail.toLowerCase() !== adminRecipient().toLowerCase())
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       subject: `[aiwebsite] /work card updated: ${card.title}`,
       text: [
         `${opts.approverEmail} approved an update to the published team card "${card.title}". The new version replaces it within 5 minutes: ${link}`,
@@ -409,7 +409,7 @@ export async function notifyUpdateApproved(
     parentEmail !== row.submitterEmail.toLowerCase() &&
     parentEmail !== opts.approverEmail.toLowerCase()
   )
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       to: opts.parent.submitterEmail,
       subject: `Your /work card was updated: ${card.title}`,
       text: `An approved update replaced your published card "${card.title}" with a new version under the same link: ${link}\n\nReply to this email if that is unexpected.`,
@@ -432,7 +432,7 @@ export async function notifyUpdateAutoPublished(
   const owner = adminRecipient().toLowerCase();
   const submitter = row.submitterEmail.toLowerCase();
   const undo = `To undo it: "Roll back to previous version" on /admin/work restores the old card. To remove the card entirely, roll back first, then delete the restored card.`;
-  await sendTroyEmail({
+  await sendGovernanceEmail({
     subject: `[aiwebsite] /work card updated: ${card.title}`,
     text: [
       submitter === owner
@@ -455,7 +455,7 @@ export async function notifyUpdateAutoPublished(
   // A second listed admin used the auto lane: they get the submitter copy,
   // the owner keeps the audit copy above.
   if (submitter !== owner)
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       to: row.submitterEmail,
       subject: `Your /work update is live: ${card.title}`,
       text: [
@@ -470,7 +470,7 @@ export async function notifyUpdateAutoPublished(
   // the clicked-approve path.
   const parentEmail = parent.submitterEmail.toLowerCase();
   if (parentEmail !== submitter && parentEmail !== owner)
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       to: parent.submitterEmail,
       subject: `Your /work card was updated: ${card.title}`,
       // "reviewed", never "approved": nobody clicked approve on this lane.
@@ -490,7 +490,7 @@ export async function notifyUpdateConflictHeld(
 ): Promise<void> {
   const selfSubmitted =
     row.submitterEmail.toLowerCase() === adminRecipient().toLowerCase();
-  await sendTroyEmail({
+  await sendGovernanceEmail({
     subject: `[aiwebsite] Action needed: /work update could not publish: ${card.title}`,
     text: [
       `Review it at ${SITE}/admin/work#sub-${row.id} (delete it, or resubmit the tool as a new card).`,
@@ -512,7 +512,7 @@ export async function notifyUpdateRejected(
   actorEmail: string
 ): Promise<void> {
   if (row.submitterEmail.toLowerCase() === actorEmail.toLowerCase()) return;
-  await sendTroyEmail({
+  await sendGovernanceEmail({
     to: row.submitterEmail,
     subject: `Your /work update was not approved: ${row.title}`,
     text: [
@@ -532,12 +532,12 @@ export async function notifyRollback(
   actorEmail: string
 ): Promise<void> {
   if (actorEmail.toLowerCase() !== adminRecipient().toLowerCase())
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       subject: `[aiwebsite] /work card rolled back: ${parent.title}`,
       text: `${actorEmail} rolled back the update to the published team card "${parent.title}". The previous version of the card was restored: ${SITE}/work#${slug} (updates within 5 minutes).`,
     });
   if (child.submitterEmail.toLowerCase() !== actorEmail.toLowerCase())
-    await sendTroyEmail({
+    await sendGovernanceEmail({
       to: child.submitterEmail,
       subject: `Your /work update was rolled back: ${parent.title}`,
       text: `Your update to "${parent.title}" was rolled back and the previous version of the card was restored. The update row is gone from your submissions page. Reply to this email or ask Adam if you want to know why.`,

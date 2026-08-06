@@ -19,7 +19,7 @@ export const CAPS = {
   // JSON mode runs on the full executor model (gpt-5.4 class, ~$0.10/turn at
   // our budgets) - 1500/day authorizes roughly $150/day worst case (owner
   // directive 2026-07-16: global x10). Tavily 300/day = ~600 credits/day.
-  // Both are env-overridable AND runtime-overridable via the Troy approval
+  // Both are env-overridable AND runtime-overridable via the email approval
   // loop (budget.ts), clamped to BUDGET_CEILINGS either way.
   brainCallsPerDayDefault: 1500,
   tavilyCallsPerDayDefault: 300,
@@ -98,7 +98,7 @@ export const CAPS = {
 } as const;
 
 /**
- * Bounds on runtime budget overrides (the Troy email-approval loop, §5.12).
+ * Bounds on runtime budget overrides (the email approval loop, §5.12).
  * Hard ceilings bound the email channel's blast radius: even a subverted
  * approval can at worst authorize ~$500/day of brain calls, never 10^9. The
  * floor keeps email from bricking the feature (that is GOVERNANCE_ENABLED's
