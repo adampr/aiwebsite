@@ -76,7 +76,7 @@ run_capped() {  # run_capped <step> <workdir> <payload...>
   # inherit + pin the deploy/stage locks (B1 class).
   timeout -k 30 1800 sudo -n systemd-run --quiet --collect --scope \
     --unit="aiwebsite-stage-${step}-$$" \
-    -p MemoryMax=2048M -p MemorySwapMax=0 \
+    -p MemoryMax=2560M -p MemorySwapMax=0 \
     bash -c "echo 1 > /sys/fs/cgroup\$(cut -d: -f3 /proc/self/cgroup)/memory.oom.group 2>/dev/null || true; exec runuser -u $capped_user -- bash -c 'export PATH=$capped_path; cd $workdir && { echo 900 > /proc/self/oom_score_adj 2>/dev/null || true; } && exec nice -n 10 ionice -c3 $*'" \
     200>&- 201>&- || rc=$?
   if [ "$rc" -eq 137 ] || [ "$rc" -eq 143 ]; then
@@ -86,7 +86,7 @@ run_capped() {  # run_capped <step> <workdir> <payload...>
       echo "       starving the box. The stage tree is abandoned; the live tree is"
       echo "       untouched. Check 'free -m' and /var/log/aiwebsite-psi.log, then re-run."
     else
-      echo "ERROR: step '$step' died inside its 2048M cgroup cap (exit $rc):"
+      echo "ERROR: step '$step' died inside its 2560M cgroup cap (exit $rc):"
       echo "       cgroup OOM (MemoryMax) or the 1800s step timeout — a pre-cutover"
       echo "       no-op; the live site keeps serving. If the build legitimately needs"
       echo "       more, raise STAGE_MEM_MAX_MB in deploy/site-deploy.env (1024–3072),"
