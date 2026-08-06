@@ -1131,8 +1131,9 @@ export async function deleteSubmission(
 }
 
 /** The original upload(s), for the owner retention email (§5.16): the
- * package plus, on CoWork Skill rows, the standalone SKILL.md. Empty after
- * the email has sent (clearArchiveData) or on pre-retention rows. */
+ * package plus, on CoWork Skill rows, the standalone SKILL.md. Empty only
+ * on pre-retention rows: since 2026-08-04 the bytes stay on the row
+ * permanently (the retention email is an archival copy, not the copy). */
 export async function archiveDataById(
   id: string
 ): Promise<{ name: string; data: Buffer }[]> {
@@ -1156,7 +1157,9 @@ export async function archiveDataById(
   return files;
 }
 
-/** Drop the retained upload bytes once the retention email has sent. */
+/** Drop the retained upload bytes. UNCALLED since 2026-08-04: Resend's 202
+ * is an accept, not a delivery, and clearing on it destroyed two uploads
+ * whose retention emails later bounced. Kept only as an explicit ops lever. */
 export async function clearArchiveData(id: string): Promise<void> {
   await db
     .update(S)

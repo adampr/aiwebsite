@@ -775,8 +775,8 @@ async function runPanelInner(
   // exists for them at all; only the public /work lane flushes ISR.
   if (row.companyId === null) await revalidateWorkPage();
   await notifyPublished(row, card, slug, contained);
-  // Owner retention: the original upload rides the row until this email
-  // confirms; a failed send keeps the bytes recoverable.
+  // Owner retention: an archival copy goes to the owner; the original
+  // upload stays on the row permanently (2026-08-04, never cleared).
   await deliverArchiveRetention(row);
 }
 

@@ -58,8 +58,9 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
       const now = await submissionById(id);
       if (now?.parentId && now.status === "published" && now.slug) {
         // Crash-recovery sweep-up: if the auto lane died between its swap
-        // and the retention email, the bytes are still on the row; this is
-        // a no-op once they were delivered and cleared.
+        // and the retention email, this re-sends it. Bytes stay on the row
+        // permanently (2026-08-04), so a re-approve of an already-swapped
+        // row sends the owner a duplicate retention email; accepted.
         await deliverArchiveRetention(now);
         return okJson({
           status: "published",
@@ -107,7 +108,7 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
     }
   }
   // Owner retention email (original upload attachment) on this publish path
-  // too; clears the stored bytes only on a confirmed send.
+  // too; the stored bytes stay on the row permanently (2026-08-04).
   await deliverArchiveRetention(row);
   return okJson({ status: "published", slug });
 }

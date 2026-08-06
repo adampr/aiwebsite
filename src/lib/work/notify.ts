@@ -10,6 +10,7 @@ import { adminRecipient, sendGovernanceEmail } from "@/lib/governance/budget";
 import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 import { HELD_NEXT_STEPS, KIND_LABELS, type WorkKind } from "./config";
 import { archiveDataById, type SubmissionRow } from "./db";
+import { toDeliverableAttachment } from "./retention-encoding";
 import type { WorkCard } from "./lint";
 
 function kindLabel(kind: string): string {
@@ -23,9 +24,15 @@ const SITE = "https://ai.xl.net";
  * ONE email, sent when the card is successfully posted (auto-publish AND
  * admin approve). CoWork Skill rows carry two files (package + SKILL.md);
  * program and legacy rows carry one; the body enumerates whatever is
- * attached, so the same template is truthful for both. Worst case
- * 10 MB + 1 MB ≈ 14.7 MB base64, inside Resend's 40 MB message cap; timeout
- * is 60 s for the larger payloads.
+ * attached, so the same template is truthful for both.
+ *
+ * Attachments go through toDeliverableAttachment (retention-encoding.ts):
+ * text-named files attach as-is, everything else as a base64 text wrapper,
+ * because Gmail bounces archives containing blocked file types (whole
+ * message, ContentRejected) and did so on 2026-08-03 and 2026-08-06. Worst
+ * case is now a 10 MB package armored to ~13.4 MB text, ~17.9 MB as the
+ * JSON base64 field, plus ~1.3 MB for SKILL.md: ~19.2 MB, inside Resend's
+ * 40 MB message cap; timeout stays 60 s for the larger payloads.
  *
  * The return value is Resend's ACCEPT (202), and that is all it can ever be.
  * It is NOT evidence of delivery, and NOTHING may delete data on the strength
@@ -42,6 +49,8 @@ export async function sendArchiveRetentionEmail(
     );
     return false;
   }
+  const prepared = files.map(toDeliverableAttachment);
+  const armored = prepared.filter((p) => p.encoded);
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -70,22 +79,47 @@ export async function sendArchiveRetentionEmail(
         // withTronSignature: this raw fetch bypasses sendGovernanceEmail (it needs
         // attachments, a 60s timeout, and the no-BCC carve-out above), so the
         // owner's always-signed ruling is applied here by hand.
+        // Body lines and the attachments array both derive from `prepared`,
+        // so what the mail says is attached can never desync from what is.
         text: withTronSignature([
           `Retention copy of the original files behind a published /work card.`,
           ``,
           `Title: ${row.title}`,
           `Kind: ${kindLabel(row.kind)}`,
           `Submitted by: ${row.submitterEmail}`,
-          ...files.map((f) => `File: ${f.name} (${f.data.length} bytes)`),
-          `Package SHA-256: ${row.archiveSha256 ?? "n/a"}`,
+          ...prepared.map((p) =>
+            p.encoded
+              ? `Attached: ${p.attachedName} (${p.attachedBytes} bytes, base64 text encoding the original upload ${p.originalName}, ${p.originalBytes} bytes)`
+              : `Attached: ${p.attachedName} (${p.attachedBytes} bytes, exactly as uploaded)`
+          ),
+          ...(armored.length > 0
+            ? [
+                ``,
+                `To restore an encoded original on macOS or Linux:`,
+                // openssl, not base64: BSD/macOS base64 rejects --decode and
+                // its -d means debug there. Names are mailSafeName-sanitized
+                // at the encoding seam, so quoting them is paste-safe.
+                ...armored.map(
+                  (p) =>
+                    `  openssl base64 -d -in "${p.attachedName}" -out "${p.originalName}"`
+                ),
+                ``,
+              ]
+            : []),
+          `Package SHA-256${armored.length > 0 ? " (hash of the restored original file, not of the attached .b64.txt text)" : ""}: ${row.archiveSha256 ?? "n/a"}`,
           ...(row.mdSha256 ? [`SKILL.md SHA-256: ${row.mdSha256}`] : []),
           `Submitted: ${row.createdAt.toISOString()}`,
           ``,
-          `A copy of these files also remains on the submission row (since 2026-08-04 they are no longer deleted after this email — a bounced retention email used to destroy the only copy).`,
+          ...(armored.length > 0
+            ? [
+                `The archive is attached as base64 text because mail providers block a list of file types inside archive attachments and bounce the whole message, and renaming the archive does not help; plain text passes. That blocking is what kept earlier retention copies from arriving.`,
+              ]
+            : []),
+          `A copy of these files also remains permanently on the submission row: since 2026-08-04 they are never deleted after this email, because a bounced retention email once destroyed the only copy.`,
         ].join("\n")),
-        attachments: files.map((f) => ({
-          filename: f.name,
-          content: f.data.toString("base64"),
+        attachments: prepared.map((p) => ({
+          filename: p.attachedName,
+          content: p.contentBase64,
         })),
       }),
       signal: AbortSignal.timeout(60_000),
