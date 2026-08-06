@@ -341,6 +341,14 @@ function sha(text: string): string {
 
 const warnings: string[] = [];
 
+// Owner ruling 2026-08-06 (a signature block in EVERY outbound email): this
+// script's sender-identity block, appended at the seam below. Hardcoded to
+// match the From line's non-persona identity; no mailbox line because the
+// From is a no-reply address and advertising it as a contact would be a
+// false affordance. scripts/work-tests.ts pins this append.
+const SIGNATURE =
+  "XL.net AI Governance\nAutomated AI agent, XL.net AI\nhttps://ai.xl.net";
+
 async function sendEmail(subject: string, body: string): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   const to =
@@ -362,7 +370,7 @@ async function sendEmail(subject: string, body: string): Promise<void> {
         from: "XL.net AI Governance <noreply@ai.xl.net>",
         to: [to],
         subject,
-        text: body,
+        text: `${body.trimEnd()}\n\n${SIGNATURE}`,
       }),
       signal: AbortSignal.timeout(20_000),
     });

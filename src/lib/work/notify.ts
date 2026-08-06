@@ -7,6 +7,7 @@ import { isAdmin } from "@aicompany/core/auth/guard";
 import { sendEmail } from "@aicompany/core/email/send";
 import { siteConfig } from "site.config";
 import { adminRecipient, sendTroyEmail, TROY_FROM } from "@/lib/governance/budget";
+import { withTronSignature, withTroySignature } from "@/lib/tron-signature";
 import { HELD_NEXT_STEPS, KIND_LABELS, type WorkKind } from "./config";
 import { archiveDataById, type SubmissionRow } from "./db";
 import type { WorkCard } from "./lint";
@@ -66,7 +67,10 @@ export async function sendArchiveRetentionEmail(
         // The recipient IS the overseer by construction here, so there is
         // nothing for a BCC to add — only something for it to leak.
         subject: `[aiwebsite] /work submission files: ${row.title}`,
-        text: [
+        // withTroySignature: this raw fetch bypasses sendTroyEmail (it needs
+        // attachments, a 60s timeout, and the no-BCC carve-out above), so the
+        // owner's always-signed ruling is applied here by hand.
+        text: withTroySignature([
           `Retention copy of the original files behind a published /work card.`,
           ``,
           `Title: ${row.title}`,
@@ -78,7 +82,7 @@ export async function sendArchiveRetentionEmail(
           `Submitted: ${row.createdAt.toISOString()}`,
           ``,
           `A copy of these files also remains on the submission row (since 2026-08-04 they are no longer deleted after this email — a bounced retention email used to destroy the only copy).`,
-        ].join("\n"),
+        ].join("\n")),
         attachments: files.map((f) => ({
           filename: f.name,
           content: f.data.toString("base64"),
@@ -137,17 +141,21 @@ export async function deliverArchiveRetention(
   // never went out was a bounce webhook nobody correlated. Route it through the
   // module send seam: a `WARN ` subject to oversight.alertEmail auto-mirrors
   // into reported_issues, so it shows up in the mandated build-start triage.
+  // withTronSignature: the module's sendEmail never mutates content (its
+  // documented contract) and sends from oversight.mailFrom, which is Tron's
+  // mailbox for this site, so the caller appends Tron's block.
   await sendEmail(siteConfig, {
     to: siteConfig.oversight.alertEmail,
     subject: `[aiwebsite] WARN /work retention email failed to send`,
-    text:
+    text: withTronSignature(
       `The retention copy of the uploaded files behind a published /work card ` +
-      `was NOT accepted by the mail vendor.\n\n` +
-      `Title:  ${row.title}\n` +
-      `Row id: ${row.id}\n` +
-      `Files:  ${files.map((f) => `${f.name} (${f.data.length} bytes)`).join(", ")}\n\n` +
-      `The bytes are STILL on the row — nothing was deleted. Re-send or ` +
-      `download them before any future retention change.`,
+        `was NOT accepted by the mail vendor.\n\n` +
+        `Title:  ${row.title}\n` +
+        `Row id: ${row.id}\n` +
+        `Files:  ${files.map((f) => `${f.name} (${f.data.length} bytes)`).join(", ")}\n\n` +
+        `The bytes are STILL on the row — nothing was deleted. Re-send or ` +
+        `download them before any future retention change.`
+    ),
   });
 }
 

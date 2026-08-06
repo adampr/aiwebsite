@@ -53,7 +53,7 @@ import {
   type SubmissionRow,
 } from "./db";
 import type { WorkScope } from "./scope";
-import { tronSignature } from "@/lib/tron-signature";
+import { withTronSignature } from "@/lib/tron-signature";
 import { emailDomain } from "@/lib/rfp/access";
 import { ROADMAP_CAPS, roadmapBrainDailyCap, roadmapEnabled } from "@/lib/roadmap/config";
 import {
@@ -111,7 +111,10 @@ function hashKey(s: string): string {
 }
 
 /** Resend send as Tron (sendTroyEmail shape; replies come from the mailbox
- * the submitter actually wrote to). */
+ * the submitter actually wrote to). Tron's signature block is appended HERE,
+ * at the seam, for every send including warnAdmin (owner ruling 2026-08-06:
+ * signatures in EVERY outbound email; per-call-site appends are how unsigned
+ * lanes shipped twice). */
 async function sendTronEmail(opts: {
   to: string;
   subject: string;
@@ -136,7 +139,7 @@ async function sendTronEmail(opts: {
         from: TRON_FROM,
         to: tronTo,
         subject: opts.subject,
-        text: opts.text,
+        text: withTronSignature(opts.text),
         // §1 oversight BCC (2026-08-04). This is the lane that most needed it:
         // three of its four call sites reply to an ARBITRARY inbound
         // correspondent with AI-composed prose, and until now no human ever
@@ -509,7 +512,7 @@ export async function handleWorkEmail(
         sent = await sendTronEmail({
           to: sender,
           subject: `Re: ${sanitizeHeaderValue(subjectRaw, 150) || "Your submission"}`,
-          text: `Email submissions are not set up for your organization right now. Nothing was stored.\n\n${tronSignature()}`,
+          text: `Email submissions are not set up for your organization right now. Nothing was stored.`,
         });
       // This reply predates reject() and returns before it exists, so it
       // needs its own mirror; without one it is the single submitter-facing
@@ -552,11 +555,11 @@ export async function handleWorkEmail(
     return ok;
   };
   // Rejection shape (2026-08-03 natural-email round): preamble, the ONE
-  // targeted fix, an optional one-line form pointer, and Tron's full
-  // signature (owner ruling: the normal signature is in ALL emails Tron
-  // sends). pointer: false on wait-class rejects (paused, throttled, quota,
-  // pipeline offline) where the form hits the same wall, and on update-path
-  // rejects whose fix is email-specific.
+  // targeted fix, and an optional one-line form pointer; sendTronEmail
+  // appends Tron's full signature at the seam (owner ruling: the normal
+  // signature is in ALL emails Tron sends). pointer: false on wait-class
+  // rejects (paused, throttled, quota, pipeline offline) where the form hits
+  // the same wall, and on update-path rejects whose fix is email-specific.
   const companyPointer = `You can also submit on the web: sign in at ${SITE}/roadmap/work with your work email.`;
   const reject = async (
     message: string,
@@ -577,8 +580,6 @@ export async function handleWorkEmail(
           ...(opts?.pointer === false
             ? []
             : [``, isCompanyLane ? companyPointer : FORM_POINTER]),
-          ``,
-          tronSignature(),
         ].join("\n"),
       });
     // §5.15 mirror (owner directive 2026-08-05): every rejection reply is
@@ -688,7 +689,7 @@ export async function handleWorkEmail(
   const parsed = parseSubmissionBody(email.text ?? "");
   // Receipt notes (2026-08-03 natural-email round): everything the intake
   // adapted instead of bouncing is disclosed here, between the receipt body
-  // and the signature.
+  // and the signature sendTronEmail appends.
   const notes: string[] = [];
   // An explicit "Title:"/"Skill Name:" body line beats the subject:
   // forwarded skill emails arrive with subjects like "Fwd: skill to our
@@ -1448,8 +1449,6 @@ export async function handleWorkEmail(
       ...disclosure,
       ...receipt.slice(1),
       ...notes.flatMap((n) => [``, n]),
-      ``,
-      tronSignature(),
     ].join("\n"),
   });
   if (kicked.run) await kicked.run(); // runPanel never throws

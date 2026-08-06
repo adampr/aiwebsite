@@ -7,6 +7,7 @@
 // effect the moment an approval lands. Server-only (DB imports).
 
 import { oversightBcc } from "@/lib/oversight-bcc";
+import { TROY_FROM, withTroySignature } from "@/lib/tron-signature";
 import {
   ALERT_STAMP_KEYS,
   OVERRIDE_KEYS,
@@ -127,7 +128,9 @@ export async function describeBudgets(): Promise<
  * legitimate submitter copies and nobody would see it.
  * ------------------------------------------------------------------ */
 
-export const TROY_FROM = "Troy Netter <Troy.Netter@ai.xl.net>";
+// Troy's identity lives in src/lib/tron-signature.ts (single source of truth
+// with his signature block); re-exported here for the existing importers.
+export { TROY_FROM };
 
 export function adminRecipient(): string {
   return (
@@ -159,7 +162,9 @@ export async function sendTroyEmail(opts: {
         from: TROY_FROM,
         to: troyTo,
         subject: opts.subject,
-        text: opts.text,
+        // Owner ruling 2026-08-06 (signatures in EVERY outbound email):
+        // signed at the seam so no call site, present or future, can forget.
+        text: withTroySignature(opts.text),
         ...(bcc && { bcc }),
         ...(opts.headers ? { headers: opts.headers } : {}),
       }),

@@ -1,11 +1,12 @@
 // Owner and participant notifications for the roadmap portal (§5.18). All
 // sends are best-effort (a mail failure never blocks the action) and go out
-// as Tron with his full signature (owner ruling 2026-08-03: every email Tron
-// sends carries it). No em dashes in any copy.
+// as Tron with his full signature, appended idempotently at the seam below
+// (owner rulings 2026-08-03 / 2026-08-06: every email carries the sender's
+// signature). No em dashes in any copy.
 
 import { oversightBcc } from "@/lib/oversight-bcc";
 import { adminRecipient } from "@/lib/governance/budget";
-import { tronSignature } from "@/lib/tron-signature";
+import { withTronSignature } from "@/lib/tron-signature";
 
 const TRON_FROM = "Tron Netter <Tron.Netter@ai.xl.net>";
 const SITE = "https://ai.xl.net";
@@ -32,7 +33,7 @@ async function sendRoadmapEmail(opts: {
         from: TRON_FROM,
         to: opts.to,
         subject: opts.subject,
-        text: `${opts.text}\n\n${tronSignature()}`,
+        text: withTronSignature(opts.text),
         // §1 oversight BCC (2026-08-04). No-ops on the call sites that already
         // put the owner in the visible `to` (so external company admins can
         // see he is on the thread); it only adds a copy where he was absent.

@@ -1809,8 +1809,127 @@ async function main() {
   const { FORM_POINTER, fuzzyKind, pickSkillDoc, CREDIT_RE } = await import(
     "../src/lib/work/email-parse"
   );
-  for (const s of [tronSignature(), FORM_POINTER])
+  const {
+    troySignature,
+    withTronSignature,
+    withTroySignature,
+    TROY_FROM,
+    TROY_MAILBOX,
+  } = await import("../src/lib/tron-signature");
+  for (const s of [tronSignature(), troySignature(), FORM_POINTER])
     assert.ok(!/—|–/.test(s), "no em or en dash in outbound constants");
+
+  // ── §5.16 signature-everywhere round (2026-08-06, owner: signatures ──
+  // ── MUST ALWAYS BE INCLUDED) ─────────────────────────────────────────
+  // Troy is a HOST-ONLY persona: packages/aicompany contains no Troy code,
+  // so unlike tronSignature there is no module function to mirror and
+  // deliberately NO source-hash pin. Rendered output only. The block omits
+  // Tron's phone line ((872) 350-4325 is Tron's own AI voice line) and the
+  // memory disclosure (false for Troy's stateless lanes) by design.
+  assert.equal(
+    troySignature(),
+    [
+      "Troy Netter",
+      "AI Agent, XL.net AI",
+      "Troy.Netter@ai.xl.net",
+      "https://ai.xl.net",
+    ].join("\n"),
+    "troySignature renders the 4-line host-only block for this config"
+  );
+  assert.equal(
+    TROY_FROM,
+    "Troy Netter <Troy.Netter@ai.xl.net>",
+    "TROY_FROM matches the historical budget.ts literal (re-exported there)"
+  );
+  assert.ok(
+    troySignature().includes(TROY_MAILBOX),
+    "Troy's signature names the mailbox on his From line"
+  );
+  // Wrapper behavior: append, idempotence, trailing-whitespace
+  // normalization. The idempotence leg is the byte-stability proof for the
+  // three intake replies that carried per-site signatures before the seam
+  // change: wrapping an already-signed body is a no-op.
+  for (const [wrap, sig] of [
+    [withTronSignature, tronSignature()],
+    [withTroySignature, troySignature()],
+  ] as const) {
+    assert.equal(wrap("Body."), `Body.\n\n${sig}`, "wrapper appends");
+    assert.equal(wrap(wrap("Body.")), wrap("Body."), "wrapper is idempotent");
+    assert.equal(
+      wrap("Body.\n\n"),
+      wrap("Body."),
+      "wrapper normalizes trailing whitespace"
+    );
+    assert.equal(
+      wrap(`Body.\n\n${sig}`),
+      `Body.\n\n${sig}`,
+      "an already-signed body is unchanged"
+    );
+  }
+  // Seam wiring pins (source scrape, the technique the module-sha pin above
+  // already uses; a runtime probe would need a network seam because both
+  // senders early-return before composing when RESEND_API_KEY is unset).
+  // These fail LOUD on refactor: re-wire the seam, then fix the assertion.
+  {
+    const budgetSrc = readFileSync("src/lib/governance/budget.ts", "utf8");
+    assert.ok(
+      /text:\s*withTroySignature\(opts\.text\)/.test(budgetSrc),
+      "sendTroyEmail signs every Troy send at the seam"
+    );
+    const intakeSrc = readFileSync("src/lib/work/email-intake.ts", "utf8");
+    assert.ok(
+      /text:\s*withTronSignature\(opts\.text\)/.test(intakeSrc),
+      "sendTronEmail signs every Tron send at the seam (covers warnAdmin)"
+    );
+    assert.ok(
+      !intakeSrc.includes("${tronSignature()"),
+      "no per-site signature appends remain in email-intake (seam only)"
+    );
+    const notifySrc = readFileSync("src/lib/work/notify.ts", "utf8");
+    const retStart = notifySrc.indexOf("function sendArchiveRetentionEmail");
+    const retSlice = notifySrc.slice(
+      retStart,
+      notifySrc.indexOf("export async function deliverArchiveRetention")
+    );
+    assert.ok(retStart > 0, "sendArchiveRetentionEmail found");
+    assert.ok(
+      retSlice.includes("withTroySignature("),
+      "the retention raw-fetch send (bypasses sendTroyEmail) signs as Troy"
+    );
+    const warnStart = notifySrc.indexOf(
+      "export async function deliverArchiveRetention"
+    );
+    const warnSlice = notifySrc.slice(
+      warnStart,
+      notifySrc.indexOf("export async function notifyPublished")
+    );
+    assert.ok(
+      warnSlice.includes("withTronSignature("),
+      "the retention-failure WARN (module sendEmail, From = oversight.mailFrom = Tron) signs as Tron"
+    );
+    const roadmapSrc = readFileSync("src/lib/roadmap/notify.ts", "utf8");
+    assert.ok(
+      /text:\s*withTronSignature\(opts\.text\)/.test(roadmapSrc),
+      "sendRoadmapEmail signs every roadmap send at the seam"
+    );
+    const govScriptSrc = readFileSync(
+      "scripts/governance-standards-refresh.ts",
+      "utf8"
+    );
+    assert.ok(
+      govScriptSrc.includes("${body.trimEnd()}\\n\\n${SIGNATURE}"),
+      "the nightly governance script signs its reports/WARNs at its seam"
+    );
+    // Identity coherence: the module-seam WARN goes out from
+    // oversight.mailFrom; if that ever stops being Tron's mailbox the
+    // appended block would misname the sender.
+    const cfg = (await import("../site.config")).siteConfig;
+    assert.equal(
+      cfg.oversight.mailFrom,
+      `${cfg.persona.name} <${cfg.channels.email.mailbox}>`,
+      "oversight.mailFrom is Tron's mailbox (the WARN's tronSignature depends on it)"
+    );
+  }
 
   // 4. Kind: parsing. Exact vocabulary lifts the line; fuzzy honors short
   //    label-like values but keeps the line and discloses; prose degrades.
