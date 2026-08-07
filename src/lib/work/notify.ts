@@ -325,6 +325,12 @@ export async function notifyPublished(
         `To remove it: /admin/roadmap company detail, or DELETE /api/work/submissions/${row.id}.`,
       ].join("\n"),
     });
+    // The owner publishing his own submission does not need the colleague-
+    // voiced second copy (same rule notifyHeld already applies). The owner
+    // email above is unconditional and sent first, so the skip can never
+    // remove the only mail trail.
+    if (row.submitterEmail.toLowerCase() === adminRecipient().toLowerCase())
+      return;
     await sendGovernanceEmail({
       to: row.submitterEmail,
       subject: `Your work submission is live: ${card.title}`,
@@ -358,6 +364,12 @@ export async function notifyPublished(
     subject: `[aiwebsite] /work card published: ${card.title}`,
     text,
   });
+  // Same rule as the company lane and as notifyHeld: when the owner is the
+  // submitter, the unconditional owner email above already told him. This is
+  // the fleet's highest-volume duplicate — 29 of 34 submitter copies in the
+  // 30 days to 2026-08-07 were the owner mailing himself.
+  if (row.submitterEmail.toLowerCase() === adminRecipient().toLowerCase())
+    return;
   await sendGovernanceEmail({
     to: row.submitterEmail,
     subject: `Your /work submission is live: ${card.title}`,
