@@ -2524,6 +2524,344 @@ async function main() {
     assert.ok(workQueueDrainEnabled(env("1")), "1 stays on");
   }
 
+  // 9. Deploy-window admission (§5.16, 2026-08-07). The owner's "Queuebot"
+  // row was refused every 60 s tick with reason=deploy and published
+  // 15 min 14 s later the moment the marker cleared, having done no panel
+  // work in between. The gate now closes only while the deploy still owns
+  // the live tree. Every leg here is a number-in/boolean-out call: no DB, no
+  // filesystem, no clock.
+  {
+    const {
+      deployBlocksPanelRun,
+      DEPLOY_MARKER_TTL_MS,
+      CUTOVER_RESTART_MAX_GAP_MS,
+    } = await import("../src/lib/work/config");
+    const now = 1_786_118_400_000;
+    const min = 60_000;
+
+    // The blocking case: a deploy that began before this process and is
+    // still touching the marker every phase. Pre-cutover, so refuse.
+    assert.equal(
+      deployBlocksPanelRun(now - 30_000, now - 90 * min, now),
+      true,
+      "deploy touching the marker while this process predates it blocks"
+    );
+    // The whole point: the marker has not been touched since this process
+    // started, so the touch at setup-vm.sh:575 and the pm2 restart after it
+    // are both behind us. Admit.
+    assert.equal(
+      deployBlocksPanelRun(now - 4 * min, now - 4 * min + 1000, now),
+      false,
+      "post-cutover process admits while the marker is still present"
+    );
+    // The measured cutover margin is ~1.0 s (marker 15:51:08.607, next-server
+    // 15:51:09) and process start is over-estimated by ~0.7 s, so the real
+    // comparison runs with roughly 1.7 s of slack. Pin the tight end.
+    assert.equal(
+      deployBlocksPanelRun(now - 1000, now, now),
+      false,
+      "one second of cutover margin is enough to admit"
+    );
+    // No marker at all: the normal state, and always the dev box.
+    assert.equal(
+      deployBlocksPanelRun(null, now - 90 * min, now),
+      false,
+      "absent marker never blocks"
+    );
+    // TTL, matching deployInProgress()'s strict `< 1_800_000`: a deploy that
+    // died before cutover leaves the marker behind and it ages out.
+    assert.equal(
+      deployBlocksPanelRun(now - DEPLOY_MARKER_TTL_MS + 1, now - 90 * min, now),
+      true,
+      "just inside the TTL still blocks"
+    );
+    assert.equal(
+      deployBlocksPanelRun(now - DEPLOY_MARKER_TTL_MS, now - 90 * min, now),
+      false,
+      "TTL boundary expires exactly where deployInProgress() does"
+    );
+    assert.equal(
+      deployBlocksPanelRun(now - DEPLOY_MARKER_TTL_MS - 1, now - 90 * min, now),
+      false,
+      "past the TTL never blocks"
+    );
+    // A tie blocks: process start is the over-estimated value, so the one
+    // comparison free to be conservative is.
+    assert.equal(
+      deployBlocksPanelRun(now - 5 * min, now - 5 * min, now),
+      true,
+      "equal timestamps block"
+    );
+    // Overlapping deploys (four ran in 26 minutes on 2026-08-07): deploy A
+    // cut over and restarted us, then deploy B started touching the marker.
+    // B's touches land after our start, so the gate closes again - which is
+    // why this compares against mtime and not the marker's birthtime.
+    assert.equal(
+      deployBlocksPanelRun(now - 10_000, now - 3 * min, now),
+      true,
+      "a second overlapping deploy re-closes the gate"
+    );
+
+    // The cutover-gap bound (review-panel MAJOR): starting after the last
+    // touch is necessary but not sufficient. ecosystem.config.cjs runs the
+    // app autorestart:true / max_memory_restart 1G, so pm2 or earlyoom can
+    // restart it mid-build; without the bound that would open the gate for
+    // the rest of a build the flip then kills.
+    assert.equal(
+      deployBlocksPanelRun(
+        now - 5 * min,
+        now - 5 * min + CUTOVER_RESTART_MAX_GAP_MS,
+        now
+      ),
+      false,
+      "a restart exactly at the gap bound still reads as the cutover"
+    );
+    assert.equal(
+      deployBlocksPanelRun(
+        now - 5 * min,
+        now - 5 * min + CUTOVER_RESTART_MAX_GAP_MS + 1,
+        now
+      ),
+      true,
+      "a restart past the gap bound is someone else's restart, so refuse"
+    );
+    // A crash restart 100 s into a staged build (builds ran 79-298 s):
+    // started after the build-start touch, but nowhere near it.
+    assert.equal(
+      deployBlocksPanelRun(now - 200_000, now - 100_000, now),
+      true,
+      "a crash restart mid-build does not open the gate"
+    );
+    // The post-cutover health gate fails 120-360 s after the flip and
+    // restarts the app again (setup-vm.sh:596-622); that restart is far
+    // outside the gap, so the gate re-closes for the failing deploy.
+    assert.equal(
+      deployBlocksPanelRun(now - 6 * min, now - 3 * min, now),
+      true,
+      "the rollback restart re-closes the gate"
+    );
+
+    // strict mode = the pre-2026-08-07 rule, reproduced by handing the pure
+    // predicate an infinite process start. The admin re-run lane uses it
+    // because a fromHeld run the cutover kills is stranded at
+    // running+held_at with no recovery.
+    assert.equal(
+      deployBlocksPanelRun(now - 4 * min, Number.POSITIVE_INFINITY, now),
+      true,
+      "strict mode refuses for the whole deploy"
+    );
+    assert.equal(
+      deployBlocksPanelRun(null, Number.POSITIVE_INFINITY, now),
+      false,
+      "strict mode still admits with no marker"
+    );
+    assert.equal(
+      deployBlocksPanelRun(
+        now - DEPLOY_MARKER_TTL_MS,
+        Number.POSITIVE_INFINITY,
+        now
+      ),
+      false,
+      "strict mode still honours the TTL"
+    );
+    // And it is byte-for-byte deployInProgress(): marker present and younger
+    // than the TTL, nothing else.
+    for (const age of [0, 1000, 15 * min, DEPLOY_MARKER_TTL_MS - 1]) {
+      assert.equal(
+        deployBlocksPanelRun(now - age, Number.POSITIVE_INFINITY, now),
+        true,
+        `strict mode blocks at marker age ${age}`
+      );
+    }
+
+    // Drift tripwires. deploy-window.ts must keep its own copy of the marker
+    // path and the TTL (importing governance/db.ts would drag the Postgres
+    // client into every caller and end this suite's DB-free contract), so
+    // the copies are pinned against the file that owns them.
+    const { readFileSync } = await import("node:fs");
+    const govSrc = readFileSync("src/lib/governance/db.ts", "utf8");
+    const { DEPLOY_MARKER_PATH } = await import(
+      "../src/lib/work/deploy-window"
+    );
+    assert.ok(
+      govSrc.includes(`fs.statSync("${DEPLOY_MARKER_PATH}")`),
+      "deploy-window.ts marker path matches the one governance/db.ts stats"
+    );
+    assert.equal(DEPLOY_MARKER_TTL_MS, 1_800_000, "TTL is 30 minutes");
+    assert.ok(
+      govSrc.includes("< 1_800_000"),
+      "DEPLOY_MARKER_TTL_MS matches deployInProgress()'s literal"
+    );
+    // Seam scrape (signature-round pattern): the admission gate must call
+    // the phase-aware check. Reverting it to deployInProgress() re-idles the
+    // queue for the whole deploy, which is a silent regression on every
+    // surface, so it fails here instead.
+    const panelSrc = readFileSync("src/lib/work/panel.ts", "utf8");
+    // Behaviour, not formatting: the gate must call deployBlocksPanel with
+    // fromHeld forwarded, and must still refuse with reason "deploy". A
+    // brace-wrapped or re-indented version of the same statement passes.
+    assert.ok(
+      /deployBlocksPanel\(\s*\{\s*strict:\s*opts\?\.fromHeld === true\s*\}\s*\)/.test(
+        panelSrc
+      ),
+      "kickPanel's deploy gate calls deployBlocksPanel() and keeps fromHeld strict"
+    );
+    assert.ok(
+      /deployBlocksPanel\([\s\S]{0,120}?reason: "deploy"/.test(panelSrc),
+      "that gate is the one that refuses with reason deploy"
+    );
+    assert.ok(
+      !/^\s*import \{[^}]*deployInProgress/m.test(panelSrc),
+      "panel.ts no longer imports deployInProgress"
+    );
+
+    // THE ORDERING INVARIANT THE WHOLE FIX RESTS ON, pinned against the
+    // rendered script. deploy/setup-vm.sh is template-rendered from
+    // @aicompany/core, so a module bump can move these lines silently; if the
+    // last marker touch ever lands AFTER the cutover restart, "not touched
+    // since we started" stops meaning "already cut over" and this gate would
+    // admit runs into a live flip. Loud failure here beats a silent one.
+    const vm = readFileSync("deploy/setup-vm.sh", "utf8");
+    const touches = [...vm.matchAll(/^\s*.*sudo touch "\$deploy_marker".*$/gm)];
+    const lastTouch = touches[touches.length - 1];
+    assert.ok(touches.length >= 2, "setup-vm.sh touches the deploy marker");
+    const reloadAt = vm.indexOf("pm2 startOrReload");
+    const cutoverAt = vm.indexOf('stage-build.sh cutover');
+    const removeAt = vm.indexOf('sudo rm -f "$deploy_marker"');
+    assert.ok(reloadAt > 0 && cutoverAt > 0 && removeAt > 0, "cutover landmarks present");
+    assert.ok(
+      lastTouch.index! < cutoverAt && cutoverAt < reloadAt,
+      "the LAST marker touch precedes the cutover flip and the pm2 restart"
+    );
+    assert.ok(
+      removeAt > reloadAt,
+      "the marker outlives the cutover restart (that gap is what this reclaims)"
+    );
+    assert.ok(
+      !/sudo touch "\$deploy_marker"/.test(vm.slice(reloadAt)),
+      "nothing touches the marker again after the cutover restart"
+    );
+
+    // The IMPURE half, driven for real against a temp marker: statSync,
+    // mtimeMs, process.uptime() and the argument order all execute here.
+    // Without this the whole file was uncovered and an argument swap (both
+    // params are `number`, so tsc is blind) passed the suite.
+    const { deployBlocksPanel } = await import("../src/lib/work/deploy-window");
+    const { mkdtempSync, writeFileSync, utimesSync, rmSync } = await import(
+      "node:fs"
+    );
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "work-deploy-window-"));
+    const mk = join(dir, "marker");
+    try {
+      assert.equal(
+        deployBlocksPanel({ markerPath: join(dir, "absent") }),
+        false,
+        "live: no marker admits"
+      );
+      writeFileSync(mk, "");
+      assert.equal(
+        deployBlocksPanel({ markerPath: mk }),
+        true,
+        "live: a marker touched now blocks (this process is older)"
+      );
+      // Backdate to three seconds before this process started: the cutover
+      // signature. Catches .mtimeMs -> .birthtimeMs and an argument swap.
+      const startedAt = Date.now() - process.uptime() * 1000;
+      const cutover = new Date(startedAt - 3000);
+      utimesSync(mk, cutover, cutover);
+      assert.equal(
+        deployBlocksPanel({ markerPath: mk }),
+        false,
+        "live: a marker touched just before our start admits"
+      );
+      assert.equal(
+        deployBlocksPanel({ markerPath: mk, strict: true }),
+        true,
+        "live: strict mode still refuses for the whole deploy"
+      );
+      // The env lever is the 2am way back to the old behaviour.
+      assert.equal(
+        deployBlocksPanel({
+          markerPath: mk,
+          env: { WORK_DEPLOY_GATE_STRICT: "1" } as unknown as NodeJS.ProcessEnv,
+        }),
+        true,
+        "live: WORK_DEPLOY_GATE_STRICT=1 restores refuse-for-the-whole-deploy"
+      );
+      assert.equal(
+        deployBlocksPanel({
+          markerPath: mk,
+          env: { WORK_DEPLOY_GATE_STRICT: "0" } as unknown as NodeJS.ProcessEnv,
+        }),
+        false,
+        "live: only the literal 1 flips the lever"
+      );
+
+      // THE BIAS REGRESSION TEST (refutation-panel MAJOR). The boundary must
+      // be the KERNEL's fork time, not process.uptime()'s, which starts
+      // ~709 ms late and so reports the process as younger than it is. A
+      // marker touched between the true fork and the uptime figure is the
+      // exact shape of a pm2 autorestart landing just before a phase touch:
+      // it must BLOCK. Reading uptime instead makes it admit for a whole
+      // build. Guarded on /proc being readable and the skew exceeding the
+      // margin, so this is a no-op wherever the fallback is legitimately in
+      // use.
+      const procStat = (() => {
+        try {
+          const s = readFileSync("/proc/self/stat", "utf8");
+          const f = s.slice(s.lastIndexOf(")") + 2).split(" ");
+          const b = /^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"));
+          if (!b || !Number.isFinite(Number(f[19]))) return null;
+          return (Number(b[1]) + Number(f[19]) / 100) * 1000;
+        } catch {
+          return null;
+        }
+      })();
+      if (procStat !== null && startedAt - procStat > 200) {
+        const between = new Date(procStat + (startedAt - procStat) / 2);
+        utimesSync(mk, between, between);
+        assert.equal(
+          deployBlocksPanel({ markerPath: mk }),
+          true,
+          "live: a touch after the TRUE fork time blocks (uptime skew must not admit it)"
+        );
+        // And just before the true fork it is a real cutover: admit.
+        const beforeFork = new Date(procStat - 2000);
+        utimesSync(mk, beforeFork, beforeFork);
+        assert.equal(
+          deployBlocksPanel({ markerPath: mk }),
+          false,
+          "live: a touch before the true fork time is the cutover, so admit"
+        );
+      }
+      // Well before our start = someone else's restart, not the cutover.
+      const stale = new Date(startedAt - 10 * min);
+      utimesSync(mk, stale, stale);
+      assert.equal(
+        deployBlocksPanel({ markerPath: mk }),
+        true,
+        "live: a start far after the touch is not the cutover restart"
+      );
+      // Past the TTL nothing blocks, strict or not.
+      const expired = new Date(Date.now() - DEPLOY_MARKER_TTL_MS - 1000);
+      utimesSync(mk, expired, expired);
+      assert.equal(
+        deployBlocksPanel({ markerPath: mk }),
+        false,
+        "live: an expired marker admits"
+      );
+      assert.equal(
+        deployBlocksPanel({ markerPath: mk, strict: true }),
+        false,
+        "live: an expired marker admits even in strict mode"
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
   console.log("work-tests: all assertions passed.");
 }
 

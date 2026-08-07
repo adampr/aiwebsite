@@ -264,6 +264,103 @@ export function drainAction(
   }
 }
 
+/** Marker age past which `deployInProgress()` stops believing there is a live
+ * deploy (governance/db.ts uses the same 30 minutes; a crashed deploy leaves
+ * the marker behind deliberately and it ages out over this TTL). Pinned
+ * against that file by a source scrape in test:work. */
+export const DEPLOY_MARKER_TTL_MS = 1_800_000;
+
+/** How long after the marker's last touch a process start can still be the
+ * CUTOVER's restart rather than an unrelated one.
+ *
+ * Derivation, not a guess. Measured gap on the 2026-08-07 15:51 deploy:
+ * 1.0 s (marker 15:51:08.607, next-server 15:51:09). The bracket between the
+ * :575 touch and `pm2 startOrReload` is only the stage rename plus the
+ * reload, because this host has no deploy/extra-services.json to stop and
+ * start; the reload's own worst case is pm2's `kill_timeout` (default
+ * 1600 ms before SIGKILL) plus a spawn. Add the ~0.7 s process.uptime()
+ * bias and the realistic ceiling is a few seconds.
+ *
+ * Kept DELIBERATELY tight rather than generous, because the thing it must
+ * exclude is closer than it looks: setup-vm.sh touches at :531 and starts
+ * the staged build on the very next line, so a pm2/earlyoom restart seconds
+ * into a build is only seconds after a touch. A wider bound would misread
+ * more of those as cutovers. Erring tight costs only that the gate stays
+ * shut and the queue waits as it did before 2026-08-07. */
+export const CUTOVER_RESTART_MAX_GAP_MS = 10_000;
+
+/** Should a panel run be refused because a deploy is mid-flight?
+ *
+ * The naive answer, and what kickPanel asked until 2026-08-07, is "yes
+ * whenever the marker is fresh". That idles the queue for the WHOLE deploy:
+ * the owner's "Queuebot" row was created 135 ms after a deploy took the lock
+ * and published 15 min 14 s later, the moment the marker cleared, with no
+ * panel work done in between.
+ *
+ * Most of that window is not dangerous. `deploy/setup-vm.sh` re-touches the
+ * marker before every phase, and its LAST touch (line 575) sits immediately
+ * before the cutover bracket; after `pm2 startOrReload` the marker is never
+ * touched again, only removed (line 1152). Nothing else on the box writes it
+ * (deploy.sh:325 creates it; the watchdog and hi-speed.sh only stat it). So
+ * a marker that has NOT been touched since this process started belongs to a
+ * deploy that has already restarted this process: the live-tree flip and the
+ * migrations are behind it, and everything it has left to do (crawler config
+ * snapshot, persona seeds, ops scripts, systemd timer units, initial crawl,
+ * watchdog install, version stamp) is inert with respect to a panel run, with
+ * ONE exception the review panel was right to name: the post-cutover health
+ * gate (setup-vm.sh:596-622) can fail 120-360 s after the flip and restart
+ * the app again to roll back. A run admitted in that window dies there and
+ * lands in the stale-running orphan class the drain already recovers. Waiting
+ * the gate out before admitting would consume the entire post-cutover tail
+ * this exists to reclaim, so it is an accepted residual, not an oversight.
+ *
+ * Comparing against the touch time rather than the marker's creation time is
+ * deliberate. Birthtime would give a multi-minute margin instead of the
+ * measured 1.0 s between the pre-cutover touch and the pm2 restart, but it
+ * survives `touch`, so under OVERLAPPING deploys (four ran in 26 minutes on
+ * 2026-08-07, two with their builds killed) it would still name the FIRST
+ * deploy's start and admit runs while a second deploy marched toward its own
+ * cutover. A live deploy re-touches every phase, so the touch comparison
+ * closes that gate again. The 1.0 s margin is structural, not luck: the
+ * touch strictly precedes the flip and the restart in the script.
+ *
+ * "Started after the last touch" is necessary but NOT sufficient, and the
+ * review panel was right to push on it: `deploy/ecosystem.config.cjs` runs
+ * the app with `autorestart: true` and `max_memory_restart: '1G'`, so pm2 or
+ * earlyoom can restart it for reasons that have nothing to do with a
+ * cutover. A crash restart mid-build would otherwise open this gate for the
+ * rest of the build, which is the one case the design set out to avoid. So
+ * the start must also land WITHIN CUTOVER_RESTART_MAX_GAP_MS of the touch:
+ * the cutover's restart follows its touch within about a second, while any
+ * other restart is minutes deep into a phase. That bound also re-closes the
+ * gate after the post-cutover health gate's rollback restart
+ * (setup-vm.sh:596-622 fails 120-360 s after the flip, far outside the gap).
+ *
+ * Pure (numbers in, boolean out) so test:work can pin it without a DB, a
+ * filesystem or a clock. Passing Infinity for processStartedAtMs reproduces
+ * the older, wider `deployInProgress()` behaviour exactly, which is how the
+ * admin re-run lane keeps it.
+ */
+export function deployBlocksPanelRun(
+  /** Marker mtime in ms, or null when the marker does not exist. */
+  markerTouchedAtMs: number | null,
+  /** When THIS process started, in ms since epoch. */
+  processStartedAtMs: number,
+  nowMs: number
+): boolean {
+  if (markerTouchedAtMs === null) return false;
+  // Same TTL and same strict comparison as deployInProgress(): a marker this
+  // old means a deploy died without cleaning up, not that one is running.
+  if (nowMs - markerTouchedAtMs >= DEPLOY_MARKER_TTL_MS) return false;
+  const sinceTouch = processStartedAtMs - markerTouchedAtMs;
+  // Ties block. `Date.now() - process.uptime()*1000` over-estimates process
+  // start by ~700 ms (measured against /proc/self/stat: Node's uptime clock
+  // starts after fork+exec+V8 init), which biases toward admitting, so the
+  // one comparison that is free to be conservative should be.
+  if (sinceTouch <= 0) return true;
+  return sinceTouch > CUTOVER_RESTART_MAX_GAP_MS;
+}
+
 /** The exact rejection copy for a program zip without an architecture doc
  * (owner requirement: reject and instruct). */
 export const MISSING_ARCH_DOC_MESSAGE =

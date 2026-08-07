@@ -15,8 +15,8 @@
 import { callBrain, newId } from "@aicompany/core/brain/client";
 import { extractAnswer } from "@aicompany/core/brain/stream";
 import { siteConfig } from "site.config";
-import { deployInProgress } from "@/lib/governance/db";
 import { brainHealthy } from "@/lib/governance/brain";
+import { deployBlocksPanel } from "./deploy-window";
 import {
   admitCompanyRun,
   recordRoadmapBrainCall,
@@ -214,7 +214,13 @@ export async function kickPanel(
 ): Promise<{ outcome: KickOutcome; run?: () => Promise<void> }> {
   if (!workSubmissionsEnabled(process.env))
     return { outcome: { status: "refused", reason: "disabled" } };
-  if (deployInProgress())
+  // Only while the deploy still has the live tree: once its cutover has
+  // restarted this process, the remaining deploy work cannot touch a run
+  // (deployBlocksPanelRun in config.ts carries the reasoning). The admin
+  // re-run lane keeps the old refuse-for-the-whole-deploy rule, because a
+  // fromHeld run the cutover kills has no recovery path. Governance's own
+  // deployInProgress() gates are deliberately untouched.
+  if (deployBlocksPanel({ strict: opts?.fromHeld === true }))
     return { outcome: { status: "refused", reason: "deploy" } };
   if (!(await brainHealthy()))
     return { outcome: { status: "refused", reason: "brain" } };

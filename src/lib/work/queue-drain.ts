@@ -5,7 +5,7 @@
 // restart strands an in-flight run at "running" with a stale heartbeat;
 // before this module the only recovery for either was a human pressing
 // Retry. The drain re-kicks both classes, oldest first, through kickPanel's
-// UNCHANGED admission gates (kill switch, deploy marker, brain health, both
+// UNCHANGED admission gates (kill switch, deploy WINDOW, brain health, both
 // budget ledgers, one-panel-at-a-time serialization, per-row 3-runs/day
 // claim cap), so it adds no new spend path and no new authority: a timer
 // kick starts exactly the run the submitter's own Retry click would, and
@@ -20,6 +20,12 @@
 //
 // Designed by a 3-seat focused panel + counterpart refutation panel
 // (state-machine/concurrency, ops/budget blast radius, surface parity).
+//
+// 2026-08-07: the "deploy marker" gate above became the deploy WINDOW gate
+// (deployBlocksPanel / work/config.ts deployBlocksPanelRun). It is still
+// kickPanel's own gate, unchanged by the drain, but it now closes only while
+// the deploy owns the live tree instead of for the deploy's whole duration.
+// That is what stops a queued row idling through a post-cutover tail.
 
 import {
   drainAction,
@@ -154,11 +160,20 @@ export async function drainWorkQueue(): Promise<void> {
  *   Only the PM2-supervised checkout (cwd /var/www/aiwebsite, the
  *   ecosystem.config.cjs APP_ROOT) drains; WORK_QUEUE_DRAIN_FORCE=1 is the
  *   deliberate override for local testing.
- * There is deliberately NO early first tick (ops-seat ruling): the deploy
- * marker stays fresh for minutes after PM2 restarts, and orphaned rows only
- * become claimable at 240 s heartbeat staleness, so a boot-time pass always
- * refuses; the plain 60 s cadence reaches every recovery window within a
- * minute of eligibility. Do not re-add one as a bugfix. */
+ * There is still deliberately NO early first tick, but HALF of the original
+ * (2026-08-05 ops-seat) rationale has expired and the comment must not be
+ * read as it was written. It said a boot pass "always refuses" because the
+ * deploy marker stays fresh for minutes after a PM2 restart. Since
+ * 2026-08-07 that is no longer true: kickPanel asks deployBlocksPanel(),
+ * which admits precisely when the restart it just came through was the
+ * deploy's own cutover, so a boot pass is now the FIRST thing that would be
+ * allowed to run. What still holds is the other half: orphaned rows only
+ * become claimable at 240 s heartbeat staleness, and the 30 s created_at age
+ * floor plus the 60 s cadence reach every window within a minute of
+ * eligibility. An early tick is therefore defensible now where it was not
+ * before, but it is a separate change with its own warmup questions (a boot
+ * pass races brainHealthy on a cold process, and a refuse=brain STOPS the
+ * pass); do not add one without deciding those. */
 export function startWorkQueueDrain(): void {
   const env = process.env;
   const forced = env.WORK_QUEUE_DRAIN_FORCE === "1";
