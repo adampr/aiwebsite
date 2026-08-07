@@ -260,6 +260,13 @@
       "when": 1785870780798,
       "tag": "0036_display_rank",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786104137499,
+      "tag": "0037_archive_users",
+      "breakpoints": true
     }
   ]
 }

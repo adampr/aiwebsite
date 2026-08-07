@@ -14,13 +14,23 @@
 //    access_token.
 //
 // These handlers run the SAME pipeline as the module (state check, token
-// exchange, profile fetch, rejectEmail/classifyUser hooks, upsertUser,
-// auth_logs, session cookie, redirect) with one addition: a per-login
-// HMAC-covered session claim `mv: true` stamped ONLY when the provider
-// proved the email. The claim is per-login, never a stored users-row flag —
-// a stored flag would let a later forged login inherit an earlier genuine
-// verification. Sessions minted here are byte-compatible with the module's
-// (same signSession, same cookie); everything else on the site ignores `mv`.
+// exchange, profile fetch, archived refusal, rejectEmail/classifyUser hooks,
+// upsertUser, auth_logs, session cookie, redirect) with one addition: a
+// per-login HMAC-covered session claim `mv: true` stamped ONLY when the
+// provider proved the email. The claim is per-login, never a stored users-row
+// flag — a stored flag would let a later forged login inherit an earlier
+// genuine verification. Sessions minted here are byte-compatible with the
+// module's (same signSession, same cookie); everything else on the site
+// ignores `mv`.
+//
+// PIPELINE-PARITY RULE (do not break): because this file REIMPLEMENTS the
+// pipeline, nothing the module adds to `handleOAuthUser()` reaches the live
+// site automatically. Every refusal the module gates sign-in on must be
+// mirrored here by hand. Today that is `isEmailArchived()` (module §5.5
+// v1.74); when the module grows another, add it below in the same place.
+// Both callbacks on this site (Google and Microsoft) and the §5.18 silent
+// re-verify lane all mint their session inside the single try block below,
+// so a refusal placed at its head covers every session-minting path.
 //
 // EMAIL CONTINUITY (do not change): the upsert email stays EXACTLY what the
 // module used — Google userinfo `email`, Microsoft Graph `mail ||
@@ -47,10 +57,12 @@ import {
   consumeOAuthRedirect,
   consumeOAuthState,
   insertAuthLog,
+  isEmailArchived,
   RejectedError,
   upsertUser,
   validateRedirect,
 } from "@aicompany/core/auth/helpers";
+import { archivedLoginMessage } from "@aicompany/core/auth/login-errors";
 import { signSession } from "@aicompany/core/auth/session";
 import { logStage } from "@aicompany/core/lib/log";
 import type { SiteConfig } from "@aicompany/core/config/types";
@@ -345,6 +357,41 @@ export function createHardenedCallbackHandler(
 
     try {
       const lowered = email.toLowerCase();
+      // §5.5 v1.74 ARCHIVED ACCOUNTS — the module's handleOAuthUser() refusal
+      // never runs on this site (see PIPELINE-PARITY RULE in the header), so
+      // without this an archived operator-blocked account would get a SUCCESS
+      // auth_log, a refreshed last_login_at, and a signed session cookie.
+      // Placed before rejectEmail and before any write, and returned rather
+      // than thrown so it keeps its own error code instead of collapsing into
+      // the catch's generic "rejected". FAILS CLOSED: a throwing query lands
+      // in the catch below (auth_logs failure + /login?error=rejected) — a
+      // revocation control must not open on a DB blip.
+      if (await isEmailArchived(lowered)) {
+        await insertAuthLog(config, {
+          userId: null,
+          email: lowered,
+          provider,
+          req,
+          success: false,
+          failureReason: "archived",
+        });
+        logStage({
+          slug,
+          channel: "auth",
+          stage: "dropped",
+          ok: false,
+          detail: `${provider} hardened callback: account_archived`,
+        });
+        return Response.redirect(
+          new URL(
+            `/login?error=account_archived&message=${encodeURIComponent(
+              archivedLoginMessage(config)
+            )}`,
+            config.site.baseUrl
+          ),
+          302
+        );
+      }
       const reason = await config.auth.rejectEmail?.(lowered);
       if (reason) throw new RejectedError(reason);
       const profile = { email: lowered, displayName, provider };
