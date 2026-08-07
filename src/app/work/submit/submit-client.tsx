@@ -34,6 +34,18 @@ export interface UpdateTarget {
   kind: "skill" | "program";
 }
 
+// "Your submissions" pager (owner request 2026-08-07): the list is unbounded
+// and every retry, update and superseded generation adds a row, so a long
+// tenure buried the form under its own history. The window is a plain
+// `.slice()` of the already-deduped `visible` array - this list is React-
+// rendered from polled state, NOT server-rendered DOM, so nothing here may
+// borrow the /work console's `<WorkPager/>` (that island MUTATES
+// server-owned nodes and its `.work-pager` CSS is gated on a /work-only
+// `html.pager-active` class, i.e. it would render invisible here).
+// 0 = All, and it is deliberately last so the default sits first.
+const PAGE_SIZES = [10, 50, 0] as const;
+const DEFAULT_PAGE_SIZE = 10;
+
 const STATUS_COPY: Record<string, string> = {
   received: "Queued for review",
   running: "Panel reviewing",
@@ -55,6 +67,8 @@ export function SubmitClient({
 }) {
   const [rows, setRows] = useState<StatusRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [page, setPage] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -136,6 +150,128 @@ export function SubmitClient({
       )
   );
 
+  // The page index is CLAMPED in render, never with setState during render:
+  // the 10 s poll and Withdraw both shrink `visible` underneath the pager,
+  // and a stale index would paint an empty list while rows plainly exist.
+  // Every control below reads `safePage`, never the raw state, so the window
+  // and both Prev/Next targets are already right on the render that shrank
+  // the list.
+  const pageCount =
+    pageSize === 0 ? 1 : Math.max(1, Math.ceil(visible.length / pageSize));
+  const safePage = Math.min(page, pageCount - 1);
+  const windowed =
+    pageSize === 0
+      ? visible
+      : visible.slice(safePage * pageSize, (safePage + 1) * pageSize);
+  // Pointless chrome stays out of the way, but ONLY while the size is still
+  // the default: someone who picked All must always find the control that
+  // puts them back on 10.
+  const showPager =
+    visible.length > DEFAULT_PAGE_SIZE || pageSize !== DEFAULT_PAGE_SIZE;
+
+  // ...and the clamp is SETTLED back into state, because deriving it alone
+  // leaves a stale high index that silently re-applies the moment the list
+  // grows again: dedupe drops a superseded row (page 3 of 3 falls back to
+  // page 2), then the submitter posts a new package and `refresh()` restores
+  // the count, and the view would snap to page 3 with no click - hiding the
+  // row they just created, which sorts first. One pass, not a loop: after
+  // the write `page === pageCount - 1` and the condition is false.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- settle a clamp the render already applied; guarded, so exactly one extra render and it cannot re-enter
+    if (page > pageCount - 1) setPage(pageCount - 1);
+  }, [page, pageCount]);
+
+  function changeSize(next: number) {
+    // Re-anchor on the first row of the current window so a size change
+    // keeps the reader roughly where they were instead of teleporting.
+    const anchor = pageSize === 0 ? 0 : safePage * pageSize;
+    setPageSize(next);
+    setPage(next === 0 ? 0 : Math.floor(anchor / next));
+  }
+
+  function goTo(next: number) {
+    if (next < 0 || next >= pageCount) return;
+    setPage(next);
+  }
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const countLabel = `${visible.length} submission${
+    visible.length === 1 ? "" : "s"
+  }`;
+  const readout =
+    pageSize === 0
+      ? countLabel
+      : `Page ${pad(safePage + 1)} / ${pad(pageCount)} · ${countLabel}`;
+
+  // Rendered above AND below the rows: a full page of status cards runs well
+  // past one screen, and a pager you have to scroll back up to reach is the
+  // reason page 2 goes unvisited. The bottom strip is a duplicate control,
+  // so only the top readout is announced.
+  const pagerStrip = (bottom: boolean) => {
+    const sizeId = bottom ? "sub-page-size-bottom" : "sub-page-size";
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-[var(--xl-line)] pt-3">
+        <div className="flex items-center gap-3">
+          <label
+            htmlFor={sizeId}
+            className="mono text-xs uppercase tracking-[0.2em] text-light"
+          >
+            Show
+          </label>
+          <select
+            id={sizeId}
+            className="input"
+            // A SUPERSET of the visible "Show": an aria-label that dropped
+            // that word would leave a voice-control user saying "click Show"
+            // with nothing to match (WCAG 2.5.3 Label in Name).
+            aria-label="Show submissions per page"
+            value={pageSize}
+            onChange={(e) => changeSize(Number(e.target.value))}
+          >
+            {PAGE_SIZES.map((s) => (
+              <option key={s} value={s}>
+                {s === 0 ? "All" : s}
+              </option>
+            ))}
+          </select>
+        </div>
+        {/* Both arrows stay MOUNTED and use aria-disabled, never the
+            `disabled` attribute or a `pageCount > 1` conditional: either one
+            would yank the element out from under the focus of the keyboard
+            user who just pressed it (a disabled or unmounted node blurs to
+            <body>, so their next Tab restarts at the top of the document,
+            back through the whole submission form). goTo() range-guards, so
+            an inert arrow is already a no-op. Same call the /work console's
+            pager makes. */}
+        <div className="flex items-center gap-4">
+          <button
+            type="button"
+            className="btn btn--text"
+            aria-disabled={safePage === 0}
+            onClick={() => goTo(safePage - 1)}
+          >
+            Prev
+          </button>
+          <span
+            className="mono text-xs uppercase tracking-[0.2em] text-faint"
+            aria-live={bottom ? undefined : "polite"}
+            aria-hidden={bottom ? true : undefined}
+          >
+            {readout}
+          </span>
+          <button
+            type="button"
+            className="btn btn--text"
+            aria-disabled={safePage >= pageCount - 1}
+            onClick={() => goTo(safePage + 1)}
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-8">
       <div className="panel panel--raised">
@@ -152,7 +288,8 @@ export function SubmitClient({
             Your submissions
           </h2>
           {error && <p className="text-sm text-red-400">{error}</p>}
-          {visible.map((r) => (
+          {showPager && pagerStrip(false)}
+          {windowed.map((r) => (
             <div
               key={r.id}
               className="border-t border-[var(--xl-line)] pt-3 text-sm"
@@ -169,8 +306,7 @@ export function SubmitClient({
               {r.status === "published" && r.slug && (
                 <p className="mt-1">
                   Live on{" "}
-                  <a href={`/work#${r.slug}`}>the Our Work page</a> (allow up
-                  to 5 minutes).
+                  <a href={`/work#${r.slug}`}>the Our Work page</a>.
                 </p>
               )}
               {r.status === "pending_approval" &&
@@ -265,6 +401,7 @@ export function SubmitClient({
               </div>
             </div>
           ))}
+          {showPager && pagerStrip(true)}
           {!isAdmin && (
             <p className="mt-2 text-xs text-faint">
               A queued review starts on its own as soon as the panel and

@@ -22,7 +22,7 @@ import {
   createSubmission,
   isUniqueViolation,
   liveDescendantId,
-  mySubmissions,
+  mySubmissionsForList,
   normalizeTitle,
   publishedTitleClash,
   sweepExpiredWork,
@@ -51,7 +51,7 @@ export async function GET(): Promise<Response> {
   } catch {
     // sweep is best-effort on the read path
   }
-  const rows = await mySubmissions(user.email);
+  const rows = await mySubmissionsForList(user.email);
   // Superseded rows carry a pointer to the card's LIVE version (§5.16 chain
   // ownership, 2026-08-04): when the last update came from someone else, the
   // published row is not in this list, and without currentId the submitter

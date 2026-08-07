@@ -649,6 +649,19 @@ html.pager-active .work-pager {
 }
 .btn--text:disabled::after { background: var(--xl-line); box-shadow: none; }
 
+/* aria-disabled twin, for a control that must stay reachable while inert:
+   the `disabled` ATTRIBUTE blurs a focused button to <body>, so pressing a
+   pager arrow onto the last page would drop a keyboard user back to the top
+   of the document. Scoped to .btn--text on purpose - a plain .btn with
+   aria-disabled exists elsewhere and carries its own inert styling. Placed
+   after the :hover rules so it wins at equal specificity. */
+.btn--text[aria-disabled="true"] {
+  color: var(--xl-text-faint);
+  box-shadow: none;
+  cursor: default;
+}
+.btn--text[aria-disabled="true"]::after { background: var(--xl-line); box-shadow: none; }
+
 /* Busy is not merely disabled: while a submit is in flight the button
    holds a dim light, so "working" and "unavailable" read differently. */
 .btn[aria-busy="true"]:disabled {

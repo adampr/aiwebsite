@@ -2,7 +2,7 @@
 // user's data: routes only call these on rows the caller owns (or as admin).
 
 import { WORK_CAPS } from "./config";
-import { UPDATE_CONFLICT_NOTE, type SubmissionRow } from "./db";
+import { UPDATE_CONFLICT_NOTE, type SubmissionListRow } from "./db";
 
 export interface SubmissionStatusView {
   id: string;
@@ -57,8 +57,11 @@ export function friendlyHeldReason(panelError: string | null): string | null {
   return parsed.length > 0 ? parsed.join("\n") : panelError;
 }
 
+// Takes the NARROW row type (db.ts SubmissionListRow), not SubmissionRow: the
+// list read selects only these columns to keep the 10 s poll cheap, and a full
+// SubmissionRow still satisfies it, so the [id] caller is unaffected.
 export function statusView(
-  row: SubmissionRow,
+  row: SubmissionListRow,
   opts?: { currentId?: string | null }
 ): SubmissionStatusView {
   let stage: string | null = null;

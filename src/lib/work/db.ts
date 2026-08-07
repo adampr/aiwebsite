@@ -154,6 +154,65 @@ export async function mySubmissions(email: string): Promise<SubmissionRow[]> {
     .limit(25);
 }
 
+// The exact columns statusView() (view.ts) reads, and nothing else. ROW_COLS
+// drops only the two blobs, so it still carries corpus_files_json (the whole
+// extracted text corpus of an upload), architecture_text/skill_md_text and the
+// panel transcript — payload the projection never touches.
+const LIST_COLS = {
+  id: S.id,
+  title: S.title,
+  kind: S.kind,
+  status: S.status,
+  slug: S.slug,
+  createdAt: S.createdAt,
+  parentId: S.parentId,
+  autoApprove: S.autoApprove,
+  heldAt: S.heldAt,
+  panelError: S.panelError,
+  panelProgressJson: S.panelProgressJson,
+  panelHeartbeatAt: S.panelHeartbeatAt,
+};
+
+/** A row narrowed to what statusView() projects. Keep this in step with
+ * LIST_COLS: statusView takes this type, so dropping a column here is a
+ * compile error, not a runtime undefined. */
+export type SubmissionListRow = Pick<
+  SubmissionRow,
+  | "id"
+  | "title"
+  | "kind"
+  | "status"
+  | "slug"
+  | "createdAt"
+  | "parentId"
+  | "autoApprove"
+  | "heldAt"
+  | "panelError"
+  | "panelProgressJson"
+  | "panelHeartbeatAt"
+>;
+
+/** The /work/submit "your submissions" list (GET /api/work/submissions).
+ * Separate from mySubmissions() for two reasons:
+ *   - cost: that endpoint is polled every 10 s while any row is active, and
+ *     ROW_COLS drags the corpus/doc text along on every tick. LIST_COLS is the
+ *     projection's own column set, so raising the cap costs little.
+ *   - truncation: mySubmissions caps at 25, which silently cut the list AND
+ *     made the page's "N submissions" readout assert a wrong total. 200 is a
+ *     generous ceiling over the 20/user and 200/admin daily quotas
+ *     (WORK_CAPS), and keeps the response bounded.
+ * mySubmissions() itself is unchanged: its other caller is §5.18 /roadmap/work. */
+export async function mySubmissionsForList(
+  email: string
+): Promise<SubmissionListRow[]> {
+  return db
+    .select(LIST_COLS)
+    .from(S)
+    .where(eq(S.submitterEmail, email))
+    .orderBy(desc(S.createdAt))
+    .limit(200);
+}
+
 export async function allSubmissions(limit = 100): Promise<SubmissionRow[]> {
   return db.select(ROW_COLS).from(S).orderBy(desc(S.createdAt)).limit(limit);
 }
