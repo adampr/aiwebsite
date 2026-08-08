@@ -2,6 +2,7 @@
   "slug": "aiwebsite",
   "profile": "publisher",
   "baseUrl": "https://ai.xl.net",
+  "robotsRequiredDisallow": ["/admin", "/api", "/auth"],
   "moneyPages": [
     "/",
     "/work",

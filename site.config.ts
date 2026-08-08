@@ -969,6 +969,18 @@ export const siteConfig = defineSiteConfig({
     // (they are noindex anyway; this saves the crawl), while the /roadmap
     // teaser itself stays crawlable (§5.18).
     extraRobotsDisallow: ["/rfp", "/roadmap/"],
+    // v1.77.0 subtraction from the module's ALWAYS_DISALLOW (the GSC-incident
+    // release): /login is 200 + `noindex, nofollow` and linked from
+    // /governance, so the module's own Disallow was precisely what stopped a
+    // crawler READING that noindex — a permanently unresolvable GSC "Blocked
+    // by robots.txt" exclusion (the defect class GSC reported against
+    // roleplay.xl.net 2026-08-07; the new `noindex-disallow-conflict`
+    // scorecard row measured /login as this host's one offender). Applies to
+    // EVERY UA group. COUPLED CHANGE, do not sever: both monitors assert the
+    // SERVED file's Disallow lines, so "/login" is simultaneously dropped
+    // from `robotsRequiredDisallow` in deploy/synth-inventory.json AND
+    // deploy/seo-scorecard.json — skip that and every 15-min sweep WARNs.
+    robotsUnblock: ["/login"],
   },
 
   theme: { darkFirst: true },
