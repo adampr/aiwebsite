@@ -8,7 +8,9 @@
 
 import type { Metadata } from "next";
 import Link from "next/link";
-import { requireRoadmapPage } from "@/lib/roadmap/access";
+import { readStaffPage, requireRoadmapPage } from "@/lib/roadmap/access";
+import { STAFF_STEP_HREFS } from "@/lib/roadmap/config";
+import { redirect } from "next/navigation";
 import { listGovernanceDocs } from "@/lib/roadmap/db";
 import { listOwnedProjects } from "@/lib/governance/db";
 import { fmtDate } from "@/components/roadmap/dates";
@@ -35,6 +37,9 @@ const KIND_TITLES: Record<string, string> = {
 const faint = { color: "var(--xl-text-faint)" } as const;
 
 export default async function RoadmapGovernancePage() {
+  // Staff lane alias (§5.18 unification): xl.net has no company row, so
+  // staff land on the public Governance Builder instead of a blank shell.
+  if (await readStaffPage()) redirect(STAFF_STEP_HREFS.governance);
   const gate = await requireRoadmapPage("/roadmap/governance");
   if (!gate.ok || !gate.principal.company) return null;
   const p = gate.principal;

@@ -13,7 +13,9 @@
 // free.
 
 import type { Metadata } from "next";
-import { requireRoadmapPage } from "@/lib/roadmap/access";
+import { readStaffPage, requireRoadmapPage } from "@/lib/roadmap/access";
+import { STAFF_STEP_HREFS } from "@/lib/roadmap/config";
+import { redirect } from "next/navigation";
 import {
   companySubmissions,
   mySubmissions,
@@ -51,6 +53,8 @@ function statusLabel(status: string): string {
 }
 
 export default async function RoadmapWorkPage() {
+  // Staff lane alias (§5.18 unification): staff submit on /work/submit.
+  if (await readStaffPage()) redirect(STAFF_STEP_HREFS.work);
   const gate = await requireRoadmapPage("/roadmap/work");
   if (!gate.ok || !gate.principal.company) return null;
   const p = gate.principal;

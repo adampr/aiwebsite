@@ -130,7 +130,11 @@ export async function POST(req: Request): Promise<Response> {
           400
         );
       const purged = await purgeCompany(companyId);
-      return okJson({ purged: true, submissionsDeleted: purged.submissions });
+      return okJson({
+        purged: true,
+        submissionsDeleted: purged.submissions,
+        requestsDeleted: purged.requests,
+      });
     }
     default:
       return roadmapError("invalid_request", "Unknown action.", 400);

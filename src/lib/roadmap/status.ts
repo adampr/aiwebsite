@@ -3,10 +3,14 @@
 // all render from the ONE RoadmapStatus object so surfaces can never
 // disagree.
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import { apolloImportStamp, countGovernanceDocs, countPeople } from "@/lib/roadmap/db";
 import { checkDkim, type DkimCheck } from "@/lib/roadmap/dkim";
+import {
+  requestStatusCounts,
+  type RequestStatusCounts,
+} from "@/lib/work/requests-db";
 
 const W = schema.workSubmissions;
 
@@ -21,6 +25,15 @@ export type RoadmapStatus = {
     everImported: boolean;
   };
   work: { done: boolean; published: number };
+  /** Step 05 (§5.19). done/listed count EVER-APPROVED requests only:
+   * monotonic (finishing work never un-lights the step) and privacy-safe (a
+   * lane-wide pending tally would let any member infer a colleague's
+   * unapproved request at a small company; pending/rejected rows surface
+   * only to their requester and the lane admin). */
+  request: { done: boolean; listed: number };
+  /** Step 06 (§5.19). live keys off the same listed count; open = approved +
+   * in_progress + done_pending. */
+  requested: { live: boolean; open: number; completed: number };
   /** Never "done": a scorecard is ongoing. live = at least one builder. */
   scorecard: { live: boolean; contributors: number };
   /** The DNS-visible DKIM state for the company's email domain (§5.18
@@ -40,26 +53,62 @@ export async function roadmapStatus(
 ): Promise<RoadmapStatus> {
   // checkDkim rides the SAME Promise.all so the DNS probe overlaps the DB
   // queries instead of adding to the render's critical path.
-  const [docs, people, importStamp, workRows, dkim] = await Promise.all([
-    countGovernanceDocs(companyId),
-    countPeople(companyId),
-    apolloImportStamp(companyId),
-    db
-      .select({
-        published: sql<number>`count(*)::int`,
-        contributors: sql<number>`count(distinct lower(${W.submitterEmail}))::int`,
-      })
-      .from(W)
-      .where(and(eq(W.companyId, companyId), eq(W.status, "published"))),
-    checkDkim(domain, { budgetMs: 800 }),
-  ]);
+  const [docs, people, importStamp, workRows, requests, dkim] =
+    await Promise.all([
+      countGovernanceDocs(companyId),
+      countPeople(companyId),
+      apolloImportStamp(companyId),
+      db
+        .select({
+          published: sql<number>`count(*)::int`,
+          contributors: sql<number>`count(distinct lower(${W.submitterEmail}))::int`,
+        })
+        .from(W)
+        .where(and(eq(W.companyId, companyId), eq(W.status, "published"))),
+      requestStatusCounts({ companyId }),
+      checkDkim(domain, { budgetMs: 800 }),
+    ]);
   const published = workRows[0]?.published ?? 0;
   const contributors = workRows[0]?.contributors ?? 0;
   return {
     governance: { done: docs >= 1, docs },
     directory: { done: people >= 1, people, everImported: importStamp !== null },
     work: { done: published >= 1, published },
+    request: { done: requests.listed >= 1, listed: requests.listed },
+    requested: {
+      live: requests.listed >= 1,
+      open: requests.open,
+      completed: requests.completed,
+    },
     scorecard: { live: contributors >= 1, contributors },
     dkim,
+  };
+}
+
+/** The staff hub's cheap internal-lane status bundle (§5.18 unification):
+ * two indexed aggregates, no DNS probe, no company row. The request counts
+ * come from the SAME requestStatusCounts as the company cards so the two
+ * hubs can never define "open" differently. */
+export type StaffRoadmapStatus = {
+  work: { published: number };
+  scorecard: { contributors: number };
+  requests: RequestStatusCounts;
+};
+
+export async function staffRoadmapStatus(): Promise<StaffRoadmapStatus> {
+  const [workRows, requests] = await Promise.all([
+    db
+      .select({
+        published: sql<number>`count(*)::int`,
+        contributors: sql<number>`count(distinct lower(${W.submitterEmail}))::int`,
+      })
+      .from(W)
+      .where(and(isNull(W.companyId), eq(W.status, "published"))),
+    requestStatusCounts({ companyId: null }),
+  ]);
+  return {
+    work: { published: workRows[0]?.published ?? 0 },
+    scorecard: { contributors: workRows[0]?.contributors ?? 0 },
+    requests,
   };
 }

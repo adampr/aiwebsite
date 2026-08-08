@@ -23,12 +23,13 @@ import {
   deniedAdminRequestInWindow,
   openAdminRequest,
 } from "@/lib/roadmap/db";
+import { staffRoadmapStatus } from "@/lib/roadmap/status";
 import { RoadmapRunway } from "@/components/roadmap/runway";
 import { RequestAdminAccess } from "@/components/roadmap/request-admin";
 import { BootstrapCard } from "@/components/roadmap/bootstrap-card";
 import { ConfirmIdentity } from "@/components/roadmap/confirm-identity";
 import { DirectoryCard } from "@/components/roadmap/directory-card";
-import { StaffPanel } from "@/components/roadmap/staff-panel";
+import { StaffHub } from "@/components/roadmap/staff-hub";
 import "./roadmap.css";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +47,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "Your AI Roadmap: From Knowledge Workers to AI Builders",
     description:
-      "A private six-step roadmap for your company: governance on file, your team listed, AI-built work reviewed and published, builders on a scorecard, plus a paid workshop and monthly cohort.",
+      "A private eight-step roadmap for your company: governance on file, your team listed, AI-built work reviewed and published, projects requested and built by your own team, builders on a scorecard, plus a paid workshop and monthly cohort.",
     alternates: { canonical: "/roadmap" },
   };
 }
@@ -54,7 +55,7 @@ export async function generateMetadata(): Promise<Metadata> {
 const FAQ = [
   {
     q: "Is it free?",
-    a: "The roadmap itself is free: sign in with your work email, no card, no trial clock. Two of the six steps are paid training, booked separately on our AI Builders page: the AI Builders Workshop ($995 for one four-hour session) and the AI Builder Cohort ($495 per month). Every other step works without buying either.",
+    a: "The roadmap itself is free: sign in with your work email, no card, no trial clock. Two of the eight steps are paid training, booked separately on our AI Builders page: the AI Builders Workshop ($995 for one four-hour session) and the AI Builder Cohort ($495 per month). Every other step works without buying either.",
   },
   {
     q: "Who can see our data?",
@@ -85,10 +86,11 @@ function Teaser() {
           From knowledge workers to <span className="glow">AI builders</span>
         </h1>
         <p className="mx-auto mt-6 max-w-3xl text-lg">
-          A private roadmap for your whole company: six steps from an AI
+          A private roadmap for your whole company: eight steps from an AI
           governance document on file to a scorecard of the builders on your
-          team, with every piece of AI-built work reviewed and published
-          along the way, and training to grow the builders themselves.
+          team, with every piece of AI-built work reviewed and published,
+          projects requested and built by your own people along the way, and
+          training to grow the builders themselves.
         </p>
         <div className="mt-10 flex flex-wrap justify-center gap-6">
           <Link
@@ -99,7 +101,7 @@ function Teaser() {
           </Link>
         </div>
         <p className="mono mx-auto mt-6 max-w-2xl text-xs" style={faint}>
-          six steps · four free, two paid training · private to your company
+          eight steps · six free, two paid training · private to your company
         </p>
       </section>
 
@@ -108,10 +110,10 @@ function Teaser() {
       <section>
         <div className="text-center">
           <span className="sys-label sys-label--center">The Runway</span>
-          <h2 className="mt-6">Six stations, one line</h2>
+          <h2 className="mt-6">Eight stations, one line</h2>
         </div>
-        {/* max-w-5xl, not 4xl: the six-stop horizontal runway needs 928px
-            and the 4xl wrap (896px) cannot hold it (roadmap.css lg math). */}
+        {/* max-w-5xl, not 4xl: the eight-stop horizontal runway needs up to
+            940px at the lg floor (roadmap.css lg math). */}
         <div className="mx-auto mt-12 max-w-5xl">
           <RoadmapRunway status={null} />
         </div>
@@ -180,8 +182,16 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
   if (view.kind === "anonymous") return <Teaser />;
 
   if (view.kind === "staff") {
+    // §5.18 unification: staff get the full hub backed by the internal
+    // (public /work) lane. Status is computed here, not in the classifier
+    // (access.ts stays classification-only).
+    const staffStatus = await staffRoadmapStatus();
     return (
-      <StaffPanel email={view.email} showAdminLink={view.showAdminLink} />
+      <StaffHub
+        email={view.email}
+        showAdminLink={view.showAdminLink}
+        status={staffStatus}
+      />
     );
   }
 
@@ -288,6 +298,14 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
     work: status.work.done
       ? `${status.work.published} published`
       : "Nothing published yet",
+    // Approved-and-later counts only (§5.19 privacy): a lane-wide pending
+    // tally would let any member infer a colleague's unapproved request.
+    request: status.request.done
+      ? `${status.request.listed} approved so far`
+      : "Nothing approved yet",
+    requested: status.requested.live
+      ? `${status.requested.open} open · ${status.requested.completed} completed`
+      : "Waiting on the first approved request",
     scorecard: status.scorecard.live
       ? `${status.scorecard.contributors} ${status.scorecard.contributors === 1 ? "builder" : "builders"} so far`
       : "Waiting on the first published work",
@@ -317,6 +335,8 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
   const stepDone = {
     governance: status.governance.done,
     work: status.work.done,
+    request: status.request.done,
+    requested: status.requested.live,
     scorecard: status.scorecard.live,
   } as const;
 
@@ -359,8 +379,9 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
           overlay: accepted trade-off. The runway above is the single state
           surface; cards carry counts and verbs, never state badges.
           Branch order is load-bearing: directory, then work, then the paid
-          branch, and only then the generic return, whose stepLines/stepDone
-          lookups are exhaustive ONLY once the other keys have returned. */}
+          branch, and only then the generic return (governance, request,
+          requested, scorecard), whose stepLines/stepDone lookups are
+          exhaustive ONLY once the other keys have returned. */}
       <section className="grid gap-6 sm:grid-cols-2">
         {ROADMAP_STEPS.map((step) => {
           if (step.key === "directory") {

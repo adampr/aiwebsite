@@ -5,8 +5,11 @@
 // tenant (governance db.ts fetchOwnedProject discipline).
 
 import crypto from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
+// §5.19 scorecard merge. requests-db imports nothing from this file
+// (WorkScope is a type-only import there), so no cycle.
+import { requestCountsByEmail } from "@/lib/work/requests-db";
 import { isCompanyEligibleDomain } from "@/lib/roadmap/domains";
 import {
   ROADMAP_CAPS,
@@ -617,29 +620,55 @@ export type ScorecardRow = {
   published: number;
   lastPublishedAt: Date | null;
   inDirectory: boolean;
+  /** §5.19 requested-work columns. Requested counts LISTED statuses only
+   * (never pending/rejected - same doctrine as published-only above);
+   * working is exactly the 3-cap predicate; completed credits the
+   * developer. */
+  requested: number;
+  working: number;
+  completed: number;
 };
+
+const NO_REQUESTS = { requested: 0, working: 0, completed: 0 } as const;
+
+function scorecardSort(rows: ScorecardRow[]): ScorecardRow[] {
+  rows.sort(
+    (a, b) =>
+      b.published - a.published ||
+      b.completed - a.completed ||
+      (a.name ?? a.email ?? "").localeCompare(b.name ?? b.email ?? "")
+  );
+  return rows;
+}
 
 /** Directory members with published-card counts, plus published submitters
  * missing from the directory. Counts PUBLISHED cards only: held, failed,
  * and in-review rows never appear anywhere in the scorecard, so it can
- * never reveal that a colleague tried and failed. */
+ * never reveal that a colleague tried and failed. §5.19: merged with the
+ * per-person requested-work counts (same lane, same email key). */
 export async function companyScorecard(
   companyId: string
 ): Promise<ScorecardRow[]> {
-  const people = await listPeople(companyId);
-  const counts = await db
-    .select({
-      email: sql<string>`lower(${W.submitterEmail})`,
-      n: sql<number>`count(*)::int`,
-      last: sql<Date | null>`max(${W.publishedAt})`,
-    })
-    .from(W)
-    .where(and(eq(W.companyId, companyId), eq(W.status, "published")))
-    .groupBy(sql`lower(${W.submitterEmail})`);
+  const [people, counts, requests] = await Promise.all([
+    listPeople(companyId),
+    db
+      .select({
+        email: sql<string>`lower(${W.submitterEmail})`,
+        n: sql<number>`count(*)::int`,
+        last: sql<Date | null>`max(${W.publishedAt})`,
+      })
+      .from(W)
+      .where(and(eq(W.companyId, companyId), eq(W.status, "published")))
+      .groupBy(sql`lower(${W.submitterEmail})`),
+    requestCountsByEmail({ companyId }),
+  ]);
   const byEmail = new Map(counts.map((c) => [c.email, c]));
   const rows: ScorecardRow[] = people.map((p) => {
-    const hit = p.email ? byEmail.get(p.email.toLowerCase()) : undefined;
-    if (p.email) byEmail.delete(p.email.toLowerCase());
+    const key = p.email?.toLowerCase();
+    const hit = key ? byEmail.get(key) : undefined;
+    if (key) byEmail.delete(key);
+    const req = key ? requests.get(key) : undefined;
+    if (key) requests.delete(key);
     return {
       personId: p.id,
       name: p.name,
@@ -647,9 +676,12 @@ export async function companyScorecard(
       published: hit?.n ?? 0,
       lastPublishedAt: hit?.last ?? null,
       inDirectory: true,
+      ...(req ?? NO_REQUESTS),
     };
   });
   for (const [email, c] of byEmail) {
+    const req = requests.get(email);
+    requests.delete(email);
     rows.push({
       personId: null,
       name: null,
@@ -657,12 +689,71 @@ export async function companyScorecard(
       published: c.n,
       lastPublishedAt: c.last,
       inDirectory: false,
+      ...(req ?? NO_REQUESTS),
     });
   }
-  rows.sort(
-    (a, b) => b.published - a.published || (a.name ?? a.email ?? "").localeCompare(b.name ?? b.email ?? "")
-  );
-  return rows;
+  // People visible only through requested-work activity (requester or
+  // developer on listed rows, never a directory or published match) join as
+  // stray rows too - their activity is already lane-public on the board.
+  for (const [email, req] of requests) {
+    rows.push({
+      personId: null,
+      name: null,
+      email,
+      published: 0,
+      lastPublishedAt: null,
+      inDirectory: false,
+      ...req,
+    });
+  }
+  return scorecardSort(rows);
+}
+
+/** The staff-lane scorecard (§5.18 unification): no directory exists for
+ * xl.net, so the employee universe is the union of internal-lane published
+ * submitters and requested-work participants (listed statuses only - a row
+ * existing at all is information, so pending/rejected-only people never
+ * appear). inDirectory true keeps the stray badge and AddToDirectory island
+ * from rendering on the staff surface. */
+export async function internalScorecard(): Promise<ScorecardRow[]> {
+  const [counts, requests] = await Promise.all([
+    db
+      .select({
+        email: sql<string>`lower(${W.submitterEmail})`,
+        name: sql<string | null>`max(${W.submitterName})`,
+        n: sql<number>`count(*)::int`,
+        last: sql<Date | null>`max(${W.publishedAt})`,
+      })
+      .from(W)
+      .where(and(isNull(W.companyId), eq(W.status, "published")))
+      .groupBy(sql`lower(${W.submitterEmail})`),
+    requestCountsByEmail({ companyId: null }),
+  ]);
+  const rows: ScorecardRow[] = counts.map((c) => {
+    const req = requests.get(c.email);
+    requests.delete(c.email);
+    return {
+      personId: null,
+      name: c.name,
+      email: c.email,
+      published: c.n,
+      lastPublishedAt: c.last,
+      inDirectory: true,
+      ...(req ?? NO_REQUESTS),
+    };
+  });
+  for (const [email, req] of requests) {
+    rows.push({
+      personId: null,
+      name: null,
+      email,
+      published: 0,
+      lastPublishedAt: null,
+      inDirectory: true,
+      ...req,
+    });
+  }
+  return scorecardSort(rows);
 }
 
 // ---- /admin/roadmap console reads (metadata allowlist; content columns
@@ -792,13 +883,21 @@ export async function setCompanyName(
  * admins/requests/people/suppressions/docs. */
 export async function purgeCompany(companyId: string): Promise<{
   submissions: number;
+  requests: number;
 }> {
   const deleted = await db
     .delete(W)
     .where(eq(W.companyId, companyId))
     .returning({ id: W.id });
+  // §5.19: work_requests.company_id is also ON DELETE RESTRICT, so the
+  // company's request rows must go before the companies row or the delete
+  // below fails on the FK.
+  const requests = await db
+    .delete(schema.workRequests)
+    .where(eq(schema.workRequests.companyId, companyId))
+    .returning({ id: schema.workRequests.id });
   await db.delete(C).where(eq(C.id, companyId));
-  return { submissions: deleted.length };
+  return { submissions: deleted.length, requests: requests.length };
 }
 
 // ---- roadmap_usage ledger (work_usage pattern; ACTUALS only, no

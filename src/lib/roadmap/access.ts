@@ -98,15 +98,33 @@ export const SILENT_REVERIFY_PROVIDERS = ["google"] as const;
  * Staff = the /rfp trust anchor: provider google AND exact-label xl.net
  * (src/lib/rfp/access.ts header for the full argument; provider rides under
  * the session HMAC and is set server-side, so it is not client-supplied).
- * mv is NOT required. That is safe ONLY because the staff surface renders
- * zero tenant data and grants zero authority: it extends the no-mv
- * google+xl.net trust from ADMIN_EMAIL to the whole staff domain purely to
- * pick an EXPLAINER screen. INVARIANT: anything added to the staff panel
- * that reads data or performs an action must re-derive its own gate
- * (requireGlobalAdmin or a trusted principal), never this predicate.
+ * mv is NOT required. INVARIANT (rewritten for the §5.18 unification): this
+ * predicate grants ZERO client-tenant authority and gates no mutation. It
+ * may select staff READ surfaces (the staff hub, the staff scorecard and
+ * its click-through) whose content is bounded above by what weaker existing
+ * staff gates already expose: internal-lane published work is public on
+ * /work, and internal-lane request aggregates are visible to any signed-in
+ * xl.net Google session on /work/requested (this predicate requires Google,
+ * the /rfp anchor that closes the nOAuth Microsoft path). Anything that
+ * renders a CLIENT company's data or performs ANY action must re-derive its
+ * own gate (requireGlobalAdmin, requireRequestUser/verifiedWebAdmin, or a
+ * trusted principal), never this predicate.
  */
 export function isStaffSession(s: SessionData): boolean {
   return isRfpProvider(s.provider) && emailDomain(s.email) === "xl.net";
+}
+
+/**
+ * Staff page gate for the (steps) shell and the staff-servable step pages
+ * (§5.18 unification). Same predicate as the hub's staff branch, so the
+ * layout and every page admit the SAME population - a stricter page gate
+ * behind a looser layout admit renders a blank shell (refuter finding).
+ * READ surfaces only; see the isStaffSession invariant above.
+ */
+export async function readStaffPage(): Promise<{ email: string } | null> {
+  const session = await readSession(siteConfig);
+  if (!session || !isStaffSession(session)) return null;
+  return { email: session.email };
 }
 
 export type RoadmapHubView =

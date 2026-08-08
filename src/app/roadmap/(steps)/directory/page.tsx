@@ -4,8 +4,9 @@
 // get the same table read-only.
 
 import type { Metadata } from "next";
-import { requireRoadmapPage } from "@/lib/roadmap/access";
-import { roadmapEnabled } from "@/lib/roadmap/config";
+import { readStaffPage, requireRoadmapPage } from "@/lib/roadmap/access";
+import { redirect } from "next/navigation";
+import { roadmapEnabled, STAFF_STEP_HREFS } from "@/lib/roadmap/config";
 import { apolloImportStamp, listPeople } from "@/lib/roadmap/db";
 import { DirectoryTable } from "./directory-table";
 
@@ -17,6 +18,9 @@ export const metadata: Metadata = {
 };
 
 export default async function RoadmapDirectoryPage() {
+  // Staff lane alias (§5.18 unification): XL.net's builder list is derived
+  // from published work on the staff scorecard.
+  if (await readStaffPage()) redirect(STAFF_STEP_HREFS.directory);
   const gate = await requireRoadmapPage("/roadmap/directory");
   if (!gate.ok || !gate.principal.company) return null;
   const p = gate.principal;

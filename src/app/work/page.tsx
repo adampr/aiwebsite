@@ -632,17 +632,18 @@ export default async function WorkPage() {
           </div>
           <h2 className="mt-6">Your AI Roadmap</h2>
           <p className="mt-2 text-sm text-faint">
-            A company&apos;s own five steps, from a governance document on
+            A company&apos;s own roadmap, from a governance document on
             file to a scorecard of its builders.
           </p>
           <p className="mt-4 text-sm">
             A client company gets its own private corner of{" "}
             <a href="#aiwebsite">ai.xl.net</a>, free, keyed to the domain of
-            its work email. Five steps sit on one line: an AI governance
-            document on file, a company directory, AI-built work submitted for
-            review, a scorecard of who is building, and verified email from
-            the company&apos;s own domain. No step is locked behind another,
-            and one company sees nothing of any other.
+            its work email. The steps sit on one line: an AI governance
+            document on file, a company directory, AI-built work submitted
+            for review, a requested-work board the company&apos;s own people
+            file and build from, and a scorecard of who is building. No step
+            is locked behind another, and one company sees nothing of any
+            other.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -665,12 +666,11 @@ export default async function WorkPage() {
                 Same Panel, Private Page
               </h3>
               <p className="mt-3 text-sm">
-                Step 03 is the submission pipeline behind the team cards
+                The submission step is the pipeline behind the team cards
                 further down this page, scoped to the company: the same
                 editorial panel reviews the build and what passes publishes to
-                the company&apos;s own work page. Step 05 is what opens the
-                email lane, because a submission can arrive by mail only once
-                mail from that domain proves where it came from.
+                the company&apos;s own work page. Its email lane opens only
+                once mail from that domain proves where it came from.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -690,7 +690,7 @@ export default async function WorkPage() {
             </div>
           </div>
           <p className="mt-8 text-sm">
-            Step 01 takes a governance document a company already has, or one
+            The governance step takes a governance document a company already has, or one
             written in the <a href="#governance">AI Governance Writer</a> and
             attached as a snapshot of the moment it was attached, which stands
             on its own once the source project reaches the end of its own
@@ -700,7 +700,7 @@ export default async function WorkPage() {
             board rather than disappearing from it.
           </p>
           <p className="mono mt-6 text-xs text-faint">
-            five steps, none locked · one workspace per work-email domain ·
+            no step locked · one workspace per work-email domain ·
             proof at sign-in or no company data · company cards never appear
             on this page · published work only on the scorecard · free
           </p>

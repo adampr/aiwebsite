@@ -144,7 +144,7 @@ export default function BuildersPage() {
             </p>
           </div>
 
-          {/* Cohort. id + scroll-mt: /roadmap step 06 deep-links here. */}
+          {/* Cohort. id + scroll-mt: /roadmap step 08 deep-links here. */}
           <div
             id="cohort"
             className="panel rise min-w-0 scroll-mt-24 sm:row-span-7 sm:grid sm:grid-rows-subgrid"

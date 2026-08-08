@@ -2,6 +2,10 @@
 // Client-safe: constants and pure env readers only, NO EM DASHES in any
 // string (site rule). Pattern: src/lib/work/config.ts.
 
+// Pure constant from a pure module (client-safe both sides): the step-06
+// blurb speaks the claim cap so copy and enforcement can never drift.
+import { REQUEST_CAPS } from "@/lib/work/requests-config";
+
 export const ROADMAP_CAPS = {
   // Client-lane submission quotas, applied to BOTH the web form and the
   // email lane (one quota story per audience; staff keep 20/200 per day).
@@ -90,10 +94,11 @@ export function apolloDailyCallCap(env: NodeJS.ProcessEnv): number {
   return Number.isFinite(n) && n > 0 ? n : ROADMAP_CAPS.apolloCallsPerDayDefault;
 }
 
-/** The six roadmap steps in progressive order. Rendering, status derivation,
- * and copy all iterate this one list so surfaces can never disagree.
+/** The eight roadmap steps in progressive order. Rendering, status
+ * derivation, and copy all iterate this one list so surfaces can never
+ * disagree.
  *
- * Steps 03 and 06 are PAID training sold on /builders (Ticket Tailor and
+ * Steps 03 and 08 are PAID training sold on /builders (Ticket Tailor and
  * Stripe). They carry a `fee` token and NOTHING else numeric: prices are
  * volatile facts owned by /builders, so seat caps and session dates never
  * appear here (a stale roadmap card would contradict the page it links to).
@@ -154,18 +159,44 @@ export const ROADMAP_STEPS = [
     cta: { todo: "Submit your first build", done: "See what is published" },
   },
   {
-    key: "scorecard",
+    key: "request",
     num: "05",
+    title: "Request AI-Built Work",
+    href: "/roadmap/request",
+    blurb:
+      "Ask for a project worth building: describe it, put an estimated " +
+      "annual value in dollars on it, and list the metrics behind that " +
+      "number. An admin reviews every request before it is listed.",
+    cta: { todo: "Request your first project", done: "See your requests" },
+  },
+  {
+    key: "requested",
+    num: "06",
+    title: "Approved Requested Work",
+    href: "/roadmap/requested",
+    // The claim cap is REQUEST_CAPS.concurrentPerDeveloper; interpolated so
+    // the enforcement constant and this copy can never drift (the fee-token
+    // PRICE SWEEP lesson).
+    blurb:
+      "The approved list, open to everyone here: claim a project to " +
+      `build, up to ${REQUEST_CAPS.concurrentPerDeveloper} at a time, and ` +
+      "mark it complete when it ships. An admin validates every completion.",
+    cta: { todo: "See approved requests", done: "See approved requests" },
+  },
+  {
+    key: "scorecard",
+    num: "07",
     title: "Employee Scorecard",
     href: "/roadmap/scorecard",
     blurb:
-      "Watch builders emerge: published work counted per person in your " +
-      "directory. Published cards only, never drafts or attempts.",
+      "Watch builders emerge: published work and requested-work activity " +
+      "counted per person in your directory. Published cards and approved " +
+      "requests only, never drafts or attempts.",
     cta: { todo: "See who is building", done: "See who is building" },
   },
   {
     key: "cohort",
-    num: "06",
+    num: "08",
     title: "AI Builder Cohort",
     href: "/builders#cohort",
     fee: "$495/mo",
@@ -186,6 +217,40 @@ export type PaidRoadmapStep = Extract<RoadmapStep, { fee: string }>;
 export function isPaidStep(step: RoadmapStep): step is PaidRoadmapStep {
   return "fee" in step;
 }
+
+/** Task steps in ROADMAP_STEPS order: the only steps the frontier ("up
+ * next") and the lightline consider. Paid steps are deliberately absent (a
+ * never-satisfiable step would hold the frontier ring forever and dress an
+ * upsell as wayfinding). INVARIANT (pinned in scripts/roadmap-tests.ts):
+ * every step is tracked XOR paid - an untracked non-paid step would
+ * silently render "Booked separately". */
+export const TRACKED_STEP_KEYS = [
+  "governance",
+  "directory",
+  "work",
+  "request",
+  "requested",
+  "scorecard",
+] as const;
+export type TrackedStepKey = (typeof TRACKED_STEP_KEYS)[number];
+
+/** Where each step points for an xl.net STAFF session (§5.18 unification:
+ * staff use the same hub backed by the internal lane). The ONE map - the
+ * staff hub cards, the staff StepStrip, and the per-page staff redirects
+ * under (steps) all read it; a second spelling anywhere is how two surfaces
+ * come to disagree. xl.net can never be a company (RESERVED_DOMAINS + DB
+ * CHECK), so governance points at the public builder and directory at the
+ * derived builder list on the staff scorecard. */
+export const STAFF_STEP_HREFS: Record<RoadmapStepKey, string> = {
+  governance: "/governance",
+  directory: "/roadmap/scorecard",
+  workshop: "/builders#workshop",
+  work: "/work/submit",
+  request: "/work/requested",
+  requested: "/work/requested",
+  scorecard: "/roadmap/scorecard",
+  cohort: "/builders#cohort",
+};
 
 /** The ONE sessionStorage guard key for the directory auto-init kick (round
  * 3). Keyed by DOMAIN, not company id (the client never sees the uuid).

@@ -413,6 +413,10 @@ export * from "./rfp-schema";
 // auth.providers.magicLink) lives below so drizzle-kit emits it.
 export * from "./roadmap-schema";
 
+// Requested Work board (§5.19) — same own-file rationale; serves BOTH the
+// internal xl.net lane and the per-company roadmap lanes.
+export * from "./work-requests-schema";
+
 // Magic-link sign-in tokens (module §5.5): hashed single-use 15-minute
 // tokens. Registered with the module client in index.ts; enabled 2026-08-04
 // as the roadmap's provider-agnostic trusted sign-in lane (§5.18).

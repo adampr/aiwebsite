@@ -160,13 +160,14 @@ export default function HomePage() {
             <span className="sys-label">For Your Company</span>
             <h3 className="mt-4">Your AI Roadmap</h3>
             <p className="mt-4 text-sm">
-              A private portal for your whole company: six steps from an AI
+              A private portal for your whole company: eight steps from an AI
               governance document on file to a scorecard of the builders on
               your team. Submit AI-built work and an automated editorial panel
               reviews it, publishing what it can verify to a private work page
-              for your company. Four
-              steps are free, two are paid training. Sign in with a work email;
-              your roadmap is visible only to your company.
+              for your company; request projects worth building and your own
+              people claim and ship them. Six steps are free, two are paid
+              training. Sign in with a work email; your roadmap is visible
+              only to your company.
             </p>
             <Link href="/roadmap" className="btn btn--text mt-6 no-underline">
               Open your roadmap →

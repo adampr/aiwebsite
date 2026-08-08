@@ -19,6 +19,20 @@ import {
 } from "../src/lib/roadmap/domains";
 import { emailDomain } from "../src/lib/rfp/access";
 import { INTERNAL_SCOPE, scopeOf } from "../src/lib/work/scope";
+import {
+  isPaidStep,
+  ROADMAP_STEPS,
+  STAFF_STEP_HREFS,
+  TRACKED_STEP_KEYS,
+} from "../src/lib/roadmap/config";
+import {
+  REQ_CAP_OPEN,
+  REQ_LISTED,
+  REQ_OPEN,
+  REQ_WORKING,
+  REQUEST_CAPS,
+  validateRequestBody,
+} from "../src/lib/work/requests-config";
 
 let passed = 0;
 function ok(name: string, fn: () => void): void {
@@ -97,6 +111,132 @@ ok("emailDomain stays strict for tenancy use", () => {
 ok("scopeOf maps company_id to the scope axis", () => {
   assert.deepEqual(scopeOf({ companyId: null }), INTERNAL_SCOPE);
   assert.deepEqual(scopeOf({ companyId: "abc" }), { companyId: "abc" });
+});
+
+// ---- §5.19 step-list invariants (eight-step round) ----
+ok("ROADMAP_STEPS is the eight-step list, numbered in order", () => {
+  assert.equal(ROADMAP_STEPS.length, 8);
+  assert.deepEqual(
+    ROADMAP_STEPS.map((s) => s.num),
+    ["01", "02", "03", "04", "05", "06", "07", "08"]
+  );
+  assert.deepEqual(
+    ROADMAP_STEPS.map((s) => s.key),
+    [
+      "governance",
+      "directory",
+      "workshop",
+      "work",
+      "request",
+      "requested",
+      "scorecard",
+      "cohort",
+    ]
+  );
+});
+
+ok("every step is tracked XOR paid (runway grammar invariant)", () => {
+  // An untracked non-paid step would silently render "Booked separately";
+  // a tracked paid step would hold the frontier ring forever.
+  for (const s of ROADMAP_STEPS) {
+    assert.equal(
+      isPaidStep(s),
+      !(TRACKED_STEP_KEYS as readonly string[]).includes(s.key),
+      s.key
+    );
+  }
+  // TRACKED order matches ROADMAP_STEPS order (frontier find() depends on it).
+  const stepOrder = ROADMAP_STEPS.filter(
+    (s) => !isPaidStep(s)
+  ).map((s) => s.key);
+  assert.deepEqual([...TRACKED_STEP_KEYS], stepOrder);
+});
+
+ok("STAFF_STEP_HREFS is total and pins the owner-ruled staff targets", () => {
+  for (const s of ROADMAP_STEPS)
+    assert.equal(typeof STAFF_STEP_HREFS[s.key], "string", s.key);
+  assert.equal(STAFF_STEP_HREFS.work, "/work/submit");
+  assert.equal(STAFF_STEP_HREFS.request, "/work/requested");
+  assert.equal(STAFF_STEP_HREFS.requested, "/work/requested");
+  assert.equal(STAFF_STEP_HREFS.scorecard, "/roadmap/scorecard");
+  assert.equal(STAFF_STEP_HREFS.governance, "/governance");
+  assert.equal(STAFF_STEP_HREFS.directory, "/roadmap/scorecard");
+  assert.equal(STAFF_STEP_HREFS.workshop, "/builders#workshop");
+  assert.equal(STAFF_STEP_HREFS.cohort, "/builders#cohort");
+});
+
+ok("no step copy carries an em dash (this pin IS the enforcement)", () => {
+  // There is no pre-commit copy scan for em dashes; this pin is the only
+  // mechanical gate for step copy.
+  for (const s of ROADMAP_STEPS) {
+    const strings = [s.title, s.blurb, s.cta.todo, s.cta.done];
+    for (const str of strings) assert.ok(!str.includes("—"), s.key);
+  }
+});
+
+ok("step-06 blurb speaks the enforced claim cap", () => {
+  const requested = ROADMAP_STEPS.find((s) => s.key === "requested");
+  assert.ok(
+    requested?.blurb.includes(
+      `up to ${REQUEST_CAPS.concurrentPerDeveloper} at a time`
+    )
+  );
+});
+
+// ---- §5.19 request-body validation pins ----
+ok("validateRequestBody enforces every §5.19 bound", () => {
+  const good = {
+    title: "Ticket triage bot",
+    description: "Route new tickets by category.",
+    value: 12_500,
+    metrics: ["2 hrs/week saved x 4 techs x $85/hr"],
+  };
+  const r = validateRequestBody(good);
+  assert.ok(r.ok);
+  assert.equal(r.ok && r.valueUsd, 12_500);
+  // title bounds
+  assert.ok(!validateRequestBody({ ...good, title: "abc" }).ok);
+  assert.ok(!validateRequestBody({ ...good, title: "x".repeat(61) }).ok);
+  // description required, but NO minimum beyond 1 (standing owner directive)
+  assert.ok(!validateRequestBody({ ...good, description: "  " }).ok);
+  assert.ok(validateRequestBody({ ...good, description: "x" }).ok);
+  // value: integer USD, 0..1e9; floats/strings/negatives/overflow refused
+  assert.ok(validateRequestBody({ ...good, value: 0 }).ok);
+  assert.ok(!validateRequestBody({ ...good, value: 10.5 }).ok);
+  assert.ok(!validateRequestBody({ ...good, value: -1 }).ok);
+  assert.ok(!validateRequestBody({ ...good, value: "12500" }).ok);
+  assert.ok(!validateRequestBody({ ...good, value: 2_000_000_000 }).ok);
+  // metrics: >= 1 non-empty, <= 10, each <= 300 chars
+  assert.ok(!validateRequestBody({ ...good, metrics: [] }).ok);
+  assert.ok(!validateRequestBody({ ...good, metrics: ["  "] }).ok);
+  assert.ok(
+    !validateRequestBody({ ...good, metrics: Array(11).fill("m") }).ok
+  );
+  assert.ok(
+    !validateRequestBody({ ...good, metrics: ["x".repeat(301)] }).ok
+  );
+  // empties are dropped, survivors kept
+  const dropped = validateRequestBody({ ...good, metrics: ["", " a ", ""] });
+  assert.ok(dropped.ok && dropped.metrics.length === 1);
+  assert.equal(dropped.ok && dropped.metrics[0], "a");
+  // non-object body
+  assert.ok(!validateRequestBody(null).ok);
+  assert.ok(!validateRequestBody("json").ok);
+});
+
+ok("§5.19 status vocabulary stays privacy-partitioned", () => {
+  // pending/rejected NEVER appear in any listed/board/scorecard set.
+  for (const set of [REQ_LISTED, REQ_WORKING, REQ_OPEN]) {
+    assert.ok(!(set as readonly string[]).includes("pending"));
+    assert.ok(!(set as readonly string[]).includes("rejected"));
+  }
+  // Working On is exactly the 3-cap predicate.
+  assert.deepEqual([...REQ_WORKING], ["in_progress", "done_pending"]);
+  // The 5-cap universe = everything not finished or refused.
+  assert.deepEqual(
+    [...REQ_CAP_OPEN].sort(),
+    ["approved", "done_pending", "in_progress", "pending"].sort()
+  );
 });
 
 console.log(`\nroadmap-tests: ${passed} checks passed`);

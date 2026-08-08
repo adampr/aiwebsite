@@ -1,4 +1,4 @@
-// The Lightline Runway (§5.18): one luminous hairline through six diamond
+// The Lightline Runway (§5.18): one luminous hairline through eight diamond
 // nodes, horizontal on wide screens, a vertical left rail below. Server
 // component; state comes entirely from the ONE server-computed RoadmapStatus
 // so the runway can never disagree with the step panels.
@@ -33,7 +33,7 @@
 //    breaks later refresh updates) while its auto-import runs. The server
 //    never renders data-working, so hydration always matches.
 //
-// PAID STEPS (03 workshop, 06 cohort) are bought on /builders and a purchase
+// PAID STEPS (03 workshop, 08 cohort) are bought on /builders and a purchase
 // is invisible to this server, so they never take a progress state, never
 // take the frontier ring, and are TRANSPARENT to segment lighting: a segment
 // asks the nearest TRACKED stop on each side. The line therefore claims task
@@ -41,15 +41,19 @@
 // is aria-hidden (screen readers would voice "$495/mo" as "slash m o"); the
 // sr channel says "Booked separately" and the card below speaks the price.
 //
-// The frontier ("up next") is computed over the four TRACKED steps only.
-// All motion is CSS-only and reduced-motion-safe (roadmap.css).
+// The frontier ("up next") is computed over the six TRACKED steps only
+// (TRACKED_STEP_KEYS in config.ts, pinned tracked-XOR-paid by
+// scripts/roadmap-tests.ts). All motion is CSS-only and
+// reduced-motion-safe (roadmap.css).
 
 import { Fragment } from "react";
 import Link from "next/link";
 import {
   ROADMAP_STEPS,
+  TRACKED_STEP_KEYS,
   isPaidStep,
   type RoadmapStepKey,
+  type TrackedStepKey,
 } from "@/lib/roadmap/config";
 import type { RoadmapStatus } from "@/lib/roadmap/status";
 
@@ -90,31 +94,46 @@ function nodeClass(s: NodeState): string {
   return `rmp-node rmp-node--${s}`;
 }
 
-/** Task steps in order: the only steps "up next" and the lightline consider.
- * Paid steps are deliberately absent (a never-satisfiable step would hold
- * the frontier ring forever and dress an upsell as wayfinding). */
-const UPNEXT_KEYS = ["governance", "directory", "work", "scorecard"] as const;
-type TrackedKey = (typeof UPNEXT_KEYS)[number];
-
-function isTracked(k: RoadmapStepKey): k is TrackedKey {
-  return (UPNEXT_KEYS as readonly string[]).includes(k);
+function isTracked(k: RoadmapStepKey): k is TrackedStepKey {
+  return (TRACKED_STEP_KEYS as readonly string[]).includes(k);
 }
 
-export function RoadmapRunway({ status }: { status: RoadmapStatus | null }) {
+/** ornament: the aria-hidden no-state render (teaser + staff hub). The
+ * teaser keeps the static up-next invitation on node 01; the staff hub
+ * passes noInvite (a signed-in surface whose cards show real counts must
+ * not wear a false wayfinding ring) and its own sr sentence. */
+export function RoadmapRunway({
+  status,
+  srSummary,
+  noInvite = false,
+}: {
+  status: RoadmapStatus | null;
+  srSummary?: string;
+  noInvite?: boolean;
+}) {
   // "reached" drives segment lighting: done for the task steps, live for the
   // scorecard (never "done": it is ongoing). Paid steps have no entry: there
   // is nothing to reach.
-  const reached: Record<TrackedKey, boolean> = status
+  const reached: Record<TrackedStepKey, boolean> = status
     ? {
         governance: status.governance.done,
         directory: status.directory.done,
         work: status.work.done,
+        request: status.request.done,
+        requested: status.requested.live,
         scorecard: status.scorecard.live,
       }
-    : { governance: false, directory: false, work: false, scorecard: false };
+    : {
+        governance: false,
+        directory: false,
+        work: false,
+        request: false,
+        requested: false,
+        scorecard: false,
+      };
 
   const frontierKey = status
-    ? (UPNEXT_KEYS.find((k) => !reached[k]) ?? null)
+    ? (TRACKED_STEP_KEYS.find((k) => !reached[k]) ?? null)
     : null;
 
   function stateFor(key: RoadmapStepKey): NodeState {
@@ -125,7 +144,10 @@ export function RoadmapRunway({ status }: { status: RoadmapStatus | null }) {
     // Precedence: done > up next (frontier) > examined > dim. Up next beats
     // examined so the runway never loses its single wayfinding ring; the
     // adjacent card still tells the searched-zero story in words.
-    if (reached[key]) return key === "scorecard" ? "live" : "done";
+    // requested is an ongoing board like the scorecard: its reached state
+    // voices "Live", never "Done".
+    if (reached[key])
+      return key === "scorecard" || key === "requested" ? "live" : "done";
     if (key === frontierKey) return "upnext";
     if (
       key === "directory" &&
@@ -184,9 +206,11 @@ export function RoadmapRunway({ status }: { status: RoadmapStatus | null }) {
   }
 
   if (status === null) {
-    // Teaser: pure ornament (aria-hidden) plus one sr-only sentence. Node 01
-    // wears the STATIC up-next invitation (the old shimmer read as activity,
-    // and pulse now exclusively means working).
+    // Ornament render: aria-hidden diamonds plus one sr-only sentence.
+    // Teaser: node 01 wears the STATIC up-next invitation (the old shimmer
+    // read as activity, and pulse now exclusively means working). Staff hub:
+    // noInvite drops the ring (a signed-in surface with real counts on its
+    // cards must not claim "up next: AI Governance").
     return (
       <div>
         <div className="rmp-runway" aria-hidden="true">
@@ -199,7 +223,8 @@ export function RoadmapRunway({ status }: { status: RoadmapStatus | null }) {
                     className={
                       isPaidStep(step)
                         ? "rmp-node rmp-node--offered"
-                        : "rmp-node" + (i === 0 ? " rmp-node--upnext" : "")
+                        : "rmp-node" +
+                          (i === 0 && !noInvite ? " rmp-node--upnext" : "")
                     }
                   />
                 </span>
@@ -212,7 +237,9 @@ export function RoadmapRunway({ status }: { status: RoadmapStatus | null }) {
             </Fragment>
           ))}
         </div>
-        <p className="sr-only">Six steps, none started yet.</p>
+        <p className="sr-only">
+          {srSummary ?? "Eight steps, none started yet."}
+        </p>
       </div>
     );
   }
