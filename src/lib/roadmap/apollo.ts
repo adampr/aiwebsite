@@ -18,6 +18,7 @@ import {
   suppressedHashes,
   trySpendApolloCall,
   upsertApolloPerson,
+  type DirectoryScope,
 } from "@/lib/roadmap/db";
 
 export type ApolloImportResult =
@@ -64,27 +65,34 @@ function personPhone(p: ApolloPerson): string | null {
   return n?.sanitized_number || n?.raw_number || null;
 }
 
-// Per-company in-flight dedup (round 3): two tabs auto-kicking at once must
+// Per-lane in-flight dedup (round 3): two tabs auto-kicking at once must
 // collapse into ONE Apollo run (upserts are idempotent either way; this
 // protects the page budget and the hourly limiter's spirit). Valid because
-// this host runs a single PM2 fork (same caveat as the dkim cache).
+// this host runs a single PM2 fork (same caveat as the dkim cache). The
+// staff lane (companyId null) keys on the "staff" sentinel, which can
+// never collide with a company uuid.
 const inflightImports = new Map<string, Promise<ApolloImportResult>>();
 
+function laneKey(scope: DirectoryScope): string {
+  return scope.companyId ?? "staff";
+}
+
 export function runApolloImport(opts: {
-  companyId: string;
+  scope: DirectoryScope;
   companyDomain: string;
 }): Promise<ApolloImportResult> {
-  const existing = inflightImports.get(opts.companyId);
+  const key = laneKey(opts.scope);
+  const existing = inflightImports.get(key);
   if (existing) return existing;
   const run = runApolloImportInner(opts).finally(() =>
-    inflightImports.delete(opts.companyId)
+    inflightImports.delete(key)
   );
-  inflightImports.set(opts.companyId, run);
+  inflightImports.set(key, run);
   return run;
 }
 
 async function runApolloImportInner(opts: {
-  companyId: string;
+  scope: DirectoryScope;
   companyDomain: string;
 }): Promise<ApolloImportResult> {
   const key = process.env.APOLLO_API_KEY;
@@ -93,7 +101,7 @@ async function runApolloImportInner(opts: {
     return { outcome: "not_configured" };
   }
 
-  const suppressed = await suppressedHashes(opts.companyId);
+  const suppressed = await suppressedHashes(opts.scope);
   let found = 0;
   let added = 0;
   let updated = 0;
@@ -131,7 +139,7 @@ async function runApolloImportInner(opts: {
       // Named env var goes to the server log ONLY; the admin-facing copy
       // never mentions it.
       console.log(
-        `[roadmap] apollo page ${page} failed${res ? ` (${res.status})` : " (network)"} for company ${opts.companyId}`
+        `[roadmap] apollo page ${page} failed${res ? ` (${res.status})` : " (network)"} for lane ${laneKey(opts.scope)}`
       );
       if (page === 1) return { outcome: "api_error" };
       partial = true;
@@ -148,7 +156,7 @@ async function runApolloImportInner(opts: {
     // auto-init for the company forever; round-3 refutation finding).
     if (!body || (!Array.isArray(body.people) && !Array.isArray(body.contacts))) {
       console.log(
-        `[roadmap] apollo page ${page} returned an unparseable body for company ${opts.companyId}`
+        `[roadmap] apollo page ${page} returned an unparseable body for lane ${laneKey(opts.scope)}`
       );
       if (page === 1) return { outcome: "api_error" };
       partial = true;
@@ -170,7 +178,7 @@ async function runApolloImportInner(opts: {
         continue;
       }
       const what = await upsertApolloPerson({
-        companyId: opts.companyId,
+        scope: opts.scope,
         apolloId: String(p.id),
         name,
         email,
@@ -189,7 +197,7 @@ async function runApolloImportInner(opts: {
   }
 
   if (!partial) {
-    await stampApolloImport(opts.companyId, added + updated + keptManual);
+    await stampApolloImport(opts.scope, added + updated + keptManual);
   }
   return {
     outcome: "done",

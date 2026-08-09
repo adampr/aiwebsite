@@ -10,6 +10,7 @@ import { db, schema } from "@/lib/db";
 // §5.19 scorecard merge. requests-db imports nothing from this file
 // (WorkScope is a type-only import there), so no cycle.
 import { requestCountsByEmail } from "@/lib/work/requests-db";
+import { personLabel } from "@/lib/person-label";
 import { isCompanyEligibleDomain } from "@/lib/roadmap/domains";
 import {
   ROADMAP_CAPS,
@@ -34,8 +35,33 @@ const CR = schema.companyAdminRequests;
 const CP = schema.companyPeople;
 const DS = schema.directorySuppressions;
 const CGD = schema.companyGovernanceDocs;
+const SRS = schema.staffRoadmapState;
 const W = schema.workSubmissions;
 const U = schema.users;
+
+/** Directory lane axis (§5.18 staff parity): companyId null = the XL.net
+ * STAFF lane (company_people/directory_suppressions rows with NULL
+ * company_id; the work_submissions/work_requests internal-lane pattern). A
+ * REQUIRED param on every people/suppression/stamp function so a missed
+ * lane filter is a compile error (WorkScope precedent). Defined here, not
+ * imported from work/scope.ts: scope.ts imports from this file, so a value
+ * import back would be a cycle. */
+export type DirectoryScope = { companyId: string | null };
+export const STAFF_DIRECTORY_SCOPE: DirectoryScope = { companyId: null };
+
+/** The ONE lane predicate: never eq() with a null (drizzle renders
+ * "= NULL", which matches nothing). */
+function dirLaneWhere(scope: DirectoryScope) {
+  return scope.companyId === null
+    ? isNull(CP.companyId)
+    : eq(CP.companyId, scope.companyId);
+}
+
+function dirSupprLaneWhere(scope: DirectoryScope) {
+  return scope.companyId === null
+    ? isNull(DS.companyId)
+    : eq(DS.companyId, scope.companyId);
+}
 
 export type CompanyRow = {
   id: string;
@@ -336,25 +362,25 @@ export async function pendingRequestsForCompany(
 
 export type PersonRow = typeof CP.$inferSelect;
 
-export async function listPeople(companyId: string): Promise<PersonRow[]> {
+export async function listPeople(scope: DirectoryScope): Promise<PersonRow[]> {
   return db
     .select()
     .from(CP)
-    .where(eq(CP.companyId, companyId))
+    .where(dirLaneWhere(scope))
     .orderBy(asc(CP.name))
     .limit(ROADMAP_CAPS.directoryRenderMax);
 }
 
-export async function countPeople(companyId: string): Promise<number> {
+export async function countPeople(scope: DirectoryScope): Promise<number> {
   const rows = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(CP)
-    .where(eq(CP.companyId, companyId));
+    .where(dirLaneWhere(scope));
   return rows[0]?.n ?? 0;
 }
 
 export async function addPerson(opts: {
-  companyId: string;
+  scope: DirectoryScope;
   name: string;
   email: string | null;
   phone: string | null;
@@ -362,7 +388,7 @@ export async function addPerson(opts: {
   const [row] = await db
     .insert(CP)
     .values({
-      companyId: opts.companyId,
+      companyId: opts.scope.companyId,
       name: opts.name,
       email: opts.email ? opts.email.toLowerCase() : null,
       phone: opts.phone,
@@ -375,7 +401,7 @@ export async function addPerson(opts: {
 /** Any human edit flips source to 'manual' so a later Apollo re-import never
  * clobbers the correction. */
 export async function updatePerson(opts: {
-  companyId: string;
+  scope: DirectoryScope;
   personId: string;
   name: string;
   email: string | null;
@@ -390,7 +416,7 @@ export async function updatePerson(opts: {
       source: "manual",
       updatedAt: new Date(),
     })
-    .where(and(eq(CP.id, opts.personId), eq(CP.companyId, opts.companyId)))
+    .where(and(eq(CP.id, opts.personId), dirLaneWhere(opts.scope)))
     .returning();
   return rows[0] ?? null;
 }
@@ -398,20 +424,20 @@ export async function updatePerson(opts: {
 /** Hard delete; when suppress is set (default for Apollo rows in the UI) the
  * email's sha256 is recorded so re-imports skip this person for good. */
 export async function removePerson(opts: {
-  companyId: string;
+  scope: DirectoryScope;
   personId: string;
   suppress: boolean;
 }): Promise<PersonRow | null> {
   const rows = await db
     .delete(CP)
-    .where(and(eq(CP.id, opts.personId), eq(CP.companyId, opts.companyId)))
+    .where(and(eq(CP.id, opts.personId), dirLaneWhere(opts.scope)))
     .returning();
   const row = rows[0];
   if (row && opts.suppress && row.email) {
     await db
       .insert(DS)
       .values({
-        companyId: opts.companyId,
+        companyId: opts.scope.companyId,
         emailSha256: sha256Hex(row.email.toLowerCase()),
       })
       .onConflictDoNothing();
@@ -420,20 +446,20 @@ export async function removePerson(opts: {
 }
 
 export async function suppressedHashes(
-  companyId: string
+  scope: DirectoryScope
 ): Promise<Set<string>> {
   const rows = await db
     .select({ h: DS.emailSha256 })
     .from(DS)
-    .where(eq(DS.companyId, companyId));
+    .where(dirSupprLaneWhere(scope));
   return new Set(rows.map((r) => r.h));
 }
 
-/** Apollo import upsert: keyed on (company_id, apollo_id); rows a human has
+/** Apollo import upsert: keyed on (lane, apollo_id); rows a human has
  * edited (source 'manual') are never clobbered. Returns what happened for
  * the admin-facing result line. */
 export async function upsertApolloPerson(opts: {
-  companyId: string;
+  scope: DirectoryScope;
   apolloId: string;
   name: string;
   email: string | null;
@@ -442,7 +468,7 @@ export async function upsertApolloPerson(opts: {
   const existing = await db
     .select({ id: CP.id, source: CP.source })
     .from(CP)
-    .where(and(eq(CP.companyId, opts.companyId), eq(CP.apolloId, opts.apolloId)))
+    .where(and(dirLaneWhere(opts.scope), eq(CP.apolloId, opts.apolloId)))
     .limit(1);
   if (existing[0]) {
     if (existing[0].source === "manual") return "kept_manual";
@@ -460,7 +486,7 @@ export async function upsertApolloPerson(opts: {
   await db
     .insert(CP)
     .values({
-      companyId: opts.companyId,
+      companyId: opts.scope.companyId,
       apolloId: opts.apolloId,
       name: opts.name,
       email: opts.email ? opts.email.toLowerCase() : null,
@@ -472,20 +498,44 @@ export async function upsertApolloPerson(opts: {
 }
 
 /** The durable auto-kick once-flag (round 3): non-null after any COMPLETE
- * import run, including complete zero-result runs. */
-export async function apolloImportStamp(companyId: string): Promise<Date | null> {
+ * import run, including complete zero-result runs. Staff lane reads the
+ * one-row staff_roadmap_state table (no companies row exists by invariant). */
+export async function apolloImportStamp(
+  scope: DirectoryScope
+): Promise<Date | null> {
+  if (scope.companyId === null) {
+    const rows = await db
+      .select({ at: SRS.apolloLastImportAt })
+      .from(SRS)
+      .where(eq(SRS.id, 1))
+      .limit(1);
+    return rows[0]?.at ?? null;
+  }
   const rows = await db
     .select({ at: C.apolloLastImportAt })
     .from(C)
-    .where(eq(C.id, companyId))
+    .where(eq(C.id, scope.companyId))
     .limit(1);
   return rows[0]?.at ?? null;
 }
 
 export async function stampApolloImport(
-  companyId: string,
+  scope: DirectoryScope,
   count: number
 ): Promise<void> {
+  if (scope.companyId === null) {
+    // UPSERT, not UPDATE: 0039 seeds the id=1 row, but a missing row must
+    // degrade to self-heal, never to a silent no-op that re-arms the
+    // auto-kick forever.
+    await db
+      .insert(SRS)
+      .values({ id: 1, apolloLastImportAt: new Date(), apolloLastImportCount: count })
+      .onConflictDoUpdate({
+        target: SRS.id,
+        set: { apolloLastImportAt: new Date(), apolloLastImportCount: count },
+      });
+    return;
+  }
   await db
     .update(C)
     .set({
@@ -493,7 +543,7 @@ export async function stampApolloImport(
       apolloLastImportCount: count,
       updatedAt: new Date(),
     })
-    .where(eq(C.id, companyId));
+    .where(eq(C.id, scope.companyId));
 }
 
 // ---- Governance docs (§5.18 step 1) ----
@@ -632,25 +682,39 @@ export type ScorecardRow = {
 const NO_REQUESTS = { requested: 0, working: 0, completed: 0 } as const;
 
 function scorecardSort(rows: ScorecardRow[]): ScorecardRow[] {
+  // Tiebreak on the DISPLAYED label (person-label rule), not the stored
+  // name: a row rendering its email must not alphabetize by a hidden
+  // single-token first name.
   rows.sort(
     (a, b) =>
       b.published - a.published ||
       b.completed - a.completed ||
-      (a.name ?? a.email ?? "").localeCompare(b.name ?? b.email ?? "")
+      personLabel(a.name, a.email).localeCompare(personLabel(b.name, b.email))
   );
   return rows;
 }
 
-/** Directory members with published-card counts, plus published submitters
- * missing from the directory. Counts PUBLISHED cards only: held, failed,
- * and in-review rows never appear anywhere in the scorecard, so it can
- * never reveal that a colleague tried and failed. §5.19: merged with the
- * per-person requested-work counts (same lane, same email key). */
-export async function companyScorecard(
-  companyId: string
+/** The ONE scorecard implementation for BOTH lanes (§5.18 staff parity;
+ * previously companyScorecard + a parallel internalScorecard whose invented
+ * max(submitter_name) source was the bare-first-name bug). Directory rows
+ * first (real personId/inDirectory in both lanes - the staff directory is
+ * the NULL lane), then published submitters missing from the directory,
+ * then requested-work-only participants (listed statuses only; a
+ * pending/rejected row existing at all is information, so those people
+ * never appear). Counts PUBLISHED cards only: held, failed, and in-review
+ * rows never appear anywhere in the scorecard, so it can never reveal that
+ * a colleague tried and failed. Stray rows carry name: null by design -
+ * work_submissions.submitter_name is a validated single first name and can
+ * never satisfy the person-label rule. */
+export async function scorecardRows(
+  scope: DirectoryScope
 ): Promise<ScorecardRow[]> {
+  const laneWhere =
+    scope.companyId === null
+      ? isNull(W.companyId)
+      : eq(W.companyId, scope.companyId);
   const [people, counts, requests] = await Promise.all([
-    listPeople(companyId),
+    listPeople(scope),
     db
       .select({
         email: sql<string>`lower(${W.submitterEmail})`,
@@ -658,9 +722,9 @@ export async function companyScorecard(
         last: sql<Date | null>`max(${W.publishedAt})`,
       })
       .from(W)
-      .where(and(eq(W.companyId, companyId), eq(W.status, "published")))
+      .where(and(laneWhere, eq(W.status, "published")))
       .groupBy(sql`lower(${W.submitterEmail})`),
-    requestCountsByEmail({ companyId }),
+    requestCountsByEmail({ companyId: scope.companyId }),
   ]);
   const byEmail = new Map(counts.map((c) => [c.email, c]));
   const rows: ScorecardRow[] = people.map((p) => {
@@ -703,53 +767,6 @@ export async function companyScorecard(
       published: 0,
       lastPublishedAt: null,
       inDirectory: false,
-      ...req,
-    });
-  }
-  return scorecardSort(rows);
-}
-
-/** The staff-lane scorecard (§5.18 unification): no directory exists for
- * xl.net, so the employee universe is the union of internal-lane published
- * submitters and requested-work participants (listed statuses only - a row
- * existing at all is information, so pending/rejected-only people never
- * appear). inDirectory true keeps the stray badge and AddToDirectory island
- * from rendering on the staff surface. */
-export async function internalScorecard(): Promise<ScorecardRow[]> {
-  const [counts, requests] = await Promise.all([
-    db
-      .select({
-        email: sql<string>`lower(${W.submitterEmail})`,
-        name: sql<string | null>`max(${W.submitterName})`,
-        n: sql<number>`count(*)::int`,
-        last: sql<Date | null>`max(${W.publishedAt})`,
-      })
-      .from(W)
-      .where(and(isNull(W.companyId), eq(W.status, "published")))
-      .groupBy(sql`lower(${W.submitterEmail})`),
-    requestCountsByEmail({ companyId: null }),
-  ]);
-  const rows: ScorecardRow[] = counts.map((c) => {
-    const req = requests.get(c.email);
-    requests.delete(c.email);
-    return {
-      personId: null,
-      name: c.name,
-      email: c.email,
-      published: c.n,
-      lastPublishedAt: c.last,
-      inDirectory: true,
-      ...(req ?? NO_REQUESTS),
-    };
-  });
-  for (const [email, req] of requests) {
-    rows.push({
-      personId: null,
-      name: null,
-      email,
-      published: 0,
-      lastPublishedAt: null,
-      inDirectory: true,
       ...req,
     });
   }

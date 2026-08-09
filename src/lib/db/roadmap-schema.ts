@@ -138,16 +138,23 @@ export const companyAdminRequests = pgTable(
 // minimization — no title/seniority/social columns; Apollo's raw response is
 // never persisted or logged). source flips 'apollo' -> 'manual' on first
 // human edit; re-import upserts on apollo_id but never clobbers a manual row.
-// Removal is a hard DELETE. Migration-only uniques: (company_id,
-// lower(email)) WHERE email IS NOT NULL and (company_id, apollo_id) WHERE
-// apollo_id IS NOT NULL.
+// Removal is a hard DELETE. company_id NULL = the XL.net STAFF lane
+// (migration 0039; the work_submissions/work_requests internal-lane
+// pattern) — NULL rows have no parent and are cascade-immune; every read
+// and write goes through a required DirectoryScope (src/lib/roadmap/db.ts)
+// so a missed lane filter is a compile error. Migration-only uniques:
+// (company_id, lower(email)) WHERE email IS NOT NULL and (company_id,
+// apollo_id) WHERE apollo_id IS NOT NULL, plus the 0039 NULL-lane partials
+// company_people_email_staff_uq / company_people_apollo_staff_uq (composite
+// btrees treat NULL company_id rows as always-distinct, so the 0035 indexes
+// never dedupe the staff lane).
 export const companyPeople = pgTable(
   "company_people",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id")
-      .notNull()
-      .references(() => companies.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id").references(() => companies.id, {
+      onDelete: "cascade",
+    }),
     name: text("name").notNull(),
     email: text("email"), // lowercased at write edge; nullable (Apollo gaps)
     phone: text("phone"),
@@ -167,14 +174,15 @@ export const companyPeople = pgTable(
 // person, the sha256 of the lowercased email is recorded (the PII itself is
 // not retained) and future imports skip it, reporting "N skipped as
 // previously removed". Without this the next import silently resurrects a
-// person who exercised deletion.
+// person who exercised deletion. company_id NULL = the staff lane (0039;
+// NULL-lane unique directory_suppr_staff_uq on email_sha256).
 export const directorySuppressions = pgTable(
   "directory_suppressions",
   {
     id: serial("id").primaryKey(),
-    companyId: uuid("company_id")
-      .notNull()
-      .references(() => companies.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id").references(() => companies.id, {
+      onDelete: "cascade",
+    }),
     emailSha256: text("email_sha256").notNull(),
     removedAt: timestamp("removed_at", { withTimezone: true })
       .notNull()
@@ -217,6 +225,19 @@ export const companyGovernanceDocs = pgTable(
   },
   (t) => [index("company_gov_docs_company_idx").on(t.companyId)]
 );
+
+// One-row staff-lane analogue of companies.apollo_last_import_* (the staff
+// lane has no companies row by invariant): the durable auto-kick once-flag
+// for the XL.net directory import. CHECK (id = 1) is migration-only (0039),
+// which also SEEDS the row; the stamp write is an UPSERT regardless, so a
+// missing row can never silently no-op the stamp and re-arm the auto-kick.
+export const staffRoadmapState = pgTable("staff_roadmap_state", {
+  id: integer("id").primaryKey(),
+  apolloLastImportAt: timestamp("apollo_last_import_at", {
+    withTimezone: true,
+  }),
+  apolloLastImportCount: integer("apollo_last_import_count"),
+});
 
 // Daily budget ledger for the client population (work_usage pattern).
 // brain_calls counts ACTUALS only — company-scope panel/title-infer brain

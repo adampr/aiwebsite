@@ -6,20 +6,42 @@
 // in depth; a page returns null when denied and this layout's screen is
 // what the visitor sees. Nothing sensitive rides through client props.
 //
+// SHELL RUNWAY (staff-parity round, owner ask): the shell renders the
+// hub-identical Lightline Runway above the step content in BOTH lanes,
+// replacing the retired text step-strip nav. The status bundle is computed HERE
+// (company: roadmapStatus, incl. the budget-bounded cached DKIM probe
+// riding its Promise.all; staff: staffRoadmapStatus) so the shell runway
+// can never disagree with the hub. Notes:
+//  - App Router layouts are NOT re-fetched on sibling step-to-step
+//    navigation, so the runway is a snapshot from shell entry; every
+//    mutation island already calls router.refresh(), which re-renders this
+//    layout, so it relights immediately after the user acts.
+//  - aria-current is deliberately absent (hub parity; a server layout
+//    cannot know the active child segment, and each step page's own
+//    "Step NN" header announces location).
+//  - The runway's #rmp-node-directory / #rmp-sr-directory ids render here
+//    too but are UNDRIVEN on step pages (DirectoryCard on the hub is the
+//    only island driver; see runway.tsx ISLAND CONTRACT).
+//
 // STAFF (§5.18 unification): xl.net staff sessions are admitted to the
 // shell FIRST, before the trusted-principal gate (readRoadmapHubView's
 // load-bearing ordering: pre-hardening staff sessions have no mv and xl.net
-// is reserved). The shell renders only static config (StepStrip) plus
-// children; INVARIANT: every (steps) page must then either render a staff
-// variant or redirect staff to its STAFF_STEP_HREFS target - a page that
-// returns null for staff renders a BLANK shell, because the layout's denial
-// screens only exist on the non-staff path (pinned in
+// is reserved). INVARIANT: every (steps) page must then either render a
+// staff variant or redirect staff to its STAFF_STEP_HREFS target - a page
+// that returns null for staff renders a BLANK shell, because the layout's
+// denial screens only exist on the non-staff path (pinned in
 // scripts/roadmap-tests.ts).
 
 import type { Metadata } from "next";
 import Link from "next/link";
 import { readStaffPage, requireRoadmapPage } from "@/lib/roadmap/access";
-import { StepStrip } from "@/components/roadmap/step-strip";
+import { STAFF_STEP_HREFS, type RoadmapStepKey } from "@/lib/roadmap/config";
+import { roadmapStatus, staffRoadmapStatus } from "@/lib/roadmap/status";
+import {
+  RoadmapRunway,
+  RunwayStage,
+  type RunwayStatus,
+} from "@/components/roadmap/runway";
 import "../roadmap.css";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +65,33 @@ function Denial({ title, body }: { title: string; body: string }) {
   );
 }
 
+/** The shell chrome: a hub link, then the bare runway (the "Start wherever
+ * helps most" caption is hub-only copy). mt-8 also gives the lg hover
+ * tooltip (which pops above the node) its headroom at the top of the
+ * shell. */
+function ShellRunway({
+  status,
+  hrefs,
+}: {
+  status: RunwayStatus;
+  hrefs?: Readonly<Record<RoadmapStepKey, string>>;
+}) {
+  return (
+    <nav aria-label="Roadmap steps" className="pt-4">
+      <p>
+        <Link href="/roadmap" className="btn btn--text no-underline">
+          <span aria-hidden="true">←</span> Your AI Roadmap
+        </Link>
+      </p>
+      <div className="mt-8">
+        <RunwayStage>
+          <RoadmapRunway status={status} hrefs={hrefs} />
+        </RunwayStage>
+      </div>
+    </nav>
+  );
+}
+
 export default async function RoadmapStepsLayout({
   children,
 }: {
@@ -50,11 +99,10 @@ export default async function RoadmapStepsLayout({
 }) {
   const staff = await readStaffPage();
   if (staff) {
+    const staffStatus = await staffRoadmapStatus();
     return (
       <div className="mx-auto max-w-5xl space-y-10">
-        <div className="pt-4">
-          <StepStrip staff />
-        </div>
+        <ShellRunway status={staffStatus} hrefs={STAFF_STEP_HREFS} />
         {children}
       </div>
     );
@@ -83,11 +131,11 @@ export default async function RoadmapStepsLayout({
     );
   }
 
+  const company = gate.principal.company;
+  const status = await roadmapStatus(company.id, company.domain);
   return (
     <div className="mx-auto max-w-5xl space-y-10">
-      <div className="pt-4">
-        <StepStrip />
-      </div>
+      <ShellRunway status={status} />
       {children}
     </div>
   );

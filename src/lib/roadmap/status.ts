@@ -5,12 +5,14 @@
 
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { apolloImportStamp, countGovernanceDocs, countPeople } from "@/lib/roadmap/db";
-import { checkDkim, type DkimCheck } from "@/lib/roadmap/dkim";
 import {
-  requestStatusCounts,
-  type RequestStatusCounts,
-} from "@/lib/work/requests-db";
+  STAFF_DIRECTORY_SCOPE,
+  apolloImportStamp,
+  countGovernanceDocs,
+  countPeople,
+} from "@/lib/roadmap/db";
+import { checkDkim, type DkimCheck } from "@/lib/roadmap/dkim";
+import { requestStatusCounts } from "@/lib/work/requests-db";
 
 const W = schema.workSubmissions;
 
@@ -56,8 +58,8 @@ export async function roadmapStatus(
   const [docs, people, importStamp, workRows, requests, dkim] =
     await Promise.all([
       countGovernanceDocs(companyId),
-      countPeople(companyId),
-      apolloImportStamp(companyId),
+      countPeople({ companyId }),
+      apolloImportStamp({ companyId }),
       db
         .select({
           published: sql<number>`count(*)::int`,
@@ -85,18 +87,32 @@ export async function roadmapStatus(
   };
 }
 
-/** The staff hub's cheap internal-lane status bundle (§5.18 unification):
- * two indexed aggregates, no DNS probe, no company row. The request counts
- * come from the SAME requestStatusCounts as the company cards so the two
- * hubs can never define "open" differently. */
+/** The staff hub/shell status bundle (§5.18 staff parity): mirrors
+ * RoadmapStatus field names minus dkim, so it satisfies the runway's
+ * structural RunwayStatus input and both hubs read identical booleans.
+ * Cheap: indexed aggregates plus the NULL-lane directory count and the
+ * one-row staff Apollo stamp; no DNS probe (the field does not exist on
+ * this shape, so no surface can ever render a fake DKIM verdict). The
+ * request counts come from the SAME requestStatusCounts as the company
+ * cards so the two hubs can never define "open" differently. */
 export type StaffRoadmapStatus = {
-  work: { published: number };
-  scorecard: { contributors: number };
-  requests: RequestStatusCounts;
+  /** Constant: XL.net's governance is its public offering (the Governance
+   * Builder plus the published AUP); xl.net can never be a companies row,
+   * so there is nothing to count and nothing to un-done. If a future round
+   * files real staff governance docs, flip this to a computed count without
+   * touching the runway. */
+  governance: { done: true };
+  directory: { done: boolean; people: number; everImported: boolean };
+  work: { done: boolean; published: number };
+  request: { done: boolean; listed: number };
+  requested: { live: boolean; open: number; completed: number };
+  scorecard: { live: boolean; contributors: number };
 };
 
 export async function staffRoadmapStatus(): Promise<StaffRoadmapStatus> {
-  const [workRows, requests] = await Promise.all([
+  const [people, importStamp, workRows, requests] = await Promise.all([
+    countPeople(STAFF_DIRECTORY_SCOPE),
+    apolloImportStamp(STAFF_DIRECTORY_SCOPE),
     db
       .select({
         published: sql<number>`count(*)::int`,
@@ -106,9 +122,22 @@ export async function staffRoadmapStatus(): Promise<StaffRoadmapStatus> {
       .where(and(isNull(W.companyId), eq(W.status, "published"))),
     requestStatusCounts({ companyId: null }),
   ]);
+  const published = workRows[0]?.published ?? 0;
+  const contributors = workRows[0]?.contributors ?? 0;
   return {
-    work: { published: workRows[0]?.published ?? 0 },
-    scorecard: { contributors: workRows[0]?.contributors ?? 0 },
-    requests,
+    governance: { done: true },
+    directory: {
+      done: people >= 1,
+      people,
+      everImported: importStamp !== null,
+    },
+    work: { done: published >= 1, published },
+    request: { done: requests.listed >= 1, listed: requests.listed },
+    requested: {
+      live: requests.listed >= 1,
+      open: requests.open,
+      completed: requests.completed,
+    },
+    scorecard: { live: contributors >= 1, contributors },
   };
 }

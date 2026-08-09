@@ -3,6 +3,7 @@
 // can never drift. Dates and dollars are formatted here (fmtDate is
 // UTC-stable) and the islands receive strings only.
 
+import { personLabel } from "@/lib/person-label";
 import { fmtDate } from "@/components/roadmap/dates";
 import {
   formatValueUsd,
@@ -26,8 +27,11 @@ export function toBoardRow(r: WorkRequestRow): BoardRowData {
     valueLabel: formatValueUsd(r.valueUsd),
     status: r.status,
     statusLabel: statusLabel(r.status),
-    requesterLabel: r.requesterName ?? r.requesterEmail,
-    developerLabel: r.developerName ?? r.developerEmail,
+    requesterLabel: personLabel(r.requesterName, r.requesterEmail),
+    // Preserve null when unclaimed (the board's "built by" suffix keys on it).
+    developerLabel: r.developerEmail
+      ? personLabel(r.developerName, r.developerEmail)
+      : null,
     developerEmail: r.developerEmail?.toLowerCase() ?? null,
     requestedOn: fmtDate(r.createdAt),
     completedOn: r.completedAt ? fmtDate(r.completedAt) : null,
@@ -53,7 +57,7 @@ export function toQueueRow(r: WorkRequestRow): QueueRowData {
     description: r.description,
     metrics: parseMetricsJson(r.metricsJson),
     valueLabel: formatValueUsd(r.valueUsd),
-    requesterLabel: r.requesterName ?? r.requesterEmail,
+    requesterLabel: personLabel(r.requesterName, r.requesterEmail),
     submittedOn: fmtDate(r.createdAt),
   };
 }

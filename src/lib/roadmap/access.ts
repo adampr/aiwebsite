@@ -101,11 +101,15 @@ export const SILENT_REVERIFY_PROVIDERS = ["google"] as const;
  * mv is NOT required. INVARIANT (rewritten for the §5.18 unification): this
  * predicate grants ZERO client-tenant authority and gates no mutation. It
  * may select staff READ surfaces (the staff hub, the staff scorecard and
- * its click-through) whose content is bounded above by what weaker existing
- * staff gates already expose: internal-lane published work is public on
- * /work, and internal-lane request aggregates are visible to any signed-in
- * xl.net Google session on /work/requested (this predicate requires Google,
- * the /rfp anchor that closes the nOAuth Microsoft path). Anything that
+ * its click-through, and the read-only NULL-lane staff directory) whose
+ * content is bounded above by what weaker existing staff gates already
+ * expose: internal-lane published work is public on /work, internal-lane
+ * request aggregates are visible to any signed-in xl.net Google session on
+ * /work/requested, and the staff directory is XL's own staff shown to XL's
+ * own staff - the same class as every client company's member-visible
+ * directory, phones included (refuter-panel ruling, staff-parity round;
+ * this predicate requires Google, the /rfp anchor that closes the nOAuth
+ * Microsoft path). Anything that
  * renders a CLIENT company's data or performs ANY action must re-derive its
  * own gate (requireGlobalAdmin, requireRequestUser/verifiedWebAdmin, or a
  * trusted principal), never this predicate.
@@ -116,20 +120,30 @@ export function isStaffSession(s: SessionData): boolean {
 
 /**
  * Staff page gate for the (steps) shell and the staff-servable step pages
- * (§5.18 unification). Same predicate as the hub's staff branch, so the
- * layout and every page admit the SAME population - a stricter page gate
- * behind a looser layout admit renders a blank shell (refuter finding).
- * READ surfaces only; see the isStaffSession invariant above.
+ * (§5.18 unification), and the staff-branch SELECTOR for the directory and
+ * apollo-import route handlers (staff parity round) - selection only; every
+ * staff WRITE is then authorized by requireGlobalAdmin. Same predicate as
+ * the hub's staff branch, so the layout and every page admit the SAME
+ * population - a stricter page gate behind a looser layout admit renders a
+ * blank shell (refuter finding). READ surfaces only; see the isStaffSession
+ * invariant above.
+ *
+ * globalAdmin selects UI affordances only (edit levers, auto-init,
+ * recheck); it is computed via isGlobalAdminSession, never bare isAdmin,
+ * and every mutation re-derives requireGlobalAdmin server-side.
  */
-export async function readStaffPage(): Promise<{ email: string } | null> {
+export async function readStaffPage(): Promise<{
+  email: string;
+  globalAdmin: boolean;
+} | null> {
   const session = await readSession(siteConfig);
   if (!session || !isStaffSession(session)) return null;
-  return { email: session.email };
+  return { email: session.email, globalAdmin: isGlobalAdminSession(session) };
 }
 
 export type RoadmapHubView =
   | { kind: "anonymous" }
-  | { kind: "staff"; email: string; showAdminLink: boolean }
+  | { kind: "staff"; email: string; globalAdmin: boolean }
   | {
       kind: "unverified";
       email: string;
@@ -157,10 +171,14 @@ export async function readRoadmapHubView(): Promise<RoadmapHubView> {
   const session = await readSession(siteConfig);
   if (!session) return { kind: "anonymous" };
   if (isStaffSession(session)) {
+    // globalAdmin, not bare-admin: inside this branch isStaffSession has
+    // already proven provider google + exact-label xl.net, so
+    // isGlobalAdminSession carries full verifiedWebAdmin semantics. RENDER
+    // decisions only; every staff write re-derives requireGlobalAdmin.
     return {
       kind: "staff",
       email: session.email,
-      showAdminLink: isAdmin(session.email),
+      globalAdmin: isGlobalAdminSession(session),
     };
   }
   if (!isTrustedSession(session)) {

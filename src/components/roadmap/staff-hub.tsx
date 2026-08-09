@@ -1,84 +1,81 @@
-// Staff hub for /roadmap (§5.18 unification, owner ruling 2026-08-08): xl.net
-// staff get the SAME roadmap hub as client companies, backed by the internal
-// (public /work) lane. Replaces the old staff-panel.tsx explainer.
+// Staff hub for /roadmap (§5.18 unification, owner ruling 2026-08-08; staff
+// PARITY round 2026-08-09): xl.net staff get the SAME roadmap hub as client
+// companies, backed by the internal (public /work) lane plus the NULL-lane
+// staff directory. Replaces the old staff-panel.tsx explainer; the round-1
+// ornament runway ("accepted trade-off") is retired - the runway now shows
+// REAL staff state, with stops linking STAFF_STEP_HREFS.
 //
 // SECURITY: rendered off isStaffSession (google + exact-label xl.net; mv not
 // required - see the rewritten invariant in src/lib/roadmap/access.ts).
 // Everything shown here is bounded above by what weaker staff gates already
-// expose: internal-lane published work is public on /work, and the request
-// aggregates are visible to any xl.net Google session on /work/requested.
-// No client-tenant data renders here, and every CTA lands on a page with its
-// own gate.
+// expose (internal-lane published work is public on /work, request
+// aggregates are staff-visible on /work/requested, and the staff directory
+// is XL's own staff shown to XL's own staff). globalAdmin gates RENDER
+// decisions only; every write re-derives requireGlobalAdmin server-side.
 //
-// Honesty notes: governance and directory cannot derive a state without a
-// company row (xl.net is RESERVED and can never be one), so those cards
-// state what is true and never claim done - the paid-card pattern. The
-// runway renders as ornament (no state, no false up-next ring); ACCEPTED
-// TRADE-OFF: its hollow diamonds sit beside cards with real counts, chosen
-// over wiring a partial status that would have to lie about steps 01-02.
-// The work card's count is DB rows in the internal lane; the hand-authored
-// static exhibits on /work are deliberately not counted, so this number can
-// read lower than the /work page's card count.
+// Honesty notes: governance renders constant-done (XL.net's governance IS
+// its public offering: the Governance Builder plus the published AUP; the
+// card says so rather than pretending a document is on file). The work
+// card's count is DB rows in the internal lane; the hand-authored static
+// exhibits on /work are deliberately not counted, so this number can read
+// lower than the /work page's card count.
 
 import Link from "next/link";
 import {
   ROADMAP_STEPS,
+  STAFF_LANE_DOMAIN,
   STAFF_STEP_HREFS,
   isPaidStep,
 } from "@/lib/roadmap/config";
 import type { StaffRoadmapStatus } from "@/lib/roadmap/status";
-import { RoadmapRunway } from "@/components/roadmap/runway";
+import { RoadmapRunway, RunwayStage } from "@/components/roadmap/runway";
+import { DirectoryCard } from "@/components/roadmap/directory-card";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 
 export function StaffHub({
   email,
-  showAdminLink,
+  globalAdmin,
+  autoInit,
+  canRecheck,
   status,
 }: {
   email: string;
-  showAdminLink: boolean;
+  globalAdmin: boolean;
+  autoInit: boolean;
+  canRecheck: boolean;
   status: StaffRoadmapStatus;
 }) {
   const lines: Record<string, string> = {
     governance: "Public offering",
-    directory: "Derived from published work",
-    work:
-      status.work.published > 0
-        ? `${status.work.published} published`
-        : "Nothing published yet",
-    request:
-      status.requests.listed > 0
-        ? `${status.requests.listed} approved so far`
-        : "Nothing approved yet",
-    requested:
-      status.requests.listed > 0
-        ? `${status.requests.open} open · ${status.requests.completed} completed`
-        : "Waiting on the first approved request",
-    scorecard:
-      status.scorecard.contributors > 0
-        ? `${status.scorecard.contributors} ${status.scorecard.contributors === 1 ? "builder" : "builders"} so far`
-        : "Waiting on the first published work",
+    work: status.work.done
+      ? `${status.work.published} published`
+      : "Nothing published yet",
+    request: status.request.done
+      ? `${status.request.listed} approved so far`
+      : "Nothing approved yet",
+    requested: status.requested.live
+      ? `${status.requested.open} open · ${status.requested.completed} completed`
+      : "Waiting on the first approved request",
+    scorecard: status.scorecard.live
+      ? `${status.scorecard.contributors} ${status.scorecard.contributors === 1 ? "builder" : "builders"} so far`
+      : "Waiting on the first published work",
   };
   const blurbs: Record<string, string> = {
     governance:
       "Client companies file a governance document here. XL.net's own " +
       "offering is the public Governance Builder.",
-    directory:
-      "Client companies list their teams here. XL.net's builder list comes " +
-      "straight from published work on the scorecard.",
     work:
       "Ship something built with AI and submit it on the site or by email. " +
       "An editorial panel reviews it and publishes it to the public Our " +
       "Work page.",
     scorecard:
       "Watch builders emerge: published public work and requested-work " +
-      "activity counted per person. Published cards and approved requests " +
-      "only, never drafts or attempts.",
+      "activity counted per person in the directory. Published cards and " +
+      "approved requests only, never drafts or attempts.",
   };
   const ctas: Record<string, string> = {
     governance: "Open the Governance Builder",
-    directory: "See the builder list",
     work: "Submit a build",
     request: "Request AI-built work",
     requested: "See the board",
@@ -95,23 +92,28 @@ export function StaffHub({
           </div>
           <span className="mono text-xs" style={faint}>
             {email} · staff
-            {showAdminLink ? " · admin" : ""}
+            {globalAdmin ? " · admin" : ""}
           </span>
         </div>
       </section>
 
-      <section aria-label="Roadmap steps overview">
-        <RoadmapRunway
-          status={null}
-          noInvite
-          srSummary="Eight steps. The XL.net lane tracks published work, requested projects, and builders on the cards below."
-        />
+      <section aria-label="Roadmap progress">
+        <RunwayStage>
+          <RoadmapRunway status={status} hrefs={STAFF_STEP_HREFS} />
+          {/* Same hub orientation caption as the company hub (hoisted out
+              of runway.tsx in the staff-parity round). */}
+          <p className="mono mt-6 text-center text-xs" style={faint}>
+            Start wherever helps most. Two steps are paid training, booked on
+            the Builders page.
+          </p>
+        </RunwayStage>
       </section>
 
       <section>
         <p className="mono text-center text-xs" style={faint}>
-          {status.work.published} published · {status.requests.open} requests
-          open · {status.scorecard.contributors} builders
+          {status.directory.people} people · {status.work.published} published
+          · {status.requested.open} requests open ·{" "}
+          {status.scorecard.contributors} builders
         </p>
       </section>
 
@@ -136,6 +138,34 @@ export function StaffHub({
                   </span>
                 </Link>
               </div>
+            );
+          }
+          if (step.key === "directory") {
+            // Real staff directory (NULL lane): the same auto-init/recheck
+            // card the company hub uses, fenced by
+            // apolloKickGuardKey(STAFF_LANE_DOMAIN) - the ONE constant, so
+            // hub -> step navigation cannot double-kick.
+            return (
+              <DirectoryCard
+                key={step.key}
+                autoInit={autoInit}
+                canRecheck={canRecheck}
+                isAdmin={globalAdmin}
+                people={status.directory.people}
+                everImported={status.directory.everImported}
+                domain={STAFF_LANE_DOMAIN}
+                href={href}
+                num={step.num}
+                title={step.title}
+                blurb={
+                  "List the people on this journey. Import the XL.net team " +
+                  "from Apollo or add them by hand; an XL.net admin keeps " +
+                  "it current."
+                }
+                ctaTodo={step.cta.todo}
+                ctaDone={step.cta.done}
+                memberInitLine="An XL.net admin can initialize this from Apollo."
+              />
             );
           }
           if (step.key === "work") {
@@ -188,7 +218,7 @@ export function StaffHub({
         })}
       </section>
 
-      {showAdminLink && (
+      {globalAdmin && (
         <section className="mx-auto max-w-xl">
           <div className="panel">
             <span className="sys-label">Operations</span>

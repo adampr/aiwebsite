@@ -57,7 +57,7 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
       );
     const [admins, people, docs, submissions] = await Promise.all([
       companyAdminsDetail(company.id),
-      listPeople(company.id),
+      listPeople({ companyId: company.id }),
       listGovernanceDocs(company.id),
       companySubmissions(company.id),
     ]);

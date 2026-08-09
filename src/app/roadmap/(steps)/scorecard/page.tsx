@@ -6,19 +6,19 @@
 // never in warning colors: not-yet is a state, not a verdict. The standing
 // disclosure header is non-dismissible by design.
 //
-// STAFF LANE (§5.18 unification): xl.net staff get the same page over the
-// internal lane (public /work submissions + the /work/requested board),
-// gated by readStaffPage BEFORE requireRoadmapPage - the (steps) layout
-// admits staff, so a trusted-only gate here would render a blank shell.
+// STAFF LANE (§5.18 unification + staff parity): xl.net staff get the same
+// page over the internal lane (the NULL-lane staff directory joined to
+// public /work submissions + the /work/requested board), gated by
+// readStaffPage BEFORE requireRoadmapPage - the (steps) layout admits
+// staff, so a trusted-only gate here would render a blank shell. Person
+// labels follow the ONE naming rule (src/lib/person-label.ts): First Last
+// or email, never a bare single-token name.
 
 import type { Metadata } from "next";
 import Link from "next/link";
 import { readStaffPage, requireRoadmapPage } from "@/lib/roadmap/access";
-import {
-  companyScorecard,
-  internalScorecard,
-  type ScorecardRow,
-} from "@/lib/roadmap/db";
+import { scorecardRows, type ScorecardRow } from "@/lib/roadmap/db";
+import { personLabelParts } from "@/lib/person-label";
 import { fmtDate } from "@/components/roadmap/dates";
 import { AddToDirectory } from "./scorecard-islands";
 
@@ -75,11 +75,17 @@ function ScoreRows({
   return (
     <>
       {rows.map((row) => {
-        const label = row.name ?? row.email ?? "";
+        // The person-label rule: "First Last" or the email; emails keep
+        // their mono styling (kind, not label.includes("@")).
+        const { label, kind } = personLabelParts(row.name, row.email);
         return (
           <tr key={row.personId ?? row.email ?? row.name ?? ""}>
             <td className="border-b border-[var(--xl-line)] py-2 pr-4">
-              {row.name ?? <span className="mono text-xs">{row.email}</span>}
+              {kind === "email" ? (
+                <span className="mono text-xs">{label}</span>
+              ) : (
+                label
+              )}
               {!row.email && (
                 <span className="mono ml-3 text-xs" style={faint}>
                   no email on file, submissions cannot be matched
@@ -163,14 +169,17 @@ function HeaderRow() {
 export default async function RoadmapScorecardPage() {
   const staff = await readStaffPage();
   if (staff) {
-    const rows = await internalScorecard();
+    const rows = await scorecardRows({ companyId: null });
+    const directoryRows = rows.filter((r) => r.inDirectory);
+    const strayRows = rows.filter((r) => !r.inDirectory);
     const disclosure =
-      `This scorecard counts each person's published cards on the public ` +
-      `Our Work page and their activity on the internal requested-work ` +
-      `board: approved requests, projects being worked on, and validated ` +
-      `completions. It is visible to signed-in XL.net staff. Drafts, ` +
-      `in-review submissions, and pending or rejected requests never ` +
-      `appear here, and it is not used to evaluate anyone.`;
+      `This scorecard counts each person in the XL.net directory, their ` +
+      `published cards on the public Our Work page, and their activity on ` +
+      `the internal requested-work board: approved requests, projects ` +
+      `being worked on, and validated completions. It is visible to ` +
+      `signed-in XL.net staff. Drafts, in-review submissions, and pending ` +
+      `or rejected requests never appear here, and it is not used to ` +
+      `evaluate anyone.`;
     return (
       <div className="space-y-10">
         <section>
@@ -184,8 +193,10 @@ export default async function RoadmapScorecardPage() {
         {rows.length === 0 ? (
           <section className="text-sm" style={faint}>
             <p>
-              Nothing to count yet: no published cards on{" "}
-              <Link href="/work">Our Work</Link> and nothing on{" "}
+              Nothing to count yet:{" "}
+              <Link href="/roadmap/directory">the directory</Link> is empty,
+              there are no published cards on{" "}
+              <Link href="/work">Our Work</Link>, and nothing is on{" "}
               <Link href="/work/requested">the requested-work board</Link>.
             </p>
           </section>
@@ -196,7 +207,8 @@ export default async function RoadmapScorecardPage() {
                 <HeaderRow />
               </thead>
               <tbody>
-                <ScoreRows rows={rows} isAdmin={false} />
+                <ScoreRows rows={directoryRows} isAdmin={staff.globalAdmin} />
+                <ScoreRows rows={strayRows} isAdmin={staff.globalAdmin} />
               </tbody>
             </table>
           </section>
@@ -211,7 +223,7 @@ export default async function RoadmapScorecardPage() {
   const company = gate.principal.company;
   const isAdmin = p.companyRole === "admin";
 
-  const rows = await companyScorecard(company.id);
+  const rows = await scorecardRows({ companyId: company.id });
   const directoryRows = rows.filter((r) => r.inDirectory);
   const strayRows = rows.filter((r) => !r.inDirectory);
   const peopleCount = directoryRows.length;

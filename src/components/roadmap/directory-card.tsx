@@ -44,6 +44,11 @@ type Props = {
   blurb: string;
   ctaTodo: string;
   ctaDone: string;
+  /** Staff hub reuse (§5.18 staff parity): overrides the company-admin
+   * phrasing on the member zero-state ("An XL.net admin can initialize
+   * this from Apollo."); the staff surfaces pass domain STAFF_LANE_DOMAIN
+   * so the apolloKickGuardKey fence stays shared with the step page. */
+  memberInitLine?: string;
 };
 
 export function DirectoryCard(props: Props) {
@@ -258,7 +263,8 @@ export function DirectoryCard(props: Props) {
       <p className="mt-4 text-sm">{props.blurb}</p>
       {memberZero && (
         <p className="mt-3 text-sm">
-          Your company admin can initialize this from Apollo.
+          {props.memberInitLine ??
+            "Your company admin can initialize this from Apollo."}
         </p>
       )}
       {props.canRecheck && (

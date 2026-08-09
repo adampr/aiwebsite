@@ -1,7 +1,12 @@
 // The Lightline Runway (§5.18): one luminous hairline through eight diamond
 // nodes, horizontal on wide screens, a vertical left rail below. Server
-// component; state comes entirely from the ONE server-computed RoadmapStatus
-// so the runway can never disagree with the step panels.
+// component; state comes entirely from the ONE server-computed status
+// bundle (RunwayStatus below: RoadmapStatus for the company lane,
+// StaffRoadmapStatus for staff) so the runway can never disagree with the
+// step panels. It renders on the hubs AND, since the staff-parity round,
+// in the (steps) shell (layout.tsx) above every step page. The hub
+// orientation caption ("Start wherever helps most...") is deliberately NOT
+// here: it is hub copy and lives with the hub callers.
 //
 // Round 4 (owner ruling): THE NODE CARRIES THE STATE - no visible state
 // words. The color grammar, enforced in roadmap.css:
@@ -32,6 +37,11 @@
 //    via nodeValue (NEVER textContent - that orphans React's text fiber and
 //    breaks later refresh updates) while its auto-import runs. The server
 //    never renders data-working, so hydration always matches.
+//  - DirectoryCard (the hub card) is the ONLY driver. The (steps) shell
+//    runway emits the same ids on step pages, where they are deliberately
+//    UNDRIVEN during DirectoryTable imports (the table's busy UI and the
+//    post-import router.refresh() tell the story); never add a second
+//    driver - two writers of one nodeValue is how the contract breaks.
 //
 // PAID STEPS (03 workshop, 08 cohort) are bought on /builders and a purchase
 // is invisible to this server, so they never take a progress state, never
@@ -55,7 +65,19 @@ import {
   type RoadmapStepKey,
   type TrackedStepKey,
 } from "@/lib/roadmap/config";
-import type { RoadmapStatus } from "@/lib/roadmap/status";
+
+/** The runway's structural input (staff-parity round): exactly the fields
+ * this component reads. RoadmapStatus and StaffRoadmapStatus both satisfy
+ * it, so ONE component serves the company hub, the staff hub, and the
+ * (steps) shell with no adapters and no fake DkimCheck anywhere. */
+export type RunwayStatus = {
+  governance: { done: boolean };
+  directory: { done: boolean; people: number; everImported: boolean };
+  work: { done: boolean };
+  request: { done: boolean };
+  requested: { live: boolean };
+  scorecard: { live: boolean };
+};
 
 type NodeState =
   | "dim"
@@ -67,8 +89,6 @@ type NodeState =
   | "examined"
   /** Paid, bought off-portal: outside the progress ladder entirely. */
   | "offered";
-
-const faint = { color: "var(--xl-text-faint)" } as const;
 
 /** The sr-only state phrase (the words left the screen; they must never
  * leave assistive tech). */
@@ -98,18 +118,37 @@ function isTracked(k: RoadmapStepKey): k is TrackedStepKey {
   return (TRACKED_STEP_KEYS as readonly string[]).includes(k);
 }
 
-/** ornament: the aria-hidden no-state render (teaser + staff hub). The
- * teaser keeps the static up-next invitation on node 01; the staff hub
- * passes noInvite (a signed-in surface whose cards show real counts must
- * not wear a false wayfinding ring) and its own sr sentence. */
+/** The runway's background stage (owner ask, staff-parity round): the SAME
+ * .beams ornament the homepage CTA wears - faint blurred vertical light
+ * shafts drifting left to right forever (futurism.css xl-beams, 30s
+ * infinite alternate; static under reduced motion; light-theme override in
+ * futurism.css). One wrapper component so the hub, the staff hub, the
+ * (steps) shell, and the teaser cannot drift. The z-10 inner keeps the
+ * stop links above the positioned ::before; the ::before is
+ * pointer-events:none and invisible to assistive tech (empty content). */
+export function RunwayStage({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="beams relative overflow-hidden py-6">
+      <div className="relative z-10">{children}</div>
+    </div>
+  );
+}
+
+/** ornament: the aria-hidden no-state render (signed-out teaser ONLY since
+ * the staff-parity round; the staff hub now passes real status). Node 01
+ * keeps the static up-next invitation ring.
+ *
+ * hrefs: per-step link overrides (staff lane: STAFF_STEP_HREFS). Default is
+ * the company step.href. The ornament branch renders no links, so the map
+ * only applies to the status render. */
 export function RoadmapRunway({
   status,
   srSummary,
-  noInvite = false,
+  hrefs,
 }: {
-  status: RoadmapStatus | null;
+  status: RunwayStatus | null;
   srSummary?: string;
-  noInvite?: boolean;
+  hrefs?: Readonly<Record<RoadmapStepKey, string>>;
 }) {
   // "reached" drives segment lighting: done for the task steps, live for the
   // scorecard (never "done": it is ongoing). Paid steps have no entry: there
@@ -149,6 +188,10 @@ export function RoadmapRunway({
     if (reached[key])
       return key === "scorecard" || key === "requested" ? "live" : "done";
     if (key === frontierKey) return "upnext";
+    // NB: on the staff lane examined is unreachable (governance is
+    // constantly reached, so an unreached directory is always the frontier
+    // and up-next wins by this precedence); the stamped-zero story is told
+    // by the directory card's copy instead.
     if (
       key === "directory" &&
       status.directory.everImported &&
@@ -206,11 +249,10 @@ export function RoadmapRunway({
   }
 
   if (status === null) {
-    // Ornament render: aria-hidden diamonds plus one sr-only sentence.
-    // Teaser: node 01 wears the STATIC up-next invitation (the old shimmer
-    // read as activity, and pulse now exclusively means working). Staff hub:
-    // noInvite drops the ring (a signed-in surface with real counts on its
-    // cards must not claim "up next: AI Governance").
+    // Ornament render (signed-out teaser only): aria-hidden diamonds plus
+    // one sr-only sentence. Node 01 wears the STATIC up-next invitation
+    // (the old shimmer read as activity, and pulse now exclusively means
+    // working).
     return (
       <div>
         <div className="rmp-runway" aria-hidden="true">
@@ -223,8 +265,7 @@ export function RoadmapRunway({
                     className={
                       isPaidStep(step)
                         ? "rmp-node rmp-node--offered"
-                        : "rmp-node" +
-                          (i === 0 && !noInvite ? " rmp-node--upnext" : "")
+                        : "rmp-node" + (i === 0 ? " rmp-node--upnext" : "")
                     }
                   />
                 </span>
@@ -253,7 +294,7 @@ export function RoadmapRunway({
           return (
             <Fragment key={step.key}>
               {i > 0 && segFor(i, false)}
-              <Link href={step.href} className="rmp-stop">
+              <Link href={hrefs?.[step.key] ?? step.href} className="rmp-stop">
                 {/* data-state feeds the pure-CSS hover/focus tooltip (round
                     6, owner ask): the same phrase assistive tech hears. The
                     cell is aria-hidden, so the tooltip never duplicates the
@@ -288,10 +329,6 @@ export function RoadmapRunway({
           );
         })}
       </div>
-      <p className="mono mt-6 text-center text-xs" style={faint}>
-        Start wherever helps most. Two steps are paid training, booked on the
-        Builders page.
-      </p>
     </div>
   );
 }
