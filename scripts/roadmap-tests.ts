@@ -35,6 +35,17 @@ import {
   TRACKED_STEP_KEYS,
 } from "../src/lib/roadmap/config";
 import { parsePersonFields, parseRemoveIds } from "../src/lib/roadmap/validate";
+import {
+  PROGRESS_TOTAL,
+  percentOf,
+  roadmapProgress,
+} from "../src/lib/roadmap/progress";
+import { apiProxyView, devVmsView } from "../src/lib/roadmap/platform";
+import {
+  isBlockedAddress,
+  parseCheckableUrl,
+  statusCounts,
+} from "../src/lib/roadmap/url-check";
 import { rateLimitedMessage, retryAfterPhrase } from "../src/lib/retry-after";
 import { personLabel, personLabelParts } from "../src/lib/person-label";
 import {
@@ -193,12 +204,12 @@ ok("scopeOf maps company_id to the scope axis", () => {
   assert.deepEqual(scopeOf({ companyId: "abc" }), { companyId: "abc" });
 });
 
-// ---- §5.19 step-list invariants (eight-step round) ----
-ok("ROADMAP_STEPS is the eight-step list, numbered in order", () => {
-  assert.equal(ROADMAP_STEPS.length, 8);
+// ---- step-list invariants (§5.20 eleven-step round) ----
+ok("ROADMAP_STEPS is the eleven-step list, numbered in order", () => {
+  assert.equal(ROADMAP_STEPS.length, 11);
   assert.deepEqual(
     ROADMAP_STEPS.map((s) => s.num),
-    ["01", "02", "03", "04", "05", "06", "07", "08"]
+    ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11"]
   );
   assert.deepEqual(
     ROADMAP_STEPS.map((s) => s.key),
@@ -211,6 +222,9 @@ ok("ROADMAP_STEPS is the eight-step list, numbered in order", () => {
       "requested",
       "scorecard",
       "cohort",
+      "secure",
+      "data",
+      "tools",
     ]
   );
 });
@@ -245,6 +259,215 @@ ok("STAFF_STEP_HREFS is total and pins the owner-ruled staff targets", () => {
   assert.equal(STAFF_STEP_HREFS.directory, "/roadmap/directory");
   assert.equal(STAFF_STEP_HREFS.workshop, "/builders#workshop");
   assert.equal(STAFF_STEP_HREFS.cohort, "/builders#cohort");
+  // §5.20: these three point at THEMSELVES because there is no public
+  // equivalent to send staff to, so the pages MUST serve the staff lane.
+  // A redirect here would be an infinite loop, and returning null for staff
+  // would render the documented BLANK SHELL.
+  assert.equal(STAFF_STEP_HREFS.secure, "/roadmap/secure");
+  assert.equal(STAFF_STEP_HREFS.data, "/roadmap/data");
+  assert.equal(STAFF_STEP_HREFS.tools, "/roadmap/tools");
+});
+
+// ---- §5.20 phases 09/10/11 ----
+
+ok("every (steps) page under a self-pointing staff href serves the staff lane", () => {
+  // The invariant that a page returning null for staff renders a blank
+  // shell. These three pages have no staff redirect, so each MUST route its
+  // gate through readPlatformPage, which carries the staff branch.
+  for (const slug of ["secure", "data", "tools"]) {
+    const src = readFileSync(
+      `src/app/roadmap/(steps)/${slug}/page.tsx`,
+      "utf8"
+    );
+    assert.ok(
+      src.includes("readPlatformPage"),
+      `${slug} page must gate through readPlatformPage`
+    );
+    assert.ok(
+      !src.includes("redirect("),
+      `${slug} page must not redirect (its staff href points at itself)`
+    );
+  }
+});
+
+ok("completion percentage: denominator is the tracked steps, not all eleven", () => {
+  assert.equal(PROGRESS_TOTAL, TRACKED_STEP_KEYS.length);
+  assert.equal(PROGRESS_TOTAL, 9);
+  // The paid steps are server-invisible, so including them would cap every
+  // company below 100 percent forever.
+  assert.equal(ROADMAP_STEPS.filter(isPaidStep).length, 2);
+});
+
+ok("percentOf reserves 0 and 100 for the real ends", () => {
+  assert.equal(percentOf(0, 9), 0);
+  assert.equal(percentOf(9, 9), 100);
+  // 8.5/9 rounds to 94, and must NOT read as 100.
+  assert.equal(percentOf(8.5, 9), 94);
+  // Anything short of complete is clamped below 100 even when it rounds up.
+  assert.equal(percentOf(8.99, 9), 99);
+  // Anything started is clamped above 0 even when it rounds down.
+  assert.equal(percentOf(0.01, 9), 1);
+  assert.equal(percentOf(0, 0), 0);
+});
+
+ok("step 09 half credit moves the percentage", () => {
+  const base = {
+    governance: { done: false },
+    directory: { done: false },
+    work: { done: false },
+    request: { done: false },
+    requested: { live: false },
+    scorecard: { live: false },
+    secure: { done: false, partial: false },
+    data: { done: false },
+    tools: { done: false },
+  };
+  assert.equal(roadmapProgress(base).earned, 0);
+  assert.equal(roadmapProgress(base).percent, 0);
+  const half = { ...base, secure: { done: false, partial: true } };
+  assert.equal(roadmapProgress(half).earned, 0.5);
+  assert.equal(roadmapProgress(half).percent, 6);
+  const full = { ...base, secure: { done: true, partial: false } };
+  assert.equal(roadmapProgress(full).earned, 1);
+  const all = {
+    governance: { done: true },
+    directory: { done: true },
+    work: { done: true },
+    request: { done: true },
+    requested: { live: true },
+    scorecard: { live: true },
+    secure: { done: true, partial: false },
+    data: { done: true },
+    tools: { done: true },
+  };
+  assert.equal(roadmapProgress(all).percent, 100);
+});
+
+ok("SAVED BUT NOT COUNTED: an unconfirmed URL never lights a step", () => {
+  // The owner's central rule. A row with both URLs present but unchecked,
+  // or failed, must not count; only "ok" on every required field does.
+  const row = (over: Record<string, unknown> = {}) =>
+    ({
+      id: "x",
+      companyId: null,
+      kind: "api_proxy",
+      label: null,
+      description: null,
+      url: "https://proxy.example.com",
+      urlState: "unchecked",
+      urlReason: null,
+      urlHttpStatus: null,
+      urlCheckedAt: null,
+      docsUrl: "https://docs.example.com",
+      docsState: "unchecked",
+      docsReason: null,
+      docsHttpStatus: null,
+      docsCheckedAt: null,
+      environmentsJson: null,
+      addedByUserId: null,
+      addedByEmail: "a@b.c",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      ...over,
+    }) as unknown as Parameters<typeof apiProxyView>[0];
+
+  assert.equal(apiProxyView(row())!.saved, true);
+  assert.equal(apiProxyView(row())!.enabled, false);
+  assert.equal(
+    apiProxyView(row({ urlState: "ok", docsState: "unchecked" }))!.enabled,
+    false
+  );
+  assert.equal(
+    apiProxyView(row({ urlState: "ok", docsState: "failed" }))!.enabled,
+    false
+  );
+  assert.equal(
+    apiProxyView(row({ urlState: "ok", docsState: "ok" }))!.enabled,
+    true
+  );
+  // Developer VMs needs environments, not a URL.
+  assert.equal(
+    devVmsView(row({ kind: "dev_vms", url: null, docsState: "ok" }))!.enabled,
+    false
+  );
+  assert.equal(
+    devVmsView(
+      row({
+        kind: "dev_vms",
+        url: null,
+        docsState: "ok",
+        environmentsJson: JSON.stringify(["Vultr"]),
+      })
+    )!.enabled,
+    true
+  );
+});
+
+ok("url-check refuses every private, reserved and mapped address", () => {
+  for (const a of [
+    "127.0.0.1",
+    "10.0.0.5",
+    "172.16.0.1",
+    "192.168.1.1",
+    "169.254.169.254", // cloud metadata
+    "100.64.0.1",
+    "0.0.0.0",
+    "224.0.0.1",
+    "255.255.255.255",
+    "::1",
+    "fc00::1",
+    "fe80::1",
+    // The IPv4-mapped-IPv6 bypass: a v6 literal that reaches v4 loopback.
+    "::ffff:127.0.0.1",
+    "::ffff:169.254.169.254",
+    "::ffff:7f00:1",
+    "64:ff9b::127.0.0.1",
+  ])
+    assert.equal(isBlockedAddress(a), true, a);
+  for (const a of ["8.8.8.8", "1.1.1.1", "172.32.0.1", "2606:4700::1111"])
+    assert.equal(isBlockedAddress(a), false, a);
+  // Anything we cannot parse as an address fails CLOSED.
+  assert.equal(isBlockedAddress("not-an-ip"), true);
+});
+
+ok("url-check parser refuses non-http schemes and embedded credentials", () => {
+  for (const u of [
+    "ftp://example.com/",
+    "file:///etc/passwd",
+    "javascript:alert(1)",
+    "data:text/html,x",
+    // Userinfo is both an SSRF and a phishing vector in a rendered link.
+    "http://trusted.example.com@127.0.0.1/",
+    "not a url",
+    "",
+  ])
+    assert.equal(parseCheckableUrl(u), null, u);
+  // Ports are explicitly supported (the owner asked for :PORT).
+  assert.ok(parseCheckableUrl("https://proxy.example.com:8443/v1"));
+});
+
+ok("integer-encoded loopback normalizes into the blocklist", () => {
+  // http://2130706433/ and friends are the classic blocklist dodge. The
+  // WHATWG URL parser normalizes them to dotted-quad, so the address
+  // classifier sees 127.0.0.1 and refuses; this pins that the two halves
+  // actually meet (verified end to end against the live checker too).
+  for (const raw of [
+    "http://2130706433/",
+    "http://0x7f000001/",
+    "http://017700000001/",
+  ]) {
+    const parsed = parseCheckableUrl(raw);
+    assert.ok(parsed, raw);
+    assert.equal(parsed!.url.hostname, "127.0.0.1", raw);
+    assert.equal(isBlockedAddress(parsed!.url.hostname), true, raw);
+  }
+});
+
+ok("statusCounts: a secured proxy answering 401 counts, a 404 does not", () => {
+  for (const s of [200, 204, 301, 302, 401, 403, 405, 429])
+    assert.equal(statusCounts(s), true, String(s));
+  for (const s of [404, 410, 500, 502, 503])
+    assert.equal(statusCounts(s), false, String(s));
 });
 
 // ---- Staff-parity round (2026-08-09) invariants ----

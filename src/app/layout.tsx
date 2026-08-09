@@ -16,6 +16,7 @@ import { FuturismFx } from "@/components/futurism-fx";
 import { EmailLink } from "@/components/email-link";
 import { StaffRfpLink } from "@/components/staff-rfp-link";
 import { YourWorkLink } from "@/components/your-work-link";
+import { RoadmapPercentBadge } from "@/components/roadmap-percent-badge";
 import { ChatWidgetMount } from "@/components/chat-widget-mount";
 import "./globals.css";
 
@@ -131,6 +132,7 @@ export default function RootLayout({
               <Link href="/blog">AI News</Link>
               <Link href="/contact">Contact</Link>
               <YourWorkLink />
+              <RoadmapPercentBadge />
               <StaffRfpLink />
               <ThemeToggle />
               <UserMenu {...toUserMenuProps(siteConfig)} />

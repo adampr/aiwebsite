@@ -1,5 +1,5 @@
-// Gate + shell for the six roadmap step pages (§5.18; steps 03 and 08 are
-// paid training on /builders and have no page here). force-dynamic and
+// Gate + shell for the NINE roadmap step pages (§5.18/§5.20; steps 03 and
+// 08 are paid training on /builders and have no page here). force-dynamic and
 // noindex; NO revalidate export anywhere under src/app/roadmap (gate-script
 // rule). The layout renders denial screens itself (rfp doctrine: explain,
 // never bounce) and each step page ALSO calls requireRoadmapPage - defense
@@ -83,7 +83,10 @@ function ShellRunway({
           <span aria-hidden="true">←</span> Your AI Roadmap
         </Link>
       </p>
-      <div className="mt-8">
+      {/* xl:-mx-32: the same runway container breakout the hub uses, for the
+          same measured reason (roadmap.css tier 3 needs 1232px and this
+          shell is max-w-5xl). */}
+      <div className="mt-8 xl:-mx-32">
         <RunwayStage>
           <RoadmapRunway status={status} hrefs={hrefs} />
         </RunwayStage>

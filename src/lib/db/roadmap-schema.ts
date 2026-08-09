@@ -239,6 +239,70 @@ export const staffRoadmapState = pgTable("staff_roadmap_state", {
   apolloLastImportCount: integer("apollo_last_import_count"),
 });
 
+// Phases 09/10/11 (§5.20): the platform a company gives its builders. ONE
+// table with a `kind` discriminator, because every row is the same shape -
+// a URL, an instructions URL, and the verification state of each - and the
+// only difference is arity: api_proxy / dev_vms / lakehouse are 0:1
+// singletons, `tool` is 1:N (the paginated Builder Tools cards).
+//
+// company_id NULL = the XL.net STAFF lane (the company_people /
+// work_submissions precedent), so staff get real pages rather than a blank
+// (steps) shell. Every read and write takes a required LinkScope
+// (src/lib/roadmap/db.ts), so a missed lane filter is a compile error.
+//
+// SINGLETON ENFORCEMENT IS AN INDEX, NOT APPLICATION CODE: two concurrent
+// saves would both pass a "does one exist" read. Migration 0041 carries
+// roadmap_links_singleton_uq (company_id, kind) WHERE kind <> 'tool', PLUS
+// a separate NULL-lane partial unique on (kind) alone - a composite btree
+// treats every NULL company_id row as distinct, so the first index would
+// never dedupe the staff lane (the trap 0039 was written to fix).
+//
+// VERIFICATION IS PER URL FIELD and never inferred: url_state/docs_state
+// are 'unchecked' | 'ok' | 'failed', and ONLY 'ok' may count toward a
+// step or the completion percentage. An unreachable URL is still SAVED
+// (owner rule: save it, tell the user, let them edit or retry), which is
+// exactly why the state lives in its own column rather than being implied
+// by the URL's presence.
+export const companyRoadmapLinks = pgTable(
+  "company_roadmap_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id").references(() => companies.id, {
+      onDelete: "cascade",
+    }),
+    kind: text("kind").notNull(), // "api_proxy" | "dev_vms" | "lakehouse" | "tool"
+    // Tool cards only; NULL on the singletons.
+    label: text("label"),
+    description: text("description"),
+    // The primary URL. NULL on dev_vms, whose "enabled" input is the
+    // hosting-environment list plus instructions, not an endpoint.
+    url: text("url"),
+    urlState: text("url_state").notNull().default("unchecked"),
+    urlReason: text("url_reason"), // UrlCheckFailReason when failed
+    urlHttpStatus: integer("url_http_status"),
+    urlCheckedAt: timestamp("url_checked_at", { withTimezone: true }),
+    docsUrl: text("docs_url"), // the associated instructions URL
+    docsState: text("docs_state").notNull().default("unchecked"),
+    docsReason: text("docs_reason"),
+    docsHttpStatus: integer("docs_http_status"),
+    docsCheckedAt: timestamp("docs_checked_at", { withTimezone: true }),
+    // dev_vms only: the multi-select hosting environments, free-form
+    // entries included. text("*_json"), never jsonb (schema.ts convention).
+    environmentsJson: text("environments_json"),
+    addedByUserId: uuid("added_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    addedByEmail: text("added_by_email").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("company_roadmap_links_company_idx").on(t.companyId, t.kind)]
+);
+
 // Daily budget ledger for the client population (work_usage pattern).
 // brain_calls counts ACTUALS only — company-scope panel/title-infer brain
 // calls dual-increment this AND work_usage; panel_runs is spent 1 per

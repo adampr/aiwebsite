@@ -638,12 +638,10 @@ export default async function WorkPage() {
           <p className="mt-4 text-sm">
             A client company gets its own private corner of{" "}
             <a href="#aiwebsite">ai.xl.net</a>, free, keyed to the domain of
-            its work email. The steps sit on one line: an AI governance
-            document on file, a company directory, AI-built work submitted
-            for review, a requested-work board the company&apos;s own people
-            file and build from, and a scorecard of who is building. No step
-            is locked behind another, and one company sees nothing of any
-            other.
+            its work email. The steps sit on one line, from an AI governance
+            document on file through the work its own people build to the
+            platform, data and tools it gives them. No step is locked behind
+            another, and one company sees nothing of any other.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">

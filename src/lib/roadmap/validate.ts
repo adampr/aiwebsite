@@ -95,3 +95,98 @@ export function parsePersonFields(bodyIn: unknown):
     phone: phoneRaw || null,
   };
 }
+
+// ---- Phases 09/10/11 (§5.20) ----
+// (ROADMAP_CAPS is already imported at the top of this file.)
+
+import { VM_ENVIRONMENTS } from "@/lib/roadmap/config";
+import { parseCheckableUrl } from "@/lib/roadmap/url-check";
+
+/** A URL field arriving from a form. Empty string means "clear it", which
+ * is different from "not supplied": the caller decides whether null is
+ * allowed, this only says whether what arrived is usable.
+ *
+ * The SAME parser the checker uses (parseCheckableUrl) decides validity, so
+ * a value can never be stored that the checker would later refuse to even
+ * attempt: that combination would strand a row as permanently unverifiable
+ * with no explanation. It also normalizes, so the stored string is what we
+ * actually fetched. */
+export function parseUrlField(
+  raw: unknown
+):
+  | { ok: true; url: string | null }
+  | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, url: null };
+  if (typeof raw !== "string")
+    return { ok: false, message: "Send the address as text." };
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, url: null };
+  const parsed = parseCheckableUrl(trimmed);
+  if (!parsed)
+    return {
+      ok: false,
+      message:
+        "That does not look like a web address. Use a full http:// or https:// address, including the port if it needs one.",
+    };
+  return { ok: true, url: parsed.href };
+}
+
+/** The Developer VMs hosting-environment multi-select. Free-form entries
+ * are allowed by design (a private cloud or a colo has no brand in our
+ * list), so each one is trimmed, length-capped and de-duplicated
+ * case-insensitively; the count is capped so the column cannot become a
+ * dumping ground. */
+export function parseEnvironmentsField(
+  raw: unknown
+): { ok: true; environments: string[] } | { ok: false; message: string } {
+  if (raw === undefined || raw === null) return { ok: true, environments: [] };
+  if (!Array.isArray(raw))
+    return { ok: false, message: "Send the hosting environments as a list." };
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const value = item.trim().slice(0, ROADMAP_CAPS.environmentLabelMaxChars);
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+    if (out.length >= ROADMAP_CAPS.environmentsMax) break;
+  }
+  return { ok: true, environments: out };
+}
+
+/** Known entries render as checkboxes; anything else is the admin's own
+ * text. Exported for the page, which groups them. */
+export function isKnownEnvironment(value: string): boolean {
+  return (VM_ENVIRONMENTS as readonly string[]).includes(value);
+}
+
+export function parseToolFields(body: Record<string, unknown>):
+  | { ok: true; label: string; description: string | null; url: string; docsUrl: string | null }
+  | { ok: false; message: string } {
+  const label =
+    typeof body.label === "string"
+      ? body.label.trim().slice(0, ROADMAP_CAPS.toolLabelMaxChars)
+      : "";
+  if (label.length < 2)
+    return { ok: false, message: "Give the tool a name." };
+  const url = parseUrlField(body.url);
+  if (!url.ok) return { ok: false, message: url.message };
+  if (!url.url)
+    return { ok: false, message: "A tool needs a link to itself." };
+  const docs = parseUrlField(body.docsUrl);
+  if (!docs.ok) return { ok: false, message: docs.message };
+  const description =
+    typeof body.description === "string"
+      ? body.description.trim().slice(0, ROADMAP_CAPS.toolDescriptionMaxChars)
+      : "";
+  return {
+    ok: true,
+    label,
+    description: description || null,
+    url: url.url,
+    docsUrl: docs.url,
+  };
+}

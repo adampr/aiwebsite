@@ -591,6 +591,53 @@
   display: inline-block;
 }
 
+/* The site-wide AI Roadmap completion badge (§5.20). It lives HERE and not
+   in roadmap.css on purpose: roadmap.css is imported by the /roadmap pages
+   only, and this badge renders in the global nav on every page, so styling
+   it there would leave it unstyled everywhere it actually appears.
+
+   A short bar plus the number. The bar is aria-hidden decoration; the
+   number and an sr-only phrase carry the meaning. No transition on the
+   fill: this is a page-load snapshot, and animating it would imply live
+   progress. */
+.rmp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3, 0.5rem);
+  text-decoration: none;
+}
+.rmp-badge-track {
+  width: 3rem;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--xl-line);
+  overflow: hidden;
+  flex: none;
+}
+.rmp-badge-fill {
+  display: block;
+  height: 100%;
+  background: var(--xl-light);
+  box-shadow: 0 0 8px var(--xl-light-glow);
+}
+.rmp-badge-num {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  color: var(--xl-text-faint);
+}
+.rmp-badge:hover .rmp-badge-num,
+.rmp-badge:focus-visible .rmp-badge-num {
+  color: var(--xl-text);
+}
+/* The nav gets crowded before the badge earns its place on a phone; the
+   number is never the reason someone opened the site on mobile. */
+@media (max-width: 700px) {
+  .rmp-badge-track {
+    display: none;
+  }
+}
+
 /* .table has no mobile story; every /rfp table is wide. */
 @media (max-width: 700px) {
   .table--stack thead { display: none; }

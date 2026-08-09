@@ -95,6 +95,27 @@ export const ROADMAP_CAPS = {
   // it does truncate, the page says so (page.tsx passes countPeople as
   // `total`); silent truncation is the state this comment used to permit.
   directoryRenderMax: 2000,
+  // Phases 09/10/11 (§5.20). URL reachability checks reach a THIRD-PARTY
+  // server, so they take a per-HOUR window by the WINDOW SHAPE rule above
+  // (external cost), and they get a per-company ceiling as well as a
+  // per-user one: the per-user key alone would let a company with many
+  // admins aim three times the traffic at one target through us. Saving the
+  // row itself is one statement against loopback Postgres, so it takes a
+  // per-MINUTE window like the directory writes.
+  urlChecksPerUserPerHour: 30,
+  urlChecksPerCompanyPerHour: 60,
+  platformWritesPerUserPerMinute: 60,
+  // Tool cards per lane. The page pages CLIENT-side over rows the server
+  // already truncated at this number, exactly as the directory does, so it
+  // sits ABOVE any plausible real list rather than at a comfortable page
+  // size, and the page SAYS SO when it truncates.
+  toolsMax: 100,
+  toolLabelMaxChars: 120,
+  toolDescriptionMaxChars: 600,
+  // Hosting environments on the Developer VMs component: a multi-select
+  // with free-form entries, so both the count and each label are bounded.
+  environmentsMax: 12,
+  environmentLabelMaxChars: 60,
   // Admin-access requests expire after 7 days; non-approval reads as
   // expiry, after which the request button re-arms.
   adminRequestTtlDays: 7,
@@ -132,7 +153,7 @@ export function apolloDailyCallCap(env: NodeJS.ProcessEnv): number {
   return Number.isFinite(n) && n > 0 ? n : ROADMAP_CAPS.apolloCallsPerDayDefault;
 }
 
-/** The eight roadmap steps in progressive order. Rendering, status
+/** The eleven roadmap steps in progressive order. Rendering, status
  * derivation, and copy all iterate this one list so surfaces can never
  * disagree.
  *
@@ -243,6 +264,44 @@ export const ROADMAP_STEPS = [
       "in a small group, working AI into your real work month over month.",
     cta: { todo: "See the cohort", done: "See the cohort" },
   },
+  {
+    key: "secure",
+    num: "09",
+    title: "Secure AI Builders",
+    href: "/roadmap/secure",
+    // PARTIAL-CAPABLE, and the only such step: two independent components,
+    // either of which alone counts as half. COPY RULE (§5.20): this step is
+    // named for the sanctioned path you are giving builders, and nothing
+    // here may imply XL.net audited it. We confirm a link answers. We do
+    // not inspect, test, or certify anything behind it.
+    blurb:
+      "Give your builders a sanctioned way in: an API proxy they can call, " +
+      "and development machines they can build on. List either one to get " +
+      "half the step, both to finish it.",
+    cta: { todo: "Set up the platform", done: "Review the platform" },
+  },
+  {
+    key: "data",
+    num: "10",
+    title: "Data Access",
+    href: "/roadmap/data",
+    blurb:
+      "Point your builders at the data: your lakehouse address, plus the " +
+      "instructions that explain how to connect to it and what the rules " +
+      "are.",
+    cta: { todo: "Add your lakehouse", done: "Review data access" },
+  },
+  {
+    key: "tools",
+    num: "11",
+    title: "AI Builder Tools",
+    href: "/roadmap/tools",
+    blurb:
+      "The tools your builders are cleared to use, each on its own card " +
+      "with a link and instructions. The step completes with the first " +
+      "tool we can reach; add as many as you need.",
+    cta: { todo: "Add your first tool", done: "Review your tools" },
+  },
 ] as const;
 
 export type RoadmapStepKey = (typeof ROADMAP_STEPS)[number]["key"];
@@ -269,6 +328,9 @@ export const TRACKED_STEP_KEYS = [
   "request",
   "requested",
   "scorecard",
+  "secure",
+  "data",
+  "tools",
 ] as const;
 export type TrackedStepKey = (typeof TRACKED_STEP_KEYS)[number];
 
@@ -289,6 +351,13 @@ export const STAFF_STEP_HREFS: Record<RoadmapStepKey, string> = {
   requested: "/work/requested",
   scorecard: "/roadmap/scorecard",
   cohort: "/builders#cohort",
+  // §5.20: staff get the REAL pages, backed by the NULL-company_id lane
+  // (the staff-parity precedent). Same href as the company lane, so the
+  // page itself serves both and needs no staff redirect - which is the only
+  // way to satisfy the (steps) invariant without a blank shell.
+  secure: "/roadmap/secure",
+  data: "/roadmap/data",
+  tools: "/roadmap/tools",
 };
 
 /** The staff lane's Apollo search domain AND the apolloKickGuardKey fence
@@ -305,3 +374,24 @@ export const STAFF_LANE_DOMAIN = "xl.net";
 export function apolloKickGuardKey(domain: string): string {
   return `rmp:apollo-kick:${domain}`;
 }
+
+/** Prepopulated hosting environments for the Developer VMs component
+ * (§5.20, step 09). A STARTING LIST, never a closed one: the control is a
+ * checkbox group plus a free-form "add another" field, because a company's
+ * builders may sit on a private cloud, a colo, or something with no brand
+ * name at all, and a closed picklist would force them to lie. Order is
+ * roughly by how often we expect to see them, not by preference. */
+export const VM_ENVIRONMENTS = [
+  "Microsoft Azure",
+  "Amazon Web Services",
+  "Google Cloud",
+  "Vultr",
+  "DigitalOcean",
+  "Linode (Akamai)",
+  "Oracle Cloud",
+  "IBM Cloud",
+  "Hetzner",
+  "VMware / vSphere",
+  "Proxmox",
+  "On-premises hardware",
+] as const;

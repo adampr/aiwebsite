@@ -1,4 +1,4 @@
-// The Lightline Runway (§5.18): one luminous hairline through eight diamond
+// The Lightline Runway (§5.18): one luminous hairline through eleven diamond
 // nodes, horizontal on wide screens, a vertical left rail below. Server
 // component; state comes entirely from the ONE server-computed status
 // bundle (RunwayStatus below: RoadmapStatus for the company lane,
@@ -51,10 +51,14 @@
 // is aria-hidden (screen readers would voice "$495/mo" as "slash m o"); the
 // sr channel says "Booked separately" and the card below speaks the price.
 //
-// The frontier ("up next") is computed over the six TRACKED steps only
+// The frontier ("up next") is computed over the nine TRACKED steps only
 // (TRACKED_STEP_KEYS in config.ts, pinned tracked-XOR-paid by
 // scripts/roadmap-tests.ts). All motion is CSS-only and
 // reduced-motion-safe (roadmap.css).
+//
+// PARTIAL (§5.20): step 09 alone can be HALF done, and half is a MODIFIER
+// layered over the state above rather than a seventh NodeState. See
+// nodeClass for the argument.
 
 import { Fragment } from "react";
 import Link from "next/link";
@@ -77,6 +81,11 @@ export type RunwayStatus = {
   request: { done: boolean };
   requested: { live: boolean };
   scorecard: { live: boolean };
+  /** §5.20. `partial` is a HALF, not a state of its own: see the partial
+   * note above nodeClass. */
+  secure: { done: boolean; partial: boolean };
+  data: { done: boolean };
+  tools: { done: boolean };
 };
 
 type NodeState =
@@ -91,8 +100,15 @@ type NodeState =
   | "offered";
 
 /** The sr-only state phrase (the words left the screen; they must never
- * leave assistive tech). */
-function srStateText(s: NodeState): string {
+ * leave assistive tech). `partial` is layered on top rather than being its
+ * own state, so a half-done step that is ALSO the frontier still says both
+ * things instead of one of them silently winning. */
+function srStateText(s: NodeState, partial = false): string {
+  if (partial) return s === "upnext" ? "Half done, up next" : "Half done";
+  return srBaseText(s);
+}
+
+function srBaseText(s: NodeState): string {
   if (s === "done") return "Done";
   if (s === "live") return "Live";
   if (s === "upnext") return "Up next"; // NEVER "In progress" (owner ruling)
@@ -106,12 +122,29 @@ function srStateText(s: NodeState): string {
   return "Not started";
 }
 
-/** Node class per state; dim renders the bare hollow base, offered adds the
- * dashed border (shape cue, no new hue), examined the gray core. */
-function nodeClass(s: NodeState): string {
-  if (s === "dim") return "rmp-node";
-  if (s === "examined") return "rmp-node rmp-node--examined";
-  return `rmp-node rmp-node--${s}`;
+/**
+ * Node class per state; dim renders the bare hollow base, offered adds the
+ * dashed border (shape cue, no new hue), examined the gray core.
+ *
+ * PARTIAL IS A MODIFIER, NOT A STATE (§5.20). Step 09 is the only step that
+ * can be half done, and half-done is orthogonal to "is this where you
+ * should go next": the fill says how much is finished, the up-next ring
+ * says where the frontier is. Modelling partial as a sixth NodeState would
+ * force one of those two facts to silently win, and a company that has done
+ * half of step 09 while it is also the frontier would either lose the only
+ * wayfinding ring on the runway or lose the fact that it is half done.
+ * Layering keeps both. The visual is a diamond filled on ONE SIDE ONLY
+ * (roadmap.css), which is a shape cue rather than a hue, per the standing
+ * rule that state must survive a colorblind reading.
+ */
+function nodeClass(s: NodeState, partial = false): string {
+  const base =
+    s === "dim"
+      ? "rmp-node"
+      : s === "examined"
+        ? "rmp-node rmp-node--examined"
+        : `rmp-node rmp-node--${s}`;
+  return partial ? `${base} rmp-node--partial` : base;
 }
 
 function isTracked(k: RoadmapStepKey): k is TrackedStepKey {
@@ -153,6 +186,9 @@ export function RoadmapRunway({
   // "reached" drives segment lighting: done for the task steps, live for the
   // scorecard (never "done": it is ongoing). Paid steps have no entry: there
   // is nothing to reach.
+  // A HALF-done step is deliberately NOT "reached": the lightline claims
+  // completed ground, so lighting the segment out of a half-finished step
+  // would overstate it. The node itself still shows the half.
   const reached: Record<TrackedStepKey, boolean> = status
     ? {
         governance: status.governance.done,
@@ -161,6 +197,9 @@ export function RoadmapRunway({
         request: status.request.done,
         requested: status.requested.live,
         scorecard: status.scorecard.live,
+        secure: status.secure.done,
+        data: status.data.done,
+        tools: status.tools.done,
       }
     : {
         governance: false,
@@ -169,6 +208,9 @@ export function RoadmapRunway({
         request: false,
         requested: false,
         scorecard: false,
+        secure: false,
+        data: false,
+        tools: false,
       };
 
   const frontierKey = status
@@ -201,7 +243,15 @@ export function RoadmapRunway({
     return "dim";
   }
 
+  /** Only step 09 can be half done, and never while it is fully done. */
+  function partialFor(key: RoadmapStepKey): boolean {
+    return (
+      key === "secure" && !!status && status.secure.partial && !status.secure.done
+    );
+  }
+
   const states = ROADMAP_STEPS.map((step) => stateFor(step.key));
+  const partials = ROADMAP_STEPS.map((step) => partialFor(step.key));
 
   /** Walk outward from index i until a TRACKED stop answers. Paid stops are
    * pass-through beads, so segments 02-03 and 03-04 both light once
@@ -279,7 +329,7 @@ export function RoadmapRunway({
           ))}
         </div>
         <p className="sr-only">
-          {srSummary ?? "Eight steps, none started yet."}
+          {srSummary ?? "Eleven steps, none started yet."}
         </p>
       </div>
     );
@@ -304,9 +354,17 @@ export function RoadmapRunway({
                 <span
                   className="rmp-node-cell"
                   aria-hidden="true"
-                  data-state={srStateText(states[i])}
+                  data-state={srStateText(states[i], partials[i])}
+                  // Feeds the tier-2 tooltip, where the visible title is
+                  // clipped (roadmap.css). Sighted users on a step page have
+                  // no cards to read the title from at that width, so the
+                  // tooltip carries it.
+                  data-title={step.title}
                 >
-                  <span id={nodeId} className={nodeClass(states[i])} />
+                  <span
+                    id={nodeId}
+                    className={nodeClass(states[i], partials[i])}
+                  />
                 </span>
                 <span className="rmp-stop-text">
                   <span className="rmp-stop-num">{step.num}</span>
@@ -321,7 +379,7 @@ export function RoadmapRunway({
                     className="sr-only"
                     id={step.key === "directory" ? "rmp-sr-directory" : undefined}
                   >
-                    {", " + srStateText(states[i])}
+                    {", " + srStateText(states[i], partials[i])}
                   </span>
                 </span>
               </Link>

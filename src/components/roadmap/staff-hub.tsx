@@ -63,6 +63,28 @@ export function StaffHub({
     scorecard: status.scorecard.live
       ? `${status.scorecard.contributors} ${status.scorecard.contributors === 1 ? "builder" : "builders"} so far`
       : "Waiting on the first published work",
+    // §5.20. Same three-state phrasing as the company hub (src/app/roadmap/
+    // page.tsx stepLines): "saved but not confirmed" is a real state and
+    // must not read as untouched.
+    secure: status.secure.done
+      ? "API proxy and developer VMs listed"
+      : status.secure.apiProxy
+        ? "API proxy listed · developer VMs to go"
+        : status.secure.devVms
+          ? "Developer VMs listed · API proxy to go"
+          : status.secure.savedUnverified
+            ? "Saved, not confirmed yet · open this step"
+            : "Nothing listed yet",
+    data: status.data.done
+      ? "Lakehouse listed"
+      : status.data.savedUnverified
+        ? "Saved, not confirmed yet · open this step"
+        : "Nothing listed yet",
+    tools: status.tools.done
+      ? `${status.tools.counted} of ${status.tools.total} ${status.tools.total === 1 ? "tool" : "tools"} counting`
+      : status.tools.total > 0
+        ? "Saved, not confirmed yet · open this step"
+        : "Nothing listed yet",
   };
   const blurbs: Record<string, string> = {
     governance:
@@ -83,6 +105,9 @@ export function StaffHub({
     request: "Request AI-built work",
     requested: "See the board",
     scorecard: "See who is building",
+    secure: "Set up the platform",
+    data: "Add the lakehouse",
+    tools: "Add a tool",
   };
 
   return (
@@ -100,7 +125,11 @@ export function StaffHub({
         </div>
       </section>
 
-      <section aria-label="Roadmap progress">
+      {/* xl:-mx-32: the SAME container breakout the company hub, the teaser
+          and the (steps) shell use. Tier 3 of roadmap.css needs 1232px for
+          eleven titled stops and .rmp-stop is flex:none, so without this the
+          staff runway simply overflows its max-w-5xl box at xl and up. */}
+      <section aria-label="Roadmap progress" className="xl:-mx-32">
         <RunwayStage>
           <RoadmapRunway status={status} hrefs={STAFF_STEP_HREFS} />
           {/* Same hub orientation caption as the company hub (hoisted out

@@ -198,6 +198,33 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   box-shadow: inset 0 0 0 2px var(--xl-bg-1);
 }
 
+/* PARTIAL (§5.20): step 09 is the only step that can be HALF done (an API
+   proxy and developer VMs are independent components, either alone worth
+   half). The diamond is filled on one side and hollow on the other, split
+   through the centre.
+
+   Why a fill fraction and not another hue: the standing rule is that state
+   must survive a colorblind reading, so the amount of fill is the cue and
+   the hue only reinforces it. Read against the rest of the ladder it is
+   unambiguous - dim is empty, examined is a small neutral core, done is
+   FULLY cyan, and this is exactly half cyan in the same hue as done, which
+   is the honest reading: half of this step is genuinely finished.
+
+   It is a MODIFIER, not a state (runway.tsx nodeClass): it composes with
+   --upnext, so a half-done step that is also the frontier keeps the ring
+   AND shows the half. Declared after --upnext and --examined so its
+   background wins when they compose. The gradient runs `to right` in the
+   node's LOCAL space, and the node is rotate(45deg), so the split lands as
+   a clean diagonal through the centre of the diamond on screen. */
+.rmp-node--partial {
+  border-color: var(--xl-light);
+  background: linear-gradient(
+    to right,
+    var(--xl-light) 0 50%,
+    var(--xl-bg-1) 50% 100%
+  );
+}
+
 /* WORKING (round 4): directory import in flight, island-toggled via
    data-working - an ATTRIBUTE, never a class, because React refresh would
    wipe a classList mutation of its managed className. Pulses fill between
@@ -334,29 +361,52 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   }
 }
 
-/* Desktop: horizontal line through the eight diamonds. EIGHT-node fit
-   (§5.19 round): the six-stop tier (8rem stops, 2rem segs) needed 928px and
-   an eighth stop would push it to 1248px, past the max-w-5xl cap itself, so
-   the whole tier condensed: stops 8rem -> 6.25rem with padding 0.5rem ->
-   0.375rem, lg-only title size 0.8rem (base vertical rail keeps 0.85rem),
-   segments 2rem -> 1.25rem. Breakpoint stays lg (1024px).
+/* Desktop: horizontal line through the diamonds. THREE TIERS since §5.20
+   took the runway from eight stops to ELEVEN.
 
-   Math (border-box, padding included): 8 stops x 6.25rem (100px) = 800px +
-   7 segments x 1.25rem min-width (20px) = 140px -> 940px hard minimum, and
-   940 is the REAL case, not worst case: every one of the eight titles
-   exceeds the 6.25rem cap. layout.tsx's main is max-w-7xl px-6, so at the
-   1024px breakpoint floor the content box is 1024 - 48 = 976px (with a
-   classic scrollbar the media query fires at ~1024 including the ~15px bar,
-   leaving ~961px - still over the 940 minimum). The 21-36px of slack is
-   absorbed by the SHRINKABLE end caps (flex 0 1 2.5rem, min-width 0):
-   ~10-18px each at the floor, the full 2.5rem from ~1072px up. Longest
-   single word "Governance" measures ~79px at 0.8rem inside the 88px content
-   box (100 - 2 x 6px padding); if a future title's word overflows, drop the
-   lg title size to 0.78rem, never widen the stop cap.
-   Titles wrap to two or three centered lines; nodes stay top-aligned
-   because the lg stop grid pins row 1 at 1.5rem and the runway is
-   align-items: flex-start. Below 1024px the vertical rail (base styles
-   above) carries all eight stops. */
+   EVERY NUMBER BELOW WAS MEASURED, not derived. A prior round wrote a
+   theory into this comment ("enters shrink mode, caps compress to 24px")
+   and it was simply wrong, so these come from headless chromium rendering
+   this exact CSS with the site's real webfont (Manrope), reading
+   offsetWidth per stop and per segment. NB offsetWidth, not
+   getBoundingClientRect: .rmp-seg--lit sits at transform:scaleX(0) until
+   its grow animation runs, so the rect reports 0 and would silently
+   flatter any measurement.
+
+   WHY ELEVEN DOES NOT FIT THE OLD TIER. Measured at the 8-stop tier:
+   11 stops x 100px + 10 segments x 20px = 1282px, inside a max-w-5xl box
+   of 976px. It overflows by 306px at EVERY viewport, because the container
+   is capped at 976 regardless of screen width. (The same harness measures
+   the old eight-stop tier at 937px, against the 940 this comment used to
+   claim, which is what calibrates it.) Shrinking the tier cannot rescue
+   it either: the binding constraint is the longest single WORD,
+   "Governance", ~79px at 0.8rem, so a stop can never go below ~91px with
+   padding, and 11 of those plus segments needs ~1100px minimum. A titled
+   single-row runway at 1024px is arithmetically impossible.
+
+   SO THE TIERS ARE:
+   1. Base, below 1024px: the vertical rail (unchanged). 11 stops measures
+      860px tall, against 644px for the old eight.
+   2. 1024px to 1279px: the horizontal line WITHOUT titles. Nodes and step
+      numbers only, 26px stops, segments taking the slack: 896px inside the
+      976px box, 72px tall. The title still reaches assistive tech through
+      the stop link's accessible name, and sighted users get it from the
+      hover/focus tooltip and from the cards below. This tier exists
+      because the alternative was dropping an 860px vertical rail on top of
+      every step page at laptop widths.
+   3. 1280px and up: the full titled runway, in a container the page widens
+      to 1232px (the max-w-7xl content box; see the xl:-mx-32 breakout on
+      the runway section in page.tsx and (steps)/layout.tsx, 976 + 2x128 =
+      1232 exactly). Tier condensed once more: stops 6.25rem -> 6rem,
+      padding 0.375rem -> 0.3125rem, segments 1.25rem -> 1rem. Measured:
+      11 stops x 96px + 10 segments x 16px = 1202px in the 1232px box, no
+      title overflow and no title wrapping to a second line, identical at
+      1280 / 1440 / 1536. The ~30px of slack is absorbed by the shrinkable
+      end caps.
+
+   Longest single word "Governance" is ~79px at 0.8rem inside the 84px
+   content box (96 - 2 x 6px padding). If a future title's word overflows,
+   drop the title size to 0.78rem, never widen the stop cap. */
 @media (min-width: 1024px) {
   .rmp-runway {
     flex-direction: row;
@@ -390,8 +440,8 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
     align-items: center;
     row-gap: 0.35rem;
     text-align: center;
-    max-width: 6.25rem;
-    padding: 0 0.375rem;
+    max-width: 6rem;
+    padding: 0 0.3125rem;
   }
 
   /* lg only: the base vertical rail keeps 0.85rem. */
@@ -403,7 +453,7 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
     flex: 1 1 0;
     height: 1px;
     width: auto;
-    min-width: 1.25rem;
+    min-width: 1rem;
     margin-left: 0;
     margin-top: calc(0.75rem - 0.5px);
   }
@@ -412,6 +462,50 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
     transform: scaleX(0);
     transform-origin: left;
     animation-name: rmp-grow-x;
+  }
+}
+
+/* TIER 2 (1024px to 1279px): the line without titles. Eleven titled stops
+   cannot fit a 976px container at any readable font size (see the math
+   above), and the honest alternatives were an 860px vertical rail on every
+   step page or a horizontal line of numbered beads. The beads keep the
+   lightline metaphor, keep every stop clickable, and cost 72px of height.
+
+   The titles are CLIPPED, not display:none, so they stay in the
+   accessibility tree: the stop link's accessible name is still
+   "09 Secure AI Builders, Half done". The tooltip on hover/focus carries
+   the state phrase, and the step cards below carry the titles in full. */
+/* The upper bound is 79.99REM, not 1279.98px, and that unit is
+   load-bearing. Tier 3 only fits because page.tsx and (steps)/layout.tsx
+   widen the container with Tailwind's `xl:-mx-32`, and Tailwind v4 defines
+   xl as 80rem, not 1280px. Pinning this boundary in px would make the two
+   diverge the moment a visitor's root font size is not 16px: the titles
+   would come back at 1280 CSS px while the breakout had not applied yet (or
+   the reverse), and the runway would overflow at exactly those widths. In
+   rem they move together by construction. */
+@media (min-width: 64rem) and (max-width: 79.99rem) {
+  .rmp-stop-title,
+  .rmp-stop-fee {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .rmp-stop-text {
+    max-width: 3rem;
+    padding: 0 0.25rem;
+  }
+
+  /* The title is clipped at this tier, and on a (steps) page there are no
+     step cards underneath to read it from, so the hover/focus tooltip
+     carries the title as well as the state. */
+  .rmp-node-cell[data-state][data-title]::after {
+    content: attr(data-title) " · " attr(data-state);
   }
 }
 

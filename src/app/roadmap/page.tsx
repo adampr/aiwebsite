@@ -47,7 +47,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: "Your AI Roadmap: From Knowledge Workers to AI Builders",
     description:
-      "A private eight-step roadmap for your company: governance on file, your team listed, AI-built work reviewed and published, projects requested and built by your own team, builders on a scorecard, plus a paid workshop and monthly cohort.",
+      "A private eleven-step roadmap for your company: governance on file, your team listed, AI-built work reviewed and published, projects requested and built by your own team, builders on a scorecard, a sanctioned platform with data access and approved tools, plus a paid workshop and monthly cohort.",
     alternates: { canonical: "/roadmap" },
   };
 }
@@ -55,7 +55,7 @@ export async function generateMetadata(): Promise<Metadata> {
 const FAQ = [
   {
     q: "Is it free?",
-    a: "The roadmap itself is free: sign in with your work email, no card, no trial clock. Two of the eight steps are paid training, booked separately on our AI Builders page: the AI Builders Workshop ($995 for one four-hour session) and the AI Builder Cohort ($495 per month). Every other step works without buying either.",
+    a: "The roadmap itself is free: sign in with your work email, no card, no trial clock. Two of the eleven steps are paid training, booked separately on our AI Builders page: the AI Builders Workshop ($995 for one four-hour session) and the AI Builder Cohort ($495 per month). Every other step works without buying either.",
   },
   {
     q: "Who can see our data?",
@@ -86,7 +86,7 @@ function Teaser() {
           From knowledge workers to <span className="glow">AI builders</span>
         </h1>
         <p className="mx-auto mt-6 max-w-3xl text-lg">
-          A private roadmap for your whole company: eight steps from an AI
+          A private roadmap for your whole company: eleven steps from an AI
           governance document on file to a scorecard of the builders on your
           team, with every piece of AI-built work reviewed and published,
           projects requested and built by your own people along the way, and
@@ -101,7 +101,7 @@ function Teaser() {
           </Link>
         </div>
         <p className="mono mx-auto mt-6 max-w-2xl text-xs" style={faint}>
-          eight steps · six free, two paid training · private to your company
+          eleven steps · nine free, two paid training · private to your company
         </p>
       </section>
 
@@ -110,11 +110,14 @@ function Teaser() {
       <section>
         <div className="text-center">
           <span className="sys-label sys-label--center">The Runway</span>
-          <h2 className="mt-6">Eight stations, one line</h2>
+          <h2 className="mt-6">Eleven stations, one line</h2>
         </div>
-        {/* max-w-5xl, not 4xl: the eight-stop horizontal runway needs up to
-            940px at the lg floor (roadmap.css lg math). */}
-        <div className="mx-auto mt-12 max-w-5xl">
+        {/* Same breakout as the signed-in hub: the teaser renders the same
+            eleven stops and would overflow its max-w-5xl wrapper at xl.
+            (The old note here about an eight-stop runway needing 940px at
+            the lg floor is superseded by the three-tier math in
+            roadmap.css.) */}
+        <div className="mt-12 xl:-mx-32">
           <RunwayStage>
             <RoadmapRunway status={null} />
           </RunwayStage>
@@ -327,6 +330,29 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
     scorecard: status.scorecard.live
       ? `${status.scorecard.contributors} ${status.scorecard.contributors === 1 ? "builder" : "builders"} so far`
       : "Waiting on the first published work",
+    // §5.20. Each line distinguishes THREE states, not two, because
+    // "saved but not confirmed" is a real state the owner asked for: a
+    // link we could not reach is kept, and the card has to say so rather
+    // than reading as though nothing was ever entered.
+    secure: status.secure.done
+      ? "API proxy and developer VMs listed"
+      : status.secure.apiProxy
+        ? "API proxy listed · developer VMs to go"
+        : status.secure.devVms
+          ? "Developer VMs listed · API proxy to go"
+          : status.secure.savedUnverified
+            ? "Saved, not confirmed yet · open this step"
+            : "Nothing listed yet",
+    data: status.data.done
+      ? "Lakehouse listed"
+      : status.data.savedUnverified
+        ? "Saved, not confirmed yet · open this step"
+        : "Nothing listed yet",
+    tools: status.tools.done
+      ? `${status.tools.counted} of ${status.tools.total} ${status.tools.total === 1 ? "tool" : "tools"} counting`
+      : status.tools.total > 0
+        ? "Saved, not confirmed yet · open this step"
+        : "Nothing listed yet",
   } as const;
   // The email lane's DKIM state, echoed on the work card (its controls live
   // one click away on /roadmap/work). It renders for EVERY verdict, never
@@ -356,6 +382,11 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
     request: status.request.done,
     requested: status.requested.live,
     scorecard: status.scorecard.live,
+    // A half-done step 09 keeps the todo verb: there is still work to do,
+    // and "Review the platform" would read as finished.
+    secure: status.secure.done,
+    data: status.data.done,
+    tools: status.tools.done,
   } as const;
 
   return (
@@ -373,7 +404,14 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
         </div>
       </section>
 
-      <section aria-label="Roadmap progress">
+      {/* xl:-mx-32 is the runway's container BREAKOUT (§5.20). The page is
+          max-w-5xl (976px) and the eleven-stop titled runway measures
+          1202px, so at the xl tier the section widens itself to the
+          max-w-7xl content box: 976 + 2 x 128 = 1232 exactly. Below xl the
+          breakout is off and the runway is in its beads or rail tier,
+          both of which fit 976. Change this and roadmap.css tier 3 stops
+          fitting; the two are one decision. */}
+      <section aria-label="Roadmap progress" className="xl:-mx-32">
         <RunwayStage>
           <RoadmapRunway status={status} />
           {/* Hub orientation caption, hoisted out of runway.tsx in the

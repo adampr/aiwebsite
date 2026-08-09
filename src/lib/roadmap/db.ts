@@ -19,6 +19,7 @@ import {
   roadmapPanelRunsDailyCap,
 } from "@/lib/roadmap/config";
 import {
+  isUniqueViolation,
   readTodayWorkUsage,
   refundWorkRun,
   trySpendWork,
@@ -1108,4 +1109,321 @@ export async function recordRoadmapBrainCall(): Promise<void> {
 /** Apollo page-budget spend (checked before each page fetch). */
 export async function trySpendApolloCall(): Promise<boolean> {
   return trySpendRoadmap("apollo_calls", 1, apolloDailyCallCap(process.env));
+}
+
+// ---- Phases 09/10/11: the builder platform links (§5.20) ----
+
+const CRL = schema.companyRoadmapLinks;
+
+/** Lane axis for company_roadmap_links, same shape and same rule as
+ * DirectoryScope: companyId null = the XL.net STAFF lane. REQUIRED on every
+ * function below so a missed lane filter is a compile error. */
+export type LinkScope = { companyId: string | null };
+export const STAFF_LINK_SCOPE: LinkScope = { companyId: null };
+
+/** Never eq() a null: drizzle renders "= NULL", which matches nothing. */
+function linkLaneWhere(scope: LinkScope) {
+  return scope.companyId === null
+    ? isNull(CRL.companyId)
+    : eq(CRL.companyId, scope.companyId);
+}
+
+export type LinkRow = typeof CRL.$inferSelect;
+/** The three singleton kinds plus the 1:N tool card. */
+export type LinkKind = "api_proxy" | "dev_vms" | "lakehouse" | "tool";
+/** Per-URL verification state. ONLY "ok" may ever count toward a step or
+ * the completion percentage (owner rule: an unreachable URL is saved, and
+ * says so, but does not count). */
+export type LinkCheckState = "unchecked" | "ok" | "failed";
+
+export async function listRoadmapLinks(scope: LinkScope): Promise<LinkRow[]> {
+  return db
+    .select()
+    .from(CRL)
+    .where(linkLaneWhere(scope))
+    .orderBy(asc(CRL.createdAt));
+}
+
+export async function getSingletonLink(
+  scope: LinkScope,
+  kind: Exclude<LinkKind, "tool">
+): Promise<LinkRow | null> {
+  const rows = await db
+    .select()
+    .from(CRL)
+    .where(and(linkLaneWhere(scope), eq(CRL.kind, kind)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function listTools(
+  scope: LinkScope,
+  limit: number
+): Promise<LinkRow[]> {
+  return db
+    .select()
+    .from(CRL)
+    .where(and(linkLaneWhere(scope), eq(CRL.kind, "tool")))
+    .orderBy(asc(CRL.createdAt))
+    .limit(limit);
+}
+
+export async function countTools(scope: LinkScope): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(CRL)
+    .where(and(linkLaneWhere(scope), eq(CRL.kind, "tool")));
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * Save one of the three singletons.
+ *
+ * READ-THEN-WRITE rather than ON CONFLICT: the two lanes are protected by
+ * two DIFFERENT partial unique indexes (company vs the NULL staff lane), so
+ * a single upsert target cannot serve both. The unique indexes are still
+ * the real arbiter - a lost race raises, and we retry once as an update.
+ *
+ * THE LOAD-BEARING RULE IS THE RESET: changing a URL clears that field's
+ * verification state back to "unchecked". Carrying the old "ok" forward
+ * would let an admin verify a reachable URL, edit it to anything at all,
+ * and keep the step lit on evidence that was never gathered about the value
+ * now stored.
+ */
+export async function saveSingletonLink(opts: {
+  scope: LinkScope;
+  kind: Exclude<LinkKind, "tool">;
+  url: string | null;
+  docsUrl: string | null;
+  environments: string[] | null;
+  addedByUserId: string | null;
+  addedByEmail: string;
+}): Promise<LinkRow> {
+  const existing = await getSingletonLink(opts.scope, opts.kind);
+  const envJson = opts.environments ? JSON.stringify(opts.environments) : null;
+  if (!existing) {
+    try {
+      const [row] = await db
+        .insert(CRL)
+        .values({
+          companyId: opts.scope.companyId,
+          kind: opts.kind,
+          url: opts.url,
+          docsUrl: opts.docsUrl,
+          environmentsJson: envJson,
+          addedByUserId: opts.addedByUserId,
+          addedByEmail: opts.addedByEmail,
+        })
+        .returning();
+      return row;
+    } catch (err) {
+      if (
+        !isUniqueViolation(
+          err,
+          "roadmap_links_singleton_uq",
+          "roadmap_links_singleton_staff_uq"
+        )
+      )
+        throw err;
+      // Lost the race: fall through and update the winner's row.
+      const winner = await getSingletonLink(opts.scope, opts.kind);
+      if (!winner) throw err;
+      return updateSingletonRow(winner, opts.url, opts.docsUrl, envJson);
+    }
+  }
+  return updateSingletonRow(existing, opts.url, opts.docsUrl, envJson);
+}
+
+async function updateSingletonRow(
+  existing: LinkRow,
+  url: string | null,
+  docsUrl: string | null,
+  envJson: string | null
+): Promise<LinkRow> {
+  const urlChanged = (existing.url ?? null) !== (url ?? null);
+  const docsChanged = (existing.docsUrl ?? null) !== (docsUrl ?? null);
+  const [row] = await db
+    .update(CRL)
+    .set({
+      url,
+      docsUrl,
+      environmentsJson: envJson,
+      updatedAt: new Date(),
+      // Reset ONLY the field that actually changed, so re-saving the VM
+      // environment list does not throw away a confirmed instructions URL.
+      ...(urlChanged
+        ? {
+            urlState: "unchecked" as const,
+            urlReason: null,
+            urlHttpStatus: null,
+            urlCheckedAt: null,
+          }
+        : {}),
+      ...(docsChanged
+        ? {
+            docsState: "unchecked" as const,
+            docsReason: null,
+            docsHttpStatus: null,
+            docsCheckedAt: null,
+          }
+        : {}),
+    })
+    .where(eq(CRL.id, existing.id))
+    .returning();
+  return row;
+}
+
+export async function addToolLink(opts: {
+  scope: LinkScope;
+  label: string;
+  description: string | null;
+  url: string;
+  docsUrl: string | null;
+  addedByUserId: string | null;
+  addedByEmail: string;
+}): Promise<LinkRow> {
+  const [row] = await db
+    .insert(CRL)
+    .values({
+      companyId: opts.scope.companyId,
+      kind: "tool",
+      label: opts.label,
+      description: opts.description,
+      url: opts.url,
+      docsUrl: opts.docsUrl,
+      addedByUserId: opts.addedByUserId,
+      addedByEmail: opts.addedByEmail,
+    })
+    .returning();
+  return row;
+}
+
+/** Edit a tool card. The id is ALWAYS bound together with the lane, so a
+ * row id from another tenant matches nothing (fetchOwnedProject
+ * discipline). Same verification reset rule as the singletons. */
+export async function updateToolLink(opts: {
+  scope: LinkScope;
+  id: string;
+  label: string;
+  description: string | null;
+  url: string;
+  docsUrl: string | null;
+}): Promise<LinkRow | null> {
+  const rows = await db
+    .select()
+    .from(CRL)
+    .where(
+      and(linkLaneWhere(opts.scope), eq(CRL.id, opts.id), eq(CRL.kind, "tool"))
+    )
+    .limit(1);
+  const existing = rows[0];
+  if (!existing) return null;
+  const urlChanged = existing.url !== opts.url;
+  const docsChanged = (existing.docsUrl ?? null) !== (opts.docsUrl ?? null);
+  const [row] = await db
+    .update(CRL)
+    .set({
+      label: opts.label,
+      description: opts.description,
+      url: opts.url,
+      docsUrl: opts.docsUrl,
+      updatedAt: new Date(),
+      ...(urlChanged
+        ? {
+            urlState: "unchecked" as const,
+            urlReason: null,
+            urlHttpStatus: null,
+            urlCheckedAt: null,
+          }
+        : {}),
+      ...(docsChanged
+        ? {
+            docsState: "unchecked" as const,
+            docsReason: null,
+            docsHttpStatus: null,
+            docsCheckedAt: null,
+          }
+        : {}),
+    })
+    .where(eq(CRL.id, existing.id))
+    .returning();
+  return row;
+}
+
+export async function removeToolLink(opts: {
+  scope: LinkScope;
+  id: string;
+}): Promise<boolean> {
+  const rows = await db
+    .delete(CRL)
+    .where(
+      and(linkLaneWhere(opts.scope), eq(CRL.id, opts.id), eq(CRL.kind, "tool"))
+    )
+    .returning({ id: CRL.id });
+  return rows.length > 0;
+}
+
+/**
+ * Record the outcome of one reachability check against one field of one row.
+ *
+ * BOUND TO THE PROBED URL, not just to (lane, id), and that is the whole
+ * point of the `probedUrl` parameter. A check takes seconds; the row can be
+ * edited while it runs. Without this predicate the sequence
+ *
+ *   save A -> probe A starts -> save B (state resets to unchecked) ->
+ *   probe A finishes -> UPDATE ... WHERE id = row
+ *
+ * stamps "ok" onto B, an address nothing ever reached. That turns the
+ * verification into something an admin can forge by editing during the
+ * window, which would defeat the entire saved-but-not-counted rule (and
+ * would let a private address inherit a public address's pass). Binding the
+ * UPDATE to the value we actually measured makes the late write a no-op
+ * instead: it matches nothing, returns null, and the row correctly stays
+ * unchecked until something probes what is now stored.
+ *
+ * Returns the fresh row, or null if the row vanished, never belonged to
+ * this lane, or moved underneath the probe.
+ */
+export async function recordLinkCheck(opts: {
+  scope: LinkScope;
+  id: string;
+  field: "url" | "docs";
+  /** The exact string that was probed. */
+  probedUrl: string;
+  state: Exclude<LinkCheckState, "unchecked">;
+  reason: string | null;
+  httpStatus: number | null;
+}): Promise<LinkRow | null> {
+  const now = new Date();
+  const set =
+    opts.field === "url"
+      ? {
+          urlState: opts.state,
+          urlReason: opts.reason,
+          urlHttpStatus: opts.httpStatus,
+          urlCheckedAt: now,
+          updatedAt: now,
+        }
+      : {
+          docsState: opts.state,
+          docsReason: opts.reason,
+          docsHttpStatus: opts.httpStatus,
+          docsCheckedAt: now,
+          updatedAt: now,
+        };
+  const rows = await db
+    .update(CRL)
+    .set(set)
+    .where(
+      and(
+        linkLaneWhere(opts.scope),
+        eq(CRL.id, opts.id),
+        // The TOCTOU fence described above.
+        opts.field === "url"
+          ? eq(CRL.url, opts.probedUrl)
+          : eq(CRL.docsUrl, opts.probedUrl)
+      )
+    )
+    .returning();
+  return rows[0] ?? null;
 }
