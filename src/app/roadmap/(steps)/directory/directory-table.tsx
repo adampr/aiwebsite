@@ -39,6 +39,14 @@
 //  - PER-ROW state. rowErr and rowBusy used to be one shared string and one
 //    shared boolean, so a failure reported itself thousands of pixels from
 //    the row that caused it and one save greyed every row's buttons.
+//
+// SCROLL-JUMP FIX (2026-08-09, owner report: "when removing a user from the
+// directory it scrolls all the way up afterwards, and it should not"): the
+// focus rescue moves focus with preventScroll, and the outcome line now
+// renders above AND below the table so the rescue can land on the copy the
+// admin can already see (BulkBar's rule, for BulkBar's reason). Only the top
+// copy is the live region. The reasoning is at the effect itself, next to
+// the guard it corrects.
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -125,7 +133,11 @@ export function DirectoryTable({
     until: number;
     lane: "single" | "bulk";
   } | null>(null);
-  const doneRef = useRef<HTMLParagraphElement | null>(null);
+  // The outcome line renders at BOTH ends of the table, for the same reason
+  // BulkBar does, so the focus rescue has a copy near wherever the admin is
+  // standing. The bottom copy exists only alongside the rows.
+  const doneTopRef = useRef<HTMLParagraphElement | null>(null);
+  const doneBottomRef = useRef<HTMLParagraphElement | null>(null);
 
   const pager = usePagedList(people, "person", DIRECTORY_PAGER);
   // DERIVED from the rendered rows, never the raw Set: for one tick after a
@@ -209,10 +221,37 @@ export function DirectoryTable({
   // drops keyboard focus to <body>. Rescue it onto the outcome line, but
   // ONLY when it was actually orphaned, so a mouse user is never yanked out
   // of whatever they moved to next.
+  //
+  // NEAREST COPY, NO SCROLL (2026-08-09, owner report: "when removing a user
+  // from the directory it scrolls all the way up afterwards, and it should
+  // not"). Two things made that a full glide to the top: the outcome line
+  // rendered ONLY above the table, and futurism.css sets `scroll-behavior:
+  // smooth` on html, so a bare focus() animated the whole viewport up there.
+  // The orphan guard does not spare the mouse either: a click focuses the
+  // button it lands on, so Confirm remove (and the bulk bar, which unmounts
+  // whole once the selection empties) leaves activeElement on <body> for a
+  // mouse user too, and the guard passes.
+  //
+  // What this buys, stated honestly. preventScroll alone would have moved
+  // focus to something the admin cannot see, which is why BOTH prior uses in
+  // this repo (work/pager.tsx, governance/home.tsx) pair it with a scroll
+  // they perform themselves. The second copy of the line is this file's
+  // version of that: after a sweep launched from the bottom bulk bar, or an
+  // edit near either end, the rescue lands on a copy that is already on
+  // screen and the outcome is read where it happened. It is NOT a guarantee
+  // for every case: remove one person from the middle of a 250-row page and
+  // neither copy is in view, so focus moves silently. What still holds there
+  // is that the top copy is role="status" and announces regardless, the
+  // failure path reports at the row instead, and the next Tab scrolls
+  // normally (sequential focus navigation always scrolls). An unseen focus
+  // ring beats hauling a 500-row list back to the top on every removal.
   useEffect(() => {
     if (!done) return;
     const active = document.activeElement;
-    if (active === null || active === document.body) doneRef.current?.focus();
+    if (active !== null && active !== document.body) return;
+    nearerToViewport(doneTopRef.current, doneBottomRef.current)?.focus({
+      preventScroll: true,
+    });
   }, [done]);
 
   function afterMutation(message: string, clearSelection = false) {
@@ -633,9 +672,16 @@ export function DirectoryTable({
         </form>
       )}
 
+      {/* The live copy. Only this one is role="status", so the outcome is
+          announced once no matter which copy the rescue focuses (the same
+          one-live-region split PagerStrip and BulkBar use). The twin below
+          the table is deliberately NOT aria-hidden the way their duplicates
+          are: it is a focus target, and focusable content inside an
+          aria-hidden subtree is unreachable for the screen reader that would
+          land on it. */}
       {done && (
         <p
-          ref={doneRef}
+          ref={doneTopRef}
           tabIndex={-1}
           role="status"
           className="text-sm text-faint"
@@ -897,6 +943,19 @@ export function DirectoryTable({
             </table>
           </div>
 
+          {/* The outcome again, at the bottom edge of the rows. A sweep is
+              confirmed from the bulk bar BELOW the table, and its message
+              carries the suppression count ("N of them will be skipped by
+              future imports") - the half that does not undo itself. With one
+              copy above the table only, that sentence was written for an
+              admin standing 9000px away from it, which is the dead response
+              field confirmBulk's comment refuses to leave it in. */}
+          {done && (
+            <p ref={doneBottomRef} tabIndex={-1} className="text-sm text-faint">
+              {done}
+            </p>
+          )}
+
           {isAdmin && bulkCount > 0 && (
             <BulkBar
               armed={bulkArmed}
@@ -925,6 +984,28 @@ export function DirectoryTable({
       )}
     </div>
   );
+}
+
+/** How far an element sits OUTSIDE the viewport, in px; 0 while any part of
+ * it is on screen. Used to choose a focus target, never to scroll to one. */
+function viewportGap(el: HTMLElement): number {
+  const r = el.getBoundingClientRect();
+  const h = window.innerHeight || document.documentElement.clientHeight;
+  if (r.bottom >= 0 && r.top <= h) return 0;
+  return r.top > h ? r.top - h : -r.bottom;
+}
+
+/** Whichever outcome-line copy the admin is nearer to. An on-screen copy
+ * always wins (gap 0); a tie goes to the top copy, which is the one that
+ * always exists - the bottom copy renders only alongside the rows, so it is
+ * absent when the last person has just been removed. */
+function nearerToViewport(
+  top: HTMLElement | null,
+  bottom: HTMLElement | null
+): HTMLElement | null {
+  if (top === null) return bottom;
+  if (bottom === null) return top;
+  return viewportGap(bottom) < viewportGap(top) ? bottom : top;
 }
 
 /** The failure (or the pause) reported where the click happened, not at the

@@ -481,6 +481,45 @@ ok("bulk remove is lane-scoped, capped, counts-only, and audited", () => {
   assert.ok(island.includes("Select every person on this page"));
 });
 
+ok("a directory mutation rescues focus without moving the viewport", () => {
+  const island = readFileSync(
+    "src/app/roadmap/(steps)/directory/directory-table.tsx",
+    "utf8"
+  );
+  // Owner report 2026-08-09: removing a person scrolled the admin all the
+  // way up. A bare focus() scrolls its target into view, the outcome line
+  // rendered only ABOVE the table, and html carries scroll-behavior: smooth,
+  // so a 500-row list glided back to the top on every single removal.
+  assert.ok(island.includes("preventScroll: true"));
+  assert.ok(!/\.focus\(\)/.test(island)); // never the bare, scrolling call
+  assert.ok(
+    readFileSync("src/app/futurism.css", "utf8").includes(
+      "scroll-behavior: smooth"
+    )
+  );
+  // The rescue still fires ONLY on orphaned focus, so a mouse user who moved
+  // on is never yanked, and it still uses aria-disabled (the `disabled`
+  // attribute would blur the focus of the button just pressed).
+  assert.ok(island.includes("active !== document.body"));
+  assert.ok(!/[^a-z-]disabled=\{/.test(island));
+  // The line renders at BOTH ends of the table and the rescue picks the copy
+  // nearer the viewport, so the bulk suppression sentence is not written for
+  // an admin standing 9000px above it.
+  assert.equal(island.match(/\{done\}/g)?.length, 2);
+  assert.ok(island.includes("nearerToViewport"));
+  assert.ok(island.includes("getBoundingClientRect"));
+  // Exactly ONE of the two is the live region, so it is announced once.
+  const attrsOf = (ref: string) =>
+    island.slice(island.indexOf(`ref={${ref}}`)).split("{done}")[0] ?? "";
+  assert.ok(attrsOf("doneTopRef").includes('role="status"'));
+  assert.ok(!attrsOf("doneBottomRef").includes('role="status"'));
+  // Both copies are focusable, and neither is hidden from the screen reader
+  // that the rescue is about to land on.
+  assert.ok(attrsOf("doneTopRef").includes("tabIndex={-1}"));
+  assert.ok(attrsOf("doneBottomRef").includes("tabIndex={-1}"));
+  assert.ok(!attrsOf("doneBottomRef").includes("aria-hidden"));
+});
+
 ok("parseRemoveIds rejects what would 500 or over-delete", () => {
   const id = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
   const other = "3f2504e0-4f89-11d3-9a0c-0305e82c3302";
