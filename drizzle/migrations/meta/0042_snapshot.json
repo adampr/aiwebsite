@@ -1,6 +1,6 @@
 {
-  "id": "52c3e152-2df1-4b60-9a58-f9f686de474c",
-  "prevId": "4218f0b1-0dda-47b1-bf8a-05d96db5531b",
+  "id": "06724e5e-b49a-4e2a-a6f1-fe966ed8afd4",
+  "prevId": "52c3e152-2df1-4b60-9a58-f9f686de474c",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1984,6 +1984,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "creator_email": {
+          "name": "creator_email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "submitter_name": {
           "name": "submitter_name",
           "type": "text",
@@ -2204,12 +2210,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
-        },
-        "creator_email": {
-          "name": "creator_email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -4488,6 +4488,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "url_grace_until": {
+          "name": "url_grace_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "url_attested_by": {
+          "name": "url_attested_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "docs_url": {
           "name": "docs_url",
           "type": "text",
@@ -4516,6 +4528,18 @@
         "docs_checked_at": {
           "name": "docs_checked_at",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "docs_grace_until": {
+          "name": "docs_grace_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "docs_attested_by": {
+          "name": "docs_attested_by",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },

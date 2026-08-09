@@ -21,12 +21,20 @@ import { usePagedList, PagerStrip } from "@/components/list-pager";
 import { resetRoadmapNavProbe } from "@/components/roadmap-probe";
 import { ROADMAP_CAPS, VM_ENVIRONMENTS } from "@/lib/roadmap/config";
 import {
+  ATTEST_ACTION,
+  ATTEST_PROMPT,
+  ATTEST_WITHDRAW,
   CHECK_SCOPE_NOTE,
   NOT_COUNTED_NOTE,
   UNCHECKED_LINE,
-  confirmedLine,
+  attestedLine,
   failureLine,
+  graceLine,
+  internalLine,
+  reachedLine,
+  stateToken,
 } from "@/lib/roadmap/platform-copy";
+import { fieldCounts, fieldInGrace } from "@/lib/roadmap/platform";
 import type { PublicLinkRow } from "@/lib/roadmap/platform-check";
 
 type ApiError = { error?: { code?: string; message?: string } };
@@ -42,72 +50,170 @@ function inputStyle() {
   return { borderColor: "var(--xl-line)" } as const;
 }
 
-/** One field's verification state, plus its Retry lever. The three states
- * are deliberately distinct in WORDS as well as colour: "confirmed",
- * "saved but not counting", and the failure reason. */
+/**
+ * One field's verification state, plus its levers.
+ *
+ * Five renders, and they are deliberately distinct in WORDS, not just in
+ * tone, because they rest on different evidence:
+ *   Reached          we got an HTTP answer (rung 1)
+ *   Internal         inside your domain, points to a private network (rung 2)
+ *   Confirmed by you a named admin asserted it (rung 3)
+ *   Failing          not reachable, but still counting until grace expires
+ *   Not counting     failed, and the grace window has closed
+ * Every decided line carries the DATE it was decided.
+ */
 function FieldState({
   row,
   field,
   fieldLabel,
   isAdmin,
   onRetry,
+  onAttest,
   busy,
 }: {
   row: PublicLinkRow | null;
   field: "url" | "docs";
-  /** Human name of the field, for the Retry button's accessible name. */
+  /** Human name of the field, for each control's accessible name. */
   fieldLabel: string;
   isAdmin: boolean;
   onRetry: (field: "url" | "docs") => void;
+  onAttest?: (field: "url" | "docs", withdraw: boolean) => void;
   busy: boolean;
 }) {
+  const [confirming, setConfirming] = useState(false);
   if (!row) return null;
   const value = field === "url" ? row.url : row.docsUrl;
   if (!value) return null;
   const state = field === "url" ? row.urlState : row.docsState;
   const reason = field === "url" ? row.urlReason : row.docsReason;
   const status = field === "url" ? row.urlHttpStatus : row.docsHttpStatus;
+  const at = field === "url" ? row.urlCheckedAt : row.docsCheckedAt;
+  const grace = field === "url" ? row.urlGraceUntil : row.docsGraceUntil;
+  const attestedBy = field === "url" ? row.urlAttestedBy : row.docsAttestedBy;
+
+  const counting = fieldCounts(state, grace);
+  const inGrace = fieldInGrace(state, grace);
+  // Server-computed: the client has no idea what the tenant's verified
+  // domain is, and must not guess at a security predicate.
+  const attestable = field === "url" ? row.urlAttestable : row.docsAttestable;
 
   const line =
     state === "ok"
-      ? confirmedLine(status)
-      : state === "failed"
-        ? failureLine(reason, status)
-        : UNCHECKED_LINE;
+      ? reachedLine(status, at)
+      : state === "internal"
+        ? internalLine(at)
+        : state === "attested"
+          ? attestedLine(attestedBy, at)
+          : state === "failed"
+            ? inGrace
+              ? graceLine(grace)
+              : failureLine(reason, status, at)
+            : UNCHECKED_LINE;
 
   return (
-    <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-      <p
-        className="text-xs"
-        style={faint}
-        // A failed check is the thing the user must act on, so it is
-        // announced; a pass is a status update.
-        role={state === "failed" ? "alert" : "status"}
-      >
-        <span className="mono uppercase tracking-[0.2em]">
-          {state === "ok" ? "Confirmed" : state === "failed" ? "Not counting" : "Not checked"}
-        </span>{" "}
-        · {line}
-      </p>
-      {isAdmin && state !== "ok" && (
-        <button
-          type="button"
-          className="btn btn--text"
-          // aria-disabled, NEVER the disabled attribute: this is the control
-          // the user just pressed, and disabling a focused element moves
-          // focus to <body> for the whole 12s the check can take. Same rule
-          // the pager arrows follow.
-          aria-disabled={busy}
-          aria-busy={busy}
-          // Four buttons per page would otherwise all be named "Retry".
-          aria-label={`Retry the check for ${fieldLabel}`}
-          onClick={() => {
-            if (busy) return;
-            onRetry(field);
-          }}
+    <div className="mt-2 space-y-1">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <p
+          className="text-xs"
+          style={faint}
+          // A field that is failing is the thing the user must act on, so
+          // it is announced; anything counting is a status update.
+          role={state === "failed" ? "alert" : "status"}
         >
-          {busy ? "Checking..." : "Retry"}
-        </button>
+          <span className="mono uppercase tracking-[0.2em]">
+            {stateToken(state, counting)}
+          </span>{" "}
+          · {line}
+        </p>
+        {/* Deliberately NOT offered on an attested field. Re-probing an
+            address a person has already told us we cannot reach from here
+            can only fail, and failing would wipe their attestation and
+            start the 72h fuse on the step. The way back is "Remove my
+            confirmation", which returns the field to unchecked so an
+            ordinary check can run again. */}
+        {isAdmin && state !== "attested" && (
+          <button
+            type="button"
+            className="btn btn--text"
+            // aria-disabled, NEVER the disabled attribute: this is the
+            // control the user just pressed, and disabling a focused
+            // element moves focus to <body> for the whole 12s a check can
+            // take. Same rule the pager arrows follow.
+            aria-disabled={busy}
+            aria-busy={busy}
+            aria-label={`Check ${fieldLabel} again`}
+            onClick={() => {
+              if (busy) return;
+              onRetry(field);
+            }}
+          >
+            {busy ? "Checking..." : counting ? "Check again" : "Retry"}
+          </button>
+        )}
+        {isAdmin && onAttest && state === "attested" && (
+          <button
+            type="button"
+            className="btn btn--text"
+            aria-disabled={busy}
+            aria-label={`Remove your confirmation of ${fieldLabel}`}
+            onClick={() => {
+              if (busy) return;
+              onAttest(field, true);
+            }}
+          >
+            {ATTEST_WITHDRAW}
+          </button>
+        )}
+        {isAdmin && onAttest && attestable && !confirming && (
+          <button
+            type="button"
+            className="btn btn--text"
+            aria-disabled={busy}
+            aria-label={`Confirm that ${fieldLabel} is internal`}
+            onClick={() => {
+              if (busy) return;
+              setConfirming(true);
+            }}
+          >
+            {ATTEST_ACTION}
+          </button>
+        )}
+      </div>
+      {isAdmin && onAttest && attestable && confirming && (
+        // A DELIBERATE second step. This is a named claim that makes a step
+        // count, so it does not sit as one unguarded button beside Retry
+        // where it can be hit by accident: the admin reads what they are
+        // putting their name to first.
+        <div
+          className="rounded-lg border p-3"
+          style={{ borderColor: "var(--xl-line)" }}
+        >
+          <p className="text-xs" style={faint}>
+            {ATTEST_PROMPT}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              className="btn btn--text"
+              aria-disabled={busy}
+              aria-busy={busy}
+              onClick={() => {
+                if (busy) return;
+                setConfirming(false);
+                onAttest(field, false);
+              }}
+            >
+              Yes, confirm it
+            </button>
+            <button
+              type="button"
+              className="btn btn--text"
+              onClick={() => setConfirming(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -150,8 +256,10 @@ export function SingletonForm({
   // Derived from the SAVED row (not the form fields), because it explains
   // why the step does not count, and the step counts on what is stored and
   // confirmed rather than on what is currently typed.
-  const urlOk = row?.urlState === "ok";
-  const docsOk = row?.docsState === "ok";
+  // The ladder, not state === "ok": an internal or attested field counts,
+  // so it must not be listed as a gap.
+  const urlOk = fieldCounts(row?.urlState, row?.urlGraceUntil);
+  const docsOk = fieldCounts(row?.docsState, row?.docsGraceUntil);
   const needs: string[] = [];
   if (withEnvironments) {
     if (!(row?.environments ?? []).length)
@@ -219,6 +327,33 @@ export function SingletonForm({
           ? "Saved. We have run a lot of checks recently, so this one is queued for you to retry shortly."
           : "Saved."
       );
+      resetRoadmapNavProbe();
+      router.refresh();
+    } catch {
+      setError("That did not save. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function attest(field: "url" | "docs", withdraw: boolean) {
+    if (!row) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/roadmap/platform/attest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: row.id, field, withdraw }),
+      });
+      if (!res.ok) {
+        setError(await readError(res));
+        return;
+      }
+      const data = (await res.json()) as { row: PublicLinkRow };
+      setRow(data.row);
+      setNotice(withdraw ? "Confirmation removed." : "Confirmed.");
       resetRoadmapNavProbe();
       router.refresh();
     } catch {
@@ -398,6 +533,7 @@ export function SingletonForm({
             fieldLabel={urlLabel ?? "the address"}
             isAdmin={isAdmin}
             onRetry={retry}
+            onAttest={attest}
             busy={busy}
           />
         </div>
@@ -427,6 +563,7 @@ export function SingletonForm({
           fieldLabel={docsLabel}
           isAdmin={isAdmin}
           onRetry={retry}
+          onAttest={attest}
           busy={busy}
         />
       </div>
@@ -552,6 +689,30 @@ export function ToolsManager({
       router.refresh();
     } catch {
       setError("That did not delete. Try again shortly.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function attest(id: string, field: "url" | "docs", withdraw: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/roadmap/platform/attest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, field, withdraw }),
+      });
+      if (!res.ok) {
+        setError(await readError(res));
+        return;
+      }
+      const data = (await res.json()) as { row: PublicLinkRow };
+      setRows((prev) => prev.map((r) => (r.id === data.row.id ? data.row : r)));
+      resetRoadmapNavProbe();
+      router.refresh();
+    } catch {
+      setError("That did not save. Try again shortly.");
     } finally {
       setBusy(false);
     }
@@ -707,7 +868,8 @@ export function ToolsManager({
                   <div className="flex items-baseline justify-between gap-4">
                     <h3 className="text-lg">{row.label}</h3>
                     <span className="mono text-xs" style={faint}>
-                      {row.urlState === "ok" && row.docsState === "ok"
+                      {fieldCounts(row.urlState, row.urlGraceUntil) &&
+                      fieldCounts(row.docsState, row.docsGraceUntil)
                         ? "Counting"
                         : "Not counting"}
                     </span>
@@ -737,6 +899,7 @@ export function ToolsManager({
                     fieldLabel={`the ${row.label ?? "tool"} link`}
                     isAdmin={isAdmin}
                     onRetry={(f) => retry(row.id, f)}
+                    onAttest={(f, w) => attest(row.id, f, w)}
                     busy={busy}
                   />
                   <FieldState
@@ -745,6 +908,7 @@ export function ToolsManager({
                     fieldLabel={`the ${row.label ?? "tool"} instructions`}
                     isAdmin={isAdmin}
                     onRetry={(f) => retry(row.id, f)}
+                    onAttest={(f, w) => attest(row.id, f, w)}
                     busy={busy}
                   />
                   <p className="mono mt-3 text-xs" style={faint}>

@@ -18,12 +18,17 @@
 
 import { readStaffPage, requireRoadmapPage } from "@/lib/roadmap/access";
 import { STAFF_LINK_SCOPE, type LinkScope } from "@/lib/roadmap/db";
+import { STAFF_LANE_DOMAIN } from "@/lib/roadmap/config";
 
 export type PlatformPageView =
   | {
       ok: true;
       scope: LinkScope;
       isAdmin: boolean;
+      /** The lane's VERIFIED domain. Rung 2 and rung 3 are both bound to
+       * it, and publicRow needs it to tell the client whether the attest
+       * control may appear. */
+      internalDomain: string;
       /** Whose platform this is, for copy. */
       ownerName: string;
       staff: boolean;
@@ -39,6 +44,7 @@ export async function readPlatformPage(
       ok: true,
       scope: STAFF_LINK_SCOPE,
       isAdmin: staff.globalAdmin,
+      internalDomain: STAFF_LANE_DOMAIN,
       ownerName: "XL.net",
       staff: true,
     };
@@ -49,6 +55,7 @@ export async function readPlatformPage(
     ok: true,
     scope: { companyId: gate.principal.company.id },
     isAdmin: gate.principal.companyRole === "admin",
+    internalDomain: gate.principal.company.domain,
     ownerName: gate.principal.company.name,
     staff: false,
   };

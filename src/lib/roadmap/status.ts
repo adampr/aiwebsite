@@ -53,12 +53,15 @@ export type RoadmapStatus = {
     /** Something is saved that is not counting yet, so the card can say so
      * instead of reading as untouched. */
     savedUnverified: boolean;
+    /** Counting ONLY because a grace window has not closed. The hub warns
+     * on this so a step never disappears without notice. */
+    failing: boolean;
   };
   /** Step 10 (§5.20). */
-  data: { done: boolean; savedUnverified: boolean };
+  data: { done: boolean; savedUnverified: boolean; failing: boolean };
   /** Step 11 (§5.20). counted = tools whose link AND instructions are
    * confirmed; total = tools listed, confirmed or not. */
-  tools: { done: boolean; counted: number; total: number };
+  tools: { done: boolean; counted: number; total: number; failing: boolean };
   /** The DNS-visible DKIM state for the company's email domain (§5.18
    * round 2). No longer a step of its own: it is the prerequisite for the
    * email lane of step 04, echoed as one line on the hub's work card and
@@ -124,6 +127,11 @@ function platformStatus(p: ReturnType<typeof platformView>) {
       partial: p.secure.partial,
       apiProxy: p.secure.apiProxy.enabled,
       devVms: p.secure.devVms.enabled,
+      // Surfaced so the HUB can warn before a step drops. Grace used to be
+      // visible only on the step page, which meant a company could lose a
+      // step (and about eleven percentage points) 72 hours later with no
+      // warning on any surface they routinely look at.
+      failing: p.secure.failing,
       savedUnverified:
         (p.secure.apiProxy.saved && !p.secure.apiProxy.enabled) ||
         (p.secure.devVms.saved && !p.secure.devVms.enabled),
@@ -131,11 +139,13 @@ function platformStatus(p: ReturnType<typeof platformView>) {
     data: {
       done: p.data.done,
       savedUnverified: p.data.lakehouse.saved && !p.data.lakehouse.enabled,
+      failing: p.data.failing,
     },
     tools: {
       done: p.tools.done,
       counted: p.tools.counted,
       total: p.tools.total,
+      failing: p.tools.failing,
     },
   };
 }
@@ -212,9 +222,10 @@ export type StaffRoadmapStatus = {
     apiProxy: boolean;
     devVms: boolean;
     savedUnverified: boolean;
+    failing: boolean;
   };
-  data: { done: boolean; savedUnverified: boolean };
-  tools: { done: boolean; counted: number; total: number };
+  data: { done: boolean; savedUnverified: boolean; failing: boolean };
+  tools: { done: boolean; counted: number; total: number; failing: boolean };
 };
 
 export async function staffRoadmapStatus(): Promise<StaffRoadmapStatus> {

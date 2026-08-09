@@ -59,9 +59,10 @@ export async function POST(req: Request): Promise<Response> {
   // already saved and simply stays unchecked until the admin retries.
   const checked = await verifyRow(actor.scope, saved, {
     spend: () => limitUrlCheck(actor),
+    internalDomain: actor.internalDomain,
   }).catch(() => ({ row: saved, skipped: true }));
   const row = checked.row;
   const checkSkipped = checked.skipped;
 
-  return okJson({ row: publicRow(row), checkSkipped }, 201);
+  return okJson({ row: publicRow(row, actor.internalDomain), checkSkipped }, 201);
 }

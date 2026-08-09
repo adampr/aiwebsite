@@ -277,15 +277,38 @@ export const companyRoadmapLinks = pgTable(
     // The primary URL. NULL on dev_vms, whose "enabled" input is the
     // hosting-environment list plus instructions, not an endpoint.
     url: text("url"),
+    // EVIDENCE LADDER (§5.20 round 2). The vocabulary is
+    // "unchecked" | "ok" | "internal" | "attested" | "failed", and the three
+    // middle values are the three rungs that COUNT:
+    //   ok       we reached it over HTTP
+    //   internal the host is inside the tenant's verified domain AND resolves
+    //            into private space; machine-checked, and we never connect
+    //   attested a named admin asserted it after a real check failed
+    // Rungs exist because the check asks "can XL.net reach this" as a stand-in
+    // for "can your builders reach this", and those are unrelated for an
+    // endpoint that lives on the company's own network. Without the ladder a
+    // company that keeps its proxy off the public internet, which is the
+    // better posture, could never complete a step called Secure AI Builders.
     urlState: text("url_state").notNull().default("unchecked"),
     urlReason: text("url_reason"), // UrlCheckFailReason when failed
     urlHttpStatus: integer("url_http_status"),
     urlCheckedAt: timestamp("url_checked_at", { withTimezone: true }),
+    // HYSTERESIS. When a field that was counting starts failing, this is set
+    // to now + a grace window instead of dropping the step immediately, and
+    // the field keeps counting until it passes. A success clears it. One bad
+    // minute on a customer's server must not un-light a step; a genuinely
+    // dead endpoint must eventually stop counting. Time-based rather than a
+    // failure counter so an every-other-day flap still expires.
+    urlGraceUntil: timestamp("url_grace_until", { withTimezone: true }),
+    /** Who attested, for state "attested". Attribution IS the control. */
+    urlAttestedBy: text("url_attested_by"),
     docsUrl: text("docs_url"), // the associated instructions URL
     docsState: text("docs_state").notNull().default("unchecked"),
     docsReason: text("docs_reason"),
     docsHttpStatus: integer("docs_http_status"),
     docsCheckedAt: timestamp("docs_checked_at", { withTimezone: true }),
+    docsGraceUntil: timestamp("docs_grace_until", { withTimezone: true }),
+    docsAttestedBy: text("docs_attested_by"),
     // dev_vms only: the multi-select hosting environments, free-form
     // entries included. text("*_json"), never jsonb (schema.ts convention).
     environmentsJson: text("environments_json"),

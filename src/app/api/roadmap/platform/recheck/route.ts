@@ -55,6 +55,24 @@ export async function POST(req: Request): Promise<Response> {
   const row = rows.find((r) => r.id === id);
   if (!row) return roadmapError("not_found", "That entry is not here.", 404);
 
+  // ATTESTED FIELDS ARE NOT RE-PROBED, and this is the server-side half of
+  // the rule. The UI stops offering "Check again" on them, but a hidden
+  // button is not a control: re-probing an address a person has already
+  // told us we cannot reach from here can only fail, and a failure would
+  // erase their attestation, wipe the attribution and start the 72h fuse
+  // on the step. The way back is to withdraw the confirmation, which
+  // returns the field to unchecked so an ordinary check can run.
+  const attestedFields = fields.filter(
+    (f) => (f === "url" ? row.urlState : row.docsState) === "attested"
+  );
+  if (attestedFields.length === fields.length)
+    return roadmapError(
+      "attested",
+      "This address is confirmed by an admin rather than by us, so there is nothing to re-check. Remove the confirmation first if you want us to try again.",
+      409
+    );
+  const probeFields = fields.filter((f) => !attestedFields.includes(f));
+
   // The limiter is spent PER FIELD, exactly as on the save routes, so a
   // Retry cannot buy two probes with one token. Unlike a save, though, a
   // refusal HERE is a real refusal: the user pressed a button that does
@@ -64,7 +82,8 @@ export async function POST(req: Request): Promise<Response> {
   let refusal: Response | null = null;
   const fresh = await verifyRow(actor.scope, row, {
     force: true,
-    fields,
+    fields: probeFields,
+    internalDomain: actor.internalDomain,
     spend: () => {
       const r = limitUrlCheck(actor);
       if (r && !refusal) refusal = r;
@@ -72,5 +91,5 @@ export async function POST(req: Request): Promise<Response> {
     },
   }).catch(() => ({ row, skipped: false, checked: [] as CheckField[] }));
   if (refusal && fresh.checked.length === 0) return refusal;
-  return okJson({ row: publicRow(fresh.row) });
+  return okJson({ row: publicRow(fresh.row, actor.internalDomain) });
 }

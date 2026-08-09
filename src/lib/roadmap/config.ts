@@ -116,6 +116,32 @@ export const ROADMAP_CAPS = {
   // with free-form entries, so both the count and each label are bounded.
   environmentsMax: 12,
   environmentLabelMaxChars: 60,
+  // HYSTERESIS window (§5.20 round 2). When a field that was counting starts
+  // failing, it keeps counting for this long instead of dropping the step at
+  // the first bad minute. Sized so a weekend outage on a customer's server
+  // does not silently cost them a step before anyone is at a desk to see it,
+  // while a genuinely dead endpoint still stops counting within days. The
+  // window is NOT extended by later failures, or it would slide forever.
+  linkGraceHours: 72,
+  // How stale a decided field may get before the nightly job re-examines it.
+  // Rung 1 costs an outbound HTTP request, rung 2 costs one DNS lookup, and
+  // an attestation is a human claim and is never re-probed at all.
+  recheckReachedAfterHours: 24 * 7,
+  recheckInternalAfterHours: 24 * 7,
+  // Wall clock one nightly run may spend. The loop is sequential and a
+  // field can cost the checker's full budget, so without this a batch of
+  // dead hosts would run past the unit's TimeoutStartSec and be SIGTERMed,
+  // paging an operator about a slow night rather than a broken one.
+  recheckRunBudgetMinutes: 20,
+  // Rows one nightly run may examine. A hard ceiling on both our outbound
+  // traffic and the run's wall clock; whatever is skipped is simply the
+  // stalest next time, because selection is oldest-checked-first.
+  recheckBatchMax: 200,
+  // Fields ONE lane may consume in a single nightly run. A lane can hold
+  // more checkable fields than a whole batch (toolsMax x 2 + singletons),
+  // so without this cap one large tenant would occupy every run and every
+  // other company's links would never be re-examined.
+  recheckPerLaneMax: 25,
   // Admin-access requests expire after 7 days; non-approval reads as
   // expiry, after which the request button re-arms.
   adminRequestTtlDays: 7,

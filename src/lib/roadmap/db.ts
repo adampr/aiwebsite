@@ -1134,7 +1134,13 @@ export type LinkKind = "api_proxy" | "dev_vms" | "lakehouse" | "tool";
 /** Per-URL verification state. ONLY "ok" may ever count toward a step or
  * the completion percentage (owner rule: an unreachable URL is saved, and
  * says so, but does not count). */
-export type LinkCheckState = "unchecked" | "ok" | "failed";
+export type LinkCheckState =
+  | "unchecked"
+  | "ok"
+  | "internal"
+  | "attested"
+  | "failed";
+
 
 export async function listRoadmapLinks(scope: LinkScope): Promise<LinkRow[]> {
   return db
@@ -1257,6 +1263,14 @@ async function updateSingletonRow(
             urlReason: null,
             urlHttpStatus: null,
             urlCheckedAt: null,
+            // BOTH of these must go with the state, and leaving either was
+            // a bug. grace_until on a non-failed state violates
+            // company_roadmap_links_grace_ck, so editing a URL while it sat
+            // inside its grace window would have 500ed. And an attestation
+            // describes ONE address: carrying the attester across an edit
+            // would leave a person's name on a value they never saw.
+            urlGraceUntil: null,
+            urlAttestedBy: null,
           }
         : {}),
       ...(docsChanged
@@ -1265,6 +1279,8 @@ async function updateSingletonRow(
             docsReason: null,
             docsHttpStatus: null,
             docsCheckedAt: null,
+            docsGraceUntil: null,
+            docsAttestedBy: null,
           }
         : {}),
     })
@@ -1334,6 +1350,14 @@ export async function updateToolLink(opts: {
             urlReason: null,
             urlHttpStatus: null,
             urlCheckedAt: null,
+            // BOTH of these must go with the state, and leaving either was
+            // a bug. grace_until on a non-failed state violates
+            // company_roadmap_links_grace_ck, so editing a URL while it sat
+            // inside its grace window would have 500ed. And an attestation
+            // describes ONE address: carrying the attester across an edit
+            // would leave a person's name on a value they never saw.
+            urlGraceUntil: null,
+            urlAttestedBy: null,
           }
         : {}),
       ...(docsChanged
@@ -1342,6 +1366,8 @@ export async function updateToolLink(opts: {
             docsReason: null,
             docsHttpStatus: null,
             docsCheckedAt: null,
+            docsGraceUntil: null,
+            docsAttestedBy: null,
           }
         : {}),
     })
@@ -1390,11 +1416,48 @@ export async function recordLinkCheck(opts: {
   field: "url" | "docs";
   /** The exact string that was probed. */
   probedUrl: string;
-  state: Exclude<LinkCheckState, "unchecked">;
+  /** "unchecked" is reachable via the attestation WITHDRAW path,
+   * which is not a verdict and must leave the field re-checkable. */
+  state: LinkCheckState;
   reason: string | null;
   httpStatus: number | null;
+  /** Rung 3 only: who asserted it. */
+  attestedBy?: string | null;
+  /** Optional second half of the compare-and-swap: only write if the field
+   * is STILL in this state. The nightly job passes the state it selected,
+   * because binding the URL alone left a window where an admin attested a
+   * field after the batch was chosen and the job then overwrote a person's
+   * claim with a machine verdict. */
+  expectState?: string;
 }): Promise<LinkRow | null> {
   const now = new Date();
+  const stateCol = opts.field === "url" ? "url_state" : "docs_state";
+  const graceCol = opts.field === "url" ? "url_grace_until" : "docs_grace_until";
+  /**
+   * The HYSTERESIS, computed in SQL so it reads the row's CURRENT state
+   * atomically rather than a snapshot this process took seconds ago.
+   *
+   *  - a passing rung clears grace outright.
+   *  - the FIRST failure of a field that was counting opens the window.
+   *  - a later failure keeps the EXISTING deadline. Extending it on every
+   *    failure would make the window slide forever and a dead endpoint
+   *    would count until the heat death of the roadmap.
+   *  - a field that never counted gets no grace at all: there is nothing
+   *    to protect, and inventing one would let a brand new bad URL count.
+   */
+  // Grace belongs to a FAILING field and nothing else. Gating on "not
+  // counting" instead was a bug: the attestation-withdraw path writes
+  // "unchecked", which is not counting, so it would have opened a grace
+  // window on an unchecked field and tripped the grace_ck CHECK
+  // (grace_until IS NULL OR state = 'failed'), turning a withdraw into a
+  // 500.
+  const graceExpr = opts.state !== "failed"
+    ? sql`NULL`
+    : sql`CASE
+            WHEN ${sql.raw(`"${stateCol}"`)} IN ('ok','internal','attested')
+              THEN now() + ${sql.raw(`interval '${ROADMAP_CAPS.linkGraceHours} hours'`)}
+            ELSE ${sql.raw(`"${graceCol}"`)}
+          END`;
   const set =
     opts.field === "url"
       ? {
@@ -1402,6 +1465,8 @@ export async function recordLinkCheck(opts: {
           urlReason: opts.reason,
           urlHttpStatus: opts.httpStatus,
           urlCheckedAt: now,
+          urlGraceUntil: graceExpr,
+          urlAttestedBy: opts.state === "attested" ? (opts.attestedBy ?? null) : null,
           updatedAt: now,
         }
       : {
@@ -1409,6 +1474,8 @@ export async function recordLinkCheck(opts: {
           docsReason: opts.reason,
           docsHttpStatus: opts.httpStatus,
           docsCheckedAt: now,
+          docsGraceUntil: graceExpr,
+          docsAttestedBy: opts.state === "attested" ? (opts.attestedBy ?? null) : null,
           updatedAt: now,
         };
   const rows = await db
@@ -1421,9 +1488,124 @@ export async function recordLinkCheck(opts: {
         // The TOCTOU fence described above.
         opts.field === "url"
           ? eq(CRL.url, opts.probedUrl)
-          : eq(CRL.docsUrl, opts.probedUrl)
+          : eq(CRL.docsUrl, opts.probedUrl),
+        ...(opts.expectState
+          ? [
+              opts.field === "url"
+                ? eq(CRL.urlState, opts.expectState)
+                : eq(CRL.docsState, opts.expectState),
+            ]
+          : [])
       )
     )
     .returning();
   return rows[0] ?? null;
+}
+
+/** One field of one row that the nightly re-check should look at again,
+ * carrying the lane's VERIFIED domain so rung 2 can be re-evaluated without
+ * the job having to know how tenancy works. */
+export type RecheckCandidate = {
+  id: string;
+  companyId: string | null;
+  kind: string;
+  field: "url" | "docs";
+  url: string;
+  state: string;
+  checkedAt: Date | null;
+  /** companies.domain, or STAFF_LANE_DOMAIN for the NULL lane. */
+  internalDomain: string;
+};
+
+/**
+ * Rows whose verdict has gone stale, oldest first.
+ *
+ * ACROSS ALL LANES on purpose: this is the one caller that is not
+ * tenant-scoped, because it is the background job rather than a request.
+ * It reads companies.domain through a LEFT JOIN so a staff-lane row (NULL
+ * company_id, no companies row) still gets its domain.
+ *
+ * INCLUDED: 'unchecked', because a save whose check the limiter refused and
+ * a withdrawn attestation both land there and nothing else revisits them.
+ *
+ * NOT INCLUDED: "attested" fields. A human claim does not go stale because
+ * a clock ticked, and silently re-checking one would either overwrite a
+ * person's assertion with a machine verdict or waste a probe on an address
+ * we already know we cannot reach. Re-affirmation is a UI prompt, not a job.
+ */
+export async function linksDueForRecheck(opts: {
+  reachedAfterHours: number;
+  internalAfterHours: number;
+  failedAfterHours: number;
+  limit: number;
+  staffDomain: string;
+}): Promise<RecheckCandidate[]> {
+  const rows = await db.execute<{
+    id: string;
+    company_id: string | null;
+    kind: string;
+    field: string;
+    url: string;
+    state: string;
+    checked_at: Date | null;
+    domain: string | null;
+  }>(sql`
+    WITH fields AS (
+      SELECT l.id, l.company_id, l.kind, 'url' AS field, l.url AS url,
+             l.url_state AS state, l.url_checked_at AS checked_at
+        FROM company_roadmap_links l
+       WHERE l.url IS NOT NULL
+      UNION ALL
+      SELECT l.id, l.company_id, l.kind, 'docs' AS field, l.docs_url AS url,
+             l.docs_state AS state, l.docs_checked_at AS checked_at
+        FROM company_roadmap_links l
+       WHERE l.docs_url IS NOT NULL
+    )
+    SELECT f.*, c.domain, c.status AS company_status
+      FROM fields f
+      LEFT JOIN companies c ON c.id = f.company_id
+     WHERE
+       -- A SUSPENDED company keeps its reads and loses this, exactly as it
+       -- loses the interactive check (requirePlatformAdmin): "can still aim
+       -- our outbound requests wherever they like" is not a capability a
+       -- suspended tenant should keep, and an unattended nightly job is a
+       -- worse place to leave it than a form.
+       (f.company_id IS NULL OR c.status = 'active')
+       AND (
+        (f.state = 'ok'       AND (f.checked_at IS NULL OR f.checked_at < now() - make_interval(hours => ${opts.reachedAfterHours})))
+     OR (f.state = 'internal' AND (f.checked_at IS NULL OR f.checked_at < now() - make_interval(hours => ${opts.internalAfterHours})))
+     OR (f.state = 'failed'   AND (f.checked_at IS NULL OR f.checked_at < now() - make_interval(hours => ${opts.failedAfterHours})))
+     -- 'unchecked' is due too. Two supported paths park a field there and
+     -- nothing else would ever revisit it: a save whose check was refused
+     -- by the rate limiter, and a withdrawn attestation. Leaving it out
+     -- made those fields permanently uncounted with no automatic way back.
+     OR (f.state = 'unchecked' AND (f.checked_at IS NULL OR f.checked_at < now() - make_interval(hours => ${opts.failedAfterHours})))
+     )
+     ORDER BY f.checked_at ASC NULLS FIRST
+     LIMIT ${opts.limit}
+  `);
+  const list = Array.isArray(rows) ? rows : ((rows as { rows?: unknown[] }).rows ?? []);
+  return (list as Record<string, unknown>[])
+    .map((r) => {
+      const companyId = (r.company_id as string | null) ?? null;
+      const domain = (r.domain as string | null) ?? null;
+      // COALESCE(domain, STAFF) would merge two different things: "this is
+      // the staff lane" and "this row points at a company that is not
+      // there". The second is a data fault, and defaulting it to xl.net
+      // would check a stranger's row against OUR domain, which is the one
+      // binding rung 2 rests on. Only a genuinely NULL lane gets the staff
+      // domain; an orphan is dropped.
+      if (companyId !== null && !domain) return null;
+      return {
+        id: String(r.id),
+        companyId,
+        kind: String(r.kind),
+        field: r.field === "url" ? ("url" as const) : ("docs" as const),
+        url: String(r.url),
+        state: String(r.state),
+        checkedAt: (r.checked_at as Date | null) ?? null,
+        internalDomain: domain ?? opts.staffDomain,
+      };
+    })
+    .filter((r): r is RecheckCandidate => r !== null);
 }

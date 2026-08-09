@@ -60,11 +60,12 @@ export async function PATCH(req: Request, ctx: Ctx): Promise<Response> {
   // already saved and simply stays unchecked until the admin retries.
   const checked = await verifyRow(actor.scope, saved, {
     spend: () => limitUrlCheck(actor),
+    internalDomain: actor.internalDomain,
   }).catch(() => ({ row: saved, skipped: true }));
   const row = checked.row;
   const checkSkipped = checked.skipped;
 
-  return okJson({ row: publicRow(row), checkSkipped });
+  return okJson({ row: publicRow(row, actor.internalDomain), checkSkipped });
 }
 
 export async function DELETE(_req: Request, ctx: Ctx): Promise<Response> {

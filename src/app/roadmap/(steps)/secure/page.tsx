@@ -31,8 +31,8 @@ export default async function RoadmapSecurePage() {
 
   const rows = await listRoadmapLinks(view.scope);
   const secure = secureView(rows);
-  const apiProxy = secure.apiProxy.row ? publicRow(secure.apiProxy.row) : null;
-  const devVms = secure.devVms.row ? publicRow(secure.devVms.row) : null;
+  const apiProxy = secure.apiProxy.row ? publicRow(secure.apiProxy.row, view.internalDomain) : null;
+  const devVms = secure.devVms.row ? publicRow(secure.devVms.row, view.internalDomain) : null;
 
   return (
     <div className="space-y-12">

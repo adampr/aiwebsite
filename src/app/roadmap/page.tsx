@@ -334,7 +334,11 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
     // "saved but not confirmed" is a real state the owner asked for: a
     // link we could not reach is kept, and the card has to say so rather
     // than reading as though nothing was ever entered.
-    secure: status.secure.done
+    // A grace window beats every other line: a step about to disappear is
+    // the one thing the hub must say out loud.
+    secure: status.secure.failing
+      ? "A link stopped answering · open this step"
+      : status.secure.done
       ? "API proxy and developer VMs listed"
       : status.secure.apiProxy
         ? "API proxy listed · developer VMs to go"
@@ -343,12 +347,16 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
           : status.secure.savedUnverified
             ? "Saved, not confirmed yet · open this step"
             : "Nothing listed yet",
-    data: status.data.done
+    data: status.data.failing
+      ? "A link stopped answering · open this step"
+      : status.data.done
       ? "Lakehouse listed"
       : status.data.savedUnverified
         ? "Saved, not confirmed yet · open this step"
         : "Nothing listed yet",
-    tools: status.tools.done
+    tools: status.tools.failing
+      ? "A link stopped answering · open this step"
+      : status.tools.done
       ? `${status.tools.counted} of ${status.tools.total} ${status.tools.total === 1 ? "tool" : "tools"} counting`
       : status.tools.total > 0
         ? "Saved, not confirmed yet · open this step"

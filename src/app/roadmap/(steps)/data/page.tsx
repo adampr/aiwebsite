@@ -25,7 +25,7 @@ export default async function RoadmapDataPage() {
   const lakehouse = lakehouseView(
     rows.find((r) => r.kind === "lakehouse") ?? null
   );
-  const row = lakehouse.row ? publicRow(lakehouse.row) : null;
+  const row = lakehouse.row ? publicRow(lakehouse.row, view.internalDomain) : null;
 
   return (
     <div className="space-y-12">

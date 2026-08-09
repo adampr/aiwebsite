@@ -40,12 +40,21 @@ import {
   percentOf,
   roadmapProgress,
 } from "../src/lib/roadmap/progress";
-import { apiProxyView, devVmsView } from "../src/lib/roadmap/platform";
 import {
+  apiProxyView,
+  devVmsView,
+  fieldAttestable,
+  fieldCounts,
+  fieldInGrace,
+} from "../src/lib/roadmap/platform";
+import {
+  hostInDomain,
   isBlockedAddress,
+  isPrivateNetworkAddress,
   parseCheckableUrl,
   statusCounts,
 } from "../src/lib/roadmap/url-check";
+import { attestedLine, internalLine, reachedLine } from "../src/lib/roadmap/platform-copy";
 import { rateLimitedMessage, retryAfterPhrase } from "../src/lib/retry-after";
 import { personLabel, personLabelParts } from "../src/lib/person-label";
 import {
@@ -1170,5 +1179,127 @@ await (async () => {
   assert.equal(r.reason, "m365-no-cnames");
   passed++; console.log("ok - dkim: resend key does not green an M365 tenant");
 })();
+
+// ---- §5.20 round 2: the evidence ladder + hysteresis ----
+
+ok("the ladder: reached, internal and attested all count; failed does not", () => {
+  assert.equal(fieldCounts("ok", null), true);
+  assert.equal(fieldCounts("internal", null), true);
+  assert.equal(fieldCounts("attested", null), true);
+  assert.equal(fieldCounts("failed", null), false);
+  assert.equal(fieldCounts("unchecked", null), false);
+  assert.equal(fieldCounts(null, null), false);
+});
+
+ok("hysteresis: a failing field keeps counting until its grace expires", () => {
+  const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const past = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  assert.equal(fieldCounts("failed", future), true);
+  assert.equal(fieldInGrace("failed", future), true);
+  assert.equal(fieldCounts("failed", past), false);
+  assert.equal(fieldInGrace("failed", past), false);
+  // Grace is meaningless on a state that is not failing, and must never
+  // make an unchecked field count.
+  assert.equal(fieldCounts("unchecked", future), false);
+  assert.equal(fieldInGrace("ok", future), false);
+  assert.equal(fieldCounts("failed", "not-a-date"), false);
+});
+
+ok("attestation is NOT a universal bypass", () => {
+  const D = "acme.com";
+  const mine = "https://proxy.acme.com/v1";
+  // The two failures consistent with an endpoint we cannot see from here,
+  // on an address inside the tenant's OWN verified domain.
+  assert.equal(fieldAttestable("failed", "unreachable", mine, D), true);
+  assert.equal(fieldAttestable("failed", "not_public", mine, D), true);
+  // THE TWO BYPASSES BOTH REFUTERS FOUND, now closed by the domain binding:
+  // (1) any non-resolving string would have been attestable, because
+  // "unreachable" covers a DNS failure as well as a refused connection.
+  assert.equal(
+    fieldAttestable("failed", "unreachable", "https://not-a-real-company.example/", D),
+    false
+  );
+  // (2) "not_public" covers a BARE PRIVATE IP LITERAL, which has no tenant
+  // binding at all and is exactly what rung 2 refuses.
+  assert.equal(fieldAttestable("failed", "not_public", "http://10.0.0.5:8080/", D), false);
+  // A lookalike domain is not the tenant's domain.
+  assert.equal(
+    fieldAttestable("failed", "unreachable", "https://proxy.evilacme.com/", D),
+    false
+  );
+  // A server ANSWERED and said the address is wrong: fix it, do not assert
+  // it. This is the line that stops attestation swallowing every typo.
+  assert.equal(fieldAttestable("failed", "http_status", mine, D), false);
+  assert.equal(fieldAttestable("failed", "invalid", mine, D), false);
+  assert.equal(fieldAttestable("failed", "self_host", mine, D), false);
+  // A real check must have run and failed FIRST.
+  assert.equal(fieldAttestable("unchecked", "unreachable", mine, D), false);
+  assert.equal(fieldAttestable("ok", "unreachable", mine, D), false);
+  assert.equal(fieldAttestable("attested", "unreachable", mine, D), false);
+  // No domain, no rung 3.
+  assert.equal(fieldAttestable("failed", "unreachable", mine, null), false);
+});
+
+ok("rung 2 host boundary: a lookalike domain never qualifies", () => {
+  assert.equal(hostInDomain("proxy.acme.com", "acme.com"), true);
+  assert.equal(hostInDomain("acme.com", "acme.com"), true);
+  assert.equal(hostInDomain("ACME.COM", "acme.com"), true);
+  assert.equal(hostInDomain("proxy.acme.com.", "acme.com"), true); // trailing dot
+  assert.equal(hostInDomain("a.b.acme.com", "acme.com"), true);
+  // The classic suffix bug: "evilacme.com".endsWith("acme.com") is true.
+  assert.equal(hostInDomain("evilacme.com", "acme.com"), false);
+  assert.equal(hostInDomain("acme.com.evil.net", "acme.com"), false);
+  assert.equal(hostInDomain("notacme.com", "acme.com"), false);
+  // A bare IP has no tenant binding at all, so it can never carry rung 2.
+  assert.equal(hostInDomain("10.0.0.5", "acme.com"), false);
+  assert.equal(hostInDomain("[::1]", "acme.com"), false);
+  assert.equal(hostInDomain("proxy.acme.com", null), false);
+});
+
+ok("rung 2 evidence is a PRIVATE NETWORK, not merely a blocked address", () => {
+  // These are where company infrastructure actually lives.
+  for (const a of ["10.0.0.5", "172.16.9.9", "192.168.1.1", "100.64.0.1", "fd12::1", "::ffff:10.0.0.5"])
+    assert.equal(isPrivateNetworkAddress(a), true, a);
+  // These are blocked from connection but are NOT a plausible internal
+  // deployment, so they must not stand as evidence: a probe of mine found
+  // 169.254.169.254 earning rung 2 before this distinction existed.
+  for (const a of ["169.254.169.254", "127.0.0.1", "0.0.0.0", "224.0.0.1", "fe80::1", "8.8.8.8"])
+    assert.equal(isPrivateNetworkAddress(a), false, a);
+  // Everything above that is not a private network is still refused a
+  // connection by the blocklist.
+  for (const a of ["169.254.169.254", "127.0.0.1", "0.0.0.0", "224.0.0.1", "fe80::1"])
+    assert.equal(isBlockedAddress(a), true, a);
+});
+
+ok("every decided state carries its date, and only rung 1 says 'reached'", () => {
+  const at = "2026-08-09T12:00:00.000Z";
+  const reached = reachedLine(200, at);
+  assert.ok(reached.includes("Aug 9, 2026"), reached);
+  assert.ok(reached.includes("reached"), reached);
+  const internal = internalLine(at);
+  assert.ok(internal.includes("Aug 9, 2026"), internal);
+  assert.ok(!/reached/i.test(internal), "rung 2 must not claim we reached it");
+  assert.ok(internal.includes("never connect"), internal);
+  const attested = attestedLine("admin@acme.com", at);
+  assert.ok(attested.includes("Aug 9, 2026"), attested);
+  assert.ok(attested.includes("admin@acme.com"), attested);
+  assert.ok(attested.includes("their word"), attested);
+  assert.ok(!/reached it from here/i.test(attested.replace("could not reach it from here", "")), attested);
+  // No em dashes anywhere in this family (site rule).
+  for (const line of [reached, internal, attested])
+    assert.ok(!line.includes("\u2014"), line);
+});
+
+ok("the nightly re-check never touches an attested field", () => {
+  // Source pin: a human claim does not go stale because a clock ticked,
+  // and re-probing an address we know we cannot reach would just burn
+  // requests. If this ever changes, the copy in platform-copy.ts has to
+  // change with it.
+  const src = readFileSync("src/lib/roadmap/db.ts", "utf8");
+  const q = src.slice(src.indexOf("export async function linksDueForRecheck"));
+  assert.ok(!q.includes("'attested'"), "recheck query must not select attested fields");
+  for (const state of ["'ok'", "'internal'", "'failed'"])
+    assert.ok(q.includes(state), `recheck query should select ${state}`);
+});
 
 console.log(`\nroadmap-tests (incl. dkim): ${passed} checks passed`);

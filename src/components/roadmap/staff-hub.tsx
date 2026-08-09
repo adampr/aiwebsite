@@ -66,7 +66,11 @@ export function StaffHub({
     // §5.20. Same three-state phrasing as the company hub (src/app/roadmap/
     // page.tsx stepLines): "saved but not confirmed" is a real state and
     // must not read as untouched.
-    secure: status.secure.done
+    // A grace window beats every other line: a step about to disappear is
+    // the one thing the hub must say out loud.
+    secure: status.secure.failing
+      ? "A link stopped answering · open this step"
+      : status.secure.done
       ? "API proxy and developer VMs listed"
       : status.secure.apiProxy
         ? "API proxy listed · developer VMs to go"
@@ -75,12 +79,16 @@ export function StaffHub({
           : status.secure.savedUnverified
             ? "Saved, not confirmed yet · open this step"
             : "Nothing listed yet",
-    data: status.data.done
+    data: status.data.failing
+      ? "A link stopped answering · open this step"
+      : status.data.done
       ? "Lakehouse listed"
       : status.data.savedUnverified
         ? "Saved, not confirmed yet · open this step"
         : "Nothing listed yet",
-    tools: status.tools.done
+    tools: status.tools.failing
+      ? "A link stopped answering · open this step"
+      : status.tools.done
       ? `${status.tools.counted} of ${status.tools.total} ${status.tools.total === 1 ? "tool" : "tools"} counting`
       : status.tools.total > 0
         ? "Saved, not confirmed yet · open this step"

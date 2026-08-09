@@ -46,6 +46,11 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { siteConfig } from "site.config";
+// Lives in its own import-free module because the CLIENT needs it too
+// (platform.ts -> the islands) and this file is server-only.
+import { hostInDomain } from "@/lib/roadmap/host-domain";
+
+export { hostInDomain };
 
 /** How long one hop may take, and the whole check including redirects. */
 const HOP_TIMEOUT_MS = 6000;
@@ -68,7 +73,17 @@ export const URL_MAX_CHARS = 500;
 /** The machine-readable outcome. `ok` is the ONLY thing that may light a
  * step: everything else is saved but does not count (owner rule). */
 export type UrlCheckResult =
-  | { ok: true; status: number; finalUrl: string }
+  | {
+      ok: true;
+      /** WHICH rung of the evidence ladder this pass is standing on.
+       * "reached": a server answered us over HTTP.
+       * "internal": the host is inside the tenant's verified domain and
+       * resolves into private space. NO connection was made and none may
+       * be: this rung is resolve-and-classify only. */
+      evidence: "reached" | "internal";
+      status: number | null;
+      finalUrl: string;
+    }
   | { ok: false; reason: UrlCheckFailReason; status: number | null };
 
 /** User-facing failure classes. Kept coarse on purpose (see header). */
@@ -184,6 +199,44 @@ const V4_BLOCKED: ReadonlyArray<readonly [string, number]> = [
 ];
 
 /**
+ * Is this address a genuine PRIVATE NETWORK address, the kind a company's
+ * own infrastructure actually sits on?
+ *
+ * Deliberately NARROWER than isBlockedAddress. Everything blocked is
+ * refused a connection, but only these ranges are allowed to stand as
+ * EVIDENCE of an internal deployment (rung 2). A probe of my own caught
+ * why this distinction has to exist: a name pointing at 169.254.169.254
+ * satisfied "every answer is blocked" and earned rung 2, and while that is
+ * harmless to us (rung 2 never connects), it would have made the copy
+ * false. Link-local, loopback, multicast, 0.0.0.0/8 and the reserved and
+ * documentation ranges are not places a company runs an AI proxy, so a
+ * name pointing at one is a misconfiguration to report, not evidence.
+ */
+export function isPrivateNetworkAddress(addr: string): boolean {
+  const family = net.isIP(addr);
+  if (family === 0) return false;
+  if (family === 4) {
+    const n = ipv4ToInt(addr);
+    if (n === null) return false;
+    return (
+      inV4Cidr(n, "10.0.0.0", 8) ||
+      inV4Cidr(n, "172.16.0.0", 12) ||
+      inV4Cidr(n, "192.168.0.0", 16) ||
+      // Carrier-grade NAT: real corporate networks do land here.
+      inV4Cidr(n, "100.64.0.0", 10)
+    );
+  }
+  const raw = addr.toLowerCase().split("%")[0];
+  const mapped = unwrapV4(raw);
+  if (mapped) return isPrivateNetworkAddress(mapped);
+  const head = parseInt(raw.split(":")[0] || "0", 16);
+  if (Number.isNaN(head)) return false;
+  // fc00::/7 unique local addresses. fe80::/10 link-local is NOT included,
+  // for the same reason 169.254/16 is not.
+  return (head & 0xfe00) === 0xfc00;
+}
+
+/**
  * Is this literal address one we refuse?
  *
  * IPv4-MAPPED IPv6 IS THE TRAP: ::ffff:127.0.0.1 is a v6 literal that
@@ -231,6 +284,12 @@ function unwrapV4(v6: string): string | null {
   const dotted = v6.match(/:((?:\d{1,3}\.){3}\d{1,3})$/);
   if (dotted && (v6.startsWith("::ffff:") || v6.startsWith("64:ff9b::")))
     return dotted[1];
+  const nat64hex = v6.match(/^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (nat64hex) {
+    const a = parseInt(nat64hex[1], 16);
+    const b = parseInt(nat64hex[2], 16);
+    return `${(a >> 8) & 0xff}.${a & 0xff}.${(b >> 8) & 0xff}.${b & 0xff}`;
+  }
   const hex = v6.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (hex) {
     const a = parseInt(hex[1], 16);
@@ -282,18 +341,34 @@ export function parseCheckableUrl(raw: string): ParsedUrl | null {
   return { url, href: url.toString() };
 }
 
-/** Resolve + classify. Fails CLOSED: any unusable answer blocks. */
-async function resolvePinned(
-  hostname: string
-): Promise<{ ok: true; address: string; family: number } | { ok: false; reason: UrlCheckFailReason }> {
-  if (isSelfHost(hostname)) return { ok: false, reason: "self_host" };
-  if (isDeniedHostname(hostname)) return { ok: false, reason: "not_public" };
+/**
+ * Resolve + classify. Fails CLOSED: any unusable answer blocks.
+ *
+ * The `private` outcome is what rung 2 is built on, and it is deliberately
+ * SEPARATE from the other not_public paths: only "this NAME resolved, and
+ * every answer was private" can ever become evidence of an internal
+ * deployment. A denied suffix (localhost, .internal) and a bare private IP
+ * literal stay hard failures, because neither carries any binding to the
+ * tenant. Note that no caller may connect on the `private` outcome: it
+ * returns no address, so there is nothing to connect to by construction.
+ */
+type ResolveOutcome =
+  | { ok: true; address: string; family: number }
+  | { ok: false; kind: "private" }
+  | { ok: false; kind: "fail"; reason: UrlCheckFailReason };
 
-  // An IP literal never goes to DNS.
+async function resolvePinned(hostname: string): Promise<ResolveOutcome> {
+  if (isSelfHost(hostname))
+    return { ok: false, kind: "fail", reason: "self_host" };
+  if (isDeniedHostname(hostname))
+    return { ok: false, kind: "fail", reason: "not_public" };
+
+  // An IP literal never goes to DNS, and never qualifies for rung 2.
   const literal = net.isIP(hostname.replace(/^\[|\]$/g, ""));
   if (literal !== 0) {
     const addr = hostname.replace(/^\[|\]$/g, "");
-    if (isBlockedAddress(addr)) return { ok: false, reason: "not_public" };
+    if (isBlockedAddress(addr))
+      return { ok: false, kind: "fail", reason: "not_public" };
     return { ok: true, address: addr, family: literal };
   }
 
@@ -301,14 +376,26 @@ async function resolvePinned(
   try {
     answers = await dnsPromises.lookup(hostname, { all: true });
   } catch {
-    return { ok: false, reason: "unreachable" };
+    return { ok: false, kind: "fail", reason: "unreachable" };
   }
-  if (!answers.length) return { ok: false, reason: "unreachable" };
+  if (!answers.length) return { ok: false, kind: "fail", reason: "unreachable" };
   // EVERY answer must be acceptable. If a name resolves to one public and
   // one private address we refuse the whole thing rather than gamble on
   // which one the socket would pick.
-  for (const a of answers) {
-    if (isBlockedAddress(a.address)) return { ok: false, reason: "not_public" };
+  const blocked = answers.filter((a) => isBlockedAddress(a.address));
+  if (blocked.length) {
+    // ALL answers on a real private network is a coherent internal
+    // deployment and can carry rung 2. A MIX is not: it is ambiguous, we
+    // still refuse to connect, and treating it as evidence would be
+    // guessing. Nor does "blocked" alone qualify: loopback, link-local and
+    // the reserved ranges are refused a connection but are not somewhere a
+    // company runs a proxy (see isPrivateNetworkAddress).
+    if (
+      blocked.length === answers.length &&
+      answers.every((a) => isPrivateNetworkAddress(a.address))
+    )
+      return { ok: false, kind: "private" };
+    return { ok: false, kind: "fail", reason: "not_public" };
   }
   const first = answers[0];
   return { ok: true, address: first.address, family: net.isIP(first.address) };
@@ -364,10 +451,21 @@ function requestHop(
         timeout: timeoutMs,
         // THE PIN. Node calls this instead of DNS, so the socket can only
         // reach the address resolvePinned already cleared.
+        // DEFERRED WITH setImmediate, and that is not a style choice. A
+        // synchronous callback here lets Node run internalConnect before
+        // ClientRequest has attached its own 'error' listener, so an
+        // IMMEDIATE connect failure (an IPv6 address on a host with no v6
+        // route, for instance) is emitted with nothing listening and
+        // becomes an unhandled 'error' that takes the process down. In the
+        // web server that is a 500; in the nightly job it would be one
+        // stored URL killing the whole run for every tenant. Deferring by
+        // one tick guarantees the listeners are in place first.
         lookup: (_hostname, options, cb) => {
-          if (options && (options as { all?: boolean }).all)
-            cb(null, [{ address, family }]);
-          else cb(null, address, family);
+          setImmediate(() => {
+            if (options && (options as { all?: boolean }).all)
+              cb(null, [{ address, family }]);
+            else cb(null, address, family);
+          });
         },
         headers: {
           "user-agent": `${siteConfig.site.name} roadmap link check (+${siteConfig.site.baseUrl})`,
@@ -407,7 +505,17 @@ function requestHop(
  * Callers must treat `ok: false` as "saved, not counted" (owner rule): the
  * value is still stored so the admin can edit or retry it.
  */
-export async function checkUrlReachable(raw: string): Promise<UrlCheckResult> {
+export async function checkUrlReachable(
+  raw: string,
+  opts: {
+    /** The tenant's VERIFIED domain (companies.domain, or
+     * STAFF_LANE_DOMAIN on the NULL staff lane). Supplying it enables rung
+     * 2: a host inside this domain that resolves privately becomes
+     * evidence of an internal deployment instead of a flat failure.
+     * Omitting it keeps the old strict behavior. */
+    internalDomain?: string | null;
+  } = {}
+): Promise<UrlCheckResult> {
   const deadline = Date.now() + TOTAL_BUDGET_MS;
   const parsed = parseCheckableUrl(raw);
   if (!parsed) return { ok: false, reason: "invalid", status: null };
@@ -421,6 +529,29 @@ export async function checkUrlReachable(raw: string): Promise<UrlCheckResult> {
 
     // Full re-validation of EVERY hop, including redirect targets.
     const pin = await resolvePinned(current.hostname);
+    if (!pin.ok && pin.kind === "private") {
+      // RUNG 2. The name resolved and every answer was private. If it is
+      // inside the tenant's own verified domain, that is two machine-checked
+      // facts (they control the zone; it points inward) and we accept it as
+      // evidence of an internal deployment.
+      //
+      // WE RETURN HERE, BEFORE ANY SOCKET EXISTS. resolvePinned handed back
+      // no address on this branch precisely so that this path cannot
+      // connect even by mistake, which is what keeps the SSRF invariant
+      // intact: nothing is ever sent to a private address.
+      //
+      // Only the FIRST hop can qualify. A public URL that redirects into
+      // private space is not an internal deployment, it is the classic
+      // redirect bypass, so it stays a failure.
+      if (hop === 0 && hostInDomain(current.hostname, opts.internalDomain ?? null))
+        return {
+          ok: true,
+          evidence: "internal",
+          status: null,
+          finalUrl: current.toString(),
+        };
+      return { ok: false, reason: "not_public", status: null };
+    }
     if (!pin.ok) return { ok: false, reason: pin.reason, status: null };
 
     const res = await requestHop(
@@ -460,7 +591,12 @@ export async function checkUrlReachable(raw: string): Promise<UrlCheckResult> {
     }
 
     if (statusCounts(res.status))
-      return { ok: true, status: res.status, finalUrl: current.toString() };
+      return {
+        ok: true,
+        evidence: "reached",
+        status: res.status,
+        finalUrl: current.toString(),
+      };
     return { ok: false, reason: "http_status", status: res.status };
   }
   return { ok: false, reason: "redirect_loop", status: null };

@@ -24,6 +24,16 @@ export type RoadmapNav = {
 const EMPTY: RoadmapNav = { yourWork: false, percent: null };
 
 let probe: Promise<RoadmapNav> | null = null;
+let probedAt = 0;
+
+/** How long a fetched answer may be reused within one client session.
+ *
+ * The reset hook below covers changes THIS tab makes. It cannot cover a
+ * change made anywhere else: the nightly re-check can demote a step at
+ * 05:30 and move the percentage with no user action at all, and a tab left
+ * open would otherwise show the old number until a full page load. A short
+ * ceiling keeps the badge honest without turning it into a poll. */
+const PROBE_TTL_MS = 5 * 60 * 1000;
 
 const listeners = new Set<() => void>();
 
@@ -52,6 +62,8 @@ export function resetRoadmapNavProbe(): void {
 }
 
 export function probeRoadmapNav(): Promise<RoadmapNav> {
+  if (probe && Date.now() - probedAt > PROBE_TTL_MS) probe = null;
+  if (!probe) probedAt = Date.now();
   probe ??= probeSession().then((s) => {
     if (!s.authenticated || !s.email) return EMPTY;
     return fetch("/api/roadmap/nav", { cache: "no-store" })

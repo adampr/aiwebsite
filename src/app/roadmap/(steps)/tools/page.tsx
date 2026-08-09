@@ -49,7 +49,7 @@ export default async function RoadmapToolsPage() {
       </section>
 
       <ToolsManager
-        initial={rows.map(publicRow)}
+        initial={rows.map((r) => publicRow(r, view.internalDomain))}
         isAdmin={view.isAdmin}
         truncated={total > rows.length}
       />

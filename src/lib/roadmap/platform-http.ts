@@ -14,7 +14,7 @@ import {
   requireGlobalAdmin,
 } from "@/lib/roadmap/access";
 import { STAFF_LINK_SCOPE, type LinkScope } from "@/lib/roadmap/db";
-import { ROADMAP_CAPS } from "@/lib/roadmap/config";
+import { ROADMAP_CAPS, STAFF_LANE_DOMAIN } from "@/lib/roadmap/config";
 import {
   rateLimit,
   requireRoadmapWritesEnabled,
@@ -29,6 +29,10 @@ export type PlatformActor = {
    * literal, matching how the Apollo limiter keys it: the staff lane has no
    * company id, and inventing one would fork the fence. */
   laneKey: string;
+  /** The tenant's VERIFIED domain, which is the tenancy key itself. Rung 2
+   * of the evidence ladder is only as trustworthy as this value, so it is
+   * read from the principal / STAFF_LANE_DOMAIN and never from a request. */
+  internalDomain: string;
 };
 
 export type PlatformGate =
@@ -51,6 +55,7 @@ export async function requirePlatformAdmin(): Promise<PlatformGate> {
         userId: admin.userId,
         email: admin.email,
         laneKey: "staff",
+        internalDomain: STAFF_LANE_DOMAIN,
       },
     };
   }
@@ -83,6 +88,7 @@ export async function requirePlatformAdmin(): Promise<PlatformGate> {
       userId: p.userId,
       email: p.email,
       laneKey: p.company.id,
+      internalDomain: p.company.domain,
     },
   };
 }

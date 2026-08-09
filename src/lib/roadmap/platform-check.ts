@@ -18,6 +18,7 @@ import {
   type LinkScope,
 } from "@/lib/roadmap/db";
 import { checkUrlReachable } from "@/lib/roadmap/url-check";
+import { fieldAttestable } from "@/lib/roadmap/platform";
 
 export type CheckField = "url" | "docs";
 
@@ -51,6 +52,8 @@ export async function verifyRow(
      * budget is gone. Called ONCE PER FIELD, because a field is what costs
      * outbound requests; charging per row let one token buy two probes. */
     spend?: () => Response | null;
+    /** The tenant's verified domain, enabling rung 2 (see url-check.ts). */
+    internalDomain?: string | null;
   } = {}
 ): Promise<{ row: LinkRow; skipped: boolean; checked: CheckField[] }> {
   const fields: CheckField[] = opts.fields ?? ["url", "docs"];
@@ -79,7 +82,9 @@ export async function verifyRow(
       // verdict can only ever land on the value it actually measured (see
       // recordLinkCheck's TOCTOU fence).
       const probedUrl = valueFor(row, field) ?? "";
-      const outcome = await checkUrlReachable(probedUrl);
+      const outcome = await checkUrlReachable(probedUrl, {
+        internalDomain: opts.internalDomain ?? null,
+      });
       return { field, probedUrl, outcome };
     })
   );
@@ -91,7 +96,13 @@ export async function verifyRow(
       id: row.id,
       field,
       probedUrl,
-      state: outcome.ok ? "ok" : "failed",
+      // The rung the evidence actually reached, never a flat "ok": the copy
+      // for "internal" must not claim we touched anything.
+      state: outcome.ok
+        ? outcome.evidence === "internal"
+          ? "internal"
+          : "ok"
+        : "failed",
       reason: outcome.ok ? null : outcome.reason,
       httpStatus: outcome.status,
     });
@@ -117,16 +128,28 @@ export type PublicLinkRow = {
   urlReason: string | null;
   urlHttpStatus: number | null;
   urlCheckedAt: string | null;
+  urlGraceUntil: string | null;
+  urlAttestedBy: string | null;
+  /** Whether rung 3 is available for this field. Computed SERVER-side with
+   * the lane's verified domain so the control can never be offered where
+   * the route would refuse it. */
+  urlAttestable: boolean;
   docsUrl: string | null;
   docsState: string;
   docsReason: string | null;
   docsHttpStatus: number | null;
   docsCheckedAt: string | null;
+  docsGraceUntil: string | null;
+  docsAttestedBy: string | null;
+  docsAttestable: boolean;
   environments: string[];
   addedByEmail: string;
 };
 
-export function publicRow(row: LinkRow): PublicLinkRow {
+export function publicRow(
+  row: LinkRow,
+  internalDomain?: string | null
+): PublicLinkRow {
   let environments: string[] = [];
   if (row.environmentsJson) {
     try {
@@ -147,11 +170,27 @@ export function publicRow(row: LinkRow): PublicLinkRow {
     urlReason: row.urlReason,
     urlHttpStatus: row.urlHttpStatus,
     urlCheckedAt: row.urlCheckedAt ? row.urlCheckedAt.toISOString() : null,
+    urlGraceUntil: row.urlGraceUntil ? row.urlGraceUntil.toISOString() : null,
+    urlAttestedBy: row.urlAttestedBy,
+    urlAttestable: fieldAttestable(
+      row.urlState,
+      row.urlReason,
+      row.url,
+      internalDomain ?? null
+    ),
     docsUrl: row.docsUrl,
     docsState: row.docsState,
     docsReason: row.docsReason,
     docsHttpStatus: row.docsHttpStatus,
     docsCheckedAt: row.docsCheckedAt ? row.docsCheckedAt.toISOString() : null,
+    docsGraceUntil: row.docsGraceUntil ? row.docsGraceUntil.toISOString() : null,
+    docsAttestedBy: row.docsAttestedBy,
+    docsAttestable: fieldAttestable(
+      row.docsState,
+      row.docsReason,
+      row.docsUrl,
+      internalDomain ?? null
+    ),
     environments,
     addedByEmail: row.addedByEmail,
   };
