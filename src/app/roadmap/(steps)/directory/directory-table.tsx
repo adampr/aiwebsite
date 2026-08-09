@@ -39,11 +39,20 @@ export function DirectoryTable({
   isAdmin,
   domain,
   autoInit,
+  visibilityNote,
+  memberEmptyLine,
 }: {
   people: DirectoryPerson[];
   isAdmin: boolean;
   domain: string;
   autoInit: boolean;
+  /** Staff lane (§5.18 staff parity): overrides the import-panel
+   * visibility sentence (the company default would render the redundant
+   * "...at xl.net..., and to XL.net"). */
+  visibilityNote?: string;
+  /** Staff lane: overrides the member zero-state's "Your company admin
+   * adds people here." (the staff lane has no company admin). */
+  memberEmptyLine?: string;
 }) {
   const router = useRouter();
   const [importBusy, setImportBusy] = useState(false);
@@ -216,8 +225,8 @@ export function DirectoryTable({
         <div className="panel">
           <span className="sys-label">Import</span>
           <p className="mt-3 text-sm">
-            Import only people you are authorized to list. Directory entries
-            are visible to everyone at {domain} who signs in, and to XL.net.
+            {visibilityNote ??
+              `Import only people you are authorized to list. Directory entries are visible to everyone at ${domain} who signs in, and to XL.net.`}
           </p>
           <button
             type="button"
@@ -297,7 +306,10 @@ export function DirectoryTable({
 
       {people.length === 0 ? (
         <p className="text-sm text-faint">
-          No one listed yet. {isAdmin ? "Import your team from Apollo or add the first person above." : "Your company admin adds people here."}
+          No one listed yet.{" "}
+          {isAdmin
+            ? "Import your team from Apollo or add the first person above."
+            : (memberEmptyLine ?? "Your company admin adds people here.")}
         </p>
       ) : (
         <div className="overflow-x-auto">

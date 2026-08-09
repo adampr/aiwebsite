@@ -573,48 +573,6 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   transform: translateX(4px);
 }
 
-/* ---- Step strip (the (steps) shell nav) -------------------------------- */
-
-.rmp-strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.5rem 1.5rem;
-  border-bottom: 1px solid var(--xl-line);
-  padding-bottom: 0.85rem;
-}
-
-.rmp-strip a {
-  text-decoration: none;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  color: var(--xl-text-faint);
-}
-
-.rmp-strip a:hover {
-  color: var(--xl-text);
-}
-
-.rmp-strip a[aria-current="page"] {
-  color: var(--xl-light);
-  text-shadow: 0 0 12px var(--xl-light-glow);
-}
-
-.rmp-strip-hub {
-  margin-right: 0.5rem;
-}
-
-.rmp-strip-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
 /* ---- DKIM dialog ----------------------------------------------------- */
 
 /* Native <dialog> shell for the DKIM instructions (§5.18 round 2; the

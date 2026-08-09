@@ -18,6 +18,7 @@ import {
 import { scorecardRequestList } from "@/lib/work/requests-db";
 import type { WorkScope } from "@/lib/work/scope";
 import { fmtDate } from "@/components/roadmap/dates";
+import { personLabel } from "@/lib/person-label";
 import {
   RequestsListClient,
   type ListRowData,
@@ -92,7 +93,7 @@ export default async function ScorecardRequestsPage({ searchParams }: Search) {
     statusLabel:
       REQUEST_STATUS_COPY[r.status as WorkRequestStatus] ?? r.status,
     valueLabel: formatValueUsd(r.valueUsd),
-    byLabel: r.requesterName ?? r.requesterEmail,
+    byLabel: personLabel(r.requesterName, r.requesterEmail),
     dateLabel: fmtDate(dateOf(r)) || "·",
   }));
 

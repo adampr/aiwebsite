@@ -146,6 +146,10 @@ export async function notifyApolloImport(opts: {
   /** Advisory audit label: "auto" = the directory initialized itself on the
    * admin's page view (round 3); "manual" = the Import button. */
   trigger?: "auto" | "manual";
+  /** Staff parity round: the xl.net NULL lane has no company or company
+   * admin, so the auto sentence must not attribute the import to one (this
+   * email is the audit record for system-initiated PII imports). */
+  staffLane?: boolean;
   adminEmail: string;
   companyDomain: string;
   added: number;
@@ -160,7 +164,7 @@ export async function notifyApolloImport(opts: {
     subject: `Apollo import for ${opts.companyDomain}${opts.partial ? " (partial)" : ""}`,
     text: [
       opts.trigger === "auto"
-        ? `Apollo directory import for ${opts.companyDomain} (started automatically on the company admin's first directory view):`
+        ? `Apollo directory import for ${opts.companyDomain} (started automatically on ${opts.staffLane ? "a staff admin's" : "the company admin's"} first directory view):`
         : `Apollo directory import for ${opts.companyDomain}:`,
       ``,
       `Added: ${opts.added}`,

@@ -24,7 +24,7 @@ import {
   openAdminRequest,
 } from "@/lib/roadmap/db";
 import { staffRoadmapStatus } from "@/lib/roadmap/status";
-import { RoadmapRunway } from "@/components/roadmap/runway";
+import { RoadmapRunway, RunwayStage } from "@/components/roadmap/runway";
 import { RequestAdminAccess } from "@/components/roadmap/request-admin";
 import { BootstrapCard } from "@/components/roadmap/bootstrap-card";
 import { ConfirmIdentity } from "@/components/roadmap/confirm-identity";
@@ -115,7 +115,9 @@ function Teaser() {
         {/* max-w-5xl, not 4xl: the eight-stop horizontal runway needs up to
             940px at the lg floor (roadmap.css lg math). */}
         <div className="mx-auto mt-12 max-w-5xl">
-          <RoadmapRunway status={null} />
+          <RunwayStage>
+            <RoadmapRunway status={null} />
+          </RunwayStage>
         </div>
         <div className="mt-12 grid gap-6 sm:grid-cols-2">
           {ROADMAP_STEPS.map((step) => (
@@ -182,14 +184,27 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
   if (view.kind === "anonymous") return <Teaser />;
 
   if (view.kind === "staff") {
-    // §5.18 unification: staff get the full hub backed by the internal
-    // (public /work) lane. Status is computed here, not in the classifier
-    // (access.ts stays classification-only).
+    // §5.18 unification + staff parity: staff get the full hub backed by
+    // the internal (public /work) lane plus the NULL-lane staff directory.
+    // Status is computed here, not in the classifier (access.ts stays
+    // classification-only). autoInit mirrors the company predicate minus
+    // company.status: no companies row exists for the staff lane (xl.net is
+    // RESERVED), and the route's staff branch skips the paused check by
+    // design (ROADMAP_ENABLED is the staff lane's only write kill switch).
     const staffStatus = await staffRoadmapStatus();
+    const staffApolloEnabled =
+      !!process.env.APOLLO_API_KEY && roadmapEnabled(process.env);
+    const staffAutoInit =
+      view.globalAdmin &&
+      staffStatus.directory.people === 0 &&
+      !staffStatus.directory.everImported &&
+      staffApolloEnabled;
     return (
       <StaffHub
         email={view.email}
-        showAdminLink={view.showAdminLink}
+        globalAdmin={view.globalAdmin}
+        autoInit={staffAutoInit}
+        canRecheck={view.globalAdmin && staffApolloEnabled}
         status={staffStatus}
       />
     );
@@ -359,7 +374,16 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
       </section>
 
       <section aria-label="Roadmap progress">
-        <RoadmapRunway status={status} />
+        <RunwayStage>
+          <RoadmapRunway status={status} />
+          {/* Hub orientation caption, hoisted out of runway.tsx in the
+              staff-parity round (the (steps) shell renders the runway
+              bare). */}
+          <p className="mono mt-6 text-center text-xs" style={faint}>
+            Start wherever helps most. Two steps are paid training, booked on
+            the Builders page.
+          </p>
+        </RunwayStage>
       </section>
 
       {/* One faint mono line replaced the 4-stat monument section: a

@@ -236,14 +236,15 @@ export type TrackedStepKey = (typeof TRACKED_STEP_KEYS)[number];
 
 /** Where each step points for an xl.net STAFF session (§5.18 unification:
  * staff use the same hub backed by the internal lane). The ONE map - the
- * staff hub cards, the staff StepStrip, and the per-page staff redirects
- * under (steps) all read it; a second spelling anywhere is how two surfaces
- * come to disagree. xl.net can never be a company (RESERVED_DOMAINS + DB
- * CHECK), so governance points at the public builder and directory at the
- * derived builder list on the staff scorecard. */
+ * staff hub cards, the (steps) shell runway (RoadmapRunway hrefs prop), and
+ * the per-page staff redirects under (steps) all read it; a second spelling
+ * anywhere is how two surfaces come to disagree. xl.net can never be a
+ * company (RESERVED_DOMAINS + DB CHECK), so governance points at the public
+ * builder; directory points at the real staff directory (the NULL-company_id
+ * lane, staff-parity round). */
 export const STAFF_STEP_HREFS: Record<RoadmapStepKey, string> = {
   governance: "/governance",
-  directory: "/roadmap/scorecard",
+  directory: "/roadmap/directory",
   workshop: "/builders#workshop",
   work: "/work/submit",
   request: "/work/requested",
@@ -251,6 +252,13 @@ export const STAFF_STEP_HREFS: Record<RoadmapStepKey, string> = {
   scorecard: "/roadmap/scorecard",
   cohort: "/builders#cohort",
 };
+
+/** The staff lane's Apollo search domain AND the apolloKickGuardKey fence
+ * domain for every staff surface (staff hub DirectoryCard, the staff
+ * directory page, the apollo-import route's staff branch). ONE constant:
+ * two spellings is how the hub and the step page stop sharing a
+ * sessionStorage fence and a same-tab double import runs. */
+export const STAFF_LANE_DOMAIN = "xl.net";
 
 /** The ONE sessionStorage guard key for the directory auto-init kick (round
  * 3). Keyed by DOMAIN, not company id (the client never sees the uuid).

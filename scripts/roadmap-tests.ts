@@ -25,12 +25,15 @@ import {
 import { isStaffSession, SILENT_REVERIFY_PROVIDERS } from "../src/lib/roadmap/access";
 import type { SessionData } from "@aicompany/core/auth/session";
 import { INTERNAL_SCOPE, scopeOf } from "../src/lib/work/scope";
+import { readFileSync, existsSync } from "node:fs";
 import {
   isPaidStep,
   ROADMAP_STEPS,
+  STAFF_LANE_DOMAIN,
   STAFF_STEP_HREFS,
   TRACKED_STEP_KEYS,
 } from "../src/lib/roadmap/config";
+import { personLabel, personLabelParts } from "../src/lib/person-label";
 import {
   REQ_CAP_OPEN,
   REQ_LISTED,
@@ -234,9 +237,117 @@ ok("STAFF_STEP_HREFS is total and pins the owner-ruled staff targets", () => {
   assert.equal(STAFF_STEP_HREFS.requested, "/work/requested");
   assert.equal(STAFF_STEP_HREFS.scorecard, "/roadmap/scorecard");
   assert.equal(STAFF_STEP_HREFS.governance, "/governance");
-  assert.equal(STAFF_STEP_HREFS.directory, "/roadmap/scorecard");
+  // Staff parity round: the REAL staff directory, no longer the scorecard
+  // alias.
+  assert.equal(STAFF_STEP_HREFS.directory, "/roadmap/directory");
   assert.equal(STAFF_STEP_HREFS.workshop, "/builders#workshop");
   assert.equal(STAFF_STEP_HREFS.cohort, "/builders#cohort");
+});
+
+// ---- Staff-parity round (2026-08-09) invariants ----
+ok("STAFF_LANE_DOMAIN is the one xl.net spelling", () => {
+  assert.equal(STAFF_LANE_DOMAIN, "xl.net");
+});
+
+ok("person-label rule: First Last or email, never a bare first name", () => {
+  assert.deepEqual(personLabelParts("Adam Radulovic", "adam@xl.net"), {
+    label: "Adam Radulovic",
+    kind: "name",
+  });
+  // Single-token name demotes to the email.
+  assert.deepEqual(personLabelParts("Adam", "adam@xl.net"), {
+    label: "adam@xl.net",
+    kind: "email",
+  });
+  assert.deepEqual(personLabelParts(null, "adam@xl.net"), {
+    label: "adam@xl.net",
+    kind: "email",
+  });
+  // Bare single token only when there is no email at all.
+  assert.deepEqual(personLabelParts("Adam", null), {
+    label: "Adam",
+    kind: "bare",
+  });
+  assert.deepEqual(personLabelParts("  Ana  Maria  ", ""), {
+    label: "Ana  Maria",
+    kind: "name",
+  });
+  assert.equal(personLabel("", null), "");
+  assert.equal(personLabel("Tim", "  "), "Tim");
+});
+
+// Source pins (readFileSync from the repo root, where test:roadmap runs).
+// The blank-shell/redirect-loop class cannot be import-pinned, so these
+// grep the files that must not regress.
+ok("staff-parity source pins hold", () => {
+  const read = (p: string) => readFileSync(p, "utf8");
+  // StepStrip is retired: the (steps) shell renders the hub runway.
+  assert.equal(existsSync("src/components/roadmap/step-strip.tsx"), false);
+  assert.ok(!read("src/app/roadmap/roadmap.css").includes("rmp-strip"));
+  assert.ok(
+    !read("src/app/roadmap/(steps)/layout.tsx").includes("StepStrip")
+  );
+  // The runway's ornament staff render is retired with its prop.
+  const runway = read("src/components/roadmap/runway.tsx");
+  assert.ok(!runway.includes("noInvite"));
+  // The staff hub passes real status + the ONE staff href map and the ONE
+  // lane-domain constant (a literal "xl.net" prop would fork the
+  // apolloKickGuardKey sessionStorage fence).
+  const staffHub = read("src/components/roadmap/staff-hub.tsx");
+  assert.ok(staffHub.includes("hrefs={STAFF_STEP_HREFS}"));
+  assert.ok(!staffHub.includes("status={null}"));
+  assert.ok(staffHub.includes("domain={STAFF_LANE_DOMAIN}"));
+  // The directory page renders a staff branch; a resurrected staff
+  // redirect against the flipped href would be a self-redirect loop.
+  const dirPage = read("src/app/roadmap/(steps)/directory/page.tsx");
+  assert.ok(!dirPage.includes("redirect(STAFF_STEP_HREFS.directory)"));
+  assert.ok(dirPage.includes("STAFF_DIRECTORY_SCOPE"));
+  // Staff governance is the constant-done public-offering ruling.
+  assert.ok(
+    read("src/lib/roadmap/status.ts").includes("governance: { done: true }")
+  );
+  // Company-lane fallback strings stay put (the staff overrides are props).
+  assert.ok(
+    read("src/components/roadmap/directory-card.tsx").includes(
+      "Your company admin can initialize this from Apollo."
+    )
+  );
+  assert.ok(
+    read("src/app/roadmap/(steps)/directory/directory-table.tsx").includes(
+      "Your company admin adds people here."
+    )
+  );
+  // Every staff write branch keeps the kill switch + global-admin gate.
+  for (const route of [
+    "src/app/api/roadmap/directory/route.ts",
+    "src/app/api/roadmap/directory/[id]/route.ts",
+    "src/app/api/roadmap/apollo-import/route.ts",
+  ]) {
+    const src = read(route);
+    assert.ok(src.includes("readStaffPage"), route);
+    assert.ok(src.includes("requireGlobalAdmin"), route);
+    assert.ok(src.includes("requireRoadmapWritesEnabled"), route);
+  }
+  // The duplicate-email catch must recognize the staff lane's partial
+  // unique or a staff duplicate 500s instead of 409ing.
+  for (const route of [
+    "src/app/api/roadmap/directory/route.ts",
+    "src/app/api/roadmap/directory/[id]/route.ts",
+  ]) {
+    assert.ok(read(route).includes("company_people_email_staff_uq"), route);
+  }
+  // The naming rule's consumers and its deliberate exclusion.
+  for (const consumer of [
+    "src/app/roadmap/(steps)/scorecard/page.tsx",
+    "src/app/roadmap/(steps)/scorecard/requests/page.tsx",
+    "src/components/requests/serialize.ts",
+  ]) {
+    assert.ok(read(consumer).includes("@/lib/person-label"), consumer);
+  }
+  // The public /work credit must never become an email.
+  assert.ok(!read("src/components/work-card.tsx").includes("person-label"));
+  // The bare-first-name source is gone from the scorecard query.
+  assert.ok(!read("src/lib/roadmap/db.ts").includes("submitterName"));
 });
 
 ok("no step copy carries an em dash (this pin IS the enforcement)", () => {

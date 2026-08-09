@@ -21,7 +21,10 @@ export function AddToDirectory({ email }: { email: string }) {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          name: email.split("@")[0] || email,
+          // parsePersonFields requires >= 2 chars: a one-char local part
+          // (a@xl.net) falls back to the full address as the name.
+          name:
+            email.split("@")[0].length >= 2 ? email.split("@")[0] : email,
           email,
           phone: null,
         }),
