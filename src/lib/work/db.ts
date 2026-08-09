@@ -19,6 +19,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { isAdmin } from "@aicompany/core/auth/guard";
+import { RFP_PROVIDERS } from "@/lib/rfp/access";
 import { db, schema } from "@/lib/db";
 import { WORK_CAPS, type WorkKind } from "./config";
 import type { WorkCard } from "./lint";
@@ -110,6 +111,10 @@ export async function createSubmission(opts: {
       mdData: opts.md?.data ?? null,
       userId: opts.userId,
       submitterEmail: opts.email,
+      // Stamped once, never rewritten by a transfer (§5.16 transfer round):
+      // the daily quota belongs to whoever spent the panel run, not to
+      // whoever happens to own the row afterwards.
+      creatorEmail: opts.email,
       submitterName: opts.name,
       kind: opts.kind,
       title: opts.title,
@@ -145,11 +150,21 @@ export async function submissionById(
   return rows[0] ?? null;
 }
 
+/** Case-folded ownership predicate. Raw equality was safe only while every
+ * submitter_email arrived verbatim from the session that later read it; a
+ * transfer stores a TYPED address, so "Jane@xl.net" must still match a row
+ * stored as "jane@xl.net" (src/lib/work/transfer.ts sameEmail is the
+ * in-memory twin of this). No index is lost: work_submissions has never had
+ * one on submitter_email. */
+function ownedBy(email: string) {
+  return sql`lower(${S.submitterEmail}) = ${email.trim().toLowerCase()}`;
+}
+
 export async function mySubmissions(email: string): Promise<SubmissionRow[]> {
   return db
     .select(ROW_COLS)
     .from(S)
-    .where(eq(S.submitterEmail, email))
+    .where(ownedBy(email))
     .orderBy(desc(S.createdAt))
     .limit(25);
 }
@@ -171,6 +186,13 @@ const LIST_COLS = {
   panelError: S.panelError,
   panelProgressJson: S.panelProgressJson,
   panelHeartbeatAt: S.panelHeartbeatAt,
+  // §5.16 transfer round: the owner triple. All three are small scalars, so
+  // ONE projection still serves both the submitter's own list and the
+  // admin's all-submissions list, and a transfer's provenance ("moved from")
+  // needs no second query.
+  submitterEmail: S.submitterEmail,
+  creatorEmail: S.creatorEmail,
+  companyId: S.companyId,
 };
 
 /** A row narrowed to what statusView() projects. Keep this in step with
@@ -190,6 +212,9 @@ export type SubmissionListRow = Pick<
   | "panelError"
   | "panelProgressJson"
   | "panelHeartbeatAt"
+  | "submitterEmail"
+  | "creatorEmail"
+  | "companyId"
 >;
 
 /** The /work/submit "your submissions" list (GET /api/work/submissions).
@@ -203,14 +228,28 @@ export type SubmissionListRow = Pick<
  *     (WORK_CAPS), and keeps the response bounded.
  * mySubmissions() itself is unchanged: its other caller is §5.18 /roadmap/work. */
 export async function mySubmissionsForList(
-  email: string
+  email: string,
+  limit = 200
 ): Promise<SubmissionListRow[]> {
   return db
     .select(LIST_COLS)
     .from(S)
-    .where(eq(S.submitterEmail, email))
+    .where(ownedBy(email))
     .orderBy(desc(S.createdAt))
-    .limit(200);
+    .limit(limit);
+}
+
+/** The admin "All submissions" view on /work/submit (§5.16 transfer round).
+ * EVERY row in EVERY lane, newest first, through the same narrow projection
+ * the submitter's own list uses. Deliberately NOT a widened
+ * mySubmissionsForList: the caller must ask for this by name, so no gate can
+ * accidentally serve the all-list to a non-admin by passing a falsy email.
+ * The caller asks for limit+1 and reports the truncation rather than letting
+ * a silently-cut list assert a total (the 2026-08-07 pager lesson). */
+export async function allSubmissionsForList(
+  limit = 200
+): Promise<SubmissionListRow[]> {
+  return db.select(LIST_COLS).from(S).orderBy(desc(S.createdAt)).limit(limit);
 }
 
 export async function allSubmissions(limit = 100): Promise<SubmissionRow[]> {
@@ -228,7 +267,12 @@ export async function countCreatedToday(email: string): Promise<number> {
     .from(S)
     .where(
       and(
-        eq(S.submitterEmail, email),
+        // CREATOR, not owner (§5.16 transfer round). Anchoring the quota on
+        // submitter_email would let a colleague's twenty transferred rows
+        // consume the recipient's whole day, and would let the sender free
+        // their own quota by moving rows away. creator_email is NULL on
+        // every pre-round row, hence the coalesce rather than a backfill.
+        sql`lower(coalesce(${S.creatorEmail}, ${S.submitterEmail})) = ${email.trim().toLowerCase()}`,
         gte(S.createdAt, dayStart),
         ne(S.status, "failed")
       )
@@ -885,6 +929,177 @@ export async function canProposeUpdate(
   return (await updateChainEmails(row)).has(email.toLowerCase());
 }
 
+export type TransferCandidate = { email: string; name: string | null };
+
+/**
+ * Staff addresses to offer as transfer targets (§5.16 transfer round). A
+ * CONVENIENCE for the typed field, never a gate: the route's only hard rule
+ * is the lane's domain, because a colleague who started last week is in
+ * none of these three sources and must still be able to receive work.
+ *
+ * Three sources, all already visible to a staff session:
+ *  - the XL.net staff directory (company_people in the NULL lane), which
+ *    /roadmap/directory renders in full to any staff viewer;
+ *  - anyone who has ever signed in with an xl.net account;
+ *  - anyone who already owns a public-lane submission.
+ * Queried here rather than through roadmap/db.ts so the staff lane's
+ * directory helpers keep their DirectoryScope contract untouched.
+ */
+export async function staffTransferCandidates(
+  domain: string,
+  limit = 500
+): Promise<TransferCandidate[]> {
+  // The domain is a code constant at every call site (WORK_SUBMIT_DOMAINS),
+  // passed in rather than imported so this file keeps no edge back to
+  // http.ts, which reaches the session and the roadmap.
+  const lane = domain.trim().toLowerCase();
+  const domainLike = `%@${lane}`;
+  const [people, accounts, submitters] = await Promise.all([
+    db
+      .select({
+        email: schema.companyPeople.email,
+        name: schema.companyPeople.name,
+      })
+      .from(schema.companyPeople)
+      .where(
+        and(
+          isNull(schema.companyPeople.companyId),
+          isNotNull(schema.companyPeople.email),
+          sql`lower(${schema.companyPeople.email}) like ${domainLike}`
+        )
+      )
+      .limit(limit),
+    db
+      .select({
+        email: schema.users.email,
+        name: schema.users.displayName,
+      })
+      .from(schema.users)
+      // emailDomain is a stored column, so no LIKE is needed here. Archived
+      // accounts are excluded because they cannot sign in at all, and the
+      // provider filter is the load-bearing one: a users row proves only that
+      // SOMETHING signed in claiming that address, and the Microsoft
+      // common-tenant lane will mint one for any email a free Entra tenant
+      // asserts (the nOAuth argument at the head of src/lib/rfp/access.ts).
+      // Advertising such a row as a colleague would put an attacker-planted
+      // address in a picker people trust.
+      //
+      // RFP_PROVIDERS (google) and NOT isVerifiedStaffProvider, even after
+      // the 2026-08-09 Microsoft-parity round, for a reason that is a
+      // property of this query rather than a policy disagreement: Microsoft
+      // staff trust rides the PER-LOGIN mv claim, which is HMAC-covered and
+      // deliberately never stored on the users row, so a stored-row filter
+      // has no evidence to read. Microsoft staff still reach this list
+      // through the two sources that carry their own evidence - the staff
+      // directory and prior public-lane submissions - and a colleague who
+      // appears in neither is still a valid target, because the list is a
+      // convenience and the lane's domain is the only hard rule.
+      .where(
+        and(
+          eq(schema.users.emailDomain, lane),
+          isNull(schema.users.archivedAt),
+          inArray(schema.users.authProvider, [...RFP_PROVIDERS])
+        )
+      )
+      .limit(limit),
+    db
+      .selectDistinct({ email: sql<string>`lower(${S.submitterEmail})` })
+      .from(S)
+      .where(
+        and(isNull(S.companyId), sql`lower(${S.submitterEmail}) like ${domainLike}`)
+      )
+      .limit(limit),
+  ]);
+  // Email-keyed merge, first non-empty name wins. Directory rows are listed
+  // first on purpose: they are the maintained source of real names.
+  const byEmail = new Map<string, TransferCandidate>();
+  const add = (email: string | null, name: string | null) => {
+    const key = (email ?? "").trim().toLowerCase();
+    if (!key) return;
+    const seen = byEmail.get(key);
+    if (!seen) byEmail.set(key, { email: key, name: name?.trim() || null });
+    else if (!seen.name && name?.trim()) seen.name = name.trim();
+  };
+  for (const p of people) add(p.email, p.name);
+  for (const a of accounts) add(a.email, a.name);
+  for (const s of submitters) add(s.email, null);
+  return [...byEmail.values()]
+    .sort((a, b) => a.email.localeCompare(b.email))
+    .slice(0, limit);
+}
+
+export type TransferResult =
+  | { ok: true; row: SubmissionRow; previousEmail: string }
+  | { ok: false; reason: "raced" };
+
+/**
+ * Move a submission to a new owner (§5.16 transfer round, owner directive
+ * 2026-08-09). ONE statement, and it is a COMPARE-AND-SWAP: the WHERE pins
+ * the owner the caller authorized against, so two people moving the same row
+ * at once cannot both win and an admin acting on a stale "All submissions"
+ * render cannot move a row out from under a transfer that already happened.
+ *
+ * What moves: submitter_email (the ownership anchor every gate reads) and
+ * user_id (repointed to the recipient's site account, or NULL when they have
+ * none, exactly as the email-intake lane already writes it).
+ *
+ * What does NOT move, deliberately:
+ *  - creator_email, which is stamped once and is what the daily quota counts;
+ *  - submitter_name and card_json, i.e. the PUBLISHED CREDIT. The card prints
+ *    the first name the submitter chose to publish under; rewriting it here
+ *    would republish public copy with no panel run and no lint, and there is
+ *    no name to rewrite it TO (the recipient never typed one).
+ *  - parent_id, so the update chain (and every earlier author's right to
+ *    propose the next version) is untouched;
+ *  - display_rank, slug, published_at: the card does not move on the page.
+ */
+export async function transferSubmission(opts: {
+  id: string;
+  toEmail: string;
+  /** The owner the caller's authorization was decided against. */
+  expectOwnerEmail: string;
+  /** The status the caller's STATE gate was decided against. Pinned in the
+   * WHERE because otherwise that gate is advisory: the route reads the row,
+   * decides "not running", and writes milliseconds later, and a queue drain
+   * tick in between turns the row into a live run whose outcome email would
+   * then go to the previous owner. */
+  expectStatus: string;
+  /** The run identity the state gate saw, or null. Status alone is NOT
+   * enough: `claimPanel` re-claims a STALE running row and leaves the status
+   * at "running", which is precisely the case the gate deliberately admits,
+   * so a status-only pin would still let a move land inside a freshly
+   * claimed run. The attempt nonce is what changes on every claim. */
+  expectAttemptId: string | null;
+  toUserId: string | null;
+}): Promise<TransferResult> {
+  const previousEmail = opts.expectOwnerEmail;
+  const res = await db
+    .update(S)
+    .set({
+      submitterEmail: opts.toEmail,
+      userId: opts.toUserId,
+      // First move stamps the pre-move owner as the creator; later moves keep
+      // the original. COALESCE, never a plain write, or a second transfer
+      // would re-anchor the quota on an intermediate owner.
+      creatorEmail: sql`coalesce(${S.creatorEmail}, ${S.submitterEmail})`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(S.id, opts.id),
+        sql`lower(${S.submitterEmail}) = ${previousEmail.trim().toLowerCase()}`,
+        eq(S.status, opts.expectStatus),
+        opts.expectAttemptId === null
+          ? isNull(S.panelAttemptId)
+          : eq(S.panelAttemptId, opts.expectAttemptId)
+      )
+    )
+    .returning(ROW_COLS);
+  const row = res[0];
+  if (!row) return { ok: false, reason: "raced" };
+  return { ok: true, row, previousEmail };
+}
+
 /** The live (published) descendant of a superseded row, walking the swap
  * chain downward (§5.16). Feeds the status list's "Submit an update" link on
  * superseded rows: without it, a submitter whose card was last updated by
@@ -1406,8 +1621,13 @@ export type CompanySubmissionMeta = {
 
 /** Company-admin "in review" list: METADATA ONLY (title/status/dates/
  * submitter), never held or failed content, panel errors, or card drafts.
- * The one sanctioned company-wide submissions lister — allSubmissions stays
- * global and is only reachable from the GA-gated /admin/work. */
+ * The one company-scoped lister a CLIENT session may reach. Two site-wide
+ * listers exist beside it and both require the same XL.net staff-admin
+ * predicate: allSubmissions (the GA-gated /admin/work) and, since the
+ * 2026-08-09 transfer round, allSubmissionsForList (GET
+ * /api/work/submissions?scope=all behind verifiedWebAdmin, which is that
+ * same predicate expressed in code). Any THIRD cross-company read belongs
+ * behind one of those two gates or nowhere. */
 export async function companySubmissions(
   companyId: string,
   limit = 50

@@ -1655,6 +1655,7 @@ async function main() {
     id: "00000000-0000-0000-0000-000000000001",
     userId: null,
     submitterEmail: "a@xl.net",
+    creatorEmail: null as string | null,
     submitterName: null,
     kind: "skill",
     title: "T",
@@ -2877,6 +2878,274 @@ async function main() {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // §5.16 ownership transfer (2026-08-09). Pure surface only: the target
+  // validator, the status gate, the case-folding identity helper, and the
+  // source-scrape tripwires for the invariants that are enforced in code
+  // rather than in types.
+  {
+    const {
+      normalizeOwnerEmail,
+      sameEmail,
+      transferBlockedReason,
+      transferTarget,
+    } = await import("../src/lib/work/transfer");
+    const { TRANSFERABLE_STATUSES, isTransferableStatus } = await import(
+      "../src/lib/work/config"
+    );
+    const { readFileSync: readSrc } = await import("node:fs");
+    const read = (rel: string) => readSrc(rel, "utf8");
+
+    const staff = (raw: unknown, currentOwner = "adam@xl.net") =>
+      transferTarget({
+        raw,
+        laneDomains: ["xl.net"],
+        currentOwner,
+        laneLabel: "the Our Work page",
+      });
+
+    // Accepts and CANONICALIZES. The stored value must be lowercase: it is
+    // typed by a human, and the roadmap scorecard has always grouped on
+    // lower(submitter_email).
+    const okTarget = staff("  Jane.Doe@XL.net  ");
+    assert.ok(okTarget.ok, "a plain staff address is accepted");
+    assert.equal(
+      okTarget.ok && okTarget.email,
+      "jane.doe@xl.net",
+      "the target is trimmed and lowercased"
+    );
+    assert.equal(normalizeOwnerEmail(" A@B.C "), "a@b.c");
+
+    // Shape refusals.
+    for (const bad of ["", "   ", "notanemail", "a@b@c.net", "a b@xl.net"])
+      assert.ok(!staff(bad).ok, `refuses ${JSON.stringify(bad)}`);
+    assert.ok(!staff(42).ok, "refuses a non-string body field");
+    assert.ok(
+      !staff(`${"x".repeat(250)}@xl.net`).ok,
+      "refuses an over-long address before parsing it"
+    );
+    // Non-ASCII is refused outright by emailDomain: a homoglyph domain must
+    // never render as xl.net while comparing unequal.
+    assert.ok(!staff("jane@xl․net").ok, "refuses a homoglyph domain");
+
+    // THE TENANCY RULE. Exact label equality, never a suffix test.
+    assert.ok(!staff("jane@evilxl.net").ok, "a suffix lookalike is refused");
+    assert.ok(
+      !staff("tron.netter@ai.xl.net").ok,
+      "a subdomain address is refused (this system's own automation identity)"
+    );
+    assert.ok(
+      !staff("jane@acme.example").ok,
+      "an outside domain cannot receive a public-lane row"
+    );
+    const company = transferTarget({
+      raw: "jane@acme.example",
+      laneDomains: ["acme.example"],
+      currentOwner: "bob@acme.example",
+      laneLabel: "Acme's private Your Work page",
+    });
+    assert.ok(company.ok, "a company row moves inside its own domain");
+    assert.ok(
+      !transferTarget({
+        raw: "adam@xl.net",
+        laneDomains: ["acme.example"],
+        currentOwner: "bob@acme.example",
+        laneLabel: "Acme's private Your Work page",
+      }).ok,
+      "a company row cannot be moved to a staff address (cross-lane)"
+    );
+    assert.ok(
+      staff("jane@acme.example").ok === false &&
+        staff("jane@acme.example").ok === false,
+      "refusal is stable"
+    );
+    const wrongLane = staff("jane@acme.example");
+    assert.ok(
+      !wrongLane.ok && wrongLane.message.includes("xl.net"),
+      "the wrong-lane refusal names the domain that would work"
+    );
+
+    // A no-op move is named rather than spending a write and two emails.
+    assert.ok(!staff("ADAM@xl.net", "adam@xl.net").ok, "same owner refused");
+
+    // Identity helper.
+    assert.ok(sameEmail("A@X.net", "a@x.net"));
+    assert.ok(sameEmail(" a@x.net ", "a@x.net"));
+    assert.ok(!sameEmail("a@x.net", "b@x.net"));
+    assert.ok(!sameEmail(null, "a@x.net"), "null never matches");
+    assert.ok(!sameEmail("a@x.net", undefined));
+
+    // Status gate. superseded is the STRUCTURAL refusal: moving one dead
+    // generation of a supersede chain would rewrite who may update the LIVE
+    // card, because updateChainEmails walks parent_id upward.
+    assert.ok(
+      !isTransferableStatus("superseded"),
+      "superseded is not transferable"
+    );
+    assert.ok(
+      (TRANSFERABLE_STATUSES as readonly string[]).every(
+        (s) => s !== "superseded"
+      ),
+      "the shared list excludes superseded"
+    );
+    for (const s of ["received", "published", "held", "failed", "pending_approval"])
+      assert.equal(
+        transferBlockedReason({ status: s, stale: false }),
+        null,
+        `${s} rows move freely`
+      );
+    assert.ok(
+      transferBlockedReason({ status: "superseded", stale: false })?.includes(
+        "live version"
+      ),
+      "the superseded refusal points at the live row instead of dead-ending"
+    );
+    // A live run is a TEMPORAL refusal; a stale one is not protected, or a
+    // crashed worker would make a row permanently unmovable.
+    assert.ok(
+      transferBlockedReason({ status: "running", stale: false }),
+      "a live panel run blocks the move"
+    );
+    assert.equal(
+      transferBlockedReason({ status: "running", stale: true }),
+      null,
+      "an orphaned run does not block the move"
+    );
+
+    // Source-scrape tripwires for invariants types cannot hold.
+    const transferRoute = read(
+      "src/app/api/work/submissions/[id]/transfer/route.ts"
+    );
+    assert.ok(
+      transferRoute.includes("requireXlUser"),
+      "the transfer route keeps the staff gate"
+    );
+    assert.ok(
+      transferRoute.includes("verifiedWebAdmin"),
+      "admin authority is provider-checked, never bare isAdmin"
+    );
+    assert.ok(
+      transferRoute.includes(
+        "!row || (!sameEmail(row.submitterEmail, user.email) && !isVerifiedAdmin)"
+      ) && !/ownership[\s\S]{0,40}403/.test(transferRoute),
+      "missing and not-yours share ONE 404 (no existence oracle)"
+    );
+    assert.ok(
+      transferRoute.includes("!isVerifiedAdmin && !verifiedWebStaff(user)"),
+      "the OWNER path is provider-checked too: this verb strips an owner"
+    );
+    assert.ok(
+      transferRoute.indexOf("return NOT_FOUND();") <
+        transferRoute.indexOf("untrusted_provider"),
+      "the provider refusal sits AFTER the 404, so it is no oracle"
+    );
+    assert.ok(
+      transferRoute.includes('company.status !== "active"') &&
+        transferRoute.includes("isCompanyEligibleDomain(laneDomain)"),
+      "a paused or ineligible company workspace cannot have work moved"
+    );
+    assert.ok(
+      transferRoute.includes("rateLimit(`work:transfer:${user.userId}`, 60, 10)"),
+      "the transfer bucket is per-actor on a per-MINUTE window"
+    );
+    assert.ok(
+      !transferRoute.includes("companyId: ") &&
+        !transferRoute.includes("scope"),
+      "the route never takes a lane from the caller"
+    );
+    const dbSrc = read("src/lib/work/db.ts");
+    assert.ok(
+      /coalesce\(\$\{S\.creatorEmail\}, \$\{S\.submitterEmail\}\)/.test(dbSrc),
+      "transferSubmission preserves the ORIGINAL creator across moves"
+    );
+    assert.ok(
+      dbSrc.includes("creatorEmail: opts.email"),
+      "createSubmission stamps the creator at intake"
+    );
+    assert.ok(
+      /countCreatedToday[\s\S]{0,900}coalesce\(\$\{S\.creatorEmail\}/.test(dbSrc),
+      "the daily quota counts the CREATOR, so a transfer moves nobody's quota"
+    );
+    assert.ok(
+      !/transferSubmission[\s\S]{0,1200}submitterName/.test(dbSrc),
+      "a transfer never rewrites the published credit"
+    );
+    const listRoute = read("src/app/api/work/submissions/route.ts");
+    assert.ok(
+      /wantsAll && !verifiedWebAdmin\(user\)/.test(listRoute),
+      "scope=all is provider-checked admin only"
+    );
+    assert.ok(
+      listRoute.includes('searchParams.get("scope") === "all"'),
+      "only the exact literal widens the scope"
+    );
+    const submitPage = read("src/app/work/submit/page.tsx");
+    assert.ok(
+      submitPage.includes("const canListAll = admin && verifiedStaff"),
+      "the All submissions button is gated on the route's own admin predicate"
+    );
+    assert.ok(
+      submitPage.includes("if (allowed && enabled && verifiedStaff)"),
+      "the staff-directory type-ahead is provider-gated like /roadmap/directory"
+    );
+    const island = read("src/app/work/submit/submit-client.tsx");
+    assert.ok(
+      island.includes("canTransfer && isTransferableStatus(r.status)"),
+      "the island offers the move only where the route allows it"
+    );
+    assert.ok(
+      island.includes("{canListAll &&\n                  isMine(r) &&"),
+      "Withdraw matches the DELETE route's predicate and never targets a stranger's row"
+    );
+    {
+      const dbSrc2 = read("src/lib/work/db.ts");
+      assert.ok(
+        dbSrc2.includes("inArray(schema.users.authProvider, [...RFP_PROVIDERS])"),
+        "the type-ahead never advertises an account minted through the forgeable lane"
+      );
+    }
+    assert.ok(
+      /if \(res\.ok\) \{[\s\S]{0,900}\} else \{[\s\S]{0,900}setError\(/.test(island),
+      "a refused list paints the refusal, never the empty state, in BOTH scopes"
+    );
+    assert.ok(
+      island.includes('r.lane === "internal" ? ('),
+      "the live-card link is lane-dependent (a company card is not on /work)"
+    );
+    assert.ok(
+      island.includes('view === "mine" ||'),
+      "isMine is fail-safe in the owner's own list"
+    );
+    // The move placeholder mirrors WORK_SUBMIT_DOMAINS[0] as a LITERAL,
+    // because that constant's module reaches the session and must not enter a
+    // client bundle. Pin the two together so the placeholder cannot drift.
+    {
+      const { WORK_SUBMIT_DOMAINS } = await import("../src/lib/work/http");
+      assert.ok(
+        island.includes(`"name@${WORK_SUBMIT_DOMAINS[0]}"`),
+        "the move field's placeholder still matches the staff domain constant"
+      );
+    }
+    assert.ok(
+      island.includes('r.laneName ?? "Company page"') &&
+        island.includes("`name@${r.laneDomain}`"),
+      "a company row names its tenant and the domain it can move to"
+    );
+    assert.ok(
+      island.includes('view === "all"') && island.includes("switchView"),
+      "the all-submissions toggle is wired"
+    );
+    assert.ok(
+      /if \(!anyActive \|\| view === "all"\) return;/.test(island),
+      "the all view does not poll"
+    );
+    assert.equal(
+      (island.match(/setInterval\(/g) ?? []).length,
+      1,
+      "exactly one poll timer survives"
+    );
   }
 
   console.log("work-tests: all assertions passed.");

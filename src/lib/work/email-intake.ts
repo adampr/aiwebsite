@@ -774,7 +774,12 @@ export async function handleWorkEmail(
     // The rejection never echoes the owner's address (not public).
     if (!(await canProposeUpdate(predecessor, sender, isAdmin(sender)))) {
       await reject(
-        `Updates to a published card are accepted from anyone who submitted a version of it, or from Adam. Ask them to send the update, or ask Adam to submit it for you.`,
+        // Not "anyone who submitted a version": since §5.16 transfers
+        // (2026-08-09) a submission can be MOVED, and moving it takes the
+        // previous owner off that generation of the chain, so someone who
+        // literally submitted a version can be refused here. The copy names
+        // the rule the code actually applies.
+        `Updates to a published card are accepted from whoever its versions belong to now, or from Adam. Ask them to send the update, or ask Adam to submit it for you.`,
         { pointer: false }
       );
       return;

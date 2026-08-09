@@ -281,6 +281,13 @@
       "when": 1786287674251,
       "tag": "0039_staff_directory",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786293274232,
+      "tag": "0040_work_transfer",
+      "breakpoints": true
     }
   ]
 }

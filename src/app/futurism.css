@@ -688,6 +688,20 @@ html.pager-active .work-pager {
 }
 .btn--text[aria-disabled="true"]::after { background: var(--xl-line); box-shadow: none; }
 
+/* SELECTED, which is the opposite of inert (§5.16 transfer round: the
+   /work/submit "Your submissions | All submissions" pair). The first draft
+   marked the active tab aria-disabled, and both aria-disabled rules above
+   would then have DIMMED the chosen one - a segmented control rendering its
+   selection as the greyed-out option. A pressed toggle stays operable
+   (switchView no-ops on re-selection), so aria-pressed is the whole story
+   and it needs its own lit state. Placed last so it wins at equal
+   specificity. */
+.btn--text[aria-pressed="true"] { color: var(--xl-light); }
+.btn--text[aria-pressed="true"]::after {
+  background: var(--xl-light);
+  box-shadow: 0 0 10px var(--xl-light-glow);
+}
+
 /* Busy is not merely disabled: while a submit is in flight the button
    holds a dim light, so "working" and "unavailable" read differently. */
 .btn[aria-busy="true"]:disabled {

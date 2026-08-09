@@ -3,6 +3,7 @@
 
 import { WORK_CAPS } from "./config";
 import { UPDATE_CONFLICT_NOTE, type SubmissionListRow } from "./db";
+import { sameEmail } from "./transfer";
 
 export interface SubmissionStatusView {
   id: string;
@@ -28,6 +29,28 @@ export interface SubmissionStatusView {
    * approval" (which would otherwise freeze on screen: the poll used to stop
    * on park, recreating the exact annoyance the auto lane removes). */
   autoApprove: boolean;
+  /** §5.16 transfer round: who owns this submission right now. On the
+   * submitter's own list this is always the viewer, so it renders nowhere;
+   * the admin "All submissions" view is what needs it. Safe to project on
+   * every row because every caller of statusView is already owner-or-admin
+   * (the file header's standing rule). */
+  owner: string;
+  /** The row's CREATOR when a transfer has moved it since, else null.
+   * Provenance for a card that reads "submitted by" someone who did not
+   * create the row; also the reason the quota did not move with it. */
+  movedFrom: string | null;
+  /** Which page this row publishes to, as a label rather than the company
+   * UUID: the all-submissions list mixes lanes and two rows under one title
+   * would otherwise be indistinguishable. */
+  lane: "internal" | "company";
+  /** Company lane only, and only on the admin all-submissions list: the
+   * company's display name and registered domain. The chip needs the name to
+   * tell two tenants apart, and the move field needs the DOMAIN because it is
+   * the only address family the route will accept for that row - without it
+   * the admin has to guess and read it back off a refusal. Null on the staff
+   * lane and on the own-list path, which never mixes tenants. */
+  laneName: string | null;
+  laneDomain: string | null;
 }
 
 // Plain-language labels for the machine-written panel_error checklist keys.
@@ -62,7 +85,10 @@ export function friendlyHeldReason(panelError: string | null): string | null {
 // SubmissionRow still satisfies it, so the [id] caller is unaffected.
 export function statusView(
   row: SubmissionListRow,
-  opts?: { currentId?: string | null }
+  opts?: {
+    currentId?: string | null;
+    lane?: { name: string; domain: string } | null;
+  }
 ): SubmissionStatusView {
   let stage: string | null = null;
   try {
@@ -114,5 +140,13 @@ export function statusView(
     // client would show "Publishing" forever on a row that is waiting for
     // the click (refutation MAJOR, 2026-08-03).
     autoApprove: !!row.parentId && row.autoApprove && row.heldAt === null,
+    owner: row.submitterEmail,
+    movedFrom:
+      row.creatorEmail && !sameEmail(row.creatorEmail, row.submitterEmail)
+        ? row.creatorEmail
+        : null,
+    lane: row.companyId === null ? "internal" : "company",
+    laneName: row.companyId === null ? null : (opts?.lane?.name ?? null),
+    laneDomain: row.companyId === null ? null : (opts?.lane?.domain ?? null),
   };
 }

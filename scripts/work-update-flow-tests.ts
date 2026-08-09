@@ -29,6 +29,11 @@ import {
   submissionById,
   latestPublishedAt,
   updateChainEmails,
+  allSubmissionsForList,
+  countCreatedToday,
+  mySubmissions,
+  mySubmissionsForList,
+  transferSubmission,
 } from "../src/lib/work/db";
 import type { WorkCard } from "../src/lib/work/lint";
 
@@ -751,6 +756,218 @@ async function main() {
     (await submissionById(rb))?.displayRank,
     null,
     "held-for-rerun rows drop their rank"
+  );
+
+  // 25-31. §5.16 OWNERSHIP TRANSFER (2026-08-09). The state machine here is
+  // one UPDATE, so what these legs actually pin is everything AROUND it:
+  // the quota anchor, the compare-and-swap, chain authorization, the
+  // auto-approve escalation that must not exist, and the case-folding that
+  // a typed-in address makes load-bearing.
+  const tOwner = "zztest-owner@xl.net";
+  const tNew = "ZZTEST-New.Owner@XL.net"; // deliberately mixed case
+  const tRow = await mkRow({ title: "ZZTEST Transfer Probe", email: tOwner });
+
+  // 25. The move itself: submitter_email becomes the new owner, creator is
+  // stamped with the person who actually created the row, and the published
+  // credit is untouched.
+  const beforeCredit = (await submissionById(tRow.id))!.submitterName;
+  const movedRow = await transferSubmission({
+    id: tRow.id,
+    toEmail: tNew.toLowerCase(),
+    expectOwnerEmail: tOwner,
+    expectStatus: "received",
+    expectAttemptId: null,
+    toUserId: null,
+  });
+  assert.ok(movedRow.ok, "the transfer lands");
+  const afterMove = (await submissionById(tRow.id))!;
+  assert.equal(afterMove.submitterEmail, tNew.toLowerCase(), "owner moved");
+  assert.equal(afterMove.creatorEmail, tOwner, "creator stamped on first move");
+  assert.equal(
+    afterMove.submitterName,
+    beforeCredit,
+    "the published credit is not rewritten by a move"
+  );
+  assert.equal(afterMove.companyId, null, "a move never changes the lane");
+
+  // 26. A SECOND move keeps the ORIGINAL creator. A plain write here would
+  // re-anchor the quota on an intermediate owner.
+  const third = "zztest-third@xl.net";
+  const movedRow2 = await transferSubmission({
+    id: tRow.id,
+    toEmail: third,
+    expectOwnerEmail: tNew.toLowerCase(),
+    expectStatus: "received",
+    expectAttemptId: null,
+    toUserId: null,
+  });
+  assert.ok(movedRow2.ok, "the second transfer lands");
+  assert.equal(
+    (await submissionById(tRow.id))!.creatorEmail,
+    tOwner,
+    "creator survives every later move"
+  );
+
+  // 27. COMPARE-AND-SWAP. A caller authorized against a stale owner loses;
+  // this is the two-admins-on-one-stale-page case.
+  const raced = await transferSubmission({
+    id: tRow.id,
+    toEmail: "zztest-race@xl.net",
+    expectOwnerEmail: tOwner, // no longer the owner
+    expectStatus: "received",
+    expectAttemptId: null,
+    toUserId: null,
+  });
+  assert.equal(raced.ok, false, "a stale expected owner is refused");
+  assert.equal(
+    (await submissionById(tRow.id))!.submitterEmail,
+    third,
+    "the refused move wrote nothing"
+  );
+
+  // 27b. THE STATE GATE IS IN THE WHERE, not merely read-then-checked. The
+  // route decides "not running" from a row it read milliseconds earlier; a
+  // queue-drain tick in that gap claims the row (status -> running with a
+  // fresh panel_attempt_id) and the move must lose, or the run's outcome
+  // email goes to the previous owner. Status alone is not enough either:
+  // claimPanel re-claims a STALE running row and LEAVES the status at
+  // running, which is exactly the case the gate admits.
+  await db
+    .update(S)
+    .set({ status: "running", panelAttemptId: "att-transfer-race" })
+    .where(eq(S.id, tRow.id));
+  const staleStatus = await transferSubmission({
+    id: tRow.id,
+    toEmail: "zztest-gate@xl.net",
+    expectOwnerEmail: third,
+    expectStatus: "received", // what the route saw
+    expectAttemptId: null,
+    toUserId: null,
+  });
+  assert.equal(staleStatus.ok, false, "a status that moved under us refuses");
+  const staleAttempt = await transferSubmission({
+    id: tRow.id,
+    toEmail: "zztest-gate@xl.net",
+    expectOwnerEmail: third,
+    expectStatus: "running", // right status...
+    expectAttemptId: null, // ...but the run was claimed since
+    toUserId: null,
+  });
+  assert.equal(
+    staleAttempt.ok,
+    false,
+    "a re-claimed run refuses even when the status is unchanged"
+  );
+  assert.equal(
+    (await submissionById(tRow.id))!.submitterEmail,
+    third,
+    "neither refused move wrote anything"
+  );
+  await db
+    .update(S)
+    .set({ status: "received", panelAttemptId: null })
+    .where(eq(S.id, tRow.id));
+
+  // 28. THE QUOTA. It must follow the creator, or moving twenty rows to a
+  // colleague would consume their whole day.
+  assert.ok(
+    (await countCreatedToday(tOwner)) >= 1,
+    "the creator still carries the row against their own daily quota"
+  );
+  assert.equal(
+    await countCreatedToday(third),
+    0,
+    "the recipient's daily quota is untouched by rows moved to them"
+  );
+  assert.ok(
+    (await countCreatedToday(tOwner.toUpperCase())) >= 1,
+    "the quota lookup is case-folded"
+  );
+
+  // 29. CASE FOLDING END TO END. A transferred row stores the address its
+  // mover typed; the new owner's session may carry any case, and both the
+  // list read and the narrow list projection must still find it.
+  const upperOwner = third.toUpperCase();
+  assert.ok(
+    (await mySubmissions(upperOwner)).some((r) => r.id === tRow.id),
+    "mySubmissions finds a moved row regardless of case"
+  );
+  assert.ok(
+    (await mySubmissionsForList(upperOwner)).some((r) => r.id === tRow.id),
+    "the polled list projection finds it too"
+  );
+  assert.ok(
+    !(await mySubmissionsForList(tOwner)).some((r) => r.id === tRow.id),
+    "and it has left the previous owner's list"
+  );
+
+  // 30. CHAIN AUTHORIZATION follows the move: the new owner may propose an
+  // update, the previous owner may not (they hold no row in the chain).
+  await db
+    .update(S)
+    .set({ status: "published", cardJson: JSON.stringify(card("ZZTEST Transfer Probe")) })
+    .where(eq(S.id, tRow.id));
+  const tPublished = (await submissionById(tRow.id))!;
+  assert.equal(
+    await canProposeUpdate(tPublished, third, false),
+    true,
+    "the new owner may update"
+  );
+  assert.equal(
+    await canProposeUpdate(tPublished, tOwner, false),
+    false,
+    "the previous owner no longer may (a move is a clean handoff)"
+  );
+  assert.equal(
+    await canProposeUpdate(tPublished, tOwner, true),
+    true,
+    "an admin always may"
+  );
+
+  // 31. NO AUTO-APPROVE ESCALATION. auto_approve is stamped only at intake
+  // by a verified admin session and is never written by a transfer, so
+  // moving a non-admin's update row to an admin cannot arm a self-publish.
+  const escChild = await mkRow({
+    parentId: tRow.id,
+    title: "ZZTEST Transfer Probe",
+    email: "zztest-nonadmin@xl.net",
+  });
+  assert.equal(escChild.autoApprove, false, "precondition: not armed");
+  const escMoved = await transferSubmission({
+    id: escChild.id,
+    toEmail: ADMIN,
+    expectOwnerEmail: "zztest-nonadmin@xl.net",
+    expectStatus: "received",
+    expectAttemptId: null,
+    toUserId: null,
+  });
+  assert.ok(escMoved.ok, "the update row moves");
+  assert.equal(
+    (await submissionById(escChild.id))!.autoApprove,
+    false,
+    "moving an update row to an admin does NOT arm the auto swap"
+  );
+
+  // 32. The admin all-submissions projection sees rows it does not own, in
+  // both lanes, and carries the owner columns the view renders.
+  const all = await allSubmissionsForList(500);
+  const seen = all.find((r) => r.id === tRow.id);
+  assert.ok(seen, "the all-list carries a row the caller does not own");
+  assert.equal(seen?.submitterEmail, third, "with its current owner");
+  assert.equal(seen?.creatorEmail, tOwner, "and its creator");
+  assert.ok(
+    all.some((r) => r.id === escChild.id),
+    "and every other row, whoever owns it"
+  );
+  // No lane filter: the admin view is an inventory of the whole site, so a
+  // company-lane row must be reachable through the same call.
+  const companyLane = await mkRow({
+    title: "ZZTEST Transfer Lane Probe",
+    companyId: comp.id,
+  });
+  assert.ok(
+    (await allSubmissionsForList(500)).some((r) => r.id === companyLane.id),
+    "the all-list spans the company lane too"
   );
 
   await cleanup();

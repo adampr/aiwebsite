@@ -43,9 +43,28 @@ export interface WorkUser {
  * carry no session at all, and createSubmission + a DB CHECK refuse the
  * flag outside a parentId row. */
 export function verifiedWebAdmin(user: WorkUser): boolean {
+  return verifiedWebStaff(user) && user.admin;
+}
+
+/** The same predicate WITHOUT the admin requirement: a staff session whose
+ * provider actually verifies the email claim, parsed with the strict
+ * exact-label domain reader rather than requireXlUser's `split("@")[1]`.
+ *
+ * Used by the §5.16 TRANSFER route for the row-owner path, and deliberately
+ * not by retry or update. The distinction is the harm class, not the verb:
+ * retry and update are ADDITIVE and leave the legitimate owner holding the
+ * row, so the nOAuth exposure there costs spend and noise. A transfer is the
+ * first §5.16 verb that permanently STRIPS an owner - afterwards their own
+ * [id] GET 404s and only the recipient or an admin can undo it - so a
+ * forgeable domain-only gate is not good enough for it.
+ *
+ * Since the 2026-08-09 Microsoft-parity round this admits Microsoft staff
+ * too, but only a session carrying the per-login `mv` claim; the only people
+ * it refuses are sessions whose email claim nothing verified, and the copy
+ * at the call site names the fix. */
+export function verifiedWebStaff(user: WorkUser): boolean {
   const domain = emailDomain(user.email);
   return (
-    user.admin &&
     isVerifiedStaffProvider(user) &&
     domain !== null &&
     WORK_SUBMIT_DOMAINS.includes(domain)

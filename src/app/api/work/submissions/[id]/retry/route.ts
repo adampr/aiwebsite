@@ -15,6 +15,7 @@ import {
   workError,
 } from "@/lib/work/http";
 import { kickPanel } from "@/lib/work/panel";
+import { sameEmail } from "@/lib/work/transfer";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -60,7 +61,10 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   const limited = rateLimit(`work:retry:${user.userId}`, 60, 5);
   if (limited) return limited;
   const row = await submissionById(id);
-  if (!row || (row.submitterEmail !== user.email && !isVerifiedAdmin))
+  // sameEmail (§5.16 transfer round): a moved row stores a typed address, so
+  // raw equality would 404 the new owner out of the lever they were just
+  // handed.
+  if (!row || (!sameEmail(row.submitterEmail, user.email) && !isVerifiedAdmin))
     return workError("not_found", "That submission does not exist.", 404);
   if (row.status === "published")
     return workError(

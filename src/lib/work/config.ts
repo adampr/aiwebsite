@@ -47,6 +47,12 @@ export const WORK_CAPS = {
   // and failed submissions do not count (enforced in countCreatedToday).
   submissionsPerUserPerDay: 20,
   submissionsPerAdminPerDay: 200,
+  // Rows GET /api/work/submissions will return, for the submitter's own list
+  // and for the admin all-submissions list alike. The route asks the DB for
+  // one MORE than this and reports `truncated`, because a list silently cut
+  // at its cap is what made the 2026-08-07 pager's "N submissions" readout
+  // assert a wrong total.
+  submissionListMax: 200,
   uploadAttemptsPerUserPerHour: 10,
   panelRunsPerSubmissionPerDay: 3,
   // Global daily budgets (work_usage ledger). A run is admitted only when
@@ -155,6 +161,38 @@ export const HELD_NEXT_STEPS =
   "Adam reviews held cards and will publish the draft, run the review again, " +
   "or remove it. Removing a submission is admin-only, so to change the " +
   "write-up ask Adam to remove it, then submit the corrected version.";
+
+/**
+ * Statuses a submission may be MOVED to another owner in (§5.16 transfer
+ * round, 2026-08-09). ONE list, imported by both the route and the island,
+ * so a control can never offer what the route refuses.
+ *
+ * `superseded` is deliberately absent, and it is the only interesting
+ * exclusion. A superseded row is a historical generation inside a supersede
+ * chain, and `updateChainEmails` walks `parent_id` UPWARD collecting each
+ * ancestor's submitter_email, which `canProposeUpdate` then unions. So
+ * moving a dead historical row would silently rewrite who may propose the
+ * next update to the LIVE card: a live authorization change wearing the
+ * clothes of an archival edit. The row's own "Submit an update" link
+ * already points at the live version, which is the surface that should be
+ * moved instead.
+ *
+ * `running` IS listed: the refusal there is temporal (a live panel run
+ * addresses its outcome email to the row it read at claim time) and belongs
+ * to the route, which can see the heartbeat and can say when to try again.
+ */
+export const TRANSFERABLE_STATUSES = [
+  "received",
+  "running",
+  "published",
+  "held",
+  "failed",
+  "pending_approval",
+] as const;
+
+export function isTransferableStatus(status: string): boolean {
+  return (TRANSFERABLE_STATUSES as readonly string[]).includes(status);
+}
 
 /** Frequency adverbs are banned in visible card copy (editorial rule 27). */
 export const BANNED_ADVERBS = [

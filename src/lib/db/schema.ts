@@ -267,9 +267,24 @@ export const workSubmissions = pgTable(
     userId: uuid("user_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    // CURRENT OWNER of the submission, and the only ownership anchor every
+    // gate reads (list, retry, poll, update chain, notify recipient, the
+    // scorecard's lower(submitter_email) credit). Movable since the §5.16
+    // transfer round (2026-08-09): "move it to someone else" rewrites this
+    // column and nothing else about who did the work.
     submitterEmail: text("submitter_email").notNull(),
+    // Who CREATED the row, stamped once at intake and never rewritten by a
+    // transfer. Exists solely so the per-person daily quota
+    // (countCreatedToday) stays anchored on the person who spent the panel
+    // run: without it, moving 20 rows to a colleague would consume that
+    // colleague's whole day. NULL on every pre-transfer-round row, so every
+    // read is COALESCE(creator_email, submitter_email) and the backfill is
+    // implicit rather than a migration that must not fail.
+    creatorEmail: text("creator_email"),
     // Optional public credit, a validated single first name; NULL = the card
     // credits "the XL.net team". Never derived from the OAuth profile.
+    // A transfer does NOT touch it: the credit is what the submitter chose
+    // to print on the card, not a pointer to the owner.
     submitterName: text("submitter_name"),
     kind: text("kind").notNull(), // "skill" | "program"
     title: text("title").notNull(),

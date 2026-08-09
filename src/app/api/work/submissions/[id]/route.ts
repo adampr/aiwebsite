@@ -30,6 +30,7 @@ import {
   workError,
 } from "@/lib/work/http";
 import { notifyRollback } from "@/lib/work/notify";
+import { sameEmail } from "@/lib/work/transfer";
 import { statusView } from "@/lib/work/view";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -49,7 +50,10 @@ export async function GET(_req: Request, ctx: Ctx): Promise<Response> {
   // common-tenant lane can mint an isAdmin-passing session (nOAuth; see
   // src/lib/rfp/access.ts). The provider check closes that for staff rows
   // too.
-  if (!row || (row.submitterEmail !== user.email && !verifiedWebAdmin(user)))
+  // sameEmail, not raw equality (§5.16 transfer round): a moved row stores
+  // the address its mover typed, so "Jane@xl.net" must still match a row
+  // stored as "jane@xl.net" or she 404s on her own submission.
+  if (!row || (!sameEmail(row.submitterEmail, user.email) && !verifiedWebAdmin(user)))
     return NOT_FOUND();
   return okJson({ submission: statusView(row) });
 }

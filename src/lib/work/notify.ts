@@ -14,6 +14,18 @@ import { mailSafeName, toDeliverableAttachment } from "./retention-encoding";
 import { screenPackageForMail, type ScreenResult } from "./mail-screen";
 import type { WorkCard } from "./lint";
 
+/** "Submitted by" must name who SUBMITTED it, which since the 2026-08-09
+ * transfer round is creator_email whenever a move has happened;
+ * submitter_email is the CURRENT OWNER. Both are printed when they differ,
+ * because the owner is who the pipeline now emails and who the scorecard
+ * counts, and this mail is the round's stated audit trail. */
+function ownerLines(row: SubmissionRow): string {
+  const creator = row.creatorEmail ?? row.submitterEmail;
+  return creator.trim().toLowerCase() === row.submitterEmail.trim().toLowerCase()
+    ? `Submitted by: ${row.submitterEmail}`
+    : `Submitted by: ${creator}\nOwned by (moved): ${row.submitterEmail}`;
+}
+
 function kindLabel(kind: string): string {
   return KIND_LABELS[kind as WorkKind] ?? kind;
 }
@@ -149,7 +161,7 @@ export async function sendArchiveRetentionEmail(
           ``,
           `Title: ${row.title}`,
           `Kind: ${kindLabel(row.kind)}`,
-          `Submitted by: ${row.submitterEmail}`,
+          ownerLines(row),
           // The word "original" never describes a screened copy: it is
           // built from the upload with entries removed, and a mailbox read
           // six months from now is the one that has to get this right.
@@ -315,7 +327,7 @@ export async function notifyPublished(
         `Company: ${sctx.orgName} (${sctx.companyDomain ?? "unknown domain"})`,
         `Title: ${card.title}`,
         `Kind: ${kindLabel(row.kind)}`,
-        `Submitted by: ${row.submitterEmail}`,
+        ownerLines(row),
         `Card (signed-in company members and admins only): ${link}`,
         ``,
         `Published description (the card's first paragraph):`,
@@ -350,7 +362,7 @@ export async function notifyPublished(
     ``,
     `Title: ${card.title}`,
     `Kind: ${kindLabel(row.kind)}`,
-    `Submitted by: ${row.submitterEmail}`,
+    ownerLines(row),
     `Card: ${link}`,
     ``,
     `Published description (the card's first paragraph):`,
@@ -394,7 +406,7 @@ export async function notifyHeld(
         `The editorial panel held a CLIENT COMPANY work submission for a human decision. It would publish to that company's private Your Work page.`,
         ``,
         `Title: ${row.title}`,
-        `Submitted by: ${row.submitterEmail}`,
+        ownerLines(row),
         ``,
         `Reason:`,
         reason,
@@ -432,7 +444,7 @@ export async function notifyHeld(
         : `The editorial panel held a team work submission for a human decision.`,
       ``,
       `Title: ${row.title}`,
-      `Submitted by: ${row.submitterEmail}`,
+      ownerLines(row),
       ``,
       `Reason:`,
       reason,
@@ -656,6 +668,105 @@ export async function notifyUpdateRejected(
       `If you want to try again, revise the files and submit a new update the same way. Reply to this email or ask Adam if you want to know what to change.`,
     ].join("\n"),
   });
+}
+
+/**
+ * §5.16 transfer round (2026-08-09): a submission changed owner. Three
+ * possible recipients, each skipped when they are the actor, because a
+ * person who just pressed the button does not need to be told what they did:
+ *  - the NEW owner, who now carries every lever on the row and would
+ *    otherwise find a stranger's submission in their list with no
+ *    explanation;
+ *  - the PREVIOUS owner, whose row just vanished from their page. This is
+ *    the one that must never be dropped: silence there reads as data loss.
+ *  - the ADMIN mailbox, for PUBLISHED rows only and only when someone other
+ *    than the owner-recipient did it: a live card's byline is public content,
+ *    and the scorecard credit moves with the row.
+ *
+ * Deliberately says what did NOT change. The published card keeps the first
+ * name it was published under (submitter_name is untouched), so the copy
+ * must not imply the page now reads differently.
+ */
+export async function notifyTransfer(opts: {
+  /** The row AFTER the move. */
+  row: SubmissionRow;
+  previousEmail: string;
+  actorEmail: string;
+}): Promise<void> {
+  const { row, previousEmail, actorEmail } = opts;
+  const isCompanyLane = row.companyId !== null;
+  const listUrl = isCompanyLane
+    ? `${SITE}/roadmap/work`
+    : `${SITE}/work/submit`;
+  const listName = isCompanyLane
+    ? "your company's Submit AI-Built Work page"
+    : "your submissions page";
+  const same = (a: string, b: string) =>
+    a.trim().toLowerCase() === b.trim().toLowerCase();
+  const movedBySomeoneElse = !same(actorEmail, previousEmail);
+
+  if (!same(actorEmail, row.submitterEmail))
+    await sendGovernanceEmail({
+      to: row.submitterEmail,
+      subject: `A work submission was moved to you: ${row.title}`,
+      text: [
+        `${actorEmail} moved the ${kindLabel(row.kind)} submission "${row.title}" to you, so it now sits with your own submissions and you have every option on it that its original submitter had.`,
+        ``,
+        `See it on ${listName}: ${listUrl}`,
+        ``,
+        `What changed: who the submission belongs to. What did not: the card itself. If it is already published it keeps the credit it was published under, and if it is still in review the panel writes the card from the same documents.`,
+        ``,
+        // Lane-dependent, because the control only exists on one of them:
+        // /work/submit carries "Move to someone else", and the transfer route
+        // is requireXlUser, so a company recipient can neither see it nor
+        // call it. Naming it to them would be a control on another surface
+        // AND a promise the code refuses.
+        isCompanyLane
+          ? `If this came to you by mistake, reply to this email and your XL.net contact will move it back.`
+          : `If this came to you by mistake, move it back from that page, or reply to this email.`,
+      ].join("\n"),
+    });
+
+  if (movedBySomeoneElse)
+    await sendGovernanceEmail({
+      to: previousEmail,
+      subject: `Your work submission was moved: ${row.title}`,
+      text: [
+        `${actorEmail} moved the ${kindLabel(row.kind)} submission "${row.title}" to ${row.submitterEmail}, so it is no longer on your submissions page and the options on it are now theirs.`,
+        // NOT an absolute. canProposeUpdate unions the whole supersede chain,
+        // so someone who submitted an EARLIER version of this card keeps the
+        // right to propose the next one even after the live row moves. Saying
+        // "the options are now theirs" full stop would be false for exactly
+        // the person most likely to try.
+        ...(row.parentId
+          ? [
+              ``,
+              `One thing does carry over: if you submitted an earlier version of this card, you can still propose an update to it from your submissions page.`,
+            ]
+          : []),
+        ``,
+        `Nothing about the submission itself changed and nothing was deleted: a published card keeps the printed byline it was published under. The scorecard counts published cards by owner, so that count moves with the submission.`,
+        ``,
+        `If this was not what you expected, reply to this email and it can be moved back.`,
+      ].join("\n"),
+    });
+
+  // ...and never when the owner mailbox IS the new owner: they already have
+  // the colleague-voiced copy above. Every sibling in this file carries the
+  // same guard (notifyPublished, notifyHeld, notifyUpdateApproved).
+  if (
+    row.status === "published" &&
+    !same(actorEmail, adminRecipient()) &&
+    !same(row.submitterEmail, adminRecipient())
+  )
+    await sendGovernanceEmail({
+      subject: `[aiwebsite] work card ownership moved: ${row.title}`,
+      text: [
+        `${actorEmail} moved the published ${isCompanyLane ? "company" : "/work"} card "${row.title}" from ${previousEmail} to ${row.submitterEmail}.`,
+        ``,
+        `The card's published credit is unchanged; what moves is who can update, retry and be emailed about it, plus the scorecard credit, which counts published cards by owner.`,
+      ].join("\n"),
+    });
 }
 
 /** §5.16 updates: an approved swap was rolled back; the previous version is

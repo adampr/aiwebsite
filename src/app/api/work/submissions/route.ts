@@ -18,6 +18,7 @@ import {
 } from "@/lib/work/config";
 import {
   activeTitleClash,
+  allSubmissionsForList,
   countCreatedToday,
   createSubmission,
   isUniqueViolation,
@@ -34,39 +35,92 @@ import {
   mergeSkillCorpus,
   skillDocFailureMessage,
 } from "@/lib/work/extract";
-import { okJson, rateLimit, requireWorkUser, workError } from "@/lib/work/http";
+import {
+  okJson,
+  rateLimit,
+  requireWorkUser,
+  verifiedWebAdmin,
+  workError,
+} from "@/lib/work/http";
+import { sameEmail } from "@/lib/work/transfer";
 import { splitMachineEcho } from "@/lib/work/names";
 import { kickPanel } from "@/lib/work/panel";
 import { ROADMAP_CAPS } from "@/lib/roadmap/config";
+import { companyById } from "@/lib/roadmap/db";
 import { countCreatedTodayForCompany } from "@/lib/work/db";
 import { statusView } from "@/lib/work/view";
 
-export async function GET(): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
   const user = await requireWorkUser();
   if (user instanceof Response) return user;
   const limited = rateLimit(`work:list:${user.userId}`, 60, 30);
   if (limited) return limited;
+  // ?scope=all (§5.16 transfer round): the admin "All submissions" view on
+  // /work/submit. verifiedWebAdmin, not bare isAdmin — this returns every
+  // company's private rows alongside the staff lane, and the Microsoft
+  // common-tenant lane can mint an isAdmin-passing session (see the head of
+  // src/lib/rfp/access.ts). Anything other than the exact literal "all"
+  // falls through to the caller's own list, so a typo can never widen scope.
+  const wantsAll = new URL(req.url).searchParams.get("scope") === "all";
+  if (wantsAll && !verifiedWebAdmin(user))
+    return workError(
+      "forbidden",
+      "Only an admin can list every submission.",
+      403
+    );
   try {
     await sweepExpiredWork(25);
   } catch {
     // sweep is best-effort on the read path
   }
-  const rows = await mySubmissionsForList(user.email);
+  // One more than the cap, so a full page is reported as truncated instead
+  // of silently asserting a complete list.
+  const cap = WORK_CAPS.submissionListMax;
+  const fetched = wantsAll
+    ? await allSubmissionsForList(cap + 1)
+    : await mySubmissionsForList(user.email, cap + 1);
+  const truncated = fetched.length > cap;
+  const rows = truncated ? fetched.slice(0, cap) : fetched;
   // Superseded rows carry a pointer to the card's LIVE version (§5.16 chain
   // ownership, 2026-08-04): when the last update came from someone else, the
   // published row is not in this list, and without currentId the submitter
   // has no surface that offers updating their card again.
+  // Lane identity for the all list only: one companyById per DISTINCT company
+  // among the rows (the /admin/work precedent), never one per row. The admin
+  // needs the company's DOMAIN to move one of its rows at all, since that is
+  // the only address family the transfer route accepts for it.
+  const lanes = new Map<string, { name: string; domain: string }>();
+  if (wantsAll) {
+    const ids = [
+      ...new Set(rows.map((r) => r.companyId).filter((c): c is string => !!c)),
+    ];
+    for (const cid of ids) {
+      try {
+        const company = await companyById(cid);
+        if (company) lanes.set(cid, { name: company.name, domain: company.domain });
+      } catch {
+        // no name, no domain: the chip falls back to a generic label
+      }
+    }
+  }
+  // currentId is resolved for the submitter's OWN list only. liveDescendantId
+  // walks the swap chain one query per hop, so doing it across every
+  // superseded row on the site would be dozens of sequential round trips per
+  // load; the all view has no use for it either (it offers no "Submit an
+  // update" on a row the admin does not own, and it does not dedupe).
   const views = await Promise.all(
     rows.map(async (r) =>
       statusView(
         r,
-        r.status === "superseded"
+        !wantsAll && r.status === "superseded"
           ? { currentId: await liveDescendantId(r.id) }
-          : undefined
+          : r.companyId
+            ? { lane: lanes.get(r.companyId) ?? null }
+            : undefined
       )
     )
   );
-  return okJson({ submissions: views });
+  return okJson({ submissions: views, scope: wantsAll ? "all" : "mine", truncated });
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -195,7 +249,10 @@ export async function POST(req: Request): Promise<Response> {
   if (clash)
     return workError(
       "duplicate_title",
-      clash.submitterEmail === user.email
+      // Case-folded (§5.16 transfer round): a transferred row stores the
+      // address the mover TYPED, so raw equality would tell the actual owner
+      // that "a teammate" holds their own row.
+      sameEmail(clash.submitterEmail, user.email)
         ? isCompanyLane
           ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it on your company's roadmap page at /roadmap/work.`
           : `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it on your submissions page at /work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
