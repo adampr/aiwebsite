@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# aicompany-template: stage-build.sh.tpl@2736c3acaf2bcd9a5ee9f4b7c5d190b8dc5ec7cea9e29ead4aecbd648fe2dccd
+# aicompany-template: stage-build.sh.tpl@00bd8c312aba1a16a58e79631f5274a6d4fd0281ea61d1cf2819109c4617f064
 set -euo pipefail
 # Staged-build engine (v1.13.0, §9.2): all mutation happens in the sibling
 # stage tree; the live tree changes only during a renames-only journaled flip.
 # Callers: setup-vm.sh (deploy pipeline) and watchdog.sh (repair pipeline).
 app="/var/www/aiwebsite"; stage="/var/www/aiwebsite.stage"
 trash="$stage/.trash"; state="$stage/.cutover-state"; lockfile="$stage/.lock"
+# Build placement (§9.2 v1.78.0): on local-artifact hosts the VM-side build is
+# REMOVED — build() below refuses structurally (see the 2026-08-08 outage).
+build_mode="remote"
 
 # Flip set = defaults (regenerated in stage) + host extras (deploy/swap-dirs.txt,
 # copied live->stage as INPUTS and hook-rebuilt there). .env is deliberately
@@ -45,7 +48,7 @@ journal() { echo "$1 $2" >> "$state"; sync "$state"; }   # fsync'd append
 # journald, cron, cloudflared) was unschedulable for 78 minutes. Every
 # memory-heavy step now runs inside a transient systemd scope with a hard
 # MemoryMax (STAGE_MEM_MAX_MB, per-host site-deploy.env, render-validated
-# 1024–3072) and MemorySwapMax=0: the cap must KILL an oversized step, not
+# 1024–5120) and MemorySwapMax=0: the cap must KILL an oversized step, not
 # let it sprawl into swap and thrash the box — the v1.15.0 swapfile exists
 # for the RESIDENT stack's cold pages, never for the build's working set.
 # Deliberately NO soft high-watermark property (A2): that throttles
@@ -76,7 +79,7 @@ run_capped() {  # run_capped <step> <workdir> <payload...>
   # inherit + pin the deploy/stage locks (B1 class).
   timeout -k 30 1800 sudo -n systemd-run --quiet --collect --scope \
     --unit="aiwebsite-stage-${step}-$$" \
-    -p MemoryMax=3072M -p MemorySwapMax=0 \
+    -p MemoryMax=5120M -p MemorySwapMax=0 \
     bash -c "echo 1 > /sys/fs/cgroup\$(cut -d: -f3 /proc/self/cgroup)/memory.oom.group 2>/dev/null || true; exec runuser -u $capped_user -- bash -c 'export PATH=$capped_path; cd $workdir && { echo 900 > /proc/self/oom_score_adj 2>/dev/null || true; } && exec nice -n 10 ionice -c3 $*'" \
     200>&- 201>&- || rc=$?
   if [ "$rc" -eq 137 ] || [ "$rc" -eq 143 ]; then
@@ -86,10 +89,10 @@ run_capped() {  # run_capped <step> <workdir> <payload...>
       echo "       starving the box. The stage tree is abandoned; the live tree is"
       echo "       untouched. Check 'free -m' and /var/log/aiwebsite-psi.log, then re-run."
     else
-      echo "ERROR: step '$step' died inside its 3072M cgroup cap (exit $rc):"
+      echo "ERROR: step '$step' died inside its 5120M cgroup cap (exit $rc):"
       echo "       cgroup OOM (MemoryMax) or the 1800s step timeout — a pre-cutover"
       echo "       no-op; the live site keeps serving. If the build legitimately needs"
-      echo "       more, raise STAGE_MEM_MAX_MB in deploy/site-deploy.env (1024–3072),"
+      echo "       more, raise STAGE_MEM_MAX_MB in deploy/site-deploy.env (1024–5120),"
       echo "       re-render, commit, redeploy."
     fi
     exit "$rc"
@@ -182,6 +185,17 @@ refresh_modules() {  # watchdog repair: ABI-exact hardlink clone of LIVE deps, n
 }
 
 build() {
+  # REMOVED, not tuned (v1.78.0): on a local-artifact host a VM-side
+  # `next build` is the 2026-08-08 outage — cgroup OOM at the stage cap,
+  # earlyoom SIGKILLs, kernel-level hard hangs. This refusal is structural:
+  # it covers the deploy pipeline, the watchdog's repair rebuild (also gated
+  # alert-only), and a hand-typed `bash deploy/stage-build.sh build` alike.
+  if [ "$build_mode" = "local-artifact" ]; then
+    echo "ERROR: DEPLOY_BUILD_MODE=local-artifact — VM-side 'next build' is REMOVED for this site."
+    echo "       Build on the dev box via deploy/deploy.sh (it builds, ships the .next artifact,"
+    echo "       and the staged cutover flips it atomically with node_modules)."
+    exit 1
+  fi
   rm -rf "$stage/.next"   # kills the stale-Turbopack-cache class; fresh build
   # Heap cap preserved (2026-07-10 OOM invariant) INSIDE the v1.15.0 cgroup
   # cap: NODE_OPTIONS bounds the V8 heap, MemoryMax bounds the whole step

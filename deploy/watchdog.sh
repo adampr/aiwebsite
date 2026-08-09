@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@18988e347057041f39ff717db7e52a0592ca9ee1112475f17d18989346a85337
+# aicompany-template: watchdog.sh.tpl@97ba2cb568e2bf7cc991552dd5bb775d72ca6d9b424f2a2bebd972d29cb5c6f4
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -33,6 +33,10 @@ if [ -n "$toolchain_prefix" ]; then
 fi
 
 app_root="/var/www/aiwebsite"
+# Build placement (§9.2 v1.78.0): on local-artifact hosts the repair rebuild
+# is DISABLED (alert-only) — a VM-side build is the 2026-08-08 outage class,
+# and stage-build.sh build refuses on such hosts anyway.
+build_mode='remote'
 pid_file="/var/run/aiwebsite-watchdog.pid"
 lock_file="/var/run/aiwebsite-watchdog.lock"
 deploy_marker="/var/run/aiwebsite-deploy-in-progress"
@@ -363,6 +367,40 @@ attempt_clean_rebuild() {
   fi
 }
 
+# ── Interrupted-cutover HEAL-ONLY recovery (v1.78.0 fix round, M2c) ──
+# local-artifact hosts only. A cutover journal ($APP_DIR.stage/.cutover-state)
+# left behind means a flip died BETWEEN renames (connection death inside the
+# bracket) and the live tree may be half-flipped — the one broken state the
+# alert-only policy would otherwise leave down until a human redeploys.
+# `stage-build.sh heal` is RENAMES ONLY (roll the journal fully backward,
+# park strays, zero build), so running it here does NOT violate the
+# never-build rule; the page-repair REBUILD stays alert-only. Deploy-marker
+# gated like every repair action: a live deploy owns its own heal (setup-vm
+# runs heal at pipeline start); a crashed one ages out over the 30-min TTL.
+check_cutover_journal() {
+  [[ "$build_mode" == "local-artifact" ]] || return 0
+  local journal="$app_root.stage/.cutover-state"
+  [[ -f "$journal" ]] || return 0
+  if deploy_in_progress; then
+    log "DEFER: cutover journal present but the deploy marker is fresh — the deploy pipeline owns heal"
+    return 0
+  fi
+  log "ACTION: cutover journal present with no live deploy — HEAL-ONLY recovery (stage-build.sh heal: renames only, zero build)"
+  if run_as_pm2_user "cd '$app_root' && bash deploy/stage-build.sh heal" >> "$log_file" 2>&1; then
+    run_as_pm2_user "pm2 restart aiwebsite brain-api skills-host" >> "$log_file" 2>&1 || true
+    send_email \
+      "WARN Healed an interrupted cutover (renames rolled back; no build)" \
+      "A cutover journal was found at $journal with no deploy in progress — a flip died mid-rename (likely connection death inside the cutover bracket).\nstage-build.sh heal rolled the flip fully BACKWARD (renames only; this host never builds) and pm2 was restarted.\nThe PREVIOUS generation is serving. Re-run the deploy from the dev box: bash deploy/deploy.sh --takeover" \
+      "cutover-heal"
+    record_issue "WARN Healed an interrupted cutover (renames rolled back; no build)" "self-healed: journal rolled backward, previous generation restored" "cutover-heal" 0 1 "auto:self-healed"
+  else
+    send_email \
+      "CRITICAL Interrupted cutover found and heal FAILED (local-artifact host)" \
+      "A cutover journal exists at $journal (flip died mid-rename) and stage-build.sh heal FAILED — the live tree may be half-flipped and the site broken.\nManual recovery NOW: on the VM, cd $app_root && bash deploy/stage-build.sh heal (inspect its error), then pm2 restart aiwebsite brain-api skills-host. Then redeploy from the dev box with --takeover." \
+      "cutover-heal-fail"
+  fi
+}
+
 check_pages() {
   local any_page_fail=false
   local failed_urls=()
@@ -397,6 +435,22 @@ check_pages() {
   if [[ "$any_page_fail" == "true" ]]; then
     local detail_list
     detail_list=$(printf '%s\n' "${failed_urls[@]}")
+
+    # local-artifact hosts (§9.2 v1.78.0): the VM must NEVER build — the
+    # repair rebuild is exactly the workload that starved this box on
+    # 2026-08-08 (and stage-build.sh build refuses on such hosts anyway, so
+    # attempting it would only burn a failed pipeline). ALERT-ONLY, before
+    # the deploy-defer branch: that branch's mail promises "the watchdog
+    # rebuilds automatically", which would be a lie here. Recovery is a
+    # dev-box redeploy (auto-rolls-back to .next.old on health failure).
+    if [[ "$build_mode" == "local-artifact" ]]; then
+      log "ALERT-ONLY: pages failing but VM-side rebuild is DISABLED (DEPLOY_BUILD_MODE=local-artifact)"
+      send_email \
+        "CRITICAL Page errors — VM rebuild disabled (local-artifact host)" \
+        "Pages returning errors:\n$detail_list\n\nThis host is DEPLOY_BUILD_MODE=local-artifact: the watchdog will NOT rebuild on the VM (that workload caused the 2026-08-08 outage). Recover from the dev box: bash deploy/deploy.sh (builds locally, ships the artifact, auto-rolls-back on health failure). Manual rollback on the VM: stage-build.sh rollback (or mv .next .next.bad && mv .next.old .next) then pm2 restart aiwebsite." \
+        "page-render-local-artifact"
+      return
+    fi
 
     # Deploy↔watchdog mutex (§9.5): a rebuild racing the deploy's own
     # npm ci/build on the same tree caused 2026-07-13's EEXIST symlink
@@ -797,6 +851,11 @@ while true; do
 
   standard_pass=$(( standard_pass + 1 ))
   any_failure=false
+
+  # 0. Interrupted-cutover heal (M2c) — BEFORE the service checks: restarting
+  # pm2 against a half-flipped tree just crash-loops; heal first, then the
+  # checks below verify the restored generation on this same pass.
+  check_cutover_journal
 
   # 1. PostgreSQL
   if ! pg_isready -h localhost -p 5432 -q 2>/dev/null; then

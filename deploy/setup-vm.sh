@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@4c5ff791629e7e8926634a489b34a4822ec329bd2e00db9074ef05bc14bc7575
+# aicompany-template: setup-vm.sh.tpl@71c2b33f47bfecf3b8b2683b045ebba83249f5e3772acf5ddb021beb042cc9db
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -12,6 +12,11 @@ set -euo pipefail
 
 app_dir="/var/www/aiwebsite"
 module_dir="$app_dir/packages/aicompany"
+# Build placement (§9.2 v1.78.0): "remote" = staged VM-side build (unchanged
+# default); "local-artifact" = deploy.sh built .next on the dev box and
+# shipped it to /var/tmp — this script extracts it into the STAGE tree and
+# never runs `next build` (the 2026-08-08 itsc outage class).
+build_mode="remote"
 
 echo "=== ai.xl.net — VM Setup ==="
 
@@ -521,16 +526,76 @@ if [ -f "$stage_dir/deploy/post-install.sh" ]; then
 fi
 install -m 600 "$app_dir/.env" "$stage_dir/.env"
 
-echo ">>> Building Next.js site (staged — live server keeps serving)..."
-# next build CLEARS distDir at build start — that is exactly why the build is
-# staged (the 2026-07-22 itsc outage: 15 min of 502s while .next was empty).
-# Heap cap (site-deploy.env): an uncapped Next build OOM-wedged a 4GB VM
-# mid-build (itsc 2026-07-10). Capped, a too-big build fails cleanly as a
-# pre-cutover no-op; stage-build also self-marks the build as the kernel's
-# preferred OOM victim so an OOM never takes brain-api/postgres.
-sudo touch "$deploy_marker"
-bash deploy/stage-build.sh build
-bash deploy/stage-build.sh verify-relocatable
+if [ "$build_mode" = "local-artifact" ]; then
+  # ── Local-artifact install (§9.2 v1.78.0): NO VM-side build, EVER ──
+  # The dev box built .next (deploy.sh, which also ran the dev-path
+  # relocatability grep) and shipped it via scp/rsync — never a stdin pipe —
+  # BEFORE this script started. Extract into the STAGE tree so the existing
+  # journaled cutover below flips node_modules + .next as ONE generation: a
+  # truncated ship or parity failure is a pre-cutover no-op and can never
+  # strand new modules against an old .next (the 2026-08-08 mixed-tree class).
+  echo ">>> Installing dev-box-built .next artifact (DEPLOY_BUILD_MODE=local-artifact — no VM-side build)..."
+  sudo touch "$deploy_marker"
+  artifact_tar="/var/tmp/aiwebsite-next-artifact.tgz"
+  if [ -z "${LOCAL_BUILD_ID:-}" ] || [ -z "${LOCAL_NODE_MAJOR:-}" ]; then
+    echo "ERROR: LOCAL_BUILD_ID / LOCAL_NODE_MAJOR not set — in local-artifact mode setup-vm.sh"
+    echo "       must be driven by deploy/deploy.sh (it builds, ships, and passes the expected"
+    echo "       artifact identity). Refusing to guess; live tree untouched."
+    exit 1
+  fi
+  [ -f "$artifact_tar" ] || { echo "ERROR: $artifact_tar missing — deploy.sh ships it before setup-vm runs; live tree untouched"; exit 1; }
+  # ── Build-time env pin gate (v1.78.0 fix round, M5) ─────────────
+  # On local-artifact hosts, BUILD-TIME env comes VERBATIM from the dev-box
+  # .env: the .next was built on the dev box, and NEXT_PUBLIC_* values are
+  # INLINED into it at build time. The pin machinery (host post-install hook,
+  # e.g. itsc pin-prod-env.sh: committed deploy/prod-env-pins.env + VM-owned
+  # /etc/<slug>/env-pins.env) edits the on-disk .env AFTER the build — a
+  # NEXT_PUBLIC_ pin would claim a production override the shipped artifact
+  # can never honor, and the site would silently serve the dev-box value.
+  # Fail loudly, pre-cutover: fix it by setting the value in the DEV .env
+  # (it ships verbatim) and removing the pin.
+  for pins_f in "$app_dir/deploy/prod-env-pins.env" "/etc/aiwebsite/env-pins.env"; do
+    [ -f "$pins_f" ] || continue
+    bad_pins="$(grep -E '^[[:space:]]*NEXT_PUBLIC_' "$pins_f" | sed 's/=.*//' || true)"
+    if [ -n "$bad_pins" ]; then
+      echo "ERROR: $pins_f pins build-time-consumed key(s) on a local-artifact host:"
+      printf '%s\n' "$bad_pins" | sed 's/^/       /'
+      echo "       NEXT_PUBLIC_* is inlined into .next at BUILD time on the DEV BOX — a pin here"
+      echo "       can never take effect on the shipped artifact. Set the value in the dev-box"
+      echo "       .env and remove the pin. Pre-cutover no-op; old build serving."
+      exit 1
+    fi
+  done
+  # Node-major parity, asserted where it binds: THIS node serves the artifact.
+  # (deploy.sh prechecks the same thing dev-box-side to fail before shipping.)
+  vm_node_major="$(node -v | sed 's/^v//' | cut -d. -f1)"
+  if [ "$vm_node_major" != "$LOCAL_NODE_MAJOR" ]; then
+    echo "ERROR: node major mismatch — artifact built under v$LOCAL_NODE_MAJOR.x, VM runs $(node -v)."
+    echo "       Pre-cutover no-op; old build serving. Rebuild on the dev box under v${vm_node_major}.x."
+    exit 1
+  fi
+  rm -rf "$stage_dir/.next"
+  tar xzf "$artifact_tar" -C "$stage_dir" ./.next
+  staged_build_id="$(cat "$stage_dir/.next/BUILD_ID" 2>/dev/null || echo missing)"
+  if [ "$staged_build_id" != "$LOCAL_BUILD_ID" ]; then
+    echo "ERROR: staged BUILD_ID '$staged_build_id' != shipped '$LOCAL_BUILD_ID' — truncated or stale artifact."
+    echo "       Pre-cutover no-op; old build serving. Re-run deploy/deploy.sh."
+    exit 1
+  fi
+  rm -f "$artifact_tar"
+  echo "  artifact staged: BUILD_ID $staged_build_id under node v${vm_node_major}.x"
+else
+  echo ">>> Building Next.js site (staged — live server keeps serving)..."
+  # next build CLEARS distDir at build start — that is exactly why the build is
+  # staged (the 2026-07-22 itsc outage: 15 min of 502s while .next was empty).
+  # Heap cap (site-deploy.env): an uncapped Next build OOM-wedged a 4GB VM
+  # mid-build (itsc 2026-07-10). Capped, a too-big build fails cleanly as a
+  # pre-cutover no-op; stage-build also self-marks the build as the kernel's
+  # preferred OOM victim so an OOM never takes brain-api/postgres.
+  sudo touch "$deploy_marker"
+  bash deploy/stage-build.sh build
+  bash deploy/stage-build.sh verify-relocatable
+fi
 
 # Migrations: new code against the live DB, old server still serving
 # (expand-contract). AFTER the build so a failed build leaves the DB untouched.
@@ -572,6 +637,17 @@ fi
 # ── CUTOVER BRACKET (renames only; the only live-tree mutation) ──
 # Extra services stop only for the flip so native-ABI trees never change under
 # a running service (the 2026-07-10 roleplay class) — a seconds-wide window.
+#
+# Connection-death shield (v1.78.0 fix round, M2a): a dropped SSH/IAP tunnel
+# HUPs this shell — everywhere else that is a clean pre-cutover abort, but
+# INSIDE the bracket it can kill the script BETWEEN two renames and leave the
+# live tree half-flipped. Ignore HUP from here through the health gate /
+# rollback so the bracket always reaches a terminal state (journal cleared,
+# or rolled back, or the loud exit 1); heal + `deploy.sh --takeover` own the
+# truly-unkillable cases (SIGKILL, power loss). The BRACKET START line below
+# is the marker deploy.sh's failure banner tells the operator to grep for.
+trap '' HUP
+echo ">>> CUTOVER BRACKET START — journaled renames begin (if this log ends before the COMPLETE line, recover with deploy.sh --takeover: it heals first)"
 sudo touch "$deploy_marker"
 if [ -f deploy/extra-services.json ]; then
   echo ">>> Stopping extra services for the cutover flip..."
@@ -610,17 +686,50 @@ if [ -z "$gate_fail" ]; then
   [ -n "$brain_ok" ] || gate_fail="brain-api /health not 200 within 60s"
 fi
 if [ -z "$gate_fail" ]; then
-  for a in brain-api skills-host; do
-    pm2 jlist 200>&- 201>&- | jq -e --arg n "$a" '.[] | select(.name==$n) | select(.pm2_env.status=="online")' >/dev/null \
-      || gate_fail="pm2 app $a not online"
-  done
+  # pm2 jlist captured ONCE and jq-validated (v1.78.0 fix round, M3): pm2 can
+  # emit interleaved daemon chatter or nothing at all when its God daemon is
+  # sick — piping that straight into jq made `jq -e` fail exactly like "app
+  # not online" (right verdict, wrong reason) or, worse for the purge below,
+  # silently yield ZERO names. A non-array is a hard gate failure, never a
+  # silent pass.
+  gate_jlist="$(pm2 jlist 200>&- 201>&- 2>/dev/null || true)"
+  if ! printf '%s' "$gate_jlist" | jq -e 'type=="array"' >/dev/null 2>&1; then
+    gate_fail="pm2 jlist did not return a JSON array — pm2 daemon state unverifiable"
+  else
+    for a in brain-api skills-host; do
+      printf '%s' "$gate_jlist" | jq -e --arg n "$a" '.[] | select(.name==$n) | select(.pm2_env.status=="online")' >/dev/null \
+        || gate_fail="pm2 app $a not online"
+    done
+  fi
 fi
 if [ -n "$gate_fail" ]; then
   echo "ERROR: post-cutover health gate failed ($gate_fail) — pm2 state follows; rolling back to previous generation"
   pm2 jlist 200>&- 201>&- | head -c 4000 || true
-  bash deploy/stage-build.sh rollback
-  pm2 restart aiwebsite brain-api skills-host --update-env 200>&- 201>&-   # matches the manual command
+  # Rollback ladder (v1.78.0 fix round, L3): every rung is guarded so the
+  # script ALWAYS reaches a truthful terminal message + exit 1. Before this,
+  # a failed `stage-build.sh rollback` died mid-ladder under set -e: no pm2
+  # restart, no extra-services start, and a log that ends mid-thought.
+  if ! bash deploy/stage-build.sh rollback; then
+    echo "!!! CRITICAL: stage-build.sh rollback FAILED — the live tree may still be the BAD new"
+    echo "!!!           generation (or mixed). Inspect $app_dir/*.old and $stage_dir/.cutover-state,"
+    echo "!!!           then heal + roll back by hand (RUNBOOK: local-artifact hosts / module rollback)."
+  fi
+  pm2 restart aiwebsite brain-api skills-host --update-env 200>&- 201>&- || true   # matches the manual command
   if [ -f deploy/extra-services.json ]; then sudo bash deploy/extra-services.sh start 200>&- 201>&- || true; fi
+  # Re-probe the restored tree so the deploy's last words state what is
+  # ACTUALLY serving, not the restart command's exit status.
+  restored_ok=""
+  for i in $(seq 1 12); do
+    body=$(curl -fsS -m 5 "http://127.0.0.1:3000/api/health" 2>/dev/null) || body=""
+    echo "$body" | grep -q '"status":"ok"' && { restored_ok=1; break; }
+    sleep 5
+  done
+  if [ -n "$restored_ok" ]; then
+    echo "ERROR: deploy FAILED ($gate_fail); rollback verified — the PREVIOUS generation is serving again."
+  else
+    echo "!!! CRITICAL: deploy FAILED ($gate_fail) AND the rolled-back tree did not come healthy"
+    echo "!!!           within 60s — the site may be DOWN. Manual recovery NOW (RUNBOOK)."
+  fi
   exit 1
 fi
 echo ">>> CUTOVER COMPLETE — the new build is LIVE (a failure after this line does NOT un-deploy it)"
@@ -630,6 +739,39 @@ bash deploy/stage-build.sh purge-trash           # delete the parked N-1 set OUT
 echo ">>> Rendering crawler config snapshot (data/aiwebsite-config.json)..."
 npx tsx "$module_dir/scripts/config-json.ts"
 
+# ── pm2 resurrect-dump hygiene (v1.78.0, local-artifact hosts) ───
+# `pm2 save` snapshots EVERY running pm2 app into the resurrect dump — strays
+# included — and `pm2 startup` resurrects that dump at boot. That pair is
+# exactly what made a HAND-CREATED `itsc-build` app (`bash -c "npm run build"`
+# in the live cwd) boot-persistent: on every boot it rewrote .next mid-serve,
+# starved the box, and wedged sshd (2026-08-08 outage). "The template does not
+# define it" is not prevention — the template must stop RE-PERSISTING it. On
+# local-artifact hosts, any pm2 app not defined by deploy/ecosystem.config.cjs
+# (plus the pm2-logrotate module) is deleted BEFORE the save, so a re-created
+# stray can never survive a deploy into the dump again.
+if [ "$build_mode" = "local-artifact" ]; then
+  # Same M3 capture+validate discipline as the health gate above: an
+  # unparseable jlist here used to yield an EMPTY stray list, so the purge
+  # silently no-oped and `pm2 save` could re-persist a stray after all. An
+  # unparseable jlist is a HARD error — refusing to save blind beats saving
+  # a dump we cannot audit (the itsc-build class this purge exists to kill).
+  purge_jlist="$(pm2 jlist 200>&- 201>&- 2>/dev/null || true)"
+  if ! printf '%s' "$purge_jlist" | jq -e 'type=="array"' >/dev/null 2>&1; then
+    echo "ERROR: pm2 jlist did not return a JSON array — cannot audit the app list before 'pm2 save'."
+    echo "       Refusing to save the resurrect dump blind (a stray could re-persist)."
+    echo "       The new build IS live (post-cutover step); fix pm2 (pm2 ping / pm2 update) and re-run setup-vm."
+    exit 1
+  fi
+  for stray in $(printf '%s' "$purge_jlist" | jq -r '.[].name' | sort -u); do
+    case "$stray" in
+      "aiwebsite"|brain-api|skills-host|pm2-logrotate) ;;
+      *)
+        echo "!!! deleting stray pm2 app '$stray' (not in deploy/ecosystem.config.cjs) so pm2 save cannot re-persist it"
+        pm2 delete "$stray" 200>&- 201>&- || true
+        ;;
+    esac
+  done
+fi
 pm2 save 200>&- 201>&-
 pm2 startup systemd -u "$(whoami)" --hp "$HOME" 2>/dev/null 200>&- 201>&- || true
 

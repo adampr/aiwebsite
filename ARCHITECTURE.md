@@ -7381,8 +7381,19 @@ CLEARS distDir at start, which is why it must never run in the live tree —
 the pre-v1.13.0 claim that output "swaps atomically" was false; the build
 scope's `MemoryMax` comes from `STAGE_MEM_MAX_MB` in `deploy/site-deploy.env`,
 2048 → 2560 on 2026-08-06 after two consecutive cgroup-OOM build kills at
-2048M — Turbopack peaks grew past the old cap; the VM holds ~2.7 GB available
-so 2560 stays clear of global pressure) →
+2048M — Turbopack peaks grew past the old cap; later 3072, and **3072 → 5120
+on 2026-08-09** after three more consecutive kills, this time at the module's
+then-maximum: `Memory cgroup out of memory: Killed process (node)
+anon-rss:2929508kB` against `MemoryMax=3072M`, while earlyoom logged the box
+itself healthy at 76.9 % free. The cap was the limit, not the machine, so the
+VM was resized 4 GiB → 8 GiB (`Standard_B2als_v2` → `Standard_B2as_v2`,
+northcentralus) and the module's validated range widened 1024–3072 → 1024–5120
+(@aicompany/core v1.80.0). **The two only work as a pair**: `MemoryMax` is
+applied regardless of box size, so a resize alone changes nothing, and raising
+the cap alone moves the kill from the cgroup (safe, pre-cutover, the live site
+never notices) to earlyoom, which is configured to prefer `node`/`next-server`
+— production itself. On 8 GiB, 5120 leaves ~2.7 GB for the live server,
+brain-api and skills-host. Raise it again only after resizing first.) →
 `verify-relocatable` → `db:migrate` (from stage against the live DB, committed
 history — AFTER the build so a failed build leaves the DB untouched) →
 **`npm run config:check`** (AFTER migrate — its drift gate fails on
