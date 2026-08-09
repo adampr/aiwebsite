@@ -26,6 +26,23 @@ const nextConfig: NextConfig = {
   // /*turbopackIgnore: true*/ comment on its path.join(process.cwd(), ...)
   // calls) — this ignore would also mask a future whole-project trace
   // introduced by host code, so it must not outlive the upstream bug.
+  // BUILD MEMORY CEILING (2026-08-09). The §5.20 round-2 deploy was
+  // OOM-killed twice on the VM: "Memory cgroup out of memory: Killed
+  // process (node) anon-rss:2850100kB" against the staged build's
+  // MemoryMax=3072M, while earlyoom reported the box itself healthy at 77
+  // percent free. So the cap was the binding constraint, not the VM, and
+  // STAGE_MEM_MAX_MB is already at its render-validated maximum of 3072.
+  //
+  // The staged build already bounds the V8 heap (NODE_OPTIONS
+  // --max-old-space-size=1024, deploy/stage-build.sh); the other ~1.8 GB is
+  // Turbopack's native side, which grows to whatever is available unless it
+  // is told otherwise. Capping it here keeps native + heap + overhead
+  // comfortably inside the cgroup instead of a few percent over it. The
+  // build gets slower under memory pressure rather than being killed, which
+  // is the trade we want on a 3.8 GB VM.
+  experimental: {
+    turbopackMemoryLimit: 1600 * 1024 * 1024,
+  },
   turbopack: {
     ignoreIssue: [
       {
