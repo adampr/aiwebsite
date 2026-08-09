@@ -12,7 +12,7 @@ import { redirect } from "next/navigation";
 import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
-import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
+import { emailDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
 import { readRoadmapPrincipal } from "@/lib/roadmap/access";
 import { adminRequestById, companyById } from "@/lib/roadmap/db";
 import { ApproveButton } from "./approve-button";
@@ -73,7 +73,7 @@ export default async function ApproveAdminPage({ searchParams }: Search) {
   const staffAdmin = isAdmin(session.email);
   const globalAdmin =
     staffAdmin &&
-    isRfpProvider(session.provider) &&
+    isVerifiedStaffProvider(session) &&
     emailDomain(session.email) === "xl.net";
   let companyApprover = false;
   if (!globalAdmin && live) {
@@ -84,22 +84,32 @@ export default async function ApproveAdminPage({ searchParams }: Search) {
       principal.principal.company?.id === live.companyId;
   }
 
-  // A listed admin on the wrong provider gets the fix, not a dead end. This
-  // discloses nothing about the request (staff identity is the viewer's own).
+  // A listed admin whose session is not verified staff gets the fix, not a
+  // dead end (after parity: an xl.net Microsoft session without the mv
+  // claim). This discloses nothing about the request (staff identity is the
+  // viewer's own).
   if (staffAdmin && !globalAdmin && !companyApprover) {
     const back = `/roadmap/approve-admin?req=${encodeURIComponent(requestId)}`;
     return (
       <Shell>
         <p className="text-sm">
-          Approvals need a Google sign-in for this account. Sign in with Google
-          and this page will show the request.
+          Approvals need a verified staff sign-in for this account. Sign in
+          again with Google or Microsoft and this page will show the request.
         </p>
-        <a
-          className="btn no-underline"
-          href={`/api/auth/google/start?redirect=${encodeURIComponent(back)}`}
-        >
-          Sign in with Google
-        </a>
+        <div className="flex flex-wrap gap-3">
+          <a
+            className="btn no-underline"
+            href={`/api/auth/google/start?redirect=${encodeURIComponent(back)}`}
+          >
+            Sign in with Google
+          </a>
+          <a
+            className="btn no-underline"
+            href={`/api/auth/microsoft/start?redirect=${encodeURIComponent(back)}`}
+          >
+            Sign in with Microsoft
+          </a>
+        </div>
       </Shell>
     );
   }

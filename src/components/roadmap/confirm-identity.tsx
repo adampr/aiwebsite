@@ -7,8 +7,10 @@
 // once that the address really belongs to the account before showing company
 // data. NO company data renders here, not even a company name.
 //
-// Two ways out: Google verification (verified email claim) or a
-// verification link mailed to the address the session ALREADY carries - the
+// Ways out: a Google or Microsoft verification sign-in (both mint the
+// verified email claim; reserved staff domains get both providers and never
+// the email option) or a verification link mailed to the address the session
+// ALREADY carries - the
 // address renders as static text and the POST body uses exactly the session
 // email prop, so this screen can never mint a link for a different mailbox.
 // Reserved domains (xl.net / ai.xl.net) never get magic links, so the email
@@ -26,7 +28,7 @@ export function ConfirmIdentity({
   email: string;
   reservedDomain: boolean;
   attempted: boolean;
-  /** The Google bounce came back with ?verify=google_unverified. */
+  /** The silent bounce came back with ?verify=<provider>_unverified. */
   verifyFlag: boolean;
 }) {
   const [busy, setBusy] = useState(false);
@@ -80,8 +82,8 @@ export function ConfirmIdentity({
         )}
         {verifyFlag && !reservedDomain && (
           <p className="mx-auto mt-3 text-sm">
-            Google completed but could not vouch for this address; use the
-            email link instead.
+            The sign-in completed but your provider could not vouch for this
+            address; use the email link instead.
           </p>
         )}
       </div>
@@ -91,15 +93,29 @@ export function ConfirmIdentity({
           {!reservedDomain && <span className="sys-label">Option 1</span>}
           <p className="mt-3 text-sm">
             {reservedDomain
-              ? "XL.net accounts verify with Google."
+              ? "XL.net accounts verify with a Google or Microsoft sign-in."
               : "Verify through Google, which vouches for your email address."}
           </p>
-          <a
-            href="/api/auth/google/start?redirect=%2Froadmap"
-            className="btn mt-4 no-underline"
-          >
-            Verify with Google
-          </a>
+          {/* Reserved (staff) domains get BOTH providers: a Microsoft
+              re-login now mints the verified claim, and an org that does not
+              use Google would otherwise face a button it can never press.
+              Public visitors keep the Google + email-link pair. */}
+          <div className="mt-4 flex flex-wrap gap-3">
+            <a
+              href="/api/auth/google/start?redirect=%2Froadmap"
+              className="btn no-underline"
+            >
+              Verify with Google
+            </a>
+            {reservedDomain && (
+              <a
+                href="/api/auth/microsoft/start?redirect=%2Froadmap"
+                className="btn no-underline"
+              >
+                Verify with Microsoft
+              </a>
+            )}
+          </div>
         </div>
         {!reservedDomain && (
           <>

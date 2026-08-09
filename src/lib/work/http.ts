@@ -5,7 +5,7 @@ import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { checkRateLimit } from "@aicompany/core/lib/rate-limit";
 import { rateLimitedMessage } from "@/lib/retry-after";
-import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
+import { emailDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
 import { isTrustedSession } from "@/lib/roadmap/access";
 import { companyForDomainRow } from "@/lib/roadmap/db";
 import { roadmapEnabled } from "@/lib/roadmap/config";
@@ -21,6 +21,8 @@ export interface WorkUser {
   email: string;
   emailDomain: string;
   provider: string;
+  /** Per-login verified-email claim (session.mv === true). Never stored. */
+  mv: boolean;
   admin: boolean;
 }
 
@@ -32,8 +34,9 @@ export interface WorkUser {
  * MICROSOFT_TENANT_ID=common the Microsoft lane will mint a session bearing
  * any email a free Entra tenant claims (the published nOAuth forgery; the
  * full argument lives at the head of src/lib/rfp/access.ts). So the stamp
- * additionally requires the /rfp predicate: a provider that verifies its
- * email claim (Google) AND an exact-label domain parse (requireXlUser's
+ * additionally requires the /rfp predicate: a verified staff provider
+ * (Google, or Microsoft carrying the per-login mv claim minted from strict
+ * xms_edov) AND an exact-label domain parse (requireXlUser's
  * split("@")[1] idiom is ambiguous on double-@ addresses). Reuses the rfp
  * primitives rather than copying the lists, so a future hardening there
  * moves here too. Email-lane submissions never see this predicate: they
@@ -43,7 +46,7 @@ export function verifiedWebAdmin(user: WorkUser): boolean {
   const domain = emailDomain(user.email);
   return (
     user.admin &&
-    isRfpProvider(user.provider) &&
+    isVerifiedStaffProvider(user) &&
     domain !== null &&
     WORK_SUBMIT_DOMAINS.includes(domain)
   );
@@ -82,6 +85,7 @@ export async function requireUser(): Promise<WorkUser | Response> {
     email: session.email,
     emailDomain: session.email.split("@")[1]?.toLowerCase() ?? "",
     provider: session.provider,
+    mv: session.mv === true,
     admin: isAdmin(session.email),
   };
 }
@@ -143,6 +147,7 @@ export async function requireWorkUser(): Promise<
     email: session.email,
     emailDomain: emailDomain(session.email) ?? "",
     provider: session.provider,
+    mv: session.mv === true,
     admin: isAdmin(session.email),
   };
   if (WORK_SUBMIT_DOMAINS.includes(user.emailDomain)) {

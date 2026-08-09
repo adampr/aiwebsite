@@ -17,7 +17,13 @@ import {
   isCompanyEligibleDomain,
   RESERVED_DOMAINS,
 } from "../src/lib/roadmap/domains";
-import { emailDomain } from "../src/lib/rfp/access";
+import {
+  emailDomain,
+  isVerifiedStaffProvider,
+  RFP_PROVIDERS,
+} from "../src/lib/rfp/access";
+import { isStaffSession, SILENT_REVERIFY_PROVIDERS } from "../src/lib/roadmap/access";
+import type { SessionData } from "@aicompany/core/auth/session";
 import { INTERNAL_SCOPE, scopeOf } from "../src/lib/work/scope";
 import { readFileSync, existsSync } from "node:fs";
 import {
@@ -111,6 +117,74 @@ ok("emailDomain stays strict for tenancy use", () => {
   assert.equal(emailDomain("a@Booboo.COM."), "booboo.com"); // lowered, root dot stripped
   assert.equal(emailDomain("a@xn--boo"), "xn--boo");
   assert.equal(emailDomain("a@bΟΟboo.com"), null); // non-ASCII homoglyph refused
+});
+
+// ---- Microsoft staff parity (2026-08-09) ----
+// The nOAuth hole stays closed on the Microsoft lane by the per-login mv
+// claim ALONE, so these pins are the security boundary: anything other than
+// boolean true must fail, including the string "true" that Entra's optional
+// claim serialization produces (the strictClaimTrue family above).
+ok("isVerifiedStaffProvider: google needs no mv, microsoft needs mv === true", () => {
+  // Google (Workspace anchor): admitted with or without mv. Never tighten.
+  assert.equal(isVerifiedStaffProvider({ provider: "google" }), true);
+  assert.equal(isVerifiedStaffProvider({ provider: "google", mv: false }), true);
+  assert.equal(isVerifiedStaffProvider({ provider: " GOOGLE " }), true);
+  // Microsoft: ONLY strict boolean true.
+  assert.equal(isVerifiedStaffProvider({ provider: "microsoft", mv: true }), true);
+  assert.equal(isVerifiedStaffProvider({ provider: " MICROSOFT ", mv: true }), true);
+  assert.equal(isVerifiedStaffProvider({ provider: "microsoft" }), false);
+  assert.equal(isVerifiedStaffProvider({ provider: "microsoft", mv: false }), false);
+  assert.equal(isVerifiedStaffProvider({ provider: "microsoft", mv: "true" }), false);
+  assert.equal(isVerifiedStaffProvider({ provider: "microsoft", mv: "false" }), false);
+  assert.equal(isVerifiedStaffProvider({ provider: "microsoft", mv: 1 }), false);
+  assert.equal(isVerifiedStaffProvider({ provider: "microsoft", mv: null }), false);
+  assert.equal(isVerifiedStaffProvider({ provider: "microsoft", mv: {} }), false);
+  // Everything else, mv or not: staff is OAuth-only.
+  assert.equal(isVerifiedStaffProvider({ provider: "magic-link", mv: true }), false);
+  assert.equal(isVerifiedStaffProvider({ provider: null }), false);
+  assert.equal(isVerifiedStaffProvider({ provider: undefined, mv: true }), false);
+});
+
+ok("RFP_PROVIDERS stays google-only (microsoft rides mv, never this list)", () => {
+  // A provider LIST cannot see mv, so listing microsoft here would admit
+  // unverified common-tenant sessions at every isRfpProvider call site.
+  assert.deepEqual([...RFP_PROVIDERS], ["google"]);
+});
+
+ok("isStaffSession pairs the predicate with exact-label xl.net", () => {
+  const base: SessionData = {
+    userId: "u1",
+    email: "adam@xl.net",
+    displayName: "Adam Example",
+    provider: "microsoft",
+    iat: 0,
+    exp: 0,
+  };
+  assert.equal(isStaffSession({ ...base, mv: true }), true);
+  assert.equal(isStaffSession(base), false); // microsoft without mv
+  assert.equal(isStaffSession({ ...base, provider: "google" }), true); // no mv needed
+  // Verified, but not xl.net: never staff.
+  assert.equal(
+    isStaffSession({ ...base, mv: true, email: "adam@gmail.com" }),
+    false
+  );
+  assert.equal(
+    isStaffSession({ ...base, mv: true, email: "adam@evilxl.net" }),
+    false
+  );
+  // Subdomain and double-@ are refused by the strict parser.
+  assert.equal(
+    isStaffSession({ ...base, mv: true, email: "tron@ai.xl.net" }),
+    false
+  );
+  assert.equal(
+    isStaffSession({ ...base, mv: true, email: "a@xl.net@evil.com" }),
+    false
+  );
+});
+
+ok("SILENT_REVERIFY_PROVIDERS carries both arms the route implements", () => {
+  assert.deepEqual([...SILENT_REVERIFY_PROVIDERS], ["google", "microsoft"]);
 });
 
 // ---- scope plumbing ----

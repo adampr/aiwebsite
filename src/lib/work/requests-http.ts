@@ -4,7 +4,7 @@
 // feature.
 
 import { companyAdminRole } from "@/lib/roadmap/db";
-import { isRfpProvider } from "@/lib/rfp/access";
+import { isVerifiedStaffProvider } from "@/lib/rfp/access";
 import {
   REQUEST_STATUS_COPY,
   type WorkRequestStatus,
@@ -28,7 +28,8 @@ export const isRequestId = (id: string): boolean => UUID_RE.test(id);
  * SESSION (xl.net -> internal scope; registered company -> its scope with
  * the trusted-session requirement), and this wrapper adds one §5.19
  * hardening on top: the INTERNAL lane additionally requires the /rfp
- * provider anchor (Google). requireWorkUser deliberately admits any-provider
+ * provider anchor (Google, or Microsoft with the per-login mv claim).
+ * requireWorkUser deliberately admits any-provider
  * xl.net sessions for submissions, where a forged Microsoft common-tenant
  * session (the nOAuth argument, http.ts header) can at worst spam its own
  * drafts through an AI panel; here it could burn the lane's claim slots and
@@ -39,10 +40,10 @@ export const isRequestId = (id: string): boolean => UUID_RE.test(id);
 export async function requireRequestUser(): Promise<RequestUser | Response> {
   const user = await requireWorkUser();
   if (user instanceof Response) return user;
-  if (user.scope.companyId === null && !isRfpProvider(user.provider)) {
+  if (user.scope.companyId === null && !isVerifiedStaffProvider(user)) {
     return workError(
       "untrusted_provider",
-      "The requested-work board is open to xl.net Google sign-ins. Sign in with your xl.net Google account and try again.",
+      "The requested-work board needs a verified xl.net sign-in. Sign in again with your xl.net Google or Microsoft account so your address can be verified, then try again.",
       403
     );
   }
@@ -74,8 +75,9 @@ export function transitionErrorResponse(
   );
 }
 
-/** Lane admin: internal = verifiedWebAdmin (ADMIN_EMAIL AND the Google
- * provider AND exact-label xl.net - never bare isAdmin); company =
+/** Lane admin: internal = verifiedWebAdmin (ADMIN_EMAIL AND a verified
+ * staff provider - Google, or Microsoft with the per-login mv claim - AND
+ * exact-label xl.net; never bare isAdmin); company =
  * companyAdminRole over the SESSION-derived scope. companyId never comes
  * from client input: requireWorkUser derived it from the session email
  * domain. */

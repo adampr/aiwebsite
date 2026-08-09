@@ -6,10 +6,15 @@
  *
  * Mints signed sessions with the real SESSION_COOKIE_SECRET and asserts who
  * the gate admits. Case 5 is the one that matters: a VALIDLY SIGNED session
- * claiming an @xl.net address via Microsoft must still be refused, because
- * MICROSOFT_TENANT_ID is "common" and Entra's `mail` attribute is not a
- * verified-domain claim. If that case ever returns GRANTED, the section is
- * open to anyone willing to create a free tenant.
+ * claiming an @xl.net address via Microsoft WITHOUT the per-login mv claim
+ * must still be refused, because MICROSOFT_TENANT_ID is "common" and Entra's
+ * `mail` attribute is not a verified-domain claim. If that case ever returns
+ * GRANTED, the section is open to anyone willing to create a free tenant.
+ *
+ * Microsoft parity (2026-08-09): mv === true (STRICT boolean, minted only by
+ * the hardened callback from a strict xms_edov) is the ONLY Microsoft
+ * admission - cases 5b/5c/5d pin that the string "true" and false do not
+ * pass. mv rides the same HMAC-signed cookie the gate reads in production.
  */
 
 import "dotenv/config";
@@ -48,7 +53,10 @@ async function main() {
   const r2 = await hit("2 valid session, gmail.com", sign({ userId: "u1", email: "someone@gmail.com", provider: "google" }));
   const r3 = await hit("3 valid session, evilxl.net", sign({ userId: "u2", email: "a@evilxl.net", provider: "google" }));
   const r4 = await hit("4 valid session, ai.xl.net subdomain", sign({ userId: "u3", email: "Tron.Netter@ai.xl.net", provider: "google" }));
-  const r5 = await hit("5 xl.net via MICROSOFT (forgery path)", sign({ userId: "u4", email: "adam@xl.net", provider: "microsoft" }));
+  const r5 = await hit("5 xl.net MICROSOFT no mv (forgery path)", sign({ userId: "u4", email: "adam@xl.net", provider: "microsoft" }));
+  const r5b = await hit("5b xl.net MICROSOFT + mv=true (verified)", sign({ userId: "u4b", email: "adam@xl.net", provider: "microsoft", mv: true }));
+  const r5c = await hit("5c xl.net MICROSOFT + mv=\"true\" string", sign({ userId: "u4c", email: "adam@xl.net", provider: "microsoft", mv: "true" }));
+  const r5d = await hit("5d xl.net MICROSOFT + mv=false", sign({ userId: "u4d", email: "adam@xl.net", provider: "microsoft", mv: false }));
   const r6 = await hit("6 xl.net via GOOGLE (real staff)", sign({ userId: "u5", email: "adam@xl.net", provider: "google" }));
   const r7 = await hit("7 tampered signature", sign({ userId: "u6", email: "adam@xl.net", provider: "google" }).replace(/.$/, "X"));
   const r8 = await hit("8 xl.net google -> /rfp/knowledge", sign({ userId: "u7", email: "a@xl.net", provider: "google" }), "/rfp/knowledge");
@@ -56,7 +64,8 @@ async function main() {
   console.log("-".repeat(78));
   const pass =
     r1.status === 307 && r2.denied && r3.denied && r4.denied &&
-    r5.denied && r6.granted && r7.status === 307 && r8.granted;
+    r5.denied && r5b.granted && r5c.denied && r5d.denied &&
+    r6.granted && r7.status === 307 && r8.granted;
   console.log(pass ? "ALL GATE ASSERTIONS PASSED" : "*** GATE FAILURE ***");
   process.exit(pass ? 0 : 1);
 }

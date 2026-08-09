@@ -15,7 +15,8 @@ import { redirect } from "next/navigation";
 import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
-import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
+import { emailDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
+import { StaffVerifyNotice } from "@/components/staff-verify-notice";
 import { roadmapEnabled, ROADMAP_CAPS } from "@/lib/roadmap/config";
 import {
   allPendingRequests,
@@ -33,13 +34,19 @@ type Search = { searchParams: Promise<{ companyId?: string }> };
 
 export default async function AdminRoadmapPage({ searchParams }: Search) {
   const session = await readSession(siteConfig);
-  if (
-    !session ||
-    !isAdmin(session.email) ||
-    !isRfpProvider(session.provider) ||
-    emailDomain(session.email) !== "xl.net"
-  )
-    redirect("/login");
+  if (!session || !isAdmin(session.email) || emailDomain(session.email) !== "xl.net")
+    redirect("/login?redirect=%2Fadmin%2Froadmap");
+  // Verified-staff check separated from the bounce so an xl.net Microsoft
+  // session without mv gets the explainer plus both sign-ins, never a login
+  // form it has already satisfied.
+  if (!isVerifiedStaffProvider(session))
+    return (
+      <StaffVerifyNotice
+        email={session.email}
+        surface="The client-workspace console"
+        redirectTo="/admin/roadmap"
+      />
+    );
 
   const { companyId } = await searchParams;
   const usage = await readTodayRoadmapUsage();

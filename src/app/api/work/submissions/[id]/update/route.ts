@@ -2,7 +2,7 @@
 // admin-mediated updates, 2026-08-03). Creates a NEW row with parent_id set;
 // title and kind are PINNED to the predecessor (renames stay admin-CLI-only)
 // and the panel result parks as pending_approval for the admin swap click.
-// ONE exception (owner ruling 2026-08-03): a Google-verified admin session
+// ONE exception (owner ruling 2026-08-03): a verified-staff admin session
 // (verifiedWebAdmin) stamps autoApprove at intake, and a PASSING panel run
 // then swaps the card live itself via finishUpdateRow; approving your own
 // submission is ceremony. Nothing on this route swaps synchronously, and
@@ -285,7 +285,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       archiveData: bytes,
       md: mdMeta,
       parentId: id,
-      // The ONLY call site that may arm this (web session, Google-verified
+      // The ONLY call site that may arm this (web session, verified-staff
       // admin). The email lane's DKIM-authenticated From is spoofable and
       // must never reach an autoApprove row.
       autoApprove: verifiedWebAdmin(user),

@@ -44,15 +44,14 @@ export default async function RfpLayout({
               RFP Response is open to XL.net staff accounts. You are signed in
               as{" "}
               <span className="mono">{result.email}</span>. If you work at
-              XL.net, sign in with your xl.net Google account.
+              XL.net, sign in with your xl.net Google or Microsoft account.
             </p>
           ) : (
             <p>
-              RFP Response requires an XL.net Google sign-in. You are signed in
-              as{" "}
-              <span className="mono">{result.email}</span>{" "}
-              using a different provider. Sign out and choose Continue with
-              Google.
+              RFP Response requires a verified XL.net sign-in. You are signed
+              in as <span className="mono">{result.email}</span>, but this
+              session could not verify your address. Sign in again with your
+              xl.net Google or Microsoft account and come back.
             </p>
           )}
           <p className="mt-4 text-sm text-faint">

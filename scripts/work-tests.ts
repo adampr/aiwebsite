@@ -1748,21 +1748,38 @@ async function main() {
   );
 
   // §5.16 verifiedWebAdmin: the auto-approve stamp predicate is strictly
-  // AND over admin + Google provider + exact-label domain (the Microsoft
-  // common-tenant lane can forge isAdmin-passing sessions).
+  // AND over admin + a VERIFIED staff provider + exact-label domain. Google
+  // needs no mv (Workspace anchor); Microsoft needs the per-login mv claim,
+  // because the mv-less common-tenant lane can forge isAdmin-passing
+  // sessions (Microsoft parity round 2026-08-09).
   const { verifiedWebAdmin } = await import("../src/lib/work/http");
   const webAdmin = {
     userId: "u",
     email: "someone@xl.net",
     emailDomain: "xl.net",
     provider: "google",
+    mv: false,
     admin: true,
   };
-  assert.equal(verifiedWebAdmin(webAdmin), true, "google admin on xl.net stamps");
+  assert.equal(
+    verifiedWebAdmin(webAdmin),
+    true,
+    "google admin on xl.net stamps with mv false (Workspace anchor, never tightened)"
+  );
   assert.equal(
     verifiedWebAdmin({ ...webAdmin, provider: "microsoft" }),
     false,
-    "microsoft session never stamps (nOAuth forgery)"
+    "microsoft session WITHOUT mv never stamps (nOAuth forgery)"
+  );
+  assert.equal(
+    verifiedWebAdmin({ ...webAdmin, provider: "microsoft", mv: true }),
+    true,
+    "microsoft admin WITH mv stamps (parity)"
+  );
+  assert.equal(
+    verifiedWebAdmin({ ...webAdmin, provider: "microsoft", mv: true, email: "a@evil.com", emailDomain: "evil.com" }),
+    false,
+    "verified microsoft on a foreign domain never stamps"
   );
   assert.equal(
     verifiedWebAdmin({ ...webAdmin, admin: false }),

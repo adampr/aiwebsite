@@ -6,8 +6,9 @@
 // session gate with deep-link redirect, instructive notices instead of
 // bounces, noindexed and absent from the sitemap.
 //
-// The internal lane is pinned to the /rfp provider anchor (Google): a
-// Microsoft common-tenant session can claim any @xl.net address (nOAuth,
+// The internal lane is pinned to the /rfp provider anchor (Google, or
+// Microsoft carrying the per-login mv claim): an mv-less Microsoft
+// common-tenant session can claim any @xl.net address (nOAuth,
 // src/lib/work/http.ts header), and here that would burn claim slots and
 // flood the admin queue. requireRequestUser enforces the same rule on every
 // route; this page just explains it.
@@ -18,7 +19,7 @@ import { redirect } from "next/navigation";
 import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
-import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
+import { emailDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
 import { verifiedWebAdmin, WORK_SUBMIT_DOMAINS } from "@/lib/work/http";
 import { INTERNAL_SCOPE } from "@/lib/work/scope";
 import { REQUEST_CAPS } from "@/lib/work/requests-config";
@@ -74,7 +75,7 @@ export default async function WorkRequestedPage() {
     );
   }
 
-  if (!isRfpProvider(session.provider)) {
+  if (!isVerifiedStaffProvider(session)) {
     return (
       <div className="mx-auto max-w-2xl space-y-8 pt-12">
         <div className="text-center">
@@ -85,9 +86,10 @@ export default async function WorkRequestedPage() {
         </div>
         <div className="panel panel--raised">
           <p className="text-sm">
-            The requested-work board is open to xl.net Google sign-ins. You
-            are signed in as {session.email} via {session.provider}. Sign in
-            with your xl.net Google account and come back.
+            The requested-work board needs a verified xl.net sign-in. You
+            are signed in as {session.email} via {session.provider}, but this
+            session could not verify your address. Sign in again with your
+            xl.net Google or Microsoft account and come back.
           </p>
         </div>
       </div>
@@ -100,6 +102,7 @@ export default async function WorkRequestedPage() {
     email: session.email,
     emailDomain: domain,
     provider: session.provider,
+    mv: session.mv === true,
     admin: isAdmin(session.email),
   };
   const admin = verifiedWebAdmin(user);

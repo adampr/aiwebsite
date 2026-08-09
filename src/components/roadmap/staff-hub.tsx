@@ -5,13 +5,16 @@
 // ornament runway ("accepted trade-off") is retired - the runway now shows
 // REAL staff state, with stops linking STAFF_STEP_HREFS.
 //
-// SECURITY: rendered off isStaffSession (google + exact-label xl.net; mv not
-// required - see the rewritten invariant in src/lib/roadmap/access.ts).
+// SECURITY: rendered off isStaffSession (a verified staff provider +
+// exact-label xl.net; Google needs no mv, Microsoft requires the per-login
+// mv claim - see the rewritten invariant in src/lib/roadmap/access.ts).
 // Everything shown here is bounded above by what weaker staff gates already
 // expose (internal-lane published work is public on /work, request
-// aggregates are staff-visible on /work/requested, and the staff directory
-// is XL's own staff shown to XL's own staff). globalAdmin gates RENDER
-// decisions only; every write re-derives requireGlobalAdmin server-side.
+// aggregates are visible to any verified xl.net staff session on
+// /work/requested, and the staff directory is XL's own staff shown to XL's
+// own staff). No client-tenant data renders here, every CTA lands on a page
+// with its own gate, and globalAdmin gates RENDER decisions only; every
+// write re-derives requireGlobalAdmin server-side.
 //
 // Honesty notes: governance renders constant-done (XL.net's governance IS
 // its public offering: the Governance Builder plus the published AUP; the

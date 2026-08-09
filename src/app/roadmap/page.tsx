@@ -211,10 +211,11 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
   }
 
   if (view.kind === "unverified") {
-    // One-shot silent Google re-verify: a server-side bounce BEFORE any HTML
+    // One-shot silent re-verify through the session's OWN provider (google
+    // or microsoft): a server-side bounce BEFORE any HTML
     // renders. The reverify route sets its own guard cookie, so a failed
     // round trip returns with attempted=true (and possibly
-    // ?verify=google_unverified) and lands on the screen below, never a
+    // ?verify=<provider>_unverified) and lands on the screen below, never a
     // loop.
     if (view.silentEligible && !view.attempted) {
       redirect("/api/auth/reverify?redirect=/roadmap");
@@ -226,7 +227,9 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
         email={view.email}
         reservedDomain={view.reservedDomain}
         attempted={view.attempted}
-        verifyFlag={verify === "google_unverified"}
+        verifyFlag={
+          verify === "google_unverified" || verify === "microsoft_unverified"
+        }
       />
     );
   }

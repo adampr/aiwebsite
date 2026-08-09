@@ -697,7 +697,7 @@ export type UpdateFinishResult =
  * - parentId: SET NULL can orphan a child that still carries the flag; an
  *   orphan must never reach the swap.
  * - autoApprove: stamped only by the web update route under a
- *   Google-verified admin session. isAdmin(submitterEmail) alone would make
+ *   verified-staff admin session. isAdmin(submitterEmail) alone would make
  *   every DKIM-spoofable adam@xl.net EMAIL update publish itself.
  * - heldAt IS NULL: a row that has EVER been held (gate failure, conflict
  *   park) has passed through a human-attention state; a later passing
