@@ -14,18 +14,41 @@
 // UPN cannot be forged (it must sit on a verified domain); `mail` can. So a
 // domain-only gate would admit anyone willing to create a free tenant.
 //
-// XL.net is a Google Workspace domain: xl.net MX points only at
-// aspmx.l.google.com and SPF includes _spf.google.com, with no Microsoft mail
-// records. Staff therefore sign in with Google, and Google will not issue an
-// @xl.net account to anyone who cannot receive mail at that address (consumer
-// signup on a Workspace-managed domain is blocked, and the fallback flow mails
-// a verification code that lands in XL.net's own tenant).
+// TWO anchors close it, one per provider (Microsoft parity, 2026-08-09):
 //
-// So the gate is (provider === "google" AND domain === "xl.net"). That closes
-// the Microsoft forgery path for this section while changing NOTHING for
-// members of the public who sign in with Microsoft elsewhere on the site.
-// `provider` is set server-side from the users row and covered by the session
-// HMAC (auth/session.ts), so it is not client-supplied.
+// GOOGLE: XL.net is a Google Workspace domain: xl.net MX points only at
+// aspmx.l.google.com and SPF includes _spf.google.com, with no Microsoft mail
+// records. Google will not issue an @xl.net account to anyone who cannot
+// receive mail at that address (consumer signup on a Workspace-managed domain
+// is blocked, and the fallback flow mails a verification code that lands in
+// XL.net's own tenant). No mv claim is required on this lane - staff Google
+// sessions predate the hardened callbacks; never tighten this.
+//
+// MICROSOFT: admitted ONLY with the per-login `mv: true` session claim,
+// stamped by the hardened callback (src/lib/auth/oauth-hardened.ts
+// microsoftVerdict) when ALL of: the id_token's aud is OUR client id (a token
+// minted for any other consented app is refused), iss is the v2.0 issuer for
+// the token's OWN tid, exp is in the future (no stale-token replay),
+// xms_edov is STRICTLY true via strictClaimTrue (Entra serializes optional
+// claims as JSON strings on some tenants and Boolean("false") is true), and
+// the token's email claim equals the stored Graph email case-insensitively
+// (the verdict is about the address that keys the session). xms_edov asserts
+// the email's DOMAIN IS VERIFIED BY THE ISSUING TENANT, and Entra domain
+// verification requires a DNS TXT record on xl.net - so only a tenant
+// controlling xl.net DNS can mint xms_edov=true for an @xl.net address. A
+// free attacker tenant can PATCH Graph `mail` to anything@xl.net, but its
+// id_token carries xms_edov false or absent; personal (MSA) accounts cannot
+// verify a custom domain at all. mv is per-login and HMAC-covered, never a
+// stored users-row flag, so a later unverified login cannot inherit an
+// earlier verification. A microsoft xl.net session WITHOUT mv is NOT staff
+// anywhere and gets the typed wrong_provider denial, never a blank surface.
+//
+// So the gate is (provider === "google", OR provider === "microsoft" with
+// the per-login mv === true claim) AND domain === "xl.net". That closes the
+// Microsoft forgery path for this section while changing NOTHING for members
+// of the public who sign in with Microsoft elsewhere on the site. `provider`
+// and `mv` are set server-side and covered by the session HMAC
+// (auth/session.ts + oauth-hardened.ts), so neither is client-supplied.
 //
 // This is deliberately NOT src/lib/work/http.ts's requireXlUser(). That gate
 // is domain-only and guards work submissions; sharing it would silently
@@ -41,11 +64,18 @@ import { siteConfig } from "site.config";
 export const RFP_DOMAINS = ["xl.net"] as const;
 
 /**
- * Sign-in providers whose email claim is trustworthy for this section.
+ * Sign-in providers whose email claim is trustworthy for this section
+ * WITHOUT a per-login verification claim.
  *
  * Adding a provider here is a security decision: it asserts that the provider
  * will not issue a session bearing an @xl.net address to someone who does not
  * control that mailbox. See the header note before touching it.
+ *
+ * "microsoft" must NEVER be added here: this is a provider LIST with no
+ * access to the session's mv claim, so listing it would admit unverified
+ * common-tenant sessions at every isRfpProvider call site. Microsoft staff
+ * trust lives ONLY in isVerifiedStaffProvider, which demands mv === true.
+ * Pinned google-only in scripts/roadmap-tests.ts.
  */
 export const RFP_PROVIDERS = ["google"] as const;
 
@@ -100,6 +130,31 @@ export function isRfpProvider(provider: string | null | undefined): boolean {
   );
 }
 
+/**
+ * THE staff trust predicate (Microsoft parity, 2026-08-09): a session whose
+ * email claim is trustworthy for STAFF surfaces. Google needs no mv (the
+ * Workspace anchor above); Microsoft is admitted only with the per-login
+ * HMAC-covered `mv: true` claim (strict xms_edov + aud/iss/exp, see the
+ * header). mv gets NO normalization here - the hardened callback stamps a
+ * boolean true and nothing else, so any non-boolean value is a bug or a
+ * forgery and must fail closed. magic-link and every other provider return
+ * false (staff is OAuth-only; magic links are never minted for staff
+ * domains).
+ *
+ * DOMAIN IS DELIBERATELY NOT CHECKED HERE: every call site pairs this with
+ * an exact-label xl.net check, exactly as it paired isRfpProvider. Using it
+ * without a domain check would admit any verified foreign-tenant session.
+ * Accepts SessionData (mv rides its index signature) and the widened
+ * WorkUser (mv: boolean) alike.
+ */
+export function isVerifiedStaffProvider(s: {
+  provider: string | null | undefined;
+  mv?: unknown;
+}): boolean {
+  if (isRfpProvider(s.provider)) return true;
+  return s.provider?.trim().toLowerCase() === "microsoft" && s.mv === true;
+}
+
 export type RfpDenial =
   | { ok: false; reason: "unauthenticated" }
   | { ok: false; reason: "wrong_domain"; email: string }
@@ -119,7 +174,7 @@ export async function readRfpUser(): Promise<
   if (domain === null || !isRfpDomain(session.email)) {
     return { ok: false, reason: "wrong_domain", email: session.email };
   }
-  if (!isRfpProvider(session.provider)) {
+  if (!isVerifiedStaffProvider(session)) {
     return { ok: false, reason: "wrong_provider", email: session.email };
   }
 

@@ -2,11 +2,13 @@
 // staff get the SAME roadmap hub as client companies, backed by the internal
 // (public /work) lane. Replaces the old staff-panel.tsx explainer.
 //
-// SECURITY: rendered off isStaffSession (google + exact-label xl.net; mv not
-// required - see the rewritten invariant in src/lib/roadmap/access.ts).
+// SECURITY: rendered off isStaffSession (a verified staff provider +
+// exact-label xl.net; Google needs no mv, Microsoft requires the per-login
+// mv claim - see the rewritten invariant in src/lib/roadmap/access.ts).
 // Everything shown here is bounded above by what weaker staff gates already
 // expose: internal-lane published work is public on /work, and the request
-// aggregates are visible to any xl.net Google session on /work/requested.
+// aggregates are visible to any verified xl.net staff session on
+// /work/requested.
 // No client-tenant data renders here, and every CTA lands on a page with its
 // own gate.
 //

@@ -44,11 +44,17 @@ export function probeStaff(): Promise<boolean> {
 }
 
 /**
- * Signed in on an xl.net account VIA GOOGLE.
+ * Signed in on an xl.net account via a staff provider (google or microsoft).
  *
- * Mirrors src/lib/rfp/access.ts exactly, including the provider requirement,
- * so the nav link never advertises a section the server will then refuse. If
- * the two ever disagree, the server is right and this is the bug.
+ * OVER-APPROXIMATES the server gate on purpose (Microsoft parity round): the
+ * per-login mv claim is not exposed by /api/auth/session (the module handler
+ * returns only email/displayName/provider/isAdmin, and its augment hook sees
+ * the users ROW, while mv is per-login and never stored), so the client
+ * cannot mirror isVerifiedStaffProvider exactly. Keeping this google-only
+ * would permanently hide the link from verified Microsoft staff; widening it
+ * only over-advertises to an xl.net Microsoft session without mv, which
+ * lands on the server's explainer naming the fix. The server gate is the
+ * control; if the two disagree, the server is right.
  */
 export function probeRfpStaff(): Promise<boolean> {
   return probeSession().then((s) => {
@@ -57,7 +63,7 @@ export function probeRfpStaff(): Promise<boolean> {
     if (parts.length !== 2) return false;
     return (
       parts[1].replace(/\.$/, "") === "xl.net" &&
-      s.provider?.trim().toLowerCase() === "google"
+      ["google", "microsoft"].includes(s.provider?.trim().toLowerCase() ?? "")
     );
   });
 }

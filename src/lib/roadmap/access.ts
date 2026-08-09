@@ -29,7 +29,7 @@ import { readSession, type SessionData } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { redirect } from "next/navigation";
 import { siteConfig } from "site.config";
-import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
+import { emailDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
 import { companyAdminRole, companyForDomainRow } from "@/lib/roadmap/db";
 
 export { emailDomain };
@@ -88,30 +88,37 @@ export type RoadmapDenial =
   | { ok: false; reason: "untrusted_provider"; email: string };
 
 /** Providers eligible for the SILENT re-verify redirect (§5.18 round 2). A
- * constant in code, google-only: Microsoft joins ONLY after all three gates
- * hold: (1) the Entra optional claims (email + xms_edov) are configured on
- * the app registration, (2) an observed real login has minted mv=true, and
- * (3) the reverify route grows a Microsoft authorize-URL arm. */
-export const SILENT_REVERIFY_PROVIDERS = ["google"] as const;
+ * constant in code. Microsoft joined 2026-08-09 (parity round): all three
+ * enable gates held - (1) the Entra optional claims (email + xms_edov) are
+ * configured on the app registration (2026-08-04), (2) real Microsoft
+ * logins observed minting mv=true in prod, (3) the reverify route carries a
+ * Microsoft authorize-URL arm (prompt=none + login_hint +
+ * response_mode=query, src/app/api/auth/reverify/route.ts). A future
+ * provider joins only after the equivalent three gates hold. */
+export const SILENT_REVERIFY_PROVIDERS = ["google", "microsoft"] as const;
 
 /**
- * Staff = the /rfp trust anchor: provider google AND exact-label xl.net
- * (src/lib/rfp/access.ts header for the full argument; provider rides under
- * the session HMAC and is set server-side, so it is not client-supplied).
- * mv is NOT required. INVARIANT (rewritten for the §5.18 unification): this
+ * Staff = the /rfp trust anchor: a VERIFIED staff provider AND exact-label
+ * xl.net (src/lib/rfp/access.ts header for the full two-anchor argument;
+ * provider and mv ride under the session HMAC and are set server-side, so
+ * neither is client-supplied). mv is NOT required for google (Workspace
+ * anchor; staff sessions predate the hardened callbacks - never tighten)
+ * and IS required for microsoft (strict xms_edov, Microsoft parity round
+ * 2026-08-09). INVARIANT (rewritten for the §5.18 unification): this
  * predicate grants ZERO client-tenant authority and gates no mutation. It
  * may select staff READ surfaces (the staff hub, the staff scorecard and
  * its click-through) whose content is bounded above by what weaker existing
  * staff gates already expose: internal-lane published work is public on
- * /work, and internal-lane request aggregates are visible to any signed-in
- * xl.net Google session on /work/requested (this predicate requires Google,
- * the /rfp anchor that closes the nOAuth Microsoft path). Anything that
+ * /work, and internal-lane request aggregates are visible to any verified
+ * xl.net staff session on /work/requested (this predicate requires a
+ * verified staff provider; the mv requirement on the Microsoft lane is what
+ * closes the nOAuth path). Anything that
  * renders a CLIENT company's data or performs ANY action must re-derive its
  * own gate (requireGlobalAdmin, requireRequestUser/verifiedWebAdmin, or a
  * trusted principal), never this predicate.
  */
 export function isStaffSession(s: SessionData): boolean {
-  return isRfpProvider(s.provider) && emailDomain(s.email) === "xl.net";
+  return isVerifiedStaffProvider(s) && emailDomain(s.email) === "xl.net";
 }
 
 /**
@@ -140,7 +147,8 @@ export type RoadmapHubView =
       attempted: boolean;
       /** xl.net/ai.xl.net: the email-link option is structurally dead
        * (magic links are never minted for staff domains) - render the
-       * Google-only verify screen. */
+       * staff verify screen (Google or Microsoft sign-in; the email
+       * option stays suppressed). */
       reservedDomain: boolean;
     }
   | { kind: "principal"; principal: RoadmapPrincipal };
@@ -257,13 +265,14 @@ export async function readRoadmapPrincipal(): Promise<
 }
 
 /** verifiedWebAdmin semantics (src/lib/work/http.ts): ADMIN_EMAIL membership
- * alone is forgeable via the Microsoft common-tenant lane, so global-admin
- * power additionally requires the Google provider and an exact-label xl.net
- * domain. Bare isAdmin appears nowhere in this feature. */
+ * alone is forgeable via the mv-less Microsoft common-tenant lane, so
+ * global-admin power additionally requires a verified staff provider
+ * (Google, or Microsoft with the per-login mv claim) and an exact-label
+ * xl.net domain. Bare isAdmin appears nowhere in this feature. */
 function isGlobalAdminSession(s: SessionData): boolean {
   return (
     isAdmin(s.email) &&
-    isRfpProvider(s.provider) &&
+    isVerifiedStaffProvider(s) &&
     emailDomain(s.email) === "xl.net"
   );
 }

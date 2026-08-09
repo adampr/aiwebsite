@@ -322,9 +322,10 @@ export const workSubmissions = pgTable(
       onDelete: "set null",
     }),
     // §5.16 admin web auto-approve: stamped true ONLY by the web update route
-    // under a Google-verified admin session (isRfpProvider + exact-domain
-    // parse; the Microsoft common-tenant lane can forge isAdmin-passing
-    // sessions, see src/lib/rfp/access.ts). A true value lets a PASSING panel
+    // under a verified-staff admin session (isVerifiedStaffProvider:
+    // Google, or Microsoft with the per-login mv claim, + exact-domain
+    // parse; an mv-less Microsoft common-tenant lane can forge
+    // isAdmin-passing sessions, see src/lib/rfp/access.ts). A true value lets a PASSING panel
     // run swap the update live without the /admin/work click. The email lane
     // (DKIM-spoofable From) must never arm it; migration 0034 adds a CHECK
     // (auto_approve = false OR parent_id IS NOT NULL) and createSubmission

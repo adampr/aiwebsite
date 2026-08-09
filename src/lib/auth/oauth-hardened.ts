@@ -66,7 +66,11 @@ import { archivedLoginMessage } from "@aicompany/core/auth/login-errors";
 import { signSession } from "@aicompany/core/auth/session";
 import { logStage } from "@aicompany/core/lib/log";
 import type { SiteConfig } from "@aicompany/core/config/types";
-import { REVERIFY_COOKIE, reverifyBinding } from "@/lib/auth/reverify";
+import {
+  REVERIFY_COOKIE,
+  REVERIFY_STATE_COOKIE,
+  reverifyBinding,
+} from "@/lib/auth/reverify";
 
 /** ONLY boolean true or the exact string "true" count as verified. */
 export function strictClaimTrue(v: unknown): boolean {
@@ -239,10 +243,14 @@ export function createHardenedCallbackHandler(
     });
 
     const params = new URL(req.url).searchParams;
-    // §5.18 silent re-verify (aix_rv present = this round-trip was started
-    // by /api/auth/reverify on behalf of an EXISTING session).
+    // §5.18 silent re-verify (aix_rv present = a silent round-trip is in
+    // flight for an EXISTING session). aix_rv_state pins WHICH round-trip:
+    // the cookie is path=/ for 10 minutes, so without it an interactive
+    // sign-in landing here while it is set would be judged by the binding
+    // below too (parity round 2026-08-09; see src/lib/auth/reverify.ts).
     const jar = await cookies();
     const rvCookie = jar.get(REVERIFY_COOKIE)?.value ?? null;
+    const rvState = jar.get(REVERIFY_STATE_COOKIE)?.value ?? null;
     const containedTarget = async (): Promise<string> => {
       const raw = await consumeOAuthRedirect(config);
       const validated = raw ? validateRedirect(config, raw) : "/roadmap";
@@ -251,9 +259,9 @@ export function createHardenedCallbackHandler(
       return validated === "/" ? "/roadmap" : validated;
     };
     // CONTAINED ERROR BRANCH - scoped to exactly the prompt=none failure
-    // shape (an error param while the guard cookie is set). Google answers
-    // login_required / interaction_required when it cannot proceed
-    // invisibly; bouncing that to /login?error would strand a SIGNED-IN
+    // shape (an error param while the guard cookie is set). Both authorities
+    // answer login_required / interaction_required (Entra also
+    // consent_required) when they cannot proceed invisibly; bouncing that to /login?error would strand a SIGNED-IN
     // user on the login page, which is the reported bug. Every OTHER
     // failure (invalid_state, exchange, userinfo) keeps today's
     // /login?error path: invalid_state is the CSRF control's signal and
@@ -328,12 +336,18 @@ export function createHardenedCallbackHandler(
 
     // §5.18 IDENTITY BINDING: a silent-reverify round-trip may only refresh
     // the session it was started for. login_hint is non-binding in OIDC, so
-    // a browser signed into a DIFFERENT Google account would otherwise get
-    // that account silently swapped into this session with zero UI. On
+    // a browser signed into a DIFFERENT account at the same provider would
+    // otherwise get that account silently swapped into this session with
+    // zero UI. On
     // mismatch: no upsert, no cookie write - the existing session stays -
     // and the user lands on the verification screen (aix_rv retained stops
     // the redirect loop).
-    if (rvCookie !== null && reverifyBinding(email) !== rvCookie) {
+    // Applies ONLY to the silent round-trip aix_rv_state names. A
+    // user-initiated sign-in (different state, or no state cookie) proceeds
+    // normally: it is deliberate, has full UI, and discarding it silently
+    // was the reported dead end.
+    const isSilentRoundTrip = rvCookie !== null && rvState === state;
+    if (isSilentRoundTrip && reverifyBinding(email) !== rvCookie) {
       logStage({
         slug,
         channel: "auth",
@@ -429,11 +443,17 @@ export function createHardenedCallbackHandler(
       // would loop full OAuth rounds); on success-without-mv, flag the
       // return so the verification screen can say what happened instead of
       // silently re-rendering itself after a manual attempt.
-      if (rvCookie !== null) {
+      if (rvCookie !== null && !isSilentRoundTrip) {
+        // An interactive login superseded the pending silent round-trip:
+        // drop the guard entirely so the hub can arm a fresh one later.
+        jar.delete(REVERIFY_COOKIE);
+        jar.delete(REVERIFY_STATE_COOKIE);
+      } else if (rvCookie !== null) {
         if (mv) {
           jar.delete(REVERIFY_COOKIE);
+          jar.delete(REVERIFY_STATE_COOKIE);
         } else if (redirect.startsWith("/") && !redirect.includes("verify=")) {
-          redirect += `${redirect.includes("?") ? "&" : "?"}verify=google_unverified`;
+          redirect += `${redirect.includes("?") ? "&" : "?"}verify=${provider}_unverified`;
         }
       }
       logStage({

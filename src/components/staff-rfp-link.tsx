@@ -5,8 +5,10 @@
 // The root layout is a NON-async server component and every public page's
 // static render depends on it staying that way, so the link cannot be
 // server-rendered from viewer session state. This island asks the shared probe
-// (src/components/staff-probe.ts) and renders only for a signed-in xl.net
-// Google account, which is the same predicate the server gate enforces.
+// (src/components/staff-probe.ts) and renders for a signed-in xl.net Google
+// or Microsoft account. The per-login mv claim is invisible to the client, so
+// this OVER-approximates the server gate (see staff-probe.ts); an unverified
+// Microsoft session lands on the server's explainer.
 //
 // Rendering nothing for everyone else is a UI convenience, NOT the control:
 // the section is gated server-side on every route regardless of what the nav

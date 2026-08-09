@@ -726,7 +726,7 @@ async function runPanelInner(
   }
   // §5.16 updates: a passing update row reaches published ONLY through
   // publishWithSupersede. finishUpdateRow parks it (attempt-fenced) and, for
-  // the ONE authorized lane (autoApprove stamped under a Google-verified
+  // the ONE authorized lane (autoApprove stamped under a verified-staff
   // admin web session, never held, submitter still admin), runs the swap
   // itself with the attempt fence; every other update waits for the
   // /admin/work click. On "raced" a concurrent actor (approve click, reject,

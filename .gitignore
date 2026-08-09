@@ -17,7 +17,7 @@ id_ecdsa
 *.swo
 *~
 
-node_modules/
+node_modules
 .next/
 out/
 dist/
