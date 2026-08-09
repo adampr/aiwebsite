@@ -1,78 +1,33 @@
 // PATCH (edit) / DELETE (remove) - one directory person (§5.18 step 2).
-// Two lanes, lane-scoped WHEREs: the caller's company (company-admin only)
-// or the XL.net STAFF lane (staff-parity round: readStaffPage selects,
-// requireGlobalAdmin authorizes, scope = NULL lane). Any edit flips source
-// to 'manual' so re-imports never clobber it. DELETE with suppress (default
-// ON for apollo rows in the UI) records the email's sha256 so future
-// imports skip this person for good.
+// Both lanes and both verbs go through directoryWriteLane (the ONE gate:
+// readStaffPage selects, requireGlobalAdmin / requireCompanyAdmin
+// authorizes, requireRoadmapWritesEnabled is the kill switch, per-actor
+// rate limit) and every db call takes the lane scope it returns, so the
+// WHERE is always lane-filtered. Any edit flips source to 'manual' so
+// re-imports never clobber it. DELETE with suppress (default ON for apollo
+// rows in the UI) records the email's sha256 so future imports skip this
+// person for good. Sweeps go to ../remove, not a loop over this route.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import {
-  readStaffPage,
-  requireCompanyAdmin,
-  requireGlobalAdmin,
-} from "@/lib/roadmap/access";
-import {
-  STAFF_DIRECTORY_SCOPE,
-  removePerson,
-  updatePerson,
-  type DirectoryScope,
-} from "@/lib/roadmap/db";
+import { removePerson, updatePerson } from "@/lib/roadmap/db";
+import { directoryWriteLane } from "@/lib/roadmap/directory-gate";
 import { isUniqueViolation } from "@/lib/work/db";
-import { ROADMAP_CAPS } from "@/lib/roadmap/config";
-import {
-  okJson,
-  rateLimit,
-  requireRoadmapWritesEnabled,
-  roadmapError,
-} from "@/lib/roadmap/http";
-import { parsePersonFields } from "@/lib/roadmap/validate";
+import { okJson, roadmapError } from "@/lib/roadmap/http";
+import { isUuid, parsePersonFields } from "@/lib/roadmap/validate";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 const NOT_FOUND = () =>
   roadmapError("not_found", "That person is not in the directory.", 404);
 
-/** Lane selection + authorization + kill switch + per-user rate limit, one
- * implementation for both verbs so the two lanes cannot drift. Staff
- * writes require requireGlobalAdmin; a non-admin staffer gets its 403 and
- * never falls through to the company path. */
-async function gateLane(): Promise<
-  { ok: true; scope: DirectoryScope } | { ok: false; response: Response }
-> {
-  const staff = await readStaffPage();
-  if (staff) {
-    const admin = await requireGlobalAdmin();
-    if (!admin.ok) return admin;
-    const disabled = requireRoadmapWritesEnabled();
-    if (disabled) return { ok: false, response: disabled };
-    const limited = rateLimit(
-      `roadmap:dir:${admin.userId}`,
-      3600,
-      ROADMAP_CAPS.directoryWritesPerUserPerHour
-    );
-    if (limited) return { ok: false, response: limited };
-    return { ok: true, scope: STAFF_DIRECTORY_SCOPE };
-  }
-  const gate = await requireCompanyAdmin();
-  if (!gate.ok) return gate;
-  const p = gate.principal;
-  const disabled = requireRoadmapWritesEnabled();
-  if (disabled) return { ok: false, response: disabled };
-  const limited = rateLimit(
-    `roadmap:dir:${p.userId}`,
-    3600,
-    ROADMAP_CAPS.directoryWritesPerUserPerHour
-  );
-  if (limited) return { ok: false, response: limited };
-  return { ok: true, scope: { companyId: p.company.id } };
-}
-
 export async function PATCH(req: Request, ctx: Ctx): Promise<Response> {
-  const lane = await gateLane();
+  const lane = await directoryWriteLane();
   if (!lane.ok) return lane.response;
   const { id } = await ctx.params;
+  // A non-uuid would reach Postgres as a uuid cast and throw 22P02, i.e. a
+  // 500 where the honest answer is "no such person".
+  if (!isUuid(id)) return NOT_FOUND();
   let body: Record<string, unknown>;
   try {
     body = (await req.json()) as Record<string, unknown>;
@@ -109,9 +64,10 @@ export async function PATCH(req: Request, ctx: Ctx): Promise<Response> {
 }
 
 export async function DELETE(req: Request, ctx: Ctx): Promise<Response> {
-  const lane = await gateLane();
+  const lane = await directoryWriteLane();
   if (!lane.ok) return lane.response;
   const { id } = await ctx.params;
+  if (!isUuid(id)) return NOT_FOUND();
   const suppress = new URL(req.url).searchParams.get("suppress") !== "0";
   const row = await removePerson({
     scope: lane.scope,

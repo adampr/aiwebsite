@@ -4,6 +4,7 @@
 import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { checkRateLimit } from "@aicompany/core/lib/rate-limit";
+import { rateLimitedMessage } from "@/lib/retry-after";
 import { emailDomain, isRfpProvider } from "@/lib/rfp/access";
 import { isTrustedSession } from "@/lib/roadmap/access";
 import { companyForDomainRow } from "@/lib/roadmap/db";
@@ -98,6 +99,9 @@ export async function requireXlUser(): Promise<WorkUser | Response> {
   return user;
 }
 
+/** A refusal that NAMES the wait. src/lib/retry-after.ts records why the old
+ * fixed sentence was a lie on any window longer than a minute, and
+ * roadmap-tests.ts pins it out of both 429 helpers. */
 export function rateLimit(
   key: string,
   windowSec: number,
@@ -105,7 +109,13 @@ export function rateLimit(
 ): Response | null {
   const r = checkRateLimit(key, { windowSec, max });
   if (r.allowed) return null;
-  return workError("rate_limited", "Too many requests. Give it a moment.", 429);
+  const res = workError("rate_limited", rateLimitedMessage(r.retryAfterSec), 429, {
+    retryAfterSec: r.retryAfterSec,
+  });
+  // Standard HTTP signal alongside the body field (governance/http.ts already
+  // ships the body field; the header is what a non-browser client reads).
+  res.headers.set("retry-after", String(Math.max(1, r.retryAfterSec)));
+  return res;
 }
 
 /**

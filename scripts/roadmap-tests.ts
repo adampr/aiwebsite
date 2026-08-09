@@ -22,11 +22,14 @@ import { INTERNAL_SCOPE, scopeOf } from "../src/lib/work/scope";
 import { readFileSync, existsSync } from "node:fs";
 import {
   isPaidStep,
+  ROADMAP_CAPS,
   ROADMAP_STEPS,
   STAFF_LANE_DOMAIN,
   STAFF_STEP_HREFS,
   TRACKED_STEP_KEYS,
 } from "../src/lib/roadmap/config";
+import { parsePersonFields, parseRemoveIds } from "../src/lib/roadmap/validate";
+import { rateLimitedMessage, retryAfterPhrase } from "../src/lib/retry-after";
 import { personLabel, personLabelParts } from "../src/lib/person-label";
 import {
   REQ_CAP_OPEN,
@@ -244,15 +247,31 @@ ok("staff-parity source pins hold", () => {
     )
   );
   // Every staff write branch keeps the kill switch + global-admin gate.
+  // The three DIRECTORY write routes reach it through the ONE shared gate
+  // (bulk-cleanup round), so the assertion moved to that file and the routes
+  // are pinned to actually import it - a route that re-spelled its own gate
+  // would pass the old string check while drifting from the other two.
+  const gate = read("src/lib/roadmap/directory-gate.ts");
+  for (const name of [
+    "readStaffPage",
+    "requireGlobalAdmin",
+    "requireCompanyAdmin",
+    "requireRoadmapWritesEnabled",
+  ]) {
+    assert.ok(gate.includes(name), `directory-gate: ${name}`);
+  }
   for (const route of [
     "src/app/api/roadmap/directory/route.ts",
     "src/app/api/roadmap/directory/[id]/route.ts",
-    "src/app/api/roadmap/apollo-import/route.ts",
+    "src/app/api/roadmap/directory/remove/route.ts",
   ]) {
-    const src = read(route);
-    assert.ok(src.includes("readStaffPage"), route);
-    assert.ok(src.includes("requireGlobalAdmin"), route);
-    assert.ok(src.includes("requireRoadmapWritesEnabled"), route);
+    assert.ok(read(route).includes("directoryWriteLane"), route);
+  }
+  {
+    const src = read("src/app/api/roadmap/apollo-import/route.ts");
+    assert.ok(src.includes("readStaffPage"));
+    assert.ok(src.includes("requireGlobalAdmin"));
+    assert.ok(src.includes("requireRoadmapWritesEnabled"));
   }
   // The duplicate-email catch must recognize the staff lane's partial
   // unique or a staff duplicate 500s instead of 409ing.
@@ -274,6 +293,175 @@ ok("staff-parity source pins hold", () => {
   assert.ok(!read("src/components/work-card.tsx").includes("person-label"));
   // The bare-first-name source is gone from the scorecard query.
   assert.ok(!read("src/lib/roadmap/db.ts").includes("submitterName"));
+});
+
+// ---- Directory bulk-cleanup round (2026-08-09) invariants ----
+ok("directory write limits are per-MINUTE windows, not per-hour", () => {
+  // The reported bug: 60 writes per HOUR against a limiter whose window is
+  // fixed from the first request, so clearing a bad Apollo import locked the
+  // admin out for up to 59 minutes. A directory write is one statement
+  // against loopback Postgres; per-hour windows are for calls with EXTERNAL
+  // cost. If this key ever goes back to PerHour, that bug is back.
+  assert.equal(ROADMAP_CAPS.directoryWritesPerUserPerMinute, 60);
+  assert.ok(!("directoryWritesPerUserPerHour" in ROADMAP_CAPS));
+  const gate = readFileSync("src/lib/roadmap/directory-gate.ts", "utf8");
+  assert.ok(gate.includes("directoryWritesPerUserPerMinute"));
+  assert.ok(gate.includes("directoryBulkRemovesPerUserPerMinute"));
+  // Bulk draws its OWN bucket: charging a 100-row sweep to the single-write
+  // bucket would lock the Add form out behind one sweep.
+  assert.ok(gate.includes("roadmap:dirbulk:"));
+  assert.ok(gate.includes("roadmap:dir:"));
+  // Both windows are 60s. Two occurrences, one per branch.
+  assert.equal(gate.match(/\n\s*60,\n/g)?.length, 2);
+});
+
+ok("a 429 names the wait instead of saying 'Give it a moment'", () => {
+  assert.equal(retryAfterPhrase(1), "in a few seconds");
+  // Sub-minute waits name the SECONDS. On the directory (a 60s window now) a
+  // vaguer phrase would have answered the owner's complaint about "give it a
+  // moment" with a near-verbatim repeat of it.
+  assert.equal(retryAfterPhrase(31), "in about 40 seconds"); // rounds UP
+  assert.equal(retryAfterPhrase(59), "in about a minute"); // never "60 seconds"
+  assert.equal(retryAfterPhrase(60), "in about a minute");
+  assert.equal(retryAfterPhrase(61), "in about 2 minutes");
+  assert.equal(retryAfterPhrase(3540), "in about 59 minutes");
+  // The old copy was off by an hour here, and by a day on the governance
+  // console's 86400s keys.
+  assert.equal(retryAfterPhrase(3600), "in about an hour");
+  assert.equal(retryAfterPhrase(86_400), "in about 24 hours");
+  assert.ok(rateLimitedMessage(3600).includes("in about an hour"));
+  // No singular/plural mismatch at any boundary.
+  for (let s = 1; s < 7300; s += 1) {
+    const p = retryAfterPhrase(s);
+    assert.ok(!p.includes(" 1 minutes"), String(s));
+    assert.ok(!p.includes(" 1 seconds"), String(s));
+    assert.ok(!p.includes(" 1 hours"), String(s));
+  }
+  // Both 429 helpers ship the machine-readable field the island reads.
+  for (const f of ["src/lib/work/http.ts", "src/lib/governance/http.ts"]) {
+    const src = readFileSync(f, "utf8");
+    assert.ok(src.includes("rateLimitedMessage"), f);
+    assert.ok(src.includes("retryAfterSec"), f);
+    assert.ok(!src.includes("Give it a moment"), f);
+  }
+});
+
+ok("directory pager is 10/50/250 with no All, and stays keyboard-safe", () => {
+  const island = readFileSync(
+    "src/app/roadmap/(steps)/directory/directory-table.tsx",
+    "utf8"
+  );
+  // Owner ruling: All would render every row of an up-to-2000-row directory
+  // with an editable control per row.
+  assert.ok(island.includes("sizes: [10, 50, 250]"));
+  assert.ok(!/sizes:\s*\[[^\]]*\b0\b/.test(island));
+  assert.ok(island.includes('plural: "people"')); // never "47 persons"
+  const pagerSrc = readFileSync("src/components/list-pager.tsx", "utf8");
+  // Both arrows stay MOUNTED and inert via aria-disabled: the `disabled`
+  // attribute blurs a keyboard user's focus to <body>.
+  assert.ok(pagerSrc.includes("aria-disabled={pager.safePage === 0}"));
+  // The bare `disabled` attribute, not the aria- one it is a substring of.
+  assert.ok(!/[^a-z-]disabled=\{/.test(pagerSrc));
+  assert.ok(pagerSrc.includes('aria-live={bottom ? undefined : "polite"}'));
+  // The strip reads its sizes and plural off the pager, so the menu and the
+  // readout beside it cannot disagree.
+  assert.ok(pagerSrc.includes("pager.sizes.map"));
+  assert.ok(pagerSrc.includes("Show ${pager.plural} per page"));
+  for (const consumer of [
+    "src/components/requests/my-requests.tsx",
+    "src/components/requests/request-board.tsx",
+    "src/app/roadmap/(steps)/scorecard/requests/requests-list-client.tsx",
+  ]) {
+    assert.ok(!/<PagerStrip[^>]*noun=/.test(readFileSync(consumer, "utf8")), consumer);
+  }
+});
+
+ok("bulk remove is lane-scoped, capped, counts-only, and audited", () => {
+  const db = readFileSync("src/lib/roadmap/db.ts", "utf8");
+  // The lane predicate must be IN the delete's WHERE: a client-supplied id
+  // list is otherwise a cross-lane delete.
+  assert.ok(
+    /inArray\(CP\.id, opts\.personIds\), dirLaneWhere\(opts\.scope\)/.test(db)
+  );
+  assert.ok(db.includes("db.transaction"));
+  const route = readFileSync(
+    "src/app/api/roadmap/directory/remove/route.ts",
+    "utf8"
+  );
+  // Counts only. Returning per-id status would make this a cross-lane uuid
+  // existence oracle.
+  assert.ok(!route.includes("personIds:") || !route.includes("ids: rows"));
+  assert.ok(route.includes("parseRemoveIds"));
+  assert.equal(ROADMAP_CAPS.directoryBulkRemoveMax, 100);
+  // The confirm step names every person, and the two suppression labels are
+  // the same sentence.
+  const island = readFileSync(
+    "src/app/roadmap/(steps)/directory/directory-table.tsx",
+    "utf8"
+  );
+  assert.equal(
+    island.match(/and keep them out of future imports/g)?.length,
+    2
+  );
+  assert.ok(island.includes("You are removing:"));
+  assert.ok(island.includes("Select every person on this page"));
+});
+
+ok("parseRemoveIds rejects what would 500 or over-delete", () => {
+  const id = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+  const other = "3f2504e0-4f89-11d3-9a0c-0305e82c3302";
+  const good = parseRemoveIds({ ids: [id, other], suppress: false });
+  assert.ok(good.ok && good.ids.length === 2 && good.suppress === false);
+  // De-duplicated, so "Remove 40 selected" cannot spend 40 on 12 people.
+  const dup = parseRemoveIds({ ids: [id, id, id], suppress: true });
+  assert.ok(dup.ok && dup.ids.length === 1);
+  // A non-uuid would reach Postgres as a uuid cast and throw 22P02 (a 500).
+  assert.ok(!parseRemoveIds({ ids: ["not-a-uuid"], suppress: true }).ok);
+  assert.ok(!parseRemoveIds({ ids: [], suppress: true }).ok);
+  assert.ok(!parseRemoveIds({ ids: [id] }).ok); // suppress is REQUIRED
+  assert.ok(!parseRemoveIds({ ids: [id], suppress: "yes" }).ok);
+  // `null` is valid JSON, so req.json() hands it straight to the validator;
+  // reading a property off it would 500 out of a 400 path.
+  for (const hostile of [null, undefined, 42, "x", [id]])
+    assert.ok(!parseRemoveIds(hostile).ok, String(hostile));
+  assert.ok(!parsePersonFields(null).ok);
+  assert.ok(!parsePersonFields([]).ok);
+  const over = Array.from(
+    { length: ROADMAP_CAPS.directoryBulkRemoveMax + 1 },
+    (_, i) => `3f2504e0-4f89-11d3-9a0c-${String(i).padStart(12, "0")}`
+  );
+  const tooMany = parseRemoveIds({ ids: over, suppress: true });
+  assert.ok(!tooMany.ok && tooMany.code === "too_many");
+});
+
+ok("the roadmap API is CSRF-protected and truncation is never silent", () => {
+  // Every roadmap mutation shipped with no same-origin check until this
+  // round; the prefix list is hand-maintained.
+  assert.ok(readFileSync("src/proxy.ts", "utf8").includes('"/api/roadmap"'));
+  // Rows past directoryRenderMax have no id on the client: unreachable for
+  // edit or removal, so the page must say when it truncated.
+  const page = readFileSync(
+    "src/app/roadmap/(steps)/directory/page.tsx",
+    "utf8"
+  );
+  assert.equal(page.match(/countPeople\(/g)?.length, 2); // both lanes
+  const island = readFileSync(
+    "src/app/roadmap/(steps)/directory/directory-table.tsx",
+    "utf8"
+  );
+  assert.ok(island.includes("total > people.length"));
+  assert.ok(ROADMAP_CAPS.directoryRenderMax >= 2000);
+  // The RENDER cap must not decide who has a name on the scorecard: a person
+  // past it used to fall out of the identity join and render as their email.
+  const db2 = readFileSync("src/lib/roadmap/db.ts", "utf8");
+  assert.ok(db2.includes("directoryIdentities"));
+  assert.ok(!/const \[people, counts, requests\][\s\S]{0,120}listPeople\(scope\)/.test(db2));
+  // An inert .btn must LOOK inert, or a paused control reads as a dead one.
+  assert.ok(
+    readFileSync("src/app/futurism.css", "utf8").includes(
+      '.btn[aria-disabled="true"]'
+    )
+  );
 });
 
 ok("no step copy carries an em dash (this pin IS the enforcement)", () => {

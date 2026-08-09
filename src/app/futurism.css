@@ -649,12 +649,38 @@ html.pager-active .work-pager {
 }
 .btn--text:disabled::after { background: var(--xl-line); box-shadow: none; }
 
-/* aria-disabled twin, for a control that must stay reachable while inert:
-   the `disabled` ATTRIBUTE blurs a focused button to <body>, so pressing a
+/* aria-disabled on ANY .btn variant. The claim that used to live in the
+   comment below - that a plain .btn with aria-disabled "carries its own
+   inert styling" - was false: it had none, so download-menu.tsx worked
+   around it with an inline opacity and request-form.tsx's primary button
+   went fully live while inert. A control that looks pressable and silently
+   does nothing is the exact failure the 2026-08-09 directory round was
+   reported for. Specificity 0-2-0 beats .btn--primary/.btn--sand (0-1-0),
+   so the filled and warm variants dim too; the :hover twin holds the same
+   values so pointing at an inert button never relights it. Placed BEFORE
+   the .btn--text twin, which must keep winning for text buttons at equal
+   specificity. */
+.btn[aria-disabled="true"],
+.btn[aria-disabled="true"]:hover {
+  color: var(--xl-text-faint);
+  border-color: var(--xl-line);
+  background: transparent;
+  box-shadow: none;
+  cursor: default;
+}
+
+/* Busy is not merely inert, same as the :disabled twin below: while a write
+   is in flight the button holds a dim light. */
+.btn[aria-busy="true"][aria-disabled="true"],
+.btn[aria-busy="true"][aria-disabled="true"]:hover {
+  border-color: var(--xl-light-dim);
+  color: var(--xl-light);
+}
+
+/* The `disabled` ATTRIBUTE blurs a focused button to <body>, so pressing a
    pager arrow onto the last page would drop a keyboard user back to the top
-   of the document. Scoped to .btn--text on purpose - a plain .btn with
-   aria-disabled exists elsewhere and carries its own inert styling. Placed
-   after the :hover rules so it wins at equal specificity. */
+   of the document; aria-disabled keeps it reachable. Placed after the
+   :hover rules so it wins at equal specificity. */
 .btn--text[aria-disabled="true"] {
   color: var(--xl-text-faint);
   box-shadow: none;

@@ -30,6 +30,16 @@ export default createTrackingMiddleware(siteConfig, {
     // §5.17: RFP handlers mutate drafts and knowledge; without this they
     // would ship with no same-origin check.
     "/api/rfp",
+    // §5.18: the roadmap portal shipped without an entry here, leaving every
+    // roadmap mutation (directory add/edit/remove, doc upload and delete,
+    // Apollo import, company bootstrap, admin request and approval, DKIM
+    // recheck and instruction mail) with no same-origin check. SameSite=lax
+    // session cookies blunt the classic cross-site form POST, so this is
+    // defense in depth rather than a live exploit, but it is the most
+    // PII-bearing subsystem on the site and the list is hand-maintained.
+    // The module checks POST/PUT/PATCH/DELETE only, so the roadmap GETs
+    // (dkim/status, docs/[id], nav) are untouched.
+    "/api/roadmap",
   ],
 });
 

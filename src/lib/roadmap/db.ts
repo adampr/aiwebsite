@@ -371,6 +371,25 @@ export async function listPeople(scope: DirectoryScope): Promise<PersonRow[]> {
     .limit(ROADMAP_CAPS.directoryRenderMax);
 }
 
+/** The identity join for the scorecard: narrow and UNCAPPED on purpose.
+ *
+ * listPeople's limit is a RENDER cap (every row it returns is serialized
+ * into the island's props), and the scorecard has no rendering reason to
+ * inherit it. It used to: a person past the cap dropped out of this join,
+ * came back through the stray-row path with name: null, and the person-label
+ * rule then rendered their EMAIL where their name belongs. One limit()
+ * silently corrupted a second surface. Three columns, no limit, so the
+ * scorecard is correct at any directory size. */
+export async function directoryIdentities(
+  scope: DirectoryScope
+): Promise<{ id: string; name: string; email: string | null }[]> {
+  return db
+    .select({ id: CP.id, name: CP.name, email: CP.email })
+    .from(CP)
+    .where(dirLaneWhere(scope))
+    .orderBy(asc(CP.name));
+}
+
 export async function countPeople(scope: DirectoryScope): Promise<number> {
   const rows = await db
     .select({ n: sql<number>`count(*)::int` })
@@ -443,6 +462,58 @@ export async function removePerson(opts: {
       .onConflictDoNothing();
   }
   return row ?? null;
+}
+
+/** Bulk remove (the 2026-08-09 directory round). Two statements regardless
+ * of N, in ONE transaction, so the client never has to reconcile a
+ * half-applied batch: either every matched row is gone with its suppression
+ * recorded, or nothing is.
+ *
+ * Ids that do not exist, or belong to the OTHER lane, simply do not match
+ * the lane-filtered WHERE and are silently skipped: `removed < personIds
+ * .length` is a SUCCESS, not a 404. A stale page or a second admin working
+ * the same list would otherwise turn a 100-row sweep into a total failure.
+ * The caller returns counts only, never per-id status, which would make the
+ * endpoint a cross-lane uuid existence oracle.
+ *
+ * Suppression policy is deliberately identical to removePerson above: rows
+ * with an email get sha256(lower(email)) recorded when suppress is set.
+ * Change one and change the other. */
+export async function removePeople(opts: {
+  scope: DirectoryScope;
+  personIds: string[];
+  suppress: boolean;
+}): Promise<{ removed: number; suppressed: number }> {
+  if (opts.personIds.length === 0) return { removed: 0, suppressed: 0 };
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .delete(CP)
+      .where(and(inArray(CP.id, opts.personIds), dirLaneWhere(opts.scope)))
+      .returning({ email: CP.email });
+    if (rows.length === 0) return { removed: 0, suppressed: 0 };
+    if (!opts.suppress) return { removed: rows.length, suppressed: 0 };
+    // De-duplicated: two directory rows may legally share no email, but a
+    // repeated hash in one multi-row insert is an avoidable conflict.
+    const hashes = [
+      ...new Set(
+        rows
+          .map((r) => r.email)
+          .filter((e): e is string => !!e)
+          .map((e) => sha256Hex(e.toLowerCase()))
+      ),
+    ];
+    if (hashes.length === 0) return { removed: rows.length, suppressed: 0 };
+    await tx
+      .insert(DS)
+      .values(
+        hashes.map((emailSha256) => ({
+          companyId: opts.scope.companyId,
+          emailSha256,
+        }))
+      )
+      .onConflictDoNothing();
+    return { removed: rows.length, suppressed: hashes.length };
+  });
 }
 
 export async function suppressedHashes(
@@ -714,7 +785,9 @@ export async function scorecardRows(
       ? isNull(W.companyId)
       : eq(W.companyId, scope.companyId);
   const [people, counts, requests] = await Promise.all([
-    listPeople(scope),
+    // directoryIdentities, not listPeople: the render cap must not decide
+    // who has a name on the scorecard (see that function's comment).
+    directoryIdentities(scope),
     db
       .select({
         email: sql<string>`lower(${W.submitterEmail})`,

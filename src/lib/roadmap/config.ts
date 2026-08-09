@@ -35,7 +35,33 @@ export const ROADMAP_CAPS = {
   apolloAutoKicksPerCompanyPerHour: 1,
   apolloPagesPerImport: 5, // hard cap; a partial import reports itself
   apolloPeoplePerPage: 100,
-  directoryWritesPerUserPerHour: 60,
+  // WINDOW SHAPE IS THE RULE, not the number (2026-08-09 directory round).
+  // Per-HOUR windows are for calls with EXTERNAL cost: Apollo pages, DNS
+  // resolution, outbound email, brain spend (apolloImports*, dkim*,
+  // docWrites). Per-MINUTE windows are for local-only single-row writes.
+  // A directory write is one statement against loopback Postgres, and the
+  // limiter's window is FIXED from its first request, so the old 60/HOUR
+  // locked an admin clearing a bad Apollo import out for up to 59 minutes
+  // (the owner's report). At 60/minute the same mistake self-heals in 60
+  // seconds, which is the only wait "Give it a moment" was ever honest for.
+  // ONE bucket for add + edit + remove: the key is about the actor, not the
+  // verb.
+  directoryWritesPerUserPerMinute: 60,
+  // Bulk keeps its OWN key so one sweep can never spend the single-write
+  // budget and lock the Add form. It is sized the SAME as single writes
+  // because the client CHUNKS a selection into directoryBulkRemoveMax-sized
+  // requests, so request count tracks SELECTION SIZE, not intent: a 250-row
+  // selection is three requests, and at the default 10-row page ten
+  // select-all-page sweeps spent a 10-request bucket in about fifty seconds,
+  // which would have reproduced the reported lockout through the very
+  // feature built to fix it. The damage bound is directoryBulkRemoveMax per
+  // request plus the admin gate, never the request count: an actor holding
+  // an admin session clears the whole render cap in about two minutes at any
+  // of these settings.
+  directoryBulkRemovesPerUserPerMinute: 60,
+  // Ids per bulk-remove call. 100 = the Apollo page size, so "one bad page"
+  // is one request and a full 500-row import clears in five.
+  directoryBulkRemoveMax: 100,
   docWritesPerUserPerHour: 6,
   portalReadsPerUserPerHour: 240,
   // DKIM email-lane checks (§5.18 round 2; since the six-step round these
@@ -55,8 +81,20 @@ export const ROADMAP_CAPS = {
   // route-enforced true limit).
   docUploadMaxBytes: 10_000_000,
   docTitleMaxChars: 120,
-  // Directory render cap (pagination is a deferral).
-  directoryRenderMax: 500,
+  // Directory render cap. The page pager (10/50/250) windows CLIENT-side over
+  // rows the server already truncated here, so this is not a display limit:
+  // listPeople is the only read path, and a row past it has no id on the
+  // client, cannot be edited or removed, and (via scorecardRows) loses its
+  // directory identity on the scorecard. So it sits ABOVE any reachable
+  // directory rather than at a comfortable page size: 4x the largest single
+  // Apollo import (5 pages x 100), ~240 KB of RSC payload at ~120 bytes/row,
+  // which a single 4 GB fork carries fine. It stays BOUNDED on purpose.
+  // TRIGGER for the next architectural step: if a real directory ever
+  // approaches 2000, move to SERVER-side pagination (cursor in the URL,
+  // selection model spanning fetches) rather than raising this again. When
+  // it does truncate, the page says so (page.tsx passes countPeople as
+  // `total`); silent truncation is the state this comment used to permit.
+  directoryRenderMax: 2000,
   // Admin-access requests expire after 7 days; non-approval reads as
   // expiry, after which the request button re-arms.
   adminRequestTtlDays: 7,

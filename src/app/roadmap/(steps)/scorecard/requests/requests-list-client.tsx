@@ -28,7 +28,7 @@ export function RequestsListClient({
   return (
     <div className="space-y-4">
       {pager.showPager && (
-        <PagerStrip pager={pager} idPrefix="screq" noun="project" />
+        <PagerStrip pager={pager} idPrefix="screq" />
       )}
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
@@ -75,7 +75,7 @@ export function RequestsListClient({
         </table>
       </div>
       {pager.showPager && (
-        <PagerStrip pager={pager} idPrefix="screq" noun="project" bottom />
+        <PagerStrip pager={pager} idPrefix="screq" bottom />
       )}
       {capNote && <p className="mono text-xs text-faint">{capNote}</p>}
     </div>

@@ -176,7 +176,15 @@ export function RequestForm({ openCount }: { openCount: number }) {
           Request filed. It goes on the board once an admin approves it.
         </p>
       )}
-      <button type="submit" className="btn btn--primary" aria-disabled={busy}>
+      {/* aria-busy too: .btn[aria-disabled="true"] is inert styling, and
+          the aria-busy twin is what keeps "working" reading differently
+          from "unavailable" (futurism.css). */}
+      <button
+        type="submit"
+        className="btn btn--primary"
+        aria-disabled={busy}
+        aria-busy={busy}
+      >
         {busy ? "Filing..." : "File the request"}
       </button>
     </form>

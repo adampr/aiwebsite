@@ -45,7 +45,7 @@ export function MyRequests({
     <div className="space-y-4">
       {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
       {pager.showPager && (
-        <PagerStrip pager={pager} idPrefix="mine" noun="request" />
+        <PagerStrip pager={pager} idPrefix="mine" />
       )}
       {pager.windowed.map((r) => (
         <div
@@ -77,7 +77,7 @@ export function MyRequests({
         </div>
       ))}
       {pager.showPager && (
-        <PagerStrip pager={pager} idPrefix="mine" noun="request" bottom />
+        <PagerStrip pager={pager} idPrefix="mine" bottom />
       )}
       {capped && (
         <p className="mono text-xs text-faint">

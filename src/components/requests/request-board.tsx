@@ -58,7 +58,7 @@ export function RequestBoard({
     <div className="space-y-4">
       {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
       {pager.showPager && (
-        <PagerStrip pager={pager} idPrefix="board" noun="request" />
+        <PagerStrip pager={pager} idPrefix="board" />
       )}
       {pager.windowed.map((r) => {
         const mine =
@@ -165,7 +165,7 @@ export function RequestBoard({
         );
       })}
       {pager.showPager && (
-        <PagerStrip pager={pager} idPrefix="board" noun="request" bottom />
+        <PagerStrip pager={pager} idPrefix="board" bottom />
       )}
       {capped && (
         <p className="mono text-xs text-faint">

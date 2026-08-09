@@ -19,6 +19,7 @@ import {
 import {
   STAFF_DIRECTORY_SCOPE,
   apolloImportStamp,
+  countPeople,
   listPeople,
 } from "@/lib/roadmap/db";
 import { DirectoryTable, type DirectoryPerson } from "./directory-table";
@@ -45,9 +46,10 @@ function tableRows(
 export default async function RoadmapDirectoryPage() {
   const staff = await readStaffPage();
   if (staff) {
-    const [people, importStamp] = await Promise.all([
+    const [people, importStamp, total] = await Promise.all([
       listPeople(STAFF_DIRECTORY_SCOPE),
       apolloImportStamp(STAFF_DIRECTORY_SCOPE),
+      countPeople(STAFF_DIRECTORY_SCOPE),
     ]);
     // The company auto-init predicate minus company.status (no companies
     // row exists for the staff lane; ROADMAP_ENABLED is its only write
@@ -74,6 +76,7 @@ export default async function RoadmapDirectoryPage() {
 
         <DirectoryTable
           people={tableRows(people)}
+          total={total}
           isAdmin={staff.globalAdmin}
           domain={STAFF_LANE_DOMAIN}
           autoInit={autoInit}
@@ -90,9 +93,10 @@ export default async function RoadmapDirectoryPage() {
   const company = gate.principal.company;
   const isAdmin = p.companyRole === "admin";
 
-  const [people, importStamp] = await Promise.all([
+  const [people, importStamp, total] = await Promise.all([
     listPeople({ companyId: company.id }),
     apolloImportStamp({ companyId: company.id }),
+    countPeople({ companyId: company.id }),
   ]);
 
   // Auto-init parity with the hub (round 3): the SAME server predicate. The
@@ -121,6 +125,7 @@ export default async function RoadmapDirectoryPage() {
 
       <DirectoryTable
         people={tableRows(people)}
+        total={total}
         isAdmin={isAdmin}
         domain={company.domain}
         autoInit={autoInit}

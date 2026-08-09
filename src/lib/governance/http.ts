@@ -5,6 +5,7 @@
 
 import { readSession } from "@aicompany/core/auth/session";
 import { checkRateLimit } from "@aicompany/core/lib/rate-limit";
+import { rateLimitedMessage } from "@/lib/retry-after";
 import { siteConfig } from "site.config";
 import type { GovernanceErrorCode } from "./types";
 
@@ -55,7 +56,10 @@ export async function requireUser(): Promise<GovUser | Response> {
   };
 }
 
-/** Per-user (or per-key) in-memory rate limit -> 429 Response when exceeded. */
+/** Per-user (or per-key) in-memory rate limit -> 429 Response when exceeded.
+ * The message NAMES the wait (rateLimitedMessage, the one spelling shared
+ * with work/http.ts): several keys here use an 86400s window, where the old
+ * fixed sentence was off by a day. */
 export function rateLimit(
   key: string,
   windowSec: number,
@@ -63,7 +67,8 @@ export function rateLimit(
 ): Response | null {
   const r = checkRateLimit(key, { windowSec, max });
   if (r.allowed) return null;
-  return govError("rate_limited", "Too many requests. Give it a moment.", 429, {
+  // govError already emits the retry-after header from this field.
+  return govError("rate_limited", rateLimitedMessage(r.retryAfterSec), 429, {
     retryAfterSec: r.retryAfterSec,
   });
 }

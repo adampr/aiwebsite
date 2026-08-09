@@ -67,11 +67,12 @@ export function DownloadMenu({
   if (!enabled) {
     return (
       <span className="inline-flex flex-wrap items-center gap-3">
+        {/* No inline opacity: .btn[aria-disabled="true"] carries the inert
+            styling now (futurism.css). It did not when this was written. */}
         <button
           type="button"
           className="btn"
           aria-disabled="true"
-          style={{ opacity: 0.55, cursor: "default" }}
           onClick={(e) => e.preventDefault()}
         >
           Download

@@ -1,8 +1,9 @@
 "use client";
 
-// Shared 10/50/All pager for React-state-rendered lists (§5.19; used by the
-// requested-work board, the your-requests list, and the scorecard
-// click-through page). A 1:1 behavioral clone of the hardened
+// Shared pager for React-state-rendered lists (§5.19). 10/50/All by default
+// (the requested-work board, the your-requests list, the scorecard
+// click-through page); the roadmap directory passes 10/50/250 with no All.
+// A 1:1 behavioral clone of the hardened
 // /work/submit "Your submissions" pager (src/app/work/submit/
 // submit-client.tsx, SUBMISSIONS-PAGER round 2026-08-07): safePage is
 // CLAMPED in render so a list that shrinks underneath the pager never
@@ -16,11 +17,27 @@
 // html.pager-active: that island mutates server-owned DOM and its
 // .work-pager CSS renders invisible off /work. This one is for lists the
 // island itself renders from props/state.
+//
+// PARAMETERIZATION RULES (2026-08-09), because the options are read on EVERY
+// render: pass the options object as a MODULE-LEVEL constant, never an inline
+// literal (a fresh object per render is fine for these reads today, but it is
+// the kind of thing that stops being fine the moment one is memoized). sizes[0]
+// is the size the list OPENS on and the one showPager compares against, so a
+// list whose first entry is not its default silently never shows its pager.
+// 0 means All and is legal only as the LAST entry.
 
 import { useEffect, useState } from "react";
 
 export const PAGE_SIZES = [10, 50, 0] as const; // 0 = All, deliberately last
 export const DEFAULT_PAGE_SIZE = 10;
+
+/** Per-list overrides. `sizes` MUST start with the default page size (the
+ * first entry is what the list opens on and what showPager compares against);
+ * 0 means All and is only legal as the LAST entry. The directory passes
+ * [10, 50, 250] with no All: it renders an editable row per person, and the
+ * owner ruled a 500-row All "too much" (2026-08-09). `plural` exists because
+ * the readout used to build "2 persons" from noun + "s". */
+export type PagerOptions = { sizes?: readonly number[]; plural?: string };
 
 export type PagedList<T> = {
   windowed: T[];
@@ -29,12 +46,21 @@ export type PagedList<T> = {
   pageCount: number;
   showPager: boolean;
   readout: string;
+  sizes: readonly number[];
+  plural: string;
   changeSize: (n: number) => void;
   goTo: (n: number) => void;
 };
 
-export function usePagedList<T>(items: T[], noun: string): PagedList<T> {
-  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+export function usePagedList<T>(
+  items: T[],
+  noun: string,
+  opts?: PagerOptions
+): PagedList<T> {
+  const sizes = opts?.sizes ?? PAGE_SIZES;
+  const plural = opts?.plural ?? `${noun}s`;
+  const defaultSize = sizes[0] ?? DEFAULT_PAGE_SIZE;
+  const [pageSize, setPageSize] = useState<number>(defaultSize);
   const [page, setPage] = useState(0);
 
   const pageCount =
@@ -45,7 +71,7 @@ export function usePagedList<T>(items: T[], noun: string): PagedList<T> {
       ? items
       : items.slice(safePage * pageSize, (safePage + 1) * pageSize);
   const showPager =
-    items.length > DEFAULT_PAGE_SIZE || pageSize !== DEFAULT_PAGE_SIZE;
+    items.length > defaultSize || pageSize !== defaultSize;
 
   // Settle the clamp into state (guarded: exactly one extra render, cannot
   // re-enter), so a stale high index does not silently re-apply when the
@@ -67,7 +93,7 @@ export function usePagedList<T>(items: T[], noun: string): PagedList<T> {
   }
 
   const pad = (n: number) => String(n).padStart(2, "0");
-  const countLabel = `${items.length} ${noun}${items.length === 1 ? "" : "s"}`;
+  const countLabel = `${items.length} ${items.length === 1 ? noun : plural}`;
   const readout =
     pageSize === 0
       ? countLabel
@@ -80,22 +106,24 @@ export function usePagedList<T>(items: T[], noun: string): PagedList<T> {
     pageCount,
     showPager,
     readout,
+    sizes,
+    plural,
     changeSize,
     goTo,
   };
 }
 
 /** The strip. Render above AND below long lists; pass bottom on the lower
- * one so only the top readout is announced. */
+ * one so only the top readout is announced. The noun comes from the pager
+ * (usePagedList owns the plural), never a second prop that could disagree
+ * with the readout it sits next to. */
 export function PagerStrip<T>({
   pager,
   idPrefix,
-  noun,
   bottom = false,
 }: {
   pager: PagedList<T>;
   idPrefix: string;
-  noun: string;
   bottom?: boolean;
 }) {
   const sizeId = bottom ? `${idPrefix}-size-bottom` : `${idPrefix}-size`;
@@ -112,11 +140,11 @@ export function PagerStrip<T>({
           id={sizeId}
           className="input"
           // A SUPERSET of the visible "Show" (WCAG 2.5.3 Label in Name).
-          aria-label={`Show ${noun}s per page`}
+          aria-label={`Show ${pager.plural} per page`}
           value={pager.pageSize}
           onChange={(e) => pager.changeSize(Number(e.target.value))}
         >
-          {PAGE_SIZES.map((s) => (
+          {pager.sizes.map((s) => (
             <option key={s} value={s}>
               {s === 0 ? "All" : s}
             </option>
