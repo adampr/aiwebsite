@@ -405,11 +405,19 @@ export const siteConfig = defineSiteConfig({
     },
   },
 
-  // Defaults, stated explicitly — identical to the legacy route envelopes
-  // (memoryMode do_not_store; 120s chat/SMS and 300s email brain timeouts).
+  // Defaults, stated explicitly — memoryMode do_not_store; 120s chat and
+  // 300s SMS/email brain timeouts. chatMs stays 120s because a web visitor is
+  // actively waiting on the stream; SMS and email are async post-ack (the
+  // webhook ACKs immediately and the reply goes out via the vendor REST API
+  // from after()), so nobody is blocked on the HTTP response and the longer
+  // budget only trades "failure copy" for "late but real answer".
   brain: {
     memoryMode: "do_not_store",
-    timeouts: { chatMs: 120_000, smsMs: 120_000, emailMs: 300_000 },
+    // smsMs raised 120_000 -> 300_000 (2026-08-09 incident, promptId
+    // sms_msm9v98b_kofsyc): a memory-recall turn produced a good 1204-char
+    // answer in 164s and the 120s abort discarded it, sending the owner the
+    // failure copy instead. 300s matches emailMs.
+    timeouts: { chatMs: 120_000, smsMs: 300_000, emailMs: 300_000 },
     // Phase-1 clamp on every envelope (brain Issue #684): keeps first-token
     // latency snappy and avoids orchestrator-escalation failure modes.
     maxOrchestratorPhase: 1,

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# aicompany-template: stage-build.sh.tpl@2736c3acaf2bcd9a5ee9f4b7c5d190b8dc5ec7cea9e29ead4aecbd648fe2dccd
+# aicompany-template: stage-build.sh.tpl@80c81b0d6c30438977bbebe94fb90832bdb4a57c9cc76720fa75112ba04a047a
 set -euo pipefail
 # Staged-build engine (v1.13.0, §9.2): all mutation happens in the sibling
 # stage tree; the live tree changes only during a renames-only journaled flip.
 # Callers: setup-vm.sh (deploy pipeline) and watchdog.sh (repair pipeline).
 app="/var/www/aiwebsite"; stage="/var/www/aiwebsite.stage"
 trash="$stage/.trash"; state="$stage/.cutover-state"; lockfile="$stage/.lock"
+# Build placement (§9.2 v1.78.0): on local-artifact hosts the VM-side build is
+# REMOVED — build() below refuses structurally (see the 2026-08-08 outage).
+build_mode="remote"
 
 # Flip set = defaults (regenerated in stage) + host extras (deploy/swap-dirs.txt,
 # copied live->stage as INPUTS and hook-rebuilt there). .env is deliberately
@@ -182,6 +185,17 @@ refresh_modules() {  # watchdog repair: ABI-exact hardlink clone of LIVE deps, n
 }
 
 build() {
+  # REMOVED, not tuned (v1.78.0): on a local-artifact host a VM-side
+  # `next build` is the 2026-08-08 outage — cgroup OOM at the stage cap,
+  # earlyoom SIGKILLs, kernel-level hard hangs. This refusal is structural:
+  # it covers the deploy pipeline, the watchdog's repair rebuild (also gated
+  # alert-only), and a hand-typed `bash deploy/stage-build.sh build` alike.
+  if [ "$build_mode" = "local-artifact" ]; then
+    echo "ERROR: DEPLOY_BUILD_MODE=local-artifact — VM-side 'next build' is REMOVED for this site."
+    echo "       Build on the dev box via deploy/deploy.sh (it builds, ships the .next artifact,"
+    echo "       and the staged cutover flips it atomically with node_modules)."
+    exit 1
+  fi
   rm -rf "$stage/.next"   # kills the stale-Turbopack-cache class; fresh build
   # Heap cap preserved (2026-07-10 OOM invariant) INSIDE the v1.15.0 cgroup
   # cap: NODE_OPTIONS bounds the V8 heap, MemoryMax bounds the whole step

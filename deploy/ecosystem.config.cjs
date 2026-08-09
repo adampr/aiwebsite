@@ -1,4 +1,4 @@
-// aicompany-template: ecosystem.config.cjs.tpl@6ba8ba5ae5ca8f3cb91f2c1e791e0ad969163a63df875f8c1b0045e2478013c3
+// aicompany-template: ecosystem.config.cjs.tpl@9b3c15c8780fd0620226b05c072aa79229d117495abbb276360da6bc81b833a9
 /* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require('fs');
 const path = require('path');
@@ -19,6 +19,14 @@ try {
     envFromFile[key] = val;
   });
 } catch { /* .env missing on dev machines — harmless */ }
+
+// CLOSED SET (v1.78.0): 'aiwebsite', 'brain-api', 'skills-host' are the ONLY
+// pm2 apps a module host may run. NEVER add a build or maintenance app here —
+// a pm2-managed `npm run build` in the live cwd rewrites .next mid-serve and
+// strands the tree without BUILD_ID, and `pm2 save` makes any RUNNING stray
+// boot-persistent via the resurrect dump (the hand-created `itsc-build` app,
+// 2026-08-08 outage). On DEPLOY_BUILD_MODE=local-artifact hosts setup-vm.sh
+// enforces this structurally: non-ecosystem apps are deleted before pm2 save.
 
 // Interpreter pins (v1.4.0): empty for standard hosts (the spread renders
 // inert — pm2 resolves `node` from PATH as before). Node-split hosts pin the
