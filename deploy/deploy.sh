@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@93cdffec36fdb27857b03a3ec8537106ae79d3658590a2e568cd9942305c4fad
+# aicompany-template: deploy.sh.tpl@c7da3ae5891fe07d5ebc216066cf6a79c71a5d91f52afb863092d9f00386b29b
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -265,7 +265,16 @@ esac
 # snapshot; it exists only on the VM, so --delete must not remove it.
 rsync_excludes=(
   --exclude .git --exclude node_modules --exclude .next
-  --exclude .env --exclude /data/
+  # v1.84.0 SECRETS: `--exclude .env` is an EXACT-NAME match, so every
+  # `.env.<anything>` sailed straight through — `.env.pre-cutover-fix.bak`,
+  # `.env.bak-*`, `.env.pre-v1.5.1.bak`. Measured 2026-08-13 on the
+  # itsupportchicago tree: six such files, each a full copy of a live .env with
+  # ~20 named provider secrets, and they were rsynced to BOTH the live and stage
+  # app dirs on the production VM. `.gitignore` never protected anything here —
+  # rsync does not read it. The fleet's own prescribed sweep glob (`.env.bak*`)
+  # missed most of them too, so detection had the same hole as prevention.
+  # `--include` MUST precede the excludes: rsync takes the FIRST matching rule.
+  --include .env.example --exclude .env --exclude ".env.*" --exclude /data/
   --exclude packages/brain/node_modules
   --exclude packages/brain/scripts/benchmark/cache
   # Staged-deploy artifacts (v1.13.0): the VM-side rollback (.old) and
@@ -276,8 +285,11 @@ rsync_excludes=(
   --exclude .next.old --exclude .next.new
 )
 tar_excludes=(
+  # Same exact-name hole on the gcloud-iap transport (itsupportchicago), which
+  # is the host the leak was measured on. GNU tar also takes the first match,
+  # so the .env.example reprieve goes first.
   --exclude ./.git --exclude "node_modules" --exclude ./.next
-  --exclude ./.env --exclude ./data
+  --exclude ./.env --exclude "./.env.*" --exclude ./data
   --exclude "./packages/brain/scripts/benchmark/cache"
 )
 

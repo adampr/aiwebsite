@@ -33,7 +33,14 @@ const STATIC_LASTMOD: Record<string, string> = {
   // §5.18: the /roadmap TEASER only — portal child paths are noindex and
   // the check-roadmap-caching gate bans any child-path string in this file.
   "/roadmap": "2026-08-05",
-  "/contact": "2026-07-13",
+  // 2026-08-13: was "2026-07-13" — stale by 24 days. Commit d7f5dba (2026-08-06)
+  // expanded /contact 216w -> 467w as the remediation for the open
+  // seo/money-page-indexed row, and touched only contact/page.tsx, so the
+  // sitemap kept asserting the page was unchanged since July. That is the one
+  // signal that invites a re-fetch, pointed the wrong way, on the single URL
+  // the row is about. Necessary, not sufficient: Google has not re-downloaded
+  // this sitemap since 2026-07-17 (both sibling hosts are fetched daily).
+  "/contact": "2026-08-06",
   "/methodology": "2026-07-25",
   "/privacy": "2026-07-16",
   "/sms-terms": "2026-07-10",
