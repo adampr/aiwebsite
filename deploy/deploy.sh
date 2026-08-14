@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@c7da3ae5891fe07d5ebc216066cf6a79c71a5d91f52afb863092d9f00386b29b
+# aicompany-template: deploy.sh.tpl@adbc2e92d4367b5998de320d085735710775642dbfb6318c7f8cf5402ee891d9
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -289,7 +289,15 @@ tar_excludes=(
   # is the host the leak was measured on. GNU tar also takes the first match,
   # so the .env.example reprieve goes first.
   --exclude ./.git --exclude "node_modules" --exclude ./.next
-  --exclude ./.env --exclude "./.env.*" --exclude ./data
+  # v1.84.1: tar patterns with a leading `./` are ANCHORED to the archive root,
+  # so v1.84.0's fix covered only top-level files — `./nested/.claude/worktrees/
+  # roadmap/.env` still shipped. Demonstrated against a real tree. This is the
+  # gcloud-iap transport, i.e. itsupportchicago, the exact host where six live
+  # `.env` copies were found on the production VM. The unanchored `*/` patterns
+  # cover every depth; rsync needs no equivalent because its patterns are
+  # basename-matched at any depth already (verified).
+  --exclude ./.env --exclude "./.env.*" --exclude "*/.env" --exclude "*/.env.*"
+  --exclude ./data
   --exclude "./packages/brain/scripts/benchmark/cache"
 )
 
