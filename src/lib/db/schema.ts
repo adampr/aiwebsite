@@ -45,6 +45,7 @@ import {
   makePageVisitsTable,
   makePhoneVerificationsTable,
   makeReportedIssuesTable,
+  makeSeoRubricRecordsTable,
   makeSmsConsentLogsTable,
   makeSmsMemoryNoticesTable,
   makeSmsNoticesTable,
@@ -124,6 +125,12 @@ export const blogMetrics = makeBlogMetricsTable();
 // spool into /api/internal/issues and the dev-box `issues.mjs` CLI reads it
 // back at build start. Registry key "reportedIssues".
 export const reportedIssues = makeReportedIssuesTable();
+
+// Weekly SEO rubric record store (module §21.19, v1.88) — one row per ISO
+// week, upserted by the dev-box scorer's push leg via /api/internal/seo-rubric;
+// /admin/seo-rubric renders the stored payload verbatim and never re-scores.
+// Registry key "seoRubricRecords" (optional-WARN posture).
+export const seoRubricRecords = makeSeoRubricRecordsTable();
 
 // ---- Host-owned tables (not part of the module contract) ----
 

@@ -28,6 +28,8 @@ registerTables({
   blogMetrics: schema.blogMetrics,
   // issue ledger (module §5.15 v1.30) — required for issue recording.
   reportedIssues: schema.reportedIssues,
+  // weekly rubric record store (module §21.19 v1.88) — optional-WARN.
+  seoRubricRecords: schema.seoRubricRecords,
 });
 
 export { db, getDb, schema };

@@ -1347,6 +1347,7 @@ never 500s the page.
 | `/admin/companies` | `page_visits` ⋈ `ip_orgs` | orgs reading the site; ISP ASNs filtered out |
 | `/admin/seo` | `page_visits` | 30-day first-party traffic: stat cards (views/sessions/visitors/bounce), source classification, referring domains, daily bars, top pages, session depth. **GSC/Semrush not wired up** |
 | `/admin/knowledge` | `brain_memories` (read-only) | rows + per-source_type stats (row sizes matter — voice injects all public rows); button triggers the crawl |
+| `/admin/seo-rubric` | `seo_rubric_records` (read-only) | module §21.19 (v1.88): renders the weekly SEO scorecard record the DEV-BOX scorer pushes via `/api/internal/seo-rubric` (x-issue-secret, same channel as the issue ledger); the page never re-scores, never calls GSC/Semrush; honest empty state until the first push; stale banner past 8d. Table: one row per ISO week, upserted, optional-WARN registry key `seoRubricRecords` (migration 0043) |
 | `/admin/governance` | `governance_projects` ⋈ `users`, `governance_usage`, `page_visits` | **host-owned** (not a module wrapper): read-only §5.12 usage review — stat tiles, per-user rollup, project list with status/liveness/failed-turn chips + deletion countdown, 14-day counters. Metadata only, content columns never selected; full contract in §5.12 "Admin review console" |
 
 API routes (module factories from `@aicompany/core/admin/api`; every handler runs the

@@ -302,6 +302,13 @@
       "when": 1786306532322,
       "tag": "0042_roadmap_evidence_ladder",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1786810047541,
+      "tag": "0043_sour_glorian",
+      "breakpoints": true
     }
   ]
 }

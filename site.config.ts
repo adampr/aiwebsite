@@ -489,6 +489,7 @@ export const siteConfig = defineSiteConfig({
       "seo",
       "blog",
       "knowledge",
+      "seo-rubric",
     ],
     // Host-owned admin pages (module renders these after the pages above,
     // same 44px nav targets). /admin/governance: §5.12 usage review console.
