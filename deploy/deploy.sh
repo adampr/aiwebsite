@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@adbc2e92d4367b5998de320d085735710775642dbfb6318c7f8cf5402ee891d9
+# aicompany-template: deploy.sh.tpl@2497a9ef61e0e1a78e596cc6619ef18dceeaed128ed26a00cc9d139f16539cea
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -167,6 +167,22 @@ if [ "$bad_syntax" -ne 0 ]; then
 fi
 echo "  syntax OK"
 
+# NOTE (2026-08-15): a REFUSING secret-shaped-file gate was built here,
+# validated (12/12 shapes caught, 0 false positives across all four deploy
+# trees), and then REMOVED on two independent refutations. Recorded so it is
+# not rebuilt: (1) the ship path is already closed on BOTH transports and
+# pinned by a behavioural test, so the gate was a second, divergent
+# implementation of a defence that already holds; (2) it sits in the
+# highest-blast-radius file in the fleet and would refuse `--takeover`, the
+# documented mid-flip recovery run, on an unrelated stray file while a site is
+# down; (3) its `find` ran in a process substitution whose exit status is
+# unchecked, so an unreadable directory made it fail OPEN — silently omitting
+# the very file it existed to catch; and (4) it structurally cannot see residue
+# already resident on a VM, which was the actual incident. The hole it aimed at
+# is closed instead where it is cheap and cannot cost uptime: `.env.*` +
+# `!.env.example` in every repo's .gitignore, and the pre-commit secrets gate
+# hoisted fleet-wide. A commit-time refusal costs nothing when it fires.
+
 # ── Dev-box credentials: read values literally — do NOT `source` .env:
 # passwords may contain shell-special characters ($, #, *) that expansion
 # would mangle. `|| true`: a missing key must return empty, not kill the
@@ -286,8 +302,17 @@ rsync_excludes=(
 )
 tar_excludes=(
   # Same exact-name hole on the gcloud-iap transport (itsupportchicago), which
-  # is the host the leak was measured on. GNU tar also takes the first match,
-  # so the .env.example reprieve goes first.
+  # is the host the leak was measured on.
+  #
+  # NOTE, corrected 2026-08-15: GNU tar has NO `--include` override, so
+  # rsync's include-first trick does NOT transfer here — an earlier version of
+  # this comment claimed it did, and it was wrong. `--exclude "./.env.*"`
+  # therefore swallows `.env.example` too. That file is NOT optional: a host
+  # without it fails `config:check` with a PROBLEM (src/config/check.ts —
+  # "host .env.example is missing"), which throws RuntimeCheckError at
+  # register(), i.e. the app refuses to boot. The excludes deliberately stay
+  # broad (fail-closed against shapes nobody has thought of); the two
+  # `.env.example` files are pushed back explicitly after the sync below.
   --exclude ./.git --exclude "node_modules" --exclude ./.next
   # v1.84.1: tar patterns with a leading `./` are ANCHORED to the archive root,
   # so v1.84.0's fix covered only top-level files — `./nested/.claude/worktrees/
@@ -488,6 +513,18 @@ run_remote "sudo touch /var/run/aiwebsite-deploy-in-progress"
 
 echo ">>> Syncing repo..."
 sync_dir "$repo_dir/" "$app_dir/"
+
+# ── .env.example reprieve (v1.85.1) ──────────────────────────────
+# The secret-shaped excludes are deliberately broad and fail-closed, and on the
+# tar transport there is no way to carve an exception out of them (no
+# --include). A host WITHOUT .env.example fails config:check with a PROBLEM and
+# the app will not boot, so ship the two the §4.3 superset lint reads, by name.
+# Idempotent and cheap on the rsync transports, where they already arrived.
+# Never a glob: two explicit paths, so this can never become a secret courier.
+echo ">>> Restoring .env.example (the secret-shaped excludes catch it; config:check requires it)..."
+[ -f "$repo_dir/.env.example" ] && push_file "$repo_dir/.env.example" "$app_dir/"
+[ -f "$module_dir/.env.example" ] && push_file "$module_dir/.env.example" "$app_dir/packages/aicompany/"
+true
 
 echo ">>> Copying production .env..."
 push_file "$repo_dir/.env" "$app_dir/"
