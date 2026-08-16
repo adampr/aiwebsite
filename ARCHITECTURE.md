@@ -5705,6 +5705,29 @@ short-circuits on signed-out/@xl.net via the shared `probeSession()` and
 otherwise fetches `GET /api/roadmap/nav` (boolean only — no counts, no
 names, false for untrusted/foreign sessions).
 
+**Session probing (aicompany v1.90.0).** `src/components/staff-probe.ts` no
+longer fetches; it is an ADAPTER over the module's shared session store (module
+§5.16), which is now the single reader of `GET /api/auth/session` for the whole
+document — the module's `<UserMenu>` reads it too, so this host went from two
+session requests per page to one. `StaffSession` and every exported signature
+(`probeSession` / `probeStaff` / `probeRfpStaff`, and by extension
+`roadmap-probe.ts`) are preserved exactly: the module's own export is also
+called `probeSession` but returns a tagged `{status}` union, so re-exporting it
+would have collapsed the /work and /rfp staff gates to false with no error. A
+failed probe still resolves to `{authenticated:false}`, as the old `.catch()`
+did, and the server gate remains the control.
+
+**No homepage adoption on this host, deliberately.** A session-aware hero CTA
+("Open Your Roadmap") was designed for `/` and then WITHDRAWN under review:
+`src/app/page.tsx` already renders `Open your roadmap →` unconditionally to
+every visitor, so the proposal duplicated an existing link ~100px away in
+different capitalisation; and `/roadmap` dead-ends the Gmail/Outlook population
+that this site's own free tool recruits (`roadmap/page.tsx` tells them "a
+workspace needs a work email", i.e. tells a signed-in user to sign in). The
+staff branch — the only session the proposal was validated against — is the one
+that cannot see that failure. If more prominence is wanted, promote the existing
+link; do not add a client swap.
+
 **Apollo import** (`src/lib/roadmap/apollo.ts`, `POST
 /api/roadmap/apollo-import`; company lane = company-admin only, staff lane
 = global-admin only over `STAFF_DIRECTORY_SCOPE` with domain

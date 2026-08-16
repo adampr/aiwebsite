@@ -1,12 +1,17 @@
 "use client";
 
-// ONE session probe, shared by every staff-only island (§5.16, §5.17).
+// ONE session probe, shared by every staff-only island (§5.16, §5.17 of THIS
+// host's doc — unrelated to the aicompany module's own §5.16 numbering).
 //
 // Both the /work submit links and the /rfp nav entry need the same answer, and
 // each previously owning its own module-scoped promise meant one fetch per
-// island per page. This module holds the single promise so N islands cost one
-// request. (The module's own <UserMenu> probes separately; that is module code
-// this host does not modify.)
+// island per page. Since aicompany v1.90.0 the deduplication lives one level
+// down, in the module's shared session store, which the module's <UserMenu>
+// also reads — so the last remaining duplicate request on this host is gone
+// too. The note that used to sit here ("the module's own <UserMenu> probes
+// separately; that is module code this host does not modify") is now obsolete.
+
+import { probeSession as moduleProbe } from "@aicompany/core/components/session-probe";
 
 export type StaffSession = {
   authenticated: boolean;
@@ -14,26 +19,36 @@ export type StaffSession = {
   provider: string | null;
 };
 
-let probe: Promise<StaffSession> | null = null;
-
+/**
+ * v1.90.0: ADAPTER over the aicompany module's §5.16 session store, which is
+ * now the single reader of GET /api/auth/session for the whole document. The
+ * module's <UserMenu/> reads the same store, so this host went from two session
+ * requests per page to one — and two requests can return two different answers
+ * inside one document.
+ *
+ * The `StaffSession` shape is preserved EXACTLY, because it is a third envelope
+ * shape (distinct from both the module's tagged union and roleplay's envelope)
+ * and `roadmap-probe.ts` consumes it. Re-exporting the module's same-named
+ * `probeSession` here would silently hand every caller a `{status}` union with
+ * no `authenticated`/`email`/`provider` fields, and the /work and /rfp staff
+ * gates would collapse to false with no error.
+ *
+ * A FAILED probe still resolves to `{authenticated:false}` here, exactly as the
+ * old `.catch()` did. The module keeps `unknown` distinct from `anonymous` for
+ * its own debuggability; nothing on this host acts on the difference, and the
+ * server gate is the control either way (see probeRfpStaff below).
+ */
 export function probeSession(): Promise<StaffSession> {
-  probe ??= fetch("/api/auth/session", { cache: "no-store" })
-    .then((r) => (r.ok ? r.json() : null))
-    .then(
-      (
-        d: {
-          authenticated?: boolean;
-          user?: { email?: string; provider?: string };
-        } | null
-      ) => ({
-        authenticated: Boolean(d?.authenticated),
-        email: typeof d?.user?.email === "string" ? d.user.email : null,
-        provider:
-          typeof d?.user?.provider === "string" ? d.user.provider : null,
-      })
-    )
-    .catch(() => ({ authenticated: false, email: null, provider: null }));
-  return probe;
+  return moduleProbe().then((snapshot) =>
+    snapshot.status === "authenticated"
+      ? {
+          authenticated: true,
+          email: typeof snapshot.user.email === "string" ? snapshot.user.email : null,
+          provider:
+            typeof snapshot.user.provider === "string" ? snapshot.user.provider : null,
+        }
+      : { authenticated: false, email: null, provider: null }
+  );
 }
 
 /** Signed in on an xl.net account. The /work submission gate's predicate. */
