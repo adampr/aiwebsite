@@ -1248,9 +1248,26 @@ silence). aiwebsite facts:
 - Synthetic monitoring (module v1.17.0, §9.8): `deploy/synth-inventory.json`
   lists the public pages/markers/feeds the dev-box sweep checks every 15 min
   (all alert-only, `[aiwebsite] SYNTH` mail grammar); `SYNTH_PAGES` in
-  site-deploy.env adds `/blog` + `/texting` to the on-VM watchdog as
-  alert-only local checks; `SYNTH_HEARTBEAT=1` dead-mans the sweep runner via
-  `data/synth-last-sweep`.
+  site-deploy.env adds `/blog` + `/texting` + `/api/auth/session` to the on-VM
+  watchdog as alert-only local checks; `SYNTH_HEARTBEAT=1` dead-mans the sweep
+  runner via `data/synth-last-sweep`.
+  `/api/auth/session` (module v1.90.0) is the fleet's ONLY server-side detector
+  for "every page silently looks logged-out to everyone" — the sweep and the
+  §21 scorer are anonymous bots that cannot hold a session, so no other
+  instrument can see that class. It carries NO byte floor deliberately: the
+  anonymous body is 23 bytes, `render.mjs` rejects any `minBytes` below 100
+  (an earlier `|20` blocked a re-render outright and was corrected 2026-08-16),
+  and the HTTP-status check alone is what earns its place — 404 route
+  unmounted, 500 missing/short `SESSION_COOKIE_SECRET`, 000 refused. It does
+  NOT detect a semantic regression on a healthy 200.
+- **Alert mail carries RFC 3834 headers (module v1.93.0).** The five rendered
+  shell senders — `watchdog.sh`, `peer-monitor.sh`, `backup-db.sh`,
+  `restore-drill.sh`, `setup-vm.sh` — POST to Resend directly and, until
+  v1.93.0, did so WITHOUT `Auto-Submitted`/`X-Auto-Response-Suppress`. Measured
+  on this host: 2026-08-15 19:14:33 a watchdog alert to adam@xl.net BOUNCED
+  while a module-mailer alert to the same address DELIVERED seven seconds
+  later. Re-render after any module bump crossing v1.93.0, or the rendered
+  copies silently lose the headers again.
 
 #### Archived accounts (module v1.74, migration `0037_archive_users`)
 

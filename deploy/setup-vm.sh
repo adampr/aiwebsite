@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@71c2b33f47bfecf3b8b2683b045ebba83249f5e3772acf5ddb021beb042cc9db
+# aicompany-template: setup-vm.sh.tpl@58a44745340ea4742441e72700e52132c31d48e336fd29a1478052ef44a0c8f3
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -840,7 +840,7 @@ fi
 if curl -s -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $key" \
   -H "Content-Type: application/json" \
-  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"adam@xl.net\"],\"subject\":\"[aiwebsite] WARN Disk usage at $usage%\",\"text\":\"$disk_body\"}" >/dev/null; then
+  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"adam@xl.net\"],\"subject\":\"[aiwebsite] WARN Disk usage at $usage%\",\"text\":\"$disk_body\",\"headers\":{\"Auto-Submitted\":\"auto-generated\",\"X-Auto-Response-Suppress\":\"All\"}}" >/dev/null; then
   record_issue "WARN Disk usage at $usage%" "$disk_body" "disk-usage" 1
 else
   record_issue "WARN Disk usage at $usage%" "$disk_body" "disk-usage" 0

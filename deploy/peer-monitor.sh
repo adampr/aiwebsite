@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: peer-monitor.sh.tpl@87963f98136ea92a8f169cf6bbd5287b804fdb07342b74297378e8313fcaaf7a
+# aicompany-template: peer-monitor.sh.tpl@0e05ee7f1cae06a2c44c1717da6b700214eef127bb8d5605eb60a51207742da2
 # Cross-site peer monitor (@aicompany/core template, §9.7 v1.15). The
 # self-hosted watchdog can't report a dead VM or severed tunnel, so sibling
 # sites watch each other across hosting providers — FULL MESH is normative
@@ -73,7 +73,7 @@ send_alert() { # subject body — returns 0 iff the mail actually went out
   if curl -sS -m 20 https://api.resend.com/emails \
     -H "Authorization: Bearer $resend_api_key" \
     -H "Content-Type: application/json" \
-    -d "$(printf '{"from":"%s","to":"%s","subject":"%s","text":"%s"}' \
+    -d "$(printf '{"from":"%s","to":"%s","subject":"%s","text":"%s","headers":{"Auto-Submitted":"auto-generated","X-Auto-Response-Suppress":"All"}}' \
           "$alert_from" "$alert_to" "$1" "$2")" >/dev/null; then
     # Logged on SUCCESS too (v1.15.0): silent success made the 2026-07-22
     # "did the DOWN alert fire?" question a forensic exercise.

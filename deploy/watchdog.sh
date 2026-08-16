@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@97ba2cb568e2bf7cc991552dd5bb775d72ca6d9b424f2a2bebd972d29cb5c6f4
+# aicompany-template: watchdog.sh.tpl@026076e6d0b597c239c3e727a96f4642b8b74acf3d4ed6fa59d01664a3a2d0d6
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -85,7 +85,7 @@ page_check_urls=(
 # on every page pass, ALERT-ONLY — never rebuild-eligible. Tokens are "path"
 # or "path|minBytes". The rebuild-eligible set stays exactly page_check_urls
 # above. The heartbeat gate is consumed in check_freshness.
-synth_pages='/blog|27000 /texting|12000'
+synth_pages='/blog|27000 /texting|12000 /api/auth/session'
 synth_heartbeat_enabled='1'
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -243,7 +243,7 @@ send_email() {
   curl -sf -m 15 -X POST "https://api.resend.com/emails" \
     -H "Authorization: Bearer $resend_api_key" \
     -H "Content-Type: application/json" \
-    -d "$(printf '{"from":"%s","to":["%s"],"subject":"%s","html":"%s"}' \
+    -d "$(printf '{"from":"%s","to":["%s"],"subject":"%s","html":"%s","headers":{"Auto-Submitted":"auto-generated","X-Auto-Response-Suppress":"All"}}' \
       "$notify_from" "$notify_to" "$subject" \
       "$(echo "$html_body" | sed 's/"/\\"/g' | tr -d '\n')")" \
     >> "$log_file" 2>&1 && {

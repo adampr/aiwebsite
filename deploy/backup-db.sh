@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: backup-db.sh.tpl@6f7e689c905e67baa8b00c41f188c992fd1bc2867eea645e948d1cc17a951648
+# aicompany-template: backup-db.sh.tpl@b7d3ba526027ded44d8fef06f5ca89c07248ddcc401164396e7f4dae0462920c
 # Nightly pg_dump to a cloud bucket with failure alerting and a success
 # heartbeat (§9.4, from host B's hardened version). Failures email
 # adam@xl.net via Resend; success stamps /var/lib/aiwebsite/last-backup-ok,
@@ -53,7 +53,7 @@ alert() { # subject-after-prefix body — returns 0 iff the mail actually went o
   curl -s -X POST https://api.resend.com/emails \
     -H "Authorization: Bearer $key" \
     -H "Content-Type: application/json" \
-    -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":\"adam@xl.net\",\"subject\":\"[aiwebsite] $1\",\"text\":\"$2\"}" >/dev/null || return 1
+    -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":\"adam@xl.net\",\"subject\":\"[aiwebsite] $1\",\"text\":\"$2\",\"headers\":{\"Auto-Submitted\":\"auto-generated\",\"X-Auto-Response-Suppress\":\"All\"}}" >/dev/null || return 1
   return 0
 }
 
