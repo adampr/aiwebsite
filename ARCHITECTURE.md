@@ -1001,10 +1001,47 @@ sitemap between deploys. RSS at `/rss.xml`.
 **pre-paint theme script** (`themeScript(true)` from `@aicompany/core/components/theme-script`:
 reads `localStorage.theme` / `prefers-color-scheme` / dark-first default, sets `.dark` or
 `data-theme="light"` on `<html>` before first paint), sticky header (logo, nav, module
-`<ThemeToggle>`, module `<UserMenu {...toUserMenuProps(siteConfig)}>`), footer, and — on every
+`<ThemeToggle>`, module `<UserMenu {...toUserMenuProps(siteConfig)}>`, and since v1.95.0
+`<MobileNav>` — see below), footer, and — on every
 page — the module `<ChatWidget {...toChatWidgetProps(siteConfig)}>` and
 `<SmsPromptCard {...toSmsPromptCardProps(siteConfig)}>`, plus the host's `<FuturismFx>`
 and `<Script src="/fx.js" strategy="afterInteractive">`.
+
+**Mobile nav (v1.95.0, `src/components/mobile-nav.tsx`).** Below 767.98px the
+seven public destinations move out of the wrapping `.nav` row into a disclosure
+panel, following roleplay's proven 2026-08-16 pattern (close on navigation —
+App Router keeps the layout mounted — plus Escape, outside pointerdown, focus
+return to the toggle, and a breakpoint-crossing close). At 360px the old row was
+4-5 rows, ~288px, roughly 45% of the first screen. `NAV_LINKS` in `layout.tsx`
+is the single source of truth feeding both presentations, at module scope so the
+layout stays a NON-async server component — computing anything session-derived
+there would de-static every public page.
+
+**The session-gated islands render TWICE.** `<YourWorkLink>` and `<StaffRfpLink>`
+appear in the bar (for desktop) and again inside the panel; `.nav > .nav-staff`
+is `display:none` below the breakpoint so the bar copy leaves the accessibility
+tree and nothing is announced twice. This costs no extra requests:
+`roadmap-probe.ts` is a module-scoped promise memo ("exactly one fetch of
+/api/roadmap/nav per page, shared by every island instance") and `staff-probe.ts`
+delegates to the module's single session store. A first draft kept them in the
+bar to avoid a duplicate probe; that reasoning was refuted from the code, and it
+mattered because those islands return null for anonymous visitors but DO render
+for signed-in @xl.net staff — whose bar came to ~650px of chrome in a 328px row.
+`<RoadmapPercentBadge>`, `<ThemeToggle>` and `<UserMenu>` stay in the bar at
+every width: the badge is a status the owner asked to keep prominent, and
+`<UserMenu>` is itself a disclosure, so nesting it would bury sign-in two taps
+deep and create a nested-Escape precedence problem.
+
+**Two cascade traps — do not "simplify" either.** (a) The mobile `.nav` rule is
+written `nav.nav` (0,1,1) because the `@media (max-width:1280px)` block later in
+futurism.css redeclares `.nav` gap/padding at (0,1,0) and wins on source order;
+a plainly-written rule is dead on arrival. (b) The 44px tap geometry is scoped to
+`.nav-anchors a, .mobile-nav-panel a` and NOT to `.nav a`, which also matches the
+logo link — applying it there beats Tailwind's `.flex` at (0,1,0) and shrinks the
+desktop bar 12px on every page. The existing `padding:12px 0` "~44px effective
+tap height" comment is correct (12px at the body's line-height 1.7 = 20.4 + 24 =
+44.4px); the defect it papers over is that an inline box hit-tests padding
+without reserving layout space, so the visitor sees a 20px row.
 
 **Styling:** Tailwind v4 + a custom "Elegant Futurism" design system (`src/app/futurism.css`,
 ~760 lines). Dark-first; light mode = `data-theme="light"` on `<html>`. Tokens are `oklch()` CSS

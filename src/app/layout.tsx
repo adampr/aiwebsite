@@ -10,6 +10,7 @@ import { SmsPromptCard } from "@aicompany/core/components/sms-prompt-card";
 import { themeScript } from "@aicompany/core/components/theme-script";
 import { ThemeToggle } from "@aicompany/core/components/theme-toggle";
 import { UserMenu } from "@aicompany/core/components/user-menu";
+import { MobileNav } from "../components/mobile-nav";
 import { OrgJsonLdScript } from "@aicompany/core/seo/org-jsonld";
 import { siteConfig } from "site.config";
 import { FuturismFx } from "@/components/futurism-fx";
@@ -56,6 +57,20 @@ export const metadata: Metadata = {
     apple: "/xl-icon-180.png",
   },
 };
+
+// The seven public destinations, owned here and passed to BOTH the desktop row
+// and <MobileNav>, so the two presentations cannot disagree about which
+// destinations exist. Module scope keeps the layout a non-async server
+// component — computing anything session-derived here would de-static the site.
+const NAV_LINKS = [
+  { href: "/", label: "Home" },
+  { href: "/work", label: "Our Work" },
+  { href: "/builders", label: "AI Builders" },
+  { href: "/governance", label: "Governance" },
+  { href: "/roadmap", label: "Your AI Roadmap" },
+  { href: "/blog", label: "AI News" },
+  { href: "/contact", label: "Contact" },
+] as const;
 
 export default function RootLayout({
   children,
@@ -123,19 +138,27 @@ export default function RootLayout({
               />
             </Link>
             <span className="badge badge--light">AI</span>
-            <div className="ml-auto flex flex-wrap items-center gap-8">
-              <Link href="/">Home</Link>
-              <Link href="/work">Our Work</Link>
-              <Link href="/builders">AI Builders</Link>
-              <Link href="/governance">Governance</Link>
-              <Link href="/roadmap">Your AI Roadmap</Link>
-              <Link href="/blog">AI News</Link>
-              <Link href="/contact">Contact</Link>
+            <div className="ml-auto flex flex-wrap items-center gap-2 md:gap-8">
+              <div className="nav-anchors flex flex-wrap items-center gap-8">
+                {NAV_LINKS.map((link) => (
+                  <Link key={link.href} href={link.href}>
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+              {/* Bar copies. Hidden below md by `.nav > .nav-staff` (§7b) —
+                  the panel carries them there. Two instances share one probe. */}
               <YourWorkLink />
-              <RoadmapPercentBadge />
               <StaffRfpLink />
+              {/* Stays visible at every width: a STATUS, not a destination, and
+                  the owner asked for it displayed prominently. */}
+              <RoadmapPercentBadge />
               <ThemeToggle />
               <UserMenu {...toUserMenuProps(siteConfig)} />
+              <MobileNav links={NAV_LINKS}>
+                <YourWorkLink />
+                <StaffRfpLink />
+              </MobileNav>
             </div>
           </nav>
         </header>

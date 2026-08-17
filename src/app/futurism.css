@@ -775,8 +775,23 @@ html.pager-active .work-pager {
   letter-spacing: 0.3em;
   text-transform: uppercase;
   color: var(--xl-text-dim);
-  padding: 12px 0; /* ~44px effective tap height (WCAG 2.5.8) */
+  /* 12px caps at line-height 1.7 (body, §2) = 20.4px + 24px padding = 44.4px of
+   * HIT AREA — the number is right. But this is an INLINE box, so the vertical
+   * padding is hit-tested and reserves no layout space: the visitor SEES a 20px
+   * row, and under a tighter row-gap adjacent rows' hit areas overlap. The
+   * geometry fix lives on .nav-anchors a / .mobile-nav-panel a below, NOT here:
+   * `.nav a` also matches the logo link, and giving it min-height would shrink
+   * the desktop bar 12px on every page. */
+  padding: 12px 0;
   position: relative;
+}
+/* Reserved space == target, gap-independent. */
+.nav-anchors a,
+.mobile-nav-panel a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0;
 }
 .nav a:hover { color: var(--xl-text); }
 .nav a[aria-current] { color: var(--xl-light); }
@@ -1155,6 +1170,105 @@ footer li a { display: inline-flex; min-height: 24px; align-items: center; }
   .nav { gap: var(--sp-4) var(--sp-6); padding: var(--sp-4) var(--sp-6); }
   .nav .badge { display: none; }
 }
+/* ── §7b Phone nav (2026-08-17) ──────────────────────────────────
+ * Below Tailwind's md the seven destinations wrapped to 4-5 rows (~45% of the
+ * first screen at 360px). They move into a disclosure panel; the desktop row
+ * hides. Breakpoint 767.98px must stay in lockstep with mobile-nav.tsx's
+ * matchMedia and the header's md:sticky.
+ *
+ * `nav.nav` (0,1,1) deliberately: the @media (max-width:1280px) block later in
+ * this file redeclares .nav gap/padding at (0,1,0) and wins on source order,
+ * so a plainly-written .nav rule here would be dead on arrival. */
+.mobile-nav { display: none; }
+@media (max-width: 767.98px) {
+  nav.nav {
+    gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-4);
+    /* Positioning context + paint order for the panel. The header is only
+     * md:sticky, so below md it is static and its z-40 is inert; page content
+     * carrying a transform (.rise) would otherwise paint over the panel.
+     * 45 sits above content, below .skip-to-content (z-50, same corner) and
+     * below the chat launcher (z-60) so chat stays reachable. */
+    position: relative;
+    z-index: 45;
+  }
+  .nav-anchors { display: none; }
+  .mobile-nav { display: block; }
+  /* These two render TWICE — once in the bar for desktop, once inside the
+   * panel for phones. That is safe because both probes are module-scoped
+   * memos (roadmap-probe: "exactly one fetch per page, shared by every island
+   * instance"; staff-probe delegates to the module's single session store), so
+   * a second instance costs zero requests and cannot disagree. Hiding the bar
+   * copy with display:none (not visibility/clip) keeps it out of the
+   * accessibility tree so nothing is announced twice. */
+  .nav > .nav-staff { display: none; }
+}
+.mobile-nav-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px; padding: 0;
+  border: 1px solid transparent; background: transparent;
+  color: var(--xl-text-dim); cursor: pointer;
+}
+.mobile-nav-toggle:hover { color: var(--xl-text); }
+.mobile-nav-toggle[aria-expanded="true"] {
+  color: var(--xl-light);
+  border-color: var(--xl-line-bright);
+}
+.mobile-nav-toggle:focus-visible { outline: var(--site-focus-ring, 2px solid var(--xl-light)); outline-offset: 2px; }
+.mobile-nav-panel {
+  position: absolute; top: 100%; left: 0; right: 0; z-index: 1;
+  display: flex; flex-direction: column;
+  background: var(--xl-bg-0);
+  border-top: 1px solid var(--xl-line);
+  border-bottom: 1px solid var(--xl-line);
+  padding: var(--sp-2) var(--sp-4) var(--sp-4);
+  /* Two declarations: min()+dvh in one value is invalid-at-computed-value-time
+   * without dvh support, and max-height would fall back to `none`. */
+  max-height: 80vh;
+  max-height: min(80vh, calc(100dvh - 5rem));
+  overflow-y: auto;
+  animation: xl-menu-in var(--dur-fast, 160ms) var(--ease, ease-out);
+}
+/* The system's light-line, reused as the panel's opening edge. */
+.mobile-nav-panel::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, var(--xl-light), transparent 70%);
+  box-shadow: 0 0 10px var(--xl-light-glow);
+}
+/* Author display:flex above would defeat the UA [hidden] rule — restate it. */
+.mobile-nav-panel[hidden] { display: none; }
+.mobile-nav-panel a {
+  gap: var(--sp-3);
+  min-height: 48px;
+  border-bottom: 1px solid var(--xl-line);
+  padding-left: var(--sp-2);
+}
+.mobile-nav-panel a:last-of-type { border-bottom: 0; }
+/* Current page: the existing nav underline rotated into a left light-rail,
+ * rather than inventing a second current-page grammar. */
+.mobile-nav-panel a[aria-current] {
+  color: var(--xl-light);
+  box-shadow: inset 2px 0 0 0 var(--xl-light);
+  background: color-mix(in oklab, var(--xl-light) 6%, transparent);
+}
+.mobile-nav-panel a[aria-current]::after { content: none; }
+.mobile-nav-index {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--xl-text-faint, var(--xl-text-dim));
+  min-width: 2.2ch;
+}
+.mobile-nav-gated {
+  display: flex; flex-direction: column;
+  margin-top: var(--sp-3); padding-top: var(--sp-3);
+  border-top: 1px solid var(--xl-line);
+}
+@keyframes xl-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* Opt-in wrap for CTAs inside width-capped cards (pricing subgrid): between
    640px and the max-w-5xl cap the two-column card interior is narrower than
    a nowrap tracked-caps label, so let exactly these buttons wrap. Scoped as
