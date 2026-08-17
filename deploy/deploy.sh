@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@6b5ba80671d18500422aa38fcd8e31a988b4405485ae6a281a9075d0835a2300
+# aicompany-template: deploy.sh.tpl@73c5ec7a3c812a845a0d6ca2a64f574be209f1e31b83ee32ee5faca70f206c17
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -42,6 +42,9 @@ set -euo pipefail
 # a pre-ship failure used to leak the ~305M tarball into /tmp).
 trap 'code=$?
 if [ -n "${artifact_tmp:-}" ]; then rm -rf "$artifact_tmp"; fi
+for f in ${env_local_stash:-}; do
+  if [ -f "$f.deploy-shielded" ]; then mv "$f.deploy-shielded" "$f"; fi
+done
 if [ "$code" -ne 0 ]; then
   echo "" >&2
   echo "!!! DEPLOY FAILED (exit $code)." >&2
@@ -394,8 +397,34 @@ if [ "$build_mode" = "local-artifact" ]; then
   # Fresh build every time — a stale Turbopack cache is the same class the VM
   # pipeline kills with `rm -rf stage/.next` (§9.2).
   rm -rf "$repo_dir/.next"
+  # ── .env*.local shield (v1.96.1) ───────────────────────────────
+  # Next.js gives .env.local / .env.<mode>.local precedence over .env, and
+  # local-artifact builds run on the DEV BOX — so a developer's localhost
+  # override is silently baked into the PROD artifact as an inlined
+  # NEXT_PUBLIC_* value. Found live on roleplay 2026-08-17, the first deploy
+  # where local-artifact met a dev box carrying .env.local: the artifact
+  # shipped site.baseUrl=http://localhost:3000, the module's own runtime
+  # check refused to boot it, and the health gate rolled the cutover back.
+  # The remote staged-build path never had this class (it builds from the
+  # VM's env). Stash the .local files for the duration of the build; the
+  # global EXIT trap restores them on EVERY exit, success or failure.
+  # The GLOBAL EXIT trap (top of file) restores these on every exit — a
+  # second `trap ... EXIT` here would silently REPLACE that trap and lose
+  # the artifact-tmp reaping plus the failure guidance.
+  env_local_stash=""
+  for f in "$repo_dir/.env.local" "$repo_dir/.env.production.local" "$repo_dir/.env.development.local"; do
+    if [ -f "$f" ]; then
+      mv "$f" "$f.deploy-shielded"
+      env_local_stash="$env_local_stash $f"
+      echo ">>> shielded $(basename "$f") from the artifact build (dev-box override; restored after)"
+    fi
+  done
   echo ">>> next build (dev box, heap 8192MB)..."
   (cd "$repo_dir" && env NODE_OPTIONS=--max-old-space-size=8192 npm run build)
+  for f in $env_local_stash; do
+    if [ -f "$f.deploy-shielded" ]; then mv "$f.deploy-shielded" "$f"; fi
+  done
+  env_local_stash=""
   [ -f "$repo_dir/.next/BUILD_ID" ] || { echo "ERROR: build produced no .next/BUILD_ID — aborting (VM untouched)"; exit 1; }
   local_build_id="$(cat "$repo_dir/.next/BUILD_ID")"
   # Relocatability gate — the local twin of stage-build verify-relocatable: a
