@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@2497a9ef61e0e1a78e596cc6619ef18dceeaed128ed26a00cc9d139f16539cea
+# aicompany-template: deploy.sh.tpl@6b5ba80671d18500422aa38fcd8e31a988b4405485ae6a281a9075d0835a2300
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -438,6 +438,7 @@ echo ">>> Remote preflight (VM liveness + memory floor + busy guard)..."
 pf_script='free -m | head -2
 awk "/^MemAvailable:/{print \"MEMAVAIL_KB\", \$2}" /proc/meminfo
 ps -eo rss=,comm= --sort=-rss | head -3 | sed "s/^/TOP-RSS /"
+if [ -n "" ]; then PATH=":$PATH"; fi
 echo "NODE_V $(command -v node >/dev/null 2>&1 && node -v || echo none)"
 if [ -f /var/run/aiwebsite-deploy-in-progress ]; then
   echo "MARKER_AGE $(( $(date +%s) - $(stat -c %Y /var/run/aiwebsite-deploy-in-progress) ))"
@@ -477,6 +478,17 @@ fi
 # dev-box-side check so a mismatch aborts before shipping ~305M; the
 # authoritative gate re-asserts VM-side right before the flip (setup-vm). The
 # NODE_V probe line is emitted for every mode and ignored in remote mode.
+#
+# The probe prepends TOOLCHAIN_PATH_PREFIX (v1.95.1). It must measure the node
+# that RUNS the site, which on a Node-split host is NOT the one a bare login
+# shell finds: those VMs keep the SYSTEM node at v20 for native-ABI services
+# (voice, brain) and install the site's v22 toolchain beside it. Probing the
+# bare PATH there reported v20, disagreed with a correctly-built v22 artifact,
+# and refused a sound deploy — while setup-vm's authoritative assert, which
+# exports the same prefix before checking, would have passed. Found on
+# roleplay 2026-08-17, the first Node-split host to run local-artifact
+# (v1.78.0 shipped to itsupportchicago only, a single-node box, so the two
+# features had never met). Empty prefix ⇒ no-op, unchanged for standard hosts.
 if [ "$build_mode" = "local-artifact" ]; then
   vm_node_v=$(printf '%s\n' "$preflight_out" | awk '/^NODE_V/{print $2; exit}')
   if [ -z "$vm_node_v" ] || [ "$vm_node_v" = "none" ]; then
