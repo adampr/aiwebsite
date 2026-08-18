@@ -1,4 +1,4 @@
-// POST - put a governance document on file (§5.18 step 1). Two content
+// POST - put a governance document on file (§5.18 step 1). Three content
 // lanes:
 //  - multipart upload (pdf/docx/md/txt, ~10 MB route cap): admin only; the
 //    original bytes are stored (downloads serve them back as octet-stream).
@@ -9,17 +9,28 @@
 //    the rendered markdown at attach time; the source project keeps its
 //    30-day lifecycle untouched (this is the whole scope of the no-ledger
 //    reversal).
+//  - JSON { url, title? }: link an existing policy where it already lives
+//    (owner directive 2026-08-18). Admin-gated like upload. The URL goes
+//    through parseCheckableUrl (the scheme gate: the stored href becomes an
+//    anchor, so this is the XSS gate too) and checkUrlReachable (§5.20
+//    SSRF-pinned checker; content is never read). A SECURED page counts:
+//    statusCounts accepts 401/403 - the owner asked only that the link
+//    "goes to SOME page", and a policy behind a sign-in wall is exactly the
+//    expected case. Reachability spends the SHARED roadmap:urlcheck:*
+//    buckets on top of the doc-write bucket: the caps bound our total
+//    outbound probe traffic, so a second spelling would double them.
 // Tenancy lane (staff governance round): docsWriteLane resolves the XL.net
-// staff lane (global-admin only for BOTH content lanes) or the caller's
+// staff lane (global-admin only for ALL content lanes) or the caller's
 // company; the scope it returns is bound into every db call.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { createHash } from "node:crypto";
-import { docsWriteLane } from "@/lib/roadmap/docs-gate";
+import { docsWriteLane, type DocsLane } from "@/lib/roadmap/docs-gate";
 import { addGovernanceDoc } from "@/lib/roadmap/db";
 import { fetchOwnedProject } from "@/lib/governance/db";
 import { ROADMAP_CAPS } from "@/lib/roadmap/config";
+import { checkUrlReachable, parseCheckableUrl } from "@/lib/roadmap/url-check";
 import {
   okJson,
   rateLimit,
@@ -62,12 +73,130 @@ function projectMarkdown(documentsJson: string): string {
   return out.join("\n").trim();
 }
 
+/** Reason -> copy for a refused link (platform-copy failureLine wording,
+ * minus the parts that do not exist here: nothing is saved on failure and
+ * there is no attest rung, so no "confirm it below"). Same discipline: say
+ * what happened, stay incurious about WHY at the network layer. */
+function linkRefusalMessage(
+  reason: string,
+  httpStatus: number | null
+): string {
+  switch (reason) {
+    case "not_public":
+      return "That address is not reachable from the public internet, so your team could not open it either. Use the address they would actually click, or one inside your own domain if the policy lives on your network.";
+    case "http_status":
+      return httpStatus
+        ? `A server answered with ${httpStatus}, so the address itself is wrong or the page is broken. Fix the link and try again.`
+        : "A server answered, but not in a way we could confirm. Check the link and try again.";
+    case "self_host":
+      return "That address points back at this site. Link the policy where it actually lives.";
+    case "redirect_loop":
+      return "That address redirected too many times for us to follow. Link the policy's address directly.";
+    default:
+      // "unreachable" and anything future: ONE bucket by design (url-check
+      // header: distinguishing refused from no-DNS is a port scanner).
+      return "We could not reach that address. It may be offline, blocking us, or on a network we cannot see. Check the link and try again.";
+  }
+}
+
+/** The link lane's reachability budget: the SHARED §5.20 urlcheck buckets
+ * (per-user + per-lane), exactly the platform-http keys - these caps bound
+ * total outbound probe traffic, so the doc lane must draw the same fence
+ * rather than minting a parallel one. */
+function limitDocLinkCheck(lane: DocsLane & { ok: true }): Response | null {
+  const perUser = rateLimit(
+    `roadmap:urlcheck:${lane.userId}`,
+    3600,
+    ROADMAP_CAPS.urlChecksPerUserPerHour
+  );
+  if (perUser) return perUser;
+  return rateLimit(
+    `roadmap:urlcheck:lane:${lane.laneKey}`,
+    3600,
+    ROADMAP_CAPS.urlChecksPerCompanyPerHour
+  );
+}
+
 export async function POST(req: Request): Promise<Response> {
   const disabled = requireRoadmapWritesEnabled();
   if (disabled) return disabled;
 
   const contentType = req.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
+    // The body picks the JSON lane (link vs attach), so it is read BEFORE
+    // the gate - lane selection needs it, and parsing grants nothing.
+    let body: {
+      governanceProjectId?: unknown;
+      url?: unknown;
+      title?: unknown;
+    } = {};
+    try {
+      // ?? {}: req.json() RESOLVES (not throws) on the literal body `null`,
+      // and this runs pre-auth, so without it `null` is an anonymous 500.
+      body = ((await req.json()) ?? {}) as typeof body;
+    } catch {
+      body = {};
+    }
+
+    if (typeof body.url === "string") {
+      // Link lane: admin-gated in BOTH lanes, mirroring upload (members
+      // attach their OWN work; pointing the company file at an arbitrary
+      // external address is an admin act, like filing the binary).
+      const lane = await docsWriteLane("admin");
+      if (!lane.ok) return lane.response;
+      // Scheme gate FIRST (free, and a refused parse must not spend an
+      // outbound-probe token). parsed.href is the ONLY value that may reach
+      // the database: it is what the on-file page renders as an anchor.
+      const parsed = parseCheckableUrl(body.url);
+      if (!parsed)
+        return roadmapError(
+          "invalid_request",
+          "We could not read that as a web address. Use a full http or https address, up to 500 characters, with no username or password in it.",
+          400
+        );
+      const spent = limitDocLinkCheck(lane);
+      if (spent) return spent;
+      // The check confirms a server ANSWERS, nothing more (statusCounts
+      // accepts 401/403: a policy behind a sign-in wall is the expected
+      // case, per the owner's "goes to SOME page"). Rung 2 ("internal")
+      // also passes: a host inside the lane's verified domain resolving
+      // into private space is a coherent place for a company policy, and
+      // we never connect to it.
+      const outcome = await checkUrlReachable(parsed.href, {
+        internalDomain: lane.internalDomain,
+      });
+      if (!outcome.ok)
+        return roadmapError(
+          "url_check_failed",
+          linkRefusalMessage(outcome.reason, outcome.status),
+          409
+        );
+      // The docs WRITE token is spent only once the check passes: a flaky
+      // target must never lock the admin out of upload/link/remove for the
+      // rest of the limiter's fixed hour (the 2026-08-09 directory-lockout
+      // mechanic); refused attempts burn only the urlcheck buckets above.
+      const limited = rateLimit(
+        `roadmap:docs:${lane.userId}`,
+        3600,
+        ROADMAP_CAPS.docWritesPerUserPerHour
+      );
+      if (limited) return limited;
+      const title =
+        (typeof body.title === "string" ? body.title : "")
+          .trim()
+          .slice(0, ROADMAP_CAPS.docTitleMaxChars) || parsed.url.hostname;
+      const id = await addGovernanceDoc({
+        scope: lane.scope,
+        source: "link",
+        title,
+        linkUrl: parsed.href,
+        docText: null,
+        addedByUserId: lane.userId,
+        addedByEmail: lane.email,
+      });
+      return okJson({ id, title }, 201);
+    }
+
     // Attach-own-project lane: member-actionable (company); global-admin
     // (staff).
     const lane = await docsWriteLane("attach");
@@ -78,16 +207,10 @@ export async function POST(req: Request): Promise<Response> {
       ROADMAP_CAPS.docWritesPerUserPerHour
     );
     if (limited) return limited;
-    let projectId = "";
-    try {
-      const body = (await req.json()) as { governanceProjectId?: unknown };
-      projectId =
-        typeof body.governanceProjectId === "string"
-          ? body.governanceProjectId
-          : "";
-    } catch {
-      projectId = "";
-    }
+    const projectId =
+      typeof body.governanceProjectId === "string"
+        ? body.governanceProjectId
+        : "";
     const project = await fetchOwnedProject(lane.userId, projectId);
     if (!project)
       return roadmapError(

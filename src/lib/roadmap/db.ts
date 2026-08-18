@@ -655,6 +655,7 @@ export async function listGovernanceDocs(
       fileSha256: CGD.fileSha256,
       fileBytes: CGD.fileBytes,
       docText: CGD.docText,
+      linkUrl: CGD.linkUrl,
       governanceProjectId: CGD.governanceProjectId,
       governanceKind: CGD.governanceKind,
       addedByUserId: CGD.addedByUserId,
@@ -676,7 +677,7 @@ export async function countGovernanceDocs(scope: GovDocScope): Promise<number> {
 
 export async function addGovernanceDoc(opts: {
   scope: GovDocScope;
-  source: "upload" | "governance_project";
+  source: "upload" | "governance_project" | "link";
   title: string;
   file?: {
     name: string;
@@ -686,6 +687,9 @@ export async function addGovernanceDoc(opts: {
     data: Buffer;
   };
   docText: string | null;
+  /** Link lane only. Callers must pass a parseCheckableUrl href, never raw
+   * input: this value is rendered as an anchor target (schema invariant). */
+  linkUrl?: string;
   governanceProjectId?: string;
   governanceKind?: string;
   addedByUserId: string;
@@ -703,6 +707,7 @@ export async function addGovernanceDoc(opts: {
       fileBytes: opts.file?.bytes ?? null,
       fileData: opts.file?.data ?? null,
       docText: opts.docText,
+      linkUrl: opts.linkUrl ?? null,
       governanceProjectId: opts.governanceProjectId ?? null,
       governanceKind: opts.governanceKind ?? null,
       addedByUserId: opts.addedByUserId,
@@ -713,7 +718,10 @@ export async function addGovernanceDoc(opts: {
 }
 
 /** Download read, scoped in the ONE query (missing and not-owned are the
- * same null; the route returns an identical 404 body for both). */
+ * same null; the route returns an identical 404 body for both). A "link"
+ * row has NO bytes and NO text by construction, so the route's !body check
+ * 404s it - deliberate: there is nothing of ours to serve, the policy lives
+ * behind the stored URL and the page renders that as an anchor instead. */
 export async function governanceDocForDownload(
   docId: string,
   scope: GovDocScope

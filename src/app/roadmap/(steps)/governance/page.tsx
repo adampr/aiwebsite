@@ -1,6 +1,9 @@
-// Roadmap step 1: AI Governance (§5.18). Admins upload documents or attach
-// their own Governance Builder projects; MEMBERS may also attach their OWN
-// projects (attach is member-actionable; upload and remove are admin-only).
+// Roadmap step 1: AI Governance (§5.18). Admins upload documents, link a
+// policy where it already lives (owner directive 2026-08-18; the stored
+// href renders as an external anchor, so only parseCheckableUrl output ever
+// reaches link_url), or attach their own Governance Builder projects;
+// MEMBERS may also attach their OWN projects (attach is member-actionable;
+// upload, link and remove are admin-only).
 // The gate is called here as well as in the (steps) layout - a denied
 // render returns null and the layout's denial screen is what the visitor
 // sees. All data is fetched with the principal's company id or the staff
@@ -29,6 +32,7 @@ import { listOwnedProjects } from "@/lib/governance/db";
 import { fmtDate } from "@/components/roadmap/dates";
 import {
   AttachProjectButton,
+  LinkDocCard,
   RemoveDocButton,
   UploadDocCard,
 } from "./gov-islands";
@@ -73,20 +77,44 @@ function OnFileList({
             <li key={doc.id} className="panel">
               <div className="flex flex-wrap items-center gap-4">
                 <span className="badge badge--light">
-                  {doc.source === "upload" ? "Upload" : "Builder"}
+                  {doc.source === "upload"
+                    ? "Upload"
+                    : doc.source === "link"
+                      ? "Link"
+                      : "Builder"}
                 </span>
                 <h2 className="text-lg">{doc.title}</h2>
               </div>
               <p className="mono mt-3 text-xs" style={faint}>
                 added by {doc.addedByEmail} · {fmtDate(doc.createdAt)}
               </p>
+              {/* A link row shows its bare target so a reader can see where
+                  it goes before clicking. The href is safe to render by the
+                  schema invariant: only a parseCheckableUrl-validated
+                  http/https URL is ever stored in link_url. */}
+              {doc.linkUrl && (
+                <p className="mono mt-1 break-all text-xs" style={faint}>
+                  {doc.linkUrl}
+                </p>
+              )}
               <div className="mt-3 flex flex-wrap items-center gap-4">
-                <a
-                  href={`/api/roadmap/docs/${doc.id}`}
-                  className="btn btn--text no-underline"
-                >
-                  Download
-                </a>
+                {doc.source === "link" && doc.linkUrl ? (
+                  <a
+                    href={doc.linkUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn--text no-underline"
+                  >
+                    Open the policy <span aria-hidden="true">→</span>
+                  </a>
+                ) : (
+                  <a
+                    href={`/api/roadmap/docs/${doc.id}`}
+                    className="btn btn--text no-underline"
+                  >
+                    Download
+                  </a>
+                )}
                 {canRemove && <RemoveDocButton docId={doc.id} />}
               </div>
             </li>
@@ -140,13 +168,20 @@ async function StaffGovernance({
       {globalAdmin && (
         <section className="grid gap-6 md:grid-cols-3">
           <div className="panel">
-            <span className="sys-label">Upload</span>
-            <h2 className="mt-4 text-lg">Upload a document</h2>
+            <span className="sys-label">Upload · Link</span>
+            <h2 className="mt-4 text-lg">Upload or link a document</h2>
             <p className="mt-3 text-sm">
               Already have the policy? Put the file itself on record for
               XL.net staff.
             </p>
             <UploadDocCard />
+            <div className="mt-6 border-t border-[var(--xl-line)] pt-4">
+              <p className="text-sm">
+                Or link to the policy where it already lives. Staff open it
+                there; a sign-in wall is fine.
+              </p>
+              <LinkDocCard />
+            </div>
           </div>
 
           <div className="panel">
@@ -211,7 +246,7 @@ async function StaffGovernance({
         docs={docs}
         emptyLine={
           globalAdmin
-            ? "Nothing on file yet. The step completes the moment the first document lands here."
+            ? "Nothing on file yet. The step completes the moment the first document or link lands here."
             : "Nothing on file yet. It will appear here the moment an XL.net admin files it."
         }
         canRemove={globalAdmin}
@@ -251,22 +286,30 @@ export default async function RoadmapGovernancePage() {
         <h1 className="mt-4">An AI governance document on file</h1>
         <p className="mt-4 max-w-3xl text-sm">
           Step one of {company.name}&apos;s roadmap: put the document that
-          governs how your company uses AI where everyone can find it. Upload
-          the one you have, attach one you built in the Governance Builder,
-          or create one now.
+          governs how your company uses AI where everyone can find it.{" "}
+          {isAdmin
+            ? "Upload the one you have, link to it where it lives, attach one you built in the Governance Builder, or create one now."
+            : "Attach one you built in the Governance Builder, create one now, or ask a company admin to upload or link the company's document."}
         </p>
       </section>
 
       <section className="grid gap-6 md:grid-cols-3">
         {isAdmin && (
           <div className="panel">
-            <span className="sys-label">Upload</span>
-            <h2 className="mt-4 text-lg">Upload a document</h2>
+            <span className="sys-label">Upload · Link</span>
+            <h2 className="mt-4 text-lg">Upload or link a document</h2>
             <p className="mt-3 text-sm">
               Already have an AI policy? Put the file itself on record for
               {" "}{company.domain}.
             </p>
             <UploadDocCard />
+            <div className="mt-6 border-t border-[var(--xl-line)] pt-4">
+              <p className="text-sm">
+                Or link to the policy where it already lives. Your team opens
+                it there; a sign-in wall is fine.
+              </p>
+              <LinkDocCard />
+            </div>
           </div>
         )}
 
@@ -335,7 +378,7 @@ export default async function RoadmapGovernancePage() {
 
       <OnFileList
         docs={docs}
-        emptyLine="Nothing on file yet. The step completes the moment the first document lands here."
+        emptyLine="Nothing on file yet. The step completes the moment the first document or link lands here."
         canRemove={isAdmin}
       />
     </div>

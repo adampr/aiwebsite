@@ -202,9 +202,13 @@ export const ROADMAP_STEPS = [
     title: "AI Governance",
     href: "/roadmap/governance",
     blurb:
-      "Put an AI governance document on file: upload your own, attach one " +
-      "you built in the Governance Builder, or create one now.",
-    cta: { todo: "Upload or create your policy", done: "Review your documents" },
+      "Put an AI governance document on file: upload your own, link to it " +
+      "where it lives, attach one you built in the Governance Builder, or " +
+      "create one now.",
+    cta: {
+      todo: "Upload, link, or create your policy",
+      done: "Review your documents",
+    },
   },
   {
     key: "directory",

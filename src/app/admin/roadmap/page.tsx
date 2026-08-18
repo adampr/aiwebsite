@@ -138,7 +138,11 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
               <li key={d.id}>
                 {d.title}{" "}
                 <span className="text-faint">
-                  ({d.source === "upload" ? d.fileName ?? "upload" : "Governance Builder"}
+                  ({d.source === "upload"
+                    ? d.fileName ?? "upload"
+                    : d.source === "link"
+                      ? d.linkUrl ?? "link"
+                      : "Governance Builder"}
                   , added by {d.addedByEmail},{" "}
                   {d.createdAt.toLocaleDateString("en-US")})
                 </span>

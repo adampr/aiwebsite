@@ -695,6 +695,74 @@ ok("staff draft signal is metadata-only, staff-bound and retention-bounded", () 
   }
 });
 
+// ---- Governance doc link lane (owner directive 2026-08-18) ----
+ok("gov link lane: admin-gated, scheme-gated, and urlcheck-budgeted", () => {
+  const route = readFileSync("src/app/api/roadmap/docs/route.ts", "utf8");
+  // The url branch is ADMIN-gated like upload (two admin resolutions in the
+  // file: the JSON link branch and the multipart branch; attach keeps its
+  // one member gate). Dropping either count reopens the lane to members.
+  assert.equal(route.match(/docsWriteLane\("admin"\)/g)?.length, 2);
+  assert.equal(route.match(/docsWriteLane\("attach"\)/g)?.length, 1);
+  // The stored href is parseCheckableUrl OUTPUT, never the raw body: the
+  // scheme gate IS the XSS gate, because link_url renders as an anchor.
+  assert.ok(route.includes("parseCheckableUrl(body.url)"));
+  assert.ok(route.includes("linkUrl: parsed.href"));
+  assert.ok(!route.includes("linkUrl: body.url"));
+  // Reachability spends the SHARED §5.20 urlcheck buckets (per-user + per
+  // lane) on top of the doc-write bucket: those caps bound our TOTAL
+  // outbound probe traffic, so a parallel bucket would double them.
+  assert.ok(route.includes("roadmap:urlcheck:${"));
+  assert.ok(route.includes("roadmap:urlcheck:lane:${"));
+  assert.ok(route.includes("urlChecksPerUserPerHour"));
+  assert.ok(route.includes("urlChecksPerCompanyPerHour"));
+  assert.ok(route.includes("docWritesPerUserPerHour"));
+  // The check runs with the LANE's verified domain (docs-gate resolves it
+  // from the principal / STAFF_LANE_DOMAIN, never a request field): rung 2
+  // is only as trustworthy as this value.
+  assert.ok(route.includes("internalDomain: lane.internalDomain"));
+  const gate = readFileSync("src/lib/roadmap/docs-gate.ts", "utf8");
+  assert.ok(gate.includes("internalDomain: STAFF_LANE_DOMAIN"));
+  assert.ok(gate.includes("internalDomain: p.company.domain"));
+});
+
+ok("gov link rows: safe anchor on the page, never a download body", () => {
+  const page = readFileSync(
+    "src/app/roadmap/(steps)/governance/page.tsx",
+    "utf8"
+  );
+  // The stored href renders as an EXTERNAL anchor with the full discipline:
+  // new tab, no opener handle, no referrer leak of the portal URL.
+  assert.ok(page.includes('target="_blank"'));
+  assert.ok(page.includes('rel="noopener noreferrer"'));
+  assert.ok(page.includes("doc.linkUrl"));
+  // A link row stores NO bytes and NO text (its addGovernanceDoc call
+  // passes docText null and no file), so the download route's !body check
+  // is what 404s it; both halves are pinned so neither can drift alone.
+  const linkAt = readFileSync(
+    "src/app/api/roadmap/docs/route.ts",
+    "utf8"
+  ).indexOf('source: "link"');
+  assert.ok(linkAt >= 0);
+  const linkCall = readFileSync(
+    "src/app/api/roadmap/docs/route.ts",
+    "utf8"
+  ).slice(linkAt, linkAt + 300);
+  assert.ok(linkCall.includes("docText: null"));
+  assert.ok(!linkCall.includes("file:"));
+  const dl = readFileSync("src/app/api/roadmap/docs/[id]/route.ts", "utf8");
+  assert.ok(dl.includes("if (!body) return NOT_FOUND();"));
+  // And the download projection never grew the link column: a link row's
+  // reader is the anchor, not this route.
+  const db = readFileSync("src/lib/roadmap/db.ts", "utf8");
+  const dlFn = db.slice(
+    db.indexOf("export async function governanceDocForDownload")
+  );
+  assert.ok(!dlFn.slice(0, dlFn.indexOf("removeGovernanceDoc")).includes("linkUrl"));
+  // The secured-page ruling in one line: a 401/403 wall still "goes to SOME
+  // page" (owner directive), while a 404 is a wrong address and refuses.
+  assert.ok(statusCounts(401) && statusCounts(403) && !statusCounts(404));
+});
+
 // ---- Directory bulk-cleanup round (2026-08-09) invariants ----
 ok("directory write limits are per-MINUTE windows, not per-hour", () => {
   // The reported bug: 60 writes per HOUR against a limiter whose window is

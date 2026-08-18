@@ -6,7 +6,10 @@
 // verified staff session (owner ruling 2026-08-18: staff READ the filed
 // document); staff-lane removes are global-admin only. Downloads never
 // trust the stored mime - always octet-stream + attachment + nosniff, so an
-// uploaded HTML/SVG "policy" can never execute on this origin.
+// uploaded HTML/SVG "policy" can never execute on this origin. A "link" row
+// holds no bytes and no text by construction, so the !body check below 404s
+// it - deliberate: the policy lives behind the stored URL and the step page
+// renders that as an anchor; this route serves only content WE hold.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 

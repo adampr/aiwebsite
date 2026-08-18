@@ -197,7 +197,10 @@ export const directorySuppressions = pgTable(
 // provenance, deliberately NO FK), so the source project keeps its 30-day
 // lifecycle untouched and the no-ledger reversal is scoped to one explicit
 // self-selection consent event by the project's OWNER. Upload lane keeps the
-// original bytes (~10 MB route cap) plus extracted text for future use.
+// original bytes (~10 MB route cap) plus extracted text for future use. The
+// link lane (owner directive 2026-08-18) stores ONLY a URL: the policy stays
+// wherever it lives (a sign-in wall is fine; the check accepts 401/403),
+// and a link row has no bytes and no text, so the download route 404s it.
 // company_id NULL = the XL.net STAFF lane (the company_people / roadmap_links
 // precedent, migration 0045): xl.net can never be a companies row, so the
 // staff document rides the NULL lane and is written only by global admins.
@@ -208,7 +211,7 @@ export const companyGovernanceDocs = pgTable(
     companyId: uuid("company_id").references(() => companies.id, {
       onDelete: "cascade",
     }),
-    source: text("source").notNull(), // "upload" | "governance_project"
+    source: text("source").notNull(), // "upload" | "governance_project" | "link"
     title: text("title").notNull(),
     fileName: text("file_name"),
     fileMime: text("file_mime"), // recorded only; downloads always serve octet-stream
@@ -216,6 +219,12 @@ export const companyGovernanceDocs = pgTable(
     fileBytes: integer("file_bytes"),
     fileData: bytea("file_data"),
     docText: text("doc_text"), // extracted text (upload) or snapshotted markdown
+    // Link lane only. INVARIANT: only ever a parseCheckableUrl-validated
+    // http/https URL (route-enforced; no credentials, no control chars,
+    // <= URL_MAX_CHARS). The stored href is rendered as a clickable anchor,
+    // so the scheme validation IS the XSS gate: a javascript: URL must be
+    // unrepresentable here, never merely unrendered.
+    linkUrl: text("link_url"),
     governanceProjectId: text("governance_project_id"), // inert provenance, no FK
     governanceKind: text("governance_kind"), // usage_policy|nist_ai_rmf|eu_ai_act|iso_42001
     addedByUserId: uuid("added_by_user_id").references(() => users.id, {

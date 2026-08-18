@@ -1,7 +1,8 @@
 "use client";
 
 // Client islands for roadmap step 1 (§5.18): document upload (admin),
-// attach-own-project (member-actionable), and the two-click remove (admin).
+// link-a-policy (admin), attach-own-project (member-actionable), and the
+// two-click remove (admin).
 // Every mutation calls the API and then router.refresh() so the server page
 // re-renders the on-file list; the islands hold no copy of company data.
 
@@ -79,6 +80,86 @@ export function UploadDocCard() {
       <p className="text-xs text-faint">.pdf, .docx, .md, or .txt, up to 10 MB.</p>
       <button type="submit" className="btn" disabled={busy} aria-busy={busy}>
         {busy ? "Uploading..." : "Upload document"}
+      </button>
+      {notice && (
+        <p role="status" className="text-xs text-faint">
+          {notice}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="text-xs text-red-400">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+export function LinkDocCard() {
+  const router = useRouter();
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!url.trim()) {
+      setError("Enter the address of the policy.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/roadmap/docs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url, title }),
+      });
+      if (!res.ok) {
+        setError(await readError(res));
+        return;
+      }
+      setNotice("On file.");
+      setUrl("");
+      setTitle("");
+      router.refresh();
+    } catch {
+      setError("The link did not save. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-3">
+      <input
+        type="url"
+        className="w-full rounded-lg border bg-transparent px-3 py-2 text-sm"
+        style={{ borderColor: "var(--xl-line)" }}
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        maxLength={500}
+        placeholder="https://..."
+        aria-label="Policy address"
+      />
+      <input
+        className="w-full rounded-lg border bg-transparent px-3 py-2 text-sm"
+        style={{ borderColor: "var(--xl-line)" }}
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        maxLength={120}
+        placeholder="Link title (optional; the site name works too)"
+        aria-label="Link title"
+      />
+      <p className="text-xs text-faint">
+        A sign-in wall is fine. We only confirm the address goes to a page,
+        we never read what is behind it.
+      </p>
+      <button type="submit" className="btn" disabled={busy} aria-busy={busy}>
+        {busy ? "Checking..." : "Link the policy"}
       </button>
       {notice && (
         <p role="status" className="text-xs text-faint">
