@@ -64,7 +64,7 @@ export function NotifyButtons({ initialJoined }: { initialJoined: boolean }) {
         >
           {state === "busy"
             ? "Adding..."
-            : "Add me to the notification list for the next workshop"}
+            : "Add me to the list"}
         </button>
       )}
       {state === "error" && (

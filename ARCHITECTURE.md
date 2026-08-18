@@ -1630,7 +1630,7 @@ those are dashboard-manual).
   (the OAuth start routes carry `?redirect` through the module's oauth_redirect cookie,
   §5.5, so the visitor returns here after sign-in). Signed in → shows the session email,
   server-renders current membership from `workshop_interest`, and mounts the
-  `notify-buttons.tsx` island: an EXPLICIT "Add me to the notification list" opt-in
+  `notify-buttons.tsx` island: an EXPLICIT "Add me to the list" opt-in
   (consent is a deliberate click, never a side effect of signing in) or, if already on
   the list, the joined readout + "Remove me from the list".
 - **Route `POST/DELETE /api/workshop/notify`** (host-owned): session required (401
