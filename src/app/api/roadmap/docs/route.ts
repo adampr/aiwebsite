@@ -1,19 +1,22 @@
-// POST - put a governance document on file for the company (§5.18 step 1).
-// Two lanes:
-//  - multipart upload (pdf/docx/md/txt, ~10 MB route cap): company-admin
-//    only; the original bytes are stored (downloads serve them back as
-//    octet-stream).
+// POST - put a governance document on file (§5.18 step 1). Two content
+// lanes:
+//  - multipart upload (pdf/docx/md/txt, ~10 MB route cap): admin only; the
+//    original bytes are stored (downloads serve them back as octet-stream).
 //  - JSON { governanceProjectId }: attach a SNAPSHOT of the caller's OWN
 //    Governance Builder project (listOwnedProjects ownership; a colleague's
-//    projects are theirs to attach) - member-actionable, mirroring the
-//    member-actionable submit lane. The snapshot copies the rendered
-//    markdown at attach time; the source project keeps its 30-day lifecycle
-//    untouched (this is the whole scope of the no-ledger reversal).
+//    projects are theirs to attach) - member-actionable on the COMPANY
+//    lane, mirroring the member-actionable submit lane. The snapshot copies
+//    the rendered markdown at attach time; the source project keeps its
+//    30-day lifecycle untouched (this is the whole scope of the no-ledger
+//    reversal).
+// Tenancy lane (staff governance round): docsWriteLane resolves the XL.net
+// staff lane (global-admin only for BOTH content lanes) or the caller's
+// company; the scope it returns is bound into every db call.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { createHash } from "node:crypto";
-import { requireCompanyAdmin, requireCompanyMember } from "@/lib/roadmap/access";
+import { docsWriteLane } from "@/lib/roadmap/docs-gate";
 import { addGovernanceDoc } from "@/lib/roadmap/db";
 import { fetchOwnedProject } from "@/lib/governance/db";
 import { ROADMAP_CAPS } from "@/lib/roadmap/config";
@@ -65,12 +68,12 @@ export async function POST(req: Request): Promise<Response> {
 
   const contentType = req.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
-    // Attach-own-project lane: member-actionable.
-    const gate = await requireCompanyMember();
-    if (!gate.ok) return gate.response;
-    const p = gate.principal;
+    // Attach-own-project lane: member-actionable (company); global-admin
+    // (staff).
+    const lane = await docsWriteLane("attach");
+    if (!lane.ok) return lane.response;
     const limited = rateLimit(
-      `roadmap:docs:${p.userId}`,
+      `roadmap:docs:${lane.userId}`,
       3600,
       ROADMAP_CAPS.docWritesPerUserPerHour
     );
@@ -85,7 +88,7 @@ export async function POST(req: Request): Promise<Response> {
     } catch {
       projectId = "";
     }
-    const project = await fetchOwnedProject(p.userId, projectId);
+    const project = await fetchOwnedProject(lane.userId, projectId);
     if (!project)
       return roadmapError(
         "not_found",
@@ -101,24 +104,23 @@ export async function POST(req: Request): Promise<Response> {
       );
     const title = KIND_TITLES[project.kind] ?? "AI Governance Document";
     const id = await addGovernanceDoc({
-      companyId: p.company.id,
+      scope: lane.scope,
       source: "governance_project",
       title,
       docText: markdown,
       governanceProjectId: project.id,
       governanceKind: project.kind,
-      addedByUserId: p.userId,
-      addedByEmail: p.email,
+      addedByUserId: lane.userId,
+      addedByEmail: lane.email,
     });
     return okJson({ id, title }, 201);
   }
 
-  // Upload lane: company-admin only.
-  const gate = await requireCompanyAdmin();
-  if (!gate.ok) return gate.response;
-  const p = gate.principal;
+  // Upload lane: company-admin (company) / global-admin (staff) only.
+  const lane = await docsWriteLane("admin");
+  if (!lane.ok) return lane.response;
   const limited = rateLimit(
-    `roadmap:docs:${p.userId}`,
+    `roadmap:docs:${lane.userId}`,
     3600,
     ROADMAP_CAPS.docWritesPerUserPerHour
   );
@@ -157,7 +159,7 @@ export async function POST(req: Request): Promise<Response> {
   if (bytes.length === 0 || bytes.length > ROADMAP_CAPS.docUploadMaxBytes)
     return roadmapError("invalid_request", "That file is too large.", 400);
   const id = await addGovernanceDoc({
-    companyId: p.company.id,
+    scope: lane.scope,
     source: "upload",
     title,
     file: {
@@ -168,8 +170,8 @@ export async function POST(req: Request): Promise<Response> {
       data: bytes,
     },
     docText: null,
-    addedByUserId: p.userId,
-    addedByEmail: p.email,
+    addedByUserId: lane.userId,
+    addedByEmail: lane.email,
   });
   return okJson({ id, title }, 201);
 }

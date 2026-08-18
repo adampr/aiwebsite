@@ -140,11 +140,18 @@ export function isStaffSession(s: SessionData): boolean {
  */
 export async function readStaffPage(): Promise<{
   email: string;
+  /** For per-user rate-limit keys and own-project reads (staff governance
+   * round); grants nothing - authorization stays with requireGlobalAdmin. */
+  userId: string;
   globalAdmin: boolean;
 } | null> {
   const session = await readSession(siteConfig);
   if (!session || !isStaffSession(session)) return null;
-  return { email: session.email, globalAdmin: isGlobalAdminSession(session) };
+  return {
+    email: session.email,
+    userId: session.userId,
+    globalAdmin: isGlobalAdminSession(session),
+  };
 }
 
 export type RoadmapHubView =

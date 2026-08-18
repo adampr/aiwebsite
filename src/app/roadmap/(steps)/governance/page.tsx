@@ -3,15 +3,28 @@
 // projects (attach is member-actionable; upload and remove are admin-only).
 // The gate is called here as well as in the (steps) layout - a denied
 // render returns null and the layout's denial screen is what the visitor
-// sees. All data is fetched with the principal's company id, never a
-// client-supplied one.
+// sees. All data is fetched with the principal's company id or the staff
+// lane, never a client-supplied one.
+//
+// STAFF BRANCH (owner ruling 2026-08-18, the Noel report): staff no longer
+// redirect to the public builder - they get a READ-ONLY view of the XL.net
+// staff-lane document (company_governance_docs, company_id NULL): on file
+// (readable/downloadable), in draft (a live xl.net builder project,
+// metadata-only signal), or nothing yet. Non-admin staff see no Upload, no
+// Attach, no Create, and no builder link: creation and filing stay with
+// XL.net global admins, who get the company-page affordances here operating
+// on the staff lane (writes re-derive requireGlobalAdmin in docs-gate.ts;
+// globalAdmin from readStaffPage selects UI affordances only).
 
 import type { Metadata } from "next";
 import Link from "next/link";
 import { readStaffPage, requireRoadmapPage } from "@/lib/roadmap/access";
-import { STAFF_STEP_HREFS } from "@/lib/roadmap/config";
-import { redirect } from "next/navigation";
-import { listGovernanceDocs } from "@/lib/roadmap/db";
+import {
+  STAFF_GOVDOC_SCOPE,
+  listGovernanceDocs,
+  type GovDocRow,
+} from "@/lib/roadmap/db";
+import { staffGovernanceDraftQuery } from "@/lib/governance/admin-db";
 import { listOwnedProjects } from "@/lib/governance/db";
 import { fmtDate } from "@/components/roadmap/dates";
 import {
@@ -36,10 +49,187 @@ const KIND_TITLES: Record<string, string> = {
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 
+/** The on-file list, one markup for both lanes (only the admin lever
+ * differs). */
+function OnFileList({
+  docs,
+  emptyLine,
+  canRemove,
+}: {
+  docs: GovDocRow[];
+  emptyLine: string;
+  canRemove: boolean;
+}) {
+  return (
+    <section>
+      <span className="sys-label">On File</span>
+      {docs.length === 0 ? (
+        <p className="mt-4 text-sm" style={faint}>
+          {emptyLine}
+        </p>
+      ) : (
+        <ul className="mt-4 space-y-4">
+          {docs.map((doc) => (
+            <li key={doc.id} className="panel">
+              <div className="flex flex-wrap items-center gap-4">
+                <span className="badge badge--light">
+                  {doc.source === "upload" ? "Upload" : "Builder"}
+                </span>
+                <h2 className="text-lg">{doc.title}</h2>
+              </div>
+              <p className="mono mt-3 text-xs" style={faint}>
+                added by {doc.addedByEmail} · {fmtDate(doc.createdAt)}
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-4">
+                <a
+                  href={`/api/roadmap/docs/${doc.id}`}
+                  className="btn btn--text no-underline"
+                >
+                  Download
+                </a>
+                {canRemove && <RemoveDocButton docId={doc.id} />}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/** The staff lane. Read-only for staff; global admins additionally file,
+ * attach and remove on this lane. */
+async function StaffGovernance({
+  userId,
+  globalAdmin,
+}: {
+  userId: string;
+  globalAdmin: boolean;
+}) {
+  const [docs, draftRows, projects] = await Promise.all([
+    listGovernanceDocs(STAFF_GOVDOC_SCOPE),
+    staffGovernanceDraftQuery(),
+    // Non-admins get no Attach panel, so their own projects are never read.
+    globalAdmin ? listOwnedProjects(userId) : Promise.resolve([]),
+  ]);
+  const onFile = docs.length >= 1;
+  const draft = !onFile && (draftRows[0]?.n ?? 0) >= 1;
+  const attachedProjectIds = new Set(
+    docs.map((d) => d.governanceProjectId).filter(Boolean)
+  );
+
+  return (
+    <div className="space-y-12">
+      <section>
+        <span className="sys-label">Step 01 · AI Governance</span>
+        <h1 className="mt-4">XL.net&apos;s AI governance document</h1>
+        <p className="mt-4 max-w-3xl text-sm">
+          The document that governs how XL.net itself uses AI, on file where
+          every staff member can read it. An XL.net global admin creates and
+          files it.
+        </p>
+        <p className="mono mt-4 text-xs" style={faint}>
+          {onFile
+            ? "On file."
+            : draft
+              ? "In draft in the Governance Builder. It will appear here once an XL.net admin files it."
+              : "Nothing on file yet."}
+        </p>
+      </section>
+
+      {globalAdmin && (
+        <section className="grid gap-6 md:grid-cols-3">
+          <div className="panel">
+            <span className="sys-label">Upload</span>
+            <h2 className="mt-4 text-lg">Upload a document</h2>
+            <p className="mt-3 text-sm">
+              Already have the policy? Put the file itself on record for
+              XL.net staff.
+            </p>
+            <UploadDocCard />
+          </div>
+
+          <div className="panel">
+            <span className="sys-label">Attach</span>
+            <h2 className="mt-4 text-lg">
+              Pick from your Governance Builder projects
+            </h2>
+            {projects.length === 0 ? (
+              <p className="mt-3 text-sm">
+                You have no Governance Builder projects yet.{" "}
+                <Link href="/governance">
+                  Create one in the Governance Builder
+                </Link>{" "}
+                and attach it here.
+              </p>
+            ) : (
+              <ul className="mt-4 space-y-4">
+                {projects.map((proj) => (
+                  <li
+                    key={proj.id}
+                    className="border-t border-[var(--xl-line)] pt-3"
+                  >
+                    <div className="text-sm">
+                      {KIND_TITLES[proj.kind] ?? "AI Governance Document"}
+                    </div>
+                    <div className="mono mt-1 text-xs" style={faint}>
+                      {proj.domain} · last activity{" "}
+                      {fmtDate(proj.lastActivityAt)}
+                    </div>
+                    <div className="mt-2">
+                      <AttachProjectButton
+                        projectId={proj.id}
+                        attached={attachedProjectIds.has(proj.id)}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-4 text-xs" style={faint}>
+              Attaching makes a copy for the staff file: this copy stays here
+              and is not deleted after 30 days. Your project itself keeps its
+              normal 30-day lifecycle.
+            </p>
+          </div>
+
+          <div className="panel">
+            <span className="sys-label">Create</span>
+            <h2 className="mt-4 text-lg">Create one now</h2>
+            <p className="mt-3 text-sm">
+              No policy yet? The Governance Builder interviews you one
+              question at a time and drafts it with you.
+            </p>
+            <Link href="/governance" className="btn btn--text mt-4 no-underline">
+              Open the Governance Builder <span aria-hidden="true">→</span>
+            </Link>
+          </div>
+        </section>
+      )}
+
+      <OnFileList
+        docs={docs}
+        emptyLine={
+          globalAdmin
+            ? "Nothing on file yet. The step completes the moment the first document lands here."
+            : "Nothing on file yet. It will appear here the moment an XL.net admin files it."
+        }
+        canRemove={globalAdmin}
+      />
+    </div>
+  );
+}
+
 export default async function RoadmapGovernancePage() {
-  // Staff lane alias (§5.18 unification): xl.net has no company row, so
-  // staff land on the public Governance Builder instead of a blank shell.
-  if (await readStaffPage()) redirect(STAFF_STEP_HREFS.governance);
+  // Staff lane (§5.18 staff governance): a real branch, never a redirect -
+  // STAFF_STEP_HREFS.governance points at THIS page, so a redirect would
+  // loop, and returning null for staff renders the documented blank shell.
+  const staff = await readStaffPage();
+  if (staff) {
+    return (
+      <StaffGovernance userId={staff.userId} globalAdmin={staff.globalAdmin} />
+    );
+  }
   const gate = await requireRoadmapPage("/roadmap/governance");
   if (!gate.ok || !gate.principal.company) return null;
   const p = gate.principal;
@@ -47,7 +237,7 @@ export default async function RoadmapGovernancePage() {
   const isAdmin = p.companyRole === "admin";
 
   const [docs, projects] = await Promise.all([
-    listGovernanceDocs(company.id),
+    listGovernanceDocs({ companyId: company.id }),
     listOwnedProjects(p.userId),
   ]);
   const attachedProjectIds = new Set(
@@ -143,40 +333,11 @@ export default async function RoadmapGovernancePage() {
         </div>
       </section>
 
-      <section>
-        <span className="sys-label">On File</span>
-        {docs.length === 0 ? (
-          <p className="mt-4 text-sm" style={faint}>
-            Nothing on file yet. The step completes the moment the first
-            document lands here.
-          </p>
-        ) : (
-          <ul className="mt-4 space-y-4">
-            {docs.map((doc) => (
-              <li key={doc.id} className="panel">
-                <div className="flex flex-wrap items-center gap-4">
-                  <span className="badge badge--light">
-                    {doc.source === "upload" ? "Upload" : "Builder"}
-                  </span>
-                  <h2 className="text-lg">{doc.title}</h2>
-                </div>
-                <p className="mono mt-3 text-xs" style={faint}>
-                  added by {doc.addedByEmail} · {fmtDate(doc.createdAt)}
-                </p>
-                <div className="mt-3 flex flex-wrap items-center gap-4">
-                  <a
-                    href={`/api/roadmap/docs/${doc.id}`}
-                    className="btn btn--text no-underline"
-                  >
-                    Download
-                  </a>
-                  {isAdmin && <RemoveDocButton docId={doc.id} />}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <OnFileList
+        docs={docs}
+        emptyLine="Nothing on file yet. The step completes the moment the first document lands here."
+        canRemove={isAdmin}
+      />
     </div>
   );
 }

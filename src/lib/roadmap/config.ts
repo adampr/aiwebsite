@@ -365,11 +365,15 @@ export type TrackedStepKey = (typeof TRACKED_STEP_KEYS)[number];
  * staff hub cards, the (steps) shell runway (RoadmapRunway hrefs prop), and
  * the per-page staff redirects under (steps) all read it; a second spelling
  * anywhere is how two surfaces come to disagree. xl.net can never be a
- * company (RESERVED_DOMAINS + DB CHECK), so governance points at the public
- * builder; directory points at the real staff directory (the NULL-company_id
- * lane, staff-parity round). */
+ * company (RESERVED_DOMAINS + DB CHECK), so the staff steps ride the
+ * NULL-company_id lane: directory points at the real staff directory
+ * (staff-parity round) and governance points at the step page's read-only
+ * staff branch (owner ruling 2026-08-18: staff see whether XL.net's
+ * document exists, is in draft, or is on file and read it when filed - and
+ * are never funneled into the public builder; filing stays with global
+ * admins). */
 export const STAFF_STEP_HREFS: Record<RoadmapStepKey, string> = {
-  governance: "/governance",
+  governance: "/roadmap/governance",
   directory: "/roadmap/directory",
   workshop: "/builders#workshop",
   work: "/work/submit",

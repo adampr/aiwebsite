@@ -16,12 +16,14 @@
 // with its own gate, and globalAdmin gates RENDER decisions only; every
 // write re-derives requireGlobalAdmin server-side.
 //
-// Honesty notes: governance renders constant-done (XL.net's governance IS
-// its public offering: the Governance Builder plus the published AUP; the
-// card says so rather than pretending a document is on file). The work
-// card's count is DB rows in the internal lane; the hand-authored static
-// exhibits on /work are deliberately not counted, so this number can read
-// lower than the /work page's card count.
+// Honesty notes: governance is state-honest since the staff governance
+// round (owner ruling 2026-08-18): on file / in draft / nothing yet, from
+// the staff-lane doc count plus the metadata-only builder draft signal; the
+// card never pitches the builder to staff (creation stays with global
+// admins, and this card renders for both, so the copy names the admin as
+// the actor). The work card's count is DB rows in the internal lane; the
+// hand-authored static exhibits on /work are deliberately not counted, so
+// this number can read lower than the /work page's card count.
 
 import Link from "next/link";
 import {
@@ -50,7 +52,11 @@ export function StaffHub({
   status: StaffRoadmapStatus;
 }) {
   const lines: Record<string, string> = {
-    governance: "Public offering",
+    governance: status.governance.done
+      ? `${status.governance.docs} on file`
+      : status.governance.draft
+        ? "In draft"
+        : "Nothing on file yet",
     work: status.work.done
       ? `${status.work.published} published`
       : "Nothing published yet",
@@ -96,8 +102,9 @@ export function StaffHub({
   };
   const blurbs: Record<string, string> = {
     governance:
-      "Client companies file a governance document here. XL.net's own " +
-      "offering is the public Governance Builder.",
+      "The document that governs how XL.net itself uses AI, on file where " +
+      "every staff member can read it. An XL.net global admin creates and " +
+      "files it.",
     work:
       "Ship something built with AI and submit it on the site or by email. " +
       "An editorial panel reviews it and publishes it to the public Our " +
@@ -108,7 +115,9 @@ export function StaffHub({
       "approved requests only, never drafts or attempts.",
   };
   const ctas: Record<string, string> = {
-    governance: "Open the Governance Builder",
+    governance: status.governance.done
+      ? "Read the document"
+      : "See where it stands",
     work: "Submit a build",
     request: "Request AI-built work",
     requested: "See the board",

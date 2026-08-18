@@ -316,6 +316,13 @@
       "when": 1787085302462,
       "tag": "0044_workshop_interest",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1787089711784,
+      "tag": "0045_staff_governance_docs",
+      "breakpoints": true
     }
   ]
 }

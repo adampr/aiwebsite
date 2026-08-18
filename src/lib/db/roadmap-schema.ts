@@ -198,13 +198,16 @@ export const directorySuppressions = pgTable(
 // lifecycle untouched and the no-ledger reversal is scoped to one explicit
 // self-selection consent event by the project's OWNER. Upload lane keeps the
 // original bytes (~10 MB route cap) plus extracted text for future use.
+// company_id NULL = the XL.net STAFF lane (the company_people / roadmap_links
+// precedent, migration 0045): xl.net can never be a companies row, so the
+// staff document rides the NULL lane and is written only by global admins.
 export const companyGovernanceDocs = pgTable(
   "company_governance_docs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    companyId: uuid("company_id")
-      .notNull()
-      .references(() => companies.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id").references(() => companies.id, {
+      onDelete: "cascade",
+    }),
     source: text("source").notNull(), // "upload" | "governance_project"
     title: text("title").notNull(),
     fileName: text("file_name"),

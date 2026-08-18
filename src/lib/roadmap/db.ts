@@ -620,12 +620,29 @@ export async function stampApolloImport(
 
 // ---- Governance docs (§5.18 step 1) ----
 
+/** Governance-doc lane axis (staff governance round, owner ruling
+ * 2026-08-18): companyId null = the XL.net STAFF lane (migration 0045; the
+ * DirectoryScope precedent). REQUIRED on every doc function so a missed
+ * lane filter is a compile error: a company read must never see the staff
+ * document and vice versa. Staff-lane WRITES are global-admin only
+ * (docs-gate.ts); staff READS are any verified staff session. */
+export type GovDocScope = { companyId: string | null };
+export const STAFF_GOVDOC_SCOPE: GovDocScope = { companyId: null };
+
+/** The ONE lane predicate: never eq() with a null (drizzle renders
+ * "= NULL", which matches nothing). */
+function govDocLaneWhere(scope: GovDocScope) {
+  return scope.companyId === null
+    ? isNull(CGD.companyId)
+    : eq(CGD.companyId, scope.companyId);
+}
+
 /** List/read shape excludes file_data (the stored original, ≤10 MB): only
  * governanceDocForDownload ever selects the bytes. */
 export type GovDocRow = Omit<typeof CGD.$inferSelect, "fileData">;
 
 export async function listGovernanceDocs(
-  companyId: string
+  scope: GovDocScope
 ): Promise<GovDocRow[]> {
   return db
     .select({
@@ -645,20 +662,20 @@ export async function listGovernanceDocs(
       createdAt: CGD.createdAt,
     })
     .from(CGD)
-    .where(eq(CGD.companyId, companyId))
+    .where(govDocLaneWhere(scope))
     .orderBy(desc(CGD.createdAt));
 }
 
-export async function countGovernanceDocs(companyId: string): Promise<number> {
+export async function countGovernanceDocs(scope: GovDocScope): Promise<number> {
   const rows = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(CGD)
-    .where(eq(CGD.companyId, companyId));
+    .where(govDocLaneWhere(scope));
   return rows[0]?.n ?? 0;
 }
 
 export async function addGovernanceDoc(opts: {
-  companyId: string;
+  scope: GovDocScope;
   source: "upload" | "governance_project";
   title: string;
   file?: {
@@ -677,7 +694,7 @@ export async function addGovernanceDoc(opts: {
   const [row] = await db
     .insert(CGD)
     .values({
-      companyId: opts.companyId,
+      companyId: opts.scope.companyId,
       source: opts.source,
       title: opts.title,
       fileName: opts.file?.name ?? null,
@@ -699,7 +716,7 @@ export async function addGovernanceDoc(opts: {
  * same null; the route returns an identical 404 body for both). */
 export async function governanceDocForDownload(
   docId: string,
-  companyId: string
+  scope: GovDocScope
 ): Promise<{
   id: string;
   title: string;
@@ -717,18 +734,18 @@ export async function governanceDocForDownload(
       docText: CGD.docText,
     })
     .from(CGD)
-    .where(and(eq(CGD.id, docId), eq(CGD.companyId, companyId)))
+    .where(and(eq(CGD.id, docId), govDocLaneWhere(scope)))
     .limit(1);
   return rows[0] ?? null;
 }
 
 export async function removeGovernanceDoc(
   docId: string,
-  companyId: string
+  scope: GovDocScope
 ): Promise<boolean> {
   const rows = await db
     .delete(CGD)
-    .where(and(eq(CGD.id, docId), eq(CGD.companyId, companyId)))
+    .where(and(eq(CGD.id, docId), govDocLaneWhere(scope)))
     .returning({ id: CGD.id });
   return rows.length > 0;
 }

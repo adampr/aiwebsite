@@ -28,6 +28,7 @@ import { db, schema } from "@/lib/db";
 import type { GovernanceKind, ProjectStatus } from "./types";
 import { CAPS } from "./config";
 import { retentionCutoff } from "./db";
+import { STAFF_LANE_DOMAIN } from "@/lib/roadmap/config";
 
 const P = schema.governanceProjects;
 const U = schema.users;
@@ -102,6 +103,42 @@ export function adminProjectsQuery(limit = 100) {
     .where(gte(P.lastActivityAt, retentionCutoff()))
     .orderBy(desc(P.lastActivityAt))
     .limit(limit);
+}
+
+/**
+ * Staff governance draft signal (§5.18 staff governance, owner ruling
+ * 2026-08-18): does any LIVE Governance Builder project exist for the
+ * xl.net domain, owned by an xl.net account? Feeds the staff roadmap's
+ * "In draft" state, so staff can see one is under way without being
+ * pointed into the builder themselves. The copy never names who is
+ * drafting: any xl.net staffer may own the project, and only an admin
+ * can file.
+ *
+ * A COUNT and nothing else: no content column, no status, no owner email
+ * (invariant 3 applies with room to spare - the reader here is any verified
+ * staff session, a wider audience than the admin console). retentionCutoff
+ * folds in like every other read (invariant 2). BOTH predicates are
+ * load-bearing: `domain` is typed by the project's owner at creation, so
+ * alone it would let any signed-in visitor light the staff card by naming
+ * xl.net; the owner-email suffix narrows it to sessions whose stored
+ * email carries the staff domain. That claim is NOT provider-verified
+ * here (a forged-email session could light the hint), which is accepted:
+ * the signal is a count-only boolean with no content, no privilege, and
+ * no attribution behind it. The suffix match is deliberately on the RAW
+ * stored email (lowered): a stricter parse buys nothing for a hint.
+ */
+export function staffGovernanceDraftQuery() {
+  return db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(P)
+    .innerJoin(U, eq(P.userId, U.id))
+    .where(
+      and(
+        eq(P.domain, STAFF_LANE_DOMAIN),
+        sql`lower(${U.email}) LIKE ${"%@" + STAFF_LANE_DOMAIN}`,
+        gte(P.lastActivityAt, retentionCutoff())
+      )
+    );
 }
 
 /** Daily counters, newest first. Attribution-free by design (day PK only). */

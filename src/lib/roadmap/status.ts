@@ -7,12 +7,14 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
 import {
   STAFF_DIRECTORY_SCOPE,
+  STAFF_GOVDOC_SCOPE,
   STAFF_LINK_SCOPE,
   apolloImportStamp,
   countGovernanceDocs,
   countPeople,
   listRoadmapLinks,
 } from "@/lib/roadmap/db";
+import { staffGovernanceDraftQuery } from "@/lib/governance/admin-db";
 import { platformView } from "@/lib/roadmap/platform";
 import type { ProgressStatus } from "@/lib/roadmap/progress";
 import { checkDkim, type DkimCheck } from "@/lib/roadmap/dkim";
@@ -81,7 +83,7 @@ export async function roadmapStatus(
   // queries instead of adding to the render's critical path.
   const [docs, people, importStamp, workRows, requests, dkim, links] =
     await Promise.all([
-      countGovernanceDocs(companyId),
+      countGovernanceDocs({ companyId }),
       countPeople({ companyId }),
       apolloImportStamp({ companyId }),
       db
@@ -168,7 +170,7 @@ export async function companyProgressStatus(
   companyId: string
 ): Promise<ProgressStatus> {
   const [docs, people, workRows, requests, links] = await Promise.all([
-    countGovernanceDocs(companyId),
+    countGovernanceDocs({ companyId }),
     countPeople({ companyId }),
     db
       .select({
@@ -202,12 +204,14 @@ export async function companyProgressStatus(
  * request counts come from the SAME requestStatusCounts as the company
  * cards so the two hubs can never define "open" differently. */
 export type StaffRoadmapStatus = {
-  /** Constant: XL.net's governance is its public offering (the Governance
-   * Builder plus the published AUP); xl.net can never be a companies row,
-   * so there is nothing to count and nothing to un-done. If a future round
-   * files real staff governance docs, flip this to a computed count without
-   * touching the runway. */
-  governance: { done: true };
+  /** Computed since the staff governance round (owner ruling 2026-08-18;
+   * the old constant-done "public offering" reading funneled staff into
+   * the builder). done = at least one document filed on the staff lane
+   * (company_governance_docs, company_id NULL). draft = a live xl.net
+   * Governance Builder project exists (metadata-only count from
+   * staffGovernanceDraftQuery) but nothing is filed yet: the hub says an
+   * admin is drafting, and never points staff at the builder. */
+  governance: { done: boolean; docs: number; draft: boolean };
   directory: { done: boolean; people: number; everImported: boolean };
   work: { done: boolean; published: number };
   request: { done: boolean; listed: number };
@@ -229,24 +233,34 @@ export type StaffRoadmapStatus = {
 };
 
 export async function staffRoadmapStatus(): Promise<StaffRoadmapStatus> {
-  const [people, importStamp, workRows, requests, links] = await Promise.all([
-    countPeople(STAFF_DIRECTORY_SCOPE),
-    apolloImportStamp(STAFF_DIRECTORY_SCOPE),
-    db
-      .select({
-        published: sql<number>`count(*)::int`,
-        contributors: sql<number>`count(distinct lower(${W.submitterEmail}))::int`,
-      })
-      .from(W)
-      .where(and(isNull(W.companyId), eq(W.status, "published"))),
-    requestStatusCounts({ companyId: null }),
-    listRoadmapLinks(STAFF_LINK_SCOPE),
-  ]);
+  const [docs, draftRows, people, importStamp, workRows, requests, links] =
+    await Promise.all([
+      countGovernanceDocs(STAFF_GOVDOC_SCOPE),
+      staffGovernanceDraftQuery(),
+      countPeople(STAFF_DIRECTORY_SCOPE),
+      apolloImportStamp(STAFF_DIRECTORY_SCOPE),
+      db
+        .select({
+          published: sql<number>`count(*)::int`,
+          contributors: sql<number>`count(distinct lower(${W.submitterEmail}))::int`,
+        })
+        .from(W)
+        .where(and(isNull(W.companyId), eq(W.status, "published"))),
+      requestStatusCounts({ companyId: null }),
+      listRoadmapLinks(STAFF_LINK_SCOPE),
+    ]);
   const published = workRows[0]?.published ?? 0;
   const contributors = workRows[0]?.contributors ?? 0;
   const platform = platformView(links);
   return {
-    governance: { done: true },
+    // draft is a HINT and never credit: only a filed staff-lane document
+    // lights the step (mirrors the company rule that only an on-file doc
+    // counts).
+    governance: {
+      done: docs >= 1,
+      docs,
+      draft: (draftRows[0]?.n ?? 0) >= 1,
+    },
     directory: {
       done: people >= 1,
       people,

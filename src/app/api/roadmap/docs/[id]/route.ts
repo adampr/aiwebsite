@@ -1,13 +1,16 @@
-// GET (download) / DELETE (remove) - one company governance doc (§5.18).
-// The doc id comes from the URL but the company ALWAYS comes from the
-// server-derived principal, bound into the ONE query: missing and not-owned
-// are the same 404 body (no existence oracle). Downloads never trust the
-// stored mime - always octet-stream + attachment + nosniff, so an uploaded
-// HTML/SVG "policy" can never execute on this origin.
+// GET (download) / DELETE (remove) - one governance doc (§5.18). The doc id
+// comes from the URL but the lane ALWAYS comes from the server-derived
+// session (docsWriteLane/docsReadLane: the caller's company, or the XL.net
+// staff lane), bound into the ONE query: missing and not-owned are the same
+// 404 body (no existence oracle). Staff-lane downloads are open to any
+// verified staff session (owner ruling 2026-08-18: staff READ the filed
+// document); staff-lane removes are global-admin only. Downloads never
+// trust the stored mime - always octet-stream + attachment + nosniff, so an
+// uploaded HTML/SVG "policy" can never execute on this origin.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import { requireCompanyAdmin, requireCompanyMember } from "@/lib/roadmap/access";
+import { docsReadLane, docsWriteLane } from "@/lib/roadmap/docs-gate";
 import {
   governanceDocForDownload,
   removeGovernanceDoc,
@@ -30,17 +33,16 @@ function safeFilename(name: string): string {
 }
 
 export async function GET(_req: Request, ctx: Ctx): Promise<Response> {
-  const gate = await requireCompanyMember();
-  if (!gate.ok) return gate.response;
-  const p = gate.principal;
+  const lane = await docsReadLane();
+  if (!lane.ok) return lane.response;
   const limited = rateLimit(
-    `roadmap:docdl:${p.userId}`,
+    `roadmap:docdl:${lane.userId}`,
     3600,
     ROADMAP_CAPS.portalReadsPerUserPerHour
   );
   if (limited) return limited;
   const { id } = await ctx.params;
-  const doc = await governanceDocForDownload(id, p.company.id);
+  const doc = await governanceDocForDownload(id, lane.scope);
   if (!doc) return NOT_FOUND();
   const body: Buffer | string | null = doc.fileData
     ? Buffer.from(doc.fileData)
@@ -61,19 +63,18 @@ export async function GET(_req: Request, ctx: Ctx): Promise<Response> {
 }
 
 export async function DELETE(_req: Request, ctx: Ctx): Promise<Response> {
-  const gate = await requireCompanyAdmin();
-  if (!gate.ok) return gate.response;
-  const p = gate.principal;
+  const lane = await docsWriteLane("admin");
+  if (!lane.ok) return lane.response;
   const disabled = requireRoadmapWritesEnabled();
   if (disabled) return disabled;
   const limited = rateLimit(
-    `roadmap:docs:${p.userId}`,
+    `roadmap:docs:${lane.userId}`,
     3600,
     ROADMAP_CAPS.docWritesPerUserPerHour
   );
   if (limited) return limited;
   const { id } = await ctx.params;
-  const removed = await removeGovernanceDoc(id, p.company.id);
+  const removed = await removeGovernanceDoc(id, lane.scope);
   if (!removed) return NOT_FOUND();
   return okJson({ deleted: true });
 }

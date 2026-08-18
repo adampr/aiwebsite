@@ -56,6 +56,7 @@ import {
 } from "../src/lib/roadmap/url-check";
 import { attestedLine, internalLine, reachedLine } from "../src/lib/roadmap/platform-copy";
 import { rateLimitedMessage, retryAfterPhrase } from "../src/lib/retry-after";
+import { staffGovernanceDraftQuery } from "../src/lib/governance/admin-db";
 import { personLabel, personLabelParts } from "../src/lib/person-label";
 import {
   REQ_CAP_OPEN,
@@ -262,7 +263,10 @@ ok("STAFF_STEP_HREFS is total and pins the owner-ruled staff targets", () => {
   assert.equal(STAFF_STEP_HREFS.request, "/work/requested");
   assert.equal(STAFF_STEP_HREFS.requested, "/work/requested");
   assert.equal(STAFF_STEP_HREFS.scorecard, "/roadmap/scorecard");
-  assert.equal(STAFF_STEP_HREFS.governance, "/governance");
+  // Staff governance round (owner ruling 2026-08-18): the step page's
+  // read-only staff branch, never the public builder (the Noel report: a
+  // staffer clicking the hub card landed in builder "create one" copy).
+  assert.equal(STAFF_STEP_HREFS.governance, "/roadmap/governance");
   // Staff parity round: the REAL staff directory, no longer the scorecard
   // alias.
   assert.equal(STAFF_STEP_HREFS.directory, "/roadmap/directory");
@@ -537,9 +541,11 @@ ok("staff-parity source pins hold", () => {
   const dirPage = read("src/app/roadmap/(steps)/directory/page.tsx");
   assert.ok(!dirPage.includes("redirect(STAFF_STEP_HREFS.directory)"));
   assert.ok(dirPage.includes("STAFF_DIRECTORY_SCOPE"));
-  // Staff governance is the constant-done public-offering ruling.
+  // Staff governance is COMPUTED since the staff governance round (owner
+  // ruling 2026-08-18); the constant-done "public offering" reading is
+  // retired and must not come back.
   assert.ok(
-    read("src/lib/roadmap/status.ts").includes("governance: { done: true }")
+    !read("src/lib/roadmap/status.ts").includes("governance: { done: true }")
   );
   // Company-lane fallback strings stay put (the staff overrides are props).
   assert.ok(
@@ -599,6 +605,94 @@ ok("staff-parity source pins hold", () => {
   assert.ok(!read("src/components/work-card.tsx").includes("person-label"));
   // The bare-first-name source is gone from the scorecard query.
   assert.ok(!read("src/lib/roadmap/db.ts").includes("submitterName"));
+});
+
+// ---- Staff governance round (2026-08-18, owner ruling) invariants ----
+ok("staff governance: lane scope discipline holds end to end", () => {
+  const read = (p: string) => readFileSync(p, "utf8");
+  const db = read("src/lib/roadmap/db.ts");
+  // Every governance-doc read/write binds the ONE lane predicate
+  // (govDocLaneWhere): list and count take it bare, download and remove AND
+  // it with the id - so a company read can never see the staff document and
+  // vice versa.
+  assert.equal(db.match(/\.where\(govDocLaneWhere\(scope\)\)/g)?.length, 2);
+  assert.equal(
+    db.match(/and\(eq\(CGD\.id, docId\), govDocLaneWhere\(scope\)\)/g)?.length,
+    2
+  );
+  // The insert takes the scope, not a bare companyId (a string param would
+  // compile the staff lane out of existence).
+  assert.ok(db.includes("companyId: opts.scope.companyId"));
+  // Only the download reader ever selects the stored bytes.
+  assert.equal(db.match(/fileData: CGD\.fileData/g)?.length, 1);
+  // The step page serves a REAL staff branch: a resurrected staff redirect
+  // against the flipped href (/roadmap/governance) would be a self-redirect
+  // loop, and returning null for staff renders the documented blank shell.
+  const page = read("src/app/roadmap/(steps)/governance/page.tsx");
+  assert.ok(!page.includes("redirect("));
+  assert.ok(page.includes("STAFF_GOVDOC_SCOPE"));
+  // The in-draft hint exists, and the write affordances (which carry the
+  // only /governance builder links on the staff branch) render behind the
+  // globalAdmin flag: non-admin staff are never funneled into creating.
+  assert.ok(
+    page.includes("It will appear here once an XL.net admin files it")
+  );
+  assert.ok(page.includes("{globalAdmin && ("));
+  // Both doc routes resolve their lane through the ONE gate, whose staff
+  // branch authorizes every write via requireGlobalAdmin.
+  for (const route of [
+    "src/app/api/roadmap/docs/route.ts",
+    "src/app/api/roadmap/docs/[id]/route.ts",
+  ]) {
+    assert.ok(read(route).includes("docsWriteLane"), route);
+  }
+  assert.ok(
+    read("src/app/api/roadmap/docs/[id]/route.ts").includes("docsReadLane")
+  );
+  const gate = read("src/lib/roadmap/docs-gate.ts");
+  for (const name of [
+    "readStaffPage",
+    "requireGlobalAdmin",
+    "requireCompanyAdmin",
+    "requireCompanyMember",
+  ]) {
+    assert.ok(gate.includes(name), `docs-gate: ${name}`);
+  }
+  // The hub card stopped pitching the builder to staff.
+  const staffHub = read("src/components/roadmap/staff-hub.tsx");
+  assert.ok(!staffHub.includes("Public offering"));
+  assert.ok(!staffHub.includes("Open the Governance Builder"));
+});
+
+ok("staff draft signal is metadata-only, staff-bound and retention-bounded", () => {
+  // .toSQL() builds without connecting, but the lazy client wants a URL
+  // (SESSION_COOKIE_SECRET idiom below).
+  process.env.DATABASE_URL ||= "postgresql://pin:pin@127.0.0.1:5432/pin";
+  const q = staffGovernanceDraftQuery().toSQL();
+  const sqlText = q.sql.toLowerCase();
+  const selectPart = sqlText.slice(0, sqlText.indexOf(" from "));
+  assert.ok(sqlText.includes('"governance_projects"'));
+  assert.ok(sqlText.includes("last_activity_at")); // retentionCutoff folds in
+  assert.ok(selectPart.includes("count(*)"));
+  // BOTH binding predicates ride the params: the project's domain field AND
+  // the owner-email suffix. The domain alone is typed by the project owner
+  // at creation, so without the suffix any signed-in visitor could light
+  // the staff hub's "In draft" line by naming xl.net.
+  assert.ok(q.params.includes("xl.net"));
+  assert.ok(q.params.includes("%@xl.net"));
+  // Nothing but the count leaves Postgres: no content column, no status, no
+  // owner email in the SELECT (this reader's audience is any verified staff
+  // session, wider than the admin console).
+  for (const col of [
+    "documents_json",
+    "transcript_json",
+    "research_json",
+    "review_summary",
+    "email",
+    "status",
+  ]) {
+    assert.ok(!selectPart.includes(col), col);
+  }
 });
 
 // ---- Directory bulk-cleanup round (2026-08-09) invariants ----
