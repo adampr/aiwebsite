@@ -1,6 +1,7 @@
 // GET /api/account/export — §5.13 module factory (@aicompany/core v1.6) +
 // host extras: governance projects (documents/transcript/research ride the
-// row as JSON) and contact submissions (keyed by email, no FK).
+// row as JSON), contact submissions, and the workshop notification list
+// (both keyed by email, no FK).
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -8,7 +9,11 @@ import { eq } from "drizzle-orm";
 import { createAccountExportHandler } from "@aicompany/core/account/data";
 import { siteConfig } from "site.config";
 import { db } from "@/lib/db";
-import { contactSubmissions, governanceProjects } from "@/lib/db/schema";
+import {
+  contactSubmissions,
+  governanceProjects,
+  workshopInterest,
+} from "@/lib/db/schema";
 
 export const GET = createAccountExportHandler(siteConfig, {
   extras: async (user) => ({
@@ -22,5 +27,11 @@ export const GET = createAccountExportHandler(siteConfig, {
       .select()
       .from(contactSubmissions)
       .where(eq(contactSubmissions.email, user.email)),
+    // §5.10 workshop notification list membership (stored lowercased, same
+    // normalization the module applies to users.email).
+    workshopInterest: await db
+      .select()
+      .from(workshopInterest)
+      .where(eq(workshopInterest.email, user.email)),
   }),
 });

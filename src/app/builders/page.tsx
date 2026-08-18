@@ -14,19 +14,15 @@ export const metadata: Metadata = {
   },
 };
 
-// The workshop card renders three time windows so the page never advertises
-// a past event: until July 30 8:00am CT it shows that session sold out above
-// the bookable August 27 one; from then until August 27 8:00am CT only the
-// August 27 session; afterwards a "next date TBA" state. 8:00am CT = 13:00
-// UTC (both dates are CDT). Requires dynamic rendering — do not remove
-// force-dynamic.
+// The workshop card renders two time windows so the page never advertises a
+// past event: until August 27 8:00am CT it shows that session SOLD OUT (the
+// Ticket Tailor reserve link left with the last seat — the page offers no
+// booking anywhere); afterwards a "next date TBA" state. Both windows point
+// the primary CTA at /builders/notify, the notification list for the next
+// session. 8:00am CT = 13:00 UTC (CDT). Requires dynamic rendering — do not
+// remove force-dynamic.
 export const dynamic = "force-dynamic";
-const JULY_SESSION_STARTS = Date.parse("2026-07-30T13:00:00Z");
 const WORKSHOP_STARTS = Date.parse("2026-08-27T13:00:00Z");
-
-// Workshop seats are sold on Ticket Tailor (single seat pool with the email
-// invite audience) — the July 30 session oversold its site/Stripe split.
-const WORKSHOP_TICKETS_URL = "https://www.tickettailor.com/events/xlnet/2323973";
 
 // Self-hosted copy of the May 21 Zoom webinar recording (54 min, 136 MB).
 // The file is gitignored; it lives in public/media/ on the dev box and ships
@@ -37,8 +33,7 @@ const RECAP_URL = "https://youtube.com/shorts/XFpJpTT4_MI";
 export default function BuildersPage() {
   // eslint-disable-next-line react-hooks/purity -- force-dynamic server page; per-request clock read is the point
   const now = Date.now();
-  const soldOutVisible = now < JULY_SESSION_STARTS;
-  const workshopOpen = now < WORKSHOP_STARTS;
+  const sessionPending = now < WORKSHOP_STARTS;
 
   return (
     <div className="mx-auto max-w-5xl space-y-16">
@@ -74,23 +69,15 @@ export default function BuildersPage() {
             id="workshop"
             className="panel panel--lightline rise min-w-0 scroll-mt-24 sm:row-span-7 sm:grid sm:grid-rows-subgrid"
           >
-            {soldOutVisible && workshopOpen ? (
+            {sessionPending ? (
               // Sold-out strip has no dot: the breathing dot is the "live,
-              // bookable" signal and belongs only on the open session.
-              // Column flex stretches both strips full width, matching the
-              // cohort card's stretched grid-item badge.
-              <div className="flex flex-col gap-2">
-                <span className="badge badge--warn badge--wrap">
-                  Next session · July 30 · Sold out
-                </span>
-                <span className="badge badge--light badge--wrap">
-                  <span className="dot" /> August 27 · Booking open
-                </span>
-              </div>
+              // bookable" signal, and nothing here is bookable.
+              <span className="badge badge--warn badge--wrap self-start">
+                August 27 · Sold out
+              </span>
             ) : (
               <span className="badge badge--light badge--wrap self-start">
-                <span className="dot" />{" "}
-                {workshopOpen ? "Next session: August 27" : "Next date: TBA"}
+                <span className="dot" /> Next date: TBA
               </span>
             )}
             <h3 className="mt-6">AI Builders Workshop</h3>
@@ -105,42 +92,28 @@ export default function BuildersPage() {
             <ul className="mt-6 space-y-2 text-sm">
               <li>Four hours online, hands-on, not a lecture</li>
               <li>Build real AI workflows and automations you keep</li>
-              {workshopOpen ? (
-                <li>
-                  Your session: Thursday, August 27 · 8:00am–12:00pm CT
-                </li>
+              {sessionPending ? (
+                <li>August 27 session: every seat is taken</li>
               ) : (
                 <li>Next session being scheduled now</li>
               )}
-              {soldOutVisible && workshopOpen ? (
-                <li>Capped at 8 attendees · July 30 filled all 8 seats</li>
-              ) : (
-                <li>Capped at 8 attendees · the July 30 session sold out</li>
-              )}
+              <li>Capped at 8 attendees · July 30 and August 27 both sold out</li>
               <li>
-                Date doesn&apos;t work after you buy?{" "}
-                <Link href="/contact">Contact us</Link>{" "}
-                and we&apos;ll move you to the next session.
+                Missed the seats?{" "}
+                <Link href="/builders/notify">Join the notification list</Link>{" "}
+                and we&apos;ll email you when the next date is set.
               </li>
             </ul>
             <div className="mt-8">
-              {workshopOpen ? (
-                <a
-                  href={WORKSHOP_TICKETS_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn btn--primary btn--wrap no-underline"
-                >
-                  Reserve August 27 · $995
-                </a>
-              ) : (
-                <Link href="/contact" className="btn btn--wrap no-underline">
-                  Ask about the next date
-                </Link>
-              )}
+              <Link
+                href="/builders/notify"
+                className="btn btn--primary btn--wrap no-underline"
+              >
+                Get notified about the next session
+              </Link>
             </div>
             <p className="mt-4 text-xs" style={{ color: "var(--xl-text-faint)" }}>
-              Secure checkout on Ticket Tailor.
+              Free to join · sign in required · remove yourself anytime.
             </p>
           </div>
 
@@ -150,8 +123,8 @@ export default function BuildersPage() {
             className="panel rise min-w-0 scroll-mt-24 sm:row-span-7 sm:grid sm:grid-rows-subgrid"
             style={{ transitionDelay: "120ms" }}
           >
-            {/* self-start stops the subgrid from stretching this badge to the
-                height of the workshop card's two stacked status strips. */}
+            {/* self-start (here and on the workshop badge) stops the subgrid
+                from stretching a badge to the taller card's row height. */}
             <span className="badge badge--ok badge--wrap self-start">
               <span className="dot" /> Enrolling · capped at 6 people
             </span>

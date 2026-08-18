@@ -309,6 +309,13 @@
       "when": 1786810047541,
       "tag": "0043_sour_glorian",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1787085302462,
+      "tag": "0044_workshop_interest",
+      "breakpoints": true
     }
   ]
 }

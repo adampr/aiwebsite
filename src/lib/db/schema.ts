@@ -425,6 +425,23 @@ export const contactSubmissions = pgTable("contact_submissions", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
+// Workshop notification list (§5.10): who asked to hear when the next AI
+// Builders Workshop date is set. A row exists ONLY via the explicit opt-in
+// click on /builders/notify (email/name/provider always from the session,
+// email lowercased; never from a request body); leaving deletes the row
+// outright. Keyed by email with no users FK — like contact_submissions —
+// so /api/account/export and /api/account/delete carry it by email in
+// extras/beforeDelete (see those routes).
+export const workshopInterest = pgTable("workshop_interest", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(), // lowercased; the idempotent-join anchor
+  displayName: text("display_name"),
+  provider: text("provider").notNull(), // session provider at opt-in time
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 // RFP Response knowledge base (§5.17). Kept in its own file: 6 foreign-domain
 // tables with their own id/JSON conventions would bury this file's job, which
 // is the composed site tables plus the module's registry. drizzle-kit reads

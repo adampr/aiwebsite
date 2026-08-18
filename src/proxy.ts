@@ -40,6 +40,9 @@ export default createTrackingMiddleware(siteConfig, {
     // The module checks POST/PUT/PATCH/DELETE only, so the roadmap GETs
     // (dkim/status, docs/[id], nav) are untouched.
     "/api/roadmap",
+    // §5.10: workshop notification list join/leave (POST/DELETE
+    // /api/workshop/notify) — state-changing, session-scoped writes.
+    "/api/workshop",
   ],
 });
 
