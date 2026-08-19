@@ -71,11 +71,32 @@ export type ArchiveFileRow = typeof A.$inferSelect;
  * on the row remains the copy, and the publish-time verification refuses
  * to clear it (the 2026-08-04 never-delete-the-only-copy ruling keeps
  * holding through every partial-failure shape).
+ *
+ * The array-position wrapper over storeArchiveFilesAt: intake always
+ * passes [package, md?], so index == slot there. The backfill/import ops
+ * scripts call storeArchiveFilesAt directly because they may store a
+ * SUBSET (md only, or completing one missing file), and the slot must
+ * come from WHICH blob a file is (package=00, md=01), never from its
+ * position in a partial array.
  */
 export async function storeArchiveFiles(
   submissionId: string,
   title: string,
   files: { name: string; data: Buffer }[]
+): Promise<void> {
+  return storeArchiveFilesAt(
+    submissionId,
+    title,
+    files.map((f, i) => ({ slot: i, name: f.name, data: f.data }))
+  );
+}
+
+/** Slot-explicit store write (see storeArchiveFiles for the contract: never
+ * throws, per-file failures log and leave the bytea as the copy). */
+export async function storeArchiveFilesAt(
+  submissionId: string,
+  title: string,
+  files: { slot: number; name: string; data: Buffer }[]
 ): Promise<void> {
   try {
     if (!UUID_RE.test(submissionId))
@@ -96,7 +117,7 @@ export async function storeArchiveFiles(
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       try {
-        const rel = storedRelPath(submissionId, i, f.name);
+        const rel = storedRelPath(submissionId, f.slot, f.name);
         const abs = resolveUnderRoot(rel);
         const sha256 = createHash("sha256").update(f.data).digest("hex");
         // Temp-then-rename: a crash mid-write leaves a .tmp orphan, never a
@@ -129,7 +150,7 @@ export async function storeArchiveFiles(
         }
       } catch (err) {
         console.log(
-          `[work] archive store failed for ${submissionId} file ${i} (${f.name.slice(0, 80)}): ${err instanceof Error ? err.message.slice(0, 200) : "unknown"} (bytea remains the copy)`
+          `[work] archive store failed for ${submissionId} file ${f.slot} (${f.name.slice(0, 80)}): ${err instanceof Error ? err.message.slice(0, 200) : "unknown"} (bytea remains the copy)`
         );
       }
     }
@@ -158,6 +179,24 @@ export async function archiveFilesForSubmission(
     .select()
     .from(A)
     .where(and(eq(A.submissionId, submissionId), isNull(A.deletedAt)))
+    .orderBy(A.relPath);
+}
+
+/** EVERY ledger row for a submission, admin-deleted rows INCLUDED, in
+ * stored order. The backfill/import operator scripts read this because
+ * admin cleanup is FINAL for those lanes: a deleted row's rel_path is
+ * permanently retired (work_archive_rel_path_uq is a FULL unique index
+ * covering deleted rows, so re-filing the same slot would collide at the
+ * ledger insert and unlink the fresh file anyway), and the scripts must
+ * see the deleted row to disclose it instead of failing opaquely. */
+export async function allArchiveFilesForSubmission(
+  submissionId: string
+): Promise<ArchiveFileRow[]> {
+  if (!UUID_RE.test(submissionId)) return [];
+  return db
+    .select()
+    .from(A)
+    .where(eq(A.submissionId, submissionId))
     .orderBy(A.relPath);
 }
 
@@ -193,13 +232,19 @@ export async function storedFilesForSubmission(
 }
 
 /** Match every expected file (the row's actual blob set) against LIVE
- * ledger rows and re-stat each on disk at the recorded size. A cheap stat,
- * not a re-hash: sha256 was computed at write time after the rename, so
- * the stat proves the file is still there and whole. Shared by the
- * advisory read below and the in-transaction clear. */
+ * ledger rows and re-stat each on disk at the recorded size. Shared by the
+ * advisory read below (stat-only: sha256 was computed at write time after
+ * the rename, so for a residency LINE in an email the stat is enough) and
+ * the in-transaction clear, which additionally passes each expected
+ * buffer's own sha256: name + size + stat proves A file of the right
+ * shape is there, only the hash equality proves it is THIS file (an
+ * operator-imported wrong file of the same length would otherwise get the
+ * real bytea cleared - refutation F1 of the backfill round, 2026-08-19).
+ * Hashing at most 100 MB once per publish is a fine price for making
+ * disk==row a proven invariant instead of an assumption. */
 async function matchAndStat(
   liveRows: ArchiveFileRow[],
-  expected: { name: string; bytes: number }[]
+  expected: { name: string; bytes: number; sha256?: string }[]
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (expected.length === 0) return { ok: false, reason: "nothing expected" };
   const unclaimed = [...liveRows];
@@ -211,6 +256,11 @@ async function matchAndStat(
     if (idx === -1)
       return { ok: false, reason: `no live ledger row for ${want} (${e.bytes} bytes)` };
     const row = unclaimed.splice(idx, 1)[0];
+    if (e.sha256 !== undefined && row.sha256 !== e.sha256)
+      return {
+        ok: false,
+        reason: `${row.relPath} ledger sha256 ${row.sha256} != row bytea sha256 ${e.sha256} (the store copy is not this file; bytea kept)`,
+      };
     try {
       const st = await stat(resolveUnderRoot(row.relPath));
       if (st.size !== row.bytes)
@@ -253,15 +303,27 @@ export async function verifyStoredCopies(
  * fails here and the bytea stays) or it waits for this commit - at which
  * point removing the store file is the admin's deliberate act against a
  * row whose retention mail already went out, not a race.
+ *
+ * Takes the BUFFERS about to be cleared, not name/size pairs: each
+ * buffer's sha256 is computed here and must EQUAL the matched ledger
+ * row's stored sha256 (backfill-round refutation F1: the work:import
+ * lane can, under --force, ledger a file whose bytes are not the row's,
+ * and name+size+stat alone would then clear the only true copy).
+ * Fail-closed: any mismatch keeps the bytea and the reason names the slot.
  */
 export async function verifyAndClearRowBytes(
   submissionId: string,
-  expected: { name: string; bytes: number }[]
+  expected: { name: string; data: Buffer }[]
 ): Promise<{ cleared: boolean; reason?: string }> {
   if (!UUID_RE.test(submissionId))
     return { cleared: false, reason: "not a uuid" };
   if (expected.length === 0)
     return { cleared: false, reason: "nothing expected" };
+  const hashed = expected.map((e) => ({
+    name: e.name,
+    bytes: e.data.length,
+    sha256: createHash("sha256").update(e.data).digest("hex"),
+  }));
   const S = schema.workSubmissions;
   return db.transaction(async (tx) => {
     const locked = await tx
@@ -272,7 +334,7 @@ export async function verifyAndClearRowBytes(
       .for("update");
     const verdict = await matchAndStat(
       locked.filter((r) => r.deletedAt === null),
-      expected
+      hashed
     );
     if (!verdict.ok) return { cleared: false, reason: verdict.reason };
     await tx

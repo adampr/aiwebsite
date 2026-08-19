@@ -48,6 +48,12 @@ import {
   nextStorageReportDueMs,
 } from "../src/lib/work/config";
 import staticTitles from "../src/lib/work/static-titles.json";
+import {
+  byteLessRowClass,
+  importShaRefusal,
+  parseImportArgs,
+  planRowBackfill,
+} from "./lib/work-archive-ops";
 
 import {
   classifyViolations,
@@ -3620,6 +3626,310 @@ async function main() {
       ),
       "submission-Delete confirms say stored files remain until cleaned (M7)"
     );
+  }
+
+  // ---- §5.16 archive backfill/import ops scripts (2026-08-19, refuted
+  // and hardened same day): pure pins for the extracted planning/gating
+  // helpers plus source-scrape tripwires for the invariants types cannot
+  // hold (the backfill never clears bytea; admin cleanup is final for the
+  // scripted lanes; the clearing transaction now proves disk==row by
+  // hash, not just name+size+stat). ----
+  {
+    const sid = "123e4567-e89b-42d3-a456-426614174000";
+    const live = (relPath: string, fileName: string, bytes: number) => ({
+      relPath,
+      fileName,
+      bytes,
+      deleted: false,
+    });
+    const gone = (relPath: string, fileName: string, bytes: number) => ({
+      relPath,
+      fileName,
+      bytes,
+      deleted: true,
+    });
+
+    // Per-FILE plan (refutation M3): empty ledger stores every slot.
+    assert.deepEqual(
+      planRowBackfill(
+        sid,
+        [
+          { slot: 0, name: "pkg.zip", bytes: 10 },
+          { slot: 1, name: "SKILL.md", bytes: 5 },
+        ],
+        []
+      ).map((p) => p.action),
+      ["store", "store"]
+    );
+    // A live match skips ONLY its own slot; the other still stores (the
+    // half-stored row completes instead of wedging).
+    assert.deepEqual(
+      planRowBackfill(
+        sid,
+        [
+          { slot: 0, name: "pkg.zip", bytes: 10 },
+          { slot: 1, name: "SKILL.md", bytes: 5 },
+        ],
+        [live(`${sid}/00-pkg.zip`, "pkg.zip", 10)]
+      ).map((p) => p.action),
+      ["skip-live", "store"]
+    );
+    // Consuming match: identical name+bytes in both slots, ONE live row -
+    // it satisfies exactly one expected file, never two.
+    assert.deepEqual(
+      planRowBackfill(
+        sid,
+        [
+          { slot: 0, name: "a.md", bytes: 5 },
+          { slot: 1, name: "a.md", bytes: 5 },
+        ],
+        [live(`${sid}/00-a.md`, "a.md", 5)]
+      ).map((p) => p.action),
+      ["skip-live", "store"]
+    );
+    // Admin cleanup is FINAL (refutation M1): a deleted ledger row at the
+    // slot's minted rel_path is disclosed and skipped, NEVER re-filed
+    // (work_archive_rel_path_uq is a FULL unique index; the insert would
+    // collide and the collision handler unlinks the fresh file).
+    assert.deepEqual(
+      planRowBackfill(
+        sid,
+        [{ slot: 0, name: "pkg.zip", bytes: 10 }],
+        [gone(`${sid}/00-pkg.zip`, "pkg.zip", 10)]
+      ).map((p) => p.action),
+      ["skip-deleted"]
+    );
+    // ... regardless of whether the deleted row's bytes match.
+    assert.deepEqual(
+      planRowBackfill(
+        sid,
+        [{ slot: 0, name: "pkg.zip", bytes: 10 }],
+        [gone(`${sid}/00-pkg.zip`, "pkg.zip", 99)]
+      ).map((p) => p.action),
+      ["skip-deleted"]
+    );
+    // A LIVE row occupying the rel_path without matching is a conflict
+    // for a human, never an overwrite.
+    assert.deepEqual(
+      planRowBackfill(
+        sid,
+        [{ slot: 0, name: "pkg.zip", bytes: 10 }],
+        [live(`${sid}/00-pkg.zip`, "pkg.zip", 99)]
+      ).map((p) => p.action),
+      ["conflict"]
+    );
+    // A row that never stamped archive_bytes matches on name alone.
+    assert.deepEqual(
+      planRowBackfill(
+        sid,
+        [{ slot: 0, name: "pkg.zip", bytes: null }],
+        [live(`${sid}/00-pkg.zip`, "pkg.zip", 42)]
+      ).map((p) => p.action),
+      ["skip-live"]
+    );
+
+    // Byte-less row classification.
+    assert.equal(byteLessRowClass([live("x", "x", 1)]), "ledgered");
+    assert.equal(byteLessRowClass([gone("x", "x", 1)]), "admin-cleaned");
+    assert.equal(
+      byteLessRowClass([gone("x", "x", 1), live("y", "y", 2)]),
+      "ledgered"
+    );
+    assert.equal(byteLessRowClass([]), "needs-recovery");
+
+    // work:import argv contract: at least one of --file/--md.
+    const full = parseImportArgs([
+      sid,
+      "--file",
+      "/tmp/pkg.zip",
+      "--md",
+      "/tmp/SKILL.md",
+      "--force",
+      "--yes",
+    ]);
+    assert.deepEqual(full, {
+      ok: true,
+      args: {
+        id: sid,
+        file: "/tmp/pkg.zip",
+        md: "/tmp/SKILL.md",
+        force: true,
+        yes: true,
+      },
+    });
+    const mdOnly = parseImportArgs([sid, "--md", "/tmp/SKILL.md"]);
+    assert.ok(
+      mdOnly.ok && mdOnly.args.file === null && mdOnly.args.md === "/tmp/SKILL.md",
+      "a standalone md import is valid (slot 01, md_sha256-gated)"
+    );
+    const fileOnly = parseImportArgs(["--file", "a.zip", sid]);
+    assert.ok(fileOnly.ok && fileOnly.args.md === null && !fileOnly.args.force);
+    assert.ok(
+      !parseImportArgs([sid]).ok,
+      "at least one of --file/--md is required"
+    );
+    assert.ok(!parseImportArgs(["--file", "a.zip"]).ok, "uuid is required");
+    assert.ok(
+      !parseImportArgs(["not-a-uuid", "--file", "a.zip"]).ok,
+      "a malformed id is refused, not passed to the DB"
+    );
+    assert.ok(
+      !parseImportArgs([sid, "--file", "--yes"]).ok,
+      "--file must not swallow a following flag as its value"
+    );
+    assert.ok(
+      !parseImportArgs([sid, "--md", "--force"]).ok,
+      "--md must not swallow a following flag as its value"
+    );
+    assert.ok(
+      !parseImportArgs([sid, "--file", "a.zip", "--frce"]).ok,
+      "a typo'd flag is refused, never a silent positional"
+    );
+    assert.ok(
+      !parseImportArgs([sid, "--file", "a.zip", "extra"]).ok,
+      "a second positional is refused"
+    );
+
+    // The import sha gate, pure (this IS the refusal-precedes-write pin:
+    // every verdict is settled in one call over ALL files, and the script
+    // writes only when it returns null).
+    const shaA = "a".repeat(64);
+    const shaB = "b".repeat(64);
+    assert.equal(
+      importShaRefusal(
+        [{ label: "package", localSha256: shaA, recordedSha256: shaA }],
+        false
+      ),
+      null
+    );
+    assert.equal(
+      importShaRefusal(
+        [{ label: "package", localSha256: shaA, recordedSha256: null }],
+        false
+      ),
+      null,
+      "no recorded sha proceeds (the caller says so)"
+    );
+    const refusal = importShaRefusal(
+      [
+        { label: "package", localSha256: shaA, recordedSha256: shaA },
+        { label: "md", localSha256: shaA, recordedSha256: shaB },
+      ],
+      false
+    );
+    assert.ok(
+      refusal !== null &&
+        refusal.includes("sha256 mismatch for md") &&
+        !refusal.includes("mismatch for package") &&
+        refusal.includes(shaA) &&
+        refusal.includes(shaB),
+      "a mismatch refuses naming only the mismatched file, with both hashes"
+    );
+    assert.equal(
+      importShaRefusal(
+        [{ label: "md", localSha256: shaA, recordedSha256: shaB }],
+        true
+      ),
+      null,
+      "--force proceeds (the caller prints PROVENANCE UNVERIFIED)"
+    );
+
+    const { readFileSync: readOps } = await import("node:fs");
+    const backfillSrc = readOps("scripts/work-archive-backfill.ts", "utf8");
+    // THE deliberate rule: backfill never clears row bytea. Clearing stays
+    // exclusively the publish-time retention transaction; the script must
+    // not even reference either clearing primitive, and it never UPDATEs
+    // any row at all.
+    assert.ok(
+      !backfillSrc.includes("clearArchiveData") &&
+        !backfillSrc.includes("verifyAndClearRowBytes"),
+      "backfill references neither bytea-clearing primitive"
+    );
+    assert.ok(
+      !backfillSrc.includes(".set("),
+      "backfill never updates any row (no drizzle .set anywhere)"
+    );
+    assert.ok(
+      backfillSrc.includes("NEVER clears the row's bytea"),
+      "backfill states the no-clear rule in its header"
+    );
+    assert.ok(
+      backfillSrc.includes("await storeArchiveFilesAt(") &&
+        backfillSrc.includes("planRowBackfill(") &&
+        backfillSrc.includes("allArchiveFilesForSubmission("),
+      "backfill plans per file (deleted rows seen) and writes slot-explicit"
+    );
+    assert.ok(
+      backfillSrc.includes("pg_try_advisory_lock") &&
+        backfillSrc.includes("process.getuid"),
+      "backfill takes the shared ops lock and refuses root"
+    );
+
+    const importSrc = readOps("scripts/work-archive-import.ts", "utf8");
+    const refuseAt = importSrc.indexOf("const refusal = importShaRefusal(");
+    const dieAt = importSrc.indexOf("if (refusal) die(refusal)");
+    const writeAt = importSrc.indexOf("await storeArchiveFilesAt(");
+    assert.ok(
+      refuseAt > 0 && dieAt > refuseAt && writeAt > dieAt,
+      "import settles ALL sha verdicts through the pure gate, dies on a refusal, and only then writes"
+    );
+    assert.ok(
+      importSrc.lastIndexOf("await storeArchiveFilesAt(") === writeAt,
+      "the store write appears exactly once, after the gate"
+    );
+    assert.ok(
+      !importSrc.includes("clearArchiveData") &&
+        !importSrc.includes("verifyAndClearRowBytes") &&
+        !importSrc.includes("archiveDataById") &&
+        !importSrc.includes(".set("),
+      "import never reads bytea buffers, never clears, never updates a row"
+    );
+    assert.ok(
+      importSrc.includes("is not null") &&
+        importSrc.includes("byte-less rows only"),
+      "import refuses rows that still hold bytea (recovery lane only, F1)"
+    );
+    assert.ok(
+      importSrc.includes("allArchiveFilesForSubmission(") &&
+        importSrc.includes("cleanup is final"),
+      "import refuses on ANY ledger row, deleted included (cleanup is final)"
+    );
+    assert.ok(
+      importSrc.includes("PROVENANCE UNVERIFIED"),
+      "--force prints the loud provenance warning"
+    );
+    assert.ok(
+      importSrc.includes("pg_try_advisory_lock") &&
+        importSrc.includes("process.getuid"),
+      "import takes the shared ops lock and refuses root"
+    );
+
+    // Defense in depth (refutation F1b): the clearing transaction hashes
+    // the exact bytea it is about to clear and requires the matched ledger
+    // row's stored sha256 to EQUAL it - disk==row proven, not assumed.
+    const storeSrc3 = readOps("src/lib/work/archive-store.ts", "utf8");
+    const vac3 = storeSrc3.slice(
+      storeSrc3.indexOf("export async function verifyAndClearRowBytes"),
+      storeSrc3.indexOf("export type ArchiveStoreUsage")
+    );
+    assert.ok(
+      vac3.includes('createHash("sha256")'),
+      "verify-and-clear hashes the buffers it is about to clear"
+    );
+    assert.ok(
+      storeSrc3.includes("row.sha256 !== e.sha256"),
+      "matchAndStat enforces ledger sha == bytea sha when a hash is given"
+    );
+    assert.ok(
+      readOps("src/lib/work/notify.ts", "utf8").includes(
+        "verifyAndClearRowBytes(row.id, rowFiles)"
+      ),
+      "the retention clear passes the BUFFERS, arming the hash check"
+    );
+
+    const opsSrc = readOps("scripts/lib/work-archive-ops.ts", "utf8");
+    for (const src of [backfillSrc, importSrc, opsSrc])
+      assert.ok(!/[–—]/.test(src), "no em or en dashes in the ops scripts");
   }
 
   console.log("work-tests: all assertions passed.");

@@ -360,9 +360,11 @@ export async function sendArchiveRetentionEmail(
  * email once destroyed the only copy") is superseded ONLY where a verified
  * second copy exists: after the send attempt, REGARDLESS of the email
  * outcome, verifyAndClearRowBytes (archive-store.ts) locks the
- * submission's ledger rows FOR UPDATE, re-checks deleted_at IS NULL and
- * re-stats every file at its recorded size INSIDE that transaction, and
- * clears the bytea in the same transaction. deleteStoredArchive's stamp
+ * submission's ledger rows FOR UPDATE, re-checks deleted_at IS NULL,
+ * re-stats every file at its recorded size AND requires each ledger
+ * sha256 to equal the hash of the exact bytea being cleared (a same-size
+ * wrong file - e.g. a --force work:import - must keep the bytes) INSIDE
+ * that transaction, and clears the bytea in the same transaction. deleteStoredArchive's stamp
  * UPDATE serializes behind those locks, so an admin "Delete selected"
  * landing between a verification and the clear can no longer destroy both
  * copies (refutation F1). The pre-compose verifyStoredCopies below feeds
@@ -413,10 +415,9 @@ export async function deliverArchiveRetention(
   let clear: { cleared: boolean; reason?: string } | null = null;
   if (rowFiles.length > 0) {
     try {
-      clear = await verifyAndClearRowBytes(
-        row.id,
-        rowFiles.map((f) => ({ name: f.name, bytes: f.data.length }))
-      );
+      // Buffers, not name/size pairs: the clear now requires the ledger
+      // sha256 to equal the hash of the exact bytes being cleared.
+      clear = await verifyAndClearRowBytes(row.id, rowFiles);
     } catch (err) {
       clear = {
         cleared: false,
