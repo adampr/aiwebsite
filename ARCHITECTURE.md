@@ -1325,7 +1325,10 @@ silence). aiwebsite facts:
   post-deploy settle gate — module §9.8).
 - Synthetic monitoring (module v1.17.0, §9.8): `deploy/synth-inventory.json`
   lists the public pages/markers/feeds the dev-box sweep checks every 15 min
-  (all alert-only, `[aiwebsite] SYNTH` mail grammar); `SYNTH_PAGES` in
+  (all alert-only, `[aiwebsite] SYNTH` mail grammar); `/roadmap` joined the
+  page list 2026-08-19 (warn class, no markers: it was the only indexable
+  force-dynamic page with no sweep coverage; anonymous fetches see its
+  signed-out teaser render); `SYNTH_PAGES` in
   site-deploy.env adds `/blog` + `/texting` + `/api/auth/session` to the on-VM
   watchdog as alert-only local checks; `SYNTH_HEARTBEAT=1` dead-mans the sweep
   runner via `data/synth-last-sweep`.

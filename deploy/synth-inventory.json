@@ -37,6 +37,10 @@
       "class": "warn"
     },
     {
+      "path": "/roadmap",
+      "class": "warn"
+    },
+    {
       "path": "/builders",
       "class": "warn"
     },
