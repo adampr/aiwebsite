@@ -30,6 +30,7 @@ import { BootstrapCard } from "@/components/roadmap/bootstrap-card";
 import { ConfirmIdentity } from "@/components/roadmap/confirm-identity";
 import { DirectoryCard } from "@/components/roadmap/directory-card";
 import { StaffHub } from "@/components/roadmap/staff-hub";
+import { WorkEntryCard } from "@/components/roadmap/work-entry-card";
 import "./roadmap.css";
 
 export const dynamic = "force-dynamic";
@@ -104,6 +105,10 @@ function Teaser() {
           eleven steps · nine free, two paid training · private to your company
         </p>
       </section>
+
+      {/* Nav restructure 2026-08-19: every hub branch renders a prominent
+          /work entry card near the top (label per audience). */}
+      <WorkEntryCard label="Our Work" />
 
       <hr className="horizon" />
 
@@ -226,14 +231,18 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
     const { verify } = await searchParams;
     // Untrusted provider: no company data, not even the name.
     return (
-      <ConfirmIdentity
-        email={view.email}
-        reservedDomain={view.reservedDomain}
-        attempted={view.attempted}
-        verifyFlag={
-          verify === "google_unverified" || verify === "microsoft_unverified"
-        }
-      />
+      <>
+        <ConfirmIdentity
+          email={view.email}
+          reservedDomain={view.reservedDomain}
+          attempted={view.attempted}
+          verifyFlag={
+            verify === "google_unverified" || verify === "microsoft_unverified"
+          }
+        />
+        {/* Signed in (if untrusted), so the signed-in label. */}
+        <WorkEntryCard label="XL.net Work" className="mx-auto mt-12 max-w-xl" />
+      </>
     );
   }
 
@@ -258,6 +267,7 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
             Sign in with your work email
           </Link>
         </div>
+        <WorkEntryCard label="XL.net Work" className="mt-12 text-left" />
       </div>
     );
   }
@@ -275,6 +285,7 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
           </h1>
         </div>
         <BootstrapCard domain={p.emailDomain} apolloEnabled={apolloEnabled} />
+        <WorkEntryCard label="XL.net Work" />
       </div>
     );
   }
@@ -411,6 +422,10 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
           </span>
         </div>
       </section>
+
+      {/* Nav restructure 2026-08-19: the signed-in nav relabels /work and the
+          staff nav drops it, so the hub carries a prominent entry card. */}
+      <WorkEntryCard label="XL.net Work" />
 
       {/* xl:-mx-32 is the runway's container BREAKOUT (§5.20). The page is
           max-w-5xl (976px) and the eleven-stop titled runway measures

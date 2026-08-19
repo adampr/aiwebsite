@@ -15,7 +15,7 @@ import { OrgJsonLdScript } from "@aicompany/core/seo/org-jsonld";
 import { siteConfig } from "site.config";
 import { FuturismFx } from "@/components/futurism-fx";
 import { EmailLink } from "@/components/email-link";
-import { StaffRfpLink } from "@/components/staff-rfp-link";
+import { NavAnchors } from "@/components/nav-anchors";
 import { YourWorkLink } from "@/components/your-work-link";
 import { RoadmapPercentBadge } from "@/components/roadmap-percent-badge";
 import { ChatWidgetMount } from "@/components/chat-widget-mount";
@@ -58,19 +58,13 @@ export const metadata: Metadata = {
   },
 };
 
-// The seven public destinations, owned here and passed to BOTH the desktop row
-// and <MobileNav>, so the two presentations cannot disagree about which
-// destinations exist. Module scope keeps the layout a non-async server
-// component — computing anything session-derived here would de-static the site.
-const NAV_LINKS = [
-  { href: "/", label: "Home" },
-  { href: "/work", label: "Our Work" },
-  { href: "/builders", label: "AI Builders" },
-  { href: "/governance", label: "Governance" },
-  { href: "/roadmap", label: "Your AI Roadmap" },
-  { href: "/blog", label: "AI News" },
-  { href: "/contact", label: "Contact" },
-] as const;
+// The destination list is SESSION-VARIANT since 2026-08-19 and lives in the
+// client module src/components/nav-links.ts, consumed by both <NavAnchors>
+// (desktop row) and <MobileNav> (phone panel) so the two presentations cannot
+// disagree. It cannot live here: this layout is a NON-async server component
+// on purpose — computing anything session-derived here would de-static every
+// public page — so both islands server-render the anonymous set and swap
+// after the shared session probe resolves (see nav-links.ts).
 
 export default function RootLayout({
   children,
@@ -139,25 +133,19 @@ export default function RootLayout({
             </Link>
             <span className="badge badge--light">AI</span>
             <div className="ml-auto flex flex-wrap items-center gap-2 md:gap-8">
-              <div className="nav-anchors flex flex-wrap items-center gap-8">
-                {NAV_LINKS.map((link) => (
-                  <Link key={link.href} href={link.href}>
-                    {link.label}
-                  </Link>
-                ))}
-              </div>
-              {/* Bar copies. Hidden below md by `.nav > .nav-staff` (§7b) —
-                  the panel carries them there. Two instances share one probe. */}
+              <NavAnchors />
+              {/* Bar copy. Hidden below md by `.nav > div > .nav-staff` (§7b) —
+                  the panel carries it there. Two instances share one probe.
+                  (StaffRfpLink retired 2026-08-19: staff reach RFP Response
+                  via the Internal Tools submenu in the anchor row/panel.) */}
               <YourWorkLink />
-              <StaffRfpLink />
               {/* Stays visible at every width: a STATUS, not a destination, and
                   the owner asked for it displayed prominently. */}
               <RoadmapPercentBadge />
               <ThemeToggle />
               <UserMenu {...toUserMenuProps(siteConfig)} />
-              <MobileNav links={NAV_LINKS}>
+              <MobileNav>
                 <YourWorkLink />
-                <StaffRfpLink />
               </MobileNav>
             </div>
           </nav>

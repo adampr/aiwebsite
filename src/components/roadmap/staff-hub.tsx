@@ -35,6 +35,7 @@ import {
 import type { StaffRoadmapStatus } from "@/lib/roadmap/status";
 import { RoadmapRunway, RunwayStage } from "@/components/roadmap/runway";
 import { DirectoryCard } from "@/components/roadmap/directory-card";
+import { WorkEntryCard } from "@/components/roadmap/work-entry-card";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 
@@ -141,6 +142,11 @@ export function StaffHub({
           </span>
         </div>
       </section>
+
+      {/* Nav restructure 2026-08-19: the staff top nav no longer carries a
+          /work link at all, so the hub's entry card is staff's nav path to
+          the public showcase. */}
+      <WorkEntryCard label="XL.net Work" />
 
       {/* xl:-mx-32: the SAME container breakout the company hub, the teaser
           and the (steps) shell use. Tier 3 of roadmap.css needs 1232px for
