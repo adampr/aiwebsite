@@ -3,13 +3,35 @@
 // (site rule).
 
 export const WORK_CAPS = {
-  // Upload transport. nginx allows 12m (deploy/nginx.d/governance-upload.conf,
-  // shared server-wide body cap); these are the route-enforced true limits.
-  uploadMaxBytes: 10_000_000,
+  // Upload transport. nginx allows 110m (deploy/nginx.d/governance-upload.conf,
+  // shared server-wide body cap; headroom for multipart framing); these are
+  // the route-enforced true limits. 10 MB -> 100 MB (owner directive
+  // 2026-08-19: code repositories over 10 MB must submit). The routes read
+  // the whole multipart body into memory, so one accepted upload holds up to
+  // ~200 MB transiently (File + Buffer copy) in the single PM2 fork; bounded
+  // by uploadAttemptsPerUserPerHour, accepted. The email lane shares this
+  // constant but is really bounded lower by what mail carries (~40 MB
+  // inbound); its reject copy points big packages at the web form.
+  uploadMaxBytes: 100_000_000,
   skillMdMaxBytes: 1_000_000,
   // Zip hardening (inflateCapped pattern from governance/style-sample.ts).
-  zipMaxEntries: 2000,
+  // 2000 -> 20000 with the 100 MB cap (2026-08-19): exceeding this REJECTS
+  // the package (archive_too_complex), and a 100 MB code repo commonly has
+  // >2000 files (node_modules-free trees included). Per-entry work stays
+  // bounded: only .md/.txt entries under perEntryInflateMaxBytes are ever
+  // inflated, and corpusInflateTotalMaxBytes bounds their combined inflate,
+  // so 20k entries cost 20k name checks plus a capped text pass, not 20k
+  // decompressions.
+  zipMaxEntries: 20_000,
   perEntryInflateMaxBytes: 2_000_000,
+  // Total inflated bytes across ALL text candidates in one archive
+  // (extract.ts walkLevel). Without it, zipMaxEntries x
+  // perEntryInflateMaxBytes = 40 GB of inflate on a hostile zip; with it the
+  // walk stops inflating (ascending-size order, so the reviewed doc and the
+  // corpus resolve first) and later text files are treated exactly like
+  // oversized ones today: skipped for corpus and content scan. Same figure
+  // as mail-screen.ts TOTAL_INFLATE_MAX.
+  corpusInflateTotalMaxBytes: 64_000_000,
   manifestMaxEntries: 300,
   // "architecture.md or equivalent": minimum prose after stripping code
   // fences and front matter, and the slice of the doc the panel reads.
@@ -271,6 +293,49 @@ export function workPanelRunsDailyCap(env: NodeJS.ProcessEnv): number {
  * narrower lever next to WORK_SUBMISSIONS_ENABLED. Default ON. */
 export function workQueueDrainEnabled(env: NodeJS.ProcessEnv): boolean {
   return env.WORK_QUEUE_DRAIN_ENABLED !== "0";
+}
+
+/** Weekly storage-report kill switch (§5.16, 2026-08-19): stops ONLY the
+ * usage email timer (storage-report.ts); the archive store, intake and the
+ * /admin/work#storage console keep working. Default ON, drain semantics. */
+export function workStorageReportEnabled(env: NodeJS.ProcessEnv): boolean {
+  return env.WORK_STORAGE_REPORT_ENABLED !== "0";
+}
+
+/** The weekly storage report's send boundary: the first Monday 14:00:00 UTC
+ * STRICTLY after `afterMs`. Strict, so a stamp written exactly on a boundary
+ * waits a full week instead of double-sending on the next tick. Pure (ms in,
+ * ms out) and here rather than storage-report.ts so the no-DB test:work
+ * suite can pin the calendar math (the drainAction precedent); all UTC, so
+ * DST never moves the send hour. */
+export function nextStorageReportDueMs(afterMs: number): number {
+  const d = new Date(afterMs);
+  // getUTCDay: Sun=0..Sat=6; days forward to Monday, 0 when already Monday.
+  const daysToMonday = (1 - d.getUTCDay() + 7) % 7;
+  const candidate = Date.UTC(
+    d.getUTCFullYear(),
+    d.getUTCMonth(),
+    d.getUTCDate() + daysToMonday,
+    14
+  );
+  return candidate > afterMs ? candidate : candidate + 7 * 86_400_000;
+}
+
+/** Human-readable byte size for the admin storage console and the weekly
+ * report. Decimal units (1 MB = 1,000,000 bytes) so the 100 MB upload cap
+ * and a 100 MB stored file read as the same number; up to two decimals,
+ * trailing zeros trimmed. Pure, pinned by test:work. */
+export function formatByteSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "0 B";
+  if (bytes < 1000) return `${Math.round(bytes)} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = bytes;
+  let u = -1;
+  do {
+    v /= 1000;
+    u++;
+  } while (v >= 1000 && u < units.length - 1);
+  return `${v.toFixed(2).replace(/\.?0+$/, "")} ${units[u]}`;
 }
 
 export type DrainAction = "stop" | "skip";

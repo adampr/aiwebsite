@@ -12,13 +12,21 @@ import { siteConfig } from "site.config";
 import { emailDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
 import { StaffVerifyNotice } from "@/components/staff-verify-notice";
 import { allSubmissions, publishedCards, submissionById } from "@/lib/work/db";
+import { archiveStoreUsage } from "@/lib/work/archive-store";
 import { companyById } from "@/lib/roadmap/db";
 import {
   KIND_LABELS,
+  formatByteSize,
   workSubmissionsEnabled,
   type WorkKind,
 } from "@/lib/work/config";
 import { WorkAdminActions } from "./actions-client";
+import { WorkStorageList } from "./storage-actions-client";
+
+// Storage rows rendered before the countPeople-style truncation disclosure
+// kicks in (§5.18 directory precedent); the whole-store totals above the
+// list are aggregate queries and stay exact regardless.
+const STORAGE_RENDER_MAX = 500;
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +72,13 @@ export default async function AdminWorkPage() {
     if (parent) byId.set(parent.id, parent);
   }
   const enabled = workSubmissionsEnabled(process.env);
+  // §5.16 archive store (2026-08-19): the on-disk retained copies of
+  // accepted uploads, listed for admin cleanup. 90-day window feeds the
+  // "cleaned" line; the weekly email uses its own 7-day window.
+  const storage = await archiveStoreUsage({
+    windowDays: 90,
+    fileListMax: STORAGE_RENDER_MAX,
+  });
   // Lane spots for the Move control (§5.16 reorder), derived from
   // publishedCards — the exact function the public pages render from, so
   // "Spot 3 of 7" here is spot 3 on the page (it drops malformed-cardJson
@@ -230,6 +245,49 @@ export default async function AdminWorkPage() {
           })}
         </div>
       )}
+      <div id="storage" className="space-y-3">
+        <h2 className="text-xl font-bold">Uploaded files</h2>
+        <p className="text-sm text-faint">
+          Durable copies of accepted uploads, kept on the server
+          (data/work-archives). After a card publishes and the store copy
+          verifies, the database copy is cleared, so a file here is usually
+          the ONLY remaining copy (marked &quot;last copy&quot;). Files
+          deliberately outlive their submission: a deleted or swept
+          submission leaves its files here until you clean them. Delete
+          removes the file from disk permanently; the ledger keeps a record
+          of what was deleted and by whom, and published cards keep
+          rendering either way.
+        </p>
+        <p className="text-sm">
+          {storage.fileCount} file{storage.fileCount === 1 ? "" : "s"},{" "}
+          {formatByteSize(storage.totalBytes)} total ·{" "}
+          {formatByteSize(storage.deletedBytesInWindow)} cleaned in the last
+          90 days ({storage.deletedInWindow} file
+          {storage.deletedInWindow === 1 ? "" : "s"})
+        </p>
+        {storage.fileCount > storage.files.length && (
+          // countPeople-style truncation disclosure (§5.18 directory
+          // precedent): never render a capped list as if it were the total.
+          <p className="text-xs text-faint">
+            Showing the newest {storage.files.length} of {storage.fileCount}{" "}
+            files; the totals above cover the whole store.
+          </p>
+        )}
+        <WorkStorageList
+          files={storage.files.map((f) => ({
+            id: f.id,
+            title: f.title,
+            fileName: f.fileName,
+            sizeLabel: formatByteSize(f.bytes),
+            dateLabel: f.createdAt.toISOString().slice(0, 16).replace("T", " "),
+            submissionId: f.submissionId,
+            // Last copy anywhere: submission gone, or its bytea cleared
+            // after a verified store copy (refutation M1 - the confirm
+            // must say deletion is unrecoverable, not reassure).
+            lastCopy: f.submissionId === null || !f.rowHasBytes,
+          }))}
+        />
+      </div>
     </div>
   );
 }

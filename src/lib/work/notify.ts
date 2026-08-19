@@ -10,7 +10,21 @@ import { adminRecipient, sendGovernanceEmail } from "@/lib/governance/budget";
 import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 import { HELD_NEXT_STEPS, KIND_LABELS, type WorkKind } from "./config";
 import { archiveDataById, type SubmissionRow } from "./db";
-import { mailSafeName, toDeliverableAttachment } from "./retention-encoding";
+import {
+  storedFilesForSubmission,
+  verifyAndClearRowBytes,
+  verifyStoredCopies,
+} from "./archive-store";
+import {
+  mailSafeName,
+  oneLine,
+  partitionAttachmentsBySize,
+  predictArmoredLength,
+  toDeliverableAttachment,
+  willArmorFile,
+  type AttachmentOmission,
+  type RetentionAttachment,
+} from "./retention-encoding";
 import { screenPackageForMail, type ScreenResult } from "./mail-screen";
 import type { WorkCard } from "./lint";
 
@@ -42,42 +56,29 @@ const SITE = "https://ai.xl.net";
  * Attachments go through toDeliverableAttachment (retention-encoding.ts):
  * text-named files attach as-is, everything else as a base64 text wrapper,
  * because Gmail bounces archives containing blocked file types (whole
- * message, ContentRejected) and did so on 2026-08-03 and 2026-08-06. Worst
- * case is now a 10 MB package armored to ~13.4 MB text, ~17.9 MB as the
- * JSON base64 field, plus ~1.3 MB for SKILL.md: ~19.2 MB, inside Resend's
- * 40 MB message cap; timeout stays 60 s for the larger payloads.
+ * message, ContentRejected) and did so on 2026-08-03 and 2026-08-06.
+ *
+ * Attach-if-fits (2026-08-19, the 100 MB round): a 100 MB package armors
+ * to ~137 MB text, which no mail provider accepts, so attachments are
+ * included ONLY while the PREDICTED payloads (predictArmoredLength, exact
+ * to the byte against the encoder) sum under RETENTION_ATTACH_TOTAL_MAX
+ * (35 MB, headroom inside Resend's 40 MB message cap). The partition is
+ * smallest-first, so a small SKILL.md is never crowded out by its package.
+ * Files attach whole or not at all; an omitted file gets a body line with
+ * its REASON (too big alone vs the budget was spent) and where it lives -
+ * lines that name the archive store only when the caller verified the
+ * store copy (opts.storeVerified), hedging to the row copy otherwise.
+ * The email always states exactly what is and is not attached and why.
+ *
+ * Only files in the attach set are ever screened or encoded: predicting
+ * first is what keeps a 100 MB package from costing ~750 MB of transient
+ * strings and an event-loop stall on the publish path.
  *
  * The return value is Resend's ACCEPT (202), and that is all it can ever be.
- * It is NOT evidence of delivery, and NOTHING may delete data on the strength
- * of it — see deliverArchiveRetention.
+ * It is NOT evidence of delivery. Bytea clearing keys on the in-transaction
+ * archive-store verification, never on this value — see
+ * deliverArchiveRetention.
  */
-/** Screen every payload, replacing only a package the provider would
- * refuse. Text docs (the standalone SKILL.md) are never screened: they
- * carry no entries and deliver as-is. Failure returns the file untouched. */
-async function screenFiles(
-  files: { name: string; data: Buffer }[],
-  originalSha: string | null
-): Promise<{ file: { name: string; data: Buffer }; screen: ScreenResult | null }[]> {
-  const out: {
-    file: { name: string; data: Buffer };
-    screen: ScreenResult | null;
-  }[] = [];
-  for (const f of files) {
-    if (!looksLikeArchive(f.data)) {
-      out.push({ file: f, screen: null });
-      continue;
-    }
-    const screen = await screenPackageForMail(f.name, f.data, originalSha);
-    out.push({
-      file:
-        screen.kind === "screened"
-          ? { name: screenedName(f.name), data: screen.zip }
-          : f,
-      screen,
-    });
-  }
-  return out;
-}
 
 function looksLikeArchive(data: Buffer): boolean {
   return (
@@ -97,9 +98,18 @@ function screenedName(name: string): string {
     : `${name}.screened.zip`;
 }
 
+type RetentionItem =
+  | {
+      attached: true;
+      prepared: RetentionAttachment;
+      screen: ScreenResult | null;
+    }
+  | { attached: false; reason: AttachmentOmission };
+
 export async function sendArchiveRetentionEmail(
   row: SubmissionRow,
-  files: { name: string; data: Buffer }[]
+  files: { name: string; data: Buffer }[],
+  opts?: { storeVerified?: boolean }
 ): Promise<boolean> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
@@ -108,17 +118,69 @@ export async function sendArchiveRetentionEmail(
     );
     return false;
   }
-  // Screen the package against the provider's blocked-type policy before
-  // armoring: the provider decodes the base64 text and refuses the whole
-  // message when a blocked type is inside (2026-08-06 evidence). A screen
-  // failure returns the original, so this can never reduce what is sent
-  // below today's behavior, and it never throws into the publish path.
-  const screened = await screenFiles(files, row.archiveSha256 ?? null);
-  const prepared = screened.map((s) => toDeliverableAttachment(s.file));
-  const armored = prepared.filter((p) => p.encoded);
-  const partial = screened.find((s) => s.screen?.kind === "screened");
+  // Where an unattached file can be fetched. The store is asserted ONLY
+  // when the caller verified the store copy before composing (refutation
+  // M3: this mail must never claim residency nothing checked); otherwise
+  // the row copy is the one named. npm run work:archive reads store-first
+  // with a per-file bytea fallback, so the command is right either way.
+  const storeVerified = opts?.storeVerified === true;
+  const residency = storeVerified
+    ? `the server archive store (data/work-archives/${row.id}/)`
+    : `the submission row on the server (the archive-store copy could not be confirmed at send time)`;
+  const fetchCmd = `npm run work:archive -- ${row.id}`;
+  // Partition FIRST, on predicted payload lengths, smallest-first. Only
+  // the attach set is screened and encoded below. Accepted edge: the
+  // prediction uses the ORIGINAL size, so a package whose SCREENED copy
+  // would have fit still omits; the copy stays truthful because the file
+  // gets its own omission line either way.
+  const { attach, omit } = partitionAttachmentsBySize(
+    files.map((f) => predictArmoredLength(f.data.length, willArmorFile(f)))
+  );
+  const attachedSet = new Set(attach);
+  const omitReason = new Map(omit.map((o) => [o.index, o.reason]));
+  const items: RetentionItem[] = [];
+  for (let i = 0; i < files.length; i++) {
+    if (!attachedSet.has(i)) {
+      // Omitted files are never screened or encoded (the whole point of
+      // predicting): no strings are built for bytes that cannot ship.
+      items.push({
+        attached: false,
+        reason: omitReason.get(i) ?? "budgetSpent",
+      });
+      continue;
+    }
+    // Screen the package against the provider's blocked-type policy before
+    // armoring: the provider decodes the base64 text and refuses the whole
+    // message when a blocked type is inside (2026-08-06 evidence). A screen
+    // failure returns the original, so this can never reduce what is sent
+    // below today's behavior, and it never throws into the publish path.
+    // Text docs (the standalone SKILL.md) are never screened: they carry
+    // no entries and deliver as-is.
+    const f = files[i];
+    let screen: ScreenResult | null = null;
+    let file = f;
+    if (looksLikeArchive(f.data)) {
+      screen = await screenPackageForMail(
+        f.name,
+        f.data,
+        row.archiveSha256 ?? null
+      );
+      if (screen.kind === "screened")
+        file = { name: screenedName(f.name), data: screen.zip };
+    }
+    items.push({ attached: true, prepared: toDeliverableAttachment(file), screen });
+  }
+  const omittedCount = files.length - attachedSet.size;
+  const armored = items.flatMap((it) =>
+    it.attached && it.prepared.encoded ? [it.prepared] : []
+  );
+  const partial = items.find(
+    (it) => it.attached && it.screen?.kind === "screened"
+  );
   const partialScreen =
-    partial?.screen?.kind === "screened" ? partial.screen : null;
+    partial?.attached && partial.screen?.kind === "screened"
+      ? partial.screen
+      : null;
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -146,31 +208,53 @@ export async function sendArchiveRetentionEmail(
         // The subject and the lead line are the two fields a mailbox
         // indexes, so a partial says so THERE, not only inside the
         // attachment (refutation panel, 2026-08-06).
-        subject: partialScreen
-          ? `[aiwebsite] /work submission files (SCREENED COPY): ${row.title}`
-          : `[aiwebsite] /work submission files: ${row.title}`,
+        subject: `[aiwebsite] /work submission files${
+          partialScreen && omittedCount > 0
+            ? " (SCREENED COPY, NOT ALL FILES ATTACHED)"
+            : partialScreen
+              ? " (SCREENED COPY)"
+              : omittedCount > 0
+                ? " (NOT ALL FILES ATTACHED)"
+                : ""
+        }: ${row.title}`,
         // withTronSignature: this raw fetch bypasses sendGovernanceEmail (it needs
         // attachments, a 60s timeout, and the no-BCC carve-out above), so the
         // owner's always-signed ruling is applied here by hand.
-        // Body lines and the attachments array both derive from `prepared`,
-        // so what the mail says is attached can never desync from what is.
+        // Body lines and the attachments array both derive from `items`
+        // (one partition), so what the mail says is attached can never
+        // desync from what is.
         text: withTronSignature([
           partialScreen
             ? `SCREENED retention copy: some uploaded files are NOT attached.`
             : `Retention copy of the original files behind a published /work card.`,
+          ...(omittedCount > 0
+            ? [
+                `${omittedCount} of ${files.length} files are NOT attached (each says why below). They are retained in ${residency}; ${fetchCmd} retrieves them.`,
+              ]
+            : []),
           ``,
-          `Title: ${row.title}`,
+          `Title: ${oneLine(row.title)}`,
           `Kind: ${kindLabel(row.kind)}`,
           ownerLines(row),
           // The word "original" never describes a screened copy: it is
           // built from the upload with entries removed, and a mailbox read
           // six months from now is the one that has to get this right.
-          ...prepared.map((p, i) => {
-            const wasScreened = screened[i]?.screen?.kind === "screened";
+          // Every file gets a line, attached or not, with the omission
+          // REASON stated truthfully: "exceeds what mail providers accept"
+          // only for a file too big alone; a file squeezed out by the
+          // budget says that instead.
+          ...items.map((it, i) => {
+            const rawName = mailSafeName(files[i]?.name ?? "upload");
+            const rawBytes = files[i]?.data.length ?? 0;
+            if (!it.attached)
+              return it.reason === "tooBigAlone"
+                ? `Not attached: ${rawName} (${rawBytes} bytes). It exceeds what mail providers accept even on its own. It is retained in ${residency}; ${fetchCmd} retrieves it.`
+                : `Not attached: ${rawName} (${rawBytes} bytes). It would fit on its own, but the files that fit already use the space this email can carry. It is retained in ${residency}; ${fetchCmd} retrieves it.`;
+            const p = it.prepared;
             if (!p.encoded)
               return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, exactly as uploaded)`;
-            if (wasScreened)
-              return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, base64 text encoding a SCREENED COPY of the upload ${mailSafeName(files[i]?.name ?? p.originalName)}, ${files[i]?.data.length ?? 0} bytes)`;
+            if (it.screen?.kind === "screened")
+              return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, base64 text encoding a SCREENED COPY of the upload ${rawName}, ${rawBytes} bytes)`;
             return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, base64 text encoding the original upload ${p.originalName}, ${p.originalBytes} bytes)`;
           }),
           ...(armored.length > 0
@@ -196,6 +280,9 @@ export async function sendArchiveRetentionEmail(
                     `  ${r.path} (${r.declaredBytes} bytes declared, ${r.reason})`
                 ),
                 ``,
+                // A screened copy only exists for a file the partition
+                // attached (omitted files are never screened), so
+                // "attached" is true by construction here.
                 `SHA-256 of the attached screened copy: ${partialScreen.sha256}`,
                 `SHA-256 of the uploaded package, which is NOT attached: ${row.archiveSha256 ?? "n/a"}`,
               ]
@@ -211,28 +298,48 @@ export async function sendArchiveRetentionEmail(
               ]
             : []),
           ...(partialScreen
-            ? [
-                `The complete upload, including every entry listed above, is stored on submission row ${row.id}. Those bytes remain only on the server: retrieving them is an operator action there (npm run work:archive -- ${row.id}), and there is no second copy of them today.`,
-              ]
-            : [
-                `A copy of these files also remains permanently on the submission row: since 2026-08-04 they are never deleted after this email, because a bounced retention email once destroyed the only copy.`,
-              ]),
+            ? storeVerified
+              ? [
+                  `The complete upload, including every entry listed above, is retained on the server in the /work archive store (data/work-archives/${row.id}/). Retrieving it is an operator action there: ${fetchCmd}. The store is the durable copy; only an admin cleaning the store removes it.`,
+                ]
+              : [
+                  `The complete upload, including every entry listed above, remains on the submission row on the server; the archive-store copy could not be confirmed at send time, so nothing was cleared. Retrieving it is an operator action there: ${fetchCmd}.`,
+                ]
+            : storeVerified
+              ? [
+                  `A copy of these files is retained on the server in the /work archive store (data/work-archives/${row.id}/), where it stays until an admin cleans it; ${fetchCmd} retrieves it there. The submission row's own transient copy is cleared only after the store copy re-verifies inside the clearing transaction; if that verification fails the row keeps the bytes (the 2026-08-04 rule: never delete the only copy).`,
+                ]
+              : [
+                  `These files remain on the submission row on the server: the archive-store copy could not be confirmed at send time, so nothing is cleared and the row keeps the bytes (the 2026-08-04 rule: never delete the only copy). ${fetchCmd} retrieves them.`,
+                ]),
         ].join("\n")),
-        attachments: prepared.map((p) => ({
-          filename: p.attachedName,
-          content: p.contentBase64,
-        })),
+        // Only the files the partition attached; the body's Attached/Not
+        // attached lines derive from the same items, so what the mail
+        // says and what it carries can never desync.
+        attachments: items.flatMap((it) =>
+          it.attached
+            ? [
+                {
+                  filename: it.prepared.attachedName,
+                  content: it.prepared.contentBase64,
+                },
+              ]
+            : []
+        ),
       }),
       signal: AbortSignal.timeout(60_000),
     });
+    // A send failure deletes nothing by itself; whether the row's bytea
+    // clears is decided separately by the in-transaction store verification
+    // (deliverArchiveRetention logs that outcome for this row id).
     if (!res.ok)
       console.log(
-        `[work] retention email failed ${res.status}: ${(await res.text()).slice(0, 150)} (bytes kept on row ${row.id})`
+        `[work] retention email failed ${res.status}: ${(await res.text()).slice(0, 150)} (row ${row.id}: retained copies unaffected; clearing decided by store verification)`
       );
     return res.ok;
   } catch (err) {
     console.log(
-      `[work] retention email threw: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"} (bytes kept on row ${row.id})`
+      `[work] retention email threw: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"} (row ${row.id}: retained copies unaffected; clearing decided by store verification)`
     );
     return false;
   }
@@ -240,58 +347,126 @@ export async function sendArchiveRetentionEmail(
 
 /**
  * Fetch the retained upload and email it to the owner. Called from every
- * publish path.
+ * publish path (panel auto-publish, panel auto-approve swap, admin approve,
+ * the approve route's alreadySwapped re-attempt).
  *
- * THE STORED BYTES ARE NEVER CLEARED HERE. Until 2026-08-04 this cleared them
- * whenever `sendArchiveRetentionEmail` returned true — but that return value is
- * Resend's 202 ACCEPT, not a delivery. The old comment claimed "only on a
- * confirmed send"; there was no confirmation anywhere in the path.
+ * File source is store-first: the row's bytea when it still carries the
+ * bytes, else the on-disk archive store (a re-publish path such as
+ * approveHeld after an earlier verified clearing must still send real
+ * files). A row with bytes in neither place is a pre-retention row.
  *
- * That cost real data. On 2026-08-03 two submissions ("Kickoff Agenda",
- * "Project Plan") were accepted by Resend, bounced minutes later with
- * Transient/ContentRejected — the recipient's provider refusing the .skill
- * attachments — and their archive_data/md_data had already been NULLed. The
- * email WAS the retention copy. With no backups configured, those uploads are
- * permanently gone.
- *
- * Keeping the bytes is close to free and was measured, not assumed: the 10
- * published rows hold 116,536 bytes TOTAL (max 26,756) against an 11 MB
- * per-row ceiling nothing has approached. Published rows are already exempt
- * from sweepExpiredWork, so this is stable rather than a leak into a sweeper.
- *
- * Rejected alternatives: clearing on a real delivery confirmation needs an
- * email.delivered webhook the module does not handle, a new column for the
- * Resend id (the POST response is discarded), and id→row correlation — and
- * degenerates to this behaviour for every row whose event is lost. Clearing on
- * a timer is the same silent loss, later.
+ * BYTEA CLEARING IS DECIDED HERE AND ONLY HERE, and it is ATOMIC. The
+ * 2026-08-04 ruling ("never delete after this email; a bounced retention
+ * email once destroyed the only copy") is superseded ONLY where a verified
+ * second copy exists: after the send attempt, REGARDLESS of the email
+ * outcome, verifyAndClearRowBytes (archive-store.ts) locks the
+ * submission's ledger rows FOR UPDATE, re-checks deleted_at IS NULL and
+ * re-stats every file at its recorded size INSIDE that transaction, and
+ * clears the bytea in the same transaction. deleteStoredArchive's stamp
+ * UPDATE serializes behind those locks, so an admin "Delete selected"
+ * landing between a verification and the clear can no longer destroy both
+ * copies (refutation F1). The pre-compose verifyStoredCopies below feeds
+ * ONLY the email's residency copy; the clear decision rests on the in-txn
+ * re-verify alone. The email was never the retention copy and its 202 is
+ * still not delivery; the locked disk verification is the evidence the
+ * ruling demanded. If it fails for ANY file, the row keeps its bytes and
+ * the log says why. With the 100 MB cap, keeping every blob on the row is
+ * no longer close to free, which is why clearing returned.
  */
 export async function deliverArchiveRetention(
   row: SubmissionRow
 ): Promise<void> {
-  const files = await archiveDataById(row.id);
-  if (files.length === 0) return; // pre-retention row
-  if (await sendArchiveRetentionEmail(row, files)) return;
-  // A failed retention send used to be a bare console.log — invisible to the
-  // operator and to the §5.15 ledger, so the ONLY signal that an archive copy
-  // never went out was a bounce webhook nobody correlated. Route it through the
-  // module send seam: a `WARN ` subject to oversight.alertEmail auto-mirrors
-  // into reported_issues, so it shows up in the mandated build-start triage.
-  // withTronSignature: the module's sendEmail never mutates content (its
-  // documented contract) and sends from oversight.mailFrom, which is Tron's
-  // mailbox for this site, so the caller appends Tron's block.
-  await sendEmail(siteConfig, {
-    to: siteConfig.oversight.alertEmail,
-    subject: `[aiwebsite] WARN /work retention email failed to send`,
-    text: withTronSignature(
-      `The retention copy of the uploaded files behind a published /work card ` +
-        `was NOT accepted by the mail vendor.\n\n` +
-        `Title:  ${row.title}\n` +
-        `Row id: ${row.id}\n` +
-        `Files:  ${files.map((f) => `${f.name} (${f.data.length} bytes)`).join(", ")}\n\n` +
-        `The bytes are STILL on the row — nothing was deleted. Re-send or ` +
-        `download them before any future retention change.`
-    ),
+  const rowFiles = await archiveDataById(row.id);
+  let files = rowFiles;
+  let fromStore = false;
+  if (files.length === 0) {
+    const stored = await storedFilesForSubmission(row.id);
+    if (stored) {
+      // Display names: prefer the row's stamped original names over the
+      // store's sanitized ones; the store's 00/01 slots are written as
+      // [package, SKILL.md] by storeArchiveFiles, matching this order.
+      const preferred = [row.archiveName, row.mdName];
+      files = stored.map((f, i) => ({ ...f, name: preferred[i] ?? f.name }));
+      fromStore = true;
+    }
+  }
+  if (files.length === 0) return; // pre-retention row: no copy anywhere
+  // Pre-compose verification feeds ONLY the email's residency lines (M3):
+  // files just read whole from the store count as verified by the read.
+  let preVerified = fromStore;
+  if (!fromStore) {
+    try {
+      preVerified = (
+        await verifyStoredCopies(
+          row.id,
+          rowFiles.map((f) => ({ name: f.name, bytes: f.data.length }))
+        )
+      ).ok;
+    } catch {
+      preVerified = false;
+    }
+  }
+  const accepted = await sendArchiveRetentionEmail(row, files, {
+    storeVerified: preVerified,
   });
+  // The ONE clearing decision: atomic verify-and-clear (see header).
+  let clear: { cleared: boolean; reason?: string } | null = null;
+  if (rowFiles.length > 0) {
+    try {
+      clear = await verifyAndClearRowBytes(
+        row.id,
+        rowFiles.map((f) => ({ name: f.name, bytes: f.data.length }))
+      );
+    } catch (err) {
+      clear = {
+        cleared: false,
+        reason: `verify-and-clear threw: ${err instanceof Error ? err.message.slice(0, 120) : "unknown"}`,
+      };
+    }
+    console.log(
+      clear.cleared
+        ? `[work] archive bytea cleared on ${row.id}: store copy re-verified inside the clearing transaction`
+        : `[work] archive bytea KEPT on ${row.id}: ${clear.reason ?? "unverified"}`
+    );
+  }
+  if (!accepted) {
+    // A failed retention send used to be a bare console.log — invisible to the
+    // operator and to the §5.15 ledger, so the ONLY signal that an archive copy
+    // never went out was a bounce webhook nobody correlated. Route it through the
+    // module send seam: a `WARN ` subject to oversight.alertEmail auto-mirrors
+    // into reported_issues, so it shows up in the mandated build-start triage.
+    // withTronSignature: the module's sendEmail never mutates content (its
+    // documented contract) and sends from oversight.mailFrom, which is Tron's
+    // mailbox for this site, so the caller appends Tron's block.
+    // The location line states the ACTUAL outcome: on the store-first path
+    // the row never held these bytes, so "still on the row" would be false
+    // there (refutation M2).
+    const location = fromStore
+      ? `The files were read from the server archive store ` +
+        `(data/work-archives/${row.id}/) and remain there; the submission ` +
+        `row holds no copy of them. Retrieve them with ` +
+        `npm run work:archive -- ${row.id}.`
+      : clear?.cleared
+        ? `The files are retained in the server archive store ` +
+          `(data/work-archives/${row.id}/), which re-verified on disk inside ` +
+          `the clearing transaction; the row's transient copy is cleared on ` +
+          `that verification. Retrieve them with npm run work:archive -- ${row.id}.`
+        : `The bytes are STILL on the row; nothing was deleted` +
+          `${clear?.reason ? ` (store verification failed: ${clear.reason})` : ""}. ` +
+          `Re-send or download them (npm run work:archive -- ${row.id}).`;
+    await sendEmail(siteConfig, {
+      to: siteConfig.oversight.alertEmail,
+      subject: `[aiwebsite] WARN /work retention email failed to send`,
+      text: withTronSignature(
+        `The retention copy of the uploaded files behind a published /work card ` +
+          `was NOT accepted by the mail vendor.\n\n` +
+          `Title:  ${oneLine(row.title)}\n` +
+          `Row id: ${row.id}\n` +
+          `Files:  ${files.map((f) => `${mailSafeName(f.name)} (${f.data.length} bytes)`).join(", ")}\n\n` +
+          location
+      ),
+    });
+  }
 }
 
 export async function notifyPublished(
@@ -405,7 +580,7 @@ export async function notifyHeld(
         ``,
         `The editorial panel held a CLIENT COMPANY work submission for a human decision. It would publish to that company's private Your Work page.`,
         ``,
-        `Title: ${row.title}`,
+        `Title: ${oneLine(row.title)}`,
         ownerLines(row),
         ``,
         `Reason:`,
@@ -443,7 +618,7 @@ export async function notifyHeld(
         ? `The editorial panel held a proposed update to a published card for a human decision. The live card stays up while it waits, and approving publishes the draft in place of the live card.`
         : `The editorial panel held a team work submission for a human decision.`,
       ``,
-      `Title: ${row.title}`,
+      `Title: ${oneLine(row.title)}`,
       ownerLines(row),
       ``,
       `Reason:`,

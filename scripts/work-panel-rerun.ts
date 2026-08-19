@@ -19,8 +19,10 @@
 // Side effects the operator must expect (all verified in code):
 // - A re-run publish re-fires BOTH notifyPublished emails (owner and
 //   submitter) with the corrected link; a held outcome fires notifyHeld.
-// - deliverArchiveRetention is a no-op on rows whose archive bytes were
-//   already emailed and cleared.
+// - deliverArchiveRetention re-sends from the archive store when the row's
+//   bytea was already cleared (2026-08-19 store-first flow); it is a no-op
+//   only on rows with bytes in neither place (pre-2026-07-29 rows and the
+//   2026-08-03 loss pair).
 // - finishPublished stamps a fresh published_at, so re-run cards move to
 //   the END of the From the Team section; re-run multiple rows in their
 //   original published_at order to preserve relative order.

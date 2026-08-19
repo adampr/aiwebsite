@@ -192,16 +192,20 @@ export function WorkAdminActions({
           disabled={busy}
           className="rounded border px-2 py-1"
           onClick={() =>
+            // Every branch carries the archive-store note (retain-by-design,
+            // owner ruling 2026-08-19): a row delete never removes the
+            // stored upload files, only the storage section does.
             void act(
               `/api/work/submissions/${id}`,
               "DELETE",
-              parentSuperseded
+              (parentSuperseded
                 ? "Roll back? The previous version of the card is restored and this update is removed."
                 : status === "published"
                   ? "Delete this PUBLISHED card? It leaves /work within 5 minutes."
                   : status === "pending_approval" || (isUpdate && status !== "published")
                     ? "Delete this proposed update without emailing the submitter? The live card stays up. Use Reject update if they should be told."
-                    : "Delete this submission entirely?"
+                    : "Delete this submission entirely?") +
+                " Any stored upload files for it remain in the archive store (Uploaded files section) until cleaned there."
             )
           }
         >

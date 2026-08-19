@@ -18,4 +18,10 @@ export async function register(): Promise<void> {
   // why when it declines to start.
   const { startWorkQueueDrain } = await import("@/lib/work/queue-drain");
   startWorkQueueDrain();
+  // §5.16 weekly storage report: mails the admin the upload archive-store
+  // usage every Monday 14:00 UTC (durable governance_meta stamp,
+  // claim-before-send). Gates itself like the drain and logs why when it
+  // declines to start.
+  const { startWorkStorageReport } = await import("@/lib/work/storage-report");
+  startWorkStorageReport();
 }

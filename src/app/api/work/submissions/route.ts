@@ -2,7 +2,8 @@
 // §5.18). ONE endpoint, two audiences: @xl.net staff (public /work lane) and
 // trusted sessions of registered roadmap companies (their private Your Work
 // lane); requireWorkUser resolves the scope. Upload bytes are inspected in
-// memory and discarded; only extracted text persists.
+// memory; accepted originals persist on the row (transiently) and in the
+// on-disk archive store (durably).
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,7 @@ import {
   verifiedWebAdmin,
   workError,
 } from "@/lib/work/http";
+import { storeArchiveFiles } from "@/lib/work/archive-store";
 import { sameEmail } from "@/lib/work/transfer";
 import { splitMachineEcho } from "@/lib/work/names";
 import { kickPanel } from "@/lib/work/panel";
@@ -175,6 +177,23 @@ export async function POST(req: Request): Promise<Response> {
       503
     );
 
+  // Content-Length precheck BEFORE any body buffering: req.formData()
+  // holds the whole multipart body in this single fork's memory, so the
+  // size gate must run before the bytes do. nginx (110m) and the tunnel
+  // already cap the wire, but this in-process check is the last line when
+  // a request reaches Next another way. Slack covers multipart framing
+  // over the file cap; an absent/garbled header falls through to the
+  // post-read byte checks below, which remain authoritative.
+  const contentLength = Number(req.headers.get("content-length") ?? "");
+  if (
+    Number.isFinite(contentLength) &&
+    contentLength > WORK_CAPS.uploadMaxBytes + 5_000_000
+  )
+    return workError(
+      "invalid_request",
+      `That file is too large (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB).`,
+      400
+    );
   let form: FormData;
   try {
     form = await req.formData();
@@ -426,6 +445,14 @@ export async function POST(req: Request): Promise<Response> {
       );
     throw err;
   }
+
+  // Durable second copy at accept time (archive-store.ts): the same file
+  // set the row's bytea carries, so publish-time verification can clear the
+  // blob. A store failure logs and never fails the submission.
+  await storeArchiveFiles(row.id, title, [
+    { name: name.slice(0, 200), data: bytes },
+    ...(mdMeta ? [{ name: mdMeta.name, data: mdMeta.data }] : []),
+  ]);
 
   // The row exists; a kick failure must degrade to "queued", never 500 the
   // submission out from under the user (2026-07-30 incident: a claim-query

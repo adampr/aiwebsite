@@ -1,9 +1,10 @@
 // Upload inspection for team work submissions (§5.16). Server-side only
 // (jszip). Everything runs in memory with hard caps (the governance
 // style-sample precedent): archives are parsed and allowlisted text is
-// extracted. Upload bytes are never written to disk; the accepted original
-// rides the row's archive_data column only until the owner retention email
-// sends on publish (notify.ts), then is cleared.
+// extracted. The accepted original is persisted twice at intake: on the
+// row (archive_data, cleared after publish only once the second copy is
+// verified) and in the on-disk archive store (archive-store.ts, the
+// durable copy an admin cleans).
 //
 // Nested archives (2026-07-30 amendment of the never-open ruling, owner
 // directive: a wrapper .zip holding the .skill and its .md must work): for
@@ -103,8 +104,11 @@ type JsZipStream = {
 };
 
 /** Inflate one zip entry with a hard byte cap (decompression-bomb guard);
- * streams so a lying central directory cannot force an unbounded inflate. */
-function inflateCapped(
+ * streams so a lying central directory cannot force an unbounded inflate.
+ * Exported for mail-screen.ts, whose whole-entry e.async("nodebuffer") had
+ * no real-byte cap (its budget counted DECLARED sizes, which a bomb lies
+ * about); one streaming implementation, two consumers. */
+export function inflateCapped(
   entry: JSZip.JSZipObject,
   maxBytes: number
 ): Promise<{ kind: "ok"; buf: Buffer } | { kind: "too_large" } | { kind: "error" }> {
@@ -250,6 +254,8 @@ interface WalkState {
   texts: TextFile[];
   innerArchives: { path: string; entry: JSZip.JSZipObject; size: number }[];
   entryCount: number;
+  /** Inflated text bytes so far, across levels (corpusInflateTotalMaxBytes). */
+  inflatedBytes: number;
 }
 
 /** One archive level: manifest, secret scan, text extraction. `prefix` is
@@ -297,9 +303,17 @@ async function walkLevel(
       state.innerArchives.push({ path, entry, size });
   }
   // Inflate candidate text files (capped) and run the content secret scan.
+  // The TOTAL budget (corpusInflateTotalMaxBytes) bounds the walk at 20k
+  // entries: candidates go smallest-first, so the reviewed doc and the
+  // corpus (both made of small files) resolve inside the budget, and text
+  // past it is skipped exactly like an oversized entry is today (no corpus,
+  // no content scan; the filename scan above still covered every entry).
   for (const f of candidates.sort((a, b) => a.size - b.size)) {
+    if (state.inflatedBytes + f.size > WORK_CAPS.corpusInflateTotalMaxBytes)
+      break; // ascending sizes: everything after is at least as large
     const out = await inflateCapped(f.entry, WORK_CAPS.perEntryInflateMaxBytes);
     if (out.kind !== "ok") continue; // oversized/encrypted/corrupt: skipped
+    state.inflatedBytes += out.buf.length;
     const text = decodeUtf8Text(out.buf);
     if (text === null) continue;
     if (textLooksSecret(text)) state.secretPaths.push(f.path);
@@ -356,6 +370,7 @@ export async function inspectArchive(
     texts: [],
     innerArchives: [],
     entryCount: 0,
+    inflatedBytes: 0,
   };
   const walkErr = await walkLevel(zip, "", kind === "skill", state);
   if (walkErr) return walkErr;

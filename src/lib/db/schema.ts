@@ -9,6 +9,7 @@
 // source; see packages/aicompany/MIGRATIONS.md "aiwebsite adoption baseline").
 
 import {
+  bigint,
   customType,
   pgTable,
   serial,
@@ -263,8 +264,10 @@ export const governanceMeta = pgTable("governance_meta", {
 // submitted documents and publishes it when the deterministic lint passes.
 // One row carries everything (governance_projects pattern) so a hard DELETE
 // removes the whole submission: extracted document text, the file manifest,
-// the produced card, and (transiently) the original upload in archive_data,
-// which is emailed to the owner on publish and then cleared.
+// the produced card, and (transiently) the original upload in archive_data.
+// Since 2026-08-19 the durable copy of the upload lives in the on-disk
+// archive store (work_archive_files below + data/work-archives/); the row
+// blob is cleared after publish ONLY once that second copy re-verifies.
 // user_id is SET NULL on account deletion (published cards are company
 // content, not private user data; attribution is denormalized below).
 export const workSubmissions = pgTable(
@@ -307,10 +310,12 @@ export const workSubmissions = pgTable(
     archiveName: text("archive_name"),
     archiveSha256: text("archive_sha256"),
     archiveBytes: integer("archive_bytes"),
-    // The original upload (.zip/.skill/.md), retained ONLY until the owner
-    // retention email sends on publish (then cleared), so the owner keeps
-    // every artifact that reached the public page. Non-published rows drop
-    // it with the row (delete/sweep). ≤10 MB per row, transient.
+    // The original upload (.zip/.skill/.md). Intake writes it here AND to
+    // the on-disk archive store; after the publish-time retention email
+    // attempt it is cleared ONLY once every file re-verifies in the store
+    // (notify.ts deliverArchiveRetention, the one clearing site). If
+    // verification fails the bytes stay here (2026-08-04 ruling: never
+    // delete the only copy). ≤100 MB per row while it lasts.
     archiveData: bytea("archive_data"),
     // Second original for CoWork Skill submissions (the standalone SKILL.md;
     // owner directive 2026-07-29: BOTH files are required and retained).
@@ -403,6 +408,45 @@ export const workSubmissions = pgTable(
     // (work_sub_parent_active_uq) and the active-title index are
     // migration-only (0033/0025, re-scoped per-company in 0035): drizzle
     // cannot model partial indexes.
+  ]
+);
+
+// Ledger for the §5.16 on-disk archive store (data/work-archives/, or
+// WORK_ARCHIVE_DIR): one row per stored upload file, written at intake by
+// archive-store.ts right after the submission row. The DURABLE copy of
+// every upload since 2026-08-19 (the 100 MB cap made the retention email
+// unable to carry big packages): the row's bytea is cleared after publish
+// only once the file here re-verifies. title/file_name are snapshots so
+// the ledger stays meaningful after the submission row is deleted
+// (submission_id goes NULL, the file stays until an admin cleans it).
+// Admin cleanup (§5.16 storage console) hard-deletes the FILE and stamps
+// deleted_at/deleted_by here; the row itself is the audit trail and is
+// never deleted.
+export const workArchiveFiles = pgTable(
+  "work_archive_files",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    submissionId: uuid("submission_id").references(() => workSubmissions.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull(), // submission title at write time
+    fileName: text("file_name").notNull(), // original name, sanitized
+    relPath: text("rel_path").notNull(), // under the store root; unique
+    // bigint (mode number): file sizes to 100 MB fit a JS number with nine
+    // orders of magnitude to spare; integer would cap at ~2.1 GB and this
+    // column should never be the thing that caps an upload.
+    bytes: bigint("bytes", { mode: "number" }).notNull(),
+    sha256: text("sha256").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    // Stamped by admin cleanup when the FILE is deleted; the row stays.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: text("deleted_by"),
+  },
+  (t) => [
+    uniqueIndex("work_archive_rel_path_uq").on(t.relPath),
+    index("work_archive_sub_idx").on(t.submissionId),
   ]
 );
 

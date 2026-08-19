@@ -94,6 +94,94 @@ function wrap76(b64: string): string {
   return lines.join("\n") + "\n";
 }
 
+/** Ceiling on the SUM of prepared attachment payloads (contentBase64
+ * lengths) one retention email may carry: headroom under Resend's 40 MB
+ * whole-message cap for the JSON envelope and body text. With the 100 MB
+ * upload cap (2026-08-19) a package can never be forced to fit, so the
+ * email attaches what fits and names where the rest lives (the archive
+ * store) instead of bouncing or silently attaching nothing. */
+export const RETENTION_ATTACH_TOTAL_MAX = 35_000_000;
+
+/** Why a file was left out of the retention email. tooBigAlone: its
+ * prepared payload exceeds the threshold by itself, so no ordering could
+ * ever attach it ("exceeds what mail providers accept" is truthful only
+ * here). budgetSpent: it would fit alone, but the files that attached
+ * already use the space this email can carry. */
+export type AttachmentOmission = "tooBigAlone" | "budgetSpent";
+
+/** Attach-if-fits partition for the retention email, SMALLEST-FIRST: the
+ * small files (a 500 KB SKILL.md beside a 90 MB package) always win a seat
+ * before the big ones spend the budget. Files attach whole or not at all
+ * (never truncated). Both result lists come back in input-index order,
+ * each omission carrying its reason. Pure so scripts/work-tests.ts can pin
+ * it without composing mail. */
+export function partitionAttachmentsBySize(
+  preparedSizes: number[],
+  threshold: number = RETENTION_ATTACH_TOTAL_MAX
+): { attach: number[]; omit: { index: number; reason: AttachmentOmission }[] } {
+  const order = preparedSizes
+    .map((size, index) => ({ size, index }))
+    .sort((a, b) => a.size - b.size || a.index - b.index);
+  const attach: number[] = [];
+  const omit: { index: number; reason: AttachmentOmission }[] = [];
+  let total = 0;
+  for (const { size, index } of order) {
+    if (size > threshold) omit.push({ index, reason: "tooBigAlone" });
+    else if (size >= 0 && total + size <= threshold) {
+      attach.push(index);
+      total += size;
+    } else omit.push({ index, reason: "budgetSpent" });
+  }
+  attach.sort((a, b) => a - b);
+  omit.sort((a, b) => a.index - b.index);
+  return { attach, omit };
+}
+
+/**
+ * The EXACT contentBase64.length toDeliverableAttachment would produce for
+ * a file of rawBytes, WITHOUT building the strings. This is what the
+ * partition runs on, so a file that cannot attach is never screened or
+ * encoded at all (a 100 MB package would otherwise cost ~750 MB of
+ * transient strings plus an event-loop stall on the publish path).
+ *
+ * Derivation, mirrored line for line against the encoder:
+ * - raw text attach: content = base64(data), length 4*ceil(n/3).
+ * - armored: b64 = 4*ceil(n/3) chars; wrap76 joins ceil(b64/76) lines with
+ *   "\n" and appends one trailing "\n", so the wrapper payload is
+ *   b64 + max(1, ceil(b64/76)) bytes (the empty input still emits the lone
+ *   trailing newline); content = base64(payload), length 4*ceil(payload/3).
+ * Pinned equal to the real encoder's output length in scripts/work-tests.ts
+ * across every rounding boundary; measured armored ratio ~1.8012.
+ */
+export function predictArmoredLength(
+  rawBytes: number,
+  willArmor: boolean
+): number {
+  const n = Math.max(0, Math.floor(rawBytes));
+  const b64 = 4 * Math.ceil(n / 3);
+  if (!willArmor) return b64;
+  const payload = b64 + Math.max(1, Math.ceil(b64 / 76));
+  return 4 * Math.ceil(payload / 3);
+}
+
+/** Would toDeliverableAttachment armor this file? Cheap (name test plus
+ * the 8 KB looksBinary sniff); feeds predictArmoredLength. */
+export function willArmorFile(f: { name: string; data: Buffer }): boolean {
+  return !(MAIL_SAFE_TEXT_EXT.test(f.name) && !looksBinary(f.data));
+}
+
+/** One line of plaintext: control characters collapse to spaces, runs of
+ * whitespace collapse, ends trimmed. For submitter-controlled strings
+ * (row.title) interpolated into labeled plaintext email lines, where an
+ * embedded newline would forge body lines. Shared with the §5.16 storage
+ * report (Seat 2). */
+export function oneLine(s: string): string {
+  return s
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** Total function: never throws (empty, corrupt and encrypted archives all
  * take the same encode path). */
 export function toDeliverableAttachment(f: {

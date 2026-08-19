@@ -44,6 +44,8 @@ import {
   HOUSE_RULES,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
+  formatByteSize,
+  nextStorageReportDueMs,
 } from "../src/lib/work/config";
 import staticTitles from "../src/lib/work/static-titles.json";
 
@@ -58,8 +60,17 @@ import {
 import {
   MAIL_SAFE_TEXT_EXT,
   mailSafePath,
+  oneLine,
+  partitionAttachmentsBySize,
+  predictArmoredLength,
+  RETENTION_ATTACH_TOTAL_MAX,
   toDeliverableAttachment,
+  willArmorFile,
 } from "../src/lib/work/retention-encoding";
+import {
+  sanitizeStoredName,
+  storedRelPath,
+} from "../src/lib/work/archive-naming";
 import {
   blockedByBytes,
   blockedByName,
@@ -1930,15 +1941,14 @@ async function main() {
     );
     // Mail-safe armor (2026-08-06 ContentRejected round): Gmail bounces
     // archives with blocked inner types, so raw upload bytes must never be
-    // attached directly again.
+    // attached directly again. Since the 100 MB round the encoder runs
+    // per-item inside the attach loop (omitted files skip it entirely).
     assert.ok(
-      /screened\.map\(\(s\) => toDeliverableAttachment\(s\.file\)\)/.test(
-        retSlice
-      ),
+      /prepared: toDeliverableAttachment\(file\)/.test(retSlice),
       "retention attachments go through the mail-safe encoder"
     );
     assert.ok(
-      retSlice.includes("await screenFiles("),
+      retSlice.includes("await screenPackageForMail("),
       "the package is screened against the provider's blocked-type policy first"
     );
     assert.ok(
@@ -3145,6 +3155,470 @@ async function main() {
       (island.match(/setInterval\(/g) ?? []).length,
       1,
       "exactly one poll timer survives"
+    );
+  }
+
+  // ---- archive store (§5.16 100 MB round, 2026-08-19): naming, the
+  // attach-if-fits partition, transport caps, and the one-clearing-site
+  // rule. The store's DB/fs halves need a real DB; everything pure is
+  // pinned here, and the load-bearing seams are source-scraped. ----
+  {
+    // Stored-name sanitizer: submitter-controlled names must reduce to one
+    // safe path segment.
+    assert.equal(sanitizeStoredName("../../etc/passwd"), "etc_passwd");
+    assert.equal(sanitizeStoredName("..\\..\\evil.zip"), "evil.zip");
+    assert.equal(sanitizeStoredName("a/b/c.zip"), "a_b_c.zip");
+    assert.equal(sanitizeStoredName(".hidden.zip"), "hidden.zip");
+    assert.equal(sanitizeStoredName("-rf.zip"), "rf.zip");
+    assert.equal(sanitizeStoredName("."), "upload");
+    assert.equal(sanitizeStoredName(".."), "upload");
+    assert.equal(sanitizeStoredName(""), "upload");
+    assert.equal(sanitizeStoredName("a\u0000b\u001f.zip"), "a_b_.zip");
+    assert.equal(sanitizeStoredName("résumé final.zip"), "r_sum_final.zip");
+    assert.equal(sanitizeStoredName('pkg"; rm -rf $HOME `x`.zip'), "pkg_rm_-rf_HOME_x_.zip");
+    assert.equal(sanitizeStoredName("x".repeat(400)).length, 150);
+    // A ".." substring may survive INSIDE a name ("a_.._b.zip"): with every
+    // separator collapsed it is inert text, never a path component. The
+    // property that matters is that no separator survives at all.
+    assert.equal(sanitizeStoredName("a/../b.zip"), "a_.._b.zip");
+    for (const hostile of ["a/../b.zip", "..\\..", "a\u0000/\u0001b", "/etc/passwd"]) {
+      const out = sanitizeStoredName(hostile);
+      assert.ok(!out.includes("/") && !out.includes("\\"), `no separator survives in ${JSON.stringify(out)}`);
+    }
+    // Rel path: uuid dir + NN index prefix (the collision-proofing) + name.
+    const uid = "0f9ad776-1c34-4c9e-9e55-7b4a2b1c9d10";
+    assert.equal(storedRelPath(uid, 0, "pkg.zip"), `${uid}/00-pkg.zip`);
+    assert.equal(storedRelPath(uid, 1, "SKILL.md"), `${uid}/01-SKILL.md`);
+    assert.equal(storedRelPath(uid, -3, "a.zip"), `${uid}/00-a.zip`);
+    // DELIBERATE COLLISION: "../pkg.zip" sanitizes to the same stored path
+    // as "pkg.zip" in the same slot. That is the intended outcome of
+    // sanitization (traversal prefixes carry no identity worth keeping);
+    // distinct files never collide because the NN slot, not the name, is
+    // the uniqueness axis within a submission.
+    assert.equal(
+      storedRelPath(uid, 0, "../pkg.zip"),
+      storedRelPath(uid, 0, "pkg.zip"),
+      "a traversal-prefixed name deliberately collides with the plain name"
+    );
+
+    // Attach-if-fits partition: SMALLEST-FIRST (a small SKILL.md is never
+    // crowded out by its package), whole files only, results in input
+    // order, every omission carrying its truthful reason.
+    assert.deepEqual(partitionAttachmentsBySize([10, 20, 30], 100), {
+      attach: [0, 1, 2],
+      omit: [],
+    });
+    // The package (90) fits alone, but smallest-first seats 5 and 20
+    // before it and then the budget is spent: reason budgetSpent, never
+    // "too big for mail" (which would be a lie for a 90-byte file).
+    assert.deepEqual(partitionAttachmentsBySize([90, 20, 5], 100), {
+      attach: [1, 2],
+      omit: [{ index: 0, reason: "budgetSpent" }],
+    });
+    assert.deepEqual(partitionAttachmentsBySize([200, 30], 100), {
+      attach: [1],
+      omit: [{ index: 0, reason: "tooBigAlone" }],
+    });
+    assert.deepEqual(partitionAttachmentsBySize([60, 40], 100), {
+      attach: [0, 1],
+      omit: [],
+    }); // exact fit attaches
+    assert.deepEqual(partitionAttachmentsBySize([], 100), {
+      attach: [],
+      omit: [],
+    });
+    // Both reasons in one partition: the giant can never attach, the
+    // second 60 loses to the first only on the budget.
+    assert.deepEqual(partitionAttachmentsBySize([1000, 60, 60], 100), {
+      attach: [1],
+      omit: [
+        { index: 0, reason: "tooBigAlone" },
+        { index: 2, reason: "budgetSpent" },
+      ],
+    });
+    assert.equal(RETENTION_ATTACH_TOTAL_MAX, 35_000_000);
+    assert.deepEqual(
+      partitionAttachmentsBySize([RETENTION_ATTACH_TOTAL_MAX + 1]),
+      { attach: [], omit: [{ index: 0, reason: "tooBigAlone" }] },
+      "the default threshold is the exported ceiling"
+    );
+
+    // predictArmoredLength must equal the REAL encoder's contentBase64
+    // length to the byte: the partition runs on predictions precisely so
+    // the encoder never runs for omitted files, and a drift here would
+    // desync what the mail says it carries from what Resend accepts.
+    // Sizes cross every rounding boundary: base64 triplets (0..5), the
+    // 76-column wrap (raw 56/57/58 give b64 76 around the line break; 75/
+    // 76/77 and multiples exercise the joiner), and a big buffer pins the
+    // measured ~1.8012 armored ratio.
+    for (const n of [0, 1, 2, 3, 4, 5, 56, 57, 58, 75, 76, 77, 113, 114, 152, 228, 1_000_000, 1_048_576]) {
+      const armoredReal = toDeliverableAttachment({
+        name: "a.zip",
+        data: Buffer.alloc(n, 65),
+      });
+      assert.equal(armoredReal.encoded, true, `size ${n}: .zip armors`);
+      assert.equal(
+        predictArmoredLength(n, true),
+        armoredReal.contentBase64.length,
+        `predictArmoredLength(${n}, armored) matches the encoder`
+      );
+      const rawReal = toDeliverableAttachment({
+        name: "a.md",
+        data: Buffer.alloc(n, 65),
+      });
+      assert.equal(rawReal.encoded, false, `size ${n}: text attaches raw`);
+      assert.equal(
+        predictArmoredLength(n, false),
+        rawReal.contentBase64.length,
+        `predictArmoredLength(${n}, raw) matches the encoder`
+      );
+    }
+    const bigPredict = predictArmoredLength(1_000_000, true);
+    assert.ok(
+      bigPredict / 1_000_000 > 1.8 && bigPredict / 1_000_000 < 1.81,
+      "armored ratio sits at the measured ~1.8012"
+    );
+    // willArmorFile mirrors the encoder's own gate.
+    assert.equal(
+      willArmorFile({ name: "SKILL.md", data: Buffer.from("plain text") }),
+      false
+    );
+    assert.equal(
+      willArmorFile({ name: "pkg.zip", data: Buffer.from("PK\u0003\u0004rest") }),
+      true
+    );
+    assert.equal(
+      willArmorFile({ name: "notes.md", data: Buffer.from([0x61, 0x00, 0x62]) }),
+      true,
+      "binary bytes under a text name still armor"
+    );
+
+    // oneLine: submitter-controlled titles cannot forge plaintext mail
+    // lines (Seat 2 reuses this in the storage report).
+    assert.equal(oneLine("Tool\r\nX-Injected: yes"), "Tool X-Injected: yes");
+    assert.equal(oneLine("  spaced\ttitle  "), "spaced title");
+    assert.equal(oneLine("plain"), "plain");
+
+    // Transport caps (owner directive 2026-08-19): 100 MB uploads, and the
+    // nginx drop-in must clear the route cap with multipart headroom.
+    assert.equal(WORK_CAPS.uploadMaxBytes, 100_000_000);
+    assert.equal(WORK_CAPS.skillMdMaxBytes, 1_000_000, "SKILL.md cap unchanged");
+    assert.equal(
+      WORK_CAPS.zipMaxEntries,
+      20_000,
+      "entry cap rejects packages, so it must fit a 100 MB repo"
+    );
+    assert.equal(WORK_CAPS.manifestMaxEntries, 300, "manifest cap unchanged");
+    assert.equal(WORK_CAPS.perEntryInflateMaxBytes, 2_000_000);
+    assert.ok(
+      WORK_CAPS.corpusInflateTotalMaxBytes >= WORK_CAPS.perEntryInflateMaxBytes,
+      "the total text-inflate budget admits at least one full-size doc"
+    );
+    const nginxConf = readFileSync("deploy/nginx.d/governance-upload.conf", "utf8");
+    assert.ok(
+      nginxConf.includes("client_max_body_size 110m;"),
+      "nginx body cap is 110m (headroom over the 100 MB route cap)"
+    );
+    assert.equal(
+      (nginxConf.match(/client_max_body_size/g) ?? []).length,
+      1,
+      "one directive, one owner"
+    );
+    // The extract walk enforces the total-inflate budget (zipMaxEntries x
+    // perEntry would otherwise be a 40 GB inflate).
+    const extractSrc = readFileSync("src/lib/work/extract.ts", "utf8");
+    assert.ok(
+      extractSrc.includes("WORK_CAPS.corpusInflateTotalMaxBytes"),
+      "walkLevel bounds total text inflation"
+    );
+
+    // Retention email: the partition drives BOTH the body lines and the
+    // attachments array, the omitted files are named with the store path
+    // and the operator command, and the dead "permanently on the row" copy
+    // is gone.
+    const notifySrc = readFileSync("src/lib/work/notify.ts", "utf8");
+    const retSlice = notifySrc.slice(
+      notifySrc.indexOf("function sendArchiveRetentionEmail"),
+      notifySrc.indexOf("export async function deliverArchiveRetention")
+    );
+    assert.ok(
+      retSlice.includes("partitionAttachmentsBySize(") &&
+        retSlice.includes("predictArmoredLength("),
+      "attachments go through the attach-if-fits partition on PREDICTED sizes"
+    );
+    assert.ok(
+      /attachments: items\.flatMap\(\(it\) =>\s*\n\s*it\.attached/.test(retSlice),
+      "only partition-attached items reach the attachments array"
+    );
+    // Omitted files are never screened or encoded: the omission branch
+    // continues before the screen/encode block runs (the 750 MB transient
+    // finding), and the reasons stay truthful per file.
+    assert.ok(
+      retSlice.indexOf("attachedSet.has(i)") <
+        retSlice.indexOf("screenPackageForMail("),
+      "the attach gate runs before any screening"
+    );
+    assert.ok(
+      retSlice.includes(`reason === "tooBigAlone"`) &&
+        retSlice.includes("exceeds what mail providers accept even on its own") &&
+        retSlice.includes("the files that fit already use the space this email can carry"),
+      "omission lines are reason-truthful (tooBigAlone vs budgetSpent)"
+    );
+    assert.ok(
+      retSlice.includes("Not attached: ") &&
+        retSlice.includes("data/work-archives/") &&
+        retSlice.includes("npm run work:archive -- "),
+      "an omitted file is named, with the store path and the operator command"
+    );
+    // Residency in the mail hedges to the row copy unless the caller
+    // verified the store before composing (storeVerified).
+    assert.ok(
+      retSlice.includes("opts?.storeVerified === true") &&
+        retSlice.includes("could not be confirmed at send time"),
+      "store residency is asserted only under a caller-passed verification"
+    );
+    assert.ok(
+      !notifySrc.includes("remains permanently on the submission row"),
+      "the pre-store permanence claim is gone (it is no longer true)"
+    );
+    assert.ok(
+      retSlice.includes("retained on the server in the /work archive store"),
+      "the retention copy names the store as the durable copy"
+    );
+
+    // THE one clearing path is ATOMIC (refutation F1): archive-store.ts
+    // verifyAndClearRowBytes locks the ledger rows FOR UPDATE, re-verifies
+    // deleted_at + on-disk size INSIDE the transaction, and clears the
+    // bytea in that same transaction, so deleteStoredArchive's stamp
+    // serializes against it. notify.ts deliverArchiveRetention is its only
+    // caller; db.ts clearArchiveData is an UNCALLED ops lever.
+    const delSlice = notifySrc.slice(
+      notifySrc.indexOf("export async function deliverArchiveRetention")
+    );
+    assert.ok(
+      delSlice.includes("await verifyAndClearRowBytes("),
+      "deliverArchiveRetention clears through the atomic verify-and-clear"
+    );
+    assert.ok(
+      !notifySrc.includes("clearArchiveData"),
+      "notify.ts no longer touches the unguarded clearArchiveData lever"
+    );
+    const storeSrc = readFileSync("src/lib/work/archive-store.ts", "utf8");
+    const vacSlice = storeSrc.slice(
+      storeSrc.indexOf("export async function verifyAndClearRowBytes"),
+      storeSrc.indexOf("export type ArchiveStoreUsage")
+    );
+    assert.ok(
+      vacSlice.includes("db.transaction(") &&
+        vacSlice.includes('.for("update")'),
+      "verify-and-clear runs inside one transaction with FOR UPDATE locks"
+    );
+    assert.ok(
+      vacSlice.indexOf('.for("update")') <
+        vacSlice.indexOf("archiveData: null"),
+      "the bytea clear follows the locked re-verify in the same transaction"
+    );
+    assert.ok(
+      vacSlice.includes("deletedAt === null"),
+      "the in-transaction re-verify re-checks deleted_at under the lock"
+    );
+    const { readdirSync, statSync } = await import("node:fs");
+    const offendersFor = (needle: string, allow: string[]): string[] => {
+      const hits: string[] = [];
+      const walk = (dir: string) => {
+        for (const name of readdirSync(dir)) {
+          const p = `${dir}/${name}`;
+          if (statSync(p).isDirectory()) walk(p);
+          else if (/\.(ts|tsx)$/.test(name)) {
+            if (
+              readFileSync(p, "utf8").includes(needle) &&
+              !allow.some((a) => p.endsWith(a))
+            )
+              hits.push(p);
+          }
+        }
+      };
+      walk("src");
+      return hits;
+    };
+    assert.deepEqual(
+      offendersFor("clearArchiveData(", ["src/lib/work/db.ts"]),
+      [],
+      "clearArchiveData has no call site anywhere in src (ops lever only)"
+    );
+    assert.deepEqual(
+      offendersFor("verifyAndClearRowBytes(", [
+        "src/lib/work/archive-store.ts",
+        "src/lib/work/notify.ts",
+      ]),
+      [],
+      "verifyAndClearRowBytes is called only from the retention delivery seam"
+    );
+
+    // mail-screen inflates through the streaming cap (a lying central
+    // directory must not detonate at screen time), never the whole-entry
+    // jszip buffer read.
+    const screenSrc2 = readFileSync("src/lib/work/mail-screen.ts", "utf8");
+    assert.ok(
+      screenSrc2.includes("inflateCapped(") &&
+        !screenSrc2.includes('.async("nodebuffer")'),
+      "mail-screen uses the capped streaming inflate, not e.async(nodebuffer)"
+    );
+
+    // Content-Length precheck in BOTH upload routes, before formData().
+    for (const lane of [
+      "src/app/api/work/submissions/route.ts",
+      "src/app/api/work/submissions/[id]/update/route.ts",
+    ]) {
+      const src = readFileSync(lane, "utf8");
+      const clAt = src.indexOf('req.headers.get("content-length")');
+      const formAt = src.indexOf("await req.formData()");
+      assert.ok(
+        clAt > 0 && formAt > clAt,
+        `${lane} checks Content-Length before buffering the body`
+      );
+    }
+
+    // All three intake lanes store the durable copy at the accept seam.
+    for (const lane of [
+      "src/app/api/work/submissions/route.ts",
+      "src/app/api/work/submissions/[id]/update/route.ts",
+      "src/lib/work/email-intake.ts",
+    ]) {
+      assert.ok(
+        readFileSync(lane, "utf8").includes("await storeArchiveFiles("),
+        `${lane} persists the upload into the archive store at accept time`
+      );
+    }
+    // The email lane's own size reject stays lane-truthful: never a bare
+    // promise of the shared 100 MB cap by email.
+    const intakeSrc2 = readFileSync("src/lib/work/email-intake.ts", "utf8");
+    assert.ok(
+      intakeSrc2.includes("Email also cannot carry packages anywhere near that size"),
+      "the email-lane size reject says mail carries less than the shared cap"
+    );
+  }
+
+  // ── §5.16 archive-store cleanup + weekly storage report (2026-08-19) ──
+  {
+    // Monday-14:00-UTC due math (nextStorageReportDueMs): strictly-after
+    // semantics so a boundary stamp waits a full week; pure UTC in and out,
+    // so DST is irrelevant by construction.
+    const DAY = 86_400_000;
+    const mon14 = Date.UTC(2026, 7, 17, 14); // 2026-08-17 14:00 UTC
+    assert.equal(new Date(mon14).getUTCDay(), 1, "fixture is a Monday");
+    assert.equal(
+      nextStorageReportDueMs(mon14),
+      mon14 + 7 * DAY,
+      "a stamp exactly on the boundary is due a full week later (strict)"
+    );
+    assert.equal(
+      nextStorageReportDueMs(mon14 - 1),
+      mon14,
+      "one ms before the boundary is due at it"
+    );
+    assert.equal(
+      nextStorageReportDueMs(Date.UTC(2026, 7, 16, 20)),
+      mon14,
+      "a Sunday-evening stamp is due the next day at 14:00 UTC"
+    );
+    assert.equal(
+      nextStorageReportDueMs(Date.UTC(2026, 7, 17, 15)),
+      mon14 + 7 * DAY,
+      "Monday 15:00 UTC rolls to next Monday"
+    );
+    assert.equal(
+      nextStorageReportDueMs(Date.UTC(2026, 7, 11, 9)),
+      mon14,
+      "a Tuesday-morning stamp is due the following Monday"
+    );
+    // Across the March clock changes the boundary stays Monday 14:00 UTC.
+    const springDue = nextStorageReportDueMs(Date.UTC(2027, 2, 12, 14));
+    assert.equal(new Date(springDue).getUTCDay(), 1, "due day stays Monday");
+    assert.equal(new Date(springDue).getUTCHours(), 14, "due hour stays 14 UTC");
+
+    // Byte formatting: decimal units so the 100 MB cap reads as 100 MB;
+    // up to two decimals, trailing zeros trimmed.
+    assert.equal(formatByteSize(0), "0 B");
+    assert.equal(formatByteSize(999), "999 B");
+    assert.equal(formatByteSize(1000), "1 KB");
+    assert.equal(formatByteSize(1234), "1.23 KB");
+    assert.equal(formatByteSize(WORK_CAPS.uploadMaxBytes), "100 MB");
+    assert.equal(formatByteSize(987_654_321), "987.65 MB");
+    assert.equal(formatByteSize(1_500_000_000), "1.5 GB");
+    assert.equal(formatByteSize(-5), "0 B");
+
+    // The admin storage DELETE route: verifiedWebAdmin BEFORE the rate
+    // limit (the [id] DELETE sibling's order), the destructive-verb 10/min
+    // window, and the ledger-stamping primitive.
+    const storageRouteSrc = readFileSync(
+      "src/app/api/work/admin/storage/[id]/route.ts",
+      "utf8"
+    );
+    const gateAt = storageRouteSrc.indexOf("verifiedWebAdmin(user)");
+    const limitAt = storageRouteSrc.indexOf(
+      "rateLimit(`work:storage-delete:"
+    );
+    assert.ok(
+      gateAt > 0 && limitAt > gateAt,
+      "storage DELETE checks verifiedWebAdmin before the rate limit"
+    );
+    assert.ok(
+      /rateLimit\(`work:storage-delete:\$\{user\.userId\}`, 60, 10\)/.test(
+        storageRouteSrc
+      ),
+      "storage DELETE keeps the destructive-verb 10/min window"
+    );
+    assert.ok(
+      storageRouteSrc.includes("deleteStoredArchive("),
+      "storage DELETE goes through the stamp-then-unlink primitive"
+    );
+
+    // Weekly report: the stamp write (claim) precedes the send in the tick,
+    // so a failed send waits for next Monday instead of looping hourly.
+    const reportSrc = readFileSync("src/lib/work/storage-report.ts", "utf8");
+    const claimAt = reportSrc.indexOf("await setMeta(STAMP_KEY");
+    const sendAt = reportSrc.indexOf("await sendStorageReport()");
+    assert.ok(
+      claimAt > 0 && sendAt > claimAt,
+      "storage report claims the stamp BEFORE sending"
+    );
+    assert.ok(
+      reportSrc.includes("sendGovernanceEmail("),
+      "storage report sends through the signed governance seam"
+    );
+    assert.ok(
+      !/[–—]/.test(reportSrc),
+      "no em or en dashes in the storage report module"
+    );
+    assert.ok(
+      reportSrc.includes("oneLine(f.title)"),
+      "report titles pass oneLine so an embedded newline cannot forge lines"
+    );
+
+    // Console honesty (refutation M1/M7): the storage island's last-copy
+    // confirm admits unrecoverability, the page derives lastCopy from the
+    // rowHasBytes existence bit, and every submission-Delete confirm names
+    // the retained store files.
+    const islandSrc = readFileSync(
+      "src/app/admin/work/storage-actions-client.tsx",
+      "utf8"
+    );
+    assert.ok(
+      islandSrc.includes("LAST copy anywhere") &&
+        islandSrc.includes("cannot be recovered after deletion"),
+      "last-copy delete confirms state unrecoverability plainly"
+    );
+    const adminPageSrc = readFileSync("src/app/admin/work/page.tsx", "utf8");
+    assert.ok(
+      adminPageSrc.includes("f.submissionId === null || !f.rowHasBytes"),
+      "lastCopy = submission gone OR row bytea cleared"
+    );
+    assert.ok(
+      readFileSync("src/app/admin/work/actions-client.tsx", "utf8").includes(
+        "remain in the archive store"
+      ),
+      "submission-Delete confirms say stored files remain until cleaned (M7)"
     );
   }
 

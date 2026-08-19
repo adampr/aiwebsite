@@ -58,8 +58,8 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
       const now = await submissionById(id);
       if (now?.parentId && now.status === "published" && now.slug) {
         // Crash-recovery sweep-up: if the auto lane died between its swap
-        // and the retention email, this re-sends it. Bytes stay on the row
-        // permanently (2026-08-04), so a re-approve of an already-swapped
+        // and the retention email, this re-sends it (store-first, bytea
+        // fallback since 2026-08-19), so a re-approve of an already-swapped
         // row sends the owner a duplicate retention email; accepted.
         await deliverArchiveRetention(now);
         return okJson({
@@ -107,8 +107,8 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
       // ISR revalidate=300 is the floor
     }
   }
-  // Owner retention email (original upload attachment) on this publish path
-  // too; the stored bytes stay on the row permanently (2026-08-04).
+  // Owner retention email (attach-if-fits) on this publish path too; the
+  // row's bytea clears in there only once the archive-store copy verifies.
   await deliverArchiveRetention(row);
   return okJson({ status: "published", slug });
 }

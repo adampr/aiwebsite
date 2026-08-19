@@ -341,8 +341,8 @@ export function SubmissionForm({
         )}
         <p id={`${uid}-pkg-help`} className="mt-2 text-xs text-faint">
           {kind === "program"
-            ? "The zip needs an architecture.md (or ARCHITECTURE.md, design.md, or a README.md with an Architecture section) at the top level or one folder deep: what it does, its components, how data flows. Max 10 MB."
-            : "Two shapes work: a .skill or .zip with SKILL.md at the top level or one folder deep, or one .zip holding both the .skill and its .md file. If the .md is in the package, the second upload is optional. Max 10 MB."}
+            ? "The zip needs an architecture.md (or ARCHITECTURE.md, design.md, or a README.md with an Architecture section) at the top level or one folder deep: what it does, its components, how data flows. Max 100 MB."
+            : "Two shapes work: a .skill or .zip with SKILL.md at the top level or one folder deep, or one .zip holding both the .skill and its .md file. If the .md is in the package, the second upload is optional. Max 100 MB."}
         </p>
       </div>
       {kind === "skill" && (

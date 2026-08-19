@@ -37,6 +37,7 @@ import {
   verifiedWebAdmin,
   workError,
 } from "@/lib/work/http";
+import { storeArchiveFiles } from "@/lib/work/archive-store";
 import { kickPanel } from "@/lib/work/panel";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -101,6 +102,21 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   if (row.companyId !== null) return NOT_FOUND();
   const kind = row.kind as WorkKind;
 
+  // Content-Length precheck BEFORE any body buffering (same guard and
+  // rationale as the create route): the size gate must run before this
+  // single fork holds the multipart body; nginx caps the wire, this is the
+  // in-process last line. Absent/garbled header falls through to the
+  // post-read byte checks, which remain authoritative.
+  const contentLength = Number(req.headers.get("content-length") ?? "");
+  if (
+    Number.isFinite(contentLength) &&
+    contentLength > WORK_CAPS.uploadMaxBytes + 5_000_000
+  )
+    return workError(
+      "invalid_request",
+      `That file is too large (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB).`,
+      400
+    );
   let form: FormData;
   try {
     form = await req.formData();
@@ -305,6 +321,13 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       );
     throw err;
   }
+
+  // Durable second copy at accept time (archive-store.ts), same seam as the
+  // create route; failure logs and never fails the update.
+  await storeArchiveFiles(child.id, row.title, [
+    { name: name.slice(0, 200), data: bytes },
+    ...(mdMeta ? [{ name: mdMeta.name, data: mdMeta.data }] : []),
+  ]);
 
   let kicked: Awaited<ReturnType<typeof kickPanel>>;
   try {

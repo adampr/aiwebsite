@@ -40,8 +40,9 @@ function inScope(scope: WorkScope) {
 }
 
 // Every list/poll/panel read EXCLUDES archive_data (the transient original
-// upload, ≤10 MB): only the retention-email step ever selects it, via
-// archiveDataById().
+// upload, ≤100 MB while it lasts): only the retention-email step ever
+// selects it, via archiveDataById(). The durable copy lives in the on-disk
+// archive store (archive-store.ts) since 2026-08-19.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const { archiveData: _archiveData, mdData: _mdData, ...ROW_COLS } =
   getTableColumns(S);
@@ -1404,10 +1405,11 @@ export async function deleteSubmission(
   return rows[0] ?? null;
 }
 
-/** The original upload(s), for the owner retention email (§5.16): the
- * package plus, on CoWork Skill rows, the standalone SKILL.md. Empty only
- * on pre-retention rows: since 2026-08-04 the bytes stay on the row
- * permanently (the retention email is an archival copy, not the copy). */
+/** The original upload(s) still on the ROW (§5.16): the package plus, on
+ * CoWork Skill rows, the standalone SKILL.md. Empty on pre-retention rows
+ * AND on rows whose bytea was cleared after publish (2026-08-19: cleared
+ * only once the archive-store copy verifies on disk; store-first readers
+ * fall back here, never the other way around). */
 export async function archiveDataById(
   id: string
 ): Promise<{ name: string; data: Buffer }[]> {
@@ -1431,9 +1433,14 @@ export async function archiveDataById(
   return files;
 }
 
-/** Drop the retained upload bytes. UNCALLED since 2026-08-04: Resend's 202
- * is an accept, not a delivery, and clearing on it destroyed two uploads
- * whose retention emails later bounced. Kept only as an explicit ops lever. */
+/** Drop the retained upload bytes from the ROW, unconditionally. UNCALLED
+ * by production code, kept only as an explicit ops lever: since 2026-08-19
+ * the one real clearing path is archive-store.ts verifyAndClearRowBytes
+ * (called only from notify.ts deliverArchiveRetention), which re-verifies
+ * the store copy under FOR UPDATE locks and clears in the same transaction
+ * so admin cleanup cannot race it. This function has none of those guards
+ * (the 2026-08-04 loss is what they exist for); test:work scrapes that no
+ * src call site exists. */
 export async function clearArchiveData(id: string): Promise<void> {
   await db
     .update(S)

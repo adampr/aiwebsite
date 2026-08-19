@@ -28,6 +28,7 @@ import {
   verdictReason,
   type EntryVerdict,
 } from "./blocked-types";
+import { inflateCapped } from "./extract";
 import { mailSafePath } from "./retention-encoding";
 
 export type RemovedEntry = {
@@ -120,15 +121,24 @@ export async function screenPackageForMail(
         });
         continue;
       }
-      inflated += declared;
-      if (inflated > TOTAL_INFLATE_MAX)
+      // Streaming inflate with a REAL-byte cap (extract.ts inflateCapped):
+      // the declared size is central-directory data a zip bomb lies about,
+      // so the per-entry cap is min(declared + slack, remaining budget) and
+      // the running total counts bytes actually produced. A cap breach
+      // aborts screening and returns the original for armoring, which is
+      // itself bounded because only partition-attached files reach here.
+      const remaining = TOTAL_INFLATE_MAX - inflated;
+      if (remaining <= 0) return { kind: "original", note: "budget" };
+      const capped = await inflateCapped(
+        e,
+        Math.min(declared + 65_536, remaining)
+      );
+      if (capped.kind === "too_large")
         return { kind: "original", note: "budget" };
-      let buf: Buffer;
-      try {
-        buf = await e.async("nodebuffer");
-      } catch {
+      if (capped.kind !== "ok")
         return { kind: "original", note: "unscreened" };
-      }
+      const buf = capped.buf;
+      inflated += buf.length;
       const byteVerdict = blockedByBytes(buf);
       if (byteVerdict) {
         removed.push({

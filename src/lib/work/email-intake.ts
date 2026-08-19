@@ -93,6 +93,7 @@ import {
   skillDocFailureMessage,
 } from "./extract";
 import { WORK_SUBMIT_DOMAINS } from "./http";
+import { storeArchiveFiles } from "./archive-store";
 import { kickPanel } from "./panel";
 import staticTitles from "./static-titles.json";
 
@@ -971,9 +972,13 @@ export async function handleWorkEmail(
   const kind = isUpdate
     ? (predecessor!.kind as WorkKind)
     : inferKind(pkgName, mds.length > 0, parsed.kind);
+  // Lane-truthful copy: the shared cap is 100 MB, but email itself carries
+  // far less (the inbound provider caps whole messages around 40 MB), so
+  // this reply must never promise "100 MB by email"; big packages go
+  // through the web form, which really does take the full cap.
   if (pkg.size > WORK_CAPS.uploadMaxBytes) {
     await reject(
-      `That package is too large (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB).`
+      `That package is too large for the pipeline (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB). Email also cannot carry packages anywhere near that size, so for anything over what mail accepts, upload it on the web instead: ${isCompanyLane ? `${SITE}/roadmap/work` : `${SITE}/work/submit`}.`
     );
     return;
   }
@@ -1362,6 +1367,13 @@ export async function handleWorkEmail(
     );
     return;
   }
+
+  // Durable second copy at accept time (archive-store.ts), route parity;
+  // failure logs and never fails the submission.
+  await storeArchiveFiles(row.id, title, [
+    { name: pkgName.slice(0, 200), data: bytes },
+    ...(mdMeta ? [{ name: mdMeta.name, data: mdMeta.data }] : []),
+  ]);
 
   let kicked: Awaited<ReturnType<typeof kickPanel>>;
   try {
