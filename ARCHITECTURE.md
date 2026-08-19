@@ -878,7 +878,12 @@ aiwebsite/
 ├── public/                     favicons, brand assets, fx.js (<xl-dust> canvas particles)
 ├── eslint.config.mjs           ESLint 9 flat config: next/core-web-vitals + next/typescript;
 │                               ignores packages/**, drizzle/**, data/** (submodules lint upstream)
-├── next.config.ts              trailingSlash:false; NO experimental.inlineCss —
+├── next.config.ts              trailingSlash:false; htmlLimitedBots:/./ (module
+│                               v1.98.0 host step, 2026-08-19: every non-empty UA
+│                               gets blocking metadata, so a dynamic/ISR render can
+│                               never stream <title>/canonical/og into <body> and
+│                               poison the UA-shared ISR cache for SEO parsers);
+│                               NO experimental.inlineCss —
 │                               REMOVED 2026-07-29: it inlined the whole Tailwind
 │                               bundle into the document, and a Next 16.2.11 defect
 │                               in getGlobalErrorStyles (injectedCSS: new Set())

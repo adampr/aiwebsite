@@ -2,6 +2,13 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   trailingSlash: false,
+  // Every non-empty UA gets BLOCKING metadata (@aicompany/core v1.98.0 host
+  // step, applied 2026-08-19 ahead of the pin bump). Next >=15.2 streaming
+  // metadata otherwise races generateMetadata against the shell flush on
+  // dynamic/ISR renders and can ship <title>/canonical/og into <body>; the
+  // UA-shared ISR cache then serves that copy to every reader until the next
+  // revalidation, and head-only SEO parsers score the page titleless.
+  htmlLimitedBots: /./,
   // @aicompany/core ships TypeScript source (consumed as a git submodule via
   // file: dependency) — Next must transpile it.
   transpilePackages: ["@aicompany/core"],
