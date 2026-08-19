@@ -166,7 +166,7 @@ async function StaffGovernance({
       </section>
 
       {globalAdmin && (
-        <section className="grid gap-6 md:grid-cols-3">
+        <section className="grid gap-6 md:grid-cols-2">
           <div className="panel">
             <span className="sys-label">Upload · Link</span>
             <h2 className="mt-4 text-lg">Upload or link a document</h2>
@@ -185,59 +185,50 @@ async function StaffGovernance({
           </div>
 
           <div className="panel">
-            <span className="sys-label">Attach</span>
-            <h2 className="mt-4 text-lg">
-              Pick from your Governance Builder projects
-            </h2>
-            {projects.length === 0 ? (
-              <p className="mt-3 text-sm">
-                You have no Governance Builder projects yet.{" "}
-                <Link href="/governance">
-                  Create one in the Governance Builder
-                </Link>{" "}
-                and attach it here.
-              </p>
-            ) : (
-              <ul className="mt-4 space-y-4">
-                {projects.map((proj) => (
-                  <li
-                    key={proj.id}
-                    className="border-t border-[var(--xl-line)] pt-3"
-                  >
-                    <div className="text-sm">
-                      {KIND_TITLES[proj.kind] ?? "AI Governance Document"}
-                    </div>
-                    <div className="mono mt-1 text-xs" style={faint}>
-                      {proj.domain} · last activity{" "}
-                      {fmtDate(proj.lastActivityAt)}
-                    </div>
-                    <div className="mt-2">
-                      <AttachProjectButton
-                        projectId={proj.id}
-                        attached={attachedProjectIds.has(proj.id)}
-                      />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p className="mt-4 text-xs" style={faint}>
-              Attaching makes a copy for the staff file: this copy stays here
-              and is not deleted after 30 days. Your project itself keeps its
-              normal 30-day lifecycle.
-            </p>
-          </div>
-
-          <div className="panel">
-            <span className="sys-label">Create</span>
-            <h2 className="mt-4 text-lg">Create one now</h2>
+            <span className="sys-label">Create · Attach</span>
+            <h2 className="mt-4 text-lg">Create one in the Governance Builder</h2>
             <p className="mt-3 text-sm">
               No policy yet? The Governance Builder interviews you one
-              question at a time and drafts it with you.
+              question at a time and drafts it with you. Attach it here once
+              it is drafted.
             </p>
-            <Link href="/governance" className="btn btn--text mt-4 no-underline">
+            <Link href="/governance" className="btn btn--text mt-3 no-underline">
               Open the Governance Builder <span aria-hidden="true">→</span>
             </Link>
+            {projects.length > 0 && (
+              <div className="mt-6 border-t border-[var(--xl-line)] pt-4">
+                <p className="text-sm">
+                  Pick from your Governance Builder projects:
+                </p>
+                <ul className="mt-3 space-y-4">
+                  {projects.map((proj) => (
+                    <li
+                      key={proj.id}
+                      className="border-t border-[var(--xl-line)] pt-3"
+                    >
+                      <div className="text-sm">
+                        {KIND_TITLES[proj.kind] ?? "AI Governance Document"}
+                      </div>
+                      <div className="mono mt-1 text-xs" style={faint}>
+                        {proj.domain} · last activity{" "}
+                        {fmtDate(proj.lastActivityAt)}
+                      </div>
+                      <div className="mt-2">
+                        <AttachProjectButton
+                          projectId={proj.id}
+                          attached={attachedProjectIds.has(proj.id)}
+                        />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-4 text-xs" style={faint}>
+                  Attaching makes a copy for the staff file: this copy stays
+                  here and is not deleted after 30 days. Your project itself
+                  keeps its normal 30-day lifecycle.
+                </p>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -293,7 +284,7 @@ export default async function RoadmapGovernancePage() {
         </p>
       </section>
 
-      <section className="grid gap-6 md:grid-cols-3">
+      <section className="grid gap-6 md:grid-cols-2">
         {isAdmin && (
           <div className="panel">
             <span className="sys-label">Upload · Link</span>
@@ -314,65 +305,57 @@ export default async function RoadmapGovernancePage() {
         )}
 
         <div className="panel">
-          <span className="sys-label">Attach</span>
-          <h2 className="mt-4 text-lg">Pick from your Governance Builder projects</h2>
-          {projects.length === 0 ? (
-            <div className="mt-3 space-y-3 text-sm">
-              {isAdmin ? (
-                <p>
-                  You have no Governance Builder projects yet.{" "}
-                  <Link href="/governance">Create one in the Governance Builder</Link>{" "}
-                  and attach it here.
-                </p>
-              ) : (
-                <p>
-                  Built a policy in the Governance Builder? Attach it here, or
-                  ask your company admin to upload the company&apos;s
-                  document.
-                </p>
-              )}
-            </div>
-          ) : (
-            <ul className="mt-4 space-y-4">
-              {projects.map((proj) => (
-                <li
-                  key={proj.id}
-                  className="border-t border-[var(--xl-line)] pt-3"
-                >
-                  <div className="text-sm">
-                    {KIND_TITLES[proj.kind] ?? "AI Governance Document"}
-                  </div>
-                  <div className="mono mt-1 text-xs" style={faint}>
-                    {proj.domain} · last activity{" "}
-                    {fmtDate(proj.lastActivityAt)}
-                  </div>
-                  <div className="mt-2">
-                    <AttachProjectButton
-                      projectId={proj.id}
-                      attached={attachedProjectIds.has(proj.id)}
-                    />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className="mt-4 text-xs" style={faint}>
-            Attaching makes a copy for the company: this copy stays with the
-            company workspace and is not deleted after 30 days. Your project
-            itself keeps its normal 30-day lifecycle.
-          </p>
-        </div>
-
-        <div className="panel">
-          <span className="sys-label">Create</span>
-          <h2 className="mt-4 text-lg">Create one now</h2>
+          <span className="sys-label">Create · Attach</span>
+          <h2 className="mt-4 text-lg">Create one in the Governance Builder</h2>
           <p className="mt-3 text-sm">
             No policy yet? The free Governance Builder interviews you one
-            question at a time and drafts it with you, shaped to your company.
+            question at a time and drafts it with you, shaped to your
+            company. Attach it here once it is drafted.
           </p>
-          <Link href="/governance" className="btn btn--text mt-4 no-underline">
+          <Link href="/governance" className="btn btn--text mt-3 no-underline">
             Open the Governance Builder <span aria-hidden="true">→</span>
           </Link>
+          {projects.length === 0 ? (
+            !isAdmin && (
+              <p className="mt-4 text-xs" style={faint}>
+                Or ask a company admin to upload or link the company&apos;s
+                document.
+              </p>
+            )
+          ) : (
+            <div className="mt-6 border-t border-[var(--xl-line)] pt-4">
+              <p className="text-sm">
+                Pick from your Governance Builder projects:
+              </p>
+              <ul className="mt-3 space-y-4">
+                {projects.map((proj) => (
+                  <li
+                    key={proj.id}
+                    className="border-t border-[var(--xl-line)] pt-3"
+                  >
+                    <div className="text-sm">
+                      {KIND_TITLES[proj.kind] ?? "AI Governance Document"}
+                    </div>
+                    <div className="mono mt-1 text-xs" style={faint}>
+                      {proj.domain} · last activity{" "}
+                      {fmtDate(proj.lastActivityAt)}
+                    </div>
+                    <div className="mt-2">
+                      <AttachProjectButton
+                        projectId={proj.id}
+                        attached={attachedProjectIds.has(proj.id)}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-4 text-xs" style={faint}>
+                Attaching makes a copy for the company: this copy stays with
+                the company workspace and is not deleted after 30 days. Your
+                project itself keeps its normal 30-day lifecycle.
+              </p>
+            </div>
+          )}
         </div>
       </section>
 
