@@ -155,21 +155,14 @@ export function StaffHub({
       <section aria-label="Roadmap progress" className="xl:-mx-32">
         <RunwayStage>
           <RoadmapRunway status={status} hrefs={STAFF_STEP_HREFS} />
-          {/* Same hub orientation caption as the company hub (hoisted out
-              of runway.tsx in the staff-parity round). */}
+          {/* Same single stats line as the company hub, inside the stage
+              under the runway. */}
           <p className="mono mt-6 text-center text-xs" style={faint}>
-            Start wherever helps most. Two steps are paid training, booked on
-            the Builders page.
+            {status.directory.people} people · {status.work.published} published
+            · {status.requested.open} requests open ·{" "}
+            {status.scorecard.contributors} builders
           </p>
         </RunwayStage>
-      </section>
-
-      <section>
-        <p className="mono text-center text-xs" style={faint}>
-          {status.directory.people} people · {status.work.published} published
-          · {status.requested.open} requests open ·{" "}
-          {status.scorecard.contributors} builders
-        </p>
       </section>
 
       <section className="grid gap-6 sm:grid-cols-2">

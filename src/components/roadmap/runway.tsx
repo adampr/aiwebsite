@@ -4,9 +4,9 @@
 // bundle (RunwayStatus below: RoadmapStatus for the company lane,
 // StaffRoadmapStatus for staff) so the runway can never disagree with the
 // step panels. It renders on the hubs AND, since the staff-parity round,
-// in the (steps) shell (layout.tsx) above every step page. The hub
-// orientation caption ("Start wherever helps most...") is deliberately NOT
-// here: it is hub copy and lives with the hub callers.
+// in the (steps) shell (layout.tsx) above every step page. The hubs add
+// their one-line stats <p> below the runway; the (steps) shell renders it
+// bare - hub copy never lives here.
 //
 // Round 4 (owner ruling): THE NODE CARRIES THE STATE - no visible state
 // words. The color grammar, enforced in roadmap.css:

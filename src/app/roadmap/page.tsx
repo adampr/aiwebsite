@@ -437,25 +437,15 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
       <section aria-label="Roadmap progress" className="xl:-mx-32">
         <RunwayStage>
           <RoadmapRunway status={status} />
-          {/* Hub orientation caption, hoisted out of runway.tsx in the
-              staff-parity round (the (steps) shell renders the runway
-              bare). */}
+          {/* ONE faint mono stats line, inside the stage under the runway:
+              the cards carry the counts and verbs, so this stays a single
+              numeric surface - never grow it back into a stat monument. */}
           <p className="mono mt-6 text-center text-xs" style={faint}>
-            Start wherever helps most. Two steps are paid training, booked on
-            the Builders page.
+            {status.governance.docs} docs · {status.directory.people} people ·{" "}
+            {status.work.published} published ·{" "}
+            {status.scorecard.contributors} builders
           </p>
         </RunwayStage>
-      </section>
-
-      {/* One faint mono line replaced the 4-stat monument section: a
-          deliberate panel ruling (round 3) - the cards now carry the counts,
-          so a second numeric surface was noise. */}
-      <section>
-        <p className="mono text-center text-xs" style={faint}>
-          {status.governance.docs} docs · {status.directory.people} people ·{" "}
-          {status.work.published} published ·{" "}
-          {status.scorecard.contributors} builders
-        </p>
       </section>
 
       {/* Action-center cards (round 3): stretched-overlay pattern. Each card

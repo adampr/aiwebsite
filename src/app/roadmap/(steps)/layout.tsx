@@ -65,8 +65,8 @@ function Denial({ title, body }: { title: string; body: string }) {
   );
 }
 
-/** The shell chrome: a hub link, then the bare runway (the "Start wherever
- * helps most" caption is hub-only copy). mt-8 also gives the lg hover
+/** The shell chrome: a hub link, then the bare runway (the hubs' stats
+ * line is hub-only copy). mt-8 also gives the lg hover
  * tooltip (which pops above the node) its headroom at the top of the
  * shell. */
 function ShellRunway({
