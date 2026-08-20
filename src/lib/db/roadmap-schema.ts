@@ -64,6 +64,13 @@ export const companies = pgTable(
       withTimezone: true,
     }),
     apolloLastImportCount: integer("apollo_last_import_count"),
+    // Admin-attested attendance for the two paid steps ("workshop" /
+    // "cohort"). Purchases are server-invisible (booked on /builders), so
+    // these are numbers a global admin types on /admin/roadmap, never
+    // computed. Informational only by ruling: paid runway nodes stay
+    // "offered" regardless. Migration-only CHECKs (>= 0) live in 0048.
+    workshopAttended: integer("workshop_attended").notNull().default(0),
+    cohortAttended: integer("cohort_attended").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -249,6 +256,11 @@ export const staffRoadmapState = pgTable("staff_roadmap_state", {
     withTimezone: true,
   }),
   apolloLastImportCount: integer("apollo_last_import_count"),
+  // Staff-lane analogue of companies.workshop_attended / cohort_attended
+  // (admin-attested paid-step attendance; xl.net has no companies row by
+  // invariant). Migration-only CHECKs (>= 0) live in 0048.
+  workshopAttended: integer("workshop_attended").notNull().default(0),
+  cohortAttended: integer("cohort_attended").notNull().default(0),
 });
 
 // Phases 09/10/11 (§5.20): the platform a company gives its builders. ONE

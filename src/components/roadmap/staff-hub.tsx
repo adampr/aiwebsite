@@ -172,6 +172,10 @@ export function StaffHub({
         {ROADMAP_STEPS.map((step) => {
           const href = STAFF_STEP_HREFS[step.key];
           if (isPaidStep(step)) {
+            // Same admin-attested attendance line as the company hub's paid
+            // card (set on /admin/roadmap, staff lane): informational only,
+            // authenticated surfaces only, availability-neutral copy.
+            const attended = status.attendance[step.key];
             return (
               <div key={step.key} className="panel rise rmp-card">
                 <div className="flex items-baseline justify-between gap-4">
@@ -182,6 +186,12 @@ export function StaffHub({
                 </div>
                 <h3 className="mt-4">{step.title}</h3>
                 <p className="mt-4 text-sm">{step.blurb}</p>
+                {attended > 0 && (
+                  <p className="mono mt-3 text-xs" style={faint}>
+                    {attended} team {attended === 1 ? "member" : "members"}{" "}
+                    attended
+                  </p>
+                )}
                 <Link href={href} className="rmp-card-cta">
                   {step.cta.todo}{" "}
                   <span className="rmp-arrow" aria-hidden="true">

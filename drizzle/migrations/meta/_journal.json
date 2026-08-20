@@ -337,6 +337,13 @@
       "when": 1787155052873,
       "tag": "0047_work_archive_files",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1787243650204,
+      "tag": "0048_paid_step_attendance",
+      "breakpoints": true
     }
   ]
 }

@@ -14,6 +14,7 @@ import {
   grantAdminByEmail,
   purgeCompany,
   revokeAdmin,
+  setAttendance,
   setCompanyName,
   setCompanyStatus,
 } from "@/lib/roadmap/db";
@@ -135,6 +136,53 @@ export async function POST(req: Request): Promise<Response> {
         submissionsDeleted: purged.submissions,
         requestsDeleted: purged.requests,
       });
+    }
+    case "set_attendance": {
+      // Admin-attested paid-step attendance (§5.18): purchases are
+      // server-invisible, so these counts are numbers the admin types.
+      // Informational only by ruling — they never light a runway node.
+      const w = body.workshopAttended;
+      const c = body.cohortAttended;
+      if (
+        typeof w !== "number" ||
+        typeof c !== "number" ||
+        !Number.isInteger(w) ||
+        !Number.isInteger(c) ||
+        w < 0 ||
+        c < 0 ||
+        w > 100000 ||
+        c > 100000
+      )
+        return roadmapError(
+          "invalid_request",
+          "Attendance counts must be whole numbers between 0 and 100000.",
+          400
+        );
+      // The literal "staff" selects the NULL-company_id staff lane and MUST
+      // branch before any uuid lookup: it is not a uuid, and an eq on the
+      // uuid id column would throw 22P02.
+      if (companyId === "staff") {
+        await setAttendance({ companyId: null }, { workshop: w, cohort: c });
+        return okJson({ saved: true });
+      }
+      // Shape-guard before the uuid eq: any other non-uuid token must 404
+      // like a missing company, not 500 in pg. Positional groups, not the
+      // loose [0-9a-f-]{36} idiom: 36 chars of hyphen-soup pass that one
+      // and still throw 22P02 (refuter finding).
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          companyId
+        )
+      )
+        return roadmapError("not_found", "No company with that id.", 404);
+      const company = await companyById(companyId);
+      if (!company)
+        return roadmapError("not_found", "No company with that id.", 404);
+      await setAttendance(
+        { companyId: company.id },
+        { workshop: w, cohort: c }
+      );
+      return okJson({ saved: true });
     }
     default:
       return roadmapError("invalid_request", "Unknown action.", 400);

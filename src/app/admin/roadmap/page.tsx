@@ -3,10 +3,14 @@
 // predicate (requireGlobalAdmin semantics inline; bare isAdmin is forgeable
 // via the Microsoft common-tenant lane and this console renders client
 // data). List view = metadata allowlist (domain, name, status, counts,
-// admin roster, last import) - never content columns; the ?companyId detail
-// view shows the directory and doc titles because there the directory IS
-// the thing being administered. ?companyId request params are legal ONLY
-// under this guard.
+// admin roster, last import) - never content columns - plus one synthetic
+// pinned XL.net row for the staff lane (by hard invariant xl.net is NEVER a
+// companies row; its data lives in the NULL-company_id lanes). The
+// ?companyId detail view shows the directory and doc titles because there
+// the directory IS the thing being administered; the literal token
+// ?companyId=staff selects the staff-lane detail and is branched BEFORE
+// companyById ("staff" is not a uuid; a uuid-column eq would throw 22P02).
+// ?companyId request params are legal ONLY under this guard.
 
 export const dynamic = "force-dynamic";
 
@@ -23,12 +27,21 @@ import {
   companiesOverview,
   companyAdminsDetail,
   companyById,
+  countGovernanceDocs,
+  countPeople,
   listGovernanceDocs,
   listPeople,
+  readAttendance,
   readTodayRoadmapUsage,
+  STAFF_GOVDOC_SCOPE,
 } from "@/lib/roadmap/db";
-import { companySubmissions } from "@/lib/work/db";
-import { RoadmapAdminActions } from "./actions-client";
+import {
+  companySubmissions,
+  countStaffPublished,
+  countStaffSubmissions,
+  staffSubmissions,
+} from "@/lib/work/db";
+import { AttendanceEditor, RoadmapAdminActions } from "./actions-client";
 
 type Search = { searchParams: Promise<{ companyId?: string }> };
 
@@ -52,6 +65,149 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
   const usage = await readTodayRoadmapUsage();
   const enabled = roadmapEnabled(process.env);
 
+  if (companyId === "staff") {
+    // Staff-lane detail. This branch MUST precede companyById: "staff" is
+    // not a uuid, and an eq on the uuid id column would throw 22P02. All
+    // three sections read the NULL-company_id lanes; no companies row
+    // exists for xl.net by hard invariant.
+    const [people, docs, submissions, submissionsTotal, attendance] =
+      await Promise.all([
+        listPeople({ companyId: null }),
+        listGovernanceDocs(STAFF_GOVDOC_SCOPE),
+        staffSubmissions(),
+        countStaffSubmissions(),
+        readAttendance({ companyId: null }),
+      ]);
+    return (
+      <div className="space-y-8">
+        <div>
+          <Link href="/admin/roadmap" className="text-sm">
+            ← All companies
+          </Link>
+          <h1 className="mt-2 text-2xl font-bold">
+            XL.net{" "}
+            <span className="text-sm font-normal text-faint">
+              xl.net · staff lane
+            </span>
+          </h1>
+        </div>
+
+        <p className="text-sm text-faint">
+          The staff directory is managed on{" "}
+          <Link href="/roadmap/directory">/roadmap/directory</Link>.
+        </p>
+
+        {/* "staff" literal selects the NULL-lane staff_roadmap_state row in
+            the dispatch route (branched before any uuid lookup there). */}
+        <AttendanceEditor
+          companyId="staff"
+          workshop={attendance.workshop}
+          cohort={attendance.cohort}
+        />
+
+        <section>
+          <h2 className="text-lg font-semibold">
+            Directory ({people.length})
+          </h2>
+          <table className="mt-2 w-full text-left text-sm">
+            <thead>
+              <tr className="text-faint">
+                <th className="pr-4 font-normal">Name</th>
+                <th className="pr-4 font-normal">Email</th>
+                <th className="pr-4 font-normal">Phone</th>
+                <th className="font-normal">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {people.map((p) => (
+                <tr key={p.id}>
+                  <td className="pr-4">{p.name}</td>
+                  <td className="pr-4">{p.email ?? "·"}</td>
+                  <td className="pr-4">{p.phone ?? "·"}</td>
+                  <td>{p.source}</td>
+                </tr>
+              ))}
+              {people.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="text-faint">
+                    Empty.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+
+        <section>
+          <h2 className="text-lg font-semibold">
+            Governance documents ({docs.length})
+          </h2>
+          <ul className="mt-2 space-y-1 text-sm">
+            {docs.map((d) => (
+              <li key={d.id}>
+                {d.title}{" "}
+                <span className="text-faint">
+                  ({d.source === "upload"
+                    ? d.fileName ?? "upload"
+                    : d.source === "link"
+                      ? d.linkUrl ?? "link"
+                      : "Governance Builder"}
+                  , added by {d.addedByEmail},{" "}
+                  {d.createdAt.toLocaleDateString("en-US")})
+                </span>
+              </li>
+            ))}
+            {docs.length === 0 && <li className="text-faint">None.</li>}
+          </ul>
+        </section>
+
+        <section>
+          <h2 className="text-lg font-semibold">
+            Work submissions ({submissionsTotal})
+          </h2>
+          {submissionsTotal > submissions.length && (
+            <p className="mt-1 text-xs text-faint">
+              Showing the newest {submissions.length} rows; the full
+              pipeline is on <Link href="/admin/work">/admin/work</Link>.
+            </p>
+          )}
+          <table className="mt-2 w-full text-left text-sm">
+            <thead>
+              <tr className="text-faint">
+                <th className="pr-4 font-normal">Title</th>
+                <th className="pr-4 font-normal">Status</th>
+                <th className="pr-4 font-normal">Submitter</th>
+                <th className="font-normal">Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {submissions.map((s) => (
+                <tr key={s.id}>
+                  <td className="pr-4">{s.title}</td>
+                  <td className="pr-4">{s.status}</td>
+                  <td className="pr-4">{s.submitterEmail}</td>
+                  <td>{s.createdAt.toLocaleDateString("en-US")}</td>
+                </tr>
+              ))}
+              {submissions.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="text-faint">
+                    None.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          <p className="mt-2 text-xs text-faint">
+            Held and pending rows are reviewed, and published cards
+            arranged, on <Link href="/admin/work">/admin/work</Link> as
+            usual.
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   if (companyId) {
     const company = await companyById(companyId);
     if (!company)
@@ -62,11 +218,12 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
           <Link href="/admin/roadmap">Back to the list</Link>
         </div>
       );
-    const [admins, people, docs, submissions] = await Promise.all([
+    const [admins, people, docs, submissions, attendance] = await Promise.all([
       companyAdminsDetail(company.id),
       listPeople({ companyId: company.id }),
       listGovernanceDocs({ companyId: company.id }),
       companySubmissions(company.id),
+      readAttendance({ companyId: company.id }),
     ]);
     return (
       <div className="space-y-8">
@@ -94,6 +251,12 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
             email: a.email,
             grantedVia: a.grantedVia,
           }))}
+        />
+
+        <AttendanceEditor
+          companyId={company.id}
+          workshop={attendance.workshop}
+          cohort={attendance.cohort}
         />
 
         <section>
@@ -193,10 +356,14 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
     );
   }
 
-  const [companies, requests] = await Promise.all([
-    companiesOverview(),
-    allPendingRequests(),
-  ]);
+  const [companies, requests, staffPeople, staffDocs, staffPublished] =
+    await Promise.all([
+      companiesOverview(),
+      allPendingRequests(),
+      countPeople({ companyId: null }),
+      countGovernanceDocs(STAFF_GOVDOC_SCOPE),
+      countStaffPublished(),
+    ]);
   return (
     <div className="space-y-8">
       <div>
@@ -242,6 +409,22 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
             </tr>
           </thead>
           <tbody>
+            {/* Synthetic pinned staff-lane row: xl.net is never a companies
+                row, so Admins / Created by / Created have nothing backing
+                them and render the "·" placeholder. */}
+            <tr>
+              <td className="pr-4">
+                <Link href="/admin/roadmap?companyId=staff">XL.net</Link>{" "}
+                <span className="text-faint">xl.net</span>
+              </td>
+              <td className="pr-4">staff</td>
+              <td className="pr-4">{staffPeople}</td>
+              <td className="pr-4">{staffDocs}</td>
+              <td className="pr-4">{staffPublished}</td>
+              <td className="pr-4">·</td>
+              <td className="pr-4">·</td>
+              <td>·</td>
+            </tr>
             {companies.map((c) => (
               <tr key={c.id}>
                 <td className="pr-4">

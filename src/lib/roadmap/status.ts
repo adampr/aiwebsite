@@ -13,6 +13,7 @@ import {
   countGovernanceDocs,
   countPeople,
   listRoadmapLinks,
+  readAttendance,
 } from "@/lib/roadmap/db";
 import { staffGovernanceDraftQuery } from "@/lib/governance/admin-db";
 import { platformView } from "@/lib/roadmap/platform";
@@ -65,6 +66,12 @@ export type RoadmapStatus = {
    * directive 2026-08-20: the instructions link is informational on tool
    * cards); total = tools listed, confirmed or not. */
   tools: { done: boolean; counted: number; total: number; failing: boolean };
+  /** Admin-attested paid-step attendance (owner ask 2026-08-20): counts a
+   * global admin typed on /admin/roadmap, keyed by the two paid step keys.
+   * Informational only by deliberate ruling — paid runway nodes stay
+   * "offered" and these numbers never light anything; the AUTHENTICATED
+   * hub cards render a faint line when > 0 (never the public teaser). */
+  attendance: { workshop: number; cohort: number };
   /** The DNS-visible DKIM state for the company's email domain (§5.18
    * round 2). No longer a step of its own: it is the prerequisite for the
    * email lane of step 04, echoed as one line on the hub's work card and
@@ -82,7 +89,7 @@ export async function roadmapStatus(
 ): Promise<RoadmapStatus> {
   // checkDkim rides the SAME Promise.all so the DNS probe overlaps the DB
   // queries instead of adding to the render's critical path.
-  const [docs, people, importStamp, workRows, requests, dkim, links] =
+  const [docs, people, importStamp, workRows, requests, dkim, links, attendance] =
     await Promise.all([
       countGovernanceDocs({ companyId }),
       countPeople({ companyId }),
@@ -101,6 +108,7 @@ export async function roadmapStatus(
       // render that awaits a stranger's server is a self-inflicted outage,
       // so checks only ever run from an explicit POST.
       listRoadmapLinks({ companyId }),
+      readAttendance({ companyId }),
     ]);
   const published = workRows[0]?.published ?? 0;
   const contributors = workRows[0]?.contributors ?? 0;
@@ -117,6 +125,7 @@ export async function roadmapStatus(
     },
     scorecard: { live: contributors >= 1, contributors },
     ...platformStatus(platform),
+    attendance,
     dkim,
   };
 }
@@ -231,10 +240,22 @@ export type StaffRoadmapStatus = {
   };
   data: { done: boolean; savedUnverified: boolean; failing: boolean };
   tools: { done: boolean; counted: number; total: number; failing: boolean };
+  /** Admin-attested paid-step attendance on the one-row staff table
+   * (staff_roadmap_state; same rule as the company field above). */
+  attendance: { workshop: number; cohort: number };
 };
 
 export async function staffRoadmapStatus(): Promise<StaffRoadmapStatus> {
-  const [docs, draftRows, people, importStamp, workRows, requests, links] =
+  const [
+    docs,
+    draftRows,
+    people,
+    importStamp,
+    workRows,
+    requests,
+    links,
+    attendance,
+  ] =
     await Promise.all([
       countGovernanceDocs(STAFF_GOVDOC_SCOPE),
       staffGovernanceDraftQuery(),
@@ -249,6 +270,7 @@ export async function staffRoadmapStatus(): Promise<StaffRoadmapStatus> {
         .where(and(isNull(W.companyId), eq(W.status, "published"))),
       requestStatusCounts({ companyId: null }),
       listRoadmapLinks(STAFF_LINK_SCOPE),
+      readAttendance({ companyId: null }),
     ]);
   const published = workRows[0]?.published ?? 0;
   const contributors = workRows[0]?.contributors ?? 0;
@@ -276,5 +298,6 @@ export async function staffRoadmapStatus(): Promise<StaffRoadmapStatus> {
     },
     scorecard: { live: contributors >= 1, contributors },
     ...platformStatus(platform),
+    attendance,
   };
 }

@@ -618,6 +618,67 @@ export async function stampApolloImport(
     .where(eq(C.id, scope.companyId));
 }
 
+// ---- Paid-step attendance (§5.18, admin-attested) ----
+
+/** Admin-attested attendance counts for the two paid steps ("workshop" /
+ * "cohort"). companyId null = the XL.net staff lane, backed by the one-row
+ * staff_roadmap_state table (no companies row exists by invariant); a
+ * missing staff row reads as zeros. Purchases are server-invisible, so
+ * these numbers are typed by a global admin, never computed, and they are
+ * informational only: paid runway nodes stay "offered" by ruling. */
+export async function readAttendance(scope: {
+  companyId: string | null;
+}): Promise<{ workshop: number; cohort: number }> {
+  if (scope.companyId === null) {
+    const rows = await db
+      .select({ workshop: SRS.workshopAttended, cohort: SRS.cohortAttended })
+      .from(SRS)
+      .where(eq(SRS.id, 1))
+      .limit(1);
+    return { workshop: rows[0]?.workshop ?? 0, cohort: rows[0]?.cohort ?? 0 };
+  }
+  const rows = await db
+    .select({ workshop: C.workshopAttended, cohort: C.cohortAttended })
+    .from(C)
+    .where(eq(C.id, scope.companyId))
+    .limit(1);
+  return { workshop: rows[0]?.workshop ?? 0, cohort: rows[0]?.cohort ?? 0 };
+}
+
+export async function setAttendance(
+  scope: { companyId: string | null },
+  counts: { workshop: number; cohort: number }
+): Promise<void> {
+  if (scope.companyId === null) {
+    // UPSERT, not UPDATE (the stampApolloImport rule): 0039 seeds the id=1
+    // row, but a missing row must degrade to self-heal, never to a silent
+    // no-op that discards the admin's numbers.
+    await db
+      .insert(SRS)
+      .values({
+        id: 1,
+        workshopAttended: counts.workshop,
+        cohortAttended: counts.cohort,
+      })
+      .onConflictDoUpdate({
+        target: SRS.id,
+        set: {
+          workshopAttended: counts.workshop,
+          cohortAttended: counts.cohort,
+        },
+      });
+    return;
+  }
+  await db
+    .update(C)
+    .set({
+      workshopAttended: counts.workshop,
+      cohortAttended: counts.cohort,
+      updatedAt: new Date(),
+    })
+    .where(eq(C.id, scope.companyId));
+}
+
 // ---- Governance docs (§5.18 step 1) ----
 
 /** Governance-doc lane axis (staff governance round, owner ruling

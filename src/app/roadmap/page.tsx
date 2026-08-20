@@ -522,7 +522,11 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
           if (isPaidStep(step)) {
             // Bought on /builders, and this server cannot see a purchase, so
             // the card states the price and says so plainly instead of
-            // pretending to know whether it is done.
+            // pretending to know whether it is done. The attendance line is
+            // an ADMIN-ATTESTED count (set on /admin/roadmap), informational
+            // only, and renders on authenticated hubs only — never the
+            // public teaser. Availability-neutral copy by rule.
+            const attended = status.attendance[step.key];
             return (
               <div key={step.key} className="panel rise rmp-card">
                 <div className="flex items-baseline justify-between gap-4">
@@ -533,6 +537,12 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
                 </div>
                 <h3 className="mt-4">{step.title}</h3>
                 <p className="mt-4 text-sm">{step.blurb}</p>
+                {attended > 0 && (
+                  <p className="mono mt-3 text-xs" style={faint}>
+                    {attended} team {attended === 1 ? "member" : "members"}{" "}
+                    attended
+                  </p>
+                )}
                 <Link href={step.href} className="rmp-card-cta">
                   {step.cta.todo}{" "}
                   <span className="rmp-arrow" aria-hidden="true">

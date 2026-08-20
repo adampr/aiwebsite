@@ -1634,7 +1634,10 @@ export type CompanySubmissionMeta = {
  * 2026-08-09 transfer round, allSubmissionsForList (GET
  * /api/work/submissions?scope=all behind verifiedWebAdmin, which is that
  * same predicate expressed in code). Any THIRD cross-company read belongs
- * behind one of those two gates or nowhere. */
+ * behind one of those two gates or nowhere; staffSubmissions below is not
+ * one — it reads a single lane (the NULL-company_id public /work pipeline)
+ * and sits behind the /admin/roadmap GA console, which is that same
+ * XL.net staff-admin predicate. */
 export async function companySubmissions(
   companyId: string,
   limit = 50
@@ -1653,6 +1656,53 @@ export async function companySubmissions(
     .where(eq(S.companyId, companyId))
     .orderBy(desc(S.createdAt))
     .limit(limit);
+}
+
+/** The staff-lane twin of companySubmissions for the /admin/roadmap
+ * ?companyId=staff detail: same metadata projection and order, scoped to
+ * company_id IS NULL (the public /work pipeline, which IS the XL.net staff
+ * lane — never eq(col, null): drizzle renders "= NULL" and matches
+ * nothing). GA-console gated only. */
+export async function staffSubmissions(
+  limit = 50
+): Promise<CompanySubmissionMeta[]> {
+  return db
+    .select({
+      id: S.id,
+      title: S.title,
+      kind: S.kind,
+      status: S.status,
+      submitterEmail: S.submitterEmail,
+      createdAt: S.createdAt,
+      publishedAt: S.publishedAt,
+    })
+    .from(S)
+    .where(isNull(S.companyId))
+    .orderBy(desc(S.createdAt))
+    .limit(limit);
+}
+
+/** Total staff-lane row count, all statuses: the honest denominator for the
+ * staff detail's capped submissions table (the staff lane is the one lane
+ * with real volume, so the 50-row window WILL truncate; the heading must
+ * name the lane total, never the window size). */
+export async function countStaffSubmissions(): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(S)
+    .where(isNull(S.companyId));
+  return rows[0]?.n ?? 0;
+}
+
+/** Published-card count for the staff lane (company_id IS NULL): the
+ * Published column of the /admin/roadmap list view's synthetic XL.net row,
+ * mirroring companiesOverview's per-company published subquery. */
+export async function countStaffPublished(): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(S)
+    .where(and(eq(S.status, "published"), isNull(S.companyId)));
+  return rows[0]?.n ?? 0;
 }
 
 // ---- Daily budget ledger (work_usage) ----
