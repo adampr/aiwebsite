@@ -157,7 +157,10 @@ export function StaffHub({
           <RoadmapRunway status={status} hrefs={STAFF_STEP_HREFS} />
           {/* Same single stats line as the company hub, inside the stage
               under the runway. */}
-          <p className="mono mt-6 text-center text-xs" style={faint}>
+          {/* mx-auto is load-bearing: futurism.css gives every bare p a
+              max-width of 62ch, so without it the box left-anchors in the
+              wide stage and text-center only centers within the box. */}
+          <p className="mono mx-auto mt-6 text-center text-xs" style={faint}>
             {status.directory.people} people · {status.work.published} published
             · {status.requested.open} requests open ·{" "}
             {status.scorecard.contributors} builders

@@ -440,7 +440,10 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
           {/* ONE faint mono stats line, inside the stage under the runway:
               the cards carry the counts and verbs, so this stays a single
               numeric surface - never grow it back into a stat monument. */}
-          <p className="mono mt-6 text-center text-xs" style={faint}>
+          {/* mx-auto is load-bearing: futurism.css gives every bare p a
+              max-width of 62ch, so without it the box left-anchors in the
+              wide stage and text-center only centers within the box. */}
+          <p className="mono mx-auto mt-6 text-center text-xs" style={faint}>
             {status.governance.docs} docs · {status.directory.people} people ·{" "}
             {status.work.published} published ·{" "}
             {status.scorecard.contributors} builders
