@@ -1584,7 +1584,10 @@ export async function linksDueForRecheck(opts: {
       SELECT l.id, l.company_id, l.kind, 'docs' AS field, l.docs_url AS url,
              l.docs_state AS state, l.docs_checked_at AS checked_at
         FROM company_roadmap_links l
-       WHERE l.docs_url IS NOT NULL
+       -- kind <> 'tool': tool instructions gate nothing (owner directive
+       -- 2026-08-20), so the nightly probe would spend requests forever on
+       -- a verdict no surface renders. Tool URL fields still recheck.
+       WHERE l.docs_url IS NOT NULL AND l.kind <> 'tool'
     )
     SELECT f.*, c.domain, c.status AS company_status
       FROM fields f

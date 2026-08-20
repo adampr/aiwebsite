@@ -46,6 +46,7 @@ import {
   fieldAttestable,
   fieldCounts,
   fieldInGrace,
+  toolCounts,
 } from "../src/lib/roadmap/platform";
 import {
   hostInDomain,
@@ -412,6 +413,57 @@ ok("SAVED BUT NOT COUNTED: an unconfirmed URL never lights a step", () => {
         environmentsJson: JSON.stringify(["Vultr"]),
       })
     )!.enabled,
+    true
+  );
+});
+
+ok("TOOL CARDS GATE ON THE LINK ALONE (owner directive 2026-08-20)", () => {
+  // The instructions field is informational on tool cards: its state must
+  // never decide counting, in either direction. Singleton views above keep
+  // their two-field gating; this pins that tools diverged on purpose.
+  const tool = (over: Record<string, unknown> = {}) =>
+    ({
+      id: "t",
+      companyId: null,
+      kind: "tool",
+      label: "Claude Code",
+      description: null,
+      url: "https://tool.example.com",
+      urlState: "unchecked",
+      urlReason: null,
+      urlHttpStatus: null,
+      urlCheckedAt: null,
+      urlGraceUntil: null,
+      docsUrl: "https://docs.example.com",
+      docsState: "unchecked",
+      docsReason: null,
+      docsHttpStatus: null,
+      docsCheckedAt: null,
+      docsGraceUntil: null,
+      environmentsJson: null,
+      addedByUserId: null,
+      addedByEmail: "a@b.c",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      ...over,
+    }) as unknown as Parameters<typeof toolCounts>[0];
+
+  // A confirmed link counts no matter what the docs field says.
+  assert.equal(toolCounts(tool({ urlState: "ok", docsState: "failed" })), true);
+  assert.equal(toolCounts(tool({ urlState: "ok", docsState: "unchecked" })), true);
+  // A confirmed docs field rescues nothing: the link is the evidence.
+  assert.equal(toolCounts(tool({ urlState: "failed", docsState: "ok" })), false);
+  assert.equal(toolCounts(tool({ urlState: "unchecked", docsState: "ok" })), false);
+  // The ladder and the grace window still apply to the link itself.
+  assert.equal(toolCounts(tool({ urlState: "internal" })), true);
+  assert.equal(toolCounts(tool({ urlState: "attested" })), true);
+  assert.equal(
+    toolCounts(
+      tool({
+        urlState: "failed",
+        urlGraceUntil: new Date(Date.now() + 60_000),
+      })
+    ),
     true
   );
 });

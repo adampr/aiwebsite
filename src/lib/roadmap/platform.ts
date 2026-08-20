@@ -182,14 +182,13 @@ export function lakehouseView(row: LinkRow | null): ComponentView {
   );
 }
 
-/** A tool card counts once BOTH its link and its instructions are
- * confirmed (the owner's phrasing: a tool listed "with a full URL ... and
- * an associated instructions URL"). */
+/** A tool card counts once its LINK is confirmed (owner directive
+ * 2026-08-20, superseding the earlier "link AND instructions" reading):
+ * on tool cards the instructions link is informational, and the link
+ * alone is the evidence. The singleton components (API proxy, Developer
+ * VMs, Lakehouse) keep their two-field gating; only tools changed. */
 export function toolCounts(row: LinkRow): boolean {
-  return (
-    fieldCounts(row.urlState, row.urlGraceUntil) &&
-    fieldCounts(row.docsState, row.docsGraceUntil)
-  );
+  return fieldCounts(row.urlState, row.urlGraceUntil);
 }
 
 export type SecureView = {
@@ -244,11 +243,10 @@ export function platformView(rows: LinkRow[]): PlatformView {
       done: counted > 0,
       counted,
       total: toolRows.length,
+      // Link-only, like toolCounts: a docs grace window must not mark a
+      // tool failing when the instructions no longer gate anything.
       failing: toolRows.some(
-        (r) =>
-          toolCounts(r) &&
-          (fieldInGrace(r.urlState, r.urlGraceUntil) ||
-            fieldInGrace(r.docsState, r.docsGraceUntil))
+        (r) => toolCounts(r) && fieldInGrace(r.urlState, r.urlGraceUntil)
       ),
       rows: toolRows,
     },

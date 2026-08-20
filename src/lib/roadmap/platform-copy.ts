@@ -119,6 +119,13 @@ export const CHECK_SCOPE_NOTE =
 export const NOT_COUNTED_NOTE =
   "Addresses we cannot reach are saved but do not count toward your roadmap until a check passes or you confirm they are internal.";
 
+/** The tools variant (owner directive 2026-08-20): on tool cards only the
+ * LINK gates counting, and the instructions field has no check or confirm
+ * lane at all, so the generic note above would promise levers that do not
+ * exist there. Singleton forms keep NOT_COUNTED_NOTE. */
+export const TOOL_NOT_COUNTED_NOTE =
+  "A tool link we cannot reach is saved but does not count toward your roadmap until a check passes or you confirm it is internal. The instructions link is informational and never gates this step.";
+
 /** What an admin is actually agreeing to when they confirm an internal
  * address. Shown at the point of the click, never buried: this is a named
  * claim that makes a step count, and it should read like one. */

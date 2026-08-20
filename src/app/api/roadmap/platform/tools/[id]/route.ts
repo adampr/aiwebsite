@@ -58,7 +58,11 @@ export async function PATCH(req: Request, ctx: Ctx): Promise<Response> {
   // The limiter is spent PER FIELD inside verifyRow (a field is what costs
   // outbound requests), and a refusal is not an error here: the row is
   // already saved and simply stays unchecked until the admin retries.
+  // LINK ONLY (owner directive 2026-08-20): the instructions field never
+  // gates a tool and no surface renders its verdict, so probing it would
+  // spend the admin's check budget on nothing.
   const checked = await verifyRow(actor.scope, saved, {
+    fields: ["url"],
     spend: () => limitUrlCheck(actor),
     internalDomain: actor.internalDomain,
   }).catch(() => ({ row: saved, skipped: true }));

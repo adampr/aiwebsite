@@ -26,6 +26,7 @@ import {
   ATTEST_WITHDRAW,
   CHECK_SCOPE_NOTE,
   NOT_COUNTED_NOTE,
+  TOOL_NOT_COUNTED_NOTE,
   UNCHECKED_LINE,
   attestedLine,
   failureLine,
@@ -846,7 +847,7 @@ export function ToolsManager({
             </p>
           )}
           <p className="text-xs" style={faint}>
-            {CHECK_SCOPE_NOTE} {NOT_COUNTED_NOTE}
+            {CHECK_SCOPE_NOTE} {TOOL_NOT_COUNTED_NOTE}
           </p>
         </form>
       )}
@@ -855,7 +856,7 @@ export function ToolsManager({
         {rows.length === 0 ? (
           <p className="text-sm" style={faint}>
             No tools listed yet. The step completes with the first tool whose
-            link and instructions both check out.
+            link checks out.
           </p>
         ) : (
           <>
@@ -867,12 +868,15 @@ export function ToolsManager({
                 <li key={row.id} className="panel">
                   <div className="flex items-baseline justify-between gap-4">
                     <h3 className="text-lg">{row.label}</h3>
-                    <span className="mono text-xs" style={faint}>
-                      {fieldCounts(row.urlState, row.urlGraceUntil) &&
-                      fieldCounts(row.docsState, row.docsGraceUntil)
-                        ? "Counting"
-                        : "Not counting"}
-                    </span>
+                    {/* Owner directive 2026-08-20: a tool that is fine gets
+                        NO badge. The badge exists only to flag a tool whose
+                        LINK is not counting (the instructions link is
+                        informational on tool cards). */}
+                    {!fieldCounts(row.urlState, row.urlGraceUntil) && (
+                      <span className="mono text-xs" style={faint}>
+                        Not counting
+                      </span>
+                    )}
                   </div>
                   {row.description && (
                     <p className="mt-3 text-sm">{row.description}</p>
@@ -902,15 +906,10 @@ export function ToolsManager({
                     onAttest={(f, w) => attest(row.id, f, w)}
                     busy={busy}
                   />
-                  <FieldState
-                    row={row}
-                    field="docs"
-                    fieldLabel={`the ${row.label ?? "tool"} instructions`}
-                    isAdmin={isAdmin}
-                    onRetry={(f) => retry(row.id, f)}
-                    onAttest={(f, w) => attest(row.id, f, w)}
-                    busy={busy}
-                  />
+                  {/* No FieldState for the docs field (owner directive
+                      2026-08-20): the instructions link stays on the card
+                      as a plain anchor, but it neither gates the step nor
+                      grows its own confirm/attest lane. */}
                   <p className="mono mt-3 text-xs" style={faint}>
                     added by {row.addedByEmail}
                   </p>

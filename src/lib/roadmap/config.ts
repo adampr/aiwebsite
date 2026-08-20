@@ -326,10 +326,12 @@ export const ROADMAP_STEPS = [
     num: "11",
     title: "AI Builder Tools",
     href: "/roadmap/tools",
+    // LADDER-NEUTRAL by copy rule (platform-copy.ts): only rung 1 may say
+    // "reached", and a tool can count via internal, attested or grace too.
     blurb:
       "The tools your builders are cleared to use, each on its own card " +
       "with a link and instructions. The step completes with the first " +
-      "tool we can reach; add as many as you need.",
+      "tool whose link checks out; add as many as you need.",
     cta: { todo: "Add your first tool", done: "Review your tools" },
   },
 ] as const;

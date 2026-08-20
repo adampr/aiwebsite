@@ -61,8 +61,9 @@ export type RoadmapStatus = {
   };
   /** Step 10 (§5.20). */
   data: { done: boolean; savedUnverified: boolean; failing: boolean };
-  /** Step 11 (§5.20). counted = tools whose link AND instructions are
-   * confirmed; total = tools listed, confirmed or not. */
+  /** Step 11 (§5.20). counted = tools whose LINK is confirmed (owner
+   * directive 2026-08-20: the instructions link is informational on tool
+   * cards); total = tools listed, confirmed or not. */
   tools: { done: boolean; counted: number; total: number; failing: boolean };
   /** The DNS-visible DKIM state for the company's email domain (§5.18
    * round 2). No longer a step of its own: it is the prerequisite for the

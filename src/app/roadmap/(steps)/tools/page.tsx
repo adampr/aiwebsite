@@ -3,8 +3,9 @@
 // src/components/list-pager.tsx, NEVER src/app/work/pager.tsx, which
 // mutates server-owned DOM and renders invisible off /work).
 //
-// The step completes with the FIRST tool whose link and instructions are
-// both confirmed; everything after that is depth, not progress.
+// The step completes with the FIRST tool whose link is confirmed
+// (owner directive 2026-08-20: the instructions link is informational on
+// tool cards); everything after that is depth, not progress.
 
 import type { Metadata } from "next";
 import { countTools, listTools } from "@/lib/roadmap/db";
@@ -44,7 +45,7 @@ export default async function RoadmapToolsPage() {
           A short, current list beats a long, stale one. Give each tool
           {" "}{view.ownerName} has approved a card here: what it is for, a
           link to it, and a link to how to get started. The step completes with
-          the first tool whose link AND instructions we can both reach.
+          the first tool whose link checks out.
         </p>
       </section>
 
