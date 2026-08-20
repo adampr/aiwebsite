@@ -24,4 +24,11 @@ export async function register(): Promise<void> {
   // declines to start.
   const { startWorkStorageReport } = await import("@/lib/work/storage-report");
   startWorkStorageReport();
+  // §5.10 workshop registration alerts: polls Ticket Tailor orders every
+  // 5 minutes and emails the admin each new registration (the API has no
+  // webhooks). Gates itself like the others and logs why when it declines.
+  const { startWorkshopOrderAlerts } = await import(
+    "@/lib/workshop/orders-watch"
+  );
+  startWorkshopOrderAlerts();
 }
