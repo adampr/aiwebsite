@@ -117,6 +117,18 @@ import {
   SHOW_TICK_MS,
 } from "../src/lib/governance/resolved-anim";
 import { staleBundleSignal } from "../src/lib/governance/build-id";
+import {
+  ATTACHED_NOTICE,
+  attachFailedText,
+  CONFIRM_ATTACH_HINT,
+  CONFIRM_ATTACH_LABEL,
+  CONFIRM_CANCELLED_ANNOUNCE,
+  CONFIRM_PANEL_LEAD,
+  confirmedAnnouncement,
+  confirmPanelAnnouncement,
+  offerAttach,
+  shouldAttach,
+} from "../src/lib/governance/confirm-attach";
 import { composeCompanySnapshot, deriveTurnState, toProjectView } from "../src/lib/governance/view";
 import {
   blocksToText,
@@ -226,6 +238,7 @@ function check(name: string, cond: boolean): void {
     "src/lib/governance/restyle.ts",
     "src/lib/governance/resolved-anim.ts",
     "src/lib/governance/build-id.ts",
+    "src/lib/governance/confirm-attach.ts",
     "src/components/governance/style-sample-control.tsx",
     "src/components/governance/research-screen.tsx",
     "src/components/governance/question-pane.tsx",
@@ -5996,6 +6009,86 @@ function check(name: string, cond: boolean): void {
       adminPageSrc.includes("isAdmin(session.email)") &&
       adminPageSrc.includes('redirect("/login")') &&
       adminPageSrc.includes('dynamic = "force-dynamic"')
+  );
+}
+
+/* 32. Confirm-final auto-attach (§5.12, owner directive 2026-08-20): the
+   confirm button opens an inline panel; when the lane allows it, the
+   finished document goes to the company's AI Roadmap governance file by
+   DEFAULT with a pre-checked opt-out. The decision table and copy are pure
+   (confirm-attach.ts) and pinned here: an unknown or failed eligibility
+   probe silently withholds the offer (never promises a lane that would
+   403), and a checkbox the user never saw must never fire the attach. */
+{
+  check(
+    "attach32: offered only when the lane is KNOWN eligible",
+    offerAttach(true) === true &&
+      offerAttach(false) === false &&
+      offerAttach(null) === false
+  );
+  check(
+    "attach32: fires only when offered AND left checked (opt-out model)",
+    shouldAttach(true, true) === true &&
+      shouldAttach(true, false) === false &&
+      shouldAttach(false, true) === false &&
+      shouldAttach(false, false) === false
+  );
+  check(
+    "attach32: panel announcement names the AI Roadmap only when offered",
+    confirmPanelAnnouncement(true).includes("AI Roadmap") &&
+      !confirmPanelAnnouncement(false).includes("AI Roadmap")
+  );
+  check(
+    "attach32: confirm receipt names the roadmap only when attaching",
+    confirmedAnnouncement(true).includes("AI Roadmap") &&
+      confirmedAnnouncement(false) === "Final draft saved. Ready to download."
+  );
+  check(
+    "attach32: failure copy leads with finality, carries the server " +
+      "message, names the manual lane",
+    attachFailedText("Rate limited.").startsWith(
+      "The draft is final, but the document was not added to the AI Roadmap."
+    ) &&
+      attachFailedText("Rate limited.").includes("Rate limited.") &&
+      attachFailedText("").includes("AI Roadmap governance page") &&
+      !attachFailedText("").includes("  ")
+  );
+  check(
+    "attach32: checkbox copy names the feature and the generic company, " +
+      "and the hint never over-promises past the 30-day project lifecycle",
+    CONFIRM_ATTACH_LABEL.includes(
+      "your company's AI Roadmap governance file"
+    ) &&
+      CONFIRM_ATTACH_HINT.includes("AI Roadmap governance page") &&
+      CONFIRM_ATTACH_HINT.includes("while this project is still on file") &&
+      !CONFIRM_ATTACH_HINT.includes("any time")
+  );
+  check(
+    "attach32: success notice names the roadmap page and stays final-first",
+    ATTACHED_NOTICE.startsWith("Final draft saved.") &&
+      ATTACHED_NOTICE.includes("AI Roadmap governance page")
+  );
+  check(
+    "attach32: cancel receipt says nothing is final",
+    CONFIRM_CANCELLED_ANNOUNCE.includes("Nothing is final yet") &&
+      CONFIRM_PANEL_LEAD.includes("marks the draft final")
+  );
+  // Source pins: the workspace latches the offer at panel open and decides
+  // the attach from the LATCHED value; the confirm result is never rolled
+  // back by an attach failure (the flip precedes the attach call).
+  const wsSrc = fs.readFileSync(
+    path.join(REPO_ROOT, "src/components/governance/workspace.tsx"),
+    "utf8"
+  );
+  check(
+    "attach32: workspace latches the offer at panel open",
+    wsSrc.includes("setAttachOffered(offered)") &&
+      wsSrc.includes("shouldAttach(attachOffered, attachChecked)")
+  );
+  check(
+    "attach32: attach runs only after the done flip (confirm never held)",
+    wsSrc.indexOf('status: "done" }') <
+      wsSrc.indexOf('api<{ id: string }>("/api/roadmap/docs"')
   );
 }
 

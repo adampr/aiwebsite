@@ -1,8 +1,13 @@
 // GET - the roadmap nav-island probe (§5.18, extended §5.20).
 //
-// Answers two things for the viewer's OWN lane and nothing else: does this
-// workspace have published work ("Your Work" link), and what is its roadmap
-// completion percentage (the site-wide badge).
+// Answers three things for the viewer's OWN lane and nothing else: does this
+// workspace have published work ("Your Work" link), what is its roadmap
+// completion percentage (the site-wide badge), and may this session attach a
+// governance document to the lane's file (`attach`, the §5.12 confirm-final
+// auto-attach offer; it mirrors the docsWriteLane("attach") verdict - company
+// member on the company lane, global admin on the staff lane - and is only
+// ever a fact about the caller's own session, so the privacy shape below is
+// untouched).
 //
 // PRIVACY SHAPE IS UNCHANGED and load-bearing: an untrusted session, a
 // session with no workspace, and a signed-out visitor all receive the SAME
@@ -27,7 +32,7 @@ import {
 } from "@/lib/roadmap/status";
 import { roadmapProgress } from "@/lib/roadmap/progress";
 
-const EMPTY = { yourWork: false, percent: null } as const;
+const EMPTY = { yourWork: false, percent: null, attach: false } as const;
 
 export async function GET(req: Request): Promise<Response> {
   // The IP fence bounds UNAUTHENTICATED noise. It deliberately does NOT
@@ -52,7 +57,14 @@ export async function GET(req: Request): Promise<Response> {
     const limited = rateLimit(`roadmap:nav:u:${staff.email}`, 3600, 600);
     if (limited) return okJson(EMPTY);
     const status = await staffRoadmapStatus();
-    return okJson({ yourWork: false, percent: roadmapProgress(status).percent });
+    // attach mirrors the staff WRITE gate (global-admin only; owner ruling
+    // 2026-08-18: staff are never funneled into creating governance docs).
+    // Session-derived, zero extra reads.
+    return okJson({
+      yourWork: false,
+      percent: roadmapProgress(status).percent,
+      attach: staff.globalAdmin,
+    });
   }
 
   const result = await readRoadmapPrincipal();
@@ -69,5 +81,12 @@ export async function GET(req: Request): Promise<Response> {
     hasPublishedCompanyWork(company.id),
     companyProgressStatus(company.id),
   ]);
-  return okJson({ yourWork, percent: roadmapProgress(status).percent });
+  // attach: true is membership itself - the docs attach lane is
+  // member-actionable on the company lane, and reaching this line IS the
+  // requireCompanyMember predicate (trusted principal with a company).
+  return okJson({
+    yourWork,
+    percent: roadmapProgress(status).percent,
+    attach: true,
+  });
 }

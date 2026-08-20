@@ -19,9 +19,15 @@ export type RoadmapNav = {
   /** Roadmap completion for the viewer's lane, or null when there is no
    * lane to report (signed out, untrusted, no workspace). */
   percent: number | null;
+  /** May this session put a governance document on its lane's AI Roadmap
+   * file (POST /api/roadmap/docs { governanceProjectId })? Mirrors the
+   * route's docsWriteLane("attach") verdict: company member on the company
+   * lane, global admin on the staff lane, false everywhere else. Consumed
+   * by the §5.12 confirm-final auto-attach offer. */
+  attach: boolean;
 };
 
-const EMPTY: RoadmapNav = { yourWork: false, percent: null };
+const EMPTY: RoadmapNav = { yourWork: false, percent: null, attach: false };
 
 let probe: Promise<RoadmapNav> | null = null;
 let probedAt = 0;
@@ -71,6 +77,7 @@ export function probeRoadmapNav(): Promise<RoadmapNav> {
       .then((d: Partial<RoadmapNav> | null) => ({
         yourWork: Boolean(d?.yourWork),
         percent: typeof d?.percent === "number" ? d.percent : null,
+        attach: d?.attach === true,
       }))
       .catch(() => EMPTY);
   });

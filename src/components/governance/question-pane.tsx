@@ -31,6 +31,11 @@ import {
   type WorkingKind,
 } from "./shared";
 import { OpenItemsResolver, type KeepResult } from "./open-items-resolver";
+import {
+  CONFIRM_ATTACH_HINT,
+  CONFIRM_ATTACH_LABEL,
+  CONFIRM_PANEL_LEAD,
+} from "@/lib/governance/confirm-attach";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 const dim = { color: "var(--xl-text-dim)" } as const;
@@ -490,7 +495,13 @@ export function QuestionPane({
   onSend,
   onRevise,
   onAmend,
-  onConfirm,
+  onConfirmRequest,
+  confirmPending,
+  onConfirmCancel,
+  onConfirmFinal,
+  attachOffer,
+  attachChecked,
+  onAttachChange,
   confirmBusy,
   onReopen,
   reopenBusy,
@@ -540,7 +551,17 @@ export function QuestionPane({
   onSend: () => void;
   onRevise: () => void;
   onAmend: (index: number, answer: string) => void;
-  onConfirm: () => void;
+  // Confirm-final panel (§5.12 auto-attach): the button requests, the
+  // workspace pre-checks and opens the panel, the panel fires or cancels.
+  // attachOffer is latched at panel open; the checkbox never renders (and
+  // never acts) on a lane the workspace could not verify.
+  onConfirmRequest: () => void;
+  confirmPending: boolean;
+  onConfirmCancel: () => void;
+  onConfirmFinal: () => void;
+  attachOffer: boolean;
+  attachChecked: boolean;
+  onAttachChange: (checked: boolean) => void;
   confirmBusy: boolean;
   onReopen: () => void;
   reopenBusy: boolean;
@@ -1155,7 +1176,7 @@ export function QuestionPane({
             className="btn btn--sand btn--stable"
             aria-busy={confirmBusy || undefined}
             disabled={working || restyleActive || confirmBusy || featureDisabled}
-            onClick={onConfirm}
+            onClick={onConfirmRequest}
           >
             <BusyLabel
               busy={confirmBusy}
@@ -1163,6 +1184,54 @@ export function QuestionPane({
               busyText="Confirming"
             />
           </button>
+          {/* Confirm-final panel (§5.12 auto-attach, owner directive
+              2026-08-20): the skip-confirm idiom, one extra beat between
+              the button and the flip. When the lane allows it, the finished
+              document goes to the company's AI Roadmap governance file by
+              DEFAULT; the pre-checked box is the opt-out. Ineligible or
+              unverified lanes get the same panel minus the roadmap line. */}
+          {confirmPending && !working && (
+            <div className="mt-3 text-xs" style={faint}>
+              <p className="max-w-none">{CONFIRM_PANEL_LEAD}</p>
+              {attachOffer && (
+                <label className="mt-2 flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 shrink-0"
+                    checked={attachChecked}
+                    disabled={confirmBusy}
+                    onChange={(e) => onAttachChange(e.target.checked)}
+                  />
+                  <span>
+                    {CONFIRM_ATTACH_LABEL} {CONFIRM_ATTACH_HINT}
+                  </span>
+                </label>
+              )}
+              <div className="mt-3 flex flex-wrap items-center gap-6">
+                <button
+                  type="button"
+                  className="btn btn--text btn--stable"
+                  aria-busy={confirmBusy || undefined}
+                  disabled={confirmBusy}
+                  onClick={onConfirmFinal}
+                >
+                  <BusyLabel
+                    busy={confirmBusy}
+                    idle="Make it final"
+                    busyText="Confirming"
+                  />
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--text"
+                  disabled={confirmBusy}
+                  onClick={onConfirmCancel}
+                >
+                  Go back
+                </button>
+              </div>
+            </div>
+          )}
           <p className="mt-3 max-w-none text-xs" style={faint}>
             {reopened
               ? "Confirming makes this final again and takes the draft watermark off downloads."
@@ -1187,7 +1256,10 @@ export function QuestionPane({
             type="button"
             className="btn btn--stable mt-3"
             aria-busy={reopenBusy || undefined}
-            disabled={reopenBusy || featureDisabled}
+            // confirmBusy spans the §5.12 auto-attach POST that follows the
+            // done flip; reopening mid-attach would race the fresh final's
+            // snapshot write and land its receipt on a reopened draft.
+            disabled={reopenBusy || featureDisabled || confirmBusy}
             onClick={onReopen}
           >
             <BusyLabel busy={reopenBusy} idle="Reopen for changes" busyText="Reopening" />

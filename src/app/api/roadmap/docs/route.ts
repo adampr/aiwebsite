@@ -8,7 +8,13 @@
 //    lane, mirroring the member-actionable submit lane. The snapshot copies
 //    the rendered markdown at attach time; the source project keeps its
 //    30-day lifecycle untouched (this is the whole scope of the no-ledger
-//    reversal).
+//    reversal). Re-attaching the same project REFRESHES the lane's existing
+//    snapshot row in place (attachOrRefreshGovernanceDoc: title, text,
+//    added-by, stamp; 200 with the existing id, 201 only on first attach) -
+//    the builder's confirm-final auto-attach (§5.12, owner directive
+//    2026-08-20) lands here on every reopen -> confirm cycle by design, and
+//    duplicates would pile up otherwise. This deliberately changes manual
+//    re-attach from "second row" to "refresh" as well.
 //  - JSON { url, title? }: link an existing policy where it already lives
 //    (owner directive 2026-08-18). Admin-gated like upload. The URL goes
 //    through parseCheckableUrl (the scheme gate: the stored href becomes an
@@ -27,7 +33,10 @@ export const dynamic = "force-dynamic";
 
 import { createHash } from "node:crypto";
 import { docsWriteLane, type DocsLane } from "@/lib/roadmap/docs-gate";
-import { addGovernanceDoc } from "@/lib/roadmap/db";
+import {
+  addGovernanceDoc,
+  attachOrRefreshGovernanceDoc,
+} from "@/lib/roadmap/db";
 import { fetchOwnedProject } from "@/lib/governance/db";
 import { ROADMAP_CAPS } from "@/lib/roadmap/config";
 import { checkUrlReachable, parseCheckableUrl } from "@/lib/roadmap/url-check";
@@ -226,9 +235,8 @@ export async function POST(req: Request): Promise<Response> {
         409
       );
     const title = KIND_TITLES[project.kind] ?? "AI Governance Document";
-    const id = await addGovernanceDoc({
+    const { id, refreshed } = await attachOrRefreshGovernanceDoc({
       scope: lane.scope,
-      source: "governance_project",
       title,
       docText: markdown,
       governanceProjectId: project.id,
@@ -236,7 +244,7 @@ export async function POST(req: Request): Promise<Response> {
       addedByUserId: lane.userId,
       addedByEmail: lane.email,
     });
-    return okJson({ id, title }, 201);
+    return okJson({ id, title, refreshed }, refreshed ? 200 : 201);
   }
 
   // Upload lane: company-admin (company) / global-admin (staff) only.

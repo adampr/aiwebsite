@@ -778,6 +778,59 @@ export async function addGovernanceDoc(opts: {
   return row.id;
 }
 
+/** Attach-or-refresh for the governance-project lane (§5.12 auto-attach,
+ * owner directive 2026-08-20): repeated reopen -> confirm cycles in the
+ * builder, and manual re-attach on the step page, must land on the ONE
+ * snapshot row per (lane, project) - refreshed in place, never piled up as
+ * duplicates. UPDATE first (lane predicate riding the WHERE exactly like
+ * every other doc query), INSERT through addGovernanceDoc only when no row
+ * matched; there is no unique constraint on (company_id,
+ * governance_project_id), so a concurrent race can leave a duplicate in
+ * theory - acceptable: the lanes are rate-limited per user and later
+ * refreshes rewrite every matching row identically. createdAt is refreshed
+ * deliberately: the on-file list orders and labels by it, and a refreshed
+ * snapshot IS a new copy of the project as of now. */
+export async function attachOrRefreshGovernanceDoc(opts: {
+  scope: GovDocScope;
+  title: string;
+  docText: string;
+  governanceProjectId: string;
+  governanceKind: string;
+  addedByUserId: string;
+  addedByEmail: string;
+}): Promise<{ id: string; refreshed: boolean }> {
+  const updated = await db
+    .update(CGD)
+    .set({
+      title: opts.title,
+      docText: opts.docText,
+      governanceKind: opts.governanceKind,
+      addedByUserId: opts.addedByUserId,
+      addedByEmail: opts.addedByEmail.toLowerCase(),
+      createdAt: new Date(),
+    })
+    .where(
+      and(
+        govDocLaneWhere(opts.scope),
+        eq(CGD.source, "governance_project"),
+        eq(CGD.governanceProjectId, opts.governanceProjectId)
+      )
+    )
+    .returning({ id: CGD.id });
+  if (updated.length > 0) return { id: updated[0].id, refreshed: true };
+  const id = await addGovernanceDoc({
+    scope: opts.scope,
+    source: "governance_project",
+    title: opts.title,
+    docText: opts.docText,
+    governanceProjectId: opts.governanceProjectId,
+    governanceKind: opts.governanceKind,
+    addedByUserId: opts.addedByUserId,
+    addedByEmail: opts.addedByEmail,
+  });
+  return { id, refreshed: false };
+}
+
 /** Download read, scoped in the ONE query (missing and not-owned are the
  * same null; the route returns an identical 404 body for both). A "link"
  * row has NO bytes and NO text by construction, so the route's !body check

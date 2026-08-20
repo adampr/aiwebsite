@@ -18,6 +18,20 @@ import {
 } from "@/lib/governance/outline";
 import { BUILD_ID, staleBundleSignal } from "@/lib/governance/build-id";
 import {
+  ATTACHED_NOTICE,
+  attachFailedText,
+  CONFIRM_CANCELLED_ANNOUNCE,
+  confirmedAnnouncement,
+  confirmPanelAnnouncement,
+  offerAttach,
+  shouldAttach,
+  type AttachEligibility,
+} from "@/lib/governance/confirm-attach";
+import {
+  probeRoadmapNav,
+  resetRoadmapNavProbe,
+} from "@/components/roadmap-probe";
+import {
   clearedSectionCounts,
   diffResolvedMarkers,
   isRegionItem,
@@ -150,6 +164,17 @@ export function Workspace({ projectId }: { projectId: string }) {
   // page's once-per-load reclaim fills it within a poll cycle).
   const [queuedReason, setQueuedReason] = useState<QueuedReason | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  // Confirm-final panel (§5.12 auto-attach, owner directive 2026-08-20):
+  // the confirm button opens this inline panel instead of firing; the panel
+  // carries the pre-checked attach opt-out. `attachEligible` is the one
+  // lazy GET /api/roadmap/nav verdict (null until it lands or if it fails);
+  // `attachOffered` latches offerAttach() at panel open so a probe landing
+  // mid-panel can never arm a checkbox the user did not see.
+  const [confirmPending, setConfirmPending] = useState(false);
+  const [attachEligible, setAttachEligible] = useState<AttachEligibility>(null);
+  const [attachOffered, setAttachOffered] = useState(false);
+  const [attachChecked, setAttachChecked] = useState(true);
+  const attachProbedRef = useRef(false);
   const [reopenBusy, setReopenBusy] = useState(false);
   // Resolved-marker reveal (owner request 2026-07-17): settled spans keep a
   // static wash until the next turn; `reveal` is the one item playing now.
@@ -1125,6 +1150,12 @@ export function Workspace({ projectId }: { projectId: string }) {
         }
       }
 
+      // Any status change stales the confirm panel (§5.12 auto-attach): a
+      // reopen after a second-tab confirm must never resurrect the old
+      // panel with its latched offer and checkbox state. requestConfirm
+      // re-arms both on the next open.
+      if (prev && next.status !== prev.status) setConfirmPending(false);
+
       // Any rev change invalidates the previous turn's resolved-marker
       // washes and any reveal in progress: their offsets refer to documents
       // that no longer exist. A new diff below may set fresh ones.
@@ -1472,6 +1503,19 @@ export function Workspace({ projectId }: { projectId: string }) {
     return () => window.removeEventListener("focus", onFocus);
   }, [fetchProject, gone, signedOut]);
 
+  // Attach-eligibility probe (§5.12 auto-attach): ONE lazy read per page
+  // load, fired when the project first reaches review (the only status the
+  // confirm panel renders in; a reopen cycle reuses the cached verdict). It
+  // never gates or delays anything: until it lands, the panel simply omits
+  // the roadmap line. probeRoadmapNav never rejects (its own catch degrades
+  // to the empty answer, attach false), and it shares the nav badge's
+  // memoized probe, so this is usually zero extra requests.
+  useEffect(() => {
+    if (status !== "review" || attachProbedRef.current) return;
+    attachProbedRef.current = true;
+    void probeRoadmapNav().then((nav) => setAttachEligible(nav.attach));
+  }, [status]);
+
   // Restore the unsent draft for the current question (S4).
   const currentQid = view
     ? view.status === "review"
@@ -1719,6 +1763,9 @@ export function Workspace({ projectId }: { projectId: string }) {
     setWorkingLong(false);
     setNotice(null);
     setSkipPending(false);
+    // Any turn stales the confirm panel's promise (the draft is changing);
+    // it re-opens from the button once the turn lands.
+    setConfirmPending(false);
     // The click's instant receipt: the button just disabled under the
     // user's focus, so the live region confirms the send took.
     if (kind === "amend")
@@ -2481,9 +2528,14 @@ export function Workspace({ projectId }: { projectId: string }) {
     void fetchProject();
   }
 
-  async function confirmFinal() {
+  /** The confirm button's press (§5.12 auto-attach, owner directive
+   *  2026-08-20): run the client-side intercepts of the server's confirm
+   *  gate, then open the inline confirmation panel instead of firing the
+   *  flip. The checkbox re-arms CHECKED on every open: attaching is the
+   *  default and opting out is per confirmation, never a sticky choice. */
+  function requestConfirm() {
     const v = viewRef.current;
-    if (!v || confirmBusy) return;
+    if (!v || confirmBusy || confirmPending) return;
     // Client-side intercept of the server's confirm gate: the button stays
     // enabled (a dead button with no reason is worse) and this explains.
     const undrafted = Object.values(v.placeholderSections ?? {}).reduce(
@@ -2505,23 +2557,65 @@ export function Workspace({ projectId }: { projectId: string }) {
       });
       return;
     }
+    const offered = offerAttach(attachEligible);
+    setNotice(null);
+    setAttachOffered(offered);
+    setAttachChecked(true);
+    setConfirmPending(true);
+    setAnnounce(confirmPanelAnnouncement(offered));
+  }
+
+  function cancelConfirm() {
+    setConfirmPending(false);
+    setAnnounce(CONFIRM_CANCELLED_ANNOUNCE);
+  }
+
+  async function confirmFinal() {
+    const v = viewRef.current;
+    if (!v || confirmBusy) return;
+    // Decided BEFORE the flip: the panel (and its checkbox) unmounts with
+    // the review UI the moment status goes done.
+    const attach = shouldAttach(attachOffered, attachChecked);
     setConfirmBusy(true);
     const r = await api<{ status: string }>(
       `/api/governance/projects/${encodeURIComponent(projectId)}/confirm`,
       { method: "POST", body: "{}" }
     );
+    if (!r.ok) {
+      setConfirmBusy(false);
+      if (r.status === 401) setSignedOut(true);
+      else setNoticeAnnounced({ kind: "error", text: r.message });
+      return;
+    }
+    setConfirmPending(false);
+    const next: ProjectView = { ...v, status: "done" };
+    viewRef.current = next;
+    setView(next);
+    setHighlights({});
+    setChangedNow(null);
+    setAnnounce(confirmedAnnouncement(attach));
+    if (!attach) {
+      setConfirmBusy(false);
+      return;
+    }
+    // The attach runs AFTER the flip and its outcome never touches the
+    // confirm: the project is final either way (design rule). The roadmap
+    // route keeps its own gates and limits, and REFRESHES the lane's
+    // existing snapshot row on reopen -> confirm cycles (no duplicates).
+    const a = await api<{ id: string }>("/api/roadmap/docs", {
+      method: "POST",
+      body: JSON.stringify({ governanceProjectId: projectId }),
+    });
     setConfirmBusy(false);
-    if (r.ok) {
-      const next: ProjectView = { ...v, status: "done" };
-      viewRef.current = next;
-      setView(next);
-      setHighlights({});
-      setChangedNow(null);
-      setAnnounce("Final draft saved. Ready to download.");
-    } else if (r.status === 401) {
+    if (a.ok) {
+      // The attach moves roadmap state (step 1 can complete): drop the nav
+      // badge's memoized probe so its next read is fresh.
+      resetRoadmapNavProbe();
+      setNoticeAnnounced({ kind: "info", text: ATTACHED_NOTICE });
+    } else if (a.status === 401) {
       setSignedOut(true);
     } else {
-      setNoticeAnnounced({ kind: "error", text: r.message });
+      setNoticeAnnounced({ kind: "error", text: attachFailedText(a.message) });
     }
   }
 
@@ -2821,7 +2915,13 @@ export function Workspace({ projectId }: { projectId: string }) {
                 onAmend={(index, amendAnswer) =>
                   void submitTurn({ skipped: false, amendIndex: index, amendAnswer })
                 }
-                onConfirm={() => void confirmFinal()}
+                onConfirmRequest={requestConfirm}
+                confirmPending={confirmPending}
+                onConfirmCancel={cancelConfirm}
+                onConfirmFinal={() => void confirmFinal()}
+                attachOffer={attachOffered}
+                attachChecked={attachChecked}
+                onAttachChange={setAttachChecked}
                 confirmBusy={confirmBusy}
                 onReopen={() => void reopenForChanges()}
                 reopenBusy={reopenBusy}

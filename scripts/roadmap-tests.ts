@@ -815,6 +815,66 @@ ok("gov link rows: safe anchor on the page, never a download body", () => {
   assert.ok(statusCounts(401) && statusCounts(403) && !statusCounts(404));
 });
 
+// ---- Confirm-final auto-attach round (2026-08-20, owner directive) ----
+ok("gov attach dedupe: one refreshed snapshot row per (lane, project)", () => {
+  const db = readFileSync("src/lib/roadmap/db.ts", "utf8");
+  const start = db.indexOf(
+    "export async function attachOrRefreshGovernanceDoc"
+  );
+  assert.ok(start >= 0);
+  const fn = db.slice(
+    start,
+    db.indexOf("export async function governanceDocForDownload")
+  );
+  assert.ok(fn.length > 0);
+  // The refresh UPDATE is keyed on the LANE predicate + source + project
+  // id: dropping the lane term would let one lane's re-confirm rewrite
+  // another lane's snapshot; dropping the source term could catch an
+  // unrelated future row that reuses the provenance column.
+  assert.ok(fn.includes("govDocLaneWhere(opts.scope)"));
+  assert.ok(fn.includes('eq(CGD.source, "governance_project")'));
+  assert.ok(
+    fn.includes("eq(CGD.governanceProjectId, opts.governanceProjectId)")
+  );
+  // The refresh rewrites the snapshot fields AND the stamp (the on-file
+  // list orders and labels by created_at; a refreshed snapshot is a new
+  // copy of the project as of now).
+  for (const field of [
+    "title: opts.title",
+    "docText: opts.docText",
+    "addedByUserId: opts.addedByUserId",
+    "createdAt: new Date()",
+  ]) {
+    assert.ok(fn.includes(field), field);
+  }
+  // The fallback INSERT goes through the ONE writer (addGovernanceDoc),
+  // never a second .insert of its own.
+  assert.ok(fn.includes("addGovernanceDoc({"));
+  assert.ok(!fn.includes(".insert("));
+  // The route's attach lane calls the refresh writer and answers 200 with
+  // the existing id on a refresh vs 201 on a first attach.
+  const route = readFileSync("src/app/api/roadmap/docs/route.ts", "utf8");
+  assert.ok(route.includes("attachOrRefreshGovernanceDoc({"));
+  assert.ok(route.includes("refreshed ? 200 : 201"));
+});
+
+ok("nav probe carries the own-lane attach verdict for the auto-attach offer", () => {
+  const route = readFileSync("src/app/api/roadmap/nav/route.ts", "utf8");
+  // Staff lane: global-admin only (staff are never funneled into creating
+  // governance docs, owner ruling 2026-08-18). Company lane: membership
+  // itself (the docs attach lane is member-actionable). The empty answer
+  // stays attach: false, so the endpoint's privacy shape is unchanged: a
+  // session with no lane learns nothing new from the field.
+  assert.ok(route.includes("attach: staff.globalAdmin"));
+  assert.ok(route.includes("attach: true"));
+  assert.ok(route.includes("attach: false"));
+  // The client parse admits only the literal true (a tampered or stale
+  // shape degrades to no offer, never to a promised 403).
+  const probe = readFileSync("src/components/roadmap-probe.ts", "utf8");
+  assert.ok(probe.includes("attach: d?.attach === true"));
+  assert.ok(probe.includes("attach: false"));
+});
+
 // ---- Directory bulk-cleanup round (2026-08-09) invariants ----
 ok("directory write limits are per-MINUTE windows, not per-hour", () => {
   // The reported bug: 60 writes per HOUR against a limiter whose window is
