@@ -14,6 +14,11 @@
 //   dashed hollow    = paid offering, booked off-portal (workshop, cohort);
 //                      a SHAPE cue, not a hue: these steps are outside the
 //                      progress ladder entirely, never dim-vs-done
+//   bright dashed    = paid offering with admin-attested attendance > 0
+//                      (owner override 2026-08-20): the up-next brightness
+//                      recipe on the dashed shape; a MODIFIER on offered
+//                      like partial, never a state, and a node-only claim -
+//                      see the PAID STEPS note below
 //   gray-core diamond = examined: the system RAN and found nothing to show
 //                      (directory stamped-zero)
 //   cyan outline     = up next (STATIC; the pulse means working only)
@@ -50,6 +55,13 @@
 // progress only, and the node claims offering status only. Their fee token
 // is aria-hidden (screen readers would voice "$495/mo" as "slash m o"); the
 // sr channel says "Booked separately" and the card below speaks the price.
+// ATTENDED (owner override 2026-08-20, NODE VISUAL only): when the lane's
+// admin-attested attendance count for a paid step is > 0, the node layers
+// rmp-node--attended over --offered (bright outline, dash kept) and the sr
+// phrase grows ", {n} attended". Everything else is deliberately untouched:
+// attendance never lights a segment, never moves the frontier, and never
+// counts toward the progress percentage - it is still not task progress,
+// the node just stops looking identical on a lane people actually attended.
 //
 // The frontier ("up next") is computed over the nine TRACKED steps only
 // (TRACKED_STEP_KEYS in config.ts, pinned tracked-XOR-paid by
@@ -86,6 +98,14 @@ export type RunwayStatus = {
   secure: { done: boolean; partial: boolean };
   data: { done: boolean };
   tools: { done: boolean };
+  /** Admin-attested paid-step head counts (owner override 2026-08-20).
+   * OPTIONAL: both real bundles (RoadmapStatus, StaffRoadmapStatus) carry it
+   * required, so every authenticated caller wires it just by passing its
+   * existing status object - no separate prop, no adapter, and the runway
+   * can never disagree with the paid cards below it. The teaser passes
+   * status={null} and stays attendance-free. > 0 only brightens the offered
+   * node and joins its sr phrase; see the PAID STEPS note above. */
+  attendance?: { workshop: number; cohort: number };
 };
 
 type NodeState =
@@ -103,8 +123,15 @@ type NodeState =
  * leave assistive tech). `partial` is layered on top rather than being its
  * own state, so a half-done step that is ALSO the frontier still says both
  * things instead of one of them silently winning. */
-function srStateText(s: NodeState, partial = false): string {
+function srStateText(s: NodeState, partial = false, attended = 0): string {
   if (partial) return s === "upnext" ? "Half done, up next" : "Half done";
+  // Attended layers over OFFERED only (owner override 2026-08-20), the same
+  // way partial layers over its states. Guarding on the state here makes a
+  // tracked step structurally unable to voice attendance, and the phrase
+  // stays availability-neutral: a head count is a fact about people, never
+  // a claim about enrollment or progress.
+  if (s === "offered" && attended > 0)
+    return `Booked separately, ${attended} attended`;
   return srBaseText(s);
 }
 
@@ -136,15 +163,24 @@ function srBaseText(s: NodeState): string {
  * Layering keeps both. The visual is a diamond filled on ONE SIDE ONLY
  * (roadmap.css), which is a shape cue rather than a hue, per the standing
  * rule that state must survive a colorblind reading.
+ *
+ * ATTENDED IS THE SECOND MODIFIER (owner override 2026-08-20), layered by
+ * the same argument: whether people attended is orthogonal to what the
+ * state machine can ever say about a paid step ("offered" is its only
+ * state), so a seventh NodeState would fork the offered branch for one
+ * border repaint. It composes with "offered" ONLY - partial exists only on
+ * tracked step 09 and attended only on the two untracked paid keys
+ * (attendedFor), so the two modifiers can never meet on one node.
  */
-function nodeClass(s: NodeState, partial = false): string {
+function nodeClass(s: NodeState, partial = false, attended = false): string {
   const base =
     s === "dim"
       ? "rmp-node"
       : s === "examined"
         ? "rmp-node rmp-node--examined"
         : `rmp-node rmp-node--${s}`;
-  return partial ? `${base} rmp-node--partial` : base;
+  if (partial) return `${base} rmp-node--partial`;
+  return attended && s === "offered" ? `${base} rmp-node--attended` : base;
 }
 
 function isTracked(k: RoadmapStepKey): k is TrackedStepKey {
@@ -250,8 +286,19 @@ export function RoadmapRunway({
     );
   }
 
+  /** Admin-attested head count (owner override 2026-08-20): only the two
+   * UNTRACKED (= paid, tracked-XOR-paid pin) keys can carry one, which is
+   * what keeps "attended" structurally an offered-only modifier. Feeds the
+   * node class (as > 0) and the sr phrase (as the number); segments, the
+   * frontier and the percentage never read it. */
+  function attendedFor(key: RoadmapStepKey): number {
+    if (!status || isTracked(key)) return 0;
+    return status.attendance?.[key] ?? 0;
+  }
+
   const states = ROADMAP_STEPS.map((step) => stateFor(step.key));
   const partials = ROADMAP_STEPS.map((step) => partialFor(step.key));
+  const attendeds = ROADMAP_STEPS.map((step) => attendedFor(step.key));
 
   /** Walk outward from index i until a TRACKED stop answers. Paid stops are
    * pass-through beads, so segments 02-03 and 03-04 both light once
@@ -354,7 +401,7 @@ export function RoadmapRunway({
                 <span
                   className="rmp-node-cell"
                   aria-hidden="true"
-                  data-state={srStateText(states[i], partials[i])}
+                  data-state={srStateText(states[i], partials[i], attendeds[i])}
                   // Feeds the tier-2 tooltip, where the visible title is
                   // clipped (roadmap.css). Sighted users on a step page have
                   // no cards to read the title from at that width, so the
@@ -363,7 +410,7 @@ export function RoadmapRunway({
                 >
                   <span
                     id={nodeId}
-                    className={nodeClass(states[i], partials[i])}
+                    className={nodeClass(states[i], partials[i], attendeds[i] > 0)}
                   />
                 </span>
                 <span className="rmp-stop-text">
@@ -379,7 +426,7 @@ export function RoadmapRunway({
                     className="sr-only"
                     id={step.key === "directory" ? "rmp-sr-directory" : undefined}
                   >
-                    {", " + srStateText(states[i], partials[i])}
+                    {", " + srStateText(states[i], partials[i], attendeds[i])}
                   </span>
                 </span>
               </Link>

@@ -2,7 +2,8 @@
    file is imported by src/app/roadmap/page.tsx and the (steps) layout, never
    globals.css. ROUND-4 NODE GRAMMAR (owner ruling; the runway node IS the
    state, no visible words): hollow = not started, dashed hollow = paid
-   offering booked off-portal, static cyan outline = up next, gray-core
+   offering booked off-portal (bright when attendance is attested, the
+   --attended modifier), static cyan outline = up next, gray-core
    diamond = examined (ran, nothing to show), pulsing cyan<->flare fill =
    working, solid cyan = done/live. Sr-only spans inside the stop links carry
    state non-visually (never color-only, WCAG 1.4.1). NOTE the deliberate
@@ -146,6 +147,8 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
    visible words - sr-only spans carry it non-visually):
      hollow neutral = not started
      DASHED hollow = paid offering, booked off-portal (six-step round)
+     BRIGHT dashed hollow = paid offering with attested attendance (--attended
+       modifier, owner override 2026-08-20; see its block below)
      static cyan outline + halo = up next (pulse now means working ONLY)
      pulsing cyan<->flare fill = working
      solid cyan = done AND live (Live vs Done is sr-only; the glow width
@@ -180,6 +183,26 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
    meaning in the other two channels. */
 .rmp-node--offered {
   border-style: dashed;
+}
+
+/* ATTENDED (owner override 2026-08-20): the lane's admin-attested attendance
+   count for a paid step is > 0. A MODIFIER layered over --offered (the
+   --partial precedent, runway.tsx nodeClass), never a state of its own: the
+   step is still a paid offering bought off-portal, so border-style STAYS
+   dashed - the paid identity is the dash, and repainting it solid would make
+   attended pixel-ambiguous with the up-next ring or the progress ladder.
+   The brightness borrows the up-next recipe exactly (border-color +
+   the 2px weight that is the light-theme second cue, refuter-pinned +
+   the 8px halo), "like other steps in progress", per the owner ask. NO
+   animation: nothing is running, and the pulse means working ONLY (standing
+   rule). Declared AFTER --offered because both are single-class (0,1,0)
+   selectors and only source order lets this border-color win. Attendance
+   remains a node-and-sr-only claim: segments, the frontier and the percent
+   line never read it (runway.tsx). */
+.rmp-node--attended {
+  border-color: var(--xl-light);
+  border-width: 2px;
+  box-shadow: 0 0 8px var(--xl-light-glow);
 }
 
 /* EXAMINED (round 5): the system RAN and there is nothing to show yet -

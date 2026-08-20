@@ -659,6 +659,26 @@ ok("staff-parity source pins hold", () => {
   assert.ok(!read("src/lib/roadmap/db.ts").includes("submitterName"));
 });
 
+// ---- Attended node modifier (owner override 2026-08-20) source pins ----
+ok("attended stays a bright DASHED offered modifier", () => {
+  const css = readFileSync("src/app/roadmap/roadmap.css", "utf8");
+  const offered = css.indexOf(".rmp-node--offered {");
+  const attended = css.indexOf(".rmp-node--attended {");
+  // Source order is load-bearing: both selectors are single-class (0,1,0),
+  // so the attended border-color only beats the offered neutral by coming
+  // LATER in the file.
+  assert.ok(offered !== -1 && attended !== -1 && offered < attended);
+  const block = css.slice(attended, css.indexOf("}", attended));
+  // The paid identity is the dash: the modifier must inherit border-style
+  // from --offered, never repaint it, and never animate (pulse = working).
+  assert.ok(!block.includes("border-style"));
+  assert.ok(!block.includes("animation"));
+  // Attendance layers over offered ONLY: the sr phrase is state-guarded, so
+  // a tracked step can never voice a head count.
+  const runway = readFileSync("src/components/roadmap/runway.tsx", "utf8");
+  assert.ok(runway.includes('s === "offered" && attended > 0'));
+});
+
 // ---- Staff governance round (2026-08-18, owner ruling) invariants ----
 ok("staff governance: lane scope discipline holds end to end", () => {
   const read = (p: string) => readFileSync(p, "utf8");
