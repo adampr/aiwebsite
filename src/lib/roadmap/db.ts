@@ -861,6 +861,70 @@ export async function governanceDocForDownload(
   return rows[0] ?? null;
 }
 
+/** Edit-again read (§5.18, owner directive 2026-08-20): the Builder-snapshot
+ * fields for one lane row. Same discipline as governanceDocForDownload:
+ * scoped in the ONE query, missing and not-owned are the same null (the
+ * route returns one identical 404 body). Strict positional uuid shape (the
+ * admin-console lesson: a loose [0-9a-f-]{36} admits hyphen-soup, which
+ * 22P02s against the uuid column instead of 404ing). */
+export async function governanceDocForEdit(
+  docId: string,
+  scope: GovDocScope
+): Promise<{
+  id: string;
+  source: string;
+  docText: string | null;
+  governanceProjectId: string | null;
+  governanceKind: string | null;
+} | null> {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      docId
+    )
+  )
+    return null;
+  const rows = await db
+    .select({
+      id: CGD.id,
+      source: CGD.source,
+      docText: CGD.docText,
+      governanceProjectId: CGD.governanceProjectId,
+      governanceKind: CGD.governanceKind,
+    })
+    .from(CGD)
+    .where(and(eq(CGD.id, docId), govDocLaneWhere(scope)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/** Re-key the lane's snapshot row to a NEW builder project (§5.18
+ * edit-again): after a seed, confirm-final in the new project must REFRESH
+ * this exact row (attachOrRefreshGovernanceDoc matches on
+ * governance_project_id) instead of inserting a sibling. Last editor wins
+ * the refresh key: a colleague's still-live ORIGINAL project inserts a
+ * fresh row on its next confirm - accepted, mirroring the existing
+ * no-unique-constraint race acceptance above. Source term riding the WHERE
+ * so a future non-snapshot row reusing the provenance column can never be
+ * re-keyed. */
+export async function repointGovernanceDocProject(opts: {
+  docId: string;
+  scope: GovDocScope;
+  governanceProjectId: string;
+}): Promise<boolean> {
+  const rows = await db
+    .update(CGD)
+    .set({ governanceProjectId: opts.governanceProjectId })
+    .where(
+      and(
+        eq(CGD.id, opts.docId),
+        govDocLaneWhere(opts.scope),
+        eq(CGD.source, "governance_project")
+      )
+    )
+    .returning({ id: CGD.id });
+  return rows.length > 0;
+}
+
 export async function removeGovernanceDoc(
   docId: string,
   scope: GovDocScope

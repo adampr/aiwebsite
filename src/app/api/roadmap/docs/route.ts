@@ -38,6 +38,7 @@ import {
   attachOrRefreshGovernanceDoc,
 } from "@/lib/roadmap/db";
 import { fetchOwnedProject } from "@/lib/governance/db";
+import { projectMarkdown } from "@/lib/governance/snapshot";
 import { ROADMAP_CAPS } from "@/lib/roadmap/config";
 import { checkUrlReachable, parseCheckableUrl } from "@/lib/roadmap/url-check";
 import {
@@ -54,33 +55,9 @@ const KIND_TITLES: Record<string, string> = {
   iso_42001: "ISO 42001 Alignment",
 };
 
-type ProjectDoc = {
-  title?: unknown;
-  sections?: { title?: unknown; markdown?: unknown }[];
-};
-
-/** Lenient flatten of a project's documents_json to markdown. Placeholder
- * and malformed sections degrade to their headings; the snapshot is a copy
- * for the company file, not a re-render. */
-function projectMarkdown(documentsJson: string): string {
-  let docs: ProjectDoc[] = [];
-  try {
-    const parsed = JSON.parse(documentsJson);
-    if (Array.isArray(parsed)) docs = parsed as ProjectDoc[];
-  } catch {
-    docs = [];
-  }
-  const out: string[] = [];
-  for (const doc of docs) {
-    if (typeof doc?.title === "string") out.push(`# ${doc.title}`);
-    for (const s of Array.isArray(doc?.sections) ? doc.sections : []) {
-      if (typeof s?.title === "string") out.push(`\n## ${s.title}\n`);
-      if (typeof s?.markdown === "string") out.push(s.markdown);
-    }
-    out.push("\n\n---\n");
-  }
-  return out.join("\n").trim();
-}
+// projectMarkdown moved to @/lib/governance/snapshot (2026-08-20 edit-again
+// round): it now has an inverse (parseSnapshotMarkdown, the [id]/edit seed)
+// and the pair must live together so they cannot drift.
 
 /** Reason -> copy for a refused link (platform-copy failureLine wording,
  * minus the parts that do not exist here: nothing is saved on failure and

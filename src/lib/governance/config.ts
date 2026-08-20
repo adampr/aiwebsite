@@ -324,6 +324,12 @@ export const REVIEW_RESOLVED_SUMMARY =
 export const REVIEW_REOPENED_SUMMARY =
   "Reopened. Change any answer under Your answers below, ask for any other change in the box under them, or confirm again to make it final as is.";
 
+/** Edit-again seed (§5.18 roadmap file -> new review project, owner
+ * directive 2026-08-20). Host-written, no AI call. No reference to Your
+ * answers: a seeded project starts with none. */
+export const REVIEW_IMPORTED_SUMMARY =
+  "This document came back from your company's AI Roadmap governance file. Read the draft on the right, ask for any change in the box below, and confirm final when it reads right.";
+
 /** Owner rule 2026-07-17: a review summary must never read as ready-for-final
  * while [TO CONFIRM] markers remain. Count-free on purpose: the stored
  * summary outlives resolutions (keep-as-drafted never rewrites it), so a

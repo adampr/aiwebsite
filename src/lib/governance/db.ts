@@ -127,6 +127,49 @@ export async function createProject(opts: {
   return rows[0].id;
 }
 
+/**
+ * Seed a builder project directly in `review` from an on-file roadmap
+ * snapshot (§5.18 edit-again, owner directive 2026-08-20: "Even final
+ * governance should be editable in the future"). Insert-only sibling of
+ * createProject - NOT applyTurnWrite, which fences against an existing row.
+ * Status "review" because every edit tool (revise, amend, restyle, the
+ * open-item resolver) is already legal and gated there, review-status paths
+ * never force-flip on answersCount 0, and turn-runner/view both tolerate a
+ * null brief and null nextQuestion. Byte caps enforced exactly like every
+ * documents/transcript write; null = refused (the caller answers 4xx).
+ */
+export async function createImportedProject(opts: {
+  userId: string;
+  kind: GovernanceKind;
+  domain: string;
+  documents: GovernanceDoc[];
+  transcript: TranscriptEntry[];
+  reviewSummary: string;
+}): Promise<string | null> {
+  const documentsJson = JSON.stringify(opts.documents);
+  const transcriptJson = JSON.stringify(opts.transcript);
+  if (
+    Buffer.byteLength(documentsJson) > CAPS.documentsJsonMaxBytes ||
+    Buffer.byteLength(transcriptJson) > CAPS.transcriptJsonMaxBytes
+  )
+    return null;
+  const rows = await db
+    .insert(P)
+    .values({
+      userId: opts.userId,
+      kind: opts.kind,
+      domain: opts.domain,
+      status: "review",
+      documentsJson,
+      transcriptJson,
+      coveredBankIdsJson: "[]",
+      reviewSummary: opts.reviewSummary,
+      changedSectionsJson: "{}",
+    })
+    .returning({ id: P.id });
+  return rows[0].id;
+}
+
 export async function deleteOwnedProject(
   userId: string,
   id: string

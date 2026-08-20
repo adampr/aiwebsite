@@ -188,7 +188,8 @@ function TranscriptList({
     (r) =>
       r.entry.qId === "revise" ||
       r.entry.qId === "confirm" ||
-      r.entry.qId === "reopen"
+      r.entry.qId === "reopen" ||
+      r.entry.qId === "imported"
   );
 
   // Shared inline amend editor (identical in both variants).
@@ -250,8 +251,9 @@ function TranscriptList({
   };
 
   let qNum = 0;
-  // Revision, kept-as-drafted, format, and reopen rows never consume a
-  // number; amend rows are folded and never listed.
+  // Revision, kept-as-drafted, format, reopen, and imported (edit-again
+  // seed) rows never consume a number; amend rows are folded and never
+  // listed.
   const rowLabel = (t: TranscriptEntry) =>
     t.qId === "revise"
       ? "Revision request"
@@ -261,7 +263,9 @@ function TranscriptList({
           ? "Format pass"
           : t.qId === "reopen"
             ? "Reopened for changes"
-            : `Q${++qNum} · ${t.q}`;
+            : t.qId === "imported"
+              ? "Brought back for editing"
+              : `Q${++qNum} · ${t.q}`;
 
   if (variant === "promoted") {
     const qCount = folded.filter((r) => isQuestionEntry(r.entry)).length;

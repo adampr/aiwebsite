@@ -684,13 +684,13 @@ ok("staff governance: lane scope discipline holds end to end", () => {
   const read = (p: string) => readFileSync(p, "utf8");
   const db = read("src/lib/roadmap/db.ts");
   // Every governance-doc read/write binds the ONE lane predicate
-  // (govDocLaneWhere): list and count take it bare, download and remove AND
-  // it with the id - so a company read can never see the staff document and
-  // vice versa.
+  // (govDocLaneWhere): list and count take it bare, download, edit-again
+  // (2026-08-20) and remove AND it with the id - so a company read can
+  // never see the staff document and vice versa.
   assert.equal(db.match(/\.where\(govDocLaneWhere\(scope\)\)/g)?.length, 2);
   assert.equal(
     db.match(/and\(eq\(CGD\.id, docId\), govDocLaneWhere\(scope\)\)/g)?.length,
-    2
+    3
   );
   // The insert takes the scope, not a bare companyId (a string param would
   // compile the staff lane out of existence).
@@ -893,6 +893,118 @@ ok("nav probe carries the own-lane attach verdict for the auto-attach offer", ()
   const probe = readFileSync("src/components/roadmap-probe.ts", "utf8");
   assert.ok(probe.includes("attach: d?.attach === true"));
   assert.ok(probe.includes("attach: false"));
+});
+
+// ---- Edit-again from the roadmap file (2026-08-20, owner directive:
+// "Even final governance should be editable in the future") ----
+ok("gov edit-again route: attach-lane gate, one 404 shape, validation before the write token", () => {
+  const route = readFileSync(
+    "src/app/api/roadmap/docs/[id]/edit/route.ts",
+    "utf8"
+  );
+  // Lane mirrors the attach lane exactly (member-actionable company lane,
+  // global-admin staff lane), resolved once; never the admin gate.
+  assert.equal(route.match(/docsWriteLane\("attach"\)/g)?.length, 1);
+  assert.ok(!route.includes('docsWriteLane("admin")'));
+  // Missing, not-owned and wrong-source rows share the download route's
+  // exact 404 body: no existence oracle across lanes or sources.
+  assert.ok(route.includes('"That document does not exist."'));
+  assert.ok(route.includes('doc.source !== "governance_project"'));
+  // The 2026-08-09 lockout mechanic: EVERY validation (row fetch, snapshot
+  // parse, builder caps, per-person creates budget, domain, byte cap) runs
+  // before the fixed-hour roadmap:docs token is spent; the up-front
+  // per-minute request throttle is a separate bucket.
+  const tokenAt = route.indexOf("roadmap:docs:${");
+  assert.ok(tokenAt > 0);
+  for (const marker of [
+    "roadmap:docedit:",
+    "governanceDocForEdit(",
+    "parseSnapshotMarkdown(",
+    "countActiveProjects(",
+    "countCreatedToday(",
+    "documentsJsonMaxBytes",
+  ]) {
+    assert.ok(route.indexOf(marker) < tokenAt, marker);
+  }
+  // Both kill switches: roadmap writes AND governanceEnabled (a seeded
+  // project in a 503'd workbench is a trap - the reopen route's reasoning).
+  assert.ok(route.includes("requireRoadmapWritesEnabled()"));
+  assert.ok(route.includes("governanceEnabled(process.env)"));
+  // Kind validated against known kinds; domain from the lane's verified
+  // tenancy value, never a request field.
+  assert.ok(route.includes("isGovernanceKind(doc.governanceKind)"));
+  assert.ok(route.includes("normalizeDomain(lane.internalDomain)"));
+  // Round 2 FIX 4: NULL/unknown governance_kind is INELIGIBLE and answers
+  // the SAME 404 (oracle-safe) - never a fallback kind, which would parse
+  // the snapshot against the wrong blueprint allowlist (a 7-doc FFIEC file
+  // folded into one giant doc).
+  assert.ok(
+    route.includes(
+      "if (!isGovernanceKind(doc.governanceKind)) return NOT_FOUND();"
+    )
+  );
+  assert.ok(!route.includes('"usage_policy"'));
+  // Round 2 FIX 2 (owner rule 2026-07-17): the seeded review summary rides
+  // withOpenItemsNote - a snapshot CAN carry [TO CONFIRM] markers (the
+  // manual attach lane has no marker gate), and a review summary must
+  // never read ready-for-final over open markers.
+  assert.ok(
+    route.includes("withOpenItemsNote(") &&
+      route.includes("openConfirmTotal(documents)")
+  );
+  // Still-live own project short-circuits with created:false and spends
+  // nothing; otherwise seed then repoint then 201.
+  assert.ok(route.includes("created: false"));
+  assert.ok(
+    route.indexOf("createImportedProject({") <
+      route.indexOf("repointGovernanceDocProject({")
+  );
+  assert.ok(route.includes("{ projectId, created: true }, 201"));
+});
+
+ok("gov edit-again repoint: lane + source bound into the ONE update", () => {
+  const db = readFileSync("src/lib/roadmap/db.ts", "utf8");
+  const start = db.indexOf(
+    "export async function repointGovernanceDocProject"
+  );
+  assert.ok(start >= 0);
+  const fn = db.slice(
+    start,
+    db.indexOf("export async function removeGovernanceDoc")
+  );
+  // Dropping the lane term would let one lane re-key another lane's row;
+  // dropping the source term could re-key an unrelated future row that
+  // reuses the provenance column.
+  assert.ok(fn.includes("govDocLaneWhere(opts.scope)"));
+  assert.ok(fn.includes('eq(CGD.source, "governance_project")'));
+  assert.ok(fn.includes("governanceProjectId: opts.governanceProjectId"));
+  // The edit read is lane-scoped in its one query and strict-uuid shaped
+  // (the loose [0-9a-f-]{36} hyphen-soup 22P02 lesson).
+  const readFn = db.slice(
+    db.indexOf("export async function governanceDocForEdit"),
+    start
+  );
+  assert.ok(readFn.includes("[0-9a-f]{8}-[0-9a-f]{4}"));
+  assert.ok(readFn.includes("govDocLaneWhere(scope)"));
+});
+
+ok("gov edit-again UI: island only on Builder rows, staff lane admin-gated", () => {
+  const page = readFileSync(
+    "src/app/roadmap/(steps)/governance/page.tsx",
+    "utf8"
+  );
+  assert.ok(page.includes('canEdit && doc.source === "governance_project"'));
+  assert.ok(page.includes("canEdit={globalAdmin}"));
+  const islands = readFileSync(
+    "src/app/roadmap/(steps)/governance/gov-islands.tsx",
+    "utf8"
+  );
+  assert.ok(islands.includes("Edit in the Governance Builder"));
+  assert.ok(islands.includes("/edit"));
+  assert.ok(islands.includes("router.push(`/governance/${data.projectId}`)"));
+  // The explicit promise line, and no em/en dashes in either file's copy.
+  assert.ok(page.includes("even after the original project has"));
+  assert.ok(!/[–—]/.test(page) && !/[–—]/.test(islands));
 });
 
 // ---- Directory bulk-cleanup round (2026-08-09) invariants ----

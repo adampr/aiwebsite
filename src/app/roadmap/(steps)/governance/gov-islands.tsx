@@ -1,8 +1,9 @@
 "use client";
 
 // Client islands for roadmap step 1 (§5.18): document upload (admin),
-// link-a-policy (admin), attach-own-project (member-actionable), and the
-// two-click remove (admin).
+// link-a-policy (admin), attach-own-project (member-actionable),
+// edit-again-in-builder on Builder snapshots (member-actionable; staff lane
+// admin-only via the page's canEdit), and the two-click remove (admin).
 // Every mutation calls the API and then router.refresh() so the server page
 // re-renders the on-file list; the islands hold no copy of company data.
 
@@ -223,6 +224,60 @@ export function AttachProjectButton({
         onClick={attach}
       >
         {busy ? "Attaching..." : "Attach"}
+      </button>
+      {error && (
+        <span role="alert" className="text-xs text-red-400">
+          {error}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Edit-again (owner directive 2026-08-20): seed (or find) a Governance
+ * Builder project from an on-file Builder snapshot and go there. Works
+ * even after the original project's 30-day retention removed it. */
+export function EditInBuilderButton({ docId }: { docId: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function edit() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/roadmap/docs/${docId}/edit`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        setError(await readError(res));
+        return;
+      }
+      const data = (await res.json().catch(() => null)) as {
+        projectId?: unknown;
+      } | null;
+      if (typeof data?.projectId === "string" && data.projectId) {
+        router.push(`/governance/${data.projectId}`);
+        return; // keep the busy state through the navigation
+      }
+      setError("Something went wrong. Try again shortly.");
+      setBusy(false);
+    } catch {
+      setError("Something went wrong. Check your connection and try again.");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="inline-flex flex-wrap items-center gap-3">
+      <button
+        type="button"
+        className="btn btn--text"
+        disabled={busy}
+        aria-busy={busy}
+        onClick={edit}
+      >
+        {busy ? "Opening..." : "Edit in the Governance Builder"}
       </button>
       {error && (
         <span role="alert" className="text-xs text-red-400">

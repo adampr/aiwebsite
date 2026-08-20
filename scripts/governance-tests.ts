@@ -34,6 +34,7 @@ import {
   KIND_LABELS,
   normalizeDomain,
   REVIEW_FORCED_SUMMARY,
+  REVIEW_IMPORTED_SUMMARY,
   REVIEW_REOPENED_SUMMARY,
   REVIEW_RESOLVED_SUMMARY,
   STYLE_SAMPLE_DEBT_NOTE,
@@ -182,6 +183,13 @@ import {
   mergeOpenItemGuesses,
   parseGuessStore,
 } from "../src/lib/governance/guesses";
+import {
+  IMPORTED_ENTRY_A,
+  IMPORTED_ENTRY_Q,
+  importedTranscriptEntry,
+  parseSnapshotMarkdown,
+  projectMarkdown,
+} from "../src/lib/governance/snapshot";
 import { GOVERNANCE_KINDS } from "../src/lib/governance/types";
 import type {
   GovernanceDoc,
@@ -251,6 +259,8 @@ function check(name: string, cond: boolean): void {
     "src/app/api/governance/projects/[id]/answer/route.ts",
     "src/app/api/governance/projects/[id]/confirm/route.ts",
     "src/app/api/governance/projects/[id]/reopen/route.ts",
+    "src/lib/governance/snapshot.ts",
+    "src/app/api/roadmap/docs/[id]/edit/route.ts",
   ]) {
     const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
     check(`no banned chars in ${rel}`, !/[–—‘’“”]/.test(text));
@@ -6090,6 +6100,261 @@ function check(name: string, cond: boolean): void {
     wsSrc.indexOf('status: "done" }') <
       wsSrc.indexOf('api<{ id: string }>("/api/roadmap/docs"')
   );
+}
+
+/* 33. Edit-again from the roadmap file (§5.18, owner directive 2026-08-20:
+   "Even final governance should be editable in the future"): the snapshot
+   markdown parses back into GovernanceDoc[] (projectMarkdown's inverse),
+   slugs and section ids REBUILT against the kind's blueprint so revise ops
+   on the seeded project validate (an off-allowlist slug makes editing look
+   alive while every op silently drops), leniency never throws and never
+   discards text, and the seeded "imported" transcript row stays numberless
+   in the workspace. */
+{
+  for (const kind of ["usage_policy", "eu_ai_act"] as const) {
+    const docs = scaffoldDocuments(kind).map((d, di) => ({
+      ...d,
+      sections: d.sections.map((s, si) => ({
+        ...s,
+        markdown: `Body ${di}-${si} line one.\n\nSecond paragraph ${si}.`,
+      })),
+    }));
+    const back = parseSnapshotMarkdown(projectMarkdown(JSON.stringify(docs)), kind);
+    check(`import33 ${kind}: round-trip doc count`, back.length === docs.length);
+    check(
+      `import33 ${kind}: round-trip slugs, titles, ids, section titles`,
+      back.every(
+        (d, i) =>
+          d.slug === docs[i].slug &&
+          d.title === docs[i].title &&
+          d.sections.length === docs[i].sections.length &&
+          d.sections.every(
+            (s, j) =>
+              s.id === docs[i].sections[j].id &&
+              s.title === docs[i].sections[j].title
+          )
+      )
+    );
+    check(
+      `import33 ${kind}: round-trip section markdown byte-exact`,
+      back.every((d, i) =>
+        d.sections.every((s, j) => s.markdown === docs[i].sections[j].markdown)
+      )
+    );
+    const allow = docSlugAllowlist(kind);
+    check(
+      `import33 ${kind}: every parsed slug allowlisted`,
+      back.every((d) => allow.has(d.slug))
+    );
+  }
+  // A retitled doc must still land on an allowlisted slug (turn ops are
+  // validated against docSlugAllowlist; anything else is a dead workbench).
+  const retitled = parseSnapshotMarkdown(
+    "# Totally Renamed Policy\n\n## Scope\n\nEveryone.",
+    "usage_policy"
+  );
+  check(
+    "import33: retitled doc falls back to an allowlisted slug, title kept",
+    retitled.length === 1 &&
+      docSlugAllowlist("usage_policy").has(retitled[0].slug) &&
+      retitled[0].title === "Totally Renamed Policy" &&
+      retitled[0].sections[0]?.markdown === "Everyone."
+  );
+  // Leniency: empty and separator-only input yield zero docs; headingless
+  // text is kept under an implicit doc/section; overflow docs FOLD into the
+  // last real doc (usage_policy's allowlist holds one slug) with the lost
+  // doc title surviving as the folded section's title; nothing throws.
+  check("import33: empty input parses to []", parseSnapshotMarkdown("", "usage_policy").length === 0);
+  check(
+    "import33: separators alone parse to []",
+    parseSnapshotMarkdown("---\n\n---\n", "usage_policy").length === 0
+  );
+  const bare = parseSnapshotMarkdown("just text\nsecond line", "usage_policy");
+  check(
+    "import33: headingless text kept under an implicit allowlisted doc",
+    bare.length === 1 &&
+      docSlugAllowlist("usage_policy").has(bare[0].slug) &&
+      bare[0].sections[0]?.markdown === "just text\nsecond line"
+  );
+  const folded33 = parseSnapshotMarkdown(
+    "# A\n\n## One\n\nBody A.\n\n---\n\n# B\n\nBody B.",
+    "usage_policy"
+  );
+  check(
+    "import33: overflow doc folds into the last doc, title and text kept",
+    folded33.length === 1 &&
+      folded33[0].sections.length === 2 &&
+      folded33[0].sections[1].title === "B" &&
+      folded33[0].sections[1].markdown === "Body B."
+  );
+  const weird = parseSnapshotMarkdown("######\n#\n##\n!!!\n---\n## !!!\nx", "usage_policy");
+  check(
+    "import33: garbage never throws and every id is turn-validator kebab",
+    Array.isArray(weird) &&
+      weird.every((d) =>
+        d.sections.every((s) =>
+          /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(s.id)
+        )
+      )
+  );
+  // The seeded transcript row: numberless (never a question entry), copy
+  // pinned - it names the AI Roadmap provenance and the editability promise.
+  const entry33 = importedTranscriptEntry(new Date().toISOString());
+  check("import33: imported row is not a question entry", !isQuestionEntry(entry33));
+  check(
+    "import33: imported row copy names provenance",
+    entry33.qId === "imported" &&
+      entry33.q === IMPORTED_ENTRY_Q &&
+      entry33.a === IMPORTED_ENTRY_A &&
+      IMPORTED_ENTRY_A.includes("AI Roadmap governance file")
+  );
+  check(
+    "import33: imported review summary names the roadmap file and review",
+    REVIEW_IMPORTED_SUMMARY.includes("AI Roadmap governance file") &&
+      REVIEW_IMPORTED_SUMMARY.includes("confirm final")
+  );
+  // Workspace tolerance: the transcript list must special-case qId
+  // "imported" in BOTH the number-consuming label ladder and the "and
+  // revisions" summary predicate (an unhandled qId would eat a Q number).
+  const qpSrc = fs.readFileSync(
+    path.join(REPO_ROOT, "src/components/governance/question-pane.tsx"),
+    "utf8"
+  );
+  check(
+    "import33: question-pane labels the imported row numberlessly",
+    qpSrc.includes('"Brought back for editing"') &&
+      (qpSrc.match(/qId === "imported"/g)?.length ?? 0) >= 2
+  );
+
+  // Round 2 FIX 1 (refuter, must-fix): a snapshot of a CONFIRMED-FINAL
+  // project of EVERY kind re-imports into a project that can confirm final
+  // again with ZERO revise turns. Confirmed-final shape: every non-stub
+  // section drafted; blueprint-default stub docs keep their scaffold
+  // placeholders (the confirm gate's placeholderSectionMap skips stub
+  // docs, so they never blocked the original confirm); one stub carries a
+  // set_stub-shaped "determination" section. Without stub restore those
+  // placeholders resurface on stub:false docs and 409 the re-confirm.
+  {
+    const { placeholderSectionMap: phMap, stubDetermined: stubDet } =
+      await import("../src/lib/governance/blueprints");
+    for (const kind of GOVERNANCE_KINDS) {
+      const finalDocs = scaffoldDocuments(kind).map((d) => ({
+        ...d,
+        sections: d.stub
+          ? d.sections
+          : d.sections.map((s, i) => ({ ...s, markdown: `Drafted ${i}.` })),
+      }));
+      const det = finalDocs.find((d) => d.stub);
+      if (det)
+        det.sections.unshift({
+          id: "determination",
+          title: "Determination",
+          markdown:
+            "This addendum does not apply; the interview found no generative AI in use.",
+        });
+      check(
+        `import33 ${kind}: final-shaped fixture confirm-eligible pre-trip`,
+        Object.keys(phMap(kind, finalDocs)).length === 0
+      );
+      const again = parseSnapshotMarkdown(
+        projectMarkdown(JSON.stringify(finalDocs)),
+        kind
+      );
+      check(
+        `import33 ${kind}: re-import confirm-eligible (stub restore)`,
+        Object.keys(phMap(kind, again)).length === 0
+      );
+      const detBack = det ? again.find((d) => d.slug === det.slug) : null;
+      check(
+        `import33 ${kind}: stub flags round-trip`,
+        again.length === finalDocs.length &&
+          again.every((d, i) => d.stub === finalDocs[i].stub) &&
+          (det ? !!detBack && stubDet(detBack) : true)
+      );
+    }
+    // Anti-laundering control: an UNDRAFTED non-stub scaffold (a non-final
+    // attach) must re-import stub:false and keep blocking confirm.
+    const rawScaffold = scaffoldDocuments("usage_policy");
+    const backRaw = parseSnapshotMarkdown(
+      projectMarkdown(JSON.stringify(rawScaffold)),
+      "usage_policy"
+    );
+    check(
+      "import33: untouched non-stub scaffold still blocks confirm post-trip",
+      backRaw[0]?.stub === false &&
+        Object.keys(phMap("usage_policy", backRaw)).length === 1
+    );
+    // Blueprint-shipped determination control (refuter round 3): two
+    // NON-stub eu_ai_act docs scaffold a "determination" section
+    // ("Determination and adoption"), which must NOT read as set_stub
+    // evidence - a pure scaffold round-trip keeps them stub:false with
+    // their placeholder blocks intact, so confirm stays blocked (the
+    // usage_policy control above cannot see this: it is the one shape
+    // with no blueprint determination section).
+    const euScaffold = scaffoldDocuments("eu_ai_act");
+    const euBack = parseSnapshotMarkdown(
+      projectMarkdown(JSON.stringify(euScaffold)),
+      "eu_ai_act"
+    );
+    const euMap = phMap("eu_ai_act", euBack);
+    check(
+      "import33: blueprint-shipped determination is not set_stub evidence",
+      ["aia-applicability-memo", "aia-prohibited-screening"].every(
+        (slug) =>
+          euBack.find((d) => d.slug === slug)?.stub === false &&
+          (euMap[slug]?.length ?? 0) > 0
+      )
+    );
+  }
+
+  // Round 2 FIX 3: caps. Thirty "## " sections fold into
+  // CAPS.maxSectionsPerDoc with every byte kept (overflow appends to the
+  // last kept section), and an over-cap single body splits into
+  // continuation sections that reassemble byte-identically.
+  {
+    const cap = CAPS.maxSectionsPerDoc;
+    const parts = Array.from(
+      { length: 30 },
+      (_, i) => `## S${i}\n\nBody ${i}.`
+    );
+    const doc30 = parseSnapshotMarkdown(
+      `# Doc\n\n${parts.join("\n\n")}`,
+      "usage_policy"
+    );
+    const expectedTail = [
+      `Body ${cap - 1}.`,
+      ...Array.from(
+        { length: 30 - cap },
+        (_, i) => `S${cap + i}\n\nBody ${cap + i}.`
+      ),
+    ].join("\n\n");
+    check(
+      "import33: 30 sections fold to the section cap",
+      doc30.length === 1 && doc30[0].sections.length === cap
+    );
+    check(
+      "import33: folded overflow content byte-identical in order",
+      doc30[0].sections
+        .slice(0, cap - 1)
+        .every((s, i) => s.markdown === `Body ${i}.` && s.title === `S${i}`) &&
+        doc30[0].sections[cap - 1].markdown === expectedTail
+    );
+    const bigBody = "x".repeat(15000);
+    const bigDocs = parseSnapshotMarkdown(
+      `# Doc\n\n## One\n\n${bigBody}`,
+      "usage_policy"
+    );
+    const secs = bigDocs[0]?.sections ?? [];
+    check(
+      "import33: over-cap body splits into capped continuation sections",
+      secs.length === 3 &&
+        secs.every(
+          (s) => s.markdown.length <= CAPS.sectionMarkdownMaxChars
+        ) &&
+        secs.map((s) => s.markdown).join("") === bigBody &&
+        secs[1].title === "One (continued)"
+    );
+  }
 }
 
 if (failures) {

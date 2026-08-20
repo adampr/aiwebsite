@@ -32,6 +32,7 @@ import { listOwnedProjects } from "@/lib/governance/db";
 import { fmtDate } from "@/components/roadmap/dates";
 import {
   AttachProjectButton,
+  EditInBuilderButton,
   LinkDocCard,
   RemoveDocButton,
   UploadDocCard,
@@ -59,10 +60,15 @@ function OnFileList({
   docs,
   emptyLine,
   canRemove,
+  canEdit,
 }: {
   docs: GovDocRow[];
   emptyLine: string;
   canRemove: boolean;
+  /** Edit-again on Builder snapshots (owner directive 2026-08-20): every
+   * member on the company lane, global admins on the staff lane - the same
+   * split as the attach lane the server re-derives in docs-gate.ts. */
+  canEdit: boolean;
 }) {
   return (
     <section>
@@ -115,11 +121,21 @@ function OnFileList({
                     Download
                   </a>
                 )}
+                {canEdit && doc.source === "governance_project" && (
+                  <EditInBuilderButton docId={doc.id} />
+                )}
                 {canRemove && <RemoveDocButton docId={doc.id} />}
               </div>
             </li>
           ))}
         </ul>
+      )}
+      {canEdit && docs.some((d) => d.source === "governance_project") && (
+        <p className="mt-4 text-xs" style={faint}>
+          Builder documents on file stay editable: bring one back into the
+          Governance Builder any time, even after the original project has
+          expired.
+        </p>
       )}
     </section>
   );
@@ -241,6 +257,7 @@ async function StaffGovernance({
             : "Nothing on file yet. It will appear here the moment an XL.net admin files it."
         }
         canRemove={globalAdmin}
+        canEdit={globalAdmin}
       />
     </div>
   );
@@ -363,6 +380,7 @@ export default async function RoadmapGovernancePage() {
         docs={docs}
         emptyLine="Nothing on file yet. The step completes the moment the first document or link lands here."
         canRemove={isAdmin}
+        canEdit
       />
     </div>
   );
