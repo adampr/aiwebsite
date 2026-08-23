@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@58a44745340ea4742441e72700e52132c31d48e336fd29a1478052ef44a0c8f3
+# aicompany-template: setup-vm.sh.tpl@650c1449e0806c8fa21f408ae9c147a2bc3185807e65ab924177a3a793e7bb5b
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -897,6 +897,16 @@ UNIT
 # a slug hash (2700–5400s) so N hosts never share a publish window
 # (network-footprint mitigation). The log is covered by the
 # /var/log/aiwebsite-*.log logrotate glob installed below.
+# RuntimeMaxSec=7200 (v1.102.0): the run-level deadline. Type=oneshot never
+# double-starts, so a HUNG run (the v1.99.0 class: a poisoned shared pg
+# client waiting forever) silently blocks EVERY future timer fire — no
+# alert, no catch-up, just a nightly that stops happening. Derivation: max
+# observed run 71 min (2026-08-22); worst-case HONEST run is 12 articles ×
+# the 450s panel ceiling + audio ≈ 100 min; 2h kills only runs that are
+# already dead. Failure surface, named: a systemd SIGTERM/SIGKILL at the
+# deadline may skip blog-nightly's data/blog-last-run heartbeat write, so
+# the stamp goes stale — the watchdog's 26h blog-heartbeat age check is the
+# backstop that surfaces a killed-every-night job as a WARN.
 if [ "1" = "1" ]; then
   blog_delay=$(( 2700 + $(printf '%s' "aiwebsite" | cksum | cut -d' ' -f1) % 2700 ))
   sudo tee /etc/systemd/system/aiwebsite-blog.service >/dev/null <<UNIT
@@ -906,6 +916,7 @@ After=network-online.target postgresql.service aiwebsite-knowledge.service
 
 [Service]
 Type=oneshot
+RuntimeMaxSec=7200
 User=$deploy_user
 WorkingDirectory=/var/www/aiwebsite
 ExecStart=/var/www/aiwebsite/node_modules/.bin/tsx /var/www/aiwebsite/packages/aicompany/scripts/blog-nightly.ts

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@026076e6d0b597c239c3e727a96f4642b8b74acf3d4ed6fa59d01664a3a2d0d6
+# aicompany-template: watchdog.sh.tpl@07dd4fdf7122646cc1f196b0b95ba18b33e3067c790d68300e8bfe43385f05fd
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -267,20 +267,51 @@ restart_and_alert() {
   # race the deploy's own npm ci/build + pm2 reload on the app tree. systemctl
   # restarts of postgres/nginx/cloudflared are NEVER gated (default false): the
   # deploy does not touch them, and a genuine infra death during a deploy must
-  # be repaired at once. The human is alerted either way — a deferred pm2
-  # failure still emails (throttled 24h), so a real service-down during a deploy
-  # window (or the ≤30-min tail of a crashed deploy that left the marker) is
-  # never silently swallowed; only the repair ACTION waits.
+  # be repaired at once.
+  #
+  # v1.102.0: the deferred branch RECORDS but does not MAIL. 61 emailed
+  # deploy-defer episodes in the 30d to 2026-08-23 were 43% of ALL operator
+  # mail, and 0 of 61 were the primary discovery channel — deploys on this
+  # fleet are session-driven, so the deploying terminal already watches the
+  # window (two itsc episodes sat BESIDE real defects the session found
+  # itself). What the silence actually costs, stated plainly so nobody
+  # re-cites the retired "the human is alerted either way" promise:
+  #   - LOOPBACK services (brain-api/skills-host bind 127.0.0.1 only): a
+  #     genuine in-window death is invisible to peer-monitor and the synth
+  #     sweep. The dark window is <=31 min AFTER THE DEPLOY'S LAST MARKER
+  #     TOUCH (30-min TTL + one 60s pass) — a LIVE deploy re-touches the
+  #     marker at every staged step, so a service dead from minute 0 of a
+  #     45-min deploy is dark for deploy-remaining + 31 min; the deploying
+  #     session owns that window (its own stop/start + health gate is the
+  #     in-window repair). "<=31 min" is exact only for the crashed-deploy
+  #     tail (round-2 refuter, 2026-08-23 — a precise-but-wrong bound is the
+  #     next false citation).
+  #   - PUBLIC-SITE death: peer-monitor has NO deploy-marker awareness and
+  #     CRITICALs a dead public site in ~10-15 min regardless of this branch.
+  #   - STRANDED STALE MARKER (service failed in-window, self-recovered,
+  #     deploy crashed leaving the marker): clear_deploy_defer refuses to
+  #     resolve while the marker exists (fresh OR stale), so the open
+  #     never-emailed ledger row and the deploying session's terminal are the
+  #     ONLY signals a human ever gets for that episode.
+  # The LOUD path is untouched: once the marker is removed — or ages past the
+  # 30-min TTL — deploy_in_progress goes false and the very next failing pass
+  # falls through to the restart below, mailing WARN restart-* on success or
+  # CRITICAL restart-fail-* on failure.
   if [[ "$gate_on_deploy" == "true" ]] && deploy_in_progress; then
-    log "DEFER: $service_name repair action skipped — deploy in progress (marker <${deploy_grace_seconds}s); alerting only"
-    # Stamp BEFORE the send_email: the failure direction must be a stray stamp
+    log "DEFER: $service_name repair action skipped — deploy in progress (marker <${deploy_grace_seconds}s); ledger row recorded, no email (v1.102.0)"
+    # Stamp BEFORE the record: the failure direction must be a stray stamp
     # (harmless — clear_deploy_defer only ever resolves a key that was opened)
     # rather than a row with no stamp, which is the v1.52 bug itself.
     mark_deploy_defer "deploy-defer-$service_name"
-    send_email \
-      "WARN $service_name failed during deploy — repair deferred" \
-      "Service: $service_name\nAction: DEFERRED while a deploy holds the mutex marker (a watchdog pm2 restart/rebuild would race the deploy on the app tree).\nThe watchdog repairs automatically once the deploy window — or its 30-min TTL — clears, if the failure persists.\n\nDetails:\n$details" \
-      "deploy-defer-$service_name"
+    # Same ledger row the retired mail produced, emailed:false by policy.
+    # Every in-window pass re-records — the endpoint merges on key and bumps
+    # the open row's count/last_seen, exactly the semantics send_email's
+    # throttled branch already relies on; the 1MB spool cap bounds the worst
+    # case. No throttle is needed because no mail is sent.
+    record_issue \
+      "WARN $service_name failed during deploy — repair deferred (not emailed)" \
+      "Service: $service_name\nAction: DEFERRED while a deploy holds the mutex marker (a watchdog pm2 restart/rebuild would race the deploy on the app tree).\nNot emailed by policy (v1.102.0): deploys are session-driven and the deploying terminal owns this window. If the failure persists past the deploy window — or the marker's 30-min TTL — the watchdog repairs and MAILS via restart-*/restart-fail-*.\nResidual visibility while deferred: a dead loopback service (brain-api/skills-host) is invisible to peer-monitor and the synth sweep for up to ~31 min after the deploy's LAST marker touch (a live deploy extends the window by its own remaining duration — the deploying session owns it); a dead PUBLIC site still trips a peer-monitor CRITICAL in ~10-15 min. If this row is open with a STALE marker (crashed deploy), this row and the deploying session's terminal are the only signals — investigate the half-deployed box.\n\nDetails:\n$details" \
+      "deploy-defer-$service_name" 0
     return
   fi
 
