@@ -878,7 +878,16 @@ export const siteConfig = defineSiteConfig({
     // same deterministic refusal at the cost of a second full pass.
     audioFallbackGenerator: createOpenAiTtsSynthesizer({
       apiKey: process.env.OPENAI_API_KEY,
-      voice: "ash",
+      // "ballad", chosen on a measurement rather than on register: the module's
+      // contentGate requires >=60% of energy in the 200-4000 Hz speech band, and
+      // 6 of 11 OpenAI voices fail it on timbre alone. Scored against that exact
+      // gate 2026-08-25, ballad is 74-78.5%; "ash", wired here first, passed at
+      // 61.5% — 1.5 points of margin, which is not margin for an unattended
+      // nightly path. Deliberately NOT roleplay's "coral": every host wiring the
+      // same fallback would make the fleet sound identical on exactly the
+      // articles that fail over. Re-check with
+      // `tsx packages/aicompany/cli/check-tts-voice.ts` before changing it.
+      voice: "ballad",
       instructions: "Read calmly, like a news narrator. Even pace, no theatrics.",
     }),
     heroImage: createGeminiHeroGenerator({
