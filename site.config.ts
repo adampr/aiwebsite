@@ -13,7 +13,10 @@
 
 import { defineSiteConfig } from "@aicompany/core/config";
 import { createGeminiHeroGenerator } from "@aicompany/core/blog/hero";
-import { createGeminiTtsSynthesizer } from "@aicompany/core/blog/audio-tts";
+import {
+  createGeminiTtsSynthesizer,
+  createOpenAiTtsSynthesizer,
+} from "@aicompany/core/blog/audio-tts";
 import type { BrainIdentity } from "@aicompany/core/config/types";
 import { newsCalendarEntries, newsDataProvider, newsSeedHints } from "@/lib/blog/news";
 import { NEWS_ARTICLE_CHECKLIST } from "@/lib/blog/editorial-checklist";
@@ -867,6 +870,16 @@ export const siteConfig = defineSiteConfig({
       // (see the note on heroImage below; it was found the hard way).
       apiKey: process.env.GOOGLE_GEMINI_API_KEY,
       voice: "Charon",
+    }),
+    // v1.103.0 (§19.33.2b) — used ONLY when the primary cannot produce a chunk,
+    // and then the WHOLE article re-renders here so the file is in one voice.
+    // Voice deliberately differs from Charon: an identical (voice, model) pair
+    // computes the same render hash and would re-ask the same vendor for the
+    // same deterministic refusal at the cost of a second full pass.
+    audioFallbackGenerator: createOpenAiTtsSynthesizer({
+      apiKey: process.env.OPENAI_API_KEY,
+      voice: "ash",
+      instructions: "Read calmly, like a news narrator. Even pace, no theatrics.",
     }),
     heroImage: createGeminiHeroGenerator({
       // GOOGLE_GEMINI_API_KEY is this host's canonical Gemini var (set

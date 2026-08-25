@@ -2329,7 +2329,19 @@ informative/news register); the module requires a voice and ships no default on
 purpose, so the three sites on it never sound like one content mill.
 `audioGenerator: createGeminiTtsSynthesizer({ apiKey: process.env.GOOGLE_GEMINI_API_KEY })`
 — the same canonical Gemini var the hero adapter learned the hard way; no new
-module env var. `@breezystack/lamejs` (pure-JS MP3 encoder) became a direct
+module env var. **v1.103.0 adds `audioFallbackGenerator:
+createOpenAiTtsSynthesizer({ apiKey: process.env.OPENAI_API_KEY, voice: "ash" })`**
+(§19.33.2b). Gemini TTS refuses particular exact input strings
+DETERMINISTICALLY — measured 15/15 on an HTTP 200 with zero output tokens and
+3/3 on an HTTP 400 "Model tried to generate text", voice- and
+model-independently — and one such chunk used to cost an article its narration
+FOR LIFE, because the script text never changes so the render hash never changes
+so no later nightly retried it. The fallback re-renders the WHOLE article, so the
+file is always in one voice; the row's `voice`/`model_id` record which seam made
+it. `"ash"` deliberately differs from the primary `"Charon"`: config refuses an
+identical `(voiceLabel, modelId)` pair, which would compute the same render hash
+and re-ask the same vendor for the same refusal. `OPENAI_API_KEY` is host-owned
+and already present; it stays out of the module `.env.example` by design. `@breezystack/lamejs` (pure-JS MP3 encoder) became a direct
 dependency. Failures degrade to an audio-less publish recorded in the run report
 AND raise the phase to WARN (the nightly report is issues-only past 20 published
 articles, so a report line alone can be silent for months). Existing posts get
