@@ -27,7 +27,7 @@ import { checkDkim } from "@/lib/roadmap/dkim";
 import { CommunityCard } from "@/components/work-card";
 import { DkimStep } from "@/components/roadmap/dkim-step";
 import { EmailLink } from "@/components/email-link";
-import { fmtDate } from "@/components/roadmap/dates";
+import { LocalTime } from "@/components/local-time";
 import { RetrySubmission, RoadmapSubmitEntry } from "./work-islands";
 
 export const dynamic = "force-dynamic";
@@ -135,8 +135,21 @@ export default async function RoadmapWorkPage() {
               >
                 <span>{row.title}</span>
                 <span className="badge">{statusLabel(row.status)}</span>
+                {/* Owner directive 2026-08-25: the submitted-at reads in
+                    the VIEWER's timezone, with a clock. fmtDate() is UTC
+                    date-only by design (its header explains why: a
+                    server-zone date would flicker against the client
+                    re-render), and that reasoning still holds for its other
+                    call sites, so the helper is untouched and only these two
+                    submission rows move. <LocalTime> is the sanctioned way
+                    across a server boundary: it server-renders the UTC
+                    string (labelled "UTC"), so hydration matches byte for
+                    byte, then swaps to the browser zone one tick after
+                    mount. The swap is real and visible for that tick; it is
+                    the price of an SSR'd row, which is why the client-only
+                    list on /work/submit uses exact() instead. */}
                 <span className="mono text-xs" style={faint}>
-                  {fmtDate(row.createdAt)}
+                  Submitted <LocalTime iso={row.createdAt.toISOString()} withTime />
                 </span>
                 {/* Queued rows get the manual lever too (the retry route
                     already authorizes company submitters on their own rows;
@@ -154,8 +167,8 @@ export default async function RoadmapWorkPage() {
           <div className="mt-8">
             <span className="sys-label">All {company.name} Submissions</span>
             <p className="mt-2 text-xs" style={faint}>
-              Admin view: titles, status, and dates only. Held and failed
-              content stays with its submitter.
+              Admin view: titles, status, submission times, and submitter
+              only. Held and failed content stays with its submitter.
             </p>
             <ul className="mt-3 space-y-3">
               {companyMeta.map((row) => (
@@ -166,7 +179,15 @@ export default async function RoadmapWorkPage() {
                   <span>{row.title}</span>
                   <span className="badge">{statusLabel(row.status)}</span>
                   <span className="mono text-xs" style={faint}>
-                    {fmtDate(row.createdAt)}
+                    {/* The middot suffix stays OUTSIDE <LocalTime>: that
+                        component owns a <time dateTime> element, and folding
+                        an email address into it would put non-time text
+                        inside a machine-readable timestamp. The "Submitted"
+                        label leads for the same reason it does on
+                        /work/submit: the badge to its left can read
+                        "Published", and a bare clock beside it reads as the
+                        publish date. */}
+                    Submitted <LocalTime iso={row.createdAt.toISOString()} withTime />
                     {myIds.has(row.id) ? " · you" : ` · ${row.submitterEmail}`}
                   </span>
                 </li>

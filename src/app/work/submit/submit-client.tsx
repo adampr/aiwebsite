@@ -15,6 +15,7 @@ import {
   WORK_CAPS,
   type WorkKind,
 } from "@/lib/work/config";
+import { exact } from "@/lib/rfp/time";
 import { personLabel } from "@/lib/person-label";
 import { SubmissionForm } from "./submission-form";
 
@@ -668,6 +669,41 @@ export function SubmitClient({
                     </span>
                   </>
                 )}
+                {/* Owner directive 2026-08-25 ("always have the timestamp
+                    shown in the timezone of the user when a work was
+                    submitted"). The API has always projected createdAt and
+                    nothing here ever rendered it, so no submitter-facing
+                    surface carried a submitted-at at all (the one stamp in
+                    code is the ADMIN archive-retention mail, notify.ts).
+                    Placed OUTSIDE the view === "all" fragment on purpose:
+                    "always" means both lists, every row, so this must not
+                    sit in a branch. LAST in the flex row because it is the
+                    widest late-added item, and flex-wrap only pushes items
+                    AFTER it: tail-position confines any reflow away from the
+                    title and status badge. The visible "Submitted" label is
+                    not decoration: the row can already read "Published", and
+                    a bare clock next to that chip reads as the publish date,
+                    which is a different column (published_at).
+
+                    exact() here, NOT <LocalTime> as on the three server
+                    surfaces, and the difference is load-bearing.
+                    <LocalTime>'s useState seed is UTC-pinned unconditionally
+                    (it is not mounted-aware) and only swaps in a deferred
+                    effect; that seed exists to make an SSR'd row hydrate byte
+                    for byte. This list has no SSR'd row to match: `rows` is
+                    [] on the server and fills only from the poll, so the seed
+                    would buy nothing and cost a painted frame of the WRONG
+                    zone on every row, on every pager turn and every view
+                    switch. exact() formats in the runtime zone on its first
+                    render, so a row goes from absent to correct. The settled
+                    text is identical: ABS_TIME's option set matches
+                    <LocalTime>'s post-mount formatter exactly. The <time>
+                    element is written out here because exact() returns a
+                    string, keeping the machine-readable instant the other
+                    surfaces get from the component. */}
+                <span className="mono text-xs text-faint">
+                  Submitted <time dateTime={r.createdAt}>{exact(r.createdAt)}</time>
+                </span>
               </div>
               {r.movedFrom && (
                 <p className="mt-1 text-xs text-faint">

@@ -22,7 +22,10 @@ export interface StorageFileView {
   fileName: string;
   /** Preformatted on the server (formatByteSize). */
   sizeLabel: string;
-  /** Preformatted ISO date slice, the submissions list's date style. */
+  /** Preformatted ISO date slice (UTC). Deliberately NOT the submissions
+   * list's viewer-zone <LocalTime> style (2026-08-25): this is the file's
+   * STORE date, which work:backfill/work:import can stamp long after the
+   * submission, so it is a different fact. */
   dateLabel: string;
   submissionId: string | null;
   /** No database copy remains (submission gone or bytea cleared): this

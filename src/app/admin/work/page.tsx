@@ -10,6 +10,7 @@ import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
 import { emailDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
+import { LocalTime } from "@/components/local-time";
 import { StaffVerifyNotice } from "@/components/staff-verify-notice";
 import { allSubmissions, publishedCards, submissionById } from "@/lib/work/db";
 import { archiveStoreUsage } from "@/lib/work/archive-store";
@@ -164,8 +165,23 @@ export default async function AdminWorkPage() {
                     {KIND_LABELS[r.kind as WorkKind] ?? r.kind}
                   </span>
                   <span className="text-faint">{r.submitterEmail}</span>
+                  {/* Owner directive 2026-08-25: submitted-at in the
+                      VIEWER's timezone. This used to be a sliced ISO string,
+                      i.e. bare UTC wearing no label at all, which an admin
+                      reading it at 9am Chicago had every reason to take for
+                      local time. Deliberate departure from the module's
+                      admin convention (@aicompany/core admin/format fmtDate
+                      renders in the BUSINESS timezone, and returns an em
+                      dash glyph for null, which the host copy ban forbids):
+                      the directive is about the person reading the row. The
+                      "Submitted" label leads because the chip to its left
+                      can read "published", and a bare clock beside it reads
+                      as the publish date. The #storage ledger below keeps
+                      its raw UTC dateLabel on purpose: that is the archive
+                      file's STORE date (work:backfill stamped rows long
+                      after their submissions), a different fact. */}
                   <span className="text-faint">
-                    {r.createdAt.toISOString().slice(0, 16).replace("T", " ")}
+                    Submitted <LocalTime iso={r.createdAt.toISOString()} withTime />
                   </span>
                   {/* Provenance of INTAKE, not of the publish actor: a
                       crash-parked or once-held auto row published by the
