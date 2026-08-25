@@ -10,6 +10,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { LocalTime } from "@/components/local-time";
 
 type RequestItem = {
   id: string;
@@ -71,9 +72,34 @@ export function RoadmapAdminActions(props: {
       <div className="mt-2 space-y-2 text-sm">
         {props.requests.map((r) => (
           <div key={r.id} className="flex flex-wrap items-center gap-3">
+            {/* Owner directive 2026-08-25, and the one site in this class
+                that was a live BUG rather than merely a wrong zone. This
+                island is "use client", but it is statically imported and
+                rendered by the server page (there is no next/dynamic and no
+                ssr:false anywhere under src/app/admin), so the App Router
+                server-renders it too. The bare toLocaleDateString therefore
+                ran TWICE - once on the VM in UTC, once in the browser in the
+                reader's zone - and for any request created in the
+                00:00-05:00Z window the two strings differed. That is a text
+                hydration mismatch, and there is no Suspense boundary between
+                here and the router root, so React discarded the server HTML
+                for the WHOLE page and client-rendered it again, logging a
+                hydration error in production; the date settled on the right
+                value only by accident, paid for with a full-root re-render.
+                exact() cannot close this - it formats in the RUNTIME zone on
+                first render, which during SSR is still the VM, so both sides
+                would still disagree. <LocalTime> can, because its useState
+                seed is UTC-pinned unconditionally: both sides render the
+                same bytes, and the swap to the browser zone happens in a
+                deferred effect, after hydration has already matched.
+                createdAt is already an ISO string (the server page
+                serializes it at the boundary), so no .toISOString() here.
+                Date-only: this is a compact flex line beside Approve and
+                Deny, and the widening a clock adds on the post-mount swap
+                can wrap those buttons onto a new row. */}
             <span>
               {r.requesterEmail} → {r.companyName} ({r.companyDomain}),{" "}
-              {new Date(r.createdAt).toLocaleDateString("en-US")}
+              <LocalTime iso={r.createdAt} />
             </span>
             <button
               type="button"

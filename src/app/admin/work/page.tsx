@@ -295,7 +295,19 @@ export default async function AdminWorkPage() {
             title: f.title,
             fileName: f.fileName,
             sizeLabel: formatByteSize(f.bytes),
-            dateLabel: f.createdAt.toISOString().slice(0, 16).replace("T", " "),
+            // Owner directive 2026-08-25 stops SHORT of this value: the
+            // store date stays UTC, because it is the archive file's own
+            // fact and not the submission's (see the ruling above). What it
+            // was missing was a label - it sat ~110 lines under a
+            // "Submitted ... CDT" row and read as a bare local clock five
+            // hours off. The suffix goes on the VALUE, server-side, where
+            // the one consumer renders it: this list has no column headers
+            // to caption (the rows are bare spans in a flex line), and a
+            // sentence in the section prose would sit a paragraph away from
+            // the thing it disclaims. Still a plain string, so
+            // StorageFileView's prop shape is untouched.
+            dateLabel:
+              f.createdAt.toISOString().slice(0, 16).replace("T", " ") + " UTC",
             submissionId: f.submissionId,
             // Last copy anywhere: submission gone, or its bytea cleared
             // after a verified store copy (refutation M1 - the confirm

@@ -15,6 +15,7 @@ import { siteConfig } from "site.config";
 import { emailDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
 import { readRoadmapPrincipal } from "@/lib/roadmap/access";
 import { adminRequestById, companyById } from "@/lib/roadmap/db";
+import { LocalTime } from "@/components/local-time";
 import { ApproveButton } from "./approve-button";
 
 export const metadata: Metadata = {
@@ -126,9 +127,26 @@ export default async function ApproveAdminPage({ searchParams }: Search) {
           <span className="font-medium">{company?.name ?? "this company"}</span>
           {company ? ` (${company.domain})` : ""}.
         </p>
+        {/* Owner directive 2026-08-25: both halves in the VIEWER's zone,
+            and both at the SAME precision. This is a server component, so
+            the two bare toLocaleDateString calls resolved to the VM's zone;
+            and because expiresAt is createdAt + 7 days it carried the exact
+            same wrong hour-of-day, so a request filed at 01:30 UTC read
+            "Requested Aug 25 · expires Sep 1" to a Chicago approver whose
+            civil dates were Aug 24 and Aug 31 - wrong in lockstep, which is
+            also why converting only one half would have left the sentence
+            disagreeing with itself. <LocalTime> rather than exact(): the
+            page is server-rendered, and exact() formats in the runtime zone
+            on first render, which here is still the VM. Date-only for both:
+            expiresAt is enforced to the millisecond by liveRequest(), but
+            this is prose furniture on a one-button page, a clock on one half
+            of a 7-day window reads broken beside a bare date on the other,
+            and no approver acts on the minute. The sentence stop stays
+            OUTSIDE the second element - <LocalTime> owns a <time dateTime>,
+            and a period is not part of a timestamp. */}
         <p className="text-sm" style={{ color: "var(--xl-text-faint)" }}>
-          Requested {live.createdAt.toLocaleDateString("en-US")} · expires{" "}
-          {live.expiresAt.toLocaleDateString("en-US")}. Any one recipient of
+          Requested <LocalTime iso={live.createdAt.toISOString()} /> · expires{" "}
+          <LocalTime iso={live.expiresAt.toISOString()} />. Any one recipient of
           the request email can approve it. Approving lets them manage the
           company directory, governance documents, and requests like this one.
         </p>

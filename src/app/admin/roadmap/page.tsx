@@ -20,6 +20,7 @@ import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { siteConfig } from "site.config";
 import { emailDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
+import { LocalTime } from "@/components/local-time";
 import { StaffVerifyNotice } from "@/components/staff-verify-notice";
 import { roadmapEnabled, ROADMAP_CAPS } from "@/lib/roadmap/config";
 import {
@@ -153,7 +154,26 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
                       ? d.linkUrl ?? "link"
                       : "Governance Builder"}
                   , added by {d.addedByEmail},{" "}
-                  {d.createdAt.toLocaleDateString("en-US")})
+                  {/* Owner directive 2026-08-25 (the rest of the timezone
+                      class): every stored date reads in the VIEWER's zone.
+                      This is a server component, so the bare
+                      toLocaleDateString that stood here resolved to the VM's
+                      zone, i.e. raw UTC wearing no label, and a doc added at
+                      9pm Chicago was filed under the NEXT day for the person
+                      who added it. <LocalTime> is the only helper that
+                      crosses a server boundary safely: its useState seed is
+                      UTC-pinned, so the SSR string and the first client
+                      string match byte for byte and the zone swap happens a
+                      tick after hydration. exact() would not work here at
+                      all - it formats in the RUNTIME zone on first render,
+                      which on the VM is still UTC. Date-only on purpose:
+                      this is a provenance parenthetical already carrying the
+                      source and the adder's address, and a clock would be a
+                      third fact nobody opened the console for. The closing
+                      ")" stays OUTSIDE the element, because <LocalTime> owns
+                      a <time dateTime> and punctuation inside a
+                      machine-readable timestamp is not a timestamp. */}
+                  <LocalTime iso={d.createdAt.toISOString()} />)
                 </span>
               </li>
             ))}
@@ -186,7 +206,15 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
                   <td className="pr-4">{s.title}</td>
                   <td className="pr-4">{s.status}</td>
                   <td className="pr-4">{s.submitterEmail}</td>
-                  <td>{s.createdAt.toLocaleDateString("en-US")}</td>
+                  {/* withTime here, date-only in the governance list above:
+                      this cell sits under an audit "Created" header, and it
+                      is the same fact /admin/work put a labelled clock on
+                      last round, so the two consoles have to agree. Growth
+                      is free - it is the last column of a w-full table, so
+                      the post-mount swap pushes nothing. */}
+                  <td>
+                    <LocalTime iso={s.createdAt.toISOString()} withTime />
+                  </td>
                 </tr>
               ))}
               {submissions.length === 0 && (
@@ -307,7 +335,11 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
                       ? d.linkUrl ?? "link"
                       : "Governance Builder"}
                   , added by {d.addedByEmail},{" "}
-                  {d.createdAt.toLocaleDateString("en-US")})
+                  {/* Twin of the staff branch above; the two must always
+                      move together or one console's two halves disagree
+                      about what day a doc was added. Reasoning in full
+                      there. */}
+                  <LocalTime iso={d.createdAt.toISOString()} />)
                 </span>
               </li>
             ))}
@@ -334,7 +366,11 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
                   <td className="pr-4">{s.title}</td>
                   <td className="pr-4">{s.status}</td>
                   <td className="pr-4">{s.submitterEmail}</td>
-                  <td>{s.createdAt.toLocaleDateString("en-US")}</td>
+                  {/* Twin of the staff branch above: same audit column,
+                      same precision, moves with it. */}
+                  <td>
+                    <LocalTime iso={s.createdAt.toISOString()} withTime />
+                  </td>
                 </tr>
               ))}
               {submissions.length === 0 && (
@@ -439,7 +475,15 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
                 <td className="pr-4">{c.published}</td>
                 <td className="pr-4">{c.admins}</td>
                 <td className="pr-4">{c.createdByEmail}</td>
-                <td>{c.createdAt.toLocaleDateString("en-US")}</td>
+                {/* Date-only: when a workspace was opened is a roster
+                    fact, not an audit trail (the cell to its left is an
+                    address, not a clock), and a clock in an 8-wide table is
+                    noise. The synthetic xl.net row above keeps its literal
+                    "·" - that lane is not a companies row and has no
+                    createdAt to render. */}
+                <td>
+                  <LocalTime iso={c.createdAt.toISOString()} />
+                </td>
               </tr>
             ))}
             {companies.length === 0 && (
