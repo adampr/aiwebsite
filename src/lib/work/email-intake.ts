@@ -34,6 +34,7 @@ import {
 import { brainHealthy } from "@/lib/governance/brain";
 import { claimMetaOnce, getMeta, setMeta } from "@/lib/governance/db";
 import {
+  EMAIL_PROMISE,
   MISSING_ARCH_DOC_MESSAGE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
@@ -1419,23 +1420,23 @@ export async function handleWorkEmail(
         ? [
             `Got it. "${title}" is in as a ${kindLabel} submission and the editorial panel is reviewing it now.`,
             ``,
-            `If it passes, it publishes to your company's private Your Work page and is credited to you on your company's scorecard, which everyone at ${senderDomain} who signs in can see. You will get an email when the card publishes or is held for review. Track it at ${SITE}/roadmap/work.`,
+            `If it passes, it publishes to your company's private Your Work page and is credited to you on your company's scorecard, which everyone at ${senderDomain} who signs in can see. ${EMAIL_PROMISE} Track it at ${SITE}/roadmap/work.`,
           ]
         : [
             `Got it. "${title}" is in as a ${kindLabel} submission and the editorial panel is reviewing it now.`,
             ``,
-            `You will get an email when the card publishes or is held for review. Track it at ${SITE}/work/submit.`,
+            `${EMAIL_PROMISE} Track it at ${SITE}/work/submit.`,
           ]
       : isCompanyLane
         ? [
             `Got it. "${title}" is stored as a ${kindLabel} submission, but the review panel is briefly unavailable, so the review has not started.`,
             ``,
-            `The review starts automatically when the panel has capacity; there is nothing you need to do. Once it runs, you will get an email when the card publishes or is held. You can watch it, or start the review by hand with Retry, at ${SITE}/roadmap/work.`,
+            `The review starts automatically when the panel has capacity; there is nothing you need to do. ${EMAIL_PROMISE} You can watch it, or start the review by hand with Retry, at ${SITE}/roadmap/work.`,
           ]
         : [
             `Got it. "${title}" is stored as a ${kindLabel} submission, but the review panel is briefly unavailable, so the review has not started.`,
             ``,
-            `The review starts automatically when the panel has capacity; there is nothing you need to do. Once it runs, you will get an email when the card publishes or is held. You can watch it, or start the review by hand with Retry, at ${SITE}/work/submit.`,
+            `The review starts automatically when the panel has capacity; there is nothing you need to do. ${EMAIL_PROMISE} You can watch it, or start the review by hand with Retry, at ${SITE}/work/submit.`,
           ];
   // A title the submitter did not write is disclosed in the receipt, near the
   // top, because renaming and removing are both admin-only. The copy says

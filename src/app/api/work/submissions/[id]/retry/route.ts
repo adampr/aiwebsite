@@ -5,8 +5,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 import { after } from "next/server";
-import { HELD_NEXT_STEPS } from "@/lib/work/config";
+import { HELD_NEXT_STEPS, queueWaitCopy } from "@/lib/work/config";
 import { submissionById } from "@/lib/work/db";
+import { noteQueueWait } from "@/lib/work/queue-signal";
 import {
   okJson,
   rateLimit,
@@ -19,28 +20,20 @@ import { sameEmail } from "@/lib/work/transfer";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-// The reader just pressed the manual lever and was refused; each string
-// promises only what the §5.16 queue drain actually does next. disabled and
-// claim promise nothing automatic because nothing automatic happens there
-// (the kill switch also stops the drain; the drain never lifts the per-row
-// cap). FAILED rows get the pre-drain manual wording: the drain deliberately
-// never re-runs a failed row, so a starts-automatically promise would strand
-// the reader waiting on a retry that never comes (refutation MAJOR,
-// 2026-08-05).
-const QUEUED_COPY: Record<string, string> = {
-  disabled: "Submissions are paused right now.",
-  deploy:
-    "A deploy is in progress. The queue resumes automatically when it finishes.",
-  budget:
-    "The review pipeline is at its daily limit. Your submission stays queued and runs automatically when capacity returns.",
-  busy:
-    "Another review is running. Yours stays queued and starts automatically when it finishes.",
-  brain:
-    "The review pipeline is briefly offline. Your submission stays queued and starts automatically once it is back.",
-  claim:
-    "This submission cannot be re-run right now (already running, finished, or at its daily retry limit).",
-};
-
+// The reader just pressed the manual lever and was refused. The QUEUED case
+// now shares ONE reason vocabulary with the live tracker (queueWaitCopy /
+// WORK_QUEUE_REASON_COPY in work/config.ts, 2026-08-25 round), so a refusal
+// the reader reads here and the sentence the tracker shows a second later on
+// the same row can never tell two different stories.
+//
+// FAILED rows keep their own table below: it answers a CLICK on a failed
+// row, not a wait. The drain deliberately never re-runs a failed row, so a
+// starts-automatically promise would strand the reader waiting on a retry
+// that never comes (refutation MAJOR, 2026-08-05), and with the auto-retry
+// lane cut in the 2026-08-25 round its "already running, finished, or at its
+// daily retry limit" wording is true again (failPanel now NULLs
+// panel_heartbeat_at, so a failed row is claimable the instant it lands
+// instead of being inert for up to four minutes).
 const FAILED_RETRY_COPY: Record<string, string> = {
   disabled: "Submissions are paused right now.",
   deploy: "A deploy is in progress. Retry in a few minutes.",
@@ -104,8 +97,23 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   }
   const reason =
     kicked.outcome.status === "refused" ? kicked.outcome.reason : "claim";
-  const copy = row.status === "failed" ? FAILED_RETRY_COPY : QUEUED_COPY;
-  return workError("queued", copy[reason] ?? copy.claim, 409, {
+  // Stamp the refusal against this row so the submitter's next status poll
+  // narrates the same wait instead of showing a silent queued row.
+  noteQueueWait(id, reason);
+  // `claim` takes the FAILED table on EVERY status, not just failed
+  // (counterpart-panel finding, 2026-08-25). WORK_QUEUE_REASON_COPY has no
+  // `claim` key, so queueWaitCopy would fall back to "the queue checks every
+  // minute and starts it on its own" for a refusal the drain maps to "skip".
+  // The reachable case: a row already at its 3-run daily cap whose run a
+  // deploy cutover killed sits at running with a stale heartbeat, /work/submit
+  // still offers Retry review, the click refuses with `claim`, and nothing
+  // ever starts it because the cap does not move until UTC midnight and
+  // nothing writes `failed`, so no email fires either.
+  const message =
+    row.status === "failed" || reason === "claim"
+      ? (FAILED_RETRY_COPY[reason] ?? FAILED_RETRY_COPY.claim)
+      : queueWaitCopy(reason);
+  return workError("queued", message, 409, {
     reason,
   });
 }

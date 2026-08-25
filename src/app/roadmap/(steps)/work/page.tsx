@@ -24,11 +24,20 @@ import {
   type PublishedCard,
 } from "@/lib/work/db";
 import { checkDkim } from "@/lib/roadmap/dkim";
+import {
+  EMAIL_PROMISE,
+  WORK_STATUS_LABELS,
+  type WorkStatus,
+} from "@/lib/work/config";
 import { CommunityCard } from "@/components/work-card";
 import { DkimStep } from "@/components/roadmap/dkim-step";
 import { EmailLink } from "@/components/email-link";
 import { LocalTime } from "@/components/local-time";
-import { RetrySubmission, RoadmapSubmitEntry } from "./work-islands";
+import {
+  RetrySubmission,
+  RoadmapSubmitEntry,
+  SubmissionProgress,
+} from "./work-islands";
 
 export const dynamic = "force-dynamic";
 
@@ -39,17 +48,12 @@ export const metadata: Metadata = {
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 
-const STATUS_LABELS: Record<string, string> = {
-  received: "Queued for review",
-  running: "In review",
-  held: "Held for review",
-  pending_approval: "Awaiting approval",
-  published: "Published",
-  failed: "Failed",
-};
-
+// ONE label map with /work/submit (WORK_STATUS_LABELS in work/config.ts), so
+// the same row cannot read "Queued for review" here and "Waiting to start"
+// there. The local map this replaces also had no `superseded` entry, which
+// rendered the raw enum value.
 function statusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? status;
+  return WORK_STATUS_LABELS[status as WorkStatus] ?? status;
 }
 
 export default async function RoadmapWorkPage() {
@@ -71,6 +75,18 @@ export default async function RoadmapWorkPage() {
     companyMeta = await companySubmissions(company.id);
   }
   const myIds = new Set(mine.map((r) => r.id));
+  // Live progress on the THREE NEWEST active rows and no more. The cap is a
+  // rate limiter, not a layout choice: work:poll allows 30 requests per 60 s
+  // per user and each live tracker polls 6 times a minute, so a fourth would
+  // put a reader's own page over the bucket it shares with every other tab
+  // they have open. `mine` is newest first (mySubmissions orders by
+  // created_at desc).
+  const liveIds = new Set(
+    mine
+      .filter((r) => r.status === "received" || r.status === "running")
+      .slice(0, 3)
+      .map((r) => r.id)
+  );
 
   return (
     <div className="space-y-14">
@@ -91,7 +107,7 @@ export default async function RoadmapWorkPage() {
             <h2 className="text-lg">Submit it here</h2>
             <p className="mt-3 text-sm">
               Upload the package and the documents behind it; the panel takes
-              it from there. You get an email either way.
+              it from there. {EMAIL_PROMISE}
             </p>
             <div className="mt-4">
               <RoadmapSubmitEntry orgName={company.name} />
@@ -157,6 +173,15 @@ export default async function RoadmapWorkPage() {
                     Retry pointer false, design-panel finding 2026-08-05). */}
                 {(row.status === "failed" || row.status === "received") && (
                   <RetrySubmission id={row.id} />
+                )}
+                {/* basis-full: the <li> is a wrapping flex line of inline
+                    metadata, and the tracker is a block that owns its own
+                    row under it. Nothing else on this server-rendered page
+                    auto-updates; these rows do. */}
+                {liveIds.has(row.id) && (
+                  <div className="basis-full">
+                    <SubmissionProgress id={row.id} />
+                  </div>
                 )}
               </li>
             ))}

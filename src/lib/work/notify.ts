@@ -8,7 +8,15 @@ import { sendEmail } from "@aicompany/core/email/send";
 import { siteConfig } from "site.config";
 import { adminRecipient, sendGovernanceEmail } from "@/lib/governance/budget";
 import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
-import { HELD_NEXT_STEPS, KIND_LABELS, type WorkKind } from "./config";
+import { reportFailureEmailIssue } from "@/lib/report-issue";
+import {
+  FAILED_NEXT_STEPS,
+  HELD_NEXT_STEPS,
+  KIND_LABELS,
+  WORK_CAPS,
+  type PanelFailReason,
+  type WorkKind,
+} from "./config";
 import { archiveDataById, type SubmissionRow } from "./db";
 import {
   storedFilesForSubmission,
@@ -964,4 +972,129 @@ export async function notifyRollback(
       subject: `Your /work update was rolled back: ${parent.title}`,
       text: `Your update to "${parent.title}" was rolled back and the previous version of the card was restored. The update row is gone from your submissions page. Reply to this email or ask Adam if you want to know why.`,
     });
+}
+
+/**
+ * §5.16 terminal failure (2026-08-25 round): the THIRD terminal notification
+ * alongside published and held, and what finally makes EMAIL_PROMISE true.
+ *
+ * Both sends are UNCONDITIONAL, including to a submitter who is the owner:
+ * failRun has already proved the row flipped to failed, so there is nothing
+ * left to predict, and gating the submitter copy on any prediction is what let
+ * the outcome promise be false in a state the design's own risk register
+ * documented. The operator subject is kept STABLE and distinct from every held
+ * subject: the §5.12 bounce ledger keys on the subject, and the 2026-08-05
+ * round exists because five unrelated causes shared one key.
+ */
+export async function notifyPanelFailed(
+  row: SubmissionRow,
+  opts: {
+    message: string;
+    reason: PanelFailReason;
+    stage: string | null;
+    detail?: string;
+  }
+): Promise<void> {
+  const isCompanyLane = row.companyId !== null;
+  // Whether a Retry actually EXISTS for this row, checked rather than assumed
+  // (counterpart-panel finding, 2026-08-25: all three seats filed this). Two
+  // separate ways the lever is already gone:
+  //  - the per-row daily cap. claimPanel refuses once panel_runs reaches
+  //    panelRunsPerSubmissionPerDay for the UTC day, so the button 409s.
+  //  - held_at. claimPanel's fromHeld path flips held -> running WITHOUT
+  //    clearing held_at and failPanel does not clear it either, so a failed
+  //    admin re-run of a held row keeps a non-null held_at. The retry route
+  //    refuses that shape (`row.heldAt`), and the admin rerun route refuses it
+  //    too (it takes only held or pending_approval), so on that path NOBODY
+  //    has a lever. Telling the submitter to press Retry and the owner to
+  //    stand down would be the same class of false sentence as the
+  //    "or over budget" literal this round deletes.
+  const capped =
+    row.panelRunsDate === new Date().toISOString().slice(0, 10) &&
+    row.panelRuns >= WORK_CAPS.panelRunsPerSubmissionPerDay;
+  const noRetry = row.heldAt !== null || capped;
+  // Only a dispatch that actually reached the recovery seam made an attempt.
+  // no_document fails before the first dispatch, crash comes from the runner's
+  // catch, and budget never attempts (panelRecoveryPlan declines it).
+  const triedRecovery =
+    opts.reason === "timeout" ||
+    opts.reason === "transport" ||
+    opts.reason === "parse";
+  const operatorBody = [
+    `A /work review run ended in failed and nothing published.`,
+    ``,
+    `Title: ${oneLine(row.title)}`,
+    ownerLines(row),
+    `Lane: ${isCompanyLane ? "a client company page" : "Our Work"}`,
+    `Row: ${row.id}`,
+    `Cause: ${opts.reason}`,
+    `Stopped at: ${opts.stage ?? "before the first step"}`,
+    ``,
+    opts.message,
+    ...(opts.detail ? [``, `Detail: ${opts.detail}`] : []),
+    ``,
+    triedRecovery
+      ? `The panel already made its one automatic recovery attempt on this step and could not get through. Nothing will run this row again on its own.`
+      : `This one failed before any recovery attempt applied. Nothing will run this row again on its own.`,
+    `Admin view: ${SITE}/admin/work#sub-${row.id}`,
+    row.heldAt !== null
+      ? `This row was held before, so neither the submitter's Retry nor the admin re-run will take it; clear or resubmit it.`
+      : capped
+        ? `The submitter has used all ${WORK_CAPS.panelRunsPerSubmissionPerDay} runs for this row today; nothing can re-run it until UTC midnight.`
+        : `The submitter still has runs left today and can press Retry.`,
+  ].join("\n");
+  const emailed = await sendGovernanceEmail({
+    subject: `[aiwebsite] WARN /work review could not finish: ${row.title}`,
+    text: operatorBody,
+  });
+  // EPISODIC key, bounded at 6 reasons x 2 lanes = 12 rows ever. A per-row or
+  // per-stage key would fill the 500-row window scripts/issues.mjs reads and
+  // evict every older open issue, which is the exact failure report-issue.ts
+  // was written to avoid.
+  reportFailureEmailIssue({
+    key: `work-panel:fail:${opts.reason}:${isCompanyLane ? "company" : "internal"}`,
+    subject: `/work review could not finish (${opts.reason})`,
+    detail: operatorBody,
+    emailed,
+  });
+  // Lane-branched exactly like notifyHeld: company copy never names Adam,
+  // /admin, or /work/submit.
+  await sendGovernanceEmail({
+    to: row.submitterEmail,
+    subject: `Your work submission could not be reviewed: ${row.title}`,
+    text: (isCompanyLane
+      ? [
+          `The review of your submission stopped before it finished, so nothing published and nothing was lost.`,
+          ``,
+          opts.message,
+          ``,
+          // A Retry the row cannot accept must not be named. "will take it
+          // from here" stays true whether the fix is a re-run or a resubmit.
+          noRetry
+            ? `Retry is not available on this one. The XL.net team will take it from here.`
+            : FAILED_NEXT_STEPS.company,
+          ``,
+          noRetry
+            ? `The XL.net team has been notified.`
+            : `The XL.net team has been notified and can run it again.`,
+          ``,
+          `Your submissions: ${SITE}/roadmap/work`,
+        ]
+      : [
+          `The review of your submission stopped before it finished, so nothing published and nothing was lost.`,
+          ``,
+          opts.message,
+          ``,
+          noRetry
+            ? `Retry is not available on this one. Adam will take it from here.`
+            : FAILED_NEXT_STEPS.internal,
+          ``,
+          noRetry
+            ? `Adam has been notified.`
+            : `Adam has been notified and can run it again.`,
+          ``,
+          `Your submissions: ${SITE}/work/submit`,
+        ]
+    ).join("\n"),
+  });
 }

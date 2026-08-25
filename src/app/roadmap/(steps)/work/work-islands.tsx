@@ -8,6 +8,7 @@
 
 import { lazy, Suspense, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { EMAIL_PROMISE } from "@/lib/work/config";
 import type { WorkSubmitDialogHandle } from "@/app/work/work-submit-dialog";
 
 const LazyDialog = lazy(() =>
@@ -15,6 +16,26 @@ const LazyDialog = lazy(() =>
     default: m.WorkSubmitDialog,
   }))
 );
+
+const LazyProgress = lazy(() =>
+  import("@/app/work/submit/review-progress").then((m) => ({
+    default: m.ReviewProgress,
+  }))
+);
+
+/** Live progress for one In Review row on this SERVER-rendered page. Self
+ * fetch mode: there is no list poll here to feed it, so the tracker polls
+ * GET /api/work/submissions/{id} itself. lane="company" is what keeps the
+ * terminal and next-step copy off Adam, /admin and /work/submit, none of
+ * which a client reader can act on. Lazy for the same reason the dialog is:
+ * the roadmap bundle should not carry it until a row needs it. */
+export function SubmissionProgress({ id }: { id: string }) {
+  return (
+    <Suspense fallback={null}>
+      <LazyProgress id={id} lane="company" />
+    </Suspense>
+  );
+}
 
 export function RoadmapSubmitEntry({ orgName }: { orgName: string }) {
   const [wantDialog, setWantDialog] = useState(false);
@@ -45,7 +66,8 @@ export function RoadmapSubmitEntry({ orgName }: { orgName: string }) {
                 h.open();
               }
             }}
-            intro="An automated editorial panel drafts a card from your documents, argues against it, and publishes only what it can verify to your company's private page. You get an email either way."
+            intro={`An automated editorial panel drafts a card from your documents, argues against it, and publishes only what it can verify to your company's private page. ${EMAIL_PROMISE}`}
+            lane="company"
             trackHref="/roadmap/work"
             creditTeamName={`the ${orgName} team`}
             retentionLine="Uploads with credential files are rejected. Only document text is kept for review; the original files are emailed to the XL.net team when the card publishes."

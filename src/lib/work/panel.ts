@@ -12,7 +12,13 @@
 // Submitted documents are untrusted input: every prompt frames them as data
 // between markers, never instructions.
 
-import { callBrain, newId } from "@aicompany/core/brain/client";
+import {
+  BRAIN_PROMPT_CACHE_RETENTION_MS,
+  callBrain,
+  newId,
+  reattachBrainTurn,
+} from "@aicompany/core/brain/client";
+import { isBrainTimeoutThrow } from "@aicompany/core/brain/failure";
 import { extractAnswer } from "@aicompany/core/brain/stream";
 import { siteConfig } from "site.config";
 import { brainHealthy } from "@/lib/governance/brain";
@@ -27,10 +33,16 @@ import {
   CATEGORY_BADGES,
   HOUSE_RULES,
   HOUSE_STYLE_RULES,
+  PANEL_RECOVERABLE_STAGES,
+  PANEL_STAGES,
   WORK_CAPS,
+  panelBeatBudget,
+  panelFailMessage,
+  panelRecoveryPlan,
   workBrainDailyCap,
   workPanelRunsDailyCap,
   workSubmissionsEnabled,
+  type PanelFailReason,
 } from "./config";
 import { scopeContext, scopeOf, type ScopeContext } from "./scope";
 import {
@@ -60,6 +72,7 @@ import {
 import {
   deliverArchiveRetention,
   notifyHeld,
+  notifyPanelFailed,
   notifyPublished,
   notifyUpdateAutoPublished,
   notifyUpdateConflictHeld,
@@ -122,8 +135,20 @@ export function buildWorkEnvelope(opts: {
  * name in your email" when the truth is that the brain was over budget or
  * unreachable (panel critic finding 2026-07-31). */
 export type WorkBrainResult =
-  | { ok: true; value: Record<string, unknown> }
-  | { ok: false; reason: "budget" | "transport" | "parse" };
+  | {
+      ok: true;
+      value: Record<string, unknown>;
+      envelope: Record<string, unknown>;
+      dispatchedAtMs: number;
+    }
+  | {
+      ok: false;
+      reason: "budget" | "timeout" | "transport" | "parse";
+      /** Null only on a budget refusal: nothing was ever dispatched, so there
+       * is no turn to re-attach to. */
+      envelope: Record<string, unknown> | null;
+      dispatchedAtMs: number;
+    };
 
 export async function callPanelBrain(
   sessionId: string,
@@ -135,10 +160,15 @@ export async function callPanelBrain(
   /** §5.18: company-scope calls dual-increment the roadmap ledger so client
    * spend is visible and capped there; work_usage stays the single actuals
    * ledger it always was. */
-  opts?: { alsoRecordRoadmap?: boolean }
+  opts?: { alsoRecordRoadmap?: boolean; envelope?: Record<string, unknown> }
 ): Promise<WorkBrainResult> {
   if (!(await trySpendWork("brain_calls", 1, brainCap)))
-    return { ok: false, reason: "budget" };
+    return {
+      ok: false,
+      reason: "budget",
+      envelope: null,
+      dispatchedAtMs: Date.now(),
+    };
   if (opts?.alsoRecordRoadmap) {
     try {
       await recordRoadmapBrainCall();
@@ -146,19 +176,41 @@ export async function callPanelBrain(
       // ledger mirroring is observability, never a gate mid-run
     }
   }
+  const envelope =
+    opts?.envelope ?? buildWorkEnvelope({ sessionId, system, user, purpose });
+  const dispatchedAtMs = Date.now();
+  // JSON.parse is OUT of the network try on purpose. callBrain's fetch path
+  // aborts with AbortSignal.timeout, which REJECTS, and the old single catch
+  // filed that as reason "parse". That is exactly what happened on 2026-08-25:
+  // the row could not have been classified correctly even if someone had
+  // wanted to. isBrainTimeoutThrow is the module's own sniffer, written
+  // because a real long timeout can arrive with message === "fetch failed".
+  let answer: string;
   try {
-    const res = await callBrain(
-      siteConfig,
-      buildWorkEnvelope({ sessionId, system, user, purpose }),
-      { timeoutMs }
-    );
-    if (!res.ok) return { ok: false, reason: "transport" };
-    const answer = extractAnswer(await res.json())?.trim();
-    if (!answer) return { ok: false, reason: "transport" };
+    const res = await callBrain(siteConfig, envelope, { timeoutMs });
+    if (!res.ok)
+      return { ok: false, reason: "transport", envelope, dispatchedAtMs };
+    const a = extractAnswer(await res.json())?.trim();
+    if (!a) return { ok: false, reason: "transport", envelope, dispatchedAtMs };
+    answer = a;
+  } catch (err) {
+    return {
+      ok: false,
+      reason: isBrainTimeoutThrow(err) ? "timeout" : "transport",
+      envelope,
+      dispatchedAtMs,
+    };
+  }
+  try {
     const jsonText = answer.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
-    return { ok: true, value: JSON.parse(jsonText) as Record<string, unknown> };
+    return {
+      ok: true,
+      value: JSON.parse(jsonText) as Record<string, unknown>,
+      envelope,
+      dispatchedAtMs,
+    };
   } catch {
-    return { ok: false, reason: "parse" };
+    return { ok: false, reason: "parse", envelope, dispatchedAtMs };
   }
 }
 
@@ -275,6 +327,40 @@ export async function kickPanel(
   };
 }
 
+/** The ONE terminal-failure path (§5.16, 2026-08-25). Writes the row, logs a
+ * structured line, and only then notifies, because the notification must
+ * describe something that actually happened. */
+async function failRun(
+  row: SubmissionRow | null,
+  id: string,
+  attemptId: string,
+  stage: string | null,
+  reason: PanelFailReason,
+  detail?: string
+): Promise<void> {
+  const message = panelFailMessage(stage, reason);
+  const updated = await failPanel(id, attemptId, message);
+  console.log(
+    `[work-panel] FAIL sub=${id} stage=${stage ?? "none"} reason=${reason} updated=${updated}`
+  );
+  // failPanel's eq(status,'running') predicate makes the UPDATE a no-op when
+  // the throw came from a POST-PUBLISH side effect (notifyPublished /
+  // deliverArchiveRetention are awaited outside any try and still reach
+  // runPanel's catch). Mailing there would tell a submitter "nothing
+  // published" about a card that is live on /work, and would open a WARN
+  // issue about a success. See db.ts failPanel's own comment (the 2026-08-03
+  // demotion class).
+  if (!updated) return;
+  const full = row ?? (await submissionById(id).catch(() => null));
+  if (full) {
+    try {
+      await notifyPanelFailed(full, { message, reason, stage, detail });
+    } catch {
+      // a mail outage must never unwind the row write above
+    }
+  }
+}
+
 /** The whole panel run. Never throws; every exit path writes the row. */
 async function runPanel(
   id: string,
@@ -285,10 +371,15 @@ async function runPanel(
     await runPanelInner(id, attemptId, brainCap);
   } catch (err) {
     try {
-      await failPanel(
+      // The raw message goes only to the operator mail, never into
+      // panel_error: panelFailMessage writes the submitter-safe prose.
+      await failRun(
+        null,
         id,
         attemptId,
-        `panel crashed: ${err instanceof Error ? err.message.slice(0, 200) : "unknown"}`
+        null,
+        "crash",
+        err instanceof Error ? err.message.slice(0, 200) : "unknown"
       );
     } catch {
       // the stale-claim sweep on the poll path recovers the row
@@ -309,7 +400,7 @@ async function runPanelInner(
   const isCompanyRun = row.companyId !== null;
   const corpus = corpusOf(row);
   if (corpus.length === 0) {
-    await failPanel(id, attemptId, "no document text on the row");
+    await failRun(row, id, attemptId, null, "no_document");
     return;
   }
   let manifest = "";
@@ -331,44 +422,191 @@ async function runPanelInner(
   const transcript: { stage: string; output: unknown }[] = [];
   // Disclosure runs AFTER synthesis (2026-07-30 calibration critic ruling):
   // the synthesis output is what publishes, so it is what the gate must see.
-  const stages = [
-    "evidence writer",
-    "voice writer",
-    "structure writer",
-    "evidence critic",
-    "editorial critic",
-    "synthesis",
-    "disclosure critic",
-    "adjudication",
-    "repair",
-  ];
+  // The stage list lives in config.ts as PANEL_STAGES, single-sourced with
+  // WORK_STAGE_LABELS so the progress line and the failure line can never
+  // call one step two names.
   let stageIdx = 0;
-  const beat = async (extra?: Record<string, unknown>) =>
+  // The recorded name must be the stage that is RUNNING, not the stage at
+  // this positional index: adjudication is conditional, so a positional name
+  // renames repair to adjudication on the majority of runs. stageIndex stays
+  // positional; it is only a counter.
+  const beat = async (stage: string, extra?: Record<string, unknown>) =>
     heartbeat(id, attemptId, {
-      stage: stages[Math.min(stageIdx, stages.length - 1)],
+      stage,
       stageIndex: stageIdx,
-      stageCount: stages.length,
+      stageCount: PANEL_STAGES.length,
       ...(extra ?? {}),
     });
+  const sleep = (ms: number) =>
+    new Promise<void>((r) => {
+      const t = setTimeout(r, ms);
+      t.unref?.();
+    });
+  /** Keepalive pump for one stage's call.
+   *
+   * THE COUNT BOUND IS LOAD-BEARING, not a nicety. Clearing in a finally is
+   * not enough: a finally never runs if the awaited promise never settles (a
+   * socket that neither errors nor closes). An unbounded pump would then keep
+   * panel_heartbeat_at fresh forever, anotherPanelRunning would stay true,
+   * every kickPanel would refuse busy, drainAction maps busy to stop, and no
+   * row in any lane would ever run again until pm2 restarts. Bounded by the
+   * stage's own worst-case budget, a hung stage stops beating and goes stale
+   * in panelStaleMs exactly as it does today.
+   *
+   * The pump is ALSO a hard precondition of the recovery seam below: a 600 s
+   * wait without it pushes panel_heartbeat_at past panelStaleMs,
+   * queuedWorkCandidates offers the live row as a deploy orphan, claimPanel
+   * grants a NEW attemptId, every write from the live run is then fenced out,
+   * and a second panel runs against the same row. */
+  const startBeat = (stage: string, stageStartedAtMs: number) => {
+    let beats = 0;
+    const max = panelBeatBudget();
+    const t = setInterval(() => {
+      if (++beats > max) {
+        clearInterval(t);
+        return;
+      }
+      // .catch, never a bare `void`: heartbeat() is a raw awaited db.update
+      // with no try/catch, and an interval callback has no catch anywhere on
+      // its stack, so a pool blip during a 600 s re-attach would be an
+      // unhandled rejection in the single PM2 fork. Swallowing is safe because
+      // heartbeatPumpSafe() proves one missed beat cannot orphan the row.
+      beat(stage, {
+        waiting: true,
+        stageStartedAtMs,
+        waitedMs: Date.now() - stageStartedAtMs,
+      }).catch(() => {});
+    }, WORK_CAPS.panelBeatIntervalMs);
+    t.unref?.();
+    return () => clearInterval(t);
+  };
+  let recoveryPoolMs: number = WORK_CAPS.panelRecoveryRunBudgetMs;
+  let lastFail: { stage: string; reason: PanelFailReason } | null = null;
+  // Read through an accessor, not inline at each fail site: TypeScript's flow
+  // analysis narrows `lastFail` to null for every reference in THIS function
+  // body (the only assignment is inside the `call` closure), which turns
+  // `lastFail?.reason` into `never`. Inside a nested function the declared type
+  // is used, so this one line is what keeps the four fail sites honest.
+  const lastFailReason = (): PanelFailReason => lastFail?.reason ?? "transport";
+  /**
+   * THE ONE recovery seam. It lives here and nowhere else: callPanelBrain
+   * stays exactly one dispatch, which is what keeps title inference's 20 s
+   * lane untouched and what keeps the worst case at 16 calls instead of 32.
+   *
+   * ONE recovery attempt per armed stage, from a pool shared by the WHOLE
+   * run. reattachBrainTurn re-POSTs the envelope BYTE-IDENTICALLY, exactly
+   * once, never a poll (module contract, MIGRATIONS v1.103.2): a cache miss is
+   * wire-indistinguishable from an attach, so N probes start N generations. It
+   * rides node:http, where the caller's budget IS the ceiling, which is the
+   * only reason a 600 s wait is real. Measured on this box on 2026-08-25: the
+   * brain finished a 625.1 s turn against a 450 s ceiling and a same-promptId
+   * re-POST returned it in 6 ms. Stages 4 and 5 are deliberately unarmed (they
+   * tolerate null), and budget is never recovered (retrying a ledger refusal
+   * spends against a wall that does not move).
+   *
+   * The pump's stop() runs in the finally BEFORE any fail site, so no
+   * straggler beat can rewrite panel_heartbeat_at after failPanel nulls it.
+   */
   const call = async (
     stage: string,
     system: string,
     user: string
   ): Promise<Record<string, unknown> | null> => {
-    await beat();
-    const res = await callPanelBrain(
-      sessionId,
-      system,
-      user,
-      brainCap,
-      undefined,
-      undefined,
-      { alsoRecordRoadmap: isCompanyRun }
-    );
-    const out = res.ok ? res.value : null;
-    transcript.push({ stage, output: out });
-    stageIdx++;
-    return out;
+    const stageStartedAtMs = Date.now();
+    await beat(stage, { stageStartedAtMs, waitedMs: 0, waiting: false });
+    const stop = startBeat(stage, stageStartedAtMs);
+    try {
+      let res = await callPanelBrain(
+        sessionId,
+        system,
+        user,
+        brainCap,
+        undefined,
+        undefined,
+        { alsoRecordRoadmap: isCompanyRun }
+      );
+      if (!res.ok) {
+        const plan = panelRecoveryPlan({
+          reason: res.reason,
+          recoverable: (PANEL_RECOVERABLE_STAGES as readonly string[]).includes(
+            stage
+          ),
+          dispatchedAtMs: res.dispatchedAtMs,
+          nowMs: Date.now(),
+          poolRemainingMs: recoveryPoolMs,
+          cacheRetentionMs: BRAIN_PROMPT_CACHE_RETENTION_MS,
+        });
+        console.log(
+          `[work-panel] stage=${stage} sub=${id} reason=${res.reason} recovery=${plan.attempt ? plan.mode : "none"} why=${plan.why}`
+        );
+        if (plan.attempt) {
+          const from = Date.now();
+          await sleep(WORK_CAPS.panelRecoveryDelayMs);
+          if (plan.mode === "reattach" && res.envelope) {
+            // This path bypasses callPanelBrain, which is where the ledger is
+            // normally spent, so it must spend its own unit FIRST: a cache
+            // MISS is wire-indistinguishable from an attach and starts a
+            // second fully billed generation. The unit is not refunded on a
+            // replay, so work_usage is an upper bound on spend, which is the
+            // safe direction for a budget guard.
+            if (await trySpendWork("brain_calls", 1, brainCap)) {
+              if (isCompanyRun) {
+                try {
+                  await recordRoadmapBrainCall();
+                } catch {
+                  // ledger mirroring is observability, never a gate mid-run
+                }
+              }
+              const re = await reattachBrainTurn(siteConfig, res.envelope, {
+                budgetMs: plan.budgetMs,
+              });
+              console.log(
+                `[work-panel] reattach stage=${stage} sub=${id} kind=${re.kind} waitedMs=${re.waitedMs}`
+              );
+              if ((re.kind === "replayed" || re.kind === "attached") && re.res) {
+                try {
+                  const a = (extractAnswer(await re.res.json()) ?? "").trim();
+                  const jsonText = a
+                    .replace(/^```(?:json)?\s*/i, "")
+                    .replace(/```\s*$/, "");
+                  if (a)
+                    res = {
+                      ok: true,
+                      value: JSON.parse(jsonText) as Record<string, unknown>,
+                      envelope: res.envelope,
+                      dispatchedAtMs: res.dispatchedAtMs,
+                    };
+                } catch {
+                  // leave res as the original failure
+                }
+              }
+            }
+          } else if (plan.mode === "redispatch") {
+            // A FRESH envelope (new promptId) on purpose: transport means the
+            // socket died or the answer was empty, parse means the reply was
+            // unusable, and in both cases re-POSTing the same promptId would
+            // replay the same bad turn.
+            res = await callPanelBrain(
+              sessionId,
+              system,
+              user,
+              brainCap,
+              plan.budgetMs,
+              undefined,
+              { alsoRecordRoadmap: isCompanyRun }
+            );
+          }
+          recoveryPoolMs = Math.max(0, recoveryPoolMs - (Date.now() - from));
+        }
+      }
+      const out = res.ok ? res.value : null;
+      if (!res.ok) lastFail = { stage, reason: res.reason };
+      transcript.push({ stage, output: out });
+      stageIdx++;
+      return out;
+    } finally {
+      stop();
+    }
   };
   const transcriptJson = () => JSON.stringify(transcript);
 
@@ -394,7 +632,7 @@ async function runPanelInner(
     `${docs}\n\nSubmission kind: ${row.kind === "skill" ? "CoWork Skill" : "Code program"}. Working title: ${JSON.stringify(row.title)}.\n\nBuild the claims inventory: 8 to 16 entries, each {"claim": one factual sentence about what the tool is or does, "quote": the exact supporting line from the documents}. Only claims a skeptical reader could verify against the quoted line. Then draft {"draftSummary": one paragraph (40-90 words) and "draftBody": [1-2 paragraphs]} using ONLY inventoried claims. Return {"claims": [...], "draftSummary": "...", "draftBody": [...]}.`
   );
   if (!evidence) {
-    await failPanel(id, attemptId, "evidence writer call failed or over budget");
+    await failRun(row, id, attemptId, "evidence writer", lastFailReason());
     return;
   }
 
@@ -405,7 +643,7 @@ async function runPanelInner(
     `${docs}\n\nDraft from the evidence writer:\n${JSON.stringify(evidence).slice(0, 12000)}\n\nRewrite the summary and body in the site's register: plain, concrete, no hype, no marketing adjectives, sentences a technician would sign off on. Keep every claim inside the inventory. Return {"summary": "...", "body": ["...", "..."]}.`
   );
   if (!voice) {
-    await failPanel(id, attemptId, "voice writer call failed or over budget");
+    await failRun(row, id, attemptId, "voice writer", lastFailReason());
     return;
   }
 
@@ -416,7 +654,7 @@ async function runPanelInner(
     `${docs}\n\nCurrent draft:\n${JSON.stringify(voice).slice(0, 8000)}\n\nProduce the structural fields: {"categoryBadge": exactly one of [${CATEGORY_BADGES.map((c) => `"${c}"`).join(", ")}], "facets": exactly 3 of {"label": a short noun phrase, max ${WORK_CAPS.facetLabelMaxChars} chars, "text": ${WORK_CAPS.facetTextMinWords}-${WORK_CAPS.facetTextMaxWords} words drawn from the documents}, "footerLine": ${WORK_CAPS.footerFragmentsMin}-${WORK_CAPS.footerFragmentsMax} short lowercase mono fragments summarizing hard facts, the first one naming the reviewed file by its filename}. Facet labels may NOT reuse any of these existing /work facet titles: ${takenFacets}. Return only that JSON.`
   );
   if (!structure) {
-    await failPanel(id, attemptId, "structure writer call failed or over budget");
+    await failRun(row, id, attemptId, "structure writer", lastFailReason());
     return;
   }
 
@@ -487,7 +725,7 @@ async function runPanelInner(
     `${docs}\n\nDraft:\n${JSON.stringify(draft).slice(0, 8000)}\n\nClaims inventory from the evidence writer:\n${JSON.stringify(evidence.claims ?? []).slice(0, 6000)}\n\nEvidence critic:\n${JSON.stringify(evidenceCritic ?? {}).slice(0, 6000)}\n\nEditorial critic:\n${JSON.stringify(editorialCritic ?? {}).slice(0, 6000)}\n\nTitle must remain ${JSON.stringify(row.title)} unless it collides with an existing card title (taken titles: ${takenTitles}).`
   );
   if (!synth) {
-    await failPanel(id, attemptId, "synthesis call failed or over budget");
+    await failRun(row, id, attemptId, "synthesis", lastFailReason());
     return;
   }
 

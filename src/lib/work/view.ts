@@ -1,7 +1,7 @@
 // Status projections for the submit page poll (§5.16). Never leaks another
 // user's data: routes only call these on rows the caller owns (or as admin).
 
-import { WORK_CAPS } from "./config";
+import { PANEL_STEP_SLOW_MS, WORK_CAPS } from "./config";
 import { UPDATE_CONFLICT_NOTE, type SubmissionListRow } from "./db";
 import { sameEmail } from "./transfer";
 
@@ -10,7 +10,24 @@ export interface SubmissionStatusView {
   title: string;
   kind: string;
   status: string;
+  /** The RAW stage name the panel recorded (PANEL_STAGES), never a composed
+   * sentence: the tracker formats it with workStageLine() so one step can
+   * never be named two ways across surfaces. */
   stage: string | null;
+  stageIndex: number | null;
+  stageCount: number | null;
+  /** Server-computed: the RUN's age while running (panel_started_at), the
+   * ROW's age while received. Null on every terminal status. */
+  elapsedMs: number | null;
+  /** The heartbeat pump is mid-call on this stage. */
+  waiting: boolean;
+  /** This stage has been running longer than most (PANEL_STEP_SLOW_MS). */
+  slow: boolean;
+  /** This box's clock at projection time, so the client can advance elapsedMs
+   * without ever subtracting a server instant from a client clock. */
+  serverNowMs: number;
+  /** Received rows only: why the queue has not started this row yet. */
+  queueReason: string | null;
   error: string | null;
   heldReason: string | null;
   slug: string | null;
@@ -88,20 +105,45 @@ export function statusView(
   opts?: {
     currentId?: string | null;
     lane?: { name: string; domain: string } | null;
+    queueReason?: string | null;
   }
 ): SubmissionStatusView {
-  let stage: string | null = null;
+  const nowMs = Date.now();
+  let stage: string | null = null,
+    stageIndex: number | null = null,
+    stageCount: number | null = null,
+    waiting = false,
+    slow = false;
   try {
-    const progress = JSON.parse(row.panelProgressJson ?? "null") as {
+    const p = JSON.parse(row.panelProgressJson ?? "null") as {
       stage?: string;
       stageIndex?: number;
       stageCount?: number;
+      stageStartedAtMs?: number;
+      waiting?: boolean;
     } | null;
-    if (row.status === "running" && progress?.stage)
-      stage = `${progress.stage} (${(progress.stageIndex ?? 0) + 1} of ${progress.stageCount ?? 9})`;
+    if (row.status === "running" && p?.stage) {
+      stage = p.stage;
+      stageIndex = p.stageIndex ?? 0;
+      stageCount = p.stageCount ?? 9;
+      waiting = p.waiting === true;
+      // Derived from the STAGE START the beat pump writes, never from
+      // panel_heartbeat_at: the pump refreshes that column every 45 s for the
+      // whole duration of a call, so its age no longer measures progress and a
+      // heartbeat-derived `slow` could never fire. Both clocks are this box's
+      // Date.now(), so the comparison is server-local and skew-free.
+      if (typeof p.stageStartedAtMs === "number")
+        slow = nowMs - p.stageStartedAtMs > PANEL_STEP_SLOW_MS;
+    }
   } catch {
     stage = null;
   }
+  const elapsedMs =
+    row.status === "running" && row.panelStartedAt
+      ? nowMs - row.panelStartedAt.getTime()
+      : row.status === "received"
+        ? nowMs - row.createdAt.getTime()
+        : null;
   const stale =
     row.status === "running" &&
     (!row.panelHeartbeatAt ||
@@ -112,6 +154,13 @@ export function statusView(
     kind: row.kind,
     status: row.status,
     stage,
+    stageIndex,
+    stageCount,
+    elapsedMs,
+    waiting,
+    slow,
+    serverNowMs: nowMs,
+    queueReason: row.status === "received" ? (opts?.queueReason ?? null) : null,
     error: row.status === "failed" ? row.panelError : null,
     // Held UPDATE rows get a canned line: panel_error can carry admin-only
     // instructions (the conflict-park note), and rendering those to the

@@ -13,18 +13,35 @@ import {
   isTransferableStatus,
   KIND_LABELS,
   WORK_CAPS,
+  WORK_POLL_MS,
+  WORK_STATUS_LABELS,
   type WorkKind,
+  type WorkStatus,
 } from "@/lib/work/config";
 import { exact } from "@/lib/rfp/time";
 import { personLabel } from "@/lib/person-label";
+import { ReviewProgress } from "./review-progress";
 import { SubmissionForm } from "./submission-form";
 
+// HAND-WRITTEN, and not derived from SubmissionStatusView on purpose (that
+// type lives in view.ts beside the db row types). The cost of that is real:
+// a field added server-side is invisible here with NO compile error, which
+// is how the tracker fields below were missing from this list for a whole
+// round. When statusView grows a field the tracker reads, add it here.
 interface StatusRow {
   id: string;
   title: string;
   kind: string;
   status: string;
+  /** The RAW stage name; <ReviewProgress> formats it. */
   stage: string | null;
+  stageIndex: number | null;
+  stageCount: number | null;
+  elapsedMs: number | null;
+  serverNowMs: number;
+  waiting: boolean;
+  slow: boolean;
+  queueReason: string | null;
   error: string | null;
   heldReason: string | null;
   slug: string | null;
@@ -62,16 +79,6 @@ export interface UpdateTarget {
 // 0 = All, and it is deliberately last so the default sits first.
 const PAGE_SIZES = [10, 50, 0] as const;
 const DEFAULT_PAGE_SIZE = 10;
-
-const STATUS_COPY: Record<string, string> = {
-  received: "Queued for review",
-  running: "Panel reviewing",
-  published: "Published",
-  held: "Held for review",
-  failed: "Review failed",
-  pending_approval: "Waiting for approval",
-  superseded: "Replaced by an update",
-};
 
 export function SubmitClient({
   isAdmin = false,
@@ -185,15 +192,34 @@ export function SubmitClient({
     const t = setTimeout(() => void refresh(), 0);
     return () => clearTimeout(t);
   }, [refresh]);
-  const anyActive = rows.some(
-    (r) =>
-      r.status === "received" ||
-      r.status === "running" ||
-      // §5.16 auto-approve: pending_approval is a moments-long transit for
-      // an admin web update (the panel swaps it itself). Keep polling so the
-      // strip flips to Published instead of freezing on a glimpsed park.
-      (r.status === "pending_approval" && r.autoApprove)
-  );
+  // The row a submit just created, so the poll keeps running through the gap
+  // between the 202 and the row appearing in the list. Without it a reader
+  // whose only other rows are finished has anyActive false at the moment of
+  // submit, and a slow or refused first refresh would leave the new row
+  // invisible with nothing coming to fix it. Bounded by the effect below, so
+  // a list that keeps refusing cannot pin the poll on a row that is never
+  // coming. NOT used to move focus: the tracker's live region announces on
+  // its own, and stealing the caret throws a keyboard user out of the form
+  // they may want to reuse.
+  const [justSubmittedId, setJustSubmittedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!justSubmittedId) return;
+    const t = setTimeout(() => setJustSubmittedId(null), WORK_POLL_MS * 3);
+    return () => clearTimeout(t);
+  }, [justSubmittedId]);
+  const awaitingNewRow =
+    !!justSubmittedId && !rows.some((r) => r.id === justSubmittedId);
+  const anyActive =
+    awaitingNewRow ||
+    rows.some(
+      (r) =>
+        r.status === "received" ||
+        r.status === "running" ||
+        // §5.16 auto-approve: pending_approval is a moments-long transit for
+        // an admin web update (the panel swaps it itself). Keep polling so the
+        // strip flips to Published instead of freezing on a glimpsed park.
+        (r.status === "pending_approval" && r.autoApprove)
+    );
   useEffect(() => {
     // The all-submissions view does NOT poll. Across every submitter there is
     // almost always something active, so anyActive would pin a 200-row read
@@ -201,8 +227,20 @@ export function SubmitClient({
     // tick for a view nobody watches for progress. Its Refresh control is
     // the lever, and the copy promises nothing automatic.
     if (!anyActive || view === "all") return;
-    const t = setInterval(() => void refresh(), 10_000);
-    return () => clearInterval(t);
+    const t = setInterval(() => {
+      // A hidden tab is SKIPPED, not stopped: the listener below fires one
+      // immediate refresh on return, so coming back never shows a stale step.
+      if (document.visibilityState === "hidden") return;
+      void refresh();
+    }, WORK_POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [anyActive, refresh, view]);
 
   /** Case-folded, because a moved row stores the address its mover typed
@@ -507,7 +545,10 @@ export function SubmitClient({
       <div className="panel panel--raised">
         <SubmissionForm
           context="page"
-          onSubmitted={() => void refresh()}
+          onSubmitted={(id) => {
+            setJustSubmittedId(id ?? null);
+            void refresh();
+          }}
           updateTarget={updateTarget}
         />
       </div>
@@ -643,9 +684,8 @@ export function SubmitClient({
                 <span className="badge badge--light">
                   {r.status === "pending_approval" && r.autoApprove
                     ? "Publishing"
-                    : (STATUS_COPY[r.status] ?? r.status)}
+                    : (WORK_STATUS_LABELS[r.status as WorkStatus] ?? r.status)}
                 </span>
-                {r.stage && <span className="text-faint">{r.stage}</span>}
                 {view === "all" && (
                   <>
                     {/* The bare address, matching /admin/work. person-label's
@@ -705,6 +745,22 @@ export function SubmitClient({
                   Submitted <time dateTime={r.createdAt}>{exact(r.createdAt)}</time>
                 </span>
               </div>
+              {/* PARENT-FED: the list poll above already has every field the
+                  tracker reads, so this must never open a second request per
+                  row. It replaces two things that used to sit here: the bare
+                  composed stage string in the flex line (which no longer
+                  exists; statusView now projects the RAW stage name) and the
+                  bare panel_error paragraph further down, which is now the
+                  tracker's terminal sentence with its next steps.
+                  canRetry mirrors the "Retry review" gate below exactly: this
+                  is the one surface that renders that control for a stale
+                  running row, so it is the one surface whose stale sentence
+                  may name it. */}
+              {(r.status === "received" ||
+                r.status === "running" ||
+                r.status === "failed") && (
+                <ReviewProgress row={r} lane={r.lane} canRetry={isMine(r)} />
+              )}
               {r.movedFrom && (
                 <p className="mt-1 text-xs text-faint">
                   Originally submitted by {r.movedFrom}.
@@ -768,7 +824,6 @@ export function SubmitClient({
                   )}
                 </div>
               )}
-              {r.error && <p className="mt-1 text-faint">{r.error}</p>}
               <div className="mt-2 flex flex-wrap gap-4">
                 {/* Retry review and Submit an update are suppressed on rows
                     the viewer does not own, and ONLY there. Retry burns one

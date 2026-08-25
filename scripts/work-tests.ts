@@ -3932,6 +3932,346 @@ async function main() {
       assert.ok(!/[–—]/.test(src), "no em or en dashes in the ops scripts");
   }
 
+  // ---------------------------------------------------------------------
+  // 2026-08-25 round: the panel's budget, liveness, recovery and copy
+  // invariants. All pure, so this NO-DB suite is where they are pinned.
+  // ---------------------------------------------------------------------
+  {
+    const cfg = await import("../src/lib/work/config");
+    const {
+      FAILED_NEXT_STEPS,
+      PANEL_PASS_TAKEOVER_MS,
+      PANEL_RECOVERABLE_STAGES,
+      PANEL_STAGES,
+      WORK_STAGE_LABELS,
+      WORK_STATUS_LABELS,
+      formatElapsed,
+      heartbeatPumpSafe,
+      panelBeatBudget,
+      panelBrainCallsWorstCase,
+      panelFailMessage,
+      panelRecoveryPlan,
+      panelWorstCaseRunMs,
+      queueWaitCopy,
+      workStageLine,
+      workTerminalLine,
+    } = cfg;
+    const { ROADMAP_CAPS } = await import("../src/lib/roadmap/config");
+
+    // ---- budget: the admission invariant, with equality ----
+    assert.ok(
+      WORK_CAPS.panelRunsPerDayDefault * WORK_CAPS.brainCallsWorstCasePerRun <=
+        WORK_CAPS.brainCallsPerDayDefault,
+      "work admission invariant: runs x worst case <= calls (400 x 18 = 7200)"
+    );
+    // roadmap/db.ts admitCompanyRun headroom-checks the WORK worst case
+    // against the ROADMAP ledger, so the two constants move in lockstep or
+    // company admission silently drops from 60 runs a day to 33.
+    assert.ok(
+      ROADMAP_CAPS.panelRunsPerDayDefault *
+        WORK_CAPS.brainCallsWorstCasePerRun <=
+        ROADMAP_CAPS.brainCallsPerDayDefault,
+      "company admission invariant: 60 x 18 = 1080 <= ROADMAP brain cap"
+    );
+    // Arming another stage for recovery must be a TEST failure, never a
+    // silent overrun of the reservation every admission is made against.
+    assert.ok(
+      panelBrainCallsWorstCase() <= WORK_CAPS.brainCallsWorstCasePerRun,
+      "9 stages + 7 armed recoveries fits inside brainCallsWorstCasePerRun"
+    );
+    // undici enforces an un-raisable 300 s headersTimeout on callBrain's
+    // fetch path, so anything at or above it here is silently inert.
+    assert.ok(
+      WORK_CAPS.brainTurnTimeoutMs < 300_000,
+      "brainTurnTimeoutMs stays under undici's un-raisable headersTimeout"
+    );
+
+    // ---- liveness: the heartbeat pump must cover a stage, and STOP ----
+    assert.equal(
+      heartbeatPumpSafe(),
+      true,
+      "one missed beat from a DB blip cannot orphan a live row"
+    );
+    const beats = panelBeatBudget();
+    assert.ok(
+      beats * WORK_CAPS.panelBeatIntervalMs >=
+        WORK_CAPS.brainTurnTimeoutMs +
+          WORK_CAPS.panelRecoveryDelayMs +
+          WORK_CAPS.panelRecoveryRunBudgetMs,
+      "the beat budget covers a full worst-case stage plus its recovery"
+    );
+    // The bound is the point: an unbounded pump keeps panel_heartbeat_at
+    // fresh forever, anotherPanelRunning stays true, drainAction maps busy
+    // to stop, and no row in any lane runs again until pm2 restarts.
+    assert.ok(
+      Number.isFinite(beats) && beats < 40,
+      "the beat budget is finite and small: a hung stage still goes stale"
+    );
+    assert.ok(
+      panelWorstCaseRunMs() < PANEL_PASS_TAKEOVER_MS,
+      "a healthy worst-case run never trips the drain's pass takeover"
+    );
+
+    // ---- panelRecoveryPlan, the whole decision table ----
+    const RETENTION_MS = 1_800_000; // stand-in for the module's constant
+    const nowRp = Date.now();
+    const planBase = {
+      recoverable: true,
+      dispatchedAtMs: nowRp - 1_000,
+      nowMs: nowRp,
+      poolRemainingMs: WORK_CAPS.panelRecoveryRunBudgetMs,
+      cacheRetentionMs: RETENTION_MS,
+    };
+    assert.equal(
+      panelRecoveryPlan({ ...planBase, reason: "budget" }).attempt,
+      false,
+      "a ledger refusal is never recovered: the wall does not move"
+    );
+    assert.equal(
+      panelRecoveryPlan({ ...planBase, reason: "timeout", recoverable: false })
+        .attempt,
+      false,
+      "an unarmed stage (4 and 5 tolerate null) never spends the pool"
+    );
+    assert.equal(
+      panelRecoveryPlan({
+        ...planBase,
+        reason: "timeout",
+        poolRemainingMs: WORK_CAPS.panelRecoveryFloorMs - 1,
+      }).attempt,
+      false,
+      "a spent pool stops recovery instead of starting one that cannot finish"
+    );
+    const freshTimeout = panelRecoveryPlan({ ...planBase, reason: "timeout" });
+    assert.equal(freshTimeout.attempt, true, "a fresh timeout is recovered");
+    assert.equal(
+      freshTimeout.mode,
+      "reattach",
+      "a timeout re-attaches to the turn the brain may already have finished"
+    );
+    assert.equal(
+      panelRecoveryPlan({
+        ...planBase,
+        reason: "timeout",
+        dispatchedAtMs: nowRp - (RETENTION_MS - 300_000),
+      }).attempt,
+      false,
+      "past the cache horizon a re-POST would bill a SECOND generation"
+    );
+    for (const reason of ["transport", "parse"] as const) {
+      const plan = panelRecoveryPlan({ ...planBase, reason });
+      assert.equal(plan.attempt, true, `${reason} is recovered`);
+      assert.equal(
+        plan.mode,
+        "redispatch",
+        `${reason} asks again with a FRESH envelope, never the same promptId`
+      );
+    }
+
+    // ---- copy: one vocabulary, no confident wrong sentence ----
+    for (const stage of PANEL_STAGES)
+      assert.ok(
+        WORK_STAGE_LABELS[stage],
+        `every panel stage has a reader-facing label (${stage})`
+      );
+    assert.equal(
+      Object.keys(WORK_STAGE_LABELS).length,
+      PANEL_STAGES.length,
+      "WORK_STAGE_LABELS carries no label for a stage that does not exist"
+    );
+    for (const stage of PANEL_RECOVERABLE_STAGES)
+      assert.ok(
+        (PANEL_STAGES as readonly string[]).includes(stage),
+        `every armed stage is a real stage (${stage})`
+      );
+    assert.equal(
+      workStageLine("no such stage", 2, 9),
+      "Step 3 of 9",
+      "an unknown stage degrades to the bare count, with no trailing separator"
+    );
+    assert.equal(formatElapsed(-5), "0s", "a skewed clock clamps to 0s");
+    assert.equal(formatElapsed(253_000), "4m 13s", "minutes and seconds");
+    const ALL_STATUSES = [
+      "received",
+      "running",
+      "published",
+      "held",
+      "failed",
+      "pending_approval",
+      "superseded",
+    ] as const;
+    for (const status of ALL_STATUSES) {
+      assert.ok(
+        WORK_STATUS_LABELS[status],
+        `every status has a badge label (${status})`
+      );
+      if (status === "received" || status === "running") continue;
+      // EVERY reachable terminal status gets a lane-aware closing sentence,
+      // so the tracker never leaves the last running sentence on screen.
+      for (const lane of ["internal", "company"] as const)
+        assert.ok(
+          workTerminalLine(status, lane).length > 0,
+          `terminal line for ${status} / ${lane}`
+        );
+    }
+    assert.equal(
+      workTerminalLine("running", "internal"),
+      "",
+      "a running row has no terminal line to freeze on screen"
+    );
+    // scope.ts rule: company copy never names Adam, /admin or /work/submit.
+    for (const forbidden of ["Adam", "/admin", "/work/submit"])
+      assert.ok(
+        !FAILED_NEXT_STEPS.company.includes(forbidden),
+        `FAILED_NEXT_STEPS.company never says "${forbidden}"`
+      );
+    // panel_error is projected VERBATIM to the submitter, so its builder must
+    // emit plain prose: no machine tag, no dashes, and never the old literal
+    // that manufactured the budget hypothesis.
+    for (const reason of [
+      "timeout",
+      "transport",
+      "parse",
+      "budget",
+      "no_document",
+      "crash",
+    ] as const) {
+      const message = panelFailMessage("synthesis", reason);
+      assert.ok(message.length > 0, `panelFailMessage(${reason}) says something`);
+      assert.ok(
+        !message.includes("#") && !/[–—]/.test(message),
+        `panelFailMessage(${reason}) carries no machine tag and no dash`
+      );
+      assert.ok(
+        !message.includes("or over budget"),
+        `panelFailMessage(${reason}) never blames the budget by reflex`
+      );
+    }
+    assert.ok(
+      queueWaitCopy("claim") === queueWaitCopy(null) &&
+        queueWaitCopy(null).length > 0,
+      "an unmapped queue reason renders the generic sentence, never a token"
+    );
+    // Every exported string in config.ts, including the ones inside exported
+    // records and arrays (roadmap-tests.ts precedent).
+    for (const [key, value] of Object.entries(cfg)) {
+      if (typeof value === "string")
+        assert.ok(!/[–—]/.test(value), `config export ${key} has no em/en dash`);
+      else if (value && typeof value === "object" && !(value instanceof RegExp))
+        for (const [k2, v2] of Object.entries(value as Record<string, unknown>))
+          if (typeof v2 === "string")
+            assert.ok(
+              !/[–—]/.test(v2),
+              `config export ${key}.${k2} has no em/en dash`
+            );
+    }
+
+    // ---- source scrapes: the shape the compile cannot see ----
+    const { readFileSync: readSrc } = await import("node:fs");
+    const panelSrc = readSrc("src/lib/work/panel.ts", "utf8");
+    assert.ok(
+      /import\s*\{[^}]*\bPANEL_STAGES\b[^}]*\}\s*from\s*"\.\/config"/s.test(
+        panelSrc
+      ),
+      "panel.ts takes its stage list from config.ts, not a local copy"
+    );
+    assert.ok(
+      !panelSrc.includes("const stages = ["),
+      "the local stages array is gone (it renamed repair to adjudication)"
+    );
+    // A missed failPanel site would read .updated off a void return, skip the
+    // email and write the old machine string. Prove by scrape, not by memory.
+    const failPanelHits = [...panelSrc.matchAll(/failPanel\(/g)];
+    assert.equal(
+      failPanelHits.length,
+      1,
+      "failPanel has exactly one caller, and it is failRun"
+    );
+    const failRunAt = panelSrc.indexOf("async function failRun");
+    assert.ok(failRunAt > 0, "failRun exists");
+    assert.ok(
+      (failPanelHits[0].index ?? -1) > failRunAt,
+      "the one failPanel call sits inside failRun"
+    );
+    const dbSrc = readSrc("src/lib/work/db.ts", "utf8");
+    const failPanelSrc = dbSrc.slice(
+      dbSrc.indexOf("export async function failPanel")
+    );
+    assert.ok(
+      failPanelSrc
+        .slice(0, failPanelSrc.indexOf("\nexport "))
+        .includes("panelHeartbeatAt: null"),
+      "failPanel NULLs the heartbeat, so Retry is not inert for four minutes"
+    );
+
+    // ---- statusView: the structured progress the tracker formats ----
+    const runningBase = {
+      ...baseRow,
+      status: "running",
+      heldAt: null,
+      panelError: null,
+      panelHeartbeatAt: new Date(),
+      panelStartedAt: new Date(Date.now() - 300_000),
+    };
+    const slowView = statusView({
+      ...runningBase,
+      panelProgressJson: JSON.stringify({
+        stage: "synthesis",
+        stageIndex: 5,
+        stageCount: 9,
+        stageStartedAtMs: Date.now() - 200_000,
+      }),
+    });
+    assert.equal(slowView.stage, "synthesis", "statusView projects the RAW stage");
+    assert.equal(slowView.stageIndex, 5, "statusView projects the step index");
+    assert.equal(slowView.stageCount, 9, "statusView projects the step count");
+    assert.equal(slowView.slow, true, "a long-running STAGE reads as slow");
+    assert.ok((slowView.elapsedMs ?? 0) > 0, "elapsed measures the RUN");
+    assert.ok(slowView.serverNowMs > 0, "the client gets this box's clock");
+    // slow is derived from the stage START, never from panel_heartbeat_at:
+    // the pump refreshes that column every 45 s, so its age no longer
+    // measures progress and a heartbeat-derived slow could never fire.
+    const freshView = statusView({
+      ...runningBase,
+      panelProgressJson: JSON.stringify({
+        stage: "synthesis",
+        stageIndex: 5,
+        stageCount: 9,
+        stageStartedAtMs: Date.now(),
+      }),
+    });
+    assert.equal(freshView.slow, false, "a fresh stage is not slow");
+    const queuedView = statusView(
+      { ...baseRow, status: "received", heldAt: null, panelError: null },
+      { queueReason: "deploy" }
+    );
+    assert.equal(queuedView.stage, null, "a queued row names no stage");
+    assert.equal(
+      queuedView.queueReason,
+      "deploy",
+      "a received row carries the queue-wait reason"
+    );
+    assert.ok(
+      (queuedView.elapsedMs ?? 0) >= 0,
+      "a queued row's elapsed measures the ROW age"
+    );
+    assert.equal(
+      statusView({ ...runningBase }, { queueReason: "deploy" }).queueReason,
+      null,
+      "only a received row carries a queue reason"
+    );
+    const failedView = statusView({
+      ...baseRow,
+      status: "failed",
+      heldAt: null,
+      panelError: panelFailMessage("synthesis", "timeout"),
+    });
+    assert.ok(
+      failedView.error && !failedView.error.includes("#"),
+      "a failed row's error is plain prose, with no machine tag"
+    );
+  }
+
   console.log("work-tests: all assertions passed.");
 }
 

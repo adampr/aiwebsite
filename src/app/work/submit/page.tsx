@@ -10,7 +10,11 @@ import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { emailDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
 import { siteConfig } from "site.config";
-import { workSubmissionsEnabled, type WorkKind } from "@/lib/work/config";
+import {
+  EMAIL_PROMISE,
+  workSubmissionsEnabled,
+  type WorkKind,
+} from "@/lib/work/config";
 import {
   canProposeUpdate,
   isUuid,
@@ -109,7 +113,7 @@ export default async function WorkSubmitPage({
           A CoWork Skill (the .skill with its SKILL.md, in one upload or
           two) or a Code program (a .zip with its architecture.md). An automated editorial
           panel drafts a /work card from those documents, argues against it,
-          and publishes only what it can verify. You get an email either way.
+          and publishes only what it can verify. {EMAIL_PROMISE}
         </p>
         <p className="mx-auto mt-4 text-xs text-faint">
           Prefer email? Send the package to Tron.Netter@ai.xl.net from your

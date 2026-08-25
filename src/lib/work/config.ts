@@ -81,13 +81,35 @@ export const WORK_CAPS = {
   // brainCallsWorstCasePerRun still fits under the call cap, so a started
   // run can always finish. Sized so the GLOBAL caps never bite before the
   // per-user quotas (owner directive 2026-07-30 after hitting the old 6/day
-  // global): 240 runs x 10 worst-case calls = 2400. Env-overridable.
-  brainCallsPerDayDefault: 2400,
-  panelRunsPerDayDefault: 240,
-  brainCallsWorstCasePerRun: 10,
-  brainTurnTimeoutMs: 90_000,
+  // global): 400 runs x 18 worst-case calls = 7200. Env-overridable.
+  // A stage may now cost a dispatch PLUS one recovery dispatch, so the worst
+  // case is 9 stage dispatches + 7 recovery dispatches (stages 4 and 5 are
+  // unarmed) + 2 spare = 18. Raising this constant also tightens company
+  // admission: src/lib/roadmap/db.ts admitCompanyRun checks it against the
+  // ROADMAP ledger, so ROADMAP_CAPS.brainCallsPerDayDefault moves with it.
+  brainCallsPerDayDefault: 7200,
+  panelRunsPerDayDefault: 400,
+  brainCallsWorstCasePerRun: 18,
+  // Measured legitimate evidence-writer call on 2026-08-25: 75_587 ms, so the
+  // old 90_000 left 14.4 s of margin on a NORMAL day. 150_000 is about 2x the
+  // measured worst stage. HARD CEILING: this rides callBrain plain fetch,
+  // where undici enforces an un-raisable 300 s headersTimeout, so any value
+  // above 300_000 here is silently inert. A longer wait must use the re-attach
+  // seam (reattachBrainTurn, node:http), never a bigger number here.
+  brainTurnTimeoutMs: 150_000,
+  // Recovery budget for ONE run's worth of stage failures. A pool for the
+  // WHOLE run, not per stage: 9 x (150 s + 600 s) would be 90 minutes of the
+  // one site-wide panel slot for one submission.
+  panelRecoveryRunBudgetMs: 600_000,
+  // Pause between a failed dispatch and its one recovery attempt.
+  panelRecoveryDelayMs: 15_000,
+  // Pool remainder below which a recovery is not worth starting.
+  panelRecoveryFloorMs: 60_000,
+  // Keepalive cadence while a single stage call is in flight, so a long wait
+  // is not mistaken for a deploy orphan. Bounded by panelBeatBudget().
+  panelBeatIntervalMs: 45_000,
   // Title inference (§5.16 email path) produces one line of output, so it must
-  // not hold a slot on the voice-shared brain for the 90 s a panel stage gets.
+  // not hold a slot on the voice-shared brain for the 150 s a panel stage gets.
   titleInferTimeoutMs: 20_000,
   titleInferPerSenderPerHour: 3,
   // A running claim whose heartbeat is older than this is an orphan
@@ -496,3 +518,302 @@ export const SECRETS_DETECTED_MESSAGE =
   "Your upload contains files that look like credentials, so it was not " +
   "accepted and nothing was stored. Remove the listed files, rotate any real " +
   "credential in them (it left your machine when you uploaded), then resubmit.";
+
+// ---------------------------------------------------------------------------
+// §5.16 panel stage vocabulary, progress copy, failure copy and the pure
+// recovery/liveness arithmetic (2026-08-25 round). Everything below is pure
+// and client-safe on purpose: the no-DB test:work suite pins it here, and the
+// tracker component imports the same strings the server writes.
+// ---------------------------------------------------------------------------
+
+export const PANEL_STAGES = [
+  "evidence writer",
+  "voice writer",
+  "structure writer",
+  "evidence critic",
+  "editorial critic",
+  "synthesis",
+  "disclosure critic",
+  "adjudication",
+  "repair",
+] as const;
+export type PanelStage = (typeof PANEL_STAGES)[number];
+
+/** Stages whose null result FAILS or HOLDS the row, and therefore the only
+ * ones recovery is armed on. 4 and 5 tolerate null by design (panel.ts), so a
+ * critic can never eat the pool synthesis needs. */
+export const PANEL_RECOVERABLE_STAGES: readonly PanelStage[] = [
+  "evidence writer",
+  "voice writer",
+  "structure writer",
+  "synthesis",
+  "disclosure critic",
+  "adjudication",
+  "repair",
+];
+
+export type PanelFailReason =
+  | "timeout"
+  | "transport"
+  | "parse"
+  | "budget"
+  | "no_document"
+  | "crash";
+
+export const WORK_STAGE_LABELS: Record<PanelStage, string> = {
+  "evidence writer": "Reading your documents and listing what can be verified",
+  "voice writer": "Rewriting the draft in the site's plain style",
+  "structure writer": "Building the card's sections and its fact footer",
+  "evidence critic": "Checking every claim against your documents",
+  "editorial critic": "Checking the writing against the house rules",
+  synthesis: "Merging the review notes into the final card",
+  "disclosure critic": "Checking that nothing private made it into the card",
+  adjudication: "Deciding whether a flagged name is safe to publish",
+  repair: "Fixing the last wording issues",
+};
+
+/** `Step 4 of 9 · Checking every claim against your documents`. An unknown
+ * stage degrades to `Step 4 of 9` with no separator, never to a blank and
+ * never to a confident wrong sentence. */
+export function workStageLine(
+  stage: string | null,
+  stageIndex: number | null,
+  stageCount: number | null
+): string {
+  const n = (stageIndex ?? 0) + 1;
+  const total = stageCount ?? PANEL_STAGES.length;
+  const label =
+    stage && stage in WORK_STAGE_LABELS
+      ? WORK_STAGE_LABELS[stage as PanelStage]
+      : null;
+  return label ? `Step ${n} of ${total} · ${label}` : `Step ${n} of ${total}`;
+}
+
+/** `12s`, `4m 13s`, `1h 02m`. Clamps negatives to "0s": elapsed is a server
+ * number offset by a client tick and a skewed laptop must never render
+ * "-2m 14s" or "NaN". */
+export function formatElapsed(ms: number): string {
+  const t = Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0;
+  if (t < 60) return `${t}s`;
+  const m = Math.floor(t / 60);
+  if (m < 60) return `${m}m ${t % 60}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+export const PANEL_STEP_SLOW_MS = 120_000;
+export const WORK_POLL_MS = 10_000;
+
+export const WORK_STATUS_LABELS: Record<WorkStatus, string> = {
+  received: "Waiting to start",
+  running: "Reviewing",
+  published: "Published",
+  held: "Held for review",
+  failed: "Review stopped",
+  pending_approval: "Waiting for approval",
+  superseded: "Replaced by an update",
+};
+
+/** EXHAUSTIVE by Record<WorkStatus,...>: a future status is a compile error,
+ * not a stale sentence left frozen on a finished row. */
+const TERMINAL_LINES: Record<WorkStatus, { internal: string; company: string }> =
+  {
+    received: { internal: "", company: "" },
+    running: { internal: "", company: "" },
+    published: {
+      internal: "Published. Your card is live on the Our Work page.",
+      company: "Published. Your card is live on your company's Your Work page.",
+    },
+    held: {
+      internal: "Finished. A person is looking at it before it goes live.",
+      company: "Finished. A person is looking at it before it goes live.",
+    },
+    failed: {
+      internal:
+        "The review stopped before it finished, so nothing published and nothing was lost.",
+      company:
+        "The review stopped before it finished, so nothing published and nothing was lost.",
+    },
+    pending_approval: {
+      internal: "Finished. It is waiting for Adam to approve the swap.",
+      company:
+        "Finished. It is waiting for approval before the live card changes.",
+    },
+    superseded: {
+      internal: "Replaced by a newer version of this card.",
+      company: "Replaced by a newer version of this card.",
+    },
+  };
+
+export function workTerminalLine(
+  status: string,
+  lane: "internal" | "company"
+): string {
+  const row = TERMINAL_LINES[status as WorkStatus];
+  return row ? row[lane] : "";
+}
+
+export function isTerminalWorkStatus(status: string): boolean {
+  return status !== "received" && status !== "running";
+}
+
+const PANEL_FAIL_CAUSE: Record<PanelFailReason, string> = {
+  timeout:
+    "The review pipeline was busy with another job and did not answer in time, so this review stopped. Nothing is wrong with your submission.",
+  transport:
+    "The review pipeline could not be reached, so this review stopped. Nothing is wrong with your submission.",
+  parse:
+    "The review pipeline returned an answer this site could not read, so the review stopped.",
+  budget:
+    "The review pipeline reached its daily call limit, so it stopped rather than start work it could not finish.",
+  no_document:
+    "The review could not start because no readable document text was stored with this submission.",
+  crash: "The review stopped unexpectedly.",
+};
+
+/** The ONE builder for panel_error. Its output is submitter-safe plain prose
+ * (view.ts projects panel_error verbatim to the submitter and /admin/work
+ * renders it raw), and it names the step with the SAME label the progress line
+ * uses, so the failure line and the progress line can never call one step two
+ * names. NO machine tag is prepended: the only thing that ever wanted one was
+ * a SQL LIKE for auto-retrying failed rows, and that lane is cut. */
+export function panelFailMessage(
+  stage: string | null,
+  reason: PanelFailReason
+): string {
+  const base = PANEL_FAIL_CAUSE[reason];
+  const idx = (PANEL_STAGES as readonly string[]).indexOf(stage ?? "");
+  if (idx < 0) return base;
+  const label = WORK_STAGE_LABELS[PANEL_STAGES[idx]];
+  return `${base} It stopped at step ${idx + 1} of ${PANEL_STAGES.length}, ${label.charAt(0).toLowerCase()}${label.slice(1)}.`;
+}
+
+/** Lane-branched like HELD_NEXT_STEPS and notifyHeld: company copy NEVER names
+ * Adam, /admin, or /work/submit (scope.ts rule). test:work asserts it. */
+export const FAILED_NEXT_STEPS: Record<"internal" | "company", string> = {
+  internal:
+    "Retry review runs the panel again on the files you already uploaded. It cannot pick up a replacement file; to change the files, ask Adam to remove this row, then submit the corrected version.",
+  company:
+    "Retry review runs the panel again on the files you already uploaded. The XL.net team can clear this row if you need to send a corrected package.",
+};
+
+/** The ONE outcome promise, now TRUE in all three terminal states because
+ * notifyPanelFailed ships in this commit. Used verbatim by
+ * submission-form.tsx, work-submit-dialog.tsx, /work/submit/page.tsx, the
+ * roadmap work page, work-islands.tsx and both email-intake receipts. */
+export const EMAIL_PROMISE =
+  "You get an email when the card publishes, when it is held for a person to look at, or if the review cannot finish.";
+
+export const WORK_QUEUE_REASON_COPY: Record<string, string> = {
+  deploy:
+    "A site update is finishing right now. Your review starts on its own as soon as it is done.",
+  busy: "Another review is running. Yours starts on its own when that one finishes.",
+  brain:
+    "The writing service is not answering right now. Your review starts on its own once it is back.",
+  budget:
+    "The review pipeline is at its limit for today. Your review starts on its own when capacity returns.",
+  disabled: "Reviews are paused right now. Yours stays in the queue.",
+};
+
+/** null, "claim", or any unmapped token renders the generic sentence, so an
+ * internal reason token can never reach a screen. */
+export function queueWaitCopy(reason: string | null): string {
+  return (
+    (reason && WORK_QUEUE_REASON_COPY[reason]) ||
+    "Waiting for its turn. The queue checks every minute and starts it on its own."
+  );
+}
+
+export const QUEUE_TICK_MS = 60_000;
+export const QUEUE_BOOT_DELAY_MS = 15_000;
+export const QUEUE_FAST_RETRY_MS = 15_000;
+export const QUEUE_FAST_RETRY_MAX = 8;
+export const QUEUE_SIGNAL_TTL_MS = 180_000;
+
+/** Moved OUT of queue-drain.ts so the no-DB test:work suite can pin it against
+ * panelWorstCaseRunMs(). 30 min would now trip on a healthy worst-case run and
+ * log an incident-shaped line on a normal path. */
+export const PANEL_PASS_TAKEOVER_MS = 45 * 60_000;
+
+/** Max beats one stage's pump may fire, derived from that stage's OWN
+ * worst-case budget. THE BOUND IS THE POINT: an unbounded pump makes
+ * panel_heartbeat_at unable to go stale, and that column is the only liveness
+ * detector the panel has (anotherPanelRunning, queuedWorkCandidates). A stage
+ * whose promise never settles would then beat forever, every other kickPanel
+ * would refuse busy, drainAction maps busy to stop, and NO row in ANY lane
+ * would run again until pm2 restarts. Bounded, a hung stage stops beating and
+ * goes stale in 240 s exactly as today. */
+export function panelBeatBudget(
+  perCallMs: number = WORK_CAPS.brainTurnTimeoutMs,
+  caps = WORK_CAPS
+): number {
+  const span = perCallMs + caps.panelRecoveryDelayMs + caps.panelRecoveryRunBudgetMs;
+  return Math.ceil(span / caps.panelBeatIntervalMs) + 1;
+}
+
+/** One missed beat from a DB blip still must not orphan a live row. */
+export function heartbeatPumpSafe(caps = WORK_CAPS): boolean {
+  return caps.panelBeatIntervalMs * 2 + 30_000 <= caps.panelStaleMs;
+}
+
+export function panelWorstCaseRunMs(caps = WORK_CAPS): number {
+  return (
+    PANEL_STAGES.length * caps.brainTurnTimeoutMs +
+    caps.panelRecoveryRunBudgetMs +
+    PANEL_STAGES.length * caps.panelRecoveryDelayMs
+  );
+}
+
+export function panelBrainCallsWorstCase(): number {
+  return PANEL_STAGES.length + PANEL_RECOVERABLE_STAGES.length;
+}
+
+/** The recovery decision, pure so test:work pins it (the drainAction
+ * precedent). cacheRetentionMs is INJECTED
+ * (BRAIN_PROMPT_CACHE_RETENTION_MS from the module) so config.ts keeps zero
+ * imports and stays client-safe. */
+export function panelRecoveryPlan(o: {
+  reason: PanelFailReason;
+  recoverable: boolean;
+  dispatchedAtMs: number;
+  nowMs: number;
+  poolRemainingMs: number;
+  cacheRetentionMs: number;
+  caps?: typeof WORK_CAPS;
+}): {
+  attempt: boolean;
+  mode: "reattach" | "redispatch";
+  budgetMs: number;
+  why: string;
+} {
+  const caps = o.caps ?? WORK_CAPS;
+  const no = (why: string) => ({
+    attempt: false,
+    mode: "redispatch" as const,
+    budgetMs: 0,
+    why,
+  });
+  if (!o.recoverable) return no("stage tolerates a null result");
+  if (o.reason === "budget") return no("a ledger refusal needs the day to roll");
+  if (o.reason !== "timeout" && o.reason !== "transport" && o.reason !== "parse")
+    return no("not a brain-call failure");
+  if (o.poolRemainingMs < caps.panelRecoveryFloorMs)
+    return no("run recovery pool spent");
+  if (o.reason === "timeout") {
+    // Past this guard the brain's prompt cache is certain to MISS, so a re-POST
+    // starts a SECOND fully billed generation instead of replaying the first.
+    if (o.nowMs - o.dispatchedAtMs >= o.cacheRetentionMs - 300_000)
+      return no("prompt cache would miss");
+    return {
+      attempt: true,
+      mode: "reattach",
+      budgetMs: Math.min(caps.panelRecoveryRunBudgetMs, o.poolRemainingMs),
+      why: "same promptId re-attach to a turn the brain may already have finished",
+    };
+  }
+  return {
+    attempt: true,
+    mode: "redispatch",
+    budgetMs: Math.min(caps.brainTurnTimeoutMs, o.poolRemainingMs),
+    why: "the socket died or the answer was unusable, so ask again",
+  };
+}

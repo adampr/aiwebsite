@@ -12,21 +12,23 @@
 // so a typed draft survives an accidental Esc.
 
 import Link from "next/link";
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { EMAIL_PROMISE } from "@/lib/work/config";
+import { ReviewProgress } from "./review-progress";
 
-// No Retry direction here: this string also serves the roadmap dialog,
-// whose tracking page renders Retry only for some rows; the automatic queue
-// drain (§5.16) is the primary path and the status lists carry the lever.
-const QUEUED_NOTICE =
-  "Received. Your submission is queued and the review starts automatically when the panel has capacity. Once it runs, you will get an email when the card publishes or is held.";
-const OK_NOTICE =
-  "Received. The panel is reviewing; you will get an email either way.";
+// QUEUED_NOTICE and OK_NOTICE are gone (2026-08-25 round). Both were dead
+// sentences: they described a state once, at the moment of the 202, and then
+// sat there unchanged for however many minutes the review took. The live
+// <ReviewProgress> tracker below says the same things and keeps saying them.
 const OK_NOTICE_UPDATE =
   "Received. The panel is reviewing your update; if it passes, it waits for Adam's approval before the live card changes.";
+const PAGE_NOTICE =
+  "Received. It is at the top of your submissions below, with live progress.";
 
 interface SubmissionFormProps {
   context: "page" | "dialog";
-  onSubmitted?: () => void;
+  /** The new row's id, so the page list can start watching it immediately. */
+  onSubmitted?: (id?: string) => void;
   onBusyChange?: (busy: boolean) => void;
   onClose?: () => void; // dialog only
   /** §5.16 update mode: the published card being updated. Title and kind
@@ -45,6 +47,10 @@ interface SubmissionFormProps {
   /** The retention fine print (the staff default names Adam; company copy
    * must not). */
   retentionLine?: string;
+  /** Which lane the tracker's terminal and next-step copy speaks for.
+   * EXPLICIT, never inferred from trackHref: a lane is an authorization fact
+   * and a href is a string a caller may change for any reason. */
+  lane?: "internal" | "company";
 }
 
 export function SubmissionForm({
@@ -56,6 +62,7 @@ export function SubmissionForm({
   trackHref = "/work/submit",
   creditTeamName = "the XL.net team",
   retentionLine = "Uploads with credential files are rejected. Only document text is kept for review; the original files are emailed to Adam when the card publishes.",
+  lane = "internal",
 }: SubmissionFormProps) {
   const [kindState, setKind] = useState<"skill" | "program">("skill");
   const kind = updateTarget ? updateTarget.kind : kindState;
@@ -68,7 +75,14 @@ export function SubmissionForm({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [serverPaths, setServerPaths] = useState<string[]>([]);
-  const [done, setDone] = useState<null | { queued: boolean }>(null);
+  // The refusal REASON, not a boolean. `Boolean(data?.queued)` is what
+  // destroyed it before: the one word that would have told a submitter a site
+  // update was finishing already travelled over the wire in the 202 body and
+  // the client threw it away on arrival.
+  const [done, setDone] = useState<null | {
+    id: string | null;
+    queued: string | null;
+  }>(null);
   const pkgRef = useRef<HTMLInputElement>(null);
   const mdRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -148,6 +162,7 @@ export function SubmissionForm({
         }
       );
       const data = (await res.json().catch(() => null)) as {
+        id?: string;
         error?: { code?: string; message?: string; paths?: string[] };
         queued?: string | null;
       } | null;
@@ -159,9 +174,9 @@ export function SubmissionForm({
         setServerPaths(data?.error?.paths ?? []);
         return;
       }
-      setDone({ queued: Boolean(data?.queued) });
+      setDone({ id: data?.id ?? null, queued: data?.queued ?? null });
       if (context === "page") resetForm();
-      onSubmitted?.();
+      onSubmitted?.(data?.id);
     } catch {
       setServerError(
         "The upload did not complete. Check your connection and try again; your entries are still here."
@@ -177,47 +192,33 @@ export function SubmissionForm({
   const inputStyle = { borderColor: "var(--xl-line)" } as const;
   const labelCls = "mono text-xs uppercase tracking-[0.2em] text-light";
 
-  // Dialog success state replaces the form; the notice carries the handoff.
+  // Dialog success state replaces the form, and now TRACKS the run in place
+  // instead of handing off to a page that used to be just as static.
   if (done && context === "dialog") {
     return (
-      <div className="space-y-5">
-        <p className="text-sm" role="status" tabIndex={-1} ref={(el) => el?.focus()}>
-          {done.queued ? QUEUED_NOTICE : OK_NOTICE}
-        </p>
-        <div className="flex flex-wrap gap-4">
-          <Link href={trackHref} className="btn no-underline">
-            Track it on your submissions page
-          </Link>
-          <button
-            type="button"
-            className="btn btn--text"
-            onClick={() => {
-              setDone(null);
-              resetForm();
-            }}
-          >
-            Submit another
-          </button>
-          {onClose && (
-            <button type="button" className="btn btn--text" onClick={onClose}>
-              Close
-            </button>
-          )}
-        </div>
-      </div>
+      <DialogDone
+        id={done.id}
+        queued={done.queued}
+        lane={lane}
+        trackHref={trackHref}
+        onAnother={() => {
+          setDone(null);
+          resetForm();
+        }}
+        onClose={onClose}
+      />
     );
   }
 
   return (
     <form onSubmit={submit} className="space-y-5">
       {done && context === "page" && (
-        <p className="text-sm" role="status">
-          {done.queued
-            ? QUEUED_NOTICE
-            : updateTarget
-              ? OK_NOTICE_UPDATE
-              : OK_NOTICE}
-        </p>
+        <div role="status" className="space-y-1">
+          <p className="text-sm">
+            {updateTarget ? OK_NOTICE_UPDATE : PAGE_NOTICE}
+          </p>
+          <p className="text-xs text-faint">{EMAIL_PROMISE}</p>
+        </div>
       )}
       {updateTarget ? (
         <div className="space-y-2">
@@ -440,5 +441,58 @@ export function SubmissionForm({
         )}
       </div>
     </form>
+  );
+}
+
+/** The dialog's post-submit branch, extracted so its focus effect can run
+ * ONCE, when the branch mounts.
+ *
+ * The bug this replaces was `ref={(el) => el?.focus()}` on the notice: a ref
+ * callback runs on EVERY render, so once the live tracker started polling
+ * inside this branch, focus was yanked back roughly six times a minute for
+ * the whole review. The WRAPPER takes focus, never the role="status" element:
+ * focusing a live region makes screen readers announce it twice. */
+function DialogDone({
+  id,
+  queued,
+  lane,
+  trackHref,
+  onAnother,
+  onClose,
+}: {
+  id: string | null;
+  queued: string | null;
+  lane: "internal" | "company";
+  trackHref: string;
+  onAnother: () => void;
+  onClose?: () => void;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    wrapRef.current?.focus();
+  }, []);
+  return (
+    <div ref={wrapRef} tabIndex={-1} className="space-y-5">
+      <p className="text-sm">Received. This updates on its own while you watch.</p>
+      {/* initialQueueReason is the reason from the 202 body, so the FIRST
+          second reads correctly, before any poll has run. */}
+      {id && (
+        <ReviewProgress id={id} lane={lane} initialQueueReason={queued} />
+      )}
+      <p className="text-xs text-faint">{EMAIL_PROMISE}</p>
+      <div className="flex flex-wrap gap-4">
+        <Link href={trackHref} className="btn no-underline">
+          Track it on your submissions page
+        </Link>
+        <button type="button" className="btn btn--text" onClick={onAnother}>
+          Submit another
+        </button>
+        {onClose && (
+          <button type="button" className="btn btn--text" onClick={onClose}>
+            Close
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

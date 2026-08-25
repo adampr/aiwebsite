@@ -149,7 +149,12 @@ export const ROADMAP_CAPS = {
   // ledger). Company panel runs and title inference draw BOTH ledgers, so
   // the whole client population can never consume more than this slice of
   // the shared brain.
-  brainCallsPerDayDefault: 600,
+  // Raised 600 -> 1200 on 2026-08-25 in lockstep with
+  // WORK_CAPS.brainCallsWorstCasePerRun 10 -> 18. admitCompanyRun
+  // (roadmap/db.ts) headroom-checks the WORK worst case against THIS cap, so
+  // leaving it at 600 would have silently cut company admission from 60 runs
+  // a day to 33. 60 x 18 = 1080 <= 1200.
+  brainCallsPerDayDefault: 1200,
   panelRunsPerDayDefault: 60,
   apolloCallsPerDayDefault: 100,
 } as const;

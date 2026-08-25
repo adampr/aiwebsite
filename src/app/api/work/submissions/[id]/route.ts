@@ -21,7 +21,10 @@ import {
   isUniqueViolation,
   rollbackSwappedUpdate,
   submissionById,
+  submissionListRowById,
 } from "@/lib/work/db";
+import { deployBlocksPanel } from "@/lib/work/deploy-window";
+import { queueReasonFor } from "@/lib/work/queue-signal";
 import {
   okJson,
   rateLimit,
@@ -44,7 +47,13 @@ export async function GET(_req: Request, ctx: Ctx): Promise<Response> {
   const { id } = await ctx.params;
   const limited = rateLimit(`work:poll:${user.userId}`, 60, 30);
   if (limited) return limited;
-  const row = await submissionById(id);
+  // The NARROW projection, not submissionById. The tracker polls this
+  // endpoint from the submit dialog on /work and /roadmap/work, so it can no
+  // longer afford ROW_COLS, which drags corpus_files_json, both doc texts,
+  // the transcript and card_json on every 10 s tick. LIST_COLS carries
+  // submitterEmail, so the ownership check below is unchanged, and statusView
+  // already takes SubmissionListRow.
+  const row = await submissionListRowById(id);
   // Owner-or-verified-admin. verifiedWebAdmin, not bare isAdmin (§5.18):
   // company-private rows are now reachable here, and the Microsoft
   // common-tenant lane can mint an isAdmin-passing session (nOAuth; see
@@ -55,7 +64,14 @@ export async function GET(_req: Request, ctx: Ctx): Promise<Response> {
   // stored as "jane@xl.net" or she 404s on her own submission.
   if (!row || (!sameEmail(row.submitterEmail, user.email) && !verifiedWebAdmin(user)))
     return NOT_FOUND();
-  return okJson({ submission: statusView(row) });
+  return okJson({
+    submission: statusView(row, {
+      queueReason:
+        row.status === "received"
+          ? queueReasonFor(row.id, deployBlocksPanel({ strict: false }))
+          : null,
+    }),
+  });
 }
 
 export async function DELETE(_req: Request, ctx: Ctx): Promise<Response> {

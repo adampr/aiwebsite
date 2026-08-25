@@ -44,6 +44,8 @@ import {
   workError,
 } from "@/lib/work/http";
 import { storeArchiveFiles } from "@/lib/work/archive-store";
+import { deployBlocksPanel } from "@/lib/work/deploy-window";
+import { noteQueueWait, queueReasonFor } from "@/lib/work/queue-signal";
 import { sameEmail } from "@/lib/work/transfer";
 import { splitMachineEcho } from "@/lib/work/names";
 import { kickPanel } from "@/lib/work/panel";
@@ -110,16 +112,26 @@ export async function GET(req: Request): Promise<Response> {
   // superseded row on the site would be dozens of sequential round trips per
   // load; the all view has no use for it either (it offers no "Submit an
   // update" on a row the admin does not own, and it does not dedupe).
+  // §5.16 queue-wait reason (2026-08-25 round): why a received row has not
+  // started yet, so the tracker can say "a site update is finishing" instead
+  // of nothing at all. ONE statSync for the whole page, and only when the
+  // page actually holds a received row; the process-local stamp is read per
+  // row, because a single global reason rendered under every received row
+  // would narrate one submitter's refusal under another's submission.
+  const deployBlocks = rows.some((r) => r.status === "received")
+    ? deployBlocksPanel({ strict: false })
+    : false;
   const views = await Promise.all(
     rows.map(async (r) =>
-      statusView(
-        r,
-        !wantsAll && r.status === "superseded"
+      statusView(r, {
+        queueReason:
+          r.status === "received" ? queueReasonFor(r.id, deployBlocks) : null,
+        ...(!wantsAll && r.status === "superseded"
           ? { currentId: await liveDescendantId(r.id) }
           : r.companyId
             ? { lane: lanes.get(r.companyId) ?? null }
-            : undefined
-      )
+            : {}),
+      })
     )
   );
   return okJson({ submissions: views, scope: wantsAll ? "all" : "mine", truncated });
@@ -467,6 +479,12 @@ export async function POST(req: Request): Promise<Response> {
     kicked = { outcome: { status: "refused", reason: "claim" } };
   }
   if (kicked.run) after(kicked.run); // runPanel never throws
+  // Stamp WHY the queue refused, keyed to this row, so the submitter's next
+  // poll narrates the wait. The 202 body below already carried the reason;
+  // the stamp is what makes it survive into the poll path after the dialog
+  // is reopened or the submissions page is reloaded.
+  if (kicked.outcome.status === "refused")
+    noteQueueWait(row.id, kicked.outcome.reason);
   return okJson(
     {
       id: row.id,

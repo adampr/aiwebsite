@@ -12,6 +12,7 @@
 // detection false-fires on drag-selects out of the big textarea.
 
 import { forwardRef, useImperativeHandle, useRef, useState } from "react";
+import { EMAIL_PROMISE } from "@/lib/work/config";
 import { SubmissionForm } from "./submit/submission-form";
 
 export interface WorkSubmitDialogHandle {
@@ -25,6 +26,10 @@ export interface WorkSubmitDialogProps {
   trackHref?: string;
   creditTeamName?: string;
   retentionLine?: string;
+  /** Which lane the live tracker's copy speaks for. Explicit, never inferred
+   * from trackHref: company copy must never name Adam, /admin or
+   * /work/submit. */
+  lane?: "internal" | "company";
 }
 
 export const WorkSubmitDialog = forwardRef<
@@ -71,7 +76,7 @@ export const WorkSubmitDialog = forwardRef<
         </div>
         <p className="mt-3 text-sm text-faint">
           {props.intro ??
-            "An automated editorial panel drafts a /work card from your documents, argues against it, and publishes only what it can verify. You get an email either way."}
+            `An automated editorial panel drafts a /work card from your documents, argues against it, and publishes only what it can verify. ${EMAIL_PROMISE}`}
         </p>
         <div className="mt-6">
           <SubmissionForm
@@ -84,6 +89,7 @@ export const WorkSubmitDialog = forwardRef<
             trackHref={props.trackHref}
             creditTeamName={props.creditTeamName}
             retentionLine={props.retentionLine}
+            lane={props.lane}
           />
         </div>
       </dialog>

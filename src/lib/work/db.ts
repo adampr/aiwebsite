@@ -174,6 +174,8 @@ export async function mySubmissions(email: string): Promise<SubmissionRow[]> {
 // drops only the two blobs, so it still carries corpus_files_json (the whole
 // extracted text corpus of an upload), architecture_text/skill_md_text and the
 // panel transcript — payload the projection never touches.
+// panelStartedAt is what makes the tracker's elapsed clock measure the RUN,
+// not the row age, on a row that waited three minutes in the queue first.
 const LIST_COLS = {
   id: S.id,
   title: S.title,
@@ -187,6 +189,7 @@ const LIST_COLS = {
   panelError: S.panelError,
   panelProgressJson: S.panelProgressJson,
   panelHeartbeatAt: S.panelHeartbeatAt,
+  panelStartedAt: S.panelStartedAt,
   // §5.16 transfer round: the owner triple. All three are small scalars, so
   // ONE projection still serves both the submitter's own list and the
   // admin's all-submissions list, and a transfer's provenance ("moved from")
@@ -213,6 +216,7 @@ export type SubmissionListRow = Pick<
   | "panelError"
   | "panelProgressJson"
   | "panelHeartbeatAt"
+  | "panelStartedAt"
   | "submitterEmail"
   | "creatorEmail"
   | "companyId"
@@ -238,6 +242,22 @@ export async function mySubmissionsForList(
     .where(ownedBy(email))
     .orderBy(desc(S.createdAt))
     .limit(limit);
+}
+
+/** The narrow twin of submissionById for the STATUS POLL. GET
+ * /api/work/submissions/[id] used submissionById, i.e. ROW_COLS, which drops
+ * only the two byteas and still drags corpus_files_json (up to
+ * corpusTotalMaxChars 80k), architecture_text, skill_md_text,
+ * panel_transcript_json (60k) and card_json on every 10 s tick. With a live
+ * tracker in the dialog on /work and /roadmap/work that read would run 6 times
+ * a minute per open dialog. submissionById is unchanged and still serves
+ * DELETE, which needs the full row. */
+export async function submissionListRowById(
+  id: string
+): Promise<SubmissionListRow | null> {
+  if (!isUuid(id)) return null;
+  const rows = await db.select(LIST_COLS).from(S).where(eq(S.id, id)).limit(1);
+  return rows[0] ?? null;
 }
 
 /** The admin "All submissions" view on /work/submit (§5.16 transfer round).
@@ -1153,17 +1173,34 @@ export async function finishHeld(
   return res.length > 0;
 }
 
+/** Returns whether the row actually flipped to failed.
+ *
+ * The return value is the caller's gate: zero rows means this UPDATE was the
+ * no-op the predicate exists to produce (a published row whose post-publish
+ * side effect threw and reached runPanel's catch), and a no-op must never send
+ * mail or write a reported_issues row.
+ *
+ * panelHeartbeatAt is nulled because the run is over and nothing is beating:
+ * without it claimPanel's non-fromHeld gate (or(isNull(panelHeartbeatAt),
+ * lt(panelHeartbeatAt, staleBefore))) refuses every Retry for up to
+ * panelStaleMs after a failure, and with the 45 s keepalive that dead window
+ * would be a FLAT four minutes on every failed row, while the retry route told
+ * the reader the row was already running, finished, or at its daily limit.
+ * Verified safe: statusView.stale, queuedWorkCandidates orphan arm and
+ * anotherPanelRunning all gate on status = running, so nothing reads this
+ * column on a non-running row. */
 export async function failPanel(
   id: string,
   attemptId: string,
   reason: string
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const res = await db
     .update(S)
     .set({
       status: "failed",
       panelError: reason.slice(0, 4000),
       panelStartedAt: null,
+      panelHeartbeatAt: null,
       updatedAt: new Date(),
     })
     // status running is load-bearing, not decorative: the runner's catch
@@ -1175,7 +1212,9 @@ export async function failPanel(
     // 2026-08-03 auto-approve round).
     .where(
       and(eq(S.id, id), eq(S.panelAttemptId, attemptId), eq(S.status, "running"))
-    );
+    )
+    .returning({ id: S.id });
+  return res.length > 0;
 }
 
 /** Admin approve of a held card: publish the stored draft as-is. */
