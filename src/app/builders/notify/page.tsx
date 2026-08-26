@@ -6,6 +6,7 @@ import { siteConfig } from "site.config";
 import { db } from "@/lib/db";
 import { workshopInterest } from "@/lib/db/schema";
 import { NotifyButtons } from "./notify-buttons";
+import { WORKSHOP_SESSION_LABEL, workshopWindow } from "@/lib/workshop/session";
 
 export const metadata: Metadata = {
   title: "Workshop Notification List",
@@ -22,8 +23,13 @@ export const dynamic = "force-dynamic";
 // ?redirect through the OAuth start routes' redirect cookie). Signed-in
 // visitors see their address and the explicit opt-in / remove control —
 // consent is always a deliberate click, never a side effect of signing in.
+// The intro is window-aware (src/lib/workshop/session.ts): while the next
+// session is bookable the list is for the date AFTER it; once that session
+// has started it is the "next date" list again.
 export default async function WorkshopNotifyPage() {
   const session = await readSession(siteConfig);
+  // eslint-disable-next-line react-hooks/purity -- force-dynamic server page; per-request clock read is the point
+  const booking = workshopWindow(Date.now()) !== "tba";
   const email = session?.email.trim().toLowerCase() ?? null;
   const joined = email
     ? (
@@ -40,10 +46,20 @@ export default async function WorkshopNotifyPage() {
       <div className="text-center">
         <span className="sys-label">AI Builders</span>
         <h1 className="mt-2 text-3xl font-bold">Next Workshop</h1>
-        <p className="mt-2 text-sm">
-          The August 27 workshop sold out. Join the notification list and
-          we&apos;ll email you when the next session date is set.
-        </p>
+        {booking ? (
+          <p className="mt-2 text-sm">
+            The next open workshop is {WORKSHOP_SESSION_LABEL}:{" "}
+            <Link href="/builders#workshop">reserve a seat</Link>{" "}
+            while they last. Join the notification list and we&apos;ll email
+            you when the date after it is set.
+          </p>
+        ) : (
+          <p className="mt-2 text-sm">
+            The {WORKSHOP_SESSION_LABEL}{" "}
+            workshop has started. Join the notification list and we&apos;ll
+            email you when the next session date is set.
+          </p>
+        )}
       </div>
 
       <div className="panel panel--raised space-y-4">

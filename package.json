@@ -21,6 +21,7 @@
     "test:governance": "tsx scripts/governance-tests.ts",
     "test:work": "tsx scripts/work-tests.ts",
     "test:roadmap": "tsx scripts/roadmap-tests.ts",
+    "test:workshop": "tsx scripts/workshop-session-tests.ts",
     "test:workupdate": "tsx scripts/work-update-flow-tests.ts",
     "work:rerun": "tsx scripts/work-panel-rerun.ts",
     "work:archive": "tsx scripts/work-archive-export.ts",

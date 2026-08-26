@@ -1,6 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CheckoutButton } from "@/components/checkout-button";
+import {
+  PREVIOUS_SESSION_LABEL,
+  WORKSHOP_PRICE_USD,
+  WORKSHOP_SEAT_CAP,
+  WORKSHOP_SESSION_LABEL,
+  WORKSHOP_SESSION_LONG_LABEL,
+  WORKSHOP_TICKETS_URL,
+  workshopWindow,
+} from "@/lib/workshop/session";
 
 export const metadata: Metadata = {
   title: "AI Builders: Learn to Build AI Workflows Safely",
@@ -14,15 +23,18 @@ export const metadata: Metadata = {
   },
 };
 
-// The workshop card renders two time windows so the page never advertises a
-// past event: until August 27 8:00am CT it shows that session SOLD OUT (the
-// Ticket Tailor reserve link left with the last seat — the page offers no
-// booking anywhere); afterwards a "next date TBA" state. Both windows point
-// the primary CTA at /builders/notify, the notification list for the next
-// session. 8:00am CT = 13:00 UTC (CDT). Requires dynamic rendering — do not
-// remove force-dynamic.
+// The workshop card renders three time windows (src/lib/workshop/session.ts,
+// the one source of truth for dates, price, cap and the Ticket Tailor URL)
+// so the page never advertises a past event: until August 27 8:00 AM CT it
+// shows that session SOLD OUT above the bookable September 24 one
+// ("prev-sold-out"); from then until September 24 8:00 AM CT only the
+// September 24 session ("booking"); afterwards a "next date TBA" state whose
+// primary CTA is /builders/notify, the notification list. In the two booking
+// windows the primary CTA is the Ticket Tailor event page (single seat pool)
+// and the notification list is the secondary path for people who cannot make
+// the date. 8:00 AM CT = 13:00 UTC (CDT). Requires dynamic rendering, per
+// request Date.now(); do not remove force-dynamic.
 export const dynamic = "force-dynamic";
-const WORKSHOP_STARTS = Date.parse("2026-08-27T13:00:00Z");
 
 // Self-hosted copy of the May 21 Zoom webinar recording (54 min, 136 MB).
 // The file is gitignored; it lives in public/media/ on the dev box and ships
@@ -33,7 +45,8 @@ const RECAP_URL = "https://youtube.com/shorts/XFpJpTT4_MI";
 export default function BuildersPage() {
   // eslint-disable-next-line react-hooks/purity -- force-dynamic server page; per-request clock read is the point
   const now = Date.now();
-  const sessionPending = now < WORKSHOP_STARTS;
+  const phase = workshopWindow(now);
+  const booking = phase !== "tba";
 
   return (
     <div className="mx-auto max-w-5xl space-y-16">
@@ -69,11 +82,28 @@ export default function BuildersPage() {
             id="workshop"
             className="panel panel--lightline rise min-w-0 scroll-mt-24 sm:row-span-7 sm:grid sm:grid-rows-subgrid"
           >
-            {sessionPending ? (
+            {/* Exactly ONE subgrid child per branch here (the stacked strips
+                share a wrapper): each card has 7 children and the
+                grid-rows-[...] template + row-span-7 depend on that count. */}
+            {phase === "prev-sold-out" ? (
               // Sold-out strip has no dot: the breathing dot is the "live,
-              // bookable" signal, and nothing here is bookable.
-              <span className="badge badge--warn badge--wrap self-start">
-                August 27 · Sold out
+              // bookable" signal and belongs only on the open session. The
+              // strips stack (side by side they overflow the ~412px card
+              // interior) and the column flex stretches both full width,
+              // matching the cohort card's stretched grid-item badge (no
+              // self-start here: on a flex-column child it would shrink the
+              // strip to content width).
+              <div className="flex flex-col gap-2">
+                <span className="badge badge--warn badge--wrap">
+                  {PREVIOUS_SESSION_LABEL} · Sold out
+                </span>
+                <span className="badge badge--light badge--wrap">
+                  <span className="dot" /> {WORKSHOP_SESSION_LABEL} · Booking open
+                </span>
+              </div>
+            ) : phase === "booking" ? (
+              <span className="badge badge--light badge--wrap self-start">
+                <span className="dot" /> {WORKSHOP_SESSION_LABEL} · Booking open
               </span>
             ) : (
               <span className="badge badge--light badge--wrap self-start">
@@ -86,35 +116,72 @@ export default function BuildersPage() {
             </p>
             <div className="stat mt-6">
               <div className="stat-value">
-                $995<em> one-time</em>
+                ${WORKSHOP_PRICE_USD}<em> one-time</em>
               </div>
             </div>
-            <ul className="mt-6 space-y-2 text-sm">
-              <li>Four hours online, hands-on, not a lecture</li>
-              <li>Build real AI workflows and automations you keep</li>
-              {sessionPending ? (
-                <li>August 27 session: every seat is taken</li>
-              ) : (
+            {booking ? (
+              <ul className="mt-6 space-y-2 text-sm">
+                <li>
+                  {WORKSHOP_SESSION_LONG_LABEL} · 8:00 AM to 12:00 PM CT, live
+                  on Zoom
+                </li>
+                <li>Four hours online, hands-on, not a lecture</li>
+                <li>Build real AI workflows and automations you keep</li>
+                <li>
+                  Capped at {WORKSHOP_SEAT_CAP} attendees · July 30 and August
+                  27 both sold out
+                </li>
+                <li>
+                  Can&apos;t make {WORKSHOP_SESSION_LABEL}?{" "}
+                  <Link href="/builders/notify">Join the notification list</Link>{" "}
+                  and we&apos;ll email you when the date after it is set.
+                </li>
+              </ul>
+            ) : (
+              <ul className="mt-6 space-y-2 text-sm">
+                <li>Four hours online, hands-on, not a lecture</li>
+                <li>Build real AI workflows and automations you keep</li>
                 <li>Next session being scheduled now</li>
-              )}
-              <li>Capped at 8 attendees · July 30 and August 27 both sold out</li>
-              <li>
-                Missed the seats?{" "}
-                <Link href="/builders/notify">Join the notification list</Link>{" "}
-                and we&apos;ll email you when the next date is set.
-              </li>
-            </ul>
+                <li>
+                  Capped at {WORKSHOP_SEAT_CAP} attendees · July 30 and August
+                  27 both sold out
+                </li>
+                <li>
+                  Missed the seats?{" "}
+                  <Link href="/builders/notify">Join the notification list</Link>{" "}
+                  and we&apos;ll email you when the next date is set.
+                </li>
+              </ul>
+            )}
             <div className="mt-8">
-              <Link
-                href="/builders/notify"
-                className="btn btn--primary btn--wrap no-underline"
-              >
-                Get notified about the next session
-              </Link>
+              {booking ? (
+                <a
+                  href={WORKSHOP_TICKETS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn btn--primary btn--wrap no-underline"
+                >
+                  Reserve {WORKSHOP_SESSION_LABEL} · ${WORKSHOP_PRICE_USD}
+                </a>
+              ) : (
+                <Link
+                  href="/builders/notify"
+                  className="btn btn--primary btn--wrap no-underline"
+                >
+                  Get notified about the next session
+                </Link>
+              )}
             </div>
-            <p className="mt-4 text-xs" style={{ color: "var(--xl-text-faint)" }}>
-              Free to join · sign in required · remove yourself anytime.
-            </p>
+            {booking ? (
+              <p className="mt-4 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+                One-time · {WORKSHOP_SEAT_CAP} seats · checkout on Ticket Tailor
+                · Zoom link sent at registration
+              </p>
+            ) : (
+              <p className="mt-4 text-xs" style={{ color: "var(--xl-text-faint)" }}>
+                Free to join · sign in required · remove yourself anytime.
+              </p>
+            )}
           </div>
 
           {/* Cohort. id + scroll-mt: /roadmap step 08 deep-links here. */}
