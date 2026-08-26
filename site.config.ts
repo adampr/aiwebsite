@@ -533,8 +533,16 @@ export const siteConfig = defineSiteConfig({
   },
 
   knowledge: {
-    // SITES order from scripts/refresh-tron-knowledge.mjs.
-    crawlOrigins: ["https://xl.net", "https://ai.xl.net"],
+    // ORDER IS LOAD-BEARING, and it is NOT what coreOriginFirst controls.
+    // The crawler walks this array in plain order, sequentially, with no
+    // per-origin catch (refresh-knowledge.mjs main(): `for (const origin of
+    // sites) { await crawlSite(...) }`), so a hang on origin 1 costs origin 2
+    // entirely. ai.xl.net is ours and is the knowledge Tron most needs;
+    // xl.net is third-party WordPress we neither control nor serve and is the
+    // only origin here that can actually stall. Ours goes first so theirs can
+    // never erase it. coreOriginFirst below is a separate knob that only ranks
+    // pages inside the prompt doc - it has no effect on crawl order.
+    crawlOrigins: ["https://ai.xl.net", "https://xl.net"],
     maxPagesPerSite: 1000,
     promptDocMaxChars: 175_000,
     // Legacy priority(): ai.xl.net pages fill the prompt-doc budget first.
