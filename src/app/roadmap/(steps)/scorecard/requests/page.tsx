@@ -17,7 +17,6 @@ import {
 } from "@/lib/work/requests-config";
 import { scorecardRequestList } from "@/lib/work/requests-db";
 import type { WorkScope } from "@/lib/work/scope";
-import { fmtDate } from "@/components/roadmap/dates";
 import { personLabel } from "@/lib/person-label";
 import {
   RequestsListClient,
@@ -94,7 +93,15 @@ export default async function ScorecardRequestsPage({ searchParams }: Search) {
       REQUEST_STATUS_COPY[r.status as WorkRequestStatus] ?? r.status,
     valueLabel: formatValueUsd(r.valueUsd),
     byLabel: personLabel(r.requesterName, r.requesterEmail),
-    dateLabel: fmtDate(dateOf(r)) || "·",
+    // Owner directive 2026-08-26: the instant crosses raw and the island
+    // formats it in the reader's zone. A server component can only resolve
+    // the VM's zone (UTC in production), so there is nothing this page could
+    // usefully format. The `|| "·"` that stood here leaned on fmtDate
+    // returning "" for a null date; the placeholder moves into the cell,
+    // where the null is explicit - all three of approvedAt, claimedAt and
+    // completedAt are nullable columns, and a claimed-but-unfinished row
+    // legitimately has no completedAt.
+    dateIso: dateOf(r)?.toISOString() ?? null,
   }));
 
   return (

@@ -1,15 +1,17 @@
 // /admin/governance (ARCHITECTURE.md §5.6 + §5.12 "Admin review console"):
 // host-owned, read-only review of AI Governance builder usage by user.
 // Self-guarding server component like every module admin page (the layout
-// re-check is defense-in-depth). Direct DB reads via admin-db.ts; no API
-// route, no client JS. Every data source degrades independently and the
+// re-check is defense-in-depth). Direct DB reads via admin-db.ts and no API
+// route; the only client JS on the page is <LocalTime>, which exists
+// because a server component cannot know the reader's timezone (see Stamp
+// below). Every data source degrades independently and the
 // three states (no data / feature disabled with cause / source unavailable)
 // never look identical, per the module convention.
 import { redirect } from "next/navigation";
 import { readSession } from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
-import { fmtDate } from "@aicompany/core/admin/format";
 import { siteConfig } from "site.config";
+import { LocalTime } from "@/components/local-time";
 import {
   ADMIN_GOV_COUNTERS_NOTE,
   ADMIN_GOV_POSTURE,
@@ -100,20 +102,43 @@ function StatCard({
   );
 }
 
-// fmtDate renders null as a dash glyph; the host copy ban wants n/a instead.
-function ts(value: string | Date | null | undefined, tz: string): string {
-  return value ? fmtDate(value, tz) : "n/a";
-}
-
-function dateOnly(value: string | Date | null | undefined, tz: string): string {
-  if (!value) return "n/a";
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return String(value);
-  return d.toLocaleDateString("en-US", {
-    timeZone: tz,
-    month: "short",
-    day: "numeric",
-  });
+/**
+ * Every stored timestamp on this console, in the READER's timezone with a
+ * clock (owner directive 2026-08-26).
+ *
+ * This replaces two helpers that disagreed with each other and with the
+ * directive. `ts()` wrapped the module's fmtDate (@aicompany/core/admin/
+ * format), which pins config.site.timezone and self-labels via
+ * timeZoneName; `dateOnly()` pinned the same business zone but printed
+ * "Aug 25" with no year, no clock and NO ZONE LABEL, so the one column that
+ * could not be checked was also the one that told you least.
+ *
+ * DEPARTING FROM THE MODULE CONVENTION IS THE POINT, and a6b52ef set the
+ * precedent on /admin/work: the module formats in the BUSINESS's zone
+ * because it treats a timestamp as a fact about the company, while the
+ * directive is about the PERSON READING THE ROW. Staff read this console
+ * from wherever they are, and "last activity 9:14 AM CDT" is a different
+ * claim to them than "9:14 AM" in a zone the page never named. Converting
+ * only dateOnly would have been worse than converting neither: two columns
+ * of the same table would then have carried two different zones.
+ *
+ * <LocalTime> rather than a bare formatter because this is a server
+ * component: a runtime-zone format resolves to the VM's UTC here and to the
+ * browser's zone on hydration, which is a text mismatch that makes React
+ * discard the server HTML for the route. <LocalTime> seeds UTC on both
+ * sides and swaps a tick after mount.
+ *
+ * The null and unparseable branches are inherited deliberately: the
+ * module's fmtDate returns an em-dash glyph for null, which the host copy
+ * ban forbids (that is the whole reason ts() existed), and <LocalTime>
+ * throws a RangeError out of Intl on an Invalid Date, so neither value may
+ * reach it.
+ */
+function Stamp({ value }: { value: string | Date | null | undefined }) {
+  if (!value) return <>n/a</>;
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return <>{String(value)}</>;
+  return <LocalTime iso={d.toISOString()} withTime />;
 }
 
 // Countdown derived from the canonical deletesAt() so a RETENTION_DAYS
@@ -141,7 +166,6 @@ export default async function Page() {
   const session = await readSession(siteConfig);
   if (!session || !isAdmin(session.email)) redirect("/login");
 
-  const tz = siteConfig.site.timezone;
   const trackingOff = trackingDisabledCause();
 
   // null = source unavailable (query threw); values (even empty) = healthy.
@@ -262,10 +286,10 @@ export default async function Page() {
                       {u.done}
                     </td>
                     <td data-label="Last activity">
-                      {ts(u.lastActivityAt, tz)}
+                      <Stamp value={u.lastActivityAt} />
                     </td>
                     <td data-label="First project">
-                      {dateOnly(u.firstCreatedAt, tz)}
+                      <Stamp value={u.firstCreatedAt} />
                     </td>
                   </tr>
                 ))}
@@ -336,7 +360,7 @@ export default async function Page() {
                         {p.answersCount}
                       </td>
                       <td data-label="Last activity">
-                        {ts(p.lastActivityAt, tz)}
+                        <Stamp value={p.lastActivityAt} />
                       </td>
                       <td data-label="Deletes">
                         <span className={del.warn ? "govadm-warn" : "govadm-muted"}>

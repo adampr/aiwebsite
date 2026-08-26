@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { LocalTime } from "@/components/local-time";
 import { REQUEST_CAPS } from "@/lib/work/requests-config";
 import { postRequestAction } from "./actions";
 import type { QueueRowData } from "./types";
@@ -48,8 +49,18 @@ export function PendingQueue({ rows }: { rows: QueueRowData[] }) {
         >
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="font-medium">{r.title}</span>
+            {/* Owner directive 2026-08-26: viewer's zone, with a clock. The
+                approval decision is partly a staleness judgement, so the
+                queue's own timestamp being a day off in the approver's zone
+                was the worst place in §5.19 to carry the UTC pin.
+                <LocalTime>, not exact(): "use client" but statically
+                imported by two async server pages, so it is server-rendered
+                and exact() would mismatch on hydration (a6b52ef). The
+                trailing {" "} replaces the space JSX strips now that the
+                element sits on its own line. */}
             <span className="mono text-xs text-faint">
-              {r.valueLabel}/yr est. · {r.requesterLabel} · {r.submittedOn}
+              {r.valueLabel}/yr est. · {r.requesterLabel} ·{" "}
+              <LocalTime iso={r.submittedAt} withTime />
             </span>
           </div>
           <p className="mt-2 whitespace-pre-wrap text-sm">{r.description}</p>

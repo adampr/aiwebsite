@@ -59,6 +59,14 @@ export function violation(input: {
   ruleId: string;
   severity: Severity;
   message: string;
+  /**
+   * Set this INSTEAD of hand-formatting an instant into `message` (§5.17, the
+   * viewer-zone timestamp class). A rule that names a stored timestamp builds the
+   * split form and derives `message` from it with `flattenTimedMessage`, so the flat
+   * fallback and the rendered sentence can never disagree. C1 is the only rule that
+   * needs it today; a bare `toISOString().slice(0, 10)` in a message is the defect.
+   */
+  timedMessage?: Violation["timedMessage"];
   locator?: Violation["locator"];
   excerpt?: string;
   suggestion?: string;
@@ -67,6 +75,10 @@ export function violation(input: {
     ruleId: input.ruleId,
     severity: input.severity,
     message: input.message,
+    // Omitted rather than set to undefined: a GateResult is JSON.stringify'd into
+    // rfp_proposals.gate_json, and an explicit undefined would serialise the key
+    // away anyway, so the absent-key shape is the one that round-trips.
+    ...(input.timedMessage ? { timedMessage: input.timedMessage } : {}),
     locator: input.locator ?? {},
     ...(input.excerpt ? { excerpt: input.excerpt } : {}),
     ...(input.suggestion ? { suggestion: input.suggestion }: {}),

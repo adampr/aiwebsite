@@ -8,7 +8,6 @@ import type { Metadata } from "next";
 import { requireRfpPage } from "@/lib/rfp/access";
 import { KnowledgeNav } from "../nav";
 import { liveFacts, listPendingKnowledge } from "@/lib/rfp/db";
-import { when } from "@/lib/rfp/time";
 import { ReviewQueue } from "./queue";
 
 export const dynamic = "force-dynamic";
@@ -69,7 +68,19 @@ export default async function ReviewPage() {
             polarity: p.polarity,
             category: p.category,
             owner: p.ownerEmail,
-            age: when(p.createdAt),
+            // Owner directive 2026-08-26, closing the KNOWN GAP a6b52ef
+            // recorded. This page is an async SERVER component, and when()
+            // is doubly wrong here: past 7 days it falls through to an
+            // unpinned Intl.DateTimeFormat, which on the VM is UTC wearing
+            // no label (the rule lib/rfp/time.ts states in its own header),
+            // and under 7 days it closes over Date.now() at REQUEST time, so
+            // "3 hours ago" freezes into the HTML and ages silently on an
+            // open queue. The instant crosses raw and the island renders it
+            // with <When>, which re-runs the same formatter after mount.
+            // <When> rather than <LocalTime> because relative-then-absolute
+            // is the point on a review queue: how long a proposal has been
+            // waiting is the fact an approver is actually reading.
+            createdAt: p.createdAt.toISOString(),
             conflict: p.factKey
               ? (byKey.get(p.factKey)?.statement ?? null)
               : null,

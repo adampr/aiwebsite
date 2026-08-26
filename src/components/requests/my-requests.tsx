@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { PagerStrip, usePagedList } from "@/components/list-pager";
+import { LocalTime } from "@/components/local-time";
 import { REQUEST_CAPS } from "@/lib/work/requests-config";
 import { postRequestAction } from "./actions";
 import type { MineRowData } from "./types";
@@ -55,8 +56,21 @@ export function MyRequests({
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="font-medium">{r.title}</span>
             <span className="badge badge--light">{r.statusLabel}</span>
+            {/* Owner directive 2026-08-26: viewer's zone, with a clock.
+                <LocalTime>, not exact(): this island is "use client" but two
+                async server pages import it statically, so it is
+                server-rendered and exact() resolves the VM's zone on that
+                pass (a6b52ef). The " · filed " separator stays OUTSIDE the
+                element on purpose - <LocalTime> owns a <time dateTime>, and
+                a dollar figure swallowed into a machine-readable timestamp
+                is not a timestamp. The explicit {" "} is required because
+                the element moved to its own line and JSX strips the
+                newline-bearing text node that used to be the space. The
+                parent is flex-wrap items-baseline, so the clock wraps
+                instead of pushing Cancel off the row. */}
             <span className="mono text-xs text-faint">
-              {r.valueLabel}/yr est. · filed {r.createdOn}
+              {r.valueLabel}/yr est. · filed{" "}
+              <LocalTime iso={r.createdAt} withTime />
             </span>
           </div>
           {r.status === "rejected" && r.rejectReason && (

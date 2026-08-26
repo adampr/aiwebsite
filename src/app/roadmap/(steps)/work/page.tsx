@@ -152,12 +152,15 @@ export default async function RoadmapWorkPage() {
                 <span>{row.title}</span>
                 <span className="badge">{statusLabel(row.status)}</span>
                 {/* Owner directive 2026-08-25: the submitted-at reads in
-                    the VIEWER's timezone, with a clock. fmtDate() is UTC
-                    date-only by design (its header explains why: a
-                    server-zone date would flicker against the client
-                    re-render), and that reasoning still holds for its other
-                    call sites, so the helper is untouched and only these two
-                    submission rows move. <LocalTime> is the sanctioned way
+                    the VIEWER's timezone, with a clock. These two rows were
+                    the first of the class to move; on 2026-08-26 the owner
+                    extended the ruling to EVERY stored timestamp a reader
+                    sees, deadlines included, and fmtDate() lost its last
+                    roadmap call site. Its header used to argue that
+                    date-only precision made the zone question immaterial,
+                    which was backwards - date-only is what makes it
+                    material, because a wrong zone flips the whole token
+                    instead of a suffix. <LocalTime> is the sanctioned way
                     across a server boundary: it server-renders the UTC
                     string (labelled "UTC"), so hydration matches byte for
                     byte, then swaps to the browser zone one tick after

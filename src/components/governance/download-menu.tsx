@@ -142,7 +142,7 @@ export function DownloadMenu({
           <p className="mt-3 text-xs" style={faint}>
             Word-friendly files. What you download is yours forever; our copy
             auto-deletes {fmtDate(deletesAt)}. Downloading counts as activity
-            and moves that date forward.
+            and moves that deadline forward.
           </p>
           {status !== "done" && (
             <p className="mt-2 text-xs" style={faint}>

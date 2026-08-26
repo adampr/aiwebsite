@@ -1679,21 +1679,31 @@ ok("rung 2 evidence is a PRIVATE NETWORK, not merely a blocked address", () => {
 
 ok("every decided state carries its date, and only rung 1 says 'reached'", () => {
   const at = "2026-08-09T12:00:00.000Z";
+  // These return a CheckLine, not a string, since 2026-08-26: the date is
+  // carried as `iso` and rendered by <LocalTime> in the viewer's zone, so
+  // asserting on formatted words here would only pin the TEST BOX's
+  // timezone. Carrying the date is still the rule; `iso` is where it lives
+  // now, and `words` is the sentence the reader actually sees around it.
+  const words = (l: { before: string; after: string }) => l.before + l.after;
   const reached = reachedLine(200, at);
-  assert.ok(reached.includes("Aug 9, 2026"), reached);
-  assert.ok(reached.includes("reached"), reached);
+  assert.equal(reached.iso, at, words(reached));
+  assert.ok(words(reached).includes("reached"), words(reached));
   const internal = internalLine(at);
-  assert.ok(internal.includes("Aug 9, 2026"), internal);
-  assert.ok(!/reached/i.test(internal), "rung 2 must not claim we reached it");
-  assert.ok(internal.includes("never connect"), internal);
+  assert.equal(internal.iso, at, words(internal));
+  assert.ok(!/reached/i.test(words(internal)), "rung 2 must not claim we reached it");
+  assert.ok(words(internal).includes("never connect"), words(internal));
   const attested = attestedLine("admin@acme.com", at);
-  assert.ok(attested.includes("Aug 9, 2026"), attested);
-  assert.ok(attested.includes("admin@acme.com"), attested);
-  assert.ok(attested.includes("their word"), attested);
-  assert.ok(!/reached it from here/i.test(attested.replace("could not reach it from here", "")), attested);
+  assert.equal(attested.iso, at, words(attested));
+  assert.ok(words(attested).includes("admin@acme.com"), words(attested));
+  assert.ok(words(attested).includes("their word"), words(attested));
+  assert.ok(!/reached it from here/i.test(words(attested).replace("could not reach it from here", "")), words(attested));
+  // A junk timestamp must fall back to the dateless sentence rather than
+  // reaching <LocalTime>, which throws a RangeError on an Invalid Date.
+  assert.equal(reachedLine(200, "not-a-date").iso, null);
+  assert.ok(reachedLine(200, "not-a-date").before.includes("We reached this address (HTTP 200)."));
   // No em dashes anywhere in this family (site rule).
   for (const line of [reached, internal, attested])
-    assert.ok(!line.includes("\u2014"), line);
+    assert.ok(!words(line).includes("\u2014"), words(line));
 });
 
 ok("the nightly re-check never touches an attested field", () => {

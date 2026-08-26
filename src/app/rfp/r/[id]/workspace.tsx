@@ -27,9 +27,10 @@
 // from the rate card in force (rules B5/B7); the quote rendered below the
 // sections is engine output, printed, never calculated here.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { when } from "@/lib/rfp/time";
+import { When } from "@/components/when";
+import { LocalTime } from "@/components/local-time";
 import {
   parseInputsSource,
   parseQuoteInputs,
@@ -1639,7 +1640,33 @@ export function Workspace({
                           >
                             {v.ruleId}
                           </span>{" "}
-                          {v.message}
+                          {/* §5.17. A rule that names a stored instant sends the
+                              sentence SPLIT (Violation.timedMessage) instead of a
+                              formatted day, because a message string is built on the
+                              server and would carry the VM's UTC day. Today only C1
+                              does. <LocalTime> and not exact(): this pane's gateResult
+                              can arrive as a SERVER PROP seeded from the stored
+                              gate_json, so these spans are server-rendered on first
+                              paint, and a runtime-zone formatter would resolve to UTC
+                              on the server and the reader's zone in the browser (a text
+                              hydration mismatch). <LocalTime>'s UTC-pinned seed emits
+                              the same bytes on both sides and swaps zones after mount.
+                              The `message` fallback is not dead code: it is what a
+                              gate_json row stored before 2026-08-26 renders, and what
+                              every rule but C1 renders. */}
+                          {v.timedMessage ? (
+                            <>
+                              {v.timedMessage.segments.map((seg, si) => (
+                                <Fragment key={si}>
+                                  {seg.before}
+                                  <LocalTime iso={seg.iso} withTime />
+                                </Fragment>
+                              ))}
+                              {v.timedMessage.after}
+                            </>
+                          ) : (
+                            v.message
+                          )}
                         </div>
                       ))}
                       {gateResult.errors.map((e, i) => (
@@ -1978,11 +2005,6 @@ export function Workspace({
                     </span>
                   </div>
                   <div className="rfpdoc-actions mt-2 flex flex-wrap items-center gap-4">
-                    {letterSec && (
-                      <span className="rfpdoc-faint">
-                        {when(letterSec.updatedAt)}
-                      </span>
-                    )}
                     {letterSec ? (
                       <>
                         <button
@@ -2027,6 +2049,50 @@ export function Workspace({
                           ? "Drafting"
                           : "Draft the cover letter"}
                       </button>
+                    )}
+                    {/* Owner directive 2026-08-26. <When>, never a bare
+                        when(), because this whole workspace is SSR'd: the
+                        file is "use client", but page.tsx is an async server
+                        component that statically imports and renders
+                        <Workspace> (no next/dynamic and no ssr:false
+                        anywhere under src/app/rfp), so the App Router
+                        renders it on the VM first and hydrates it in the
+                        browser second. when() disagrees across those two
+                        runs on BOTH branches: past 7 days it falls through
+                        to an Intl.DateTimeFormat with no pinned zone, which
+                        is UTC on the VM and the reader's zone in the
+                        browser; under 7 days it measures against
+                        Date.now(), which has moved by the time hydration
+                        runs and flips "59 minutes ago" to "1 hour ago" on
+                        its own. Either way the two renders emit different
+                        text, and there is no Suspense boundary between here
+                        and the router root, so React discards the server
+                        HTML for the WHOLE page and client-renders it again
+                        - the timestamp lands correct only by accident, paid
+                        for with a full-root re-render. <When> seeds its
+                        state with the same string the server computed so
+                        the first client render matches byte for byte, re-runs
+                        when() in a deferred effect to land the viewer's zone,
+                        and carries suppressHydrationWarning for the case
+                        where the two clocks straddle a minute. updatedAt is
+                        already an ISO string on every path (all three
+                        writers stamp new Date().toISOString() and it
+                        survives as JSON in sectionsJson), so no conversion
+                        here. */}
+                    {/* LAST in this flex row, deliberately. On the
+                        post-mount zone swap this string roughly doubles (12
+                        characters to about 26, at 10px uppercase with 0.18em
+                        tracking), and flex-wrap only ever displaces what
+                        comes AFTER the item that grew. Sitting first, as it
+                        did, it pushed Edit / Ask Tron / Redraft onto a
+                        second line the moment hydration landed; last, it
+                        wraps alone and the buttons keep fixed offsets. Same
+                        rule the repo already applies on /work/submit: the
+                        item that grows goes at the end of the row. */}
+                    {letterSec && (
+                      <span className="rfpdoc-faint">
+                        <When iso={letterSec.updatedAt} />
+                      </span>
                     )}
                   </div>
                   {run?.active && run.currentLabel === LETTER_LABEL && (
@@ -2195,11 +2261,6 @@ export function Workspace({
                         </h3>
                       </div>
                       <div className="rfpdoc-actions flex flex-wrap items-center gap-4">
-                        {sec && (
-                          <span className="rfpdoc-faint">
-                            {when(sec.updatedAt)}
-                          </span>
-                        )}
                         {!sec ? (
                           <button
                             type="button"
@@ -2232,6 +2293,21 @@ export function Workspace({
                               Ask Tron
                             </button>
                           </>
+                        )}
+                        {/* <When>, and LAST in the row, both for the
+                            reasons spelled out at the cover letter's
+                            timestamp above: this component is
+                            server-rendered, so a bare when() mismatches
+                            between the two renders; and the timestamp is the
+                            one item here that changes width after mount,
+                            while flex-wrap only ever displaces what follows
+                            the item that grew. Ahead of Draft this / Edit /
+                            Ask Tron it pushed them onto a second line on
+                            every section at once. */}
+                        {sec && (
+                          <span className="rfpdoc-faint">
+                            <When iso={sec.updatedAt} />
+                          </span>
                         )}
                       </div>
                     </div>

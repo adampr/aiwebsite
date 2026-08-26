@@ -141,14 +141,23 @@ export default async function ApproveAdminPage({ searchParams }: Search) {
             expiresAt is enforced to the millisecond by liveRequest(), but
             this is prose furniture on a one-button page, a clock on one half
             of a 7-day window reads broken beside a bare date on the other,
-            and no approver acts on the minute. The sentence stop stays
-            OUTSIDE the second element - <LocalTime> owns a <time dateTime>,
-            and a period is not part of a timestamp. */}
+            and no approver acts on the minute. OVERRULED 2026-08-26: the
+            owner's ruling on this whole class is "clock on everything",
+            deadlines explicitly included - an expiry date has to mean
+            exactly what it says, and a reader who cannot see the hour
+            cannot tell whether "expires Sep 1" leaves them a day or a
+            minute. Both halves now carry withTime, still in lockstep, and
+            the requester's mirror of this same sentence (RequestAdminAccess
+            on the /roadmap hub, which was on the UTC fmtDate helper) moved
+            with them, so the two sides of one row cannot disagree. The
+            sentence stop stays OUTSIDE the second element - <LocalTime> owns
+            a <time dateTime>, and a period is not part of a timestamp. */}
         <p className="text-sm" style={{ color: "var(--xl-text-faint)" }}>
-          Requested <LocalTime iso={live.createdAt.toISOString()} /> · expires{" "}
-          <LocalTime iso={live.expiresAt.toISOString()} />. Any one recipient of
-          the request email can approve it. Approving lets them manage the
-          company directory, governance documents, and requests like this one.
+          Requested <LocalTime iso={live.createdAt.toISOString()} withTime /> ·
+          expires <LocalTime iso={live.expiresAt.toISOString()} withTime />.
+          Any one recipient of the request email can approve it. Approving
+          lets them manage the company directory, governance documents, and
+          requests like this one.
         </p>
         <ApproveButton requestId={live.id} />
       </div>

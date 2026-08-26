@@ -166,14 +166,19 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
                       string match byte for byte and the zone swap happens a
                       tick after hydration. exact() would not work here at
                       all - it formats in the RUNTIME zone on first render,
-                      which on the VM is still UTC. Date-only on purpose:
-                      this is a provenance parenthetical already carrying the
-                      source and the adder's address, and a clock would be a
-                      third fact nobody opened the console for. The closing
-                      ")" stays OUTSIDE the element, because <LocalTime> owns
-                      a <time dateTime> and punctuation inside a
-                      machine-readable timestamp is not a timestamp. */}
-                  <LocalTime iso={d.createdAt.toISOString()} />)
+                      which on the VM is still UTC. withTime by owner
+                      ruling 2026-08-26 ("clock on everything"): a6b52ef left
+                      this slot date-only on the judgement that a
+                      provenance parenthetical already carrying the source
+                      and the adder's address did not need a third fact, and
+                      ARCHITECTURE.md recorded that as an outstanding
+                      exception rather than a settled decision. The owner has
+                      now ruled the other way, so the judgement is spent. The
+                      closing ")" stays OUTSIDE the element, because
+                      <LocalTime> owns a <time dateTime> and punctuation
+                      inside a machine-readable timestamp is not a
+                      timestamp. */}
+                  <LocalTime iso={d.createdAt.toISOString()} withTime />)
                 </span>
               </li>
             ))}
@@ -337,9 +342,9 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
                   , added by {d.addedByEmail},{" "}
                   {/* Twin of the staff branch above; the two must always
                       move together or one console's two halves disagree
-                      about what day a doc was added. Reasoning in full
-                      there. */}
-                  <LocalTime iso={d.createdAt.toISOString()} />)
+                      about when a doc was added. Reasoning in full there,
+                      withTime included. */}
+                  <LocalTime iso={d.createdAt.toISOString()} withTime />)
                 </span>
               </li>
             ))}
@@ -475,14 +480,20 @@ export default async function AdminRoadmapPage({ searchParams }: Search) {
                 <td className="pr-4">{c.published}</td>
                 <td className="pr-4">{c.admins}</td>
                 <td className="pr-4">{c.createdByEmail}</td>
-                {/* Date-only: when a workspace was opened is a roster
-                    fact, not an audit trail (the cell to its left is an
-                    address, not a clock), and a clock in an 8-wide table is
-                    noise. The synthetic xl.net row above keeps its literal
-                    "·" - that lane is not a companies row and has no
-                    createdAt to render. */}
+                {/* withTime by owner ruling 2026-08-26 ("clock on
+                    everything"). a6b52ef left this cell date-only, reasoning
+                    that when a workspace was opened is a roster fact rather
+                    than an audit trail and that a clock in an 8-wide table
+                    is noise; ARCHITECTURE.md carried that as an outstanding
+                    exception, not a settled decision, and the ruling has now
+                    settled it the other way. Nothing wraps: the cell is the
+                    LAST column, so the wider string grows into the table's
+                    own overflow rather than displacing a sibling. The
+                    synthetic xl.net row above keeps its literal "·" - that
+                    lane is not a companies row and has no createdAt to
+                    render. */}
                 <td>
-                  <LocalTime iso={c.createdAt.toISOString()} />
+                  <LocalTime iso={c.createdAt.toISOString()} withTime />
                 </td>
               </tr>
             ))}

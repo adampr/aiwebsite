@@ -42,11 +42,68 @@ export type ViolationLocator = {
   charOffset?: number;
 };
 
+/**
+ * A violation message SPLIT at the instants it names, so a client can render each
+ * one in the VIEWER's timezone (§5.17) instead of shipping the server's day inside
+ * a string.
+ *
+ * Why a structure and not a formatted string: a plain string cannot hold a React
+ * element, and `message` is built on the server, where the runtime zone is the VM's
+ * UTC. Rule C1 named two stored instants as bare UTC calendar days, so a Chicago
+ * staffer who corrected a fact at 21:30 on Jul 26 (2026-07-27T02:30:00Z) read
+ * "Corrected Jul 26, 2026, 09:30 PM CDT" on /rfp/knowledge and "corrected on
+ * 2026-07-27" in the same workspace's Checks pane. One instant, two consoles, two
+ * days. C1's ENTIRE payload is the ORDERING of those two days ("corrected on X,
+ * after this was drafted on Y"), so a shifted day is the point of the sentence.
+ *
+ * Shape follows the `CheckLine {before, iso, after}` precedent in
+ * `src/lib/roadmap/platform-copy.ts` (rendered by `platform-islands.tsx`),
+ * generalised to N instants because C1 names two: each segment is the prose that
+ * PRECEDES its instant, and `after` is everything past the last one.
+ */
+export type TimedMessage = {
+  segments: { before: string; iso: string }[];
+  after: string;
+};
+
+/**
+ * The flat form of a TimedMessage, with every instant rendered as an explicitly
+ * LABELLED UTC day.
+ *
+ * `message` is derived from the split form through this rather than written twice,
+ * so the two can never drift apart. The label is not decoration: this string is the
+ * degraded path (a `gate_json` row stored before `timedMessage` existed, and
+ * `formatGateResult`'s terminal report), and an unlabelled day silently implies the
+ * reader's own day, which is the exact defect this type exists to close.
+ */
+export function flattenTimedMessage(timed: TimedMessage): string {
+  return (
+    timed.segments.map((s) => `${s.before}${s.iso.slice(0, 10)} (UTC)`).join("") +
+    timed.after
+  );
+}
+
 export type Violation = {
   /** "A1", "B2" — stable, matching DOMAIN-RULES.md exactly. */
   ruleId: string;
   severity: Severity;
+  /**
+   * The complete sentence, always present and always self-sufficient. Consumers
+   * without JSX (formatGateResult) read only this.
+   */
   message: string;
+  /**
+   * Present ONLY on rules that name a stored instant; today that is C1 alone, the
+   * only rule in the 26 that puts a date in its message. A JSX consumer renders
+   * these segments through `<LocalTime withTime>` and ignores `message`; every
+   * other consumer ignores this and reads `message`.
+   *
+   * OPTIONAL by construction, because a GateResult is serialised whole into
+   * `rfp_proposals.gate_json` (a text column holding JSON, so this is an additive
+   * field and NOT a migration). A gate run stored before 2026-08-26 simply lacks it
+   * and falls back to `message`; re-running the gate replaces the row.
+   */
+  timedMessage?: TimedMessage;
   /** Where it is, precisely enough to click through. */
   locator: ViolationLocator;
   /** The offending text, when there is one, for display in the review UI. */

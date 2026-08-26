@@ -19,7 +19,7 @@ import Link from "next/link";
 import { readStaffPage, requireRoadmapPage } from "@/lib/roadmap/access";
 import { scorecardRows, type ScorecardRow } from "@/lib/roadmap/db";
 import { personLabelParts } from "@/lib/person-label";
-import { fmtDate } from "@/components/roadmap/dates";
+import { LocalTime } from "@/components/local-time";
 import { AddToDirectory } from "./scorecard-islands";
 
 export const dynamic = "force-dynamic";
@@ -126,11 +126,30 @@ function ScoreRows({
               col="completed"
               srSuffix={`validated completions by ${label}`}
             />
+            {/* "Most recent" (the last published card) in the VIEWER's
+                zone, with a clock - owner directive 2026-08-26. It was
+                fmtDate(), UTC and date-only, on a page whose whole purpose
+                is letting a person recognise their own activity: a card
+                published at 20:15 Chicago was filed here under the next
+                day, which reads as someone else's row. <LocalTime> rather
+                than exact(): this is an async server component, so exact()
+                formats in the VM's zone during SSR and the browser's on
+                hydration, and the resulting text mismatch makes React
+                discard the server HTML for the route (a6b52ef). The middot
+                fallback stays a bare string - a row with no published card
+                has no instant to render, and <LocalTime> has no null form.
+                Widening is safe here: the <section> wrapping this table is
+                overflow-x-auto, so the extra "08:15 PM CDT" scrolls inside
+                the table instead of forcing the page body sideways. */}
             <td
               className="mono border-b border-[var(--xl-line)] py-2 text-xs"
               style={row.published === 0 ? faint : undefined}
             >
-              {row.lastPublishedAt ? fmtDate(row.lastPublishedAt) : "·"}
+              {row.lastPublishedAt ? (
+                <LocalTime iso={row.lastPublishedAt.toISOString()} withTime />
+              ) : (
+                "·"
+              )}
             </td>
           </tr>
         );

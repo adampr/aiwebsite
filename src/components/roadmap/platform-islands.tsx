@@ -18,6 +18,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePagedList, PagerStrip } from "@/components/list-pager";
+import { LocalTime } from "@/components/local-time";
 import { resetRoadmapNavProbe } from "@/components/roadmap-probe";
 import { ROADMAP_CAPS, VM_ENVIRONMENTS } from "@/lib/roadmap/config";
 import {
@@ -32,6 +33,7 @@ import {
   failureLine,
   graceLine,
   internalLine,
+  plainLine,
   reachedLine,
   stateToken,
 } from "@/lib/roadmap/platform-copy";
@@ -98,6 +100,11 @@ function FieldState({
   // domain is, and must not guess at a security predicate.
   const attestable = field === "url" ? row.urlAttestable : row.docsAttestable;
 
+  // A CheckLine, not a string: the sentence is split at its timestamp so
+  // the date can render through <LocalTime>. See platform-copy.ts for why
+  // it cannot stay inside the string (this island is seeded from server
+  // props, so these sentences are SERVER-RENDERED and an unpinned
+  // formatter would mismatch on hydration).
   const line =
     state === "ok"
       ? reachedLine(status, at)
@@ -109,7 +116,7 @@ function FieldState({
             ? inGrace
               ? graceLine(grace)
               : failureLine(reason, status, at)
-            : UNCHECKED_LINE;
+            : plainLine(UNCHECKED_LINE);
 
   return (
     <div className="mt-2 space-y-1">
@@ -124,7 +131,25 @@ function FieldState({
           <span className="mono uppercase tracking-[0.2em]">
             {stateToken(state, counting)}
           </span>{" "}
-          · {line}
+          {/* before/after carry their own spacing and punctuation, so
+              nothing goes between these three children. The newlines that
+              separate them are whitespace-only text nodes and JSX strips
+              them; adding a space here would double the one already inside
+              the copy. When iso is null, before holds the entire dateless
+              sentence and after is "", so this renders correctly with no
+              extra branch.
+
+              KNOWN TRADEOFF: this <p> is a live region (role alert/status
+              above), and <LocalTime> rewrites its own text one tick after
+              hydration when it swaps UTC for the reader's zone. A screen
+              reader may therefore read this line once more on load. The
+              alternative is lifting the date out of the sentence, which
+              would cost the five states the distinct wording they exist to
+              have, so the extra announcement is accepted deliberately
+              rather than overlooked. */}
+          · {line.before}
+          {line.iso ? <LocalTime iso={line.iso} withTime /> : null}
+          {line.after}
         </p>
         {/* Deliberately NOT offered on an attested field. Re-probing an
             address a person has already told us we cannot reach from here

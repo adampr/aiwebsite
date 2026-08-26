@@ -996,7 +996,19 @@ export async function scorecardRows(
       .select({
         email: sql<string>`lower(${W.submitterEmail})`,
         n: sql<number>`count(*)::int`,
-        last: sql<Date | null>`max(${W.publishedAt})`,
+        // sql<string | null>, NOT sql<Date | null>, and the difference is a
+        // 500 rather than a cosmetic one. drizzle's postgres-js driver
+        // replaces the client's timestamptz parser with an identity function
+        // (postgres-js/driver.js: transparentParser over OID 1184) and then
+        // decodes on the way out per COLUMN, in PgTimestamp.mapFromDriverValue.
+        // A raw `sql` field has no column behind it, so it gets noopDecoder
+        // and the raw postgres text arrives untouched. The old annotation
+        // said Date and no one noticed while the value only ever reached a
+        // helper that accepted `Date | string`; the moment a caller reached
+        // for .toISOString() it threw for every scope with a published card.
+        // governance/admin-db.ts types the identical max()/min() construct
+        // sql<string> and is the honest precedent.
+        last: sql<string | null>`max(${W.publishedAt})`,
       })
       .from(W)
       .where(and(laneWhere, eq(W.status, "published")))
@@ -1015,7 +1027,10 @@ export async function scorecardRows(
       name: p.name,
       email: p.email,
       published: hit?.n ?? 0,
-      lastPublishedAt: hit?.last ?? null,
+      // ScorecardRow promises a Date; the aggregate hands back a string
+      // (see the select above). Coerce HERE, once, so no consumer has to
+      // know that this one field came from a raw expression.
+      lastPublishedAt: hit?.last ? new Date(hit.last) : null,
       inDirectory: true,
       ...(req ?? NO_REQUESTS),
     };
@@ -1028,7 +1043,7 @@ export async function scorecardRows(
       name: null,
       email,
       published: c.n,
-      lastPublishedAt: c.last,
+      lastPublishedAt: c.last ? new Date(c.last) : null,
       inDirectory: false,
       ...(req ?? NO_REQUESTS),
     });

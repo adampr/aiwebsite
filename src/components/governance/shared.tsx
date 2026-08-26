@@ -205,13 +205,66 @@ export function firstFeedTarget(
   return null;
 }
 
-/** "Aug 15, 2026" (en-US, UTC): the concrete deletion date everywhere. */
+/**
+ * "Aug 15, 2026, 08:30 PM CDT" (en-US, the READER's own timezone).
+ *
+ * Owner directive 2026-08-26: every stored timestamp a person sees renders
+ * in that person's zone and carries a clock, deadlines included. This used
+ * to pin timeZone:"UTC" and print the date alone, which got the DAY itself
+ * wrong for anyone west of Greenwich: a project started at 8pm Chicago was
+ * labelled "started Aug 16" on the list of the person who started it on the
+ * 15th, and "Auto-deletes Sep 24" gave no hint the sweep lands at an hour
+ * that is still the 23rd where the reader is sitting.
+ *
+ * A plain STRING helper, not the <LocalTime> element the server-rendered
+ * surfaces use, and that is deliberate on both counts:
+ *  - No date in the governance UI is ever server-rendered. /governance
+ *    mounts <GovernanceHome> with a scalar domain and seeds its list
+ *    `useState<ProjectSummary[] | null>(null)`; both of its date sites live
+ *    inside `projects?.map`, which does not run on the server pass.
+ *    /governance/[id] is a shell that renders <Workspace projectId=...>,
+ *    whose own `useState<ProjectView | null>(null)` sits above an
+ *    `if (!view) return ...` early return, and every remaining date site is
+ *    below it, including all of doc-pane, question-pane and download-menu
+ *    (workspace.tsx is the only thing that mounts those three). Their first
+ *    render in existence happens after mount, in the browser, so the
+ *    runtime zone IS the reader's zone and there is no hydration seam for
+ *    an unpinned formatter to mismatch on.
+ *  - Three call sites sit inside TEMPLATE LITERALS (doc-pane's two footer
+ *    variants, question-pane's confirm blurb). A React element cannot live
+ *    in one, so an element-returning helper would force those sentences to
+ *    be rebuilt in JSX and buy nothing.
+ * Get this backwards and it is a defect in both directions: <LocalTime> on
+ * a client-only row paints a frame of UTC on every render, and a bare
+ * formatter on a server-rendered row is the text hydration mismatch that
+ * makes React discard the server HTML for the whole route (a6b52ef). The
+ * discriminator is not the "use client" line, which all five of these files
+ * carry; it is whether a server page hands the component DATA or only an id
+ * it must go and fetch.
+ *
+ * toLocaleString rather than toLocaleDateString: the two return the same
+ * bytes once time fields are passed explicitly, and the name should not
+ * tell the next reader this is date-only. The option set matches
+ * <LocalTime>'s post-mount formatter and exact() exactly, so the settled
+ * text reads the same here as everywhere else on the site.
+ *
+ * No null/Invalid-Date guard, unlike platform-copy's instant() and
+ * /admin/governance's <Stamp>, and that is checked rather than overlooked:
+ * every value that reaches this helper is a non-null `string` by type
+ * (ProjectView.deletesAt, ProjectSummary.createdAt/deletesAt, Turn.answeredAt)
+ * and the one nullable field, amendedAt, is truthiness-gated at both of its
+ * render sites in question-pane. The other two helpers guard because they
+ * feed <LocalTime>, which throws a RangeError out of Intl; this one only
+ * ever produces text.
+ */
 export function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
+  return new Date(iso).toLocaleString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
-    timeZone: "UTC",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
   });
 }
 

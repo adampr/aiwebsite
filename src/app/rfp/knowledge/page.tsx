@@ -2,6 +2,7 @@
 // card, and the intake questionnaire.
 
 import { requireRfpPage } from "@/lib/rfp/access";
+import { LocalTime } from "@/components/local-time";
 import { KnowledgeNav } from "./nav";
 import { AddFact, FactActions, MinimumsEdit, QuestionEdit, RateItemEdit } from "./edit";
 import {
@@ -16,8 +17,48 @@ import {
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function day(d: Date | null): string {
-  return d ? d.toISOString().slice(0, 10) : "";
+/**
+ * Owner directive 2026-08-26: every stored timestamp a reader sees renders
+ * in the VIEWER's zone, with a clock.
+ *
+ * What stood here was `day()`, returning d.toISOString().slice(0, 10) - the
+ * UTC CALENDAR DATE, shown to everyone. Both values it formatted are real
+ * instants, not calendar dates (rfp_facts.corrected_at and
+ * rfp_rate_cards.effective_from are both `timestamp(..., withTimezone)`), so
+ * it was off by a day for any reader west of Greenwich after their local
+ * evening: a fact corrected at 02:30Z read "Corrected 2026-07-27" to the
+ * Chicago staffer who corrected it at 21:30 on the 26th. The rate card is
+ * worse - the seeded effectiveFrom is exactly 2026-01-01T00:00:00.000Z, so
+ * "In force from 2026-01-01" was Dec 31 2025 for that reader: the WRONG
+ * YEAR. This survived three timezone rounds because toISOString().slice()
+ * matches none of the greps that found the rest (not toLocale*, not
+ * when()/exact(), not <When>/<LocalTime>).
+ *
+ * Both values really are Date objects at runtime, which is the precondition
+ * for .toISOString() here: correctedFacts() does a plain `db.select()` over
+ * rfpFacts and currentRateCard() selects `effectiveFrom: rfpRateCards
+ * .effectiveFrom` by COLUMN, so drizzle's PgTimestamp.mapFromDriverValue
+ * runs on both. A raw sql<Date> expression does NOT get that mapper and
+ * hands back a string - the trap a peer found this round in
+ * src/lib/roadmap/db.ts, where .toISOString() would have 500'd the page.
+ *
+ * <LocalTime> is the helper that crosses a server boundary safely (this is
+ * a force-dynamic SERVER component): its useState seed is UTC-pinned, so the
+ * SSR string and the first client render match byte for byte, and the swap
+ * to the browser's zone happens a tick after hydration. exact() would not
+ * work here - it formats in the RUNTIME zone on first render, which during
+ * SSR is still the VM.
+ */
+function stamp(d: Date | null) {
+  // Two holes to plug, both of which would take the whole page down rather
+  // than degrade: correctedAt is NULLABLE, and an unparseable value throws a
+  // RangeError out of .toISOString() (and again out of Intl inside
+  // <LocalTime>). Rendering nothing reproduces the old empty-string
+  // behaviour exactly and beats a 500. Neither branch is reachable today -
+  // correctedFacts() filters on `corrected_at is not null` and
+  // effective_from is NOT NULL - so this is a guard, not a display case.
+  if (!d || Number.isNaN(d.getTime())) return null;
+  return <LocalTime iso={d.toISOString()} withTime />;
 }
 
 export default async function RfpKnowledgePage() {
@@ -100,7 +141,7 @@ export default async function RfpKnowledgePage() {
                 </div>
                 <p className="mt-1">{f.statement}</p>
                 <div className="mt-1 text-xs text-faint">
-                  Corrected {day(f.correctedAt)} · introduced at KB v
+                  Corrected {stamp(f.correctedAt)} · introduced at KB v
                   {f.introducedInKb}
                   {f.detail ? ` · ${f.detail}` : ""}
                 </div>
@@ -123,7 +164,7 @@ export default async function RfpKnowledgePage() {
         ) : (
           <>
             <p className="mt-2 text-sm text-faint">
-              In force from {day(card.effectiveFrom)}. Minimum{" "}
+              In force from {stamp(card.effectiveFrom)}. Minimum{" "}
               {card.minimumFullyManagedUsers} fully managed users, floor{" "}
               {usd(card.minimumMonthlyFeeCents)} per month. The floor is its own
               figure, not the per-user rate multiplied out.

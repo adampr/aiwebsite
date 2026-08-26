@@ -10,6 +10,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { PagerStrip, usePagedList } from "@/components/list-pager";
+import { LocalTime } from "@/components/local-time";
 import { REQUEST_CAPS } from "@/lib/work/requests-config";
 import { postRequestAction } from "./actions";
 import type { BoardRowData } from "./types";
@@ -77,10 +78,42 @@ export function RequestBoard({
                 {r.valueLabel}/yr est.
               </span>
             </div>
+            {/* Owner directive 2026-08-26: viewer's zone, with a clock.
+                <LocalTime>, never exact() - this island is "use client" but
+                two async server pages import it statically, so it is
+                server-rendered and exact() would format in the VM's zone on
+                that pass and the reader's in the browser: the text hydration
+                mismatch a6b52ef fixed. serialize.ts carries the full
+                reasoning.
+
+                The two suffixes were TEMPLATE LITERALS, and a React element
+                cannot live in one, so the completed suffix becomes a
+                fragment. Two whitespace traps in that conversion, both
+                visible copy defects if missed. (1) The newline between JSX
+                children is a whitespace-only text node and JSX strips it, so
+                the leading space and the middot that used to sit INSIDE the
+                literal have to be re-supplied verbatim as {" · completed "}
+                or the row reads "...Aug 26, 2026, 08:30 PM CDTcompleted".
+                (2) "on" now ends a line, so it needs an explicit {" "}
+                before the element for the same reason, or it reads "onAug
+                26". The developerLabel suffix carries no timestamp and keeps
+                its literal untouched - converting it too would be two more
+                chances to lose a separator for no gain.
+
+                completedAt stays a null check, not a truthiness check on a
+                formatted string: serialize.ts emits either a full instant or
+                null, never "". This <p> is full-width and wraps, so the
+                clock costs no layout. */}
             <p className="mt-1 text-xs text-faint">
-              Requested by {r.requesterLabel} on {r.requestedOn}
+              Requested by {r.requesterLabel} on{" "}
+              <LocalTime iso={r.requestedAt} withTime />
               {r.developerLabel ? ` · built by ${r.developerLabel}` : ""}
-              {r.completedOn ? ` · completed ${r.completedOn}` : ""}
+              {r.completedAt ? (
+                <>
+                  {" · completed "}
+                  <LocalTime iso={r.completedAt} withTime />
+                </>
+              ) : null}
             </p>
             <details className="mt-1">
               <summary className="cursor-pointer text-xs text-faint">

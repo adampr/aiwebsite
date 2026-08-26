@@ -94,12 +94,22 @@ export function RoadmapAdminActions(props: {
                 deferred effect, after hydration has already matched.
                 createdAt is already an ISO string (the server page
                 serializes it at the boundary), so no .toISOString() here.
-                Date-only: this is a compact flex line beside Approve and
-                Deny, and the widening a clock adds on the post-mount swap
-                can wrap those buttons onto a new row. */}
+                withTime by owner ruling 2026-08-26 ("clock on everything"),
+                which reverses the date-only judgement this comment used to
+                argue for. That judgement was not wrong about the mechanism:
+                the timestamp is the ONE item here that changes width after
+                mount (the UTC-pinned seed swaps to the viewer's zone, and a
+                clock plus a zone name roughly doubles it), so wherever it
+                sits in this flex row, everything after it can be pushed onto
+                a new line - and what followed it was Approve and Deny. The
+                fix is placement, not suppression: per the repo's own rule
+                from /work/submit, the item that grows goes LAST in a flex
+                row, because flex-wrap only ever displaces what comes after.
+                Approve and Deny now sit at fixed offsets and the timestamp
+                wraps alone if it must. The trailing comma went with the
+                move: it introduced a clause that is no longer adjacent. */}
             <span>
-              {r.requesterEmail} → {r.companyName} ({r.companyDomain}),{" "}
-              <LocalTime iso={r.createdAt} />
+              {r.requesterEmail} → {r.companyName} ({r.companyDomain})
             </span>
             <button
               type="button"
@@ -121,6 +131,9 @@ export function RoadmapAdminActions(props: {
             >
               {busy === `d-${r.id}` ? "..." : "Deny"}
             </button>
+            <span className="text-faint">
+              <LocalTime iso={r.createdAt} withTime />
+            </span>
           </div>
         ))}
         {error && (

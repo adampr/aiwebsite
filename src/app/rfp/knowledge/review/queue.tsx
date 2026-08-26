@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { When } from "@/components/when";
 
 type Item = {
   id: string;
@@ -11,7 +12,9 @@ type Item = {
   polarity: string;
   category: string;
   owner: string;
-  age: string;
+  /** ISO-8601 instant, NOT a formatted age: the server page cannot format it
+   * (see the comment there), so this island does, through <When />. */
+  createdAt: string;
   conflict: string | null;
 };
 
@@ -59,7 +62,7 @@ export function ReviewQueue({ items }: { items: Item[] }) {
               </span>
             )}
             <span className="text-xs text-faint">
-              {it.owner} · {it.age}
+              {it.owner} · <When iso={it.createdAt} />
             </span>
           </div>
 

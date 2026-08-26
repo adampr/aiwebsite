@@ -23,58 +23,114 @@
 
 import type { UrlCheckFailReason } from "@/lib/roadmap/url-check";
 
-/** Short absolute date. Deliberately not "3 days ago": a relative phrase
- * hides how stale a claim really is once it passes a few weeks. */
-export function checkDate(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return "";
-  return d.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+/**
+ * A verification sentence, SPLIT at its one timestamp.
+ *
+ * These lines used to be finished strings built around a `checkDate()` that
+ * pinned timeZone:"UTC" and printed no clock. Owner directive 2026-08-26:
+ * every stored timestamp a person sees renders in that person's zone, with
+ * a clock, deadlines included (graceLine's "still counts until X" is a
+ * deadline). Neither half of that can be done with a string here:
+ *
+ *  - Unpinning the formatter is a HYDRATION MISMATCH, not a fix. FieldState
+ *    lives in platform-islands.tsx, which carries "use client" but is
+ *    seeded from server props (`useState<PublicLinkRow | null>(initial)`)
+ *    by three async server pages (/roadmap/secure, /roadmap/tools,
+ *    /roadmap/data). The row is present on the server pass, so the sentence
+ *    IS server-rendered, and an unpinned formatter resolves to the VM's UTC
+ *    there and to the reader's zone in the browser. React then throws away
+ *    the server HTML for the whole route, which is exactly the defect
+ *    a6b52ef fixed on /admin/roadmap.
+ *  - The one helper that crosses that boundary is <LocalTime> (its useState
+ *    seed is UTC-pinned unconditionally, so both sides emit identical bytes
+ *    and the zone swap happens a tick after hydration), and <LocalTime> is
+ *    an ELEMENT. An element cannot be interpolated into a template literal,
+ *    so the sentence has to be assembled in JSX by the caller.
+ *
+ * `before` and `after` carry their own spacing and punctuation, so the
+ * caller concatenates them with nothing of its own in between. `iso === null`
+ * means this state has no usable timestamp: `before` then holds the WHOLE
+ * fallback sentence and `after` is empty, so a caller that renders
+ * before/after unconditionally is always correct.
+ *
+ * The copy rule at the top of this file is unchanged and still enforced by
+ * scripts/roadmap-tests.ts: every decided state carries its date. It is now
+ * carried as `iso` rather than as words inside the sentence.
+ */
+export interface CheckLine {
+  before: string;
+  iso: string | null;
+  after: string;
+}
+
+/** The instant, or null if <LocalTime> could not format it.
+ *
+ * checkDate() swallowed an unparseable value by returning "", and the
+ * sentence quietly fell back to its dateless form. <LocalTime> has no such
+ * guard: Intl throws a RangeError on an Invalid Date, which would take the
+ * whole step page down. So the guard has to survive the move, and it has to
+ * live HERE rather than in the island, because here is where the dateless
+ * fallback wording lives. */
+function instant(iso: string | null): string | null {
+  if (!iso) return null;
+  return Number.isFinite(new Date(iso).getTime()) ? iso : null;
 }
 
 /** RUNG 1. A server answered us. That is all this says. */
 export function reachedLine(
   httpStatus: number | null,
   at: string | null
-): string {
-  const when = checkDate(at);
+): CheckLine {
   const code = httpStatus ? ` (HTTP ${httpStatus})` : "";
-  return when
-    ? `We reached this address on ${when}${code}.`
-    : `We reached this address${code}.`;
+  const iso = instant(at);
+  return iso
+    ? { before: "We reached this address on ", iso, after: `${code}.` }
+    : { before: `We reached this address${code}.`, iso: null, after: "" };
 }
 
 /** RUNG 2. Machine-checked and carefully bounded: a name inside the
  * company's own verified domain that points onto a private network. We did
  * NOT connect to it and could not have. */
-export function internalLine(at: string | null): string {
-  const when = checkDate(at);
+export function internalLine(at: string | null): CheckLine {
   const tail =
     "This address is inside your domain and points to a private network, so it counts. We never connect to private addresses, so we have not tested it ourselves.";
-  return when ? `Checked ${when}. ${tail}` : tail;
+  const iso = instant(at);
+  return iso
+    ? { before: "Checked ", iso, after: `. ${tail}` }
+    : { before: tail, iso: null, after: "" };
 }
 
 /** RUNG 3. A person's claim, and the copy says so in those words. */
-export function attestedLine(by: string | null, at: string | null): string {
-  const when = checkDate(at);
+export function attestedLine(by: string | null, at: string | null): CheckLine {
   const who = by || "an admin";
-  return when
-    ? `Confirmed by ${who} on ${when} as reachable inside your network. We could not reach it from here, so this counts on their word.`
-    : `Confirmed by ${who} as reachable inside your network. We could not reach it from here, so this counts on their word.`;
+  const tail =
+    " as reachable inside your network. We could not reach it from here, so this counts on their word.";
+  const iso = instant(at);
+  return iso
+    ? { before: `Confirmed by ${who} on `, iso, after: tail }
+    : {
+        before: `Confirmed by ${who}${tail}`,
+        iso: null,
+        after: "",
+      };
 }
 
 /** Failing, but still counting because the grace window has not closed.
  * Warning BEFORE the step drops is the whole point of the window. */
-export function graceLine(graceUntil: string | null): string {
-  const when = checkDate(graceUntil);
-  return when
-    ? `Our last check could not reach this address. It still counts until ${when}, and stops counting after that unless a check succeeds.`
-    : "Our last check could not reach this address. It stops counting shortly unless a check succeeds.";
+export function graceLine(graceUntil: string | null): CheckLine {
+  const iso = instant(graceUntil);
+  return iso
+    ? {
+        before: "Our last check could not reach this address. It still counts until ",
+        iso,
+        after: ", and stops counting after that unless a check succeeds.",
+      }
+    : {
+        before:
+          "Our last check could not reach this address. It stops counting shortly unless a check succeeds.",
+        iso: null,
+        after: "",
+      };
 }
 
 /** What the admin sees when a check fails. Actionable, and deliberately
@@ -83,33 +139,47 @@ export function failureLine(
   reason: string | null,
   httpStatus: number | null,
   at: string | null
-): string {
-  const when = checkDate(at);
-  const prefix = when ? `Checked ${when}. ` : "";
+): CheckLine {
+  const body = failureBody(reason, httpStatus);
+  const iso = instant(at);
+  return iso
+    ? { before: "Checked ", iso, after: `. ${body}` }
+    : { before: body, iso: null, after: "" };
+}
+
+/** The failure sentence without its date, so failureLine can put the date
+ * either in front of it or nowhere. */
+function failureBody(reason: string | null, httpStatus: number | null): string {
   switch (reason as UrlCheckFailReason) {
     case "invalid":
-      return `${prefix}We could not read that as a web address. Check it and save again.`;
+      return "We could not read that as a web address. Check it and save again.";
     case "not_public":
-      return `${prefix}That address is not reachable from the public internet. If it lives on your own network, confirm it below and it will count.`;
+      return "That address is not reachable from the public internet. If it lives on your own network, confirm it below and it will count.";
     case "http_status":
       return httpStatus
-        ? `${prefix}A server answered with ${httpStatus}, so the address itself is wrong or the page is broken. This one needs fixing rather than confirming.`
-        : `${prefix}A server answered, but not in a way we could confirm.`;
+        ? `A server answered with ${httpStatus}, so the address itself is wrong or the page is broken. This one needs fixing rather than confirming.`
+        : "A server answered, but not in a way we could confirm.";
     case "self_host":
-      return `${prefix}That address points back at this site, so there is nothing for us to confirm. Use the address your builders actually call.`;
+      return "That address points back at this site, so there is nothing for us to confirm. Use the address your builders actually call.";
     case "redirect_loop":
       return httpStatus
-        ? `${prefix}That address answered with a redirect we could not follow.`
-        : `${prefix}That address redirected too many times for us to follow.`;
+        ? "That address answered with a redirect we could not follow."
+        : "That address redirected too many times for us to follow.";
     case "unreachable":
     default:
-      return `${prefix}We could not reach that address. It may be offline, blocking us, or on a network we cannot see. You can retry, or confirm it below if it is internal.`;
+      return "We could not reach that address. It may be offline, blocking us, or on a network we cannot see. You can retry, or confirm it below if it is internal.";
   }
 }
 
 /** Not yet attempted, or the attempt did not complete. */
 export const UNCHECKED_LINE =
   "Saved. We have not confirmed this address yet, so it is not counting toward this step. Retry when you are ready.";
+
+/** A sentence with no timestamp in it, in CheckLine shape, so FieldState
+ * renders every one of its five states through one code path. */
+export function plainLine(text: string): CheckLine {
+  return { before: text, iso: null, after: "" };
+}
 
 /** The standing caveat, rendered once per page rather than per field. */
 export const CHECK_SCOPE_NOTE =

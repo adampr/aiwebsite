@@ -29,7 +29,7 @@ import {
 } from "@/lib/roadmap/db";
 import { staffGovernanceDraftQuery } from "@/lib/governance/admin-db";
 import { listOwnedProjects } from "@/lib/governance/db";
-import { fmtDate } from "@/components/roadmap/dates";
+import { LocalTime } from "@/components/local-time";
 import {
   AttachProjectButton,
   EditInBuilderButton,
@@ -91,8 +91,23 @@ function OnFileList({
                 </span>
                 <h2 className="text-lg">{doc.title}</h2>
               </div>
+              {/* Owner directive 2026-08-26: every stored timestamp a
+                  reader sees renders in the VIEWER's zone, with a clock.
+                  This was fmtDate(), which pinned timeZone:"UTC" AND dropped
+                  the time, so a document uploaded at 19:40 Chicago carried
+                  tomorrow's date in its own provenance footnote - the one
+                  line whose entire job is to say when it landed.
+                  <LocalTime> and not exact(): this is an async server
+                  component, so exact() would format in the VM's zone (UTC)
+                  during SSR and in the browser's on hydration, which is a
+                  text mismatch React resolves by throwing away the server
+                  HTML for the whole route (a6b52ef). The separator middot
+                  stays OUTSIDE the element: <LocalTime> owns a <time
+                  dateTime>, and an email address is not part of a
+                  timestamp. */}
               <p className="mono mt-3 text-xs" style={faint}>
-                added by {doc.addedByEmail} · {fmtDate(doc.createdAt)}
+                added by {doc.addedByEmail} ·{" "}
+                <LocalTime iso={doc.createdAt.toISOString()} withTime />
               </p>
               {/* A link row shows its bare target so a reader can see where
                   it goes before clicking. The href is safe to render by the
@@ -225,9 +240,22 @@ async function StaffGovernance({
                       <div className="text-sm">
                         {KIND_TITLES[proj.kind] ?? "AI Governance Document"}
                       </div>
+                      {/* Viewer zone with a clock (owner directive
+                          2026-08-26), <LocalTime> because this page is a
+                          server component - see the provenance footnote
+                          above for the full reasoning. "last activity" is
+                          the value a reader checks against their own memory
+                          of when they last touched the project, so a UTC
+                          date-only render was the worst possible shape for
+                          it: an evening edit appeared to have happened the
+                          next day. It also drives the 30-day sweep, so it is
+                          load-bearing, not decoration. */}
                       <div className="mono mt-1 text-xs" style={faint}>
                         {proj.domain} · last activity{" "}
-                        {fmtDate(proj.lastActivityAt)}
+                        <LocalTime
+                          iso={proj.lastActivityAt.toISOString()}
+                          withTime
+                        />
                       </div>
                       <div className="mt-2">
                         <AttachProjectButton
@@ -353,9 +381,18 @@ export default async function RoadmapGovernancePage() {
                     <div className="text-sm">
                       {KIND_TITLES[proj.kind] ?? "AI Governance Document"}
                     </div>
+                    {/* The staff branch's copy of the attach list. It moves
+                        in lockstep with the member branch above by rule: the
+                        two render the same sentence about the same column,
+                        and converting one alone would have XL.net staff and
+                        their client reading the same project's last activity
+                        as two different days. */}
                     <div className="mono mt-1 text-xs" style={faint}>
                       {proj.domain} · last activity{" "}
-                      {fmtDate(proj.lastActivityAt)}
+                      <LocalTime
+                        iso={proj.lastActivityAt.toISOString()}
+                        withTime
+                      />
                     </div>
                     <div className="mt-2">
                       <AttachProjectButton

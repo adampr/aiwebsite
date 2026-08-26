@@ -8,7 +8,7 @@
 // "pending" outcome.
 
 import { useState } from "react";
-import { fmtDate } from "@/components/roadmap/dates";
+import { LocalTime } from "@/components/local-time";
 
 type Pending = { requestedAt: string; expiresAt: string };
 
@@ -22,10 +22,34 @@ export function RequestAdminAccess({
   const [error, setError] = useState<string | null>(null);
 
   if (pending) {
+    // Owner directive 2026-08-26: both halves in the VIEWER's zone,
+    // both with a clock, and both at the SAME precision. This island is
+    // "use client" but /roadmap imports it STATICALLY and resolves
+    // `pending` server-side, so this branch is server-rendered on the
+    // first paint - which is why it takes <LocalTime> and not exact():
+    // exact() formats in the runtime zone, and during SSR that zone is
+    // the VM's, so the two renders would disagree and React would throw
+    // away the server HTML for the hub (a6b52ef). fmtDate() did not
+    // mismatch, because it pinned UTC - it was simply wrong for everyone,
+    // and silently: expiresAt is requestedAt + 7 days, so both halves
+    // carried the identical wrong hour-of-day and the sentence stayed
+    // internally consistent while both of its dates were off by one for
+    // any viewer west of Greenwich. They move together by rule; a clock
+    // on the deadline beside a bare date on the request reads broken.
+    // The mirror of this sentence is on /roadmap/approve-admin (the
+    // approver's side of the same row) and was converted with it.
+    // One-tick note: after a successful POST, setPending() mounts a
+    // fresh <LocalTime> whose useState seed is UTC-pinned, so the
+    // just-filed request shows " UTC" for a tick before the effect swaps
+    // it. That is the price of a component that must also survive
+    // hydration, and the SSR path is the common one. Semicolons and the
+    // sentence stop stay OUTSIDE the elements: <LocalTime> owns a <time
+    // dateTime>, and punctuation is not part of a timestamp.
     return (
       <p className="mono text-xs text-faint">
-        Admin access requested {fmtDate(pending.requestedAt)}; approvers were
-        emailed; expires {fmtDate(pending.expiresAt)}.
+        Admin access requested{" "}
+        <LocalTime iso={pending.requestedAt} withTime />; approvers were
+        emailed; expires <LocalTime iso={pending.expiresAt} withTime />.
       </p>
     );
   }

@@ -2,7 +2,7 @@
  * C. Freshness and consistency.
  */
 
-import { contentHash } from "@/lib/rfp/content-model";
+import { contentHash, flattenTimedMessage, type TimedMessage } from "@/lib/rfp/content-model";
 import { documentText, textSpans, violation, type Rule } from "./rule";
 
 /**
@@ -42,11 +42,46 @@ export const C1: Rule = {
           if (!correction?.correctedAt) continue;
           if (correction.correctedAt <= draftedAt) continue;
 
+          // §5.17, viewer-zone timestamps. This sentence carried two instants as bare
+          // `toISOString().slice(0, 10)` UTC days, and it is READER-FACING: C1 is
+          // registered in gate.ts, the GateResult crosses
+          // POST /api/rfp/proposals/[id]/gate into workspace.tsx's Checks pane (and is
+          // seeded there from the stored gate_json server-side), which paints the
+          // message. So a Chicago staffer who corrected a fact at 21:30 on Jul 26 read
+          // "Corrected Jul 26, 2026, 09:30 PM CDT" on /rfp/knowledge and "corrected on
+          // 2026-07-27" here: one instant, two consoles, two days. The whole payload of
+          // this sentence is the ORDERING of those two days, so a shifted day is not a
+          // cosmetic wrongness, it is the point of the rule rendered false.
+          //
+          // A plain string cannot hold a React element, so the sentence is carried SPLIT
+          // (TimedMessage) and the Checks pane renders each instant through
+          // <LocalTime withTime>. `message` is DERIVED from the split form, never written
+          // beside it, so the flat fallback (an older stored gate_json row,
+          // formatGateResult's terminal report) cannot drift from what the pane paints.
+          // Both values are real `Date`s: correctedAt is a timestamptz column and
+          // draftedAt is proposal.createdAt, both through drizzle column selects, so
+          // PgTimestamp.mapFromDriverValue has already mapped them (a raw sql<> select
+          // would have handed back a string, which is the trap §4 records).
+          const timedMessage: TimedMessage = {
+            segments: [
+              {
+                before: `Block ${block.id} cites ${correction.key}, which was corrected on `,
+                iso: correction.correctedAt.toISOString(),
+              },
+              {
+                before: ", after this proposal was drafted on ",
+                iso: draftedAt.toISOString(),
+              },
+            ],
+            after: ". Rebuild; do not patch.",
+          };
+
           violations.push(
             violation({
               ruleId: "C1",
               severity: "block",
-              message: `Block ${block.id} cites ${correction.key}, which was corrected on ${correction.correctedAt.toISOString().slice(0, 10)}, after this proposal was drafted on ${draftedAt.toISOString().slice(0, 10)}. Rebuild; do not patch.`,
+              message: flattenTimedMessage(timedMessage),
+              timedMessage,
               locator: { sectionId: section.id, blockId: block.id },
               suggestion: correction.statement,
             }),
