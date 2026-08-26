@@ -138,6 +138,43 @@ export async function createProject(opts: {
  * null brief and null nextQuestion. Byte caps enforced exactly like every
  * documents/transcript write; null = refused (the caller answers 4xx).
  */
+/**
+ * The format sample of one project, read WITHOUT an ownership check (§5.12
+ * round 21). The caller has already proved lane access to the roadmap doc
+ * row that names this project id, and the sample is the company's own
+ * upload; requiring the reader to be the original uploader would defeat the
+ * point, since edit-again exists precisely for the colleague who did not
+ * create the draft. Null when the project is gone: retention deletes the
+ * sample with the project, exactly as STYLE_SAMPLE_HELPER promises, and
+ * nothing here resurrects it.
+ */
+export async function styleSampleForProject(id: string): Promise<{
+  name: string;
+  text: string;
+  header: string | null;
+  footer: string | null;
+} | null> {
+  if (!isUuid(id)) return null;
+  const rows = await db
+    .select({
+      name: P.styleSampleName,
+      text: P.styleSampleText,
+      header: P.styleSampleHeader,
+      footer: P.styleSampleFooter,
+    })
+    .from(P)
+    // The retention term is REQUIRED, not defensive. Sweeps are periodic, so
+    // an expired row can still be present; without this the read would
+    // resurrect a sample the UI already promised was deleted with its project
+    // and re-seed it into a fresh 30-day life. Every other project read here
+    // carries the same term.
+    .where(and(eq(P.id, id), gte(P.lastActivityAt, retentionCutoff())))
+    .limit(1);
+  const r = rows[0];
+  if (!r || !r.name || !r.text) return null;
+  return { name: r.name, text: r.text, header: r.header, footer: r.footer };
+}
+
 export async function createImportedProject(opts: {
   userId: string;
   kind: GovernanceKind;
@@ -145,6 +182,16 @@ export async function createImportedProject(opts: {
   documents: GovernanceDoc[];
   transcript: TranscriptEntry[];
   reviewSummary: string;
+  // Round 21 (D1): edit-again used to seed a project with NO style_sample_*
+  // at all, so a document brought back from the roadmap file permanently
+  // lost its numbering style, its length target and its letterhead. Carried
+  // when the source project still exists; null after retention removed it.
+  styleSample?: {
+    name: string;
+    text: string;
+    header: string | null;
+    footer: string | null;
+  } | null;
 }): Promise<string | null> {
   const documentsJson = JSON.stringify(opts.documents);
   const transcriptJson = JSON.stringify(opts.transcript);
@@ -165,6 +212,10 @@ export async function createImportedProject(opts: {
       coveredBankIdsJson: "[]",
       reviewSummary: opts.reviewSummary,
       changedSectionsJson: "{}",
+      styleSampleName: opts.styleSample?.name ?? null,
+      styleSampleText: opts.styleSample?.text ?? null,
+      styleSampleHeader: opts.styleSample?.header ?? null,
+      styleSampleFooter: opts.styleSample?.footer ?? null,
     })
     .returning({ id: P.id });
   return rows[0].id;

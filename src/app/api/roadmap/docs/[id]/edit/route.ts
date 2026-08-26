@@ -47,6 +47,7 @@ import {
   countCreatedToday,
   createImportedProject,
   fetchOwnedProject,
+  styleSampleForProject,
 } from "@/lib/governance/db";
 import {
   importedTranscriptEntry,
@@ -168,12 +169,23 @@ export async function POST(_req: Request, ctx: Ctx): Promise<Response> {
   );
   if (writeLimited) return writeLimited;
 
+  // Carry the format sample forward (round 21, D1). Without this the
+  // reopened project drafts with no numbering style, no length target and no
+  // letterhead, so an edited document silently stops matching the sample it
+  // was built against. Read from the SOURCE project, which is why it is
+  // fetched even on the seeding path where the caller does not own it; null
+  // once retention has removed that project, and nothing here recreates it.
+  const styleSample = doc.governanceProjectId
+    ? await styleSampleForProject(doc.governanceProjectId)
+    : null;
+
   const projectId = await createImportedProject({
     userId: lane.userId,
     kind,
     domain,
     documents,
     transcript,
+    styleSample,
     // Owner rule 2026-07-17: a review summary must never read as
     // ready-for-final while [TO CONFIRM] markers remain - and a snapshot
     // CAN carry them (the manual attach lane has no marker gate).

@@ -539,11 +539,16 @@ export function recoverTrailingNumberedHeadings(lines: string[]): string[] {
  * parity with round 19; visible in outlineTitles, recoverable by
  * removing the sample).
  */
-const LEADING_NUM_TITLE = /^(\d{1,3})[.)]\s{1,4}([A-Za-z][^\n]{0,78})$/;
+const LEADING_NUM_TITLE = /^(\d{1,3})([.)])\s{1,4}([A-Za-z][^\n]{0,78})$/;
 const INDENTED_MARKER = /^\s{1,10}(?:[-*]\s|\d{1,3}[.)]\s|[A-Za-z][.)]\s)/;
 
 export function recoverLeadingNumberedHeadings(lines: string[]): string[] {
-  const hits: { idx: number; title: string; listChild: boolean }[] = [];
+  const hits: {
+    idx: number;
+    title: string;
+    sep: string;
+    listChild: boolean;
+  }[] = [];
   let expected = 1;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
@@ -551,7 +556,7 @@ export function recoverLeadingNumberedHeadings(lines: string[]): string[] {
     const m = LEADING_NUM_TITLE.exec(raw.trim());
     if (!m) continue;
     if (parseInt(m[1], 10) !== expected) continue;
-    const title = m[2].trim();
+    const title = m[3].trim();
     if (/[.!?;]\s/.test(title) || /[:.!?;,]$/.test(title)) continue;
     if (title.split(/\s{1,10}/).length > 10) continue;
     let next = i + 1;
@@ -559,6 +564,7 @@ export function recoverLeadingNumberedHeadings(lines: string[]): string[] {
     hits.push({
       idx: i,
       title,
+      sep: m[2],
       listChild: next < lines.length && INDENTED_MARKER.test(lines[next]),
     });
     expected++;
@@ -566,9 +572,17 @@ export function recoverLeadingNumberedHeadings(lines: string[]): string[] {
   if (hits.length < 3) return lines;
   const parents = hits.reduce((n, h) => n + (h.listChild ? 1 : 0), 0);
   if (parents * 2 > hits.length) return lines;
+  // Round 21: re-emit the chain's OWN separator instead of a hardcoded
+  // ".". The recovered text is the only thing detectNumberingStyle ever
+  // sees, so writing "1. Purpose" over a sample that reads "1) Purpose"
+  // laundered a correct "paren" detection into "decimal", silently, on
+  // exactly the PDF class this recovery exists for. One separator for the
+  // whole chain (the first link's): a single outline has one marker shape,
+  // and mixing them would split the style vote against itself.
+  const sep = hits[0].sep;
   const out = [...lines];
   hits.forEach((h, k) => {
-    out[h.idx] = `## ${k + 1}. ${h.title}`;
+    out[h.idx] = `## ${k + 1}${sep} ${h.title}`;
   });
   return out;
 }

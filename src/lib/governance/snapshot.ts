@@ -16,9 +16,76 @@ type ProjectDoc = {
   sections?: { title?: unknown; markdown?: unknown }[];
 };
 
+/**
+ * Snapshot heading floor (round 21). projectMarkdown writes each section as
+ * "## <title>" followed by that section's own markdown, and
+ * parseSnapshotMarkdown reads EVERY "## " line as a section boundary. A
+ * drafted section routinely carries its own "## " inner headings, so the
+ * round trip used to split one section into several: an 11-section AUP came
+ * back as 16 to 20 sections, every ordinal moved, duplicate titles appeared,
+ * and the blueprint section ids were lost. Shifting a section's headings so
+ * its SHALLOWEST is "###" makes "## " mean section boundary and nothing else.
+ *
+ * Render-neutral: normalizeSectionBlocks rebases each section's heading depth
+ * to the shallowest level that section uses, so a body written entirely in
+ * "###" renders exactly like one in "##". Idempotent: a body already at "###"
+ * or deeper is returned untouched, so repeated round trips never walk
+ * headings deeper. Byte-safe for stub restore: no blueprint placeholder
+ * contains a heading (verified across all 127 sections), so a placeholder is
+ * never rewritten and the byte-exact scaffold comparison still holds. The
+ * shift is clamped so nothing passes "######"; a section already spanning
+ * "##" through "######" cannot shift and keeps today's ambiguity, which
+ * beats corrupting its structure.
+ *
+ * Chosen over an in-band marker deliberately: any marker line is body text to
+ * the CURRENT parser, so a marker at the file head invents a phantom document
+ * that consumes the first blueprint slug and loses every stub flag, and a
+ * trailing marker block lands inside the last section's stored markdown. This
+ * scheme has no such rollback edge: an old server reading a new snapshot
+ * parses it correctly, and better than it parses today's.
+ */
+export function demoteSectionHeadings(md: string): string {
+  if (typeof md !== "string" || !md.includes("#")) return md;
+  // MATCHES THE RENDERER, NOT THE MARKDOWN SPEC. parseMarkdown only parses
+  // "#" through "####" (markdown.ts), so a heading pushed to "#####" stops
+  // being a heading entirely and glues into the paragraph above as literal
+  // hash characters, in the doc pane and the .docx alike, permanently. The
+  // ceiling here is therefore 4, not 6.
+  //
+  // Fenced blocks are deliberately NOT skipped: parseMarkdown has no fenced
+  // -code concept, so a "# retention in days" line inside a fence is already
+  // a heading to every renderer in this system. Shifting it is consistent
+  // with how it is displayed, and skipping it would leave a "# " line in the
+  // body for parseSnapshotMarkdown to read as a new DOCUMENT.
+  const H = /^(#{1,4})(?=\s)/;
+  const lines = md.split("\n");
+  let min = 5;
+  let max = 0;
+  for (const line of lines) {
+    const m = H.exec(line);
+    if (!m) continue;
+    min = Math.min(min, m[1].length);
+    max = Math.max(max, m[1].length);
+  }
+  if (max === 0 || min >= 3) return md;
+  // ALL OR NOTHING. A partial shift that leaves any "## " behind fixes
+  // nothing (the boundary is still ambiguous) while still rewriting bytes,
+  // so a section that cannot clear level 2 without passing level 4 is left
+  // exactly as it is today: today's split beats a corrupted heading.
+  const shift = 3 - min;
+  if (max + shift > 4) return md;
+  return lines
+    .map((line) => {
+      const m = H.exec(line);
+      return m ? `${"#".repeat(m[1].length + shift)}${line.slice(m[1].length)}` : line;
+    })
+    .join("\n");
+}
+
 /** Lenient flatten of a project's documents_json to markdown. Placeholder
  * and malformed sections degrade to their headings; the snapshot is a copy
- * for the company file, not a re-render. */
+ * for the company file, not a re-render. Section bodies pass through
+ * demoteSectionHeadings so the "## " boundary stays unambiguous on re-import. */
 export function projectMarkdown(documentsJson: string): string {
   let docs: ProjectDoc[] = [];
   try {
@@ -32,7 +99,8 @@ export function projectMarkdown(documentsJson: string): string {
     if (typeof doc?.title === "string") out.push(`# ${doc.title}`);
     for (const s of Array.isArray(doc?.sections) ? doc.sections : []) {
       if (typeof s?.title === "string") out.push(`\n## ${s.title}\n`);
-      if (typeof s?.markdown === "string") out.push(s.markdown);
+      if (typeof s?.markdown === "string")
+        out.push(demoteSectionHeadings(s.markdown));
     }
     out.push("\n\n---\n");
   }
