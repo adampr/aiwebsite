@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@73c5ec7a3c812a845a0d6ca2a64f574be209f1e31b83ee32ee5faca70f206c17
+# aicompany-template: deploy.sh.tpl@230d9a753f399f965226115ff11ae93182fb03fe69dc0e0b36db17714eb34cec
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
-#   bash deploy/deploy.sh [--allow-sshpass] [--takeover]
+#   bash deploy/deploy.sh [--allow-sshpass] [--takeover] [--allow-dirty|--dirty-ok]
 #
 # --takeover (v1.15.0): skip the pre-rsync deploy-busy guard (fresh remote
 # deploy marker) and reap orphaned capped build scopes first — ONLY for
@@ -81,6 +81,74 @@ transport="ssh-key"
 # the VM NEVER runs `next build` (the 2026-08-08 itsc outage class).
 build_mode="remote"
 tunnel_cred_local="${TUNNEL_CRED_LOCAL:-$HOME/.cloudflared/aiwebsite-tunnel.json}"
+
+# ── Working-tree gate (§9, v1.104.0). THIS SCRIPT SHIPS THE WORKING TREE.
+# sync_dir() rsyncs the checkout excluding only .git, node_modules, .next, .env
+# and data — so anything uncommitted, INCLUDING UNTRACKED FILES, goes to
+# production exactly as it sits on disk.
+#
+# WHY IT LIVES HERE NOW. Several sessions share these checkouts, and every host
+# had to invent this guard for itself: aiwebsite in scripts/deploy-safe.sh,
+# roleplay in deploy/deploy-roleplay.sh Gate 1 — while itsupportchicago and
+# topmspnearme had NO tree gate at all, because their wrappers exist for the
+# 2FA window rather than for tree safety. Two of four hosts were unprotected,
+# and `deploy/deploy.sh` stayed directly runnable on all four regardless of what
+# any host CLAUDE.md said, because the host's CLAUDE.md is not what auto-loads
+# when the module's is in context. On 2026-08-25 that shipped one session's
+# 12 modified + 2 untracked files to aiwebsite production; on 2026-07-31 the
+# same shape came one command from shipping a half-built feature plus an
+# unapplied migration and was caught by a person noticing, which is not a
+# control. A guard that only exists in a wrapper is a guard the next caller
+# can walk past.
+#
+# ESCAPE HATCH IS AN ENV VAR, NOT A FLAG, DELIBERATELY: host wrappers parse and
+# STRIP their own escape flag before exec'ing this script — verified 2026-08-25,
+# aiwebsite's scripts/deploy-safe.sh consumes `--dirty-ok` into a local and
+# execs `deploy/deploy.sh "${passthru[@]}"`, and roleplay's
+# deploy/deploy-roleplay.sh does the same with `--allow-dirty` (two DIFFERENT
+# flag names, which is its own argument for not using a flag). A flag here would
+# be swallowed by both.
+#
+# ** HOSTS WITH THEIR OWN ESCAPE FLAG MUST EXPORT THIS ONE. ** Without it, a
+# `deploy-safe.sh --dirty-ok` passes the WRAPPER's gate and is then refused by
+# THIS one, silently breaking a documented escape. One line in the wrapper's
+# allow branch: `export DEPLOY_ALLOW_DIRTY=1`. MIGRATIONS v1.104.1 carries the
+# exact diff per host.
+#
+# The flags are ALSO accepted here for any wrapper that forwards rather than
+# strips, and for a direct `deploy.sh --allow-dirty` invocation — belt and
+# braces, since the cost of accepting them is nil and the cost of a broken
+# escape hatch is a caller reaching for something worse.
+deploy_allow_dirty="${DEPLOY_ALLOW_DIRTY:-}"
+for _arg in "$@"; do
+  case "$_arg" in
+    --allow-dirty|--dirty-ok) deploy_allow_dirty=1 ;;
+  esac
+done
+if [ "$deploy_allow_dirty" != "1" ] && git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1; then
+  dirty="$(git -C "$repo_dir" status --porcelain 2>/dev/null || true)"
+  if [ -n "$dirty" ]; then
+    echo "ERROR: aiwebsite working tree is not clean, and this script ships the WORKING TREE." >&2
+    echo "       Everything below would go to production as it sits on disk:" >&2
+    printf '%s\n' "$dirty" | sed 's/^/         /' >&2
+    echo "" >&2
+    echo "       SEVERAL SESSIONS SHARE THIS CHECKOUT. Confirm every path above is YOURS." >&2
+    echo "       If it is not, WAIT and message the owner — do not ship it for them." >&2
+    echo "       Then: commit, or re-run with DEPLOY_ALLOW_DIRTY=1 for the deliberate case." >&2
+    exit 1
+  fi
+  echo ">>> Working tree clean."
+else
+  # Never print "clean" when it is not. A deploy that used the escape hatch must
+  # say so in the log, because the log is what the next person reads when they
+  # are working out what actually shipped.
+  if [ "$deploy_allow_dirty" = "1" ]; then
+    echo ">>> working-tree gate BYPASSED (DEPLOY_ALLOW_DIRTY / --allow-dirty / --dirty-ok). Shipping the tree as it sits:"
+    git -C "$repo_dir" status --short 2>/dev/null | sed 's/^/      /' || true
+  else
+    echo ">>> Working-tree gate skipped (not a git checkout)."
+  fi
+fi
 
 # ── Template drift gate (§9): rendered deploy/ files must match the module's
 # current templates, or a module bump would silently run stale scripts.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@650c1449e0806c8fa21f408ae9c147a2bc3185807e65ab924177a3a793e7bb5b
+# aicompany-template: setup-vm.sh.tpl@c998badfbc6ec55a3ff487d85239df4931076e6ab17c9b231ca746d2bccd0175
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -520,6 +520,27 @@ bash deploy/stage-build.sh install-brain; sudo touch "$deploy_marker"
 # path and its hard-verify reads the serving file). setup-vm then re-copies
 # the pinned live .env into stage so migrate/build/config:check validate the
 # exact env that goes live. .env is NEVER generation-flipped.
+#
+# SYSTEMD CONTRACT (v1.104.2 — the same trap, found the hard way on roleplay
+# 2026-08-25). A hook that installs or updates systemd units MUST NOT derive
+# its path from "$0"/"$(dirname "$0")": the cwd here is the STAGE, so a hook
+# doing `app_dir="$(cd "$(dirname "$0")/.." && pwd)"` gets
+# <app>.stage, and any live-dir guard it carries then SKIPS on every normal
+# deploy. roleplay's three install-*-ops.sh all do exactly that, so their
+# units were never installed or refreshed by a deploy — the existing timers
+# survive only because someone once ran the installer from the live dir, and a
+# NEW timer silently did not install while the deploy reported success. The
+# skip line reads like routine noise.
+#
+# Units are LIVE-DIR state, not staged state: they reference absolute
+# ExecStart paths under $app_dir and are not generation-flipped. So a
+# unit-installing hook must use the LIVE $app_dir by absolute path (the same
+# rule as .env above), and should FAIL LOUDLY rather than skip if it cannot
+# determine it. A hook that skips silently on the deploy path is a hook that
+# does not run — the "a silent skip reads as a pass" family.
+#
+# VERIFY, do not assume: `systemctl list-timers '<slug>-*'` after a deploy
+# that was supposed to add or change one.
 if [ -f "$stage_dir/deploy/post-install.sh" ]; then
   echo ">>> Running host post-install hook (stage cwd)..."
   (cd "$stage_dir" && bash deploy/post-install.sh); sudo touch "$deploy_marker"

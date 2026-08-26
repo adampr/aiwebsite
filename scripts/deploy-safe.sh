@@ -68,6 +68,14 @@ echo ">>> Deploying from a clean tree at $(git rev-parse --short HEAD) ($branch)
 echo "    $(git log -1 --pretty=%s)"
 if [ "$dirty_ok" = "yes" ] && [ -n "$dirty" ]; then
   echo "    --dirty-ok: $(echo "$dirty" | wc -l) uncommitted path(s) WILL ship"
+  # Carry the escape THROUGH to the module's own working-tree gate
+  # (@aicompany/core v1.104.0, MIGRATIONS v1.104.1). This wrapper CONSUMES
+  # --dirty-ok at line 32 and execs deploy/deploy.sh with "${passthru[@]}",
+  # so the flag never reaches the lower gate. v1.104.1 also accepts the flag
+  # directly, which makes this belt and braces rather than load-bearing, but
+  # the env var is the form that cannot be broken by a future change to
+  # either script's argument handling.
+  export DEPLOY_ALLOW_DIRTY=1
 fi
 echo ""
 
