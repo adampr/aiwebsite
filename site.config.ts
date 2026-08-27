@@ -882,8 +882,19 @@ export const siteConfig = defineSiteConfig({
     // v1.103.0 (§19.33.2b) — used ONLY when the primary cannot produce a chunk,
     // and then the WHOLE article re-renders here so the file is in one voice.
     // Voice deliberately differs from Charon: an identical (voice, model) pair
-    // computes the same render hash and would re-ask the same vendor for the
-    // same deterministic refusal at the cost of a second full pass.
+    // computes the same render hash, so a second pass would re-ask the SAME
+    // vendor at the cost of a full re-render. That reason stands on its own.
+    // What it is NO LONGER justified by is "the refusal is deterministic" —
+    // retired in v1.105.1, and this host mailed the false alarm that retired it
+    // (2026-08-26, reported_issues id 234, refusing "Tron's take."). Gemini
+    // refuses in kinds that need OPPOSITE handling: the "Model tried to
+    // generate text" 400 (invalid_request) and the zero-output-token HTTP 200
+    // (empty-generation) were each measured deterministic on their own string
+    // and each still get ONE attempt, but the POLICY refusal (content_blocked)
+    // is NOT deterministic — the same bytes refused and then succeeded across
+    // ~43 identical calls on 2026-08-27 — so the module now RETRIES it, bounded,
+    // before anything reaches this seam. Any rate quoted for that class is an
+    // order of magnitude, not a property of the vendor.
     audioFallbackGenerator: createOpenAiTtsSynthesizer({
       apiKey: process.env.OPENAI_API_KEY,
       // "ballad", chosen on a measurement rather than on register: the module's
