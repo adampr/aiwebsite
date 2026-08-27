@@ -38,6 +38,7 @@ import {
   type QuoteInputs,
 } from "@/lib/rfp/quote";
 import { parseStaffRange, type StatedStaff } from "@/lib/rfp/staff-count";
+import { normalizeGapQuestion } from "@/lib/rfp/gaps";
 import { DEFAULT_LETTER_BODY, LETTER_LABEL, LETTER_TITLE } from "@/lib/rfp/letter";
 import { COMPANY_SIGNATURE, type PersonSignature } from "@/lib/rfp/signature";
 import type { PricingQuote } from "@/lib/rfp/content-model";
@@ -472,14 +473,17 @@ export function Workspace({
   // Gap questions dedupe by normalized text: seventeen sections asking the
   // same certification question is ONE question with seventeen targets, not
   // seventeen interruptions. (The benchmark tool asks a handful for a whole
-  // document; the queue must read the same way.)
+  // document; the queue must read the same way.) The normalizer is the
+  // SHARED one in @/lib/rfp/gaps: the draft route snaps a new gap onto an
+  // open question's exact text with the same function, so the two
+  // vocabularies cannot drift.
   const gapEntries = new Map<
     string,
     Extract<OpenQuestion, { kind: "gap" }>
   >();
   for (const sec of sections) {
     for (const g of sec.gaps) {
-      const norm = g.question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const norm = normalizeGapQuestion(g.question);
       const existing = gapEntries.get(norm);
       if (existing) {
         if (!existing.targets.some((t) => t.label === sec.label))

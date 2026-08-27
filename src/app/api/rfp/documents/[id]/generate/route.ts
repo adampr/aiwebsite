@@ -32,6 +32,11 @@ import {
   writeProposalSections,
   type FactRow,
 } from "@/lib/rfp/db";
+import {
+  capOpenQuestionsForPrompt,
+  collectOpenQuestions,
+  snapGapQuestions,
+} from "@/lib/rfp/gaps";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
 
 const HEARTBEAT_MS = 60 * 1000;
@@ -256,17 +261,36 @@ export async function POST(
           ),
         ];
 
+        // Open questions already on the proposal, from the CLAIM-TIME
+        // snapshot: the gen claim serializes draft runs, so no concurrent
+        // draft can be ADDING gaps, and claim-time costs zero extra reads.
+        // The only concurrent mutation is an answer REMOVING a question;
+        // one answered mid-flight at worst gets repeated by the model and
+        // lands as its own open entry, which is semantically right (the
+        // section still lacked the fact when it drafted).
+        const openQuestions = collectOpenQuestions(existing, label);
+        // Reserve prompt room for the redrafted section's own gaps (the
+        // collector places them last): repeating its own wording is what
+        // keeps a merged queue entry stable across a redraft.
+        const ownOpenGaps =
+          existing.find((s) => s.label === label)?.gaps.length ?? 0;
+
         drafted = await draftSection(
           proposalId,
           { label, title },
           forSection,
-          asFacts
+          asFacts,
+          capOpenQuestionsForPrompt(openQuestions, ownOpenGaps)
         );
       }
 
       // Land the result, but only while the claim is still THIS attempt's.
       // An edit mid-run bumps rev (retry with the fresh document); a reclaim
       // swaps the attempt id (drop the result, the reclaiming run owns it).
+      // The activity log reports the LANDED gap count (post-snap), which
+      // can be lower than what the model returned when the snap folds two
+      // normalize-equal gaps into one.
+      let landedGapCount: number | null = null;
       for (let tries = 0; tries < 3; tries++) {
         const fresh = await getProposalForDocument(doc.id);
         if (!fresh || fresh.genAttemptId !== attemptId) break;
@@ -279,10 +303,27 @@ export async function POST(
             title,
             paragraphs: drafted.paragraphs,
             cites: drafted.cites,
-            gaps: drafted.gaps,
+            // Snap AGAINST THE LANDING STATE, not the claim snapshot: a
+            // question answered while this draft ran must not be re-minted
+            // under its old wording, and a CAS retry re-snaps against the
+            // fresher array. The target's own previous gaps are still in
+            // `sections` here (the splice below replaces them), so a
+            // redraft that repeats its own question keeps its wording;
+            // other sections' wording wins via collector precedence. The
+            // snap list is deliberately UNCAPPED, unlike the prompt list:
+            // a paraphrase of a capped-out question still deserves the
+            // merge. The letter never carries gap plumbing: its
+            // drafted.gaps is the literal [] built above.
+            gaps: isLetter
+              ? drafted.gaps
+              : snapGapQuestions(
+                  drafted.gaps,
+                  collectOpenQuestions(sections, label)
+                ),
             generatedBy: "llm",
             updatedAt: new Date().toISOString(),
           };
+          landedGapCount = record.gaps.length;
           // Identity is LABEL alone, as everywhere else (workspace join,
           // section/gap routes, resolve-draft); matching on title too made
           // a retitled node land a duplicate label.
@@ -324,7 +365,7 @@ export async function POST(
           section: label || title,
           paragraphs: drafted?.paragraphs.length ?? 0,
           cites: drafted?.cites.length ?? 0,
-          gaps: drafted?.gaps.length ?? 0,
+          gaps: landedGapCount ?? drafted?.gaps.length ?? 0,
         },
       });
     } catch (err) {
