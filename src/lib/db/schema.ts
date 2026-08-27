@@ -299,6 +299,38 @@ export const workSubmissions = pgTable(
     kind: text("kind").notNull(), // "skill" | "program"
     title: text("title").notNull(),
     blurb: text("blurb").notNull(), // submitter's one-paragraph description
+    // §5.16 "Time saved per month for you" (owner ask 2026-08-27): the
+    // submitter's own estimate of the time this work saves THEM in a month.
+    // NULLABLE, and NULL means "not reported" rather than zero: the figure is
+    // optional at intake and usually unknowable then (the real number shows up
+    // after weeks of use), so the row's OWNER sets or clears it afterwards on
+    // any status, published included. Entering 0 hours clears it back to NULL,
+    // which is the only gesture that removes a wrong figure from a live card.
+    // Stored in whole MINUTES while every input asks for HOURS: people think
+    // in hours a month, and minutes keep "6 hours 30 minutes" exact without a
+    // float ever reaching a column. src/lib/work/time-saved.ts is the one
+    // parse/format module for both directions.
+    // SELF-REPORTED and never panel-verified, which is why every surface that
+    // prints it attributes it to the submitter: /work's standing promise that
+    // every claim is drawn from the submitted documents does not cover this
+    // number.
+    // The update lane (parent_id rows) arrives NULL on purpose: nothing is
+    // copied at intake. An approved swap makes the child the live card, so
+    // the figure is carried over inside publishWithSupersede AT SWAP TIME,
+    // read from the FOR UPDATE-locked parent, and only when
+    // sameEmail(parent.submitterEmail, child.submitterEmail) - a child that
+    // reported its own figure keeps it. An intake copy (the first cut) was
+    // refuted three ways: it froze a stale value while the parent stayed
+    // editable, it missed the email update lane entirely, and it republished
+    // one person's self-reported number under another person's row and
+    // scorecard. The full reasoning lives at that call site; do not re-add a
+    // copy here or in any createSubmission caller.
+    // Range is enforced by migration 0049 (work_submissions_time_saved_ck,
+    // time_saved_minutes IS NULL OR 1..44640, a 31-day month). Like the 0034
+    // and 0035 CHECKs above, it is hand-written SQL invisible to drizzle
+    // (snapshot has checkConstraints: {}), so `drizzle-kit push` would
+    // silently drop it — deploys must keep using `drizzle-kit migrate`.
+    timeSavedMinutes: integer("time_saved_minutes"),
     // received -> running -> published | held | failed (held = panel could
     // not verify safety/rules; renders nowhere until admin approves).
     status: text("status").notNull().default("received"),

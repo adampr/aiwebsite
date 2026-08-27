@@ -291,6 +291,17 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       kind,
       title: row.title,
       blurb,
+      // NO time-saved value here on purpose. §5.16's figure is inherited
+      // from the parent at SWAP time, inside publishWithSupersede, which is
+      // the one primitive both swap paths reach. Copying it at intake was
+      // wrong three ways: the time-saved route is status-blind, so a
+      // correction the owner makes on the LIVE parent while this child waits
+      // for approval would be reverted by a snapshot taken here; the EMAIL
+      // update lane never runs this code, so an emailed update published the
+      // card with the figure gone; and an update submitted by someone else
+      // (an admin, or an earlier owner in the supersede chain) would
+      // republish one person's self-reported number under another person's
+      // row, where it also lands in that person's scorecard column.
       architectureText: kind === "program" ? docText : null,
       skillMdText: kind === "skill" ? docText : null,
       fileManifestJson: JSON.stringify(extracted.manifest),

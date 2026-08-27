@@ -1705,6 +1705,11 @@ async function main() {
     slug: null,
     publishedAt: null,
     displayRank: null as number | null,
+    // Every column statusView() reads has to exist on this hand-written row
+    // or the whole suite stops compiling; time_saved_minutes arrived with the
+    // 2026-08-27 "Time saved per month" round and rides statusView like the
+    // rest. null is the honest default: not reported.
+    timeSavedMinutes: null as number | null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -4269,6 +4274,581 @@ async function main() {
     assert.ok(
       failedView.error && !failedView.error.includes("#"),
       "a failed row's error is plain prose, with no machine tag"
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // 2026-08-27 round: "Time saved per month for you" (§5.16 / §5.18). The
+  // whole feature funnels through ONE pure module, so this is where its
+  // contract is pinned: the optional field on the submission form, the
+  // create route, the afterwards-editor route, the published card line and
+  // the scorecard column all call these four functions and nothing else. A
+  // parser that drifts from the form's `max` or from migration 0049's CHECK
+  // turns a typo into a 500, so the ceiling is asserted against both.
+  // ---------------------------------------------------------------------
+  {
+    const {
+      TIME_SAVED_MAX_HOURS,
+      TIME_SAVED_MAX_MINUTES,
+      formatTimeSavedCompact,
+      formatTimeSavedPhrase,
+      hoursFieldValue,
+      parseTimeSavedHours,
+    } = await import("../src/lib/work/time-saved");
+
+    // Narrowing helpers. The parser returns a union and every assertion
+    // below wants one half of it; asserting the half FIRST is deliberate,
+    // because the `if (r.ok)` shape used elsewhere in this file silently
+    // runs zero assertions when the parser regresses.
+    const minutesOf = (raw: unknown): number | null => {
+      const r = parseTimeSavedHours(raw);
+      assert.ok(
+        r.ok,
+        `expected ${String(raw)} to parse, refused with: ${r.ok ? "" : r.message}`
+      );
+      return r.ok ? r.minutes : null;
+    };
+    const refusalFor = (raw: unknown): string => {
+      const r = parseTimeSavedHours(raw);
+      assert.ok(!r.ok, `expected ${String(raw)} to be refused`);
+      return r.ok ? "" : r.message;
+    };
+
+    // ---- the two constants are one ceiling ----
+    assert.equal(
+      TIME_SAVED_MAX_MINUTES,
+      TIME_SAVED_MAX_HOURS * 60,
+      "the hours cap and the minutes cap are the same bound in two units"
+    );
+
+    // ---- parseTimeSavedHours: "not reported" has several spellings ----
+    // Absent and empty are both real inputs: FormData.get() returns null for
+    // a field the form never set (the field is optional, and update-lane
+    // submissions never render it at all), and an untouched input posts "".
+    assert.equal(minutesOf(undefined), null, "absent field is not reported");
+    assert.equal(minutesOf(null), null, "null field is not reported");
+    assert.equal(minutesOf(""), null, "empty string is not reported");
+    assert.equal(minutesOf("   "), null, "whitespace only is not reported");
+    // Zero CLEARS instead of refusing. The row editor pre-fills the current
+    // hours, so typing 0 and saving is the only gesture anyone reaches for
+    // when they want a wrong figure off a published card; a refusal there
+    // would strand it with no way to remove it.
+    assert.equal(minutesOf("0"), null, "0 hours clears back to not reported");
+    assert.equal(minutesOf(0), null, "numeric 0 clears too");
+
+    // ---- hours in, whole minutes out ----
+    assert.equal(minutesOf("6"), 360, "6 hours stores as 360 minutes");
+    assert.equal(minutesOf(6), 360, "a JSON number reaches the same value");
+    assert.equal(minutesOf("6.5"), 390, "half hours survive as minutes");
+    assert.equal(minutesOf(" 6.5 "), 390, "a pasted value with spaces trims");
+    assert.equal(minutesOf("0.25"), 15, "a quarter of an hour lands on 15m");
+    // Values no step grid would have allowed. The round-2 fix moved every
+    // time-saved input to step="any" precisely because the submission form
+    // is a real <form onSubmit> with no noValidate: under step=0.25 the
+    // BROWSER refused 6.3 ("the two nearest valid values are 6.25 and 6.5")
+    // after the whole form was filled in and a package attached, for a
+    // value this parser has always accepted and the inline row editor (not
+    // inside a form) saved without a word. These pin what the field can now
+    // actually send, so the parser and the input can never disagree again.
+    assert.equal(minutesOf("6.3"), 378, "6.3 hours, the value step=0.25 refused");
+    assert.equal(minutesOf("0.1"), 6, "a tenth of an hour is 6 minutes");
+    assert.equal(
+      minutesOf("6.333333"),
+      380,
+      "a long decimal rounds to whole minutes rather than being refused"
+    );
+    // Clamped to at least one minute: 0.005 h rounds to 0 minutes, and
+    // storing THAT as null would tell a submitter who typed a real number
+    // that their report vanished. One minute is the honest floor and is
+    // exactly the CHECK's lower bound.
+    assert.equal(minutesOf(0.005), 1, "a sliver of an hour records as 1m");
+    assert.equal(
+      minutesOf(TIME_SAVED_MAX_HOURS),
+      TIME_SAVED_MAX_MINUTES,
+      "the ceiling itself is accepted, not refused off by one"
+    );
+
+    // ---- refusals, each with copy the reader can act on ----
+    assert.match(
+      refusalFor("abc"),
+      /number of hours/,
+      "unparseable text names the shape it wanted"
+    );
+    // Refused BY TYPE, never coerced: Number(true) is 1 and Number([]) is 0,
+    // and both would reach the card as a deliberate report.
+    assert.match(refusalFor(true), /number of hours/, "a boolean is refused");
+    assert.match(refusalFor([]), /number of hours/, "an array is refused");
+    assert.match(refusalFor({}), /number of hours/, "an object is refused");
+    assert.match(refusalFor(Number.NaN), /number of hours/, "NaN is refused");
+    assert.match(
+      refusalFor(Number.POSITIVE_INFINITY),
+      /number of hours/,
+      "Infinity is refused before the range check can pass it"
+    );
+    assert.match(
+      refusalFor("-2"),
+      /negative/,
+      "a negative names the empty-field alternative"
+    );
+    const overCap = refusalFor("745");
+    assert.match(
+      overCap,
+      new RegExp(String(TIME_SAVED_MAX_HOURS)),
+      "the over-cap refusal names the actual bound, so a typo is diagnosable"
+    );
+    assert.match(overCap, /31-day month/, "and says where the bound comes from");
+    assert.equal(
+      refusalFor(745),
+      overCap,
+      "a JSON number over the cap is refused identically to the string"
+    );
+    // These messages are visible site copy on three surfaces (the form's
+    // inline error, the create route's 400, the row editor's alert), so the
+    // owner's em-dash ban reaches them.
+    for (const m of [
+      refusalFor("abc"),
+      refusalFor("-2"),
+      overCap,
+    ])
+      assert.ok(!/[–—]/.test(m), "no em or en dashes in a refusal message");
+
+    // ---- formatTimeSavedPhrase: prose for the card and the row line ----
+    // null renders NOTHING anywhere. A "0 minutes a month" line on a
+    // published card would read as a claim that the work saves no time,
+    // which is the opposite of "nobody reported one".
+    assert.equal(formatTimeSavedPhrase(null), null, "not reported prints nothing");
+    assert.equal(formatTimeSavedPhrase(0), null, "a stored 0 prints nothing");
+    assert.equal(formatTimeSavedPhrase(-5), null, "so does a negative");
+    assert.equal(formatTimeSavedPhrase(1), "1 minute a month", "singular minute");
+    assert.equal(formatTimeSavedPhrase(45), "45 minutes a month");
+    assert.equal(formatTimeSavedPhrase(60), "1 hour a month", "singular hour");
+    assert.equal(formatTimeSavedPhrase(61), "1 hour 1 minute a month");
+    assert.equal(formatTimeSavedPhrase(90), "1 hour 30 minutes a month");
+    assert.equal(formatTimeSavedPhrase(360), "6 hours a month");
+    assert.equal(formatTimeSavedPhrase(390), "6 hours 30 minutes a month");
+    // The card reads "Time saved · {phrase}, reported by the submitter", so
+    // the phrase must never end in punctuation or start with a capital.
+    for (const m of [1, 45, 60, 90, 360, 390, TIME_SAVED_MAX_MINUTES]) {
+      const phrase = formatTimeSavedPhrase(m) ?? "";
+      assert.match(phrase, /a month$/, "every phrase ends in the period it covers");
+      assert.ok(!/[–—]/.test(phrase), "no em or en dashes in card copy");
+    }
+
+    // ---- formatTimeSavedCompact: the scorecard cell ----
+    assert.equal(formatTimeSavedCompact(390), "6h 30m");
+    assert.equal(formatTimeSavedCompact(360), "6h", "whole hours drop the 0m");
+    assert.equal(formatTimeSavedCompact(45), "45m", "under an hour drops the 0h");
+    assert.equal(formatTimeSavedCompact(1), "1m");
+    // A bare "0", not "0m": the cell sits beside Published's faint zero and
+    // must read the same way, as a not-yet rather than a measurement.
+    assert.equal(formatTimeSavedCompact(0), "0", "an empty sum is a bare 0");
+    assert.equal(
+      formatTimeSavedCompact(Number.NaN),
+      "0",
+      "a decoding accident renders as 0 rather than NaN in a table cell"
+    );
+
+    // ---- hoursFieldValue: the editor's pre-fill, and the round trip ----
+    assert.equal(hoursFieldValue(null), "", "nothing reported pre-fills empty");
+    assert.equal(hoursFieldValue(0), "", "so does a stored 0");
+    assert.equal(hoursFieldValue(390), "6.5");
+    assert.equal(hoursFieldValue(360), "6", "no trailing .0 to strip");
+    assert.equal(hoursFieldValue(45), "0.75");
+    for (const m of [1, 15, 45, 60, 90, 360, 390, TIME_SAVED_MAX_MINUTES]) {
+      const field = hoursFieldValue(m);
+      // At most two decimals. The step=0.25 grid this used to defend against
+      // is gone (every input is step="any" since the round-2 fix, so no
+      // browser rejects its own pre-filled value for being off a grid any
+      // more), but the reason survives in a plainer form: minutes/60 lands
+      // float tails like "6.500000000000001" in the field, and a person
+      // asked to correct THAT is reading a machine's number instead of the
+      // one they typed. Two decimals is also exactly what the round trip
+      // below survives, which is the property that actually has to hold.
+      assert.ok(
+        /^\d+(\.\d{1,2})?$/.test(field),
+        `pre-fill ${field} is a plain 2-decimal number`
+      );
+      // Round trip: what the editor shows, saved again unchanged, must come
+      // back as the same figure. Minutes are the storage resolution, so one
+      // minute of slack is the honest tolerance.
+      const back = minutesOf(field);
+      assert.ok(
+        back !== null && Math.abs(back - m) <= 1,
+        `${m} minutes round-trips through "${field}" (got ${String(back)})`
+      );
+    }
+
+    // ---- the invariants the compiler cannot see ----
+    const { readFileSync } = await import("node:fs");
+    // The module constant and migration 0049's CHECK are two spellings of
+    // one ceiling. If they drift, the route hands postgres a value the
+    // constraint refuses and the submitter gets a 500 instead of the
+    // sentence the parser would have handed them.
+    const migSrc = readFileSync(
+      "drizzle/migrations/0049_work_time_saved.sql",
+      "utf8"
+    );
+    const ck =
+      /time_saved_minutes >= (\d+) AND time_saved_minutes <= (\d+)/.exec(migSrc);
+    assert.ok(ck, "0049 still carries the range CHECK");
+    assert.equal(
+      Number(ck?.[1]),
+      1,
+      "the CHECK's floor is the parser's 1-minute clamp"
+    );
+    assert.equal(
+      Number(ck?.[2]),
+      TIME_SAVED_MAX_MINUTES,
+      "the CHECK's ceiling is TIME_SAVED_MAX_MINUTES"
+    );
+    assert.ok(
+      migSrc.includes("ADD COLUMN IF NOT EXISTS"),
+      "0049 survives a hand-applied VM catch-up (the 0044 lesson)"
+    );
+
+    // The scorecard sum is PUBLISHED-ONLY by the same predicate as the
+    // Published column. That is not a preference: the page's standing
+    // doctrine is that a held or failed row never surfaces, so a nonzero
+    // time-saved cell on a person with 0 published would announce exactly
+    // what the page exists not to reveal. The same predicate also drops
+    // superseded rows, so a card and its predecessor never both count.
+    const roadmapDbSrc = readFileSync("src/lib/roadmap/db.ts", "utf8");
+    const aggStart = roadmapDbSrc.indexOf("timeSaved: sql<number>");
+    assert.ok(aggStart > 0, "the scorecard still sums time_saved_minutes");
+    const agg = roadmapDbSrc.slice(
+      aggStart,
+      roadmapDbSrc.indexOf(".groupBy(", aggStart)
+    );
+    assert.ok(
+      agg.includes('eq(W.status, "published")'),
+      "the time-saved sum rides the published-only where clause"
+    );
+    assert.ok(
+      agg.includes("::int"),
+      "sum() over an integer column is bigint and arrives as a STRING through noopDecoder; the ::int cast is what keeps callers from concatenating"
+    );
+
+    // The card line names its source. Everything else on that card came out
+    // of the panel and /work opens by promising every claim is drawn from
+    // the submitted documents; this number is typed by the submitter and no
+    // review stage checks it, so the attribution is what keeps the promise
+    // true. Deleting it would be invisible to types and to every other test.
+    const cardSrc = readFileSync("src/components/work-card.tsx", "utf8");
+    assert.ok(
+      cardSrc.includes("Time saved · {timeSaved}, reported by the submitter"),
+      "the published card attributes the figure to the submitter"
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // 2026-08-27 round 2: the refuter panel's findings on the same feature.
+  // Everything below is a SOURCE scrape rather than a call, because each
+  // invariant lives in the SHAPE of the code - which function carries an
+  // expression, which route deliberately does NOT pass a field, which
+  // branch is tested first - and no value a unit test can pass in would
+  // observe any of it. They exist because every one of these decisions
+  // reads like an oversight to a later reader, and "tidying" any of them
+  // puts back a defect that shipped once already.
+  // ---------------------------------------------------------------------
+  {
+    const { readFileSync } = await import("node:fs");
+    // JSX copy wraps across lines at the formatter's whim, so every prose
+    // assertion below runs against a whitespace-flattened copy. Scraping
+    // the raw text would fail on a reflow that changed nothing.
+    const flat = (s: string) => s.replace(/\s+/g, " ");
+
+    // ---- the time-saved figure is inherited at SWAP time, not at intake ----
+    // The first shape of this feature copied the parent's minutes onto the
+    // child inside the update ROUTE, at intake. That was wrong three ways
+    // and all three were live: (1) the time-saved route is deliberately
+    // status-blind, so the owner can correct the figure on the LIVE parent
+    // for the whole time an update waits for approval, and an intake
+    // snapshot silently reverted that correction at the swap; (2) the EMAIL
+    // update lane never runs the web route at all, so an emailed update
+    // republished the card with the figure GONE; (3) an update may be
+    // submitted by someone else entirely (an admin, or any earlier
+    // participant in the supersede chain), and the intake copy republished
+    // one person's self-reported number under another person's row, summed
+    // it into that person's scorecard column under a disclosure paragraph
+    // saying each person reports their own, and left the original reporter
+    // unable to take it back (the row is not theirs any more, so their POST
+    // 404s). publishWithSupersede is the ONE primitive every swap path
+    // reaches, so the rule lives there and nowhere else.
+    const dbSrc = readFileSync("src/lib/work/db.ts", "utf8");
+    const swapStart = dbSrc.indexOf(
+      "export async function publishWithSupersede"
+    );
+    assert.ok(swapStart > 0, "publishWithSupersede is still the swap primitive");
+    const swapEnd = dbSrc.indexOf("export type UpdateFinishResult", swapStart);
+    assert.ok(
+      swapEnd > swapStart,
+      "publishWithSupersede still ends where UpdateFinishResult begins"
+    );
+    const swap = dbSrc.slice(swapStart, swapEnd);
+    assert.ok(
+      swap.includes("child.timeSavedMinutes ??"),
+      "the child's OWN figure wins at the swap: the time-saved route is status-blind, so an updater may have reported one deliberately while the child waited"
+    );
+    assert.ok(
+      swap.includes("sameEmail(parent.submitterEmail, child.submitterEmail)"),
+      "the parent's figure is inherited ONLY when both rows belong to the same person"
+    );
+    assert.ok(
+      swap.includes("parent.timeSavedMinutes"),
+      "and it is read from the FOR UPDATE-locked parent, so a correction made on the live card while the update waited is what publishes"
+    );
+    assert.ok(
+      /import \{ sameEmail \} from "\.\/transfer"/.test(dbSrc),
+      "sameEmail rides the pure transfer.ts (no cycle back through the DB layer, unlike scope.ts's type-only import)"
+    );
+
+    // The update route must carry NO time-saved field at all. A negative
+    // assertion is the only shape that works here: the defect was a line
+    // that looked helpful, and nothing about its absence is visible to the
+    // compiler. The comment that replaced it has to keep naming where the
+    // inheritance went, or the next reader re-adds the line.
+    const updateRouteSrc = readFileSync(
+      "src/app/api/work/submissions/[id]/update/route.ts",
+      "utf8"
+    );
+    assert.ok(
+      !updateRouteSrc.includes("timeSavedMinutes"),
+      "the update route no longer snapshots the parent's figure at intake"
+    );
+    assert.ok(
+      updateRouteSrc.includes("publishWithSupersede"),
+      "and it still says where that inheritance moved to"
+    );
+
+    // Rollback is the deliberate non-participant: it DELETEs the child and
+    // restores the parent, and its .set() never mentions the column, so the
+    // parent keeps the value it always had. Adding the field here would
+    // write the child's inherited copy back over the parent's own.
+    const rbStart = dbSrc.indexOf(
+      "export async function rollbackSwappedUpdate"
+    );
+    const rbEnd = dbSrc.indexOf("export async function activeUpdateChild", rbStart);
+    assert.ok(rbStart > 0 && rbEnd > rbStart, "rollbackSwappedUpdate is intact");
+    assert.ok(
+      !dbSrc.slice(rbStart, rbEnd).includes("timeSavedMinutes"),
+      "rollback leaves the restored parent's own figure alone"
+    );
+
+    // ---- step="any" on every time-saved input, all three of them ----
+    // The submission form is a real <form onSubmit> with no noValidate, so
+    // the browser runs constraint validation BEFORE the submit handler. A
+    // step grid there refuses values parseTimeSavedHours accepts, and the
+    // inline row editors (not inside a form) accept them, so the same field
+    // said two different things about the same number depending on which
+    // write moment the person used. min and max stay: they agree with the
+    // parser exactly, and they give instant native feedback.
+    const formSrc = readFileSync(
+      "src/app/work/submit/submission-form.tsx",
+      "utf8"
+    );
+    const submitSrc = readFileSync(
+      "src/app/work/submit/submit-client.tsx",
+      "utf8"
+    );
+    const islandSrc = readFileSync(
+      "src/app/roadmap/(steps)/work/work-islands.tsx",
+      "utf8"
+    );
+    for (const [name, src] of [
+      ["submission-form.tsx", formSrc],
+      ["submit-client.tsx", submitSrc],
+      ["work-islands.tsx", islandSrc],
+    ] as const) {
+      assert.ok(
+        src.includes('step="any"'),
+        `${name}'s time-saved input is step="any"`
+      );
+      // Braced/quoted forms only: the why-comments in these files still
+      // quote the old `step=0.25` while explaining what it broke, and
+      // deleting that history to satisfy a regex would be the wrong trade.
+      assert.ok(
+        !/step=\{0\.25\}|step="0\.25"/.test(src),
+        `${name} carries no quarter-hour step grid`
+      );
+      assert.ok(
+        src.includes("TIME_SAVED_MAX_HOURS"),
+        `${name} keeps its max at the shared constant, never a hand-typed 744`
+      );
+    }
+
+    // ---- a superseded row shows the figure, and offers no control ----
+    // Both surfaces render superseded rows on purpose: on /work/submit it is
+    // the submitter's only remaining surface when the live version belongs
+    // to someone else, and the roadmap "In Review" list is not
+    // status-filtered at all (mySubmissions selects every row the person
+    // owns). isMine() is true for such a row, so the editor used to open
+    // there and answer a save with "Saved. This submission reports 6 hours a
+    // month." Nothing reads that value: publishedCards() and the scorecard
+    // sum both key on status = 'published', which is also what stops a card
+    // and the generation it replaced from being counted twice. Held and
+    // failed rows deliberately KEEP their editor, because a retry can still
+    // publish them and the figure becomes real the moment it does.
+    for (const [name, src] of [
+      ["submit-client.tsx", submitSrc],
+      ["work-islands.tsx", islandSrc],
+    ] as const) {
+      assert.ok(
+        flat(src).includes("as reported on this version"),
+        `${name} labels a superseded row's figure as belonging to that version`
+      );
+      assert.ok(
+        flat(src).includes("Nothing reads this figure now."),
+        `${name} says plainly that the superseded figure counts nowhere`
+      );
+      // CONDITIONAL, and pinned as such. The first cut said "The live
+      // version carries its own", which is false in the very case that
+      // makes a superseded row visible on /work/submit: the live version
+      // belongs to someone else, and publishWithSupersede's same-person
+      // guard published it with NO figure. Telling a person their number
+      // moved across while /work shows no such line, and their scorecard
+      // total just fell, is the class of falsehood this suite exists to
+      // stop, so assert the sentence does not claim a live figure exists.
+      assert.ok(
+        !flat(src).includes("The live version carries its own"),
+        `${name} does not assert the live version has a figure of its own`
+      );
+    }
+    // Branch ORDER, not just presence: the superseded test has to run
+    // BEFORE the isMine() test, because /work/submit's admin all-view
+    // resolves no currentId and never runs the dedupe, so a superseded row
+    // reaches this block with isMine false and would otherwise fall to the
+    // read-only arm by accident rather than by rule.
+    const supIdx = submitSrc.indexOf('r.status === "superseded" ? (');
+    const mineIdx = submitSrc.indexOf(") : isMine(r) ? (");
+    assert.ok(
+      supIdx > 0 && mineIdx > supIdx,
+      "superseded is decided before ownership, so the all-submissions view gets the same rule"
+    );
+    assert.ok(
+      islandSrc.includes('if (status === "superseded")'),
+      "the roadmap island takes the same early return"
+    );
+    // AFTER the hooks, always. An early return placed above any hook makes
+    // React count a different number of hooks on a superseded row than on
+    // its neighbours, and the throw lands on the re-render after someone
+    // else's router.refresh() rather than on the row that caused it. So:
+    // no hook call may appear anywhere BELOW the early return in this
+    // component. (TimeSavedEditor is the file's last export, so its body
+    // runs to the end of the file.)
+    const editorBody = islandSrc.slice(
+      islandSrc.indexOf("export function TimeSavedEditor")
+    );
+    const earlyReturn = editorBody.indexOf('if (status === "superseded")');
+    assert.ok(earlyReturn > 0, "TimeSavedEditor still takes the early return");
+    assert.ok(
+      !/\buse[A-Z]\w*\(/.test(editorBody.slice(earlyReturn)),
+      "no hook is called below the superseded early return"
+    );
+    assert.ok(
+      /\buse[A-Z]\w*\(/.test(editorBody.slice(0, earlyReturn)),
+      "and the hooks it must sit below are genuinely above it"
+    );
+
+    // ---- the editor copy is true on every status it renders under ----
+    // These editors render on received, running, held and failed rows, where
+    // there is no card and the published-only scorecard counts nothing. The
+    // first copy asserted both outright, which made the page lie to exactly
+    // the person most likely to be watching it.
+    assert.ok(
+      flat(submitSrc).includes(
+        "Once the card is published the figure shows on it"
+      ),
+      "/work/submit's editor conditions the promise on publication"
+    );
+    assert.ok(
+      flat(islandSrc).includes(
+        "Once your card is published the figure shows on it"
+      ),
+      "the roadmap editor does too, in company-lane voice"
+    );
+    assert.ok(
+      flat(formSrc).includes("Once your card is published the figure shows"),
+      "and so does the submission form's help copy"
+    );
+
+    // ---- a poll issued before a save cannot repaint the old number ----
+    // refresh() already dropped replies from a scope the reader had left,
+    // but had no ORDERING guard: a poll issued before an inline save could
+    // land after it and put the pre-save value back under the confirmation
+    // saying it saved. If that late reply also carried the row's terminal
+    // status, anyActive went false, the 10 s interval was torn down, and
+    // nothing ever came to correct it. One monotonic ref carries both halves
+    // of staleness in a single predicate.
+    assert.ok(
+      submitSrc.includes("const refreshSeq = useRef(0)"),
+      "refresh() has a monotonic request sequence"
+    );
+    assert.ok(
+      submitSrc.includes("seq === refreshSeq.current") &&
+        submitSrc.includes("s === viewRef.current"),
+      "and one predicate drops both a stale scope and a stale request"
+    );
+    assert.ok(
+      submitSrc.includes("if (newest()) setLoading(false)"),
+      "only the newest request clears the spinner, so a refused or thrown request still clears it and a late reply cannot clear it out from under one still in flight"
+    );
+
+    // ---- the row editors have distinguishing accessible names ----
+    // A reader with five submissions otherwise meets five buttons whose
+    // accessible names are all "Edit time saved", and a screen reader's
+    // button list is exactly where identical names stop being usable. The
+    // precedent is CountCell's sr-only suffix on the scorecard: the visible
+    // label stays short because it sits beside the row it belongs to; the
+    // announced one does not, so it carries the title.
+    assert.ok(
+      flat(submitSrc).includes('<span className="sr-only"> for {r.title}</span>'),
+      "/work/submit's toggle announces the row it belongs to"
+    );
+    assert.ok(
+      flat(islandSrc).includes(
+        '<span className="sr-only"> time saved for {title}</span>'
+      ),
+      "the roadmap toggle does too (its visible label is a bare Edit/Add)"
+    );
+    // The island cannot invent either value, so the page has to hand both
+    // down: the title for the name above, the status for the superseded
+    // branch. A prop that stops being passed is a silent regression in both.
+    const roadmapWorkPageSrc = readFileSync(
+      "src/app/roadmap/(steps)/work/page.tsx",
+      "utf8"
+    );
+    assert.ok(
+      flat(roadmapWorkPageSrc).includes(
+        "<TimeSavedEditor id={row.id} title={row.title} status={row.status} minutes={row.timeSavedMinutes} />"
+      ),
+      "the roadmap page passes id, title, status and minutes into the island"
+    );
+
+    // ---- /work's standing promise is narrowed, not quietly broken ----
+    // The section intro has always opened with "Every claim below is drawn
+    // from the submitted documents", and it is the reason the card line says
+    // "reported by the submitter" at all. A card can now carry a figure no
+    // panel stage ever saw, so the promise itself needs the exception named
+    // in it. A comma clause, never an em dash (owner ban on visible copy).
+    const communitySrc = readFileSync("src/app/work/community.tsx", "utf8");
+    assert.ok(
+      flat(communitySrc).includes(
+        "Every claim below is drawn from the submitted documents, apart from a time saved figure, which is reported by the submitter and labelled that way on the card."
+      ),
+      "the /work intro names the one claim the panel did not verify"
+    );
+    // Scoped to the paragraph, not the file: line 11's ordering comment
+    // carries a legitimate em dash, and prose comments are not site copy.
+    const flatCommunity = flat(communitySrc);
+    const introFrom = flatCommunity.indexOf("XL.net staff submit tools");
+    const introTo = flatCommunity.indexOf("</p>", introFrom);
+    assert.ok(
+      introFrom > 0 && introTo > introFrom,
+      "the /work intro paragraph is still where this scrape looks for it"
+    );
+    assert.ok(
+      !/[–—]/.test(flatCommunity.slice(introFrom, introTo)),
+      "no em or en dashes in the /work section intro (owner ban, visible copy)"
     );
   }
 

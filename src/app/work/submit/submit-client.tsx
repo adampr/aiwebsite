@@ -19,6 +19,11 @@ import {
   type WorkStatus,
 } from "@/lib/work/config";
 import { exact } from "@/lib/rfp/time";
+import {
+  formatTimeSavedPhrase,
+  hoursFieldValue,
+  TIME_SAVED_MAX_HOURS,
+} from "@/lib/work/time-saved";
 import { personLabel } from "@/lib/person-label";
 import { ReviewProgress } from "./review-progress";
 import { SubmissionForm } from "./submission-form";
@@ -55,6 +60,11 @@ interface StatusRow {
   owner: string;
   /** Set when the row has been moved since it was created. */
   movedFrom: string | null;
+  /** §5.16 time saved per month, in MINUTES; null = nothing reported. Added
+   * the same day statusView grew it, per this interface's header rule: it is
+   * hand-written, so a field the server projects is invisible here with no
+   * compile error until someone reads the payload. */
+  timeSavedMinutes: number | null;
   lane: "internal" | "company";
   /** Company lane only: which tenant, and the domain its rows may move to. */
   laneName: string | null;
@@ -137,10 +147,59 @@ export function SubmitClient({
     null
   );
   const [moveBusy, setMoveBusy] = useState(false);
+  // §5.16 time saved (owner ask 2026-08-27), the "afterwards" lane: which
+  // row has its editor open, the hours typed in it, and that row's own
+  // message. Per row for the same reason the move message is: a panel-level
+  // line at the top of a 10-row page is invisible to someone acting on the
+  // last row of it. The message carries `error` rather than being two states,
+  // so one element can be role="alert" for a refusal and role="status" for a
+  // confirmation without either being announced by the wrong one.
+  const [timeOpen, setTimeOpen] = useState<string | null>(null);
+  const [timeHours, setTimeHours] = useState("");
+  const [timeBusy, setTimeBusy] = useState(false);
+  const [timeMsg, setTimeMsg] = useState<{
+    id: string;
+    text: string;
+    error: boolean;
+  } | null>(null);
   const noticeRef = useRef<HTMLParagraphElement | null>(null);
+  // The Edit/Add toggle of every rendered row, so focus can return to it when
+  // a save closes the editor under the Save button that was pressed. Without
+  // it focus falls to <body> and the reader's next Tab restarts at the top of
+  // the submission form, which is the same defect the pager arrows and the
+  // view toggle are written the way they are to avoid. A Map keyed by row id,
+  // because there is one such button per row and React re-keys them on every
+  // poll; a stale entry is a detached node and .focus() on it is a harmless
+  // no-op.
+  const timeToggleRefs = useRef<Map<string, HTMLButtonElement | null>>(
+    new Map()
+  );
 
+  // A monotonic request counter, bumped on every issue of refresh(). It is
+  // the ordering half of the staleness rule below; viewRef is the scope half.
+  // The defect it closes: a poll issued BEFORE an inline save (time saved,
+  // and equally a retry or a withdraw) can land AFTER the save's own refresh
+  // and repaint the row from a response that predates the write, i.e. put the
+  // old number back under the confirmation that says it was saved. If that
+  // late reply also carries the row's terminal status, anyActive goes false,
+  // the 10 s interval is torn down, and NOTHING ever comes to correct it. A
+  // ref and not state on purpose: bumping it must not re-render, and it must
+  // be readable by a callback whose identity never changes (the mount effect
+  // runs exactly once, see viewRef's note above).
+  const refreshSeq = useRef(0);
+
+  /** Load the list into state, dropping any reply that is no longer the
+   * answer to the question on screen. Two ways a reply goes stale, one
+   * predicate: the reader switched scope while it was in flight (viewRef),
+   * or a newer refresh() was issued after it (refreshSeq). A dropped reply
+   * touches NOTHING, the spinner included, because the newer request is
+   * still coming and will paint the truth. */
   const refresh = useCallback(async (scope?: "mine" | "all") => {
     const s = scope ?? viewRef.current;
+    const seq = ++refreshSeq.current;
+    // Read at each await boundary, never captured once: both halves can
+    // change while this request is in flight, which is the entire point.
+    const newest = () => s === viewRef.current && seq === refreshSeq.current;
     try {
       const res = await fetch(
         s === "all"
@@ -155,8 +214,10 @@ export function SubmitClient({
         };
         // Late reply from a scope the reader has since left: dropping it is
         // what stops a slow all-list from repainting over the own-list they
-        // switched back to.
-        if (s !== viewRef.current) return;
+        // switched back to. Superseded by a newer request: dropping it is
+        // what stops a poll that was already on the wire from repainting a
+        // just-saved row with the value it held before the save.
+        if (!newest()) return;
         setRows(data.submissions);
         setTruncated(!!data.truncated);
         setError(null);
@@ -171,7 +232,7 @@ export function SubmitClient({
         const body = (await res.json().catch(() => null)) as {
           error?: { message?: string };
         } | null;
-        if (s !== viewRef.current) return;
+        if (!newest()) return;
         setError(
           body?.error?.message ??
             `That list could not be loaded (${res.status}).`
@@ -185,7 +246,11 @@ export function SubmitClient({
     // otherwise leave "Loading submissions." on screen for good), while a
     // stale reply must NOT clear it out from under the request still in
     // flight, which would flash the empty state over a list that has rows.
-    if (s === viewRef.current) setLoading(false);
+    // Both halves of staleness apply here for that same reason: an OLDER
+    // reply clearing the spinner is the same defect as a cross-scope one,
+    // and the newest request always reaches this line (a rejected fetch
+    // falls through the empty catch), so the spinner cannot strand.
+    if (newest()) setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -268,6 +333,11 @@ export function SubmitClient({
     setPage(0);
     setMoveOpen(null);
     setMoveMsg(null);
+    // Same reason as the move form above: the rows on screen belong to the
+    // OTHER scope, so an open hours field and its confirmation both point at
+    // a row that is no longer rendered.
+    setTimeOpen(null);
+    setTimeMsg(null);
     setError(null);
     // Both are answers about the list you are LEAVING: a "X now belongs to Y"
     // line and a truncation claim carried into the other scope are stale the
@@ -390,6 +460,90 @@ export function SubmitClient({
       await refresh();
     } finally {
       setMoveBusy(false);
+    }
+  }
+
+  // §5.16 time saved (owner ask 2026-08-27): "either at submission
+  // (optionally) or AFTERWARDS under their submissions". This is the
+  // afterwards half, and it is the path that matters, because the honest
+  // answer to "how much time does this save you a month" is usually only
+  // known once the tool has been in use for a month.
+  //
+  // No confirm(). The convention this file follows guards acts the presser
+  // cannot undo alone (Withdraw deletes, Move hands the row to someone else);
+  // this one is a number the same person can retype in five seconds, and a
+  // dialog in front of it would only teach people to click through dialogs.
+  async function saveTimeSaved(row: StatusRow) {
+    setTimeBusy(true);
+    setTimeMsg(null);
+    try {
+      const res = await fetch(`/api/work/submissions/${row.id}/time-saved`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // The RAW string, trimmed, not a Number(): the route runs the same
+        // parser the form does, and it is the one place that decides what
+        // "6.5", "" and "0" mean. Converting here would hand it a NaN for
+        // "6.5 hours" and lose the sentence that explains the refusal.
+        body: JSON.stringify({ hours: timeHours.trim() }),
+      });
+      const data = (await res.json().catch(() => null)) as {
+        timeSavedMinutes?: number | null;
+        error?: { message?: string };
+      } | null;
+      if (!res.ok) {
+        // Rendered verbatim: the route's refusals are instructional (they
+        // name the 744-hour ceiling, or say to leave it empty), and a
+        // generic "that failed" would throw that away. The editor stays
+        // OPEN so the value that was refused is still there to correct.
+        setTimeMsg({
+          id: row.id,
+          text: data?.error?.message ?? "That did not save. Try again.",
+          error: true,
+        });
+        return;
+      }
+      // The STORED minutes from the response, never the typed hours: the
+      // parser rounds and clamps (0.005 hours becomes 1 minute), so echoing
+      // the input would paint a figure the database does not hold.
+      const minutes = data?.timeSavedMinutes ?? null;
+      // Optimistic AND refresh(). Both, and neither is redundant: the local
+      // write makes the new figure appear on the row immediately, and the
+      // refresh does two things at once. It re-reads the row from the server
+      // (a status can move while the editor is open), and ISSUING it bumps
+      // refreshSeq, which is what actually disarms a poll that was already on
+      // the wire when the save landed: that reply is no longer the newest, so
+      // refresh() drops it instead of painting the old number back over a
+      // confirmation that says it was saved. Before the sequence guard this
+      // call was a hope rather than a rule, because a reply arriving after it
+      // repainted the list just the same.
+      setRows((prev) =>
+        prev.map((o) =>
+          o.id === row.id ? { ...o, timeSavedMinutes: minutes } : o
+        )
+      );
+      setTimeOpen(null);
+      const phrase = formatTimeSavedPhrase(minutes);
+      setTimeMsg({
+        id: row.id,
+        text: phrase
+          ? `Saved. This submission reports ${phrase}.`
+          : "Saved. This submission no longer reports a time saved.",
+        error: false,
+      });
+      // The Save button just unmounted with the editor, so focus would sit on
+      // <body>; hand it back to the toggle that opened it.
+      requestAnimationFrame(() =>
+        timeToggleRefs.current.get(row.id)?.focus()
+      );
+      void refresh();
+    } catch {
+      setTimeMsg({
+        id: row.id,
+        text: "That did not save. Check your connection and try again.",
+        error: true,
+      });
+    } finally {
+      setTimeBusy(false);
     }
   }
 
@@ -823,6 +977,224 @@ export function SubmitClient({
                     </a>
                   )}
                 </div>
+              )}
+              {/* §5.16 time saved (owner ask 2026-08-27). The figure and,
+                  for the row's OWNER, the editor that sets it.
+
+                  Offered on every status the row can still act on,
+                  published included, and that is the point rather than an
+                  oversight (the one exception is spelled out below): the
+                  number is learned
+                  after the tool has been in use, so the published row is the
+                  one people come back to fill in. Nothing here re-runs the
+                  panel or changes a status.
+
+                  Owner only. The route would accept an admin edit (it takes
+                  verifiedWebAdmin, so a wrong figure on a live card is
+                  fixable), but the CONTROL belongs on the row of the person
+                  whose time it is: the all-submissions view is an inventory,
+                  and an Edit button on 200 rows of other people's self-
+                  reported estimates invites exactly the correction nobody
+                  asked for. Their rows show the value read-only, and only
+                  when there is one to show.
+
+                  SUPERSEDED is the one status with no editor, owner's row or
+                  not, and it is not a tidiness call. A superseded row is kept
+                  visible on purpose (when the live version belongs to someone
+                  else it is the submitter's only surface), and isMine() is
+                  true for it in "Your submissions", so the editor used to
+                  render here and answer a save with "Saved. This submission
+                  reports 6 hours a month." Nothing anywhere reads that value:
+                  publishedCards() and the scorecard sum both key on
+                  status = 'published', which is also what keeps a card and
+                  the generation it replaced from being counted twice. So the
+                  figure renders read-only when the row has one, with a line
+                  saying where the live number actually lives, and the
+                  "Submit an update" button already beside it is the honest
+                  next step. Held and failed rows keep their editor: a retry
+                  can still publish them, and the figure becomes real the
+                  moment it does. */}
+              {r.status === "superseded" ? (
+                (r.timeSavedMinutes ?? 0) > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <p className="mono text-xs text-faint">
+                      Time saved · {formatTimeSavedPhrase(r.timeSavedMinutes)},
+                      as reported on this version
+                    </p>
+                    {/* CONDITIONAL, never "the live version carries its
+                        own". On this list a superseded row survives the
+                        dedupe mainly when the live version belongs to
+                        SOMEONE ELSE, and that is exactly the case where
+                        publishWithSupersede's same-person guard publishes
+                        the child with no figure at all. Asserting the live
+                        card has one would tell the person their number moved
+                        across, while /work shows no such line and their
+                        scorecard total has dropped. "Submit an update"
+                        beside this row is the way to put a figure back on a
+                        card that is now someone else's. */}
+                    <p className="text-xs text-faint">
+                      Nothing reads this figure now. Whatever the live version
+                      reports is what the card and the scorecard show.
+                    </p>
+                  </div>
+                )
+              ) : isMine(r) ? (
+                <div className="mt-2 space-y-2">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="mono text-xs text-faint">
+                      {/* "not reported" rather than "0": a zero here would
+                          read as a claim that the work saves no time, which
+                          is a different statement from having no figure. */}
+                      Time saved ·{" "}
+                      {formatTimeSavedPhrase(r.timeSavedMinutes) ??
+                        "not reported"}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn--text"
+                      ref={(el) => {
+                        timeToggleRefs.current.set(r.id, el);
+                      }}
+                      aria-expanded={timeOpen === r.id}
+                      onClick={() => {
+                        setTimeMsg(null);
+                        if (timeOpen === r.id) {
+                          setTimeOpen(null);
+                          return;
+                        }
+                        // Pre-filled with the current figure, so "change it
+                        // slightly" is an edit and not a re-entry from
+                        // memory. hoursFieldValue is the inverse of the
+                        // parser and rounds to 2 decimals, so what the field
+                        // opens with is a value the parser reads back
+                        // unchanged.
+                        setTimeHours(hoursFieldValue(r.timeSavedMinutes));
+                        setTimeOpen(r.id);
+                      }}
+                    >
+                      {/* "> 0", not "!== null", everywhere this decides
+                          between reported and not: migration 0049's CHECK
+                          starts at 1 minute precisely so there is one
+                          spelling of "nothing reported", and a stray 0 from
+                          a hand-edited row must read the same way here as
+                          the formatter reads it, not offer to "Edit" a
+                          figure the line above calls not reported. */}
+                      {timeOpen === r.id
+                        ? "Cancel edit"
+                        : (r.timeSavedMinutes ?? 0) > 0
+                          ? "Edit time saved"
+                          : "Add time saved"}
+                      {/* The row's title, for screen readers only. A reader
+                          with five submissions otherwise meets five buttons
+                          whose accessible names are all "Edit time saved",
+                          and a screen reader's button list is exactly where
+                          that becomes unusable. Same treatment as CountCell's
+                          sr-only suffix on the scorecard, and for the same
+                          reason: the visible label is right beside the row it
+                          belongs to, the announced one is not. */}
+                      <span className="sr-only"> for {r.title}</span>
+                    </button>
+                  </div>
+                  {timeOpen === r.id && (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label
+                        htmlFor={`time-${r.id}`}
+                        className="mono text-xs uppercase tracking-[0.2em] text-light"
+                      >
+                        Hours a month
+                      </label>
+                      <input
+                        id={`time-${r.id}`}
+                        type="number"
+                        // A phone keypad without a decimal point makes "6.5"
+                        // untypeable, and "about six and a half" is the most
+                        // common shape of answer this field will get.
+                        inputMode="decimal"
+                        min={0}
+                        // The constant, not a literal: the parser and the
+                        // 0049 CHECK share this ceiling, and a hand-typed one
+                        // here would drift into a field that accepts a value
+                        // the route then refuses.
+                        max={TIME_SAVED_MAX_HOURS}
+                        // "any", not a step grid. This field is not inside
+                        // a <form>, so the browser never refuses it here, but
+                        // the SAME number typed into the submission form
+                        // would be refused there on a 0.25 grid (6.3: "the
+                        // two nearest valid values are 6.25 and 6.5"). One
+                        // field, two write moments, and they must not
+                        // disagree about what a valid figure is. The parser
+                        // is the single arbiter; min and max stay because
+                        // they agree with it exactly.
+                        step="any"
+                        className="input w-24"
+                        value={timeHours}
+                        onChange={(e) => setTimeHours(e.target.value)}
+                        onKeyDown={(e) => {
+                          // Enter saves. The field is inside the page's
+                          // <form>-less list, so nothing submits on its own,
+                          // and preventDefault keeps it that way if that
+                          // ever changes.
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            if (!timeBusy) void saveTimeSaved(r);
+                          }
+                        }}
+                        placeholder="6.5"
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--text"
+                        // aria-disabled, never the `disabled` attribute: a
+                        // disabled control blurs to <body> mid-save and the
+                        // reader's next Tab restarts at the top of the form.
+                        // The handler no-ops instead, so a double press
+                        // cannot fire a second POST.
+                        aria-busy={timeBusy}
+                        aria-disabled={timeBusy}
+                        onClick={() => {
+                          if (timeBusy) return;
+                          void saveTimeSaved(r);
+                        }}
+                      >
+                        {timeBusy ? "Saving..." : "Save"}
+                      </button>
+                      <span className="text-xs text-faint">
+                        {/* "Once the card is published" is load-bearing, not
+                            hedging: this editor renders on received, running,
+                            held and failed rows too, where there is no card
+                            and the scorecard (published rows only, by
+                            doctrine) counts nothing. The old copy asserted
+                            both outright. Hours, any hours: the parser takes
+                            0.75 as readily as 6, and the field's step="any"
+                            now says so too. */}
+                        Your own estimate in hours; 6, 6.5 and 0.75 all work.
+                        Once the card is published the figure shows on it,
+                        reported by you, and counts on the scorecard. Enter 0
+                        to remove it.
+                      </span>
+                    </div>
+                  )}
+                  {timeMsg?.id === r.id && (
+                    <p
+                      // A refusal interrupts; a confirmation waits its turn.
+                      role={timeMsg.error ? "alert" : "status"}
+                      className={
+                        timeMsg.error
+                          ? "text-sm text-red-400"
+                          : "text-xs text-faint"
+                      }
+                    >
+                      {timeMsg.text}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                (r.timeSavedMinutes ?? 0) > 0 && (
+                  <p className="mono mt-2 text-xs text-faint">
+                    Time saved · {formatTimeSavedPhrase(r.timeSavedMinutes)},
+                    reported by the submitter
+                  </p>
+                )
               )}
               <div className="mt-2 flex flex-wrap gap-4">
                 {/* Retry review and Submit an update are suppressed on rows

@@ -7,6 +7,7 @@
 // to markup.
 
 import type { PublishedCard } from "@/lib/work/db";
+import { formatTimeSavedPhrase } from "@/lib/work/time-saved";
 
 export function CommunityCard({
   item,
@@ -22,6 +23,11 @@ export function CommunityCard({
     ? `submitted by ${item.submitterName}`
     : `submitted by ${defaultCredit}`;
   const footer = [...card.footerLine, credit].join(" · ");
+  // §5.16 time saved (owner ask 2026-08-27). null when the submitter has not
+  // reported one, and the line below is then not rendered at all: a "0" here
+  // would read as a card claiming the work saves nobody any time, which is a
+  // claim nobody made.
+  const timeSaved = formatTimeSavedPhrase(item.timeSavedMinutes);
   return (
     <section
       id={item.slug}
@@ -52,6 +58,18 @@ export function CommunityCard({
           </div>
         ))}
       </div>
+      {/* ATTRIBUTED, and the attribution is not decoration. Everything else
+          on this card came out of the panel, and the /work page opens with a
+          standing promise that "Every claim below is drawn from the submitted
+          documents" - this number is not: it is typed by the submitter and no
+          stage of the review ever checks it. Naming the source in the line
+          itself is what keeps the promise true. It sits ABOVE the footer so
+          the byline stays the card's last line. */}
+      {timeSaved && (
+        <p className="mono mt-6 text-xs text-faint">
+          Time saved · {timeSaved}, reported by the submitter
+        </p>
+      )}
       <p className="mono mt-6 text-xs text-faint">{footer}</p>
     </section>
   );

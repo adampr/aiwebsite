@@ -38,7 +38,9 @@ export function CommunitySection({ cards }: { cards: PublishedCard[] }) {
           XL.net staff submit tools they built, with the documents to back
           them. An automated editorial panel drafts each card, argues against
           it, and holds anything it cannot verify for a human decision. Every
-          claim below is drawn from the submitted documents.
+          claim below is drawn from the submitted documents, apart from a
+          time saved figure, which is reported by the submitter and labelled
+          that way on the card.
         </p>
       </div>
       {cards.map((item, i) => (

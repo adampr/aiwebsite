@@ -24,6 +24,10 @@ import { db, schema } from "@/lib/db";
 import { WORK_CAPS, type WorkKind } from "./config";
 import type { WorkCard } from "./lint";
 import { slugForTitle } from "./lint";
+// Value import, and safe as one: transfer.ts is PURE (its only imports are
+// @/lib/rfp/access and ./config, both of which this file already pulls in),
+// so it cannot cycle back through the DB layer the way scope.ts does below.
+import { sameEmail } from "./transfer";
 // Type-only (erased at runtime): scope.ts imports roadmap/db which imports
 // this file, so a value import here would cycle.
 import type { WorkScope } from "./scope";
@@ -90,6 +94,16 @@ export async function createSubmission(opts: {
    * lane. null = public /work; a company id = that company's private Your
    * Work. Company update rows are impossible (0035 CHECK + throw here). */
   companyId: string | null;
+  /** §5.16 self-reported time saved per month, in MINUTES (the form asks for
+   * hours; parseTimeSavedHours in time-saved.ts converts). Optional and null
+   * by default: it is optional at submission time, the email lane never has
+   * it, and the owner can set it afterwards on the row. UPDATE rows arrive
+   * null here ON PURPOSE and inherit the parent's figure at SWAP time inside
+   * publishWithSupersede instead: an intake copy is read weeks before the
+   * swap (so it reverts a correction made on the live card in the meantime),
+   * it never reached the email update lane at all, and it would republish
+   * one person's self-reported number under another person's row. */
+  timeSavedMinutes?: number | null;
 }): Promise<SubmissionRow> {
   if (opts.autoApprove && !opts.parentId)
     throw new Error(
@@ -127,6 +141,10 @@ export async function createSubmission(opts: {
       archiveName: opts.archiveName,
       archiveSha256: opts.archiveSha256,
       archiveBytes: opts.archiveBytes,
+      // ?? null rather than leaving it out: an omitted key and an explicit
+      // null insert the same row today, but stating it keeps "not reported"
+      // visible at the one place every intake lane passes through.
+      timeSavedMinutes: opts.timeSavedMinutes ?? null,
     })
     .returning(ROW_COLS);
   return row;
@@ -197,6 +215,11 @@ const LIST_COLS = {
   submitterEmail: S.submitterEmail,
   creatorEmail: S.creatorEmail,
   companyId: S.companyId,
+  // §5.16 time saved: one small integer, and the submissions lists are the
+  // only place the OWNER can edit it after the fact, so the projection that
+  // feeds those lists has to carry the current value or the editor would
+  // open empty on a row that already reports one.
+  timeSavedMinutes: S.timeSavedMinutes,
 };
 
 /** A row narrowed to what statusView() projects. Keep this in step with
@@ -220,6 +243,7 @@ export type SubmissionListRow = Pick<
   | "submitterEmail"
   | "creatorEmail"
   | "companyId"
+  | "timeSavedMinutes"
 >;
 
 /** The /work/submit "your submissions" list (GET /api/work/submissions).
@@ -308,6 +332,11 @@ export interface PublishedCard {
   submitterName: string | null;
   publishedAt: Date;
   docPath: string;
+  /** §5.16 self-reported time saved per month, in minutes; null = not
+   * reported, which is most cards. It rides the CARD, not the panel's
+   * WorkCard JSON, precisely because it is not panel output: the panel never
+   * saw this number and the template has to say so when it prints it. */
+  timeSavedMinutes: number | null;
 }
 
 /** Published cards for the public /work section, newest publish first so a
@@ -350,6 +379,7 @@ export async function publishedCards(scope: WorkScope): Promise<PublishedCard[]>
         submitterName: r.submitterName,
         publishedAt: r.publishedAt ?? r.createdAt,
         docPath,
+        timeSavedMinutes: r.timeSavedMinutes,
       });
     } catch {
       // a malformed row renders nothing rather than breaking the page
@@ -648,7 +678,10 @@ export type SupersedeResult =
  * or superseded by a rival), the child is parked held with
  * UPDATE_CONFLICT_NOTE and NOTHING publishes standalone: a standalone
  * publish is how duplicate live cards get minted (refutation FATAL,
- * 2026-08-03). */
+ * 2026-08-03).
+ * The child also inherits the parent's §5.16 time-saved figure here, and
+ * only here, and only when both rows belong to the same person; the long
+ * comment on that field in the child's .set() below has the reasoning. */
 export async function publishWithSupersede(
   childId: string,
   expectedAttemptId?: string
@@ -734,6 +767,47 @@ export async function publishWithSupersede(
         // replaces the card in place, spot included (same rule as slug and
         // publishedAt above).
         displayRank: parent.displayRank,
+        // §5.16 time saved: inherited HERE, at swap time, from the LOCKED
+        // parent, and never copied onto the child at intake. Every clause
+        // below is load-bearing, so none of them can be trimmed:
+        //
+        // - At swap time, not intake. The time-saved route is deliberately
+        //   status-blind, so the owner can correct the figure on the LIVE
+        //   parent for the whole time the update sits waiting for approval.
+        //   An intake snapshot would be read weeks before the swap and would
+        //   silently revert that correction; the parent is read under FOR
+        //   UPDATE right here, so what publishes is what the live card was
+        //   actually showing a moment ago.
+        // - One primitive covers every lane. Both swap paths reach this
+        //   function (the admin approve route calls it, the web auto-approve
+        //   lane arrives through finishUpdateRow) and so does the EMAIL
+        //   update lane through the panel. An emailed update never passed a
+        //   value at intake at all, so under an intake copy it republished
+        //   the card with the figure gone.
+        // - Same person only. The number is self-reported and the scorecard
+        //   sums it PER PERSON, and an update may be submitted by someone
+        //   else entirely (an admin, or any earlier participant in the
+        //   supersede chain). Carrying Alice's figure onto Adam's row would
+        //   print a claim Adam never made, credit it to Adam's scorecard
+        //   column under a disclosure that says each person reports their
+        //   own, and leave Alice unable to take it back: the row is not hers
+        //   any more, so her POST would 404.
+        // - The child's own value wins when it has one. Because the route is
+        //   status-blind, an updater can report their own figure on the child
+        //   while it waits, and that is a deliberate statement by the row's
+        //   owner, not a leftover.
+        // - The known edge, stated honestly: NULL cannot distinguish "never
+        //   reported on the child" from "cleared on the child", so clearing
+        //   the CHILD while the parent still carries a figure re-inherits it
+        //   at the swap. The gesture that always works is clearing the row
+        //   that is actually live (the parent before the swap, or the
+        //   published card after it), which is also the row a person is
+        //   looking at when they decide the number is wrong.
+        timeSavedMinutes:
+          child.timeSavedMinutes ??
+          (sameEmail(parent.submitterEmail, child.submitterEmail)
+            ? parent.timeSavedMinutes
+            : null),
         panelError: null,
         updatedAt: new Date(),
       })
@@ -1287,6 +1361,38 @@ export async function setSubmissionTitle(
     .update(S)
     .set({ title, updatedAt: new Date() })
     .where(eq(S.id, id))
+    .returning({ id: S.id });
+  return res.length > 0;
+}
+
+/** §5.16 "time saved per month": set or clear the submitter's own figure on
+ * their row. minutes = null CLEARS it (the form's 0 hours), which is the only
+ * way to take a wrong number off a live card.
+ *
+ * DELIBERATELY status-blind: the number is usually learned weeks after the
+ * panel ran, so the main path is an owner editing a PUBLISHED row, and a
+ * status gate here would refuse exactly the case the feature exists for.
+ * DELIBERATELY scope-blind too: the caller (the route) is what proves the
+ * session owns this row - `submissionListRowById` is not scope-filtered, so
+ * the ownership check must happen before this function is reached, not here.
+ *
+ * updated_at moves with it because an edited card is changed content:
+ * latestPublishedAt() reads greatest(published_at, updated_at) for the
+ * sitemap's lastmod, and a card whose visible copy changed without moving
+ * lastmod tells crawlers nothing happened.
+ *
+ * Returns whether a row matched, so the route can 404 a vanished row instead
+ * of reporting a save that wrote nothing. The 0049 CHECK is the backstop on
+ * the value; parseTimeSavedHours is what keeps a bad one from getting here. */
+export async function setTimeSaved(opts: {
+  id: string;
+  minutes: number | null;
+}): Promise<boolean> {
+  if (!isUuid(opts.id)) return false;
+  const res = await db
+    .update(S)
+    .set({ timeSavedMinutes: opts.minutes, updatedAt: new Date() })
+    .where(eq(S.id, opts.id))
     .returning({ id: S.id });
   return res.length > 0;
 }

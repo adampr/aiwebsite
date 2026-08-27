@@ -344,6 +344,13 @@
       "when": 1787243650204,
       "tag": "0048_paid_step_attendance",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1787844050666,
+      "tag": "0049_work_time_saved",
+      "breakpoints": true
     }
   ]
 }

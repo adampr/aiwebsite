@@ -952,6 +952,16 @@ export type ScorecardRow = {
   requested: number;
   working: number;
   completed: number;
+  /** §5.16 time saved: the sum, in MINUTES, of what this person reported on
+   * their PUBLISHED cards in this lane. 0 when they reported none, so the
+   * column is a number everywhere and no consumer has to spell "nothing" a
+   * second way. Published-only by the same predicate as `published` above:
+   * a nonzero cell on a person with 0 published would announce that a
+   * colleague has a held or failed row, which the scorecard exists not to do.
+   * That predicate also excludes superseded rows, so an updated card and its
+   * predecessor can never both be counted. Self-reported and never
+   * panel-verified (the page's disclosure says so). */
+  timeSavedMinutes: number;
 };
 
 const NO_REQUESTS = { requested: 0, working: 0, completed: 0 } as const;
@@ -1009,6 +1019,17 @@ export async function scorecardRows(
         // governance/admin-db.ts types the identical max()/min() construct
         // sql<string> and is the honest precedent.
         last: sql<string | null>`max(${W.publishedAt})`,
+        // ::int, and sql<number> rather than sql<string>, for the reason the
+        // comment above spells out in the other direction: a raw `sql` field
+        // has no column behind it, so it gets noopDecoder and arrives EXACTLY
+        // as postgres wrote it. sum() over an integer column returns bigint,
+        // which postgres-js hands back as a STRING to protect precision, so
+        // without the cast this field would be "390" and every consumer that
+        // added it to a number would concatenate instead. count(*)::int on
+        // the line above is the same trick and the honest precedent.
+        // coalesce because sum() of an all-NULL group (nobody reported one)
+        // is NULL, not 0, and ScorecardRow promises a number.
+        timeSaved: sql<number>`coalesce(sum(${W.timeSavedMinutes}), 0)::int`,
       })
       .from(W)
       .where(and(laneWhere, eq(W.status, "published")))
@@ -1031,6 +1052,11 @@ export async function scorecardRows(
       // (see the select above). Coerce HERE, once, so no consumer has to
       // know that this one field came from a raw expression.
       lastPublishedAt: hit?.last ? new Date(hit.last) : null,
+      // No hit at all means no published cards in this lane, which is also
+      // zero reported time: the sum lives in the SAME aggregate row as the
+      // count, so the two can never disagree about whether this person has
+      // published work here.
+      timeSavedMinutes: hit?.timeSaved ?? 0,
       inDirectory: true,
       ...(req ?? NO_REQUESTS),
     };
@@ -1044,6 +1070,7 @@ export async function scorecardRows(
       email,
       published: c.n,
       lastPublishedAt: c.last ? new Date(c.last) : null,
+      timeSavedMinutes: c.timeSaved,
       inDirectory: false,
       ...(req ?? NO_REQUESTS),
     });
@@ -1058,6 +1085,10 @@ export async function scorecardRows(
       email,
       published: 0,
       lastPublishedAt: null,
+      // Requested-work-only people have no published card in this lane by
+      // construction (byEmail is drained above), and the column counts
+      // published rows only, so this is zero by the same rule.
+      timeSavedMinutes: 0,
       inDirectory: false,
       ...req,
     });

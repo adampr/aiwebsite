@@ -14,6 +14,10 @@
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import { EMAIL_PROMISE } from "@/lib/work/config";
+import {
+  parseTimeSavedHours,
+  TIME_SAVED_MAX_HOURS,
+} from "@/lib/work/time-saved";
 import { ReviewProgress } from "./review-progress";
 
 // QUEUED_NOTICE and OK_NOTICE are gone (2026-08-25 round). Both were dead
@@ -69,6 +73,12 @@ export function SubmissionForm({
   const [title, setTitle] = useState("");
   const [blurb, setBlurb] = useState("");
   const [attribution, setAttribution] = useState("");
+  // §5.16 time saved (owner ask 2026-08-27). A STRING, never a number: this
+  // is the raw input value, and holding it as a number would turn a
+  // half-typed "6." into NaN and wipe the caret out from under the person
+  // typing it. The one parse happens on submit, through the same module the
+  // route uses.
+  const [timeSavedHours, setTimeSavedHours] = useState("");
   const [pkg, setPkg] = useState<File | null>(null);
   const [skillMd, setSkillMd] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -85,6 +95,7 @@ export function SubmissionForm({
   }>(null);
   const pkgRef = useRef<HTMLInputElement>(null);
   const mdRef = useRef<HTMLInputElement>(null);
+  const timeRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const uid = useId();
 
@@ -111,6 +122,7 @@ export function SubmissionForm({
     setTitle("");
     setBlurb("");
     setAttribution("");
+    setTimeSavedHours("");
     setPkg(null);
     setSkillMd(null);
     setFieldErrors({});
@@ -132,9 +144,31 @@ export function SubmissionForm({
           : "Attach the Skill package (.skill or .zip).";
     // The SKILL.md field is optional (the package may carry the doc); only
     // the server can see inside the archive, so no client check exists.
+    //
+    // Time saved IS checked here, and the reason is narrower than the one
+    // this comment used to give. It claimed the check spares the submitter a
+    // 100 MB upload the route would only refuse afterwards; in a browser it
+    // almost never does, because an <input type="number"> hands back "" for
+    // anything it cannot parse (so "6 hourss" never survives the field) and
+    // the native min/max on that input already refuse the out-of-range
+    // values the parser refuses. The branch STAYS, for the two things it
+    // still does: it is belt and braces for a value that reaches state
+    // without passing through the field's sanitizer (autofill, a paste
+    // handled oddly, a browser that behaves differently), and it is the SAME
+    // function the route calls, so whichever side does the refusing, the
+    // person reads one sentence and not two that can drift apart.
+    const timeSaved = parseTimeSavedHours(
+      updateTarget ? "" : timeSavedHours
+    );
+    if (!timeSaved.ok) errs.timeSaved = timeSaved.message;
     setFieldErrors(errs);
     if (Object.keys(errs).length > 0) {
-      pkgRef.current?.focus();
+      // The FIRST failing field in DOM order takes focus, not always the
+      // package: the hours input sits above the upload zone, and sending
+      // focus past a field that is flagged red is how a keyboard user ends
+      // up never finding the thing that refused them.
+      if (errs.timeSaved) timeRef.current?.focus();
+      else pkgRef.current?.focus();
       return;
     }
     setBusyBoth(true);
@@ -149,6 +183,15 @@ export function SubmissionForm({
       }
       form.set("blurb", blurb);
       form.set("attribution", attribution);
+      // Only when non-empty, and never in update mode. An empty string would
+      // parse to "not reported" and be harmless, but a field that is absent
+      // from the body is the honest description of a field nobody filled in,
+      // and it keeps the update lane's FormData byte-identical to what it
+      // sent before this round (that route ignores the key; the child picks
+      // the live parent's figure up at swap time instead, in
+      // publishWithSupersede).
+      if (!updateTarget && timeSavedHours.trim() !== "")
+        form.set("timeSavedHours", timeSavedHours.trim());
       form.set("file", pkg as File);
       if (kind === "skill" && skillMd) form.set("skillMd", skillMd);
       const res = await fetch(
@@ -281,6 +324,95 @@ export function SubmissionForm({
           placeholder="Optional context: what it does, who uses it, what it replaced (up to 5000 characters). The card's claims come from your documents."
         />
       </div>
+      {/* §5.16 time saved (owner ask 2026-08-27), optional at submission
+          time. It sits between the paragraph and the upload because it is a
+          fact about the WORK, not about the files, and because the person is
+          still thinking in prose here rather than hunting for a .zip.
+
+          HIDDEN in update mode, and that is the whole design of the update
+          lane for this field: an update is reviewed as a fresh row, so an
+          empty box on the update form would be read by the route as "clear
+          it" and would silently strip the figure off a live card the moment
+          the swap was approved. Instead the child INHERITS the parent's
+          figure at swap time (publishWithSupersede reads the live parent
+          under FOR UPDATE and carries its value over, so a correction made
+          on the live card while the update waited is the one that
+          publishes), and the owner edits it on the row afterwards (the
+          editor on the submissions list), where there is exactly one
+          meaning for an empty field. */}
+      {!updateTarget && (
+        <div>
+          <label htmlFor={`${uid}-timesaved`} className={labelCls}>
+            Time saved per month for you (optional)
+          </label>
+          <input
+            id={`${uid}-timesaved`}
+            ref={timeRef}
+            className={inputCls}
+            style={inputStyle}
+            type="number"
+            // inputMode on top of type="number": a phone keypad that opens
+            // without a decimal point makes "6.5" untypeable, which is the
+            // most common answer this field will ever get.
+            inputMode="decimal"
+            min={0}
+            // The constant, never a literal 744: the parser refuses above it
+            // and migration 0049's CHECK refuses above its minute twin, so a
+            // hand-typed ceiling here would drift into a browser that accepts
+            // a value the server then rejects.
+            max={TIME_SAVED_MAX_HOURS}
+            // "any", never a step grid. This input lives inside a real
+            // <form onSubmit> with no noValidate, so the browser runs
+            // constraint validation BEFORE the handler: with step=0.25 a
+            // submitter who typed 6.3, filled in the rest and attached a
+            // package was refused ("the two nearest valid values are 6.25
+            // and 6.5") for a value parseTimeSavedHours accepts happily and
+            // the editor on the submissions list saves without a word. The
+            // parser is the single arbiter of what this field means; min and
+            // max stay because they agree with it exactly.
+            step="any"
+            value={timeSavedHours}
+            onChange={(e) => {
+              setTimeSavedHours(e.target.value);
+              // Clear the refusal as soon as the value changes: a field
+              // still flagged red while it now holds a fine value is the
+              // same contradiction the file-drop rule above names.
+              if (fieldErrors.timeSaved)
+                setFieldErrors((prev) => {
+                  const next = { ...prev };
+                  delete next.timeSaved;
+                  return next;
+                });
+            }}
+            aria-describedby={
+              fieldErrors.timeSaved
+                ? `${uid}-timesaved-error ${uid}-timesaved-help`
+                : `${uid}-timesaved-help`
+            }
+            aria-invalid={Boolean(fieldErrors.timeSaved)}
+            placeholder="Hours a month, for example 6, 6.5, or 0.75"
+          />
+          {fieldErrors.timeSaved && (
+            <p
+              id={`${uid}-timesaved-error`}
+              className="mt-1 text-xs text-red-400"
+            >
+              {fieldErrors.timeSaved}
+            </p>
+          )}
+          {/* Lane-neutral on purpose: this component renders on /work, in the
+              /work dialog and inside the company dialog on /roadmap/work, so
+              naming "the Our Work page" here would be false for a company
+              submitter. "Your published card" is true in every lane. */}
+          <p id={`${uid}-timesaved-help`} className="mt-2 text-xs text-faint">
+            Your own estimate of the time this saves you in a typical month.
+            Once your card is published the figure shows on it, said to be
+            reported by you, and it is added to your total on the scorecard.
+            Leave it empty if you do not have a figure yet; you can add it or
+            change it later on this submission.
+          </p>
+        </div>
+      )}
       <div>
         <span id={`${uid}-pkg-label`} className={labelCls}>
           {kind === "program"

@@ -60,6 +60,13 @@ export interface SubmissionStatusView {
    * UUID: the all-submissions list mixes lanes and two rows under one title
    * would otherwise be indistinguishable. */
   lane: "internal" | "company";
+  /** §5.16 time saved per month, in MINUTES; null = the submitter has not
+   * reported one. Formatted for display by src/lib/work/time-saved.ts, never
+   * by a caller doing its own division. Projected on EVERY row (not only the
+   * viewer's own) under the file header's standing rule that every caller of
+   * statusView is already owner-or-admin; the admin all-submissions list
+   * shows it read-only, and the inline editor belongs on the owner's row. */
+  timeSavedMinutes: number | null;
   /** Company lane only, and only on the admin all-submissions list: the
    * company's display name and registered domain. The chip needs the name to
    * tell two tenants apart, and the move field needs the DOMAIN because it is
@@ -194,6 +201,7 @@ export function statusView(
       row.creatorEmail && !sameEmail(row.creatorEmail, row.submitterEmail)
         ? row.creatorEmail
         : null,
+    timeSavedMinutes: row.timeSavedMinutes,
     lane: row.companyId === null ? "internal" : "company",
     laneName: row.companyId === null ? null : (opts?.lane?.name ?? null),
     laneDomain: row.companyId === null ? null : (opts?.lane?.domain ?? null),

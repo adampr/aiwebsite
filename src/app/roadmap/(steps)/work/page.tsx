@@ -37,6 +37,7 @@ import {
   RetrySubmission,
   RoadmapSubmitEntry,
   SubmissionProgress,
+  TimeSavedEditor,
 } from "./work-islands";
 
 export const dynamic = "force-dynamic";
@@ -177,6 +178,39 @@ export default async function RoadmapWorkPage() {
                 {(row.status === "failed" || row.status === "received") && (
                   <RetrySubmission id={row.id} />
                 )}
+                {/* §5.16 time saved per month (owner ask 2026-08-27). Every
+                    row in this list is the VIEWER's own (mySubmissions is
+                    keyed on p.email), so the ownership question the
+                    /work/submit list has to answer per row is already
+                    settled here - the route re-checks it regardless.
+                    Offered on every status, published included: this list is
+                    where a company member comes back once the tool has been
+                    in use for a month, which is the only point at which the
+                    number is knowable. The admin "All {company} Submissions"
+                    list below deliberately does NOT get it: that view is
+                    titles, status and submitter only, and someone else's
+                    self-reported estimate is not an admin's to edit.
+                    The title rides along for the toggle's accessible name
+                    only: five rows would otherwise give a screen reader five
+                    buttons named "Edit", with nothing in the announcement to
+                    say which submission each one belongs to. The status
+                    rides along for one decision inside the island: a
+                    superseded row shows its number read-only and offers no
+                    control, because nothing reads it. That branch is
+                    DEFENSIVE here rather than live: this list is not
+                    status-filtered (mySubmissions selects every row the
+                    person owns), but a company row can never BE superseded
+                    (0035's work_sub_company_no_update_ck, plus the update
+                    route and publishWithSupersede both refusing company
+                    lanes). It earns its place by keeping the island honest
+                    for the staff lane, where the same shared surface would
+                    meet real superseded rows. */}
+                <TimeSavedEditor
+                  id={row.id}
+                  title={row.title}
+                  status={row.status}
+                  minutes={row.timeSavedMinutes}
+                />
                 {/* basis-full: the <li> is a wrapping flex line of inline
                     metadata, and the tracker is a block that owns its own
                     row under it. Nothing else on this server-rendered page

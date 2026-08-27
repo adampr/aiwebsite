@@ -19,6 +19,7 @@ import Link from "next/link";
 import { readStaffPage, requireRoadmapPage } from "@/lib/roadmap/access";
 import { scorecardRows, type ScorecardRow } from "@/lib/roadmap/db";
 import { personLabelParts } from "@/lib/person-label";
+import { formatTimeSavedCompact } from "@/lib/work/time-saved";
 import { LocalTime } from "@/components/local-time";
 import { AddToDirectory } from "./scorecard-islands";
 
@@ -108,6 +109,36 @@ function ScoreRows({
             >
               {row.published}
             </td>
+            {/* §5.16 "Time saved / mo": the sum, in minutes, of what this
+                person reported on their own PUBLISHED cards in this lane,
+                rendered compact ("6h 30m") because a scorecard column is
+                read down, not read aloud. PUBLISHED-ONLY is the whole
+                reason this cell is safe to show: the aggregate behind it
+                shares its predicate with the Published column, so a person
+                with 0 published can never show a nonzero figure here. If it
+                counted held, failed or in-review rows, a nonzero cell beside
+                a 0 in Published would announce to every colleague on this
+                page that this person tried and it did not survive the panel,
+                which is exactly what this scorecard exists not to reveal.
+                The same predicate also drops superseded rows, so an updated
+                card and the card it replaced are never both counted.
+                Deliberately NOT a CountCell: that component's link-plus-
+                sr-only treatment exists because a nonzero count promises a
+                click-through list, and there is no per-person time-saved
+                list to open. A plain cell like Published is the honest
+                shape. Faint when the figure is 0, on the Published column's
+                rule that not-yet is a state and not a verdict; the faint
+                middot for a row with no email on file matches the count
+                columns, because a person we cannot match to submissions has
+                no figure rather than a zero one. */}
+            <td
+              className="border-b border-[var(--xl-line)] py-2 pr-4"
+              style={
+                !row.email || row.timeSavedMinutes === 0 ? faint : undefined
+              }
+            >
+              {row.email ? formatTimeSavedCompact(row.timeSavedMinutes) : "·"}
+            </td>
             <CountCell
               n={row.requested}
               email={row.email}
@@ -161,6 +192,12 @@ function ScoreRows({
 const HEADERS = [
   "Person",
   "Published",
+  // Sits next to Published on purpose: the two are computed from the same
+  // published-only aggregate, and reading them side by side is what makes
+  // the "0 published, so nothing saved" row self-explanatory. Inserting
+  // here is safe for HeaderRow's padding rule below, which drops the right
+  // padding by INDEX on the last column rather than by name.
+  "Time saved / mo",
   "Requested",
   "Working on",
   "Completed",
@@ -198,7 +235,9 @@ export default async function RoadmapScorecardPage() {
       `being worked on, and validated completions. It is visible to ` +
       `signed-in XL.net staff. Drafts, in-review submissions, and pending ` +
       `or rejected requests never appear here, and it is not used to ` +
-      `evaluate anyone.`;
+      `evaluate anyone. Time saved per month is what each person reported ` +
+      `for themselves about their own work. No one measures or verifies ` +
+      `it, and it is added up from published cards only.`;
     return (
       <div className="space-y-10">
         <section>
@@ -264,7 +303,9 @@ export default async function RoadmapScorecardPage() {
     `requests only; drafts, in-review submissions, and pending or rejected ` +
     `requests never appear here. It is maintained by ${company.name}'s own ` +
     `administrators, not by XL.net, and XL.net does not use it to evaluate ` +
-    `anyone.`;
+    `anyone. Time saved per month is what each submitter reported for ` +
+    `themselves about their own work. No one measures or verifies it, and ` +
+    `it is added up from published cards only.`;
 
   return (
     <div className="space-y-10">

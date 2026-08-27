@@ -47,6 +47,7 @@ import { storeArchiveFiles } from "@/lib/work/archive-store";
 import { deployBlocksPanel } from "@/lib/work/deploy-window";
 import { noteQueueWait, queueReasonFor } from "@/lib/work/queue-signal";
 import { sameEmail } from "@/lib/work/transfer";
+import { parseTimeSavedHours } from "@/lib/work/time-saved";
 import { splitMachineEcho } from "@/lib/work/names";
 import { kickPanel } from "@/lib/work/panel";
 import { ROADMAP_CAPS } from "@/lib/roadmap/config";
@@ -260,6 +261,19 @@ export async function POST(req: Request): Promise<Response> {
       `Description can be up to ${WORK_CAPS.blurbMaxChars} characters (it is optional; the card is written from your documents).`,
       400
     );
+  // §5.16 "time saved per month for you" (owner ask 2026-08-27): OPTIONAL
+  // here, and never present on an email-lane row, so an absent field is a
+  // successful parse to null rather than a refusal. Validated at this point
+  // and not later because this is the first line where the value exists, and
+  // failing here still spares the caller inspectArchive walking the whole
+  // package for a submission that is going to be refused over one number.
+  // (It cannot spare the UPLOAD itself: req.formData() above has already
+  // buffered the multipart body, which is why the size gates run before it.)
+  // form.get() returns null when the field was never sent and a File if
+  // something posts one under this name; parseTimeSavedHours refuses by TYPE
+  // instead of coercing, so neither can be mistaken for a real report.
+  const timeSaved = parseTimeSavedHours(form.get("timeSavedHours"));
+  if (!timeSaved.ok) return workError("invalid_request", timeSaved.message, 400);
   // Duplicate-title guard (§5.16, 2026-07-30: the owner triple-submitted the
   // same tool because nothing stopped him). One public page, one active
   // submission per title, from anyone; failed rows never block.
@@ -432,6 +446,10 @@ export async function POST(req: Request): Promise<Response> {
     kind,
     title,
     blurb,
+    // null when the field was empty or 0 (the parser's "not reported"), which
+    // is what every email-lane row carries too. The owner can set or change
+    // it afterwards on their own row via the time-saved route.
+    timeSavedMinutes: timeSaved.minutes,
     architectureText: kind === "program" ? docText : null,
     skillMdText: kind === "skill" ? docText : null,
     fileManifestJson: JSON.stringify(extracted.manifest),
