@@ -19,6 +19,14 @@ import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/r
 export const LETTER_LABEL = "__letter";
 export const LETTER_TITLE = "Cover Letter";
 
+/** Whole-document scope sentinel for the Tron pane (§5.17.1): the section
+ *  route treats this label as "plan a revision across every section" rather
+ *  than a section lookup. Same unforgeability story as LETTER_LABEL: it
+ *  shares the reserved "__" namespace, and readRfp strips leading
+ *  underscores from client labels, so a hostile RFP cannot mint a section
+ *  whose label triggers the plan branch. */
+export const DOC_LABEL = "__doc";
+
 /** Client-authored labels never start "__": readRfp runs every structure
  *  label and requirement structureLabel through this, so a hostile document
  *  cannot mint a record that lands in a reserved slot. */

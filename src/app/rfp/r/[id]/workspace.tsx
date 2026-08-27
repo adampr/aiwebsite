@@ -39,7 +39,12 @@ import {
 } from "@/lib/rfp/quote";
 import { parseStaffRange, type StatedStaff } from "@/lib/rfp/staff-count";
 import { normalizeGapQuestion } from "@/lib/rfp/gaps";
-import { DEFAULT_LETTER_BODY, LETTER_LABEL, LETTER_TITLE } from "@/lib/rfp/letter";
+import {
+  DEFAULT_LETTER_BODY,
+  DOC_LABEL,
+  LETTER_LABEL,
+  LETTER_TITLE,
+} from "@/lib/rfp/letter";
 import { COMPANY_SIGNATURE, type PersonSignature } from "@/lib/rfp/signature";
 import type { PricingQuote } from "@/lib/rfp/content-model";
 import type { GateResult } from "@/lib/rfp/validators/gate";
@@ -346,6 +351,50 @@ export function Workspace({
     current: string[];
     note: string;
   } | null>(null);
+  // ---- the whole-document flow (scope === DOC_LABEL) ----
+  // One plan turn names the sections to change, then the SAME per-section
+  // revise call runs on each, sequentially, collecting proposals here. Each
+  // is accepted or discarded exactly like the single proposal above.
+  const [docProposals, setDocProposals] = useState<
+    {
+      label: string;
+      proposed: string[];
+      current: string[];
+      note: string;
+      directive: string;
+    }[]
+  >([]);
+  // The planner's own summary line; also Tron's whole answer when it
+  // selects zero sections (a refused or already-satisfied request).
+  const [docPlanNote, setDocPlanNote] = useState("");
+  const [docRun, setDocRun] = useState<{
+    done: number;
+    total: number;
+    current: string;
+  } | null>(null);
+  const [docFailures, setDocFailures] = useState<string[]>([]);
+  const [docStopped, setDocStopped] = useState(false);
+  // Stop was pressed but the in-flight section is still landing; the button
+  // acknowledges immediately instead of sitting inert for up to a minute.
+  const [docStopping, setDocStopping] = useState(false);
+  // Labels accepted from the doc list, for the multi-section receipt.
+  const [docApplied, setDocApplied] = useState<string[]>([]);
+  // Use-all in flight: per-entry Use this/Discard freeze so a click cannot
+  // race the sequential applies into a double accept or a stranded discard.
+  const [docAccepting, setDocAccepting] = useState(false);
+  // Tron's own stop flag. NOT draftAll's stopRef: the two loops can run at
+  // the same time, and a shared flag would make Stop on one kill the other.
+  const tronStopRef = useRef(false);
+  // Run generation. clearDocFlow bumps it; the doc loop captures it at entry
+  // and bails once it moves. Without this, changing the scope mid-run cleared
+  // the UI but the loop kept POSTing for up to 40 x ~90s and repopulated the
+  // "cleared" proposal list, which is exactly the stale-Use-this hazard the
+  // clear exists to prevent.
+  const docRunIdRef = useRef(0);
+  // What the busy line describes. Keyed on the RUN as started, never on the
+  // current select value: changing the scope mid-flight otherwise relabels a
+  // live doc run as "Reading the section", which is false.
+  const [busyKind, setBusyKind] = useState<"section" | "doc" | null>(null);
   const [notice, setNotice] = useState("");
 
   // ---- the live-update choreography (governance pattern) ----
@@ -1111,34 +1160,76 @@ export function Workspace({
     setNotice("");
   }
 
+  /** How a human reads a section reference anywhere in the Tron pane.
+   *  Reads the `sections` STATE, not sectionsRef: it renders, and a ref
+   *  read during render is the exact staleness the ref exists to avoid. */
+  const tronDisplay = (label: string) => {
+    if (label === LETTER_LABEL) return LETTER_TITLE;
+    const sec = sections.find((s) => s.label === label);
+    return sec ? `${sec.label} ${sec.title}`.trim() : label;
+  };
+
+  /** Every doc-flow surface, back to blank. A stale plan with a live "Use
+   *  this" invites a wrong write, same reason the single proposal clears. */
+  const clearDocFlow = () => {
+    // Invalidate any live doc loop FIRST: clearing the surfaces without
+    // detaching the loop let it repopulate them from in-flight responses.
+    docRunIdRef.current += 1;
+    setDocProposals([]);
+    setDocPlanNote("");
+    setDocRun(null);
+    setDocFailures([]);
+    setDocStopped(false);
+    setDocStopping(false);
+    setDocApplied([]);
+  };
+
+  /** One Tron POST, JSON or multipart depending on the attached file. The
+   *  file is re-sent per call: "align each section with the attached
+   *  document" needs the content at revise time, not only at plan time. */
+  const postTron = (payload: {
+    label: string;
+    instruction: string;
+    directive?: string;
+  }): Promise<Response | null> => {
+    if (tronFile) {
+      const form = new FormData();
+      form.set("label", payload.label);
+      form.set("instruction", payload.instruction);
+      if (payload.directive) form.set("directive", payload.directive);
+      form.set("file", tronFile);
+      return fetch(`/api/rfp/proposals/${proposalId}/section`, {
+        method: "POST",
+        body: form,
+      }).catch(() => null);
+    }
+    return fetch(`/api/rfp/proposals/${proposalId}/section`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => null);
+  };
+
   async function askTron() {
     if (!proposalId || !scope || instruction.trim().length < 3) return;
     setTronBusy(true);
+    setBusyKind(scope === DOC_LABEL ? "doc" : "section");
     setNotice("");
     setTronError("");
     setTronApplied(null);
     // A new request supersedes the open proposal; leaving it on screen with
     // a live "Use this" invites accepting section A's old text while B is
-    // in flight.
+    // in flight. The doc flow's collected proposals clear for the same
+    // reason.
     setProposal(null);
-    let res: Response | null;
-    if (tronFile) {
-      const form = new FormData();
-      form.set("label", scope);
-      form.set("instruction", instruction);
-      form.set("file", tronFile);
-      res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
-        method: "POST",
-        body: form,
-      }).catch(() => null);
-    } else {
-      res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ label: scope, instruction }),
-      }).catch(() => null);
+    clearDocFlow();
+    if (scope === DOC_LABEL) {
+      await askTronDoc();
+      return;
     }
+    const res = await postTron({ label: scope, instruction });
     setTronBusy(false);
+    setBusyKind(null);
     if (!res) {
       setTronError("The server could not be reached. Nothing has been changed.");
       return;
@@ -1161,55 +1252,229 @@ export function Workspace({
     });
   }
 
-  async function acceptProposal() {
-    if (!proposal || !proposalId) return;
-    // The section may have moved since Tron read it (a gap answer woven in,
-    // a colleague's edit, the user's own). Accepting would overwrite that
-    // silently, because the PATCH sends whole paragraphs and its rev CAS
-    // only fences writes concurrent with the PATCH itself.
-    const live = sectionsRef.current.find((x) => x.label === proposal.label);
-    const changedSince =
-      live !== undefined &&
-      (live.paragraphs.length !== proposal.current.length ||
-        live.paragraphs.some((p, i) => p !== proposal.current[i]));
-    if (changedSince) {
+  /** The whole-document flow: one PLAN turn names the sections to change,
+   *  then the targets loop through the EXISTING per-section revise call,
+   *  one at a time (never parallel: the brain semaphore has 2 slots shared
+   *  with Twilio voice), same client-driven pattern as draftAll. Nothing is
+   *  written; every proposal still waits for its own accept. */
+  async function askTronDoc() {
+    tronStopRef.current = false;
+    // Captured AFTER askTron's clearDocFlow bump. Once the ref moves again
+    // (scope change, another clear), this run is abandoned: no more POSTs,
+    // no more writes to the doc surfaces. Only stale() may end the run with
+    // the surfaces untouched, and it may clear tronBusy because a NEW ask
+    // cannot start while the button is disabled on tronBusy.
+    const runId = docRunIdRef.current;
+    const stale = () => docRunIdRef.current !== runId;
+    const res = await postTron({ label: DOC_LABEL, instruction });
+    if (stale()) {
+      setTronBusy(false);
+      setBusyKind(null);
+      return;
+    }
+    if (!res) {
+      setTronBusy(false);
+      setBusyKind(null);
+      setTronError("The server could not be reached. Nothing has been changed.");
+      return;
+    }
+    if (!res.ok) {
+      const d = await res.json().catch(() => null);
+      setTronBusy(false);
+      setBusyKind(null);
       setTronError(
-        "This section changed after Tron read it. Using this would undo that change. Ask Tron again so it reads the current text; if it keeps saying this, reload the page."
+        d?.message ?? "Tron did not answer. Nothing has been changed."
       );
       return;
     }
+    const d = await res.json().catch(() => null);
+    const targets: { label: string; directive: string }[] = Array.isArray(
+      d?.plan?.targets
+    )
+      ? d.plan.targets
+      : [];
+    const note = typeof d?.plan?.note === "string" ? d.plan.note : "";
+    if (targets.length === 0) {
+      // Zero targets is Tron's ANSWER (nothing to change, or a request it
+      // must refuse), not a failure; it renders as the plan note.
+      setTronBusy(false);
+      setBusyKind(null);
+      setDocPlanNote(
+        note || "Tron found nothing to change for that request."
+      );
+      return;
+    }
+    setDocPlanNote(note);
+    const failures: string[] = [];
+    // Counts sections actually sent, not loop index: a section deleted
+    // since the plan is skipped, and "(3 of 7)" jumping to "(5 of 7)"
+    // reads as a lost response.
+    let attempted = 0;
+    for (let i = 0; i < targets.length; i++) {
+      if (tronStopRef.current || stale()) break;
+      const t = targets[i];
+      // The plan read a snapshot; a section deleted since then (another
+      // tab's redraft) just drops out of the run.
+      const live = sectionsRef.current.find((s) => s.label === t.label);
+      if (!live) continue;
+      const display =
+        live.label === LETTER_LABEL
+          ? LETTER_TITLE
+          : `${live.label} ${live.title}`.trim();
+      setDocRun({ done: attempted, total: targets.length, current: display });
+      attempted++;
+      const r = await postTron({
+        label: t.label,
+        instruction,
+        directive: t.directive,
+      });
+      if (stale()) {
+        setTronBusy(false);
+        setBusyKind(null);
+        return;
+      }
+      if (!r || !r.ok) {
+        const rd = r ? await r.json().catch(() => null) : null;
+        failures.push(
+          `${display}: ${
+            rd?.message ??
+            (r
+              ? "Tron did not return a revision."
+              : "The server could not be reached.")
+          }`
+        );
+        continue;
+      }
+      const rd = await r.json().catch(() => null);
+      if (!rd || !Array.isArray(rd.proposed)) {
+        failures.push(`${display}: Tron did not return a revision.`);
+        continue;
+      }
+      // Pushed AS IT ARRIVES: the user reads early proposals while later
+      // sections are still thinking.
+      setDocProposals((prev) => [
+        ...prev,
+        {
+          label: t.label,
+          proposed: rd.proposed,
+          current: Array.isArray(rd.current) ? rd.current : live.paragraphs,
+          note: String(rd.note ?? ""),
+          directive: t.directive,
+        },
+      ]);
+    }
+    setDocStopped(tronStopRef.current);
+    setDocStopping(false);
+    setDocRun(null);
+    setDocFailures(failures);
+    setTronBusy(false);
+    setBusyKind(null);
+  }
+
+  /**
+   * The accept write, shared by the single proposal's "Use this" and every
+   * whole-document entry. Returns an error string to show, or null.
+   *
+   * The staleness guard: the section may have moved since Tron read it (a
+   * gap answer woven in, a colleague's edit, the user's own). Accepting
+   * would overwrite that silently, because the PATCH sends whole paragraphs
+   * and its rev CAS only fences writes concurrent with the PATCH itself.
+   */
+  async function applyProposal(p: {
+    label: string;
+    proposed: string[];
+    current: string[];
+  }): Promise<string | null> {
+    if (!proposalId) return "The proposal is gone. Reload the page.";
+    const live = sectionsRef.current.find((x) => x.label === p.label);
+    const changedSince =
+      live !== undefined &&
+      (live.paragraphs.length !== p.current.length ||
+        live.paragraphs.some((q, i) => q !== p.current[i]));
+    if (changedSince)
+      return "This section changed after Tron read it. Using this would undo that change. Ask Tron again so it reads the current text; if it keeps saying this, reload the page.";
     const res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        label: proposal.label,
-        paragraphs: proposal.proposed,
+        label: p.label,
+        paragraphs: p.proposed,
       }),
     }).catch(() => null);
     if (!res || !res.ok) {
       const d = res ? await res.json().catch(() => null) : null;
-      setTronError(
+      return (
         d?.message ??
-          (res
-            ? "That change was not saved."
-            : "The server could not be reached.")
+        (res
+          ? "That change was not saved."
+          : "The server could not be reached.")
       );
-      return;
     }
     const d = await res.json().catch(() => null);
     adoptRev(d?.rev);
     setGateResult(null);
     setSections((prev) =>
       prev.map((s) =>
-        s.label === proposal.label ? { ...s, paragraphs: proposal.proposed } : s
+        s.label === p.label ? { ...s, paragraphs: p.proposed } : s
       )
     );
-    showChanged([proposal.label]);
+    showChanged([p.label]);
+    return null;
+  }
+
+  async function acceptProposal() {
+    if (!proposal || !proposalId) return;
+    const err = await applyProposal(proposal);
+    if (err) {
+      setTronError(err);
+      return;
+    }
     setTronApplied(proposal.label);
     setProposal(null);
     setInstruction("");
     setTronFile(null);
     setTronError("");
+  }
+
+  async function acceptDocProposal(label: string) {
+    const entry = docProposals.find((p) => p.label === label);
+    if (!entry) return;
+    const err = await applyProposal(entry);
+    if (err) {
+      setTronError(`${tronDisplay(label)}: ${err}`);
+      return;
+    }
+    setDocApplied((prev) => [...prev, label]);
+    setDocProposals((prev) => prev.filter((p) => p.label !== label));
+    // The stopped line says nothing has been written; an accept just did.
+    setDocStopped(false);
+    setTronError("");
+  }
+
+  /** Apply every remaining doc proposal, in order, stopping on the first
+   *  failure so the section that refused is named rather than buried.
+   *  docAccepting freezes the per-entry buttons for the duration: this
+   *  iterates a click-time snapshot, so a Discard clicked mid-sequence
+   *  would still be applied, and a second Use this would double-accept
+   *  into the staleness guard's confusing error. */
+  async function acceptAllDocProposals() {
+    if (docAccepting) return;
+    setDocAccepting(true);
+    try {
+      for (const entry of [...docProposals]) {
+        const err = await applyProposal(entry);
+        if (err) {
+          setTronError(`${tronDisplay(entry.label)}: ${err}`);
+          return;
+        }
+        setDocApplied((prev) => [...prev, entry.label]);
+        setDocProposals((prev) => prev.filter((p) => p.label !== entry.label));
+        setDocStopped(false);
+      }
+      setTronError("");
+    } finally {
+      setDocAccepting(false);
+    }
   }
 
   const blocks =
@@ -1720,9 +1985,13 @@ export function Workspace({
                       setProposal(null);
                       setTronError("");
                       setTronApplied(null);
+                      // Same reason the single proposal clears: a live
+                      // "Use this" over stale text invites a wrong write.
+                      clearDocFlow();
                     }}
                   >
                     <option value="">Pick a section</option>
+                    <option value={DOC_LABEL}>The whole document</option>
                     {sections.map((sec) => (
                       <option key={sec.label} value={sec.label}>
                         {sec.label === LETTER_LABEL
@@ -1766,22 +2035,54 @@ export function Workspace({
                 </div>
                 <p className="mt-2 text-xs text-faint">
                   Tron can reword, tighten, reorder, and work from an attached
-                  PDF, Word, or text file as you direct. It will not add a
-                  price, a contract length, or a claim the knowledge base does
-                  not support. Images cannot be read yet.
+                  PDF, Word, or text file as you direct. Choosing the whole
+                  document plans the change first, then proposes a revision
+                  for each affected section. It will not add a price, a
+                  contract length, or a claim the knowledge base does not
+                  support. Images cannot be read yet.
                 </p>
-                <button
-                  type="button"
-                  className="btn btn--primary mt-4"
-                  disabled={tronBusy || !scope || instruction.trim().length < 3}
-                  onClick={askTron}
-                >
-                  {tronBusy ? "Thinking" : "Propose a change"}
-                </button>
-                {tronBusy && (
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    disabled={tronBusy || !scope || instruction.trim().length < 3}
+                    onClick={askTron}
+                  >
+                    {tronBusy ? "Thinking" : "Propose a change"}
+                  </button>
+                  {docRun && (
+                    <button
+                      type="button"
+                      className="btn btn--text"
+                      disabled={docStopping}
+                      onClick={() => {
+                        tronStopRef.current = true;
+                        setDocStopping(true);
+                      }}
+                    >
+                      {docStopping
+                        ? "Stopping after this section"
+                        : "Stop after this section"}
+                    </button>
+                  )}
+                </div>
+                {busyKind === "section" && (
                   <p className="mt-3 text-sm text-faint" role="status">
                     Reading the section{tronFile ? " and your document" : ""}.
                     Under a minute.
+                  </p>
+                )}
+                {busyKind === "doc" && !docRun && (
+                  <p className="mt-3 text-sm text-faint" role="status">
+                    Planning the changes across the whole document. Under two
+                    minutes.
+                  </p>
+                )}
+                {docRun && (
+                  <p className="mt-3 text-sm text-faint" role="status">
+                    Revising <span className="mono">{docRun.current}</span> (
+                    {docRun.done + 1} of {docRun.total}). Under a minute each.
+                    Nothing is written until you use a proposal.
                   </p>
                 )}
                 {tronError && (
@@ -1808,6 +2109,50 @@ export function Workspace({
                     </button>
                   </p>
                 )}
+                {docStopped && (
+                  <p className="mt-3 text-sm text-faint" role="status">
+                    Stopped.{" "}
+                    {/* Phrased off docApplied at RENDER time: an accept can
+                        land mid-run, before this line exists, and "nothing
+                        has been written" would then be false. */}
+                    {docApplied.length > 0
+                      ? "The sections you already used are saved; nothing else has been written."
+                      : docProposals.length > 0
+                        ? "The proposals already collected are below; nothing has been written."
+                        : "Nothing has been written."}
+                  </p>
+                )}
+                {docPlanNote && (
+                  <p className="mt-3 text-sm text-faint" role="status">
+                    {docPlanNote}
+                  </p>
+                )}
+                {docFailures.length > 0 && (
+                  <div className="mt-3 space-y-1 text-sm" role="alert">
+                    {docFailures.map((f, i) => (
+                      <p key={i}>{f}</p>
+                    ))}
+                  </div>
+                )}
+                {docApplied.length > 0 &&
+                  docProposals.length === 0 &&
+                  !docRun &&
+                  !tronBusy && (
+                    <p className="mt-3 text-xs text-faint" role="status">
+                      Used in {docApplied.length} section
+                      {docApplied.length === 1 ? "" : "s"}.{" "}
+                      <button
+                        type="button"
+                        className="linklike"
+                        onClick={() => {
+                          setMobile("draft");
+                          window.setTimeout(() => jumpTo(docApplied[0]), 60);
+                        }}
+                      >
+                        View the first
+                      </button>
+                    </p>
+                  )}
 
                 {proposal && (
                   <div className="mt-6 border-t pt-4" style={{ borderColor: "var(--xl-line)" }}>
@@ -1852,6 +2197,90 @@ export function Workspace({
                         ))}
                       </div>
                     </details>
+                  </div>
+                )}
+
+                {docProposals.length > 0 && (
+                  <div
+                    className="mt-6 border-t pt-4"
+                    style={{ borderColor: "var(--xl-line)" }}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <span className="sys-label">
+                        Proposed for {docProposals.length} section
+                        {docProposals.length === 1 ? "" : "s"}
+                        {docRun ? ", more on the way" : ""}
+                      </span>
+                      {docProposals.length > 1 && (
+                        // Disabled while the loop still collects: applying a
+                        // snapshot mid-run would strand the entries that
+                        // land after the click.
+                        <button
+                          type="button"
+                          className="btn btn--text"
+                          disabled={tronBusy || docAccepting}
+                          onClick={() => void acceptAllDocProposals()}
+                        >
+                          {docAccepting ? "Using all" : "Use all"}
+                        </button>
+                      )}
+                    </div>
+                    {docProposals.map((p) => (
+                      <div
+                        key={p.label}
+                        className="mt-4 border-t pt-4"
+                        style={{ borderColor: "var(--xl-line)" }}
+                      >
+                        <span className="sys-label">
+                          {tronDisplay(p.label)}
+                        </span>
+                        {p.directive && (
+                          <p className="mt-1 text-xs text-faint">
+                            {p.directive}
+                          </p>
+                        )}
+                        {p.note && (
+                          <p className="mt-3 text-sm text-faint">{p.note}</p>
+                        )}
+                        <div className="mt-3 max-h-[40vh] space-y-3 overflow-y-auto text-sm">
+                          {p.proposed.map((q, i) => (
+                            <p key={i}>{q}</p>
+                          ))}
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-3">
+                          <button
+                            type="button"
+                            className="btn btn--primary"
+                            disabled={docAccepting}
+                            onClick={() => void acceptDocProposal(p.label)}
+                          >
+                            Use this
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn--text"
+                            disabled={docAccepting}
+                            onClick={() =>
+                              setDocProposals((prev) =>
+                                prev.filter((x) => x.label !== p.label)
+                              )
+                            }
+                          >
+                            Discard
+                          </button>
+                        </div>
+                        <details className="mt-3">
+                          <summary className="linklike text-xs">
+                            The text it replaces
+                          </summary>
+                          <div className="mt-2 space-y-2 text-xs text-faint">
+                            {p.current.map((q, i) => (
+                              <p key={i}>{q}</p>
+                            ))}
+                          </div>
+                        </details>
+                      </div>
+                    ))}
                   </div>
                 )}
                   </>
