@@ -10,3 +10,12 @@
 # and the #715 drift auto-resolution in prod (goal scheduler hard-skips
 # while the file exists). Never ship it.
 packages/brain/data/model-registry.json.freeze
+# The /builders webinar (public/media/*.mp4, 136 MB) is GITIGNORED and untracked,
+# so it exists only in a checkout that happens to have it. sync_dir() runs
+# `rsync -az --delete` and nothing else covered this path, so a deploy driven from
+# a fresh clone or a worktree would have found no local mp4 and DELETED the video
+# from production (/builders would link a 404). Excluded paths are never deleted
+# — this is not --delete-excluded — so prod keeps its copy no matter which
+# checkout deploys. Cost: a NEW/re-encoded video no longer rides the sync and must
+# be pushed to the VM explicitly, exactly like data/GeoLite2-ASN.mmdb.
+public/media

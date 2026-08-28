@@ -1963,15 +1963,29 @@ copy since 2026-08-26, above):
 - **Webinar recording:** `/builders` links a self-hosted copy of the May 21 Zoom
   webinar ("AI in the Workplace: Productivity Opportunities and Cybersecurity Risks",
   54 min, 136 MB) at `public/media/ai-in-the-workplace-webinar-2026-05.mp4`. The file
-  is **gitignored** (`/public/media/*.mp4`) but ships to the VM anyway because
-  deploy.sh rsyncs the working tree — like `data/GeoLite2-ASN.mmdb`, it must exist on
-   `deploy/rsync-excludes.txt` (host-owned, appended to both exclude sets)
-   excludes `.claude/worktrees`: concurrent agent sessions keep git worktrees
-   INSIDE the repo and churn them mid-deploy; a worktree vanishing during the
-   rsync aborted a deploy with exit 23 (2026-07-17).
-  the dev box for a rebuild (source: the Zoom share link in the AI Builder launch
-  email; the pwd-tokenized share URL → `share-info` → `play/info` API flow yields the
-  `viewMp4Url`). Next serves it from `public/` with Range support (seekable playback).
+  is **gitignored** (`/public/media/*.mp4`), so it is not in git and cannot be restored
+  from it. It must exist on the dev box for a rebuild (source: the Zoom share link in
+  the AI Builder launch email; the pwd-tokenized share URL → `share-info` →
+  `play/info` API flow yields the `viewMp4Url`). Next serves it from `public/` with
+  Range support (seekable playback).
+- **Why `public/media` is in `deploy/rsync-excludes.txt` (2026-08-28).** It used to
+  reach the VM only because `deploy.sh` rsyncs the working tree and the file happened
+  to sit in the deploying checkout. That is not a delivery mechanism, it is a
+  coincidence: `sync_dir()` runs `rsync -az --delete`, nothing in `rsync_excludes`
+  covered `public/media`, and the file is gitignored — so a deploy driven from a fresh
+  clone or a `.claude/worktrees` worktree would have found no mp4 locally and
+  **silently deleted the webinar from production**, leaving `/builders` linking a 404.
+  Excluding the path fixes that in the direction that fails safe: excluded paths are
+  never deleted (this is not `--delete-excluded`), so prod keeps the copy it has
+  regardless of what the deploying checkout contains. **The cost, stated because it is
+  a real regression in convenience:** a NEW or re-encoded video no longer rides the
+  sync and must be pushed to the VM explicitly — the same handling
+  `data/GeoLite2-ASN.mmdb` already gets (`deploy.sh` ships that one by name after the
+  rsync). Verified after the 2026-08-28 deploys: HTTP 206 on a Range request.
+- **Deploy note:** `deploy/rsync-excludes.txt` (host-owned, appended to both exclude
+  sets) also excludes `.claude/worktrees`: concurrent agent sessions keep git worktrees
+  INSIDE the repo and churn them mid-deploy; a worktree vanishing during the
+  rsync aborted a deploy with exit 23 (2026-07-17).
 
 ### 5.11 AI-news blog (module §19, host-owned news seam)
 
