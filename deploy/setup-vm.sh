@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@c998badfbc6ec55a3ff487d85239df4931076e6ab17c9b231ca746d2bccd0175
+# aicompany-template: setup-vm.sh.tpl@b5631580f01f3384761d0a960935f5a229f5df634e724b4507608d5eda7f399e
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -470,6 +470,23 @@ sentinel_should_abort() {  # <misses> <threshold> → exit 0 = abort
 }
 sentinel_flag="$stage_dir/.liveness-abort"
 rm -f "$sentinel_flag"
+
+# The sentinel protects a LIVE site from being starved by stage work. On a FIRST
+# deploy there is no live site — nothing has ever listened on :3000 — so every
+# probe misses, three misses arrive in 30 seconds, and it SIGKILLs the staging it
+# was meant to protect: a brand-new host could never complete its first deploy.
+# (Observed on topmspnearme: install-brain killed at exit 137 with an empty
+# /var/www tree.) Arm only if the site answered healthy BEFORE staging — strictly
+# narrowing, since on an established host the probe succeeds and nothing changes.
+# A sentinel guarding something that is not running has nothing to protect and can
+# only produce false aborts.
+sentinel_arm=1
+if ! curl -fsS -m 5 "http://127.0.0.1:3000/api/health" 2>/dev/null | grep -q '"status":"ok"'; then
+  sentinel_arm=0
+  echo ">>> liveness sentinel DISARMED: no healthy site on :3000 before staging"
+  echo "    (first deploy, or the site is already down — either way there is no"
+  echo "     live traffic for stage work to starve)."
+fi
 deploy_sentinel() {
   misses=0
   ticks=0
@@ -492,9 +509,14 @@ deploy_sentinel() {
 }
 # Spawn closes fd 200 AND 201 (B1 class): the sentinel is a long-lived child
 # that must never inherit + pin the deploy or stage lock.
-deploy_sentinel 200>&- 201>&- &
-sentinel_pid=$!
-trap 'kill "$sentinel_pid" 2>/dev/null || true; rm -f "$sentinel_flag"' EXIT
+if [ "$sentinel_arm" = "1" ]; then
+  deploy_sentinel 200>&- 201>&- &
+  sentinel_pid=$!
+  trap 'kill "$sentinel_pid" 2>/dev/null || true; rm -f "$sentinel_flag"' EXIT
+else
+  sentinel_pid=""
+  trap 'rm -f "$sentinel_flag"' EXIT
+fi
 
 # Re-touch the mutex marker after each staged step (v1.4.0 rule): the whole
 # install+build span can outrun the watchdog's 30-min TTL on a small VM.
