@@ -13,6 +13,11 @@ import {
   proseLength,
 } from "../src/lib/work/extract";
 import {
+  classifyWorkKind,
+  kindVerdictSentence,
+  hasSkillFrontmatter as classifyFrontmatter,
+} from "../src/lib/work/classify";
+import {
   isNoneFound,
   lintCard,
   quoteInCorpus,
@@ -24,7 +29,6 @@ import { isFreshDate } from "../src/lib/governance/approval";
 import {
   archiveDeclaredNames,
   docDeclaredNames,
-  inferKind,
   isPlaceholderSubject,
   isSenderIdentity,
   looksLikeAWorkName,
@@ -1583,11 +1587,351 @@ async function main() {
     "8.3-truncated .SKI recognized as the package"
   );
 
-  assert.equal(inferKind("OUTAGE_1.SKI", false, null), "skill");
-  assert.equal(inferKind("tool.skill", false, null), "skill");
-  assert.equal(inferKind("tool.zip", true, null), "skill");
-  assert.equal(inferKind("tool.zip", false, null), "program");
-  assert.equal(inferKind("tool.skill", true, "program"), "program", "explicit kind wins");
+  // ---- kind inference (§5.16, owner directive 2026-08-28) ----
+  // The ladder is the contract. Every rung gets a test, and the two ORDER
+  // inversions get one each, because the order is the part a later edit is
+  // most likely to break by "simplifying".
+  const sig = (
+    packageName: string | null,
+    paths: string[],
+    texts: { path: string; text: string }[] = []
+  ) => ({
+    packageName,
+    paths,
+    // walkLevel's OWN collection rule (extract.ts INNER_ARCHIVE_EXT), not a
+    // third regex invented for the tests: this array is only ever filled by
+    // that walk, so a test helper that collects a wider set would pin rungs
+    // against inputs the real pipeline can never produce.
+    innerArchivePaths: paths.filter(
+      (p) => /\.(skill|zip)$/i.test(p) && p.split("/").length - 1 <= 1
+    ),
+    texts,
+  });
+  const SKILL_FM = `---\nname: thing\ndescription: does a thing\n---\n\n${PROSE}`;
+
+  // rung 1: no package at all
+  assert.equal(classifyWorkKind(sig(null, [])).rule, "bare_document");
+  assert.equal(classifyWorkKind(sig(null, [])).kind, "skill");
+
+  // rung 2: agent configuration, CI. Above the .skill rung on purpose.
+  for (const p of [
+    ".claude/settings.json",
+    "wrapper/.claude/commands/go.md",
+    ".claude-plugin/plugin.json",
+    ".mcp.json",
+    "proj/.mcp.json",
+    ".github/workflows/ci.yml",
+  ])
+    assert.equal(
+      classifyWorkKind(sig("tool.zip", [p, "SKILL.md"])).kind,
+      "program",
+      `${p} reads as a Claude Code project`
+    );
+  assert.equal(
+    classifyWorkKind(sig("tool.skill", [".claude/settings.json", "SKILL.md"]))
+      .rule,
+    "claude_code_project",
+    "ORDER: agent config outranks the .skill extension (the extension records how a file was exported, .claude records what it is)"
+  );
+
+  // rung 3: the package is a Skill export
+  assert.equal(classifyWorkKind(sig("tool.skill", ["SKILL.md"])).rule, "skill_package");
+  assert.equal(
+    classifyWorkKind(sig("OUTAGE_1.SKI", ["SKILL.md"])).kind,
+    "skill",
+    "8.3-truncated .SKI is still a Skill package"
+  );
+
+  // rung 4: program scaffolding
+  for (const p of [
+    "architecture.md",
+    "proj/ARCHITECTURE.md",
+    "design.md",
+    "proj/CLAUDE.md",
+    "package.json",
+    "app/server/package.json",
+    "requirements.txt",
+    "proj/pyproject.toml",
+    "Run.cmd",
+    "app/start.bat",
+  ])
+    assert.equal(
+      classifyWorkKind(sig("tool.zip", [p, "README.md"])).kind,
+      "program",
+      `${p} is program scaffolding`
+    );
+  // THE WRAPPER-FOLDER RULE. "Depth <= 1" read literally means "the root or
+  // one folder down", and in a package with NO wrapper that makes every
+  // first-level subdirectory count as the package's own root: a Skill's
+  // references/design.md would then be read as its architecture document,
+  // call the whole package a program, AND get resolved as the reviewed doc,
+  // so the card would be written from a reference note. A wrapper is only a
+  // wrapper when everything is inside it. Both shapes are pinned.
+  assert.equal(
+    classifyWorkKind(
+      sig(
+        "dr.zip",
+        ["SKILL.md", "references/design.md", "references/checklist.md"],
+        [{ path: "SKILL.md", text: SKILL_FM }]
+      )
+    ).rule,
+    "skill_document",
+    "no wrapper: references/design.md is not this package's architecture doc"
+  );
+  assert.equal(
+    classifyWorkKind(
+      sig(
+        "dr.zip",
+        ["pkg/SKILL.md", "pkg/references/design.md"],
+        [{ path: "pkg/SKILL.md", text: SKILL_FM }]
+      )
+    ).rule,
+    "skill_document",
+    "one wrapper: a doc two folders down is not this package's own either"
+  );
+  assert.equal(
+    classifyWorkKind(sig("p.zip", ["proj/ARCHITECTURE.md", "proj/main.py"]))
+      .rule,
+    "program_scaffolding",
+    "one wrapper: a doc directly inside it IS this package's own"
+  );
+
+  // A Skill that ships helper scripts ships their dependency manifest with
+  // them. Convicting it on requirements.txt while deliberately exempting the
+  // scripts themselves was self-contradictory, so the manifest rung sits
+  // BELOW the Skill-document rungs.
+  assert.equal(
+    classifyWorkKind(
+      sig(
+        "soql.zip",
+        ["SKILL.md", "requirements.txt", "scripts/translate.py", "references/f.md"],
+        [{ path: "SKILL.md", text: SKILL_FM }]
+      )
+    ).kind,
+    "skill",
+    "a Skill's helper-script dependencies do not make it a program"
+  );
+  assert.equal(
+    classifyWorkKind(sig("a.zip", ["app/package.json", "app/src/i.js", "app/README.md"]))
+      .rule,
+    "program_dependencies",
+    "a dependency manifest with no Skill document still decides"
+  );
+
+  // The Skill document is recognised by SIGNATURE, not only by filename:
+  // extract.ts's own ladder resolves a Skill's doc by uniqueness and by this
+  // same front matter, so a name-only test here would send packages it
+  // happily accepts down the program lane to a hard refusal.
+  assert.equal(
+    classifyWorkKind(
+      sig("soql.zip", ["soql-translator.md", "references/f.md"], [
+        { path: "soql-translator.md", text: SKILL_FM },
+      ])
+    ).rule,
+    "skill_document",
+    "a Skill doc that is not named SKILL.md is still a Skill doc"
+  );
+  assert.equal(
+    classifyWorkKind(sig("usage.zip", ["how-to-run-the-audit.md"])).rule,
+    "sole_document",
+    "one document and no code is the shape extract.ts accepts as a Skill"
+  );
+  assert.equal(
+    classifyWorkKind(sig("w.zip", ["my-skill.zip", "my-skill-SKILL.md"])).kind,
+    "skill",
+    "a wrapper holding an inner .zip Skill keeps working (walkLevel collects .skill AND .zip)"
+  );
+
+  // ORDER: a program that CONTAINS a Skill is still a program. Containment
+  // points one way only, which is exactly the mistake three production rows
+  // recorded before this ladder existed.
+  assert.equal(
+    classifyWorkKind(
+      sig(
+        "tool.zip",
+        ["proj/ARCHITECTURE.md", "proj/SKILL.md", "proj/inner.skill"],
+        [{ path: "proj/SKILL.md", text: SKILL_FM }]
+      )
+    ).rule,
+    "program_scaffolding",
+    "ORDER: scaffolding outranks both the wrapped Skill and a signed SKILL.md"
+  );
+
+  // rung 5: a wrapper zip whose payload is one packaged Skill
+  assert.equal(
+    classifyWorkKind(sig("files (2).zip", ["my.skill", "my-SKILL.md"])).rule,
+    "wrapped_skill_package"
+  );
+  assert.equal(
+    classifyWorkKind(sig("bundle.zip", ["a.skill", "b.skill"])).kind,
+    "program",
+    "two packaged Skills is a bundle, not a Skill"
+  );
+
+  // rung 6/8: the SKILL.md rungs, signed and unsigned
+  const signed = classifyWorkKind(
+    sig("t.zip", ["pkg/SKILL.md"], [{ path: "pkg/SKILL.md", text: SKILL_FM }])
+  );
+  assert.equal(signed.rule, "skill_document");
+  const unsigned = classifyWorkKind(
+    sig("t.zip", ["pkg/SKILL.md"], [{ path: "pkg/SKILL.md", text: PROSE }])
+  );
+  assert.equal(unsigned.rule, "skill_document_weak");
+  assert.equal(unsigned.kind, "skill", "a file named SKILL.md is still the submitter's own statement");
+
+  // rung 7: source outside a helper directory, and the exemption that keeps
+  // a real Skill (the SOQL translator on production) from being reclassified
+  assert.equal(
+    classifyWorkKind(sig("t.zip", ["notes.md", "runner.py"])).rule,
+    "program_source"
+  );
+  assert.equal(
+    classifyWorkKind(
+      sig(
+        "t.zip",
+        ["pkg/SKILL.md", "pkg/references/o.md", "pkg/scripts/build.py"],
+        [{ path: "pkg/SKILL.md", text: SKILL_FM }]
+      )
+    ).kind,
+    "skill",
+    "a Skill's helper scripts are not program source"
+  );
+
+  // The last rung. A single .md is now `sole_document` (extract.ts accepts
+  // that shape as a Skill, so refusing it here would manufacture a 422), so
+  // reaching `default_program` takes a package with no usable document at
+  // all: several boilerplate-named files and nothing else.
+  assert.equal(
+    classifyWorkKind(sig("t.zip", ["notes.md"])).rule,
+    "sole_document"
+  );
+  assert.equal(
+    classifyWorkKind(sig("t.zip", ["README.md", "LICENSE.md"])).rule,
+    "default_program"
+  );
+  // The one rung whose reading most needs to be arguable, so its sentence
+  // must not be the broken "because it has no program scaffolding".
+  const lastRung = kindVerdictSentence(
+    classifyWorkKind(sig("t.zip", ["README.md", "LICENSE.md"]))
+  );
+  assert.match(lastRung, /because it carries neither/);
+  assert.ok(!/because it has no/.test(lastRung), "no self-contradicting reason");
+
+  // The two front-matter implementations must agree; classify.ts keeps its
+  // own copy so the reclassification script can load it without jszip.
+  for (const t of [SKILL_FM, PROSE, "---\nname: x\n---\n", ""])
+    assert.equal(
+      classifyFrontmatter(t),
+      hasSkillFrontmatter(t),
+      "classify.ts and extract.ts agree on the Skill front-matter signature"
+    );
+
+  // The sentence a submitter reads when an inferred kind is what refused them.
+  const verdictSentence = kindVerdictSentence(
+    classifyWorkKind(sig("t.zip", ["architecture.md", "package.json"]))
+  );
+  assert.match(verdictSentence, /Code program/);
+  assert.match(verdictSentence, /architecture\.md/);
+  assert.ok(!/[\u2014\u2013]/.test(verdictSentence), "no long dashes in submitter-facing copy");
+
+  // ---- inspectArchive infers when the kind is null (§5.16) ----
+  const inferredProgram = await inspectArchive(okZip, null, {
+    packageName: "myproj.zip",
+  });
+  assert.ok(inferredProgram.ok && inferredProgram.kind === "program");
+  if (inferredProgram.ok)
+    assert.equal(inferredProgram.kindVerdict.rule, "program_scaffolding");
+
+  const inferredSkill = await inspectArchive(
+    await zipOf({ "myskill/SKILL.md": SKILL_FM }),
+    null,
+    { packageName: "myskill.skill" }
+  );
+  assert.ok(inferredSkill.ok && inferredSkill.kind === "skill");
+
+  // A pinned kind still wins, and the verdict still reports the package, so
+  // the update lane can see a disagreement without being ruled by it.
+  const pinned = await inspectArchive(okZip, "skill", {
+    packageName: "myproj.zip",
+  });
+  assert.ok(pinned.ok && pinned.kind === "skill", "an explicit kind pins");
+  if (pinned.ok)
+    assert.equal(
+      pinned.kindVerdict.kind,
+      "program",
+      "the verdict still describes the package under a pin"
+    );
+
+  // The walk is unconditionally collectInner now. Assert that is inert: the
+  // manifest, the corpus and the resolved doc of a program package must be
+  // identical to what the old collectInner=false walk produced.
+  const innerZip = await zipOf({
+    "proj/architecture.md": PROSE,
+    "proj/assets.zip": "PK-not-really",
+    "proj/notes.md": "notes",
+  });
+  const withInner = await inspectArchive(innerZip, "program");
+  assert.ok(withInner.ok, "a program package carrying a zip is unaffected");
+  if (withInner.ok) {
+    assert.equal(withInner.docPath, "proj/architecture.md");
+    assert.equal(withInner.manifest.length, 3);
+    assert.ok(
+      !withInner.corpus.some((c) => c.path.includes("!/")),
+      "the program lane never opens the inner archive"
+    );
+  }
+
+  // The standalone-document rescue rests on ONE property of extract.ts, and
+  // both routes and the email lane depend on it: the same bytes that
+  // hard-fail as a program return ok-with-docMissing when the kind is pinned
+  // to skill, carrying the manifest, corpus and hashes the ExtractErr does
+  // not. If that ever stops holding, three rescue paths silently stop
+  // rescuing, so it is pinned here rather than left to the callers.
+  const noArchDoc = await zipOf({
+    "app/package.json": '{"name":"x"}',
+    "app/src/index.js": "console.log(1)",
+    "app/README.md": "short readme",
+  });
+  const rescueFirst = await inspectArchive(noArchDoc, null, {
+    packageName: "tool.zip",
+  });
+  assert.ok(
+    !rescueFirst.ok && rescueFirst.code === "missing_architecture_doc",
+    "a dependency manifest with no architecture doc is a program that refuses"
+  );
+  assert.equal(rescueFirst.ok ? "" : rescueFirst.kind, "program");
+  const rescueSecond = await inspectArchive(noArchDoc, "skill", {
+    packageName: "tool.zip",
+  });
+  assert.ok(
+    rescueSecond.ok && rescueSecond.docMissing === "missing",
+    "the same bytes pinned to skill yield a rescuable walk"
+  );
+  if (rescueSecond.ok) {
+    assert.equal(rescueSecond.manifest.length, 3, "the rescue pass carries the manifest");
+    assert.equal(rescueSecond.archiveSha256.length, 64);
+  }
+  // A rescue supplies a missing document; it never launders an archive.
+  const dirtyPkg = await zipOf({ "app/package.json": "{}", ".env": "SECRET=1" });
+  for (const k of [null, "skill"] as const) {
+    const r = await inspectArchive(dirtyPkg, k, { packageName: "t.zip" });
+    assert.ok(
+      !r.ok && r.code === "secrets_detected",
+      "credentials refuse on the rescue pass too"
+    );
+  }
+
+  // A bare .md carries the bare_document verdict, not a hand-written literal.
+  const bareDoc = inspectBareMd("SKILL.md", Buffer.from(PROSE));
+  assert.ok(bareDoc.ok && bareDoc.kind === "skill");
+  if (bareDoc.ok) assert.equal(bareDoc.kindVerdict.rule, "bare_document");
+
+  // inferKind is GONE (owner directive 2026-08-28). It answered from the
+  // package FILENAME plus a "Kind:" line, and both halves were wrong: the
+  // line outranked the files, and "a .md is attached" meant Skill, which
+  // silently reclassified every Code program that mailed its architecture
+  // document beside the zip. classify.ts reads the archive instead, and its
+  // ladder is pinned below under "kind inference".
 
   // ── §5.16 admin-mediated updates: directive parsing (2026-08-03) ──
 

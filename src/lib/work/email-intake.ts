@@ -41,6 +41,7 @@ import {
   workSubmissionsEnabled,
   type WorkKind,
 } from "./config";
+import { kindVerdictSentence } from "./classify";
 import {
   activeTitleClash,
   canProposeUpdate,
@@ -68,7 +69,6 @@ import {
   archiveDeclaredNames,
   docDeclaredNames,
   FORM_POINTER,
-  inferKind,
   HOSTILE_TITLE_CHARS,
   isPlaceholderSubject,
   isSenderIdentity,
@@ -91,6 +91,8 @@ import {
   inspectArchive,
   inspectBareMd,
   mergeSkillCorpus,
+  type ExtractErr,
+  type ExtractOk,
   skillDocFailureMessage,
 } from "./extract";
 import { WORK_SUBMIT_DOMAINS } from "./http";
@@ -798,11 +800,18 @@ export async function handleWorkEmail(
       );
       return;
     }
-    // Kind is pinned too; an explicit conflicting Kind: line rejects now,
-    // attachment-shape conflicts reject after the attachments are known.
+    // Kind is pinned too, so a "Kind:" line that names the other one rejects
+    // here, before anything is downloaded. This is the ONLY place that line
+    // still stops a submission (2026-08-28): everywhere else the package
+    // decides and the line is inert, but a sender who states the wrong kind
+    // for a card they are replacing has misunderstood which card this is, and
+    // that is worth stopping over rather than silently ignoring. The copy
+    // names the line as the fix, because the line is what conflicted; a
+    // package that reads as the other kind is a different matter, handled
+    // after the attachments are known.
     if (parsed.kind !== null && parsed.kind !== predecessor.kind) {
       await reject(
-        `The published card "${predecessor.title}" is a ${predecessor.kind === "skill" ? "CoWork Skill" : "Code program"}, so an update to it must be one too. Attach the matching package type and resend.`,
+        `The published card "${predecessor.title}" is a ${predecessor.kind === "skill" ? "CoWork Skill" : "Code program"}, and an update never changes a card's kind, but your "Kind:" line names the other one. If this update belongs to that card, drop the "Kind:" line and resend; the package itself is what gets read either way. If you meant a different card, point the "Update Card:" line at it instead.`,
         { pointer: false }
       );
       return;
@@ -920,13 +929,20 @@ export async function handleWorkEmail(
     notes.push(
       `Also: the body carried only a short note, so the panel leans on the attached documents for the card.`
     );
+  // The "Kind:" line stopped deciding anything on 2026-08-28 (owner
+  // directive: "no longer ask if its CoWork or Code program. Figure out which
+  // is based on what was uploaded"). These two notes survive only because the
+  // line itself survives in the description and an unexplained line the
+  // submitter wrote deserves an answer; neither one tells them what the card
+  // became. The note that does that is pushed further down, after the package
+  // has been inspected, because that is the first moment the kind exists.
   if (parsed.kindRaw !== null)
     notes.push(
-      `Also: I could not read your "Kind:" line ("${parsed.kindRaw}") as "CoWork Skill" or "Code program", so the attachments decided the kind. The line stayed in your description.`
+      `Also: I could not read your "Kind:" line ("${parsed.kindRaw}") as "CoWork Skill" or "Code program", and it made no difference: a "Kind:" line no longer sets a card's kind. The line stayed in your description.`
     );
   if (parsed.kindInferred !== null && parsed.kind !== null)
     notes.push(
-      `Also: I read your "Kind:" line ("${parsed.kindInferred}") as ${parsed.kind === "skill" ? "CoWork Skill" : "Code program"}. The line stayed in your description.`
+      `Also: your "Kind:" line ("${parsed.kindInferred}") stayed in your description and reads as part of your text; a "Kind:" line no longer sets a card's kind.`
     );
   if (parsed.creditIgnored !== null)
     notes.push(
@@ -955,24 +971,29 @@ export async function handleWorkEmail(
   }
   const pkg = archives[0];
   const pkgName = pkg.filename ?? "upload.zip";
-  // §5.16 updates: kind is pinned to the predecessor; an attachment shape
-  // that cannot be that kind (a .skill/.ski or standalone .md on a Code
-  // program card) is a conflict, not an override. A bare .zip is valid for
-  // both kinds and inherits the pin.
-  if (
-    isUpdate &&
-    predecessor!.kind === "program" &&
-    (/\.(skill|ski)$/i.test(pkgName) || mds.length > 0)
-  ) {
-    await reject(
-      `The published card "${predecessor!.title}" is a Code program, so an update to it must be one too. Attach the matching package type (.zip with its architecture doc) and resend.`,
-      { pointer: false }
-    );
-    return;
-  }
-  const kind = isUpdate
-    ? (predecessor!.kind as WorkKind)
-    : inferKind(pkgName, mds.length > 0, parsed.kind);
+  // §5.16 updates: kind is pinned to the predecessor, so a package that
+  // cannot be that kind is a conflict rather than an override. The filename
+  // is the only half of that testable before a download, and it is worth
+  // testing here because it costs nothing.
+  //
+  // A ".md attachment" used to be the other half of this condition and is
+  // gone from it (2026-08-28). It was only ever a conflict because a .md
+  // attachment used to MEAN Skill; now that the package decides, a Code
+  // program mailing its architecture document beside the zip is an ordinary
+  // shape, and refusing it here bounced a correct update over a file that is
+  // not even the reviewed document. A bare .zip is still valid for both
+  // kinds and inherits the pin, which inspectArchive enforces below by
+  // resolving on the predecessor's kind.
+  // The extension gate that used to stand here is GONE (2026-08-28), in
+  // lockstep with the web update route, which deleted its twin this round.
+  // It refused a .skill package against a Code program card on the reasoning
+  // that a packaged Skill cannot be a program, and classify.ts's own rung 2
+  // is the standing refutation of that: a .skill holding an agent-configured
+  // repository IS a program, which is why agent configuration outranks the
+  // extension in the ladder. The card's kind is pinned by the row and the
+  // inspection below resolves on that pin, so the extension never needed to
+  // agree; refusing here would only refuse a file the form now invites. What
+  // it cost was one download on a package that fails the pinned lane anyway.
   // Lane-truthful copy: the shared cap is 100 MB, but email itself carries
   // far less (the inbound provider caps whole messages around 40 MB), so
   // this reply must never promise "100 MB by email"; big packages go
@@ -983,7 +1004,27 @@ export async function handleWorkEmail(
     );
     return;
   }
+  // The .md attachment is picked on EVERY lane now (2026-08-28). It used to
+  // be picked only when a provisional kind said "skill", and that provisional
+  // kind was itself computed from the presence of a .md, so the two answers
+  // were the same answer: any email carrying a .md became a Skill, and a
+  // program that mailed its architecture document beside the zip had that
+  // attachment quietly dropped. The kind does not exist yet in this ordering
+  // (the package decides it, at inspectArchive below), so the pick has to be
+  // kind-blind and every consequence of the pick waits for the verdict.
   let mdAtt: AttachmentMeta | null = null;
+  /** Whether pickSkillDoc had to choose between several .md files. Disclosed
+   * once the kind is known, not here: "I used X as the Skill's document" is
+   * a false sentence on a submission that turns out to be a program. */
+  let mdPickNoted = false;
+  /** The picked .md when it is over the 1 MB cap. Held rather than rejected
+   * on the spot, because that cap belongs to the Skill lane, where the file
+   * IS the reviewed document. Bouncing an otherwise perfect Code program
+   * over an oversized attachment it never reads, with a message naming
+   * SKILL.md, is exactly the kind of nonsense the old kind-first ordering
+   * could not avoid. Nothing oversized is downloaded either way; the Skill
+   * lane still refuses it below, with the same sentence as before. */
+  let mdOversize: AttachmentMeta | null = null;
   // 2026-08-05 (owner directive after a real bounce: "ENTRA-~1.MD" +
   // "architecture.md", none named SKILL.md): an unclear attachment pick no
   // longer rejects up front. The decision defers past archive inspection:
@@ -991,20 +1032,15 @@ export async function handleWorkEmail(
   // ignored with a note), and a front-matter scan of the attached files is
   // the last deterministic rung before the ambiguity reject.
   let deferredMds: AttachmentMeta[] | null = null;
-  if (kind === "skill" && mds.length > 0) {
+  if (mds.length > 0) {
     const picked = pickSkillDoc(mds);
     if (!picked) {
       deferredMds = mds;
+    } else if (picked.pick.size > WORK_CAPS.skillMdMaxBytes) {
+      mdOversize = picked.pick;
     } else {
       mdAtt = picked.pick;
-      if (picked.noted)
-        notes.push(
-          `Also: several .md files were attached; I used "${sanitizeHeaderValue(mdAtt.filename ?? "SKILL.md", 60)}" as the Skill's document.`
-        );
-      if (mdAtt.size > WORK_CAPS.skillMdMaxBytes) {
-        await reject("The SKILL.md attachment is too large (limit 1 MB).");
-        return;
-      }
+      mdPickNoted = picked.noted;
     }
   }
 
@@ -1043,29 +1079,179 @@ export async function handleWorkEmail(
   // truncated zip). JSZip reads zips with prepended data, so this also
   // rescues packages the two-byte sniff wrongly rejected.
   let mdFile: { name: string; bytes: Buffer } | null = null;
+  // A failed .md download is only fatal on the Skill lane, where that file is
+  // the document under review. On a program the attachment is not read at
+  // all, and refusing an entire submission because an unread readme would not
+  // come down the wire is a bounce with no fix behind it. Held, like the size
+  // cap above, until the package has said which lane this is.
+  let mdDownloadFailed = false;
   if (mdAtt) {
     const mdBytes = await downloadAttachment(
       emailId,
       mdAtt.id,
       WORK_CAPS.skillMdMaxBytes
     );
-    if (!mdBytes) {
+    if (!mdBytes) mdDownloadFailed = true;
+    else mdFile = { name: mdAtt.filename ?? "SKILL.md", bytes: mdBytes };
+  }
+
+  // ── Inspection ───────────────────────────────────────────────────
+  // Hard failures are never rescued by a clean standalone .md, with ONE
+  // exception added 2026-08-28 and implemented below: a program's missing
+  // architecture document, which is the one failure the second file was
+  // invited to answer. Secrets, an unreadable archive and an over-complex one
+  // stay unrescuable, because a clean standalone must never launder a dirty
+  // archive.
+  //
+  // This call is where the kind is DECIDED (owner directive 2026-08-28).
+  // null means "read it off the package"; the update lane passes the
+  // predecessor's kind instead, which PINS the inspection, because a card's
+  // kind is a property of the card and not of whichever package was mailed
+  // for it last. The package name rides along because the classifier's
+  // .skill/.ski rung is a fact about the filename, which the bytes do not
+  // carry. Either way a verdict comes back, so even the pinned lane can see
+  // what the files look like.
+  //
+  // The kind column is plain text under a two-value CHECK, so the cast below
+  // is the one the old kind derivation already made; the constraint, not that
+  // line, is what keeps it honest.
+  const pinnedKind: WorkKind | null = isUpdate
+    ? (predecessor!.kind as WorkKind)
+    : null;
+  const extracted = await inspectArchive(bytes, pinnedKind, {
+    packageName: pkgName,
+  });
+  /** Set only by the standalone-document rescue below: the walk to build the
+   * row from when the FIRST pass hard-failed on a program's missing
+   * architecture doc and the submitter mailed that document as an attachment.
+   * Null on every other path, including every success, where `extracted` is
+   * already the walk to use. */
+  let rescuedPackage: ExtractOk | null = null;
+  let rescuedKind: WorkKind | null = null;
+  if (!extracted.ok) {
+    // The failures raised BEFORE classification (an unreadable zip, an empty
+    // archive, a secret) carry no kind at all: fall back to the pin on an
+    // update and to nothing on a create. Nothing is lost by that, because
+    // those codes never reach the program-document branch below.
+    const failedKind = extracted.kind ?? pinnedKind;
+    // Name the inference in front of the instruction (web-route parity).
+    // Someone who believes they mailed a CoWork Skill and gets back "your zip
+    // needs an architecture document" has no way to work out what happened
+    // unless the reply says what the package was read as and why. Only when
+    // the verdict is what the refusal actually applied: on an update the pin
+    // can differ from the verdict, and leading with a reading the refusal did
+    // NOT act on would send the submitter after the wrong fix.
+    const verdictLead =
+      extracted.kindVerdict && extracted.kindVerdict.kind === failedKind
+        ? [kindVerdictSentence(extracted.kindVerdict)]
+        : [];
+    // ---- the standalone-document rescue, on this lane too (2026-08-28) ----
+    // Web-route parity, and it is parity this same round created: both routes
+    // now accept a standalone reviewed document from a PROGRAM, because the
+    // form stopped being able to ask which kind it was showing the field to.
+    // Without this branch the two lanes would answer the identical submission
+    // differently, and in the direction that makes no sense: a program whose
+    // architecture doc sits beside the zip would be accepted on the web and
+    // refused by email, having mailed the very file the refusal asks for.
+    //
+    // The bytes are already here. mdFile was downloaded above, unconditionally
+    // now that the .md is picked on every lane, and on this path it was about
+    // to be thrown away. So the rescue costs one extra archive walk and no
+    // extra network. It is the same shape as the routes': pin "skill" for the
+    // second pass, because the skill ladder never hard-fails on doc
+    // resolution and so yields the manifest and corpus the ExtractErr does
+    // not carry; the pin is a MEANS, and the row is still stored as the
+    // program the first pass read.
+    // UPDATES RESCUE TOO. An earlier cut excluded them for no stated reason,
+    // which would have left an emailed update to a program card refused for
+    // the missing document it had attached, while the web update route (which
+    // grew the identical rescue this round) accepted the same two files. On an
+    // update `failedKind` is the card's pinned kind, so this reads the pin,
+    // which is what should decide there.
+    const rescuable =
+      failedKind === "program" &&
+      (extracted.code === "missing_architecture_doc" ||
+        extracted.code === "doc_too_short");
+    /** Why a rescue that was available did not happen, for the refusal to
+     * name. Silence here was the defect: the reply told a submitter to attach
+     * the architecture document they had just attached, and said nothing
+     * about the file or why it could not be used. */
+    let rescueBlocked: string | null = null;
+    /** A refusal the rescue pass surfaced that the first pass could not see
+     * (credentials or a corrupt package inside a bundled archive). More
+     * specific and more urgent than the missing-document refusal it replaces. */
+    let rescueFailure: ExtractErr | null = null;
+    if (rescuable && !mdFile && (mdOversize || mdDownloadFailed))
+      rescueBlocked = mdOversize
+        ? `The "${sanitizeHeaderValue(mdOversize.filename ?? "attachment", 60)}" attachment looks like that document, but it is over the 1 MB limit for a document sent outside the package, so I could not read it. Put it inside the package, or trim it and resend.`
+        : `A .md attachment looks like that document, but I could not download it. Resend the email.`;
+    if (rescuable && mdFile) {
+      const mdCheck = inspectBareMd(mdFile.name, mdFile.bytes);
+      if (!mdCheck.ok)
+        rescueBlocked = `The "${sanitizeHeaderValue(mdFile.name, 60)}" attachment looks like that document, but I could not use it: ${mdCheck.message}`;
+      if (mdCheck.ok) {
+        const rescue = await inspectArchive(bytes, "skill", {
+          packageName: pkgName,
+        });
+        // A rescue supplies a missing document; it never launders an archive.
+        // The skill pass opens a nested archive the program pass never looked
+        // at, so it can still find credentials or a corrupt inner package in
+        // there, and those refusals stand. They also REPLACE the refusal the
+        // first pass was about to send: a package holding a credential inside
+        // a bundled archive must be answered with the rotate-and-resubmit
+        // message, not with "your zip needs an architecture document", which
+        // would leave the submitter fixing the wrong thing and never told
+        // that a credential was found.
+        if (rescue.ok) {
+          // Inner-archive evidence must not reach a program row. The pin is a
+          // means to get a manifest and a corpus back; the end is what a
+          // program walk would have produced, and a program walk never opens
+          // a nested archive. Storing "outer.zip!/inner/file" rows here would
+          // break extract.ts's own invariant, classify.ts's KindSignals
+          // contract and the reclassification script's assumption, and would
+          // feed the panel text from a bundle the program lane never read.
+          rescuedPackage = {
+            ...rescue,
+            manifest: rescue.manifest.filter((m) => !m.path.includes("!/")),
+            corpus: rescue.corpus.filter((c) => !c.path.includes("!/")),
+          };
+          rescuedKind = "program";
+        } else if (rescue.code !== extracted.code) {
+          rescueFailure = rescue;
+        }
+      }
+    }
+    if (!rescuedPackage && rescueFailure) {
       await reject(
-        "I could not download the .md attachment. Resend the email."
+        [
+          rescueFailure.message,
+          ...(rescueFailure.paths?.length
+            ? [``, `Files: ${rescueFailure.paths.slice(0, 20).join(", ")}`]
+            : []),
+        ].join("\n")
       );
       return;
     }
-    mdFile = { name: mdAtt.filename ?? "SKILL.md", bytes: mdBytes };
-  }
-
-  // ── Inspection (route parity: hard failures are NEVER rescued by a
-  // clean standalone .md) ──────────────────────────────────────────
-  const extracted = await inspectArchive(bytes, kind);
-  if (!extracted.ok) {
+    if (!rescuedPackage)
     await reject(
       extracted.code === "missing_architecture_doc" ||
-        (extracted.code === "doc_too_short" && kind === "program")
-        ? `${extracted.message}\n\n${MISSING_ARCH_DOC_MESSAGE}`
+        (extracted.code === "doc_too_short" && failedKind === "program")
+        ? [
+            ...verdictLead,
+            extracted.message,
+            // The attached document the submitter is about to be told to
+            // attach, and why it did not count.
+            ...(rescueBlocked ? [rescueBlocked] : []),
+            // extract.ts answers both of those codes WITH the instruction
+            // paragraph, so appending it unconditionally printed the same six
+            // sentences twice in one reply. The web route never showed it
+            // (message and instructions are separate JSON fields there and
+            // the form renders one), which is how it survived; an email is a
+            // single body and has to be read as written.
+            ...(extracted.message === MISSING_ARCH_DOC_MESSAGE
+              ? []
+              : [MISSING_ARCH_DOC_MESSAGE]),
+          ].join("\n\n")
         : [
             extracted.message,
             ...(extracted.paths?.length
@@ -1073,8 +1259,82 @@ export async function handleWorkEmail(
               : []),
           ].join("\n")
     );
+    if (!rescuedPackage) return;
+  }
+  // The walk the row is built from: the first pass when it succeeded, else
+  // the rescue pass. Every read of the package below goes through this, never
+  // through `extracted`, which on the rescued path is the failure.
+  const pkgWalk: ExtractOk = rescuedPackage ?? (extracted as ExtractOk);
+  // The kind the rest of the submission is stored, logged and described
+  // under: what the package was read as, or the card's pinned kind on an
+  // update. On the rescued path it is the PROGRAM the first pass inferred,
+  // never the "skill" that pass was pinned to in order to get a corpus back.
+  // Nothing above this line may consult it, which is the whole point of the
+  // 2026-08-28 reordering.
+  const kind = rescuedKind ?? pkgWalk.kind;
+  const kindLabel = kind === "skill" ? "CoWork Skill" : "Code program";
+  // The two .md decisions held back from the pre-download block, now that
+  // there is a lane to apply them to. Both keep the Skill lane exactly as
+  // strict as it was.
+  if (kind === "skill" && mdOversize) {
+    await reject("The SKILL.md attachment is too large (limit 1 MB).");
     return;
   }
+  if (kind === "skill" && mdDownloadFailed) {
+    await reject("I could not download the .md attachment. Resend the email.");
+    return;
+  }
+  if (kind === "skill" && mdAtt && mdPickNoted)
+    notes.push(
+      `Also: several .md files were attached; I used "${sanitizeHeaderValue(mdAtt.filename ?? "SKILL.md", 60)}" as the Skill's document.`
+    );
+  // Reached only when the package resolved its OWN architecture document, so
+  // the attachment was not needed as the rescue above and does not outrank
+  // what is inside the package (the divergence from the web routes is argued
+  // at the doc-precedence block below). Say so instead of
+  // dropping it in silence: the shape this covers is a submitter mailing
+  // architecture.md beside the zip, and that attachment is precisely what
+  // used to file their program as a Skill.
+  if (
+    kind === "program" &&
+    !rescuedPackage &&
+    (mdAtt || mdOversize || deferredMds)
+  ) {
+    const one = mdAtt ?? mdOversize;
+    notes.push(
+      `Also: ${
+        one
+          ? `the "${sanitizeHeaderValue(one.filename ?? "attachment", 60)}" attachment was`
+          : `the ${deferredMds!.length} .md files attached beside your package were`
+      } left out of the review. A ${kindLabel} is reviewed from the architecture document inside its package, so a .md sent alongside the package is not read.`
+    );
+  }
+  // The submitter said one thing and the files said another, on a create.
+  // Disclosed in full, WITH the classifier's own reasons, because this
+  // receipt is now the only place that decision is visible to them: they do
+  // not choose the kind any more, so someone who typed "Kind: CoWork Skill"
+  // and got a Code program card has nothing else to learn why from. Naming
+  // the files keeps a wrong verdict arguable against the package rather than
+  // against the site. Never on an update: there the kind is pinned by the
+  // card, a stated conflict was already refused before any download, and a
+  // verdict about the package would describe a decision nothing here made.
+  if (!isUpdate && parsed.kind !== null && parsed.kind !== kind)
+    notes.push(
+      [
+        `Also: your "Kind:" line said ${parsed.kind === "skill" ? "CoWork Skill" : "Code program"}, and the card is filed as a ${kindLabel} instead.`,
+        kindVerdictSentence(pkgWalk.kindVerdict),
+        `What is in the package decides that now, and nobody is asked, so the panel is reviewing it as a ${kindLabel}.`,
+        ...(sender.toLowerCase() === adminRecipient().toLowerCase()
+          ? []
+          : isCompanyLane
+            ? [
+                `If that reading is wrong, reply to this email and the XL.net team can take another look before the card publishes.`,
+              ]
+            : [
+                `If that reading is wrong, tell Adam before the card publishes.`,
+              ]),
+      ].join(" ")
+    );
   // Deferred attachment ambiguity resolves HERE, with the package inspected
   // (2026-08-05). Package resolved its own doc: the extra attachments are
   // supporting material, ignored with a note. Package doc missing too: the
@@ -1082,7 +1342,7 @@ export async function handleWorkEmail(
   // the Skill front-matter signature wins; otherwise the ambiguity finally
   // rejects, with the file list.
   if (kind === "skill" && deferredMds) {
-    if (!extracted.docMissing) {
+    if (!pkgWalk.docMissing) {
       notes.push(
         `Also: several .md files were attached and none was clearly the Skill's document, so I used the Skill document inside your package and left the attached files out of the review.`
       );
@@ -1141,9 +1401,9 @@ export async function handleWorkEmail(
         // not resolve, and claiming otherwise sends the submitter looking
         // for a file that is already there.
         const pkgClause =
-          extracted.docMissing === "missing"
+          pkgWalk.docMissing === "missing"
             ? "the package does not carry one either"
-            : extracted.docMissing === "too_short"
+            : pkgWalk.docMissing === "too_short"
               ? "the document inside the package is too short to review"
               : "the package holds several possible documents of its own";
         const scanClause =
@@ -1168,10 +1428,10 @@ export async function handleWorkEmail(
                   `I read the first ${candidates.length} .md attachments only, so ${unscanned} more went unexamined. Attaching just the Skill's document is the quickest fix.`,
                 ]
               : []),
-            ...(extracted.candidatePaths?.length
+            ...(pkgWalk.candidatePaths?.length
               ? [
                   ``,
-                  `Inside the package: ${extracted.candidatePaths.slice(0, 20).join(", ")}`,
+                  `Inside the package: ${pkgWalk.candidatePaths.slice(0, 20).join(", ")}`,
                 ]
               : []),
           ].join("\n")
@@ -1180,12 +1440,23 @@ export async function handleWorkEmail(
       }
     }
   }
-  let docText = extracted.docText;
-  let corpus = extracted.corpus;
+  let docText = pkgWalk.docText;
+  let corpus = pkgWalk.corpus;
   let mdMeta:
     | { name: string; sha256: string; bytes: number; data: Buffer }
     | undefined;
-  if (kind === "skill") {
+  // WHEN THE STANDALONE WINS, and the one place this lane deliberately does
+  // NOT match the web routes. There, the second upload always outranks the
+  // package's own document for either kind, and that is right: the person
+  // chose that exact file in a field whose help says it wins. Here the .md is
+  // simply whichever markdown attachment `pickSkillDoc` settled on out of the
+  // message, which is a far weaker signal of intent, and letting it silently
+  // outrank a program's own architecture.md would mean a stray design note
+  // mailed alongside the zip becoming the reviewed document. So on this lane
+  // a program uses its attachment only as the RESCUE it was accepted for:
+  // when the package carried no architecture doc at all. A Skill keeps the
+  // long-standing precedence, where the standalone always wins.
+  if (kind === "skill" || rescuedPackage) {
     if (mdFile) {
       const mdExtract = inspectBareMd(mdFile.name, mdFile.bytes);
       if (!mdExtract.ok) {
@@ -1193,39 +1464,39 @@ export async function handleWorkEmail(
         return;
       }
       docText = mdExtract.docText;
-      corpus = mergeSkillCorpus(mdExtract, extracted);
+      corpus = mergeSkillCorpus(mdExtract, pkgWalk);
       mdMeta = {
         name: mdFile.name.slice(0, 200),
         sha256: mdExtract.archiveSha256,
         bytes: mdFile.bytes.length,
         data: mdFile.bytes,
       };
-    } else if (extracted.docMissing) {
+    } else if (pkgWalk.docMissing) {
       // Carry the candidate paths the route's 422 body ships, so an email
       // submitter learns which files collided (panel parity finding).
       await reject(
         [
-          skillDocFailureMessage(extracted.docMissing),
-          ...(extracted.candidatePaths?.length
+          skillDocFailureMessage(pkgWalk.docMissing),
+          ...(pkgWalk.candidatePaths?.length
             ? [
                 ``,
-                `Files: ${extracted.candidatePaths.slice(0, 20).join(", ")}`,
+                `Files: ${pkgWalk.candidatePaths.slice(0, 20).join(", ")}`,
               ]
             : []),
         ].join("\n")
       );
       return;
-    } else if (extracted.docRawBytes) {
+    } else if (pkgWalk.docRawBytes) {
       const docBase =
-        extracted.docPath.split("!/").pop()?.split("/").pop() ?? "SKILL.md";
+        pkgWalk.docPath.split("!/").pop()?.split("/").pop() ?? "SKILL.md";
       mdMeta = {
         name: docBase.slice(0, 200),
         sha256: crypto
           .createHash("sha256")
-          .update(extracted.docRawBytes)
+          .update(pkgWalk.docRawBytes)
           .digest("hex"),
-        bytes: extracted.docRawBytes.length,
-        data: extracted.docRawBytes,
+        bytes: pkgWalk.docRawBytes.length,
+        data: pkgWalk.docRawBytes,
       };
     }
   }
@@ -1248,7 +1519,7 @@ export async function handleWorkEmail(
       ...docDeclaredNames(docText),
       ...archiveDeclaredNames(
         pkgName,
-        extracted.manifest.map((m) => m.path)
+        pkgWalk.manifest.map((m) => m.path)
       ),
     ].map(nameKey);
     // A corroborated candidate clears the SAME gate a model answer does
@@ -1334,11 +1605,11 @@ export async function handleWorkEmail(
       blurb: parsed.blurb,
       architectureText: kind === "program" ? docText : null,
       skillMdText: kind === "skill" ? docText : null,
-      fileManifestJson: JSON.stringify(extracted.manifest),
+      fileManifestJson: JSON.stringify(pkgWalk.manifest),
       corpusFilesJson: JSON.stringify(corpus),
       archiveName: pkgName.slice(0, 200),
-      archiveSha256: extracted.archiveSha256,
-      archiveBytes: extracted.archiveBytes,
+      archiveSha256: pkgWalk.archiveSha256,
+      archiveBytes: pkgWalk.archiveBytes,
       archiveData: bytes,
       md: mdMeta,
       parentId: predecessor?.id ?? null,
@@ -1392,7 +1663,6 @@ export async function handleWorkEmail(
   // (src/lib/work/queue-drain.ts) re-kicks it automatically, so the receipt
   // states the automatic start and keeps Retry as the manual fallback,
   // matching QUEUED_NOTICE (parity finding 2026-07-30, inverted 2026-08-05).
-  const kindLabel = kind === "skill" ? "CoWork Skill" : "Code program";
   // Update receipts state the approval gate plainly: the live card never
   // changes on this path without the admin's click on /admin/work, whoever
   // sent the mail (isAdmin(sender) only varies the wording, never the gate:

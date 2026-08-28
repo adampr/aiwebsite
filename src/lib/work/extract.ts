@@ -16,6 +16,16 @@
 // stay opaque; at most two zip layers ever parse. The lazy rule (open only
 // on outer failure) keeps every previously-accepted bare package accepted
 // byte-for-byte. kind "program" never opens nested archives.
+//
+// Kind inference (owner directive 2026-08-28, "no longer ask if it's CoWork
+// or Code program; figure out which is based on what was uploaded"): the
+// `kind` argument is nullable now. Null means classify.ts decides from this
+// walk; a non-null value PINS the kind and is used only by the update lane,
+// where a card's kind belongs to the card. Either way the classifier runs and
+// its verdict rides on the result, so a lane that pinned can still see that
+// the package disagrees. The full ordering argument, including why the outer
+// walk is now unconditionally collectInner and why the inner open must stay
+// downstream of the decision, is on inspectArchive itself.
 
 import { createHash } from "node:crypto";
 import JSZip from "jszip";
@@ -31,6 +41,7 @@ import {
   type WorkKind,
 } from "./config";
 import { fileNameLooksSecret, textLooksSecret } from "./secret-patterns";
+import { classifyWorkKind, type KindVerdict } from "./classify";
 
 export interface ManifestEntry {
   path: string;
@@ -39,6 +50,16 @@ export interface ManifestEntry {
 
 export interface ExtractOk {
   ok: true;
+  /** The kind this inspection RESOLVED ON, and the one to store: the caller's
+   * pinned kind when it passed one, else `kindVerdict.kind`. */
+  kind: WorkKind;
+  /** What the PACKAGE looks like, always computed from the walk even when the
+   * caller pinned a kind (§5.16 kind inference, 2026-08-28). The two differ
+   * only on the update lane, where the card's kind is pinned and the new
+   * package may not match it; every other caller has `kind === kindVerdict.kind`
+   * by construction. Kept separate rather than collapsed so a lane that wants
+   * to DISCLOSE a disagreement can see one. */
+  kindVerdict: KindVerdict;
   /** The reviewed doc's text (capped). Empty string when docMissing is set:
    * the skill kind returns ok-with-docMissing for doc-resolution failures so
    * the route can rescue with a standalone .md; hard failures (secrets,
@@ -70,6 +91,14 @@ export interface ExtractErr {
     | "doc_too_short";
   message: string;
   paths?: string[];
+  /** Set on every failure raised AFTER the walk classified the package, so a
+   * caller can say WHY it applied the rule that refused (§5.16 kind
+   * inference): "this reads as a Code program, because it has a .claude
+   * folder, and a program needs an architecture doc". Absent on the failures
+   * that precede classification (unreadable zip, empty archive, secrets),
+   * where there is nothing to have concluded. */
+  kind?: WorkKind;
+  kindVerdict?: KindVerdict;
 }
 
 export type ExtractResult = ExtractOk | ExtractErr;
@@ -246,6 +275,12 @@ interface TextFile {
   text: string;
   buf: Buffer;
   size: number;
+  /** True when this text came from INSIDE a lazily-opened inner archive.
+   * Recorded at walk time rather than recovered by looking for "!/" in the
+   * path: normalizePath accepts a directory segment ending in "!", so a real
+   * outer entry can legitimately be "Project!/architecture.md" and a string
+   * test would exclude a document the program lane must see. */
+  inner: boolean;
 }
 
 interface WalkState {
@@ -317,7 +352,14 @@ async function walkLevel(
     const text = decodeUtf8Text(out.buf);
     if (text === null) continue;
     if (textLooksSecret(text)) state.secretPaths.push(f.path);
-    else state.texts.push({ path: f.path, text, buf: out.buf, size: f.size });
+    else
+      state.texts.push({
+        path: f.path,
+        text,
+        buf: out.buf,
+        size: f.size,
+        inner: prefix !== "",
+      });
   }
   return null;
 }
@@ -349,10 +391,41 @@ function baseOf(path: string): string {
  * prose floor; else SKILL.md at depth <= 1 inside the single lazily-opened
  * inner archive) and returns ok-with-docMissing instead of a doc-resolution
  * 422, so the route can rescue with the optional standalone .md.
+ *
+ * `kind` is now NULLABLE (§5.16 kind inference, owner directive 2026-08-28:
+ * stop asking which one it is and read the package). Pass a kind to PIN one -
+ * the update lane does, because a card's kind is fixed by the card, not by
+ * whatever the replacement package happens to look like - and pass null to
+ * have classify.ts decide from the walk. Either way the classifier runs and
+ * its verdict rides on the result, so a pinned lane can still see, and
+ * disclose, that the package disagrees with the pin.
+ *
+ * THE ORDERING CONSTRAINT, and why the walk is unconditional now:
+ * `collectInner` used to be `kind === "skill"`, which cannot survive kind
+ * becoming an OUTPUT of the walk. It is now always true, and that is inert
+ * rather than merely acceptable: collecting an inner archive is a push of
+ * {path, entry, size} with no inflate and no parse, and the classification
+ * chain in walkLevel is an `else if` whose earlier arms (secret filenames,
+ * then TEXT_EXT candidates) are disjoint from INNER_ARCHIVE_EXT, so turning
+ * the third arm on cannot take an entry away from either. manifest,
+ * entryCount, texts, secretPaths and inflatedBytes are byte-identical under
+ * both flags; the only delta is a populated innerArchives, which no program
+ * path reads. The archive is still walked EXACTLY ONCE, which matters
+ * because WalkState's budgets (zipMaxEntries, corpusInflateTotalMaxBytes)
+ * accumulate across levels and a second pass would double-count them.
+ *
+ * The lazy inner OPEN stays strictly downstream of the decision. It inflates
+ * up to 100 MB, runs a second JSZip parse, and mutates the shared state
+ * (manifest rows, entry count, inflate budget, and possibly a secret hit that
+ * hard-fails). Classification may read the name, count and declared size of
+ * inner archives - all free, from the central directory - and never their
+ * contents, so no package pays for an inflate that the decision itself was
+ * supposed to authorize.
  */
 export async function inspectArchive(
   bytes: Buffer,
-  kind: WorkKind
+  kind: WorkKind | null,
+  opts: { packageName?: string | null } = {}
 ): Promise<ExtractResult> {
   let zip: JSZip;
   try {
@@ -372,7 +445,7 @@ export async function inspectArchive(
     entryCount: 0,
     inflatedBytes: 0,
   };
-  const walkErr = await walkLevel(zip, "", kind === "skill", state);
+  const walkErr = await walkLevel(zip, "", true, state);
   if (walkErr) return walkErr;
   if (state.entryCount === 0)
     return {
@@ -381,6 +454,24 @@ export async function inspectArchive(
       message: `The archive must contain between 1 and ${WORK_CAPS.zipMaxEntries} files (files inside a packaged .skill count toward the limit).`,
     };
   if (state.secretPaths.length > 0) return secretsErr(state.secretPaths);
+
+  // ---- classify (§5.16 kind inference) ----
+  // Runs on the OUTER level only: state holds nothing else yet, because the
+  // inner open below is gated on the decision this makes. Every later return
+  // carries the verdict so a refusal can explain the rule it applied.
+  const kindVerdict = classifyWorkKind({
+    // "" and not null: null is classify.ts's "there is no package at all",
+    // the bare-.md lane, and that lane never reaches inspectArchive (it goes
+    // through inspectBareMd). A caller that did not name its upload has a
+    // package whose NAME is unknown, which is a different fact, and an empty
+    // string is the one that falls through the extension rung instead of
+    // short-circuiting the whole ladder to "skill".
+    packageName: opts.packageName ?? "",
+    paths: state.manifest.map((m) => m.path),
+    innerArchivePaths: state.innerArchives.map((a) => a.path),
+    texts: state.texts.map((t) => ({ path: t.path, text: t.text })),
+  });
+  const resolved: WorkKind = kind ?? kindVerdict.kind;
 
   const finish = (
     doc: TextFile | null,
@@ -395,7 +486,14 @@ export async function inspectArchive(
       corpus.push({ path: doc.path, text: docText });
       total = docText.length;
     }
-    for (const t of state.texts.sort((a, b) => a.size - b.size)) {
+    // A COPY, never state.texts itself: Array.prototype.sort mutates, and
+    // both doc ladders resolve by `.find()` over the array in WALK order
+    // (outer level before inner, ascending declared size within a level).
+    // While finish() was the last thing to touch texts that was invisible;
+    // now the classifier reads the array too, and a sort that reordered it
+    // under a later reader would make the reviewed doc depend on which
+    // caller ran first.
+    for (const t of [...state.texts].sort((a, b) => a.size - b.size)) {
       if (doc && t.path === doc.path) continue;
       if (total + t.text.length > WORK_CAPS.corpusTotalMaxChars) continue;
       corpus.push({ path: t.path, text: t.text });
@@ -403,6 +501,8 @@ export async function inspectArchive(
     }
     return {
       ok: true,
+      kind: resolved,
+      kindVerdict,
       docText,
       docPath: doc?.path ?? "",
       ...(doc ? { docRawBytes: doc.buf } : {}),
@@ -416,24 +516,37 @@ export async function inspectArchive(
     };
   };
 
-  if (kind === "program") {
-    const required = state.texts.find((t) => matchesArchDoc(t.path, t.text));
+  if (resolved === "program") {
+    // Outer level only. matchesArchDoc measures depth on the DISPLAY path, so
+    // "wrapper.skill!/architecture.md" splits into two segments and would
+    // pass its depth <= 1 gate. That is unreachable today because the inner
+    // open is skill-only and runs below this branch, but the guard states the
+    // invariant rather than relying on the reader to rediscover it: a Code
+    // program's required document is a file in the program, never one found
+    // inside a packaged Skill it happens to carry.
+    const required = state.texts.find(
+      (t) => !t.inner && matchesArchDoc(t.path, t.text)
+    );
     if (!required)
       return {
         ok: false,
         code: "missing_architecture_doc",
         message: MISSING_ARCH_DOC_MESSAGE,
+        kind: resolved,
+        kindVerdict,
       };
     if (proseLength(required.text) < WORK_CAPS.archDocMinProseChars)
       return {
         ok: false,
         code: "doc_too_short",
         message: MISSING_ARCH_DOC_MESSAGE,
+        kind: resolved,
+        kindVerdict,
       };
     return finish(required);
   }
 
-  // ---- kind "skill": precedence chain ----
+  // ---- resolved "skill": precedence chain ----
   const isSkillMd = (t: TextFile) =>
     /^skill\.md$/i.test(baseOf(t.path)) && depthOf(levelPath(t.path)) <= 1;
   let doc: TextFile | null = null;
@@ -498,6 +611,8 @@ export async function inspectArchive(
           ok: false,
           code: "invalid_archive",
           message: `The packaged Skill inside your zip (${inner.path}) could not be read. Re-export it and resubmit, or attach its SKILL.md in the second upload field.`,
+          kind: resolved,
+          kindVerdict,
         };
       let innerZip: JSZip;
       try {
@@ -507,6 +622,8 @@ export async function inspectArchive(
           ok: false,
           code: "invalid_archive",
           message: `The packaged Skill inside your zip (${inner.path}) could not be read. Re-export it and resubmit, or attach its SKILL.md in the second upload field.`,
+          kind: resolved,
+          kindVerdict,
         };
       }
       const innerErr = await walkLevel(
@@ -559,6 +676,15 @@ export function mergeSkillCorpus(
   return corpus;
 }
 
+/** The verdict every bare-.md submission carries. Computed once through the
+ * real ladder, not hand-written, so it cannot drift from classify.ts. */
+const BARE_DOC_VERDICT: KindVerdict = classifyWorkKind({
+  packageName: null,
+  paths: [],
+  innerArchivePaths: [],
+  texts: [],
+});
+
 /** A standalone .md (the Skill's SKILL.md): validated the same way, corpus of one. */
 export function inspectBareMd(
   name: string,
@@ -587,6 +713,12 @@ export function inspectBareMd(
   const docText = text.slice(0, WORK_CAPS.archDocMaxChars);
   return {
     ok: true,
+    // A submission that is one document and no package is a Skill by
+    // definition: a Code program is always a package. classify.ts owns that
+    // sentence (its `bare_document` rung) rather than a literal here, so the
+    // one ladder answers for every lane.
+    kind: BARE_DOC_VERDICT.kind,
+    kindVerdict: BARE_DOC_VERDICT,
     docText,
     docPath: name,
     docRawBytes: bytes,

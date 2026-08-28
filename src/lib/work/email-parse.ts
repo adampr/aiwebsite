@@ -150,13 +150,20 @@ export interface ParsedBody {
    * 2026-07-31: the first real forwarded submission published under its
    * subject, "skill to our work", while the body named the tool). */
   title: string | null;
-  /** Recognized Kind: override, or null when absent. */
+  /** Recognized Kind: value, or null when the line is absent or unreadable.
+   * It is NOT an override any more (owner directive 2026-08-28: the package
+   * decides the kind and nobody is asked). Two callers still want it: the
+   * update lane rejects a stated conflict with the card's pinned kind before
+   * anything is downloaded, and the create lane's receipt discloses a
+   * disagreement between what the submitter typed and what the files say. */
   kind: WorkKind | null;
-  /** Raw value of an unrecognized Kind: line (receipt notes that the
-   * attachments decided; the line stays in the blurb), else null. */
+  /** Raw value of an unrecognized Kind: line (the receipt says the line could
+   * not be read and that the package decides; the line stays in the blurb),
+   * else null. */
   kindRaw: string | null;
-  /** Raw value of a Kind: line honored via fuzzyKind (an inference, so the
-   * receipt discloses it; the line stays in the blurb), else null. */
+  /** Raw value of a Kind: line resolved through fuzzyKind rather than the
+   * exact vocabulary (the receipt discloses it; the line stays in the blurb),
+   * else null. */
   kindInferred: string | null;
   /** Lifted Credit: value; by construction always matches CREDIT_RE, so it
    * can never bounce downstream. Null when absent or non-name-shaped. */
@@ -184,7 +191,9 @@ const KIND_VALUES: Record<string, WorkKind> = {
  * round): only short values (at most 3 words and 30 chars), never values
  * carrying a negator ("not a skill" must not lift skill), and only when
  * exactly ONE side matches. Returns null for everything else; the caller
- * keeps the line in the blurb and discloses in the receipt either way. */
+ * keeps the line in the blurb and discloses in the receipt either way. Since
+ * 2026-08-28 the answer is a disclosure and never the kind itself, so a
+ * near-miss here costs a receipt sentence rather than a mislabelled card. */
 export function fuzzyKind(value: string): WorkKind | null {
   const v = value.trim();
   if (!v || v.length > 30 || v.split(/\s+/).length > 3) return null;
@@ -583,11 +592,17 @@ export function parseSubmissionBody(raw: string): ParsedBody {
       const value = directiveValue(directive[2]).trim();
       if (label === "kind") {
         // Exact vocabulary lifts the line out of the blurb (the sender used
-        // the documented form). A fuzzy match is honored but DISCLOSED and
-        // the authored line stays in the blurb; anything else stays too and
-        // the attachments decide (2026-08-03 natural-email round: the old
-        // behavior hard-rejected any unrecognized value). An empty value is
-        // a dangling label, dropped silently (the Update Card: rule).
+        // the documented form). A fuzzy match is read but DISCLOSED and the
+        // authored line stays in the blurb; anything else stays too
+        // (2026-08-03 natural-email round: the old behavior hard-rejected
+        // any unrecognized value). An empty value is a dangling label,
+        // dropped silently (the Update Card: rule).
+        //
+        // What the value NO LONGER does is choose the kind (owner directive
+        // 2026-08-28). The parsing survives because the line still has to be
+        // lifted out of the description one way or the other, and because
+        // what the submitter believed they were sending is worth disclosing
+        // back to them when the package says otherwise.
         if (!value) continue;
         const mapped = KIND_VALUES[value.toLowerCase().replace(/\.$/, "")] ?? null;
         if (mapped) {
@@ -802,17 +817,4 @@ export function pickAttachments(atts: AttachmentMeta[]): {
     archives: atts.filter((a) => ARCHIVE_RE.test(a.filename ?? "")),
     mds: atts.filter((a) => MD_RE.test(a.filename ?? "")),
   };
-}
-
-/** Kind resolution: an explicit Kind: line wins; else a .skill/.ski package
- * or a standalone .md attachment means CoWork Skill; a bare .zip is a
- * program. */
-export function inferKind(
-  packageName: string,
-  hasMd: boolean,
-  override: WorkKind | null
-): WorkKind {
-  if (override) return override;
-  if (/\.(skill|ski)$/i.test(packageName) || hasMd) return "skill";
-  return "program";
 }

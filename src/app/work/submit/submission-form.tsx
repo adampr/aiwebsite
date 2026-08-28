@@ -10,6 +10,17 @@
 // context="dialog": success REPLACES the form in place (the dialog stays
 // open so the handoff link is read); state is never reset on dialog close,
 // so a typed draft survives an accidental Esc.
+//
+// There is NO kind control on this form (owner directive 2026-08-28: "for
+// submit, no longer ask if its CoWork or Code program. Figure out which is
+// based on what was uploaded"). Two radio buttons stood here for months and
+// people picked the wrong one often enough to matter: three of the 85 rows
+// on production were filed as CoWork Skills while the package was plainly a
+// Claude Code program. src/lib/work/classify.ts reads the files and decides,
+// and this form cannot help it: the browser never opens the archive, so
+// every label, hint and error below has to be true of both shapes at once.
+// The single place a kind is still named is the update banner, where the
+// kind belongs to the published card being replaced and the server pins it.
 
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
@@ -37,7 +48,10 @@ interface SubmissionFormProps {
   onClose?: () => void; // dialog only
   /** §5.16 update mode: the published card being updated. Title and kind
    * are pinned server-side; the form shows them locked and never sends
-   * either field (the update route 400s on a typed value). */
+   * either field (the update route 400s on a typed value). The kind lives on
+   * this prop and nowhere else on the form: a card's kind is a property of
+   * the card, so an update to it is not open to re-inference, while a fresh
+   * submission has no kind until the server has read the package. */
   updateTarget?: {
     id: string;
     title: string;
@@ -68,8 +82,6 @@ export function SubmissionForm({
   retentionLine = "Uploads with credential files are rejected. Only document text is kept for review; the original files are emailed to Adam when the card publishes.",
   lane = "internal",
 }: SubmissionFormProps) {
-  const [kindState, setKind] = useState<"skill" | "program">("skill");
-  const kind = updateTarget ? updateTarget.kind : kindState;
   const [title, setTitle] = useState("");
   const [blurb, setBlurb] = useState("");
   const [attribution, setAttribution] = useState("");
@@ -137,13 +149,9 @@ export function SubmissionForm({
     setServerError(null);
     setServerPaths([]);
     const errs: Record<string, string> = {};
-    if (!pkg)
-      errs.pkg =
-        kind === "program"
-          ? "Attach the .zip of your program."
-          : "Attach the Skill package (.skill or .zip).";
-    // The SKILL.md field is optional (the package may carry the doc); only
-    // the server can see inside the archive, so no client check exists.
+    if (!pkg) errs.pkg = "Attach your package (.zip or .skill).";
+    // The document field is optional (the package usually carries the doc);
+    // only the server can see inside the archive, so no client check exists.
     //
     // Time saved IS checked here, and the reason is narrower than the one
     // this comment used to give. It claimed the check spares the submitter a
@@ -177,10 +185,11 @@ export function SubmissionForm({
     const timeout = setTimeout(() => ctrl.abort(), 90_000);
     try {
       const form = new FormData();
-      if (!updateTarget) {
-        form.set("kind", kind);
-        form.set("title", title);
-      }
+      // No "kind" field, on either lane. On a create the server infers it
+      // from the package; on an update it is pinned to the parent row, and
+      // that route refuses a value that disagrees with the card. Sending a
+      // guess from here could only ever be wrong or redundant.
+      if (!updateTarget) form.set("title", title);
       form.set("blurb", blurb);
       form.set("attribution", attribution);
       // Only when non-empty, and never in update mode. An empty string would
@@ -193,7 +202,12 @@ export function SubmissionForm({
       if (!updateTarget && timeSavedHours.trim() !== "")
         form.set("timeSavedHours", timeSavedHours.trim());
       form.set("file", pkg as File);
-      if (kind === "skill" && skillMd) form.set("skillMd", skillMd);
+      // "skillMd" is the historical wire name, kept on purpose. The field is
+      // now the generic standalone reviewed document (a SKILL.md or an
+      // architecture doc, whichever the package is short of), and renaming it
+      // would mean changing the create route, the update route and the email
+      // lane's equivalent in lockstep for the sake of a label nobody sees.
+      if (skillMd) form.set("skillMd", skillMd);
       const res = await fetch(
         updateTarget
           ? `/api/work/submissions/${updateTarget.id}/update`
@@ -278,39 +292,19 @@ export function SubmissionForm({
           </p>
         </div>
       ) : (
-        <>
-          <div className="flex gap-4">
-            {(
-              [
-                ["skill", "CoWork Skill"],
-                ["program", "Code program"],
-              ] as const
-            ).map(([value, label]) => (
-              <label key={value} className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="kind"
-                  checked={kind === value}
-                  onChange={() => setKind(value)}
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-          <div>
-            <label className={labelCls}>Title</label>
-            <input
-              className={inputCls}
-              style={inputStyle}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              minLength={4}
-              maxLength={60}
-              required
-              placeholder="What the tool is called"
-            />
-          </div>
-        </>
+        <div>
+          <label className={labelCls}>Title</label>
+          <input
+            className={inputCls}
+            style={inputStyle}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            minLength={4}
+            maxLength={60}
+            required
+            placeholder="What the tool is called"
+          />
+        </div>
       )}
       <div>
         <label className={labelCls}>One paragraph (optional)</label>
@@ -415,9 +409,7 @@ export function SubmissionForm({
       )}
       <div>
         <span id={`${uid}-pkg-label`} className={labelCls}>
-          {kind === "program"
-            ? "Program .zip (must include architecture.md or equivalent)"
-            : "Skill package (.skill or .zip)"}
+          Your package (.zip or .skill)
         </span>
         <label
           className={
@@ -440,7 +432,7 @@ export function SubmissionForm({
           <input
             ref={pkgRef}
             type="file"
-            accept={kind === "program" ? ".zip" : ".skill,.zip"}
+            accept=".zip,.skill"
             aria-labelledby={`${uid}-pkg-label`}
             aria-describedby={
               fieldErrors.pkg
@@ -461,9 +453,7 @@ export function SubmissionForm({
           ) : (
             <>
               <span className="file-drop-cta">Choose file</span>
-              <span className="mono text-xs text-faint">
-                {kind === "program" ? ".zip" : ".skill or .zip"}
-              </span>
+              <span className="mono text-xs text-faint">.zip or .skill</span>
             </>
           )}
         </label>
@@ -472,59 +462,84 @@ export function SubmissionForm({
             {fieldErrors.pkg}
           </p>
         )}
+        {/* The single most-read paragraph on the page, and the one thing
+            standing between a submitter and a 422. It has to serve both
+            shapes at once now that nobody declares which they are sending,
+            so it names what each shape must CONTAIN rather than which button
+            to press: the refusals people actually hit are "no SKILL.md
+            found" and "no architecture document", and both are avoidable by
+            whoever reads this before choosing a file. */}
         <p id={`${uid}-pkg-help`} className="mt-2 text-xs text-faint">
-          {kind === "program"
-            ? "The zip needs an architecture.md (or ARCHITECTURE.md, design.md, or a README.md with an Architecture section) at the top level or one folder deep: what it does, its components, how data flows. Max 100 MB."
-            : "Two shapes work: a .skill or .zip with SKILL.md at the top level or one folder deep, or one .zip holding both the .skill and its .md file. If the .md is in the package, the second upload is optional. Max 100 MB."}
+          Upload the whole package.{" "}
+          {/* Only on a create. On an update the kind is pinned to the card
+              and the banner above says so, so telling that submitter their
+              files decide it would contradict the sentence they just read. */}
+          {!updateTarget && (
+            <>
+              Whether it is a Skill or a program is read off the files, so
+              there is nothing to pick.{" "}
+            </>
+          )}
+          A Skill needs its SKILL.md at the top level or one folder deep, or
+          the package can be a .skill, or a .zip holding one. A program needs
+          an architecture.md (or ARCHITECTURE.md, design.md, or a README.md
+          with an Architecture section) at the top level or one folder deep:
+          what it does, its components, how data flows. Max 100 MB.
         </p>
       </div>
-      {kind === "skill" && (
-        <div>
-          <span id={`${uid}-md-label`} className={labelCls}>
-            SKILL.md (optional if it is already in your package)
+      {/* ALWAYS rendered, where it used to appear only for a Skill. Hiding
+          it behind the kind was only possible while the submitter declared
+          one, and it left the program lane with no way out of a hard refusal:
+          a program whose architecture doc was not in the zip had nothing it
+          could attach, so the rescue that Skills had always enjoyed did not
+          exist for it. Both routes now take this file for either kind. */}
+      <div>
+        <span id={`${uid}-md-label`} className={labelCls}>
+          SKILL.md or architecture doc (optional)
+        </span>
+        <label
+          className={"file-drop mt-2" + (skillMd ? " file-drop--filled" : "")}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            const files = e.dataTransfer.files;
+            if (files?.length && mdRef.current) {
+              mdRef.current.files = files;
+              takeMd(files[0]);
+            }
+          }}
+        >
+          <input
+            ref={mdRef}
+            type="file"
+            accept=".md,.mdx,.markdown"
+            aria-labelledby={`${uid}-md-label`}
+            aria-describedby={`${uid}-md-help`}
+            onChange={(e) => takeMd(e.target.files?.[0] ?? null)}
+          />
+          <span className="file-drop-glyph" aria-hidden="true">
+            {skillMd ? "✓" : "+"}
           </span>
-          <label
-            className={"file-drop mt-2" + (skillMd ? " file-drop--filled" : "")}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              const files = e.dataTransfer.files;
-              if (files?.length && mdRef.current) {
-                mdRef.current.files = files;
-                takeMd(files[0]);
-              }
-            }}
-          >
-            <input
-              ref={mdRef}
-              type="file"
-              accept=".md,.mdx,.markdown"
-              aria-labelledby={`${uid}-md-label`}
-              aria-describedby={`${uid}-md-help`}
-              onChange={(e) => takeMd(e.target.files?.[0] ?? null)}
-            />
-            <span className="file-drop-glyph" aria-hidden="true">
-              {skillMd ? "✓" : "+"}
-            </span>
-            {skillMd ? (
-              <>
-                <span className="file-drop-name">{skillMd.name}</span>
-                <span className="file-drop-cta">Replace</span>
-              </>
-            ) : (
-              <>
-                <span className="file-drop-cta">Choose file</span>
-                <span className="mono text-xs text-faint">.md (optional)</span>
-              </>
-            )}
-          </label>
-          <p id={`${uid}-md-help`} className="mt-2 text-xs text-faint">
-            Skip this if your package already carries the SKILL.md. Attach it
-            only when you want the panel to review this exact text; a file
-            attached here wins over the copy inside the package. Max 1 MB.
-          </p>
-        </div>
-      )}
+          {skillMd ? (
+            <>
+              <span className="file-drop-name">{skillMd.name}</span>
+              <span className="file-drop-cta">Replace</span>
+            </>
+          ) : (
+            <>
+              <span className="file-drop-cta">Choose file</span>
+              <span className="mono text-xs text-faint">.md (optional)</span>
+            </>
+          )}
+        </label>
+        <p id={`${uid}-md-help`} className="mt-2 text-xs text-faint">
+          Skip this if your package already carries the document the panel
+          should read, a SKILL.md for a Skill or an architecture doc for a
+          program. Attach one here when it does not, or when you want the
+          panel to review this exact text; a file attached here wins over the
+          copy inside the package. Max 1 MB.
+        </p>
+      </div>
       <p className="text-xs text-faint">{retentionLine}</p>
       <div>
         <label className={labelCls}>Public credit (optional)</label>

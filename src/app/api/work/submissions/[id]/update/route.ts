@@ -29,6 +29,8 @@ import {
   inspectBareMd,
   mergeSkillCorpus,
   skillDocFailureMessage,
+  type ExtractErr,
+  type ExtractOk,
 } from "@/lib/work/extract";
 import {
   okJson,
@@ -42,8 +44,66 @@ import { kickPanel } from "@/lib/work/panel";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+/** The 422 for a standalone document that fails on its own terms. A verbatim
+ * twin of the create route's, and duplicated rather than shared for the same
+ * reason every other refusal sentence in these two files is: the copy in this
+ * route speaks about an UPDATE and the two are free to diverge, and this file
+ * already carries its own copy of the .md extension and size messages. The
+ * too-short case gets local copy because extract.ts's version says "your
+ * Skill's document", and this field now carries a program's architecture doc
+ * just as often. */
+function standaloneDocError(err: ExtractErr): Response {
+  const message =
+    err.code === "doc_too_short"
+      ? "The document you attached is too short to review. It needs to describe the tool: what it does, how it is used, and how it works, at least a few paragraphs. Expand it and resubmit."
+      : err.message;
+  return workError(err.code, message, 422, {
+    ...(err.paths ? { paths: err.paths } : {}),
+    instructions: message,
+  });
+}
+
 const NOT_FOUND = () =>
   workError("not_found", "That submission does not exist.", 404);
+
+/** The rescue's second pass runs the SKILL ladder over a package the
+ * classifier already called a program, so its refusals are worded for a Skill
+ * submitter: "the packaged Skill inside your zip could not be read ... attach
+ * its SKILL.md in the second upload field". Both halves are wrong here. The
+ * inner archive is whatever the program happens to bundle (test fixtures, a
+ * data set), not a packaged Skill, and the second upload field is the one the
+ * submitter ALREADY used, which is the only reason the rescue ran. Left
+ * as-is it turns an accurate refusal into one with no path forward, so the
+ * inner-archive failures are re-worded for the lane that actually hit them
+ * and everything else (credentials, an over-complex archive) passes through
+ * with its own copy, which is kind-neutral. */
+function rescuePassError(err: ExtractErr, archiveName: string): Response {
+  const message =
+    err.code === "invalid_archive"
+      ? `Your package contains an archive that could not be read, so the panel could not finish inspecting ${archiveName}. Remove it, or re-export it as a plain .zip, and resubmit.`
+      : err.message;
+  return workError(err.code, message, 422, {
+    ...(err.paths ? { paths: err.paths } : {}),
+  });
+}
+
+/** A rescued program's row must not carry inner-archive evidence. The rescue
+ * pins the Skill ladder purely to get a manifest and a corpus back, and that
+ * ladder opens a nested archive the program lane never opens, so its result
+ * can hold "outer.zip!/inner/file" rows. Storing those would break three
+ * stated invariants at once (extract.ts's "kind program never opens nested
+ * archives", classify.ts's KindSignals contract, and the reclassification
+ * script's assumption that no row carries such a path) and would feed the
+ * editorial panel text from inside a bundle the program lane never read. The
+ * pin is a means to an end; the end is what a program walk would have
+ * produced. */
+function outerLevelOnly(pkg: ExtractOk): ExtractOk {
+  return {
+    ...pkg,
+    manifest: pkg.manifest.filter((m) => !m.path.includes("!/")),
+    corpus: pkg.corpus.filter((c) => !c.path.includes("!/")),
+  };
+}
 
 export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   const user = await requireXlUser();
@@ -135,6 +195,13 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       "An update keeps the published card's title, and renaming a card is admin only. Remove the title field, or ask Adam if the card should be renamed.",
       400
     );
+  // The current form does not send this field AT ALL, on either lane (the
+  // kind is inferred on a create and pinned here), so in practice this guard
+  // never fires from the site. It stays as the defence it always was, against
+  // a stale client cached from before 2026-08-28 or a hand-built POST: a
+  // typed value that disagrees with the card is a conflict to be surfaced,
+  // never something to ignore, because the person who sent it believes they
+  // are replacing the card with a different kind of thing.
   const sentKind = String(form.get("kind") ?? "").trim();
   if (sentKind && sentKind !== kind)
     return workError(
@@ -182,22 +249,25 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       409
     );
 
+  // Envelope checks only, and kind-neutral even though the kind IS known
+  // here. The rule stated a few lines down (a package the create lane accepts
+  // has to be acceptable as an update) is the reason: the create lane now
+  // takes a .zip or a .skill from anyone, and the form offers both in update
+  // mode too, so refusing a .skill against a program card would refuse a file
+  // the site just invited. The card's kind is pinned by the row, never by the
+  // file extension, so nothing downstream needs the extension to agree.
   const file = form.get("file");
   if (!(file instanceof File) || file.size === 0)
     return workError(
       "invalid_request",
-      kind === "program"
-        ? "Attach the .zip of the updated program."
-        : "Attach the updated Skill package (.skill or .zip).",
+      "Attach the updated package (.zip or .skill).",
       400
     );
   const name = file.name || "upload";
   if (!/\.(zip|skill)$/.test(name.toLowerCase()))
     return workError(
       "invalid_request",
-      kind === "program"
-        ? "A Code program update must be a .zip archive."
-        : "The Skill package must be a .skill or .zip file.",
+      "The package must be a .zip or .skill file.",
       400
     );
   if (file.size > WORK_CAPS.uploadMaxBytes)
@@ -214,71 +284,110 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   // the create lane accepts has to be acceptable as an update, or the same
   // bytes publish a new card and bounce as a new version of it.
   // inspectArchive attempts the parse and names what the bytes are.
+  // The standalone reviewed document, ungated from the kind (2026-08-28) in
+  // lockstep with the create route: the one form serves both lanes, so an
+  // update to a PROGRAM card can now carry its architecture doc as the second
+  // file, exactly as an update to a Skill card has always carried its
+  // SKILL.md. "skillMd" is the historical wire name for the slot; see the
+  // create route for why it is not being renamed.
   let mdFile: { name: string; bytes: Buffer } | null = null;
-  if (kind === "skill") {
-    const md = form.get("skillMd");
-    if (md instanceof File && md.size > 0) {
-      const mdName = md.name || "SKILL.md";
-      if (!/\.(md|mdx|markdown)$/.test(mdName.toLowerCase()))
-        return workError(
-          "invalid_request",
-          "The Skill's document must be a .md file.",
-          400
-        );
-      if (md.size > WORK_CAPS.skillMdMaxBytes)
-        return workError(
-          "invalid_request",
-          "The SKILL.md is too large (limit 1 MB).",
-          400
-        );
-      mdFile = { name: mdName, bytes: Buffer.from(await md.arrayBuffer()) };
-    }
+  const md = form.get("skillMd");
+  if (md instanceof File && md.size > 0) {
+    const mdName = md.name || "SKILL.md";
+    if (!/\.(md|mdx|markdown)$/.test(mdName.toLowerCase()))
+      return workError(
+        "invalid_request",
+        "The document must be a .md file.",
+        400
+      );
+    if (md.size > WORK_CAPS.skillMdMaxBytes)
+      return workError(
+        "invalid_request",
+        "That document is too large (limit 1 MB).",
+        400
+      );
+    mdFile = { name: mdName, bytes: Buffer.from(await md.arrayBuffer()) };
   }
 
-  const extracted = await inspectArchive(bytes, kind);
-  if (!extracted.ok)
+  // PINNED, unlike the create route's null: a card's kind is a property of
+  // the card, so the package is inspected under the rule the published card
+  // already lives by. The walk still classifies the bytes and hands back its
+  // verdict; a package that reads as the OTHER kind is not an error here and
+  // gets no refusal (a program that grew a SKILL.md, or a Skill that gained a
+  // package.json, is still an update to that card), which is exactly why the
+  // pinned kind and the verdict are two separate fields on the result.
+  const extracted = await inspectArchive(bytes, kind, { packageName: name });
+  // Validated once, after the package walk, for the reason the create route
+  // spells out: an archive with credentials in it must still refuse with the
+  // secrets message rather than with a note about the attached document.
+  const mdExtract = mdFile ? inspectBareMd(mdFile.name, mdFile.bytes) : null;
+
+  let pkg: ExtractOk;
+  if (extracted.ok) {
+    pkg = extracted;
+  } else if (
+    mdExtract &&
+    kind === "program" &&
+    (extracted.code === "missing_architecture_doc" ||
+      extracted.code === "doc_too_short")
+  ) {
+    // The same symmetric rescue the create route grew on 2026-08-28, and it
+    // has to be here too or the two lanes contradict each other: a program
+    // whose architecture doc travels as the second file would publish as a
+    // new card and then bounce as an update to it. Second walk with the kind
+    // pinned to "skill" purely because that ladder never hard-fails on doc
+    // resolution and so returns the manifest and corpus the failed result
+    // does not carry; see the create route for the full reasoning. The stored
+    // kind is untouched by it: `kind` is the parent row's and nothing below
+    // reads the rescue pass's own.
+    if (!mdExtract.ok) return standaloneDocError(mdExtract);
+    const rescue = await inspectArchive(bytes, "skill", { packageName: name });
+    if (!rescue.ok) return rescuePassError(rescue, name);
+    pkg = outerLevelOnly(rescue);
+  } else {
     return workError(extracted.code, extracted.message, 422, {
       ...(extracted.paths ? { paths: extracted.paths } : {}),
     });
-  let docText = extracted.docText;
-  let corpus = extracted.corpus;
+  }
+
+  // Reviewed-doc precedence, the same ladder for both kinds now: the
+  // standalone wins when there is one, else the package's resolved doc, else
+  // the Skill doc-resolution failure that only a standalone could have
+  // rescued.
+  let docText = pkg.docText;
+  let corpus = pkg.corpus;
   let mdMeta:
     | { name: string; sha256: string; bytes: number; data: Buffer }
     | undefined;
-  if (kind === "skill") {
-    if (mdFile) {
-      const mdExtract = inspectBareMd(mdFile.name, mdFile.bytes);
-      if (!mdExtract.ok)
-        return workError(mdExtract.code, mdExtract.message, 422, {
-          ...(mdExtract.paths ? { paths: mdExtract.paths } : {}),
-          instructions: mdExtract.message,
-        });
-      docText = mdExtract.docText;
-      corpus = mergeSkillCorpus(mdExtract, extracted);
-      mdMeta = {
-        name: mdFile.name.slice(0, 200),
-        sha256: mdExtract.archiveSha256,
-        bytes: mdFile.bytes.length,
-        data: mdFile.bytes,
-      };
-    } else if (extracted.docMissing) {
-      const message = skillDocFailureMessage(extracted.docMissing);
-      return workError(`skill_doc_${extracted.docMissing}`, message, 422, {
-        ...(extracted.candidatePaths ? { paths: extracted.candidatePaths } : {}),
-        instructions: message,
-      });
-    } else if (extracted.docRawBytes) {
-      const docBase =
-        extracted.docPath.split("!/").pop()?.split("/").pop() ?? "SKILL.md";
-      mdMeta = {
-        name: docBase.slice(0, 200),
-        sha256: createHash("sha256")
-          .update(extracted.docRawBytes)
-          .digest("hex"),
-        bytes: extracted.docRawBytes.length,
-        data: extracted.docRawBytes,
-      };
-    }
+  if (mdFile && mdExtract) {
+    if (!mdExtract.ok) return standaloneDocError(mdExtract);
+    docText = mdExtract.docText;
+    corpus = mergeSkillCorpus(mdExtract, pkg);
+    mdMeta = {
+      name: mdFile.name.slice(0, 200),
+      sha256: mdExtract.archiveSha256,
+      bytes: mdFile.bytes.length,
+      data: mdFile.bytes,
+    };
+  } else if (pkg.docMissing) {
+    // Skill lane only: the program ladder hard-fails above instead of
+    // returning ok-with-docMissing.
+    const message = skillDocFailureMessage(pkg.docMissing);
+    return workError(`skill_doc_${pkg.docMissing}`, message, 422, {
+      ...(pkg.candidatePaths ? { paths: pkg.candidatePaths } : {}),
+      instructions: message,
+    });
+  } else if (kind === "skill" && pkg.docRawBytes) {
+    // Skill only, exactly as before this round: a program's architecture doc
+    // has never been split back out of the archive into the md_* columns.
+    const docBase =
+      pkg.docPath.split("!/").pop()?.split("/").pop() ?? "SKILL.md";
+    mdMeta = {
+      name: docBase.slice(0, 200),
+      sha256: createHash("sha256").update(pkg.docRawBytes).digest("hex"),
+      bytes: pkg.docRawBytes.length,
+      data: pkg.docRawBytes,
+    };
   }
 
   let child;
@@ -304,11 +413,11 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       // row, where it also lands in that person's scorecard column.
       architectureText: kind === "program" ? docText : null,
       skillMdText: kind === "skill" ? docText : null,
-      fileManifestJson: JSON.stringify(extracted.manifest),
+      fileManifestJson: JSON.stringify(pkg.manifest),
       corpusFilesJson: JSON.stringify(corpus),
       archiveName: name.slice(0, 200),
-      archiveSha256: extracted.archiveSha256,
-      archiveBytes: extracted.archiveBytes,
+      archiveSha256: pkg.archiveSha256,
+      archiveBytes: pkg.archiveBytes,
       archiveData: bytes,
       md: mdMeta,
       parentId: id,

@@ -27,6 +27,7 @@
     "work:archive": "tsx scripts/work-archive-export.ts",
     "work:backfill": "tsx scripts/work-archive-backfill.ts",
     "work:import": "tsx scripts/work-archive-import.ts",
+    "work:reclassify": "tsx scripts/work-kind-reclassify.ts",
     "test:peg": "node scripts/peg-score-tests.mjs",
     "test:keywords": "node scripts/title-keywords-tests.mjs",
     "qa:hi-speed": "node scripts/qa/hi-speed-test.mjs",

@@ -297,7 +297,16 @@ export async function sendArchiveRetentionEmail(
             : [
                 `Package SHA-256${armored.length > 0 ? " (hash of the restored original file, not of the attached .b64.txt text)" : ""}: ${row.archiveSha256 ?? "n/a"}`,
               ]),
-          ...(row.mdSha256 ? [`SKILL.md SHA-256: ${row.mdSha256}`] : []),
+          // Named from the stored FILENAME, not from a literal (2026-08-28).
+          // This slot used to be a Skill's SKILL.md and nothing else, so the
+          // label could be hard-coded. Since the kind stopped being declared,
+          // the second upload field is offered to every submitter and a Code
+          // program's architecture doc lands here too, which would have made
+          // this line announce a SKILL.md that was never sent. md_name is
+          // what the person actually attached.
+          ...(row.mdSha256
+            ? [`${row.mdName ?? "SKILL.md"} SHA-256: ${row.mdSha256}`]
+            : []),
           `Submitted: ${row.createdAt.toISOString()}`,
           ``,
           ...(armored.length > 0

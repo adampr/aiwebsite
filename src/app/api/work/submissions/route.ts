@@ -11,12 +11,13 @@ import { createHash } from "node:crypto";
 import { after } from "next/server";
 import { brainHealthy } from "@/lib/governance/brain";
 import {
-  isWorkKind,
   MISSING_ARCH_DOC_MESSAGE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
   workSubmissionsEnabled,
+  type WorkKind,
 } from "@/lib/work/config";
+import { kindVerdictSentence, type KindVerdict } from "@/lib/work/classify";
 import {
   activeTitleClash,
   allSubmissionsForList,
@@ -35,6 +36,8 @@ import {
   inspectBareMd,
   mergeSkillCorpus,
   skillDocFailureMessage,
+  type ExtractErr,
+  type ExtractOk,
 } from "@/lib/work/extract";
 import {
   okJson,
@@ -54,6 +57,77 @@ import { ROADMAP_CAPS } from "@/lib/roadmap/config";
 import { companyById } from "@/lib/roadmap/db";
 import { countCreatedTodayForCompany } from "@/lib/work/db";
 import { statusView } from "@/lib/work/view";
+
+/** A refusal that is a CONSEQUENCE of the inferred kind, said so it can be
+ * argued with (§5.16 kind inference, 2026-08-28). Nobody picks a kind any
+ * more, so "your zip needs an architecture document" on its own reads as an
+ * arbitrary demand from a submitter who never said the word "program". With
+ * the verdict in front of it, the sentence names the files that decided, and
+ * a wrong decision becomes arguable against the package instead of against
+ * the site. The verdict is optional because ExtractErr carries one only for
+ * failures raised AFTER classification; a refusal that precedes it (an
+ * unreadable zip) has nothing to disclose and passes through unchanged. */
+function kindRefusal(verdict: KindVerdict | undefined, message: string): string {
+  return verdict ? `${kindVerdictSentence(verdict)} ${message}` : message;
+}
+
+/** The 422 for a standalone document that fails on its own terms.
+ *
+ * Its own copy for the too-short case, deliberately: extract.ts says "The
+ * panel found your Skill's document but it is too short", and this field now
+ * carries a program's architecture doc as often as a Skill's SKILL.md, so
+ * that sentence would tell a program submitter about a Skill they never
+ * mentioned. Everything else inspectBareMd can say (bytes that are not UTF-8,
+ * credentials in the text) is already kind-neutral and passes through. */
+function standaloneDocError(err: ExtractErr): Response {
+  const message =
+    err.code === "doc_too_short"
+      ? "The document you attached is too short to review. It needs to describe the tool: what it does, how it is used, and how it works, at least a few paragraphs. Expand it and resubmit."
+      : err.message;
+  return workError(err.code, message, 422, {
+    ...(err.paths ? { paths: err.paths } : {}),
+    instructions: message,
+  });
+}
+
+/** The rescue's second pass runs the SKILL ladder over a package the
+ * classifier already called a program, so its refusals are worded for a Skill
+ * submitter: "the packaged Skill inside your zip could not be read ... attach
+ * its SKILL.md in the second upload field". Both halves are wrong here. The
+ * inner archive is whatever the program happens to bundle (test fixtures, a
+ * data set), not a packaged Skill, and the second upload field is the one the
+ * submitter ALREADY used, which is the only reason the rescue ran. Left
+ * as-is it turns an accurate refusal into one with no path forward, so the
+ * inner-archive failures are re-worded for the lane that actually hit them
+ * and everything else (credentials, an over-complex archive) passes through
+ * with its own copy, which is kind-neutral. */
+function rescuePassError(err: ExtractErr, archiveName: string): Response {
+  const message =
+    err.code === "invalid_archive"
+      ? `Your package contains an archive that could not be read, so the panel could not finish inspecting ${archiveName}. Remove it, or re-export it as a plain .zip, and resubmit.`
+      : err.message;
+  return workError(err.code, message, 422, {
+    ...(err.paths ? { paths: err.paths } : {}),
+  });
+}
+
+/** A rescued program's row must not carry inner-archive evidence. The rescue
+ * pins the Skill ladder purely to get a manifest and a corpus back, and that
+ * ladder opens a nested archive the program lane never opens, so its result
+ * can hold "outer.zip!/inner/file" rows. Storing those would break three
+ * stated invariants at once (extract.ts's "kind program never opens nested
+ * archives", classify.ts's KindSignals contract, and the reclassification
+ * script's assumption that no row carries such a path) and would feed the
+ * editorial panel text from inside a bundle the program lane never read. The
+ * pin is a means to an end; the end is what a program walk would have
+ * produced. */
+function outerLevelOnly(pkg: ExtractOk): ExtractOk {
+  return {
+    ...pkg,
+    manifest: pkg.manifest.filter((m) => !m.path.includes("!/")),
+    corpus: pkg.corpus.filter((c) => !c.path.includes("!/")),
+  };
+}
 
 export async function GET(req: Request): Promise<Response> {
   const user = await requireWorkUser();
@@ -217,9 +291,10 @@ export async function POST(req: Request): Promise<Response> {
       400
     );
   }
-  const kind = form.get("kind");
-  if (!isWorkKind(kind))
-    return workError("invalid_request", "Pick a submission kind.", 400);
+  // No kind is read from the body. It is not asked on the form, and a value
+  // posted under that name is ignored rather than trusted: the package
+  // decides (owner directive 2026-08-28), and inspectArchive is handed a null
+  // kind below so classify.ts answers from the files.
   const title = String(form.get("title") ?? "").trim();
   if (
     title.length < WORK_CAPS.titleMinChars ||
@@ -321,25 +396,24 @@ export async function POST(req: Request): Promise<Response> {
     attribution = rawName;
   }
 
-  // The package: a .zip for a Code program, a .skill/.zip for a CoWork
-  // Skill. A CoWork Skill ALSO requires the standalone SKILL.md (owner
-  // directive: both files, both retained).
+  // The package: ONE upload, either shape, from everybody. Both refusals in
+  // this stretch are about the envelope (a file is here, it is plausibly an
+  // archive, it is small enough) and none of them is about the kind any more:
+  // a .zip and a .skill are now equally acceptable from any submitter,
+  // because which one they sent is evidence for the classifier rather than a
+  // claim to be checked against a declared kind.
   const file = form.get("file");
   if (!(file instanceof File) || file.size === 0)
     return workError(
       "invalid_request",
-      kind === "program"
-        ? "Attach the .zip of your program."
-        : "Attach the Skill package (.skill or .zip).",
+      "Attach your package (.zip or .skill).",
       400
     );
   const name = file.name || "upload";
   if (!/\.(zip|skill)$/.test(name.toLowerCase()))
     return workError(
       "invalid_request",
-      kind === "program"
-        ? "A Code program submission must be a .zip archive."
-        : "The Skill package must be a .skill or .zip file.",
+      "The package must be a .zip or .skill file.",
       400
     );
   if (file.size > WORK_CAPS.uploadMaxBytes)
@@ -355,85 +429,172 @@ export async function POST(req: Request): Promise<Response> {
   // lane): inspectArchive attempts the parse and names what the bytes are
   // when it fails.
 
-  // The standalone SKILL.md is OPTIONAL (owner directive 2026-07-30): a
-  // package that already carries the doc needs no second upload.
+  // The standalone reviewed document: OPTIONAL (owner directive 2026-07-30,
+  // a package that already carries the doc needs no second upload) and, as
+  // of 2026-08-28, taken from EVERY submission rather than only from Skills.
+  // It had to be ungated the moment the kind stopped being declared: the form
+  // shows this field to everyone because it cannot know what the package is,
+  // so refusing a program's separately attached architecture doc would refuse
+  // a file the site itself invited.
+  //
+  // "skillMd" is the historical wire name and it stays. It is what a Skill's
+  // SKILL.md has always arrived in, the email lane maps its own attachment
+  // onto the same slot, and renaming it would mean changing the form, both
+  // routes and the intake in lockstep for a label nobody reads.
   let mdFile: { name: string; bytes: Buffer } | null = null;
-  if (kind === "skill") {
-    const md = form.get("skillMd");
-    if (md instanceof File && md.size > 0) {
-      const mdName = md.name || "SKILL.md";
-      if (!/\.(md|mdx|markdown)$/.test(mdName.toLowerCase()))
-        return workError(
-          "invalid_request",
-          "The Skill's document must be a .md file.",
-          400
-        );
-      if (md.size > WORK_CAPS.skillMdMaxBytes)
-        return workError(
-          "invalid_request",
-          "The SKILL.md is too large (limit 1 MB).",
-          400
-        );
-      mdFile = { name: mdName, bytes: Buffer.from(await md.arrayBuffer()) };
-    }
+  const md = form.get("skillMd");
+  if (md instanceof File && md.size > 0) {
+    const mdName = md.name || "SKILL.md";
+    if (!/\.(md|mdx|markdown)$/.test(mdName.toLowerCase()))
+      return workError(
+        "invalid_request",
+        "The document must be a .md file.",
+        400
+      );
+    if (md.size > WORK_CAPS.skillMdMaxBytes)
+      return workError(
+        "invalid_request",
+        "That document is too large (limit 1 MB).",
+        400
+      );
+    mdFile = { name: mdName, bytes: Buffer.from(await md.arrayBuffer()) };
   }
 
-  const extracted = await inspectArchive(bytes, kind);
-  if (!extracted.ok) {
-    // Hard failures (secrets, invalid archive, too complex, program doc
-    // rules): reject and instruct; NEVER rescued by a standalone .md (a
-    // clean standalone must not launder a dirty archive).
-    return workError(extracted.code, extracted.message, 422, {
-      ...(extracted.paths ? { paths: extracted.paths } : {}),
-      ...(extracted.code === "missing_architecture_doc" ||
-      (extracted.code === "doc_too_short" && kind === "program")
-        ? { instructions: MISSING_ARCH_DOC_MESSAGE }
-        : {}),
-    });
+  // null, so the ladder in classify.ts decides. The kind that comes back is
+  // the one stored on the row; nothing upstream of this line has an opinion.
+  const extracted = await inspectArchive(bytes, null, { packageName: name });
+  // The standalone is validated exactly ONCE, here, and deliberately after
+  // the package walk rather than where it is read: an archive carrying
+  // credentials has to keep refusing with the secrets message, which is the
+  // one a submitter must act on fastest, and checking the .md first would let
+  // "your document is too short" answer for a package that is worse than
+  // that. inspectBareMd is pure and cheap, so computing it for a package that
+  // then refuses costs nothing.
+  const mdExtract = mdFile ? inspectBareMd(mdFile.name, mdFile.bytes) : null;
+
+  let pkg: ExtractOk;
+  let kind: WorkKind;
+  if (extracted.ok) {
+    pkg = extracted;
+    kind = extracted.kind;
+  } else if (
+    mdExtract &&
+    extracted.kind === "program" &&
+    (extracted.code === "missing_architecture_doc" ||
+      extracted.code === "doc_too_short")
+  ) {
+    // ---- the standalone-document rescue, made symmetric (2026-08-28) ----
+    // A Skill's doc-resolution failure has always been rescuable by the
+    // second upload field: the skill ladder returns ok-with-docMissing
+    // precisely so this route can put the attached .md in the reviewed slot.
+    // The program ladder hard-fails instead, so a program whose architecture
+    // doc sat beside the zip instead of inside it was a dead end. That was
+    // defensible while the form asked which kind you were sending and offered
+    // the .md field to Skills only. It stopped being defensible the moment
+    // the form started offering that field to everyone: the site would be
+    // refusing a document it had just invited, over a kind the submitter
+    // never chose.
+    //
+    // HOW: a second walk with the kind PINNED to "skill". extract.ts is not
+    // ours to change this round, and its ExtractErr carries no manifest and
+    // no corpus, so there is nothing in the failed result to build a row out
+    // of; the skill ladder never hard-fails on doc resolution, so pinning it
+    // returns exactly what is missing (manifest, corpus, hashes) for the very
+    // same bytes. The cost is one extra inflate, paid only by a package that
+    // was otherwise about to be refused outright and only when a .md is
+    // actually attached, so no accepted submission and no ordinary refusal
+    // pays for it. The alternative that avoids the second walk (pin "skill"
+    // on the FIRST pass whenever a .md is attached, and store
+    // kindVerdict.kind) was rejected: it would change the inspection of every
+    // submission that attaches a document, opening a nested .skill the
+    // program lane never opens, to save CPU on the rarest path here.
+    //
+    // The pinned kind is a MEANS, never a result: `kind` below is taken from
+    // the first pass, which is the inferred one, so a program rescued this
+    // way is stored as a program and reviewed as one.
+    if (!mdExtract.ok) return standaloneDocError(mdExtract);
+    const rescue = await inspectArchive(bytes, "skill", { packageName: name });
+    // The skill pass opens a single inner .skill that the program pass never
+    // looked at, so it can still fail on that inner archive or on credentials
+    // found inside it. Those refusals stand: a rescue supplies a missing
+    // document, it never launders an archive.
+    if (!rescue.ok) return rescuePassError(rescue, name);
+    pkg = outerLevelOnly(rescue);
+    kind = extracted.kind;
+  } else {
+    // Hard failures (secrets, invalid archive, too complex, and a program doc
+    // failure with nothing attached that could have carried the document):
+    // reject and instruct; NEVER rescued by a standalone .md beyond the one
+    // case above (a clean standalone must not launder a dirty archive).
+    const docFailure =
+      extracted.code === "missing_architecture_doc" ||
+      (extracted.code === "doc_too_short" && extracted.kind === "program");
+    return workError(
+      extracted.code,
+      docFailure
+        ? kindRefusal(extracted.kindVerdict, extracted.message)
+        : extracted.message,
+      422,
+      {
+        ...(extracted.paths ? { paths: extracted.paths } : {}),
+        ...(docFailure ? { instructions: MISSING_ARCH_DOC_MESSAGE } : {}),
+      }
+    );
   }
 
-  // Reviewed-doc precedence for kind=skill: a standalone upload always wins;
-  // else the package's resolved doc; else the doc-resolution failure is
-  // recoverable ONLY by a standalone, so with neither it rejects here.
-  let docText = extracted.docText;
-  let corpus = extracted.corpus;
+  // Reviewed-doc precedence, the same ladder for both kinds now: a standalone
+  // upload always wins; else the package's resolved doc; else the skill
+  // ladder's doc-resolution failure, which only a standalone could have
+  // rescued, so with neither it rejects here.
+  let docText = pkg.docText;
+  let corpus = pkg.corpus;
   let mdMeta: { name: string; sha256: string; bytes: number; data: Buffer } | undefined;
-  if (kind === "skill") {
-    if (mdFile) {
-      const mdExtract = inspectBareMd(mdFile.name, mdFile.bytes);
-      if (!mdExtract.ok)
-        return workError(mdExtract.code, mdExtract.message, 422, {
-          ...(mdExtract.paths ? { paths: mdExtract.paths } : {}),
-          instructions: mdExtract.message,
-        });
-      docText = mdExtract.docText;
-      corpus = mergeSkillCorpus(mdExtract, extracted);
-      mdMeta = {
-        name: mdFile.name.slice(0, 200),
-        sha256: mdExtract.archiveSha256,
-        bytes: mdFile.bytes.length,
-        data: mdFile.bytes,
-      };
-    } else if (extracted.docMissing) {
-      const message = skillDocFailureMessage(extracted.docMissing);
-      return workError(`skill_doc_${extracted.docMissing}`, message, 422, {
-        ...(extracted.candidatePaths ? { paths: extracted.candidatePaths } : {}),
+  if (mdFile && mdExtract) {
+    if (!mdExtract.ok) return standaloneDocError(mdExtract);
+    docText = mdExtract.docText;
+    // mergeSkillCorpus is named for the lane it was written for and is
+    // kind-blind in what it does (the standalone first, then the package's
+    // texts minus byte-identical duplicates, under the corpus cap), so it is
+    // the merge for a rescued program too.
+    corpus = mergeSkillCorpus(mdExtract, pkg);
+    mdMeta = {
+      name: mdFile.name.slice(0, 200),
+      sha256: mdExtract.archiveSha256,
+      bytes: mdFile.bytes.length,
+      data: mdFile.bytes,
+    };
+  } else if (pkg.docMissing) {
+    // Only the skill ladder returns ok-with-docMissing (the program ladder
+    // hard-fails above and is caught in the branch that refuses), so this is
+    // the Skill refusal, and it discloses the verdict for the same reason the
+    // program one does: the submitter never said "Skill", the files did, and
+    // "the panel could not find your SKILL.md" is answerable only by someone
+    // who knows a Skill is what this was read as.
+    const message = skillDocFailureMessage(pkg.docMissing);
+    return workError(
+      `skill_doc_${pkg.docMissing}`,
+      kindRefusal(pkg.kindVerdict, message),
+      422,
+      {
+        ...(pkg.candidatePaths ? { paths: pkg.candidatePaths } : {}),
         instructions: message,
-      });
-    } else if (extracted.docRawBytes) {
-      // Doc came from inside the package: retention still carries it as its
-      // own attachment (md_* backfilled from the untruncated raw bytes).
-      const docBase =
-        extracted.docPath.split("!/").pop()?.split("/").pop() ?? "SKILL.md";
-      mdMeta = {
-        name: docBase.slice(0, 200),
-        sha256: createHash("sha256")
-          .update(extracted.docRawBytes)
-          .digest("hex"),
-        bytes: extracted.docRawBytes.length,
-        data: extracted.docRawBytes,
-      };
-    }
+      }
+    );
+  } else if (kind === "skill" && pkg.docRawBytes) {
+    // Doc came from inside the package: retention still carries it as its own
+    // attachment (md_* backfilled from the untruncated raw bytes). Skill only,
+    // exactly as before this round: a program's architecture doc has never
+    // been split back out of the archive into the md_* columns, and doing it
+    // now would change what the retention email attaches for every program
+    // ever submitted, which is nothing this round was asked to decide.
+    const docBase =
+      pkg.docPath.split("!/").pop()?.split("/").pop() ?? "SKILL.md";
+    mdMeta = {
+      name: docBase.slice(0, 200),
+      sha256: createHash("sha256").update(pkg.docRawBytes).digest("hex"),
+      bytes: pkg.docRawBytes.length,
+      data: pkg.docRawBytes,
+    };
   }
 
   let row;
@@ -452,11 +613,11 @@ export async function POST(req: Request): Promise<Response> {
     timeSavedMinutes: timeSaved.minutes,
     architectureText: kind === "program" ? docText : null,
     skillMdText: kind === "skill" ? docText : null,
-    fileManifestJson: JSON.stringify(extracted.manifest),
+    fileManifestJson: JSON.stringify(pkg.manifest),
     corpusFilesJson: JSON.stringify(corpus),
     archiveName: name.slice(0, 200),
-    archiveSha256: extracted.archiveSha256,
-    archiveBytes: extracted.archiveBytes,
+    archiveSha256: pkg.archiveSha256,
+    archiveBytes: pkg.archiveBytes,
     // Retained until the owner retention email sends on publish (§5.16);
     // non-published rows drop them with the row.
       archiveData: bytes,

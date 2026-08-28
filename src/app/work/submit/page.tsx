@@ -109,17 +109,26 @@ export default async function WorkSubmitPage({
           Our Work / Submit Your Build
         </span>
         <h1 className="mt-8">Submit a tool you built</h1>
+        {/* No kind is named here any more (owner directive 2026-08-28). The
+            page used to open by asking the reader to sort their own work into
+            one of two buckets before it had said what happens next, and the
+            two sentences it spent on that were the two people got wrong. */}
         <p className="mx-auto mt-6 text-sm">
-          A CoWork Skill (the .skill with its SKILL.md, in one upload or
-          two) or a Code program (a .zip with its architecture.md). An automated editorial
-          panel drafts a /work card from those documents, argues against it,
-          and publishes only what it can verify. {EMAIL_PROMISE}
+          A CoWork Skill or a Claude Code program. Which one it is gets read
+          off the files you upload, so there is nothing to pick. An automated
+          editorial panel drafts a /work card from your documents, argues
+          against it, and publishes only what it can verify. {EMAIL_PROMISE}
         </p>
+        {/* "Kind:" is gone from this list on purpose. The line is still
+            parsed, still lifted out of the description and still answered in
+            the receipt, but it no longer sets anything, so offering it here
+            as a way to "want control" would be an invitation to type a line
+            that does nothing. */}
         <p className="mx-auto mt-4 text-xs text-faint">
           Prefer email? Send the package to Tron.Netter@ai.xl.net from your
           xl.net address with a normal note; Tron works out the rest and
           replies with what he did. Optional lines if you want control:
-          {" "}&quot;Title:&quot;, &quot;Kind:&quot;, &quot;Credit:&quot;, and
+          {" "}&quot;Title:&quot;, &quot;Credit:&quot;, and
           {" "}&quot;Update Card: (its exact title)&quot; to update a card you
           published.
         </p>

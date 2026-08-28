@@ -349,9 +349,17 @@ export const workSubmissions = pgTable(
     // verification fails the bytes stay here (2026-08-04 ruling: never
     // delete the only copy). ≤100 MB per row while it lasts.
     archiveData: bytea("archive_data"),
-    // Second original for CoWork Skill submissions (the standalone SKILL.md;
-    // owner directive 2026-07-29: BOTH files are required and retained).
-    // Same lifecycle as archive_data; NULL on program and legacy rows.
+    // Second original: the standalone reviewed document a submitter attached
+    // beside the package (owner directive 2026-07-29: BOTH files are required
+    // and retained). Same lifecycle as archive_data.
+    // NO LONGER Skill-only (2026-08-28). While the form asked which kind you
+    // were sending it offered this field to Skills alone, so these columns
+    // were NULL on every program row and the retention email could hard-code
+    // the label "SKILL.md". Now that the kind is inferred from the package
+    // (src/lib/work/classify.ts) the form cannot know what to offer, so the
+    // field is shown to everyone and a Code program's architecture document
+    // lands here too; notify.ts labels the line from md_name for that reason.
+    // Still NULL on legacy rows and on any submission that attached nothing.
     mdName: text("md_name"),
     mdSha256: text("md_sha256"),
     mdBytes: integer("md_bytes"),
