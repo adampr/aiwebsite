@@ -13,9 +13,11 @@ import {
   DEFAULT_LETTER_BODY,
   LETTER_LABEL,
   LETTER_TITLE,
+  labelDisplaysWorded,
   splitSections,
   stripReservedPrefix,
 } from "../src/lib/rfp/letter";
+import { sectionKicker } from "../src/lib/rfp/export-assets";
 import { COMPANY_SIGNATURE, signatureFor } from "../src/lib/rfp/signature";
 import type { DraftSectionRecord } from "../src/app/api/rfp/documents/[id]/generate/route";
 
@@ -100,6 +102,38 @@ check(
   COMPANY_SIGNATURE.articles.every((a) => a.title.endsWith("(by XL.net)")),
   true
 );
+
+// ---- labelDisplaysWorded parity with the kicker display rule (§5.17.1).
+// The retitle op decides which slot a new header lands in by asking whether
+// the LABEL is what the reader sees, and that must match sectionKicker
+// (export-assets.ts, itself a pinned replica of the workspace's secKicker)
+// byte for byte: worded ⇔ the kicker renders the label verbatim.
+for (const label of [
+  "8",
+  "3.1",
+  "IV",
+  "III",
+  "VII",
+  "F.",
+  "4.2",
+  "A",
+  "June 8th, 2026:",
+  "June 19 2026:",
+  "Current IT Provider Issues (Entiva)",
+  "Next Steps",
+  "Section 4",
+  "mix III words",
+  "",
+  "   ",
+  "MMMM",
+  "IIX",
+]) {
+  check(
+    `worded-label parity: ${JSON.stringify(label)}`,
+    labelDisplaysWorded(label),
+    sectionKicker(label) === label.trim() && label.trim() !== ""
+  );
+}
 
 if (failures) {
   console.log(`\n${failures} failing`);

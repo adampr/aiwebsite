@@ -22,11 +22,17 @@
 // the Document `fonts` option, so the .docx carries the faces even on a
 // machine with neither installed. The old Georgia/Arial mapping is gone.
 //
-// PDF pages are buffered so footers, draft corner marks and continuation
-// kickers are stamped AFTER the content flow ends. Stamping from a
-// `pageAdded` handler mutated the live flow state mid-paragraph (font,
-// size, x/y), which silently rendered the rest of an auto-paginated
-// section at 8pt — never go back to that.
+// PDF pages are buffered so footers and continuation kickers are stamped
+// AFTER the content flow ends. Stamping from a `pageAdded` handler mutated
+// the live flow state mid-paragraph (font, size, x/y), which silently
+// rendered the rest of an auto-paginated section at 8pt — never go back to
+// that.
+//
+// NO DRAFT MARKING, by owner ruling 2026-08-28: the downloaded file never
+// says DRAFT or WORKING DRAFT anywhere (no cover line, no corner mark, no
+// footer prefix, no -DRAFT filename). What is still outstanding is said in
+// the WORKSPACE (the export notice reads the x-rfp-* headers), never in the
+// file a prospect might end up holding.
 
 import {
   AlignmentType,
@@ -65,8 +71,6 @@ import {
   FURNITURE_CLOSING_WEB,
   FURNITURE_COVER_KICKER,
   FURNITURE_DIVIDERS,
-  FURNITURE_DRAFT_LINE,
-  FURNITURE_DRAFT_MARK,
   FURNITURE_FOOT_LEFT,
   FURNITURE_FOOT_RIGHT,
   FURNITURE_MINIMUM_CAPTION,
@@ -91,14 +95,9 @@ const GHOST_FILL = "EEF0FB";
 const NAVY_LEDE = "D9DFF7";
 const NAVY_LABEL = "9FB6F0";
 const NAVY_RULE = "6365D4"; // 25% white over the navy field, precomposed
-const AMBER = "B45309";
 const h = (c: string) => `#${c.toLowerCase()}`;
 
 export type ExportView = {
-  /** True when the compliance gate, open questions, or pricing are
-   *  unresolved: the file downloads anyway (owner directive: the current
-   *  state is always downloadable) and SAYS what it is. */
-  draft: boolean;
   coverTitle: string;
   clientName: string;
   proposalTitle: string;
@@ -135,14 +134,12 @@ export type ExportView = {
 /** The one place presentation-level pricing sentences are authored. */
 export function buildExportView(
   resolved: ResolvedProposal,
-  rateCard: RateCard,
-  draft: boolean
+  rateCard: RateCard
 ): ExportView {
   const quote = resolved.pricing;
   const anyMinimum = quote?.illustrations.some((i) => i.minimumApplied) ?? false;
   const clientName = resolved.cover.clientName;
   return {
-    draft,
     coverTitle: resolved.cover.title,
     clientName,
     proposalTitle: resolved.proposal.title,
@@ -471,22 +468,6 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
         after: 120,
       },
     }),
-    ...(view.draft
-      ? [
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: FURNITURE_DRAFT_LINE,
-                font: AR_SEMI,
-                size: px2hp(12),
-                characterSpacing: ls2tw(0.08, 12),
-                color: AMBER,
-              }),
-            ],
-            spacing: { before: 120, after: 120 },
-          }),
-        ]
-      : []),
     spacerX(4200),
     metaGrid(
       [
@@ -1012,7 +993,6 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
                   top: { style: BorderStyle.SINGLE, size: 6, color: HAIR, space: 4 },
                 },
                 children: [
-                  ...(view.draft ? [footRun("Draft · ", AMBER)] : []),
                   footRun(FURNITURE_FOOT_LEFT),
                   new TextRun({ children: ["\t"] }),
                   footRun(FURNITURE_FOOT_RIGHT),
@@ -1316,8 +1296,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       width: ledeW,
       lineGap: Math.max(0, pt(18) * 1.55 - doc.currentLineHeight()),
     });
-    const draftH = view.draft ? pt(12) + pt(16) : 0;
-    const blockH = pt(12) + pt(20) + titleH + pt(28) + pt(4) + pt(24) + ledeH + draftH;
+    const blockH = pt(12) + pt(20) + titleH + pt(28) + pt(4) + pt(24) + ledeH;
     const regionTop = fy + pad + pt(56);
     const regionBottom = metaRuleY;
     let y = regionTop + Math.max(pt(24), (regionBottom - regionTop - blockH) / 2);
@@ -1356,18 +1335,6 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
         color: h(MUTED),
         width: ledeW,
       });
-    }
-    if (view.draft) {
-      // The screen's mixed-case draft line, verbatim (not the caps voice).
-      y = doc.y + pt(16);
-      doc
-        .font("Archivo-SemiBold")
-        .fontSize(pt(12))
-        .fillColor(h(AMBER))
-        .text(FURNITURE_DRAFT_LINE, ix, y, {
-          characterSpacing: 0.08 * pt(12),
-          lineBreak: false,
-        });
     }
   }
 
@@ -1761,8 +1728,8 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
   }
 
   /* ---- Stamping pass: pagefoot on EVERY page, continuation kickers on
-     overflow pages, the draft corner mark. All AFTER the flow so nothing
-     can disturb the text state the content was written with. ---- */
+     overflow pages. All AFTER the flow so nothing can disturb the text
+     state the content was written with. ---- */
   {
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i++) {
@@ -1790,17 +1757,6 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
           color: h(FAINT),
         });
       }
-      if (view.draft) {
-        doc
-          .font("Archivo-SemiBold")
-          .fontSize(pt(10.5))
-          .fillColor(h(AMBER))
-          .text(FURNITURE_DRAFT_MARK, PAGE.width - PAGE.margin - 120, pt(32), {
-            width: 120,
-            align: "right",
-            characterSpacing: 0.5,
-          });
-      }
     }
     doc.flushPages();
   }
@@ -1815,5 +1771,5 @@ export function exportFileName(view: ExportView, format: "docx" | "pdf"): string
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
-  return `${base || "rfp-response"}-response${view.draft ? "-DRAFT" : ""}.${format}`;
+  return `${base || "rfp-response"}-response.${format}`;
 }

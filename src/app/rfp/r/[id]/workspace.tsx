@@ -27,8 +27,21 @@
 // from the rate card in force (rules B5/B7); the quote rendered below the
 // sections is engine output, printed, never calculated here.
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
+
+// This component is server-rendered (page.tsx statically imports it), and
+// React warns on useLayoutEffect during SSR; the server branch is inert
+// anyway because the measurement needs a live DOM.
+const useIsoLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
 import { When } from "@/components/when";
 import { LocalTime } from "@/components/local-time";
 import {
@@ -238,8 +251,8 @@ function pricingQuestions(
 export function Workspace({
   documentId,
   proposalId: initialProposalId,
-  structure,
-  requirements,
+  structure: initialStructure,
+  requirements: initialRequirements,
   sections: initialSections,
   rev: initialRev,
   pricing: initialPricing,
@@ -279,6 +292,11 @@ export function Workspace({
   signature: PersonSignature;
 }) {
   const router = useRouter();
+  // Structure and requirements are state, not plain props: an accepted Tron
+  // retitle or remove (§5.17.1) changes them, and the document, the
+  // Coverage pane, and the section picker must follow without a reload.
+  const [structure, setStructure] = useState(initialStructure);
+  const [requirements, setRequirements] = useState(initialRequirements);
   const [sections, setSectionsState] = useState<Section[]>(initialSections);
   // Ref mirror so async pollers diff against the CURRENT sections, not the
   // closure's. A state-updater callback is not guaranteed to run before the
@@ -321,17 +339,24 @@ export function Workspace({
   // two panes whenever they disagreed (first tap of any mobile rail tab).
   const [pane, setPane] = useState<Pane>("questions");
   const [mobile, setMobile] = useState<"draft" | Pane>("draft");
+  // The rail self-scrolls at lg; without a reset, leaving a long Coverage
+  // list clamps the next pane to the BOTTOM of its shorter content.
+  const railRef = useRef<HTMLDivElement | null>(null);
   const showPane = useCallback(
     (k: Pane) => {
       setPane(k);
       setMobile(k);
+      if (railRef.current) railRef.current.scrollTop = 0;
     },
     []
   );
   const [busy, setBusy] = useState(initialBusy);
   const [editing, setEditing] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
-  const [scope, setScope] = useState<string | null>(null);
+  // Whole-document is the DEFAULT scope (owner directive 2026-08-28): most
+  // real instructions span sections, and the per-section "Ask Tron" buttons
+  // still narrow it to one.
+  const [scope, setScope] = useState<string | null>(DOC_LABEL);
   const [instruction, setInstruction] = useState("");
   // Tron runs independently of drafting: the brain semaphore takes both, a
   // revision only READS until the human accepts, and waiting a 25-minute
@@ -345,19 +370,30 @@ export function Workspace({
   // column, so without this the output just vanishes (same reason the gap
   // flow has lastWoven).
   const [tronApplied, setTronApplied] = useState<string | null>(null);
+  // Receipt after an accepted REMOVAL: the section is gone, so there is no
+  // sheet to flash and no jump target — the pane says so in words.
+  const [tronRemoved, setTronRemoved] = useState<string | null>(null);
   const [proposal, setProposal] = useState<{
     label: string;
     proposed: string[];
     current: string[];
     note: string;
+    /** Structural proposals riding a single-section revise (§5.17.1):
+     *  a replacement header, or removing the section outright. */
+    heading: string | null;
+    remove: boolean;
   } | null>(null);
   // ---- the whole-document flow (scope === DOC_LABEL) ----
   // One plan turn names the sections to change, then the SAME per-section
   // revise call runs on each, sequentially, collecting proposals here. Each
   // is accepted or discarded exactly like the single proposal above.
+  // Structural targets (retitle/remove) skip the revise call: the plan
+  // already authored everything they need, so they land as instant entries.
   const [docProposals, setDocProposals] = useState<
     {
       label: string;
+      op: "revise" | "retitle" | "remove";
+      heading?: string;
       proposed: string[];
       current: string[];
       note: string;
@@ -379,6 +415,12 @@ export function Workspace({
   const [docStopping, setDocStopping] = useState(false);
   // Labels accepted from the doc list, for the multi-section receipt.
   const [docApplied, setDocApplied] = useState<string[]>([]);
+  // Display names of sections REMOVED from the doc list. Separate from
+  // docApplied: a removed section has no sheet to flash and no jump
+  // target, and a permanent delete with zero on-screen confirmation is the
+  // hidden-column failure the receipts exist to prevent (on mobile the
+  // draft column is not even visible when the entry disappears).
+  const [docRemoved, setDocRemoved] = useState<string[]>([]);
   // Use-all in flight: per-entry Use this/Discard freeze so a click cannot
   // race the sequential applies into a double accept or a stranded discard.
   const [docAccepting, setDocAccepting] = useState(false);
@@ -438,8 +480,18 @@ export function Workspace({
   // is not sticky or the tabstrip and scroll margins offset for a bar that
   // scrolled away. The section workbar IS sticky below md and taller than
   // the old hardcoded 4.5rem, so its real height is measured too.
-  const runbarLive = Boolean(run?.active || followProgress);
-  useEffect(() => {
+  // Sticky ONLY while something in the bar needs to stay reachable or
+  // readable (a live run's Stop button, a landed notice — dismissable, so
+  // the pin always has an exit): at rest it scrolls away with the page
+  // (owner directive 2026-08-28: the pinned header block plus per-column
+  // scrollbars made the workspace hard to maneuver). genError deliberately
+  // does NOT pin: it is a server prop that never clears, and a proposal
+  // whose last run errored would otherwise load pinned forever.
+  const runbarLive = Boolean(run?.active || followProgress || notice);
+  // Layout effect, not useEffect: on the frame the --live class first
+  // applies, a post-paint measurement leaves --rfp-runbar-h at 0 for one
+  // frame and the freshly sticky bar paints over the rail and receipt.
+  useIsoLayoutEffect(() => {
     const el = runbarRef.current;
     const page = el?.closest<HTMLElement>(".rfp-page");
     if (!el || !page) return;
@@ -581,25 +633,14 @@ export function Workspace({
     const reduce = window.matchMedia(
       "(prefers-reduced-motion: reduce)"
     ).matches;
-    const pane = el.closest(".rfp-docpane");
-    // Desktop: the document scrolls inside its own sticky pane (the
-    // governance rule — never yank the window while someone is answering).
-    if (pane && window.matchMedia("(min-width: 1024px)").matches) {
-      const top =
-        pane.scrollTop +
-        el.getBoundingClientRect().top -
-        pane.getBoundingClientRect().top -
-        16;
-      pane.scrollTo({
-        top: Math.max(top, 0),
-        behavior: reduce ? "auto" : "smooth",
-      });
-    } else {
-      el.scrollIntoView({
-        block: "start",
-        behavior: reduce ? "auto" : "smooth",
-      });
-    }
+    // The document scrolls WITH the window at every width (owner directive
+    // 2026-08-28: the self-scrolling pane was one vertical scrollbar too
+    // many); the sec-* scroll-margins in globals.css clear the sticky bars.
+    // showChanged still refuses to jump while the user is typing.
+    el.scrollIntoView({
+      block: "start",
+      behavior: reduce ? "auto" : "smooth",
+    });
   }, []);
 
   // "Updated just now" must stay true: the receipt and the section chips
@@ -674,6 +715,13 @@ export function Workspace({
         })
         .map((n) => n.label);
       setSections(next);
+      // Adopt the document structure alongside the sections: a retitle or
+      // remove accepted in ANOTHER tab moves both, and stale structure here
+      // would render the old header as a ghost "Not drafted yet" sheet
+      // while hiding the renamed section entirely. (The route serves the
+      // full structure on every poll; requirements travel only as a count,
+      // so Coverage rows heal on reload instead.)
+      if (Array.isArray(s.structure)) setStructure(s.structure);
       if (p.pricing !== undefined) setPricing(p.pricing);
       if (p.pricingInputs) {
         // Adopt provenance with the inputs: a second tab that edited the
@@ -1099,8 +1147,9 @@ export function Workspace({
     a.download = name;
     a.click();
     URL.revokeObjectURL(a.href);
-    // The current state always downloads; when it went out marked as a
-    // draft, say exactly why so finishing it is one glance away.
+    // The current state always downloads, unmarked (owner directive
+    // 2026-08-28: the file must never say DRAFT anywhere). What is still
+    // outstanding is said HERE instead, so finishing it is one glance away.
     if (res.headers.get("x-rfp-draft") === "1") {
       const gaps = Number(res.headers.get("x-rfp-open-gaps") ?? "0");
       const missing = Number(res.headers.get("x-rfp-pricing-missing") ?? "0");
@@ -1115,7 +1164,7 @@ export function Workspace({
         parts.push(`${missing} pricing answer${missing === 1 ? "" : "s"}`);
       if (!gateOk) parts.push("failing checks");
       setNotice(
-        `Downloaded as a WORKING DRAFT: ${parts.join(", ") || "unresolved items"} outstanding. The Questions and Checks panes walk through them.`
+        `Downloaded. Still outstanding: ${parts.join(", ") || "unresolved items"}. The Questions and Checks panes walk through them.`
       );
       // The export just ran and stored a gate result; without this the notice
       // can say "failing checks" while the Checks pane still shows nothing.
@@ -1182,6 +1231,22 @@ export function Workspace({
     setDocStopped(false);
     setDocStopping(false);
     setDocApplied([]);
+    setDocRemoved([]);
+  };
+
+  /** EVERY route that changes the Tron scope runs the same clears as the
+   *  select's onChange: the per-section "Ask Tron" buttons used to only
+   *  setScope, leaving a full set of whole-document cards (with a live
+   *  "Use all") on screen under a now-single-section scope — the exact
+   *  stale-Use-this hazard the select guards against. */
+  const pickScope = (label: string) => {
+    setScope(label);
+    setProposal(null);
+    setTronError("");
+    setTronApplied(null);
+    setTronRemoved(null);
+    clearDocFlow();
+    showPane("tron");
   };
 
   /** One Tron POST, JSON or multipart depending on the attached file. The
@@ -1217,6 +1282,7 @@ export function Workspace({
     setNotice("");
     setTronError("");
     setTronApplied(null);
+    setTronRemoved(null);
     // A new request supersedes the open proposal; leaving it on screen with
     // a live "Use this" invites accepting section A's old text while B is
     // in flight. The doc flow's collected proposals clear for the same
@@ -1249,6 +1315,8 @@ export function Workspace({
       proposed: d.proposed,
       current: d.current,
       note: d.note,
+      heading: typeof d.heading === "string" && d.heading ? d.heading : null,
+      remove: d.remove === true,
     });
   }
 
@@ -1288,11 +1356,12 @@ export function Workspace({
       return;
     }
     const d = await res.json().catch(() => null);
-    const targets: { label: string; directive: string }[] = Array.isArray(
-      d?.plan?.targets
-    )
-      ? d.plan.targets
-      : [];
+    const targets: {
+      label: string;
+      op?: "revise" | "retitle" | "remove";
+      directive: string;
+      heading?: string;
+    }[] = Array.isArray(d?.plan?.targets) ? d.plan.targets : [];
     const note = typeof d?.plan?.note === "string" ? d.plan.note : "";
     if (targets.length === 0) {
       // Zero targets is Tron's ANSWER (nothing to change, or a request it
@@ -1306,22 +1375,57 @@ export function Workspace({
     }
     setDocPlanNote(note);
     const failures: string[] = [];
+    // The progress line narrates only the targets that COST a call:
+    // structural entries land instantly, and counting them once flashed
+    // "(3 of 3)" as the first thing the user saw.
+    const reviseTotal = targets.filter(
+      (t) => t.op !== "retitle" && t.op !== "remove"
+    ).length;
     // Counts sections actually sent, not loop index: a section deleted
     // since the plan is skipped, and "(3 of 7)" jumping to "(5 of 7)"
     // reads as a lost response.
     let attempted = 0;
     for (let i = 0; i < targets.length; i++) {
-      if (tronStopRef.current || stale()) break;
+      // A stale run is ABANDONED: return without touching the surfaces
+      // (clearDocFlow already reset them, and the old `break` fell through
+      // to the tail, which wrote the dead run's failures back onto the
+      // cleared pane). A stopped run breaks so the tail reports honestly.
+      if (stale()) {
+        setTronBusy(false);
+        setBusyKind(null);
+        return;
+      }
+      if (tronStopRef.current) break;
       const t = targets[i];
       // The plan read a snapshot; a section deleted since then (another
       // tab's redraft) just drops out of the run.
       const live = sectionsRef.current.find((s) => s.label === t.label);
       if (!live) continue;
+      // Structural targets need no revise call: the plan already authored
+      // the heading (retitle) or the decision (remove). They land as
+      // instant proposals BEFORE the progress line ticks; every write
+      // still waits for Use this.
+      if (t.op === "retitle" || t.op === "remove") {
+        if (t.op === "retitle" && !t.heading) continue;
+        setDocProposals((prev) => [
+          ...prev,
+          {
+            label: t.label,
+            op: t.op as "retitle" | "remove",
+            ...(t.op === "retitle" ? { heading: t.heading } : {}),
+            proposed: [],
+            current: live.paragraphs,
+            note: "",
+            directive: t.directive,
+          },
+        ]);
+        continue;
+      }
       const display =
         live.label === LETTER_LABEL
           ? LETTER_TITLE
           : `${live.label} ${live.title}`.trim();
-      setDocRun({ done: attempted, total: targets.length, current: display });
+      setDocRun({ done: attempted, total: reviseTotal, current: display });
       attempted++;
       const r = await postTron({
         label: t.label,
@@ -1351,11 +1455,20 @@ export function Workspace({
         continue;
       }
       // Pushed AS IT ARRIVES: the user reads early proposals while later
-      // sections are still thinking.
+      // sections are still thinking. A revise answer can still carry a
+      // structural half (the model saw the same instruction the planner
+      // did); remove wins over retitle when it claims both.
       setDocProposals((prev) => [
         ...prev,
         {
           label: t.label,
+          op:
+            rd.remove === true
+              ? ("remove" as const)
+              : ("revise" as const),
+          ...(typeof rd.heading === "string" && rd.heading && rd.remove !== true
+            ? { heading: rd.heading }
+            : {}),
           proposed: rd.proposed,
           current: Array.isArray(rd.current) ? rd.current : live.paragraphs,
           note: String(rd.note ?? ""),
@@ -1373,63 +1486,163 @@ export function Workspace({
 
   /**
    * The accept write, shared by the single proposal's "Use this" and every
-   * whole-document entry. Returns an error string to show, or null.
+   * whole-document entry. Returns { error } to show, or { label } — the
+   * section's label AFTER the write (a retitle of a worded label renames
+   * the key itself, and every receipt and jump must follow it).
    *
    * The staleness guard: the section may have moved since Tron read it (a
    * gap answer woven in, a colleague's edit, the user's own). Accepting
-   * would overwrite that silently, because the PATCH sends whole paragraphs
-   * and its rev CAS only fences writes concurrent with the PATCH itself.
+   * would overwrite (or remove) that silently, because the PATCH sends
+   * whole paragraphs and its rev CAS only fences writes concurrent with the
+   * PATCH itself. A retitle that carries NO body change skips the guard:
+   * it writes nothing the section's paragraphs hold.
    */
   async function applyProposal(p: {
     label: string;
+    op?: "revise" | "retitle" | "remove";
+    heading?: string;
     proposed: string[];
     current: string[];
-  }): Promise<string | null> {
-    if (!proposalId) return "The proposal is gone. Reload the page.";
+  }): Promise<{ error: string } | { label: string }> {
+    if (!proposalId) return { error: "The proposal is gone. Reload the page." };
+    const op = p.op ?? "revise";
+    const touchesBody = op === "remove" || op === "revise";
     const live = sectionsRef.current.find((x) => x.label === p.label);
+    if (!live && (op === "retitle" || op === "remove"))
+      return { error: "That section is already gone. Reload the page." };
     const changedSince =
       live !== undefined &&
       (live.paragraphs.length !== p.current.length ||
         live.paragraphs.some((q, i) => q !== p.current[i]));
-    if (changedSince)
-      return "This section changed after Tron read it. Using this would undo that change. Ask Tron again so it reads the current text; if it keeps saying this, reload the page.";
+    if (touchesBody && changedSince)
+      return {
+        error:
+          "This section changed after Tron read it. Using this would undo that change. Ask Tron again so it reads the current text; if it keeps saying this, reload the page.",
+      };
+
+    // One write per accept. A revise that also carries a heading rides the
+    // retitle op WITH its paragraphs, so header and body land in the same
+    // CAS'd transaction instead of two half-applies.
+    const body =
+      op === "remove"
+        ? { op: "remove", label: p.label }
+        : op === "retitle" || p.heading
+          ? {
+              op: "retitle",
+              label: p.label,
+              heading: p.heading,
+              ...(op === "revise" ? { paragraphs: p.proposed } : {}),
+            }
+          : { label: p.label, paragraphs: p.proposed };
     const res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        label: p.label,
-        paragraphs: p.proposed,
-      }),
+      body: JSON.stringify(body),
     }).catch(() => null);
     if (!res || !res.ok) {
       const d = res ? await res.json().catch(() => null) : null;
-      return (
-        d?.message ??
-        (res
-          ? "That change was not saved."
-          : "The server could not be reached.")
-      );
+      return {
+        error:
+          d?.message ??
+          (res
+            ? "That change was not saved."
+            : "The server could not be reached."),
+      };
     }
     const d = await res.json().catch(() => null);
     adoptRev(d?.rev);
     setGateResult(null);
+
+    if (op === "remove") {
+      setSections((prev) => prev.filter((s) => s.label !== p.label));
+      setStructure((prev) => prev.filter((n) => n.label !== p.label));
+      setRequirements((prev) =>
+        prev.filter((r) => r.structureLabel !== p.label)
+      );
+      // A receipt chip for a section that no longer exists would render a
+      // jump button that silently does nothing.
+      setHighlights((prev) => {
+        if (!prev.has(p.label)) return prev;
+        const next = new Set(prev);
+        next.delete(p.label);
+        return next;
+      });
+      if (editing === p.label) setEditing(null);
+      if (scope === p.label) setScope(DOC_LABEL);
+      return { label: p.label };
+    }
+
+    // The server names the slot it filled; adopt ITS answer, never a local
+    // re-derivation of the worded-label rule.
+    const newLabel =
+      typeof d?.label === "string" && d.label ? (d.label as string) : p.label;
+    const newTitle = typeof d?.title === "string" ? (d.title as string) : null;
     setSections((prev) =>
       prev.map((s) =>
-        s.label === p.label ? { ...s, paragraphs: p.proposed } : s
+        s.label === p.label
+          ? {
+              ...s,
+              label: newLabel,
+              ...(newTitle !== null ? { title: newTitle } : {}),
+              ...(op === "revise" ? { paragraphs: p.proposed } : {}),
+            }
+          : s
       )
     );
-    showChanged([p.label]);
-    return null;
+    if (newLabel !== p.label || newTitle !== null) {
+      setStructure((prev) =>
+        prev.map((n) =>
+          n.label === p.label
+            ? {
+                ...n,
+                label: newLabel,
+                ...(newTitle !== null ? { title: newTitle } : {}),
+              }
+            : n
+        )
+      );
+      setRequirements((prev) =>
+        prev.map((r) =>
+          r.structureLabel === p.label
+            ? { ...r, structureLabel: newLabel }
+            : r
+        )
+      );
+      // The old label's receipt chip would jump nowhere after the rename;
+      // showChanged below re-lights the section under its new key.
+      setHighlights((prev) => {
+        if (newLabel === p.label || !prev.has(p.label)) return prev;
+        const next = new Set(prev);
+        next.delete(p.label);
+        return next;
+      });
+      if (editing === p.label) setEditing(newLabel);
+      if (scope === p.label) setScope(newLabel);
+    }
+    showChanged([newLabel]);
+    return { label: newLabel };
   }
 
   async function acceptProposal() {
     if (!proposal || !proposalId) return;
-    const err = await applyProposal(proposal);
-    if (err) {
-      setTronError(err);
+    const r = await applyProposal({
+      label: proposal.label,
+      op: proposal.remove ? "remove" : "revise",
+      heading: proposal.heading ?? undefined,
+      proposed: proposal.proposed,
+      current: proposal.current,
+    });
+    if ("error" in r) {
+      setTronError(r.error);
       return;
     }
-    setTronApplied(proposal.label);
+    if (proposal.remove) {
+      setTronApplied(null);
+      setTronRemoved(tronDisplay(proposal.label));
+    } else {
+      setTronApplied(r.label);
+      setTronRemoved(null);
+    }
     setProposal(null);
     setInstruction("");
     setTronFile(null);
@@ -1439,12 +1652,17 @@ export function Workspace({
   async function acceptDocProposal(label: string) {
     const entry = docProposals.find((p) => p.label === label);
     if (!entry) return;
-    const err = await applyProposal(entry);
-    if (err) {
-      setTronError(`${tronDisplay(label)}: ${err}`);
+    // Read BEFORE the apply: after a removal the section is gone from
+    // state and the display name can no longer be derived.
+    const display = tronDisplay(label);
+    const r = await applyProposal(entry);
+    if ("error" in r) {
+      setTronError(`${display}: ${r.error}`);
       return;
     }
-    setDocApplied((prev) => [...prev, label]);
+    if (entry.op === "remove")
+      setDocRemoved((prev) => [...prev, display]);
+    else setDocApplied((prev) => [...prev, r.label]);
     setDocProposals((prev) => prev.filter((p) => p.label !== label));
     // The stopped line says nothing has been written; an accept just did.
     setDocStopped(false);
@@ -1462,12 +1680,15 @@ export function Workspace({
     setDocAccepting(true);
     try {
       for (const entry of [...docProposals]) {
-        const err = await applyProposal(entry);
-        if (err) {
-          setTronError(`${tronDisplay(entry.label)}: ${err}`);
+        const display = tronDisplay(entry.label);
+        const r = await applyProposal(entry);
+        if ("error" in r) {
+          setTronError(`${display}: ${r.error}`);
           return;
         }
-        setDocApplied((prev) => [...prev, entry.label]);
+        if (entry.op === "remove")
+          setDocRemoved((prev) => [...prev, display]);
+        else setDocApplied((prev) => [...prev, r.label]);
         setDocProposals((prev) => prev.filter((p) => p.label !== entry.label));
         setDocStopped(false);
       }
@@ -1514,7 +1735,17 @@ export function Workspace({
         )}
         {notice && (
           <p className="mb-3 text-sm" role="status">
-            {notice}
+            {notice}{" "}
+            {/* Notices are set-and-forget and now PIN the bar; without a
+                dismiss, one export on a phone parks a wall of panel over
+                half the viewport for the rest of the session. */}
+            <button
+              type="button"
+              className="linklike"
+              onClick={() => setNotice("")}
+            >
+              Dismiss
+            </button>
           </p>
         )}
         {genError && !notice && <p className="mb-3 text-sm">{genError}</p>}
@@ -1594,7 +1825,7 @@ export function Workspace({
             {(queue.length > 0 || (gateResult && !gateResult.passed)) &&
               sections.length > 0 && (
                 <span className="text-xs text-faint">
-                  exports marked WORKING DRAFT
+                  open items remain before this is final
                 </span>
               )}
             <button
@@ -1637,6 +1868,7 @@ export function Workspace({
         {/* ---- the rail (left at lg, like governance's question pane) ---- */}
         <div
           className={`${mobile !== "draft" ? "block" : "hidden"} lg:block rfp-rail min-w-0`}
+          ref={railRef}
         >
           <nav className="tabstrip tabstrip--rail" aria-label="Rail">
             {(["questions", "coverage", "checks", "tron"] as const).map((k) => (
@@ -1853,7 +2085,10 @@ export function Workspace({
                 <p className="mt-3 text-sm text-faint">
                   Every ask the client made, in their words and their order.
                 </p>
-                <div className="mt-4 max-h-[60vh] overflow-y-auto">
+                {/* No inner scrollbox: the rail itself scrolls at lg, and
+                    stacking a second scrollbar inside it was part of the
+                    maneuvering problem (owner, 2026-08-28). */}
+                <div className="mt-4">
                   {requirements.map((r) => (
                     <div className="rfp-row" key={r.id}>
                       <div className="mono text-xs text-faint">
@@ -1890,18 +2125,18 @@ export function Workspace({
                   <p className="mt-3 text-sm">
                     {gapQuestionCount === 0
                       ? "The compliance rules have not run on this draft yet. Run them from the bar above."
-                      : `${gapQuestionCount} open question${gapQuestionCount === 1 ? "" : "s"} across ${gapSectionCount} section${gapSectionCount === 1 ? "" : "s"}. Until answered, exports are marked WORKING DRAFT; the Questions pane walks through them.`}
+                      : `${gapQuestionCount} open question${gapQuestionCount === 1 ? "" : "s"} across ${gapSectionCount} section${gapSectionCount === 1 ? "" : "s"}. The Questions pane walks through them.`}
                   </p>
                 ) : (
                   <>
                     <p className="mt-3 text-sm">
                       {gateResult.passed
                         ? queue.length > 0
-                          ? `The rules pass. ${queue.length} open question${queue.length === 1 ? "" : "s"} remain${queue.length === 1 ? "s" : ""}; until answered, exports are marked WORKING DRAFT.`
+                          ? `The rules pass. ${queue.length} open question${queue.length === 1 ? "" : "s"} remain${queue.length === 1 ? "s" : ""}; the Questions pane walks through them.`
                           : "Passing. Nothing blocks export."
-                        : `${blocks.length} blocking finding${blocks.length === 1 ? "" : "s"}${warns.length ? ` and ${warns.length} advisory` : ""}. Until fixed, exports are marked WORKING DRAFT.`}
+                        : `${blocks.length} blocking finding${blocks.length === 1 ? "" : "s"}${warns.length ? ` and ${warns.length} advisory` : ""}. Fix them before this response is sent.`}
                     </p>
-                    <div className="mt-4 space-y-3 max-h-[50vh] overflow-y-auto">
+                    <div className="mt-4 space-y-3">
                       {[...blocks, ...warns].map((v, i) => (
                         <div key={i} className="text-sm">
                           <span
@@ -1979,18 +2214,9 @@ export function Workspace({
                   <span className="text-faint">Section</span>
                   <select
                     className="input mt-1 w-full"
-                    value={scope ?? ""}
-                    onChange={(e) => {
-                      setScope(e.target.value || null);
-                      setProposal(null);
-                      setTronError("");
-                      setTronApplied(null);
-                      // Same reason the single proposal clears: a live
-                      // "Use this" over stale text invites a wrong write.
-                      clearDocFlow();
-                    }}
+                    value={scope ?? DOC_LABEL}
+                    onChange={(e) => pickScope(e.target.value)}
                   >
-                    <option value="">Pick a section</option>
                     <option value={DOC_LABEL}>The whole document</option>
                     {sections.map((sec) => (
                       <option key={sec.label} value={sec.label}>
@@ -2034,12 +2260,13 @@ export function Workspace({
                   )}
                 </div>
                 <p className="mt-2 text-xs text-faint">
-                  Tron can reword, tighten, reorder, and work from an attached
-                  PDF, Word, or text file as you direct. Choosing the whole
-                  document plans the change first, then proposes a revision
-                  for each affected section. It will not add a price, a
-                  contract length, or a claim the knowledge base does not
-                  support. Images cannot be read yet.
+                  Tron can reword, tighten, reorder, rename section headers,
+                  remove whole sections, and work from an attached PDF,
+                  Word, or text file as you direct. The whole document is
+                  the default scope: Tron plans the change first, then
+                  proposes a revision for each affected section. It will not
+                  add a price, a contract length, or a claim the knowledge
+                  base does not support. Images cannot be read yet.
                 </p>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
@@ -2109,14 +2336,22 @@ export function Workspace({
                     </button>
                   </p>
                 )}
+                {tronRemoved && !proposal && (
+                  <p className="mt-3 text-xs text-faint" role="status">
+                    Removed <span className="mono">{tronRemoved}</span> from
+                    the document.
+                  </p>
+                )}
                 {docStopped && (
                   <p className="mt-3 text-sm text-faint" role="status">
                     Stopped.{" "}
-                    {/* Phrased off docApplied at RENDER time: an accept can
-                        land mid-run, before this line exists, and "nothing
-                        has been written" would then be false. */}
-                    {docApplied.length > 0
-                      ? "The sections you already used are saved; nothing else has been written."
+                    {/* Phrased off docApplied AND docRemoved at RENDER
+                        time: an accept or a removal can land mid-run,
+                        before this line exists, and "nothing has been
+                        written" would then be false — for a removal,
+                        dangerously so. */}
+                    {docApplied.length + docRemoved.length > 0
+                      ? "The changes you already used are saved; nothing else has been written."
                       : docProposals.length > 0
                         ? "The proposals already collected are below; nothing has been written."
                         : "Nothing has been written."}
@@ -2153,6 +2388,15 @@ export function Workspace({
                       </button>
                     </p>
                   )}
+                {/* Removals get their own worded receipt: the entry
+                    vanishing from the list is NOT confirmation, and on
+                    mobile the draft column is hidden anyway. */}
+                {docRemoved.length > 0 && (
+                  <p className="mt-3 text-xs text-faint" role="status">
+                    Removed from the document:{" "}
+                    <span className="mono">{docRemoved.join(" · ")}</span>.
+                  </p>
+                )}
 
                 {proposal && (
                   <div className="mt-6 border-t pt-4" style={{ borderColor: "var(--xl-line)" }}>
@@ -2165,11 +2409,27 @@ export function Workspace({
                     {proposal.note && (
                       <p className="mt-3 text-sm text-faint">{proposal.note}</p>
                     )}
-                    <div className="mt-3 max-h-[40vh] space-y-3 overflow-y-auto text-sm">
-                      {proposal.proposed.map((p, i) => (
-                        <p key={i}>{p}</p>
-                      ))}
-                    </div>
+                    {proposal.remove ? (
+                      <p className="mt-3 text-sm">
+                        Removes this section, header included. The client
+                        asks recorded under it leave Coverage and the checks
+                        with it, for this and every later draft of this RFP.
+                      </p>
+                    ) : (
+                      <>
+                        {proposal.heading && (
+                          <p className="mt-3 text-sm">
+                            Header becomes{" "}
+                            <span className="mono">{proposal.heading}</span>.
+                          </p>
+                        )}
+                        <div className="mt-3 space-y-3 text-sm">
+                          {proposal.proposed.map((p, i) => (
+                            <p key={i}>{p}</p>
+                          ))}
+                        </div>
+                      </>
+                    )}
                     <div className="mt-4 flex flex-wrap gap-3">
                       <button
                         type="button"
@@ -2177,7 +2437,7 @@ export function Workspace({
                         disabled={tronBusy}
                         onClick={acceptProposal}
                       >
-                        Use this
+                        {proposal.remove ? "Remove the section" : "Use this"}
                       </button>
                       <button
                         type="button"
@@ -2189,7 +2449,9 @@ export function Workspace({
                     </div>
                     <details className="mt-3">
                       <summary className="linklike text-xs">
-                        The text it replaces
+                        {proposal.remove
+                          ? "The text it removes"
+                          : "The text it replaces"}
                       </summary>
                       <div className="mt-2 space-y-2 text-xs text-faint">
                         {proposal.current.map((p, i) => (
@@ -2206,9 +2468,15 @@ export function Workspace({
                     style={{ borderColor: "var(--xl-line)" }}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-3">
+                      {/* Removals are called out in the aggregate line AND
+                          on the bulk button: "Use all" must never quietly
+                          delete sections the reader did not scroll to. */}
                       <span className="sys-label">
                         Proposed for {docProposals.length} section
                         {docProposals.length === 1 ? "" : "s"}
+                        {docProposals.some((p) => p.op === "remove")
+                          ? ` (${docProposals.filter((p) => p.op === "remove").length} of them removals)`
+                          : ""}
                         {docRun ? ", more on the way" : ""}
                       </span>
                       {docProposals.length > 1 && (
@@ -2221,7 +2489,11 @@ export function Workspace({
                           disabled={tronBusy || docAccepting}
                           onClick={() => void acceptAllDocProposals()}
                         >
-                          {docAccepting ? "Using all" : "Use all"}
+                          {docAccepting
+                            ? "Using all"
+                            : docProposals.some((p) => p.op === "remove")
+                              ? "Use all, removals included"
+                              : "Use all"}
                         </button>
                       )}
                     </div>
@@ -2242,11 +2514,38 @@ export function Workspace({
                         {p.note && (
                           <p className="mt-3 text-sm text-faint">{p.note}</p>
                         )}
-                        <div className="mt-3 max-h-[40vh] space-y-3 overflow-y-auto text-sm">
-                          {p.proposed.map((q, i) => (
-                            <p key={i}>{q}</p>
-                          ))}
-                        </div>
+                        {p.op === "remove" ? (
+                          <p className="mt-3 text-sm">
+                            Removes this section, header included. The client
+                            asks recorded under it leave Coverage and the
+                            checks with it, for this and every later draft
+                            of this RFP.
+                          </p>
+                        ) : p.op === "retitle" ? (
+                          // A retitle touches ONLY the header: no body
+                          // preview, no "text it replaces" (that reads as
+                          // a body wipe when the proposed list is empty).
+                          <p className="mt-3 text-sm">
+                            Renames the header{" "}
+                            <span className="mono">{tronDisplay(p.label)}</span>{" "}
+                            to <span className="mono">{p.heading}</span>. The
+                            text under it is not touched.
+                          </p>
+                        ) : (
+                          <>
+                            {p.heading && (
+                              <p className="mt-3 text-sm">
+                                Header becomes{" "}
+                                <span className="mono">{p.heading}</span>.
+                              </p>
+                            )}
+                            <div className="mt-3 space-y-3 text-sm">
+                              {p.proposed.map((q, i) => (
+                                <p key={i}>{q}</p>
+                              ))}
+                            </div>
+                          </>
+                        )}
                         <div className="mt-4 flex flex-wrap gap-3">
                           <button
                             type="button"
@@ -2254,7 +2553,11 @@ export function Workspace({
                             disabled={docAccepting}
                             onClick={() => void acceptDocProposal(p.label)}
                           >
-                            Use this
+                            {p.op === "remove"
+                              ? "Remove the section"
+                              : p.op === "retitle"
+                                ? "Rename the header"
+                                : "Use this"}
                           </button>
                           <button
                             type="button"
@@ -2269,16 +2572,20 @@ export function Workspace({
                             Discard
                           </button>
                         </div>
-                        <details className="mt-3">
-                          <summary className="linklike text-xs">
-                            The text it replaces
-                          </summary>
-                          <div className="mt-2 space-y-2 text-xs text-faint">
-                            {p.current.map((q, i) => (
-                              <p key={i}>{q}</p>
-                            ))}
-                          </div>
-                        </details>
+                        {p.op !== "retitle" && (
+                          <details className="mt-3">
+                            <summary className="linklike text-xs">
+                              {p.op === "remove"
+                                ? "The text it removes"
+                                : "The text it replaces"}
+                            </summary>
+                            <div className="mt-2 space-y-2 text-xs text-faint">
+                              {p.current.map((q, i) => (
+                                <p key={i}>{q}</p>
+                              ))}
+                            </div>
+                          </details>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -2451,10 +2758,7 @@ export function Workspace({
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            setScope(LETTER_LABEL);
-                            showPane("tron");
-                          }}
+                          onClick={() => pickScope(LETTER_LABEL)}
                         >
                           Ask Tron
                         </button>
@@ -2718,10 +3022,7 @@ export function Workspace({
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
-                                setScope(node.label);
-                                showPane("tron");
-                              }}
+                              onClick={() => pickScope(node.label)}
                             >
                               Ask Tron
                             </button>

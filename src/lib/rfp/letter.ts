@@ -33,6 +33,23 @@ export const DOC_LABEL = "__doc";
 export const stripReservedPrefix = (label: string): string =>
   label.replace(/^_+/, "");
 
+/**
+ * Whether a section label renders VERBATIM as the visible header eyebrow.
+ * This is the workspace's secKicker branch test (and export-assets'
+ * sectionKicker replica), verbatim: bare numbering ("4.2", "F", "III")
+ * renders as "Section 4.2", so its heading lives in the TITLE; a worded
+ * label ("June 8th, 2026:", "Current IT Provider Issues") IS the heading
+ * people see. The section PATCH's retitle op keys on this to decide which
+ * slot a replacement header lands in — keep all three in lockstep.
+ */
+export const labelDisplaysWorded = (label: string): boolean => {
+  const t = label.trim();
+  if (!t) return false;
+  if (/^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/i.test(t))
+    return false;
+  return /[a-z]{3,}/i.test(t);
+};
+
 /** What the letter page says before the letter is drafted. Also the export
  *  body for a proposal whose letter was never drafted: short, claim-free,
  *  exactly the furniture text this page always carried. */

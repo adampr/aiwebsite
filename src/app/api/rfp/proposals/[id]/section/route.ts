@@ -1,6 +1,9 @@
 // Section-level writes on a draft (§5.17).
 //
-//   PATCH  — a human edits the text of one section
+//   PATCH  — a human edits the text of one section; under op "retitle" /
+//            "remove" it applies a STRUCTURAL change instead (a Tron
+//            proposal the human accepted): the header renames, or the whole
+//            section leaves the document, structure and Coverage included
 //   POST   — Tron proposes a revision (returns a PROPOSAL, writes nothing);
 //            under the DOC_LABEL sentinel it PLANS instead, returning the
 //            sections to change so the client can loop them through here
@@ -18,12 +21,19 @@ import {
   reviseSection,
   brainHealthy,
 } from "@/lib/rfp/brain";
-import { DOC_LABEL, LETTER_LABEL } from "@/lib/rfp/letter";
+import {
+  DOC_LABEL,
+  LETTER_LABEL,
+  labelDisplaysWorded,
+  stripReservedPrefix,
+} from "@/lib/rfp/letter";
 import { logRfpActivity } from "@/lib/rfp/activity";
 import {
+  getDocument,
   getOwnedProposal,
   knowledgeForUser,
   writeProposalSections,
+  writeProposalStructureOp,
 } from "@/lib/rfp/db";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
 import { extractStyleSampleText } from "@/lib/governance/style-sample";
@@ -108,7 +118,12 @@ export async function PATCH(
       409
     );
 
-  let body: { label?: string; paragraphs?: string[] };
+  let body: {
+    label?: string;
+    paragraphs?: string[];
+    op?: string;
+    heading?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -123,6 +138,155 @@ export async function PATCH(
   const sections: DraftSectionRecord[] = JSON.parse(proposal.sectionsJson || "[]");
   const at = sections.findIndex((s) => s.label === label);
   if (at < 0) return rfpError("not_found", "No such section.", 404);
+
+  // ---- structural ops (§5.17.1): an accepted Tron retitle or remove ----
+  if (body.op === "retitle" || body.op === "remove") {
+    // The letter (and the whole reserved namespace) is furniture: it has no
+    // structure node, no Coverage rows, and its header is host copy.
+    if (label.startsWith("__"))
+      return rfpError(
+        "invalid_request",
+        "The cover letter's header is fixed, and the letter itself is never removed.",
+        400
+      );
+    const doc = await getDocument(user, proposal.documentId);
+    if (!doc) return notFound();
+    const structure: { label: string; title: string }[] = JSON.parse(
+      doc.structureJson || "[]"
+    );
+
+    if (body.op === "remove") {
+      const nextSections = sections.filter((s) => s.label !== label);
+      const nextStructure = structure.filter((n) => n.label !== label);
+      // Removing the LAST structure node would blank the whole document
+      // behind the "no section structure was found" panel, unrecoverably
+      // (structure_json has no restore path short of re-ingesting the RFP).
+      if (structure.length > 0 && nextStructure.length === 0)
+        return rfpError(
+          "invalid_request",
+          "The last section cannot be removed; a document needs at least one. Revise it instead.",
+          409
+        );
+      const ok = await writeProposalStructureOp({
+        proposalId: proposal.id,
+        expectedRev: proposal.rev,
+        sectionsJson: JSON.stringify(nextSections),
+        documentId: doc.id,
+        structureJson: JSON.stringify(nextStructure),
+        removeLabel: label,
+      });
+      if (!ok)
+        return rfpError(
+          "conflict",
+          "Someone else changed this draft while you were editing. Reload to see their version.",
+          409
+        );
+      await logRfpActivity({
+        actorEmail: user.email,
+        actorAdmin: user.admin,
+        action: "proposal.section_remove",
+        subjectKind: "proposal",
+        subjectId: proposal.id,
+        meta: { section: label, paragraphs: sections[at].paragraphs.length },
+      });
+      return rfpOk({ ok: true, rev: proposal.rev + 1 });
+    }
+
+    // retitle. The heading is model-authored-then-human-accepted text: one
+    // line, no fence-token runs, never a reserved prefix, bounded — the
+    // same cleanup the brain applied, re-applied here because the PATCH
+    // body is client-supplied either way.
+    const heading = stripReservedPrefix(
+      String(body.heading ?? "")
+        .replace(/\s+/g, " ")
+        .replace(/<{3,}|>{3,}/g, " ")
+        .trim()
+    ).slice(0, 120);
+    if (!heading)
+      return rfpError(
+        "invalid_request",
+        "Say what the header should become.",
+        400
+      );
+
+    // Which slot the heading lands in follows what the reader SEES (the
+    // secKicker display rule): a worded label is itself the visible header,
+    // so the label renames — and the label is the join key everywhere
+    // (sections, structure, Coverage's structure_label), so the rename must
+    // stay unique and rides one transaction. A bare-numbering label stays
+    // (the client's own numbering, rule C4); the title takes the heading.
+    // On the worded branch the TITLE clears: the heading is contractually
+    // the FULL replacement header, and both slots print (kicker + h3, and
+    // the export mirrors them), so a preserved title would keep the very
+    // words the request asked to strip visible on the sheet and in the
+    // delivered file.
+    const renamesLabel = labelDisplaysWorded(label);
+    const newLabel = renamesLabel ? heading : label;
+    if (
+      renamesLabel &&
+      newLabel !== label &&
+      (sections.some((s) => s.label === newLabel) ||
+        structure.some((n) => n.label === newLabel))
+    )
+      return rfpError(
+        "conflict",
+        "A section with that header already exists.",
+        409
+      );
+    const newTitle = renamesLabel ? sections[at].title : heading;
+
+    const nextSections = sections.map((s) =>
+      s.label === label
+        ? {
+            ...s,
+            label: newLabel,
+            title: newTitle,
+            // Accepted alongside a body revision when present; cites and
+            // generatedBy carry over per the header invariant.
+            ...(Array.isArray(body.paragraphs) ? { paragraphs } : {}),
+            updatedAt: new Date().toISOString(),
+          }
+        : s
+    );
+    const nextStructure = structure.map((n) =>
+      n.label === label ? { ...n, label: newLabel, title: newTitle } : n
+    );
+    const ok = await writeProposalStructureOp({
+      proposalId: proposal.id,
+      expectedRev: proposal.rev,
+      sectionsJson: JSON.stringify(nextSections),
+      documentId: doc.id,
+      structureJson: JSON.stringify(nextStructure),
+      renameLabel:
+        renamesLabel && newLabel !== label
+          ? { from: label, to: newLabel }
+          : undefined,
+    });
+    if (!ok)
+      return rfpError(
+        "conflict",
+        "Someone else changed this draft while you were editing. Reload to see their version.",
+        409
+      );
+    await logRfpActivity({
+      actorEmail: user.email,
+      actorAdmin: user.admin,
+      action: "proposal.section_retitle",
+      subjectKind: "proposal",
+      subjectId: proposal.id,
+      meta: {
+        section: label,
+        renamedLabel: renamesLabel,
+        headingChars: heading.length,
+      },
+    });
+    return rfpOk({
+      ok: true,
+      rev: proposal.rev + 1,
+      label: newLabel,
+      title: newTitle,
+    });
+  }
 
   sections[at] = {
     ...sections[at],
@@ -279,6 +443,8 @@ export async function POST(
       // and the attachment may quote the client's RFP.
       meta: {
         targets: plan.targets.length,
+        retitles: plan.targets.filter((t) => t.op === "retitle").length,
+        removes: plan.targets.filter((t) => t.op === "remove").length,
         instructionChars: instruction.length,
         attachedChars: attachment?.text.length ?? 0,
         attachedInjectionHits: attachInjectionHits,
@@ -310,7 +476,10 @@ export async function POST(
     instruction,
     shared,
     attachment,
-    directive || undefined
+    directive || undefined,
+    // The letter's header and existence are furniture; only real sections
+    // may be offered a retitle or a removal.
+    section.label !== LETTER_LABEL
   );
   if (!result)
     return rfpError(
@@ -336,6 +505,9 @@ export async function POST(
       directiveChars: directive.length,
       attachedChars: attachment?.text.length ?? 0,
       attachedInjectionHits: attachInjectionHits,
+      // Shape only: whether Tron proposed a structural change too.
+      proposedHeading: result.heading !== null,
+      proposedRemove: result.remove,
     },
   });
 
@@ -343,5 +515,7 @@ export async function POST(
     proposed: result.paragraphs,
     note: result.note,
     current: section.paragraphs,
+    heading: result.heading,
+    remove: result.remove,
   });
 }

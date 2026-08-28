@@ -501,6 +501,70 @@ export async function writeProposalSections(
 }
 
 /**
+ * Structure-level accept (§5.17.1 Tron retitle/remove): ONE transaction
+ * updates the proposal's sections (same CAS-on-rev contract as
+ * writeProposalSections, including the gate stale-out), the document's
+ * structure_json, and the requirements rows that key Coverage by
+ * structure_label (renamed on a retitle that renames the label, deleted on
+ * a remove — a removed section's asks nagging "Not yet" forever would
+ * contradict the removal the owner just accepted). The CAS runs FIRST so a
+ * conflict leaves document and requirements untouched.
+ */
+export async function writeProposalStructureOp(opts: {
+  proposalId: string;
+  expectedRev: number;
+  sectionsJson: string;
+  documentId: string;
+  structureJson: string;
+  renameLabel?: { from: string; to: string };
+  removeLabel?: string;
+}): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const res = await tx
+      .update(rfpProposals)
+      .set({
+        sectionsJson: opts.sectionsJson,
+        rev: opts.expectedRev + 1,
+        updatedAt: new Date(),
+        gateJson: null,
+        gateRanAt: null,
+      })
+      .where(
+        and(
+          eq(rfpProposals.id, opts.proposalId),
+          eq(rfpProposals.rev, opts.expectedRev)
+        )
+      )
+      .returning({ id: rfpProposals.id });
+    if (res.length === 0) return false;
+    await tx
+      .update(rfpDocuments)
+      .set({ structureJson: opts.structureJson, updatedAt: new Date() })
+      .where(eq(rfpDocuments.id, opts.documentId));
+    if (opts.renameLabel)
+      await tx
+        .update(rfpRequirements)
+        .set({ structureLabel: opts.renameLabel.to })
+        .where(
+          and(
+            eq(rfpRequirements.documentId, opts.documentId),
+            eq(rfpRequirements.structureLabel, opts.renameLabel.from)
+          )
+        );
+    if (opts.removeLabel !== undefined)
+      await tx
+        .delete(rfpRequirements)
+        .where(
+          and(
+            eq(rfpRequirements.documentId, opts.documentId),
+            eq(rfpRequirements.structureLabel, opts.removeLabel)
+          )
+        );
+    return true;
+  });
+}
+
+/**
  * One proposal the caller may see. Same null-means-404 contract as
  * getDocument. Ownership lives here, not in routes.
  */

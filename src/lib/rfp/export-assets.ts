@@ -129,10 +129,6 @@ export const FURNITURE_CLOSING_WEB = "xl.net";
 export const FURNITURE_MINIMUM_CAPTION =
   "The monthly minimum applies to the fully managed line, so it is billed at the flat minimum rather than the per-user product.";
 
-/** The draft marking, cover line and corner mark. */
-export const FURNITURE_DRAFT_LINE = "WORKING DRAFT · not for delivery";
-export const FURNITURE_DRAFT_MARK = "WORKING DRAFT";
-
 /** Investment table head, in screen column order. */
 export const FURNITURE_TABLE_HEAD = ["Service", "Qty", "Unit", "Monthly"] as const;
 

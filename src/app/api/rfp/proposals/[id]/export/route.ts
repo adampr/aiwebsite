@@ -1,15 +1,15 @@
 // GET /api/rfp/proposals/[id]/export?format=docx|pdf — emit the response.
 //
-// The CURRENT STATE always downloads (owner directive): the compliance gate
-// runs here on the exact content being emitted, and an unresolved document
-// is not refused, it is MARKED — "WORKING DRAFT · not for delivery" on the
-// cover, a corner mark on every PDF page, a DRAFT footer and -DRAFT
-// filename suffix in .docx. The x-rfp-* response headers carry what is
-// outstanding so the workspace says why the file is a draft. Only a
-// proposal with zero drafted sections refuses (there is nothing to render).
-// The gate result is stored on every run, so the Checks pane and the file's
-// own marking can never disagree. Generated on demand and streamed, never
-// stored — the same contract as governance downloads.
+// The CURRENT STATE always downloads (owner directive), and the FILE is
+// never marked: no DRAFT anywhere in it, by owner ruling 2026-08-28 (the
+// old cover line / corner mark / footer prefix / -DRAFT filename are gone).
+// The compliance gate still runs here on the exact content being emitted;
+// what is outstanding travels ONLY in the x-rfp-* response headers, which
+// the workspace turns into its export notice. Only a proposal with zero
+// drafted sections refuses (there is nothing to render). The gate result is
+// stored on every run, so the Checks pane stays current. Generated on
+// demand and streamed, never stored — the same contract as governance
+// downloads.
 
 import { logRfpActivity } from "@/lib/rfp/activity";
 import { getDocument, getOwnedProposal, writeProposalGate } from "@/lib/rfp/db";
@@ -72,15 +72,12 @@ export async function GET(
     proposal.id
   ).missing;
 
-  // The current state ALWAYS downloads (owner directive). An unresolved
-  // draft is not refused; it is MARKED: "WORKING DRAFT · not for delivery"
-  // on the cover, a per-page corner mark in the PDF, a DRAFT footer in the
-  // .docx. The response headers carry what is outstanding so the workspace
-  // can say why the file is a draft.
+  // Still computed, but it never touches the FILE any more: it feeds the
+  // x-rfp-* headers (the workspace's export notice) and the activity log.
   const draft = !result.passed || openGaps > 0 || pricingMissing.length > 0;
 
   const { resolved } = resolveDraft(input);
-  const view = buildExportView(resolved, input.rateCard, draft);
+  const view = buildExportView(resolved, input.rateCard);
 
   const buffer =
     format === "docx" ? await renderRfpDocx(view) : await renderRfpPdf(view);

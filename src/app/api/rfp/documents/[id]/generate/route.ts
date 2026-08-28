@@ -86,6 +86,27 @@ export async function POST(
     : String(body.sectionTitle ?? "").slice(0, 300);
   if (!label && !title)
     return rfpError("invalid_request", "Name the section to draft.", 400);
+  // Labels are mutable now (§5.17.1 Tron retitle/remove renames or deletes
+  // structure nodes), so membership must be checked at claim time: a stale
+  // tab's "Draft this" on a removed or renamed label would otherwise
+  // re-create the record under the retired key — a section invisible to
+  // every workspace (they render through structure) yet still APPENDED to
+  // the exported file by resolve-draft's orphan pass. The letter is the one
+  // draftable label with no structure node. (Residual: a remove accepted
+  // during the seconds a draft of that same section is in flight can still
+  // land an orphan; the Tron plan only targets drafted sections, so the
+  // interleaving has no realistic path.)
+  if (!isLetter) {
+    const structure: { label: string }[] = JSON.parse(
+      doc.structureJson || "[]"
+    );
+    if (!structure.some((n) => n.label === label))
+      return rfpError(
+        "not_found",
+        "That section is no longer part of this document. Reload to see the current structure.",
+        404
+      );
+  }
 
   if (!(await brainHealthy()))
     return rfpError(

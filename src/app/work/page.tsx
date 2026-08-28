@@ -599,9 +599,9 @@ export default async function WorkPage() {
                 and PDF alike. Editing a section or a price clears the stored
                 result, so a passing verdict can never describe a draft that
                 has since changed. An unresolved proposal still downloads,
-                carrying WORKING DRAFT · not for delivery on its cover, a
-                WORKING DRAFT corner mark on every PDF page, and DRAFT in its
-                filename.
+                and the file itself stays clean; what is still outstanding
+                is reported in the workspace beside the download, never
+                stamped into a document a prospect might one day hold.
               </p>
             </div>
           </div>
@@ -617,7 +617,7 @@ export default async function WorkPage() {
           <p className="mono mt-6 text-xs text-faint">
             94-second read, then one section per call · gap questions capped
             at two per section · counts in, figures computed · every export
-            re-runs the checks · WORKING DRAFT marking until it is resolved ·
+            re-runs the checks · open items reported beside the download ·
             cover letter written last
           </p>
         </section>

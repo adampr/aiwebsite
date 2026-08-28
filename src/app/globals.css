@@ -681,40 +681,43 @@
     /* Below the runbar, whose height the workspace measures into
        --rfp-runbar-h (it varies with notices and wrapping). Without the
        offset the two sticky elements share 11.25rem and the runbar covers
-       the rail's tabs. */
+       the rail's tabs. NO overscroll-behavior: contain — reaching the
+       rail's end should chain to the window, not trap the wheel (the
+       2026-08-28 fewer-scroll-traps pass). */
     top: calc(11.25rem + var(--rfp-runbar-h, 0px));
     max-height: calc(100dvh - 12.75rem - var(--rfp-runbar-h, 0px));
     overflow-y: auto;
-    overscroll-behavior: contain;
+  }
+  /* The pane tabs stay reachable however deep the rail is scrolled
+     (Coverage can hold 300 requirement rows; with the inner scrollboxes
+     gone, the rail IS the scroll container). */
+  .rfp-page .rfp-rail .tabstrip--rail {
+    position: sticky;
+    top: 0;
+    z-index: 6;
+    background: var(--xl-bg-0);
   }
 }
 /* The workspace action bar (draft-all progress, stop, export, notices)
-   sticks below the site header + section workbar: the flash choreography
-   auto-scrolls the window, so anything only at the top of the page is
-   guaranteed off-viewport exactly when a notice lands or the stop button
-   is needed mid-run. */
+   scrolls WITH the page at rest, at EVERY width (owner directive
+   2026-08-28: pinned bars plus per-column scrollbars made the workspace
+   hard to maneuver). It turns sticky only while --live: a run's Stop
+   button and status, or a landed notice, must stay reachable while the
+   flash choreography scrolls the window. Below md its sticky top is the
+   MEASURED workbar height (the section workbar is sticky top:0 there and
+   taller than 4.5rem, which a hardcoded offset slid under). The workspace
+   zeroes --rfp-runbar-h while the bar is not sticky. */
 .rfp-page .rfp-runbar {
-  position: sticky;
-  top: 4.5rem;
-  z-index: 30;
+  position: static;
   background: var(--xl-bg-1);
 }
-/* Below md the full panel is nearly half a phone viewport, so it scrolls
-   with the page UNLESS a run is live (--live: the Stop button and run
-   status must stay reachable mid-run — the flash choreography scrolls the
-   window). Its sticky top is the MEASURED workbar height (the section
-   workbar is sticky top:0 at this width and taller than 4.5rem, which the
-   old hardcoded offset slid under). The workspace zeroes --rfp-runbar-h
-   while the bar is not sticky. */
-@media (max-width: 767px) {
-  .rfp-page .rfp-runbar { position: static; }
-  .rfp-page .rfp-runbar--live {
-    position: sticky;
-    top: var(--rfp-workbar-h, 4.5rem);
-  }
+.rfp-page .rfp-runbar--live {
+  position: sticky;
+  top: var(--rfp-workbar-h, 4.5rem);
+  z-index: 30;
 }
 @media (min-width: 768px) {
-  .rfp-page .rfp-runbar { top: 11.25rem; }
+  .rfp-page .rfp-runbar--live { top: 11.25rem; }
 }
 
 /* Native select popups paint with UA colors; a transparent .input select on
@@ -738,19 +741,18 @@ select.input option {
    preview of the printed proposal, not a site surface. Values adapted
    from the CoWork handoff's chf.render.dc.html.
    ------------------------------------------------------------------ */
+/* The document column scrolls WITH the window at every width (owner
+   directive 2026-08-28): its old sticky self-scrolling pane was one
+   vertical scrollbar too many, and wheel position decided which of three
+   scroll containers moved. Only the RAIL still self-scrolls (it must stay
+   in view); the document is the page. */
 @media (min-width: 1024px) {
-  .rfp-docpane {
-    position: sticky;
-    top: calc(11.25rem + var(--rfp-runbar-h, 0px));
-    max-height: calc(100dvh - 12.75rem - var(--rfp-runbar-h, 0px));
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-  /* The change receipt floats over the paper's top edge, so it is visible
-     wherever the pane happens to be scrolled when a change lands. */
+  /* The change receipt stays visible wherever the window is scrolled when
+     a change lands: sticky against the WINDOW now, below the sticky
+     header + workbar stack (and the runbar while one is live). */
   .rfp-docpane .rfp-doc-receipt {
     position: sticky;
-    top: 0;
+    top: calc(11.25rem + var(--rfp-runbar-h, 0px));
     z-index: 5;
     background: var(--xl-bg-1);
   }
@@ -1211,10 +1213,13 @@ select.input option {
   .rfp-page [id^="sec-"] { scroll-margin-top: calc(12rem + var(--rfp-runbar-h, 0px)); }
 }
 /* Below lg the pane switcher is sticky too (the rail is not), so jumps must
-   clear it as well: 44px button row + its 1px bottom border. */
+   clear it as well: 44px button row + its 1px bottom border. Below md the
+   workbar's real height is MEASURED (--rfp-workbar-h): on a narrow phone
+   it wraps to ~120px and the old fixed 6.5rem parked jumped-to kickers
+   under it. */
 @media (max-width: 1023px) {
   .rfp-page [id^="sec-"] {
-    scroll-margin-top: calc(6.5rem + 45px + var(--rfp-runbar-h, 0px));
+    scroll-margin-top: calc(var(--rfp-workbar-h, 6.5rem) + 45px + var(--rfp-runbar-h, 0px) + 0.75rem);
   }
 }
 @media (min-width: 768px) and (max-width: 1023px) {
