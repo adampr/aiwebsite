@@ -494,7 +494,13 @@ async function main() {
     { card: { ...goodCard(), title: "abc" }, frees: ["title"] },
     { card: { ...goodCard(), title: "Claude Skill: Export Scorer" }, frees: ["title"] },
     { card: { ...goodCard(), title: "Export Scorer (export-scorer)" }, frees: ["title"] },
-    { card: { ...goodCard(), title: "Log Analyzer" }, frees: ["title"] }, // static collision
+    // Static collision. Read the title out of the snapshot rather than
+    // pinning a literal: "Log Analyzer" was pinned here until 2026-08-29 and
+    // the exhibit-to-team-card round deleted it from static-titles.json, so
+    // the case stopped producing a violation and this suite went red. The
+    // dynamic form is the same idiom lines 373/377 already use and cannot rot
+    // on the next exhibit change.
+    { card: { ...goodCard(), title: staticTitles.titles[0] }, frees: ["title"] },
     { card: { ...goodCard(), categoryBadge: "Flagship product" }, frees: ["badge"] },
     { card: { ...goodCard(), summary: sentence(10) }, frees: ["summary"] },
     { card: { ...goodCard(), summary: sentence(50) + " It ran — fast." }, frees: ["summary"] },

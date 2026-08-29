@@ -11,16 +11,23 @@
 // first, then newest first — §5.16 reorder)
 // and passes the rows here and to the registry, so the index can never
 // advertise cards this section failed to render. An empty list renders
-// NOTHING (the 25 hand-authored exhibits are unaffected and the page never
+// NOTHING (the hand-authored exhibits are unaffected and the page never
 // breaks on this section's account). data-team-divider / data-work-card
 // are the pager island's hooks for hiding the divider on static-only pages.
 //
-// SEAM PARITY (re-derived 2026-08-05, when rfp-response left slot 25 for bay
-// 02 and Ticket Reply Composer became the last static at an EVEN global
-// position, so it renders plain): the first team card must start LIGHTLINE or
-// the seam double-stripes plain-on-plain. The offset lives here, not in
-// work-card.tsx, because the company page (§5.18 /roadmap/work) opens its own
-// alternation with no statics above it and must keep starting plain.
+// SEAM PARITY (first derived 2026-08-05, RE-DERIVED 2026-08-29): the last
+// static exhibit sits at an EVEN global position and so renders plain, which
+// means the first team card must start LIGHTLINE or the seam double-stripes
+// plain-on-plain. The offset lives here, not in work-card.tsx, because the
+// company page (§5.18 /roadmap/work) opens its own alternation with no
+// statics above it and must keep starting plain.
+//
+// The conclusion has survived two reshuffles and the DERIVATION is the part
+// that keeps going stale, so read it off the page rather than off this
+// comment. On 2026-08-05 the last static was Ticket Reply Composer at 26;
+// on 2026-08-29 eight exhibits became team cards and it became
+// #autotask-ci-intake at 18. Both are even, so the offset never moved. A
+// future removal of an ODD number of trailing cards WOULD flip it.
 
 // The card template itself lives in src/components/work-card.tsx (§5.18:
 // the company /roadmap/work page renders through the SAME component, with a

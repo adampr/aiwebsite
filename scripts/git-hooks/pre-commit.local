@@ -147,4 +147,36 @@ if [ -n "$seed_hits" ]; then
   [ -n "${PERSON_MAP_OK:-}" ] || exit 1
 fi
 
+# ── Rendered-file survival gate: the work-archive-store backup (2026-08-29) ──
+# deploy/backup-db.sh is TEMPLATE-RENDERED from @aicompany/core, and the
+# §5.16 work-archive-store block in it is a HOST edit that has no home in
+# the template yet. render.mjs writes every output unconditionally, and
+# deploy.sh's drift gate hashes the MODULE TEMPLATE rather than the rendered
+# bytes, so the next `node packages/aicompany/deploy/render.mjs` deletes the
+# whole block and every existing gate still passes. Nothing reads the block's
+# stamp for freshness either (watchdog.sh checks only the DATABASE
+# heartbeat), so the end state is silent: the last copy of colleagues'
+# submitted work stops being backed up and nobody is told.
+#
+# This is the fail-closed half, at the one moment a wipe becomes permanent:
+# a staged deploy/backup-db.sh that no longer defines archive_store_backup is
+# refused. It is a name check, not a parser. RETIRE THIS GATE the day the
+# block lands in packages/aicompany/deploy/templates/backup-db.sh.tpl, which
+# is the durable home; until then a re-render must be re-applied, not
+# committed as-is.
+if git diff --cached --name-only --diff-filter=ACMR | grep -qx 'deploy/backup-db.sh'; then
+  if ! git show :deploy/backup-db.sh 2>/dev/null | grep -q 'archive_store_backup'; then
+    echo "BLOCKED: deploy/backup-db.sh no longer defines archive_store_backup()." >&2
+    echo "  That is the §5.16 work-archive-store backup (ARCHITECTURE.md §9.6/§9.7)." >&2
+    echo "  A re-render of this template-stamped file deletes it silently and no" >&2
+    echo "  existing gate notices, because the drift check hashes the TEMPLATE." >&2
+    echo "  Re-apply the block on top of the fresh render before committing, or" >&2
+    echo "  port it to packages/aicompany/deploy/templates/backup-db.sh.tpl and" >&2
+    echo "  delete this gate in the same commit." >&2
+    echo "  Bypass ONLY if the block genuinely moved upstream:" >&2
+    echo "    ARCHIVE_BACKUP_OK=1 git commit ..." >&2
+    [ -n "${ARCHIVE_BACKUP_OK:-}" ] || exit 1
+  fi
+fi
+
 exit 0

@@ -15,18 +15,10 @@
     "XL Lakehouse",
     "XL API Gateway",
     "SpamSlayer",
-    "TicketScribe",
-    "Autotask Ticket Summaries",
     "Auto-Draft Follow-Up Emails",
     "Beacon",
     "Morning Brief",
-    "SP Writer",
-    "Kaseya AP Builder",
-    "TPS Client Count",
-    "Log Analyzer",
-    "Autotask CI Intake",
-    "Script Master",
-    "Ticket Reply Composer"
+    "Autotask CI Intake"
   ],
   "facetLabels": [
     "Remembers Whose Memory It Is",
@@ -71,12 +63,6 @@
     "Four Checks",
     "Never Clicks the Link",
     "Errs Toward Caution",
-    "Chronological, Every Ticket",
-    "Facts-Only Handoffs",
-    "The Hypothesis Stays Home",
-    "Reads With Your Login",
-    "Issue, Done, Next",
-    "Looks, Never Touches",
     "One Line, Tokens Filled",
     "The Call Gets Logged",
     "The Send Stays Human",
@@ -86,27 +72,9 @@
     "The Day, Drawn First",
     "The List That Subtracts",
     "No New Access",
-    "Every Path Reaches End",
-    "Flagged, Never Filled In",
-    "Two Files, Then a Tech",
-    "The Log Does the Talking",
-    "Built to Survive the Import",
-    "No Connection, No Keys",
-    "Arithmetic Left in the Cells",
-    "Burned Twice, Written Down",
-    "Only the Downloads Folder",
-    "Triage by Signature",
-    "The Fix Must Fit the Build",
-    "Works From the Export",
     "A Column Is Not a Field",
     "Parents Already on File",
-    "Where a Person Comes In",
-    "Its Own Form Proves Nothing",
-    "A Clean Pass Says So",
-    "Stops Ride Inside the Script",
-    "Interchangeable Parts",
-    "Nine Presets or a Paragraph",
-    "Nowhere to Put an Address"
+    "Where a Person Comes In"
   ],
   "anchorIds": [
     "brain",
@@ -123,18 +91,10 @@
     "lakehouse",
     "api-gateway",
     "spamslayer",
-    "ticketscribe",
-    "ticket-summaries",
     "follow-up-emails",
     "beacon",
     "morning-brief",
-    "sp-writer",
-    "kaseya-ap-builder",
-    "tps-client-count",
-    "log-analyzer",
-    "autotask-ci-intake",
-    "script-master",
-    "ticket-reply-composer"
+    "autotask-ci-intake"
   ],
   "bays": [
     {
@@ -230,16 +190,6 @@
       "bay": "05"
     },
     {
-      "id": "ticketscribe",
-      "title": "TicketScribe",
-      "bay": "05"
-    },
-    {
-      "id": "ticket-summaries",
-      "title": "Autotask Ticket Summaries",
-      "bay": "05"
-    },
-    {
       "id": "follow-up-emails",
       "title": "Auto-Draft Follow-Up Emails",
       "bay": "05"
@@ -255,38 +205,8 @@
       "bay": "05"
     },
     {
-      "id": "sp-writer",
-      "title": "SP Writer",
-      "bay": "05"
-    },
-    {
-      "id": "kaseya-ap-builder",
-      "title": "Kaseya AP Builder",
-      "bay": "05"
-    },
-    {
-      "id": "tps-client-count",
-      "title": "TPS Client Count",
-      "bay": "05"
-    },
-    {
-      "id": "log-analyzer",
-      "title": "Log Analyzer",
-      "bay": "05"
-    },
-    {
       "id": "autotask-ci-intake",
       "title": "Autotask CI Intake",
-      "bay": "05"
-    },
-    {
-      "id": "script-master",
-      "title": "Script Master",
-      "bay": "05"
-    },
-    {
-      "id": "ticket-reply-composer",
-      "title": "Ticket Reply Composer",
       "bay": "05"
     }
   ]

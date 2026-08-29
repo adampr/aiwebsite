@@ -15,7 +15,119 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 §5.16 ADMIN REMOVAL ON /work/submit (sections 5.6 /work/submit pages row + the 5.16 removal bullet): owner directive - admins now remove past submissions from the /work/submit list itself: a removal control on every row of every status except superseded (other people's rows and published rows included), per-row honest labels Withdraw / Roll back update / Delete card, and a panel-level success notice that reads `rolledBack` off the DELETE response rather than the client's stale status; regular users still get no delete, their own rows included. DELETE route, schema and env unchanged. Previous: 2026-08-29 §5.21 CHASE REGISTER (new section 5.21, two rows in 9.7): `chase_tasks` + `chase_sends` (migration 0054, EMPTY in git by design and seeded on the VM, because this repo is public), a Mon..Fri 13:00 UTC reminder that detects completions BEFORE it emails and claims a `chase_sends` row before it composes, and a Mon 15:00 UTC report to ADMIN_EMAIL that sends every week even when nobody is outstanding so its silence means breakage. No page, no API route and no inbound reply lane in this round, deliberately. Previous: 2026-08-29 §5.16 INTAKE CLEANING (sections 5.16 upload inspection + reviewed-doc precedence + the work:correlate/work:import passages; migration 0053): owner directive "if someone submits a zip and it contains personal info or credentials, instead of erroring out just clean it before you save it" - `secrets_detected` is retired from `ExtractErr`, `secret-patterns.ts` is replaced by `sanitize.ts` (one function returns the cleaned text AND the hit inventory, so a pattern that detects without redacting is unrepresentable), `sanitize-archive.ts` rebuilds the zip carrying untouched entries by reference with their source compression pinned, and `cleaning.ts` `decideStorage()` is the one storage decision every intake lane shares, the three §5.16 web/email lanes and
+Last verified against code: 2026-08-29 THREE INDEPENDENT CHANGES IN ONE ROUND. (a) EIGHT /work
+EXHIBITS BECOME TEAM CARDS (sections 5.16 "One tool, one card" + 5.18 exhibit credits + the
+`/work` pages-table row): by owner ruling, a tool that was BOTH a hand-written exhibit and a
+real submitted package gets ONE card, the submitted one, written by the §5.16 editorial panel
+from the actual package and credited to the person who built it, so the exhibit comes down in
+the same round. Removed from `src/app/work/page.tsx`: `#ticketscribe`, `#ticket-summaries`,
+`#sp-writer`, `#kaseya-ap-builder`, `#tps-client-count`, `#log-analyzer`, `#script-master`,
+`#ticket-reply-composer`, all from bay 05, taking the static lane from twenty-six exhibits to
+EIGHTEEN; `src/lib/work/static-titles.json` is regenerated (18 titles, 18 anchor ids, 54 facet
+labels, 5 bays) and the registry, the pager count, the 409 title gate, the lint collision sets
+and the panel's taken-titles prompt all follow the snapshot with NO code change. No schema,
+migration, route or env change. THREE ORDERINGS FALL OUT OF THE CODE: the eight
+removal DEPLOYS before any
+package is submitted (the create route and `work:submit` both 409 a title that normalizes to a
+static exhibit title), and the panel runs LAST, because it is told to keep the row's title
+unless it collides. THE THIRD ORDERING WAS WRONG AND IS REVERSED: this header first said the
+eight `work_static_credits` rows must come out BEFORE the deploy, because `work:credit remove`
+validated its anchor exactly as `add` does. `validateCredit` now takes `allowRetired`, passed
+for `remove` and never for `add`, so a retired anchor can be cleared after the fact and the
+order is free. It should be LAST. Those rows are the only record of which colleague built which
+exhibit (the email half of that mapping lives only in production, by design) and they are the
+input the `work:submit --email` step consumes; deleting them first destroys that input, with no
+audit row and no soft delete, and buys nothing, because the §5.18 honesty guard already makes a
+retired credit count for nobody the moment the removal deploys. THE STRIPE
+ARITHMETIC IS UNCHANGED BY CONSTRUCTION and is recorded rather than left to be re-derived: the
+removals form three runs of EVEN length (15-16, 20-23, 25-26), so every surviving card keeps
+its parity, no `panel--lightline` class was flipped, and the last static is still at an EVEN
+global position (`#autotask-ci-intake`, 18, plain), so the `community.tsx` seam offset holds
+untouched. Bay 05 keeps five statics and no bay empties. Two SURVIVING cards lost cross-links
+into removed anchors (`#follow-up-emails`, `#autotask-ci-intake`). The `<a>` wrappers are gone
+rather than re-pointed, because a team card's slug is minted at publish time and there is a
+window in which those tools are on no page at all. The BARE PROPER NOUNS went too, in a second
+pass: leaving "TicketScribe", "Kaseya AP Builder" and "Log Analyzer" as plain prose made two
+surviving cards introduce, by name and with a definite article, five tools that appear nowhere
+on the page for the whole window until their cards publish, and permanently for any that never
+do. Each is now named by category instead ("ticket-note and ticket-summary skills", "a Kaseya
+agent-procedure builder", "a log analyzer"), which reads correctly in both states, keeps the
+contrast the paragraphs exist for, and claims no anchor. The dated /work exhibit entries further down this header (2026-07-23 through
+2026-07-28) record when these eight FIRST shipped and are left standing as history: none of the
+counts they state is current. THE STALE COMMENTS AND THE RED SUITE ARE FIXED, not
+recorded: `src/lib/db/schema.ts` no longer says "the 26 exhibits"/"the 26 ids" and its worked
+example is a live id (`"morning-brief"`), `src/app/work/community.tsx` states the seam parity as
+a rule and marks the DERIVATION as the part that goes stale, `scripts/lib/work-credit-ops.ts`
+says "every id" rather than 26, and `scripts/work-tests.ts:497` reads
+`staticTitles.titles[0]` instead of pinning the deleted `"Log Analyzer"`, so the case can never
+rot on the next exhibit change and `npm run test:work` no longer throws at `:526`.
+(b) THE §5.16 WORK ARCHIVE STORE IS BACKED UP (sections 5.16 + 9.6 + 9.7 + the §13 checklist):
+`deploy/backup-db.sh` gains a SECOND artifact beside the nightly SQL dump, a `tar.gz` of
+`WORK_ARCHIVE_DIR` in the same bucket through the same `bucket_put` and credentials, with its
+own size and disk guards, a `tar -tzf` read-back before it may overwrite
+`latest-work-archives.tar.gz`, its own stamp `last-archive-backup-ok`, its own CRITICAL mail
+and its own non-zero exit. It closes a real single point of failure: `data/` is excluded from
+the deploy rsync, so the store existed on one VM disk and in no backup while §5.16's own rule
+says that after a published row's bytea is cleared the store file is the only copy anywhere.
+The dump half keeps its own heartbeat exactly where it was, because the watchdog's 26 h check
+and the quarterly restore drill both reason about the dump; it is no longer byte-identical,
+because a refutation round added a `flock` single-instance guard in front of both halves and
+made `on_error` state that a dump failure means the STORE was not backed up either. That
+sentence is the honest correction to this row's original "independently alerted" claim: the
+store block runs last, so a dump-half failure silently takes it down too. The same round
+narrowed the tar exclusion from `*.tmp-*` to `*.tmp-[0-9]*-[0-9]*` (the loose glob dropped
+REAL submitter files such as `00-build.tmp-1.zip` out of the artifact and could make a live
+store read as a fresh host), added a PARTIAL-LOSS guard so a store that lost most of its files
+cannot overwrite `latest-work-archives.tar.gz`, moved the size ceiling to
+`WORK_ARCHIVE_BACKUP_MAX_KB` in `.env` (the old remediation text told an operator to edit a
+rendered file), and made the fresh-host branch record a WARN on the issue ledger. Both artifacts of one run share the same timestamp, which is the whole
+basis of a matched-pair restore, and the existing 30-day `bucket_sweep` covers the new blob
+with no change. §9.7 now carries the restore runbook and the ledger-versus-store skew rule
+(NEVER restore a store older than the dump). No env var, no schema change, no new unit. TWO
+FOLLOW-UPS ARE NOW BLOCKING PRE-CONDITIONS ON THE NEXT MODULE BUMP, not notes:
+`deploy/backup-db.sh` is TEMPLATE-RENDERED and the next `render.mjs` run deletes the whole
+block silently (the drift gate compares the stamp, never the rendered bytes), so the durable
+home is `packages/aicompany/deploy/templates/backup-db.sh.tpl`; and neither `restore-drill.sh`
+nor `watchdog.sh` knows about the store, so nothing raises an alarm once the block is gone. The
+host-side half-measure that shipped meanwhile: `scripts/git-hooks/pre-commit.local` REFUSES a
+staged `deploy/backup-db.sh` with no `archive_store_backup` in it (`ARCHIVE_BACKUP_OK=1`
+bypasses), so a re-render cannot be committed quietly. Retire that gate when the block moves
+upstream. (c) THE DEPLOY
+WRAPPER GATES THE COMMIT SET (section 9.7, the deploy-safety block): a clean tree says nothing
+about WHAT ships, because `deploy.sh` sends the tree at its current commit and so carries every
+commit every other session has pushed. `scripts/deploy-safe.sh` now reads
+`~/.aiwebsite-deploy-commit` off the VM before handing over, prints the live commit plus every
+commit in `marker..HEAD` (and, separately, any accidental ROLLBACK in `HEAD..marker`), and
+refuses without `--ack=<sha>` naming the exact current HEAD. It no longer `exec`s deploy.sh: it
+runs it as a child, propagates the status verbatim and stamps the marker only on exit 0. Every
+marker-read failure DEGRADES to a loud UNKNOWN BASELINE and proceeds, never refuses, so a
+monitoring gap cannot block the `--takeover` recovery run while the site is down. New
+`scripts/deploy-safe-tests.sh` (92 assertions, stub ssh and stub deploy.sh, no VM), wired up as
+`npm run test:deploysafe`. `CLAUDE.md`'s "Deploying (required)" paragraph is REWRITTEN in the
+same round: it now says the wrapper reads the VM marker over ssh before handing over, refuses
+without `--ack`, and runs deploy.sh as a child. A refutation round closed three ways the gate
+could be off while looking healthy (stderr folded into the marker body by `2>&1`; a
+pipe-buffer SIGPIPE exiting 141 with no output; an ungated deploy leaving no record anywhere
+but stdout, now mailed to `ADMIN_EMAIL`), corrected the load-bearing but FALSE claim that the
+ack sha "cannot be produced without having read the list" (it is `git rev-parse --short HEAD`),
+and put the commit lists inside the refusal's own stderr text. ONE GAP REMAINS AND IS AN OWNER
+STEP: the VM carries no marker yet, so the cutover deploy itself takes the ungated first-run
+path unless the marker is seeded at the live commit first (§9.7 gives the one-line command). Previous: 2026-08-29 §5.16 ADMIN REMOVAL ON /work/submit (sections 5.6 /work/submit pages row + the 5.16 removal bullet): owner directive - admins now remove past submissions from the /work/submit list itself: a removal control on every row of every status except superseded (other people's rows and published rows included), per-row honest labels Withdraw / Roll back update / Delete card, and a panel-level success notice that reads `rolledBack` off the DELETE response rather than the client's stale status; regular users still get no delete, their own rows included. DELETE route, schema and env unchanged. Previous: 2026-08-29 §5.21 CHASE REGISTER (new section 5.21, two rows in 9.7): `chase_tasks` + `chase_sends` (migration 0054, EMPTY in git by design and seeded on the VM, because this repo is public), a Mon..Fri 13:00 UTC reminder that detects completions BEFORE it emails and claims a `chase_sends` row before it composes, and a Mon 15:00 UTC report to ADMIN_EMAIL that sends every week even when nobody is outstanding so its silence means breakage. No page, no API route and no inbound reply lane in this round, deliberately. Previous: 2026-08-29 §5.16 INTAKE CLEANING (sections 5.16 upload inspection + reviewed-doc precedence + the work:correlate/work:import passages; migration 0053): owner directive "if someone submits a zip and it contains personal info or credentials, instead of erroring out just clean it before you save it" - `secrets_detected` is retired from `ExtractErr`, `secret-patterns.ts` is replaced by `sanitize.ts` (one function returns the cleaned text AND the hit inventory, so a pattern that detects without redacting is unrepresentable), `sanitize-archive.ts` rebuilds the zip carrying untouched entries by reference with their source compression pinned, and `cleaning.ts` `decideStorage()` is the one storage decision every intake lane shares, the three §5.16 web/email lanes and Previous: 2026-08-29
+§5.21 CHASE REGISTER (new section 5.21, two rows in 9.7): `chase_tasks` + `chase_sends`
+(migration 0054, EMPTY in git by design and seeded on the VM, because this repo is public), a
+Mon..Fri 13:00 UTC reminder that detects completions BEFORE it emails and claims a
+`chase_sends` row before it composes, and a Mon 15:00 UTC report to ADMIN_EMAIL that sends
+every week even when nobody is outstanding so its silence means breakage. No page, no API route
+and no inbound reply lane in this round, deliberately. Previous: 2026-08-29 §5.16 INTAKE
+CLEANING (sections 5.16 upload inspection + reviewed-doc precedence + the
+work:correlate/work:import passages; migration 0053): owner directive "if someone submits a zip
+and it contains personal info or credentials, instead of erroring out just clean it before you
+save it" - `secrets_detected` is retired from `ExtractErr`, `secret-patterns.ts` is replaced by
+`sanitize.ts` (one function returns the cleaned text AND the hit inventory, so a pattern that
+detects without redacting is unrepresentable), `sanitize-archive.ts` rebuilds the zip carrying
+untouched entries by reference with their source compression pinned, and `cleaning.ts`
+`decideStorage()` is the one storage decision every intake lane shares, the three §5.16
+web/email lanes and
 the `work:submit` operator script (nothing cleaned = the submitted bytes stored untouched; cleaned = the rebuild; rebuild unverifiable = NOTHING stored, never the submitted bytes and never a refusal). Ordinary work email addresses and phone numbers are deliberately NOT redacted. `archive_sha256`/`md_sha256` keep describing what the submitter SENT; `cleaning_json` records what was stored. Previous: 2026-08-29 §5.18 EXHIBIT CREDITS ON THE EMPLOYEE SCORECARD (sections 5.16/5.18): the hand-authored /work exhibits are page copy, not rows, so their builders were counted by nothing on the staff scorecard and two read 0 published; new `work_static_credits` (migration 0052, EMPTY in git by design, rows written on the VM because this repo is public) feeds a staff-lane-only Exhibits column, honesty-guarded against the generated anchor list, with the published-only doctrine, the company lane and the public /work copy untouched. Previous: 2026-08-29 §5.16 REPOSITORY SUBMISSION ROUND
 (sections 5.16 "Exhibit archives" + "Scripted submission lane" + the /work
 page row): every repository on the dev box is now filed on /work under
@@ -424,7 +536,8 @@ from ROW_COLS) — the retention email carries every retained file as
 attachments in ONE message (worst case ~14.7 MB base64). (3) Renames:
 user-facing kind labels are "CoWork Skill" / "Code program" (KIND_LABELS;
 DB values unchanged), CATEGORY_BADGES member "CoWork skill" recased (the
-"Claude Skill" member stays: 12+ hand-authored exhibits render it), panel
+"Claude Skill" member stays: 12+ hand-authored exhibits rendered it then,
+3 since the 2026-08-29 conversion, so it is still load-bearing), panel
 prompt + emails + admin page updated.
 Earlier same day: §5.16 owner artifact retention —
 the accepted original upload (.zip/.skill/.md) now rides `work_submissions.archive_data`
@@ -1085,7 +1198,7 @@ admin console under `/admin/*` (§5.6):
 | URL | Type | Content |
 |---|---|---|
 | `/` | static server component | Site-truth home (2026-08-05 redesign, focused builder panel + adversarial refutation panel; refuter blocked a "published on our work page" claim about roadmap submissions — company cards are private by §5.18 INTERNAL_SCOPE — and restored the og image the page-level `openGraph` block would otherwise drop, since Next does not deep-merge it): hero with `<xl-dust>` + theme-aware animated logo iframes (`/brand/xl-logo-animated-{dark,light}.html`), h1 "AI for managed IT, built in the open", stat band UNCHANGED (79.8% issue reduction, 24/7, 99.3% CSAT — verbatim-locked to `seo.llmsTxt.summary` and the fallback-knowledge block; change all three surfaces together), "What runs here" panels for the five public surfaces (flagship `/work` + `/governance`, `/roadmap`, `/builders`, `/blog`+`/methodology` — no exhibit counts, no workshop date: `/builders` computes availability dynamically), "Meet Tron Netter" channel panel (chat / (872) 350-4325 / Tron.Netter@ai.xl.net, BCC-guardrail line scoped to the §1 invariant wording), "Around the Lab" band (xl.net parent + roleplay.xl.net sister, external `<a>` + `/work#roleplay` Link), closing CTA → `/contact` + `/work`. Page-level `metadata` export: `title.absolute` (46 chars, defeats the layout template), 158-char description, full `openGraph` incl. `images` |
-| `/work` | ISR server component (`revalidate = 300`) | "Our Work" showcase: manifesto strip, then twenty-six anchored product exhibits in narrative order (`#brain` Software Brain → `#aicompany` @aicompany/core → `#aiwebsite` this site, framed around the §1 oversight invariants → `#governance` AI Governance Writer, the §5.12 builder as a product exhibit (live · public, "Sign in to create" qualifier badge; three-facet sub-grid: Researched First / Nothing Silently Accepted / Yours, Then Gone; body anchor-links `#aiwebsite` + `#brain`; closing paragraph folds in the not-legal-advice hedge; internal `<Link>` `btn` CTA to `/governance` — one of the page's TWO internal-route exhibit CTAs since 2026-08-05, the other being `#your-ai-roadmap`'s) → `#itsupportchicago` the autonomy experiment, explicitly "designed as a test of a 100% autonomous organization", sandbox facts first → `#roleplay` roleplay.xl.net, the external-tenant Brain-SDK product (moved from group 05 into group 02 on 2026-08-04, owner directive: it is a running deployment, not a work-in-progress) → `#leo-netter` internal Slack-bot test (moved from group 05 to follow Roleplay on 2026-08-04, owner rationale: it runs on the Software Brain) → `#rfp-response` RFP Response, the §5.17 staff-gated `/rfp` section (moved from group 05 slot 25 into group 02 as exhibit 8 on 2026-08-05, owner directive, and REWRITTEN in the same commit: the 2026-07-31 copy described only the knowledge-base port and predated rounds 2-8, and its live-DB inventory (78 facts / six negatives / 11 rate lines / 15-user minimum / 20 questions / 14 required / v2 / five corrected) is mutated by admin corrections without a deploy, so every DB-mutable number was dropped rather than restated; the copy now carries only code- and doc-anchored facts: the 94s measured read, one section per call, the two-prompt split (`readRfp()` sees the client text and nothing else, `draftSection()` sees the facts but never a rate-card unit price), deterministic pricing with any engine-unsourced currency token blocking, the gate re-running at export against the exact emitted content with a content or price edit clearing the stored verdict, the always-downloads WORKING DRAFT marking quoted at its three REAL surfaces (`WORKING DRAFT · not for delivery` on the cover, a bare `WORKING DRAFT` corner mark per PDF page, `-DRAFT` in the filename; there is NO PDF footer, `export.ts` puts the docx-only `DRAFT · XL.net ·` run in a `Footer`), retire-and-supersede corrections, and cover-letter-last; live · internal on `badge--ok`, category badge "Proposal workspace"; three-facet sub-grid: Neither Prompt Sees Both / No Figure Without the Engine / Checked Against What Ships; body anchor-links `#brain`, the old `#script-master` closing link is dropped. THE TWO STANDING CONSTRAINTS THIS COPY HAS CARRIED SINCE 2026-07-31 SURVIVE THE REWRITE AND STILL BIND: it states NO count of the compliance rules (the registry moved 25 -> 26 while the original panel ran, so the rules are named ostensively per rule 44 — the count is verifiable today at 26 across `src/lib/rfp/validators/rules-a..d.ts` but was deliberately left out again), and it makes NO claim about which `/rfp` routes exist or about drafting/ingest/gate being unwired; anything asserting the section's page inventory must be re-verified against `src/app/rfp/` before it is written) → `#your-ai-roadmap` Your AI Roadmap, the §5.18 per-client-company portal as a public exhibit (NEW 2026-08-05, exhibit 9, closing group 02 and handing into "03 · Client Delivery"): the step story DE-ENUMERATED (§5.19 round: the exhibit no longer states a step count or step numbers - the list grew from five to eight in two rounds and every numeric claim went stale; it now names the stations ostensively and the mono footer says "no step locked"), domain-keyed tenancy with membership computed per lookup and company admins as the only stored authorization fact, no company data at all for an unproven session, freemail domains refused, the §5.16 pipeline scoped per company with company cards never on this page, the email lane stated WITH its step-05 DKIM precondition, Apollo persistence named exactly (name, email, phone, import id; raw response never stored; hand-edited rows not overwritten) and the removal fingerprint stated CONDITIONALLY because `removePerson` only records the sha256 when `suppress` is set (opt-out checkbox, default on for Apollo rows only), governance snapshot at attach time, scorecard published-cards-only with the standing disclosure and zeros kept on the board; live · client companies on `badge--ok`, category badge "Client portal"; three-facet sub-grid: Keyed by a Proven Domain / Same Panel, Private Page / What the Import Keeps; body anchor-links `#aiwebsite`, closing anchor-links `#governance`; internal `<Link>` `btn` CTA to `/roadmap`, the SECOND such CTA on the page (see the governance note above), legitimate because the signed-out `/roadmap` teaser is the feature's one public indexable surface. Deliberately NOT stated: Microsoft sign-in, which stays roadmap-untrusted until the one-time Entra optional-claims setup, so no copy may promise a runway to "any work email") → `#qbr-machine` the Claude Code client-delivery pipeline (in production; three-deliverable sub-grid: Gap Analysis / Asset Strategy / QBR Deck; inline anchor link to `#lakehouse`) → `#onboarding-toolkit` the MSP-onboarding platform (in production; three-facet sub-grid: Discovery / Intake & Review / Runbooks) → `#lakehouse` XL Lakehouse, the scoped vault-backed access layer behind the AI teammates (in production; row-form "facet ledger" instead of the 3-col sub-grid; links back to `#qbr-machine`) → `#api-gateway` XL API Gateway, per-client-cloud API proxy (in development, console live — plain badge by rule: green `badge--ok` only when the panel's primary status is production as a whole; facet ledger; opener defines it against `#lakehouse` with an inline link) → `#spamslayer` SpamSlayer, an internal phishing-triage Slack bot (live · internal; standalone Python service on Claude Sonnet, not on the Brain; three-facet sub-grid: Four Checks / Never Clicks the Link / Errs Toward Caution; green `badge--ok` — production internally; the analysis rubric also ships as the `email-safety-check` Claude Skill) → `#ticketscribe` TicketScribe, a Claude Skill for chronological ticket notes + facts-only escalations (live · internal) → `#ticket-summaries` Autotask Ticket Summaries, a Claude Skill that reads open Autotask tickets via Chrome in the tech's own session, view-only, issue/done/next per ticket (live · internal) → `#follow-up-emails` Auto-Draft Follow-Up Emails, a Claude Skill for inside sales: pasted email/phone → PhoneBurner lookup → token-filled template draft in the rep's Gmail, no send step (live · internal) → `#beacon` Beacon, an internal Slack knowledge-layer assistant for #claude-teamhub: tool-registry dedup matching + SweetProcess governance citation via XL Lakehouse (MCP, read-only, no direct SweetProcess credential), code-gated permissions (restricted items redacted in channel, DM'd only after a live team-membership lookup), owner-reaction-gated registry writes with 72h expiry, weekly/on-demand manager digest; standalone Node.js + Slack Bolt Socket Mode + direct Anthropic API, not on the Brain (plain badge "Built · final setup" — built and module-tested against production data, Slack app not yet created) → `#morning-brief` Morning Brief, a Claude Skill that renders a personal morning glance as one drawn HTML page: a hand-sketched terrain line carrying the day's reading (light / normal / heavy) above two lists (needs-your-attention, already-resolved), reading only already-connected calendar/email/chat sources (a missing source thins the brief; no new access requested), invoked on demand via /morning or set up by the user as a recurring scheduled task (live · internal; distributed as a .skill file) → `#sp-writer` SP Writer, a Claude Skill for service-desk documentation: raw troubleshooting notes / pasted ticket / old Word-PDF doc / spoken walkthrough → a SweetProcess procedure ("SP") draft in XL.net's house format (prefixed title — client name for client SPs, XL.net for internal, software name for generic; 3–7 search tags; purpose statement; short numbered steps, one action or decision each; decision steps with ANSWERS routing, every path traced to the End step, renumber after edits; bold instead of code spans so formatting survives the paste; output as markdown + matching .docx; credentials only as BitWarden entry names; missing facts asked or `[Confirm: …]`-marked, never invented; no publish step — never creates the SP in SweetProcess itself, a tech reviews and publishes) (live · internal; three-facet sub-grid: Every Path Reaches End / Flagged, Never Filled In / Two Files, Then a Tech; closing anchor-links `#ticketscribe` + `#beacon`, Beacon referenced future-tense to match its final-setup badge) → `#kaseya-ap-builder` Kaseya AP Builder, a Claude Skill for Central Services: plain-English request → import-ready Kaseya VSA 9 agent-procedure ScExport .xml in the house style + a numbered "Process:" writeup for the Body description/runbook (check-first via service/registry/install-path with logged skips; generous WriteScriptLogEntry narration with ERROR: prefixes, silent on the endpoint (silent switches, SYSTEM); managed variables as angle-bracket names gated by exists-checks — values live only in Kaseya's AP Variable Manager at runtime; installers from vendor evergreen links or pinned S3 copies; XML-escaped, field-size-capped, parse-checked so imports don't fail on Kaseya's truncation error; the published .skill is sanitized — placeholders, no client names/internal URLs; generates text only, never connects to Kaseya or runs anything; documented practice: tech reviews + imports, first run on a lab machine) (live · internal; three-facet sub-grid: The Log Does the Talking / Built to Survive the Import / No Connection, No Keys; closing anchor-links `#sp-writer` — procedures-for-people vs procedures-for-machines pairing) → `#tps-client-count` TPS Client Count, a Claude Skill for the weekly department-scorecard TPS metric: runs two Autotask LiveReports (tickets per client with the date filter, seats per client) via Chrome in the user's own signed-in session, exports both to Excel in Downloads, merges seats into the ticket report by client name, writes TPS as live =IFERROR(Tickets/Seats,"") formulas (2 decimals) + a live =COUNTIF at-or-below-0.45 headline count (blank TPS excluded, skipped clients reported) + the exact date range used; window = four Thursdays ago through yesterday, recomputed each run (Thursday same-day off-by-one fixed and documented in the SKILL.md); columns located by header name, not position (Autotask once inserted an SA column — missing header raises a named error); read-back verification of TPS/count/dates; Excel-open (~$ marker) check before overwrite; scope locked to these two reports/pod/threshold; writes only the two xlsx in Downloads, nothing back into Autotask, no API credential (live · internal; three-facet sub-grid: Arithmetic Left in the Cells / Burned Twice, Written Down / Only the Downloads Folder; closing anchor-links `#ticketscribe` + `#ticket-summaries`, Chrome-session read pattern attributed to ticket-summaries only) → `#log-analyzer` Log Analyzer, a Claude Skill for log investigation: exported log files in (Windows Event Logs, syslog, firewall/hypervisor/backup, web server, app logs), with or without a stated symptom; bundled `scripts/parse_logs.py` normalizes lines and masks variable tokens (numbers/IPs/GUIDs/hex) so near-duplicates collapse into counted first/last-seen signatures sorted severity-then-frequency, summary read before raw lines (binary .evtx anticipated by the bundled format guide: convert via a python-evtx-style library or ask for CSV/XML export); identified event IDs/error codes researched against the vendor's official KB/docs with applicability checked against the environment's actual OS/software version and patch level (forum posts corroboration-only, never primary); report separates active from historical issues, ranks root causes High/Medium/Low with a per-cause "why this confidence" line, maps solutions per cause (mitigation vs underlying fix, plus a no-action cosmetic tier), and lists unresolved context as open questions; missing environment detail asked for only when plausible causes genuinely diverge on it (bundled environment-context checklist), else logged as a limitation; no connection to the source machine — input is a copy, the procedure ends at the report (live · internal — distributed .skill + one fully documented production run: two .evtx exports, 122,644 records, five months of an HP business laptop, Windows 11 24H2 build 26100 fingerprinted from WinSxS manifests in the logs; three-facet sub-grid: Triage by Signature / The Fix Must Fit the Build / Works From the Export; closing anchor-links `#ticket-summaries` + `#tps-client-count`, live-Chrome Autotask reading attributed to those two only,  contrast axis = nothing live on the other end) → `#autotask-ci-intake` Autotask CI Intake, a Claude Skill that turns raw device data into entry-ready Autotask Configuration Items: input is a device/serial-label photo, a management screenshot (iDRAC/iLO, vCenter, a controller UI), an RMM or tool export (Kaseya agent list, vCenter VM list, a CI search export), or pasted text, one device or many; it picks the CI category and the type inside it (Switch vs Firewall, NAS vs SAN, Local vs AWS/Azure VM), reads every field the input carries (manufacturer, model, serial, MAC, IP, hostname, firmware, OS), applies XL defaults (Status Active, Installed By, Location as an account/location selection) so only differences are asked, and batches every remaining required field into a single round of questions; relationships resolve to EXISTING parent CIs (a hypervisor host CI is linked, never duplicated; VM-to-host placement read from a supplied vCenter view); output is a per-device field block in Autotask New Configuration Item FORM ORDER (required and unconfirmed values flagged) plus an appended row in a per-client XLSX log, one tab per category, doubling as a client hardware inventory; it never writes to Autotask, a tech pastes and confirms before saving, and an unreadable value is flagged rather than guessed (live · internal — one fully documented production run: a Kaseya agent export of 8 VMs × 23 columns plus a CI search export naming the two existing Physical Server host CIs and a vCenter view for placement; VMware UUIDs kept as UUIDs not serials, split `2016`/`Build 14393` OS fields resolved to Windows Server release names, empty purchase-date column so install dates derive from each agent's first check-in, one row carrying a vCenter-object-name vs agent-name disagreement with a verify note; three-facet sub-grid: A Column Is Not a Field / Parents Already on File / Where a Person Comes In; closing anchor-links `#kaseya-ap-builder` + `#log-analyzer`, contrast axis = direction of travel, points out of Kaseya rather than into it, and reads an export to establish what a machine IS rather than why it misbehaves; NO category count is stated in the copy — the source blurb says "six" but names five, so the list is ostensive ("among them"), never closed → `#script-master` Script Master, a Claude Skill for operations scripting (PowerShell, CMD/Batch, Bash, Python and other IT-ops languages; triggered by a plain-language sysadmin task with no language named): an ordered workflow of environment context → compatibility notes → language recommendation → script standards (SemVer header, parameterization, error handling, timestamped logging, -WhatIf/-Confirm + dry-run safety, credentials via Get-Credential/env var/vault) → optional CSV/HTML/PDF reporting rendered from one data pass → testing (syntax/lint actually run where a code execution tool exists, branch walk, untested-here recorded) → QA review pass → Admin Guide + User Guide, with a skipped stage named rather than silently dropped and a filled-in environment profile read before questions (the bundled blank template is never read as environment data); it produces files only, opens no session with a live system (live · internal — packaged .skill: SKILL.md + naming/versioning reference + four assets; NO documented production run, so the copy is capability-tense throughout and makes zero usage claims; three-facet sub-grid: Its Own Form Proves Nothing / A Clean Pass Says So / Stops Ride Inside the Script; closing anchor-links `#kaseya-ap-builder` only, contrast axis = a platform that holds the secrets vs a standalone script that must carry its own) → `#ticket-reply-composer` Ticket Reply Composer, a single-file vanilla-JS HTML app (v5, no build step, no backend) for helpdesk technicians: technician inputs (customer/agent name, auto-generated ticket ID, one of nine issue categories, tone = Formal/Friendly/Apologetic, status = Resolved/In Progress/Pending Customer Action/Escalated, plain-English cause, resolution, and a customer-action box revealed only on In Progress + Pending Customer Action) assemble live into a perforated ticket-stub customer reply, with a second tab holding an internal-reference troubleshooting checklist (nine categories × five steps, each step a title + a why line, 31 of the 45 carrying a PowerShell/CMD command); a free-text description field calls the Anthropic API from the browser for a customer explanation + five steps (the steps list is badged "From your description", the explanation lands in the cause box unmarked; the request carries no key of its own), and both outputs leave only through Copy buttons — no address field, no mail account, no send path (built · internal on a plain `badge`, NOT `badge--ok`: the distributed artifact is an HTML file plus a maintenance skill, and distribution to the team is not evidenced, so Live would outrun the evidence; three-facet sub-grid: Interchangeable Parts / Nine Presets or a Paragraph / Nowhere to Put an Address; closing anchor-links `#follow-up-emails` only, contrast axis = where the draft lands, a rep's Gmail vs nowhere but the page. The companion `ticket-reply-composer.skill` that builds/extends the app is named in exactly one mono footer fragment, per the delivery-lineage rule))), grouped into five `aria-label`ed `<section>` wrappers with visual kicker labels (Engine / What It Runs / Client Delivery / The Access Layer / What We Have Built; "X in — Y out" taglines are the Client Delivery pair's signature only), mid-page (after `#onboarding-toolkit`) + closing CTAs → `/builders`. **Card uniformity + "Full detail" disclosure (2026-07-27):** exhibit cards are held to one repeating shape, so visible copy per card stays comparable (visible-word spread across the 25 cards is ~6x, down from ~11x). Cards 16, 18, 19, 20, 21 carry a JS-free `<details className="card-more">` whose `<summary>` reads `Full detail` (per-card `aria-label="Full detail: <card name>"` so the accessible names stay distinct); it sits between the last bridge `<p>` and the mono footer `<p>`, and holds the practitioner-depth prose trimmed out of the visible region. Collapsed content stays in the DOM, so it remains crawlable and no keyword coverage is lost; the `+`/`−` state glyph comes from `.card-more > summary::before` in `futurism.css`, never from markup. Cards under the threshold keep no disclosure, and material with nothing depending on it was cut outright rather than hidden behind a click. Load-bearing constraint carried through the trim: liability/boundary copy (human-review steps, no-write claims, the `#lakehouse` scoped-API reconciliation, badge-justifying status sentences) stays in the VISIBLE region, never behind the disclosure, and no claim was left outrunning its surviving visible evidence. The page-level wrapper carries a `work-page` class whose only job is `.work-page .panel p { max-width: none }`, overriding the global 62ch `p` cap that otherwise left card prose using ~58% of the panel width above and below each facet grid. **Team submissions (§5.16, 2026-07-29; restructured 2026-07-30):** `<CommunitySection/>` (`src/app/work/community.tsx`) reads `status=published` rows from `work_submissions` and renders them INSIDE group "05 · What We Have Built" (owner directive: no separate numbered group; the group was renamed from "What We're Testing" the same day), after exhibit 25, introduced by an unnumbered "From the Team" sys-label divider carrying the provenance intro, through ONE card template (`CommunityCard`): plain `badge` "Built" (constant, never model-chosen, never `badge--ok`), category badge from a fixed enum, h2 title, summary + 1-2 body paragraphs, 3-facet sub-grid, mono footer joined with `·` and a template-appended credit fragment ("submitted by the XL.net team" or "submitted by <firstName>"), and, above that footer and only when the submitter reported one, the attributed line `Time saved · 6 hours 30 minutes a month, reported by the submitter` (2026-08-27, §5.16: the page's opening promise is that every claim below is drawn from the submitted documents, and this figure is not, so the source is named in the line itself). All fields are lint-validated plain strings rendered as React text nodes; submitted content has no path to markup, links, or the status-badge slot. Empty table OR DB error renders NOTHING (the static exhibits never depend on it). `<StaffSubmitLink/>` (client island, ONE deduped session probe per page) renders ONLY for signed-in @xl.net accounts — the ISR page cannot vary by viewer server-side, the public page carries no staff-facing copy, and no space is reserved (the one-line staff-only layout shift is accepted by ruling). Two instances: `variant="top"` inside the manifesto hero ("Submit it for review · Your submissions"; plain left-click opens the native submission dialog, lazy-loaded after the staff probe; modifier/middle clicks follow the real href to /work/submit) and the plain bottom link after the community section. Page metadata is count-free by rule: cards publish without a deploy, so a hard-coded count would go false on first publish. **Registry + console pager (2026-08-04):** after the manifesto, `<WorkRegistry team={...}/>` (`src/app/work/registry.tsx`) renders an always-complete mono anchor index of every exhibit — five bay groups, rows `NN · Title` numbered continuously at one uniform width, static rows from `static-titles.json`'s generated `bays`/`exhibits` fields, team rows from the same fetch the cards render from — then `<WorkPager/>` (`src/app/work/pager.tsx`, client island): Show 5/10/25/All radio segments + Prev/Next + aria-live readout, default 10, sessionStorage `xl.work.pageSize` (size only). The server always renders EVERY card in the one ISR document; the island windows visibility with `hidden="until-found"` and hides `[data-bay-head]`/`[data-team-divider]` for emptied groups (`pager-empty` collapses wrappers). No JS, a crashed island, or a panel-count drift (island counts DOM panels vs staticCount+teamCount) means nothing is hidden and the strips stay `display:none` (`html.pager-active` gates the CSS) — fail-open, never fail-hidden. Deep links always reveal: the routine runs at mount (hashchange does not fire on initial nav), on hashchange, and from a capture-phase click listener covering same-hash registry re-clicks; targets get tabindex=-1 focus, `:target` lightline glow, `scroll-margin-top`. `publishedCards()` is uncapped, ordered `display_rank ASC` (NULLS LAST, §5.16 reorder) then newest-first (display and the panel's uniqueness gate share it; a never-arranged lane is plain newest-first); WorkPage hoists the ONE guarded fetch; `CommunitySection` is presentational (`cards` prop; alternation starts LIGHTLINE via an `index + 1` offset in `community.tsx`, re-derived 2026-08-05 when `#rfp-response` left slot 25 for bay 02 and the last static became `#ticket-reply-composer` at an EVEN global position (plain), so a plain first team card would double-stripe the seam; the offset lives in `community.tsx`, NOT `work-card.tsx`, because the §5.18 company page opens its own alternation with no statics above it and must keep starting plain). Team cards render in full (no body fold — rules 38/40); the static card `<section>` blocks other than the two that moved or were added are byte-identical, and there is deliberately no author `content-visibility` on panels and no pre-hydration boot script (see the 2026-08-04 header note for both traps) **Exhibit copy refresh (2026-08-29):** the six exhibits whose repositories were submitted in the §5.16 repository round (`#brain`, `#aicompany`, `#aiwebsite`, `#itsupportchicago`, `#roleplay`, `#leo-netter`) were rewritten from roughly 115 to 150 visible words each to the current card shape and length, narrowing the visible-word spread the uniformity ruling above bounds; `#brain`'s badge stopped stating a test count (a number that goes stale without a deploy) and reads `In production`. Section ids and `<h2>` titles are byte-identical through the rewrite, load-bearing in two directions: `static-titles.json` gates uniqueness on the titles, and §5.18's `work_static_credits` keys builder credit on the section id, so a rename would silently stop counting a colleague's card. |
+| `/work` | ISR server component (`revalidate = 300`) | "Our Work" showcase: manifesto strip, then eighteen anchored product exhibits in narrative order (`#brain` Software Brain → `#aicompany` @aicompany/core → `#aiwebsite` this site, framed around the §1 oversight invariants → `#governance` AI Governance Writer, the §5.12 builder as a product exhibit (live · public, "Sign in to create" qualifier badge; three-facet sub-grid: Researched First / Nothing Silently Accepted / Yours, Then Gone; body anchor-links `#aiwebsite` + `#brain`; closing paragraph folds in the not-legal-advice hedge; internal `<Link>` `btn` CTA to `/governance` — one of the page's TWO internal-route exhibit CTAs since 2026-08-05, the other being `#your-ai-roadmap`'s) → `#itsupportchicago` the autonomy experiment, explicitly "designed as a test of a 100% autonomous organization", sandbox facts first → `#roleplay` roleplay.xl.net, the external-tenant Brain-SDK product (moved from group 05 into group 02 on 2026-08-04, owner directive: it is a running deployment, not a work-in-progress) → `#leo-netter` internal Slack-bot test (moved from group 05 to follow Roleplay on 2026-08-04, owner rationale: it runs on the Software Brain) → `#rfp-response` RFP Response, the §5.17 staff-gated `/rfp` section (moved from group 05 slot 25 into group 02 as exhibit 8 on 2026-08-05, owner directive, and REWRITTEN in the same commit: the 2026-07-31 copy described only the knowledge-base port and predated rounds 2-8, and its live-DB inventory (78 facts / six negatives / 11 rate lines / 15-user minimum / 20 questions / 14 required / v2 / five corrected) is mutated by admin corrections without a deploy, so every DB-mutable number was dropped rather than restated; the copy now carries only code- and doc-anchored facts: the 94s measured read, one section per call, the two-prompt split (`readRfp()` sees the client text and nothing else, `draftSection()` sees the facts but never a rate-card unit price), deterministic pricing with any engine-unsourced currency token blocking, the gate re-running at export against the exact emitted content with a content or price edit clearing the stored verdict, the always-downloads WORKING DRAFT marking quoted at its three REAL surfaces (`WORKING DRAFT · not for delivery` on the cover, a bare `WORKING DRAFT` corner mark per PDF page, `-DRAFT` in the filename; there is NO PDF footer, `export.ts` puts the docx-only `DRAFT · XL.net ·` run in a `Footer`), retire-and-supersede corrections, and cover-letter-last; live · internal on `badge--ok`, category badge "Proposal workspace"; three-facet sub-grid: Neither Prompt Sees Both / No Figure Without the Engine / Checked Against What Ships; body anchor-links `#brain`, the old `#script-master` closing link is dropped. THE TWO STANDING CONSTRAINTS THIS COPY HAS CARRIED SINCE 2026-07-31 SURVIVE THE REWRITE AND STILL BIND: it states NO count of the compliance rules (the registry moved 25 -> 26 while the original panel ran, so the rules are named ostensively per rule 44 — the count is verifiable today at 26 across `src/lib/rfp/validators/rules-a..d.ts` but was deliberately left out again), and it makes NO claim about which `/rfp` routes exist or about drafting/ingest/gate being unwired; anything asserting the section's page inventory must be re-verified against `src/app/rfp/` before it is written) → `#your-ai-roadmap` Your AI Roadmap, the §5.18 per-client-company portal as a public exhibit (NEW 2026-08-05, exhibit 9, closing group 02 and handing into "03 · Client Delivery"): the step story DE-ENUMERATED (§5.19 round: the exhibit no longer states a step count or step numbers - the list grew from five to eight in two rounds and every numeric claim went stale; it now names the stations ostensively and the mono footer says "no step locked"), domain-keyed tenancy with membership computed per lookup and company admins as the only stored authorization fact, no company data at all for an unproven session, freemail domains refused, the §5.16 pipeline scoped per company with company cards never on this page, the email lane stated WITH its step-05 DKIM precondition, Apollo persistence named exactly (name, email, phone, import id; raw response never stored; hand-edited rows not overwritten) and the removal fingerprint stated CONDITIONALLY because `removePerson` only records the sha256 when `suppress` is set (opt-out checkbox, default on for Apollo rows only), governance snapshot at attach time, scorecard published-cards-only with the standing disclosure and zeros kept on the board; live · client companies on `badge--ok`, category badge "Client portal"; three-facet sub-grid: Keyed by a Proven Domain / Same Panel, Private Page / What the Import Keeps; body anchor-links `#aiwebsite`, closing anchor-links `#governance`; internal `<Link>` `btn` CTA to `/roadmap`, the SECOND such CTA on the page (see the governance note above), legitimate because the signed-out `/roadmap` teaser is the feature's one public indexable surface. Deliberately NOT stated: Microsoft sign-in, which stays roadmap-untrusted until the one-time Entra optional-claims setup, so no copy may promise a runway to "any work email") → `#qbr-machine` the Claude Code client-delivery pipeline (in production; three-deliverable sub-grid: Gap Analysis / Asset Strategy / QBR Deck; inline anchor link to `#lakehouse`) → `#onboarding-toolkit` the MSP-onboarding platform (in production; three-facet sub-grid: Discovery / Intake & Review / Runbooks) → `#lakehouse` XL Lakehouse, the scoped vault-backed access layer behind the AI teammates (in production; row-form "facet ledger" instead of the 3-col sub-grid; links back to `#qbr-machine`) → `#api-gateway` XL API Gateway, per-client-cloud API proxy (in development, console live — plain badge by rule: green `badge--ok` only when the panel's primary status is production as a whole; facet ledger; opener defines it against `#lakehouse` with an inline link) → `#spamslayer` SpamSlayer, an internal phishing-triage Slack bot (live · internal; standalone Python service on Claude Sonnet, not on the Brain; three-facet sub-grid: Four Checks / Never Clicks the Link / Errs Toward Caution; green `badge--ok` — production internally; the analysis rubric also ships as the `email-safety-check` Claude Skill) → `#follow-up-emails` Auto-Draft Follow-Up Emails, a Claude Skill for inside sales: pasted email/phone → PhoneBurner lookup → token-filled template draft in the rep's Gmail, no send step (live · internal; its closing bridge used to name TicketScribe and the Autotask ticket summaries as anchor links; since 2026-08-29 both are team cards, and because a team card's slug is minted by the panel at publish time and is unknowable when the removal ships, an `href` would be broken by construction. The bridge now says "ticket-note and ticket-summary skills" rather than carrying the bare proper nouns, so it does not introduce by name two tools that are on no page during the window between the removal deploying and those cards publishing) → `#beacon` Beacon, an internal Slack knowledge-layer assistant for #claude-teamhub: tool-registry dedup matching + SweetProcess governance citation via XL Lakehouse (MCP, read-only, no direct SweetProcess credential), code-gated permissions (restricted items redacted in channel, DM'd only after a live team-membership lookup), owner-reaction-gated registry writes with 72h expiry, weekly/on-demand manager digest; standalone Node.js + Slack Bolt Socket Mode + direct Anthropic API, not on the Brain (plain badge "Built · final setup" — built and module-tested against production data, Slack app not yet created) → `#morning-brief` Morning Brief, a Claude Skill that renders a personal morning glance as one drawn HTML page: a hand-sketched terrain line carrying the day's reading (light / normal / heavy) above two lists (needs-your-attention, already-resolved), reading only already-connected calendar/email/chat sources (a missing source thins the brief; no new access requested), invoked on demand via /morning or set up by the user as a recurring scheduled task (live · internal; distributed as a .skill file) → `#autotask-ci-intake` Autotask CI Intake, a Claude Skill that turns raw device data into entry-ready Autotask Configuration Items: input is a device/serial-label photo, a management screenshot (iDRAC/iLO, vCenter, a controller UI), an RMM or tool export (Kaseya agent list, vCenter VM list, a CI search export), or pasted text, one device or many; it picks the CI category and the type inside it (Switch vs Firewall, NAS vs SAN, Local vs AWS/Azure VM), reads every field the input carries (manufacturer, model, serial, MAC, IP, hostname, firmware, OS), applies XL defaults (Status Active, Installed By, Location as an account/location selection) so only differences are asked, and batches every remaining required field into a single round of questions; relationships resolve to EXISTING parent CIs (a hypervisor host CI is linked, never duplicated; VM-to-host placement read from a supplied vCenter view); output is a per-device field block in Autotask New Configuration Item FORM ORDER (required and unconfirmed values flagged) plus an appended row in a per-client XLSX log, one tab per category, doubling as a client hardware inventory; it never writes to Autotask, a tech pastes and confirms before saving, and an unreadable value is flagged rather than guessed (live · internal — one fully documented production run: a Kaseya agent export of 8 VMs × 23 columns plus a CI search export naming the two existing Physical Server host CIs and a vCenter view for placement; VMware UUIDs kept as UUIDs not serials, split `2016`/`Build 14393` OS fields resolved to Windows Server release names, empty purchase-date column so install dates derive from each agent's first check-in, one row carrying a vCenter-object-name vs agent-name disagreement with a verify note; three-facet sub-grid: A Column Is Not a Field / Parents Already on File / Where a Person Comes In; closing bridge named Kaseya AP Builder and Log Analyzer until 2026-08-29 and now names neither, saying "a Kaseya agent-procedure builder" and "a log analyzer" instead, de-anchored and de-named for the reason given under `#follow-up-emails`; contrast axis = direction of travel, points out of Kaseya rather than into it, and reads an export to establish what a machine IS rather than why it misbehaves; NO category count is stated in the copy — the source blurb says "six" but names five, so the list is ostensive ("among them"), never closed), grouped into five `aria-label`ed `<section>` wrappers with visual kicker labels (Engine / What It Runs / Client Delivery / The Access Layer / What We Have Built; "X in — Y out" taglines are the Client Delivery pair's signature only), mid-page (after `#onboarding-toolkit`) + closing CTAs → `/builders`. **Card uniformity + "Full detail" disclosure (2026-07-27):** exhibit cards are held to one repeating shape, so visible copy per card stays comparable (visible-word spread across the 25 cards then on the page was ~6x, down from ~11x). ONE card, 16 `#beacon`, still carries a JS-free `<details className="card-more">` whose `<summary>` reads `Full detail` (per-card `aria-label="Full detail: <card name>"` so the accessible names stay distinct; the other four rode `#sp-writer`, `#kaseya-ap-builder`, `#tps-client-count` and `#log-analyzer` off the page on 2026-08-29); it sits between the last bridge `<p>` and the mono footer `<p>`, and holds the practitioner-depth prose trimmed out of the visible region. Collapsed content stays in the DOM, so it remains crawlable and no keyword coverage is lost; the `+`/`−` state glyph comes from `.card-more > summary::before` in `futurism.css`, never from markup. Cards under the threshold keep no disclosure, and material with nothing depending on it was cut outright rather than hidden behind a click. Load-bearing constraint carried through the trim: liability/boundary copy (human-review steps, no-write claims, the `#lakehouse` scoped-API reconciliation, badge-justifying status sentences) stays in the VISIBLE region, never behind the disclosure, and no claim was left outrunning its surviving visible evidence. The page-level wrapper carries a `work-page` class whose only job is `.work-page .panel p { max-width: none }`, overriding the global 62ch `p` cap that otherwise left card prose using ~58% of the panel width above and below each facet grid. **Team submissions (§5.16, 2026-07-29; restructured 2026-07-30):** `<CommunitySection/>` (`src/app/work/community.tsx`) reads `status=published` rows from `work_submissions` and renders them INSIDE group "05 · What We Have Built" (owner directive: no separate numbered group; the group was renamed from "What We're Testing" the same day), after the last static exhibit (25 until 2026-08-29, 18 since), introduced by an unnumbered "From the Team" sys-label divider carrying the provenance intro, through ONE card template (`CommunityCard`): plain `badge` "Built" (constant, never model-chosen, never `badge--ok`), category badge from a fixed enum, h2 title, summary + 1-2 body paragraphs, 3-facet sub-grid, mono footer joined with `·` and a template-appended credit fragment ("submitted by the XL.net team" or "submitted by <firstName>"), and, above that footer and only when the submitter reported one, the attributed line `Time saved · 6 hours 30 minutes a month, reported by the submitter` (2026-08-27, §5.16: the page's opening promise is that every claim below is drawn from the submitted documents, and this figure is not, so the source is named in the line itself). All fields are lint-validated plain strings rendered as React text nodes; submitted content has no path to markup, links, or the status-badge slot. Empty table OR DB error renders NOTHING (the static exhibits never depend on it). `<StaffSubmitLink/>` (client island, ONE deduped session probe per page) renders ONLY for signed-in @xl.net accounts — the ISR page cannot vary by viewer server-side, the public page carries no staff-facing copy, and no space is reserved (the one-line staff-only layout shift is accepted by ruling). Two instances: `variant="top"` inside the manifesto hero ("Submit it for review · Your submissions"; plain left-click opens the native submission dialog, lazy-loaded after the staff probe; modifier/middle clicks follow the real href to /work/submit) and the plain bottom link after the community section. Page metadata is count-free by rule: cards publish without a deploy, so a hard-coded count would go false on first publish. **Registry + console pager (2026-08-04):** after the manifesto, `<WorkRegistry team={...}/>` (`src/app/work/registry.tsx`) renders an always-complete mono anchor index of every exhibit — five bay groups, rows `NN · Title` numbered continuously at one uniform width, static rows from `static-titles.json`'s generated `bays`/`exhibits` fields, team rows from the same fetch the cards render from — then `<WorkPager/>` (`src/app/work/pager.tsx`, client island): Show 5/10/25/All radio segments + Prev/Next + aria-live readout, default 10, sessionStorage `xl.work.pageSize` (size only). The server always renders EVERY card in the one ISR document; the island windows visibility with `hidden="until-found"` and hides `[data-bay-head]`/`[data-team-divider]` for emptied groups (`pager-empty` collapses wrappers). No JS, a crashed island, or a panel-count drift (island counts DOM panels vs staticCount+teamCount) means nothing is hidden and the strips stay `display:none` (`html.pager-active` gates the CSS) — fail-open, never fail-hidden. Deep links always reveal: the routine runs at mount (hashchange does not fire on initial nav), on hashchange, and from a capture-phase click listener covering same-hash registry re-clicks; targets get tabindex=-1 focus, `:target` lightline glow, `scroll-margin-top`. `publishedCards()` is uncapped, ordered `display_rank ASC` (NULLS LAST, §5.16 reorder) then newest-first (display and the panel's uniqueness gate share it; a never-arranged lane is plain newest-first); WorkPage hoists the ONE guarded fetch; `CommunitySection` is presentational (`cards` prop; alternation starts LIGHTLINE via an `index + 1` offset in `community.tsx`, re-derived 2026-08-05 when `#rfp-response` left slot 25 for bay 02 and the last static became `#ticket-reply-composer` at an EVEN global position (plain), so a plain first team card would double-stripe the seam, and RE-CHECKED 2026-08-29 when eight exhibits came down: the removals form three runs of EVEN length (15-16, 20-23, 25-26), so every surviving card keeps its parity, no `panel--lightline` class was flipped, and the last static is now `#autotask-ci-intake` at global position 18, still EVEN and still plain, so the offset holds untouched; the offset lives in `community.tsx`, NOT `work-card.tsx`, because the §5.18 company page opens its own alternation with no statics above it and must keep starting plain). Team cards render in full (no body fold — rules 38/40); the static card `<section>` blocks other than the two that moved or were added are byte-identical, and there is deliberately no author `content-visibility` on panels and no pre-hydration boot script (see the 2026-08-04 header note for both traps) **Exhibit copy refresh (2026-08-29):** the six exhibits whose repositories were submitted in the §5.16 repository round (`#brain`, `#aicompany`, `#aiwebsite`, `#itsupportchicago`, `#roleplay`, `#leo-netter`) were rewritten from roughly 115 to 150 visible words each to the current card shape and length, narrowing the visible-word spread the uniformity ruling above bounds; `#brain`'s badge stopped stating a test count (a number that goes stale without a deploy) and reads `In production`. Section ids and `<h2>` titles are byte-identical through the rewrite, load-bearing in two directions: `static-titles.json` gates uniqueness on the titles, and §5.18's `work_static_credits` keys builder credit on the section id, so a rename would silently stop counting a colleague's card. **Eight exhibits became team cards (2026-08-29, owner ruling, §5.16):** a tool that was BOTH a hand-written exhibit here and a real submitted package gets ONE card, the submitted one, written by the §5.16 editorial panel from the package itself and credited to the person who built it, so `#ticketscribe`, `#ticket-summaries`, `#sp-writer`, `#kaseya-ap-builder`, `#tps-client-count`, `#log-analyzer`, `#script-master` and `#ticket-reply-composer` were deleted from `src/app/work/page.tsx` in the same round, taking the static lane from 26 exhibits to EIGHTEEN. All eight were in bay 05, which keeps five statics (`#spamslayer`, `#follow-up-emails`, `#beacon`, `#morning-brief`, `#autotask-ci-intake`); no bay empties. `src/lib/work/static-titles.json` was regenerated (18 titles, 18 anchor ids, 54 facet labels, 5 bays) and the registry, the pager count, the create route's 409 title gate, the lint collision sets and the panel's taken-titles prompt all follow the snapshot with NO code change. The copy edits above (`#follow-up-emails`, `#autotask-ci-intake`, the disclosure count, the seam note) are the whole blast radius for the page: no route, schema or migration change. |
 | `/work/submit` | dynamic server shell + client form | Staff submission page (§5.16), `robots: noindex`, absent from the sitemap; the noscript-safe, deep-linkable home of the flow. Server shell: no session → `redirect(/login?redirect=/work/submit)`; signed-in non-xl.net → instructive notice, no form; kill switch off → paused notice. Body: the shared `<SubmissionForm>` (same component the /work dialog hosts): NO kind control since 2026-08-28 (the radio pair was deleted; the kind is inferred from the package, and the ONE place a kind is still named on this form is the update banner, where it belongs to the card being replaced), title 4-60, one-paragraph blurb 0-900 (OPTIONAL and unbounded below since 2026-08-05: no `required`, no `minLength`, label "One paragraph (optional)"), optional public credit (single first name, validated server-side; empty = team credit), optional "Time saved per month for you" in HOURS (2026-08-27, §5.16: number input `min=0 max={TIME_SAVED_MAX_HOURS} step="any"` - `step="any"` is not a detail: this input sits in a real `<form onSubmit>` with no `noValidate`, so the browser runs constraint validation BEFORE the handler and a quarter-hour grid refused 6.3 for a value `parseTimeSavedHours` accepts and the inline row editors, which are in no form, save silently; `min`/`max` stay because they agree with the parser exactly - parsed client-side by the same pure module the route uses (belt and braces, NOT an upload saver: `req.formData()` has already buffered the package by then, and `<input type="number">` sanitizes unparseable text to `""` anyway; what the client parse really buys is that the refusal sentence a person reads is the route's own, so the two can never drift), sent as `timeSavedHours` only when non-empty, and NOT rendered in update mode because the child inherits the parent's figure at SWAP time in `publishWithSupersede`, not here), package file input (100 MB since 2026-08-19; form copy "Max 100 MB.") plus, for CoWork Skill, the required standalone SKILL.md input (1 MB), per-input client errors + verbatim server 422s with `paths` list; and the "your submissions" list polling `GET /api/work/submissions` every 10 s while any row is active, with Retry (failed/received/stale, everyone; a manual fallback since 2026-08-05 — the §5.16 queue drain starts queued and orphaned reviews automatically, failed stays manual) and admin-only removal (hard DELETE, ADMIN-ONLY since 2026-07-30; since the 2026-08-29 owner directive offered on every row of every status except superseded — other people's rows and published rows included — with per-row honest labels Withdraw / Roll back update / Delete card, per the §5.16 removal bullet; non-admins get one footer note naming the removal path: email the admin with the title) — the list lives ONLY here, never in the dialog. Since 2026-08-27 each row the viewer OWNS also carries its time-saved line and an inline editor (Add/Edit toggle with `aria-expanded`, an hours input, Save with `aria-busy`/`aria-disabled` and never `disabled`, "Enter 0 to remove it"), POSTing `{hours}` to `/api/work/submissions/[id]/time-saved`, writing the returned minutes into local state and then calling the existing `refresh()` so the 10 s poll cannot repaint the old value; refusals render on the ROW (`role="alert"`) with the editor left open, confirmations `role="status"`, and focus returns to that row's toggle. The toggle's visible label ("Edit time saved" / "Add time saved") carries an sr-only ` for {title}` suffix, the `CountCell` precedent from the scorecard: the visible label sits beside the row it belongs to, the ANNOUNCED one does not, and five submissions otherwise mean five buttons with one accessible name in a screen reader's button list. Rows the viewer does not own (the admin all-submissions view) show the value read-only and only when set, and so does a SUPERSEDED row, viewer's own or not: that branch is tested FIRST, above `isMine(r)`, because the all-submissions view resolves no `currentId` and never runs the dedupe, so a superseded row reaches this block with `isMine` false and would otherwise land in the read-only arm by accident rather than by rule. `refresh()` carries a monotonic `refreshSeq` ref alongside `viewRef`, and ONE predicate drops a reply that is stale either way (wrong scope, or superseded by a newer request); only the newest request calls `setLoading(false)`, so a refused or thrown request still clears the spinner while a late reply cannot clear it out from under one still in flight. **Submitted-at (2026-08-25, owner: "always have the timestamp shown in the timezone of the user"):** every row in BOTH views ends with a `Submitted <time dateTime>` chip (`mono text-xs text-faint`) holding `exact(r.createdAt)` from `src/lib/rfp/time.ts`, the viewer's zone with a clock, rendered outside the `view === "all"` branch so it cannot be view-conditional; `created_at` was already in the narrow projection below and had simply never been rendered. This is the ONE submission list that does not use `<LocalTime>`, deliberately: there is no hydration seam here (`rows` is `[]` at SSR and fills only from the poll), and `<LocalTime>`'s UTC seed is not mounted-aware, so it would paint `… UTC` for a tick on every row, every pager turn and every view switch while buying nothing. `exact()` formats in the runtime zone on its first render, and its `ABS_TIME` option set matches `<LocalTime>`'s post-mount formatter, so the settled text matches the other three lists exactly. A published row reads `Live on the Our Work page.` with NO latency parenthetical (the "(allow up to 5 minutes)" tail was dropped 2026-08-07, owner: the swap has never been anything but instant and the note never cleared; the within-5-minutes wording survives only on the admin/email surfaces, which describe the ISR propagation of an approved swap). **List pager (2026-08-07):** the deduped `visible` array is windowed by a plain `.slice()`, with an identical strip above AND below the rows — a native `<select className="input">` "Show" pull-down (10 default / 50 / All, `All` = size 0; its `aria-label` is a superset of the visible "Show") plus always-mounted Prev/Next and a mono `Page NN / NN · N submissions` readout (`aria-live="polite"` on the top strip only; the bottom readout is `aria-hidden`) — under All the readout is just `N submissions`, since `pageCount` is forced to 1. The arrows are made inert with `aria-disabled` and are never `disabled` nor conditionally unmounted, because both would blur the focused arrow to `<body>`; `goTo()` range-guards the click and `.btn--text[aria-disabled="true"]` (futurism.css) carries the look. The page index is CLAMPED during render (`safePage = min(page, pageCount - 1)`) and every control reads `safePage`, never the raw state, because the 10 s poll and Withdraw shrink the list underneath the pager; a guarded `useEffect` then settles the clamp into state so a stale high index cannot re-apply when the list grows back. A size change re-anchors on the first row of the current window. The GET reads through `mySubmissionsForList()` (`src/lib/work/db.ts`), a NARROW list read added 2026-08-07 that selects only the twelve columns `statusView()` projects (`id, title, kind, status, slug, created_at, parent_id, auto_approve, held_at, panel_error, panel_progress_json, panel_heartbeat_at`) and caps at 200 rows: the endpoint is polled every 10 s while any row is active, so the wide `ROW_COLS` read it used before shipped `corpus_files_json` (the whole extracted upload corpus), the doc text and the panel transcript on every tick, and its `.limit(25)` both truncated the list and made the `N submissions` readout assert a wrong total. `mySubmissions()` keeps its `.limit(25)` and its wide `ROW_COLS` for its other caller, §5.18 `/roadmap/work`. KNOWN LIMIT: above 200 rows the `N submissions` readout understates again, silently as before, since the count is the returned array's length; closing that needs server-side paging with a COUNT. Both strips are hidden only while the list fits one page AND the size is still the default, so a user who picked All can always get back to 10. This list is React-rendered from polled state and deliberately shares NOTHING with `/work`'s `<WorkPager/>` island (which mutates server-owned DOM and whose `.work-pager` CSS is gated on the /work-only `html.pager-active` class). Note the SKILL.md input is optional since the same-day intake rework |
 | `/work/requested` | dynamic server shell + client islands | Requested Work board (§5.19), `robots: noindex`, absent from the sitemap; verified xl.net staff sessions only (Google, or Microsoft with the per-login `mv` claim; provider pin, §5.19): request form + own-requests list + the approved board with claim/complete actions and admin approve/validate queues; all lists server-fetched and windowed by the shared 10/50/All list pager |
 | `/builders` | **dynamic** server component (`force-dynamic`) | "AI Builders" commercial page: 2028 thesis hero, two offerings (§5.10) - AI Builders Workshop $995 one-time (titled "Virtual Workshop" until 2026-08-05, renamed so /roadmap step 03's `/builders#workshop` deep link lands on the heading it promised; both offering cards carry `id`+`scroll-mt-24` anchors for those links), capped at 8, **bookable again since 2026-08-26: the September 24, 2026 session on Ticket Tailor** (§5.10), and Stripe-purchasable AI Builder Cohort $495/month (max 6, auto-renew disclosure on-card). The workshop card is time-gated in THREE windows off the pure `workshopWindow(now)` in `src/lib/workshop/session.ts` (this gating is why the page is force-dynamic): `prev-sold-out` (until Aug 27 8:00 AM CT = 13:00Z) stacks a `badge--warn` "August 27 · Sold out" strip with NO breathing dot (the dot is the "live, bookable" signal) above a `badge--light`+dot "September 24 · Booking open" strip, the two sharing ONE wrapper so the card keeps 7 subgrid children; `booking` (until Sept 24 13:00Z) shows the single dotted "September 24 · Booking open" strip; `tba` (from Sept 24 13:00Z) the dotted "Next date: TBA" strip. In both booking windows the primary CTA is the Ticket Tailor event page (`<a target="_blank" rel="noopener noreferrer">` "Reserve September 24 · $995", the one-time qualifier lives in the stat row per the 2026-07-22 CTA-width ruling) with `/builders/notify` as the secondary "Can't make September 24?" path; the tba window keeps the "Get notified about the next session" notify CTA. The proof line reads "July 30 and August 27 both sold out". Single-strip badges carry `self-start` so the subgrid can't stretch them; the stacked strips are stretched full-width by their flex column on purpose. Below pricing: free May webinar (self-hosted MP4, §5.10) + June 18 recap YouTube short; objection panels; CTA → `/contact` |
@@ -4743,7 +4856,18 @@ too (row bytea when present, else `storedFilesForSubmission`,
 all-or-nothing, displayed under the row's stamped archiveName/mdName via
 the 00/01 slot mapping), so a re-publish after a clear still sends real
 files. Consequence the admin console states plainly: once a published
-row's bytea is cleared, the store file is the LAST copy anywhere. The
+row's bytea is cleared, the store file is the LAST copy anywhere.
+SINCE 2026-08-29 THE STORE IS BACKED UP. `deploy/backup-db.sh` uploads a
+`tar.gz` of the store root beside the nightly SQL dump, same bucket, same
+credentials, own guards, own alert (§9.7). That closes a real single point
+of failure: `data/` is excluded from the deploy rsync, which is exactly
+what makes the store survive deploys, so before this the store lived on
+one VM disk and in no backup at all while the sentence above says it holds
+the only copy of a colleague's work. An absent or empty store is NOT a
+failure on a fresh host, but it IS a CRITICAL alert once a non-empty store
+has been backed up successfully before, the `last-archive-backup-ok` stamp
+being the discriminator; an operator who deliberately empties the whole
+store acknowledges that by deleting the stamp file. The
 mail-screen inflate path shares extract.ts `inflateCapped` (per-entry cap
 min(declared + 64 KB slack, remaining 64 MB budget), real-bytes
 accounting; a breach returns the original unscreened).
@@ -5048,7 +5172,12 @@ a verdict: a marketing name need not share a word with the skill name
 (exhibit "TicketScribe" IS the `ticket-notes` skill), so no overlap prints
 "no exhibit name resembles this" and proves nothing either way, and a card
 that IS named may simply be the wrong one (the `ticket-notes` group draws
-"Ticket Reply Composer"), which is why the same rider rides both branches
+"Ticket Reply Composer"). BOTH WORKED EXAMPLES ARE HISTORICAL SINCE
+2026-08-29: TicketScribe and Ticket Reply Composer are team cards now
+(§5.16 "One tool, one card"), so the snapshot no longer carries either
+title and the tool cannot draw them; the reasoning they illustrate is
+unchanged, and the DATABASE lane now answers for both tools. That is why
+the same rider rides both branches
 and why the Summary count refuses its own complement in the same line
 instead of leaving "unmatched minus possible" to be subtracted. Advisory
 guesses never move the exit code, and absence from /work is only ever
@@ -5109,6 +5238,37 @@ most of what a row carries: an exhibit must NOT become a row. The editorial
 panel would rewrite the page's best prose into the card template, and
 publishing a card for a tool that already has an exhibit duplicates it on the
 page. The create route enforces the same ruling from the other side.
+
+**One tool, one card (owner ruling, 2026-08-29).** The paragraph above
+settles a DUPLICATE. It does not settle the case where the exhibit and a real
+submitted package are the same tool, and the ruling for that case is: the tool
+gets ONE card, the SUBMITTED one, written by the editorial panel from the
+package itself and credited to the person who built it, with the package
+retained in the archive store, and the hand-authored exhibit comes down in the
+same round. Eight exhibits were converted on that ruling (`#ticketscribe`,
+`#ticket-summaries`, `#sp-writer`, `#kaseya-ap-builder`, `#tps-client-count`,
+`#log-analyzer`, `#script-master`, `#ticket-reply-composer`), taking the
+static lane from 26 cards to EIGHTEEN and `static-titles.json` to 18 titles,
+18 anchor ids and 54 facet labels. THREE ORDERINGS FALL OUT OF THE CODE AND
+GOVERN THE OPERATOR RUN, in this order. (1) The eight `work_static_credits`
+rows come out FIRST, BEFORE the deploy: `work:credit remove` runs the same
+`validateCredit()` against `staticTitles.anchorIds` that `add` does, so once
+the removal ships the tool refuses all eight ids and the rows can only be
+cleared by hand SQL. The cost of doing it first is a short undercount on the
+staff scorecard between the removal and the panel run; double counting is
+impossible either way, because `scorecardRows` already filters credits against
+the generated anchor list. (2) The removal DEPLOYS before any package is
+submitted, because `POST /api/work/submissions` 409s a title that normalizes
+to a static exhibit title and `npm run work:submit` applies the identical
+gate. (3) The panel runs LAST, because it is told "Title must remain
+<row.title> unless it collides", so submitting before the removal ships makes
+it invent a different name. The RETENTION lane described ABOVE is unchanged
+and is now the lane for exhibits that STAY page copy: `work:retain --exhibit` matches the
+snapshot title exactly, so after the deploy it can no longer name any of the
+eight, and pre-existing `exhibits/<slug>/` rows stay (`isExhibitRelPath` keys
+on the path shape, not on the snapshot). Converting an exhibit is deliberately
+NOT scripted: it is a page edit, a snapshot regeneration and an ordered
+operator run, so nothing enforces the ordering except this paragraph.
 
 **Scripted submission lane (2026-08-29)**: `npm run work:submit -- --title
 "<title>" --file <package.zip> [--md <doc.md>] [--blurb-file <file>] [--email
@@ -5530,14 +5690,15 @@ summary 40-90 words, body 1-2 ¶, exactly 3 facets (label ≤28 chars, text
 (`</?letter`, `&#`), scheme URLs + `www.`, emails, phone shapes, frequency
 adverbs, **process meta-commentary collocations** (16 patterns — "source
 document", "this card", "editorial", negated "no … was submitted",
-"withheld", "provisional", etc. — validated 0 hits across the 24 exhibits +
-the good community card; the TITLE is exempt because titles are
+"withheld", "provisional", etc. — validated 0 hits across the 24 exhibits then on the
+page + the good community card; the TITLE is exempt because titles are
 submitter-chosen names), and **category-prefixed titles**
 (`TITLE_KIND_PREFIX_RE` backstop: "Claude Skill: X" duplicates the badge;
 both intakes strip or reject before a row exists, so a lint fire means a
 new intake path skipped that step); whole-card 140-560 visible words;
 title/facet-label uniqueness vs `static-titles.json` (generated snapshot of
-the 24 hand-authored exhibits; `scripts/work-static-snapshot.mjs --check`
+the hand-authored exhibits, 18 of them since 2026-08-29;
+`scripts/work-static-snapshot.mjs --check`
 fails build:check on drift, `--write` regenerates) + published rows. Lint
 fail → repair with MERGE containment (`repair.ts`, pure module, 2026-08-04
 "Rippling Mileage Entry" round — the old detect-and-hold gate held a fine
@@ -8539,8 +8700,9 @@ exists); consumers are the scorecard rows (emails keep mono styling via
 `personLabelParts().kind`), the scorecard click-through, and the requested
 serializers; the public /work card credit is EXEMPT by privacy design
 (single validated first name or team credit, never an email; source-pinned).
-**Exhibit credits (§5.16/§5.18, owner ruling 2026-08-29).** The 26
-hand-authored exhibits on the public `/work` page are page copy in
+**Exhibit credits (§5.16/§5.18, owner ruling 2026-08-29).** The
+hand-authored exhibits on the public `/work` page (26 when this table
+shipped, EIGHTEEN since the conversion later the same day) are page copy in
 `src/app/work/page.tsx`, not `work_submissions` rows, so the colleagues who
 built them were counted by NOTHING on this scorecard: eight of those exhibits
 have a named builder, and two of those people read `0 published` while the
@@ -8589,7 +8751,29 @@ nonzero time-saved cell beside a `0 published` remains impossible, which is
 the property that keeps the page from revealing that a colleague tried and
 failed. (4) An HONESTY GUARD: the read is `inArray(anchor_id,
 staticTitles.anchorIds)`, so a credit whose exhibit has been retired from the
-page stops counting the day the section goes, with no migration. Sort places
+page stops counting the day the section goes, with no migration. That guard
+has an OPERATOR CONSEQUENCE, and it bit on 2026-08-29: `remove` used to
+validate its anchor against the same generated list that `add` does, so once a
+removal had shipped the credit rows for the deleted exhibit were unreachable
+by the supported tool and clearable only by hand SQL. FIXED IN THE SAME ROUND:
+`validateCredit` takes `allowRetired`, which `scripts/work-credit.ts` passes
+for `remove` and never for `add` (a typo on `add` must still fail closed, or
+the person silently reads 0), so `remove` accepts a retired id in section-id
+SHAPE and prints a note saying the section is no longer on the page. THE
+ORDER IS THEREFORE NO LONGER FORCED, and the right order is the opposite of
+the one this paragraph first recommended: **retire the credits LAST**, after
+the replacement team card has published and its submitter address has been
+checked. The credit rows are the ONLY record of which colleague built which
+exhibit (the email half of that mapping lives only in the production database
+by design, see the schema comment), and they are the input the conversion's
+own `work:submit --email` step needs; deleting them first destroys that input
+before it is consumed, with no audit row and no soft delete. Nothing is gained
+by deleting first: the honesty guard means a leftover credit for a retired
+anchor already counts for NOBODY the moment the removal deploys, so there is
+no double-count window to close. The undercount window is real but is created
+by the DEPLOY, not by the removal: between the page edit going live and the
+panel publishing the replacement card, the builder is counted by nothing, and
+that is the cost the conversion ordering buys. Sort places
 exhibits below published and above completed, so a builder whose only work is
 an exhibit does not sit in the alphabetical tail among people who have
 shipped nothing. A credited person who is in no other source still renders,
@@ -10140,10 +10324,15 @@ work_archive_files id uuid PK default random,
 
 work_static_credits id uuid PK default random,
                    anchor_id text NOT NULL (a /work section id, e.g.
-                   "ticketscribe"; validated at the WRITE edge and filtered at
+                   "morning-brief"; validated at the WRITE edge and filtered at
                    READ time against the GENERATED src/lib/work/static-titles.json
-                   anchor list, never by a CHECK - the 26 ids change whenever
-                   page.tsx changes and that must not need a migration),
+                   anchor list, never by a CHECK - the ids change whenever
+                   page.tsx changes and that must not need a migration; there
+                   are 18 of them since the 2026-08-29 conversion, down from 26.
+                   KNOWN STALE: the comment in src/lib/db/schema.ts still says
+                   "the 26 ids" and still uses "ticketscribe" as its worked
+                   example, an id that no longer exists. Comment only, nothing
+                   reads it),
                    email text NOT NULL (denormalized, lowercased, NO FK: the
                    scorecard matches on lower(email), and a company_people row
                    is a hard DELETE that a re-import replaces with a fresh uuid,
@@ -11057,7 +11246,19 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
   `BLOG_ENABLED=1` — the blog heartbeat `data/blog-last-run` (§5.11) — any >26 h old →
   alert — plus (v1.1.0 template) the digest state file `data/blog-digest-last` at its own
   35-day threshold (blog-digest.ts stamps it on EVERY exit path incl. OK-skips, so stale
-  means the daily digest timer is dead, not "not due").
+  means the daily digest timer is dead, not "not due"). The store-backup stamp
+  `/var/lib/aiwebsite/last-archive-backup-ok` (§9.7) is still NOT among these
+  checks: a store backup that FAILS mails its own CRITICAL, but one that stops
+  running altogether has no dead-man alarm here. watchdog.sh is
+  template-rendered, so closing that gap belongs upstream, and it is a
+  BLOCKING PRE-CONDITION on the next module bump alongside porting the backup
+  block itself (§9.7). Two host-side partial mitigations shipped 2026-08-29
+  instead of nothing: the fresh-host branch of the store backup now records a
+  `WARN`/`archive-store-backup-skipped` issue-ledger row rather than a bare
+  echo, and `scripts/git-hooks/pre-commit.local` refuses a staged
+  `deploy/backup-db.sh` that no longer defines `archive_store_backup`, which
+  is the way the block would most plausibly disappear. Neither is a freshness
+  check; a stamp nobody reads is not a heartbeat.
 - Every 5th pass: renders `/` and `/login`; on 5xx / "application error" /
   NEXT_NOT_FOUND / timeout → **staged rebuild** (module v1.13.0: full-pipeline flock on
   `/var/www/aiwebsite.stage/.lock`; deps hardlink-cloned from the LIVE `node_modules`
@@ -11093,7 +11294,7 @@ which are not in this table):
 | `aiwebsite-knowledge` | daily 08:00 | nightly crawl (§8); `ExecStartPre` re-renders `data/aiwebsite-config.json` |
 | `aiwebsite-blog` | daily 09:30 + ~4484 s slug jitter (≈10:44) | nightly AI-news post (§5.11): `packages/aicompany/scripts/blog-nightly.ts` via the app's own tsx. `Type=oneshot`, `After=aiwebsite-knowledge.service` (ordered behind the 08:00 crawl); logs `/var/log/aiwebsite-blog.log`. Gated on `BLOG_ENABLED=1` |
 | `aiwebsite-blog-digest` | daily 14:00 (`BLOG_DIGEST_ONCALENDAR`, v1.1.0) | monthly blog digest email (module §19.18): `packages/aicompany/scripts/blog-digest.ts`. Fires daily; the SCRIPT is the gate — `reports.monthlyDigest` month guard (day ≥ dayOfMonth ∧ lastSentMonth < currentMonth) makes it monthly and `Persistent=true` boot catch-up correct; stamps `data/blog-digest-last` on every exit path (watchdog checks >35 d, §9.6); logs `/var/log/aiwebsite-blog-digest.log`. Gated on `BLOG_ENABLED=1` |
-| `aiwebsite-backup` | daily 07:15 | `backup-db.sh`: `pg_dump aiwebsite \| gzip` → `$BACKUP_BUCKET` (+ `latest.sql.gz`), refuses <500 MB free disk, rejects dumps <100 KB, 30-day bucket retention, stamps the heartbeat the watchdog checks. **BACKUP_BUCKET is currently EMPTY** — no bucket exists for aiwebsite yet, so every run fails loudly (`[aiwebsite] CRITICAL Database backup FAILED` nightly) until one is provisioned (go-live TODO in site-deploy.env; Azure Blob `azblob://…` is the natural fit — the VM is Azure) |
+| `aiwebsite-backup` | daily 07:15 | `backup-db.sh`, TWO artifacts per run. **NOT independently alerted, and the asymmetry is one-way:** the store block runs at the END of the script, so any dump-half failure kills the run under errexit before the store is ever packaged, and the store raises no alert of its own for that. The single likeliest cause hits before `pg_dump` even runs (a missing `AZURE_STORAGE_KEY` trips `false` while resolving the transport), so one credential problem takes both halves down. `on_error` therefore says in the mail that the store was not backed up either; making it genuinely independent means hoisting the dump half into a function called from an `if`, the way `archive_store_backup` already is. **(a) Postgres:** `pg_dump aiwebsite \| gzip` → `$BACKUP_BUCKET` as `aiwebsite_<ts>.sql.gz` + `latest.sql.gz`, refuses <500 MB free disk, rejects dumps <100 KB, stamps `/var/lib/aiwebsite/last-backup-ok`, the heartbeat the watchdog checks at 26 h. **(b) the §5.16 work archive store (NEW 2026-08-29):** `tar.gz` of `WORK_ARCHIVE_DIR` (default `data/work-archives`, read out of `.env` with the same literal grep the credentials use, so moving the store cannot leave the backup quietly packaging an empty default path) as `aiwebsite-work-archives_<ts>.tar.gz` + `latest-work-archives.tar.gz`, through the SAME bucket and the SAME `bucket_put`. Its own guards: single-instance under `flock` on `/var/lib/aiwebsite/backup-db.lock` (an overlapping run used to delete the other run's in-flight tarball through a `aiwebsite-work-archives_*.tar.gz` sweep and then raise a false CRITICAL; a second run now exits 0 quietly), refuses a store over `WORK_ARCHIVE_BACKUP_MAX_KB` KB (default 2 GiB; read from `.env` rather than hand-edited into this RENDERED file, because such an edit reverts on the next render) or a disk with less than store size + the 500 MB margin free, excludes `*.tmp-[0-9]*-[0-9]*` (**not** the looser `*.tmp-*` it shipped with: `sanitizeStoredName` keeps `.` and `-` verbatim, so a real submitter package called `build.tmp-1.zip` is stored as `00-build.tmp-1.zip` and the loose glob silently dropped it from the artifact and made a store of such files read as EMPTY, i.e. as a fresh host; the narrow form is archive-store.ts's own `/\.tmp-\d+-\d+$/`), treats `tar` exit 1 as a warning and exit ≥2 as fatal, and READS THE FINISHED TARBALL BACK with `tar -tzf` before it is allowed to overwrite `latest-work-archives.tar.gz`, so a truncated artifact cannot become the copy an operator restores from. Stamps `/var/lib/aiwebsite/last-archive-backup-ok` with the epoch on line 1 and `entries=`/`store_kb=` below it, which feeds a **PARTIAL-LOSS GUARD**: the emptiness check is all-or-nothing, so a store that lost most but not all of its files used to overwrite `latest-work-archives.tar.gz` with the damage at exit 0 and no alert (measured: 7 files to 1, a 99.8% collapse, in silence), and `latest-work-archives.tar.gz` is exactly the blob the restore runbook below tells an operator to download. When entries or KB drop by more than half against the stamp, the DATED blob still uploads (tonight is never lost) but `latest` is left holding the last good copy and the run raises its CRITICAL; deleting the stamp file acknowledges a deliberate mass deletion. **Both artifacts of one run share the same `<ts>`**, which is what makes a matched-pair restore possible. The existing 30-day sweep covers both with no change: `bucket_sweep` reads the retention date with `grep -oP '\d{8}'`, both blob names carry exactly ONE 8-digit run, and both `latest*` names are digit-free so the sweep never touches them. Store failures raise their OWN CRITICAL mail ("Work archive store backup FAILED", ledger key `archive-store-backup-failed`) and exit non-zero, and never withhold the DATABASE heartbeat, because that heartbeat is what the watchdog and the quarterly restore drill reason about. Absent/empty store on a fresh host = no mail, but it now records a `WARN`/`archive-store-backup-skipped` row on the issue ledger, because NOTHING reads `last-archive-backup-ok` for freshness (§9.6) and that branch was otherwise the one way the store backup could go on not happening with nobody told. Once `last-archive-backup-ok` exists, an empty store is CRITICAL. `BACKUP_BUCKET=azblob://xlaiwebbackups/backups` in `deploy/site-deploy.env` since 2026-08-16 (the go-live TODO comment still sitting above that line is stale). **This edit lives in a RENDERED file**: `deploy/backup-db.sh` carries an `aicompany-template:` stamp, `render.mjs` writes every output unconditionally and deploy.sh's drift gate compares the stamp against the MODULE TEMPLATE's hash, never against the rendered bytes, so the hand edit passes the gate today and the next re-render deletes the whole block with no warning. Durable home: `packages/aicompany/deploy/templates/backup-db.sh.tpl`, paths as `${APP_DIR}` placeholders. **BLOCKING PRE-CONDITION on the next module bump**, together with adding `/var/lib/aiwebsite/last-archive-backup-ok` to `watchdog.sh`'s freshness list (a stamp nobody reads is not a heartbeat). Until then the fail-closed half is host-side: `scripts/git-hooks/pre-commit.local` REFUSES a staged `deploy/backup-db.sh` that no longer defines `archive_store_backup` (bypass `ARCHIVE_BACKUP_OK=1`), so a re-render can no longer delete the block quietly; retire that gate the day the block lands in the template. **Bucket access:** the container is provisioned out of band, so no file in this repo states its access level; expected private with no anonymous access, reached only with `AZURE_STORAGE_KEY`, which lives in the VM's `.env` (0600) and the dev box's `.env` and nowhere else. The store tarball carries the LAST copy of retention-cleared submitter packages, so confirm that setting in the portal before treating this row as verified |
 | `aiwebsite-restore-drill` | quarterly (Jan/Apr/Jul/Oct 5th, 06:30) | restores `latest.sql.gz` into a scratch DB, sanity-checks row counts, drops it, emails pass/fail either way — a backup that cannot be restored is not a backup |
 | `aiwebsite-retention-sweeper` | weekly Sun 05:30 | deletes `page_visits` >730 d, `auth_logs` >365 d, `ip_orgs` >730 d, `admin_emails` >730 d — **must match `privacy.retentionDays`** in site.config.ts (sms_consent_logs exempt by design). Since v1.1.0 also probes `blog_cta_events` via `to_regclass` (>400 d, `RETAIN_BLOG_CTA_EVENTS_DAYS`) — the table is absent here (cta.funnelEvents not adopted), so the sweep self-skips |
 | `aiwebsite-disk-check` | daily 06:45 | alert at >80 % disk on `/` |
@@ -11104,14 +11305,93 @@ which are not in this table):
 
 ---
 
+**Restoring the work archive store (§5.16).** A store backup is only as real
+as its restore, so the procedure is written out. All commands run on the VM.
+
+1. Fetch, through the same credential path the backup script uses:
+   ```bash
+   key=$(sudo grep -E '^AZURE_STORAGE_KEY=' /var/www/aiwebsite/.env | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+   az storage blob list --auth-mode key --account-key "$key" \
+     --account-name xlaiwebbackups --container-name backups \
+     --query "[?contains(name,'work-archives')].{n:name,size:properties.contentLength,at:properties.lastModified}" -o table
+   az storage blob download --auth-mode key --account-key "$key" \
+     --account-name xlaiwebbackups --container-name backups \
+     --name latest-work-archives.tar.gz \
+     --file /var/backups/aiwebsite/restore-work-archives.tar.gz
+   ```
+   (A GCS host: `gsutil cp gs://<bucket>/latest-work-archives.tar.gz <file>`.)
+2. Look before unpacking: `tar -tzf <file> | wc -l` and `tar -tzf <file> | head`.
+   The single top-level entry is the BASENAME of the store root as configured
+   when the artifact was taken, `work-archives/` on the default path.
+3. Unpack into the store root's PARENT, never into the store root:
+   `sudo tar -xzf /var/backups/aiwebsite/restore-work-archives.tar.gz -C /var/www/aiwebsite/data`.
+   This MERGES: same-named files are overwritten, extra files on disk are left
+   alone. PM2 need not be stopped, because intake only ever writes NEW
+   submission directories.
+4. Ownership. The web process runs as the deploy user (the owner of
+   `/var/www/aiwebsite`) and admin cleanup must be able to `unlink` a file,
+   which needs write+execute on the CONTAINING DIRECTORY, not on the file.
+   Root extraction restores the archived owner by name, but derive it rather
+   than trust it: `sudo chown -R "$(stat -c '%U:%G' /var/www/aiwebsite)"
+   /var/www/aiwebsite/data/work-archives`, then 755 on dirs and 644 on files.
+5. RE-APPLY ADMIN DELETIONS, or the restore resurrects files an admin
+   deliberately deleted. Their ledger rows carry `deleted_at` and their
+   `rel_path` is retired permanently (the unique index is FULL, covering
+   deleted rows), so the file must go again: select `rel_path` from
+   `work_archive_files where deleted_at is not null` and `rm -f` each one
+   under the store root.
+6. Reconcile against the ledger. Walk `work_archive_files where deleted_at is
+   null` and, per row, compare `bytes` and `sha256` against the file on disk,
+   reporting MISSING and MISMATCH; then list files on disk (excluding
+   `*.tmp-*`) that no ledger row knows about. The ledger's `sha256` was
+   computed at write time AFTER the rename, so a MISMATCH-free run is proof
+   the restore is byte-correct, not merely present.
+
+**The store and its ledger are backed up on different clocks, and the skew is
+asymmetric.** `work_archive_files` rides in the SQL dump; the store is its own
+tarball taken minutes later in the same run. A store restored from a DIFFERENT
+night than the dump disagrees with the ledger, and the two directions are not
+equally bad:
+
+- **Dump NEWER than the store** (the dangerous direction): ledger rows with no
+  file. Everything fails CLOSED, which is the system working as designed:
+  `storedFilesForSubmission` returns null, the retention email drops its
+  residency claim, and `verifyAndClearRowBytes` refuses to clear a row bytea
+  it cannot match. But any submission whose bytea was ALREADY cleared is gone
+  for good, and `archiveStoreUsage` over-reports, because it sums ledger bytes.
+- **Store NEWER than the dump** (the safe direction): unledgered files on
+  disk, invisible to verification, usage totals and admin cleanup, costing
+  nothing but disk until re-imported.
+
+So the operator rule is: **never restore a store OLDER than the dump.** Prefer
+the matched pair from one run, trivially identifiable because both blobs carry
+the same timestamp (`aiwebsite_<ts>.sql.gz` with
+`aiwebsite-work-archives_<ts>.tar.gz`); within a run the dump is taken first
+and the tar minutes later, so the pair errs safe by construction. If the pair
+is unavailable, take the NEWEST store you have. Finally, name the losses:
+anything reported MISSING whose `work_submissions` row no longer holds
+`archive_data` is unrecoverable from this host and the submitter has to be
+told. Two riders on that list. Rows with `submission_id IS NULL` and an
+`exhibits/<slug>/` rel_path are the hand-authored exhibit lane, which never
+had a bytea at all, so a missing exhibit file is recoverable only from whoever
+handed the file over. And the publish-time retention email attaches the
+package whenever it fits the 35 MB budget, so `ADMIN_EMAIL`'s mailbox is a
+real third source for small packages before anything is declared lost.
+
+`deploy/restore-drill.sh` still drills only `latest.sql.gz`; a store drill
+(download `latest-work-archives.tar.gz`, `tar -tzf` it, compare its entry list
+against `work_archive_files`) is the obvious next step and belongs in the same
+upstream template change as the backup edit itself.
+
 **Deploy safety wrapper (host-owned) + the module's own tree gate.**
 `scripts/deploy-safe.sh` is the intended entry point; `deploy/deploy.sh` is
-what it execs. The wrapper refuses on a dirty working tree, because
-`sync_dir()` rsyncs the tree rather than a git archive, so uncommitted work in
-a shared checkout would ship to production verbatim. `--dirty-ok` overrides.
-The wrapper additionally warns on unpushed commits and prints the commit about
-to ship, neither of which the module gate does, so it stays the correct
-entrypoint.
+what it RUNS (a child process since 2026-08-29, no longer `exec`; see the
+marker paragraph below for why). The wrapper refuses on a dirty working tree,
+because `sync_dir()` rsyncs the tree rather than a git archive, so uncommitted
+work in a shared checkout would ship to production verbatim. `--dirty-ok`
+overrides. The wrapper additionally warns on unpushed commits, prints the
+commit about to ship and prints every commit not yet on the VM, none of which
+the module gate does, so it stays the correct entrypoint.
 
 **Since `@aicompany/core` v1.104.x there is a SECOND, LOWER gate inside the
 rendered `deploy/deploy.sh` itself** (module §9), and the older "it must be a
@@ -11128,15 +11408,132 @@ sessions share the checkout, and exits 1 before touching the VM.
 
 Its escape is `DEPLOY_ALLOW_DIRTY=1` **and** the flags `--allow-dirty` /
 `--dirty-ok`. The env var is the primary form deliberately: this wrapper
-CONSUMES `--dirty-ok` at line 32 and execs `deploy/deploy.sh "${passthru[@]}"`
-without it, so a flag-only gate (module v1.104.0, superseded within the hour by
+CONSUMES `--dirty-ok` (and `--ack=`) in its argument loop and runs
+`deploy/deploy.sh "${passthru[@]}"` without them, so a flag-only gate (module v1.104.0, superseded within the hour by
 v1.104.1) silently broke this host's documented escape hatch, refusing the
 operator the exact thing they had just asked for. This host's `--dirty-ok`
 branch therefore also `export`s `DEPLOY_ALLOW_DIRTY=1`, which is the form that
 cannot be broken by a future change to either script's argument handling. The
 bypass path never prints "working tree clean"; it names what it is shipping,
 because the log is what the next person reads to work out what actually went
-out. `scripts/dev-servers.sh` is the
+out.
+
+**The wrapper also gates the commit SET, not just the tree (2026-08-29).** A
+clean tree proves nothing about WHAT ships: `deploy.sh` sends the tree at its
+current commit, so it carries every commit every other session has pushed to
+the branch, and that hazard lives entirely inside committed, pushed history
+where the dirty-tree gate, `git status` and the module gate are all blind to
+it. On 2026-08-29 four sessions were pushing to master and one session's
+cutover would have shipped another session's round while that round still had
+two FATALs open, one of them a credential-leak regression; agents messaging
+each other is what stopped it, which is not a control. So before handing over,
+the wrapper reads `~/.aiwebsite-deploy-commit` from the VM (the deploy user's
+home, over the ssh-key transport only, `BatchMode=yes` +
+`ConnectTimeout=8` under a 25 s `timeout`, stdin from `/dev/null` so it can
+neither prompt nor eat terminal input; `DEPLOY_TRANSPORT` and `SSH_KEY_PATH`
+come from `deploy/site-deploy.env`, `AIWEBSITE_SSH_IP` / `AIWEBSITE_USER` /
+`AIWEBSITE_SSH_KEY` from `.env`), where the last successful run of the wrapper
+recorded the commit it shipped. It then prints a banner naming the live commit
+and its subject, every commit in `marker..HEAD` with sha, date, author and
+subject (newest first), and separately every commit in `HEAD..marker`, which
+is an accidental ROLLBACK and is called out as one. Any non-empty set REFUSES
+unless the operator passes `--ack=<sha>` naming the exact current HEAD; a name
+(`HEAD`, `master`, a tag) is refused, because it would acknowledge whatever
+the branch happens to be at the moment of the run. The ack is a speed bump,
+not authentication: any caller can supply it, and it is not an identity claim.
+BE PRECISE ABOUT WHAT IT BUYS. It does NOT buy "the sha cannot be produced
+without the list having been printed" - that claim was written here and in the
+script header and is false: the sha is `git rev-parse --short HEAD`, available
+to anyone holding the checkout with no wrapper invocation at all, and the
+refusal prints the complete ready-to-run command containing it, so an
+autonomous agent gets past the gate in one extra turn. Leaving that rationale
+standing would be worse than the gap, because the next session would read
+`Acknowledged:` in a deploy log as evidence that somebody reviewed the list.
+What survives is real but smaller: the ack goes STALE the moment anyone else
+pushes, which closes the window between reading the list and deploying, and
+the deploy log carries `Acknowledged: N new + M removed commit(s) at <sha>`,
+so shipping somebody else's round is a LOGGED act rather than a silent one.
+The list is the control; the flag is a speed bump. The refusal now repeats the
+NEW and REMOVED commit lists inside its own stderr message rather than only in
+the stdout banner, so a caller that keeps one stream cannot end up holding the
+bypass command without the evidence it bypasses. Author
+identity is deliberately NOT the discriminator: every session in this checkout
+commits under one git identity, so a per-author filter would have printed an
+all-clear on exactly the incident this exists to catch. Foreign author
+addresses are annotated, never trusted as the test.
+
+**The marker, and why it lives in `$HOME` rather than the app dir.**
+`sync_dir()` rsyncs `$app_dir` with `--delete`, so a marker inside
+`/var/www/aiwebsite` is erased at the START of every deploy; a deploy that
+then failed after the sync would leave the box with no record of the commit
+still serving, which is exactly when the record is worth having. Nothing else
+on the VM can answer "what is live?", because `.git` is excluded from the
+sync. The file is one line (the full sha) followed by `#` comment lines
+(branch, subject, `dirty: yes|no`, `deployed_at`, `by`); a `dirty: yes` marker
+makes the next pre-flight say the live files are not exactly that commit and
+that the commit list is therefore a LOWER BOUND. Writing the marker is why the
+wrapper no longer ends in `exec bash deploy/deploy.sh`: it runs deploy.sh as a
+child, propagates its exit status verbatim, and stamps the marker ONLY on exit
+0, so a failed deploy never records a commit as shipped. Signals still reach
+deploy.sh through the shared process group, and a Ctrl-C (rc 130) skips the
+stamp like any other non-zero status.
+
+**Every marker failure degrades, and none of them refuses.** No marker yet
+(first run), an unreachable VM, a missing key, a non-`ssh-key` transport, or a
+marker naming a commit this checkout does not have: each prints a loud UNKNOWN
+BASELINE block with the reason and the 15 most recent commits, requires no
+acknowledgement, and proceeds. Refusing on a failed read would let a
+monitoring gap block `--takeover`, the documented mid-flip recovery run, while
+the site is down, which is worse than the hazard being policed, and
+`deploy.sh`'s own liveness probe still refuses a dead box seconds later. A
+post-deploy write failure warns and exits 0, because the deploy really did
+succeed. NINE conditions reach that path (no marker, a corrupt marker, an
+empty marker from a partial write, a marker naming a commit this checkout does
+not have, a CRLF marker, ssh unreachable, a non-`ssh-key` transport, no
+`.env`, a missing key), and until 2026-08-29 the only trace of any of them was
+one stdout line in the middle of a long deploy log, so a gate dead for weeks
+looked exactly like a gate that was working. A successful deploy on an unknown
+baseline now also mails `ADMIN_EMAIL` (`WARN deploy shipped with an UNKNOWN
+BASELINE`, naming the reason and the shipped sha) through the same Resend key
+the watchdog uses. It cannot block a recovery deploy: it runs after the child
+exits 0 and absorbs every failure. TWO READ HAZARDS ARE CLOSED IN THE SAME
+ROUND, both of which turned the gate OFF while looking healthy. The marker
+read no longer folds stderr into the marker body with `2>&1`: one ordinary
+line of ssh noise (most likely this wrapper's own
+`StrictHostKeyChecking=accept-new` printing `Warning: Permanently added ...`
+on the first connect after a VM rebuild, i.e. exactly the `--takeover`
+recovery the degrade path exists for) became line 1, failed the sha test, and
+shipped the deploy ungated while blaming a marker file that was intact. And
+the sha is now selected as the first sha-SHAPED line using parameter
+expansion, not `printf | head -1 | awk`: under `set -o pipefail` a marker body
+past the 64 KiB pipe buffer gave `printf` a SIGPIPE, which errexit turned into
+a bare exit 141 with no banner and no refusal text, a hard stop in the one
+path designed never to refuse. The marker is written ONLY by `scripts/deploy-safe.sh`, so a direct
+`deploy/deploy.sh` run leaves it stale and the next pre-flight over-reports
+the range, which is the safe direction. `scripts/deploy-safe-tests.sh` (92
+assertions, no VM and no network: a throwaway git repo with stub `ssh` and
+stub `deploy/deploy.sh`) covers the argument handling, both refusal shapes,
+the commit-range formatting, every degradation path, the stderr-noise and
+oversized-marker read hazards, and that a `--dirty-ok` run never logs "clean
+tree". Run it with `npm run test:deploysafe`.
+
+**THE CUTOVER DEPLOY IS THE ONE THIS GATE DOES NOT COVER, UNLESS THE MARKER IS
+SEEDED FIRST.** The gate is driven entirely by a marker only this wrapper ever
+writes, and the VM carries none yet, so the first run takes the no-marker path:
+`live now : UNKNOWN`, no ack required, ships. The deploy that carries this gate
+to production is therefore the exact deploy it was written to stop, and it is
+inert there; the control starts working on the SECOND deploy. Close it with one
+owner-run command BEFORE the cutover, seeding the marker at the commit that is
+live now (`c34d738` at the time of writing):
+
+```bash
+ssh <deploy user>@<vm> "printf '%s\n' c34d738 > ~/.aiwebsite-deploy-commit"
+```
+
+Then the very first gated run is the cutover itself. Agents may not ssh to
+production, so this is an owner step and belongs in the round's runbook.
+
+`scripts/dev-servers.sh` is the
 companion for local servers: it inventories every `next-server` with its port,
 cwd and supervision state, stops only unsupervised idle ones, and (`--check`)
 reports crash-looping systemd user units.
@@ -11187,6 +11584,7 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | | `WORK_BRAIN_DAILY_CAP` (default 7200) / `WORK_PANEL_RUNS_DAILY_CAP` (default 400) | global daily panel budgets in the `work_usage` ledger; a run is admitted only when its worst case (18 calls) still fits under the call cap, so keep runs × 18 ≤ calls. Tripled 2400 → 7200 on 2026-08-25 with the worst case re-derived 10 → 18; both are commented OUT in `.env.example`, so the CODE defaults in `src/lib/work/config.ts` are what production runs |
 | | `WORK_QUEUE_DRAIN_ENABLED` / `WORK_QUEUE_DRAIN_FORCE` | §5.16 queue drain: `ENABLED=0` stops only the automatic re-kick timer (intake + manual Retry keep working; unset = on); `FORCE=1` lets a non-supervised checkout (dev test) run the drain despite the cwd + NODE_ENV gates |
 | | `WORK_ARCHIVE_DIR` | §5.16 archive-store root; unset = `data/work-archives` under the cwd (survives deploys — data/ is excluded from rsync; gitignored on the dev box) |
+| | `WORK_ARCHIVE_BACKUP_MAX_KB` | Ceiling in KB on the store `deploy/backup-db.sh` will package into the nightly `aiwebsite-work-archives_<ts>.tar.gz` (§9.7). Not a disk guard (the script does its own free-space arithmetic): crossing it uploads NOTHING and raises a CRITICAL. Unset = 2097152 (2 GiB). It lives in `.env` rather than in the script because `backup-db.sh` is template-rendered, so an operator raising the ceiling by editing the constant would have the change reverted by the next render |
 | | `WORK_STORAGE_REPORT_ENABLED` / `WORK_STORAGE_REPORT_FORCE` | §5.16 weekly storage report: `ENABLED=0` stops only the Monday 14:00 UTC usage email (store + admin console keep working; unset = on); `FORCE=1` lets a non-supervised checkout run the reporter despite the cwd + NODE_ENV gates |
 | Roadmap | `ROADMAP_ENABLED` | §5.18 writes kill switch (unset/1 = on; 0 pauses bootstrap, requests, imports, directory/doc edits, company submissions both lanes; reads stay up) |
 | Roadmap | `ROADMAP_BRAIN_DAILY_CAP` | client-population brain slice, default 1200 (dual-entry with WORK_BRAIN_DAILY_CAP). Raised 600 → 1200 on 2026-08-25 in lockstep with `WORK_CAPS.brainCallsWorstCasePerRun` 10 → 18: `admitCompanyRun` (roadmap/db.ts) headroom-checks the WORK worst case against THIS cap, so leaving it at 600 would have cut company admission from 60 runs a day to 33 (60 × 18 = 1080 ≤ 1200) |
@@ -11252,6 +11650,7 @@ journalctl -u cloudflared -n 20                 # tunnel connected
 systemctl list-timers 'aiwebsite-*'             # all 8 timers present (§9.7; blog + blog-digest gated on BLOG_ENABLED)
 psql -c "select count(*) from brain_memories where scope='public'"   # ≥7 seed rows
 ls -la /var/lib/aiwebsite/last-backup-ok        # after the first backup window (needs BACKUP_BUCKET)
+ls -la /var/lib/aiwebsite/last-archive-backup-ok # §5.16 store backup (absent = never yet run OR store still empty)
 
 # Team work submissions (§5.16):
 psql -tAc "select to_regclass('public.work_submissions') is not null"      # t

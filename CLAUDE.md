@@ -60,11 +60,38 @@ it is. On 2026-07-31 that came one command away from shipping another
 session's half-built feature plus an unapplied migration; it was caught by a
 person noticing, which is not a control.
 
-`scripts/deploy-safe.sh` refuses on a dirty tree, warns on unpushed commits,
-prints the commit about to ship, then execs the real script with your args.
-`--dirty-ok` exists for the deliberate case and should be rare. The guard is a
-wrapper because `deploy/deploy.sh` is template-rendered from `@aicompany/core`
-and verifies its own stamp, so a guard inside it would fail the drift check.
+`scripts/deploy-safe.sh` refuses on a dirty tree and warns on unpushed
+commits. It then does two things the old one-line description did not cover.
+
+**It reaches production before it hands over.** It opens one ssh connection to
+the VM to read `~/.aiwebsite-deploy-commit`, the marker recording the commit
+the last successful deploy shipped. Read-only, `BatchMode=yes`, 25 s timeout.
+
+**It refuses on the commit SET, not just the tree.** A clean tree says nothing
+about WHAT ships: `deploy.sh` sends the tree at its current commit, so it
+carries every commit every other session has pushed to this branch. The
+wrapper prints every commit between the marker and HEAD (and any that would be
+rolled back) and REFUSES until you re-run with `--ack=<the exact HEAD sha it
+printed>`. Expect that on a normal deploy: any session that has committed its
+own work has a non-empty list. **The list is the control, not the flag** - the
+sha is `git rev-parse --short HEAD`, so passing `--ack` proves nothing about
+whether anyone read anything. Read the subjects; if a round is not yours, ask
+its author before you ship it.
+
+Every marker-read failure (no marker yet, unreachable VM, missing key) degrades
+to a loud UNKNOWN BASELINE and proceeds rather than refusing, so a monitoring
+gap can never block the `--takeover` recovery run while the site is down; that
+case now also mails ADMIN_EMAIL, so a dead gate does not look like a working
+one. The wrapper RUNS `deploy/deploy.sh` as a child (no longer `exec`s it),
+propagates its exit status verbatim, and stamps the marker only on success.
+`--dirty-ok` exists for the deliberate case and should be rare. Tests, no VM
+and no network: `npm run test:deploysafe`.
+
+The guard started as a wrapper because `deploy/deploy.sh` is template-rendered
+from `@aicompany/core` and verifies its own stamp. That reasoning has lapsed:
+since v1.104.x the module ships its own dirty-tree gate inside the rendered
+`deploy.sh`, so both gates exist and the wrapper's value is now the commit-set
+check, the unpushed warning and the marker, none of which the lower gate does.
 
 **Several sessions share this checkout.** Before deploying, `git status` and
 confirm the uncommitted paths are yours. If they are not, wait.

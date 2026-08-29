@@ -503,7 +503,7 @@ export const workArchiveFiles = pgTable(
 );
 
 // WHO BUILT EACH HAND-WRITTEN /work EXHIBIT (§5.16/§5.18, owner ruling
-// 2026-08-29). The 26 exhibits on the public Our Work page are page copy in
+// 2026-08-29). The exhibits on the public Our Work page are page copy in
 // src/app/work/page.tsx, NOT work_submissions rows, so the colleagues who
 // built them were counted by nothing: the §5.18 Employee Scorecard groups
 // published cards by lower(submitter_email), and two builders therefore read
@@ -552,8 +552,8 @@ export const workStaticCredits = pgTable(
   "work_static_credits",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    // The /work section id, e.g. "ticketscribe". Validated at READ time
-    // against the generated anchor list, never by a CHECK: the 26 ids change
+    // The /work section id, e.g. "morning-brief". Validated at READ time
+    // against the generated anchor list, never by a CHECK: the id set changes
     // whenever page.tsx changes, and that must not require a migration. A
     // credit whose exhibit has been retired stops counting the day the
     // section leaves the page, which is the honest behaviour.
