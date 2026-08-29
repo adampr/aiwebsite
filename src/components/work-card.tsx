@@ -5,6 +5,12 @@
 // byte-identical ("the XL.net team"). Every card field is a schema-validated
 // plain string rendered as React text nodes; submitted content has no path
 // to markup.
+//
+// `placed` (2026-08-29, src/lib/work/placements.ts): a team card lifted into
+// a static bay sits ABOVE the "From the Team" divider that carries the
+// section-level provenance promise, so it must disclose its own provenance
+// on the card: a "From the Team" badge in the badge row. Opt-in, default
+// off, so the run on /work and the §5.18 company page stay byte-identical.
 
 import type { PublishedCard } from "@/lib/work/db";
 import { formatTimeSavedPhrase } from "@/lib/work/time-saved";
@@ -13,10 +19,12 @@ export function CommunityCard({
   item,
   index,
   defaultCredit = "the XL.net team",
+  placed = false,
 }: {
   item: PublishedCard;
   index: number;
   defaultCredit?: string;
+  placed?: boolean;
 }) {
   const { card } = item;
   const credit = item.submitterName
@@ -38,6 +46,7 @@ export function CommunityCard({
     >
       <div className="flex flex-wrap items-center gap-4">
         <span className="badge">Built</span>
+        {placed && <span className="badge badge--light">From the Team</span>}
         <span className="badge badge--light">{card.categoryBadge}</span>
       </div>
       <h2 className="mt-6">{card.title}</h2>

@@ -6,6 +6,12 @@ import { WorkRegistry } from "./registry";
 import { WorkPager } from "./pager";
 import { publishedCards, type PublishedCard } from "@/lib/work/db";
 import { INTERNAL_SCOPE } from "@/lib/work/scope";
+import {
+  sequencePositions,
+  splitPlacements,
+  type SequencePositions,
+} from "@/lib/work/placements";
+import { CommunityCard } from "@/components/work-card";
 import staticTitles from "@/lib/work/static-titles.json";
 
 // Team-submitted cards (§5.16) publish to this page without a deploy, so a
@@ -27,6 +33,38 @@ export const metadata: Metadata = {
   },
 };
 
+/** Team cards PLACED into a static bay (src/lib/work/placements.ts, owner
+ * directive 2026-08-29): rendered after the bay's hand-authored exhibits,
+ * through the ONE card template, at their GLOBAL sequence position so the
+ * stripe alternation holds across the seam, and with the "From the Team"
+ * badge because they sit above the divider that carries the provenance
+ * promise. Every bay wrapper calls this; a bay with nothing placed renders
+ * no DOM at all. */
+function PlacedCards({
+  bay,
+  placed,
+  positions,
+}: {
+  bay: string;
+  placed: ReadonlyMap<string, readonly PublishedCard[]>;
+  positions: SequencePositions;
+}) {
+  const cards = placed.get(bay) ?? [];
+  // placedStart carries a key for every bay static-titles.json knows, so an
+  // undefined here means this wrapper names a bay the snapshot does not;
+  // splitPlacements already routed such a bay's cards to the run, so there
+  // is nothing to render, never a position to guess.
+  const first = positions.placedStart.get(bay);
+  if (first === undefined || cards.length === 0) return null;
+  return (
+    <>
+      {cards.map((item, i) => (
+        <CommunityCard key={item.id} item={item} index={first + i} placed />
+      ))}
+    </>
+  );
+}
+
 function BuildersChip() {
   return (
     <div className="text-center">
@@ -38,10 +76,16 @@ function BuildersChip() {
 }
 
 export default async function WorkPage() {
-  // ONE guarded fetch feeds the registry, the pager counts, and the team
-  // section, so the index can never list a card the body failed to render.
-  // DB down or empty -> team=[] -> statics-only page, exactly today's
-  // degradation (§5.16: the hand-authored exhibits never depend on the DB).
+  // ONE guarded fetch feeds the registry, the pager counts, the placed
+  // cards and the team section, so the index can never list a card the body
+  // failed to render. DB down or empty -> team=[] -> statics-only page
+  // (§5.16: the hand-authored exhibits never depend on the DB). Since the
+  // placement round that page is not quite the pre-placement one: the
+  // statics after a placed card's bay carry classes flipped for it, so with
+  // its row absent the seam inside that bay (#onboarding-toolkit ->
+  // #lakehouse) double-stripes until the map entry in placements.ts is
+  // removed. Every OTHER seam, the "From the Team" one included, holds,
+  // because sequencePositions() counts the map, not the rows.
   let team: PublishedCard[] = [];
   try {
     // INTERNAL_SCOPE (§5.18): the public page renders ONLY the staff lane;
@@ -50,6 +94,16 @@ export default async function WorkPage() {
   } catch {
     // the static exhibits are the page
   }
+  // Split ONCE (placements.ts): placed cards render inside their static
+  // bay, the run stays under the "From the Team" divider in bay 05. The
+  // positions give every placed list and the run their first GLOBAL
+  // sequence position, which is what the stripe classes key on; they come
+  // from the MAP, not from `placed`, so they are the same constants the
+  // static classes were flipped against.
+  const { bays, exhibits } = staticTitles;
+  const bayNumbers = bays.map((b) => b.n);
+  const { placed, run } = splitPlacements(team, bayNumbers);
+  const positions = sequencePositions(exhibits, bayNumbers);
   return (
     <div className="work-page mx-auto max-w-5xl space-y-16">
       {/* Manifesto strip */}
@@ -77,7 +131,7 @@ export default async function WorkPage() {
           Both are additive chrome - the static card sections stay
           byte-identical, and with JS off the pager strip never appears and
           every card renders visible. */}
-      <WorkRegistry team={team} />
+      <WorkRegistry placed={placed} run={run} />
       <WorkPager
         staticCount={staticTitles.exhibits.length}
         teamCount={team.length}
@@ -181,6 +235,7 @@ export default async function WorkPage() {
             security scan · brain.xl.net
           </p>
         </section>
+        <PlacedCards bay="01" placed={placed} positions={positions} />
       </section>
 
       {/* Group: what it runs */}
@@ -894,6 +949,7 @@ export default async function WorkPage() {
             See your AI Roadmap
           </Link>
         </section>
+        <PlacedCards bay="02" placed={placed} positions={positions} />
       </section>
 
       {/* Group: client delivery */}
@@ -1036,6 +1092,12 @@ export default async function WorkPage() {
             human-in-the-loop · audit everything
           </p>
         </section>
+        {/* Placed team cards (placements.ts): today, Client Site Rescue
+            Mirror at global position 12, which is why the six static
+            exhibits after it (#lakehouse .. #autotask-ci-intake) carry the
+            OPPOSITE hard-coded stripe class to the one 6e45b44 (the
+            #follow-up-emails conversion) left them with. */}
+        <PlacedCards bay="03" placed={placed} positions={positions} />
       </section>
 
       <BuildersChip />
@@ -1049,7 +1111,7 @@ export default async function WorkPage() {
         </div>
 
         {/* 12. XL Lakehouse */}
-        <section id="lakehouse" className="panel rise">
+        <section id="lakehouse" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -1116,7 +1178,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 13. XL API Gateway */}
-        <section id="api-gateway" className="panel panel--lightline rise">
+        <section id="api-gateway" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
               <span className="dot" /> In development
@@ -1187,6 +1249,7 @@ export default async function WorkPage() {
             proxy · audited fleet operations
           </p>
         </section>
+        <PlacedCards bay="04" placed={placed} positions={positions} />
       </section>
 
       {/* Group: what we're testing */}
@@ -1198,7 +1261,7 @@ export default async function WorkPage() {
         </div>
 
         {/* 14. SpamSlayer */}
-        <section id="spamslayer" className="panel rise">
+        <section id="spamslayer" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · internal
@@ -1267,9 +1330,8 @@ export default async function WorkPage() {
           </p>
         </section>
 
-        {/* 15. Auto-Draft Follow-Up Emails */}
         {/* 16. Beacon */}
-        <section id="beacon" className="panel panel--lightline rise">
+        <section id="beacon" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
               <span className="dot" /> Built · final setup
@@ -1368,7 +1430,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 17. Morning Brief */}
-        <section id="morning-brief" className="panel rise">
+        <section id="morning-brief" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · internal
@@ -1443,7 +1505,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 18. Autotask CI Intake */}
-        <section id="autotask-ci-intake" className="panel panel--lightline rise">
+        <section id="autotask-ci-intake" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · internal
@@ -1539,11 +1601,14 @@ export default async function WorkPage() {
           </p>
         </section>
 
+        <PlacedCards bay="05" placed={placed} positions={positions} />
+
         {/* Team-submitted cards (§5.16) render inside this group (owner
             directive 2026-07-30: no separate numbered section). Renders
             nothing while empty; the DB read is guarded in WorkPage above,
-            so the static exhibits never depend on it. */}
-        <CommunitySection cards={team} />
+            so the static exhibits never depend on it. Only the RUN lands
+            here; placed cards rendered above in their own bays. */}
+        <CommunitySection cards={run} firstPosition={positions.runFirst} />
       </section>
 
       {/* Bottom pager strip portal target: the island fills it only when

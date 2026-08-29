@@ -8,30 +8,52 @@
 //
 // Pagination round (2026-08-04): this component is now PRESENTATIONAL -
 // the page owns the single guarded publishedCards() fetch (arranged spots
-// first, then newest first — §5.16 reorder)
-// and passes the rows here and to the registry, so the index can never
-// advertise cards this section failed to render. An empty list renders
+// first, then newest first — §5.16 reorder), splits off the PLACED cards
+// (placements.ts, rendered inside their static bays) and passes the RUN
+// here and to the registry, so the index can never advertise cards this
+// section failed to render. An empty list renders
 // NOTHING (the hand-authored exhibits are unaffected and the page never
 // breaks on this section's account). data-team-divider / data-work-card
 // are the pager island's hooks for hiding the divider on static-only pages.
 //
-// SEAM PARITY (first derived 2026-08-05, RE-DERIVED 2026-08-29): the last
-// static exhibit sits at an EVEN global position and so renders plain, which
-// means the first team card must start LIGHTLINE or the seam double-stripes
-// plain-on-plain. The offset lives here, not in work-card.tsx, because the
-// company page (§5.18 /roadmap/work) opens its own alternation with no
-// statics above it and must keep starting plain.
+// SEAM PARITY (first derived 2026-08-05, RE-DERIVED 2026-08-29 for the
+// placement round, and once more after the same-day #follow-up-emails
+// conversion, 6e45b44): stripe classes key on the GLOBAL 1-based position
+// of a card in the one works sequence (odd = lightline, even = plain;
+// #brain at 1 is lightline), and the run is the tail of that sequence, so
+// its first card's position is (every static) + (every placement in
+// src/lib/work/placements.ts naming a known bay) + 1. That number is no
+// longer a literal here: the page computes it (sequencePositions().runFirst)
+// and passes it as `firstPosition`; a card at index i renders at
+// firstPosition + i and CommunityCard derives the class from that. It IS
+// still a build-time constant: the positions count the MAP, never the
+// published rows, because the static classes below a placed card were
+// flipped against the map, and had the run followed the rows instead, an
+// unpublished placement would have moved this seam too (refuter finding).
+// Today's derivation: 17 statics + 1 placement (#team-client-site-rescue-
+// mirror at position 12, inside bay 03) put the last static,
+// #autotask-ci-intake, at position 18, EVEN, plain, so the run starts at
+// 19, ODD, lightline. With the placed row unpublished the run still starts
+// at 19 and only the seam inside bay 03/04 (#onboarding-toolkit ->
+// #lakehouse) double-stripes, until the map entry is removed. Inserting or
+// removing an ODD number of cards anywhere before the run flips every
+// hard-coded static class after that point (see placements.ts for why bay
+// membership is a build-time fact), and scripts/work-placements-tests.ts
+// walks the real page.tsx token stream to prove the alternation rather
+// than trusting this text.
 //
-// The conclusion has survived two reshuffles and FLIPPED on the third, and
-// the DERIVATION is the part that keeps going stale, so read it off the page
-// rather than off this comment. On 2026-08-05 the last static was Ticket
-// Reply Composer at 26; on 2026-08-29 eight exhibits became team cards and
-// it became #autotask-ci-intake at 18, both even, so the offset stayed at
-// i + 1. Later the same day #follow-up-emails (position 15) was converted
-// too, so the last static is #autotask-ci-intake at 17: ODD, lightline, and
-// the first team card must start PLAIN, so the offset is now i. The three
-// statics after the removed one had their literal stripe classes flipped in
-// page.tsx in the same commit; the alternation is written, not computed.
+// HISTORY, kept because the derivation is the part that goes stale: on
+// 2026-08-05 the last static was Ticket Reply Composer at 26 (even, offset
+// i + 1, run starting lightline); on 2026-08-29 eight exhibits became team
+// cards and it became #autotask-ci-intake at 18 (even, offset unchanged);
+// later that day #follow-up-emails (position 15) was converted too, the
+// last static fell to 17 (odd) and the offset moved to i (run starting
+// plain), with the three statics after the removed one flipped in page.tsx;
+// the placement round then put a card at 12, flipping the six statics after
+// it back, and replaced the literal offset with the computed position.
+// The offset lives here, not in work-card.tsx, because the company page
+// (§5.18 /roadmap/work) opens its own alternation with no statics above it
+// and must keep starting plain.
 
 // The card template itself lives in src/components/work-card.tsx (§5.18:
 // the company /roadmap/work page renders through the SAME component, with a
@@ -39,7 +61,14 @@
 import type { PublishedCard } from "@/lib/work/db";
 import { CommunityCard } from "@/components/work-card";
 
-export function CommunitySection({ cards }: { cards: PublishedCard[] }) {
+export function CommunitySection({
+  cards,
+  firstPosition,
+}: {
+  cards: PublishedCard[];
+  /** 1-based global position of the first run card (sequencePositions). */
+  firstPosition: number;
+}) {
   if (cards.length === 0) return null;
   return (
     <>
@@ -55,7 +84,7 @@ export function CommunitySection({ cards }: { cards: PublishedCard[] }) {
         </p>
       </div>
       {cards.map((item, i) => (
-        <CommunityCard key={item.id} item={item} index={i} />
+        <CommunityCard key={item.id} item={item} index={firstPosition + i} />
       ))}
     </>
   );

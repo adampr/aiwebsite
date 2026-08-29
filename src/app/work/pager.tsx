@@ -1,9 +1,10 @@
 "use client";
 
 // /work console pager (pagination round, 2026-08-04): windows the ONE
-// works sequence (the static exhibits in bay order, then team cards in lane
-// display order) behind a "Show 5 / 10 / 25 / All" mono strip below the
-// registry.
+// works sequence (the static exhibits in bay order, each bay's PLACED team
+// cards after its statics (src/lib/work/placements.ts), then the "From the
+// Team" run in lane display order) behind a "Show 5 / 10 / 25 / All" mono
+// strip below the registry.
 //
 // Mechanism and safety contract, in order of importance:
 // - The server always renders EVERY card; this island only toggles
@@ -105,10 +106,16 @@ export function WorkPager({
           else head.setAttribute("hidden", "");
         }
       });
+    // The divider hides only when NONE of its OWN run is visible: the run
+    // cards are its following siblings inside bay 05, hence the `~`. A
+    // PLACED team card (placements.ts) carries the same data-work-card but
+    // lives in another bay above the divider, and a page-wide query would
+    // keep the divider standing over nothing whenever that card is the only
+    // visible team card (e.g. size 5, page 3).
     const divider = document.querySelector("[data-team-divider]");
     if (divider) {
       const anyTeam = document.querySelector(
-        'section.panel[id][data-work-card="team"]:not([hidden])'
+        '[data-team-divider] ~ section.panel[id][data-work-card="team"]:not([hidden])'
       );
       if (anyTeam) divider.removeAttribute("hidden");
       else divider.setAttribute("hidden", "");

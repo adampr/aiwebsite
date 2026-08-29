@@ -23,20 +23,38 @@ interface RegistryRow {
   title: string;
 }
 
-export function WorkRegistry({ team }: { team: PublishedCard[] }) {
+export function WorkRegistry({
+  placed,
+  run,
+}: {
+  placed: ReadonlyMap<string, readonly PublishedCard[]>;
+  run: readonly PublishedCard[];
+}) {
   const { bays, exhibits } = staticTitles;
-  const total = exhibits.length + team.length;
+  let placedCount = 0;
+  placed.forEach((list) => {
+    placedCount += list.length;
+  });
+  const total = exhibits.length + placedCount + run.length;
   const width = Math.max(2, String(total).length);
 
   // Number the whole sequence before rendering (continuous across bays,
-  // uniform width; team rows continue after the last static in bay 05).
+  // uniform width; placed rows follow their bay's statics, the run
+  // continues after the last static in bay 05).
   const flat: (RegistryRow & { bay: string })[] = bays.flatMap((bay) => {
     const rows = exhibits
       .filter((e) => e.bay === bay.n)
       .map((e) => ({ id: e.id, title: e.title, bay: bay.n }));
+    rows.push(
+      ...(placed.get(bay.n) ?? []).map((t) => ({
+        id: t.slug,
+        title: t.card.title,
+        bay: bay.n,
+      }))
+    );
     if (bay.n === "05") {
       rows.push(
-        ...team.map((t) => ({ id: t.slug, title: t.card.title, bay: "05" }))
+        ...run.map((t) => ({ id: t.slug, title: t.card.title, bay: "05" }))
       );
     }
     return rows;

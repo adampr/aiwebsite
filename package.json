@@ -27,6 +27,7 @@
     "test:worksubmit": "tsx scripts/work-submit-tests.ts",
     "test:workattribute": "tsx scripts/work-attribute-tests.ts",
     "test:workexhibit": "tsx scripts/work-exhibit-tests.ts",
+    "test:placements": "tsx scripts/work-placements-tests.ts",
     "work:rerun": "tsx scripts/work-panel-rerun.ts",
     "work:archive": "tsx scripts/work-archive-export.ts",
     "work:backfill": "tsx scripts/work-archive-backfill.ts",
