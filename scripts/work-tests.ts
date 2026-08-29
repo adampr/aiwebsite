@@ -3556,9 +3556,23 @@ async function main() {
       island.includes("canTransfer && isTransferableStatus(r.status)"),
       "the island offers the move only where the route allows it"
     );
+    // Owner directive 2026-08-29: removal covers PAST submissions from this
+    // list (other people's rows and published rows), still admin-only. The
+    // pin is the GATE, not the label: both removal controls must sit behind
+    // canListAll (the render mirror of the route's verifiedWebAdmin), and
+    // superseded rows must offer no control at all (rollback reservoir; the
+    // route 409s them).
     assert.ok(
-      island.includes("{canListAll &&\n                  isMine(r) &&"),
-      "Withdraw matches the DELETE route's predicate and never targets a stranger's row"
+      island.includes(
+        '{canListAll &&\n' +
+          '                  r.status !== "published" &&\n' +
+          '                  r.status !== "superseded" && ('
+      ),
+      "Withdraw is admin-gated and keeps off published/superseded rows"
+    );
+    assert.ok(
+      island.includes('{canListAll && r.status === "published" && ('),
+      "the published-row removal control is admin-gated like the route"
     );
     {
       const dbSrc2 = read("src/lib/work/db.ts");

@@ -3,9 +3,15 @@
 // /work/submit body (§5.16): the shared <SubmissionForm> plus the "your
 // submissions" status list with a 10 s poll while anything is active. The
 // list lives ONLY here: this page is the deep-linkable, emailed home of
-// submission status. Retry is available to everyone eligible; Withdraw is
-// ADMIN-ONLY (owner directive 2026-07-30), and non-admins get one footer
-// note naming the removal path instead.
+// submission status. Retry is available to everyone eligible; removal is
+// ADMIN-ONLY (owner directive 2026-07-30) and, per the 2026-08-29 owner
+// directive, admins remove PAST submissions from this list too: other
+// people's rows and published rows carry the control, with per-row honest
+// labels (Withdraw; Roll back update on a published swapped-in update,
+// whose DELETE restores the previous version; Delete card on any other
+// published row). The DELETE route is unchanged, /admin/work keeps its own
+// lever, and non-admins get one footer note naming the removal path
+// instead.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -364,28 +370,78 @@ export function SubmitClient({
     void refresh();
   }
 
-  async function withdraw(row: StatusRow) {
-    const id = row.id;
-    if (
-      !confirm(
-        isMine(row)
-          ? `Withdraw "${row.title}"? This deletes it entirely.`
-          : `Withdraw "${row.title}"? This deletes ${row.owner}'s submission entirely.`
-      )
-    )
-      return;
-    const res = await fetch(`/api/work/submissions/${id}`, {
+  /** DELETE the row. One function behind three labels (Withdraw, Roll back
+   * update, Delete card): the fetch and the error surfacing are identical,
+   * and only the confirm copy going in and the notice coming back differ.
+   * ADMIN-ONLY end to end (the route requires verifiedWebAdmin; the render
+   * gates mirror it via canListAll), and per the 2026-08-29 owner directive
+   * it covers PAST submissions too: other people's rows and published rows.
+   * The route is unchanged and its semantics dictate the copy: DELETE on a
+   * published swapped-in update is a ROLLBACK (previous version restored,
+   * `rolledBack: true` in the response; the legacy parent-gone edge falls
+   * through to a plain delete, which is why the notice reads the response
+   * rather than trusting the label), any other published delete removes the
+   * live card (the internal lane's /work catches up on the next ISR pass,
+   * revalidate=300; a company page is force-dynamic and updates on its next
+   * load), and the route's 409s (superseded reservoir, update in review,
+   * status moved since page load) are the guard rails, surfaced verbatim. */
+  async function removeRow(row: StatusRow) {
+    const published = row.status === "published";
+    const confirmText = published
+      ? row.isUpdate
+        ? `Roll back "${row.title}"? The previous version of the card returns to the live page, and this update row is deleted.`
+        : `Delete "${row.title}"? The published card is removed from ${
+            row.lane === "company" ? "the company's page" : "the Our Work page"
+          } entirely and the submission is deleted. ${
+            row.lane === "company"
+              ? "It comes off the page on its next load."
+              : "The page updates within about 5 minutes."
+          }`
+      : isMine(row)
+        ? `Withdraw "${row.title}"? This deletes it entirely.`
+        : `Withdraw "${row.title}"? This deletes ${row.owner}'s submission entirely.`;
+    if (!confirm(confirmText)) return;
+    const res = await fetch(`/api/work/submissions/${row.id}`, {
       method: "DELETE",
     });
     if (!res.ok) {
       // A silent no-op button is worse than an error (rate limit, stale
-      // admin render): surface the body like retry() does.
+      // admin render): surface the body like retry() does. The route's 409
+      // copy is user-ready and does the explaining.
       const data = (await res.json().catch(() => null)) as {
         error?: { message?: string };
       } | null;
-      setError(data?.error?.message ?? "Withdraw failed.");
+      setError(data?.error?.message ?? "That could not be removed.");
     } else {
       setError(null);
+      // Parsed UNCONDITIONALLY, never behind the client-side `published`
+      // flag (refutation F1): `row.status` is the RENDER's idea of the
+      // status, and a pending_approval row that auto-swaps live between
+      // render and click takes the Withdraw path while the route rolls
+      // back, so gating this read on the label would show NOTHING while
+      // the old card is publicly live again. The inverse staleness (a
+      // plain delete of a row that published after render) is invisible in
+      // this response and needs a server echo; deferred by adjudication.
+      const data = (await res.json().catch(() => null)) as {
+        rolledBack?: boolean;
+      } | null;
+      if (data?.rolledBack || published) {
+        // On refresh the row just disappears, and for a rollback a NEW
+        // reality exists (the old card is live again) that silence would
+        // hide. Same panel-level notice the move path uses, for the same
+        // reason: the pressed control unmounts with its row.
+        setNotice(
+          data?.rolledBack
+            ? `"${row.title}" was rolled back. The update row is deleted and the previous version of the card is live again.`
+            : row.lane === "company"
+              ? // A company page is PRIVATE (never "public") and
+                // force-dynamic: no ISR window, and the route revalidates
+                // /work only for companyId === null rows (refutation F2).
+                `"${row.title}" was deleted. It comes off the company's page on its next load.`
+              : `"${row.title}" was deleted. The public page updates within about 5 minutes.`
+        );
+        requestAnimationFrame(() => noticeRef.current?.focus());
+      }
     }
     void refresh();
   }
@@ -1256,21 +1312,41 @@ export function SubmitClient({
                     Submit an update
                   </a>
                 )}
-                {/* Withdraw is hidden on published rows: DELETE on a
-                    swapped-in update is a ROLLBACK, and /admin/work carries
-                    the properly-labelled lever (refutation finding). */}
+                {/* Removal is ADMIN-ONLY (canListAll, the render mirror of
+                    the route's verifiedWebAdmin - bare isAdmin would show a
+                    control a Microsoft common-tenant session then gets 403
+                    on), and per the 2026-08-29 owner directive it is offered
+                    on PAST submissions from this list too: other people's
+                    rows and published rows included. That supersedes the
+                    earlier refutation ruling that hid it on published rows;
+                    the resolution is HONEST PER-ROW LABELS, not hiding.
+                    DELETE on a published swapped-in update is a ROLLBACK,
+                    so that button says "Roll back update"; any other
+                    published row's says "Delete card" because it removes
+                    the live card. The route is unchanged and /admin/work
+                    keeps its own lever. Superseded rows alone get NO
+                    control: they are the rollback reservoir and the route
+                    409s them. */}
                 {canListAll &&
-                  isMine(r) &&
                   r.status !== "published" &&
                   r.status !== "superseded" && (
                     <button
                       type="button"
                       className="btn btn--text"
-                      onClick={() => void withdraw(r)}
+                      onClick={() => void removeRow(r)}
                     >
                       Withdraw
                     </button>
                   )}
+                {canListAll && r.status === "published" && (
+                  <button
+                    type="button"
+                    className="btn btn--text"
+                    onClick={() => void removeRow(r)}
+                  >
+                    {r.isUpdate ? "Roll back update" : "Delete card"}
+                  </button>
+                )}
                 {/* §5.16 transfer (owner directive 2026-08-09). Offered on
                     every status, including while a review is running: the
                     route refuses a live run with copy that names when to try
