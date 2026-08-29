@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 §5.16 INTAKE CLEANING (sections 5.16 upload inspection + reviewed-doc precedence + the work:correlate/work:import passages; migration 0053): owner directive "if someone submits a zip and it contains personal info or credentials, instead of erroring out just clean it before you save it" - `secrets_detected` is retired from `ExtractErr`, `secret-patterns.ts` is replaced by `sanitize.ts` (one function returns the cleaned text AND the hit inventory, so a pattern that detects without redacting is unrepresentable), `sanitize-archive.ts` rebuilds the zip carrying untouched entries by reference with their source compression pinned, and `cleaning.ts` `decideStorage()` is the one storage decision all three lanes share (nothing cleaned = the submitted bytes stored untouched; cleaned = the rebuild; rebuild unverifiable = NOTHING stored, never the submitted bytes and never a refusal). Ordinary work email addresses and phone numbers are deliberately NOT redacted. `archive_sha256`/`md_sha256` keep describing what the submitter SENT; `cleaning_json` records what was stored. Previous: 2026-08-29 §5.18 EXHIBIT CREDITS ON THE EMPLOYEE SCORECARD (sections 5.16/5.18): the hand-authored /work exhibits are page copy, not rows, so their builders were counted by nothing on the staff scorecard and two read 0 published; new `work_static_credits` (migration 0050, EMPTY in git by design, rows written on the VM because this repo is public) feeds a staff-lane-only Exhibits column, honesty-guarded against the generated anchor list, with the published-only doctrine, the company lane and the public /work copy untouched. Previous: 2026-08-29 §5.16 REPOSITORY SUBMISSION ROUND
+Last verified against code: 2026-08-29 §5.16 INTAKE CLEANING (sections 5.16 upload inspection + reviewed-doc precedence + the work:correlate/work:import passages; migration 0053): owner directive "if someone submits a zip and it contains personal info or credentials, instead of erroring out just clean it before you save it" - `secrets_detected` is retired from `ExtractErr`, `secret-patterns.ts` is replaced by `sanitize.ts` (one function returns the cleaned text AND the hit inventory, so a pattern that detects without redacting is unrepresentable), `sanitize-archive.ts` rebuilds the zip carrying untouched entries by reference with their source compression pinned, and `cleaning.ts` `decideStorage()` is the one storage decision all three lanes share (nothing cleaned = the submitted bytes stored untouched; cleaned = the rebuild; rebuild unverifiable = NOTHING stored, never the submitted bytes and never a refusal). Ordinary work email addresses and phone numbers are deliberately NOT redacted. `archive_sha256`/`md_sha256` keep describing what the submitter SENT; `cleaning_json` records what was stored. Previous: 2026-08-29 §5.18 EXHIBIT CREDITS ON THE EMPLOYEE SCORECARD (sections 5.16/5.18): the hand-authored /work exhibits are page copy, not rows, so their builders were counted by nothing on the staff scorecard and two read 0 published; new `work_static_credits` (migration 0052, EMPTY in git by design, rows written on the VM because this repo is public) feeds a staff-lane-only Exhibits column, honesty-guarded against the generated anchor list, with the published-only doctrine, the company lane and the public /work copy untouched. Previous: 2026-08-29 §5.16 REPOSITORY SUBMISSION ROUND
 (sections 5.16 "Exhibit archives" + "Scripted submission lane" + the /work
 page row): every repository on the dev box is now filed on /work under
 adam@xl.net. Six of them already had a hand-authored exhibit card, and those
@@ -4614,10 +4614,32 @@ even when what was stored is a cleaned rebuild of them**: they are provenance
 values, and `work:import`/`work:correlate` compare them against the submitter's
 own copy of their own file, so redefining them to describe our rebuild would
 make the true original report as never submitted. What was actually written is
-recorded in `cleaning_json` (migration 0051, NULL ⇒ the stored artifact IS the
+recorded in `cleaning_json` (migration 0053, NULL ⇒ the stored artifact IS the
 submitted artifact, so no backfill and old rows stay correct): dropped/redacted/
 excluded paths, the rule ids that fired, the sha256+length of the stored
-artifact, and `failed` when no archive was retained. The manifest describes the
+artifact, and `failed` when no archive was retained.
+
+**WHICH HASH EACH CONSUMER COMPARES**, stated because there are now three
+candidate answers and each is right somewhere. `archive_sha256`/`md_sha256` =
+the SUBMITTED bytes; `cleaning_json.archive/md` = the STORED bytes;
+`work_archive_files.sha256` = what is on disk, which equals the stored hash.
+`work:correlate` matches recovered files against the SUBMITTED hash, which is
+what keeps it able to recognise the submitter's own copy in the admin mailbox
+or a downloads folder; the corollary is that correlating a folder taken FROM
+THE STORE will NOT match a cleaned row, and that is correct rather than a bug,
+because those bytes are ours and not theirs (a cleaned row is never reported
+`ready` there for the same reason). `work:import` compares the SUBMITTED hash
+too, and therefore REFUSES a cleaned row without `--force`: a local file that
+passes that check IS the uncleaned original, so filing it would restore the
+removed material. `work:archive`/`work:backfill` verify bytes-on-disk against
+the STORED hash, or they print a MISMATCH on every cleaned row and train the
+operator to ignore the one alarm that matters. `verifyAndClearRowBytes`
+compares the row bytea against the LEDGER hash and never against
+`archive_sha256`, so the publish-time clear is untouched by the split: both
+sides of that comparison are the cleaned artifact. The retention email prints
+BOTH, labelled.
+
+The manifest describes the
 STORED artifact, so dropped entries leave it while redacted entries stay —
 all on ONE `work_submissions` row (hard DELETE removes everything). The accepted ORIGINAL upload is kept in `archive_data` (bytea)
 for owner retention, and — since the 100 MB round (2026-08-19) — a DURABLE

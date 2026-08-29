@@ -478,8 +478,17 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   // create route; failure logs and never fails the update.
   if (storage.cleaned)
     reportIntakeCleaningIssue({
-      key: "work-intake:cleaned:web-update",
-      subject: "Credential-shaped content cleaned from a /work update (web)",
+      // A FAILED rebuild gets its own key, not the routine cleaning one.
+      // Both are episodic per lane, so this adds one bounded row rather than a
+      // row per event, and it buys the thing that matters: "we accepted this
+      // and durably stored nothing" can no longer be overwritten by the next
+      // ordinary cleaning, whose last-wins detail would otherwise bury it.
+      key: storage.failed
+        ? "work-intake:cleaning-failed:web-update"
+        : "work-intake:cleaned:web-update",
+      subject: storage.failed
+        ? "A /work update (web) was cleaned but NO archive could be stored"
+        : "Credential-shaped content cleaned from a /work update (web)",
       detail: [
         `update row ${child.id} for card ${row.id} (${row.title})`,
         `submitter ${user.email}`,

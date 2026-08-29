@@ -1705,8 +1705,15 @@ export async function handleWorkEmail(
       // Keyed by SENDER DOMAIN, not by sender or submission: episodic, so a
       // repeat from the same organisation bumps a count instead of opening a
       // row, and the ledger's 500-row read window survives a mail loop.
-      key: `work-intake:cleaned:email:${senderDomain}`,
-      subject: `Credential-shaped content cleaned from a work submission emailed by ${senderDomain}`,
+      // A FAILED rebuild gets its own key (route parity): both stay episodic
+      // per lane, and "accepted, nothing stored" must not be buried by the
+      // next ordinary cleaning's last-wins detail.
+      key: storage.failed
+        ? `work-intake:cleaning-failed:email:${senderDomain}`
+        : `work-intake:cleaned:email:${senderDomain}`,
+      subject: storage.failed
+        ? `A work submission emailed by ${senderDomain} was cleaned but NO archive could be stored`
+        : `Credential-shaped content cleaned from a work submission emailed by ${senderDomain}`,
       detail: [
         `submission ${row.id} (${title})`,
         `sender ${sender}`,

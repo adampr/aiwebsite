@@ -686,9 +686,17 @@ export async function POST(req: Request): Promise<Response> {
       // Episodic: one row per lane, not per submission. A per-submission or
       // per-rule key would fill the ledger's 500-row read window and evict
       // every other open issue from the standing triage.
-      key: "work-intake:cleaned:web-create",
-      subject:
-        "Credential-shaped content cleaned from a /work submission (web create)",
+      // A FAILED rebuild gets its own key, not the routine cleaning one.
+      // Both are episodic per lane, so this adds one bounded row rather than a
+      // row per event, and it buys the thing that matters: "we accepted this
+      // and durably stored nothing" can no longer be overwritten by the next
+      // ordinary cleaning, whose last-wins detail would otherwise bury it.
+      key: storage.failed
+        ? "work-intake:cleaning-failed:web-create"
+        : "work-intake:cleaned:web-create",
+      subject: storage.failed
+        ? "A /work submission (web create) was cleaned but NO archive could be stored"
+        : "Credential-shaped content cleaned from a /work submission (web create)",
       detail: [
         `submission ${row.id} (${title})`,
         `submitter ${user.email}`,
