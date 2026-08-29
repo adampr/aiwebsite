@@ -57,9 +57,10 @@ function standaloneDocError(err: ExtractErr): Response {
     err.code === "doc_too_short"
       ? "The document you attached is too short to review. It needs to describe the tool: what it does, how it is used, and how it works, at least a few paragraphs. Expand it and resubmit."
       : err.message;
+  // One submitter-facing text, never a second copy field: `instructions` used
+  // to repeat this message verbatim here (see workError, 2026-08-29).
   return workError(err.code, message, 422, {
     ...(err.paths ? { paths: err.paths } : {}),
-    instructions: message,
   });
 }
 
@@ -375,7 +376,6 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     const message = skillDocFailureMessage(pkg.docMissing);
     return workError(`skill_doc_${pkg.docMissing}`, message, 422, {
       ...(pkg.candidatePaths ? { paths: pkg.candidatePaths } : {}),
-      instructions: message,
     });
   } else if (kind === "skill" && pkg.docRawBytes) {
     // Skill only, exactly as before this round: a program's architecture doc

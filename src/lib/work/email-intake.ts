@@ -43,6 +43,12 @@ import {
 } from "./config";
 import { kindVerdictSentence } from "./classify";
 import {
+  composeParagraphs,
+  composeRefusal,
+  repeatedParagraphs,
+  type RefusalParts,
+} from "./refusal";
+import {
   activeTitleClash,
   canProposeUpdate,
   countCreatedToday,
@@ -137,6 +143,25 @@ async function sendTronEmail(opts: {
   }
   const tronTo = [opts.to];
   const bcc = oversightBcc(tronTo);
+  // Last net before the wire, for the three sends that do not compose through
+  // reject() (warnAdmin, the company-row-vanished notice, the receipt). It
+  // acts ONLY on a body that actually repeats a paragraph, so an ordinary
+  // body goes out byte-identical, and it says what it caught: a silent net
+  // masks the assembly bug it is covering for. Deliberately BEFORE
+  // withTronSignature, so the signature block is never a dedupe candidate
+  // (same seam, same reasoning as the signature's own idempotence guard).
+  let text = opts.text;
+  const repeats = repeatedParagraphs(text);
+  if (repeats.length > 0) {
+    text = composeParagraphs([text]);
+    // The dropped TEXT, not just a count: this line is the only trace an
+    // assembly bug leaves, and "1 paragraph" does not say which copy doubled.
+    log(
+      `composer dropped ${repeats.length} repeated paragraph(s) from "${opts.subject.slice(0, 60)}": ${repeats
+        .map((p) => `"${p.slice(0, 80)}"`)
+        .join(" ")}`
+    );
+  }
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -148,7 +173,7 @@ async function sendTronEmail(opts: {
         from: TRON_FROM,
         to: tronTo,
         subject: opts.subject,
-        text: withTronSignature(opts.text),
+        text: withTronSignature(text),
         // §1 oversight BCC (2026-08-04). This is the lane that most needed it:
         // three of its four call sites reply to an ARBITRARY inbound
         // correspondent with AI-composed prose, and until now no human ever
@@ -572,25 +597,35 @@ export async function handleWorkEmail(
   // the same wall, and on update-path rejects whose fix is email-specific.
   const companyPointer = `You can also submit on the web: sign in at ${SITE}/roadmap/work with your work email.`;
   const reject = async (
-    message: string,
+    refusal: string | RefusalParts,
     opts?: { pointer?: boolean }
   ): Promise<void> => {
+    // A bare string is a one-block refusal; the typed shape is for the
+    // branches that carry a kind-verdict lead, a blocked-file note, a
+    // standing instruction or an evidence list. Either way the finished body
+    // is assembled in ONE place (refusal.ts), which is what makes "say each
+    // thing once" a property of the lane instead of a rule each branch has to
+    // remember. See the 2026-08-28 incident note at the top of refusal.ts.
+    const parts: RefusalParts =
+      typeof refusal === "string" ? { diagnosis: refusal } : refusal;
+    const message = composeRefusal(parts);
     let sent = false;
     if (companyReplyAllowed())
       sent = await sendTronEmail({
         to: sender,
         subject: replySubject,
         headers: replyHeaders,
-        text: [
+        text: composeParagraphs([
           isCompanyLane
             ? `I could not accept this as a work submission. Nothing was stored.`
             : `I could not accept this as a /work submission. Nothing was stored.`,
-          ``,
           message,
-          ...(opts?.pointer === false
-            ? []
-            : [``, isCompanyLane ? companyPointer : FORM_POINTER]),
-        ].join("\n"),
+          opts?.pointer === false
+            ? null
+            : isCompanyLane
+              ? companyPointer
+              : FORM_POINTER,
+        ]),
       });
     // §5.15 mirror (owner directive 2026-08-05): every rejection reply is
     // also an open issue, so the owner reviews bounced submissions in the
@@ -600,7 +635,13 @@ export async function handleWorkEmail(
     // is the case that most needs a record: a suppressed or failed reply is
     // a failure the submitter never even learns about.
     reportFailureEmailIssue({
-      key: `work-intake:reject:${ledgerReasonSlug(message)}:${senderDomain || "unknown"}`,
+      // KEYED ON THE DIAGNOSIS, never on the finished body. report-issue.ts's
+      // contract is that keys are episodic per (reason class, lane): a key
+      // taken from the composed message varies with the interpolated
+      // kind-verdict sentence, so one refusal class silently opens a fresh
+      // triage row per package shape and evicts the rest. The diagnosis slot
+      // is the one that names the class, which is what the key is for.
+      key: `work-intake:reject:${ledgerReasonSlug(parts.diagnosis)}:${senderDomain || "unknown"}`,
       subject: `${isCompanyLane ? "Company" : "/work"} email submission rejected (${senderDomain || "unknown domain"})`,
       detail: [
         `Sender: ${sender}`,
@@ -1141,10 +1182,10 @@ export async function handleWorkEmail(
     // the verdict is what the refusal actually applied: on an update the pin
     // can differ from the verdict, and leading with a reading the refusal did
     // NOT act on would send the submitter after the wrong fix.
-    const verdictLead =
+    const verdictLead: string | null =
       extracted.kindVerdict && extracted.kindVerdict.kind === failedKind
-        ? [kindVerdictSentence(extracted.kindVerdict)]
-        : [];
+        ? kindVerdictSentence(extracted.kindVerdict)
+        : null;
     // ---- the standalone-document rescue, on this lane too (2026-08-28) ----
     // Web-route parity, and it is parity this same round created: both routes
     // now accept a standalone reviewed document from a PROGRAM, because the
@@ -1222,44 +1263,42 @@ export async function handleWorkEmail(
       }
     }
     if (!rescuedPackage && rescueFailure) {
+      await reject({
+        diagnosis: rescueFailure.message,
+        evidence: rescueFailure.paths?.length
+          ? [`Files: ${rescueFailure.paths.slice(0, 20).join(", ")}`]
+          : [],
+      });
+      return;
+    }
+    if (!rescuedPackage) {
       await reject(
-        [
-          rescueFailure.message,
-          ...(rescueFailure.paths?.length
-            ? [``, `Files: ${rescueFailure.paths.slice(0, 20).join(", ")}`]
-            : []),
-        ].join("\n")
+        extracted.code === "missing_architecture_doc" ||
+          (extracted.code === "doc_too_short" && failedKind === "program")
+          ? {
+              lead: verdictLead,
+              diagnosis: extracted.message,
+              // The attached document the submitter is about to be told to
+              // attach, and why it did not count.
+              blocked: rescueBlocked,
+              // UNCONDITIONAL on purpose. extract.ts answers both of these
+              // codes WITH this constant today, so composeRefusal drops it as
+              // already said; if that copy ever splits into a diagnosis plus
+              // an instruction, this line starts printing and the refusal
+              // stays complete. The equality check that stood here made the
+              // opposite bet, and it had to stay right about a fact extract.ts
+              // states nowhere.
+              instruction: MISSING_ARCH_DOC_MESSAGE,
+            }
+          : {
+              diagnosis: extracted.message,
+              evidence: extracted.paths?.length
+                ? [`Files: ${extracted.paths.slice(0, 20).join(", ")}`]
+                : [],
+            }
       );
       return;
     }
-    if (!rescuedPackage)
-    await reject(
-      extracted.code === "missing_architecture_doc" ||
-        (extracted.code === "doc_too_short" && failedKind === "program")
-        ? [
-            ...verdictLead,
-            extracted.message,
-            // The attached document the submitter is about to be told to
-            // attach, and why it did not count.
-            ...(rescueBlocked ? [rescueBlocked] : []),
-            // extract.ts answers both of those codes WITH the instruction
-            // paragraph, so appending it unconditionally printed the same six
-            // sentences twice in one reply. The web route never showed it
-            // (message and instructions are separate JSON fields there and
-            // the form renders one), which is how it survived; an email is a
-            // single body and has to be read as written.
-            ...(extracted.message === MISSING_ARCH_DOC_MESSAGE
-              ? []
-              : [MISSING_ARCH_DOC_MESSAGE]),
-          ].join("\n\n")
-        : [
-            extracted.message,
-            ...(extracted.paths?.length
-              ? [``, `Files: ${extracted.paths.slice(0, 20).join(", ")}`]
-              : []),
-          ].join("\n")
-    );
-    if (!rescuedPackage) return;
   }
   // The walk the row is built from: the first pass when it succeeded, else
   // the rescue pass. Every read of the package below goes through this, never
@@ -1410,32 +1449,23 @@ export async function handleWorkEmail(
           signed.length === 0
             ? `none of the attached files I read carries`
             : `more than one of the attached files carries`;
-        await reject(
-          [
-            `Several .md attachments could be the Skill's document (${list}), ${pkgClause}, and ${scanClause} a Skill front-matter block, so I could not settle on one. Rename the right one to SKILL.md and resend.`,
-            ...(oversize.length > 0
-              ? [
-                  ``,
-                  `${oversize.length === 1 ? "One attachment was" : `${oversize.length} attachments were`} over the 1 MB limit for the Skill's document and could not be read: ${oversize
-                    .slice(0, 5)
-                    .map((m) => `"${sanitizeHeaderValue(m.filename ?? "unnamed", 60)}"`)
-                    .join(", ")}. If the right one is in there, trim it or send it inside the package.`,
-                ]
-              : []),
-            ...(unscanned > 0
-              ? [
-                  ``,
-                  `I read the first ${candidates.length} .md attachments only, so ${unscanned} more went unexamined. Attaching just the Skill's document is the quickest fix.`,
-                ]
-              : []),
-            ...(pkgWalk.candidatePaths?.length
-              ? [
-                  ``,
-                  `Inside the package: ${pkgWalk.candidatePaths.slice(0, 20).join(", ")}`,
-                ]
-              : []),
-          ].join("\n")
-        );
+        await reject({
+          diagnosis: `Several .md attachments could be the Skill's document (${list}), ${pkgClause}, and ${scanClause} a Skill front-matter block, so I could not settle on one. Rename the right one to SKILL.md and resend.`,
+          evidence: [
+            oversize.length > 0
+              ? `${oversize.length === 1 ? "One attachment was" : `${oversize.length} attachments were`} over the 1 MB limit for the Skill's document and could not be read: ${oversize
+                  .slice(0, 5)
+                  .map((m) => `"${sanitizeHeaderValue(m.filename ?? "unnamed", 60)}"`)
+                  .join(", ")}. If the right one is in there, trim it or send it inside the package.`
+              : null,
+            unscanned > 0
+              ? `I read the first ${candidates.length} .md attachments only, so ${unscanned} more went unexamined. Attaching just the Skill's document is the quickest fix.`
+              : null,
+            pkgWalk.candidatePaths?.length
+              ? `Inside the package: ${pkgWalk.candidatePaths.slice(0, 20).join(", ")}`
+              : null,
+          ],
+        });
         return;
       }
     }
@@ -1474,17 +1504,12 @@ export async function handleWorkEmail(
     } else if (pkgWalk.docMissing) {
       // Carry the candidate paths the route's 422 body ships, so an email
       // submitter learns which files collided (panel parity finding).
-      await reject(
-        [
-          skillDocFailureMessage(pkgWalk.docMissing),
-          ...(pkgWalk.candidatePaths?.length
-            ? [
-                ``,
-                `Files: ${pkgWalk.candidatePaths.slice(0, 20).join(", ")}`,
-              ]
-            : []),
-        ].join("\n")
-      );
+      await reject({
+        diagnosis: skillDocFailureMessage(pkgWalk.docMissing),
+        evidence: pkgWalk.candidatePaths?.length
+          ? [`Files: ${pkgWalk.candidatePaths.slice(0, 20).join(", ")}`]
+          : [],
+      });
       return;
     } else if (pkgWalk.docRawBytes) {
       const docBase =

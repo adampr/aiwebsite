@@ -71,11 +71,34 @@ export function verifiedWebStaff(user: WorkUser): boolean {
   );
 }
 
+/** What a /work error body may carry BESIDES its one human sentence: facts a
+ * client acts on, never a second copy of the text.
+ *
+ * Closed on purpose (2026-08-29). It was an open `Record<string, unknown>`,
+ * and the submission routes used it to ship `instructions`, a second
+ * submitter-facing field holding either the message verbatim or the very
+ * paragraph the message already contained. Nothing ever rendered it (every
+ * island reads `error.message`), but its existence said the message was the
+ * diagnosis and the fix lived somewhere else. That reading is what put a
+ * six-sentence instruction into one email body twice on 2026-08-28. One
+ * submitter-facing text per refusal, and this type is what keeps it one. */
+export interface WorkErrorExtras {
+  /** Files the refusal is about: the archive paths that collided, the
+   * candidate documents, the entries that failed a guard. */
+  paths?: string[];
+  /** Machine-readable queue/refusal class behind a 409, for the client to
+   * branch on. The human wording is already in `message`. */
+  reason?: string;
+  /** Seconds until a rate-limited caller may retry. */
+  retryAfterSec?: number;
+}
+
+/** The uniform /work error body: `{error:{code, message, ...extras}}`. */
 export function workError(
   code: string,
   message: string,
   status: number,
-  extra?: Record<string, unknown>
+  extra?: WorkErrorExtras
 ): Response {
   return Response.json(
     { error: { code, message, ...(extra ?? {}) } },

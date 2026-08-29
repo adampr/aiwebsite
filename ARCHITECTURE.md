@@ -15,7 +15,36 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 §5.16 BADGE SUBJECT GUIDANCE (and,
+Last verified against code: 2026-08-29 §5.20 ADDED IS NOT COUNTING (sections
+5.20 "09 Secure AI Builders" + "Saved but not counted" + the §5.20 Tests
+paragraph): XL.net had BOTH step-09 components on file, the API proxy address
+failing its reachability check truthfully, and all three summary surfaces
+told the owner to add the component that was already there. The step page's
+closing line and the two hub cards now read `SecureSummary`
+(`src/lib/roadmap/platform.ts`) through the shared `secureCardLine` /
+`secureStepLine` in `src/lib/roadmap/platform-copy.ts`, so a component is
+called missing only from `added` and never from `enabled`; `ComponentView`
+gains `added` (its own inputs, not row existence) in place of `saved`, and
+`secure.savedUnverified` is deleted because one boolean could not name which
+of the two components it meant. Credit is UNCHANGED: half is still half, and
+the runway and the percentage stay structurally blind to the new fields. NO
+schema, NO env, NO route change.
+Previous: 2026-08-29 §5.16 ONE REFUSAL, SAID ONCE (sections
+5.16 "Required-doc rule" + the email-intake reply shape): a refused emailed
+submission printed the same six-sentence architecture-document instruction
+TWICE, because `extract.ts` answers both program document failures WITH that
+instruction as the failure's `message` and the email lane appended the same
+constant after it. Assembly now belongs to one zero-import leaf,
+`src/lib/work/refusal.ts` (`composeParagraphs` / `composeRefusal` /
+`repeatedParagraphs`): a paragraph already emitted is never emitted again,
+the standing `instruction` slot is passed unconditionally and dropped when a
+block above already carries its words, and `sendTronEmail` re-checks the
+finished body at the seam. The routes' `instructions` field, a second
+submitter-facing copy no client ever read, is DELETED and `workError`'s
+extras are typed closed (`WorkErrorExtras`) so a parallel copy channel cannot
+be added back silently. NO schema, NO env, NO route-path change; the rendered
+copy of every refusal is byte-identical apart from the removed repeat.
+Previous: 2026-08-29 §5.16 BADGE SUBJECT GUIDANCE (and,
 same day, the §5.16 external-recovery correlation lane: `work:correlate` +
 `scripts/lib/work-archive-correlate.ts` + `test:correlate`, read-only against
 the DB, no lock; plus the fourth-script clause in "Backfill + external
@@ -4361,7 +4390,22 @@ store) and `kindVerdict`; `ExtractErr` carries both optionally, set on every
 failure raised AFTER classification. Refusals that are a CONSEQUENCE of the
 inferred kind prefix `kindVerdictSentence()` ("I read your upload as a Code
 program, because it has …"), so a wrong verdict is arguable against the files
-rather than against the site. ORDERING CONSTRAINTS the restructure had to
+rather than against the site. The prefix LEADS the one submitter-facing text
+(it is the premise, not the fix, and it is the claim most worth contesting),
+and it rides only where the verdict is the rule the refusal actually applied.
+Where it rides TODAY, exactly: the create route's program-document and
+skill-document 422s (`kindRefusal`, always, since that lane always infers);
+the email lane's program-document refusal, gated on `kindVerdict.kind ===
+failedKind` so a pinned update that disagrees with its package does not lead
+with a reading the refusal did not act on; and NOWHERE in
+`/api/work/submissions/[id]/update`, where the card pinned the kind and a
+reading of the files would send the submitter after the wrong argument. KNOWN
+GAP, deliberate to leave alone until it is worth a copy round: the email
+lane's two refusals raised on an OK walk (the Skill document missing or
+ambiguous, and the deferred `.md` ambiguity) carry no lead, so an emailed
+Skill submitter is told "the panel could not find your SKILL.md" without
+being told a Skill is what the package was read as, which is the very
+sentence the create route added for that refusal. ORDERING CONSTRAINTS the restructure had to
 honour: the outer walk is now unconditionally `collectInner=true` (inert —
 collecting an inner archive is a metadata push, and `walkLevel`'s classification
 chain is an else-if whose earlier arms are disjoint from `INNER_ARCHIVE_EXT`),
@@ -4433,7 +4477,14 @@ by email the `.md` is merely whichever markdown attachment `pickSkillDoc`
 settled on out of the message, so a PROGRAM uses it only as the rescue it was
 accepted for (the package carried no architecture doc at all) and never as a
 silent override of a program's own `architecture.md`. A Skill keeps the
-long-standing precedence on both lanes. When a program's package DID resolve
+long-standing precedence on both lanes. It rescues on the same shape, but it
+does NOT inherit `rescuePassError`: an inner-archive failure raised by the
+email lane's rescue pass goes out with extract.ts's Skill wording, so a Code
+program submitter can still be told about "the packaged Skill inside your
+zip" and pointed at "the second upload field", which does not exist in email.
+Known gap as of 2026-08-29, left for a copy round rather than folded into the
+refusal-assembly fix; the re-wording is a one-line `diagnosis:` change at that
+call site now that assembly is centralized. When a program's package DID resolve
 its own doc, the attachment is left out of the review and the receipt says so
 rather than dropping it in silence, since that attachment is precisely what
 used to file the program as a Skill. Reviewed-doc precedence, first hit wins:
@@ -4460,7 +4511,19 @@ from whichever source won (standalone bytes, or the in-package doc's
 untruncated `docRawBytes`), so retention always emails the `.md` as its own
 attachment. Docs must clear 600 chars of prose after
 stripping code fences/front matter; failures 422 with the exact fix
-(`MISSING_ARCH_DOC_MESSAGE` / `MISSING_SKILL_DOC_MESSAGE`). Legacy
+(`MISSING_ARCH_DOC_MESSAGE` / `MISSING_SKILL_DOC_MESSAGE`) as the ONE
+submitter-facing text. The error body is `{error:{code, message, paths?}}`
+and `workError`'s extras are typed (`WorkErrorExtras`: `paths`, `reason`,
+`retryAfterSec` — facts a client acts on, never a second copy of the human
+text). The routes used to ship an `instructions` twin holding the message
+verbatim, or the paragraph the message already contained; nothing ever read
+it (every island renders `error.message`), but the two-field shape read as
+"message is the diagnosis, the fix lives elsewhere", which is what licensed
+the email lane's duplicate append. Deleted 2026-08-29. The closed type blocks
+both idioms that ever shipped (a literal field, and a spread of a conditional
+literal); a pre-built `const extras` object still compiles, so the guard that
+actually holds is the one in test:work, which reads both route sources and
+refuses an `instructions:` key. Legacy
 pre-rework single-file skill rows are untouched (Retry re-reads stored text,
 never files). Persisted: doc text (≤40k), evidence corpus, file manifest
 (≤300 entries), archive name/sha256/bytes + `md_name/md_sha256/md_bytes` —
@@ -4873,7 +4936,55 @@ and every rejection from here on is a Tron reply (From
 targeted fix, an optional one-line `FORM_POINTER` (suppressed with
 `{ pointer: false }` on wait-class rejects: paused, throttled, quota,
 pipeline offline, and on update-path rejects whose fix is email-specific),
-and Tron's full signature. The old seven-bullet FORMAT_REMINDER is retired
+and Tron's full signature.
+
+**Every REFUSAL body this lane composes is assembled by
+`src/lib/work/refusal.ts` and by nothing else (2026-08-29)** (the acceptance
+receipt, the admin WARN and the notify.ts publish/held/update mails are
+assembled in their own files and are not refusals; they reach the composer
+only through the seam check below). `composeParagraphs(blocks)` joins blocks and
+drops any paragraph already emitted; `composeRefusal(parts)` is the typed
+shape behind it (`lead` = the kind-verdict sentence, `diagnosis` = what is
+wrong, `blocked` = why an attached file could not serve as the fix,
+`instruction` = the standing fix paragraph, `evidence` = file lists). Blocks
+are matched exactly after whitespace collapse and case fold, NEVER by
+similarity: this lane's refusals routinely share most of their words and
+differ only in the sentence that names the fix (the ambiguity refusal's
+"rename the right one to SKILL.md" beside its "over the 1 MB limit … trim
+it"), and dropping a paragraph the submitter needed is worse than printing
+one they have read. The `instruction` slot alone also drops on CONTAINMENT,
+since it is boilerplate whose whole job is to repeat, which covers a
+diagnosis that WRAPS it as well as one that equals it. `refusal.ts` imports
+nothing, so it cannot join the `email-parse` → `lint` graph that `names.ts`
+exists to break; copy constants stay in `config.ts` and are passed in.
+`sendTronEmail` re-runs the detector (`repeatedParagraphs`) over the finished
+body BEFORE `withTronSignature` and acts only if it finds a repeat, logging
+the dropped paragraphs themselves: an ordinary body goes out byte-identical,
+the three sends that bypass `reject()` (warnAdmin, the company-row-vanished
+notice, the receipt) are still covered, and the signature block is never a
+dedupe candidate. Both the composer and the seam work at PARAGRAPH
+granularity: a future author who glues two copies into one paragraph with a
+soft newline defeats them, which is why the test suite's own detector also
+compares long SENTENCES and every refusal shape is replayed through it. The §5.15 ledger key is derived from the `diagnosis` slot, never
+from the composed body: `report-issue.ts` keys are episodic per (reason
+class, lane), and a key taken from a body carrying the interpolated verdict
+sentence opens a fresh triage row per package shape.
+**Why:** on 2026-08-28 20:53Z a program package with no architecture document
+(a Claude plugin bundle: `.claude-plugin/plugin.json` + two packaged skills +
+a README with no Architecture section) was refused with the same six-sentence
+instruction paragraph printed TWICE. `extract.ts` answers both program
+document failures WITH that instruction as the failure's `message`
+(`MISSING_ARCH_DOC_MESSAGE`, both codes), and the email lane appended the
+constant again. The web routes never showed it because `message` and the old
+`instructions` field were separate JSON fields and the form renders one; an
+email is a single body and has to be read as written. The first repair was a
+string equality at that one call site, which is a claim about another
+module's constant rather than a property of the lane. The email lane's
+program-document refusal now passes `instruction` UNCONDITIONALLY and lets
+the composer decide, so if that copy ever splits into a diagnosis plus a fix,
+the refusal stays complete instead of silently losing half.
+
+The old seven-bullet FORMAT_REMINDER is retired
 (it buried each reject's fix under a wall of rules; the owner's bounced
 1503-char email showed it). The rate-limited notice and the
 paused notice are themselves throttled to 1/hr/sender (an outbound email is

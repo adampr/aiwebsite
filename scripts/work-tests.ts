@@ -46,11 +46,17 @@ import {
 } from "../src/lib/work/email-parse";
 import {
   HOUSE_RULES,
+  MISSING_ARCH_DOC_MESSAGE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
   formatByteSize,
   nextStorageReportDueMs,
 } from "../src/lib/work/config";
+import {
+  composeParagraphs,
+  composeRefusal,
+  repeatedParagraphs,
+} from "../src/lib/work/refusal";
 import staticTitles from "../src/lib/work/static-titles.json";
 import {
   byteLessRowClass,
@@ -2268,7 +2274,7 @@ async function main() {
     );
     const intakeSrc = readFileSync("src/lib/work/email-intake.ts", "utf8");
     assert.ok(
-      /text:\s*withTronSignature\(opts\.text\)/.test(intakeSrc),
+      /text:\s*withTronSignature\(text\)/.test(intakeSrc),
       "sendTronEmail signs every Tron send at the seam (covers warnAdmin)"
     );
     assert.ok(
@@ -5569,6 +5575,288 @@ async function main() {
     );
     for (const src of [scriptSrc, readTx("scripts/lib/work-transfer-ops.ts", "utf8")])
       assert.ok(!/[–—]/.test(src), "no em or en dashes in the transfer lane");
+  }
+
+  // ── §5.16 a refusal says each thing ONCE (2026-08-29) ──────────────
+  // On 2026-08-28 20:53Z an emailed submission (a Claude plugin bundle with
+  // no architecture document) was refused with the SAME six sentences printed
+  // twice: extract.ts answers both program document failures WITH the
+  // instruction paragraph, and the email lane appended that constant again.
+  // The first repair was a string equality at that one call site. These
+  // assertions cover the CLASS instead: the composer owns assembly, and a
+  // repeat is caught wherever it is composed.
+  {
+    const { readFileSync } = await import("node:fs");
+
+    const paragraphsOf = (body: string): string[] =>
+      body.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    /** Sentences of 8+ words, across paragraph boundaries. Sentence level and
+     * not only paragraph level, deliberately: the 2026-08-28 defect was an
+     * exact paragraph repeat, but the next one will not be. The moment a
+     * failure's message gains one clause ("... the closest file was
+     * docs/design.md"), paragraph equality goes green while the reader still
+     * gets the same six sentences twice. */
+    const sentencesOf = (body: string): string[] =>
+      body
+        .split(/\n\s*\n/)
+        .flatMap((p) => p.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+/))
+        .map((s) => s.trim())
+        .filter((s) => s.split(/\s+/).length >= 8);
+    const repeats = (xs: string[]): string[] => {
+      const n = new Map<string, number>();
+      for (const x of xs) n.set(x, (n.get(x) ?? 0) + 1);
+      return [...n].filter(([, c]) => c > 1).map(([x]) => x);
+    };
+    const duplicatedCopy = (body: string): string[] => [
+      ...repeats(paragraphsOf(body)),
+      ...repeats(sentencesOf(body)),
+    ];
+    const saysItOnce = (body: string, what: string): void => {
+      assert.deepEqual(duplicatedCopy(body), [], `${what}: repeats copy`);
+      assert.equal(
+        body.split(MISSING_ARCH_DOC_MESSAGE).length - 1,
+        body.includes(MISSING_ARCH_DOC_MESSAGE) ? 1 : 0,
+        `${what}: the instruction paragraph appears at most once`
+      );
+    };
+
+    // NEGATIVE CONTROLS FIRST. A duplication detector that quietly stopped
+    // detecting would leave every assertion below green forever.
+    const incidentBody = [MISSING_ARCH_DOC_MESSAGE, MISSING_ARCH_DOC_MESSAGE].join("\n\n");
+    assert.ok(
+      duplicatedCopy(incidentBody).length > 0,
+      "the detector fires on the 2026-08-28 body (exact paragraph repeat)"
+    );
+    const driftBody = [
+      `${MISSING_ARCH_DOC_MESSAGE} The closest file was skills/xlnet-policy/SKILL.md.`,
+      MISSING_ARCH_DOC_MESSAGE,
+    ].join("\n\n");
+    assert.equal(
+      repeats(paragraphsOf(driftBody)).length,
+      0,
+      "the drift shape is invisible to a paragraph-only check (hence sentences)"
+    );
+    assert.ok(
+      duplicatedCopy(driftBody).length > 0,
+      "the detector fires once a message gained a clause, where string equality would miss it"
+    );
+
+    // ---- the composer itself ----
+    assert.equal(composeParagraphs(["A", "B"]), "A\n\nB");
+    assert.equal(composeParagraphs(["A", "B", "A"]), "A\n\nB", "first occurrence keeps its place");
+    assert.equal(
+      composeParagraphs(["Add the file and resubmit.", "add the  file\nand resubmit."]),
+      "Add the file and resubmit.",
+      "normalization is for comparison only; the kept block is printed verbatim"
+    );
+    assert.equal(composeParagraphs(["A", "", null, undefined, false, "   ", "B"]), "A\n\nB");
+    assert.equal(
+      composeParagraphs(["A\n\nB", "B"]),
+      "A\n\nB",
+      "a multi-paragraph block is flattened, so nesting cannot smuggle a repeat past the check"
+    );
+    assert.equal(repeatedParagraphs("A\n\nB\n\nA").length, 1);
+    assert.equal(repeatedParagraphs("A\n\nB").length, 0);
+    assert.equal(
+      repeatedParagraphs("A\r\n\r\nB\r\n\r\nA").length,
+      1,
+      "the seam detector reads CRLF bodies too (inbound mail is CRLF)"
+    );
+    // The seam net itself: a body that repeats loses the repeat, an ordinary
+    // body is untouched. Pinned because sendTronEmail is the last chance for
+    // the three sends that never see reject().
+    assert.equal(composeParagraphs(["A\n\nB\n\nA"]), "A\n\nB");
+    assert.equal(composeParagraphs(["A\n\nB"]), "A\n\nB");
+    // Not fuzzy: two refusal paragraphs that share most of their words but
+    // name different fixes must both survive.
+    assert.equal(
+      paragraphsOf(
+        composeParagraphs([
+          `Several .md attachments could be the Skill's document, and none carries a Skill front-matter block, so I could not settle on one. Rename the right one to SKILL.md and resend.`,
+          `2 attachments were over the 1 MB limit for the Skill's document and could not be read. If the right one is in there, trim it or send it inside the package.`,
+        ])
+      ).length,
+      2,
+      "similar paragraphs that name different fixes both survive"
+    );
+    assert.equal(
+      composeRefusal({ diagnosis: "That package is empty." }),
+      "That package is empty.",
+      "a one-slot refusal is the identity"
+    );
+    const LEAD = "I read your upload as a Code program, because it has a .claude-plugin folder.";
+    assert.equal(
+      composeRefusal({
+        lead: LEAD,
+        diagnosis: MISSING_ARCH_DOC_MESSAGE,
+        instruction: MISSING_ARCH_DOC_MESSAGE,
+      }),
+      `${LEAD}\n\n${MISSING_ARCH_DOC_MESSAGE}`,
+      "the 2026-08-28 shape: the instruction is dropped when the diagnosis already IS it"
+    );
+    assert.equal(
+      composeRefusal({
+        diagnosis: `${LEAD} ${MISSING_ARCH_DOC_MESSAGE}`,
+        instruction: MISSING_ARCH_DOC_MESSAGE,
+      }).split(MISSING_ARCH_DOC_MESSAGE).length - 1,
+      1,
+      "and when the diagnosis WRAPS it, which a string-equality check missed"
+    );
+    assert.ok(
+      composeRefusal({
+        diagnosis: "That package is empty.",
+        instruction: MISSING_ARCH_DOC_MESSAGE,
+      }).includes(MISSING_ARCH_DOC_MESSAGE),
+      "the instruction is still printed when it is genuinely new"
+    );
+    assert.equal(
+      composeRefusal({
+        lead: "L",
+        diagnosis: "D",
+        blocked: "B",
+        instruction: "I",
+        evidence: ["E", null],
+      }),
+      "L\n\nD\n\nB\n\nI\n\nE",
+      "slot order: lead, diagnosis, blocked, instruction, evidence"
+    );
+    assert.equal(
+      composeRefusal({ diagnosis: "msg", evidence: ["Files: a, b"] }),
+      ["msg", "", "Files: a, b"].join("\n"),
+      "the evidence shape is byte-identical to the joins it replaced"
+    );
+
+    // ---- driven by the REAL failure shapes ----
+    // The 2026-08-28 archive: a .claude-plugin folder, two packaged skills,
+    // and a README with no Architecture section. Replayed against the real
+    // bytes this yields missing_architecture_doc / program /
+    // claude_code_project, and so does this fixture.
+    const README_NO_ARCH = ["# xlnet-context", "", "## What it does", "", PROSE, "", "## Installing", "", PROSE].join("\n");
+    const incidentShaped = await zipOf({
+      ".claude-plugin/plugin.json": '{"name":"xlnet-context","version":"0.1.0"}',
+      "README.md": README_NO_ARCH,
+      "skills/xlnet-policy/SKILL.md": `---\nname: xlnet-policy\ndescription: policy lookup\n---\n${PROSE}`,
+      "skills/xlnet-onboarding/SKILL.md": `---\nname: xlnet-onboarding\ndescription: onboarding interview\n---\n${PROSE}`,
+    });
+    const incident = await inspectArchive(incidentShaped, null, {
+      packageName: "xlnet-context.zip",
+    });
+    assert.ok(!incident.ok, "the incident shape is refused");
+    if (!incident.ok) {
+      assert.equal(incident.code, "missing_architecture_doc");
+      assert.equal(incident.kind, "program");
+      assert.equal(incident.kindVerdict?.rule, "claude_code_project");
+      // The body the email lane composes for it, envelope and pointer
+      // included, exactly as reject() assembles one.
+      const body = composeParagraphs([
+        "I could not accept this as a /work submission. Nothing was stored.",
+        composeRefusal({
+          lead: incident.kindVerdict ? kindVerdictSentence(incident.kindVerdict) : null,
+          diagnosis: incident.message,
+          instruction: MISSING_ARCH_DOC_MESSAGE,
+        }),
+        "If the form is easier, you can also submit at https://ai.xl.net/work/submit.",
+      ]);
+      saysItOnce(body, "the 2026-08-28 dcollett refusal");
+      assert.equal(paragraphsOf(body).length, 4);
+    }
+    // Every other shape that reaches the program document refusal.
+    const docShapes: { name: string; bytes: Buffer; pin: "program" | null; blocked?: string }[] = [
+      { name: "source with no document at all", bytes: await zipOf({ "main.py": "print(1)", "util.py": "x=1" }), pin: null },
+      { name: "an architecture doc below the prose floor", bytes: await zipOf({ "architecture.md": "too short", "main.py": "x=1" }), pin: null },
+      {
+        name: "the incident shape with the rescue blocked by an oversize .md",
+        bytes: incidentShaped,
+        pin: null,
+        blocked: `The "architecture.md" attachment looks like that document, but it is over the 1 MB limit for a document sent outside the package, so I could not read it. Put it inside the package, or trim it and resend.`,
+      },
+      { name: "the update lane's pinned program whose package reads as a Skill", bytes: await zipOf({ "src/SKILL.md": PROSE, "src/a.py": "x=1" }), pin: "program" },
+    ];
+    for (const shape of docShapes) {
+      const res = await inspectArchive(shape.bytes, shape.pin, { packageName: "tool.zip" });
+      assert.ok(!res.ok, `${shape.name}: refused`);
+      if (res.ok) continue;
+      const failedKind = res.kind ?? shape.pin;
+      assert.ok(
+        res.code === "missing_architecture_doc" ||
+          (res.code === "doc_too_short" && failedKind === "program"),
+        `${shape.name}: is a program document failure (got ${res.code})`
+      );
+      saysItOnce(
+        composeRefusal({
+          lead:
+            res.kindVerdict && res.kindVerdict.kind === failedKind
+              ? kindVerdictSentence(res.kindVerdict)
+              : null,
+          diagnosis: res.message,
+          blocked: shape.blocked ?? null,
+          instruction: MISSING_ARCH_DOC_MESSAGE,
+        }),
+        shape.name
+      );
+    }
+    // The fact the retired suppressor silently rested on, now pinned: both
+    // program document codes answer WITH the instruction, so any caller that
+    // appends the constant duplicates it.
+    for (const res of [incident, await inspectArchive(await zipOf({ "architecture.md": "too short", "main.py": "x=1" }), null, { packageName: "tool.zip" })])
+      assert.equal(
+        res.ok ? "" : res.message,
+        MISSING_ARCH_DOC_MESSAGE,
+        "extract.ts answers the program document failures WITH the instruction paragraph"
+      );
+
+    // ---- the source guards: the class, not the one call site ----
+    const refusalSrc = readFileSync("src/lib/work/refusal.ts", "utf8");
+    assert.ok(
+      !/^import /m.test(refusalSrc) && !/\bimport\s*\(/.test(refusalSrc),
+      "refusal.ts stays a zero-import leaf (static or dynamic), so any work module can compose through it"
+    );
+    const intakeSrc4 = readFileSync("src/lib/work/email-intake.ts", "utf8");
+    assert.ok(
+      !/[!=]== MISSING_ARCH_DOC_MESSAGE/.test(intakeSrc4),
+      "the 2026-08-28 per-call-site duplicate suppressor does not come back in either polarity; refusal.ts owns assembly"
+    );
+    // Pins the retired idiom specifically. It is a ratchet, not a proof: the
+    // file still joins single newlines for the receipt and the admin WARN,
+    // and a hand-built paragraph pair could still be passed in as one
+    // diagnosis. What actually holds the property is that every refusal is
+    // replayed through the composer above and checked at SENTENCE level.
+    assert.ok(
+      !intakeSrc4.includes('join("\\n\\n")'),
+      "the paragraph-joining idiom the duplicate shipped through is gone from email-intake"
+    );
+    assert.ok(
+      /text:\s*composeParagraphs\(\[/.test(intakeSrc4),
+      "reject() composes its reply body through the composer"
+    );
+    assert.ok(
+      /repeatedParagraphs\(text\)/.test(intakeSrc4) &&
+        intakeSrc4.indexOf("repeatedParagraphs(text)") <
+          intakeSrc4.indexOf("withTronSignature(text)"),
+      "sendTronEmail re-checks the finished body at the seam, before the signature is appended"
+    );
+    assert.ok(
+      /ledgerReasonSlug\(parts\.diagnosis\)/.test(intakeSrc4),
+      "the §5.15 ledger key comes from the diagnosis slot, never the composed body (episodic keys)"
+    );
+    // The web lane's 422 must not carry a second submitter-facing copy field:
+    // that shape is what read as "message is the diagnosis, the fix lives
+    // elsewhere" and licensed the append.
+    for (const route of [
+      "src/app/api/work/submissions/route.ts",
+      "src/app/api/work/submissions/[id]/update/route.ts",
+    ])
+      assert.ok(
+        !/\binstructions\s*:/.test(readFileSync(route, "utf8")),
+        `${route} ships one submitter-facing text, with no instructions twin`
+      );
+    const httpSrc = readFileSync("src/lib/work/http.ts", "utf8");
+    assert.ok(
+      /extra\?: WorkErrorExtras/.test(httpSrc) &&
+        !/extra\?: Record<string, unknown>/.test(httpSrc),
+      "workError's extras stay closed, so a second copy field cannot be added back silently"
+    );
+    assert.ok(!/[–—]/.test(refusalSrc), "no em or en dashes in refusal.ts");
   }
 
   console.log("work-tests: all assertions passed.");

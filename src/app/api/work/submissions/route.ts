@@ -11,7 +11,6 @@ import { createHash } from "node:crypto";
 import { after } from "next/server";
 import { brainHealthy } from "@/lib/governance/brain";
 import {
-  MISSING_ARCH_DOC_MESSAGE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
   workSubmissionsEnabled,
@@ -84,9 +83,10 @@ function standaloneDocError(err: ExtractErr): Response {
     err.code === "doc_too_short"
       ? "The document you attached is too short to review. It needs to describe the tool: what it does, how it is used, and how it works, at least a few paragraphs. Expand it and resubmit."
       : err.message;
+  // One submitter-facing text, never a second copy field: `instructions` used
+  // to repeat this message verbatim here (see workError, 2026-08-29).
   return workError(err.code, message, 422, {
     ...(err.paths ? { paths: err.paths } : {}),
-    instructions: message,
   });
 }
 
@@ -535,10 +535,14 @@ export async function POST(req: Request): Promise<Response> {
         ? kindRefusal(extracted.kindVerdict, extracted.message)
         : extracted.message,
       422,
-      {
-        ...(extracted.paths ? { paths: extracted.paths } : {}),
-        ...(docFailure ? { instructions: MISSING_ARCH_DOC_MESSAGE } : {}),
-      }
+      // No `instructions` twin: `extracted.message` for a program document
+      // failure IS the instruction paragraph (extract.ts sets
+      // MISSING_ARCH_DOC_MESSAGE for both codes), so the field shipped the
+      // same six sentences a second time in every one of these bodies. It was
+      // invisible only because the form renders `message` alone, and that is
+      // an accident, not a control: the email lane read the same two-field
+      // shape as a division of labour and printed both (2026-08-28).
+      { ...(extracted.paths ? { paths: extracted.paths } : {}) }
     );
   }
 
@@ -575,10 +579,7 @@ export async function POST(req: Request): Promise<Response> {
       `skill_doc_${pkg.docMissing}`,
       kindRefusal(pkg.kindVerdict, message),
       422,
-      {
-        ...(pkg.candidatePaths ? { paths: pkg.candidatePaths } : {}),
-        instructions: message,
-      }
+      { ...(pkg.candidatePaths ? { paths: pkg.candidatePaths } : {}) }
     );
   } else if (kind === "skill" && pkg.docRawBytes) {
     // Doc came from inside the package: retention still carries it as its own
