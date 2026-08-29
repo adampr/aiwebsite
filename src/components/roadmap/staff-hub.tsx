@@ -106,9 +106,11 @@ export function StaffHub({
       "An editorial panel reviews it and publishes it to the public Our " +
       "Work page.",
     scorecard:
-      "Watch builders emerge: published public work and requested-work " +
-      "activity counted per person in the directory. Published cards and " +
-      "approved requests only, never drafts or attempts.",
+      "Watch builders emerge: published public work, the hand-written Our " +
+      "Work exhibits recorded against each person, and requested-work " +
+      "activity counted per person in the directory. Published cards, " +
+      "recorded exhibits and approved requests only, never drafts or " +
+      "attempts.",
   };
   const ctas: Record<string, string> = {
     governance: status.governance.done

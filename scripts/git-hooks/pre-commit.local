@@ -109,4 +109,42 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -qE '^src/app/(roadma
   fi
 fi
 
+# ── Person-mapping seed gate (§5.16/§5.18 + §5.21, 2026-08-29) ────────────
+# work_static_credits (who built which /work exhibit) and chase_tasks /
+# chase_sends (who was asked for what and has not done it) both map a
+# colleague BY ADDRESS to a fact about them. THIS REPOSITORY IS PUBLIC, so
+# those rows live only in the production database and their migrations create
+# EMPTY structure; the rows are written on the VM.
+#
+# Until now that rule was prose in three comments, and the existing secrets
+# gate above does not match an email address, so the obvious next step for a
+# future session ("just add the two missing credits") would have committed a
+# seed with nothing objecting. This gate is the fail-closed half: reject any
+# staged ADDED line that names one of those tables and also carries an "@".
+# It is a names-and-formats check like the secrets gate, not a parser: it
+# stops the obvious seed, not a determined one split across lines.
+#
+# The address test is an EMAIL SHAPE (local part, @, dotted domain, TLD), not
+# a bare "@": the first cut used "@" and fired on a documentation line that
+# merely named the table next to `@aicompany/core` (2026-08-29, a real false
+# positive on a peer's commit that cost them a bypass). A package scope, a
+# decorator or an at-mention must not trip a gate whose whole value is that
+# people trust it enough not to reach for the bypass.
+seed_hits=$(git diff --cached --unified=0 --diff-filter=ACMR -- . \
+  | grep -E '^\+' \
+  | grep -Ev '^\+\+\+' \
+  | grep -E 'work_static_credits|chase_tasks|chase_sends' \
+  | grep -E '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}' || true)
+if [ -n "$seed_hits" ]; then
+  echo "BLOCKED: a staged line names a person-mapping table and contains an email address:" >&2
+  echo "$seed_hits" | head -5 >&2
+  echo "  These tables map a colleague by address to a fact about them, and this repo is" >&2
+  echo "  PUBLIC: a committed seed publishes that permanently, and git history keeps it" >&2
+  echo "  after any revert. Migrations create EMPTY structure; rows are written on the VM" >&2
+  echo "  (npm run work:credit, npm run chase:seed). See the migration headers." >&2
+  echo "  Bypass ONLY for a false positive (a comment, a test with a fake domain):" >&2
+  echo "    PERSON_MAP_OK=1 git commit ..." >&2
+  [ -n "${PERSON_MAP_OK:-}" ] || exit 1
+fi
+
 exit 0

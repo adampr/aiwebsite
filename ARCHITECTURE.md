@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 §5.16 REPOSITORY SUBMISSION ROUND
+Last verified against code: 2026-08-29 §5.18 EXHIBIT CREDITS ON THE EMPLOYEE SCORECARD (sections 5.16/5.18): the hand-authored /work exhibits are page copy, not rows, so their builders were counted by nothing on the staff scorecard and two read 0 published; new `work_static_credits` (migration 0050, EMPTY in git by design, rows written on the VM because this repo is public) feeds a staff-lane-only Exhibits column, honesty-guarded against the generated anchor list, with the published-only doctrine, the company lane and the public /work copy untouched. Previous: 2026-08-29 §5.16 REPOSITORY SUBMISSION ROUND
 (sections 5.16 "Exhibit archives" + "Scripted submission lane" + the /work
 page row): every repository on the dev box is now filed on /work under
 adam@xl.net. Six of them already had a hand-authored exhibit card, and those
@@ -8275,7 +8275,9 @@ scorecard (ratio hero + standing disclosure header; published cards plus
 link to `/roadmap/scorecard/requests?person=..&col=..` with an sr-only name
 suffix; listed statuses only - pending/rejected never render; zeros
 text-faint and unlinked; email-less rows annotated; not-in-directory
-submitters flagged with admin-only add; since 2026-08-27 a `Time saved / mo`
+submitters flagged with admin-only add; since 2026-08-29 a staff-lane-only `Exhibits`
+column sits between Published and Time saved (see "Exhibit credits" below;
+absent, not zero-filled, on a company scorecard); since 2026-08-27 a `Time saved / mo`
 column sits immediately after Published, summing that person's self-reported
 `work_submissions.time_saved_minutes` over their PUBLISHED rows in the lane
 and rendered by `formatTimeSavedCompact` - a plain cell, not a `CountCell`,
@@ -8378,6 +8380,71 @@ exists); consumers are the scorecard rows (emails keep mono styling via
 `personLabelParts().kind`), the scorecard click-through, and the requested
 serializers; the public /work card credit is EXEMPT by privacy design
 (single validated first name or team credit, never an email; source-pinned).
+**Exhibit credits (§5.16/§5.18, owner ruling 2026-08-29).** The 26
+hand-authored exhibits on the public `/work` page are page copy in
+`src/app/work/page.tsx`, not `work_submissions` rows, so the colleagues who
+built them were counted by NOTHING on this scorecard: eight of those exhibits
+have a named builder, and two of those people read `0 published` while the
+company publicly showcased their tool. `work_static_credits` (migration
+`0052`, `anchor_id` + `email` + audit columns, UNIQUE on
+`(anchor_id, lower(email))` because one exhibit can have two builders AND
+because every read groups on `lower(email)`, so a raw-column index would let
+two spellings of one person count their exhibit twice) records who built
+which exhibit, and
+`scorecardRows` adds a fourth parallel query for it. THE TABLE IS EMPTY IN
+GIT AND MUST STAY THAT WAY: the rows carry colleagues' addresses and THIS
+REPOSITORY IS PUBLIC, so a seed INSERT in the migration, a checked-in JSON
+map, or a test fixture would publish them to the open internet permanently
+and git history would keep them after a revert. The migration creates
+structure only and the rows are written on the VM; the anchor half of the
+mapping may live in the repo precisely because it is already public
+(`static-titles.json` is GENERATED from the page and holds ids and titles,
+never addresses). There is deliberately NO migration `0050`: this work was in
+flight under that number when a concurrent session generated `0051` against a
+schema that already carried the table, so `0051`'s snapshot holds it while
+`0051`'s SQL does not create it; rather than ship a migration whose snapshot
+and statements disagree, `0050` was withdrawn and the CREATE moved after it.
+The write path is `npm run work:credit -- list | add <exhibit-id> <email>
+--by <admin> | remove ...` (`scripts/work-credit.ts`, pure validation in
+`scripts/lib/work-credit-ops.ts`), VM-only for the same publication reason and
+the answer to the disclosure's "ask an administrator": it validates the
+anchor against the generated list at the WRITE edge, because a mistyped id
+fails closed and silently (indistinguishable from a retired exhibit, so the
+colleague still reads 0, which is the bug the table exists to fix), lowercases
+the address to agree with the index and the reader, and stamps
+`updated_by_email` on both add and remove. Four properties are load-bearing. (1) STAFF LANE ONLY: the
+table has no `company_id` column at all, so there is no WHERE clause anyone
+can forget, the read runs only when `scope.companyId === null`, and the
+column is absent from the company table rather than rendered as zeros; the
+public `/work` copy describing the CLIENT scorecard ("counts published cards
+only") therefore stays true and was not touched. (2) A SEPARATE NUMBER from
+`published`, never folded in: `published` means published cards, the company
+lane's shipped/total hero and `totalPublished` both read it, and folding
+would make the column's own copy false. (3) The published-only doctrine is
+untouched - time saved still shares the Published predicate exactly, so a
+nonzero time-saved cell beside a `0 published` remains impossible, which is
+the property that keeps the page from revealing that a colleague tried and
+failed. (4) An HONESTY GUARD: the read is `inArray(anchor_id,
+staticTitles.anchorIds)`, so a credit whose exhibit has been retired from the
+page stops counting the day the section goes, with no migration. Sort places
+exhibits below published and above completed, so a builder whose only work is
+an exhibit does not sit in the alphabetical tail among people who have
+shipped nothing. A credited person who is in no other source still renders,
+as a stray row with the `Not in directory` badge - EXCEPT one whose address
+the lane has suppressed, whose credit is skipped in that drain alone
+(directory removal keeps only `sha256(lower(email))` precisely so the person
+stops being named here, and this is the one path that could otherwise print
+their literal address back to every signed-in colleague months later; the
+credit row itself is not deleted, and re-adding them to the directory
+restores it through the first drain). The credit is INTERNAL and
+the disclosure says so in those words: this page is `force-dynamic`,
+`robots: noindex` and staff-gated, no exhibit on the public page names its builder (the
+scoped claim, not the general one: a published team CARD does print an opt-in
+first name), and this is NOT the §5.16 card credit (that one is opt-in,
+first-name-only, and typed by the submitter into `submitter_name`). Removal
+is an admin DELETE, which the disclosure also names, and `updated_by_email`
+is the durable answer to who recorded it.
+
 The scorecard is ONE implementation for both lanes - `scorecardRows(scope)`
 replaced companyScorecard + internalScorecard, whose invented
 max(submitter_name) projection (a validated single first name by
@@ -9614,6 +9681,33 @@ work_archive_files id uuid PK default random,
                    -- after temp-write → rename → re-stat. Queries live in
                    -- src/lib/work/archive-store.ts, NOT work/db.ts (separate
                    -- lifecycle from work_submissions by design)
+
+work_static_credits id uuid PK default random,
+                   anchor_id text NOT NULL (a /work section id, e.g.
+                   "ticketscribe"; validated at the WRITE edge and filtered at
+                   READ time against the GENERATED src/lib/work/static-titles.json
+                   anchor list, never by a CHECK - the 26 ids change whenever
+                   page.tsx changes and that must not need a migration),
+                   email text NOT NULL (denormalized, lowercased, NO FK: the
+                   scorecard matches on lower(email), and a company_people row
+                   is a hard DELETE that a re-import replaces with a fresh uuid,
+                   so an FK would drop the attribution when someone leaves the
+                   directory),
+                   created_at/updated_at timestamptz NOT NULL default now(),
+                   updated_by_email text NOT NULL (who recorded it; the durable
+                   answer for a colleague who asks to be uncredited),
+                   UNIQUE (anchor_id, lower(email)) work_static_credit_uq
+                   -- §5.16/§5.18 exhibit credits (migration 0052, IF NOT EXISTS
+                   -- per the 0044/0046/0047 precedent; the expression index is
+                   -- HAND-ADDED on the 0039 company_people_email_staff_uq
+                   -- precedent and is invisible to drizzle, so `drizzle-kit
+                   -- push` would silently drop it). EMPTY IN GIT BY DESIGN: the
+                   -- rows name colleagues by address and this repo is public,
+                   -- so the migration creates structure only and rows are
+                   -- written on the VM by `npm run work:credit`. NO company_id
+                   -- column, deliberately - these are XL.net's own page copy,
+                   -- and an absent column is a tenancy guarantee no reader can
+                   -- forget. Read only by scorecardRows on the staff lane.
 
 blog_audio         slug text PK, data bytea, url text NOT NULL, mime text default 'audio/mpeg',
                    content_hash text, render_hash text, duration_sec int, byte_length int,

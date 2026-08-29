@@ -351,6 +351,13 @@
       "when": 1787844050666,
       "tag": "0049_work_time_saved",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1788022701493,
+      "tag": "0052_work_static_credits",
+      "breakpoints": true
     }
   ]
 }

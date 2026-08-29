@@ -1,5 +1,8 @@
 // Roadmap step 7: Employee Scorecard (§5.18 + §5.19). Derived entirely at
-// read time from the directory joined to PUBLISHED company cards plus
+// read time from the directory joined to PUBLISHED company cards, the
+// staff-lane-only exhibit credits (§5.16 work_static_credits, owner ruling
+// 2026-08-29: the hand-written /work exhibits are page copy rather than
+// rows, so the colleagues who built them were counted by nothing here), plus
 // requested-work activity in LISTED statuses; held, failed, in-review,
 // pending, and rejected rows never appear anywhere here, so the scorecard
 // can never reveal that a colleague tried and failed. Zeros render faint,
@@ -69,9 +72,15 @@ function CountCell({
 function ScoreRows({
   rows,
   isAdmin,
+  showExhibits,
 }: {
   rows: ScorecardRow[];
   isAdmin: boolean;
+  /** Staff lane only: the hand-authored /work exhibits are XL.net's own page
+   * copy and mean nothing in a client lane, so the column is absent there
+   * rather than rendered as a column of zeros. Must move in lockstep with
+   * the header list this table was given. */
+  showExhibits: boolean;
 }) {
   return (
     <>
@@ -109,6 +118,29 @@ function ScoreRows({
             >
               {row.published}
             </td>
+            {/* Hand-authored /work exhibits credited to this person
+                (§5.16/§5.18, owner ruling 2026-08-29). Sits beside Published
+                because the two answer the same question, "what has this
+                person built that the company shows", from the page's two
+                different halves: the 26 hand-written exhibits and the
+                submitted cards. It is deliberately NOT folded into
+                Published, whose own copy says "published cards" and whose
+                count feeds the company lane's shipped/total hero.
+                Deliberately NOT a CountCell either, on the Time saved
+                precedent: a CountCell's link promises a click-through list
+                and there is no per-person exhibit list to open. Faint at 0
+                on the Published column's rule that not-yet is a state and
+                not a verdict, and a middot rather than a 0 for a row with no
+                email on file, matching the other cells, because a person we
+                cannot match has no figure rather than a zero one. */}
+            {showExhibits && (
+              <td
+                className="border-b border-[var(--xl-line)] py-2 pr-4"
+                style={!row.email || row.exhibits === 0 ? faint : undefined}
+              >
+                {row.email ? row.exhibits : "·"}
+              </td>
+            )}
             {/* §5.16 "Time saved / mo": the sum, in minutes, of what this
                 person reported on their own PUBLISHED cards in this lane,
                 rendered compact ("6h 30m") because a scorecard column is
@@ -189,7 +221,7 @@ function ScoreRows({
   );
 }
 
-const HEADERS = [
+const COMPANY_HEADERS = [
   "Person",
   "Published",
   // Sits next to Published on purpose: the two are computed from the same
@@ -204,15 +236,37 @@ const HEADERS = [
   "Most recent",
 ] as const;
 
-function HeaderRow() {
+/** The staff lane adds Exhibits, immediately after Published. Inserted there
+ * rather than appended for the reason the Time saved comment above already
+ * records: HeaderRow drops the right padding by INDEX on the LAST column, so
+ * appending would silently move that rule off "Most recent". */
+const STAFF_HEADERS = [
+  "Person",
+  "Published",
+  "Exhibits",
+  "Time saved / mo",
+  "Requested",
+  "Working on",
+  "Completed",
+  "Most recent",
+] as const;
+
+/** ONE switch, not two. The column set was briefly decided by a `headers`
+ * array on this component AND a `showExhibits` flag on ScoreRows, which a
+ * comment asked to stay in lockstep and nothing enforced: passing
+ * STAFF_HEADERS with showExhibits={false} would have rendered eight headers
+ * over seven cells and shifted every column right of Published. Both now
+ * read the same boolean. */
+function HeaderRow({ showExhibits }: { showExhibits: boolean }) {
+  const headers = showExhibits ? STAFF_HEADERS : COMPANY_HEADERS;
   return (
     <tr className="mono text-xs uppercase tracking-[0.2em] text-faint">
-      {HEADERS.map((h, i) => (
+      {headers.map((h, i) => (
         <th
           key={h}
           className={
             "border-b border-[var(--xl-line)] py-2 font-normal" +
-            (i < HEADERS.length - 1 ? " pr-4" : "")
+            (i < headers.length - 1 ? " pr-4" : "")
           }
         >
           {h}
@@ -230,14 +284,20 @@ export default async function RoadmapScorecardPage() {
     const strayRows = rows.filter((r) => !r.inDirectory);
     const disclosure =
       `This scorecard counts each person in the XL.net directory, their ` +
-      `published cards on the public Our Work page, and their activity on ` +
-      `the internal requested-work board: approved requests, projects ` +
-      `being worked on, and validated completions. It is visible to ` +
-      `signed-in XL.net staff. Drafts, in-review submissions, and pending ` +
-      `or rejected requests never appear here, and it is not used to ` +
-      `evaluate anyone. Time saved per month is what each person reported ` +
-      `for themselves about their own work. No one measures or verifies ` +
-      `it, and it is added up from published cards only.`;
+      `published cards on the public Our Work page, the hand-written ` +
+      `exhibits on that page they are recorded as having built, and their ` +
+      `activity on the internal requested-work board: approved requests, ` +
+      `projects being worked on, and validated completions. It is visible ` +
+      `to signed-in XL.net staff. Drafts, in-review submissions, and ` +
+      `pending or rejected requests never appear here, and it is not used ` +
+      `to evaluate anyone. Exhibits are counted from a record an ` +
+      `administrator keeps, not from anything you submitted, and they stay ` +
+      `on this page: no exhibit on the public page names its builder. ` +
+      `Ask an administrator to change or remove your exhibit credit. ` +
+      `Time saved per month is what ` +
+      `each person reported for themselves about their own work. No one ` +
+      `measures or verifies it, and it is added up from published cards ` +
+      `only.`;
     return (
       <div className="space-y-10">
         <section>
@@ -253,7 +313,7 @@ export default async function RoadmapScorecardPage() {
             <p>
               Nothing to count yet:{" "}
               <Link href="/roadmap/directory">the directory</Link> is empty,
-              there are no published cards on{" "}
+              there are no published cards or recorded exhibit builders on{" "}
               <Link href="/work">Our Work</Link>, and nothing is on{" "}
               <Link href="/work/requested">the requested-work board</Link>.
             </p>
@@ -262,11 +322,19 @@ export default async function RoadmapScorecardPage() {
           <section className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <HeaderRow />
+                <HeaderRow showExhibits />
               </thead>
               <tbody>
-                <ScoreRows rows={directoryRows} isAdmin={staff.globalAdmin} />
-                <ScoreRows rows={strayRows} isAdmin={staff.globalAdmin} />
+                <ScoreRows
+                  rows={directoryRows}
+                  isAdmin={staff.globalAdmin}
+                  showExhibits
+                />
+                <ScoreRows
+                  rows={strayRows}
+                  isAdmin={staff.globalAdmin}
+                  showExhibits
+                />
               </tbody>
             </table>
           </section>
@@ -368,11 +436,19 @@ export default async function RoadmapScorecardPage() {
             <section className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
-                  <HeaderRow />
+                  <HeaderRow showExhibits={false} />
                 </thead>
                 <tbody>
-                  <ScoreRows rows={directoryRows} isAdmin={isAdmin} />
-                  <ScoreRows rows={strayRows} isAdmin={isAdmin} />
+                  <ScoreRows
+                    rows={directoryRows}
+                    isAdmin={isAdmin}
+                    showExhibits={false}
+                  />
+                  <ScoreRows
+                    rows={strayRows}
+                    isAdmin={isAdmin}
+                    showExhibits={false}
+                  />
                 </tbody>
               </table>
             </section>
