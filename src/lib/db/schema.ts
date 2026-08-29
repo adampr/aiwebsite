@@ -340,8 +340,20 @@ export const workSubmissions = pgTable(
     // The exact files whose text was fed to the panel (the evidence corpus).
     corpusFilesJson: text("corpus_files_json"),
     archiveName: text("archive_name"),
+    // THE SUBMITTED hash and length, always, even when what we stored is a
+    // cleaned rebuild of them (§5.16 cleaning, 2026-08-29). This is the
+    // provenance value: work:import and work:correlate compare it against the
+    // submitter's own copy of their own file, so redefining it to describe our
+    // rebuild would make the true original report as never submitted. What was
+    // actually written to disk is in cleaning_json.
     archiveSha256: text("archive_sha256"),
     archiveBytes: integer("archive_bytes"),
+    // What the intake scan removed, and the hashes of what we kept in its
+    // place. NULL means the stored artifact IS the submitted artifact, which
+    // is true of every row written before 2026-08-29 and of every upload that
+    // carries nothing sensitive, so there is no backfill and an old row is
+    // correctly indistinguishable from a new clean one.
+    cleaningJson: text("cleaning_json"),
     // The original upload (.zip/.skill/.md). Intake writes it here AND to
     // the on-disk archive store; after the publish-time retention email
     // attempt it is cleared ONLY once every file re-verifies in the store

@@ -81,7 +81,7 @@ export function RoadmapSubmitEntry({ orgName }: { orgName: string }) {
             lane="company"
             trackHref="/roadmap/work"
             creditTeamName={`the ${orgName} team`}
-            retentionLine="Uploads with credential files are rejected. Only document text is kept for review; the original files are emailed to the XL.net team when the card publishes."
+            retentionLine="Files that look like credentials are cleaned out of your upload before it is stored. Only document text is kept for review; the files are emailed to the XL.net team when the card publishes."
           />
         </Suspense>
       )}

@@ -94,6 +94,12 @@ export function composeParagraphs(blocks: readonly RefusalBlock[]): string {
 
 /** A refusal, in the order the submitter reads it. */
 export interface RefusalParts {
+  /** What the intake CLEANING removed before this refusal was reached
+   * (§5.16 cleaning, 2026-08-29). First, ahead of the verdict lead: when the
+   * package we read was one .env we then dropped, "your zip needs an
+   * architecture document" is an accurate mechanism attached to the wrong
+   * instruction, and the submitter goes looking for a file they did send. */
+  cleaned?: string | null;
   /** What the package was READ as, when the refusal is a consequence of that
    * reading (kindVerdictSentence). The premise, never the fix. */
   lead?: string | null;
@@ -112,7 +118,12 @@ export interface RefusalParts {
 
 /** Compose one refusal body from its slots. */
 export function composeRefusal(parts: RefusalParts): string {
-  const head: RefusalBlock[] = [parts.lead, parts.diagnosis, parts.blocked];
+  const head: RefusalBlock[] = [
+    parts.cleaned,
+    parts.lead,
+    parts.diagnosis,
+    parts.blocked,
+  ];
   const instruction =
     typeof parts.instruction === "string" && parts.instruction.trim() !== ""
       ? parts.instruction.trim()

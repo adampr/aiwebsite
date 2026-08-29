@@ -14,7 +14,15 @@ export const dynamic = "force-dynamic";
 import { createHash } from "node:crypto";
 import { after } from "next/server";
 import { brainHealthy } from "@/lib/governance/brain";
-import { WORK_CAPS, workSubmissionsEnabled, type WorkKind } from "@/lib/work/config";
+import {
+  WORK_CAPS,
+  cleanedBeforeRefusalLead,
+  secretsCleanedMessage,
+  workSubmissionsEnabled,
+  type WorkKind,
+} from "@/lib/work/config";
+import { decideStorage } from "@/lib/work/cleaning";
+import { reportIntakeCleaningIssue } from "@/lib/report-issue";
 import {
   activeTitleClash,
   canProposeUpdate,
@@ -346,9 +354,16 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     if (!rescue.ok) return rescuePassError(rescue, name);
     pkg = outerLevelOnly(rescue);
   } else {
-    return workError(extracted.code, extracted.message, 422, {
-      ...(extracted.paths ? { paths: extracted.paths } : {}),
-    });
+    return workError(
+      extracted.code,
+      extracted.droppedPaths
+        ? `${cleanedBeforeRefusalLead(extracted.droppedPaths)}\n\n${extracted.message}`
+        : extracted.message,
+      422,
+      {
+        ...(extracted.paths ? { paths: extracted.paths } : {}),
+      }
+    );
   }
 
   // Reviewed-doc precedence, the same ladder for both kinds now: the
@@ -390,6 +405,22 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     };
   }
 
+  const storage = decideStorage({
+    pkg,
+    submittedArchive: bytes,
+    md:
+      mdFile && mdExtract?.ok
+        ? { extract: mdExtract, submitted: mdFile.bytes }
+        : null,
+  });
+  const mdForRow = mdMeta
+    ? { ...mdMeta, data: storage.mdData ?? mdMeta.data }
+    : undefined;
+  if (storage.cleaned && storage.failed)
+    console.warn(
+      `[work] archive NOT stored on update: cleaning rebuild failed (${storage.failed})`
+    );
+
   let child;
   try {
     child = await createSubmission({
@@ -418,8 +449,9 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       archiveName: name.slice(0, 200),
       archiveSha256: pkg.archiveSha256,
       archiveBytes: pkg.archiveBytes,
-      archiveData: bytes,
-      md: mdMeta,
+      archiveData: storage.archiveData,
+      md: mdForRow,
+      cleaningJson: storage.cleaningJson,
       parentId: id,
       // The ONLY call site that may arm this (web session, verified-staff
       // admin). The email lane's DKIM-authenticated From is spoofable and
@@ -444,10 +476,33 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
 
   // Durable second copy at accept time (archive-store.ts), same seam as the
   // create route; failure logs and never fails the update.
-  await storeArchiveFiles(child.id, row.title, [
-    { name: name.slice(0, 200), data: bytes },
-    ...(mdMeta ? [{ name: mdMeta.name, data: mdMeta.data }] : []),
-  ]);
+  if (storage.cleaned)
+    reportIntakeCleaningIssue({
+      // A FAILED rebuild gets its own key, not the routine cleaning one.
+      // Both are episodic per lane, so this adds one bounded row rather than a
+      // row per event, and it buys the thing that matters: "we accepted this
+      // and durably stored nothing" can no longer be overwritten by the next
+      // ordinary cleaning, whose last-wins detail would otherwise bury it.
+      key: storage.failed
+        ? "work-intake:cleaning-failed:web-update"
+        : "work-intake:cleaned:web-update",
+      subject: storage.failed
+        ? "A /work update (web) was cleaned but NO archive could be stored"
+        : "Credential-shaped content cleaned from a /work update (web)",
+      detail: [
+        `update row ${child.id} for card ${row.id} (${row.title})`,
+        `submitter ${user.email}`,
+        `cleaned: ${storage.cleanedPaths.join(", ")}`,
+        ...(storage.failed ? [`archive NOT stored: ${storage.failed}`] : []),
+      ].join("\n"),
+      emailed: false,
+    });
+
+  if (storage.archiveData)
+    await storeArchiveFiles(child.id, row.title, [
+      { name: name.slice(0, 200), data: storage.archiveData },
+      ...(mdForRow ? [{ name: mdForRow.name, data: mdForRow.data }] : []),
+    ]);
 
   let kicked: Awaited<ReturnType<typeof kickPanel>>;
   try {
@@ -466,6 +521,18 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       queued:
         kicked.outcome.status === "refused" ? kicked.outcome.reason : null,
       updates: id,
+      cleaned: storage.cleaned
+        ? {
+            // The UNCAPPED count and the real class: cleanedPaths is capped
+            // at 20 for display, so counting it tells a submitter who cleaned
+            // 30 files that we cleaned 20.
+            message: secretsCleanedMessage(
+              storage.cleanedCount,
+              storage.cleanedKind
+            ),
+            paths: storage.cleanedPaths,
+          }
+        : null,
     },
     202
   );

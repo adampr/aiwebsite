@@ -95,6 +95,7 @@ import {
 import { basename, join, relative, resolve } from "node:path";
 import { asc, sql } from "drizzle-orm";
 import { db, schema } from "../src/lib/db";
+import { parseCleaning } from "../src/lib/work/cleaning";
 import { sanitizeStoredName } from "../src/lib/work/archive-naming";
 import staticTitles from "../src/lib/work/static-titles.json";
 import {
@@ -273,6 +274,7 @@ async function main() {
       mdBytes: S.mdBytes,
       hasArchive: sql<boolean>`${S.archiveData} is not null`,
       hasMd: sql<boolean>`${S.mdData} is not null`,
+      cleaningJson: S.cleaningJson,
     })
     .from(S)
     .orderBy(asc(S.createdAt));
@@ -281,6 +283,9 @@ async function main() {
     createdAt: r.createdAt.toISOString(),
     hasArchive: r.hasArchive === true,
     hasMd: r.hasMd === true,
+    // A cleaned row's recorded sha is the SUBMITTED hash, so a local match is
+    // the uncleaned original; the planner refuses to propose filing it.
+    cleaned: parseCleaning(r.cleaningJson) !== null,
   }));
   const ledgerRaw = await db
     .select({

@@ -514,10 +514,115 @@ export const AMBIGUOUS_SKILL_DOC_MESSAGE =
   "SKILL.md. Rename the one the panel should review to SKILL.md, or attach " +
   "it in the second upload field, then resubmit.";
 
-export const SECRETS_DETECTED_MESSAGE =
-  "Your upload contains files that look like credentials, so it was not " +
-  "accepted and nothing was stored. Remove the listed files, rotate any real " +
-  "credential in them (it left your machine when you uploaded), then resubmit.";
+// SECRETS_DETECTED_MESSAGE was deleted on 2026-08-29, not reworded. It said
+// the upload "was not accepted and nothing was stored" and told the submitter
+// to resubmit, and all three of those are false under the cleaning lane. A
+// near-miss refusal string left lying around is how a stale message gets
+// reused by the next lane someone adds.
+//
+// What SURVIVES from it is the rotation duty, which is the important half and
+// is still true: cleaning our copy is not an un-leak. The bytes reached this
+// server exactly as sent, before any pattern ran.
+
+/** The rotation duty, web lanes. Said ONCE per message, and never with a
+ * matched value in it: the intake scan reports paths and rule names only. */
+export const ROTATE_ANYWAY_WEB =
+  "Rotate any real credential in them anyway: they reached our server exactly " +
+  "as you sent them, and cleaning our copy does not make them secret again.";
+
+/** The email twin. The second clause differs because on this lane it is
+ * concretely checkable by the person reading it: the message they sent still
+ * carries the attachment, in their Sent folder and at our mail provider. */
+export const ROTATE_ANYWAY_EMAIL =
+  "Rotate any real credential in them anyway: they reached our server exactly " +
+  "as you sent them, and the email you sent still carries them.";
+
+/** What the submitter is told when the intake scan cleaned their upload. The
+ * claim is deliberately narrow: we say what WE did to what WE keep, never that
+ * their package is now free of secrets. The scan only reads the documents it
+ * can read (.md and .txt under the inflate caps) plus every filename, so
+ * "your upload is clean now" would be a promise the mechanism cannot keep. */
+export type CleanedKind = "credential" | "personal" | "both";
+
+/** What the scan actually found, so the sentence is true. "Credentials" for a
+ * date of birth is wrong twice over: it misdescribes the finding, and it ends
+ * in an instruction to rotate something that cannot be rotated. */
+function cleanedNoun(kind: CleanedKind): string {
+  return kind === "personal"
+    ? "personal information"
+    : kind === "both"
+      ? "credentials and personal information"
+      : "credentials";
+}
+
+export function secretsCleanedMessage(
+  count: number,
+  kind: CleanedKind = "credential"
+): string {
+  const noun = cleanedNoun(kind);
+  const lead =
+    count === 1
+      ? `One file in your upload looked like it carried ${noun}, so it was cleaned before anything was stored or reviewed.`
+      : `${count} files in your upload looked like they carried ${noun}, so they were cleaned before anything was stored or reviewed.`;
+  // Rotation is a credential instruction. A personal identifier has nothing to
+  // rotate, so that lane gets the sentence that IS true of it.
+  return kind === "personal"
+    ? `${lead} ${REMOVED_NOT_UNSENT}`
+    : `${lead} ${ROTATE_ANYWAY_WEB}`;
+}
+
+/** The personal-information counterpart of the rotation duty: there is nothing
+ * to rotate, but the submitter should still know the values reached us. */
+export const REMOVED_NOT_UNSENT =
+  "They reached our server exactly as you sent them, so treat them as " +
+  "disclosed even though our stored copy no longer has them.";
+
+/** The receipt block for the email lane. Hoisted to the top of the reply
+ * rather than filed as an "Also:" note: every other adaptation note tells the
+ * sender what we did with their subject line, and this one tells them to go
+ * rotate a live credential. */
+export function cleaningReceiptBlock(
+  paths: string[],
+  kind: CleanedKind = "credential",
+  count = paths.length
+): string {
+  const noun = cleanedNoun(kind);
+  const lead =
+    count === 1
+      ? `About the ${noun} in your package: one file looked like it carried them, so I cleaned it before anything was stored or reviewed.`
+      : `About the ${noun} in your package: ${count} files looked like they carried them, so I cleaned them before anything was stored or reviewed.`;
+  return kind === "personal"
+    ? `${lead} ${REMOVED_NOT_UNSENT}`
+    : `${lead} ${ROTATE_ANYWAY_EMAIL}`;
+}
+
+/** When cleaning removed files and the submission then failed for a DIFFERENT
+ * reason, the refusal has to say so first. A package that was one .env would
+ * otherwise be told to attach the architecture document it never had, with no
+ * mention of the file we took out: an accurate mechanism wired to the wrong
+ * instruction, which is the worst kind of refusal this system can send. */
+export function cleanedBeforeRefusalLead(paths: string[]): string {
+  const list = paths.slice(0, 5).join(", ");
+  const lead =
+    paths.length === 1
+      ? `First, one thing about the upload itself: ${list} looked like it carried credentials, so it was cleaned out of the package before anything else happened.`
+      : `First, one thing about the upload itself: ${paths.length} files looked like they carried credentials (${list}), so they were cleaned out of the package before anything else happened.`;
+  return `${lead} ${ROTATE_ANYWAY_WEB}`;
+}
+
+/** The row note on the submitter's own status list. The dialog message dies
+ * with the dialog, and the person who most needs the instruction is the one
+ * who closed the tab; rotation has no expiry, so this shows on every status
+ * including published. */
+export const CLEANED_ROW_NOTE =
+  "Credentials were cleaned out of this upload when it arrived. Rotate any " +
+  "real credential in the files below if you have not already.";
+
+/** The admin-surface note. This is the one owner surface that exists for a row
+ * which is held or failed, and therefore never sends a retention email. */
+export const CLEANED_ADMIN_NOTE =
+  "Cleaned at intake: credential-shaped content was taken out of these files " +
+  "before this row was stored or reviewed. The submitter was told to rotate.";
 
 // ---------------------------------------------------------------------------
 // §5.16 panel stage vocabulary, progress copy, failure copy and the pure

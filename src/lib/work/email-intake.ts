@@ -38,9 +38,13 @@ import {
   MISSING_ARCH_DOC_MESSAGE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
+  cleanedBeforeRefusalLead,
+  cleaningReceiptBlock,
   workSubmissionsEnabled,
   type WorkKind,
 } from "./config";
+import { decideStorage } from "./cleaning";
+import { reportIntakeCleaningIssue } from "@/lib/report-issue";
 import { kindVerdictSentence } from "./classify";
 import {
   composeParagraphs,
@@ -1140,9 +1144,11 @@ export async function handleWorkEmail(
   // Hard failures are never rescued by a clean standalone .md, with ONE
   // exception added 2026-08-28 and implemented below: a program's missing
   // architecture document, which is the one failure the second file was
-  // invited to answer. Secrets, an unreadable archive and an over-complex one
-  // stay unrescuable, because a clean standalone must never launder a dirty
-  // archive.
+  // invited to answer. An unreadable archive and an over-complex one stay
+  // unrescuable, because a document cannot answer for a package that could
+  // not be read. Credentials left this list on 2026-08-29: they are cleaned
+  // rather than refused, so there is no longer a dirty-archive failure for a
+  // clean standalone to launder.
   //
   // This call is where the kind is DECIDED (owner directive 2026-08-28).
   // null means "read it off the package"; the update lane passes the
@@ -1234,15 +1240,16 @@ export async function handleWorkEmail(
         const rescue = await inspectArchive(bytes, "skill", {
           packageName: pkgName,
         });
-        // A rescue supplies a missing document; it never launders an archive.
-        // The skill pass opens a nested archive the program pass never looked
-        // at, so it can still find credentials or a corrupt inner package in
-        // there, and those refusals stand. They also REPLACE the refusal the
-        // first pass was about to send: a package holding a credential inside
-        // a bundled archive must be answered with the rotate-and-resubmit
-        // message, not with "your zip needs an architecture document", which
-        // would leave the submitter fixing the wrong thing and never told
-        // that a credential was found.
+        // A rescue supplies a missing document; it never makes an unreadable
+        // package readable. The skill pass opens a nested archive the program
+        // pass never looked at, so it can still find a corrupt inner package
+        // in there, and that refusal stands and REPLACES the refusal the first
+        // pass was about to send. Credentials inside that bundle are no longer
+        // part of this argument: since 2026-08-29 the bundle is dropped and
+        // the submission continues, so what used to be the strongest case
+        // here (answer with rotate-and-resubmit, not "your zip needs an
+        // architecture document") is now served by the cleaned lead that
+        // every refusal carries when a cleaning removed anything.
         if (rescue.ok) {
           // Inner-archive evidence must not reach a program row. The pin is a
           // means to get a manifest and a corpus back; the end is what a
@@ -1276,6 +1283,9 @@ export async function handleWorkEmail(
         extracted.code === "missing_architecture_doc" ||
           (extracted.code === "doc_too_short" && failedKind === "program")
           ? {
+              cleaned: extracted.droppedPaths
+                ? cleanedBeforeRefusalLead(extracted.droppedPaths)
+                : null,
               lead: verdictLead,
               diagnosis: extracted.message,
               // The attached document the submitter is about to be told to
@@ -1291,6 +1301,9 @@ export async function handleWorkEmail(
               instruction: MISSING_ARCH_DOC_MESSAGE,
             }
           : {
+              cleaned: extracted.droppedPaths
+                ? cleanedBeforeRefusalLead(extracted.droppedPaths)
+                : null,
               diagnosis: extracted.message,
               evidence: extracted.paths?.length
                 ? [`Files: ${extracted.paths.slice(0, 20).join(", ")}`]
@@ -1475,6 +1488,11 @@ export async function handleWorkEmail(
   let mdMeta:
     | { name: string; sha256: string; bytes: number; data: Buffer }
     | undefined;
+  /** The standalone document's own walk, hoisted so the storage decision below
+   * can see whether IT was cleaned. Null when no .md rode along, or when the
+   * reviewed document came out of the package instead (those bytes are the
+   * package walk's and are already cleaned). */
+  let mdWalk: ExtractOk | null = null;
   // WHEN THE STANDALONE WINS, and the one place this lane deliberately does
   // NOT match the web routes. There, the second upload always outranks the
   // package's own document for either kind, and that is right: the person
@@ -1495,6 +1513,7 @@ export async function handleWorkEmail(
       }
       docText = mdExtract.docText;
       corpus = mergeSkillCorpus(mdExtract, pkgWalk);
+      mdWalk = mdExtract;
       mdMeta = {
         name: mdFile.name.slice(0, 200),
         sha256: mdExtract.archiveSha256,
@@ -1618,6 +1637,19 @@ export async function handleWorkEmail(
   }
 
   // ── Persist + kick (route parity) ────────────────────────────────
+  // Route parity for the cleaning decision too: same function, same rule, so
+  // this lane cannot drift into storing what the web lanes clean.
+  const storage = decideStorage({
+    pkg: pkgWalk,
+    submittedArchive: bytes,
+    md: mdFile && mdWalk ? { extract: mdWalk, submitted: mdFile.bytes } : null,
+  });
+  const mdForRow = mdMeta
+    ? { ...mdMeta, data: storage.mdData ?? mdMeta.data }
+    : undefined;
+  if (storage.cleaned && storage.failed)
+    log(`archive NOT stored: cleaning rebuild failed (${storage.failed})`);
+
   let row;
   try {
     row = await createSubmission({
@@ -1635,8 +1667,9 @@ export async function handleWorkEmail(
       archiveName: pkgName.slice(0, 200),
       archiveSha256: pkgWalk.archiveSha256,
       archiveBytes: pkgWalk.archiveBytes,
-      archiveData: bytes,
-      md: mdMeta,
+      archiveData: storage.archiveData,
+      md: mdForRow,
+      cleaningJson: storage.cleaningJson,
       parentId: predecessor?.id ?? null,
     });
   } catch (err) {
@@ -1667,10 +1700,36 @@ export async function handleWorkEmail(
 
   // Durable second copy at accept time (archive-store.ts), route parity;
   // failure logs and never fails the submission.
-  await storeArchiveFiles(row.id, title, [
-    { name: pkgName.slice(0, 200), data: bytes },
-    ...(mdMeta ? [{ name: mdMeta.name, data: mdMeta.data }] : []),
-  ]);
+  if (storage.cleaned)
+    reportIntakeCleaningIssue({
+      // Keyed by SENDER DOMAIN, not by sender or submission: episodic, so a
+      // repeat from the same organisation bumps a count instead of opening a
+      // row, and the ledger's 500-row read window survives a mail loop.
+      // A FAILED rebuild gets its own key (route parity): both stay episodic
+      // per lane, and "accepted, nothing stored" must not be buried by the
+      // next ordinary cleaning's last-wins detail.
+      key: storage.failed
+        ? `work-intake:cleaning-failed:email:${senderDomain}`
+        : `work-intake:cleaned:email:${senderDomain}`,
+      subject: storage.failed
+        ? `A work submission emailed by ${senderDomain} was cleaned but NO archive could be stored`
+        : `Credential-shaped content cleaned from a work submission emailed by ${senderDomain}`,
+      detail: [
+        `submission ${row.id} (${title})`,
+        `sender ${sender}`,
+        `cleaned: ${storage.cleanedPaths.join(", ")}`,
+        ...(storage.failed ? [`archive NOT stored: ${storage.failed}`] : []),
+        "The receipt carried the rotate-anyway notice.",
+      ].join("\n"),
+      // This lane DOES reply, and the receipt below carries the notice.
+      emailed: true,
+    });
+
+  if (storage.archiveData)
+    await storeArchiveFiles(row.id, title, [
+      { name: pkgName.slice(0, 200), data: storage.archiveData },
+      ...(mdForRow ? [{ name: mdForRow.name, data: mdForRow.data }] : []),
+    ]);
 
   let kicked: Awaited<ReturnType<typeof kickPanel>>;
   try {
@@ -1759,12 +1818,31 @@ export async function handleWorkEmail(
               `About that title: your email had no usable subject line, so I took the card name from your message. Renaming and removing are both admin-only, so if it should be called something else, tell Adam and he can retitle the card once it publishes.`,
             ]
       : [];
+  // The cleaning block is HOISTED to sit directly under the first line, above
+  // even the title disclosure, and it is deliberately not an "Also:" note.
+  // Every other adaptation note in this reply tells the sender what happened
+  // to their subject line; this one tells them to go rotate a live credential,
+  // and the notes array renders at the very bottom under the blurb-length and
+  // kind-line trivia. Rotation does not go below trivia.
+  const cleaningBlock = storage.cleaned
+    ? [
+        ``,
+        cleaningReceiptBlock(
+          storage.cleanedPaths,
+          storage.cleanedKind,
+          storage.cleanedCount
+        ),
+        ``,
+        `Files: ${storage.cleanedPaths.join(", ")}`,
+      ]
+    : [];
   await sendTronEmail({
     to: sender,
     subject: replySubject,
     headers: replyHeaders,
     text: [
       receipt[0],
+      ...cleaningBlock,
       ...disclosure,
       ...receipt.slice(1),
       ...notes.flatMap((n) => [``, n]),

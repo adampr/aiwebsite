@@ -13,9 +13,13 @@ import { brainHealthy } from "@/lib/governance/brain";
 import {
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
+  cleanedBeforeRefusalLead,
+  secretsCleanedMessage,
   workSubmissionsEnabled,
   type WorkKind,
 } from "@/lib/work/config";
+import { decideStorage } from "@/lib/work/cleaning";
+import { reportIntakeCleaningIssue } from "@/lib/report-issue";
 import { kindVerdictSentence, type KindVerdict } from "@/lib/work/classify";
 import {
   activeTitleClash,
@@ -77,7 +81,8 @@ function kindRefusal(verdict: KindVerdict | undefined, message: string): string 
  * carries a program's architecture doc as often as a Skill's SKILL.md, so
  * that sentence would tell a program submitter about a Skill they never
  * mentioned. Everything else inspectBareMd can say (bytes that are not UTF-8,
- * credentials in the text) is already kind-neutral and passes through. */
+ * an unterminated private key it could not clean around) is already
+ * kind-neutral and passes through. */
 function standaloneDocError(err: ExtractErr): Response {
   const message =
     err.code === "doc_too_short"
@@ -464,12 +469,13 @@ export async function POST(req: Request): Promise<Response> {
   // the one stored on the row; nothing upstream of this line has an opinion.
   const extracted = await inspectArchive(bytes, null, { packageName: name });
   // The standalone is validated exactly ONCE, here, and deliberately after
-  // the package walk rather than where it is read: an archive carrying
-  // credentials has to keep refusing with the secrets message, which is the
-  // one a submitter must act on fastest, and checking the .md first would let
-  // "your document is too short" answer for a package that is worse than
-  // that. inspectBareMd is pure and cheap, so computing it for a package that
-  // then refuses costs nothing.
+  // the package walk rather than where it is read. The original reason was
+  // that a credential-bearing archive had to refuse with the secrets message
+  // before a document complaint could answer for it; credentials no longer
+  // refuse at all, but the ordering still earns its place, because a package
+  // that cannot be READ (unreadable zip, too complex) is a worse problem than
+  // a short document and must answer first. inspectBareMd is pure and cheap,
+  // so computing it for a package that then refuses costs nothing.
   const mdExtract = mdFile ? inspectBareMd(mdFile.name, mdFile.bytes) : null;
 
   let pkg: ExtractOk;
@@ -515,25 +521,33 @@ export async function POST(req: Request): Promise<Response> {
     if (!mdExtract.ok) return standaloneDocError(mdExtract);
     const rescue = await inspectArchive(bytes, "skill", { packageName: name });
     // The skill pass opens a single inner .skill that the program pass never
-    // looked at, so it can still fail on that inner archive or on credentials
-    // found inside it. Those refusals stand: a rescue supplies a missing
-    // document, it never launders an archive.
+    // looked at, so it can still fail on that inner archive. Those refusals
+    // stand: a rescue supplies a missing document, it never makes an
+    // unreadable package readable. It no longer has anything to say about
+    // credentials: since 2026-08-29 an inner archive holding them is DROPPED
+    // and the walk continues, on this pass exactly as on the first.
     if (!rescue.ok) return rescuePassError(rescue, name);
     pkg = outerLevelOnly(rescue);
     kind = extracted.kind;
   } else {
-    // Hard failures (secrets, invalid archive, too complex, and a program doc
-    // failure with nothing attached that could have carried the document):
-    // reject and instruct; NEVER rescued by a standalone .md beyond the one
-    // case above (a clean standalone must not launder a dirty archive).
+    // Hard failures (invalid archive, too complex, and a program doc failure
+    // with nothing attached that could have carried the document): reject and
+    // instruct; NEVER rescued by a standalone .md beyond the one case above,
+    // because a document cannot answer for a package that could not be read.
+    // Credentials are NOT in this list any more: they are cleaned, not
+    // refused, so a refusal reached after a cleaning leads with what the
+    // cleaning removed (cleanedBeforeRefusalLead) instead.
     const docFailure =
       extracted.code === "missing_architecture_doc" ||
       (extracted.code === "doc_too_short" && extracted.kind === "program");
+    const body = docFailure
+      ? kindRefusal(extracted.kindVerdict, extracted.message)
+      : extracted.message;
     return workError(
       extracted.code,
-      docFailure
-        ? kindRefusal(extracted.kindVerdict, extracted.message)
-        : extracted.message,
+      extracted.droppedPaths
+        ? `${cleanedBeforeRefusalLead(extracted.droppedPaths)}\n\n${body}`
+        : body,
       422,
       // No `instructions` twin: `extracted.message` for a program document
       // failure IS the instruction paragraph (extract.ts sets
@@ -598,6 +612,31 @@ export async function POST(req: Request): Promise<Response> {
     };
   }
 
+  // What we are allowed to keep. On the common path this hands back the
+  // submitted bytes untouched; when the intake scan found something it hands
+  // back the cleaned rebuild, and when that rebuild could not be verified it
+  // hands back null and we store no archive at all rather than the bytes we
+  // were told to clean.
+  const storage = decideStorage({
+    pkg,
+    submittedArchive: bytes,
+    // ONLY the standalone-upload branch has its own walk to carry a cleaning
+    // record. When mdMeta was built from pkg.docRawBytes instead (the doc came
+    // from inside the package), those bytes are already the cleaned ones, so
+    // there is nothing to decide and mdData below falls through to them.
+    md:
+      mdFile && mdExtract?.ok
+        ? { extract: mdExtract, submitted: mdFile.bytes }
+        : null,
+  });
+  const mdForRow = mdMeta
+    ? { ...mdMeta, data: storage.mdData ?? mdMeta.data }
+    : undefined;
+  if (storage.cleaned && storage.failed)
+    console.warn(
+      `[work] archive NOT stored: cleaning rebuild failed (${storage.failed})`
+    );
+
   let row;
   try {
     row = await createSubmission({
@@ -620,9 +659,12 @@ export async function POST(req: Request): Promise<Response> {
     archiveSha256: pkg.archiveSha256,
     archiveBytes: pkg.archiveBytes,
     // Retained until the owner retention email sends on publish (§5.16);
-    // non-published rows drop them with the row.
-      archiveData: bytes,
-      md: mdMeta,
+    // non-published rows drop them with the row. Since 2026-08-29 this is what
+    // the cleaning decided, which is the submitted bytes when nothing was
+    // found and null when a rebuild could not be verified.
+      archiveData: storage.archiveData,
+      md: mdForRow,
+      cleaningJson: storage.cleaningJson,
     });
   } catch (err) {
     // The partial unique index closes the double-click race the pre-check
@@ -641,10 +683,41 @@ export async function POST(req: Request): Promise<Response> {
   // Durable second copy at accept time (archive-store.ts): the same file
   // set the row's bytea carries, so publish-time verification can clear the
   // blob. A store failure logs and never fails the submission.
-  await storeArchiveFiles(row.id, title, [
-    { name: name.slice(0, 200), data: bytes },
-    ...(mdMeta ? [{ name: mdMeta.name, data: mdMeta.data }] : []),
-  ]);
+  if (storage.cleaned)
+    reportIntakeCleaningIssue({
+      // Episodic: one row per lane, not per submission. A per-submission or
+      // per-rule key would fill the ledger's 500-row read window and evict
+      // every other open issue from the standing triage.
+      // A FAILED rebuild gets its own key, not the routine cleaning one.
+      // Both are episodic per lane, so this adds one bounded row rather than a
+      // row per event, and it buys the thing that matters: "we accepted this
+      // and durably stored nothing" can no longer be overwritten by the next
+      // ordinary cleaning, whose last-wins detail would otherwise bury it.
+      key: storage.failed
+        ? "work-intake:cleaning-failed:web-create"
+        : "work-intake:cleaned:web-create",
+      subject: storage.failed
+        ? "A /work submission (web create) was cleaned but NO archive could be stored"
+        : "Credential-shaped content cleaned from a /work submission (web create)",
+      detail: [
+        `submission ${row.id} (${title})`,
+        `submitter ${user.email}`,
+        `cleaned: ${storage.cleanedPaths.join(", ")}`,
+        ...(storage.failed ? [`archive NOT stored: ${storage.failed}`] : []),
+        "The submitter was shown the rotate-anyway notice.",
+      ].join("\n"),
+      // The web lanes send no mail here, so [never-emailed] in the triage
+      // listing is accurate rather than an alarm.
+      emailed: false,
+    });
+
+  // Never the submitted bytes: this is the durable copy, so it gets exactly
+  // what the row got. A failed rebuild stores nothing here either.
+  if (storage.archiveData)
+    await storeArchiveFiles(row.id, title, [
+      { name: name.slice(0, 200), data: storage.archiveData },
+      ...(mdForRow ? [{ name: mdForRow.name, data: mdForRow.data }] : []),
+    ]);
 
   // The row exists; a kick failure must degrade to "queued", never 500 the
   // submission out from under the user (2026-07-30 incident: a claim-query
@@ -671,6 +744,21 @@ export async function POST(req: Request): Promise<Response> {
       status: kicked.outcome.status === "running" ? "running" : "received",
       queued:
         kicked.outcome.status === "refused" ? kicked.outcome.reason : null,
+      // The cleaning disclosure. The submitter has to learn two things a
+      // success response does not normally carry: that we changed their files,
+      // and that they still need to rotate whatever was in them.
+      cleaned: storage.cleaned
+        ? {
+            // The UNCAPPED count and the real class: cleanedPaths is capped
+            // at 20 for display, so counting it tells a submitter who cleaned
+            // 30 files that we cleaned 20.
+            message: secretsCleanedMessage(
+              storage.cleanedCount,
+              storage.cleanedKind
+            ),
+            paths: storage.cleanedPaths,
+          }
+        : null,
     },
     202
   );

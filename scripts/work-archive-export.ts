@@ -34,6 +34,7 @@ import {
   readStoredArchive,
 } from "../src/lib/work/archive-store";
 import { sanitizeStoredName } from "../src/lib/work/archive-naming";
+import { parseCleaning } from "../src/lib/work/cleaning";
 
 function usage(msg: string): never {
   console.error(`${msg}\n\nUsage: npm run work:archive -- <uuid> [--out <dir>] [--list]`);
@@ -66,8 +67,16 @@ async function main() {
     if (slot === "01" && row.mdName) return row.mdName;
     return fileName;
   };
+  // For a CLEANED row (§5.16, 2026-08-29) the row's stamped sha describes the
+  // package as SUBMITTED, while the bytes on disk are the cleaned rebuild, so
+  // comparing them would print a MISMATCH on every cleaned row and teach the
+  // operator to ignore the one alarm that matters. The cleaned hashes are
+  // recorded on the row for exactly this.
+  const rowCleaning = parseCleaning(row.cleaningJson);
   const stampedSha = (name: string): string | null =>
-    name === row.mdName ? row.mdSha256 : row.archiveSha256;
+    name === row.mdName
+      ? (rowCleaning?.md?.sha256 ?? row.mdSha256)
+      : (rowCleaning?.archive?.sha256 ?? row.archiveSha256);
 
   const recovered: {
     name: string;
@@ -137,6 +146,20 @@ async function main() {
   });
 
   if (recovered.length === 0 && missing.length === 0) {
+    // A cleaned row with a failed rebuild has a REASON for holding nothing, and
+    // it is not the legacy one. Printing the pre-2026-07-29 explanation there
+    // sends an operator looking for an admin cleanup stamp that does not exist,
+    // for a row whose emptiness was a deliberate decision.
+    if (rowCleaning?.failed) {
+      console.log(
+        `\nNothing was retained for this row BY DECISION: the upload carried ` +
+          `credential-shaped content, the cleaned rebuild could not be verified ` +
+          `(${rowCleaning.failed}), and the submitted bytes were deliberately ` +
+          `not stored. The submitter's own copy is the only one, and they were ` +
+          `told to rotate.`
+      );
+      process.exit(0);
+    }
     console.log(
       "\nNo retained bytes for this row in the archive store or on the row. " +
         "Rows published before the 2026-07-29 retention change never stored " +

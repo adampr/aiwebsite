@@ -79,7 +79,7 @@ export function SubmissionForm({
   updateTarget = null,
   trackHref = "/work/submit",
   creditTeamName = "the XL.net team",
-  retentionLine = "Uploads with credential files are rejected. Only document text is kept for review; the original files are emailed to Adam when the card publishes.",
+  retentionLine = "Files that look like credentials are cleaned out of your upload before it is stored. Only document text is kept for review; the files are emailed to Adam when the card publishes.",
   lane = "internal",
 }: SubmissionFormProps) {
   const [title, setTitle] = useState("");
@@ -104,6 +104,10 @@ export function SubmissionForm({
   const [done, setDone] = useState<null | {
     id: string | null;
     queued: string | null;
+    /** Set when the intake scan cleaned the upload. Rendered on BOTH surfaces:
+     * the submitter has to learn that we changed their files and that they
+     * still need to rotate whatever was in them. */
+    cleaned: { message: string; paths: string[] } | null;
   }>(null);
   const pkgRef = useRef<HTMLInputElement>(null);
   const mdRef = useRef<HTMLInputElement>(null);
@@ -222,6 +226,7 @@ export function SubmissionForm({
         id?: string;
         error?: { code?: string; message?: string; paths?: string[] };
         queued?: string | null;
+        cleaned?: { message: string; paths: string[] } | null;
       } | null;
       if (!res.ok) {
         // Server 422s carry instructional copy; render it verbatim.
@@ -231,7 +236,11 @@ export function SubmissionForm({
         setServerPaths(data?.error?.paths ?? []);
         return;
       }
-      setDone({ id: data?.id ?? null, queued: data?.queued ?? null });
+      setDone({
+        id: data?.id ?? null,
+        queued: data?.queued ?? null,
+        cleaned: data?.cleaned ?? null,
+      });
       if (context === "page") resetForm();
       onSubmitted?.(data?.id);
     } catch {
@@ -256,6 +265,7 @@ export function SubmissionForm({
       <DialogDone
         id={done.id}
         queued={done.queued}
+        cleaned={done.cleaned}
         lane={lane}
         trackHref={trackHref}
         onAnother={() => {
@@ -275,6 +285,7 @@ export function SubmissionForm({
             {updateTarget ? OK_NOTICE_UPDATE : PAGE_NOTICE}
           </p>
           <p className="text-xs text-faint">{EMAIL_PROMISE}</p>
+          {done.cleaned && <CleanedNotice cleaned={done.cleaned} />}
         </div>
       )}
       {updateTarget ? (
@@ -599,9 +610,36 @@ export function SubmissionForm({
  * inside this branch, focus was yanked back roughly six times a minute for
  * the whole review. The WRAPPER takes focus, never the role="status" element:
  * focusing a live region makes screen readers announce it twice. */
+/** The intake-cleaning disclosure, shared by both success surfaces.
+ *
+ * role="alert", not "status": in the dialog this sits in the same subtree as
+ * the live review tracker, which repaints several times a minute, and a polite
+ * region competing with that is a region nobody hears. This is also the only
+ * copy in the whole flow that asks the submitter to go and do something
+ * outside the site, which is what earns the interruption. */
+function CleanedNotice({
+  cleaned,
+}: {
+  cleaned: { message: string; paths: string[] };
+}) {
+  return (
+    <div role="alert" className="space-y-1">
+      <p className="text-sm">{cleaned.message}</p>
+      {cleaned.paths.length > 0 && (
+        <ul className="mono text-xs text-faint">
+          {cleaned.paths.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function DialogDone({
   id,
   queued,
+  cleaned,
   lane,
   trackHref,
   onAnother,
@@ -609,6 +647,7 @@ function DialogDone({
 }: {
   id: string | null;
   queued: string | null;
+  cleaned: { message: string; paths: string[] } | null;
   lane: "internal" | "company";
   trackHref: string;
   onAnother: () => void;
@@ -621,6 +660,11 @@ function DialogDone({
   return (
     <div ref={wrapRef} tabIndex={-1} className="space-y-5">
       <p className="text-sm">Received. This updates on its own while you watch.</p>
+      {/* ABOVE the tracker on purpose. The wrapper takes focus on mount, so a
+          screen reader reaches the cleaning notice before the live region
+          starts repainting, and a sighted reader meets the one instruction
+          that needs acting on before the progress copy. */}
+      {cleaned && <CleanedNotice cleaned={cleaned} />}
       {/* initialQueueReason is the reason from the 202 body, so the FIRST
           second reads correctly, before any poll has run. */}
       {id && (

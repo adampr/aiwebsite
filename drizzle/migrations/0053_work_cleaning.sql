@@ -1,0 +1,11 @@
+-- §5.16 intake cleaning (owner directive 2026-08-29): an upload carrying
+-- credentials or high-risk personal identifiers is CLEANED and accepted
+-- instead of refused. This column records what the scan removed and the
+-- hashes of what was kept in its place.
+--
+-- Additive and nullable with no default, so the deploy's rsync -> migrate ->
+-- build -> cutover ordering is safe in both directions: the old code running
+-- during the migrate never selects it, and NULL correctly means "the stored
+-- artifact IS the submitted artifact" for every row that already exists, so
+-- there is no backfill.
+ALTER TABLE "work_submissions" ADD COLUMN "cleaning_json" text;

@@ -106,6 +106,11 @@ export type RowFacts = {
   hasArchive: boolean;
   /** md_data is not null. */
   hasMd: boolean;
+  /** The row was CLEANED at intake (§5.16, 2026-08-29): its recorded sha256
+   * is the hash of the package as SUBMITTED, and the bytes that were stored
+   * are a cleaned rebuild. A local file matching that hash is therefore the
+   * UNCLEANED original, and filing it would restore removed material. */
+  cleaned?: boolean;
 };
 
 export type LedgerFacts = {
@@ -161,6 +166,9 @@ export type SlotVerdict =
    * per-slot ledger gate of work:import refuses a slot with a live row,
    * so the wrong store file must be deleted in the console first. */
   | "store-mismatch"
+  /** The store holds the cleaned rebuild and the row records the submitted
+   * hash: correct by construction, never a recovery target. */
+  | "store-cleaned"
   /** Only admin-DELETED ledger rows stand at this slot: cleanup is FINAL,
    * never recoverable by script. */
   | "admin-deleted"
@@ -223,6 +231,18 @@ export function slotCoverage(row: RowFacts, ledger: LedgerFacts[]): SlotCoverage
     const atPath = live.find((l) => l.relPath === relPath);
     if (atPath) {
       if (sha256 === null) return { ...base, verdict: "store-live" as const, note: null };
+      // A CLEANED row lands here by construction and is NOT a mismatch in the
+      // sense this verdict was written for: the recorded sha describes the
+      // package as SUBMITTED while the store holds the cleaned rebuild, so the
+      // store has exactly the right bytes. Blaming "a forced import or a
+      // differing backfill" on every cleaned row is a false accusation, and it
+      // contradicts the corrective reason printed further down the report.
+      if (row.cleaned === true)
+        return {
+          ...base,
+          verdict: "store-cleaned" as const,
+          note: `the store holds the CLEANED rebuild (${atPath.sha256}); the recorded ${sha256} is the package as submitted, which was never stored`,
+        };
       return {
         ...base,
         verdict: "store-mismatch" as const,
@@ -385,11 +405,27 @@ export function searchFolder(
 export function planSlotRecovery(
   cov: SlotCoverage,
   localIndex: LocalIndex,
-  rowHoldsBytes = false
+  rowHoldsBytes = false,
+  rowCleaned = false
 ): SlotRecovery {
   const found = searchFolder(cov, localIndex);
   const base = { ...cov, recovery: found.recovery, file: found.file };
   const original = found.recovery === "recoverable" && found.file ? ` The true original IS in this folder: ${found.file.path}.` : "";
+  // A cleaned row is NEVER ready, and the sha match is exactly why. The
+  // recorded hash describes the submitter's own file, deliberately, so the
+  // provenance check that normally proves a recovery here would instead be
+  // proving that the local file is the copy we removed material from.
+  if (rowCleaned)
+    return {
+      ...base,
+      flag: null,
+      ready: false,
+      reason:
+        `this row was cleaned at intake, so the recorded sha256 is the hash of the package AS SUBMITTED, not of what was stored; ` +
+        `a local file matching it is the uncleaned original and filing it would restore removed material. ` +
+        `work:import refuses it without --force.` +
+        (original || ` ${found.reason}`),
+    };
   if (cov.verdict === "store-mismatch")
     return {
       ...base,
@@ -436,7 +472,7 @@ export function planRecovery(
     const holdsBytes = row.hasArchive || row.hasMd;
     const open = slots
       .filter((s) => s.verdict === "missing" || s.verdict === "store-mismatch")
-      .map((s) => planSlotRecovery(s, localIndex, holdsBytes));
+      .map((s) => planSlotRecovery(s, localIndex, holdsBytes, row.cleaned === true));
     const flags = open.filter((m) => m.ready && m.flag).map((m) => m.flag as string);
     return {
       row,

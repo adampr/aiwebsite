@@ -11,7 +11,16 @@ import {
   mergeSkillCorpus,
   nonZipMessage,
   proseLength,
+  type ExtractOk,
 } from "../src/lib/work/extract";
+import {
+  SANITIZE_RULES,
+  placeholderFor,
+  sanitizeText,
+  textLooksSecret,
+} from "../src/lib/work/sanitize";
+import { rebuildWithout } from "../src/lib/work/sanitize-archive";
+import { decideStorage } from "../src/lib/work/cleaning";
 import {
   classifyWorkKind,
   kindVerdictSentence,
@@ -22,6 +31,7 @@ import {
   lintCard,
   quoteInCorpus,
   slugForTitle,
+  stringViolations,
   wordCount,
 } from "../src/lib/work/lint";
 import { friendlyHeldReason } from "../src/lib/work/view";
@@ -184,12 +194,33 @@ async function main() {
     "doc-less skill package is ok-with-docMissing"
   );
 
+  // CLEANED, NOT REFUSED (owner directive 2026-08-29). The whole point of the
+  // round: the submission is accepted, the .env is gone from the stored
+  // archive AND from the manifest, and the rebuilt bytes are what a caller may
+  // persist.
   const secretFile = await inspectArchive(
     await zipOf({ "architecture.md": PROSE, ".env": "X=1" }),
     "program"
   );
-  assert.ok(!secretFile.ok && secretFile.code === "secrets_detected");
-  assert.deepEqual(!secretFile.ok && secretFile.paths, [".env"]);
+  assert.ok(secretFile.ok, "a package carrying a .env is accepted and cleaned");
+  if (secretFile.ok) {
+    assert.deepEqual(
+      secretFile.cleaning?.droppedPaths.map((d) => d.path),
+      [".env"]
+    );
+    assert.ok(
+      !secretFile.manifest.some((m) => m.path === ".env"),
+      "a dropped entry leaves the manifest: it describes the STORED artifact"
+    );
+    const rebuilt = await JSZip.loadAsync(secretFile.cleaning!.stored!.bytes);
+    assert.ok(!rebuilt.files[".env"], "the stored archive does not hold it");
+    assert.ok(rebuilt.files["architecture.md"], "everything else survives");
+    assert.notEqual(
+      secretFile.cleaning!.stored!.sha256,
+      secretFile.archiveSha256,
+      "archiveSha256 still describes what the submitter SENT (provenance)"
+    );
+  }
 
   // Fixture assembled at runtime so the repo's own pre-commit secrets gate
   // (which scans staged literals) does not trip on a deliberately fake key.
@@ -197,11 +228,50 @@ async function main() {
   const secretContent = await inspectArchive(
     await zipOf({
       "architecture.md": PROSE,
-      "notes.md": fakeSecretLine,
+      // Real prose AROUND the credential, which is the ordinary shape: a
+      // runbook that happens to paste a key into one line. A file that is
+      // NOTHING but the credential takes the gut-guard path instead, asserted
+      // just below.
+      "notes.md": `${PROSE}\n\n${fakeSecretLine}\n`,
     }),
     "program"
   );
-  assert.ok(!secretContent.ok && secretContent.code === "secrets_detected");
+  assert.ok(secretContent.ok, "an inline credential is cleaned, not refused");
+  if (secretContent.ok) {
+    assert.deepEqual(secretContent.cleaning?.redactedPaths, ["notes.md"]);
+    // The value is gone from all three places it could have reached: the
+    // corpus the panel reads, the stored archive, and the manifest is intact.
+    const corpusText = secretContent.corpus.map((c) => c.text).join("\n");
+    assert.ok(!corpusText.includes("abcdefgh12345678"), "corpus is clean");
+    assert.ok(corpusText.includes("[redacted:"), "and says so where it cut");
+    const rebuilt = await JSZip.loadAsync(secretContent.cleaning!.stored!.bytes);
+    const stored = await rebuilt.files["notes.md"].async("string");
+    assert.ok(!stored.includes("abcdefgh12345678"), "stored archive is clean");
+    assert.ok(
+      secretContent.manifest.some((m) => m.path === "notes.md"),
+      "a REDACTED file stays in the manifest: it is still in the archive"
+    );
+  }
+
+  // THE GUT GUARD. A supporting file that is mostly placeholder is not
+  // evidence, and handing the panel a page of redaction tokens is worse than
+  // handing it nothing. It leaves the CORPUS but keeps its manifest row and
+  // stays in the stored archive: it is still a file the package contains.
+  const gutted = await inspectArchive(
+    await zipOf({ "architecture.md": PROSE, "notes.md": fakeSecretLine }),
+    "program"
+  );
+  assert.ok(gutted.ok, "a mostly-credential support file does not refuse");
+  if (gutted.ok) {
+    assert.ok(
+      !gutted.corpus.some((c) => c.path === "notes.md"),
+      "a gutted file is not offered to the panel as evidence"
+    );
+    assert.ok(
+      gutted.manifest.some((m) => m.path === "notes.md"),
+      "but the manifest still describes the archive truthfully"
+    );
+  }
 
   // JSZip normalizes "../" away on write, so byte-patch an equal-length
   // placeholder to fabricate the hostile archive a real attacker would send.
@@ -821,11 +891,25 @@ async function main() {
     return zip.generateAsync({ type: "nodebuffer" });
   })();
   const dirty = await inspectArchive(dirtyInner, "skill");
-  assert.ok(!dirty.ok && dirty.code === "secrets_detected", "inner secret rejected");
-  assert.ok(
-    !dirty.ok && dirty.paths?.some((p) => p === "my-skill.skill!/.env"),
-    "inner secret path is prefixed"
-  );
+  // The WHOLE bundled archive leaves, rather than being rewritten and
+  // re-embedded: rewriting a nested archive would be the first code here to
+  // treat one as writable, and it would cost a second full rebuild inside the
+  // one already running. Nothing read out of it may be reviewed either, so the
+  // row falls back to the doc-missing lane the standalone .md field rescues.
+  assert.ok(dirty.ok, "a credential inside a bundled archive no longer refuses");
+  if (dirty.ok) {
+    assert.equal(dirty.docMissing, "missing", "its documents are not reviewed");
+    assert.deepEqual(
+      dirty.cleaning?.droppedPaths.map((d) => d.path),
+      ["my-skill.skill"]
+    );
+    const rebuilt = await JSZip.loadAsync(dirty.cleaning!.stored!.bytes);
+    assert.ok(!rebuilt.files["my-skill.skill"], "the bundle is not stored");
+    assert.ok(
+      !dirty.manifest.some((m) => m.path.startsWith("my-skill.skill")),
+      "and neither it nor its inner rows remain in the manifest"
+    );
+  }
 
   // Short boilerplate-adjacent .md does not dead-end resolution: floor-gated
   // candidacy falls through to the inner SKILL.md.
@@ -1917,14 +2001,17 @@ async function main() {
     assert.equal(rescueSecond.manifest.length, 3, "the rescue pass carries the manifest");
     assert.equal(rescueSecond.archiveSha256.length, 64);
   }
-  // A rescue supplies a missing document; it never launders an archive.
+  // The rescue pass cleans on the same terms as the first pass. It used to
+  // refuse here ("a rescue never launders an archive"); now nothing refuses
+  // for carrying credentials on any pass, and the .env is simply gone from
+  // what would be stored.
   const dirtyPkg = await zipOf({ "app/package.json": "{}", ".env": "SECRET=1" });
   for (const k of [null, "skill"] as const) {
     const r = await inspectArchive(dirtyPkg, k, { packageName: "t.zip" });
-    assert.ok(
-      !r.ok && r.code === "secrets_detected",
-      "credentials refuse on the rescue pass too"
-    );
+    assert.ok(r.ok || r.droppedPaths?.includes(".env"),
+      "the rescue pass cleans, and any refusal still names what it removed");
+    if (r.ok)
+      assert.deepEqual(r.cleaning?.droppedPaths.map((d) => d.path), [".env"]);
   }
 
   // A bare .md carries the bare_document verdict, not a hand-written literal.
@@ -2060,6 +2147,9 @@ async function main() {
     // 2026-08-27 "Time saved per month" round and rides statusView like the
     // rest. null is the honest default: not reported.
     timeSavedMinutes: null as number | null,
+    // §5.16 cleaning (2026-08-29): null means the stored artifact IS the
+    // submitted one, which is the state of every row that predates the round.
+    cleaningJson: null as string | null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -5720,6 +5810,25 @@ async function main() {
       "L\n\nD\n\nB\n\nI\n\nE",
       "slot order: lead, diagnosis, blocked, instruction, evidence"
     );
+    // The `cleaned` slot (2026-08-29) sits AHEAD of the verdict lead, and
+    // nothing above defends that position: the assertion here pins C before L
+    // so a later refactor cannot quietly reorder it. The ordering is a copy
+    // ruling, not a formatting one. An action taken on the submitter's own
+    // files outranks the explanation of the verdict, because a package that
+    // was one .env must learn what was removed before it is told to attach a
+    // document it never had.
+    assert.equal(
+      composeRefusal({
+        cleaned: "C",
+        lead: "L",
+        diagnosis: "D",
+        blocked: "B",
+        instruction: "I",
+        evidence: ["E"],
+      }),
+      "C\n\nL\n\nD\n\nB\n\nI\n\nE",
+      "slot order: cleaned FIRST, then lead, diagnosis, blocked, instruction, evidence"
+    );
     assert.equal(
       composeRefusal({ diagnosis: "msg", evidence: ["Files: a, b"] }),
       ["msg", "", "Files: a, b"].join("\n"),
@@ -5858,6 +5967,363 @@ async function main() {
     );
     assert.ok(!/[–—]/.test(refusalSrc), "no em or en dashes in refusal.ts");
   }
+
+  // ───────────────────────────────────────────────────────────────────
+  // §5.16 INTAKE CLEANING (owner directive 2026-08-29). The properties the
+  // whole round rests on; each one is here because losing it silently
+  // reintroduces the exact failure it guards.
+  // ───────────────────────────────────────────────────────────────────
+
+  // C1. THE DETECTOR AND THE CLEANER CANNOT DISAGREE. textLooksSecret is
+  // derived from sanitizeText, so a pattern that detects without redacting is
+  // unrepresentable. Pin it on every rule the module ships.
+  for (const rule of SANITIZE_RULES) {
+    assert.ok(
+      /^[a-z-]+$/.test(rule.id),
+      `rule id ${rule.id} must be lowercase-kebab and DIGIT-FREE: it is the
+       placeholder label, and a digit would trip lint's phone-number ban`
+    );
+  }
+
+  // C2. THE PLACEHOLDER'S OWN VOCABULARY IS CLEAN. A card quoting the marker
+  // is refused (C3), and it should be refused FOR THAT REASON: the violation a
+  // reviewer reads has to name the marker, not send them chasing a phantom
+  // phone number. This is what forces rule ids to stay digit-free and
+  // lowercase-kebab, since a digit in a label would land inside the
+  // phone-number ban and an "@" inside the email one.
+  for (const rule of SANITIZE_RULES) {
+    const token = placeholderFor(rule.id);
+    const violations = stringViolations("summary", token);
+    assert.equal(
+      violations.length,
+      1,
+      `placeholder ${token} should trip exactly one ban, got: ${violations.join("; ")}`
+    );
+    assert.ok(
+      violations[0].includes("redaction marker"),
+      `placeholder ${token} must be refused as a marker, not as something else`
+    );
+  }
+
+  // C3. ...but a card that QUOTES the marker is refused, in every field
+  // INCLUDING the title. The panel reads a cleaned corpus, so the token sits
+  // in the evidence looking like submitter text; a card is about the tool,
+  // never about what was taken out of the package.
+  for (const field of ["title", "summary"]) {
+    assert.ok(
+      stringViolations(field, `Tool [redacted:private-key] here`).some((v) =>
+        v.includes("redaction marker")
+      ),
+      `${field} must refuse the intake redaction marker`
+    );
+  }
+
+  // PEM armor assembled at runtime, never as a source literal: the repo's
+  // pre-commit secrets gate scans staged lines and a literal block reads to it
+  // as a real key. Same reason the API_KEY fixtures above are joined.
+  const PEM_B = `-----BEGIN RSA ${["PRIVATE", "KEY"].join(" ")}-----`;
+  const PEM_E = `-----END RSA ${["PRIVATE", "KEY"].join(" ")}-----`;
+
+  // C4. IDEMPOTENCE. Cleaning a cleaned file changes nothing. Two rules used
+  // to re-match their own output (a written connection-string placeholder
+  // reparses as user:pass; the date-of-birth token contains its own label),
+  // which is why the transform masks existing placeholders before scanning
+  // rather than tuning each rule.
+  const idempotenceCorpus = [
+    "postgres://[redacted:connection-string-password]@host/db",
+    "date-of-birth [redacted:date-of-birth] and DOB 1990-01-02",
+    `${["API", "KEY"].join("_")} = "abcdefgh12345678"`,
+    "SSN 123-45-6789 and card 4111 1111 1111 1111",
+    `${PEM_B}\nAAAA\n${PEM_E}`,
+  ];
+  for (const text of idempotenceCorpus) {
+    const once = sanitizeText(text).text;
+    assert.equal(
+      sanitizeText(once).changed,
+      false,
+      `sanitize must be idempotent for ${JSON.stringify(text.slice(0, 40))}`
+    );
+  }
+
+  // C5. THE RULING THAT DEFINES THE ROUND: ordinary work contact details are
+  // NOT personal information to be redacted. This corpus is XL.net's own
+  // tooling documentation, where the address IS the subject matter, and the
+  // panel writes the published card from exactly this text. Measured before
+  // ruling: naive email+phone patterns fire 75 times on 1 MB of this repo's
+  // own docs, every hit legitimate. Deleting these assertions to "also redact
+  // emails" would quietly turn working documents into nonsense.
+  for (const keep of [
+    "Escalate to 312-555-0142 or email flester@xl.net for the export.",
+    "Tron.Netter@ai.xl.net handles inbound at (872) 350-4325.",
+    "Customer account number 4471203 in ConnectWise needs review.",
+    "Open Passportal and copy the entry name only.",
+    "Hire date 2019-03-01 stays, and so does commit a1b2c3d4e5f6a7b8c9d0e1f2.",
+    // The label-anchored rules are case-INSENSITIVE, so a value class of
+    // [A-Z0-9] happily matches ordinary words. Measured over 1.3 MB of this
+    // repo's own prose, the driver-licence rule's only hit in the entire
+    // corpus was the word "Ordinary" in a sentence that just mentions the
+    // document type. A real licence number carries digits; the lookahead is
+    // what keeps that true.
+    "Check the driver licence and Ordinary paperwork before dispatch.",
+    `${["PASS", "WORD"].join("")} = "<your-password-here>"`,
+  ]) {
+    assert.equal(
+      sanitizeText(keep).changed,
+      false,
+      `must survive untouched: ${keep}`
+    );
+  }
+
+  // ...but a real licence number, which carries digits, still goes.
+  assert.ok(
+    sanitizeText("Driver licence number D1234567 on file").changed,
+    "a real driver licence number is still redacted"
+  );
+
+  // C6. UNTERMINATED KEY MATERIAL LEAVES WHOLE. A BEGIN header with no END
+  // inside the block bound has no span to patch, and leaving the body in the
+  // corpus because a marker was missing is the one outcome this all exists to
+  // prevent. The old pattern matched ONLY the BEGIN line, so a naive span
+  // replacement would have deleted the header and shipped the key body.
+  const unterminated = sanitizeText(`${PEM_B}\nMIIEowIBAAKCAQEASECRETBODY`);
+  assert.equal(unterminated.excludeFile, "unterminated-private-key");
+  assert.ok(textLooksSecret(`${PEM_B}\nMIIEowSECRET`));
+
+  // C7. proseLength does not count placeholders, so a document that was mostly
+  // credentials cannot buy its way over the prose floor with the tokens we
+  // wrote in their place.
+  assert.ok(
+    proseLength("[redacted:private-key] ".repeat(60)) < 100,
+    "a wall of redaction tokens is not prose"
+  );
+
+  // C8. THE REBUILD PASSES ENTRIES THROUGH BY REFERENCE, and the per-entry
+  // compression pin is what makes that true. Measured on the pinned jszip: a
+  // global DEFLATE re-deflates STORE entries and a global STORE inflates every
+  // DEFLATE entry and DOUBLES the archive. At the 100 MB cap that is a
+  // multi-hundred-megabyte artifact conjured from a package we were only asked
+  // to clean, so this asserts the bytes themselves did not move.
+  const mixed = new JSZip();
+  mixed.file("keep-store.bin", Buffer.alloc(40_000, 7), { compression: "STORE" });
+  mixed.file("keep-deflate.txt", "compressible ".repeat(4_000), {
+    compression: "DEFLATE",
+  });
+  mixed.file(".env", "TOKEN=zzz");
+  const mixedBytes = await mixed.generateAsync({ type: "nodebuffer" });
+  const mixedLoaded = await JSZip.loadAsync(mixedBytes);
+  const rebuiltMixed = await rebuildWithout(mixedLoaded, {
+    drop: new Set([".env"]),
+    redact: new Map(),
+  });
+  assert.ok(rebuiltMixed.ok, "the rebuild succeeds");
+  if (rebuiltMixed.ok) {
+    const after = await JSZip.loadAsync(rebuiltMixed.zip);
+    assert.ok(!after.files[".env"], "the dropped entry is gone");
+    for (const name of ["keep-store.bin", "keep-deflate.txt"]) {
+      const before = mixedLoaded.files[name] as unknown as {
+        _data?: { crc32?: number; compressedSize?: number };
+      };
+      const now = after.files[name] as unknown as {
+        _data?: { crc32?: number; compressedSize?: number };
+      };
+      assert.equal(
+        now._data?.crc32,
+        before._data?.crc32,
+        `${name} kept its crc32: it was carried, not re-encoded`
+      );
+      assert.equal(
+        now._data?.compressedSize,
+        before._data?.compressedSize,
+        `${name} kept its compressed size: no transcode happened`
+      );
+    }
+  }
+
+  // C9. A WINDOWS-AUTHORED NAME IS PLANNED ON ITS RAW ZIP KEY. normalizePath
+  // rewrites "\\" to "/", so a plan keyed on the display path would miss
+  // "dir\\.env" and the credential would ride into the stored archive
+  // silently, and only for archives authored on Windows.
+  const winZip = new JSZip();
+  winZip.file("dir\\.env", "TOKEN=zzz");
+  winZip.file("architecture.md", PROSE);
+  const winWalk = await inspectArchive(
+    await winZip.generateAsync({ type: "nodebuffer" }),
+    "program"
+  );
+  assert.ok(winWalk.ok, "the windows-authored package is accepted");
+  if (winWalk.ok) {
+    const rebuilt = await JSZip.loadAsync(winWalk.cleaning!.stored!.bytes);
+    assert.ok(
+      !Object.keys(rebuilt.files).some((k) => k.includes(".env")),
+      "the backslash-named .env is really gone from the stored archive"
+    );
+  }
+
+  // C10. CONTAINMENT: a rebuild we cannot verify stores NOTHING. Never the
+  // submitted bytes (that writes the exact material we were told to remove)
+  // and never a refusal (the submitter did nothing wrong, our code did).
+  const failedDecision = decideStorage({
+    pkg: {
+      ...(winWalk as ExtractOk),
+      cleaning: {
+        droppedPaths: [{ path: ".env", reason: "filename marks it as key material" }],
+        redactedPaths: [],
+        excludedPaths: [],
+        rules: [],
+        stored: null,
+        failed: "rebuilt archive did not parse",
+      },
+    },
+    submittedArchive: Buffer.from("SUBMITTED-BYTES"),
+  });
+  assert.equal(
+    failedDecision.archiveData,
+    null,
+    "a failed rebuild stores no archive at all"
+  );
+  assert.equal(failedDecision.failed, "rebuilt archive did not parse");
+  assert.ok(failedDecision.cleaned, "and the row still records that it happened");
+
+  // C11. A CLEAN UPLOAD IS STORED EXACTLY AS IT ARRIVED. A rebuild is never
+  // byte-identical (jszip rewrites headers and degrades mtimes), so the common
+  // path must not pay for one.
+  const untouched = decideStorage({
+    pkg: winWalk as ExtractOk,
+    submittedArchive: Buffer.from("SUBMITTED-BYTES"),
+  });
+  if (!(winWalk as ExtractOk).cleaning)
+    assert.equal(untouched.cleaningJson, null, "nothing cleaned, nothing recorded");
+
+  // C12. THE STANDALONE DOCUMENT IS CLEANED TOO, AND ITS BYTES FOLLOW ITS
+  // TEXT. docRawBytes becomes md_data and the retention email attachment, so a
+  // cleaner that updated the text and left the buffer would keep the corpus
+  // clean and mail the credential out of the building.
+  const dirtyMd = inspectBareMd(
+    "SKILL.md",
+    Buffer.from(`${PROSE}\n\n${["API", "KEY"].join("_")} = "abcdefgh12345678"\n`)
+  );
+  assert.ok(dirtyMd.ok, "a standalone .md with a credential is cleaned, not refused");
+  if (dirtyMd.ok) {
+    assert.ok(!dirtyMd.docText.includes("abcdefgh12345678"), "text is clean");
+    assert.ok(
+      !dirtyMd.docRawBytes!.toString("utf8").includes("abcdefgh12345678"),
+      "and docRawBytes follows the text, or retention mails the original"
+    );
+    assert.equal(dirtyMd.cleaning?.redactedPaths[0], "SKILL.md");
+  }
+
+
+  // C13. THE TWO FATALS THIS ROUND SHIPPED AND THEN FIXED. Both were found by
+  // an adversarial review that EXECUTED the scenarios; the suite at the time
+  // passed with both defects present, which is why these are pinned by
+  // behaviour rather than by shape.
+  //
+  // (a) THE GUARD ASKED A WHOLE-FILE QUESTION WHILE THE REDACTOR WORKS PER
+  // MATCH. One complete key block anywhere satisfied the paired test, so a
+  // SECOND key with no END line rode through verbatim into the corpus, the
+  // stored archive and the retention mail, while the submitter was told the
+  // upload had been cleaned. It was a REGRESSION: that file used to be
+  // refused outright. Any future "does this file contain X" check reaching for
+  // the same shape breaks this assertion.
+  const pairedThenUnterminated = `intro\n\n${PEM_B}\nAAAAPAIRED\n${PEM_E}\n\nreal:\n${PEM_B}\nREALSECRETKEYBODY\n`;
+  const pt = sanitizeText(pairedThenUnterminated);
+  assert.equal(
+    pt.excludeFile,
+    "unterminated-private-key",
+    "a paired block must not vouch for an unpaired one later in the file"
+  );
+  assert.equal(pt.changed, false, "the file leaves whole rather than patched");
+
+  // ...and end to end, the second key body must reach nothing.
+  const leakZip = await zipOf({
+    "architecture.md": PROSE,
+    "notes.md": pairedThenUnterminated,
+    "main.py": "print(1)",
+  });
+  const leakWalk = await inspectArchive(leakZip, "program");
+  assert.ok(leakWalk.ok, "the package is still accepted");
+  if (leakWalk.ok) {
+    assert.ok(
+      !JSON.stringify(leakWalk.corpus).includes("REALSECRETKEYBODY"),
+      "the key body must not reach the corpus the panel reads"
+    );
+    const storedZip = await JSZip.loadAsync(leakWalk.cleaning!.stored!.bytes);
+    assert.ok(
+      !storedZip.files["notes.md"],
+      "the file holding unterminated key material leaves the stored archive"
+    );
+  }
+
+  // (b) THE LAZY 20,000-CHARACTER GAP WAS QUADRATIC IN DISGUISE. Measured on
+  // the shipped version: 2 MB of repeated headers took 2.8s, a 38 KB upload
+  // took 22s of BLOCKING CPU in the single fork, and filling the inflate
+  // budget extrapolated to ~95s. The linear scanner does the same 2 MB in
+  // single-digit milliseconds. The bound here is deliberately loose: it is
+  // catching a return to quadratic behaviour, not measuring performance.
+  const headerFlood = `${PEM_B}\n`.repeat(20_000);
+  const floodStart = Date.now();
+  const floodResult = sanitizeText(headerFlood);
+  const floodMs = Date.now() - floodStart;
+  assert.equal(floodResult.excludeFile, "unterminated-private-key");
+  assert.ok(
+    floodMs < 2_000,
+    `a header flood must not re-expand a lazy gap per header (took ${floodMs}ms)`
+  );
+
+  // C14. docVeto is ANCHORED. It used to match its keywords as a substring
+  // anywhere in the value, so a real secret that merely contained one was
+  // silently kept while the submitter was told the file had been cleaned.
+  const vaultish = `${["PASS", "WORD"].join("")} = "Vault-Prod-2024!"`;
+  assert.ok(
+    sanitizeText(vaultish).changed,
+    "a real secret containing a placeholder word is still redacted"
+  );
+  assert.equal(
+    sanitizeText(`${["API", "KEY"].join("_")} = "\${DB_API_KEY}"`).changed,
+    false,
+    "but a genuine documentation placeholder still survives"
+  );
+
+  // C15. The value's offset comes from the match's group INDICES, never from
+  // indexOf inside the match: when the same digits appear twice in one match,
+  // indexOf redacts the earlier copy and leaves the real one in the corpus.
+  const repeated = sanitizeText("bank account number 123456 and routing 123456 on file");
+  assert.ok(
+    repeated.text.startsWith("bank account number [redacted:bank-account-number]"),
+    `the labelled occurrence is the one replaced, got: ${repeated.text}`
+  );
+
+  // C16. THE TWO OPERATOR GUARDS THAT STAND BETWEEN A CLEANED ROW AND ITS
+  // UNCLEANED ORIGINAL. Source-scraped because both are refusals in scripts
+  // the suite cannot execute (they need a DB and a filesystem), and because
+  // parseCleaning fails OPEN by design: a malformed value reads as "nothing
+  // was cleaned", which is the safe direction for a renderer and the unsafe
+  // one here. One careless refactor removes either guard silently.
+  const importSrc = readFileSync("scripts/work-archive-import.ts", "utf8");
+  // Anchored on the WHOLE condition, not a substring of it: a first cut
+  // matched `rowCleaning && !force` and therefore still passed when the guard
+  // was disabled with `if (false && rowCleaning && !force)`. Mutation-tested.
+  assert.ok(
+    /if \(rowCleaning && !force\) \{/.test(importSrc),
+    "work:import must refuse a cleaned row unless --force is given"
+  );
+  assert.ok(
+    /row was CLEANED at intake/.test(importSrc),
+    "and the refusal must say why, naming what was removed"
+  );
+  assert.ok(
+    /FORCING ONTO A CLEANED ROW/.test(importSrc),
+    "and --force must SAY so: the sha MATCHES on a cleaned row, so the run would otherwise read as a clean verified recovery"
+  );
+  const correlateSrc = readFileSync("scripts/lib/work-archive-correlate.ts", "utf8");
+  assert.ok(
+    /if \(rowCleaned\)\n?\s*return \{/.test(correlateSrc),
+    "work:correlate must never propose an import for a cleaned row"
+  );
+  assert.ok(
+    /row was cleaned at intake/.test(correlateSrc),
+    "and must say why, since the sha MATCHING is exactly what makes it dangerous"
+  );
 
   console.log("work-tests: all assertions passed.");
 }

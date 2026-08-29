@@ -34,6 +34,7 @@ import {
   type RetentionAttachment,
 } from "./retention-encoding";
 import { screenPackageForMail, type ScreenResult } from "./mail-screen";
+import { parseCleaning } from "./cleaning";
 import type { WorkCard } from "./lint";
 
 /** "Submitted by" must name who SUBMITTED it, which since the 2026-08-09
@@ -131,6 +132,22 @@ export async function sendArchiveRetentionEmail(
   // M3: this mail must never claim residency nothing checked); otherwise
   // the row copy is the one named. npm run work:archive reads store-first
   // with a per-file bytea fallback, so the command is right either way.
+  // What the intake scan took out, if anything. Read once: the subject, the
+  // lead line, the hash block and the entry list all have to agree, and the
+  // word "original" cannot appear in any of them for a cleaned row. That rule
+  // is already written down two paragraphs below for the blocked-type screen
+  // and it binds identically here.
+  const cleaning = parseCleaning(row.cleaningJson);
+  /** The deliberate no-copy case: the intake scan found something, the rebuild
+   * could not be verified, and we chose to keep nothing rather than keep the
+   * bytes we were told to clean. This mail exists to say that out loud. */
+  // "The PACKAGE was not retained", not "we have zero files". cleaning.failed
+  // is set only when the archive rebuild could not be verified, and in that
+  // case no package was stored no matter how many other slots survived: a
+  // Skill whose standalone .md came through still has files.length === 1, and
+  // the old predicate let that mail claim to carry "the CLEANED files" while
+  // the package was absent entirely and the hash line printed "n/a".
+  const noCopyRetained = Boolean(cleaning?.failed);
   const storeVerified = opts?.storeVerified === true;
   const residency = storeVerified
     ? `the server archive store (data/work-archives/${row.id}/)`
@@ -171,7 +188,11 @@ export async function sendArchiveRetentionEmail(
       screen = await screenPackageForMail(
         f.name,
         f.data,
-        row.archiveSha256 ?? null
+        row.archiveSha256 ?? null,
+        // For a cleaned row these bytes ARE the intake rebuild, so the
+        // screened copy's README must not pair their length with the
+        // submitted hash, nor promise a complete package on the row.
+        cleaning?.archive != null
       );
       if (screen.kind === "screened")
         file = { name: screenedName(f.name), data: screen.zip };
@@ -224,7 +245,7 @@ export async function sendArchiveRetentionEmail(
               : omittedCount > 0
                 ? " (NOT ALL FILES ATTACHED)"
                 : ""
-        }: ${row.title}`,
+        }${noCopyRetained ? " (NO COPY RETAINED)" : cleaning ? " (CLEANED AT INTAKE)" : ""}: ${row.title}`,
         // withTronSignature: this raw fetch bypasses sendGovernanceEmail (it needs
         // attachments, a 60s timeout, and the no-BCC carve-out above), so the
         // owner's always-signed ruling is applied here by hand.
@@ -232,9 +253,18 @@ export async function sendArchiveRetentionEmail(
         // (one partition), so what the mail says is attached can never
         // desync from what is.
         text: withTronSignature([
-          partialScreen
+          noCopyRetained
+            ? `NO retention copy exists for this card. The intake scan found credential-shaped content in the upload, and the cleaned rebuild could not be verified (${cleaning?.failed ?? "unknown"}), so nothing was stored rather than storing the package as sent. The submitter's own copy is the only one, and they were told to rotate.`
+            : partialScreen
             ? `SCREENED retention copy: some uploaded files are NOT attached.`
-            : `Retention copy of the original files behind a published /work card.`,
+            : cleaning
+              ? // NOT "the original files": the intake scan rewrote this
+                // package before anything was stored, so the only copy that
+                // ever existed here is the cleaned one. Saying "original"
+                // would send a reader six months from now looking for
+                // material that was deliberately never kept.
+                `Retention copy of the files behind a published /work card. Credential-shaped content was cleaned out of this package when it arrived, so these are the CLEANED files, not the upload as it was sent.`
+              : `Retention copy of the original files behind a published /work card.`,
           ...(omittedCount > 0
             ? [
                 `${omittedCount} of ${files.length} files are NOT attached (each says why below). They are retained in ${residency}; ${fetchCmd} retrieves them.`,
@@ -260,10 +290,14 @@ export async function sendArchiveRetentionEmail(
                 : `Not attached: ${rawName} (${rawBytes} bytes). It would fit on its own, but the files that fit already use the space this email can carry. It is retained in ${residency}; ${fetchCmd} retrieves it.`;
             const p = it.prepared;
             if (!p.encoded)
-              return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, exactly as uploaded)`;
+              return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, ${
+                cleaning ? "cleaned at intake, not the upload as sent" : "exactly as uploaded"
+              })`;
             if (it.screen?.kind === "screened")
               return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, base64 text encoding a SCREENED COPY of the upload ${rawName}, ${rawBytes} bytes)`;
-            return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, base64 text encoding the original upload ${p.originalName}, ${p.originalBytes} bytes)`;
+            return `Attached: ${p.attachedName} (${p.attachedBytes} bytes, base64 text encoding ${
+              cleaning ? "the CLEANED copy of" : "the original upload"
+            } ${p.originalName}, ${p.originalBytes} bytes)`;
           }),
           ...(armored.length > 0
             ? [
@@ -294,9 +328,58 @@ export async function sendArchiveRetentionEmail(
                 `SHA-256 of the attached screened copy: ${partialScreen.sha256}`,
                 `SHA-256 of the uploaded package, which is NOT attached: ${row.archiveSha256 ?? "n/a"}`,
               ]
-            : [
-                `Package SHA-256${armored.length > 0 ? " (hash of the restored original file, not of the attached .b64.txt text)" : ""}: ${row.archiveSha256 ?? "n/a"}`,
-              ]),
+            : cleaning
+              ? [
+                  // TWO hashes, both labelled, because for a cleaned row they
+                  // are answers to different questions and the row's own
+                  // archive_sha256 does NOT describe the attachment. It is the
+                  // hash of what the submitter sent, kept so work:correlate
+                  // can still recognise their copy; the attached bytes are the
+                  // cleaned rebuild and hash differently by construction.
+                  // Branch on WHICH SLOT was cleaned. When only the
+                  // standalone document carried a hit, the package was stored
+                  // exactly as submitted, and telling the owner it "was never
+                  // stored" would send them looking for a copy that is on the
+                  // row.
+                  ...(cleaning.archive
+                    ? [
+                        `SHA-256 of the attached cleaned package: ${cleaning.archive.sha256}`,
+                        `SHA-256 of the package as submitted, which is NOT attached and was never stored: ${row.archiveSha256 ?? "n/a"}`,
+                      ]
+                    : [
+                        `Package SHA-256: ${row.archiveSha256 ?? "n/a"} (the package itself carried nothing and is attached as submitted)`,
+                      ]),
+                  ...(cleaning.md
+                    ? [
+                        `SHA-256 of the attached cleaned document: ${cleaning.md.sha256}`,
+                        `SHA-256 of the document as submitted, which is NOT attached: ${row.mdSha256 ?? "n/a"}`,
+                      ]
+                    : []),
+                ]
+              : [
+                  `Package SHA-256${armored.length > 0 ? " (hash of the restored original file, not of the attached .b64.txt text)" : ""}: ${row.archiveSha256 ?? "n/a"}`,
+                ]),
+          ...(cleaning
+            ? [
+                ``,
+                `Cleaned at intake, before anything was stored or reviewed:`,
+                ...cleaning.dropped.map(
+                  (d) => `  ${d.path} (removed: ${d.reason})`
+                ),
+                ...cleaning.excluded.map(
+                  (e) => `  ${e.path} (removed: ${e.reason})`
+                ),
+                ...cleaning.redacted.map(
+                  (p) => `  ${p} (kept, with the matching spans replaced)`
+                ),
+                ...(cleaning.rules.length > 0
+                  ? [
+                      `Matched: ${cleaning.rules.map((r) => r.ruleId).join(", ")}.`,
+                    ]
+                  : []),
+                `The submitter was told to rotate anything real in them.`,
+              ]
+            : []),
           // Named from the stored FILENAME, not from a literal (2026-08-28).
           // This slot used to be a Skill's SKILL.md and nothing else, so the
           // label could be hard-coded. Since the kind stopped being declared,
@@ -409,7 +492,42 @@ export async function deliverArchiveRetention(
       fromStore = true;
     }
   }
-  if (files.length === 0) return; // pre-retention row: no copy anywhere
+  if (files.length === 0) {
+    // A row with no copy is normally a pre-retention legacy row, and silence
+    // is right for those. It is NOT right for a row that has no copy because
+    // WE decided not to keep one: a cleaning rebuild we could not verify means
+    // the owner gets no retention mail for a card that just published, and an
+    // unexplained absence reads exactly like a bug in the retention lane.
+    const cleaning = parseCleaning(row.cleaningJson);
+    if (cleaning?.failed) {
+      // AND ALARM IF IT DOES NOT ARRIVE. Discarding this boolean left the one
+      // message that says "we accepted this card and durably kept nothing" as
+      // the only retention mail whose non-delivery had no signal at all: a
+      // vendor 4xx, a missing key or a timeout would leave a console line and
+      // nothing else, on precisely the row that has no second copy to fall
+      // back on.
+      const sent = await sendArchiveRetentionEmail(row, [], {
+        storeVerified: false,
+      });
+      if (!sent)
+        await sendEmail(siteConfig, {
+          to: siteConfig.oversight.alertEmail,
+          subject: `[aiwebsite] WARN /work no-copy retention notice failed to send`,
+          text: withTronSignature(
+            `A /work card published whose upload could NOT be cleaned into a ` +
+              `storable archive, so nothing was retained for it, and the notice ` +
+              `saying so was not accepted by the mail vendor.\n\n` +
+              `Title:  ${oneLine(row.title)}\n` +
+              `Row id: ${row.id}\n` +
+              `Reason: ${cleaning.failed}\n\n` +
+              `There is no copy of this upload anywhere on the server. The ` +
+              `submitter's own copy is the only one, and they were told to ` +
+              `rotate whatever was in it.`
+          ),
+        });
+    }
+    return;
+  }
   // Pre-compose verification feeds ONLY the email's residency lines (M3):
   // files just read whole from the store count as verified by the read.
   let preVerified = fromStore;
