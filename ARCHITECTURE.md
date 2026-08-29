@@ -8557,11 +8557,14 @@ The write path is `npm run work:credit -- list | add <exhibit-id> <email>
 --by <admin> | remove ...` (`scripts/work-credit.ts`, pure validation in
 `scripts/lib/work-credit-ops.ts`), VM-only for the same publication reason and
 the answer to the disclosure's "ask an administrator": it validates the
-anchor against the generated list at the WRITE edge, because a mistyped id
-fails closed and silently (indistinguishable from a retired exhibit, so the
+anchor against the generated list at the WRITE edge on `add` only, because a
+mistyped id fails closed and silently (indistinguishable from a retired exhibit, so the
 colleague still reads 0, which is the bug the table exists to fix), lowercases
 the address to agree with the index and the reader, and stamps
-`updated_by_email` on both add and remove. Four properties are load-bearing. (1) STAFF LANE ONLY: the
+`updated_by_email` on both add and remove. `remove` deliberately ACCEPTS a
+retired anchor (shape-checked only): the cleanup order is page removal first,
+then credit retirement, and a live-list check there would make dead rows
+permanent - found by the exhibit-to-team-card conversion round the same day. Four properties are load-bearing. (1) STAFF LANE ONLY: the
 table has no `company_id` column at all, so there is no WHERE clause anyone
 can forget, the read runs only when `scope.companyId === null`, and the
 column is absent from the company table rather than rendered as zeros; the

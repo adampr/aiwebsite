@@ -82,11 +82,16 @@ async function main() {
     process.exit(0);
   }
 
+  // add: the anchor must be on the page (a typo fails closed and silently).
+  // remove: a RETIRED anchor is accepted, because retiring the credit of an
+  // exhibit that already left page.tsx is the normal cleanup order, and the
+  // live-list check would make dead rows permanent.
   const v = validateCredit({
     anchorId,
     email,
     validAnchors: staticTitles.anchorIds,
     laneDomains: WORK_SUBMIT_DOMAINS,
+    allowRetired: cmd === "remove",
   });
   if (!v.ok) die(v.error);
   const actor = validateCredit({
@@ -94,11 +99,16 @@ async function main() {
     email: by,
     validAnchors: staticTitles.anchorIds,
     laneDomains: WORK_SUBMIT_DOMAINS,
+    allowRetired: cmd === "remove",
   });
   if (!actor.ok) die(`--by: ${actor.error}`);
 
   const title =
     staticTitles.exhibits.find((e) => e.id === v.anchorId)?.title ?? v.anchorId;
+  if (cmd === "remove" && !staticTitles.anchorIds.includes(v.anchorId))
+    console.log(
+      `[work-credit] note: "${v.anchorId}" is no longer a section on the /work page (retired exhibit); removing its credit row.`
+    );
 
   if (!yes) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });

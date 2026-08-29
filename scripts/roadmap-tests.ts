@@ -26,6 +26,7 @@ import { isStaffSession, SILENT_REVERIFY_PROVIDERS } from "../src/lib/roadmap/ac
 import type { SessionData } from "@aicompany/core/auth/session";
 import { INTERNAL_SCOPE, scopeOf } from "../src/lib/work/scope";
 import { readFileSync, existsSync } from "node:fs";
+import { validateCredit } from "./lib/work-credit-ops";
 import {
   isPaidStep,
   ROADMAP_CAPS,
@@ -2180,6 +2181,40 @@ ok("exhibit credits: the write path validates the anchor at the write edge", () 
   // which is the exact bug the table exists to fix.
   const ops = readFileSync("scripts/lib/work-credit-ops.ts", "utf8");
   assert.ok(ops.includes("validAnchors.includes(anchorId)"), "anchor validated at the write edge");
+  // remove must ACCEPT a retired anchor: the cleanup order is page removal
+  // first, then credit retirement, and a live-list check on remove would
+  // make dead rows permanent (found by the exhibit-to-team-card round).
+  {
+    const anchors = ["ticketscribe"] as const;
+    const addRetired = validateCredit({
+      anchorId: "retired-exhibit",
+      email: "a@xl.net",
+      validAnchors: anchors,
+      laneDomains: ["xl.net"],
+    });
+    assert.ok(!addRetired.ok, "add refuses an anchor not on the page");
+    const removeRetired = validateCredit({
+      anchorId: "retired-exhibit",
+      email: "a@xl.net",
+      validAnchors: anchors,
+      laneDomains: ["xl.net"],
+      allowRetired: true,
+    });
+    assert.ok(removeRetired.ok, "remove accepts a retired anchor");
+    const removeJunk = validateCredit({
+      anchorId: "Not A Slug!",
+      email: "a@xl.net",
+      validAnchors: anchors,
+      laneDomains: ["xl.net"],
+      allowRetired: true,
+    });
+    assert.ok(!removeJunk.ok, "remove still refuses a non-slug id");
+    const script = readFileSync("scripts/work-credit.ts", "utf8");
+    assert.ok(
+      script.includes('allowRetired: cmd === "remove"'),
+      "the script wires allowRetired to remove only"
+    );
+  }
   assert.ok(/normalizeCreditEmail|toLowerCase\(\)/.test(ops), "address lowercased to agree with the index");
   assert.ok(ops.includes("needs --by"), "both verbs record who did it");
   // The script must be VM-only and must not carry a plan file in the repo.

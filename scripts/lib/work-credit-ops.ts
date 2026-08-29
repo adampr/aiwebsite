@@ -42,18 +42,32 @@ export function normalizeCreditEmail(raw: string): string {
  * @param email        the builder's address, pre-normalization
  * @param validAnchors the generated anchor list (staticTitles.anchorIds)
  * @param laneDomains  the domains a credit may name (staff lane only)
+ * @param allowRetired ADD must refuse an id that is not on the page (a typo
+ *                     fails closed and silently, the person reads 0). REMOVE
+ *                     must ACCEPT one: retiring the credit of an exhibit
+ *                     that has already left page.tsx is the normal cleanup
+ *                     order (page removal deploys first, then the credit is
+ *                     retired), and a live-list check there would make dead
+ *                     rows permanent. Found by the 2026-08-29
+ *                     exhibit-to-team-card conversion round.
  */
 export function validateCredit(opts: {
   anchorId: unknown;
   email: unknown;
   validAnchors: readonly string[];
   laneDomains: readonly string[];
+  allowRetired?: boolean;
 }): { ok: true; anchorId: string; email: string } | { ok: false; error: string } {
   const { validAnchors, laneDomains } = opts;
   if (typeof opts.anchorId !== "string" || opts.anchorId.trim() === "")
     return { ok: false, error: "an exhibit id is required" };
   const anchorId = opts.anchorId.trim();
-  if (!validAnchors.includes(anchorId)) {
+  if (opts.allowRetired && !/^[a-z0-9][a-z0-9-]*$/.test(anchorId))
+    return {
+      ok: false,
+      error: `"${anchorId}" is not a section-id shape (lowercase letters, digits, hyphens)`,
+    };
+  if (!opts.allowRetired && !validAnchors.includes(anchorId)) {
     // Name the near misses rather than dumping 26 ids: a typo is usually one
     // character or one word away from the real thing.
     const near = validAnchors
