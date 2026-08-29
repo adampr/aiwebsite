@@ -29,8 +29,14 @@ export interface StorageFileView {
    * stamp long after the submission, so it is a different fact. */
   dateLabel: string;
   submissionId: string | null;
+  /** True when this file belongs to a hand-authored EXHIBIT card (bays 01
+   * to 05 of /work), which has no submission row and never had one. It is
+   * the OTHER reason submissionId can be null, and it must not render as
+   * a removed submission: nothing was removed. */
+  exhibit: boolean;
   /** No database copy remains (submission gone or bytea cleared): this
-   * store file is the last copy anywhere. */
+   * store file is the last copy anywhere. Always true for an exhibit
+   * archive, which has no row to hold a copy. */
   lastCopy: boolean;
 }
 
@@ -140,6 +146,13 @@ export function WorkStorageList({ files }: { files: StorageFileView[] }) {
             <a href={`#sub-${f.submissionId}`} className="underline">
               View submission
             </a>
+          ) : f.exhibit ? (
+            // Not an orphan: an exhibit card has no submission row and
+            // never had one, so "submission removed" would describe an
+            // event that never happened.
+            <span className="text-faint">
+              exhibit archive (no submission row, by design)
+            </span>
           ) : (
             // The expected retain-by-design outcome, not an anomaly: a
             // submission delete or the 30-day sweep leaves the file here.
@@ -158,7 +171,7 @@ export function WorkStorageList({ files }: { files: StorageFileView[] }) {
               void deleteFiles(
                 [f.id],
                 f.lastCopy
-                  ? `Delete the stored file "${f.fileName}"? This is the LAST copy anywhere: no database copy remains, so it cannot be recovered after deletion. The ledger keeps only the record.`
+                  ? `Delete the stored file "${f.fileName}"? This is the LAST copy anywhere: ${f.exhibit ? "an exhibit archive has no submission row and no database copy at all" : "no database copy remains"}, so it cannot be recovered after deletion. The ledger keeps only the record.`
                   : `Delete the stored file "${f.fileName}" from the server disk? The submission row still holds a database copy of the upload; the ledger keeps a record of the deletion.`
               )
             }

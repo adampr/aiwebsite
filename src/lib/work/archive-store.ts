@@ -33,7 +33,14 @@ import {
 import path from "node:path";
 import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { sanitizeStoredName, storedRelPath } from "./archive-naming";
+import {
+  EXHIBIT_DIR,
+  isExhibitSlug,
+  resolveUnderStoreRoot,
+  sanitizeStoredName,
+  storedExhibitRelPath,
+  storedRelPath,
+} from "./archive-naming";
 
 const A = schema.workArchiveFiles;
 
@@ -52,13 +59,12 @@ export function archiveStoreRoot(): string {
 
 /** Resolve a ledger rel_path under the root, refusing anything that would
  * escape it. rel paths are minted by storedRelPath (uuid dir + sanitized
- * segment), so a failure here means a tampered ledger row, not user input. */
+ * segment) or storedExhibitRelPath (exhibits/<slug>/ + sanitized segment),
+ * so a failure here means a tampered ledger row, not user input. The rule
+ * itself lives in archive-naming.ts (pure, DB-free, disk-free) so it is
+ * pinnable in the unit suites; this wrapper only supplies the env root. */
 function resolveUnderRoot(relPath: string): string {
-  const root = path.resolve(archiveStoreRoot());
-  const abs = path.resolve(root, relPath);
-  if (abs !== root && !abs.startsWith(root + path.sep))
-    throw new Error(`archive path escapes the store root: ${relPath}`);
-  return abs;
+  return resolveUnderStoreRoot(archiveStoreRoot(), relPath);
 }
 
 export type ArchiveFileRow = typeof A.$inferSelect;
@@ -159,6 +165,123 @@ export async function storeArchiveFilesAt(
       `[work] archive store failed for ${submissionId}: ${err instanceof Error ? err.message.slice(0, 200) : "unknown"} (bytea remains the copy)`
     );
   }
+}
+
+/**
+ * Persist the source archive of a HAND-AUTHORED EXHIBIT card (the bays
+ * 01 to 05 lane of src/app/work/page.tsx, which has no work_submissions
+ * row at all) into the same store, under exhibits/<slug>/<NN>-<name>.
+ *
+ * The ledger row carries submissionId: null. That column is nullable and
+ * already SET NULL on a submission delete, and title/file_name are
+ * snapshots taken at write time, so a null-submission row keeps its full
+ * meaning with NO schema change and NO migration: the store, the usage
+ * rollup, the weekly report and admin cleanup all key off the ledger row,
+ * never off the submission. Readers tell the two lanes apart by rel_path
+ * (isExhibitRelPath), which is why nothing needed a new column.
+ *
+ * UNLIKE storeArchiveFiles/storeArchiveFilesAt, this THROWS on failure
+ * instead of logging and continuing. The intake path swallows because the
+ * submission row's bytea is still a copy of the very bytes it failed to
+ * store, so a swallowed failure costs nothing but a retry (and
+ * publish-time verification refuses to clear a bytea it cannot match).
+ * An exhibit has NO other copy anywhere: no row, no bytea, nothing but
+ * the file the operator handed over. A swallowed failure here would tell
+ * an operator their archive is retained while the store holds nothing,
+ * which is the one outcome this lane exists to prevent. So: same
+ * temp-write -> rename -> re-stat -> ledger-insert -> unlink-on-failure
+ * discipline, opposite failure contract.
+ *
+ * Files are slot-explicit for the same reason the ops scripts are: the
+ * slot is WHICH file a thing is (00 package, 01 document), never its
+ * position in a possibly partial array. Returns the ledger rows written,
+ * in the order given. A throw leaves no unledgered file behind for the
+ * entry that failed; entries already written keep their ledger rows, and
+ * a re-run skips them (the caller's per-slot gate sees them).
+ */
+export async function storeExhibitArchive(
+  slug: string,
+  title: string,
+  files: { slot: number; name: string; data: Buffer }[]
+): Promise<ArchiveFileRow[]> {
+  if (!isExhibitSlug(slug))
+    throw new Error(`not an exhibit slug: ${JSON.stringify(slug)}`);
+  const root = path.resolve(archiveStoreRoot());
+  const dir = path.join(root, EXHIBIT_DIR, slug);
+  await mkdir(dir, { recursive: true });
+  // Same opportunistic hygiene as the submission lane: a crash between
+  // writeFile and rename leaves a .tmp-* orphan; sweep this exhibit's dir
+  // before writing (best-effort, never a gate).
+  try {
+    for (const name of await readdir(dir))
+      if (/\.tmp-\d+-\d+$/.test(name))
+        await unlink(path.join(dir, name)).catch(() => undefined);
+  } catch {
+    // hygiene only
+  }
+  const written: ArchiveFileRow[] = [];
+  for (const f of files) {
+    const rel = storedExhibitRelPath(slug, f.slot, f.name);
+    const abs = resolveUnderRoot(rel);
+    const sha256 = createHash("sha256").update(f.data).digest("hex");
+    // Temp-then-rename: a crash mid-write leaves a .tmp orphan, never a
+    // ledgered path with partial bytes.
+    const tmp = `${abs}.tmp-${process.pid}-${Date.now()}`;
+    await writeFile(tmp, f.data);
+    await rename(tmp, abs);
+    const st = await stat(abs);
+    if (st.size !== f.data.length) {
+      await unlink(abs).catch(() => undefined);
+      throw new Error(
+        `${rel}: size mismatch after write: ${st.size} != ${f.data.length}`
+      );
+    }
+    try {
+      const rows = await db
+        .insert(A)
+        .values({
+          submissionId: null,
+          title: title.slice(0, 200),
+          fileName: sanitizeStoredName(f.name),
+          relPath: rel,
+          bytes: f.data.length,
+          sha256,
+        })
+        .returning();
+      if (!rows[0]) throw new Error("ledger insert returned no row");
+      written.push(rows[0]);
+    } catch (err) {
+      // An unledgered file is invisible to verification, usage totals and
+      // admin cleanup: remove it rather than leak it. Then rethrow: with
+      // no bytea behind this lane, an unstored exhibit must be a failure
+      // the operator sees, not a log line.
+      await unlink(abs).catch(() => undefined);
+      throw err;
+    }
+  }
+  return written;
+}
+
+/** EVERY ledger row (admin-deleted included) under one exhibit's slug
+ * directory, in stored order. The exhibit twin of
+ * allArchiveFilesForSubmission, and it carries the same semantics: the
+ * operator lane must SEE an admin-deleted row to disclose it, because
+ * work_archive_rel_path_uq is a FULL unique index covering deleted rows,
+ * so a retired slot is retired permanently.
+ *
+ * Prefix match rather than a column lookup, because the lane lives in the
+ * rel_path and nowhere else. Safe as a LIKE: isExhibitSlug admits only
+ * [a-z0-9-], so a slug can carry neither of LIKE's wildcards (% and _),
+ * and the pattern is a bound parameter either way. */
+export async function allArchiveFilesForExhibit(
+  slug: string
+): Promise<ArchiveFileRow[]> {
+  if (!isExhibitSlug(slug)) return [];
+  return db
+    .select()
+    .from(A)
+    .where(sql`${A.relPath} like ${`${EXHIBIT_DIR}/${slug}/%`}`)
+    .orderBy(A.relPath);
 }
 
 export async function archiveFileById(

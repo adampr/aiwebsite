@@ -31,8 +31,9 @@
 // that). The DB copy remains, and the admin console's rowHasBytes bit
 // correctly shows these store files as not-the-last-copy.
 //
-// Concurrency: takes the shared archive-ops advisory lock (backfill AND
-// import use one key), so a second script instance refuses to start; and
+// Concurrency: takes the shared archive-ops advisory lock (backfill,
+// import and work:retain use one key), so a second script instance
+// refuses to start; and
 // each row's ledger is re-read immediately before storing, shrinking the
 // window against a concurrent intake write.
 //
@@ -105,7 +106,7 @@ async function main() {
   const unknown = argv.filter((a) => a !== "--dry-run");
   if (unknown.length > 0) usage(`Unknown argument: ${unknown[0]}`);
 
-  // One writer at a time across backfill AND import: overlapping store
+  // One writer at a time across backfill, import AND retain: overlapping store
   // writes to the same submission can unlink each other's files through
   // the rename + ledger-collision handler while both exit 0.
   const lockRows = await db.execute(
@@ -113,7 +114,7 @@ async function main() {
   );
   if (lockRows[0]?.locked !== true)
     die(
-      "Another work:backfill or work:import run holds the archive ops lock; wait for it to finish (the lock releases when that process exits)."
+      "Another work:backfill, work:import or work:retain run holds the archive ops lock; wait for it to finish (the lock releases when that process exits)."
     );
 
   console.log(`Store:  ${resolve(archiveStoreRoot())}`);

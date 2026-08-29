@@ -70,7 +70,8 @@ export async function sendStorageReport(): Promise<boolean> {
   const now = Date.now();
   const lines = [
     "Weekly usage report for the /work upload storage area (accepted",
-    "submission packages retained on disk, work_archive_files ledger).",
+    "submission packages and retained exhibit archives on disk, one",
+    "work_archive_files ledger for both).",
     "",
     `In storage now: ${usage.fileCount} file(s), ${formatByteSize(usage.totalBytes)} total.`,
     `Last 7 days: ${usage.createdInWindow} file(s) added (${formatByteSize(usage.createdBytesInWindow)}), ${usage.deletedInWindow} deleted (${formatByteSize(usage.deletedBytesInWindow)} freed).`,

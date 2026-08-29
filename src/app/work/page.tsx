@@ -97,7 +97,7 @@ export default async function WorkPage() {
         <section id="brain" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
-              <span className="dot" /> 110 automated checks passing
+              <span className="dot" /> In production
             </span>
             <span className="badge badge--light">Core engine</span>
           </div>
@@ -107,47 +107,78 @@ export default async function WorkPage() {
           </p>
           <p className="mt-4 text-sm">
             A conversation-first, memory-bearing, tool-using AI architecture
-            modeled on neurological principles, built as a TypeScript monorepo.
-            Every other exhibit below runs on it.
+            modeled on neurological principles, built as a TypeScript monorepo
+            and reachable at brain.xl.net. A handful of services sit over a
+            shared core of orchestrator, memory, providers and auth, with SDKs
+            for callers in other repositories. Every other exhibit below either
+            runs on it or was built with it, and on the days it has taken one
+            of them down, the incident is written into the same documents as
+            the design.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">01 · </span>
-                Memory
+                Remembers Whose Memory It Is
               </h3>
               <p className="mt-3 text-sm">
-                Scoped memory that persists across conversations, so every
-                system built on the Brain remembers what matters instead of
-                starting from zero each time.
+                Every stored fact is scoped as it is written: private to the
+                person who said it by default, private to a group, or public.
+                Facts carry validity dates instead of being overwritten, so a
+                superseded answer is retired rather than erased, and recall
+                combines keyword search, embedding similarity and a reranking
+                pass. The rule the documents will not bend is that memory
+                survives a restart, a new session and any version upgrade:
+                wipe and recreate is not an upgrade path.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">02 · </span>
-                Voice
+                Speech In, Speech Back
               </h3>
               <p className="mt-3 text-sm">
-                A full voice stack: speech-to-text, text-to-speech, and
-                realtime conversation, the same packages that let you call
-                Tron Netter from this page.
+                Transcription runs on Deepgram and spoken replies default to
+                OpenAI text-to-speech, streamed in pieces so the first audio
+                arrives in a fraction of the wait a rendered answer would cost.
+                A second mode hands the conversation to a realtime voice model,
+                with the key for it never leaving the server, and a telephony
+                path lets the same engine pick up a phone call. This is the
+                stack behind the phone number on this page.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">03 · </span>
-                Rebuild-Ready
+                Rebuilt From the Document Alone
               </h3>
               <p className="mt-3 text-sm">
-                A canonical architecture document specifies the whole system in
-                enough detail that a competent team could reconstruct it from
-                the document alone.
+                One master architecture document is the source of truth,
+                required to carry enough implementation detail to rebuild the
+                entire codebase to functional equivalence. It is updated first
+                or alongside the code, never after, and that is enforced rather
+                than encouraged: a commit touching the packages, the apps or the
+                scripts is refused unless the documentation is staged with it.
               </p>
             </div>
           </div>
+          <p className="mt-8 text-sm">
+            A release is not done when the code works. A layered QA harness runs
+            from unit checks up through browser and restart runs,
+            the security scan has to come back with zero findings straight
+            after it, and the written definition of done carries a clause most
+            specifications do not: the document must not overstate guarantees
+            relative to the code. Nothing a visitor reads is assembled, either:
+            no canned replies, no pattern-matched answers, no template
+            acknowledgements anywhere in the response path. It also strips em
+            dashes from its own writing, twice over, because someone here
+            objects to them.
+          </p>
           <p className="mono mt-6 text-xs text-faint">
-            TypeScript monorepo · scoped memory · voice (STT/TTS/realtime) ·
-            canonical architecture doc v17
+            TypeScript monorepo · scoped memory with validity dates · Deepgram
+            in, spoken reply out · one rebuild-ready master document ·
+            doc-before-code enforced at commit · layered QA, then a clean
+            security scan · brain.xl.net
           </p>
         </section>
       </section>
@@ -162,57 +193,87 @@ export default async function WorkPage() {
         <section id="aicompany" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
-              <span className="dot" /> Live · 2 production sites
+              <span className="dot" /> In production
             </span>
-            <span className="badge badge--light">Middleware</span>
+            <span className="badge badge--light">Shared module</span>
           </div>
           <h2 className="mt-6">@aicompany/core</h2>
           <p className="mt-2 text-sm text-faint">
-            An entire AI-company website in one config file.
+            Everything an AI company needs around its website, driven by one
+            config object.
           </p>
           <p className="mt-4 text-sm">
-            Reusable middleware that gives any business an AI persona and
-            everything a working AI company site needs around it. It ships
-            today as a git submodule inside two live production sites: this one
-            and IT Support Chicago.
+            The generic extraction of what our sites have in common: a persona
+            reachable over chat, text, email and the phone, sign-in and
+            sessions, an admin console, first-party analytics, a knowledge
+            crawler, and a deploy and operations stack for a single server.
+            The host site keeps its pages, its brand and its own features and
+            mounts the rest in wrapper files a few lines long. It runs{" "}
+            <a href="#aiwebsite">this site</a>,{" "}
+            <a href="#itsupportchicago">IT Support Chicago</a> and{" "}
+            <a href="#roleplay">Roleplay</a> and the metro ranking site Top MSP
+            Near Me, and its own release notes treat those hosts as one fleet.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">01 · </span>
-                Every Channel
+                Configure It, Never Fork It
               </h3>
               <p className="mt-3 text-sm">
-                One persona across web chat, SMS, email, and voice, plus OAuth
-                sign-in for visitors who want an account.
+                A new site is a new repository, a config object, brand assets,
+                content pages and vendor accounts. If a host has to fork a
+                shared component, the module treats that as its own design bug.
+                The panel that signs off on its design carries a standing
+                question pointed the other way: does sharing make the third site
+                faster to launch without making it read as a clone of the
+                first?
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">02 · </span>
-                The Whole Site
+                The Same Promises on Every Site
               </h3>
               <p className="mt-3 text-sm">
-                An admin console, first-party analytics, SEO surfaces, a
-                nightly knowledge crawler, and a single-VM deploy stack come
-                with it.
+                A few behaviors are invariants rather than options, so they
+                cannot be quietly switched off on one property:
+                outbound email is copied to a human, the persona says it is an
+                AI in its signature and in its first reply to a new texter,
+                inbound webhooks are signature-checked with no flag to skip it,
+                and visitor tracking refuses to run at all on a site that has
+                not published a privacy policy.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">03 · </span>
-                One Config File
+                Each Release States Its Blast Radius
               </h3>
               <p className="mt-3 text-sm">
-                A single <span className="mono">site.config.ts</span> drives
-                all of it: the host site supplies the config, the middleware
-                does the rest.
+                Every release entry is titled with what it will cost a host:
+                nothing, a re-render of the deploy scripts, or a database
+                migration that has to run first. One host takes each release
+                first and sits on it before the others follow. Deploy scripts
+                are rendered from templates and stamped, and the deploy
+                refuses both a stamp mismatch and a dirty working tree.
               </p>
             </div>
           </div>
+          <p className="mt-8 text-sm">
+            The boundary is drawn as carefully as the features. Page metadata
+            stays with the host on purpose, because that is where sites stop
+            looking alike. Voice is a documented contract rather than module
+            code: the call goes to the engine directly and the module
+            contributes the routing around it. Every subsystem is expected to
+            fail on its own and say so, a disabled feature rendering a designed
+            explanation rather than a blank page that reads as an outage.
+          </p>
           <p className="mono mt-6 text-xs text-faint">
-            chat / SMS / email / voice · admin console · analytics · nightly
-            crawler · one config file
+            one config object · chat / text / email / phone · admin console ·
+            first-party analytics · nightly crawler · signature-checked
+            webhooks with no off switch · no privacy policy, no tracking ·
+            stamped deploy templates
           </p>
         </section>
 
@@ -229,47 +290,77 @@ export default async function WorkPage() {
             deployment.
           </p>
           <p className="mt-4 text-sm">
-            Every constraint here is a decision, not a limitation. Safe by
-            architecture, not by promise.
+            This page, the chat widget in the corner, and the number and mailbox
+            Tron Netter answers on are one application on one VM behind a
+            Cloudflare tunnel. No load balancer, no container runtime, no
+            managed cloud database: a web server, a process manager, Postgres
+            and the tunnel. What is worth showing is not the stack but the
+            constraints, which are written down as invariants a rebuild may
+            not drop, beside the note of the day one of them turned out to be
+            only half true.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">01 · </span>
-                Human BCC
+                Every Send Copies a Person
               </h3>
               <p className="mt-3 text-sm">
-                Every email our AI sends is BCC&apos;d to a human, so nothing
-                leaves unreviewed.
+                Every email this site sends is copied to a human overseer, by
+                two mechanisms rather than one, because for a while the second
+                did not exist and the senders that skip the shared mail seam
+                copied nobody. Both paths normalize addresses before comparing,
+                so an overseer who is also the recipient gets one copy rather
+                than two. Exactly one send is carved out on purpose, with the
+                reason written at the call site.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">02 · </span>
-                No Tools, No Internet
+                Nothing to Reach For
               </h3>
               <p className="mt-3 text-sm">
-                The public persona has no tools and no live internet access,
-                so it can never take an action we haven&apos;t designed.
+                The public persona has no tools and no internet. Chat, text and
+                email each declare a tool policy of none, and every call
+                passes the engine&apos;s entire tool list back as the list to
+                disable. That list is assembled fail-closed: if the
+                inventory cannot be read, a pinned set of names is disabled
+                instead, because an empty disable list would quietly mean
+                everything is allowed.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">03 · </span>
-                Published Knowledge Only
+                Only What We Published
               </h3>
               <p className="mt-3 text-sm">
-                Its knowledge is a nightly crawl of xl.net and ai.xl.net, so
-                it only speaks about what we publish.
+                What it knows is a nightly crawl of ai.xl.net and xl.net,
+                written by replacing what was there rather than adding to it,
+                so a page we take down stops being something it knows. A crawl
+                that comes back empty, or nearly empty, aborts and keeps
+                yesterday&apos;s knowledge rather than publishing a blank one,
+                and either outcome is mailed as a report.
               </p>
             </div>
           </div>
           <p className="mt-8 text-sm">
+            Memory follows the same posture. An anonymous conversation is not
+            stored at all, what a signed-in or phone-verified person tells it
+            stays private to them, and a sweep runs before and after every
+            remembering turn to invalidate any fact that tried to write itself
+            public, because a stranger planting a memory every visitor could
+            read is the interesting failure here. Texting the word FORGET
+            erases that number&apos;s memories outright. The exhibits on this
+            page are written into the application itself, so an unreachable
+            database costs the cards submitted by the team and nothing else.
             Try it: chat, text, email, or call Tron Netter on this page.
           </p>
           <p className="mono mt-6 text-xs text-faint">
-            human BCC on all outbound email · no tools, no internet · nightly
-            knowledge crawl · single Azure VM behind a Cloudflare tunnel
+            human copy on every outbound email · tools disabled fail-closed ·
+            nightly crawl, replaced not appended · anonymous turns unstored ·
+            FORGET erases a number · one VM behind a Cloudflare tunnel
           </p>
         </section>
 
@@ -351,59 +442,90 @@ export default async function WorkPage() {
         {/* 5. IT Support Chicago */}
         <section id="itsupportchicago" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
-            <span className="badge badge--warn">
-              <span className="dot" /> Autonomy experiment
+            <span className="badge badge--ok">
+              <span className="dot" /> Live · public
             </span>
+            <span className="badge badge--light">Almost entirely AI-run</span>
           </div>
           <h2 className="mt-6">IT Support Chicago</h2>
           <p className="mt-2 text-sm text-faint">
-            Our controlled autonomy experiment: the deliberate opposite of the
-            site you&apos;re on.
+            A ranking site that runs itself, published by a firm that appears
+            on its own list.
           </p>
           <p className="mt-4 text-sm">
-            itsupportchicago.net was designed as a test of a 100% autonomous
-            organization: how far can an AI-run operation go with no human in
-            the loop?
+            itsupportchicago.net ranks Chicago managed IT providers against a
+            scoring formula it publishes in full, built from third-party data,
+            with the worked arithmetic and the evidence shown on every vendor
+            page. It is free, nothing on it can be bought, and it is almost
+            entirely operated by AI agents: collection, scoring, drafting and
+            review run without a person in the chair. Maximum oversight on{" "}
+            <a href="#aiwebsite">this site</a>, near-total delegation on that
+            one. We run both on purpose, because the question worth answering
+            is where the line falls.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">01 · </span>
-                Maximum Autonomy
+                Nobody Can Buy a Place
               </h3>
               <p className="mt-3 text-sm">
-                No human in the loop: the experiment exists to find out how
-                far an AI-run operation can go on its own.
+                The formula is published, each score shows the calculation and
+                the evidence under it, and every page carries the date the data
+                behind it was last checked. The methodology page declines to
+                call any of it objectively verified, because the wording would
+                claim more than the process delivers. A vendor&apos;s operating
+                status is the one field no agent flips on a single signal; it
+                waits for an evidence gate.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">02 · </span>
-                Hardened Sandbox
+                The Publisher Is on the List
               </h3>
               <p className="mt-3 text-sm">
-                A GCP confidential VM with AMD SEV memory encryption, Shielded
-                VM boot integrity, IAP-only SSH, and deny-all ingress.
+                XL.net owns and operates the site and is itself one of the
+                firms it ranks, which the site says on its own about page
+                rather than in a footnote. That paragraph is the one piece of
+                copy no automated agent may write, alter or remove: changing it
+                is a human decision, and the rule is written into the component
+                that renders it.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">03 · </span>
-                Fully Separate
+                Where the Agents Stop
               </h3>
               <p className="mt-3 text-sm">
-                Its own infrastructure, completely separate from XL.net client
-                systems, so the experiment can fail safely.
+                Delegation is not the same as absence. Outreach is drafted and
+                queued, and a person approves before anything sends. An article
+                whose adversarial review panel did not convene publishes
+                unindexed and out of the sitemap rather than quietly going
+                out. Deploys still begin at somebody&apos;s keyboard, and the
+                legally load-bearing copy is frozen against the agents that
+                write everything else.
               </p>
             </div>
           </div>
           <p className="mt-8 text-sm">
-            Maximum oversight here, maximum autonomy there: we run both, on
-            purpose, to learn where the line is.
+            The sandbox is built to let all of that fail safely. Its own cloud
+            project, a confidential virtual machine with encrypted memory and
+            verified boot, no external address, and a firewall that denies
+            inbound traffic outright: visitors arrive through a tunnel the box
+            opens from the inside. A watchdog checks the services every minute
+            and restarts what died, security patches land unattended overnight,
+            and the backups are not taken on faith. They are restored into a
+            scratch database on a schedule and counted, on the principle its
+            documentation states plainly: a backup that cannot be restored is
+            not a backup.
           </p>
           <p className="mono mt-6 text-xs text-faint">
-            GCP confidential VM (AMD SEV) · Shielded VM · IAP-only SSH ·
-            deny-all ingress
+            published formula, shown arithmetic · common ownership disclosed
+            on the site · frozen copy no agent may touch · outreach drafted,
+            a person sends · confidential VM, deny-all inbound · restore-tested
+            backups
           </p>
           <a
             href="https://itsupportchicago.net"
@@ -422,54 +544,86 @@ export default async function WorkPage() {
             <span className="badge badge--ok">
               <span className="dot" /> Live · public
             </span>
-            <span className="badge badge--light">Sign-in with approval</span>
+            <span className="badge badge--light">Approval to enter</span>
           </div>
           <h2 className="mt-6">Roleplay</h2>
           <p className="mt-2 text-sm text-faint">
-            A public multi-user AI playground running directly on the Brain SDK.
+            Live practice against an AI buyer, then a debrief that scores you
+            off the transcript.
           </p>
           <p className="mt-4 text-sm">
-            roleplay.xl.net is our external-tenant experiment: what happens
-            when the Software Brain powers a product that isn&apos;t about
-            XL.net at all.
+            roleplay.xl.net is the answer to what the{" "}
+            <a href="#brain">Software Brain</a> does when it powers a product
+            that is not about XL.net at all. Salespeople and service reps run a
+            live audio or video session against an AI buyer with a hidden
+            agenda, hang up, and get coaching graded against what was actually
+            said. Its users are people who do not work for XL.net: it is the
+            external tenant, on its own machine with its own database, running
+            the engine and <a href="#aicompany">the shared module</a> together.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">01 · </span>
-                Brain SDK In-Process
+                The Buyer Does Not Repeat Itself
               </h3>
               <p className="mt-3 text-sm">
-                The Software Brain&apos;s orchestrator, memory, and voice
-                packages run inside the app itself to power multi-user AI
-                roleplay.
+                Scenarios are archetypes with difficulty ratings, and the
+                learner gets a pre-call brief and nothing else: the buyer&apos;s
+                agenda stays hidden, the way it would be. Every run samples a
+                different objection and different stalling tactics and is told
+                to open differently, so the second attempt cannot be beaten
+                from memory.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">02 · </span>
-                Realtime Voice
+                Scored Off the Stored Copy
               </h3>
               <p className="mt-3 text-sm">
-                Live voice via STT/TTS and the xAI realtime API, so characters
-                can speak, not just type.
+                The debrief scores each dimension, names one thing to change,
+                and caps the misses, every one of them citing the turn it came
+                from with the line to say instead. Grading reads the
+                transcript the server stored rather than the browser&apos;s
+                copy, which becomes worth editing the moment a score exists,
+                and a degraded model response is never written down as a scored
+                session at all.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">03 · </span>
-                Gated and Isolated
+                Compiled In, Not Called Over
               </h3>
               <p className="mt-3 text-sm">
-                Google sign-in with admin approval gates entry, and the
-                tenant&apos;s data lives in its own isolated databases: your
-                data stays yours.
+                The engine&apos;s orchestrator, memory, voice and storage
+                packages are imported straight into the practice service rather
+                than reached over HTTP, so a live turn crosses no network hop
+                of ours. The audio itself goes from the browser to the voice
+                model directly and never transits the server, while the
+                ordinary chat persona on the same site talks to the shared
+                engine like every other property here.
               </p>
             </div>
           </div>
+          <p className="mt-8 text-sm">
+            Anyone can sign in, with Google, with Microsoft, or with a link
+            mailed to them, and nobody reaches the practice stage until an
+            admin approves them, an invitation from their own company is
+            accepted, or a plan is paid for. Both of its services check that
+            independently rather than trusting the browser&apos;s claim.
+            Recordings and transcripts belong to the learner, every read is
+            ownership-checked, and a manager&apos;s reach stops at the edge of
+            their own email domain. If the camera is on but too few frames
+            were usable, the coach is told to skip body language rather than
+            guess.
+          </p>
           <p className="mono mt-6 text-xs text-faint">
-            Brain SDK in-process · realtime voice · Google sign-in + approval ·
-            isolated per-tenant databases
+            practice against an AI buyer · hidden agenda, varied every run ·
+            graded off the stored transcript, with turn citations · sign in
+            freely, enter on approval · engine compiled in, audio direct from
+            the browser
           </p>
           <a
             href="https://roleplay.xl.net"
@@ -485,38 +639,55 @@ export default async function WorkPage() {
         {/* 7. Leo Netter */}
         <section id="leo-netter" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
-            <span className="badge">
-              <span className="dot" /> Internal test
+            <span className="badge badge--ok">
+              <span className="dot" /> In production
             </span>
+            <span className="badge badge--light">Internal-facing</span>
           </div>
           <h2 className="mt-6">Leo Netter</h2>
           <p className="mt-2 text-sm text-faint">
-            The AI teammate we test on ourselves first.
+            A teammate in Slack, with most of what it could reach deliberately
+            switched off.
           </p>
           <p className="mt-4 text-sm">
-            Leo Netter is our internal test bot: a memory-bearing assistant
-            built on the Brain SDK, deployed to the people most likely to
-            complain about it: us.
+            Leo Netter is a conversation-first, memory-bearing assistant for
+            the XL.net team, built on the{" "}
+            <a href="#brain">Software Brain</a> and described by its own
+            documents as the slow and deliberate successor to the sales
+            assistant it replaced. That handover is finished and it answers in
+            Slack every working day. The part worth exhibiting is the
+            restraint around it: nearly every lane this thing could speak on is
+            built, tested, and dark until a person names what it may touch.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">01 · </span>
-                Slack DMs Only
+                Built, Then Left Switched Off
               </h3>
               <p className="mt-3 text-sm">
-                It lives only in Slack DMs for the XL.net team and never talks
-                to customers.
+                It works in direct messages and in a named list of channels,
+                and nowhere else yet. In a channel it runs with its writing and
+                identity tools stripped out and remembers nothing past the
+                conversation. The lanes for email, text, the phone and meeting
+                audio are built and shipped behind switches that default to
+                off, and its document search stays invisible to the model until
+                somebody names the folders it may read.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
               <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
                 <span className="text-faint">02 · </span>
-                Rough Edges First
+                It Has to Admit It Cannot
               </h3>
               <p className="mt-3 text-sm">
-                It exists so we hit the rough edges of a memory-bearing AI
-                teammate before anyone else does.
+                A standing rule forbids the offer it cannot keep: before
+                promising an action it has to establish that the action maps to
+                a call it could make right now, and otherwise say so and stop.
+                The tools that read business systems refuse anything that
+                would write. Sending an email takes two steps with a person&apos;s
+                click between them, a second click sends nothing twice, and an
+                approval left too long is refused rather than sent late.
               </p>
             </div>
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -525,14 +696,31 @@ export default async function WorkPage() {
                 Architecture Is Canonical
               </h3>
               <p className="mt-3 text-sm">
-                Every behavior, tool, and test is written into the
-                architecture document before code lands.
+                Every tool, behavior, memory scope, environment switch and test
+                is written into the architecture document before the code for
+                it exists. The document commit comes first and the code commit
+                second, which is enforced rather than trusted: a commit that
+                touches the application without staging that document is
+                refused outright.
               </p>
             </div>
           </div>
+          <p className="mt-8 text-sm">
+            Memory is classified one turn at a time into private to the person,
+            shared with the team, or public, and anything short of a confident
+            call files the fact as private, because over-scoping is the mistake
+            you can recover from. Two people&apos;s private memories cannot
+            surface in each other&apos;s conversations, and a channel writes
+            nothing durable at all. The test list works like the architecture:
+            a defect becomes a numbered entry before anyone writes the fix, and
+            a closed one is marked resolved rather than deleted, so what went
+            wrong stays in the document that specifies what replaced it.
+          </p>
           <p className="mono mt-6 text-xs text-faint">
-            Slack DM-only · internal to the XL.net team · architecture-is-canonical
-            governance
+            Slack first, every other lane dark by default · read-only business
+            tools · two steps and a human click to send mail · over-scope to
+            private when unsure · doc before code, enforced at commit ·
+            append-only test list
           </p>
         </section>
 

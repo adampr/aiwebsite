@@ -253,8 +253,12 @@ async function main() {
 
   // 2. Scan the table: existence bits only, never the blobs (ROW_COLS
   // discipline of work:backfill), plus the WHOLE ledger, deleted rows and
-  // orphans (submission_id null) included, so an unmatched local file is
-  // never a copy of something the store once held.
+  // every null-submission row included (an orphaned submission file, or
+  // an EXHIBIT archive retained by work:retain), so an unmatched local
+  // file is never a copy of something the store already holds. That is
+  // also the one place lane B becomes byte-visible here: once an exhibit
+  // is retained, a local copy of its package stops being reported as
+  // matching no submission row, because a ledger sha now claims it.
   const rowsRaw = await db
     .select({
       id: S.id,
