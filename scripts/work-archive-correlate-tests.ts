@@ -1,9 +1,10 @@
 // Tests for the §5.16 external-recovery correlation helpers
 // (scripts/lib/work-archive-correlate.ts): armor decode against the real
 // retention encoder, screened-name rules, per-slot coverage verdicts,
-// recovery planning (provenance rules), the unmatched-local grouping and
-// the bounded SKILL.md name sniff. Run: npm run test:correlate (tsx, no
-// DB, no brain).
+// recovery planning (provenance rules), the unmatched-local grouping, the
+// bounded SKILL.md name sniff, and the ADVISORY static-exhibit name guess
+// (which must stay a question: it never becomes a verdict and never moves
+// an exit code). Run: npm run test:correlate (tsx, no DB, no brain).
 
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
@@ -12,8 +13,10 @@ import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 import { toDeliverableAttachment } from "../src/lib/work/retention-encoding";
 import { storedRelPath } from "../src/lib/work/archive-naming";
+import staticTitles from "../src/lib/work/static-titles.json";
 import {
   DEFAULT_MD_NAME,
+  EXHIBIT_STOP_WORDS,
   MD_SLOT,
   PACKAGE_SLOT,
   decodeArmor,
@@ -25,6 +28,7 @@ import {
   localName,
   planRecovery,
   planSlotRecovery,
+  possibleExhibitMatches,
   preferLocal,
   recordedSlots,
   shellQuote,
@@ -33,6 +37,7 @@ import {
   unarmoredName,
   unmatchedLocal,
   unscreenedName,
+  type ExhibitFacts,
   type LedgerFacts,
   type LocalEntry,
   type LocalIndex,
@@ -398,6 +403,117 @@ async function main() {
     assert.equal(await sniffSkillName("big.md", big), null, "the 64 KB cap holds");
   }
 
+  // ---- the static exhibit lane: ADVISORY name guesses ONLY ---------------
+  {
+    // Lane B fixture (the hand-authored cards of src/app/work/page.tsx as
+    // page.tsx words them). Nothing here has a row, a sha or bytes, which
+    // is exactly why the byte lane cannot rule on it.
+    const EX: ExhibitFacts[] = [
+      { id: "tps-client-count", title: "TPS Client Count", bay: "03" },
+      { id: "log-analyzer", title: "Log Analyzer", bay: "03" },
+      { id: "ticketscribe", title: "TicketScribe", bay: "03" },
+      { id: "ticket-reply-composer", title: "Ticket Reply Composer", bay: "05" },
+      { id: "autotask-ticket-summaries", title: "Autotask Ticket Summaries", bay: "03" },
+      { id: "onboarding-toolkit", title: "Onboarding Toolkit", bay: "03" },
+      { id: "aiwebsite", title: "ai.xl.net", bay: "02" },
+      { id: "sp-writer", title: "SP Writer", bay: "03" },
+    ];
+    const ids = (hint: { skillName: string | null; fileName: string }) =>
+      possibleExhibitMatches(hint, EX).map((e) => e.id);
+
+    // token overlap, with hyphens, underscores, spaces and parens all
+    // splitting into words.
+    assert.deepEqual(
+      ids({ skillName: "client-count-tps-metric", fileName: "client-count-tps-metric.skill" }),
+      ["tps-client-count"]
+    );
+    assert.deepEqual(ids({ skillName: null, fileName: "log_analyzer (1).skill" }), ["log-analyzer"]);
+    assert.deepEqual(
+      ids({ skillName: "sweetprocess-sp", fileName: "sweetprocess-sp.skill" }),
+      ["sp-writer"],
+      "a two-letter word is still a word"
+    );
+    // the sniffed `name:` carries the guess when the file name is transport junk
+    assert.deepEqual(ids({ skillName: "log-analyzer", fileName: "files (2).zip" }), ["log-analyzer"]);
+    assert.deepEqual(ids({ skillName: null, fileName: "files (2).zip" }), [], "no shared token, no guess");
+
+    // stop words alone NEVER propose a match, and the list is pinned here.
+    for (const w of ["skill", "the", "a", "app", "xl", "tool", "it", "your", "up"])
+      assert.ok(EXHIBIT_STOP_WORDS.has(w), `${w} is a stop word`);
+    assert.ok(
+      !EXHIBIT_STOP_WORDS.has("ai"),
+      "ai is NOT a stop word: it would leave exhibit ai.xl.net with no token at all, a silent blind spot"
+    );
+    assert.deepEqual(ids({ skillName: null, fileName: "the-xl-tool-app.skill" }), []);
+    assert.deepEqual(
+      ids({ skillName: null, fileName: "SKILL (14).md" }),
+      [],
+      "a stem of stop words and a copy counter leaves nothing to match on"
+    );
+    // ... but "toolkit" is a real noun, deliberately NOT a stop word, so an
+    // overlap on it is a legitimate question to put to the operator.
+    assert.ok(!EXHIBIT_STOP_WORDS.has("toolkit"));
+    assert.deepEqual(ids({ skillName: null, fileName: "toolkit.skill" }), ["onboarding-toolkit"]);
+
+    // strongest first: more shared tokens, then the shorter title.
+    assert.deepEqual(
+      ids({ skillName: "autotask-ticket-summaries", fileName: "autotask-ticket-summaries.skill" }),
+      ["autotask-ticket-summaries", "ticket-reply-composer"],
+      "three shared tokens outrank one"
+    );
+    const TIE: ExhibitFacts[] = [
+      { id: "kaseya-builder", title: "Kaseya Builder", bay: "04" },
+      { id: "kaseya-ap", title: "Kaseya AP", bay: "04" },
+    ];
+    assert.deepEqual(
+      possibleExhibitMatches(
+        { skillName: "clean-kaseya-ap-builder", fileName: "clean-kaseya-ap-builder.skill" },
+        TIE
+      ).map((e) => e.id),
+      ["kaseya-ap", "kaseya-builder"],
+      "equal overlap: the shorter title first"
+    );
+
+    // THE HONEST EMPTY. Exhibit "TicketScribe" IS the `ticket-notes` skill,
+    // and token overlap cannot know that: returning nothing is the correct
+    // answer, and an empty result is never evidence that a file is
+    // unpublished. Note what the tool DOES offer for that file: other
+    // cards, which is why every advisory line is worded as a question.
+    assert.deepEqual(
+      possibleExhibitMatches({ skillName: "ticket-notes", fileName: "ticket-notes.skill" }, [EX[2]]),
+      [],
+      "a marketing name sharing no word is undiscoverable here, and is not guessed at"
+    );
+    assert.ok(
+      !ids({ skillName: "ticket-notes", fileName: "ticket-notes.skill" }).includes("ticketscribe"),
+      "the true exhibit never surfaces by name"
+    );
+    assert.deepEqual(ids({ skillName: "ticket-notes", fileName: "ticket-notes.skill" }), [
+      "ticket-reply-composer",
+      "autotask-ticket-summaries",
+    ]);
+    assert.deepEqual(possibleExhibitMatches({ skillName: "log-analyzer", fileName: "x.skill" }, []), []);
+
+    // The real snapshot the script reads: shape only. Titles are not pinned
+    // (a card rename is a page.tsx edit, not a regression here).
+    assert.ok(staticTitles.exhibits.length > 0, "the static lane is non-empty");
+    for (const ex of staticTitles.exhibits) {
+      assert.ok(ex.id.length > 0 && ex.title.length > 0, "every exhibit has an anchor and a title");
+      assert.ok(/^[0-9]{2}$/.test(ex.bay), "a two-digit bay");
+      // Self-advisable: a card whose whole title is stop words could never
+      // be guessed at, not even by a file named after it, and would become
+      // a SILENT blind spot the moment someone renamed it. A stop-word
+      // addition (or a rename) that costs this must be reconsidered, not
+      // pinned around: "ai" fails here on ai.xl.net, which is why it is not
+      // a stop word.
+      assert.equal(
+        possibleExhibitMatches({ skillName: null, fileName: ex.title }, [ex]).length,
+        1,
+        `exhibit "${ex.title}" is not proposable even by its own title`
+      );
+    }
+  }
+
   // ---- source scrape: no em or en dashes in the correlate lane ------------
   const here = dirname(fileURLToPath(import.meta.url));
   for (const f of [
@@ -424,6 +540,62 @@ async function main() {
   assert.equal(byteaMentions, 2, "both bytea columns are named");
   assert.equal(existenceBits, 2, "bytea columns appear ONLY as existence bits, never selected");
   assert.ok(!/db\s*\.\s*(update|insert|delete|execute|transaction)\(|storeArchiveFiles|verifyAndClearRowBytes|deleteStoredArchive/.test(scriptSrc), "the script writes nothing to the DB or the store");
+
+  // The unmatched section is per ROW, and discloses the lane it cannot see.
+  assert.ok(
+    /== Local files matching no submission ROW \(\$\{unmatched\.length\} distinct byte streams\) ==/.test(scriptSrc),
+    "the heading says ROW: the section is not a claim about what is on /work"
+  );
+  assert.ok(
+    /hand-authored exhibit cards \(src\/app\/work\/page\.tsx, bays 01 to 05\) that have no row, no sha and no bytes in the database/.test(scriptSrc),
+    "the standing caveat names lane B"
+  );
+  assert.ok(/already be PUBLISHED as an exhibit under a different \(marketing\) name/.test(scriptSrc));
+  assert.ok(/byte comparison cannot see that lane/.test(scriptSrc));
+  assert.ok(
+    /Check src\/app\/work\/page\.tsx before treating anything below as missing from \/work\./.test(scriptSrc),
+    "absence from /work is concluded by reading page.tsx, never by this tool"
+  );
+  assert.ok(
+    /this is a NAME guess, not a byte match/.test(scriptSrc),
+    "every advisory line says it is a guess"
+  );
+  assert.ok(
+    /no exhibit name resembles this; still verify page\.tsx/.test(scriptSrc),
+    "and an empty guess says so out loud instead of implying absence"
+  );
+  assert.deepEqual(
+    scriptSrc.match(/process\.exit\([^)]*\)/g) ?? [],
+    ["process.exit(1)", "process.exit(notReady.length > 0 ? 2 : 0)", "process.exit(1)"],
+    "the exit code is evidence only: no advisory exhibit guess can move it"
+  );
+  // That deepEqual pins the exit EXPRESSION, so it would still pass if an
+  // advisory ever reached the code INDIRECTLY (by filtering notReady, say).
+  // It is a control-flow pin, not a wording one; the scrapes below are the
+  // wording guarantee, and neither substitutes for the other. Every hedge
+  // that keeps this section from reading as a verdict is pinned here,
+  // because rewriting one into a claim is a one-line edit that no
+  // behavioural test would catch.
+  assert.ok(
+    /possibly already exhibit/.test(scriptSrc),
+    "the guess is offered as POSSIBLY, never as an established fact"
+  );
+  assert.ok(
+    /\(if none of the above is it, that is NOT evidence: a marketing name need not share any word with the skill name\)/.test(scriptSrc),
+    "a group WITH guesses carries the rider too: the named cards may all be wrong (ticket-notes draws Ticket Reply Composer, the truth is TicketScribe)"
+  );
+  assert.ok(
+    /share a word with a static exhibit card title: a QUESTION for each, not a match/.test(scriptSrc),
+    "the Summary count is offered as a question"
+  );
+  assert.ok(
+    /are NOT thereby unpublished, because a marketing name need not share any word/.test(scriptSrc),
+    "and the Summary refuses the complement in the same breath: the subtraction is the bad reasoning this tool must not invite"
+  );
+  assert.ok(
+    /Only src\/app\/work\/page\.tsx settles any of them\./.test(scriptSrc),
+    "the Summary names the only thing that settles it"
+  );
 
   console.log("work-archive-correlate-tests: all assertions passed.");
 }

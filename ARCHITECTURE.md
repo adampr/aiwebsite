@@ -4799,18 +4799,43 @@ also lists every local byte stream matching no recorded row sha and no
 ledger sha, grouped by sha with duplicates together (an armor source is
 hidden once its decoded copy is indexed), with a bounded `name:` sniff from
 SKILL.md front matter (first SKILL.md at depth <= 2 in a zip container
-detected by magic, 64 KB cap, a bad zip never throws). Writes NOTHING to the
+detected by magic, 64 KB cap, a bad zip never throws). That section is
+headed "matching no submission ROW" because /work renders TWO lanes: the
+DATABASE lane (`work_submissions` rows, rendered as "From the Team"), which
+is the only lane a sha comparison can see, and the STATIC lane, the
+hand-authored exhibit cards written directly in `src/app/work/page.tsx`
+(bays 01 to 05, snapshotted into `src/lib/work/static-titles.json`), which
+have no row, no sha and no bytes anywhere in the database, so a package
+fully published as an exhibit is byte-identical, to this tool, to one never
+submitted. The section therefore prints a standing caveat naming that lane
+and, per group, ADVISORY exhibit guesses by shared meaningful token between
+the exhibit title and the sniffed `name:` plus the file's basename stem
+(`possibleExhibitMatches`; hyphens and underscores split, stop words like
+skill/tool/xl/the dropped, strongest first), worded as a question, never as
+a verdict: a marketing name need not share a word with the skill name
+(exhibit "TicketScribe" IS the `ticket-notes` skill), so no overlap prints
+"no exhibit name resembles this" and proves nothing either way, and a card
+that IS named may simply be the wrong one (the `ticket-notes` group draws
+"Ticket Reply Composer"), which is why the same rider rides both branches
+and why the Summary count refuses its own complement in the same line
+instead of leaving "unmatched minus possible" to be subtracted. Advisory
+guesses never move the exit code, and absence from /work is only ever
+concluded by READING `src/app/work/page.tsx`. Writes NOTHING to the
 DB or the store, takes no archive-ops advisory lock (it may run beside a
 backfill or an import), needs no root refusal; refuses to run without a
 directory argument. Exit 0 when every missing slot is ready or none is
 missing or mismatched, 2 when any missing or mismatched slot is not ready
 (unverifiable, screened-only, unrecovered, store-mismatch, or a byte-holding
 row), 1 on a usage or runtime error. Pure pieces (`decodeArmor`,
-`slotCoverage`, `planRecovery`, `unmatchedLocal`, `sniffSkillName`, the
-name predicates) live in `scripts/lib/work-archive-correlate.ts`,
+`slotCoverage`, `planRecovery`, `unmatchedLocal`, `sniffSkillName`,
+`possibleExhibitMatches`, the name predicates) live in
+`scripts/lib/work-archive-correlate.ts`,
 unit-tested DB-free by `npm run test:correlate` (armor round-trip against
 the real encoder, every verdict, no `--force`/`--yes` in any command, the
-em-dash scrape over the lane's three files).
+advisory-guess rules including the pinned stop list and the honest empty
+for `ticket-notes`, a scrape that the ROW heading and its caveat are
+printed and that no advisory count reaches `process.exit`, the em-dash
+scrape over the lane's three files).
 
 **Email intake (2026-07-30)** — the second entry point into the SAME pipeline
 (`src/lib/work/email-intake.ts` + pure parsers in `email-parse.ts`, mounted

@@ -44,12 +44,25 @@
 // the operator confirms each import. Everything not ready is printed with
 // its exact reason, the true original named when it is in the folder.
 //
-// Also lists the local files that correspond to NO submission (not a
+// Also lists the local files that correspond to no submission ROW (not a
 // recorded row sha, not a ledger sha), grouped by sha so duplicates sit
 // together, with a bounded best-effort `name:` sniff from SKILL.md front
 // matter (first SKILL.md at depth <= 2 in a zip container, 64 KB cap, a
 // bad zip never throws): candidates that were never submitted, or
 // different byte-versions of something that was.
+//
+// That section is per ROW, and says so, because /work renders TWO lanes.
+// Lane A is the database (work_submissions, the "From the Team" section),
+// the only lane this tool compares against. Lane B is the hand-authored
+// exhibit cards written directly in src/app/work/page.tsx (bays 01 to 05,
+// snapshotted into src/lib/work/static-titles.json), which have NO row,
+// NO sha and NO bytes in the database at all: a package fully published
+// as an exhibit is indistinguishable, by bytes, from one never submitted.
+// The section therefore carries a standing caveat, and each group carries
+// ADVISORY exhibit-name guesses by shared token (marketing names need not
+// share a word with the skill name, so an empty guess proves nothing).
+// The guesses are never evidence and never move the exit code; absence
+// from /work is only ever concluded by reading page.tsx.
 //
 // The walk never lets one bad entry abort the report: symlinks are
 // skipped and listed, an unreadable file or an entry that will not stat is
@@ -83,15 +96,18 @@ import { basename, join, relative, resolve } from "node:path";
 import { asc, sql } from "drizzle-orm";
 import { db, schema } from "../src/lib/db";
 import { sanitizeStoredName } from "../src/lib/work/archive-naming";
+import staticTitles from "../src/lib/work/static-titles.json";
 import {
   MD_SLOT,
   decodeArmor,
   isArmorName,
   isZipMagic,
   planRecovery,
+  possibleExhibitMatches,
   sniffSkillName,
   unarmoredName,
   unmatchedLocal,
+  type ExhibitFacts,
   type LedgerFacts,
   type LocalEntry,
   type LocalIndex,
@@ -101,6 +117,13 @@ import {
 const S = schema.workSubmissions;
 const A = schema.workArchiveFiles;
 const DECODED_DIR = ".decoded";
+/** Lane B: the hand-authored exhibit cards of src/app/work/page.tsx, as
+ * snapshotted. Read for ADVISORY name guesses only: nothing here is a
+ * submission, has a sha, or can settle whether a local file is published.
+ * Guarded: a stale or hand-edited snapshot degrades to "no guesses" and
+ * the caveat drops its count, it never throws after a report has printed
+ * (that would flip a clean exit 0 into exit 1). */
+const EXHIBITS: ExhibitFacts[] = staticTitles.exhibits ?? [];
 
 function usage(msg: string): never {
   console.error(`[work-correlate] ${msg}\n\nUsage: npm run work:correlate -- <dir>`);
@@ -328,10 +351,27 @@ async function main() {
   // (d) already complete.
   console.log(`\n== Already complete: ${complete} of ${plan.length} rows record no missing or mismatched slot ==`);
 
-  // (e) local files that correspond to no submission.
+  // (e) local files whose bytes match no submission ROW. The heading says
+  // ROW because that is all a byte comparison can speak to: the static
+  // exhibit lane of page.tsx has no row, no sha and no bytes to compare
+  // against, so the caveat stands over the whole section and every group
+  // gets an ADVISORY name guess (or an explicit "no name resembles this",
+  // which is not evidence either). None of it touches the exit code.
   const unmatched = unmatchedLocal(index, rows, allLedger);
-  console.log(`\n== Local files matching no submission (${unmatched.length} distinct byte streams) ==`);
+  console.log(`\n== Local files matching no submission ROW (${unmatched.length} distinct byte streams) ==`);
   if (unmatched.length === 0) console.log("  none");
+  if (unmatched.length > 0) {
+    console.log(
+      `  CAVEAT: /work also renders${EXHIBITS.length > 0 ? ` ${EXHIBITS.length}` : ""} hand-authored exhibit cards (src/app/work/page.tsx, bays 01 to 05) that have no row, no sha and no bytes in the database.`
+    );
+    console.log(
+      "  A file below may therefore already be PUBLISHED as an exhibit under a different (marketing) name: byte comparison cannot see that lane at all."
+    );
+    console.log(
+      "  Check src/app/work/page.tsx before treating anything below as missing from /work."
+    );
+  }
+  let possibleExhibit = 0;
   for (const g of unmatched) {
     const first = g.entries[0];
     let name: string | null = null;
@@ -341,6 +381,25 @@ async function main() {
       name = null;
     }
     console.log(`\n  ${g.sha256.slice(0, 12)}  ${g.bytes} bytes${name ? `  name: ${name}` : ""}`);
+    const maybe = possibleExhibitMatches({ skillName: name, fileName: basename(first.path) }, EXHIBITS);
+    if (maybe.length > 0) possibleExhibit++;
+    for (const ex of maybe)
+      console.log(
+        `    possibly already exhibit "${ex.title}" (#${ex.id}, bay ${ex.bay}) - verify in page.tsx, this is a NAME guess, not a byte match`
+      );
+    // The rider rides BOTH branches. A named card that turns out not to be
+    // it is exactly as weak as no card at all: `ticket-notes` draws
+    // "Ticket Reply Composer" while the truth is exhibit "TicketScribe",
+    // so "checked the two named cards, neither matched" must never read as
+    // "not published".
+    if (maybe.length > 0)
+      console.log(
+        "    (if none of the above is it, that is NOT evidence: a marketing name need not share any word with the skill name)"
+      );
+    if (maybe.length === 0)
+      console.log(
+        "    no exhibit name resembles this; still verify page.tsx (marketing names need not share any word with the skill name)"
+      );
     for (const e of g.entries)
       console.log(`    ${relative(dir, e.path)}${e.source === "decoded-armor" ? `  (decoded from ${relative(dir, e.armorPath ?? "")})` : ""}`);
   }
@@ -348,8 +407,17 @@ async function main() {
   const openSlots = withOpen.reduce((n, p) => n + p.open.length, 0);
   const ready = openSlots - notReady.length;
   console.log(
-    `\nSummary: ${plan.length} rows, ${withOpen.length} with a missing or mismatched slot (${openSlots} slots: ${ready} ready to import, ${notReady.length} not), ${complete} complete, ${unmatched.length} unmatched local byte streams. Nothing was written to the DB or the store.`
+    `\nSummary: ${plan.length} rows, ${withOpen.length} with a missing or mismatched slot (${openSlots} slots: ${ready} ready to import, ${notReady.length} not), ${complete} complete, ${unmatched.length} local byte streams matching no submission row. Nothing was written to the DB or the store.`
   );
+  // Both operands of "unmatched minus possible" are on this screen, and the
+  // caveat is hundreds of lines up: the subtraction is the exact reasoning
+  // that nearly started a publication round off this tool, so the line that
+  // offers the count refuses the complement in the same breath.
+  if (unmatched.length > 0)
+    console.log(
+      `         ${possibleExhibit} of those ${unmatched.length} share a word with a static exhibit card title: a QUESTION for each, not a match. The other ${unmatched.length - possibleExhibit} are NOT thereby unpublished, because a marketing name need not share any word (exhibit "TicketScribe" IS the ticket-notes skill). Only src/app/work/page.tsx settles any of them.`
+    );
+  // The exit code is evidence only: advisory exhibit guesses never move it.
   process.exit(notReady.length > 0 ? 2 : 0);
 }
 
