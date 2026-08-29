@@ -14,6 +14,7 @@ import { LocalTime } from "@/components/local-time";
 import { StaffVerifyNotice } from "@/components/staff-verify-notice";
 import { allSubmissions, publishedCards, submissionById } from "@/lib/work/db";
 import { archiveStoreUsage } from "@/lib/work/archive-store";
+import { isExhibitRelPath } from "@/lib/work/archive-naming";
 import { companyById } from "@/lib/roadmap/db";
 import {
   KIND_LABELS,
@@ -269,7 +270,11 @@ export default async function AdminWorkPage() {
           verifies, the database copy is cleared, so a file here is usually
           the ONLY remaining copy (marked &quot;last copy&quot;). Files
           deliberately outlive their submission: a deleted or swept
-          submission leaves its files here until you clean them. Delete
+          submission leaves its files here until you clean them. Exhibit
+          archives (the hand-authored cards in bays 01 to 05, retained
+          with npm run work:retain) sit in the same list and are marked as
+          such; they never had a submission row, so they are always the
+          last copy. Delete
           removes the file from disk permanently; the ledger keeps a record
           of what was deleted and by whom, and published cards keep
           rendering either way.
@@ -309,9 +314,18 @@ export default async function AdminWorkPage() {
             dateLabel:
               f.createdAt.toISOString().slice(0, 16).replace("T", " ") + " UTC",
             submissionId: f.submissionId,
+            // A null submission_id has TWO causes and they must not read
+            // alike (2026-08-29 exhibit lane): a submission that was
+            // deleted or swept, or a file that never had a submission at
+            // all because it belongs to a hand-authored exhibit card. The
+            // ledger carries no lane column and needs none - the rel_path
+            // says which lane minted the row.
+            exhibit: isExhibitRelPath(f.relPath),
             // Last copy anywhere: submission gone, or its bytea cleared
             // after a verified store copy (refutation M1 - the confirm
-            // must say deletion is unrecoverable, not reassure).
+            // must say deletion is unrecoverable, not reassure). True for
+            // every exhibit archive by construction: lane B has no row
+            // and therefore no bytea to fall back on, ever.
             lastCopy: f.submissionId === null || !f.rowHasBytes,
           }))}
         />

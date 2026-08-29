@@ -70,7 +70,8 @@
 // belong in the store where the console can manage them.
 //
 // Concurrency: takes the shared archive-ops advisory lock (one key with
-// work:backfill), so overlapping store writes cannot unlink each other's
+// work:backfill and work:retain), so overlapping store writes cannot
+// unlink each other's
 // files; the lock releases when this process exits.
 //
 // Usage:
@@ -136,7 +137,7 @@ async function main() {
   if (!parsed.ok) die(`${parsed.error}\n\n${USAGE}`);
   const { id, file, md, extra, force, yes } = parsed.args;
 
-  // One writer at a time across import AND backfill (shared advisory key):
+  // One writer at a time across import, backfill AND retain (shared key):
   // overlapping store writes to one submission can unlink each other's
   // files through the rename + ledger-collision handler.
   const lockRows = await db.execute(
@@ -144,7 +145,7 @@ async function main() {
   );
   if (lockRows[0]?.locked !== true)
     die(
-      "Another work:backfill or work:import run holds the archive ops lock; wait for it to finish (the lock releases when that process exits)."
+      "Another work:backfill, work:import or work:retain run holds the archive ops lock; wait for it to finish (the lock releases when that process exits)."
     );
 
   const row = await submissionById(id);

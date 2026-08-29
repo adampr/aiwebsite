@@ -11,12 +11,13 @@ import {
   storedRelPath,
 } from "../../src/lib/work/archive-naming";
 
-/** One advisory-lock key shared by BOTH ops scripts (pg_try_advisory_lock):
+/** One advisory-lock key shared by ALL THREE ops scripts (work:backfill,
+ * work:import and, since 2026-08-29, work:retain) (pg_try_advisory_lock):
  * two concurrent storeArchiveFilesAt runs against the same submission can
  * interleave rename + ledger-insert-collision + unlink so that one run
  * deletes the OTHER run's live file while both exit 0. A second script
  * instance therefore refuses to start while any backfill/import holds the
- * lock. Session-scoped: Postgres releases it when the script's connection
+ * lock, whichever of the three it is. Session-scoped: Postgres releases it when the script's connection
  * closes at process exit. Arbitrary constant, just stable and unlikely to
  * collide with other advisory users of this database. */
 export const ARCHIVE_OPS_LOCK_KEY = 815162342;
