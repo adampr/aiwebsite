@@ -34,8 +34,11 @@ export interface StoredCleaning {
   redacted: string[];
   excluded: { path: string; reason: string }[];
   rules: { ruleId: string; cls: string }[];
-  /** Why no archive was stored. Null on the normal cleaned path. */
+  /** Why no archive was stored. PACKAGE ONLY: notify.ts's "NO COPY RETAINED"
+   * keys on this and means the package. Null on the normal cleaned path. */
   failed: string | null;
+  /** Why no standalone document was stored, when one was submitted. */
+  mdFailed?: string | null;
 }
 
 export interface StorageDecision {
@@ -59,8 +62,19 @@ export interface StorageDecision {
   /** How many paths were cleaned in total, uncapped. `cleanedPaths` is capped
    * for display, so counting it under-reports past the cap. */
   cleanedCount: number;
-  /** Set when a rebuild failed and no archive is being stored. */
+  /** Set when the PACKAGE rebuild failed and no archive is being stored. */
   failed: string | null;
+  /** Set when a standalone DOCUMENT was passed and its cleaned bytes could not
+   * be produced, so nothing may be stored for that slot either.
+   *
+   * SEPARATE FROM `mdData === null`, and that distinction is the whole reason
+   * this field exists. mdData is null in two situations a caller cannot tell
+   * apart: there is no document slot at all (benign, and the caller should
+   * keep whatever document the package walk already cleaned), or the document
+   * WAS cleaned and could not be stored (the failure). A `?? mdMeta.data`
+   * fallback reads as a harmless default and is only harmless for the first,
+   * so callers must branch on THIS instead. */
+  mdFailed: string | null;
 }
 
 function mergeRules(
@@ -99,6 +113,7 @@ export function decideStorage(opts: {
       cleanedKind: "credential",
       cleanedCount: 0,
       failed: null,
+      mdFailed: null,
     };
 
   const archiveData = pkgClean
@@ -122,7 +137,17 @@ export function decideStorage(opts: {
     redacted: [...(pkgClean?.redactedPaths ?? []), ...(mdClean?.redactedPaths ?? [])],
     excluded: [...(pkgClean?.excludedPaths ?? []), ...(mdClean?.excludedPaths ?? [])],
     rules: mergeRules([pkgClean, mdClean]),
+    // PACKAGE-ONLY, deliberately: notify.ts keys "NO COPY RETAINED" on this
+    // field, and that sentence is about the package. An md failure recorded
+    // here would make the retention mail claim the package was not retained
+    // when it is attached to the very same message.
     failed: pkgClean && !pkgClean.stored ? (pkgClean.failed ?? "rebuild failed") : null,
+    // The document slot gets its own field so a failure there is still
+    // RECORDED rather than presenting as an ordinary success with md: null.
+    mdFailed:
+      opts.md && mdClean && !mdClean.stored
+        ? (mdClean.failed ?? "document rebuild failed")
+        : null,
   };
 
   const classes = new Set(record.rules.map((r) => r.cls));
@@ -141,7 +166,11 @@ export function decideStorage(opts: {
             // unambiguously a credential, so the default belongs on that side.
             "credential",
     cleanedCount: allCleanedPaths(record).length,
-    failed: record.failed,
+    failed: pkgClean && !pkgClean.stored ? (pkgClean.failed ?? "rebuild failed") : null,
+    mdFailed:
+      opts.md && mdClean && !mdClean.stored
+        ? (mdClean.failed ?? "document rebuild failed")
+        : null,
   };
 }
 
@@ -179,6 +208,7 @@ export function parseCleaning(json: string | null | undefined): StoredCleaning |
       excluded: Array.isArray(parsed.excluded) ? parsed.excluded : [],
       rules: Array.isArray(parsed.rules) ? parsed.rules : [],
       failed: parsed.failed ?? null,
+      mdFailed: parsed.mdFailed ?? null,
     };
   } catch {
     return null;

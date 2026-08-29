@@ -6361,6 +6361,69 @@ async function main() {
     );
   }
 
+
+  // C18. A DOCUMENT-SLOT FAILURE MUST NOT FALL BACK TO THE SUBMITTED FILE.
+  // decideStorage returns mdData null for two different reasons, and only one
+  // of them makes `?? mdMeta.data` safe: no document slot at all (the package
+  // walk already cleaned that document) versus a document that WAS cleaned and
+  // could not be stored (that buffer is the submitted, uncleaned file). The
+  // module reports the second separately so the lanes can drop the slot.
+  {
+    const fakePkg = { ...(winWalk as ExtractOk), cleaning: undefined };
+    const mdRecord = {
+      droppedPaths: [],
+      redactedPaths: ["SKILL.md"],
+      excludedPaths: [],
+      rules: [{ ruleId: "private-key", cls: "credential" as const }],
+      stored: null,
+      failed: "document rebuild failed",
+    };
+    const d = decideStorage({
+      pkg: fakePkg,
+      submittedArchive: Buffer.from("PKG"),
+      md: {
+        extract: { ...(winWalk as ExtractOk), cleaning: mdRecord },
+        submitted: Buffer.from("SUBMITTED-UNCLEANED-MD"),
+      },
+    });
+    assert.equal(d.mdData, null, "no cleaned document bytes are offered");
+    assert.equal(
+      d.mdFailed,
+      "document rebuild failed",
+      "and the failure is reported separately, so the lanes can tell it apart from having no slot"
+    );
+    // `failed` stays PACKAGE-only, because notify's "NO COPY RETAINED" keys on
+    // it and that sentence is about the package; the document slot has its own
+    // field so the failure is still recorded rather than looking like success.
+    assert.equal(d.failed, null, "a document failure is not a package failure");
+    const rec = JSON.parse(d.cleaningJson!) as { mdFailed?: string | null };
+    assert.equal(
+      rec.mdFailed,
+      "document rebuild failed",
+      "and the stored record carries it, or nothing downstream can tell"
+    );
+  }
+  // The benign shape: no document slot passed at all.
+  {
+    const d = decideStorage({
+      pkg: winWalk as ExtractOk,
+      submittedArchive: Buffer.from("PKG"),
+    });
+    assert.equal(d.mdFailed, null, "no slot is not a failure");
+  }
+  // Every lane guards on mdFailed rather than on mdData being null.
+  for (const lane of [
+    "src/app/api/work/submissions/route.ts",
+    "src/app/api/work/submissions/[id]/update/route.ts",
+    "src/lib/work/email-intake.ts",
+    "scripts/work-submit.ts",
+  ]) {
+    assert.ok(
+      /mdMeta && !storage\.mdFailed/.test(readFileSync(lane, "utf8")),
+      `${lane} must drop the document slot on a document-rebuild failure, not fall back to the submitted file`
+    );
+  }
+
   console.log("work-tests: all assertions passed.");
 }
 

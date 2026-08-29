@@ -1644,9 +1644,20 @@ export async function handleWorkEmail(
     submittedArchive: bytes,
     md: mdFile && mdWalk ? { extract: mdWalk, submitted: mdFile.bytes } : null,
   });
-  const mdForRow = mdMeta
-    ? { ...mdMeta, data: storage.mdData ?? mdMeta.data }
-    : undefined;
+  // THE `??` IS ONLY SAFE FOR ONE OF THE TWO BRANCHES, which is why the guard
+  // is on mdFailed and not on mdData being null. A null mdData means either
+  // "no standalone document slot was passed", in which case mdMeta.data is the
+  // package walk's ALREADY-CLEANED document and the fallback is correct, or
+  // "a document was passed and its cleaned bytes could not be produced", in
+  // which case mdMeta.data is the SUBMITTED, uncleaned file and falling back
+  // to it stores exactly what this round exists to remove. Those two are
+  // indistinguishable from mdData alone, so the module reports the failure
+  // separately and we drop the slot entirely, the same way the package slot
+  // is dropped behind `if (storage.archiveData)`.
+  const mdForRow =
+    mdMeta && !storage.mdFailed
+      ? { ...mdMeta, data: storage.mdData ?? mdMeta.data }
+      : undefined;
   if (storage.cleaned && storage.failed)
     log(`archive NOT stored: cleaning rebuild failed (${storage.failed})`);
 

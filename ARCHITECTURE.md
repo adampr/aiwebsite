@@ -4618,7 +4618,19 @@ make the true original report as never submitted. What was actually written is
 recorded in `cleaning_json` (migration 0053, NULL ⇒ the stored artifact IS the
 submitted artifact, so no backfill and old rows stay correct): dropped/redacted/
 excluded paths, the rule ids that fired, the sha256+length of the stored
-artifact, and `failed` when no archive was retained.
+artifact, and `failed` when no archive was retained. **`failed` is
+PACKAGE-ONLY** and the document slot has its own `mdFailed`: `notify.ts` keys
+the `(NO COPY RETAINED)` retention mail on `failed`, and that sentence is
+about the package, so folding a document failure into it would have the mail
+claim the package was not retained while attaching it to the same message.
+The split matters at the call sites too, and is the reason `decideStorage`
+reports it rather than leaving callers to infer it: `mdData` is null both when
+there is no standalone document slot (in which case the package walk's
+already-cleaned document is the right thing to keep) and when a document was
+submitted whose cleaned bytes could not be produced (in which case the only
+remaining buffer is the SUBMITTED file). Those are indistinguishable from
+`mdData` alone, so all four lanes guard on `mdFailed` and drop the slot
+entirely, exactly as the package slot is dropped behind `archiveData`.
 
 **WHAT THE SCAN DOES NOT SEE, stated because cleaning-instead-of-refusing
 WIDENS what gets stored.** Content scanning reaches only `.md`/`.mdx`/
