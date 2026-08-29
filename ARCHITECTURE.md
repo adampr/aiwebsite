@@ -15,7 +15,11 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 §5.16 BADGE SUBJECT GUIDANCE: the
+Last verified against code: 2026-08-29 §5.16 BADGE SUBJECT GUIDANCE (and,
+same day, the §5.16 external-recovery correlation lane: `work:correlate` +
+`scripts/lib/work-archive-correlate.ts` + `test:correlate`, read-only against
+the DB, no lock; plus the fourth-script clause in "Backfill + external
+import"): the
 panel's two badge-picking stages (the structure writer and synthesis) now
 carry one shared sentence saying what `categoryBadge` is FOR, because the
 vocabulary alone never said. The gap produced a real class of wrong badge:
@@ -4588,7 +4592,10 @@ Returns 202 `{id, status, queued}` and kicks the panel.
 **Backfill + external import (2026-08-19, refuted and hardened same day)** -
 two more VM-only operator scripts beside `work:archive` (all three read
 only `DATABASE_URL` + `WORK_ARCHIVE_DIR`, both long in `.env.example`; they
-run on the VM because that is where both resolve). Shared safeguards: both
+run on the VM because that is where both resolve; a fourth,
+`work:correlate`, reads `DATABASE_URL` only, writes nothing to the DB or
+the store and takes no lock, see "External-recovery correlation" below).
+Shared safeguards: both
 refuse to run as root (store files must stay owned by the user the site
 runs as, or admin cleanup could never unlink them), and both take ONE
 shared Postgres advisory lock (`pg_try_advisory_lock`, constant key
@@ -4747,19 +4754,29 @@ there) makes the hand-rolled matching of a folder of recovered files (the
 admin mailbox's retention attachments, the owner's downloads) repeatable. It
 walks `<dir>` recursively, sha256-hashes every regular file, decodes every
 `<name>.b64.txt` armor (the 76-column base64 `retention-encoding.ts` emits;
-any whitespace tolerated, non-base64 text refused as null) into
-`<dir>/.decoded/<unarmoredName>` so an import command can point at a real
-file (an identical decode already there is left alone; a different file at
-that name is disclosed and the decode lands under a sha-prefixed name), scans
+any whitespace tolerated, non-base64 or empty text refused as null) into
+`<dir>/.decoded/<name>` (the unarmored basename through `sanitizeStoredName`)
+so an import command can point at a real file (an identical decode already
+there is left alone; a different file at that name is disclosed and the
+decode lands under a sha-prefixed name; a decode that is not a zip under a
+`.skill`/`.zip`/`.ski` name is noted as possibly not a retention
+attachment). The walk `lstat`s and never follows: symlinks, unreadable
+files and entries that will not stat are listed in notes and skipped, one
+bad entry never aborts the report. It scans
 every `work_submissions` row by existence bits only (`archive_data is not
 null`, never a bytea select) plus the whole `work_archive_files` ledger
-(deleted and orphaned rows included), and prints per row, per RECORDED slot
+(deleted and orphaned rows included), and decides per row, per RECORDED slot
 (00 when `archive_name`/`archive_sha256` is stamped, 01 when
 `md_name`/`md_sha256` is) one of: row-bytes, store-live (a live ledger row
-sha-equal to the recorded sha, or any live row at the slot's minted
-`storedRelPath`, noted when its sha differs), admin-deleted (only deleted
-ledger rows at the slot: cleanup is FINAL, nothing is proposed), missing. A
-missing slot is recoverable when a local file hashes to the recorded sha (a
+sha-equal to the recorded sha, noted when it sits under another rel_path;
+or, with no sha recorded, any live row at the slot's minted
+`storedRelPath`), store-mismatch (a live row at the minted `storedRelPath`
+whose sha DIFFERS from the recorded one: a forced import or a differing
+backfill left the wrong bytes in the store), admin-deleted (only deleted
+ledger rows at the slot: cleanup is FINAL, nothing is proposed), missing.
+Only rows with a missing or mismatched slot are printed slot by slot; the
+rest are reduced to an "already complete" count. A missing or mismatched
+slot is recoverable when a local file hashes to the recorded sha (a
 plain file wins over a decoded armor copy, then the shortest path);
 unverifiable-name-match when the row records NO sha and a non-screened local
 file has the same sanitized name and byte count (disclosed as
@@ -4768,9 +4785,16 @@ the only name matches are screened copies (`<name>.screened.<ext>`, the
 Gmail-safe REWRITE the retention email attaches when the original would
 bounce: a different byte stream by construction, so it can never satisfy a
 recorded sha; the tool says the original is not in this folder and never
-emits `--force`); else unrecovered. The ready-to-run block is
-`npm run work:import -- <id> --file <path> --md <path>` over the recoverable
-slots only, never `--force`, never `--yes` (the operator confirms each). It
+emits `--force`); else unrecovered. A recoverable slot is READY only when
+`work:import` would accept it as things stand: a store-mismatch slot is never
+ready (the per-slot ledger gate refuses a slot with a live row; the wrong
+store file must be deleted in the console first, and the tool says so while
+still naming the true original when it is in the folder), and no slot of a
+row that still holds bytea in ANY slot is ready (`work:import` refuses
+byte-holding rows whole: run `work:backfill` first, then re-run). The
+ready-to-run block is `npm run work:import -- <id> --file <path> --md <path>`
+over the ready slots only, never `--force`, never `--yes` (the operator
+confirms each); everything not ready is listed with its exact reason. It
 also lists every local byte stream matching no recorded row sha and no
 ledger sha, grouped by sha with duplicates together (an armor source is
 hidden once its decoded copy is indexed), with a bounded `name:` sniff from
@@ -4778,9 +4802,10 @@ SKILL.md front matter (first SKILL.md at depth <= 2 in a zip container
 detected by magic, 64 KB cap, a bad zip never throws). Writes NOTHING to the
 DB or the store, takes no archive-ops advisory lock (it may run beside a
 backfill or an import), needs no root refusal; refuses to run without a
-directory argument. Exit 0 when every missing slot is recoverable or none is
-missing, 2 when any missing slot is unverifiable, screened-only or
-unrecovered, 1 on a usage or runtime error. Pure pieces (`decodeArmor`,
+directory argument. Exit 0 when every missing slot is ready or none is
+missing or mismatched, 2 when any missing or mismatched slot is not ready
+(unverifiable, screened-only, unrecovered, store-mismatch, or a byte-holding
+row), 1 on a usage or runtime error. Pure pieces (`decodeArmor`,
 `slotCoverage`, `planRecovery`, `unmatchedLocal`, `sniffSkillName`, the
 name predicates) live in `scripts/lib/work-archive-correlate.ts`,
 unit-tested DB-free by `npm run test:correlate` (armor round-trip against
