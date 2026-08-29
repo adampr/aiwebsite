@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: peer-monitor.sh.tpl@0e05ee7f1cae06a2c44c1717da6b700214eef127bb8d5605eb60a51207742da2
+# aicompany-template: peer-monitor.sh.tpl@6aedc126e6831204e6860986f6af38ad16b882ec2d958730a00aabb3d45fef13
 # Cross-site peer monitor (@aicompany/core template, §9.7 v1.15). The
 # self-hosted watchdog can't report a dead VM or severed tunnel, so sibling
 # sites watch each other across hosting providers — FULL MESH is normative
@@ -18,6 +18,16 @@
 # best-effort, same 6h throttle in a .sms-suffixed state file. This is an
 # ATTENTION-layer fix, not detection: the 07-22 DOWN email was DELIVERED at
 # 14:50Z and sat unread for an hour.
+#
+# Geo gate (v1.110.0, §5.2/§9.7): outbound SMS is US/Canada ONLY — Twilio's
+# account-level Geo Permissions were opened account-wide for an unrelated
+# consumer, so this second direct sender re-checks the rule itself.
+# render.mjs already refuses a non-US/CA PEER_MONITOR_SMS_TO at render time,
+# but PEER_MONITOR_SMS_TO_OVERRIDE never passes through render, so send_sms
+# validates the target at send time too: full NANP shape, then the non-US/CA
+# territory NPA denylist (mirrors NON_US_CA_NANP_NPAS in src/lib/phone.ts;
+# sync-pinned by tests/templates.test.ts). Malformed target => refused
+# (fail-safe). Log lines carry at most "+1"+NPA, never the full number.
 #
 # Rendered per host from PEER_MONITOR_PEERS in deploy/site-deploy.env
 # (space-separated name|url pairs); every default below is overridable via
@@ -87,6 +97,24 @@ send_alert() { # subject body — returns 0 iff the mail actually went out
 
 send_sms() { # body — best-effort Twilio escalation (attention layer)
   [ -n "$sms_to" ] || return 0
+  # §5.2 geo gate (v1.110.0): US/Canada ONLY, enforced HERE because the
+  # OVERRIDE env var bypasses render.mjs's validator and Twilio's account
+  # no longer backstops geography. Shape first — "+1" + exactly 10 digits,
+  # NPA in [2-9]xx — so anything malformed refuses (fail-safe), then the
+  # non-US/CA NANP territory denylist (Jamaica/Bahamas/DR/… share "+1";
+  # mirrors NON_US_CA_NANP_NPAS in src/lib/phone.ts — update BOTH).
+  case "$sms_to" in
+    +1[2-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) : ;;
+    *)
+      echo "$(date -Is) SMS escalation REFUSED: target ${sms_to:0:5}... is not a US/CA number (geo gate, §9.7)"
+      return 0 ;;
+  esac
+  npa=${sms_to:2:3}
+  case " 242 246 264 268 284 345 441 473 649 658 664 721 758 767 784 809 829 849 868 869 876 " in
+    *" $npa "*)
+      echo "$(date -Is) SMS escalation REFUSED: +1$npa is a non-US/CA NANP territory (geo gate, §9.7)"
+      return 0 ;;
+  esac
   sid=$(grep -m1 '^TWILIO_ACCOUNT_SID=' "$env_file" | cut -d= -f2-)
   tok=$(grep -m1 '^TWILIO_AUTH_TOKEN=' "$env_file" | cut -d= -f2-)
   from=$(grep -m1 '^TWILIO_PHONE_NUMBER=' "$env_file" | cut -d= -f2-)
@@ -99,7 +127,8 @@ send_sms() { # body — best-effort Twilio escalation (attention layer)
     --data-urlencode "From=$from" \
     --data-urlencode "To=$sms_to" \
     --data-urlencode "Body=$1" >/dev/null || true
-  echo "$(date -Is) SMS escalation attempted to $sms_to: $1"
+  # Masked (v1.110.0): "+1"+NPA only — log lines never carry a full number.
+  echo "$(date -Is) SMS escalation attempted to ${sms_to:0:5}...: $1"
 }
 
 for peer in $peers; do

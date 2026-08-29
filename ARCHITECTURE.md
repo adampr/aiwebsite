@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 §5.16 `wasPublished` ECHO ON DELETE (the 5.16 removal
+Last verified against code: 2026-08-29 @aicompany/core v1.110.0 ADOPTED (submodule 6ca024a, from v1.109.0 83d101a; RE-RENDER release, the only rendered file that changed is `deploy/peer-monitor.sh`): outbound SMS is US/Canada-only at BOTH of the module's Twilio senders, discriminated at the NANP area-code level (a denylist of the 21 non-US/CA +1 territories, so a new US/CA overlay code cannot fail closed), because Twilio's account-level Geo Permissions were opened account-wide for an unrelated consumer and the per-app restriction moved into code. Host impact: none beyond the re-render - no schema, no env, no site.config change; this host sets no PEER_MONITOR_SMS_TO, and `deploy/backup-db.sh` was restored to its committed form after the render (its template hash is unchanged, so the render only stripped the host's hand-added archive_store_backup block; the pre-commit.local gate guards that). Owner directive relayed fleet-wide by the leonetter session; aiwebsite is the §13 canary, same owner shortcut of the soak as v1.109.0. Semantics live in the module's MIGRATIONS.md v1.110.0 entry, not here. Previous: 2026-08-29 §5.16 `wasPublished` ECHO ON DELETE (the 5.16 removal
 bullet only): the plain-delete success response of `DELETE /api/work/submissions/[id]` becomes
 `{deleted: true, wasPublished}`, echoed from the route's OWN fresh read, which is authoritative
 because `deleteSubmission(id, {expectStatus: row.status})` ties the delete's success to that
