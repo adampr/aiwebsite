@@ -6325,6 +6325,42 @@ async function main() {
     "and must say why, since the sha MATCHING is exactly what makes it dangerous"
   );
 
+
+  // C17. THE FOURTH INTAKE LANE. scripts/work-submit.ts is a full intake lane
+  // (inspectArchive, createSubmission, storeArchiveFiles) and it was missed
+  // when cleaning shipped, which turned it into this round's own worst case:
+  // the walk stopped REFUSING credential-bearing uploads, so that lane began
+  // ACCEPTING them while still writing the SUBMITTED buffer to the row bytea,
+  // to the durable store, and onward to the owner's retention mail. A round
+  // that introduces an invariant owns finding every site that must honour it,
+  // so this pins the count: any NEW createSubmission caller must route
+  // through decideStorage or this fails.
+  const submitSrc = readFileSync("scripts/work-submit.ts", "utf8");
+  assert.ok(
+    /decideStorage\(/.test(submitSrc),
+    "work:submit must make the same storage decision as the other lanes"
+  );
+  assert.ok(
+    !/archiveData: bytes\b/.test(submitSrc),
+    "work:submit must never write the SUBMITTED buffer to the row"
+  );
+  for (const lane of [
+    "src/app/api/work/submissions/route.ts",
+    "src/app/api/work/submissions/[id]/update/route.ts",
+    "src/lib/work/email-intake.ts",
+    "scripts/work-submit.ts",
+  ]) {
+    const src = readFileSync(lane, "utf8");
+    assert.ok(
+      /decideStorage\(/.test(src),
+      `${lane} calls createSubmission and must route through decideStorage`
+    );
+    assert.ok(
+      !/data: bytes \}/.test(src),
+      `${lane} must not hand the submitted buffer to storeArchiveFiles`
+    );
+  }
+
   console.log("work-tests: all assertions passed.");
 }
 

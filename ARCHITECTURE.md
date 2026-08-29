@@ -15,7 +15,8 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 §5.16 INTAKE CLEANING (sections 5.16 upload inspection + reviewed-doc precedence + the work:correlate/work:import passages; migration 0053): owner directive "if someone submits a zip and it contains personal info or credentials, instead of erroring out just clean it before you save it" - `secrets_detected` is retired from `ExtractErr`, `secret-patterns.ts` is replaced by `sanitize.ts` (one function returns the cleaned text AND the hit inventory, so a pattern that detects without redacting is unrepresentable), `sanitize-archive.ts` rebuilds the zip carrying untouched entries by reference with their source compression pinned, and `cleaning.ts` `decideStorage()` is the one storage decision all three lanes share (nothing cleaned = the submitted bytes stored untouched; cleaned = the rebuild; rebuild unverifiable = NOTHING stored, never the submitted bytes and never a refusal). Ordinary work email addresses and phone numbers are deliberately NOT redacted. `archive_sha256`/`md_sha256` keep describing what the submitter SENT; `cleaning_json` records what was stored. Previous: 2026-08-29 §5.18 EXHIBIT CREDITS ON THE EMPLOYEE SCORECARD (sections 5.16/5.18): the hand-authored /work exhibits are page copy, not rows, so their builders were counted by nothing on the staff scorecard and two read 0 published; new `work_static_credits` (migration 0052, EMPTY in git by design, rows written on the VM because this repo is public) feeds a staff-lane-only Exhibits column, honesty-guarded against the generated anchor list, with the published-only doctrine, the company lane and the public /work copy untouched. Previous: 2026-08-29 §5.16 REPOSITORY SUBMISSION ROUND
+Last verified against code: 2026-08-29 §5.16 INTAKE CLEANING (sections 5.16 upload inspection + reviewed-doc precedence + the work:correlate/work:import passages; migration 0053): owner directive "if someone submits a zip and it contains personal info or credentials, instead of erroring out just clean it before you save it" - `secrets_detected` is retired from `ExtractErr`, `secret-patterns.ts` is replaced by `sanitize.ts` (one function returns the cleaned text AND the hit inventory, so a pattern that detects without redacting is unrepresentable), `sanitize-archive.ts` rebuilds the zip carrying untouched entries by reference with their source compression pinned, and `cleaning.ts` `decideStorage()` is the one storage decision every intake lane shares, the three §5.16 web/email lanes and
+the `work:submit` operator script (nothing cleaned = the submitted bytes stored untouched; cleaned = the rebuild; rebuild unverifiable = NOTHING stored, never the submitted bytes and never a refusal). Ordinary work email addresses and phone numbers are deliberately NOT redacted. `archive_sha256`/`md_sha256` keep describing what the submitter SENT; `cleaning_json` records what was stored. Previous: 2026-08-29 §5.18 EXHIBIT CREDITS ON THE EMPLOYEE SCORECARD (sections 5.16/5.18): the hand-authored /work exhibits are page copy, not rows, so their builders were counted by nothing on the staff scorecard and two read 0 published; new `work_static_credits` (migration 0052, EMPTY in git by design, rows written on the VM because this repo is public) feeds a staff-lane-only Exhibits column, honesty-guarded against the generated anchor list, with the published-only doctrine, the company lane and the public /work copy untouched. Previous: 2026-08-29 §5.16 REPOSITORY SUBMISSION ROUND
 (sections 5.16 "Exhibit archives" + "Scripted submission lane" + the /work
 page row): every repository on the dev box is now filed on /work under
 adam@xl.net. Six of them already had a hand-authored exhibit card, and those
@@ -5130,9 +5131,15 @@ project. On top of what `.gitignore` already excludes it drops every
 dotenv-shaped filename (`.env.example` and `deploy/site-deploy.env` included,
 which hold no secrets and would pass the intake, because a template is
 indistinguishable from the real thing to a later reader) and every file
-matching the store's own filename rules (`sanitize.ts`
-`SECRET_FILENAME_PATTERNS`, formerly `secret-patterns.ts`), printing each
-exclusion with its reason and never the matched value.
+matching `secret-patterns.ts`'s filename list, printing each exclusion with
+its reason and never the matched value. **That module still exists and this
+script still imports it** (2026-08-29): the intake cleaning replaced
+`secret-patterns.ts` for the three §5.16 INTAKE lanes with `sanitize.ts`, but
+the packager was not repointed in the same round, so two filename lists are
+live and have already diverged, with the packager's pre-upload filter now
+NARROWER than the intake cleaning. Owned by the work:package round; until it
+lands, a package can pass the packager and still be cleaned at intake, which
+is the safe direction but not the intended one.
 **Email intake (2026-07-30)** — the second entry point into the SAME pipeline
 (`src/lib/work/email-intake.ts` + pure parsers in `email-parse.ts`, mounted
 from the §5.3 `onInbound` hook). Trigger (attachment shape, owner ruling): an

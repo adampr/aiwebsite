@@ -141,6 +141,7 @@ import {
   type ExtractResult,
 } from "../src/lib/work/extract";
 import { storeArchiveFiles, archiveStoreRoot } from "../src/lib/work/archive-store";
+import { decideStorage } from "../src/lib/work/cleaning";
 import { INTERNAL_SCOPE } from "../src/lib/work/scope";
 import { parseTimeSavedHours } from "../src/lib/work/time-saved";
 import {
@@ -514,6 +515,41 @@ async function main(): Promise<void> {
     if (answer.trim().toLowerCase() !== "yes") die("aborted", 0);
   }
 
+  // THE SAME STORAGE DECISION THE OTHER THREE LANES MAKE (§5.16 cleaning,
+  // 2026-08-29). This script is a fourth intake lane and it was missed when
+  // cleaning shipped, which turned it into the round's own worst case: the
+  // walk stopped REFUSING credential-bearing uploads, so this lane started
+  // accepting them, and it was still writing the SUBMITTED buffer into the
+  // row bytea and the durable store, and mailing it to ADMIN_EMAIL at
+  // publish. A repo full of .env files is exactly what this script is for.
+  const storage = decideStorage({
+    pkg,
+    submittedArchive: bytes,
+    // Only the standalone-upload branch carries its own cleaning record; when
+    // the reviewed doc came out of the package, mdMeta.data is already the
+    // cleaned buffer and mdData below falls through to it.
+    md:
+      mdFile && mdExtract?.ok
+        ? { extract: mdExtract, submitted: mdFile.bytes }
+        : null,
+  });
+  const mdForRow = mdMeta
+    ? { ...mdMeta, data: storage.mdData ?? mdMeta.data }
+    : undefined;
+  if (storage.cleaned) {
+    console.log(
+      `\n[work-submit] CLEANED at intake before storing (${storage.cleanedCount} file(s)):`
+    );
+    for (const cp of storage.cleanedPaths) console.log(`    ${cp}`);
+    if (storage.failed)
+      console.log(
+        `  !! the cleaned rebuild could not be verified (${storage.failed}), so NO archive is being stored for this row.`
+      );
+    console.log(
+      `  Rotate anything real in them: they were read from disk as they are.`
+    );
+  }
+
   let row;
   try {
     row = await createSubmission({
@@ -532,8 +568,9 @@ async function main(): Promise<void> {
       archiveName: name.slice(0, 200),
       archiveSha256: pkg.archiveSha256,
       archiveBytes: pkg.archiveBytes,
-      archiveData: bytes,
-      md: mdMeta,
+      archiveData: storage.archiveData,
+      md: mdForRow,
+      cleaningJson: storage.cleaningJson,
     });
   } catch (err) {
     // ── gate: unique_violation (route 626-638) ─────────────────────
@@ -548,10 +585,11 @@ async function main(): Promise<void> {
   // Durable second copy at accept time, the route's call verbatim: package
   // at slot 0, standalone document at slot 1. Never throws; a store failure
   // logs and leaves the row's bytea as the copy.
-  await storeArchiveFiles(row.id, title, [
-    { name: name.slice(0, 200), data: bytes },
-    ...(mdMeta ? [{ name: mdMeta.name, data: mdMeta.data }] : []),
-  ]);
+  if (storage.archiveData)
+    await storeArchiveFiles(row.id, title, [
+      { name: name.slice(0, 200), data: storage.archiveData },
+      ...(mdForRow ? [{ name: mdForRow.name, data: mdForRow.data }] : []),
+    ]);
 
   console.log(`\nCreated ${row.id}`);
   console.log(`  status ${row.status}`);

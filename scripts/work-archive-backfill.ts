@@ -160,18 +160,26 @@ async function main() {
       // advisory lock excludes the other script, and this shrinks the
       // window against a concurrent intake write.
       const ledger = await ledgerFacts(row.id);
+      // SIZES MUST DESCRIBE THE BYTEA WE ARE ABOUT TO WRITE, not the upload
+      // as submitted (§5.16 cleaning, 2026-08-29). archive_bytes/md_bytes are
+      // provenance values recording what the SUBMITTER SENT, while a cleaned
+      // row's bytea holds the rebuild, so comparing against them reported
+      // every cleaned row as a CONFLICT and skipped the whole row. This is
+      // unreachable until a cleaned row exists, which is why it belongs to
+      // the round that creates the first one.
+      const rowCleaning = parseCleaning(row.cleaningJson);
       const expected: ExpectedSlotFile[] = [];
       if (row.hasArchive === true)
         expected.push({
           slot: PACKAGE_SLOT,
           name: row.archiveName ?? "upload.zip",
-          bytes: row.archiveBytes,
+          bytes: rowCleaning?.archive?.bytes ?? row.archiveBytes,
         });
       if (row.hasMd === true)
         expected.push({
           slot: MD_SLOT,
           name: row.mdName ?? "SKILL.md",
-          bytes: row.mdBytes,
+          bytes: rowCleaning?.md?.bytes ?? row.mdBytes,
         });
 
       if (expected.length === 0) {

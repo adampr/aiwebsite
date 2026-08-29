@@ -542,9 +542,37 @@ function main(): void {
     "this lane never files an update row and never stamps auto-approve"
   );
   {
-    // storeArchiveFiles: package at slot 0, standalone document at slot 1.
-    const call = /await storeArchiveFiles\(row\.id, title, \[\s*\{ name: name\.slice\(0, 200\), data: bytes \},\s*\.\.\.\(mdMeta \? \[\{ name: mdMeta\.name, data: mdMeta\.data \}\] : \[\]\),\s*\]\);/;
-    assert.ok(call.test(scriptSrc), "the store call is the route's, verbatim");
+    // storeArchiveFiles: package at slot 0, standalone document at slot 1,
+    // and this lane's call must equal the CREATE ROUTE'S call.
+    //
+    // DERIVED FROM THE ROUTE, not from a literal copied out of it (changed
+    // 2026-08-29). The literal that stood here pinned `data: bytes`, so when
+    // the §5.16 cleaning round changed BOTH files identically the mirror went
+    // red for the one reason it should not: the two lanes still agreed. A
+    // hand-written copy of the thing you are comparing against has to be
+    // re-copied every time that thing moves, which is how a mirror test
+    // becomes a thing people adjust until it passes. Reading the route means
+    // the assertion can only fail when the two lanes genuinely DIVERGE.
+    const routeSrc = readFileSync(
+      "src/app/api/work/submissions/route.ts",
+      "utf8"
+    );
+    const grab = (src: string) => {
+      const at = src.indexOf("storeArchiveFiles(row.id");
+      if (at === -1) return null;
+      const end = src.indexOf("]);", at);
+      return end === -1
+        ? null
+        : src.slice(at, end + 3).replace(/\s+/g, " ").trim();
+    };
+    const routeCall = grab(routeSrc);
+    const scriptCall = grab(scriptSrc);
+    assert.ok(routeCall, "the create route still has a storeArchiveFiles call");
+    assert.equal(
+      scriptCall,
+      routeCall,
+      "the store call is the route's, verbatim"
+    );
   }
 
   // ---- house rule: no em or en dashes -------------------------------------
