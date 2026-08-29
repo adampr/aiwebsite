@@ -4274,7 +4274,9 @@ editorial panel, modeled on the owner's human /work review panels, drafts the
 public card, argues against it, and publishes it to `/work` (§4) with no deploy
 and no source commit. Postgres is the canonical store; the rendered page is
 just Next's ISR cache of it. Code: `src/lib/work/` (`config.ts` caps/copy,
-`http.ts` session gate, `db.ts`, `extract.ts`, `secret-patterns.ts`,
+`http.ts` session gate, `db.ts`, `extract.ts`, `sanitize.ts` +
+`sanitize-archive.ts` + `cleaning.ts` (the 2026-08-29 intake cleaning, which
+replaced `secret-patterns.ts`),
 `lint.ts`, `panel.ts`, `notify.ts`, `view.ts`, `static-titles.json`;
 2026-08-19: `archive-store.ts` + `archive-naming.ts` the on-disk upload
 store and its ledger, `storage-report.ts` the weekly usage email;
@@ -4458,8 +4460,13 @@ store) and `kindVerdict`; `ExtractErr` carries both optionally, set on every
 failure raised AFTER classification. Refusals that are a CONSEQUENCE of the
 inferred kind prefix `kindVerdictSentence()` ("I read your upload as a Code
 program, because it has …"), so a wrong verdict is arguable against the files
-rather than against the site. The prefix LEADS the one submitter-facing text
-(it is the premise, not the fix, and it is the claim most worth contesting),
+rather than against the site. The prefix leads the one submitter-facing text
+(it is the premise, not the fix, and it is the claim most worth contesting)
+EXCEPT where the intake cleaning removed files first (2026-08-29): a
+`cleaned` slot sits ahead of it in `refusal.ts`, because an action taken on
+the submitter's own data outranks the explanation of the verdict, and a
+package that was one `.env` must not be told to attach a document before it
+is told what was taken out,
 and it rides only where the verdict is the rule the refusal actually applied.
 Where it rides TODAY, exactly: the create route's program-document and
 skill-document 422s (`kindRefusal`, always, since that lane always infers);
@@ -4705,7 +4712,8 @@ alone delivered; a script-free package delivered. So `screenPackageForMail`
 (`src/lib/work/mail-screen.ts`, jszip + node:crypto) rebuilds a package
 that contains refused entry types, and the policy list lives in its own
 dated file (`src/lib/work/blocked-types.ts`, pure, `LIST_RETRIEVED`; the
-`secret-patterns.ts` precedent). The screen is a BLOCKLIST: Google's
+same precedent `sanitize.ts` now carries, and `secret-patterns.ts` carried
+before it). The screen is a BLOCKLIST: Google's
 published list, an evidence-only precaution set (`.sh` and the PowerShell
 siblings; `.py`/`.sql`/`.go`/`.html` deliberately NOT withheld), the
 unscreenable nested containers, plus a leading-bytes sniff for shebang
@@ -5070,8 +5078,9 @@ project. On top of what `.gitignore` already excludes it drops every
 dotenv-shaped filename (`.env.example` and `deploy/site-deploy.env` included,
 which hold no secrets and would pass the intake, because a template is
 indistinguishable from the real thing to a later reader) and every file
-matching the store's own `secret-patterns.ts`, printing each exclusion with its
-reason and never the matched value.
+matching the store's own filename rules (`sanitize.ts`
+`SECRET_FILENAME_PATTERNS`, formerly `secret-patterns.ts`), printing each
+exclusion with its reason and never the matched value.
 **Email intake (2026-07-30)** — the second entry point into the SAME pipeline
 (`src/lib/work/email-intake.ts` + pure parsers in `email-parse.ts`, mounted
 from the §5.3 `onInbound` hook). Trigger (attachment shape, owner ruling): an

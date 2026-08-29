@@ -1144,9 +1144,11 @@ export async function handleWorkEmail(
   // Hard failures are never rescued by a clean standalone .md, with ONE
   // exception added 2026-08-28 and implemented below: a program's missing
   // architecture document, which is the one failure the second file was
-  // invited to answer. Secrets, an unreadable archive and an over-complex one
-  // stay unrescuable, because a clean standalone must never launder a dirty
-  // archive.
+  // invited to answer. An unreadable archive and an over-complex one stay
+  // unrescuable, because a document cannot answer for a package that could
+  // not be read. Credentials left this list on 2026-08-29: they are cleaned
+  // rather than refused, so there is no longer a dirty-archive failure for a
+  // clean standalone to launder.
   //
   // This call is where the kind is DECIDED (owner directive 2026-08-28).
   // null means "read it off the package"; the update lane passes the
@@ -1238,15 +1240,16 @@ export async function handleWorkEmail(
         const rescue = await inspectArchive(bytes, "skill", {
           packageName: pkgName,
         });
-        // A rescue supplies a missing document; it never launders an archive.
-        // The skill pass opens a nested archive the program pass never looked
-        // at, so it can still find credentials or a corrupt inner package in
-        // there, and those refusals stand. They also REPLACE the refusal the
-        // first pass was about to send: a package holding a credential inside
-        // a bundled archive must be answered with the rotate-and-resubmit
-        // message, not with "your zip needs an architecture document", which
-        // would leave the submitter fixing the wrong thing and never told
-        // that a credential was found.
+        // A rescue supplies a missing document; it never makes an unreadable
+        // package readable. The skill pass opens a nested archive the program
+        // pass never looked at, so it can still find a corrupt inner package
+        // in there, and that refusal stands and REPLACES the refusal the first
+        // pass was about to send. Credentials inside that bundle are no longer
+        // part of this argument: since 2026-08-29 the bundle is dropped and
+        // the submission continues, so what used to be the strongest case
+        // here (answer with rotate-and-resubmit, not "your zip needs an
+        // architecture document") is now served by the cleaned lead that
+        // every refusal carries when a cleaning removed anything.
         if (rescue.ok) {
           // Inner-archive evidence must not reach a program row. The pin is a
           // means to get a manifest and a corpus back; the end is what a

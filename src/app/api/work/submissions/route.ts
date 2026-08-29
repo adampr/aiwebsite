@@ -519,17 +519,22 @@ export async function POST(req: Request): Promise<Response> {
     if (!mdExtract.ok) return standaloneDocError(mdExtract);
     const rescue = await inspectArchive(bytes, "skill", { packageName: name });
     // The skill pass opens a single inner .skill that the program pass never
-    // looked at, so it can still fail on that inner archive or on credentials
-    // found inside it. Those refusals stand: a rescue supplies a missing
-    // document, it never launders an archive.
+    // looked at, so it can still fail on that inner archive. Those refusals
+    // stand: a rescue supplies a missing document, it never makes an
+    // unreadable package readable. It no longer has anything to say about
+    // credentials: since 2026-08-29 an inner archive holding them is DROPPED
+    // and the walk continues, on this pass exactly as on the first.
     if (!rescue.ok) return rescuePassError(rescue, name);
     pkg = outerLevelOnly(rescue);
     kind = extracted.kind;
   } else {
-    // Hard failures (secrets, invalid archive, too complex, and a program doc
-    // failure with nothing attached that could have carried the document):
-    // reject and instruct; NEVER rescued by a standalone .md beyond the one
-    // case above (a clean standalone must not launder a dirty archive).
+    // Hard failures (invalid archive, too complex, and a program doc failure
+    // with nothing attached that could have carried the document): reject and
+    // instruct; NEVER rescued by a standalone .md beyond the one case above,
+    // because a document cannot answer for a package that could not be read.
+    // Credentials are NOT in this list any more: they are cleaned, not
+    // refused, so a refusal reached after a cleaning leads with what the
+    // cleaning removed (cleanedBeforeRefusalLead) instead.
     const docFailure =
       extracted.code === "missing_architecture_doc" ||
       (extracted.code === "doc_too_short" && extracted.kind === "program");

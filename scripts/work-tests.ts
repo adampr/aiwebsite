@@ -5810,6 +5810,25 @@ async function main() {
       "L\n\nD\n\nB\n\nI\n\nE",
       "slot order: lead, diagnosis, blocked, instruction, evidence"
     );
+    // The `cleaned` slot (2026-08-29) sits AHEAD of the verdict lead, and
+    // nothing above defends that position: the assertion here pins C before L
+    // so a later refactor cannot quietly reorder it. The ordering is a copy
+    // ruling, not a formatting one. An action taken on the submitter's own
+    // files outranks the explanation of the verdict, because a package that
+    // was one .env must learn what was removed before it is told to attach a
+    // document it never had.
+    assert.equal(
+      composeRefusal({
+        cleaned: "C",
+        lead: "L",
+        diagnosis: "D",
+        blocked: "B",
+        instruction: "I",
+        evidence: ["E"],
+      }),
+      "C\n\nL\n\nD\n\nB\n\nI\n\nE",
+      "slot order: cleaned FIRST, then lead, diagnosis, blocked, instruction, evidence"
+    );
     assert.equal(
       composeRefusal({ diagnosis: "msg", evidence: ["Files: a, b"] }),
       ["msg", "", "Files: a, b"].join("\n"),
