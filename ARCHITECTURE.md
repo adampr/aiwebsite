@@ -24,9 +24,14 @@ closing line and the two hub cards now read `SecureSummary`
 (`src/lib/roadmap/platform.ts`) through the shared `secureCardLine` /
 `secureStepLine` in `src/lib/roadmap/platform-copy.ts`, so a component is
 called missing only from `added` and never from `enabled`; `ComponentView`
-gains `added` (its own inputs, not row existence) in place of `saved`, and
-`secure.savedUnverified` is deleted because one boolean could not name which
-of the two components it meant. Credit is UNCHANGED: half is still half, and
+gains `added` in place of `saved`, defined as the component's PRIMARY input
+(the address, or for `dev_vms` the hosting environment list) because a
+refuter broke an `any input at all` version on an instructions-only row,
+which it would have called "saved" when "add the API proxy" was still the
+honest sentence; `secure.savedUnverified` is deleted because one boolean
+could not name which of the two components it meant; and the step page's
+grace sentence names the failing half rather than saying "one address
+here", which bound to the wrong component in exactly the partial case. Credit is UNCHANGED: half is still half, and
 the runway and the percentage stay structurally blind to the new fields. NO
 schema, NO env, NO route change.
 Previous: 2026-08-29 §5.16 ONE REFUSAL, SAID ONCE (sections
@@ -8841,14 +8846,27 @@ env vars.
 Three steps that record the platform a company gives its builders, added
 2026-08-09. They share one table, one gate, one reachability checker and one
 copy source, because they are the same shape three times: an address, an
-instructions address, and proof we could reach each.
+instructions address, and evidence for each that reaches one of the three
+ladder rungs below (reaching it is only the first of them).
 
 - **09 Secure AI Builders** (`/roadmap/secure`) — TWO independent
   components, and the ONLY partial-capable step in the roadmap. *API proxy*
   needs an endpoint plus instructions; *Developer VMs* needs at least one
   hosting environment plus instructions (no endpoint: a VM fleet has no
   single URL to answer). Either component alone earns HALF the step, both
-  earn it fully.
+  earn it fully. HALF CREDIT AND "NOT ADDED" ARE DIFFERENT FACTS and every
+  summary surface must keep them apart: a component whose PRIMARY INPUT is
+  stored but whose evidence has not arrived is ADDED and NOT COUNTING,
+  never missing. `ComponentView.added` (`src/lib/roadmap/platform.ts`)
+  carries that per component, and the primary input is the whole
+  definition: the address for `api_proxy` and `lakehouse`, the hosting
+  environment list for `dev_vms` (which has no address by design). NOT row
+  existence, and NOT "any input at all": a proxy row holding only an
+  instructions link has no proxy address, and calling that "saved" is the
+  exact mirror of the bug the field exists to fix, so "add the API proxy"
+  stays the honest sentence there. `SecureSummary` is the flat projection
+  every summary reads. Copy may call a component missing only from
+  `*Added`, never from `*Counting`.
 - **10 Data Access** (`/roadmap/data`) — the lakehouse address plus
   instructions.
 - **11 AI Builder Tools** (`/roadmap/tools`) — 1:N tool cards, each with a
@@ -8959,6 +8977,35 @@ retype another, and keep the step lit on evidence gathered about a value no
 longer stored). The user is told which state a field is in, and gets Edit
 (the save routes, which re-check what changed) and Retry (`/recheck`, the
 only path that re-runs a field already decided).
+
+THE SUMMARY SURFACES OWE THE SAME HONESTY, and until 2026-08-29 they did
+not. The rule was enforced per FIELD and stated per STEP, and for step 09
+that gap produced a false imperative: XL.net had both components on file
+with the API proxy address failing its check truthfully, and the step page
+said "Add the other component to finish it" while both hub cards said "API
+proxy to go". The hub chains could not have been right, because their
+saved-but-not-counting arm sat BELOW the two single-half arms and was
+unreachable whenever exactly one half counted. Step 09's summary sentences
+now live in `secureCardLine` / `secureStepLine`
+(`src/lib/roadmap/platform-copy.ts`, the ONE copy source the per-field
+verification sentences already use), read `SecureSummary`, and name the
+component and its state; both hubs call the same function rather than
+carrying the byte-identical ternary each had before. `secure.savedUnverified`
+is GONE (it collapsed two components into one boolean and so could not say
+which one it meant); `data.savedUnverified` stays, still meaning row
+existence, because step 10 has a single component, cannot be ambiguous, and
+is out of scope for this round. The step-page grace sentence NAMES the
+failing half for the same reason the state clause does: an impersonal "one
+address here has stopped answering" binds to whichever component the
+sentence before it named, which in the partial case is the half that is NOT
+failing. It also says "failing its check" rather than "stopped answering",
+because a rung-2 `internal` field can enter grace without our ever having
+opened a socket to it. Steps 10 and 11 keep their inline card chains (one
+component each, so neither can make the step-09 mistake) and now share its
+"Saved, not counting yet" wording rather than saying "not confirmed" for the
+identical state on the same card grid. The runway is deliberately
+untouched: `RunwayStatus.secure` stays `{done, partial}`, the half is
+genuinely not earned, and "Half done" remains exactly true.
 
 **The reachability checker (`src/lib/roadmap/url-check.ts`) is the security
 boundary of this feature.** Every other outbound call in this codebase
@@ -9139,7 +9186,16 @@ segment out of a half-finished stop stays dark. sr text says "Half done" or
 invariant at nine tracked steps, the staff-href self-pointing pins plus the
 source pin that each of the three pages gates through `readPlatformPage` and
 never redirects, the percentage unit cases (empty, half, complete, both
-rounding clamps), the saved-but-not-counted matrix, and the SSRF blocklist
+rounding clamps), the saved-but-not-counted matrix, the PROD-SHAPE pin (the
+2026-08-29 XL.net rows: a failed `api_proxy` with no grace window beside a
+counting `dev_vms`, asserting half credit AND that neither summary surface
+says "add"), the branch-coverage pin (ten inputs yielding the card's eight
+distinct lines and the step line's ten, so no branch of either is
+unreachable), the mirror-defect pin (an instructions-only component is NOT
+"added" and still reads "add the API proxy"), the counting-implies-added
+invariant with the one fixture that can actually discriminate it (a counting
+state with no stored URL: DB-impossible, type-possible, and the only shape
+that fails if the `added &&` fold in `view()` is removed), and the SSRF blocklist
 including the IPv4-mapped-IPv6 bypass and the scheme/credential parser cases.
 No new env vars.
 

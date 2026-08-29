@@ -22,6 +22,11 @@
 //    different evidence. Only rung 1 may use the word "reached".
 
 import type { UrlCheckFailReason } from "@/lib/roadmap/url-check";
+// Type-only, and it must stay that way: this file is imported by a
+// "use client" island, and platform.ts is pure but url-check.ts (which
+// platform-copy already type-imports above) is not. An `import type` is
+// erased at build, so neither line puts anything in the client bundle.
+import type { SecureSummary } from "@/lib/roadmap/platform";
 
 /**
  * A verification sentence, SPLIT at its one timestamp.
@@ -204,6 +209,115 @@ export const ATTEST_PROMPT =
 
 export const ATTEST_ACTION = "It is internal, confirm it";
 export const ATTEST_WITHDRAW = "Remove my confirmation";
+
+/**
+ * STEP 09's SUMMARY SENTENCES, and why they are here rather than in the
+ * three files that render them.
+ *
+ * The step page, the company hub and the staff hub each told this story in
+ * their own ternary, and the two hub chains were a byte-identical
+ * copy-paste pair. All three said the same false thing on 2026-08-29: XL.net
+ * had BOTH components on file, the API proxy address was failing its
+ * reachability check (truthfully - it times out from the VM), and every
+ * surface reported the component as one the owner had not added yet. The
+ * hub chains were worse than wrong, they were structurally unable to be
+ * right: their `savedUnverified` arm sat BELOW the two single-half arms, so
+ * whenever exactly one half counted an earlier arm always matched and the
+ * saved-but-not-counting case could never be reached.
+ *
+ * So the rule these two functions exist to enforce: a surface may call a
+ * component missing only from `*Added`, never from `*Counting`. Nothing
+ * about CREDIT changes here. Half is still half.
+ */
+
+/** The step-09 hub card line, read by BOTH hubs.
+ *
+ * `failing` wins outright, unchanged from the original chain and for the
+ * original reason: a step about to disappear is the one thing the hub must
+ * say out loud. It costs nothing here because that line asserts nothing
+ * about either component, it just routes the reader to the step page.
+ *
+ * Length discipline: the slot is one `mono text-xs` span sharing a
+ * `justify-between` row with the step number, and the longest line that has
+ * always fitted is the 41-character "A link stopped answering · open this
+ * step". Every line below is at or under that. */
+export function secureCardLine(s: SecureSummary): string {
+  if (s.failing) return "A link stopped answering · open this step";
+  if (s.done) return "API proxy and developer VMs counting";
+  // The inner branch is the fix. "to go" is now reachable ONLY when the
+  // other component genuinely holds nothing.
+  if (s.apiProxyCounting)
+    return s.devVmsAdded
+      ? "API proxy counting · Dev VMs not counting"
+      : "API proxy counting · Developer VMs to go";
+  if (s.devVmsCounting)
+    return s.apiProxyAdded
+      ? "Dev VMs counting · API proxy not counting"
+      : "Developer VMs counting · API proxy to go";
+  if (s.apiProxyAdded || s.devVmsAdded)
+    return "Saved, not counting yet · open this step";
+  return "Nothing listed yet";
+}
+
+/** The closing line on /roadmap/secure.
+ *
+ * It names WHICH component is in which state, because "the other component"
+ * was the exact phrase that misled the owner. It deliberately does NOT
+ * point at a lever: Retry and "It is internal, confirm it" render only for
+ * an admin, and a component with no instructions link renders no field line
+ * at all, so any "the card above says why" promise would be false for some
+ * readers. The per-field lines carry the levers for the people who have
+ * them.
+ *
+ * A grace window APPENDS here rather than replacing the state line: unlike
+ * the hub card, this page has room to say both, and which half counts is
+ * still the primary fact. */
+export function secureStepLine(s: SecureSummary): string {
+  return s.failing ? `${secureState(s)} ${graceNote(s)}` : secureState(s);
+}
+
+/**
+ * The grace sentence NAMES its component, and says "failing its check"
+ * rather than "stopped answering".
+ *
+ * Both corrections are refuter-earned. An impersonal "one address here has
+ * stopped answering" binds to whichever component the preceding sentence
+ * named, and in the partial case that is the half which is NOT failing, so
+ * the reader is pointed at the wrong component: the same defect as "add the
+ * other component", one round later. And "stopped answering" is a rung-1
+ * claim, while a rung-2 `internal` field can enter grace without our ever
+ * having opened a socket to it, so that wording would describe a
+ * conversation that never happened. Singular/plural is decided by the
+ * count, because one component can put two fields in grace at once.
+ */
+function graceNote(s: SecureSummary): string {
+  const both = s.apiProxyFailing && s.devVmsFailing;
+  if (both)
+    return "Addresses on both components have started failing their checks. Their own lines above say how long they still count.";
+  const which = s.apiProxyFailing ? "the API proxy" : "Developer VMs";
+  return `An address on ${which} has started failing its check. Its own line above says how long it still counts.`;
+}
+
+function secureState(s: SecureSummary): string {
+  if (s.done) return "Both components are counting. This step is complete.";
+  const half = "which earns half this step.";
+  if (s.apiProxyCounting)
+    return s.devVmsAdded
+      ? `The API proxy is counting, ${half} Developer VMs are saved but not counting yet.`
+      : `The API proxy is counting, ${half} Add Developer VMs to finish it.`;
+  if (s.devVmsCounting)
+    return s.apiProxyAdded
+      ? `Developer VMs are counting, ${half} The API proxy is saved but not counting yet.`
+      : `Developer VMs are counting, ${half} Add the API proxy to finish it.`;
+  const nothing = "Nothing is counting toward this step yet.";
+  if (s.apiProxyAdded && s.devVmsAdded)
+    return `${nothing} Both components are saved but not counting.`;
+  if (s.apiProxyAdded)
+    return `${nothing} The API proxy is saved but not counting, and Developer VMs are not listed.`;
+  if (s.devVmsAdded)
+    return `${nothing} Developer VMs are saved but not counting, and the API proxy is not listed.`;
+  return nothing;
+}
 
 /** The one-word status token beside each line. "Confirmed" is reserved for
  * a rung we actually verified; a human claim says so. */

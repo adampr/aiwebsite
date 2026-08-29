@@ -311,8 +311,8 @@ export const ROADMAP_STEPS = [
     // not inspect, test, or certify anything behind it.
     blurb:
       "Give your builders a sanctioned way in: an API proxy they can call, " +
-      "and development machines they can build on. List either one to get " +
-      "half the step, both to finish it.",
+      "and development machines they can build on. Each counts once its " +
+      "details are confirmed; either one earns half the step, both finish it.",
     cta: { todo: "Set up the platform", done: "Review the platform" },
   },
   {

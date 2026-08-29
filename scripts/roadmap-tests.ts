@@ -46,7 +46,11 @@ import {
   fieldAttestable,
   fieldCounts,
   fieldInGrace,
+  lakehouseView,
+  secureSummary,
+  secureView,
   toolCounts,
+  type SecureSummary,
 } from "../src/lib/roadmap/platform";
 import {
   hostInDomain,
@@ -55,7 +59,13 @@ import {
   parseCheckableUrl,
   statusCounts,
 } from "../src/lib/roadmap/url-check";
-import { attestedLine, internalLine, reachedLine } from "../src/lib/roadmap/platform-copy";
+import {
+  attestedLine,
+  internalLine,
+  reachedLine,
+  secureCardLine,
+  secureStepLine,
+} from "../src/lib/roadmap/platform-copy";
 import { rateLimitedMessage, retryAfterPhrase } from "../src/lib/retry-after";
 import { staffGovernanceDraftQuery } from "../src/lib/governance/admin-db";
 import { personLabel, personLabelParts } from "../src/lib/person-label";
@@ -385,7 +395,7 @@ ok("SAVED BUT NOT COUNTED: an unconfirmed URL never lights a step", () => {
       ...over,
     }) as unknown as Parameters<typeof apiProxyView>[0];
 
-  assert.equal(apiProxyView(row())!.saved, true);
+  assert.equal(apiProxyView(row())!.added, true);
   assert.equal(apiProxyView(row())!.enabled, false);
   assert.equal(
     apiProxyView(row({ urlState: "ok", docsState: "unchecked" }))!.enabled,
@@ -465,6 +475,276 @@ ok("TOOL CARDS GATE ON THE LINK ALONE (owner directive 2026-08-20)", () => {
       })
     ),
     true
+  );
+});
+
+// ── Step 09: ADDED is not COUNTING (defect of 2026-08-29) ───────────────
+// XL.net had BOTH components on file. The api_proxy address failed its
+// reachability check (truthfully: it times out from the VM), so the step
+// earned half, which is correct. But the step page said "Add the other
+// component to finish it" and both hub cards said "API proxy to go",
+// telling the owner to add what was already there. These pins exist so a
+// surface can never again call a component missing off `*Counting`.
+
+const secureLink = (over: Record<string, unknown> = {}) =>
+  ({
+    id: "x",
+    companyId: null,
+    kind: "api_proxy",
+    label: null,
+    description: null,
+    url: null,
+    urlState: "unchecked",
+    urlReason: null,
+    urlHttpStatus: null,
+    urlCheckedAt: null,
+    urlGraceUntil: null,
+    urlAttestedBy: null,
+    docsUrl: null,
+    docsState: "unchecked",
+    docsReason: null,
+    docsHttpStatus: null,
+    docsCheckedAt: null,
+    docsGraceUntil: null,
+    docsAttestedBy: null,
+    environmentsJson: null,
+    addedByUserId: null,
+    addedByEmail: "a@b.c",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...over,
+  }) as unknown as Parameters<typeof apiProxyView>[0];
+
+/** The XL.net staff lane exactly as production held it on 2026-08-29. */
+const PROD_API_PROXY = secureLink({
+  id: "p",
+  kind: "api_proxy",
+  url: "https://lakehouse.xl.net/",
+  urlState: "failed",
+  urlReason: "unreachable",
+  urlGraceUntil: null,
+  urlCheckedAt: new Date(),
+  docsUrl: "https://www.sweetprocess.com/procedures/x/",
+  docsState: "ok",
+  docsHttpStatus: 200,
+});
+const PROD_DEV_VMS = secureLink({
+  id: "v",
+  kind: "dev_vms",
+  url: null,
+  urlState: "unchecked",
+  environmentsJson: JSON.stringify(["Microsoft Azure"]),
+  docsUrl: "https://www.sweetprocess.com/procedures/x/",
+  docsState: "ok",
+  docsHttpStatus: 200,
+});
+
+ok("PROD SHAPE: a failed api_proxy is ADDED, not counting, and not missing", () => {
+  const v = secureView([PROD_API_PROXY!, PROD_DEV_VMS!]);
+  // CREDIT IS UNCHANGED BY THIS FIX. Half, and only half.
+  assert.equal(v.apiProxy.enabled, false);
+  assert.equal(v.devVms.enabled, true);
+  assert.equal(v.partial, true);
+  assert.equal(v.done, false);
+  // "failing" means riding a grace window, which this row is not doing:
+  // it failed with no grace, so it simply does not count.
+  assert.equal(v.failing, false);
+  // THE DEFECT: the proxy IS added.
+  assert.equal(v.apiProxy.added, true);
+
+  const s = secureSummary(v);
+  assert.equal(s.apiProxyAdded, true);
+  assert.equal(s.apiProxyCounting, false);
+  assert.equal(s.devVmsCounting, true);
+  // The collapsed boolean that could not name a component must not return.
+  assert.ok(!("savedUnverified" in s));
+
+  const card = secureCardLine(s);
+  const step = secureStepLine(s);
+  for (const line of [card, step]) {
+    assert.ok(!/to go/i.test(line), line);
+    assert.ok(!/\badd\b/i.test(line), line);
+    assert.ok(/API proxy/i.test(line), line);
+  }
+  // The card names BOTH halves and their states, so nothing on it can be
+  // read as "the API proxy is missing".
+  assert.equal(card, "Dev VMs counting · API proxy not counting");
+  assert.ok(step.includes("The API proxy is saved but not counting yet"), step);
+  assert.ok(!step.includes("Add the other component"), step);
+});
+
+ok("step 09 copy: 'to go' and 'Add' survive ONLY where nothing was added", () => {
+  const S = (o: Partial<SecureSummary>): SecureSummary => ({
+    done: false,
+    partial: false,
+    apiProxyCounting: false,
+    devVmsCounting: false,
+    apiProxyAdded: false,
+    devVmsAdded: false,
+    failing: false,
+    apiProxyFailing: false,
+    devVmsFailing: false,
+    ...o,
+  });
+  // The genuinely-missing halves keep the old imperative wording.
+  const vmsMissing = S({ partial: true, apiProxyCounting: true, apiProxyAdded: true });
+  assert.equal(secureCardLine(vmsMissing), "API proxy counting · Developer VMs to go");
+  assert.ok(/Add Developer VMs/.test(secureStepLine(vmsMissing)));
+  const proxyMissing = S({ partial: true, devVmsCounting: true, devVmsAdded: true });
+  assert.equal(secureCardLine(proxyMissing), "Developer VMs counting · API proxy to go");
+  assert.ok(/Add the API proxy/.test(secureStepLine(proxyMissing)));
+
+  // Every reachable combination gets its OWN line. Eight inputs, eight
+  // distinct strings: the pre-fix chain could not satisfy this, because
+  // its saved-but-not-counting arm was unreachable whenever exactly one
+  // half counted.
+  const all = [
+    S({ failing: true, apiProxyFailing: true, devVmsFailing: true, done: true, apiProxyCounting: true, devVmsCounting: true, apiProxyAdded: true, devVmsAdded: true }),
+    S({ done: true, apiProxyCounting: true, devVmsCounting: true, apiProxyAdded: true, devVmsAdded: true }),
+    S({ partial: true, apiProxyCounting: true, apiProxyAdded: true, devVmsAdded: true }),
+    vmsMissing,
+    S({ partial: true, devVmsCounting: true, devVmsAdded: true, apiProxyAdded: true }),
+    proxyMissing,
+    S({ apiProxyAdded: true }),
+    S({}),
+    // The two step-line branches the eight above never reach. A refuter
+    // proved the earlier version of this pin could not see them, so a
+    // swapped component name in either would have shipped.
+    S({ apiProxyAdded: true, devVmsAdded: true }),
+    S({ devVmsAdded: true }),
+  ];
+  // secureCardLine has EIGHT possible outputs and the last two inputs share
+  // its "Saved, not counting yet" arm, so eight distinct strings from these
+  // ten inputs is full coverage of the card. secureStepLine has TEN.
+  assert.equal(new Set(all.map(secureCardLine)).size, 8);
+  assert.equal(new Set(all.map(secureStepLine)).size, 10);
+  // The grace sentence NAMES the failing half, so it can never point at the
+  // component the sentence before it just called not-counting.
+  const proxyGrace = secureStepLine(
+    S({ partial: true, apiProxyCounting: true, apiProxyAdded: true, devVmsAdded: true, failing: true, apiProxyFailing: true })
+  );
+  assert.ok(proxyGrace.includes("An address on the API proxy has started failing"), proxyGrace);
+  assert.ok(!proxyGrace.includes("One address here"), proxyGrace);
+  const vmsGrace = secureStepLine(
+    S({ partial: true, devVmsCounting: true, devVmsAdded: true, apiProxyAdded: true, failing: true, devVmsFailing: true })
+  );
+  assert.ok(vmsGrace.includes("An address on Developer VMs has started failing"), vmsGrace);
+  assert.ok(secureStepLine(all[0]!).includes("both components"), "both-failing wording");
+  // "stopped answering" is a rung-1 claim: an `internal` field enters grace
+  // without our ever having opened a socket to it.
+  for (const line of all.map(secureStepLine))
+    assert.ok(!/stopped answering/.test(line), line);
+  // Nothing at all still reads exactly as it always did.
+  assert.equal(secureCardLine(S({})), "Nothing listed yet");
+  assert.equal(secureStepLine(S({})), "Nothing is counting toward this step yet.");
+  // A grace window still outranks every other hub line (unchanged wording,
+  // shared verbatim with steps 10 and 11).
+  assert.ok(secureCardLine(all[0]!).includes("A link stopped answering"));
+  // On the step page grace APPENDS, so which half counts is still said.
+  assert.ok(secureStepLine(all[0]!).includes("This step is complete."));
+  assert.ok(secureStepLine(all[0]!).includes("failing their checks"));
+  // Site rule: no em dashes in visible copy. Step-page copy has no
+  // pre-commit scan, and the ROADMAP_STEPS pin does not reach these.
+  for (const line of [...all.map(secureCardLine), ...all.map(secureStepLine)])
+    assert.ok(!/[–—]/.test(line), line);
+});
+
+ok("ADDED is the PRIMARY input, so 'saved' is never said about a component with none", () => {
+  // THE MIRROR DEFECT, caught by a refuter on the first version of this
+  // round: `added` was `url || docsUrl`, so an API proxy row carrying only
+  // an instructions link and NO address reported as "saved", and the step
+  // page dropped the "Add the API proxy" sentence that was correct for it.
+  const docsOnlyProxy = apiProxyView(
+    secureLink({ kind: "api_proxy", docsUrl: "https://d.example.com/", docsState: "ok" })
+  );
+  assert.equal(docsOnlyProxy!.added, false, "no address means the proxy is not added");
+  assert.ok(docsOnlyProxy!.row !== null, "row existence stays visible as `row`");
+  const s = secureSummary(
+    secureView([
+      secureLink({ kind: "api_proxy", docsUrl: "https://d.example.com/", docsState: "ok" })!,
+      PROD_DEV_VMS!,
+    ])
+  );
+  assert.ok(/Add the API proxy/.test(secureStepLine(s)), secureStepLine(s));
+  assert.equal(secureCardLine(s), "Developer VMs counting · API proxy to go");
+
+  // dev_vms: the environment list is the component, an instructions link is not.
+  assert.equal(devVmsView(secureLink({ kind: "dev_vms", environmentsJson: "[]" }))!.added, false);
+  assert.equal(
+    devVmsView(secureLink({ kind: "dev_vms", docsUrl: "https://d.example.com/", docsState: "ok", environmentsJson: "[]" }))!.added,
+    false
+  );
+  assert.equal(
+    devVmsView(secureLink({ kind: "dev_vms", environmentsJson: JSON.stringify(["Vultr"]) }))!.added,
+    true
+  );
+  assert.equal(apiProxyView(secureLink({ kind: "api_proxy" }))!.added, false);
+  assert.equal(lakehouseView(secureLink({ kind: "lakehouse" }))!.added, false);
+});
+
+ok("counting IMPLIES added, and the fold in view() is what enforces it", () => {
+  // THIS FIXTURE IS THE POINT. A refuter mutation-tested the earlier
+  // version of this pin by deleting `added &&` from view() and it still
+  // passed: every fixture satisfied the invariant for reasons unrelated to
+  // the fold. Only a row that is counting with NO primary input can tell
+  // the difference, and the DB forbids it (migration 0042's
+  // *_ok_needs_url_ck), which is exactly why the type must forbid it too.
+  const noUrlButCounting = apiProxyView(
+    secureLink({ kind: "api_proxy", url: null, urlState: "ok", docsUrl: "https://d.example.com/", docsState: "ok" })
+  );
+  assert.equal(noUrlButCounting!.added, false);
+  assert.equal(noUrlButCounting!.enabled, false, "the fold in view() is the only guard here");
+  assert.equal(noUrlButCounting!.failing, false);
+  // And the invariant across the ordinary shapes.
+  for (const v of [
+    devVmsView(secureLink({ kind: "dev_vms", environmentsJson: "[]" })),
+    apiProxyView(PROD_API_PROXY),
+    devVmsView(PROD_DEV_VMS),
+    apiProxyView(secureLink({ url: "https://p.example.com/", urlState: "ok", docsUrl: "https://d.example.com/", docsState: "ok" })),
+  ])
+    assert.ok(!v!.enabled || v!.added);
+});
+
+ok("step 09 tells ONE story: no surface rebuilds the chain, and credit is untouched", () => {
+  const read = (p: string) => readFileSync(p, "utf8");
+  for (const f of ["src/app/roadmap/page.tsx", "src/components/roadmap/staff-hub.tsx"]) {
+    const src = read(f);
+    assert.ok(src.includes("secureCardLine(status.secure)"), f);
+    // The duplicated ternary and its false wording are gone from both.
+    assert.ok(!src.includes("API proxy to go"), f);
+    assert.ok(!src.includes("developer VMs to go"), f);
+    assert.ok(!src.includes("status.secure.apiProxy"), f);
+  }
+  const page = read("src/app/roadmap/(steps)/secure/page.tsx");
+  assert.ok(page.includes("secureStepLine("), "the step page reads the ONE copy source");
+  assert.ok(!page.includes("Add the other component"));
+  assert.ok(!/[–—]/.test(page));
+  assert.ok(read("src/lib/roadmap/status.ts").includes("secureSummary(p.secure)"));
+  // The runway and the percentage must stay structurally blind to the new
+  // fields: the half is genuinely not earned, so nothing they paint moves.
+  // Asserted on the ABSENCE of the new field names rather than on an exact
+  // type-literal spelling, which a reformat would break with a message
+  // naming the wrong problem.
+  for (const f of ["src/components/roadmap/runway.tsx", "src/lib/roadmap/progress.ts"]) {
+    const src = read(f);
+    assert.ok(/secure:\s*\{\s*done:\s*boolean;\s*partial:\s*boolean\s*\}/.test(src), f);
+    assert.ok(!src.includes("Counting"), `${f} must not learn the added/counting split`);
+    assert.ok(!src.includes("Added"), f);
+  }
+  const s = secureSummary(secureView([PROD_API_PROXY!, PROD_DEV_VMS!]));
+  assert.equal(
+    roadmapProgress({
+      governance: { done: false },
+      directory: { done: false },
+      work: { done: false },
+      request: { done: false },
+      requested: { live: false },
+      scorecard: { live: false },
+      secure: s,
+      data: { done: false },
+      tools: { done: false },
+    }).earned,
+    0.5
   );
 });
 

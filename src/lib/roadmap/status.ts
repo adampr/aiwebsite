@@ -16,7 +16,12 @@ import {
   readAttendance,
 } from "@/lib/roadmap/db";
 import { staffGovernanceDraftQuery } from "@/lib/governance/admin-db";
-import { platformView } from "@/lib/roadmap/platform";
+import {
+  platformView,
+  secureSummary,
+  type PlatformView,
+  type SecureSummary,
+} from "@/lib/roadmap/platform";
 import type { ProgressStatus } from "@/lib/roadmap/progress";
 import { checkDkim, type DkimCheck } from "@/lib/roadmap/dkim";
 import { requestStatusCounts } from "@/lib/work/requests-db";
@@ -47,19 +52,10 @@ export type RoadmapStatus = {
   scorecard: { live: boolean; contributors: number };
   /** Step 09 (§5.20). The ONE partial-capable step: two independent
    * components, either alone earns half. `partial` means exactly one is
-   * confirmed, so it is never true at the same time as `done`. */
-  secure: {
-    done: boolean;
-    partial: boolean;
-    apiProxy: boolean;
-    devVms: boolean;
-    /** Something is saved that is not counting yet, so the card can say so
-     * instead of reading as untouched. */
-    savedUnverified: boolean;
-    /** Counting ONLY because a grace window has not closed. The hub warns
-     * on this so a step never disappears without notice. */
-    failing: boolean;
-  };
+   * counting, so it is never true at the same time as `done`. The
+   * added/counting split lives on SecureSummary in platform.ts: read its
+   * comments before writing any copy off these booleans. */
+  secure: SecureSummary;
   /** Step 10 (§5.20). */
   data: { done: boolean; savedUnverified: boolean; failing: boolean };
   /** Step 11 (§5.20). counted = tools whose LINK is confirmed (owner
@@ -132,25 +128,32 @@ export async function roadmapStatus(
 
 /** The §5.20 slice of both status bundles, built once so the company hub
  * and the staff hub can never define these steps differently. */
-function platformStatus(p: ReturnType<typeof platformView>) {
+type PlatformStatusSlice = {
+  secure: SecureSummary;
+  data: { done: boolean; savedUnverified: boolean; failing: boolean };
+  tools: { done: boolean; counted: number; total: number; failing: boolean };
+};
+
+function platformStatus(p: PlatformView): PlatformStatusSlice {
   return {
-    secure: {
-      done: p.secure.done,
-      partial: p.secure.partial,
-      apiProxy: p.secure.apiProxy.enabled,
-      devVms: p.secure.devVms.enabled,
-      // Surfaced so the HUB can warn before a step drops. Grace used to be
-      // visible only on the step page, which meant a company could lose a
-      // step (and about eleven percentage points) 72 hours later with no
-      // warning on any surface they routinely look at.
-      failing: p.secure.failing,
-      savedUnverified:
-        (p.secure.apiProxy.saved && !p.secure.apiProxy.enabled) ||
-        (p.secure.devVms.saved && !p.secure.devVms.enabled),
-    },
+    // ONE projection, shared by both hubs and the step page. The old
+    // hand-built object collapsed both components into a single
+    // `savedUnverified` boolean, which could not say WHICH component was
+    // saved-not-counting; that is the field the 2026-08-29 defect hid
+    // behind, and it is deliberately gone. `secure.failing` survives so the
+    // HUB can still warn before a step drops: grace used to be visible only
+    // on the step page, which meant a company could lose a step (and about
+    // eleven percentage points) 72 hours later with no warning on any
+    // surface they routinely look at.
+    secure: secureSummary(p.secure),
     data: {
       done: p.data.done,
-      savedUnverified: p.data.lakehouse.saved && !p.data.lakehouse.enabled,
+      // ROW EXISTENCE, deliberately, which is what this has always meant.
+      // Step 10 is out of scope for the step-09 round and must not change
+      // behaviour: reading `added` here would narrow it to "an address is
+      // on file" and silence the card for a lakehouse row carrying only an
+      // instructions link.
+      savedUnverified: !!p.data.lakehouse.row && !p.data.lakehouse.enabled,
       failing: p.data.failing,
     },
     tools: {
@@ -229,15 +232,9 @@ export type StaffRoadmapStatus = {
   scorecard: { live: boolean; contributors: number };
   /** §5.20 on the NULL-company_id staff lane: XL.net configures its own
    * builder platform through the same pages, so these are computed, never
-   * constant-done like governance. */
-  secure: {
-    done: boolean;
-    partial: boolean;
-    apiProxy: boolean;
-    devVms: boolean;
-    savedUnverified: boolean;
-    failing: boolean;
-  };
+   * constant-done like governance. Same SecureSummary as the company
+   * bundle, so the two hubs cannot tell step 09's story differently. */
+  secure: SecureSummary;
   data: { done: boolean; savedUnverified: boolean; failing: boolean };
   tools: { done: boolean; counted: number; total: number; failing: boolean };
   /** Admin-attested paid-step attendance on the one-row staff table

@@ -19,6 +19,7 @@ import {
   roadmapEnabled,
 } from "@/lib/roadmap/config";
 import { roadmapStatus } from "@/lib/roadmap/status";
+import { secureCardLine } from "@/lib/roadmap/platform-copy";
 import {
   deniedAdminRequestInWindow,
   openAdminRequest,
@@ -342,35 +343,31 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
       ? `${status.scorecard.contributors} ${status.scorecard.contributors === 1 ? "builder" : "builders"} so far`
       : "Waiting on the first published work",
     // §5.20. Each line distinguishes THREE states, not two, because
-    // "saved but not confirmed" is a real state the owner asked for: a
+    // "saved but not counting" is a real state the owner asked for: a
     // link we could not reach is kept, and the card has to say so rather
     // than reading as though nothing was ever entered.
     // A grace window beats every other line: a step about to disappear is
     // the one thing the hub must say out loud.
-    secure: status.secure.failing
-      ? "A link stopped answering · open this step"
-      : status.secure.done
-      ? "API proxy and developer VMs listed"
-      : status.secure.apiProxy
-        ? "API proxy listed · developer VMs to go"
-        : status.secure.devVms
-          ? "Developer VMs listed · API proxy to go"
-          : status.secure.savedUnverified
-            ? "Saved, not confirmed yet · open this step"
-            : "Nothing listed yet",
+    // Step 09's chain lives in platform-copy.ts because the staff hub
+    // rendered a byte-identical copy of it and both were wrong the same
+    // way (they read "counting" to decide whether to say "add"). Do not
+    // re-inline it here. Steps 10 and 11 keep their inline chains below:
+    // one component each, so neither can make that mistake, and all three
+    // steps say "not counting" for the same state.
+    secure: secureCardLine(status.secure),
     data: status.data.failing
       ? "A link stopped answering · open this step"
       : status.data.done
       ? "Lakehouse listed"
       : status.data.savedUnverified
-        ? "Saved, not confirmed yet · open this step"
+        ? "Saved, not counting yet · open this step"
         : "Nothing listed yet",
     tools: status.tools.failing
       ? "A link stopped answering · open this step"
       : status.tools.done
       ? `${status.tools.counted} of ${status.tools.total} ${status.tools.total === 1 ? "tool" : "tools"} counting`
       : status.tools.total > 0
-        ? "Saved, not confirmed yet · open this step"
+        ? "Saved, not counting yet · open this step"
         : "Nothing listed yet",
   } as const;
   // The email lane's DKIM state, echoed on the work card (its controls live

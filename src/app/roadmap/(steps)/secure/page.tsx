@@ -13,7 +13,8 @@ import type { Metadata } from "next";
 import { listRoadmapLinks } from "@/lib/roadmap/db";
 import { readPlatformPage } from "@/lib/roadmap/platform-page";
 import { publicRow } from "@/lib/roadmap/platform-check";
-import { secureView } from "@/lib/roadmap/platform";
+import { secureSummary, secureView } from "@/lib/roadmap/platform";
+import { secureStepLine } from "@/lib/roadmap/platform-copy";
 import { SingletonForm } from "@/components/roadmap/platform-islands";
 
 export const dynamic = "force-dynamic";
@@ -44,9 +45,12 @@ export default async function RoadmapSecurePage() {
           find their own, on personal accounts you cannot see. This step is
           where {view.ownerName} writes down the two things that prevent
           that: the AI endpoint your people should call, and the machines
-          they should build on. Each one needs its instructions link too, and
-          we have to be able to reach what you list. Finish either component
-          to earn half this step, both to complete it.
+          they should build on. Each one needs its instructions link too. An
+          address counts once we reach it, or once a name on your own domain
+          is shown to point onto your private network. If we cannot see it at
+          all, an admin can confirm an address on your own domain is internal
+          and it counts on their word. Finish either component to earn half
+          this step, both to complete it.
         </p>
       </section>
 
@@ -86,13 +90,14 @@ export default async function RoadmapSecurePage() {
         </div>
       </section>
 
+      {/* NAMES the component and its state. The old line said "Add the
+          other component to finish it" off `partial` alone, which told an
+          owner whose API proxy was on file and merely failing its check to
+          add the thing that was already there. Copy that calls a component
+          missing must read *Added, never *Counting. */}
       <section>
         <p className="mono text-xs" style={faint}>
-          {secure.done
-            ? "Both components are listed and confirmed. This step is complete."
-            : secure.partial
-              ? "Half of this step is done. Add the other component to finish it."
-              : "Nothing is counting toward this step yet."}
+          {secureStepLine(secureSummary(secure))}
         </p>
       </section>
     </div>

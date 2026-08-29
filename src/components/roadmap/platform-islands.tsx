@@ -462,6 +462,14 @@ export function SingletonForm({
           onRetry={() => {}}
           busy={false}
         />
+        {/* The SAME "why this is not counting" line the admin form shows.
+            Without it a member could read the step page's closing sentence
+            saying this component is saved but not counting and find nothing
+            on the page that explains it: FieldState renders nothing at all
+            for a field with no URL, so an empty address or a missing
+            instructions link leaves the panel silent. The levers stay
+            admin-only; the reason does not. */}
+        {gap && <p className="text-xs" style={faint}>Not counting yet: {gap}</p>}
         <p className="text-xs" style={faint}>
           Your company admin keeps this up to date.
         </p>

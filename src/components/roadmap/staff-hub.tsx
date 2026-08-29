@@ -33,6 +33,7 @@ import {
   isPaidStep,
 } from "@/lib/roadmap/config";
 import type { StaffRoadmapStatus } from "@/lib/roadmap/status";
+import { secureCardLine } from "@/lib/roadmap/platform-copy";
 import { RoadmapRunway, RunwayStage } from "@/components/roadmap/runway";
 import { DirectoryCard } from "@/components/roadmap/directory-card";
 import { WorkEntryCard } from "@/components/roadmap/work-entry-card";
@@ -70,35 +71,29 @@ export function StaffHub({
     scorecard: status.scorecard.live
       ? `${status.scorecard.contributors} ${status.scorecard.contributors === 1 ? "builder" : "builders"} so far`
       : "Waiting on the first published work",
-    // §5.20. Same three-state phrasing as the company hub (src/app/roadmap/
-    // page.tsx stepLines): "saved but not confirmed" is a real state and
-    // must not read as untouched.
-    // A grace window beats every other line: a step about to disappear is
-    // the one thing the hub must say out loud.
-    secure: status.secure.failing
-      ? "A link stopped answering · open this step"
-      : status.secure.done
-      ? "API proxy and developer VMs listed"
-      : status.secure.apiProxy
-        ? "API proxy listed · developer VMs to go"
-        : status.secure.devVms
-          ? "Developer VMs listed · API proxy to go"
-          : status.secure.savedUnverified
-            ? "Saved, not confirmed yet · open this step"
-            : "Nothing listed yet",
+    // §5.20. "Saved, not counting yet" is a real state and must not read as
+    // untouched, and a grace window beats every other line, because a step
+    // about to disappear is the one thing the hub must say out loud.
+    // Step 09's chain lives in platform-copy.ts, shared with the company
+    // hub (src/app/roadmap/page.tsx): this file used to carry a
+    // byte-identical copy of it, and both told a saved-but-failing
+    // component it had not been added. Do not re-inline it here. Steps 10
+    // and 11 keep their inline chains, which have a single component each
+    // and so cannot make that mistake.
+    secure: secureCardLine(status.secure),
     data: status.data.failing
       ? "A link stopped answering · open this step"
       : status.data.done
       ? "Lakehouse listed"
       : status.data.savedUnverified
-        ? "Saved, not confirmed yet · open this step"
+        ? "Saved, not counting yet · open this step"
         : "Nothing listed yet",
     tools: status.tools.failing
       ? "A link stopped answering · open this step"
       : status.tools.done
       ? `${status.tools.counted} of ${status.tools.total} ${status.tools.total === 1 ? "tool" : "tools"} counting`
       : status.tools.total > 0
-        ? "Saved, not confirmed yet · open this step"
+        ? "Saved, not counting yet · open this step"
         : "Nothing listed yet",
   };
   const blurbs: Record<string, string> = {
