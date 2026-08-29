@@ -3580,6 +3580,20 @@ async function main() {
       island.includes('{canListAll && r.status === "published" && ('),
       "the published-row removal control is admin-gated like the route"
     );
+    // §5.16 wasPublished echo (refutation F1, inverse half): the delete
+    // notice must not trust the RENDER's status, so the route echoes its
+    // own fresh read (expectStatus fences the delete on that same read)
+    // and the island prefers the echo, keeping the client flag only for
+    // an echo-less previous-build response inside a deploy window.
+    const deleteRoute = read("src/app/api/work/submissions/[id]/route.ts");
+    assert.ok(
+      deleteRoute.includes("okJson({ deleted: true, wasPublished })"),
+      "the plain-delete response echoes the route's own published read"
+    );
+    assert.ok(
+      island.includes("data?.wasPublished ?? published"),
+      "the notice reads the server echo first, the render flag as fallback"
+    );
     {
       const dbSrc2 = read("src/lib/work/db.ts");
       assert.ok(

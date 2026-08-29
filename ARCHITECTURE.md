@@ -15,7 +15,17 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 THREE INDEPENDENT CHANGES IN ONE ROUND. (a) EIGHT /work
+Last verified against code: 2026-08-29 §5.16 `wasPublished` ECHO ON DELETE (the 5.16 removal
+bullet only): the plain-delete success response of `DELETE /api/work/submissions/[id]` becomes
+`{deleted: true, wasPublished}`, echoed from the route's OWN fresh read, which is authoritative
+because `deleteSubmission(id, {expectStatus: row.status})` ties the delete's success to that
+same read. It closes refutation F1's inverse half from the admin-removal round: a row that
+published between render and click took the Withdraw path, the server removed a LIVE card, and
+the /work/submit island showed no notice because its local `published` flag was false. The
+island now notices on `rolledBack || (wasPublished ?? published)`, the fallback kept only for
+an echo-less previous-build response inside a deploy window. Rollback response, notice copy,
+`/admin/work` (reads no success field), schema and env unchanged; two source pins in
+`test:work`. Previous: 2026-08-29 THREE INDEPENDENT CHANGES IN ONE ROUND. (a) EIGHT /work
 EXHIBITS BECOME TEAM CARDS (sections 5.16 "One tool, one card" + 5.18 exhibit credits + the
 `/work` pages-table row): by owner ruling, a tool that was BOTH a hand-written exhibit and a
 real submitted package gets ONE card, the submitted one, written by the §5.16 editorial panel
@@ -7092,10 +7102,22 @@ keeps its exact meaning.
   **Withdraw**. On success a panel-level `role="status"` notice
   distinguishes rolled back from deleted by reading `rolledBack` from the
   response — the row disappears on refresh, and a rollback creates a new
-  reality (the old card restored) that silence would hide. The DELETE route
-  is unchanged and `/admin/work` keeps its own labelled lever. The gate is
-  `canListAll`, not bare `isAdmin`, because `DELETE` requires
-  `verifiedWebAdmin`.
+  reality (the old card restored) that silence would hide. The plain-delete
+  half of the same staleness (refutation F1's inverse: a row that published
+  between render and click takes the Withdraw path, so the client's
+  `published` flag is false while a LIVE card comes down) is closed by a
+  `wasPublished` echo on the plain-delete response, `{deleted, wasPublished}`
+  (2026-08-29): the route reports its OWN fresh read, authoritative because
+  `deleteSubmission`'s `expectStatus` fence ties the delete's success to that
+  same read, and the island shows the notice on `rolledBack || (wasPublished
+  ?? published)`. The `?? published` fallback is kept for one narrow case: a
+  response from the previous server build inside a deploy window carries no
+  echo, and the render-time flag is then the best available truth. The
+  rollback branch's `{deleted, rolledBack, slug}` is unchanged (`rolledBack`
+  already names the visible-state change). That echo is the DELETE route's
+  only change for this surface; `/admin/work` keeps its own labelled lever
+  and reads no success field. The gate is `canListAll`, not bare `isAdmin`,
+  because `DELETE` requires `verifiedWebAdmin`.
 - Accepted residuals, stated with their cost: (1) Company-lane members get no
   transfer control of their own: `/roadmap/work` has no such surface, and
   shipping a route with no page is how capabilities drift out of sight. An

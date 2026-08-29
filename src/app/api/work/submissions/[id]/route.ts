@@ -160,5 +160,10 @@ export async function DELETE(_req: Request, ctx: Ctx): Promise<Response> {
         text: `${user.email} deleted the published team card "${row.title}" (${row.slug ?? "no slug"}). The page updates within 5 minutes.`,
       });
   }
-  return okJson({ deleted: true });
+  // The `wasPublished` echo closes refutation F1's inverse half: the
+  // client's render-time status can be stale (a row that published between
+  // render and click takes the Withdraw path with a local flag of false),
+  // but this read cannot be, because the expectStatus fence above ties the
+  // delete's success to the very status it reports.
+  return okJson({ deleted: true, wasPublished });
 }

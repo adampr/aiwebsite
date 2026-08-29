@@ -9,8 +9,9 @@
 // people's rows and published rows carry the control, with per-row honest
 // labels (Withdraw; Roll back update on a published swapped-in update,
 // whose DELETE restores the previous version; Delete card on any other
-// published row). The DELETE route is unchanged, /admin/work keeps its own
-// lever, and non-admins get one footer note naming the removal path
+// published row). The `wasPublished` echo on the plain-delete response is
+// the DELETE route's only change for this surface; /admin/work keeps its
+// own lever, and non-admins get one footer note naming the removal path
 // instead.
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -376,7 +377,8 @@ export function SubmitClient({
    * ADMIN-ONLY end to end (the route requires verifiedWebAdmin; the render
    * gates mirror it via canListAll), and per the 2026-08-29 owner directive
    * it covers PAST submissions too: other people's rows and published rows.
-   * The route is unchanged and its semantics dictate the copy: DELETE on a
+   * The `wasPublished` echo is the route's only change for this surface;
+   * its semantics still dictate the copy: DELETE on a
    * published swapped-in update is a ROLLBACK (previous version restored,
    * `rolledBack: true` in the response; the legacy parent-gone edge falls
    * through to a plain delete, which is why the notice reads the response
@@ -420,12 +422,18 @@ export function SubmitClient({
       // render and click takes the Withdraw path while the route rolls
       // back, so gating this read on the label would show NOTHING while
       // the old card is publicly live again. The inverse staleness (a
-      // plain delete of a row that published after render) is invisible in
-      // this response and needs a server echo; deferred by adjudication.
+      // plain delete of a row that published after render) is closed by
+      // the `wasPublished` echo: the route reports its OWN fresh read, and
+      // its expectStatus fence ties the delete's success to that same
+      // read, so the echo is authoritative where the render flag is not.
       const data = (await res.json().catch(() => null)) as {
         rolledBack?: boolean;
+        wasPublished?: boolean;
       } | null;
-      if (data?.rolledBack || published) {
+      // `?? published` is deliberate, for one narrow case: a response from
+      // the PREVIOUS server build during a deploy window carries no echo,
+      // and the client-side flag is then still the best available truth.
+      if (data?.rolledBack || (data?.wasPublished ?? published)) {
         // On refresh the row just disappears, and for a rollback a NEW
         // reality exists (the old card is live again) that silence would
         // hide. Same panel-level notice the move path uses, for the same
@@ -1323,8 +1331,9 @@ export function SubmitClient({
                     DELETE on a published swapped-in update is a ROLLBACK,
                     so that button says "Roll back update"; any other
                     published row's says "Delete card" because it removes
-                    the live card. The route is unchanged and /admin/work
-                    keeps its own lever. Superseded rows alone get NO
+                    the live card. The wasPublished echo is the route's only
+                    change for this surface; /admin/work keeps its own
+                    lever. Superseded rows alone get NO
                     control: they are the rollback reservoir and the route
                     409s them. */}
                 {canListAll &&
