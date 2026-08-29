@@ -146,6 +146,20 @@ async function main() {
   });
 
   if (recovered.length === 0 && missing.length === 0) {
+    // A cleaned row with a failed rebuild has a REASON for holding nothing, and
+    // it is not the legacy one. Printing the pre-2026-07-29 explanation there
+    // sends an operator looking for an admin cleanup stamp that does not exist,
+    // for a row whose emptiness was a deliberate decision.
+    if (rowCleaning?.failed) {
+      console.log(
+        `\nNothing was retained for this row BY DECISION: the upload carried ` +
+          `credential-shaped content, the cleaned rebuild could not be verified ` +
+          `(${rowCleaning.failed}), and the submitted bytes were deliberately ` +
+          `not stored. The submitter's own copy is the only one, and they were ` +
+          `told to rotate.`
+      );
+      process.exit(0);
+    }
     console.log(
       "\nNo retained bytes for this row in the archive store or on the row. " +
         "Rows published before the 2026-07-29 retention change never stored " +

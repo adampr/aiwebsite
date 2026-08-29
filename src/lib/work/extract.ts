@@ -460,13 +460,19 @@ async function walkLevel(
       continue;
     }
     if (clean.changed) {
-      state.redactedPaths.push(f.path);
-      if (owner)
+      if (owner) {
+        // NOT redactedPaths. The containing archive is leaving whole, and the
+        // retention mail prints a redacted path as "kept, with the matching
+        // spans replaced" - which would be a false statement about a file that
+        // was removed. The drop below is the honest record of what happened.
         state.drop.set(owner.rawName, {
           path: owner.path,
           reason: "bundled archive held credential material",
         });
-      else state.redact.set(f.entry.name, Buffer.from(clean.text, "utf8"));
+      } else {
+        state.redactedPaths.push(f.path);
+        state.redact.set(f.entry.name, Buffer.from(clean.text, "utf8"));
+      }
     }
     state.texts.push({
       path: f.path,
@@ -484,15 +490,25 @@ async function walkLevel(
   return null;
 }
 
-/** The dropped paths a REFUSAL should lead with. A submission whose package
- * was one .env would otherwise be told to attach the SKILL.md it never had,
- * with no mention of the file we took out, which is an accurate mechanism
- * attached to the wrong instruction. */
+/** The paths a REFUSAL should lead with. A submission whose package was one
+ * .env would otherwise be told to attach the SKILL.md it never had, with no
+ * mention of the file we took out, which is an accurate mechanism attached to
+ * the wrong instruction.
+ *
+ * REDACTED AND EXCLUDED PATHS COUNT, not only dropped ones. Reading
+ * `state.drop` alone meant a package whose only finding was a credential
+ * REWRITTEN inside a document, which then failed for some other reason, told
+ * the submitter nothing at all: no mention that we had touched their files and
+ * no instruction to rotate. The refusal is the last thing that lane says, so
+ * it is the last chance to say it. */
 function droppedForRefusal(state: WalkState): { droppedPaths?: string[] } {
-  if (state.drop.size === 0) return {};
-  return {
-    droppedPaths: [...state.drop.values()].map((d) => d.path).slice(0, 20),
-  };
+  const paths = [
+    ...[...state.drop.values()].map((d) => d.path),
+    ...state.excludedPaths.map((e) => e.path),
+    ...state.redactedPaths,
+  ];
+  if (paths.length === 0) return {};
+  return { droppedPaths: [...new Set(paths)].slice(0, 20) };
 }
 
 /** Basename relative to its own archive level (after any "!/" prefix). */

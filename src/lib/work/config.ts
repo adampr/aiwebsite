@@ -542,24 +542,58 @@ export const ROTATE_ANYWAY_EMAIL =
  * their package is now free of secrets. The scan only reads the documents it
  * can read (.md and .txt under the inflate caps) plus every filename, so
  * "your upload is clean now" would be a promise the mechanism cannot keep. */
-export function secretsCleanedMessage(count: number): string {
+export type CleanedKind = "credential" | "personal" | "both";
+
+/** What the scan actually found, so the sentence is true. "Credentials" for a
+ * date of birth is wrong twice over: it misdescribes the finding, and it ends
+ * in an instruction to rotate something that cannot be rotated. */
+function cleanedNoun(kind: CleanedKind): string {
+  return kind === "personal"
+    ? "personal information"
+    : kind === "both"
+      ? "credentials and personal information"
+      : "credentials";
+}
+
+export function secretsCleanedMessage(
+  count: number,
+  kind: CleanedKind = "credential"
+): string {
+  const noun = cleanedNoun(kind);
   const lead =
     count === 1
-      ? "One file in your upload looked like it carried credentials, so it was cleaned before anything was stored or reviewed."
-      : `${count} files in your upload looked like they carried credentials, so they were cleaned before anything was stored or reviewed.`;
-  return `${lead} ${ROTATE_ANYWAY_WEB}`;
+      ? `One file in your upload looked like it carried ${noun}, so it was cleaned before anything was stored or reviewed.`
+      : `${count} files in your upload looked like they carried ${noun}, so they were cleaned before anything was stored or reviewed.`;
+  // Rotation is a credential instruction. A personal identifier has nothing to
+  // rotate, so that lane gets the sentence that IS true of it.
+  return kind === "personal"
+    ? `${lead} ${REMOVED_NOT_UNSENT}`
+    : `${lead} ${ROTATE_ANYWAY_WEB}`;
 }
+
+/** The personal-information counterpart of the rotation duty: there is nothing
+ * to rotate, but the submitter should still know the values reached us. */
+export const REMOVED_NOT_UNSENT =
+  "They reached our server exactly as you sent them, so treat them as " +
+  "disclosed even though our stored copy no longer has them.";
 
 /** The receipt block for the email lane. Hoisted to the top of the reply
  * rather than filed as an "Also:" note: every other adaptation note tells the
  * sender what we did with their subject line, and this one tells them to go
  * rotate a live credential. */
-export function cleaningReceiptBlock(paths: string[]): string {
+export function cleaningReceiptBlock(
+  paths: string[],
+  kind: CleanedKind = "credential",
+  count = paths.length
+): string {
+  const noun = cleanedNoun(kind);
   const lead =
-    paths.length === 1
-      ? "About the credentials in your package: one file looked like it carried them, so I cleaned it before anything was stored or reviewed."
-      : `About the credentials in your package: ${paths.length} files looked like they carried them, so I cleaned them before anything was stored or reviewed.`;
-  return `${lead} ${ROTATE_ANYWAY_EMAIL}`;
+    count === 1
+      ? `About the ${noun} in your package: one file looked like it carried them, so I cleaned it before anything was stored or reviewed.`
+      : `About the ${noun} in your package: ${count} files looked like they carried them, so I cleaned them before anything was stored or reviewed.`;
+  return kind === "personal"
+    ? `${lead} ${REMOVED_NOT_UNSENT}`
+    : `${lead} ${ROTATE_ANYWAY_EMAIL}`;
 }
 
 /** When cleaning removed files and the submission then failed for a DIFFERENT
@@ -571,8 +605,8 @@ export function cleanedBeforeRefusalLead(paths: string[]): string {
   const list = paths.slice(0, 5).join(", ");
   const lead =
     paths.length === 1
-      ? `First, one thing about the upload itself: ${list} looked like it carried credentials, so it was taken out and nothing from it was stored.`
-      : `First, one thing about the upload itself: ${paths.length} files looked like they carried credentials (${list}), so they were taken out and nothing from them was stored.`;
+      ? `First, one thing about the upload itself: ${list} looked like it carried credentials, so it was cleaned out of the package before anything else happened.`
+      : `First, one thing about the upload itself: ${paths.length} files looked like they carried credentials (${list}), so they were cleaned out of the package before anything else happened.`;
   return `${lead} ${ROTATE_ANYWAY_WEB}`;
 }
 

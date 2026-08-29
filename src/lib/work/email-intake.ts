@@ -1827,7 +1827,11 @@ export async function handleWorkEmail(
   const cleaningBlock = storage.cleaned
     ? [
         ``,
-        cleaningReceiptBlock(storage.cleanedPaths),
+        cleaningReceiptBlock(
+          storage.cleanedPaths,
+          storage.cleanedKind,
+          storage.cleanedCount
+        ),
         ``,
         `Files: ${storage.cleanedPaths.join(", ")}`,
       ]

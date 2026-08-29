@@ -81,7 +81,8 @@ function kindRefusal(verdict: KindVerdict | undefined, message: string): string 
  * carries a program's architecture doc as often as a Skill's SKILL.md, so
  * that sentence would tell a program submitter about a Skill they never
  * mentioned. Everything else inspectBareMd can say (bytes that are not UTF-8,
- * credentials in the text) is already kind-neutral and passes through. */
+ * an unterminated private key it could not clean around) is already
+ * kind-neutral and passes through. */
 function standaloneDocError(err: ExtractErr): Response {
   const message =
     err.code === "doc_too_short"
@@ -468,12 +469,13 @@ export async function POST(req: Request): Promise<Response> {
   // the one stored on the row; nothing upstream of this line has an opinion.
   const extracted = await inspectArchive(bytes, null, { packageName: name });
   // The standalone is validated exactly ONCE, here, and deliberately after
-  // the package walk rather than where it is read: an archive carrying
-  // credentials has to keep refusing with the secrets message, which is the
-  // one a submitter must act on fastest, and checking the .md first would let
-  // "your document is too short" answer for a package that is worse than
-  // that. inspectBareMd is pure and cheap, so computing it for a package that
-  // then refuses costs nothing.
+  // the package walk rather than where it is read. The original reason was
+  // that a credential-bearing archive had to refuse with the secrets message
+  // before a document complaint could answer for it; credentials no longer
+  // refuse at all, but the ordering still earns its place, because a package
+  // that cannot be READ (unreadable zip, too complex) is a worse problem than
+  // a short document and must answer first. inspectBareMd is pure and cheap,
+  // so computing it for a package that then refuses costs nothing.
   const mdExtract = mdFile ? inspectBareMd(mdFile.name, mdFile.bytes) : null;
 
   let pkg: ExtractOk;
@@ -747,7 +749,13 @@ export async function POST(req: Request): Promise<Response> {
       // and that they still need to rotate whatever was in them.
       cleaned: storage.cleaned
         ? {
-            message: secretsCleanedMessage(storage.cleanedPaths.length),
+            // The UNCAPPED count and the real class: cleanedPaths is capped
+            // at 20 for display, so counting it tells a submitter who cleaned
+            // 30 files that we cleaned 20.
+            message: secretsCleanedMessage(
+              storage.cleanedCount,
+              storage.cleanedKind
+            ),
             paths: storage.cleanedPaths,
           }
         : null,

@@ -523,7 +523,13 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       updates: id,
       cleaned: storage.cleaned
         ? {
-            message: secretsCleanedMessage(storage.cleanedPaths.length),
+            // The UNCAPPED count and the real class: cleanedPaths is capped
+            // at 20 for display, so counting it tells a submitter who cleaned
+            // 30 files that we cleaned 20.
+            message: secretsCleanedMessage(
+              storage.cleanedCount,
+              storage.cleanedKind
+            ),
             paths: storage.cleanedPaths,
           }
         : null,

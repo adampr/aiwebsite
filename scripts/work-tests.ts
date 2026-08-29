@@ -6212,6 +6212,119 @@ async function main() {
     assert.equal(dirtyMd.cleaning?.redactedPaths[0], "SKILL.md");
   }
 
+
+  // C13. THE TWO FATALS THIS ROUND SHIPPED AND THEN FIXED. Both were found by
+  // an adversarial review that EXECUTED the scenarios; the suite at the time
+  // passed with both defects present, which is why these are pinned by
+  // behaviour rather than by shape.
+  //
+  // (a) THE GUARD ASKED A WHOLE-FILE QUESTION WHILE THE REDACTOR WORKS PER
+  // MATCH. One complete key block anywhere satisfied the paired test, so a
+  // SECOND key with no END line rode through verbatim into the corpus, the
+  // stored archive and the retention mail, while the submitter was told the
+  // upload had been cleaned. It was a REGRESSION: that file used to be
+  // refused outright. Any future "does this file contain X" check reaching for
+  // the same shape breaks this assertion.
+  const pairedThenUnterminated = `intro\n\n${PEM_B}\nAAAAPAIRED\n${PEM_E}\n\nreal:\n${PEM_B}\nREALSECRETKEYBODY\n`;
+  const pt = sanitizeText(pairedThenUnterminated);
+  assert.equal(
+    pt.excludeFile,
+    "unterminated-private-key",
+    "a paired block must not vouch for an unpaired one later in the file"
+  );
+  assert.equal(pt.changed, false, "the file leaves whole rather than patched");
+
+  // ...and end to end, the second key body must reach nothing.
+  const leakZip = await zipOf({
+    "architecture.md": PROSE,
+    "notes.md": pairedThenUnterminated,
+    "main.py": "print(1)",
+  });
+  const leakWalk = await inspectArchive(leakZip, "program");
+  assert.ok(leakWalk.ok, "the package is still accepted");
+  if (leakWalk.ok) {
+    assert.ok(
+      !JSON.stringify(leakWalk.corpus).includes("REALSECRETKEYBODY"),
+      "the key body must not reach the corpus the panel reads"
+    );
+    const storedZip = await JSZip.loadAsync(leakWalk.cleaning!.stored!.bytes);
+    assert.ok(
+      !storedZip.files["notes.md"],
+      "the file holding unterminated key material leaves the stored archive"
+    );
+  }
+
+  // (b) THE LAZY 20,000-CHARACTER GAP WAS QUADRATIC IN DISGUISE. Measured on
+  // the shipped version: 2 MB of repeated headers took 2.8s, a 38 KB upload
+  // took 22s of BLOCKING CPU in the single fork, and filling the inflate
+  // budget extrapolated to ~95s. The linear scanner does the same 2 MB in
+  // single-digit milliseconds. The bound here is deliberately loose: it is
+  // catching a return to quadratic behaviour, not measuring performance.
+  const headerFlood = `${PEM_B}\n`.repeat(20_000);
+  const floodStart = Date.now();
+  const floodResult = sanitizeText(headerFlood);
+  const floodMs = Date.now() - floodStart;
+  assert.equal(floodResult.excludeFile, "unterminated-private-key");
+  assert.ok(
+    floodMs < 2_000,
+    `a header flood must not re-expand a lazy gap per header (took ${floodMs}ms)`
+  );
+
+  // C14. docVeto is ANCHORED. It used to match its keywords as a substring
+  // anywhere in the value, so a real secret that merely contained one was
+  // silently kept while the submitter was told the file had been cleaned.
+  const vaultish = `${["PASS", "WORD"].join("")} = "Vault-Prod-2024!"`;
+  assert.ok(
+    sanitizeText(vaultish).changed,
+    "a real secret containing a placeholder word is still redacted"
+  );
+  assert.equal(
+    sanitizeText(`${["API", "KEY"].join("_")} = "\${DB_API_KEY}"`).changed,
+    false,
+    "but a genuine documentation placeholder still survives"
+  );
+
+  // C15. The value's offset comes from the match's group INDICES, never from
+  // indexOf inside the match: when the same digits appear twice in one match,
+  // indexOf redacts the earlier copy and leaves the real one in the corpus.
+  const repeated = sanitizeText("bank account number 123456 and routing 123456 on file");
+  assert.ok(
+    repeated.text.startsWith("bank account number [redacted:bank-account-number]"),
+    `the labelled occurrence is the one replaced, got: ${repeated.text}`
+  );
+
+  // C16. THE TWO OPERATOR GUARDS THAT STAND BETWEEN A CLEANED ROW AND ITS
+  // UNCLEANED ORIGINAL. Source-scraped because both are refusals in scripts
+  // the suite cannot execute (they need a DB and a filesystem), and because
+  // parseCleaning fails OPEN by design: a malformed value reads as "nothing
+  // was cleaned", which is the safe direction for a renderer and the unsafe
+  // one here. One careless refactor removes either guard silently.
+  const importSrc = readFileSync("scripts/work-archive-import.ts", "utf8");
+  // Anchored on the WHOLE condition, not a substring of it: a first cut
+  // matched `rowCleaning && !force` and therefore still passed when the guard
+  // was disabled with `if (false && rowCleaning && !force)`. Mutation-tested.
+  assert.ok(
+    /if \(rowCleaning && !force\) \{/.test(importSrc),
+    "work:import must refuse a cleaned row unless --force is given"
+  );
+  assert.ok(
+    /row was CLEANED at intake/.test(importSrc),
+    "and the refusal must say why, naming what was removed"
+  );
+  assert.ok(
+    /FORCING ONTO A CLEANED ROW/.test(importSrc),
+    "and --force must SAY so: the sha MATCHES on a cleaned row, so the run would otherwise read as a clean verified recovery"
+  );
+  const correlateSrc = readFileSync("scripts/lib/work-archive-correlate.ts", "utf8");
+  assert.ok(
+    /if \(rowCleaned\)\n?\s*return \{/.test(correlateSrc),
+    "work:correlate must never propose an import for a cleaned row"
+  );
+  assert.ok(
+    /row was cleaned at intake/.test(correlateSrc),
+    "and must say why, since the sha MATCHING is exactly what makes it dangerous"
+  );
+
   console.log("work-tests: all assertions passed.");
 }
 

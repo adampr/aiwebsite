@@ -50,6 +50,15 @@ export interface StorageDecision {
   cleanedPaths: string[];
   /** True when the scan removed anything at all. */
   cleaned: boolean;
+  /** WHAT was found, so the copy can be true. Every submitter-facing string
+   * used to say "credentials" and demand rotation, which is wrong when the
+   * only hit was a personal identifier: there is nothing to rotate about
+   * somebody's date of birth, and telling a submitter to go rotate one is
+   * both confusing and a small loss of credibility for the times it matters. */
+  cleanedKind: "credential" | "personal" | "both";
+  /** How many paths were cleaned in total, uncapped. `cleanedPaths` is capped
+   * for display, so counting it under-reports past the cap. */
+  cleanedCount: number;
   /** Set when a rebuild failed and no archive is being stored. */
   failed: string | null;
 }
@@ -87,6 +96,8 @@ export function decideStorage(opts: {
       cleaningJson: null,
       cleanedPaths: [],
       cleaned: false,
+      cleanedKind: "credential",
+      cleanedCount: 0,
       failed: null,
     };
 
@@ -114,12 +125,22 @@ export function decideStorage(opts: {
     failed: pkgClean && !pkgClean.stored ? (pkgClean.failed ?? "rebuild failed") : null,
   };
 
+  const classes = new Set(record.rules.map((r) => r.cls));
   return {
     archiveData,
     mdData,
     cleaningJson: JSON.stringify(record),
     cleanedPaths: cleanedPathsOf(record),
     cleaned: true,
+    cleanedKind:
+      classes.has("credential") && classes.has("personal")
+        ? "both"
+        : classes.has("personal")
+          ? "personal"
+          : // A filename-class drop (.env, a key file) records no rule but is
+            // unambiguously a credential, so the default belongs on that side.
+            "credential",
+    cleanedCount: allCleanedPaths(record).length,
     failed: record.failed,
   };
 }
@@ -128,11 +149,17 @@ export function decideStorage(opts: {
  * matters more to the reader than one that was patched. Capped at 20 like
  * every other path list in this feature. */
 export function cleanedPathsOf(record: StoredCleaning): string[] {
+  return allCleanedPaths(record).slice(0, 20);
+}
+
+/** The same list UNCAPPED, for counting. Counting the capped list is how a
+ * submission that cleaned 30 files tells the submitter it cleaned 20. */
+export function allCleanedPaths(record: StoredCleaning): string[] {
   return [
     ...record.dropped.map((d) => d.path),
     ...record.excluded.map((e) => e.path),
     ...record.redacted,
-  ].slice(0, 20);
+  ];
 }
 
 /** Read a row's cleaning_json. Total: a malformed or legacy value reads as

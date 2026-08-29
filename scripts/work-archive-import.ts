@@ -178,6 +178,26 @@ async function main() {
   // on disk, hash-verified and looking authoritative. --force still works, for
   // the operator who has read this and means it.
   const rowCleaning = parseCleaning(bits[0]?.cleaningJson ?? null);
+  if (rowCleaning && force) {
+    // ONE FLAG, TWO OVERRIDES, AND THE QUIET ONE IS THE DANGEROUS ONE. Forcing
+    // past a sha MISMATCH is already loud (importShaRefusal prints PROVENANCE
+    // UNVERIFIED). Forcing past a CLEANED row is the opposite shape: the sha
+    // MATCHES, so load() prints "sha256 MATCH" and the whole run reads as a
+    // clean, hash-verified recovery, while what is actually being filed is the
+    // uncleaned original. Say so where the operator is looking.
+    console.log(
+      `\n!! FORCING ONTO A CLEANED ROW. This row's upload was cleaned at intake ` +
+        `and its recorded sha256 is the hash of the package AS SUBMITTED, so a ` +
+        `matching local file is the UNCLEANED original. Filing it RESTORES ` +
+        `material that was deliberately removed:`
+    );
+    for (const removed of cleanedPathsOf(rowCleaning))
+      console.log(`     ${removed}`);
+    console.log(
+      `   Any "sha256 MATCH" printed below is confirming the ORIGINAL, not the ` +
+        `cleaned copy.\n`
+    );
+  }
   if (rowCleaning && !force) {
     const removed = cleanedPathsOf(rowCleaning);
     die(

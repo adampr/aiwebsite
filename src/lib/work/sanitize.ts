@@ -94,6 +94,10 @@ interface RedactionRule {
 }
 
 export const MAX_RECORDED_HITS = 2000;
+/** How far a private-key END marker may sit from its BEGIN before the block
+ * counts as unterminated. A bound is required: without one a stray header
+ * makes every scan run to end of file. */
+export const PRIVATE_KEY_MAX_SPAN = 20_000;
 /** A non-doc corpus file more than this fraction placeholder is not evidence;
  * extract.ts drops it from the corpus (it stays in the manifest). */
 export const GUT_RATIO = 0.3;
@@ -108,9 +112,20 @@ export function placeholderFor(ruleId: string): string {
  * test. */
 export const REDACTION_TOKEN_RE = /\[redacted:[a-z-]+\]/g;
 
-/** Values that are plainly documentation, not credentials. */
+/** Values that are plainly documentation, not credentials.
+ *
+ * THE KEYWORD ALTERNATIVES ARE ANCHORED, and that is the whole correctness of
+ * this list. An earlier version matched `.*(?:example|vault|insert|todo).*`,
+ * i.e. the keyword ANYWHERE in the value, so a real password whose text began
+ * with the word "Vault", or an API key whose text began with the word
+ * "insert", was vetoed and silently KEPT while the submitter was told the
+ * upload had been cleaned. A documentation placeholder IS the whole value; a
+ * credential that happens to contain an English word is still a credential.
+ * (The two shapes are pinned as fixtures in scripts/work-tests.ts, assembled
+ * at runtime so this repo's own pre-commit secrets gate does not read them as
+ * real values.) */
 const DOC_PLACEHOLDER_RE =
-  /^["']?(?:x{3,}|\.{3,}|-{3,}|_{3,}|\*{3,}|\$\{[^}]*\}|%[A-Za-z_]+%|<[^>]*>|\[[^\]]*\]|(?:your|my|the)[ _-]|.*(?:example|sample|placeholder|redacted|changeme|change[ _-]me|todo|fixme|dummy|test[ _-]?value|insert|replace[ _-]?(?:me|this)|vault|1password|bitwarden|lastpass|keepass|secret[ _-]manager).*)["']?$/i;
+  /^["']?(?:x{3,}|\.{3,}|-{3,}|_{3,}|\*{3,}|\$\{[^}]*\}|%[A-Za-z_]+%|<[^>]*>|\[[^\]]*\]|(?:your|my|the)[ _-][A-Za-z _-]{0,40}|(?:example|sample|placeholder|redacted|changeme|change[ _-]me|todo|fixme|dummy|test[ _-]?value|insert[ _-]?(?:value|here)?|replace[ _-]?(?:me|this)?)(?:[ _-]?(?:value|here|key|token|secret|password))?)["']?$/i;
 
 function isDocPlaceholder(value: string): boolean {
   return DOC_PLACEHOLDER_RE.test(value.trim());
@@ -229,14 +244,24 @@ export const SANITIZE_RULES: readonly RedactionRule[] = [
     valueGroup: 0,
     needle: "eyJ",
   },
-  // THE ONE THAT MUST SPAN THE WHOLE BLOCK. See the header.
-  {
-    id: "private-key",
-    cls: "credential",
-    re: /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]{0,20000}?-----END [A-Z ]{0,40}PRIVATE KEY-----/g,
-    valueGroup: 0,
-    needle: "PRIVATE KEY",
-  },
+  // PRIVATE KEYS ARE NOT A RULE HERE. privateKeyEdits() below does that job
+  // with offset arithmetic instead of a regex span, for two reasons, both
+  // measured, both defects in the first cut:
+  //
+  // COST. The obvious pattern is BEGIN + a lazy [\s\S]{0,20000}? gap + END.
+  // For a header with no terminator the engine expands that gap up to 20,000
+  // times, once per header in the file, so a document of repeated BEGIN lines
+  // is quadratic in disguise: 2 MB of them measured at 2.8s, a 38 KB upload of
+  // eight such entries at 22s of BLOCKING CPU in the single Next fork, and
+  // ~95s if a submitter fills the 64 MB inflate budget. That is a denial of
+  // service any authorised submitter could trigger with a small attachment.
+  //
+  // CORRECTNESS. A regex rule redacts per MATCH, while "is there an
+  // unterminated key here" is a question about every OCCURRENCE. One complete
+  // BEGIN/END pair earlier in the file satisfied the old whole-text paired
+  // test, so the guard never fired and a second, unterminated key's body rode
+  // through verbatim into the corpus, the stored archive and the retention
+  // mail, while the submitter was told the upload had been cleaned.
   // userinfo with a colon before the @ is a password by construction. The
   // scheme and host survive, so the sentence still says which database.
   {
@@ -408,6 +433,31 @@ interface Edit {
   cls: RedactionClass;
 }
 
+/** Every private-key block in `masked`, as spans, plus whether any header was
+ * left unterminated. Linear: one global scan for headers, one bounded search
+ * per header for its terminator. Never backtracks, and answers per OCCURRENCE,
+ * so a paired block earlier in the file cannot vouch for an unpaired one
+ * later. */
+function privateKeyEdits(masked: string): {
+  edits: Edit[];
+  unterminated: boolean;
+} {
+  const BEGIN = /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----/g;
+  const END = /-----END [A-Z ]{0,40}PRIVATE KEY-----/g;
+  const edits: Edit[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = BEGIN.exec(masked)) !== null) {
+    END.lastIndex = m.index + m[0].length;
+    const e = END.exec(masked);
+    if (e === null || e.index - m.index > PRIVATE_KEY_MAX_SPAN)
+      return { edits: [], unterminated: true };
+    const end = e.index + e[0].length;
+    edits.push({ start: m.index, end, ruleId: "private-key", cls: "credential" });
+    BEGIN.lastIndex = end;
+  }
+  return { edits, unterminated: false };
+}
+
 /**
  * THE function: clean the text and report what was removed.
  *
@@ -420,15 +470,12 @@ interface Edit {
 export function sanitizeText(text: string): SanitizeResult {
   const masked = maskPlaceholders(text);
 
-  // An unterminated private-key header cannot be spanned, and leaving key
-  // material in the corpus because an END marker was missing is the one
-  // outcome this module exists to prevent. The whole file leaves instead.
-  if (
-    /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----/.test(masked) &&
-    !/-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]{0,20000}?-----END [A-Z ]{0,40}PRIVATE KEY-----/.test(
-      masked
-    )
-  ) {
+  // Key material first, and per OCCURRENCE. An unterminated header cannot be
+  // spanned, and leaving a key body in the corpus because an END marker was
+  // missing is the one outcome this module exists to prevent, so that file
+  // leaves whole rather than being patched around.
+  const keys = privateKeyEdits(masked);
+  if (keys.unterminated)
     return {
       text,
       hits: [],
@@ -437,12 +484,12 @@ export function sanitizeText(text: string): SanitizeResult {
       hitsTruncated: false,
       excludeFile: "unterminated-private-key",
     };
-  }
 
-  const edits: Edit[] = [];
+  const edits: Edit[] = [...keys.edits];
   for (const rule of SANITIZE_RULES) {
     if (rule.needle !== null && !masked.includes(rule.needle)) continue;
-    const re = new RegExp(rule.re.source, rule.re.flags);
+    // `d` so match.indices gives each group's true offset (see below).
+    const re = new RegExp(rule.re.source, rule.re.flags.includes("d") ? rule.re.flags : rule.re.flags + "d");
     let m: RegExpExecArray | null;
     while ((m = re.exec(masked)) !== null) {
       if (m[0].length === 0) {
@@ -453,8 +500,14 @@ export function sanitizeText(text: string): SanitizeResult {
       if (value === undefined || value === "") continue;
       if (rule.verify && !rule.verify(value)) continue;
       if (rule.docVeto && isDocPlaceholder(value)) continue;
-      const start =
-        rule.valueGroup === 0 ? m.index : m.index + m[0].indexOf(value);
+      // THE GROUP'S REAL OFFSET, from the `d` flag, never m[0].indexOf(value).
+      // indexOf finds the FIRST occurrence of that text inside the match,
+      // which is a different position whenever the value repeats: for
+      // "bank account 123456 routing 123456" the label-anchored rules would
+      // redact the earlier copy and leave the real one in the stored corpus,
+      // while reporting the file cleaned.
+      const groupAt = m.indices?.[rule.valueGroup]?.[0];
+      const start = groupAt ?? m.index;
       edits.push({ start, end: start + value.length, ruleId: rule.id, cls: rule.cls });
     }
   }

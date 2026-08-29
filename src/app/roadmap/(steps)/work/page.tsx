@@ -25,10 +25,12 @@ import {
 } from "@/lib/work/db";
 import { checkDkim } from "@/lib/roadmap/dkim";
 import {
+  CLEANED_ROW_NOTE,
   EMAIL_PROMISE,
   WORK_STATUS_LABELS,
   type WorkStatus,
 } from "@/lib/work/config";
+import { cleanedPathsOf, parseCleaning } from "@/lib/work/cleaning";
 import { CommunityCard } from "@/components/work-card";
 import { DkimStep } from "@/components/roadmap/dkim-step";
 import { EmailLink } from "@/components/email-link";
@@ -211,6 +213,30 @@ export default async function RoadmapWorkPage() {
                   status={row.status}
                   minutes={row.timeSavedMinutes}
                 />
+                {/* §5.16 intake cleaning (2026-08-29): the rotation
+                    instruction has to survive the dialog closing, on this
+                    lane exactly as on /work/submit. A company submitter is
+                    the LAST person who should lose it: their credential is
+                    their client's, and this page is the only place they ever
+                    see their own rows. Shown on every status, published
+                    included, because rotation has no expiry. */}
+                {(() => {
+                  const cleaning = parseCleaning(row.cleaningJson);
+                  if (!cleaning) return null;
+                  const paths = cleanedPathsOf(cleaning);
+                  return (
+                    <div className="basis-full">
+                      <p className="text-xs" style={faint}>
+                        {CLEANED_ROW_NOTE}
+                      </p>
+                      <ul className="mono text-xs" style={faint}>
+                        {paths.map((cp) => (
+                          <li key={cp}>{cp}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
                 {/* basis-full: the <li> is a wrapping flex line of inline
                     metadata, and the tracker is a block that owns its own
                     row under it. Nothing else on this server-rendered page

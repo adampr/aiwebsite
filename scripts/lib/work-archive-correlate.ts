@@ -166,6 +166,9 @@ export type SlotVerdict =
    * per-slot ledger gate of work:import refuses a slot with a live row,
    * so the wrong store file must be deleted in the console first. */
   | "store-mismatch"
+  /** The store holds the cleaned rebuild and the row records the submitted
+   * hash: correct by construction, never a recovery target. */
+  | "store-cleaned"
   /** Only admin-DELETED ledger rows stand at this slot: cleanup is FINAL,
    * never recoverable by script. */
   | "admin-deleted"
@@ -228,6 +231,18 @@ export function slotCoverage(row: RowFacts, ledger: LedgerFacts[]): SlotCoverage
     const atPath = live.find((l) => l.relPath === relPath);
     if (atPath) {
       if (sha256 === null) return { ...base, verdict: "store-live" as const, note: null };
+      // A CLEANED row lands here by construction and is NOT a mismatch in the
+      // sense this verdict was written for: the recorded sha describes the
+      // package as SUBMITTED while the store holds the cleaned rebuild, so the
+      // store has exactly the right bytes. Blaming "a forced import or a
+      // differing backfill" on every cleaned row is a false accusation, and it
+      // contradicts the corrective reason printed further down the report.
+      if (row.cleaned === true)
+        return {
+          ...base,
+          verdict: "store-cleaned" as const,
+          note: `the store holds the CLEANED rebuild (${atPath.sha256}); the recorded ${sha256} is the package as submitted, which was never stored`,
+        };
       return {
         ...base,
         verdict: "store-mismatch" as const,

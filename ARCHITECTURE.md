@@ -4619,6 +4619,21 @@ submitted artifact, so no backfill and old rows stay correct): dropped/redacted/
 excluded paths, the rule ids that fired, the sha256+length of the stored
 artifact, and `failed` when no archive was retained.
 
+**WHAT THE SCAN DOES NOT SEE, stated because cleaning-instead-of-refusing
+WIDENS what gets stored.** Content scanning reaches only `.md`/`.mdx`/
+`.markdown`/`.txt` entries under the per-entry and total inflate caps; the
+FILENAME rules run on every entry at every parsed level, but no `.py`, `.json`,
+`.yaml`, `.ps1`, `.pdf` or `.docx` is ever opened, nor a text file over 2 MB or
+past the 64 MB budget, nor anything below two zip layers. Before this round a
+credential in a scanned `.md` refused the WHOLE upload, so unscanned files in
+that package were never stored either; now that package is accepted and those
+unscanned files are stored and mailed. That is a real widening and it is
+accepted deliberately: the alternative is refusing submissions the owner
+directed us to accept. It is also why no submitter-facing string may say the
+upload is now free of secrets. The honest claims are exactly: we clean the
+documents we read, we never open files whose NAME marks them as key material,
+and the submitter must rotate anything real regardless.
+
 **WHICH HASH EACH CONSUMER COMPARES**, stated because there are now three
 candidate answers and each is right somewhere. `archive_sha256`/`md_sha256` =
 the SUBMITTED bytes; `cleaning_json.archive/md` = the STORED bytes;
@@ -4655,8 +4670,23 @@ a ledger-insert failure after the rename unlinks the just-renamed file so
 no store file is ever unledgered). `storeArchiveFiles` is called right
 after `createSubmission` in ALL THREE
 intake lanes (create route, update route, email lane) and NEVER fails the
-submission: on any failure the row bytea remains the copy and the
-verify-and-clear refuses to clear it. On publish (either path) the upload is
+submission: on a STORE failure the row bytea remains the copy and the
+verify-and-clear refuses to clear it. **Since 2026-08-29 that call is
+CONDITIONAL, and the fallback sentence above does not describe the one branch
+where it matters most.** When the intake cleaning could not produce a
+verifiable rebuild, `decideStorage` returns `archiveData: null`, the store is
+not called at all, and the row bytea is NOT the copy: there is deliberately no
+copy anywhere, because the only remaining candidate was the material we were
+told to remove. Retaining it instead would leave a credential-bearing blob at
+rest in Postgres for the row's life (held rows are exempt from the expiry
+sweep), attach it to the retention mail at publish, where the blocked-type
+screen removes file TYPES and not credentials, and hand it to any operator
+running `work:archive` with a MATCH against `archive_sha256`. The absence is
+recorded in `cleaning_json.failed`, alarmed under its own episodic ledger key
+`work-intake:cleaning-failed:<lane>`, surfaced on `/admin/work`, and stated in
+a retention email that carries a `(NO COPY RETAINED)` subject token; that
+notice's own non-delivery raises a WARN, because it is the one message whose
+silence would otherwise mean nothing was kept and nobody knew. On publish (either path) the upload is
 emailed to ADMIN_EMAIL (`sendArchiveRetentionEmail(row, files,
 {storeVerified})`, 60 s timeout) **attach-if-fits on PREDICTED sizes,
 SMALLEST-FIRST**: `partitionAttachmentsBySize` partitions

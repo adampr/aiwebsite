@@ -69,13 +69,23 @@ function readmeFor(
   originalName: string,
   originalBytes: number,
   originalSha: string | null,
-  removed: RemovedEntry[]
+  removed: RemovedEntry[],
+  /** True when the package this screened was itself the §5.16 intake-cleaning
+   * rebuild rather than the submitted upload. Two sentences below are false in
+   * that case and must not be printed: the byte count and sha would pair the
+   * CLEANED length with the SUBMITTED hash, and there is no "complete package"
+   * on the row to point the reader at. */
+  fromCleaned = false
 ): string {
   return [
     `THIS IS NOT THE ORIGINAL PACKAGE.`,
     ``,
-    `It is a screened copy of ${mailSafePath(originalName)} (${originalBytes} bytes,`,
-    `SHA-256 ${originalSha ?? "n/a"}), rebuilt for email delivery with the`,
+    fromCleaned
+      ? `It is a screened copy of the CLEANED ${mailSafePath(originalName)}`
+      : `It is a screened copy of ${mailSafePath(originalName)} (${originalBytes} bytes,`,
+    fromCleaned
+      ? `(${originalBytes} bytes), rebuilt for email delivery with the`
+      : `SHA-256 ${originalSha ?? "n/a"}), rebuilt for email delivery with the`,
     `entries below removed. The mail provider refuses a whole message when it`,
     `finds one of these types inside an archive attachment.`,
     ``,
@@ -84,9 +94,18 @@ function readmeFor(
       (r) => `  ${r.path} (${r.declaredBytes} bytes declared, ${r.reason})`
     ),
     ``,
-    `The complete package, including everything listed above, is stored on the`,
-    `submission row in the site database. That stored copy is the only complete`,
-    `one; nothing was deleted from it.`,
+    ...(fromCleaned
+      ? [
+          `The package this was screened from is itself the cleaned rebuild made`,
+          `at intake: credential-shaped content had already been taken out of it`,
+          `before anything was stored. The upload as submitted was never kept, so`,
+          `there is no more complete copy of it anywhere on the server.`,
+        ]
+      : [
+          `The complete package, including everything listed above, is stored on the`,
+          `submission row in the site database. That stored copy is the only complete`,
+          `one; nothing was deleted from it.`,
+        ]),
   ].join("\n");
 }
 
@@ -97,7 +116,10 @@ function readmeFor(
 export async function screenPackageForMail(
   name: string,
   data: Buffer,
-  originalSha: string | null
+  originalSha: string | null,
+  /** Whether `data` is the §5.16 cleaned rebuild rather than the submitted
+   * upload; the README's provenance sentences differ. */
+  fromCleaned = false
 ): Promise<ScreenResult> {
   const started = Date.now();
   try {
@@ -164,7 +186,7 @@ export async function screenPackageForMail(
 
     out.file(
       "_SCREENED-COPY-README.txt",
-      readmeFor(name, data.length, originalSha, removed)
+      readmeFor(name, data.length, originalSha, removed, fromCleaned)
     );
     const rebuilt = await out.generateAsync({
       type: "nodebuffer",
