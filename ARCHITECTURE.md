@@ -2705,6 +2705,62 @@ estimated cost and takes the nightly advisory lock). **The podcast feed
 artwork and the Apple/Spotify submissions, which need a human — both are behind a
 login with 2FA, and both are free.
 
+**v1.108.0 (adopted 2026-08-29, submodule `fe49de7`): the blog writer-model
+diagnostic stops naming a ModelTask and reads the one the reply reports.** Pin
+moved `403344e` (v1.107.2) -> `fe49de7`, crossing TWO releases, v1.107.3 and
+v1.108.0. **NO schema, NO env, NO `site.config.ts` edit, NO re-render** — verified
+rather than assumed: `git diff --name-only 403344e fe49de7 -- deploy/templates/`
+is EMPTY, so every rendered stamp under `deploy/` still matches and the drift gate
+passes untouched. The whole `src/` delta is one file, `src/blog/generate.ts`.
+
+*What was wrong.* The nightly's `writer-model-changed` / `writer-model-flapping`
+lines told the operator to read the head of ModelTask `think_harder`. The quantity
+they explain is `answeringModel`, which the module derives from the
+`json_completion` DRAFT pass. Brain #817 (shipped here in v1.142 on 2026-08-28)
+gave that pass its own routing lane, so the strings named a seat that could no
+longer move with the number being reported. **On THIS host the divergence is
+real**: `BRAIN_ROUTER` is unset, which defaults to router v2, and under v2 the
+heads differ (`json_completion` = gpt-5.6-sol, `think_harder` = claude-opus-5).
+Under `legacy`, `legacy_high_stakes` and `v2_high_stakes` the two lanes resolve to
+the same head, so this misdirected in ONE routing mode out of four — the one this
+host runs.
+
+*Why it took two releases.* v1.107.3 fixed it by hardcoding `json_completion`
+instead. That is correct today and has NOT rotted, but it is correct only while
+that lane stays armed, and the lane is not fixed per brain release — the brain
+resolves it from its own data files at profile load, so an eval bar rotting out
+re-arms the `think_harder` fallback with no brain release and no version for this
+host to gate on. v1.108.0 closes the class: the module reads the `taskType` the
+brain stamps on the draft pass record and prints whatever THAT reply says served
+it. An unarmed lane now prints `think_harder` because the wire said so, not
+because the module wrote it down.
+
+*What an operator sees here, concretely.* On a panel night the line names the lane
+from the reply. **On a panel-off night it names none, and that is correct, not a
+fault** — the brain builds `thinking` only when the panel ran, so a solo re-ask
+carries no pass records at all even on the newest brain, while `answeringModel`
+still resolves off the single-pass aggregate so the comparison still runs. The
+null wording names no lane, refuses to substitute `json_completion` (that is the
+`usage_events` workload key, which the brain writes even on a turn that routed
+`think_harder`), and points at the brain's warn-once `[json-completion] #817 lane
+not armed` log. The `[blog-writer]` stdout series line gains `draft_task=`,
+rendered `-` when the reply names no lane. Still **recorded-not-mailed** — nothing
+new pages anyone.
+
+*`supportedBrainRange` deliberately UNCHANGED at `>=1.102 <2.0.0`,* so this
+adoption imposes no brain floor on this host or any sibling. Raising it was
+considered and rejected upstream: it would remove not one line of the absent-field
+branch (absence is a panel-mode condition, not a version one), the brain declares
+`taskType` optional, and `config:check` enforces the range as a hard pre-cutover
+deploy blocker — disproportionate for a diagnostic that never mails. A separate
+upstream release may raise it later; that is a fleet decision, not this one.
+
+*Gates run here.* `npx tsc --noEmit` exit 0 (this host has no `typecheck` npm
+script — `npm run typecheck` exits 1 as MISSING SCRIPT and must not be read as a
+type error). `npm run config:check` -> `config:check OK`. `npm run upgrade:check`
+-> exit 0, module version 1.108.0 (git tag v1.108.0), 21 pending entries — the
+familiar stamp-lag artifact, grown by exactly the two entries this pin crosses.
+
 **v1.107.2 (adopted 2026-08-28, submodule `403344e`): the §19.5 week-over-week
 traffic detector was counting REQUESTS, the bot list was a decade out of date,
 and the two release lines became one.** Pin moved 8b4c842 (v1.105.1) →
