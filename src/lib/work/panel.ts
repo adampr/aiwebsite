@@ -625,6 +625,27 @@ async function runPanelInner(
     ...publishedFacetLabels,
   ].join("; ");
 
+  // What the badge is FOR, said once and given to both stages that pick one
+  // (2026-08-29). The vocabulary alone does not say, and the gap produced a
+  // real class of wrong badge: five published rows whose kind is "program"
+  // carry a Skill badge, because their packages CONTAIN skills (a
+  // `.claude/skills/` directory, a `.claude-plugin` bundle) and a model
+  // reading the files reasonably reached for the nearest matching word.
+  //
+  // The fix is guidance, NOT a lint gate keyed on row.kind, and the
+  // difference is the whole point. A hard rule ("a program may not wear a
+  // Skill badge") looks obvious and is false: `.claude/skills/<name>/` is a
+  // Skill's own shipping format, so classify.ts routes a pure bundle of
+  // Skills to "program" on its agent-configuration rung, and a gate would
+  // then force the one true badge off the card and leave seven that are
+  // vaguer or simply wrong. This repo ships a Skill at .claude/skills/verify;
+  // the routing kind answers which document rules apply, never what the card
+  // is ABOUT. So the distinction that actually matters is not the kind, it is
+  // subject versus contents, and that is a judgement, which belongs in the
+  // prompt where a judgement can be made case by case.
+  const badgeMeaning =
+    "The categoryBadge names what the submission itself IS for a reader, not what its files contain: a tool that ships a Claude Skill alongside its own code and documents is not itself a Skill, while a submission whose payload is one or more Skills is. Pick the badge a reader would use to describe the thing being published.";
+
   // 1. Evidence writer: the claims inventory, every claim paired with a quote.
   const evidence = await call(
     "evidence writer",
@@ -651,7 +672,7 @@ async function runPanelInner(
   const structure = await call(
     "structure writer",
     `You are the structure-focused writer on the same panel. ${UNTRUSTED_FRAME} ${HOUSE_RULES}`,
-    `${docs}\n\nCurrent draft:\n${JSON.stringify(voice).slice(0, 8000)}\n\nProduce the structural fields: {"categoryBadge": exactly one of [${CATEGORY_BADGES.map((c) => `"${c}"`).join(", ")}], "facets": exactly 3 of {"label": a short noun phrase, max ${WORK_CAPS.facetLabelMaxChars} chars, "text": ${WORK_CAPS.facetTextMinWords}-${WORK_CAPS.facetTextMaxWords} words drawn from the documents}, "footerLine": ${WORK_CAPS.footerFragmentsMin}-${WORK_CAPS.footerFragmentsMax} short lowercase mono fragments summarizing hard facts, the first one naming the reviewed file by its filename}. Facet labels may NOT reuse any of these existing /work facet titles: ${takenFacets}. Return only that JSON.`
+    `${docs}\n\nCurrent draft:\n${JSON.stringify(voice).slice(0, 8000)}\n\n${badgeMeaning} Produce the structural fields: {"categoryBadge": exactly one of [${CATEGORY_BADGES.map((c) => `"${c}"`).join(", ")}], "facets": exactly 3 of {"label": a short noun phrase, max ${WORK_CAPS.facetLabelMaxChars} chars, "text": ${WORK_CAPS.facetTextMinWords}-${WORK_CAPS.facetTextMaxWords} words drawn from the documents}, "footerLine": ${WORK_CAPS.footerFragmentsMin}-${WORK_CAPS.footerFragmentsMax} short lowercase mono fragments summarizing hard facts, the first one naming the reviewed file by its filename}. Facet labels may NOT reuse any of these existing /work facet titles: ${takenFacets}. Return only that JSON.`
   );
   if (!structure) {
     await failRun(row, id, attemptId, "structure writer", lastFailReason());
@@ -721,7 +742,7 @@ async function runPanelInner(
   // this stage carries submitted text.
   const synth = await call(
     "synthesis",
-    `You are the synthesis editor of the panel. Merge the draft and every critic finding into the final card. The submitted documents are included below and they are the ground truth. Resolve every evidence strike by removing the claim or re-grounding it in an exact document line. Apply every editorial fix the documents do not contradict. A critic finding that contradicts the documents, for example a claim that no document was submitted, that evidence is unavailable, or that a source is missing, is wrong: reject it and keep the copy grounded in the documents. The card describes the tool for the public page; card copy must contain no commentary about this review, the panel, critics, editorial decisions, evidence availability, or required follow-up. Total visible copy ${WORK_CAPS.cardMinWords}-${WORK_CAPS.cardMaxWords} words. ${UNTRUSTED_FRAME} ${HOUSE_RULES} Return ONLY the card JSON, schema: ${schemaSpec}`,
+    `You are the synthesis editor of the panel. Merge the draft and every critic finding into the final card. The submitted documents are included below and they are the ground truth. Resolve every evidence strike by removing the claim or re-grounding it in an exact document line. Apply every editorial fix the documents do not contradict. A critic finding that contradicts the documents, for example a claim that no document was submitted, that evidence is unavailable, or that a source is missing, is wrong: reject it and keep the copy grounded in the documents. The card describes the tool for the public page; card copy must contain no commentary about this review, the panel, critics, editorial decisions, evidence availability, or required follow-up. Total visible copy ${WORK_CAPS.cardMinWords}-${WORK_CAPS.cardMaxWords} words. ${badgeMeaning} ${UNTRUSTED_FRAME} ${HOUSE_RULES} Return ONLY the card JSON, schema: ${schemaSpec}`,
     `${docs}\n\nDraft:\n${JSON.stringify(draft).slice(0, 8000)}\n\nClaims inventory from the evidence writer:\n${JSON.stringify(evidence.claims ?? []).slice(0, 6000)}\n\nEvidence critic:\n${JSON.stringify(evidenceCritic ?? {}).slice(0, 6000)}\n\nEditorial critic:\n${JSON.stringify(editorialCritic ?? {}).slice(0, 6000)}\n\nTitle must remain ${JSON.stringify(row.title)} unless it collides with an existing card title (taken titles: ${takenTitles}).`
   );
   if (!synth) {

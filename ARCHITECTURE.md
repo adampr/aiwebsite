@@ -15,6 +15,29 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
+Last verified against code: 2026-08-29 §5.16 BADGE SUBJECT GUIDANCE: the
+panel's two badge-picking stages (the structure writer and synthesis) now
+carry one shared sentence saying what `categoryBadge` is FOR, because the
+vocabulary alone never said. The gap produced a real class of wrong badge:
+five published rows whose kind is "program" wear a Skill badge, since their
+packages CONTAIN skills (a `.claude/skills/` directory, a `.claude-plugin`
+bundle) and a model reading the files reached for the nearest matching word.
+The fix is GUIDANCE, not a lint gate keyed on `kind`, and a gate was built
+first and then thrown away, so the reasoning is worth keeping: "a Code program
+may not wear a Skill badge" looks obvious and is false. `.claude/skills/<name>/`
+is a Skill's own shipping format (this repo ships one at
+`.claude/skills/verify`), so classify.ts routes a package whose entire payload
+is Skills to "program" on its agent-configuration rung; a gate would then
+force the one TRUE badge off that card and leave seven that are vaguer or
+outright wrong, breaking the vocabulary's own editorial rule ("a category,
+never a claim") in the name of enforcing it. The routing kind answers which
+document rules apply, never what the card is ABOUT. The distinction that
+matters is subject versus contents, which is a judgement, so it lives in the
+prompt where it can be made case by case. `CATEGORY_BADGES`, `LintContext`
+and `lint.ts` are unchanged. NOTE for anyone tempted by the gate again: a
+published card IS re-linted when `npm run work:rerun` re-runs its panel, so a
+badge rule is not inert for existing rows the way it first appears.
+
 Last verified against code: 2026-08-28 §5.16 KIND INFERENCE (owner directive
 "for submit, no longer ask if its CoWork or Code program; figure out which is
 based on what was uploaded. Also go back over all the submits as some were
