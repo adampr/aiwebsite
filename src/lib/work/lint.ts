@@ -181,6 +181,58 @@ export function stringViolations(field: string, s: string): string[] {
   return v;
 }
 
+/** Retired-tool opener (2026-08-29 "Ticket Reply Composer" incident). /work
+ * shows tools people can still use, so a summary that opens by putting the
+ * TOOL in the past tense ("Ticket Reply Composer was a browser-based IT
+ * helpdesk app that drafted ...") publishes a live tool as a retirement
+ * notice. The panel had been told "past tense for anything that ran" and
+ * applied it to the tool itself; the prompt rule is now precise
+ * (HOUSE_STYLE_RULES) and this is its deterministic half.
+ *
+ * NARROW ON PURPOSE. Past tense is legitimate copy nearly everywhere: a
+ * one-time event ("The first run processed 40 tickets"), a migration, an
+ * incident, a genuinely retired tool described further down the card. Only
+ * the summary's OPENING noun phrase is checked, and only the "<name> was"
+ * shape (plus "were" behind an article or the title), which is the one that
+ * makes a reader think the tool is gone. The article branch is a real noun
+ * phrase of at most five words with no clause boundary and no one-time
+ * event as a word ("The first run was completed", "The migration was
+ * finished" are the past tense the prompt rule permits), so a compliant
+ * sentence such as "The tool exports tickets, and the first run was slow"
+ * passes; "were" is not accepted after a bare name because "Tickets were
+ * routed by hand before this tool shipped" is legitimate before-state copy.
+ * A past-tense VERB opener ("Outage Detective monitored ...", "This skill
+ * drafted ...") is DELIBERATELY deferred to the panel prompt: it is the same
+ * defect class (about 22 more of the 96 published cards on 2026-08-29), it
+ * is separable when the subject is the tool, but an "-ed" test needs a
+ * stoplist (embed, need, feed, exceed, proceed, succeed) and was not worth a
+ * false hold on the first night. Replayed over the 96 published production
+ * cards: 27 flagged, every one a tool described as if retired, and no
+ * present-tense card flagged. */
+const OPENER_NAME = "[A-Z][A-Za-z0-9.'+/-]*(?:\\s+[A-Z][A-Za-z0-9.'+/-]*){0,5}";
+const OPENER_MACHINE = "[a-z][A-Za-z0-9.'+/]*[-.][A-Za-z0-9.'+/-]*";
+const OPENER_WORD = "[A-Za-z0-9.'+/-]+";
+// A clause boundary ends the noun phrase: past this word the sentence is
+// talking about something other than its subject.
+const OPENER_CLAUSE =
+  "(?:and|or|but|that|which|who|whose|when|while|after|before|because|so|if|until|though|where|whether)";
+// A one-time EVENT as the head noun is the past tense the prompt rule
+// permits ("The first run was completed across 40 tickets", "The migration
+// was finished in March"), so the article branch stops at one of these.
+const OPENER_EVENT =
+  "(?:runs?|migrations?|incidents?|rollouts?|pilots?|outages?|deploys?|deployments?|cutovers?|batch(?:es)?|upgrades?|releases?|rebuilds?|launch(?:es)?|imports?|exports?)";
+const OPENER_ARTICLE = `(?:This|The)(?:\\s+(?!(?:${OPENER_CLAUSE}|${OPENER_EVENT})\\b)${OPENER_WORD}){1,5}?`;
+
+export function pastTenseOpener(summary: string, title: string): string | null {
+  const escaped = title.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const named = escaped ? `${OPENER_ARTICLE}|${escaped}` : OPENER_ARTICLE;
+  const re = new RegExp(
+    `^\\s*(?:(?:${named})\\s+(?:was|were)|(?:${OPENER_NAME}|${OPENER_MACHINE})\\s+was)\\b`
+  );
+  const m = re.exec(summary);
+  return m ? m[0].trim() : null;
+}
+
 export interface LintContext {
   /** Published community titles/facet labels (lowercased) from the DB. */
   publishedTitles: string[];
@@ -229,6 +281,15 @@ export function lintCard(raw: unknown, ctx: LintContext): LintResult {
     violations.push(
       `summary must be ${WORK_CAPS.summaryMinWords}-${WORK_CAPS.summaryMaxWords} words (got ${sw})`
     );
+  // The violation string starts with "summary" so classifyViolations frees
+  // exactly that field for the repair stage (repair.ts).
+  {
+    const opener = pastTenseOpener(summary, title);
+    if (opener)
+      violations.push(
+        `summary describes the tool in the past tense ("${opener.slice(0, 60)}"), which reads as retired; describe what the tool is and does in the present tense, and keep the past tense for a one-time event such as a run or an incident`
+      );
+  }
 
   const body = Array.isArray(obj.body)
     ? obj.body.filter((p): p is string => typeof p === "string")

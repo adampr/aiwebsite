@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 FOLLOW-UP EMAILS CONVERTED (sections 5.16 + the /work row): the ninth builder-made exhibit, `#follow-up-emails` (Luke Barrett, canvas-attributed, owner-ruled), leaves page.tsx and becomes a panel-written team card filed under its builder with no public attribution, on the same one-tool-one-card ruling as the eight earlier today; 18 -> 17 statics, snapshot regenerated; because it sat at position 15 the three statics after it flip stripe class and community.tsx's seam offset moves from `i + 1` to `i` (last static now odd). The package is the canvas SKILL.md, byte-identical, wrapped as a canonical .skill because the package lane takes .zip/.skill only. Two chase-register tasks (§5.21) are open for the two remaining builder-made exhibits whose packages were never posted (Morning Brief, Autotask CI Intake); per the Exhibits retirement one entry below, their builders show their real published count until those cards publish. NO schema, NO env, NO route change. Previous: 2026-08-29 EXHIBITS RETIRED FROM THE EMPLOYEE SCORECARD (sections
+Last verified against code: 2026-08-29 §5.16 LIVE TOOLS ARE PRESENT TENSE, AND A CREDIT CAN BE FIXED (sections 5.16 panel/lint passage + the new attribution lane): the house rule "past tense for anything that ran" was being applied to the TOOL, so a live tool published as "Ticket Reply Composer was a browser-based IT helpdesk app" and read as retired (27 of the 96 published summaries opened that way, every one a tool described as if retired, no present-tense card flagged); `HOUSE_STYLE_RULES` now separates the tool (present tense) from a one-time event (past), the editorial critic's "tense slip" is glossed, and `lintCard` fails a past-tense summary OPENER with a "summary" violation the repair grant frees. New `npm run work:attribute` (`scripts/work-attribute.ts` + pure `scripts/lib/work-attribute-ops.ts`, `test:workattribute`) sets or clears `submitter_name` on one row (the column no shipped route or script could change after intake) AT THE NAMED PERSON'S OWN REQUEST, with a best-effort `/work` revalidate; the names-nobody default and the opt-in, first-name-only credit are UNCHANGED, and the converted exhibits stay unattributed by ruling. NO schema, NO env, NO route change. Previous: 2026-08-29 FOLLOW-UP EMAILS CONVERTED (sections 5.16 + the /work row): the ninth builder-made exhibit, `#follow-up-emails` (Luke Barrett, canvas-attributed, owner-ruled), leaves page.tsx and becomes a panel-written team card filed under its builder with no public attribution, on the same one-tool-one-card ruling as the eight earlier today; 18 -> 17 statics, snapshot regenerated; because it sat at position 15 the three statics after it flip stripe class and community.tsx's seam offset moves from `i + 1` to `i` (last static now odd). The package is the canvas SKILL.md, byte-identical, wrapped as a canonical .skill because the package lane takes .zip/.skill only. Two chase-register tasks (§5.21) are open for the two remaining builder-made exhibits whose packages were never posted (Morning Brief, Autotask CI Intake); per the Exhibits retirement one entry below, their builders show their real published count until those cards publish. NO schema, NO env, NO route change. Previous: 2026-08-29 EXHIBITS RETIRED FROM THE EMPLOYEE SCORECARD (sections
 5.16 "One tool, one card" + 5.18 + the §6 schema listing; migration 0055). Owner ruling, later
 the same day the credits shipped: `/roadmap/scorecard` counts PUBLISHED /work cards only, in
 both lanes, and the "Exhibits" concept on it is retired end to end. OUT OF THE CODE: the
@@ -5330,6 +5330,38 @@ produced; a company's private lane is refused outright. No panel kick and no
 `--kick` flag: the row is created at `received` and the queue drain picks it up
 under its unchanged gates.
 
+**Attribution lane (2026-08-29)**: `npm run work:attribute -- <uuid>
+<FirstName> [--yes]`, or `-- <uuid> --clear [--yes]`
+(`scripts/work-attribute.ts`, pure pieces in
+`scripts/lib/work-attribute-ops.ts`, `test:workattribute`) sets or clears the
+public credit (`submitter_name`, the "submitted by" line on the card). It
+THE DEFAULT IS UNCHANGED (owner ruling, standing on 2026-08-29): the public
+page names nobody; `submitter_name` NULL is the default and the card reads
+"submitted by the XL.net team"; the credit is opt-in, first-name-only and the
+named person's own choice, and the exhibits converted into team cards that
+day were filed with no public attribution on purpose. This lane exists for
+ADD or REMOVE at that person's own request, because the column is written
+once by `createSubmission` and nothing shipped could change it afterwards:
+the transfer lane refuses it on purpose (the credit is what the submitter
+chose to print, not a pointer to the owner) and the form only sends it at
+intake, so "please add my name" or "please take my name off" had no answer
+but hand-written SQL. It writes `submitter_name` on ONE row,
+compare-and-swapped on the credit it read, and nothing else: no owner move,
+no card copy, no title, slug, rank or publish stamp, and NOT `updated_at`,
+which on this table is the retention timer `sweepExpiredWork` reads for
+non-published rows (the same call `work:reclassify` documents). The name
+rule is `parseAttribution` (the route's own single-first-name rule, imported
+not restated); the script refuses a missing row, a bad uuid, a name that
+fails that rule, a run that names neither a name nor `--clear`, an unknown
+or repeated flag, a run as root, and a SUPERSEDED row (after an approved
+update swap the live card renders the child's byline under the old slug, so
+it names the live descendant to credit instead). The confirm prompt states
+the consent rule. No email and no panel run: a byline change is not a
+publish. For a public-lane row it then calls `revalidateWorkPage()`
+BEST EFFORT so the byline shows without waiting out ISR; a failure is printed
+and does not fail the run, and company-lane rows render force-dynamic and
+need nothing.
+
 `npm run work:package -- <repo-path> <out.zip>`
 (`scripts/work-repo-package.ts`) builds a submission-ready package from `git
 archive HEAD` rather than the working tree, since this checkout routinely holds
@@ -5730,7 +5762,26 @@ page + the good community card; the TITLE is exempt because titles are
 submitter-chosen names), and **category-prefixed titles**
 (`TITLE_KIND_PREFIX_RE` backstop: "Claude Skill: X" duplicates the badge;
 both intakes strip or reject before a row exists, so a lint fire means a
-new intake path skipped that step); whole-card 140-560 visible words;
+new intake path skipped that step); **retired-tool summary openers**
+(2026-08-29 "Ticket Reply Composer": the house rule read "past tense for
+anything that ran", so the panel put the TOOL in the past and a live tool
+published as a retirement notice. `HOUSE_STYLE_RULES` now reads "present
+tense for what the tool is and does, because the page shows live tools; past
+tense only for a one-time event such as a run, a migration, or an incident,
+and never for the tool itself", the editorial critic's "tense slip" is
+glossed with that meaning, and `lintCard` carries the deterministic half: a
+summary whose OPENING noun phrase (the card title, a capitalized name of up
+to six words, a lowercase machine name, or This/The plus up to five words
+with no clause boundary and no one-time-event noun such as run or migration)
+is followed by `was` (`were` only behind the article or the title) fails with
+a violation starting "summary", so the repair grant frees exactly that
+field. Narrow on purpose, past tense stays legal for events ("The first run
+was completed", "Tickets were piling up before this tool") and for every
+later sentence; a past-tense VERB opener ("Outage Detective monitored") is
+the same defect class, about 22 more cards that day, and is deliberately
+left to the prompt rule; replayed over the 96 published
+production cards it flags 27, all of them tools described as if retired, and
+no present-tense card); whole-card 140-560 visible words;
 title/facet-label uniqueness vs `static-titles.json` (generated snapshot of
 the hand-authored exhibits, 18 of them since 2026-08-29;
 `scripts/work-static-snapshot.mjs --check`

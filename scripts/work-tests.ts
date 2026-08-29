@@ -369,6 +369,79 @@ async function main() {
     `echo shape in a body paragraph is legal: ${lintCard(echoBody, ctx).violations.join("; ")}`
   );
 
+  // Retired-tool opener (2026-08-29 "Ticket Reply Composer" incident): a
+  // summary that opens by putting the TOOL in the past tense publishes a live
+  // tool as a retirement notice. The violation must START with "summary" so
+  // classifyViolations frees that field for the repair stage.
+  {
+    const pastOpener = goodCard();
+    pastOpener.summary =
+      "Export Scorer was a browser-based tool that scored each export row. " +
+      sentence(50);
+    const res = lintCard(pastOpener, ctx);
+    assert.ok(!res.ok, "past-tense summary opener rejected");
+    assert.ok(
+      res.violations.some((v) => v.startsWith("summary describes the tool in the past tense")),
+      "the tense violation is classified as a summary violation"
+    );
+    // The same shape without the title, and with a leading article.
+    const theOpener = goodCard();
+    theOpener.summary =
+      "The Export Scoring Dashboard was a locally run web application. " +
+      sentence(50);
+    {
+      const res = lintCard(theOpener, ctx);
+      assert.ok(!res.ok, "\"The <noun> was\" opener rejected");
+      assert.ok(
+        res.violations.some((v) => v.startsWith("summary describes the tool in the past tense")),
+        "the article opener fails for the tense reason, not another rule"
+      );
+    }
+
+    // A COMPLIANT sentence that obeys the new rule exactly (present tense for
+    // the tool, past for a one-time event in the same sentence) must pass:
+    // the article branch stops at a clause boundary instead of scanning 60
+    // characters for any "was" (refutation MAJOR, 2026-08-29).
+    for (const opener of [
+      "The tool exports tickets, and the first run was slow.",
+      "This skill drafts replies, and the pilot run was short.",
+      "The tool replaced a manual process that was slow.",
+      "Tickets were routed by hand before this tool shipped.",
+      "The first run was completed across 40 tickets.",
+      "The migration was finished in March, and the tool now syncs nightly.",
+      "Tickets were piling up before this tool existed.",
+    ]) {
+      const compliant = goodCard();
+      compliant.summary = opener + " " + sentence(48);
+      assert.ok(
+        lintCard(compliant, ctx).ok,
+        `compliant opener passes: ${JSON.stringify(opener)}: ${lintCard(compliant, ctx).violations.join("; ")}`
+      );
+    }
+
+    // Present tense passes.
+    const present = goodCard();
+    present.summary =
+      "Export Scorer is a browser-based tool that scores each export row. " +
+      sentence(50);
+    assert.ok(
+      lintCard(present, ctx).ok,
+      `present-tense summary passes: ${lintCard(present, ctx).violations.join("; ")}`
+    );
+
+    // A legitimate past-tense EVENT later in the summary passes: past tense is
+    // banned only for the tool itself, in the opening clause.
+    const event = goodCard();
+    event.summary =
+      "Export Scorer is a browser-based tool that scores each export row. " +
+      sentence(46) +
+      " The first run processed 40 tickets.";
+    assert.ok(
+      lintCard(event, ctx).ok,
+      `past-tense event later in the summary passes: ${lintCard(event, ctx).violations.join("; ")}`
+    );
+  }
+
   const collide = goodCard();
   collide.title = staticTitles.titles[0];
   assert.ok(!lintCard(collide, ctx).ok, "static title collision rejected");
@@ -833,9 +906,11 @@ async function main() {
     "House copy rules, all mandatory: no em dashes or en dashes anywhere; no " +
       "frequency adverbs (always, never, often, usually, frequently, rarely, " +
       "constantly, typically, regularly); no URLs, email addresses, or phone " +
-      "numbers; no HTML or markdown markup; plain factual prose; past tense for " +
-      "anything that ran; every claim must be supported by the submitted " +
-      "documents; claims must not outrun the evidence.",
+      "numbers; no HTML or markdown markup; plain factual prose; present tense " +
+      "for what the tool is and does, because the page shows live tools; past " +
+      "tense only for a one-time event such as a run, a migration, or an " +
+      "incident, and never for the tool itself; every claim must be supported " +
+      "by the submitted documents; claims must not outrun the evidence.",
     "HOUSE_RULES concatenation is byte-identical to the pre-split literal"
   );
 

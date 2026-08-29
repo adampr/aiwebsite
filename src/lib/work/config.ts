@@ -169,13 +169,25 @@ export const TITLE_KIND_PREFIX_RE =
  * "no supporting source document was submitted" cards. Stages that see the
  * documents get HOUSE_RULES; docs-blind stages get HOUSE_STYLE_RULES only.
  * The concatenation is asserted byte-identical to the pre-split literal in
- * scripts/work-tests.ts; edit with that test in mind. */
+ * scripts/work-tests.ts; edit with that test in mind.
+ *
+ * The tense clause is precise on purpose (2026-08-29 "Ticket Reply Composer"
+ * incident): the old wording, "past tense for anything that ran", read to the
+ * panel as a licence to describe the TOOL in the past, so a live tool
+ * published as "Ticket Reply Composer was a browser-based helpdesk app" and
+ * the card read as a retirement notice. A replay of the 96 published cards
+ * found 27 summaries opening that way. /work shows tools people can still
+ * use, so the tool is present tense and only a one-time event (a run, a
+ * migration, an incident) is past. lintCard carries the deterministic half of
+ * this rule for the summary opener. */
 export const HOUSE_STYLE_RULES =
   "House copy rules, all mandatory: no em dashes or en dashes anywhere; no " +
   "frequency adverbs (always, never, often, usually, frequently, rarely, " +
   "constantly, typically, regularly); no URLs, email addresses, or phone " +
-  "numbers; no HTML or markdown markup; plain factual prose; past tense for " +
-  "anything that ran.";
+  "numbers; no HTML or markdown markup; plain factual prose; present tense " +
+  "for what the tool is and does, because the page shows live tools; past " +
+  "tense only for a one-time event such as a run, a migration, or an " +
+  "incident, and never for the tool itself.";
 
 export const HOUSE_EVIDENCE_RULES =
   "every claim must be supported by the submitted " +
