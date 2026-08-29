@@ -372,6 +372,13 @@
       "when": 1788026894119,
       "tag": "0054_chase_register",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1788043710603,
+      "tag": "0055_drop_work_static_credits",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,29 @@
+-- EXHIBITS RETIRED FROM THE EMPLOYEE SCORECARD (owner ruling 2026-08-29).
+-- The scorecard (/roadmap/scorecard, staff lane and company lane alike)
+-- counts PUBLISHED /work cards only. The staff-lane Exhibits column and the
+-- work_static_credits table that fed it (created empty by 0052 the same
+-- day) are retired end to end: the hand-written /work exhibits are page copy
+-- in src/app/work/page.tsx, the employee-built ones became team cards, and
+-- the credit rows counted for nobody.
+--
+-- THE DROP IS THE ONE IRREVERSIBLE STEP OF THIS CHANGE, so it carries an
+-- operator precondition: any rows the table holds on production (eight on
+-- 2026-08-29, every one for an anchor that had already left the page) MUST
+-- be exported to a file OUTSIDE the repository, on the VM, before the deploy
+-- runs db:migrate. No address from that export may ever be committed here:
+-- THIS REPOSITORY IS PUBLIC, and git history keeps anything after a revert.
+--
+-- NUMBERED 0055 because 0054 is the journal tail: drizzle applies migrations
+-- in journal order and the tail snapshot must describe everything already
+-- committed, so this file sits above 0054_chase_register and
+-- meta/0055_snapshot.json was generated against 0054's (verified: 0055.prevId
+-- equals 0054.id, and the snapshot no longer carries the table).
+--
+-- IF EXISTS (the repo's IF NOT EXISTS precedent, 0044 onward): a hand-applied
+-- catch-up on the VM must be able to run this file again without failing the
+-- deploy's db:migrate step.
+--
+-- The unique expression index work_static_credit_uq (hand-added in 0052,
+-- invisible to drizzle) goes with the table: DROP TABLE removes every index
+-- on it, so no separate DROP INDEX is needed.
+DROP TABLE IF EXISTS "work_static_credits";

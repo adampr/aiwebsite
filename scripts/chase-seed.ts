@@ -7,8 +7,10 @@
 // github.com/adampr/aiwebsite is PUBLIC: a checked-in seed, fixture or map
 // would publish a machine-readable delinquency list of real people to the
 // open internet permanently, and git history keeps it after any revert.
-// Same ruling as 0050_work_static_credits, taken the same day for the same
-// reason. So this script reads a file path or stdin, and the tables ship
+// Same ruling the former work_static_credits table (0052) took the same day
+// for the same reason; that table was dropped by 0055 later that day, when
+// the scorecard went to published cards only, so do not go looking for it.
+// So this script reads a file path or stdin, and the tables ship
 // empty. Write the list on the VM, run this, delete the file.
 //
 // Usage:

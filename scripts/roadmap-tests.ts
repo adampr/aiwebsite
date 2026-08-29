@@ -26,7 +26,6 @@ import { isStaffSession, SILENT_REVERIFY_PROVIDERS } from "../src/lib/roadmap/ac
 import type { SessionData } from "@aicompany/core/auth/session";
 import { INTERNAL_SCOPE, scopeOf } from "../src/lib/work/scope";
 import { readFileSync, existsSync } from "node:fs";
-import { validateCredit } from "./lib/work-credit-ops";
 import {
   isPaidStep,
   ROADMAP_CAPS,
@@ -1526,10 +1525,11 @@ ok("the roadmap API is CSRF-protected and truncation is never silent", () => {
   // past it used to fall out of the identity join and render as their email.
   const db2 = readFileSync("src/lib/roadmap/db.ts", "utf8");
   assert.ok(db2.includes("directoryIdentities"));
-  // Tolerant of extra parallel queries: this pin went VACUOUS once a fourth
-  // element (exhibitCounts) joined the destructuring, because it was anchored
-  // on the exact three-element form and a non-matching regex makes a NEGATIVE
-  // assertion pass for free.
+  // Tolerant of extra parallel queries: this pin once went VACUOUS when a
+  // fourth element briefly joined the destructuring (the exhibit credit read,
+  // retired 2026-08-29), because it was anchored on the exact three-element
+  // form and a non-matching regex makes a NEGATIVE assertion pass for free.
+  // The optional group keeps it honest if a fourth element ever returns.
   assert.ok(/const \[people, counts, requests(?:,[^\]]*)?\] = await Promise\.all\(/.test(db2),
     "scorecardRows still destructures its parallel reads (pin is not vacuous)");
   assert.ok(!/const \[people, counts, requests(?:,[^\]]*)?\][\s\S]{0,160}listPeople\(scope\)/.test(db2));
@@ -2112,154 +2112,97 @@ ok("the directory table labels the phone field Mobile", () => {
   assert.ok(!page.includes("\u2014"));
 });
 
-// ── §5.16/§5.18 exhibit credits on the Employee Scorecard (2026-08-29) ──
-// Owner ruling: the hand-authored /work exhibits are page copy, not rows, so
-// their builders were counted by nothing here. work_static_credits feeds a
-// staff-lane-only Exhibits column.
+// ── Exhibits retired from the Employee Scorecard (owner ruling 2026-08-29) ──
+// The scorecard counts PUBLISHED /work cards only, both lanes. The staff-lane
+// Exhibits column and the work_static_credits table (0052) that fed it are
+// gone end to end; these pins keep them gone.
 
-ok("exhibit credits: the mapping is NEVER seeded in the repo (this repo is public)", () => {
-  // THE privacy invariant of this feature, enforced mechanically rather than
-  // by intent: the rows map a colleague's address to an exhibit, and every
-  // committed file is world-readable and permanent in git history. The
-  // migration must create structure only, and no committed file may seed it.
-  const mig = readFileSync("drizzle/migrations/0052_work_static_credits.sql", "utf8");
-  assert.ok(/create table if not exists "work_static_credits"/i.test(mig));
-  // The STATEMENT shape, not the word: the migration's own warning paragraph
-  // says "a seed INSERT here ... would publish those addresses", and a test
-  // that fails on its own documentation trains people to delete the warning.
-  assert.ok(
-    !/^\s*insert\s+into/im.test(mig),
-    "migration 0052 must contain no INSERT statement"
-  );
-  assert.ok(!mig.includes("@"), "migration 0052 must contain no email address");
+ok("exhibits retired: the credit table is out of the schema and out of the reads", () => {
   const schema = readFileSync("src/lib/db/schema.ts", "utf8");
-  const block = schema.slice(
-    schema.indexOf("export const workStaticCredits"),
-    schema.indexOf("export const workUsage")
+  assert.ok(!schema.includes("workStaticCredits"), "schema.ts has no workStaticCredits");
+  assert.ok(!schema.includes("work_static_credits"), "schema.ts names no work_static_credits table");
+  const db2 = readFileSync("src/lib/roadmap/db.ts", "utf8");
+  assert.ok(!/exhibits:\s/.test(db2), "ScorecardRow has no exhibits field and no row site sets one");
+  assert.ok(!db2.includes("b.exhibits"), "no exhibits sort tiebreak");
+  assert.ok(!db2.includes("static-titles.json"), "no static-titles.json import");
+  assert.ok(!db2.includes("STATIC_EXHIBIT_IDS"));
+  assert.ok(!db2.includes("workStaticCredits"));
+  // Back to the three-source form, and the pin above this file keeps
+  // watching the destructuring.
+  assert.ok(db2.includes("const [people, counts, requests] = await Promise.all(["));
+  // The published-only doctrine is untouched: time saved still shares the
+  // Published predicate.
+  assert.ok(db2.includes('eq(W.status, "published")'));
+});
+
+ok("exhibits retired: one header list, no Exhibits column, no exhibit copy", () => {
+  const page = readFileSync("src/app/roadmap/(steps)/scorecard/page.tsx", "utf8");
+  assert.equal(page.split("] as const;").length - 1, 1, "exactly one header list");
+  assert.ok(page.includes("const HEADERS = ["), "the one list is HEADERS");
+  assert.ok(!page.includes("STAFF_HEADERS") && !page.includes("COMPANY_HEADERS"));
+  assert.ok(!page.includes('"Exhibits"'), "no Exhibits header");
+  assert.ok(!page.includes("showExhibits"), "no showExhibits switch anywhere");
+  assert.ok(page.includes("function HeaderRow()"), "HeaderRow takes no props");
+  assert.ok(!page.includes("row.exhibits"), "no exhibits cell");
+  const staffDisclosure = page.slice(
+    page.indexOf("This scorecard counts each person in the XL.net directory"),
+    page.indexOf("added up from published cards only")
   );
-  assert.ok(block.length > 0 && !block.includes("@"), "no address in the table definition");
-});
-
-ok("exhibit credits: staff lane only, honesty-guarded, separate from published", () => {
-  const db2 = readFileSync("src/lib/roadmap/db.ts", "utf8");
-  // No company_id on the table, so the lane gate is in the read itself.
-  assert.ok(db2.includes("scope.companyId === null && STATIC_EXHIBIT_IDS.length > 0"),
-    "the exhibit read runs only on the staff lane");
-  // A credit for a retired exhibit must stop counting with no migration.
-  assert.ok(db2.includes("inArray(WSC.anchorId, STATIC_EXHIBIT_IDS)"), "honesty guard");
-  assert.ok(db2.includes("const STATIC_EXHIBIT_IDS: string[] = staticTitles.anchorIds"));
-  // Never folded into `published`: that column feeds the company hero.
-  assert.ok(!/published:\s*[^,\n]*exhibits/.test(db2), "exhibits never folded into published");
-  // Every row-construction site sets it (three drains plus the exhibit-only
-  // stray loop), or a credited person silently reads 0.
-  assert.ok(db2.split(/exhibits:\s/).length - 1 >= 4, "every row site sets exhibits");
-  assert.ok(db2.includes("b.exhibits - a.exhibits"), "sort ranks exhibits below published");
-});
-
-ok("exhibit credits: the column is staff-only and is not a CountCell", () => {
-  const page = readFileSync("src/app/roadmap/(steps)/scorecard/page.tsx", "utf8");
-  const staff = page.slice(page.indexOf("const STAFF_HEADERS"), page.indexOf("function HeaderRow"));
-  const company = page.slice(page.indexOf("const COMPANY_HEADERS"), page.indexOf("const STAFF_HEADERS"));
-  assert.ok(staff.includes('"Exhibits"'), "staff headers carry Exhibits");
-  assert.ok(!company.includes('"Exhibits"'), "company headers must NOT carry Exhibits");
-  // Inserted after Published, not appended: HeaderRow drops the right padding
-  // by INDEX on the last column.
-  assert.ok(staff.indexOf('"Exhibits"') < staff.indexOf('"Most recent"'));
-  assert.ok(page.includes("showExhibits={false}"), "company lane passes it false");
-  // A CountCell promises a click-through list and there is no exhibit list.
-  assert.ok(!/CountCell[\s\S]{0,200}exhibits/.test(page), "not rendered as a CountCell");
-  // The disclosure must say the credit is internal and how to get it removed.
-  assert.ok(page.includes("no exhibit on the public page names its builder"));
-  assert.ok(page.includes("Ask an administrator to change or remove your exhibit credit"));
-  assert.ok(!page.includes("\u2014"), "no em dash in scorecard copy");
-});
-
-ok("exhibit credits: the write path validates the anchor at the write edge", () => {
-  // A mistyped section id fails CLOSED and SILENTLY: the reader filters
-  // credits against the generated anchor list, so a bad id is
-  // indistinguishable from a retired exhibit and the colleague still reads 0,
-  // which is the exact bug the table exists to fix.
-  const ops = readFileSync("scripts/lib/work-credit-ops.ts", "utf8");
-  assert.ok(ops.includes("validAnchors.includes(anchorId)"), "anchor validated at the write edge");
-  // remove must ACCEPT a retired anchor: the cleanup order is page removal
-  // first, then credit retirement, and a live-list check on remove would
-  // make dead rows permanent (found by the exhibit-to-team-card round).
-  {
-    const anchors = ["ticketscribe"] as const;
-    const addRetired = validateCredit({
-      anchorId: "retired-exhibit",
-      email: "a@xl.net",
-      validAnchors: anchors,
-      laneDomains: ["xl.net"],
-    });
-    assert.ok(!addRetired.ok, "add refuses an anchor not on the page");
-    const removeRetired = validateCredit({
-      anchorId: "retired-exhibit",
-      email: "a@xl.net",
-      validAnchors: anchors,
-      laneDomains: ["xl.net"],
-      allowRetired: true,
-    });
-    assert.ok(removeRetired.ok, "remove accepts a retired anchor");
-    const removeJunk = validateCredit({
-      anchorId: "Not A Slug!",
-      email: "a@xl.net",
-      validAnchors: anchors,
-      laneDomains: ["xl.net"],
-      allowRetired: true,
-    });
-    assert.ok(!removeJunk.ok, "remove still refuses a non-slug id");
-    const script = readFileSync("scripts/work-credit.ts", "utf8");
-    assert.ok(
-      script.includes('allowRetired: cmd === "remove"'),
-      "the script wires allowRetired to remove only"
-    );
-  }
-  assert.ok(/normalizeCreditEmail|toLowerCase\(\)/.test(ops), "address lowercased to agree with the index");
-  assert.ok(ops.includes("needs --by"), "both verbs record who did it");
-  // The script must be VM-only and must not carry a plan file in the repo.
-  const script = readFileSync("scripts/work-credit.ts", "utf8");
-  assert.ok(script.includes("RUNS ON THE PROD VM ONLY"));
-  assert.ok(script.includes("on conflict (anchor_id, lower(email))"), "add is an upsert on the real index");
-  assert.ok(!/[—–]/.test(script) && !/[—–]/.test(ops), "no em or en dashes");
-  // package.json exposes it.
-  assert.ok(readFileSync("package.json", "utf8").includes('"work:credit"'));
-});
-
-ok("exhibit credits: a suppressed address is never re-surfaced by the credit drain", () => {
-  // Directory removal keeps only sha256(lower(email)) and hard-DELETEs the
-  // row so the person stops being named. The exhibit-only drain is the one
-  // path that could print their literal address back to every colleague.
-  const db2 = readFileSync("src/lib/roadmap/db.ts", "utf8");
-  const drain = db2.slice(db2.indexOf("Anyone credited with an exhibit who reached none"));
-  assert.ok(drain.includes("suppressedHashes(scope)"), "the credit drain consults the suppression list");
-  assert.ok(drain.includes("if (suppressed.has(sha256Hex(email))) continue;"));
-});
-
-ok("exhibit credits: one switch decides the column set", () => {
-  // Two independent switches (a headers array and a boolean) could disagree
-  // and render eight headers over seven cells.
-  const page = readFileSync("src/app/roadmap/(steps)/scorecard/page.tsx", "utf8");
-  assert.ok(page.includes("function HeaderRow({ showExhibits }"), "HeaderRow takes the same boolean");
-  assert.ok(page.includes("const headers = showExhibits ? STAFF_HEADERS : COMPANY_HEADERS"));
-  assert.ok(!page.includes("headers={STAFF_HEADERS}"), "no second switch at the call site");
-});
-
-ok("exhibit credits: the published-only doctrine is untouched", () => {
-  // Time saved must still share the Published predicate exactly: a nonzero
-  // time-saved cell beside a 0 published would announce a held or failed row.
-  const db2 = readFileSync("src/lib/roadmap/db.ts", "utf8");
-  const agg = db2.slice(db2.indexOf("timeSaved: sql<number>"), db2.indexOf(".groupBy(", db2.indexOf("timeSaved: sql<number>")));
-  assert.ok(agg.includes('eq(W.status, "published")') || db2.includes('eq(W.status, "published")'));
-  // The company disclosure is client-visible copy about a feature that lane
-  // does not have, and must not have moved.
-  const page = readFileSync("src/app/roadmap/(steps)/scorecard/page.tsx", "utf8");
+  assert.ok(staffDisclosure.length > 0, "staff disclosure present");
+  assert.ok(!/exhibit/i.test(staffDisclosure), "staff disclosure does not mention exhibits");
+  assert.ok(page.includes("there are no published cards on{"), "staff empty state names cards only");
+  assert.ok(!page.includes("recorded exhibit builders"));
+  // The company disclosure is client-visible copy and must not have moved.
   assert.ok(page.includes("This scorecard counts published AI work submissions for each person in "),
     "company disclosure unchanged");
-  // The PUBLIC /work sentence describes the CLIENT scorecard and stays true.
+  assert.ok(!page.includes("\u2014"), "no em dash in scorecard copy");
+  // The PUBLIC /work sentence describes the scorecard and stays true.
   const work = readFileSync("src/app/work/page.tsx", "utf8");
-  assert.ok(work.includes("The scorecard counts published cards only"),
-    "public copy describes the client lane and needs no change");
+  assert.ok(work.includes("The scorecard counts published cards only"));
+});
+
+ok("exhibits retired: the staff hub blurb no longer promises exhibit credit", () => {
+  const hub = readFileSync("src/components/roadmap/staff-hub.tsx", "utf8");
+  const blurb = hub.slice(hub.indexOf("    scorecard:\n      \"Watch builders emerge"), hub.indexOf("  };", hub.indexOf("Watch builders emerge")));
+  assert.ok(blurb.length > 0, "scorecard blurb found");
+  assert.ok(!/exhibit/i.test(blurb), "blurb does not mention exhibits");
+  assert.ok(blurb.includes("Published cards and"), "blurb names published cards");
+  assert.ok(!hub.includes("\u2014"), "no em dash in hub copy");
+});
+
+ok("exhibits retired: migration 0055 drops the table and only the table", () => {
+  const path = "drizzle/migrations/0055_drop_work_static_credits.sql";
+  assert.ok(existsSync(path), "0055 exists");
+  const mig = readFileSync(path, "utf8");
+  assert.ok(/drop table if exists "work_static_credits"/i.test(mig), "IF EXISTS drop");
+  // Statement shape, not the word: the header is allowed to say "seed".
+  assert.ok(!/^\s*insert\s+into/im.test(mig), "no INSERT");
+  assert.ok(!mig.includes("@"), "no email address");
+  const statements = mig
+    .split("\n")
+    .filter((l) => l.trim() && !l.trim().startsWith("--"));
+  assert.equal(statements.length, 1, "exactly one SQL statement");
+  assert.ok(!/[\u2014\u2013]/.test(mig), "no em or en dashes");
+  // Journal tail is 0055, above 0054, and the snapshot chain is honest.
+  const journal = JSON.parse(readFileSync("drizzle/migrations/meta/_journal.json", "utf8"));
+  const tail = journal.entries[journal.entries.length - 1];
+  assert.equal(tail.tag, "0055_drop_work_static_credits");
+  assert.equal(tail.idx, 55);
+  const prev = journal.entries[journal.entries.length - 2];
+  assert.equal(prev.tag, "0054_chase_register");
+  assert.ok(tail.when > prev.when);
+  const snap = JSON.parse(readFileSync("drizzle/migrations/meta/0055_snapshot.json", "utf8"));
+  const snap54 = JSON.parse(readFileSync("drizzle/migrations/meta/0054_snapshot.json", "utf8"));
+  assert.equal(snap.prevId, snap54.id, "0055 chains off 0054");
+  assert.ok(!JSON.stringify(snap).includes("work_static_credits"), "tail snapshot has no credit table");
+});
+
+ok("exhibits retired: the credit script and its npm entry are gone", () => {
+  assert.ok(!existsSync("scripts/work-credit.ts"));
+  assert.ok(!existsSync("scripts/lib/work-credit-ops.ts"));
+  const pkg = readFileSync("package.json", "utf8");
+  assert.ok(!pkg.includes("work:credit"), "package.json has no work:credit");
+  assert.ok(!pkg.includes("work-credit"));
 });
 
 console.log(`\nroadmap-tests (incl. dkim): ${passed} checks passed`);

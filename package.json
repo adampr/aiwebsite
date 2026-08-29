@@ -35,7 +35,6 @@
     "work:retain": "tsx scripts/work-exhibit-retain.ts",
     "work:package": "tsx scripts/work-repo-package.ts",
     "work:reclassify": "tsx scripts/work-kind-reclassify.ts",
-    "work:credit": "tsx scripts/work-credit.ts",
     "work:transfer": "tsx scripts/work-transfer.ts",
     "chase:run": "tsx scripts/chase-run.ts",
     "chase:report": "tsx scripts/chase-report.ts",

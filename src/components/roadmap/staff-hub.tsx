@@ -23,7 +23,9 @@
 // admins, and this card renders for both, so the copy names the admin as
 // the actor). The work card's count is DB rows in the internal lane; the
 // hand-authored static exhibits on /work are deliberately not counted, so
-// this number can read lower than the /work page's card count.
+// this number can read lower than the /work page's card count. The
+// scorecard card is the same doctrine (owner ruling 2026-08-29): published
+// cards and requested-work activity only, no exhibit credit of any kind.
 
 import Link from "next/link";
 import {
@@ -109,11 +111,9 @@ export function StaffHub({
       "An editorial panel reviews it and publishes it to the public Our " +
       "Work page.",
     scorecard:
-      "Watch builders emerge: published public work, the hand-written Our " +
-      "Work exhibits recorded against each person, and requested-work " +
-      "activity counted per person in the directory. Published cards, " +
-      "recorded exhibits and approved requests only, never drafts or " +
-      "attempts.",
+      "Watch builders emerge: published public work and requested-work " +
+      "activity counted per person in the directory. Published cards and " +
+      "approved requests only, never drafts or attempts.",
   };
   const ctas: Record<string, string> = {
     governance: status.governance.done
