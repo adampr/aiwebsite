@@ -4102,6 +4102,7 @@ async function main() {
         id: sid,
         file: "/tmp/pkg.zip",
         md: "/tmp/SKILL.md",
+        extra: [],
         force: true,
         yes: true,
       },
@@ -4241,7 +4242,7 @@ async function main() {
     assert.ok(
       importSrc.includes("allArchiveFilesForSubmission(") &&
         importSrc.includes("cleanup is final"),
-      "import refuses on ANY ledger row, deleted included (cleanup is final)"
+      "import refuses per slot on a ledger row, deleted included (cleanup is final at slot granularity since 2026-08-29)"
     );
     assert.ok(
       importSrc.includes("PROVENANCE UNVERIFIED"),
@@ -5194,6 +5195,380 @@ async function main() {
       !/[–—]/.test(flatCommunity.slice(introFrom, introTo)),
       "no em or en dashes in the /work section intro (owner ban, visible copy)"
     );
+  }
+
+  // ---------------------------------------------------------------------
+  // 2026-08-29 round (canvas recovery): work:import refuses per SLOT, not
+  // per row, and grows --extra <name>=<path> for ASSOCIATED files stored
+  // at slot 02+ with no originality claim. All pure, pinned here DB-free.
+  // ---------------------------------------------------------------------
+  {
+    const ops = await import("./lib/work-archive-ops");
+    const {
+      EXTRA_SLOT_MIN,
+      extraNameRefusal,
+      freeExtraSlots,
+      importSlotRefusal,
+      ledgerSlot,
+      parseImportArgs: parseImport,
+    } = ops;
+    const sid = "11111111-2222-4333-8444-555555555555";
+    const live = (rel: string) => ({ relPath: `${sid}/${rel}`, deletedAt: null });
+    const gone = (rel: string) => ({
+      relPath: `${sid}/${rel}`,
+      deletedAt: new Date("2026-08-20T00:00:00Z"),
+    });
+
+    assert.equal(EXTRA_SLOT_MIN, 2, "extras start above the two recorded slots");
+    assert.equal(ledgerSlot(`${sid}/00-kb-style-guide.skill`), 0);
+    assert.equal(ledgerSlot(`${sid}/07-x.md`), 7);
+    assert.equal(ledgerSlot(`${sid}/kb-style-guide.skill`), null);
+    assert.equal(ledgerSlot(`${sid}/0-x.md`), null, "one digit is not a slot");
+
+    // importSlotRefusal: the per-slot ledger gate.
+    assert.equal(importSlotRefusal([], [0, 1]), null, "empty ledger: ok");
+    assert.equal(
+      importSlotRefusal([live("00-kb-style-guide.skill")], [1]),
+      null,
+      "live 00 + write 01 = ok (the 681e4ea4 shape: slot 00 from the 08-19 backfill accepts --md)"
+    );
+    const live00 = importSlotRefusal([live("00-kb-style-guide.skill")], [0]);
+    assert.ok(
+      live00 !== null &&
+        live00.includes(`${sid}/00-kb-style-guide.skill`) &&
+        live00.includes("live"),
+      "live 00 + write 00 = refuse, naming the live path"
+    );
+    const gone01 = importSlotRefusal([gone("01-SKILL.md")], [1]);
+    assert.ok(
+      gone01 !== null &&
+        gone01.includes("ADMIN-DELETED") &&
+        gone01.includes("final"),
+      "deleted 01 + write 01 = refuse, ADMIN-DELETED and final"
+    );
+    assert.equal(
+      importSlotRefusal([gone("01-SKILL.md")], [0, 2]),
+      null,
+      "a deleted slot only refuses writes to THAT slot"
+    );
+    const both = importSlotRefusal(
+      [live("00-a.zip"), gone("01-SKILL.md")],
+      [0, 1]
+    );
+    assert.ok(
+      both !== null && both.includes("slot 00") && both.includes("slot 01"),
+      "every conflicting slot is reported in one refusal"
+    );
+    const tampered = importSlotRefusal([live("kb-style-guide.skill")], [5]);
+    assert.ok(
+      tampered !== null && tampered.includes("tampered"),
+      "a rel_path without the NN- prefix refuses loudly even when no slot overlaps"
+    );
+
+    // freeExtraSlots: lowest free slots >= 02, deleted rows count as taken.
+    assert.deepEqual(freeExtraSlots([], 2), [2, 3]);
+    assert.deepEqual(
+      freeExtraSlots([live("00-a.zip"), gone("02-x.md"), live("03-y.md")], 2),
+      [4, 5],
+      "extras skip slots held live OR admin-deleted"
+    );
+    assert.deepEqual(freeExtraSlots([live("00-a.zip")], 0), []);
+
+    // --extra name rules.
+    assert.equal(extraNameRefusal("kb-style-guide.md"), null);
+    assert.equal(extraNameRefusal("license-renewal-tracker.skill"), null);
+    assert.ok(extraNameRefusal("") !== null, "empty name refused");
+    assert.ok(extraNameRefusal("a/b.md") !== null, "slash refused");
+    assert.ok(extraNameRefusal("a\\b.md") !== null, "backslash refused");
+    assert.ok(extraNameRefusal("noext") !== null, "an extension is required");
+    assert.ok(extraNameRefusal("trailing.") !== null, "empty extension refused");
+    const b64 = extraNameRefusal("kb-style-guide.skill.b64.txt");
+    assert.ok(
+      b64 !== null && b64.includes("decode"),
+      ".b64.txt refused and the refusal says to decode first"
+    );
+    assert.ok(
+      extraNameRefusal("X.B64.TXT") !== null,
+      ".b64.txt refusal is case-insensitive"
+    );
+
+    // parseImportArgs with --extra.
+    const two = parseImport([
+      sid,
+      "--md",
+      "/tmp/SKILL.md",
+      "--extra",
+      "kb-style-guide.md=/tmp/a.bin",
+      "--extra",
+      "license-renewal-tracker.skill=/tmp/b.bin",
+    ]);
+    assert.deepEqual(two, {
+      ok: true,
+      args: {
+        id: sid,
+        file: null,
+        md: "/tmp/SKILL.md",
+        extra: [
+          { name: "kb-style-guide.md", path: "/tmp/a.bin" },
+          { name: "license-renewal-tracker.skill", path: "/tmp/b.bin" },
+        ],
+        force: false,
+        yes: false,
+      },
+    });
+    const extraOnly = parseImport([sid, "--extra", "x.skill=/tmp/x"]);
+    assert.ok(
+      extraOnly.ok && extraOnly.args.file === null && extraOnly.args.md === null,
+      "--extra alone satisfies the at-least-one rule"
+    );
+    const eqInPath = parseImport([sid, "--extra", "x.skill=/tmp/a=b"]);
+    assert.ok(
+      eqInPath.ok && eqInPath.args.extra[0].path === "/tmp/a=b",
+      "the first = splits name from path; later ones belong to the path"
+    );
+    assert.ok(!parseImport([sid]).ok, "still nothing to write without any flag");
+    assert.ok(
+      !parseImport([sid, "--extra", "foo"]).ok,
+      "--extra foo without = is refused"
+    );
+    assert.ok(
+      !parseImport([sid, "--extra", "foo.md="]).ok,
+      "--extra with an empty path is refused"
+    );
+    assert.ok(
+      !parseImport([sid, "--extra", "=/tmp/x"]).ok,
+      "--extra with an empty name is refused"
+    );
+    assert.ok(
+      !parseImport([sid, "--extra"]).ok && !parseImport([sid, "--extra", "--yes"]).ok,
+      "--extra must not swallow a following flag as its value"
+    );
+    assert.ok(
+      !parseImport([sid, "--extra", "a.md=/x", "--extra", "a.md=/y"]).ok,
+      "duplicate --extra names are refused"
+    );
+    assert.ok(
+      !parseImport([sid, "--extra", "a b.md=/x", "--extra", "a_b.md=/y"]).ok,
+      "names that collide after sanitizing are duplicates too"
+    );
+    assert.ok(
+      !parseImport([sid, "--extra", "dir/a.md=/x"]).ok,
+      "a name with a slash is refused"
+    );
+    assert.ok(
+      !parseImport([sid, "--extra", "a.skill.b64.txt=/x"]).ok,
+      ".b64.txt names are refused at parse time"
+    );
+
+    // Script text pins: the slot gate precedes the sha gate and the write;
+    // extras are labelled and never enter importShaRefusal.
+    const { readFileSync: readSrc } = await import("node:fs");
+    const importSrc2 = readSrc("scripts/work-archive-import.ts", "utf8");
+    const slotAt = importSrc2.indexOf("importSlotRefusal(ledger, slotsToWrite)");
+    const shaAt = importSrc2.indexOf("const refusal = importShaRefusal(");
+    const writeAt2 = importSrc2.indexOf("await storeArchiveFilesAt(");
+    assert.ok(
+      slotAt > 0 && shaAt > slotAt && writeAt2 > shaAt,
+      "import settles the slot gate, then the sha gate, then writes"
+    );
+    assert.ok(
+      importSrc2.includes("ASSOCIATED FILE (not the recorded original)"),
+      "each --extra is labelled as associated, not original, in the console"
+    );
+    assert.ok(
+      importSrc2.includes("freeExtraSlots(ledger, extra.length)"),
+      "extra slots are assigned from the ledger, never from argv position"
+    );
+    assert.ok(
+      !importSrc2.includes("row already has") &&
+        importSrc2.includes("cleanup is final"),
+      "the whole-row refusal is gone; finality is stated per slot"
+    );
+    // The extra loader pushes to entries but NOT to checks (no sha claim).
+    const extraBlock = importSrc2.slice(
+      importSrc2.indexOf("extra.forEach("),
+      importSrc2.indexOf("if (!md && row.mdName)")
+    );
+    assert.ok(
+      extraBlock.includes("entries.push(") && !extraBlock.includes("checks.push("),
+      "--extra never enters importShaRefusal"
+    );
+    for (const src of [importSrc2, readSrc("scripts/lib/work-archive-ops.ts", "utf8")])
+      assert.ok(!/[–—]/.test(src), "no em or en dashes in the import lane");
+  }
+
+  // ---------------------------------------------------------------------
+  // 2026-08-29 canvas round: scripts/work-transfer.ts, the scripted twin of
+  // POST /api/work/submissions/[id]/transfer. Everything decided here is in
+  // scripts/lib/work-transfer-ops.ts and reuses the route's own gates
+  // (transferTarget, transferBlockedReason, emailDomain), so these tests pin
+  // the SCRIPT's contract: plan shape, per-row verdict, argv.
+  // ---------------------------------------------------------------------
+  {
+    const { decideTransfer, parseTransferArgs, parseTransferPlan } =
+      await import("./lib/work-transfer-ops");
+    const { readFileSync: readTx } = await import("node:fs");
+    const uidA = "2d17baef-3130-425c-8689-69617b6811c3";
+    const uidB = "30011d6b-c02e-4712-a34c-912eb1c4722b";
+
+    // Plan shape. Every refusal names the row index, since the plan is typed
+    // by hand from a canvas.
+    assert.ok(!parseTransferPlan({ id: uidA }).ok, "plan must be an array");
+    assert.ok(!parseTransferPlan([]).ok, "an empty plan is refused");
+    assert.ok(!parseTransferPlan([{ to: "a@xl.net" }]).ok, "id is required");
+    assert.ok(
+      !parseTransferPlan([{ id: "2d17baef", to: "a@xl.net" }]).ok,
+      "a prefix is not a uuid"
+    );
+    assert.ok(
+      !parseTransferPlan([{ id: uidA, to: "" }]).ok,
+      "an empty target is refused"
+    );
+    const dup = parseTransferPlan([
+      { id: uidA, to: "a@xl.net" },
+      { id: uidA.toUpperCase(), to: "b@xl.net" },
+    ]);
+    assert.ok(!dup.ok && /duplicate id/.test(dup.error), "duplicate ids are refused case-insensitively");
+    const unk = parseTransferPlan([{ id: uidA, too: "a@xl.net" }]);
+    assert.ok(!unk.ok && /unknown key "too"/.test(unk.error), "an unknown key is named, not ignored");
+    assert.ok(
+      !parseTransferPlan([{ id: uidA, to: "a@xl.net", note: 7 }]).ok,
+      "note must be a string when present"
+    );
+    const good = parseTransferPlan([
+      { id: uidA.toUpperCase(), to: " Jallas@xl.net ", note: "Joanne Allas" },
+      { id: uidB, to: "stetteh@xl.net" },
+    ]);
+    assert.ok(good.ok);
+    if (good.ok) {
+      assert.equal(good.rows[0].id, uidA, "ids are lowercased");
+      assert.equal(good.rows[0].to, "Jallas@xl.net", "to is trimmed, not folded (decide folds)");
+      assert.equal(good.rows[1].note, "", "note defaults to empty");
+    }
+
+    // Per-row verdict, in the route's order.
+    const base = {
+      id: uidA,
+      title: "ARC",
+      status: "published",
+      submitterEmail: "adam@xl.net",
+      companyId: null,
+      panelAttemptId: null,
+      stale: false,
+    };
+    const missing = decideTransfer(null, "jallas@xl.net");
+    assert.equal(missing.verdict, "refuse");
+    const company = decideTransfer({ ...base, companyId: "c1" }, "jallas@xl.net");
+    assert.ok(
+      company.verdict === "refuse" && /company-lane/.test(company.reason),
+      "a company row is refused and says why (the lane needs the company's domain)"
+    );
+    const superseded = decideTransfer({ ...base, status: "superseded" }, "jallas@xl.net");
+    assert.ok(
+      superseded.verdict === "refuse" && /previous version/.test(superseded.reason),
+      "superseded is the route's structural refusal, verbatim"
+    );
+    const live = decideTransfer({ ...base, status: "running", panelAttemptId: "a1" }, "jallas@xl.net");
+    assert.ok(
+      live.verdict === "refuse" && /being reviewed right now/.test(live.reason),
+      "a live run refuses"
+    );
+    const staleRun = decideTransfer(
+      { ...base, status: "running", panelAttemptId: "a1", stale: true },
+      "jallas@xl.net"
+    );
+    assert.equal(staleRun.verdict, "move", "a stale run is movable (an orphaned row is never unmovable)");
+    const same = decideTransfer(base, " ADAM@xl.net ");
+    assert.ok(
+      same.verdict === "skip" && /already owns/.test(same.reason),
+      "the current owner is a skip, not a refusal (a re-run after a partial apply)"
+    );
+    for (const bad of ["jallas@gmail.com", "jallas@evilxl.net", "jallas@ai.xl.net", "not-an-email", "jallas@xl.net x"]) {
+      const v = decideTransfer(base, bad);
+      assert.equal(v.verdict, "refuse", `target ${bad} refused by the staff lane`);
+    }
+    const ok = decideTransfer(base, " Jallas@XL.net ");
+    assert.deepEqual(
+      ok,
+      { verdict: "move", from: "adam@xl.net", to: "jallas@xl.net" },
+      "a move carries the row's owner (the CAS pin) and the normalized target"
+    );
+    const otherLane = decideTransfer(base, "jallas@xl.net", ["example.com"]);
+    assert.equal(otherLane.verdict, "refuse", "laneDomains is honoured, not hardcoded");
+
+    // argv.
+    const dry = parseTransferArgs(["plan.json"]);
+    assert.deepEqual(dry, {
+      ok: true,
+      args: { plan: "plan.json", apply: false, actor: null, notify: false, yes: false },
+    });
+    const full = parseTransferArgs(["plan.json", "--apply", "--actor", "Adam@XL.net", "--notify", "--yes"]);
+    assert.deepEqual(full, {
+      ok: true,
+      args: { plan: "plan.json", apply: true, actor: "adam@xl.net", notify: true, yes: true },
+    });
+    const noActor = parseTransferArgs(["plan.json", "--apply"]);
+    assert.ok(!noActor.ok && /--actor/.test(noActor.error), "--apply without --actor is refused");
+    const notifyDry = parseTransferArgs(["plan.json", "--notify"]);
+    assert.ok(!notifyDry.ok && /--apply/.test(notifyDry.error), "--notify without --apply is refused");
+    const unknownFlag = parseTransferArgs(["plan.json", "--force"]);
+    assert.ok(!unknownFlag.ok && /unknown flag --force/.test(unknownFlag.error));
+    assert.ok(!parseTransferArgs([]).ok, "the plan path is required");
+    assert.ok(!parseTransferArgs(["a.json", "b.json"]).ok, "one plan only");
+    assert.ok(!parseTransferArgs(["a.json", "--actor", "--apply"]).ok, "--actor must not swallow a flag");
+    assert.ok(!parseTransferArgs(["a.json", "--actor", "x@xl.net", "--actor", "y@xl.net"]).ok, "--actor given twice");
+    // The actor lands in the audit line and the new-owner email, so it takes
+    // the recipient's shape checks (transferTarget): the last three cases
+    // pass a bare domain parse and are refused only by those.
+    for (const badActor of [
+      "adam@gmail.com",
+      "adam@evilxl.net",
+      "adam",
+      "@xl.net",
+      "a b@xl.net",
+      '"quoted"@xl.net',
+      "adam..r@xl.net",
+    ])
+      assert.ok(
+        !parseTransferArgs(["a.json", "--apply", "--actor", badActor]).ok,
+        `actor ${badActor} refused (transferTarget shape + WORK_SUBMIT_DOMAINS)`
+      );
+
+    // The notify.ts refactor: the new-owner send is its own export and
+    // notifyTransfer still routes through it (byte-identical copy).
+    const notifySrc = readTx("src/lib/work/notify.ts", "utf8");
+    assert.ok(/export async function notifyTransferNewOwner\(/.test(notifySrc));
+    assert.ok(
+      /await notifyTransferNewOwner\(\{ row, actorEmail \}\)/.test(notifySrc),
+      "notifyTransfer delegates the new-owner copy"
+    );
+    assert.equal(
+      (notifySrc.match(/A work submission was moved to you:/g) ?? []).length,
+      1,
+      "the moved-to-you subject exists exactly once (no forked copy)"
+    );
+
+    // The script prints the route's log line in the route's shape.
+    const scriptSrc = readTx("scripts/work-transfer.ts", "utf8");
+    // The route's line is READ, not restated: both literals are reduced to
+    // their shape (every ${...} hole becomes ${}) and compared, so a route
+    // edit fails this test instead of leaving the script's audit line
+    // silently different.
+    const logShape = (src: string): string | null => {
+      const m = src.match(/`\[work\] transferred [^`]*`/);
+      return m ? m[0].replace(/\$\{[^}]*\}/g, "${}") : null;
+    };
+    const routeShape = logShape(
+      readTx("src/app/api/work/submissions/[id]/transfer/route.ts", "utf8")
+    );
+    assert.ok(routeShape !== null, "the route still logs a [work] transferred line");
+    assert.strictEqual(
+      logShape(scriptSrc),
+      routeShape,
+      "the transfer log line matches the route's"
+    );
+    for (const src of [scriptSrc, readTx("scripts/lib/work-transfer-ops.ts", "utf8")])
+      assert.ok(!/[–—]/.test(src), "no em or en dashes in the transfer lane");
   }
 
   console.log("work-tests: all assertions passed.");

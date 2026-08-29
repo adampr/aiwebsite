@@ -24,10 +24,18 @@
 //     store copy comes from work:backfill, not from an outside file
 //     (importing outside bytes onto a bytea-holding row is exactly the
 //     same-length-wrong-file hole refutation F1 closed);
-//   - the row has ANY ledger rows, live or admin-deleted: live means the
-//     store already manages files here (no silent double-import); deleted
-//     means an admin deliberately removed that copy, and cleanup is FINAL
-//     for this lane (manual SQL is the only override, not offered here).
+//   - a ledger row, live or admin-deleted, already occupies a SLOT this
+//     run would write (importSlotRefusal, pure and unit-tested): live
+//     means the store already manages that file (no silent double-import);
+//     deleted means an admin deliberately removed that copy, and cleanup
+//     is FINAL for this lane at slot granularity (manual SQL is the only
+//     override, not offered here). Slots the run does not touch are left
+//     alone. Until 2026-08-29 ANY ledger row refused the whole row; the
+//     canvas recovery (below) needed a row that already held slot 00 from
+//     the 08-19 backfill to accept its md, so the gate was narrowed to
+//     the slots actually being written and no further;
+//   - a ledger rel_path without the NN- prefix storeArchiveFilesAt mints:
+//     that ledger was tampered with or hand-edited, refused loudly.
 //
 // Slots come from WHICH file a thing is, never from array position:
 // --file is the package (slot 00, stored under the row's archive_name),
@@ -36,17 +44,53 @@
 // Local basenames are transport junk and are never used. Touches NOTHING
 // else on the row: not bytea, not status, nothing.
 //
+// --extra <name>=<path> (repeatable, 2026-08-29) stores an ASSOCIATED file:
+// something that travelled beside the submission but is NOT the recorded
+// original upload (a differently-built .skill, or the right SKILL.md when
+// the row recorded a mis-attached doc). It goes to the next free slot
+// >= EXTRA_SLOT_MIN (02) under the given name (sanitizeStoredName), is
+// compared against NOTHING on the row (it never enters importShaRefusal;
+// the ledger records the file's own sha256 like every other file), and
+// the console labels each one ASSOCIATED FILE (not the recorded original)
+// so nobody reads a slot-02 file as provenance for the row. Names must be
+// bare filenames with a real extension; .b64.txt is refused because the
+// canvas carries base64-armored .skill files and the store must hold the
+// decoded artifact, not its transport.
+//
+// Why (2026-08-29 canvas recovery): rows from the 07-30..08-03 era lost
+// their bytea to retention, and their originals turned up on the
+// "AI Builders Skills and Code (XLnetters)" Slack canvas. Most are clean
+// sha MATCHES on --file/--md. One row (Knowledge Base Style Guide) already
+// holds slot 00 from the 08-19 backfill and records kickoff-agenda.md as
+// its md (mis-attached at submission): the real kb-style-guide.md is
+// associated, not original. Another (License renewal tracking) records a
+// "files (2).zip" package while the canvas carries a differently-built
+// license-renewal-tracker.skill: associated, not original. Neither may be
+// filed at slot 00/01 under an originality claim it cannot make; both
+// belong in the store where the console can manage them.
+//
 // Concurrency: takes the shared archive-ops advisory lock (one key with
 // work:backfill), so overlapping store writes cannot unlink each other's
 // files; the lock releases when this process exits.
 //
 // Usage:
-//   npm run work:import -- <submission-uuid> [--file <path>] [--md <path>] [--force] [--yes]
+//   npm run work:import -- <submission-uuid> [--file <path>] [--md <path>]
+//                          [--extra <name>=<path>]... [--force] [--yes]
 //
-//   --file    the recovered package (.zip/.skill/.md original), slot 00
-//   --md      the recovered standalone SKILL.md, slot 01
-//             (at least one of --file/--md is required)
-//   --force   proceed past a sha256 mismatch (PROVENANCE UNVERIFIED)
+//   --file    the recovered package (.zip/.skill/.md original), slot 00,
+//             sha-gated on archive_sha256
+//   --md      the recovered standalone SKILL.md, slot 01, sha-gated on
+//             md_sha256
+//   --extra   an ASSOCIATED file (not the recorded original), stored at
+//             the next free slot >= 02 under <name>; no sha claim;
+//             repeatable, names unique, bare filename with an extension,
+//             never .b64.txt (decode first); the byte-less-row rule
+//             applies to extras as well (a row still holding its original
+//             bytes takes work:backfill first)
+//             (at least one of --file/--md/--extra is required)
+//   --force   proceed past a sha256 mismatch on --file/--md (PROVENANCE
+//             UNVERIFIED); --extra is never sha-checked so --force does
+//             not apply to it
 //   --yes     skip the confirm prompt (work:rerun precedent)
 
 import "dotenv/config";
@@ -68,10 +112,15 @@ import {
   ARCHIVE_OPS_LOCK_KEY,
   MD_SLOT,
   PACKAGE_SLOT,
+  freeExtraSlots,
   importShaRefusal,
+  importSlotRefusal,
   parseImportArgs,
   type ImportFileCheck,
 } from "./lib/work-archive-ops";
+
+const USAGE =
+  "Usage: npm run work:import -- <submission-uuid> [--file <path>] [--md <path>] [--extra <name>=<path>]... [--force] [--yes]";
 
 function die(msg: string, code = 1): never {
   console.error(`[work-import] ${msg}`);
@@ -84,11 +133,8 @@ async function main() {
       "Refusing to run as root: store files must be owned by the user the site runs as (run this as the deploy user), or admin cleanup could never unlink them."
     );
   const parsed = parseImportArgs(process.argv.slice(2));
-  if (!parsed.ok)
-    die(
-      `${parsed.error}\n\nUsage: npm run work:import -- <submission-uuid> [--file <path>] [--md <path>] [--force] [--yes]`
-    );
-  const { id, file, md, force, yes } = parsed.args;
+  if (!parsed.ok) die(`${parsed.error}\n\n${USAGE}`);
+  const { id, file, md, extra, force, yes } = parsed.args;
 
   // One writer at a time across import AND backfill (shared advisory key):
   // overlapping store writes to one submission can unlink each other's
@@ -122,25 +168,37 @@ async function main() {
       "row still holds its original bytes (archive_data/md_data): import is a recovery lane for byte-less rows only. Use npm run work:backfill, which stores the row's own bytes."
     );
 
-  // ANY ledger row refuses, admin-deleted included (no silent
-  // double-import; admin cleanup is final for the scripted lanes).
+  // Per-SLOT ledger gate (admin-deleted included): a ledger row at a slot
+  // this run would write refuses (live = no silent double-import;
+  // deleted = admin cleanup is final for the scripted lanes). Slots not
+  // being written are left alone. Extras take the lowest free slots
+  // >= 02, free meaning no ledger row live OR deleted.
   const ledger = await allArchiveFilesForSubmission(id);
-  if (ledger.length > 0) {
-    const lines = ledger.map(
-      (l) =>
-        `  ${l.relPath} (${l.bytes} bytes, ${l.deletedAt === null ? "live" : `ADMIN-DELETED ${l.deletedAt.toISOString().slice(0, 10)}`})`
-    );
+  const extraSlots = freeExtraSlots(ledger, extra.length);
+  const slotsToWrite = [
+    ...(file ? [PACKAGE_SLOT] : []),
+    ...(md ? [MD_SLOT] : []),
+    ...extraSlots,
+  ];
+  const slotRefusal = importSlotRefusal(ledger, slotsToWrite);
+  if (slotRefusal)
     die(
-      `row already has ${ledger.length} ledger row(s); refusing to import:\n${lines.join("\n")}\n` +
-        `Live rows mean the store already manages this submission's files. ` +
-        `Admin-deleted rows mean that copy was deliberately removed; cleanup is final for this lane and this script will not re-file it.`
+      `refusing to import:\n${slotRefusal}\n` +
+        `Live rows mean the store already manages that file. ` +
+        `Admin-deleted rows mean that copy was deliberately removed; cleanup is final for this lane and this script will not re-file that slot.`
     );
-  }
 
   console.log(`Row:    ${row.id}`);
   console.log(`Title:  ${row.title}`);
   console.log(`Status: ${row.status}`);
   console.log(`Store:  ${resolve(archiveStoreRoot())}`);
+  if (ledger.length > 0) {
+    console.log(`Existing ledger rows (none of these slots is written by this run):`);
+    for (const l of ledger)
+      console.log(
+        `  ${l.relPath} (${l.bytes} bytes, ${l.deletedAt === null ? "live" : `ADMIN-DELETED ${l.deletedAt.toISOString().slice(0, 10)}`})`
+      );
+  }
 
   // Read + hash every local file and settle EVERY sha verdict (pure
   // importShaRefusal, all files at once) BEFORE any write: a refusal must
@@ -179,13 +237,34 @@ async function main() {
   if (file)
     load("package", file, PACKAGE_SLOT, row.archiveName ?? "upload.zip", row.archiveSha256);
   if (md) load("md", md, MD_SLOT, row.mdName ?? "SKILL.md", row.mdSha256);
+  // Associated files: no originality claim, so no sha claim. They are
+  // read + hashed for the console and the ledger only, and never enter
+  // importShaRefusal (nothing on the row is theirs to match).
+  extra.forEach((x, i) => {
+    let data: Buffer;
+    try {
+      data = readFileSync(x.path);
+    } catch (err) {
+      die(
+        `cannot read extra ${x.path}: ${err instanceof Error ? err.message : "unknown"}`
+      );
+    }
+    const slot = extraSlots[i];
+    const storedName = sanitizeStoredName(x.name);
+    const sha = createHash("sha256").update(data).digest("hex");
+    console.log(`\nextra: ${x.path}`);
+    console.log(`  ASSOCIATED FILE (not the recorded original): compared against nothing on the row; the ledger records this file's own sha256.`);
+    console.log(`  stores as slot ${String(slot).padStart(2, "0")} ${storedName} (${data.length} bytes)`);
+    console.log(`  local sha256    ${sha}`);
+    entries.push({ slot, label: `extra ${storedName}`, name: x.name, data });
+  });
   if (!md && row.mdName)
     console.log(
-      `\nNOTE: the row records a standalone md (${row.mdName}) and no --md was given; only the package will be imported.`
+      `\nNOTE: the row records a standalone md (${row.mdName}) and no --md was given; slot 01 is not written by this run.`
     );
   if (!file && row.archiveName)
     console.log(
-      `\nNOTE: the row records a package (${row.archiveName}) and no --file was given; only the md will be imported.`
+      `\nNOTE: the row records a package (${row.archiveName}) and no --file was given; slot 00 is not written by this run.`
     );
 
   // ALL verdicts settled, then the one gate, then (only then) any write.
@@ -217,8 +296,17 @@ async function main() {
   );
 
   // storeArchiveFilesAt never throws; the ledger re-read is the verdict
-  // (consuming match: one ledger row never satisfies two files).
-  const after = await archiveFilesForSubmission(id);
+  // (consuming match: one ledger row never satisfies two files). Only rows
+  // that did not exist before this run count: since the per-slot gate
+  // (2026-08-29) admits rows that already hold a live slot, a pre-existing
+  // row with the same sanitized name and byte length (a re-import of the
+  // very file at slot 00, say) would otherwise satisfy an entry whose own
+  // write failed, and the "stored" listing would claim files this run never
+  // touched.
+  const before = new Set(ledger.map((l) => l.id));
+  const after = (await archiveFilesForSubmission(id)).filter(
+    (l) => !before.has(l.id)
+  );
   const unclaimed = [...after];
   const unmatched: string[] = [];
   for (const e of entries) {
@@ -233,6 +321,9 @@ async function main() {
     console.log(
       `\nstored ${l.relPath}\n  ${l.bytes} bytes\n  ledger id ${l.id}\n  sha256 ${l.sha256}`
     );
+  for (const l of ledger)
+    if (l.deletedAt === null)
+      console.log(`\nalready in the store (not written by this run): ${l.relPath}`);
   if (unmatched.length > 0)
     die(
       `store write failed for ${unmatched.join(", ")} (see [work] log lines above); nothing else was changed`

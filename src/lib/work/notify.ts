@@ -863,6 +863,53 @@ export async function notifyUpdateRejected(
   });
 }
 
+/** Case-folded address equality, the transfer round's one comparison. */
+function sameAddress(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * The NEW owner's copy of a transfer notice, on its own so the bulk script
+ * can send only this one. Skipped when the new owner is the actor (a person
+ * who just moved a row to themselves does not need to be told). Text and
+ * subject are exactly what notifyTransfer sent before the extraction.
+ */
+export async function notifyTransferNewOwner(opts: {
+  /** The row AFTER the move. */
+  row: SubmissionRow;
+  actorEmail: string;
+}): Promise<void> {
+  const { row, actorEmail } = opts;
+  const isCompanyLane = row.companyId !== null;
+  const listUrl = isCompanyLane
+    ? `${SITE}/roadmap/work`
+    : `${SITE}/work/submit`;
+  const listName = isCompanyLane
+    ? "your company's Submit AI-Built Work page"
+    : "your submissions page";
+  if (sameAddress(actorEmail, row.submitterEmail)) return;
+  await sendGovernanceEmail({
+    to: row.submitterEmail,
+    subject: `A work submission was moved to you: ${row.title}`,
+    text: [
+      `${actorEmail} moved the ${kindLabel(row.kind)} submission "${row.title}" to you, so it now sits with your own submissions and you have every option on it that its original submitter had.`,
+      ``,
+      `See it on ${listName}: ${listUrl}`,
+      ``,
+      `What changed: who the submission belongs to. What did not: the card itself. If it is already published it keeps the credit it was published under, and if it is still in review the panel writes the card from the same documents.`,
+      ``,
+      // Lane-dependent, because the control only exists on one of them:
+      // /work/submit carries "Move to someone else", and the transfer route
+      // is requireXlUser, so a company recipient can neither see it nor
+      // call it. Naming it to them would be a control on another surface
+      // AND a promise the code refuses.
+      isCompanyLane
+        ? `If this came to you by mistake, reply to this email and your XL.net contact will move it back.`
+        : `If this came to you by mistake, move it back from that page, or reply to this email.`,
+    ].join("\n"),
+  });
+}
+
 /**
  * §5.16 transfer round (2026-08-09): a submission changed owner. Three
  * possible recipients, each skipped when they are the actor, because a
@@ -879,6 +926,13 @@ export async function notifyUpdateRejected(
  * Deliberately says what did NOT change. The published card keeps the first
  * name it was published under (submitter_name is untouched), so the copy
  * must not imply the page now reads differently.
+ *
+ * The new-owner send lives in notifyTransferNewOwner so the bulk script
+ * (scripts/work-transfer.ts, 2026-08-29) can send THAT copy alone: a
+ * canvas-driven batch of two dozen moves out of one mailbox would otherwise
+ * put two dozen "your submission was moved" mails plus two dozen owner-
+ * mailbox copies into the inbox that already receives the OUTBOUND_BCC copy
+ * of every send. This function's own behaviour is unchanged.
  */
 export async function notifyTransfer(opts: {
   /** The row AFTER the move. */
@@ -888,37 +942,10 @@ export async function notifyTransfer(opts: {
 }): Promise<void> {
   const { row, previousEmail, actorEmail } = opts;
   const isCompanyLane = row.companyId !== null;
-  const listUrl = isCompanyLane
-    ? `${SITE}/roadmap/work`
-    : `${SITE}/work/submit`;
-  const listName = isCompanyLane
-    ? "your company's Submit AI-Built Work page"
-    : "your submissions page";
-  const same = (a: string, b: string) =>
-    a.trim().toLowerCase() === b.trim().toLowerCase();
+  const same = sameAddress;
   const movedBySomeoneElse = !same(actorEmail, previousEmail);
 
-  if (!same(actorEmail, row.submitterEmail))
-    await sendGovernanceEmail({
-      to: row.submitterEmail,
-      subject: `A work submission was moved to you: ${row.title}`,
-      text: [
-        `${actorEmail} moved the ${kindLabel(row.kind)} submission "${row.title}" to you, so it now sits with your own submissions and you have every option on it that its original submitter had.`,
-        ``,
-        `See it on ${listName}: ${listUrl}`,
-        ``,
-        `What changed: who the submission belongs to. What did not: the card itself. If it is already published it keeps the credit it was published under, and if it is still in review the panel writes the card from the same documents.`,
-        ``,
-        // Lane-dependent, because the control only exists on one of them:
-        // /work/submit carries "Move to someone else", and the transfer route
-        // is requireXlUser, so a company recipient can neither see it nor
-        // call it. Naming it to them would be a control on another surface
-        // AND a promise the code refuses.
-        isCompanyLane
-          ? `If this came to you by mistake, reply to this email and your XL.net contact will move it back.`
-          : `If this came to you by mistake, move it back from that page, or reply to this email.`,
-      ].join("\n"),
-    });
+  await notifyTransferNewOwner({ row, actorEmail });
 
   if (movedBySomeoneElse)
     await sendGovernanceEmail({

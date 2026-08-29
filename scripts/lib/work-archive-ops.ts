@@ -25,6 +25,81 @@ export const ARCHIVE_OPS_LOCK_KEY = 815162342;
  * file is, never from its position in a (possibly partial) array. */
 export const PACKAGE_SLOT = 0;
 export const MD_SLOT = 1;
+/** work:import --extra files (ASSOCIATED, not the recorded original) take
+ * the lowest free slots from here up, so slots 00/01 stay reserved for
+ * the two blobs the row actually records (2026-08-29 canvas recovery). */
+export const EXTRA_SLOT_MIN = 2;
+
+/** The NN slot a ledger rel_path (`<uuid>/<NN>-<name>`, see storedRelPath)
+ * occupies, or null when the basename carries no two-digit prefix (a
+ * ledger row storeArchiveFilesAt could not have written). */
+export function ledgerSlot(relPath: string): number | null {
+  const base = relPath.slice(relPath.lastIndexOf("/") + 1);
+  const m = /^(\d{2})-/.exec(base);
+  return m ? Number(m[1]) : null;
+}
+
+export type LedgerSlotFact = { relPath: string; deletedAt: Date | null };
+
+/**
+ * work:import's ledger gate, per SLOT (2026-08-29; before that ANY ledger
+ * row refused the whole row). For every slot about to be written, a LIVE
+ * ledger row at that slot refuses (the store already manages that file:
+ * no silent double-import) and an admin-DELETED row at that slot refuses
+ * too (cleanup is FINAL for the scripted lanes; work_archive_rel_path_uq
+ * is a full unique index, and manual SQL is deliberately the only
+ * override). Slots the import does not touch are simply left alone, so a
+ * row whose only ledger row is slot 00 accepts --md. A ledger rel_path
+ * with no NN- prefix cannot have come from storeArchiveFilesAt: refuse
+ * loudly (tampered or hand-edited ledger), never ignore it.
+ */
+export function importSlotRefusal(
+  ledger: LedgerSlotFact[],
+  slotsToWrite: number[]
+): string | null {
+  const malformed = ledger.filter((l) => ledgerSlot(l.relPath) === null);
+  if (malformed.length > 0)
+    return (
+      `ledger row(s) without a NN- slot prefix: ` +
+      malformed.map((l) => l.relPath).join(", ") +
+      `\nstoreArchiveFilesAt never writes such a rel_path, so this ledger looks tampered or hand-edited. ` +
+      `Refusing to import anything for this row until a human inspects the ledger.`
+    );
+  const problems: string[] = [];
+  for (const slot of [...new Set(slotsToWrite)].sort((a, b) => a - b)) {
+    const at = ledger.filter((l) => ledgerSlot(l.relPath) === slot);
+    const nn = String(slot).padStart(2, "0");
+    const live = at.find((l) => l.deletedAt === null);
+    const gone = at.find((l) => l.deletedAt !== null);
+    if (live)
+      problems.push(
+        `slot ${nn} is held by a live ledger row ${live.relPath}: the store already manages that file; refusing to double-import it.`
+      );
+    else if (gone)
+      problems.push(
+        `slot ${nn} was ADMIN-DELETED (${gone.relPath}, ${gone.deletedAt!.toISOString().slice(0, 10)}): cleanup is final for this lane; this script will not re-file it.`
+      );
+  }
+  return problems.length > 0 ? problems.join("\n") : null;
+}
+
+/** The lowest `count` slots >= EXTRA_SLOT_MIN that no ledger row (live OR
+ * admin-deleted) occupies, ascending. Malformed rel_paths are skipped
+ * here only because importSlotRefusal refuses the whole row on them. */
+export function freeExtraSlots(
+  ledger: LedgerSlotFact[],
+  count: number
+): number[] {
+  const taken = new Set<number>();
+  for (const l of ledger) {
+    const s = ledgerSlot(l.relPath);
+    if (s !== null) taken.add(s);
+  }
+  const out: number[] = [];
+  for (let s = EXTRA_SLOT_MIN; out.length < count; s++)
+    if (!taken.has(s)) out.push(s);
+  return out;
+}
 
 export type ExpectedSlotFile = {
   slot: number;
@@ -108,15 +183,46 @@ export function byteLessRowClass(ledger: LedgerFact[]): ByteLessRowClass {
   return "needs-recovery";
 }
 
+/** One --extra <name>=<path>: an ASSOCIATED file (something carried
+ * beside the submission that is NOT the recorded original upload), stored
+ * at the next free slot >= EXTRA_SLOT_MIN under `name`. */
+export type ImportExtra = { name: string; path: string };
+
 export type ImportArgs = {
   id: string;
-  /** The recovered package (slot 00); optional when --md is given. */
+  /** The recovered package (slot 00); optional when --md/--extra is given. */
   file: string | null;
   /** The recovered standalone SKILL.md (slot 01). */
   md: string | null;
+  /** Associated files, in argv order; never enter importShaRefusal. */
+  extra: ImportExtra[];
   force: boolean;
   yes: boolean;
 };
+
+/** Why an --extra name is unusable, or null. The name is the STORED name
+ * (through sanitizeStoredName), so it must be a bare filename that keeps
+ * a real extension; `.b64.txt` is refused because the canvas carries
+ * base64-armored .skill files and an operator must decode before
+ * importing (the store must hold the artifact, not its transport). */
+export function extraNameRefusal(name: string): string | null {
+  if (name.length === 0) return "--extra needs a non-empty name before the =";
+  if (/[\\/]/.test(name))
+    return `--extra name "${name}" must be a bare filename (no / or \\)`;
+  if (/\.b64\.txt$/i.test(name))
+    return (
+      `--extra name "${name}" is a base64-armored transport copy: decode it first ` +
+      `(base64 -d) and import the decoded file under its real name`
+    );
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1)
+    return `--extra name "${name}" needs an extension (.skill, .md, .zip) so the stored file keeps its type`;
+  const ext = name.slice(dot);
+  const stored = sanitizeStoredName(name);
+  if (!stored.endsWith(ext))
+    return `--extra name "${name}" would store as "${stored}" and lose its extension; use a plain [A-Za-z0-9._-] name`;
+  return null;
+}
 
 export type ImportParse =
   | { ok: true; args: ImportArgs }
@@ -126,20 +232,49 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** work:import argv contract, pure so the refusal shapes are pinned in
- * test:work: exactly one uuid positional; at least one of --file/--md,
- * each with a value; --force/--yes booleans; anything else refused (a
- * typo'd flag must never silently become a positional). */
+ * test:work: exactly one uuid positional; at least one of
+ * --file/--md/--extra, each with a value (--extra repeatable as
+ * <name>=<path>, names unique after sanitizing); --force/--yes booleans;
+ * anything else refused (a typo'd flag must never silently become a
+ * positional). */
 export function parseImportArgs(argv: string[]): ImportParse {
   let id: string | null = null;
   let file: string | null = null;
   let md: string | null = null;
+  const extra: ImportExtra[] = [];
+  const extraNames = new Set<string>();
   let force = false;
   let yes = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--force") force = true;
     else if (a === "--yes") yes = true;
-    else if (a === "--file" || a === "--md") {
+    else if (a === "--extra") {
+      const v = argv[i + 1];
+      if (!v || v.startsWith("--"))
+        return { ok: false, error: "--extra needs <name>=<path>" };
+      const eq = v.indexOf("=");
+      if (eq === -1)
+        return {
+          ok: false,
+          error: `--extra needs <name>=<path> (no = in "${v}")`,
+        };
+      const name = v.slice(0, eq);
+      const path = v.slice(eq + 1);
+      const bad = extraNameRefusal(name);
+      if (bad) return { ok: false, error: bad };
+      if (!path)
+        return { ok: false, error: `--extra ${name}= needs a path after the =` };
+      const stored = sanitizeStoredName(name);
+      if (extraNames.has(stored))
+        return {
+          ok: false,
+          error: `--extra name "${name}" given twice (stores as ${stored})`,
+        };
+      extraNames.add(stored);
+      extra.push({ name, path });
+      i++;
+    } else if (a === "--file" || a === "--md") {
       const v = argv[i + 1];
       if (!v || v.startsWith("--"))
         return { ok: false, error: `${a} needs a path` };
@@ -158,9 +293,12 @@ export function parseImportArgs(argv: string[]): ImportParse {
   }
   if (!id || !UUID_RE.test(id))
     return { ok: false, error: "a submission uuid is required" };
-  if (!file && !md)
-    return { ok: false, error: "at least one of --file/--md is required" };
-  return { ok: true, args: { id, file, md, force, yes } };
+  if (!file && !md && extra.length === 0)
+    return {
+      ok: false,
+      error: "at least one of --file/--md/--extra is required",
+    };
+  return { ok: true, args: { id, file, md, extra, force, yes } };
 }
 
 export type ImportFileCheck = {
