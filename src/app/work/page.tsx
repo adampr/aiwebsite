@@ -1268,85 +1268,8 @@ export default async function WorkPage() {
         </section>
 
         {/* 15. Auto-Draft Follow-Up Emails */}
-        <section id="follow-up-emails" className="panel panel--lightline rise">
-          <div className="flex flex-wrap items-center gap-4">
-            <span className="badge badge--ok">
-              <span className="dot" /> Live · internal
-            </span>
-            <span className="badge badge--light">Claude Skill</span>
-          </div>
-          <h2 className="mt-6">Auto-Draft Follow-Up Emails</h2>
-          <p className="mt-2 text-sm text-faint">
-            The post-call email, from copy-paste chore to a one-line request
-            and a draft waiting in Gmail.
-          </p>
-          <p className="mt-4 text-sm">
-            A Claude Skill our inside-sales team runs after calls. The rep
-            drops the contact&apos;s email address or phone number into chat,
-            and a filled-in draft appears in their own Gmail, ready to
-            review. Ask for a &quot;chill follow-up&quot; and the softer,
-            low-pressure variant of the template comes back instead.
-          </p>
-          <div className="mt-8 grid gap-6 md:grid-cols-3">
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">01 · </span>
-                One Line, Tokens Filled
-              </h3>
-              <p className="mt-3 text-sm">
-                One pasted email address or phone number is the whole
-                request. The skill finds the contact in PhoneBurner and
-                fills the tokens, name, industry, the rest, in the standard
-                XL.net follow-up, the one that introduces CEO Adam Radulovic
-                and carries his booking link. The template was always the
-                easy part; hunting down the details and fitting them in was
-                the chore.
-              </p>
-            </div>
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">02 · </span>
-                The Call Gets Logged
-              </h3>
-              <p className="mt-3 text-sm">
-                The same request updates the call disposition in
-                PhoneBurner: contact, or no answer. The record of the call
-                is up to date with no second trip into the CRM to log it.
-              </p>
-            </div>
-            <div className="border-t border-[var(--xl-line)] pt-4">
-              <h3 className="mono text-xs uppercase tracking-[0.2em] text-light">
-                <span className="text-faint">03 · </span>
-                The Send Stays Human
-              </h3>
-              <p className="mt-3 text-sm">
-                What comes back is a draft in the rep&apos;s own Gmail,
-                addressed from the rep&apos;s work address. The procedure
-                has no send step: the rep reads the email over, edits
-                anything worth editing, and sends it themselves. A wrong
-                detail is a quick fix in review, not an email already in a
-                prospect&apos;s inbox.
-              </p>
-            </div>
-          </div>
-          <p className="mt-8 text-sm">
-            The service desk got this idea first, as ticket-note and
-            ticket-summary skills; this is the same pattern crossing to the
-            sales floor, the email after the call instead of the note after
-            the ticket. Where those skills have no write step at all, this
-            one is allowed exactly two writes, a Gmail draft and a
-            PhoneBurner disposition, and nothing reaches a prospect until the
-            rep sends it.
-          </p>
-          <p className="mono mt-6 text-xs text-faint">
-            Claude Skill · PhoneBurner lookup · XL.net template, tokens
-            filled · &quot;chill follow-up&quot; variant · draft in the
-            rep&apos;s Gmail, no send step · logs contact / no answer
-          </p>
-        </section>
-
         {/* 16. Beacon */}
-        <section id="beacon" className="panel rise">
+        <section id="beacon" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
               <span className="dot" /> Built · final setup
@@ -1445,7 +1368,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 17. Morning Brief */}
-        <section id="morning-brief" className="panel panel--lightline rise">
+        <section id="morning-brief" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · internal
@@ -1520,7 +1443,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 18. Autotask CI Intake */}
-        <section id="autotask-ci-intake" className="panel rise">
+        <section id="autotask-ci-intake" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · internal

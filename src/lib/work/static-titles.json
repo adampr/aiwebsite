@@ -15,7 +15,6 @@
     "XL Lakehouse",
     "XL API Gateway",
     "SpamSlayer",
-    "Auto-Draft Follow-Up Emails",
     "Beacon",
     "Morning Brief",
     "Autotask CI Intake"
@@ -63,9 +62,6 @@
     "Four Checks",
     "Never Clicks the Link",
     "Errs Toward Caution",
-    "One Line, Tokens Filled",
-    "The Call Gets Logged",
-    "The Send Stays Human",
     "Match Before Build",
     "Claude Talks, Code Decides",
     "Writes Wait for the Owner",
@@ -91,7 +87,6 @@
     "lakehouse",
     "api-gateway",
     "spamslayer",
-    "follow-up-emails",
     "beacon",
     "morning-brief",
     "autotask-ci-intake"
@@ -187,11 +182,6 @@
     {
       "id": "spamslayer",
       "title": "SpamSlayer",
-      "bay": "05"
-    },
-    {
-      "id": "follow-up-emails",
-      "title": "Auto-Draft Follow-Up Emails",
       "bay": "05"
     },
     {

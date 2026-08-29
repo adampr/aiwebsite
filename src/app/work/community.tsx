@@ -22,12 +22,16 @@
 // company page (§5.18 /roadmap/work) opens its own alternation with no
 // statics above it and must keep starting plain.
 //
-// The conclusion has survived two reshuffles and the DERIVATION is the part
-// that keeps going stale, so read it off the page rather than off this
-// comment. On 2026-08-05 the last static was Ticket Reply Composer at 26;
-// on 2026-08-29 eight exhibits became team cards and it became
-// #autotask-ci-intake at 18. Both are even, so the offset never moved. A
-// future removal of an ODD number of trailing cards WOULD flip it.
+// The conclusion has survived two reshuffles and FLIPPED on the third, and
+// the DERIVATION is the part that keeps going stale, so read it off the page
+// rather than off this comment. On 2026-08-05 the last static was Ticket
+// Reply Composer at 26; on 2026-08-29 eight exhibits became team cards and
+// it became #autotask-ci-intake at 18, both even, so the offset stayed at
+// i + 1. Later the same day #follow-up-emails (position 15) was converted
+// too, so the last static is #autotask-ci-intake at 17: ODD, lightline, and
+// the first team card must start PLAIN, so the offset is now i. The three
+// statics after the removed one had their literal stripe classes flipped in
+// page.tsx in the same commit; the alternation is written, not computed.
 
 // The card template itself lives in src/components/work-card.tsx (§5.18:
 // the company /roadmap/work page renders through the SAME component, with a
@@ -51,7 +55,7 @@ export function CommunitySection({ cards }: { cards: PublishedCard[] }) {
         </p>
       </div>
       {cards.map((item, i) => (
-        <CommunityCard key={item.id} item={item} index={i + 1} />
+        <CommunityCard key={item.id} item={item} index={i} />
       ))}
     </>
   );
