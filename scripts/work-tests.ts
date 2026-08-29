@@ -5436,13 +5436,13 @@ async function main() {
       "note must be a string when present"
     );
     const good = parseTransferPlan([
-      { id: uidA.toUpperCase(), to: " Jallas@xl.net ", note: "Joanne Allas" },
-      { id: uidB, to: "stetteh@xl.net" },
+      { id: uidA.toUpperCase(), to: " Alice@xl.net ", note: "A Person" },
+      { id: uidB, to: "bob@xl.net" },
     ]);
     assert.ok(good.ok);
     if (good.ok) {
       assert.equal(good.rows[0].id, uidA, "ids are lowercased");
-      assert.equal(good.rows[0].to, "Jallas@xl.net", "to is trimmed, not folded (decide folds)");
+      assert.equal(good.rows[0].to, "Alice@xl.net", "to is trimmed, not folded (decide folds)");
       assert.equal(good.rows[1].note, "", "note defaults to empty");
     }
 
@@ -5456,26 +5456,26 @@ async function main() {
       panelAttemptId: null,
       stale: false,
     };
-    const missing = decideTransfer(null, "jallas@xl.net");
+    const missing = decideTransfer(null, "alice@xl.net");
     assert.equal(missing.verdict, "refuse");
-    const company = decideTransfer({ ...base, companyId: "c1" }, "jallas@xl.net");
+    const company = decideTransfer({ ...base, companyId: "c1" }, "alice@xl.net");
     assert.ok(
       company.verdict === "refuse" && /company-lane/.test(company.reason),
       "a company row is refused and says why (the lane needs the company's domain)"
     );
-    const superseded = decideTransfer({ ...base, status: "superseded" }, "jallas@xl.net");
+    const superseded = decideTransfer({ ...base, status: "superseded" }, "alice@xl.net");
     assert.ok(
       superseded.verdict === "refuse" && /previous version/.test(superseded.reason),
       "superseded is the route's structural refusal, verbatim"
     );
-    const live = decideTransfer({ ...base, status: "running", panelAttemptId: "a1" }, "jallas@xl.net");
+    const live = decideTransfer({ ...base, status: "running", panelAttemptId: "a1" }, "alice@xl.net");
     assert.ok(
       live.verdict === "refuse" && /being reviewed right now/.test(live.reason),
       "a live run refuses"
     );
     const staleRun = decideTransfer(
       { ...base, status: "running", panelAttemptId: "a1", stale: true },
-      "jallas@xl.net"
+      "alice@xl.net"
     );
     assert.equal(staleRun.verdict, "move", "a stale run is movable (an orphaned row is never unmovable)");
     const same = decideTransfer(base, " ADAM@xl.net ");
@@ -5483,17 +5483,17 @@ async function main() {
       same.verdict === "skip" && /already owns/.test(same.reason),
       "the current owner is a skip, not a refusal (a re-run after a partial apply)"
     );
-    for (const bad of ["jallas@gmail.com", "jallas@evilxl.net", "jallas@ai.xl.net", "not-an-email", "jallas@xl.net x"]) {
+    for (const bad of ["alice@gmail.com", "alice@evilxl.net", "alice@ai.xl.net", "not-an-email", "alice@xl.net x"]) {
       const v = decideTransfer(base, bad);
       assert.equal(v.verdict, "refuse", `target ${bad} refused by the staff lane`);
     }
-    const ok = decideTransfer(base, " Jallas@XL.net ");
+    const ok = decideTransfer(base, " Alice@XL.net ");
     assert.deepEqual(
       ok,
-      { verdict: "move", from: "adam@xl.net", to: "jallas@xl.net" },
+      { verdict: "move", from: "adam@xl.net", to: "alice@xl.net" },
       "a move carries the row's owner (the CAS pin) and the normalized target"
     );
-    const otherLane = decideTransfer(base, "jallas@xl.net", ["example.com"]);
+    const otherLane = decideTransfer(base, "alice@xl.net", ["example.com"]);
     assert.equal(otherLane.verdict, "refuse", "laneDomains is honoured, not hardcoded");
 
     // argv.
