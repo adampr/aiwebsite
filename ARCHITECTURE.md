@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 §5.16 INTAKE CLEANING (sections 5.16 upload inspection + reviewed-doc precedence + the work:correlate/work:import passages; migration 0053): owner directive "if someone submits a zip and it contains personal info or credentials, instead of erroring out just clean it before you save it" - `secrets_detected` is retired from `ExtractErr`, `secret-patterns.ts` is replaced by `sanitize.ts` (one function returns the cleaned text AND the hit inventory, so a pattern that detects without redacting is unrepresentable), `sanitize-archive.ts` rebuilds the zip carrying untouched entries by reference with their source compression pinned, and `cleaning.ts` `decideStorage()` is the one storage decision every intake lane shares, the three §5.16 web/email lanes and
+Last verified against code: 2026-08-29 §5.21 CHASE REGISTER (new section 5.21, two rows in 9.7): `chase_tasks` + `chase_sends` (migration 0054, EMPTY in git by design and seeded on the VM, because this repo is public), a Mon..Fri 13:00 UTC reminder that detects completions BEFORE it emails and claims a `chase_sends` row before it composes, and a Mon 15:00 UTC report to ADMIN_EMAIL that sends every week even when nobody is outstanding so its silence means breakage. No page, no API route and no inbound reply lane in this round, deliberately. Previous: 2026-08-29 §5.16 INTAKE CLEANING (sections 5.16 upload inspection + reviewed-doc precedence + the work:correlate/work:import passages; migration 0053): owner directive "if someone submits a zip and it contains personal info or credentials, instead of erroring out just clean it before you save it" - `secrets_detected` is retired from `ExtractErr`, `secret-patterns.ts` is replaced by `sanitize.ts` (one function returns the cleaned text AND the hit inventory, so a pattern that detects without redacting is unrepresentable), `sanitize-archive.ts` rebuilds the zip carrying untouched entries by reference with their source compression pinned, and `cleaning.ts` `decideStorage()` is the one storage decision every intake lane shares, the three §5.16 web/email lanes and
 the `work:submit` operator script (nothing cleaned = the submitted bytes stored untouched; cleaned = the rebuild; rebuild unverifiable = NOTHING stored, never the submitted bytes and never a refusal). Ordinary work email addresses and phone numbers are deliberately NOT redacted. `archive_sha256`/`md_sha256` keep describing what the submitter SENT; `cleaning_json` records what was stored. Previous: 2026-08-29 §5.18 EXHIBIT CREDITS ON THE EMPLOYEE SCORECARD (sections 5.16/5.18): the hand-authored /work exhibits are page copy, not rows, so their builders were counted by nothing on the staff scorecard and two read 0 published; new `work_static_credits` (migration 0052, EMPTY in git by design, rows written on the VM because this repo is public) feeds a staff-lane-only Exhibits column, honesty-guarded against the generated anchor list, with the published-only doctrine, the company lane and the public /work copy untouched. Previous: 2026-08-29 §5.16 REPOSITORY SUBMISSION ROUND
 (sections 5.16 "Exhibit archives" + "Scripted submission lane" + the /work
 page row): every repository on the dev box is now filed on /work under
@@ -8548,9 +8548,10 @@ structure only and the rows are written on the VM; the anchor half of the
 mapping may live in the repo precisely because it is already public
 (`static-titles.json` is GENERATED from the page and holds ids and titles,
 never addresses). There is deliberately NO migration `0050`: this work was in
-flight under that number when a concurrent session generated `0051` against a
-schema that already carried the table, so `0051`'s snapshot holds it while
-`0051`'s SQL does not create it; rather than ship a migration whose snapshot
+flight under that number when a concurrent session generated the chase
+migration (then `0051`, since renumbered `0054`, §5.21) against a schema that
+already carried the table, so that snapshot held it while its SQL did not
+create it; rather than ship a migration whose snapshot
 and statements disagree, `0050` was withdrawn and the CREATE moved after it.
 The write path is `npm run work:credit -- list | add <exhibit-id> <email>
 --by <admin> | remove ...` (`scripts/work-credit.ts`, pure validation in
@@ -9526,6 +9527,285 @@ state with no stored URL: DB-impossible, type-possible, and the only shape
 that fails if the `added &&` fold in `view()` is removed), and the SSRF blocklist
 including the IPv4-mapped-IPv6 bypass and the scheme/credential parser cases.
 No new env vars.
+
+### 5.21 Chase register (`chase_tasks` + `chase_sends`, migration 0054) - host-owned, no web surface
+
+Owner ask, 2026-08-29: *"For any work by others, I recommend Tron emails them
+every week day until they have completed your requested task. Report to me
+weekly if anyone is left that has not done what you asked."* This section is
+that, and nothing else: **two systemd timers, two tables, five modules under
+`src/lib/chase/`, four operator scripts. No page, no API route, no inbound
+reply lane** (the deliberate boundary, below).
+
+**The register ships EMPTY and must stay that way in git.** Every row names a
+colleague by address and records whether they have done what they were asked,
+and this repository is public: a checked-in seed, fixture or map would publish
+a machine-readable delinquency list of real people permanently, and git
+history would keep it after any revert. Same ruling as `0050_work_static_credits`,
+taken the same day for the same reason. Rows are written on the VM by
+`npm run chase:seed` from a file path or stdin supplied at run time.
+`scripts/chase-tests.ts` pins that every address literal in every chase source
+file is an `example.*` synthetic.
+
+**Tables (migration 0054, `src/lib/db/chase-schema.ts`).**
+
+The migration is numbered **0053, deliberately above `0052`**, and the number is
+load-bearing rather than cosmetic. It was first written as `0051` in a shared
+checkout; `0052_work_static_credits` then landed on master with a LATER journal
+`when`, and drizzle-orm's migrator applies a file only while the ledger's newest
+`created_at` is below that file's `folderMillis`. A database that had already run
+`0052` would therefore have SKIPPED `0051` in silence, `db:migrate` would still
+have exited 0, and the deploy would have ended with no `chase_*` tables and two
+timers failing every day afterwards. `meta/0053_snapshot.json` was regenerated
+against `0052`'s, so the snapshot chain is intact and the next `drizzle-kit
+generate` emits nothing for these tables.
+
+- **`chase_tasks`** - one row per thing XL.net asked a named person to do.
+  `assignee_email` / `assignee_name` are SNAPSHOTS (the `company_people` FK is
+  `SET NULL` and is a liveness probe, never the identity, so the register still
+  reads in people's names after an offboarding). Status machine, all arrows
+  moved by a human except the two the detector moves:
+  `blocked -> open -> paused -> open`, and `open|paused -> done|declined|cancelled`
+  (terminal, `closed_at` set). **`blocked` is the DEFAULT**, so a row inserted by
+  any path is silent until somebody deliberately opens it. Hand-written CHECKs
+  in 0053 make the illegal states unrepresentable: an unexplained blocked row,
+  an open row with no `opened_at` (the detector's time floor), a half-closed
+  row, a bad status or detector. Two migration-only indexes carry real weight:
+  `chase_task_live_uq` (partial UNIQUE on `lower(assignee_email), detector,
+  coalesce(detector_arg,''), lower(title)` WHERE status is live) is the
+  anti-reseed rail, and `chase_task_due_idx` is exactly the send selector's
+  predicate. `closed_at` is LATCHED, never re-derived: `sweepExpiredWork` and
+  `rollbackSwappedUpdate` hard-delete /work rows, so a design that re-queried
+  live state would silently reopen a month-old completion and start nagging.
+- **`chase_sends`** - one row per `(UTC day, recipient, kind)`, INSERTED BEFORE
+  the send. **`chase_send_day_uq` (UNIQUE `send_date, lower(assignee_email),
+  kind`) IS the double-send guarantee**, not any code path: a timer fire racing
+  a hand run, a reboot catch-up, two overlapping passes and a restart mid-batch
+  all collapse to one email, because the loser of the insert gets nothing back
+  and sends nothing. `outcome = accepted` means Resend took the message;
+  acceptance is not delivery, and nothing in this repo can tell the difference.
+- **Retention.** `chase_tasks` is NEVER swept: the row IS the evidence of who
+  was asked what and when, and an accusation that outlives its evidence is
+  worse than no register. `chase_sends` gets a bounded 400-day opportunistic
+  sweep from the weekday job. NEITHER table joins account export or account
+  deletion: these are company records of an internal assignment
+  (`company_people` / `work_requests` precedent), not the signed-in user's own
+  account data. Decided, not forgotten.
+
+**The two jobs.** Both are host-owned systemd units installed by
+`deploy/post-install.sh` (§9.7), both refuse to run as root, both take
+`--dry-run`.
+
+- `npm run chase:run` (`scripts/chase-run.ts`, `aiwebsite-chase.timer`,
+  Mon..Fri 13:00 UTC). ORDER IS THE DESIGN: refuse if `WORK_CHASE_ENABLED=0`;
+  **detect completions FIRST** (somebody who did the work yesterday afternoon
+  must be closed this morning, not nagged this morning and closed tomorrow);
+  select `status='open' AND marked_done_at IS NULL` grouped by assignee;
+  **drop any assignee the site no longer has** (see Liveness below); per
+  assignee INSERT the `chase_sends` claim row **before composing or
+  sending**; **re-read the group's statuses between the claim and the
+  compose**, because the group list is materialised once and a batch can run
+  for minutes, so an operator who pauses a row at 13:00:30 has to be obeyed
+  at 13:02; send; stamp the outcome. Each assignee is wrapped in its own
+  try/catch, so one bad address never costs the other twenty their reminder,
+  and **every exit from that block reconciles the row it claimed, including
+  the throw path**: a claim left at `outcome='pending'` renders in the weekly
+  report as an ordinary delivered nudge and nothing else reconciles it.
+  `--dry-run` subtracts the rows detection just decided to close or pause,
+  because a dry run writes nothing and would otherwise name people a live run
+  would not have emailed.
+  Sending is weekday-only (`isChaseWeekday`, UTC); DETECTION runs any day, so a
+  weekend or catch-up run still closes what people finished on Saturday.
+  Exit 0 covers a vendor refusal (recorded on the ledger row and reported on
+  Monday); exit 1 is reserved for a real failure, which the unit's OnFailure
+  turns into a CRITICAL email.
+- `npm run chase:report` (`scripts/chase-report.ts`,
+  `aiwebsite-chase-report.timer`, Mon 15:00 UTC). **It sends every week even
+  when nothing is outstanding.** A report that only arrives with bad news
+  teaches the reader that no email means everything is fine, at which point a
+  crashed timer, a bad `DATABASE_URL`, a revoked Resend key and a genuinely
+  empty register are indistinguishable from the inbox. Five sections: still
+  outstanding (name, ask, when asked, reminder count, last send outcome); said
+  done but not confirmed; paused with reason; blocked with reason (those two
+  are the rows **nobody is being emailed about**, which the owner must rule
+  on); and closed in the last 7 days. **Every item prints its task id**,
+  because the report's own call to action is `chase:admin <op> <id>` and that
+  command needs a uuid. Ledgered as a `chase_sends` row with `kind='report'`,
+  so a restart cannot double-send it, but that claim is **reclaimable while
+  its outcome is not `accepted`** (`claimSend({reclaimUnlessAccepted:true})`):
+  for this one message the thing that must not happen twice is a DELIVERY, and
+  a claim that survived a failure would make a same-day hand re-run impossible
+  and report the lost week as "already sent today". **A refusal exits 1**,
+  unlike the nudge: the nudge's exit-0 rule is right for it (one permanently
+  bad address must not page an operator nightly, and Monday's report surfaces
+  the failures), but the report has no backstop, because the only thing that
+  would have reported its own failure is the report. So a refused report fails
+  the unit and `aiwebsite-chase-report-alert.service` turns the silent week
+  into the CRITICAL email.
+
+**Detectors (`src/lib/chase/detect.ts`).** `matchCompletion(task, candidates)`
+is PURE; the candidate queries sit beside it and fetch nothing else.
+
+- `manual` - only an operator closes it. No query could know, and it is the
+  column DEFAULT. **The email copy is conditioned on this**: a nudge may
+  promise the automatic close only for the rows that have a real detector, and
+  a `manual` row's item line says instead that a person has to be told. A
+  blanket "nothing else to do, I check the site every morning" on a `manual`
+  row is the bug that emails somebody every weekday forever after they have
+  done the work, while telling them the system already noticed.
+- `work_submission` - a `work_submissions` row created by the assignee at or
+  after `opened_at` whose package identity matches `detector_arg`, matched on
+  `archive_name` or on the SKILL.md front-matter `name:` recorded in
+  `corpus_files_json`. Identity comparison folds case, path and extension
+  ("Software Brain.zip" = "software-brain"). Ownership counts through EITHER
+  anchor, `coalesce(creator_email, submitter_email)` or the current
+  `submitter_email`, because a §5.16 transfer is precisely the gesture that
+  moves a row onto the person who really did the work.
+- `work_update_child` - a child row with `parent_id = detector_arg` created by
+  the assignee at or after `opened_at`. The id compare is CASE-FOLDED on both
+  sides and `chase:seed` lowercases the arg: Postgres renders every uuid it
+  returns in lowercase while uuid equality in SQL is not textual, so an
+  uppercase `detector_arg` would find the child and then be discarded by the
+  pure filter, which reads as "they never did it". **ANY status closes it**, held and
+  failed included: the ball has left the assignee and the next move is
+  XL.net's. **EXCEPT** when the child's `archive_sha256` equals the parent's:
+  they re-sent the identical package, nothing changed, but they plainly believe
+  they answered, so the task PAUSES with a reason instead of closing, which
+  takes it out of the send selector and puts it in the weekly report for a
+  person to act on. A null digest on either side is unknown, not identical, and
+  closes. **Reopening a paused row RESETS `opened_at` to now** (`chase:admin
+  open`), because the resubmission that paused it is still sitting there at or
+  after the old floor: preserving the floor would let the next run re-pause the
+  row inside the same run, making the operator's gesture silently inert and the
+  only automatic pause in the system a one-way trip. Reopening a BLOCKED row
+  keeps an `opened_at` it already had, since that ask was never re-made.
+- `chase_tasks.detector_md_sha256` exists for a future digest match and is NOT
+  read in this round. Deliberate, not forgotten.
+
+**Email (`src/lib/chase/notify.ts`).** Composed pure, sent through
+`sendGovernanceEmail` so the §1 oversight BCC and Tron's signature apply at the
+seam. One email per person per weekday however many asks it carries, up to
+`CHASE_CAPS.tasksPerEmail` named and the rest counted. Grouped by ASSIGNEE and
+never by (assignee, requester): two groups for one person would produce two
+claims for one day, the second would lose the unique-index race, and that
+requester's ask would silently never be chased. Every human-entered value
+(title, detail, name, URL) goes through `oneLine()` at compose time, so an
+embedded newline cannot forge a line the reader would take for one this code
+wrote. The copy says who asked, why, where to do it, and how to stop it, and
+deliberately never counts the reminders at the reader: the count is oversight
+information and belongs in the owner's report.
+
+**Reply-To.** The From line is the Tron persona mailbox, whose INBOUND lane
+feeds a conversational AI that knows nothing about this register: a colleague
+replying "this is not mine, stop" must reach a person, not software. So
+`sendGovernanceEmail` gained an optional **first-class `replyTo`** (Resend's own
+`reply_to` field, added 2026-08-29 for this lane, optional so every existing
+caller is unchanged) and the nudge sets it to the oldest ask's
+`requester_email`. It is NOT smuggled through `headers`: Resend documents
+`reply_to` separately, a Reply-To passed as a custom header is one the vendor
+may drop silently, and RFC 5322 allows only one. `headers` still carries the RFC
+3834 `Auto-Submitted: auto-generated` and `X-Auto-Response-Suppress`, which stop
+a vacation responder bouncing into the persona mailbox every weekday. **The body
+also names the address in a plain sentence**, pinned by `scripts/chase-tests.ts`
+so a later edit cannot delete it as redundant, and when one email mixes
+requesters it says WHICH address the Reply button reaches and names the others
+explicitly. The stop instruction additionally copies `ADMIN_EMAIL`, because the
+requester alone is not guaranteed to be able to stop anything: `chase:admin` on
+the VM is the only lever.
+
+**Liveness: who this lane refuses to chase.** `assignee_person_id` is a PROBE,
+never a gate: the FK is `SET NULL`, `company_people` removal is a hard DELETE,
+and a person seeded from `users` alone never had one, so a NULL test would both
+miss departures and falsely drop legitimate assignees. The weekday job instead
+does a LIVE read of the same evidence the seed gate used (present in
+`company_people` or `users`) plus `directory_suppressions`, the site's own
+do-not-contact record written when somebody exercises deletion. An assignee who
+fails either test is SKIPPED and logged, and Monday's report prints
+`NO EMAIL IS GOING OUT: <why>` under that row plus a count in the summary, so
+the owner never reads "outstanding" as "ignoring me" when nothing was sent at
+all. Deliberately a skip, not an automatic close or pause: the row is still a
+true record of an ask, and a directory edit is not a ruling on somebody's
+obligation.
+
+**The oversight BCC.** Every nudge goes through `sendGovernanceEmail`, which
+applies `oversightBcc()` unconditionally, so `ADMIN_EMAIL` receives ONE COPY PER
+ASSIGNEE PER WEEKDAY in addition to the Monday report. That is the §1 invariant
+working as designed and it is stated here (and in `.env.example`) because it is
+the surprising half of the volume: the weekly report is the digest, the BCC
+stream is not, and the only lever over it is `WORK_CHASE_ENABLED=0`.
+
+**Seeding gate (`npm run chase:seed`).** Dry run by default, `--apply` writes,
+and a failure of ANY gate refuses the WHOLE batch (a half-seeded register
+starts emailing some people about a list the operator believes was rejected):
+(1) BOTH the assignee AND the requester address must ALREADY be in
+`company_people` or `users`, case-folded - a read, not a domain regex, which
+would happily accept an address somebody invented at a domain we recognise. The
+requester half is the less obvious one and matters as much: every nudge tells
+the reader to write to that address to make the emails stop, so a typo'd or
+departed requester leaves a cornered colleague writing to nobody while the mail
+keeps arriving. (2) `status='open'` requires `opened_at`; (3) `status='blocked'`
+requires `blocked_reason`; (4) a non-manual detector requires `detector_arg`
+(a `work_update_child` arg must parse as a submission uuid, and is lowercased);
+(5) a non-manual detector requires `actionUrl`, since a detector that watches
+the site for the work implies a place on the site to do it, and only a `manual`
+row may omit it (its nudge then names the requester as the destination).
+Duplicates are the database's job: the insert is `ON CONFLICT DO NOTHING`
+against `chase_task_live_uq`, never a read-then-write, because this script is
+not the only writer. With `--apply` the whole insert loop runs in ONE
+transaction, so a failure after the gates cannot leave half a register behind
+either.
+
+**Operator console (`npm run chase:admin`).** `unblock | open | pause | close |
+decline | cancel`, dry run by default, `--actor <email>` required with
+`--apply` (every close is stamped `closed_by = "owner:<actor>"`). `unblock`
+REFUSES a row whose `blocked_reason` matches `/attribution/i` unless
+`--attribution-confirmed` is also passed: opening such a row starts emailing a
+person daily about work that may not be theirs, which is the most damaging
+thing this feature can do to somebody.
+
+**Both jobs stand down while the deploy marker is fresh** (the governance
+daily job's guard, spelled in `src/lib/chase/db.ts` `deployInProgress()`).
+`deploy/post-install.sh` enables AND starts both timers before `setup-vm.sh`
+runs `db:migrate` and the cutover, so `Persistent=false` alone covers only the
+catch-up fire: a deploy running across 13:00 on a weekday would otherwise let
+the GENUINE scheduled fire execute against the pre-migrate tree, throw, and page
+an operator on the very deploy that shipped the feature.
+
+**Kill switches (`.env.example`).** `WORK_CHASE_ENABLED` and `WORK_CHASE_REPORT_ENABLED`,
+both default ON, both disabled only by the exact string `"0"`
+(`GOVERNANCE_ENABLED` semantics). The first stops the weekday reminders and the
+detector; the second stops only the Monday report. Two levers on purpose:
+silencing the reminders must not also silence the oversight that says who is
+outstanding. Nothing accumulates while either is off, because the dedupe axis
+is a calendar date.
+
+**THE DELIBERATE BOUNDARY: no inbound lane, no admin page, no API route in this
+round.** An inbound `DONE` / `STOP` lane WAS designed (`marked_done_at`,
+`marked_done_by` and `marked_done_note` are in the schema for it, and the
+report's "said done but not confirmed" section is its output surface, empty
+until something writes those columns) and was deliberately deferred: it adds an
+authenticated inbound surface, and inbound mail here is DKIM-spoofable and
+would have to decide, from a From line, whether a person may close a record
+about themselves. That is a review this round did not do. Until it happens, a
+person who wants to say "not mine" or "stop" replies to the email and reaches
+the requester through Reply-To, and the operator acts with `npm run chase:admin`.
+`scripts/chase-tests.ts` pins that no chase source carries a route handler, so
+adding one is a deliberate act with a test to delete.
+
+**Tests.** `npm run test:chase` (`scripts/chase-tests.ts`), DB-free and
+network-free: the weekday calendar including the UTC boundary cases, both kill
+switches, `matchCompletion` in every branch (including the identical
+resubmission pause and the null-digest case), the report body builder including
+the empty week, `oneLine()` defeating a forged newline in both documents
+(addresses included: `normalizeEmail` runs `oneLine` first, because an address
+is typed into the same operator-written JSON as a title), the manual-detector
+copy contract, the reclaimable report claim, the paused-row time-floor reset,
+the claim-before-send ordering and the seeding gates as source scrapes, and the
+synthetic-address and no-long-dash scans. The scanned file list is DISCOVERED
+from `src/lib/chase/`, `scripts/chase-*.ts`, the schema file and the migration
+rather than hardcoded, so a file added to the lane later cannot fall outside
+the scans that keep a real colleague's address out of a public repository.
+
 
 ## 6. Database
 
@@ -10786,10 +11066,13 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
 
 ### 9.7 Scheduled work — systemd timers (`Persistent=true`), not cron
 
-Installed/enabled by setup-vm.sh — except `aiwebsite-governance`, installed by the host
+Installed/enabled by setup-vm.sh, except `aiwebsite-governance`, `aiwebsite-linkcheck`
+and the two `aiwebsite-chase*` units, installed by the host
 post-install hook (§9.2); scripts installed to `/usr/local/bin/aiwebsite-*`;
-verify with `systemctl list-timers 'aiwebsite-*'` (all 8 — the blog + blog-digest timers
-are installed only when `BLOG_ENABLED=1`):
+verify with `systemctl list-timers 'aiwebsite-*'` (the 11 rows below; the blog +
+blog-digest timers are installed only when `BLOG_ENABLED=1`; the listing will also
+show the module-installed `aiwebsite-peer-monitor` and `aiwebsite-hi-speed` units,
+which are not in this table):
 
 | Timer | Schedule (UTC) | Does |
 |---|---|---|
@@ -10802,6 +11085,8 @@ are installed only when `BLOG_ENABLED=1`):
 | `aiwebsite-disk-check` | daily 06:45 | alert at >80 % disk on `/` |
 | `aiwebsite-governance` | daily 04:30 (+ ≤300 s jitter) | governance daily duties (§5.12/§8.1): guarded 30-day retention sweep, stale-research reaper, queued-project kicks, usage prune, standards watch + self-gated quarterly deep research + seed upserts. **Installed by `deploy/post-install.sh` (host-owned, NOT template-rendered, no stamp)**; `OnFailure=aiwebsite-governance-alert.service` (CRITICAL email); `NODE_OPTIONS=--max-old-space-size=256`; exits quietly while the deploy marker is fresh; logs `/var/log/aiwebsite-governance.log` (research jobs: `-research.log`). Uninstall: the hook's manifest loop, or `systemctl disable --now aiwebsite-governance.timer` + rm the three units |
 | `aiwebsite-linkcheck` | 05:50 UTC daily | `scripts/roadmap-link-recheck.ts` | §5.20 evidence-ladder re-check. Installed by the host post-install hook (§9.2), NOT setup-vm.sh. `Persistent=false` on purpose: the hook runs before cutover, so a catch-up fire would execute against the pre-deploy tree. Own OnFailure unit (`aiwebsite-linkcheck-alert`); a single failing LINK is normal and recorded per field, so the alert fires only when the job itself dies. |
+| `aiwebsite-chase` | Mon..Fri 13:00 (+ ≤300 s jitter) | §5.21 chase register weekday reminders: `scripts/chase-run.ts` detects completions FIRST, then emails each assignee with an open request once per UTC day (the `chase_send_day_uq` claim row, inserted before the send, is the double-send guarantee). Installed by `deploy/post-install.sh` (host-owned), NOT setup-vm.sh. `Persistent=false` for the linkcheck reason: the hook runs before `db:migrate` and the cutover, so a catch-up fire on the introducing deploy would run against the old tree with no `chase_*` tables. `Persistent=false` does not cover a GENUINE fire during a deploy, so the script additionally exits quietly while the deploy marker is fresh (governance's guard). Own OnFailure unit (`aiwebsite-chase-alert`) and own log `/var/log/aiwebsite-chase.log`; a REFUSED send is normal, recorded on the ledger row and reported on Monday, so the alert fires only when the job itself dies. Kill switch `WORK_CHASE_ENABLED=0`; note every nudge is BCC'd to `oversight.bccEmail`, i.e. one copy per assignee per weekday |
+| `aiwebsite-chase-report` | Mon 15:00 (+ ≤300 s jitter) | §5.21 weekly outstanding-work report to `ADMIN_EMAIL`: `scripts/chase-report.ts`. **Sends every week even when nothing is outstanding**, so its silence means the job is broken rather than that everyone is up to date; ledgered as a `chase_sends` row with `kind='report'` so a restart cannot double-send it. Installed by `deploy/post-install.sh`; `Persistent=false`, plus the same deploy-marker stand-down. **A REFUSED send exits 1 here** (unlike the weekday job), so `aiwebsite-chase-report-alert` turns a week with no report into a CRITICAL email rather than silence the owner is left to interpret; the claim row is reclaimable until a send is accepted, so `npm run chase:report` by hand the same day actually sends. Own log `/var/log/aiwebsite-chase-report.log`. Kill switch `WORK_CHASE_REPORT_ENABLED=0` (separate from the reminder switch on purpose) |
 
 ---
 

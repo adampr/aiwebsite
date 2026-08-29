@@ -6,18 +6,22 @@
 # research reaper, queued kicks, self-gated quarterly standards refresh), its
 # OnFailure alert unit, and the research job's log file. Since §5.20 round 2
 # it also installs the nightly roadmap link re-check (aiwebsite-linkcheck),
-# which shares the same OnFailure alert unit.
+# which shares the same OnFailure alert unit. Since §5.21 it also installs
+# the chase register's two jobs (aiwebsite-chase weekday reminders,
+# aiwebsite-chase-report weekly), each with its own alert unit and log.
 #
 # Uninstall/rename path: units are managed via the manifest below — any
 # aiwebsite-governance* unit not listed gets disabled and removed, so renames
-# and feature removal cannot leave zombie timers firing forever.
+# and feature removal cannot leave zombie timers firing forever. The
+# linkcheck and chase families have their own manifest loops for the same
+# reason (that glob is prefix-scoped and does not reach them).
 
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/var/www/aiwebsite}"
 APP_USER="${APP_USER:-$(stat -c '%U' "$APP_DIR")}"
 
-echo "post-install: governance + linkcheck units (app dir $APP_DIR, user $APP_USER)"
+echo "post-install: governance + linkcheck + chase units (app dir $APP_DIR, user $APP_USER)"
 
 # ── Log files: the detached research job appends via an inherited fd (it
 # gets no systemd StandardOutput), so the file must exist and be writable by
@@ -179,6 +183,172 @@ UNIT
 sudo touch /var/log/aiwebsite-linkcheck.log
 sudo chown "$APP_USER":"$APP_USER" /var/log/aiwebsite-linkcheck.log 2>/dev/null || true
 
+# ── §5.21 chase register: two units, the weekday nudge and the weekly
+# report. They follow the governance/linkcheck pattern exactly, and each
+# gets its OWN alert unit and its OWN log for the reason spelled out above
+# the linkcheck alert: an alert unit hardcodes a subject, a body and a log
+# path, so borrowing another feature's would page an operator about the
+# wrong service and send them to a log with nothing in it.
+#
+# SLOTS. 13:00 and 15:00 UTC, both free against every timer this deploy
+# installs (04:30 governance, 05:10 hi-speed, 05:30 Sunday sweeper, 05:50
+# linkcheck, 06:30 quarterly restore drill, 06:45 disk check, 07:15 backup,
+# 08:00 knowledge crawl, 09:30 blog, 14:00 blog digest, plus the every-5-min
+# peer monitor) and against ARCHITECTURE §9.7. 13:00 is a workday morning in
+# Chicago, which is when a reminder is worth reading; 15:00 Monday puts the
+# owner's report an hour after the 14:00 blog digest rather than on top of
+# it, and after the week's first nudge run so the report describes the state
+# the recipients are actually in.
+sudo tee /usr/local/bin/aiwebsite-chase-alert.sh >/dev/null <<'ALERT'
+#!/usr/bin/env bash
+set -u
+ENV_FILE="/var/www/aiwebsite/.env"
+KEY=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+TO=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | cut -d, -f1)
+TO="${TO:-adam@xl.net}"
+[ -z "$KEY" ] && exit 0
+TAIL=$(tail -c 1500 /var/log/aiwebsite-chase.log 2>/dev/null | sed 's/"/\\"/g' | tr '\n' ' ')
+curl -sS -m 20 -X POST https://api.resend.com/emails \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"$TO\"],\"subject\":\"[aiwebsite] CRITICAL chase weekday job FAILED\",\"text\":\"aiwebsite-chase.service exited nonzero. Nobody was reminded today, and completed tasks may not have been closed. A single REFUSED send is normal and is recorded on the ledger row; this fires only when the job itself died. Log tail: $TAIL\"}" \
+  >/dev/null || true
+ALERT
+sudo chmod 0755 /usr/local/bin/aiwebsite-chase-alert.sh
+
+sudo tee /etc/systemd/system/aiwebsite-chase-alert.service >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite chase weekday job failure alert
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aiwebsite-chase-alert.sh
+UNIT
+
+sudo tee /etc/systemd/system/aiwebsite-chase.service >/dev/null <<UNIT
+[Unit]
+Description=aiwebsite chase register weekday reminders (§5.21)
+After=network-online.target postgresql.service
+OnFailure=aiwebsite-chase-alert.service
+
+[Service]
+Type=oneshot
+User=$APP_USER
+WorkingDirectory=$APP_DIR
+Environment=NODE_OPTIONS=--max-old-space-size=256
+ExecStart=/usr/bin/env npx tsx $APP_DIR/scripts/chase-run.ts
+StandardOutput=append:/var/log/aiwebsite-chase.log
+StandardError=append:/var/log/aiwebsite-chase.log
+TimeoutStartSec=1800
+UNIT
+
+# Persistent=FALSE, for the same reason the linkcheck timer above is: this
+# hook runs BEFORE db:migrate and before the cutover flips $APP_DIR to the
+# new code, so on the deploy that introduces this feature a catch-up fire
+# would execute against the OLD tree, where scripts/chase-run.ts and the
+# chase_* tables do not exist yet, fail, and email an OnFailure alert about
+# the very deploy that shipped it. Missing one weekday is invisible here:
+# the register is not a queue and nothing accumulates, so the safe default
+# is to wait for the next 13:00.
+#
+# Persistent=false covers the CATCH-UP fire only. A deploy that happens to be
+# running across 13:00 on a weekday would still let the GENUINE scheduled fire
+# start against the pre-migrate tree, because these timers are enabled and
+# started here, before setup-vm.sh runs db:migrate and the cutover. Both chase
+# scripts therefore also exit quietly while /var/run/aiwebsite-deploy-in-progress
+# is fresh, the same guard the governance daily job uses (§5.21).
+sudo tee /etc/systemd/system/aiwebsite-chase.timer >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite chase register weekday timer (Mon..Fri 13:00 UTC)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 13:00:00 UTC
+RandomizedDelaySec=300
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+sudo tee /usr/local/bin/aiwebsite-chase-report-alert.sh >/dev/null <<'ALERT'
+#!/usr/bin/env bash
+set -u
+ENV_FILE="/var/www/aiwebsite/.env"
+KEY=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+TO=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | cut -d, -f1)
+TO="${TO:-adam@xl.net}"
+[ -z "$KEY" ] && exit 0
+TAIL=$(tail -c 1500 /var/log/aiwebsite-chase-report.log 2>/dev/null | sed 's/"/\\"/g' | tr '\n' ' ')
+curl -sS -m 20 -X POST https://api.resend.com/emails \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"$TO\"],\"subject\":\"[aiwebsite] CRITICAL chase weekly report FAILED\",\"text\":\"aiwebsite-chase-report.service exited nonzero, so this week's outstanding-work report did NOT go out. That report is sent every week even when nobody is outstanding, precisely so that its silence means breakage; this alert is that silence being explained. Log tail: $TAIL\"}" \
+  >/dev/null || true
+ALERT
+sudo chmod 0755 /usr/local/bin/aiwebsite-chase-report-alert.sh
+
+sudo tee /etc/systemd/system/aiwebsite-chase-report-alert.service >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite chase weekly report failure alert
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aiwebsite-chase-report-alert.sh
+UNIT
+
+sudo tee /etc/systemd/system/aiwebsite-chase-report.service >/dev/null <<UNIT
+[Unit]
+Description=aiwebsite chase register weekly report (§5.21)
+After=network-online.target postgresql.service
+OnFailure=aiwebsite-chase-report-alert.service
+
+[Service]
+Type=oneshot
+User=$APP_USER
+WorkingDirectory=$APP_DIR
+Environment=NODE_OPTIONS=--max-old-space-size=256
+ExecStart=/usr/bin/env npx tsx $APP_DIR/scripts/chase-report.ts
+StandardOutput=append:/var/log/aiwebsite-chase-report.log
+StandardError=append:/var/log/aiwebsite-chase-report.log
+TimeoutStartSec=900
+UNIT
+
+# Persistent=false and the same deploy-marker stand-down as the weekday timer
+# above. Note the asymmetry in the two services' exit codes: a REFUSED weekly
+# report exits 1 on purpose (the report is the only oversight surface, and the
+# thing that would have reported its own failure is the report), while a
+# refused nudge exits 0 and is reported on Monday.
+sudo tee /etc/systemd/system/aiwebsite-chase-report.timer >/dev/null <<'UNIT'
+[Unit]
+Description=aiwebsite chase register weekly report timer (Mon 15:00 UTC)
+
+[Timer]
+OnCalendar=Mon *-*-* 15:00:00 UTC
+RandomizedDelaySec=300
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+for f in /var/log/aiwebsite-chase.log /var/log/aiwebsite-chase-report.log; do
+  sudo touch "$f"
+  sudo chown "$APP_USER":"$APP_USER" "$f" 2>/dev/null || true
+  sudo chmod 0644 "$f"
+done
+
+# ── Manifest cleanup for the chase family (the governance glob below is
+# prefix-scoped and does NOT cover these, exactly as with linkcheck).
+CHASE_MANIFEST="aiwebsite-chase.service aiwebsite-chase.timer aiwebsite-chase-alert.service aiwebsite-chase-report.service aiwebsite-chase-report.timer aiwebsite-chase-report-alert.service"
+for unit in $(ls /etc/systemd/system/ 2>/dev/null | grep '^aiwebsite-chase' || true); do
+  case " $CHASE_MANIFEST " in
+    *" $unit "*) ;;
+    *)
+      echo "post-install: removing stale unit $unit"
+      sudo systemctl disable --now "$unit" 2>/dev/null || true
+      sudo rm -f "/etc/systemd/system/$unit"
+      ;;
+  esac
+done
+
 # ── Manifest cleanup for the linkcheck family (same rename/removal safety
 # as governance below; its glob is prefix-scoped and does NOT cover these).
 LINKCHECK_MANIFEST="aiwebsite-linkcheck.service aiwebsite-linkcheck.timer aiwebsite-linkcheck-alert.service"
@@ -214,5 +384,9 @@ sudo systemctl enable aiwebsite-governance.timer
 sudo systemctl start aiwebsite-governance.timer
 sudo systemctl enable aiwebsite-linkcheck.timer
 sudo systemctl start aiwebsite-linkcheck.timer
+sudo systemctl enable aiwebsite-chase.timer
+sudo systemctl start aiwebsite-chase.timer
+sudo systemctl enable aiwebsite-chase-report.timer
+sudo systemctl start aiwebsite-chase-report.timer
 
-echo "post-install: governance + linkcheck units installed"
+echo "post-install: governance + linkcheck + chase units installed"

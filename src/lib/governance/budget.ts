@@ -140,6 +140,14 @@ export async function sendGovernanceEmail(opts: {
   subject: string;
   text: string;
   headers?: Record<string, string>;
+  /** Resend's FIRST-CLASS reply_to field, not a custom header. Added
+   * 2026-08-29 for the §5.21 chase nudge: that mail goes to a colleague from
+   * the Tron persona mailbox, whose inbound lane answers with an AI, so a
+   * reply saying "this is not mine, stop" has to land on a person. Resend
+   * documents reply_to separately from headers, and a Reply-To smuggled
+   * through headers is one the vendor may drop silently. Optional, so every
+   * existing caller is unchanged. */
+  replyTo?: string;
 }): Promise<boolean> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
@@ -163,6 +171,7 @@ export async function sendGovernanceEmail(opts: {
         // signed at the seam so no call site, present or future, can forget.
         text: withTronSignature(opts.text),
         ...(bcc && { bcc }),
+        ...(opts.replyTo ? { reply_to: opts.replyTo } : {}),
         ...(opts.headers ? { headers: opts.headers } : {}),
       }),
       signal: AbortSignal.timeout(20_000),

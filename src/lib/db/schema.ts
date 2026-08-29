@@ -622,6 +622,14 @@ export * from "./roadmap-schema";
 // internal xl.net lane and the per-company roadmap lanes.
 export * from "./work-requests-schema";
 
+// Chase register (§5.21) - same own-file rationale. Two tables whose rows
+// name real colleagues and record whether they have done what they were
+// asked; they ship EMPTY and are seeded on the VM, because this repo is
+// public (see the file header). The re-export is load-bearing: drizzle.config
+// points at THIS file only, so a table in a sibling that is not re-exported
+// here never gets a migration.
+export * from "./chase-schema";
+
 // Magic-link sign-in tokens (module §5.5): hashed single-use 15-minute
 // tokens. Registered with the module client in index.ts; enabled 2026-08-04
 // as the roadmap's provider-agnostic trusted sign-in lane (§5.18).
