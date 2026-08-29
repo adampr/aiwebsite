@@ -106,6 +106,11 @@ export type RowFacts = {
   hasArchive: boolean;
   /** md_data is not null. */
   hasMd: boolean;
+  /** The row was CLEANED at intake (§5.16, 2026-08-29): its recorded sha256
+   * is the hash of the package as SUBMITTED, and the bytes that were stored
+   * are a cleaned rebuild. A local file matching that hash is therefore the
+   * UNCLEANED original, and filing it would restore removed material. */
+  cleaned?: boolean;
 };
 
 export type LedgerFacts = {
@@ -385,11 +390,27 @@ export function searchFolder(
 export function planSlotRecovery(
   cov: SlotCoverage,
   localIndex: LocalIndex,
-  rowHoldsBytes = false
+  rowHoldsBytes = false,
+  rowCleaned = false
 ): SlotRecovery {
   const found = searchFolder(cov, localIndex);
   const base = { ...cov, recovery: found.recovery, file: found.file };
   const original = found.recovery === "recoverable" && found.file ? ` The true original IS in this folder: ${found.file.path}.` : "";
+  // A cleaned row is NEVER ready, and the sha match is exactly why. The
+  // recorded hash describes the submitter's own file, deliberately, so the
+  // provenance check that normally proves a recovery here would instead be
+  // proving that the local file is the copy we removed material from.
+  if (rowCleaned)
+    return {
+      ...base,
+      flag: null,
+      ready: false,
+      reason:
+        `this row was cleaned at intake, so the recorded sha256 is the hash of the package AS SUBMITTED, not of what was stored; ` +
+        `a local file matching it is the uncleaned original and filing it would restore removed material. ` +
+        `work:import refuses it without --force.` +
+        (original || ` ${found.reason}`),
+    };
   if (cov.verdict === "store-mismatch")
     return {
       ...base,
@@ -436,7 +457,7 @@ export function planRecovery(
     const holdsBytes = row.hasArchive || row.hasMd;
     const open = slots
       .filter((s) => s.verdict === "missing" || s.verdict === "store-mismatch")
-      .map((s) => planSlotRecovery(s, localIndex, holdsBytes));
+      .map((s) => planSlotRecovery(s, localIndex, holdsBytes, row.cleaned === true));
     const flags = open.filter((m) => m.ready && m.flag).map((m) => m.flag as string);
     return {
       row,

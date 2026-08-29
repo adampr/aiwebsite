@@ -13,9 +13,13 @@ import { brainHealthy } from "@/lib/governance/brain";
 import {
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
+  cleanedBeforeRefusalLead,
+  secretsCleanedMessage,
   workSubmissionsEnabled,
   type WorkKind,
 } from "@/lib/work/config";
+import { decideStorage } from "@/lib/work/cleaning";
+import { reportIntakeCleaningIssue } from "@/lib/report-issue";
 import { kindVerdictSentence, type KindVerdict } from "@/lib/work/classify";
 import {
   activeTitleClash,
@@ -529,11 +533,14 @@ export async function POST(req: Request): Promise<Response> {
     const docFailure =
       extracted.code === "missing_architecture_doc" ||
       (extracted.code === "doc_too_short" && extracted.kind === "program");
+    const body = docFailure
+      ? kindRefusal(extracted.kindVerdict, extracted.message)
+      : extracted.message;
     return workError(
       extracted.code,
-      docFailure
-        ? kindRefusal(extracted.kindVerdict, extracted.message)
-        : extracted.message,
+      extracted.droppedPaths
+        ? `${cleanedBeforeRefusalLead(extracted.droppedPaths)}\n\n${body}`
+        : body,
       422,
       // No `instructions` twin: `extracted.message` for a program document
       // failure IS the instruction paragraph (extract.ts sets
@@ -598,6 +605,31 @@ export async function POST(req: Request): Promise<Response> {
     };
   }
 
+  // What we are allowed to keep. On the common path this hands back the
+  // submitted bytes untouched; when the intake scan found something it hands
+  // back the cleaned rebuild, and when that rebuild could not be verified it
+  // hands back null and we store no archive at all rather than the bytes we
+  // were told to clean.
+  const storage = decideStorage({
+    pkg,
+    submittedArchive: bytes,
+    // ONLY the standalone-upload branch has its own walk to carry a cleaning
+    // record. When mdMeta was built from pkg.docRawBytes instead (the doc came
+    // from inside the package), those bytes are already the cleaned ones, so
+    // there is nothing to decide and mdData below falls through to them.
+    md:
+      mdFile && mdExtract?.ok
+        ? { extract: mdExtract, submitted: mdFile.bytes }
+        : null,
+  });
+  const mdForRow = mdMeta
+    ? { ...mdMeta, data: storage.mdData ?? mdMeta.data }
+    : undefined;
+  if (storage.cleaned && storage.failed)
+    console.warn(
+      `[work] archive NOT stored: cleaning rebuild failed (${storage.failed})`
+    );
+
   let row;
   try {
     row = await createSubmission({
@@ -620,9 +652,12 @@ export async function POST(req: Request): Promise<Response> {
     archiveSha256: pkg.archiveSha256,
     archiveBytes: pkg.archiveBytes,
     // Retained until the owner retention email sends on publish (§5.16);
-    // non-published rows drop them with the row.
-      archiveData: bytes,
-      md: mdMeta,
+    // non-published rows drop them with the row. Since 2026-08-29 this is what
+    // the cleaning decided, which is the submitted bytes when nothing was
+    // found and null when a rebuild could not be verified.
+      archiveData: storage.archiveData,
+      md: mdForRow,
+      cleaningJson: storage.cleaningJson,
     });
   } catch (err) {
     // The partial unique index closes the double-click race the pre-check
@@ -641,10 +676,33 @@ export async function POST(req: Request): Promise<Response> {
   // Durable second copy at accept time (archive-store.ts): the same file
   // set the row's bytea carries, so publish-time verification can clear the
   // blob. A store failure logs and never fails the submission.
-  await storeArchiveFiles(row.id, title, [
-    { name: name.slice(0, 200), data: bytes },
-    ...(mdMeta ? [{ name: mdMeta.name, data: mdMeta.data }] : []),
-  ]);
+  if (storage.cleaned)
+    reportIntakeCleaningIssue({
+      // Episodic: one row per lane, not per submission. A per-submission or
+      // per-rule key would fill the ledger's 500-row read window and evict
+      // every other open issue from the standing triage.
+      key: "work-intake:cleaned:web-create",
+      subject:
+        "Credential-shaped content cleaned from a /work submission (web create)",
+      detail: [
+        `submission ${row.id} (${title})`,
+        `submitter ${user.email}`,
+        `cleaned: ${storage.cleanedPaths.join(", ")}`,
+        ...(storage.failed ? [`archive NOT stored: ${storage.failed}`] : []),
+        "The submitter was shown the rotate-anyway notice.",
+      ].join("\n"),
+      // The web lanes send no mail here, so [never-emailed] in the triage
+      // listing is accurate rather than an alarm.
+      emailed: false,
+    });
+
+  // Never the submitted bytes: this is the durable copy, so it gets exactly
+  // what the row got. A failed rebuild stores nothing here either.
+  if (storage.archiveData)
+    await storeArchiveFiles(row.id, title, [
+      { name: name.slice(0, 200), data: storage.archiveData },
+      ...(mdForRow ? [{ name: mdForRow.name, data: mdForRow.data }] : []),
+    ]);
 
   // The row exists; a kick failure must degrade to "queued", never 500 the
   // submission out from under the user (2026-07-30 incident: a claim-query
@@ -671,6 +729,15 @@ export async function POST(req: Request): Promise<Response> {
       status: kicked.outcome.status === "running" ? "running" : "received",
       queued:
         kicked.outcome.status === "refused" ? kicked.outcome.reason : null,
+      // The cleaning disclosure. The submitter has to learn two things a
+      // success response does not normally carry: that we changed their files,
+      // and that they still need to rotate whatever was in them.
+      cleaned: storage.cleaned
+        ? {
+            message: secretsCleanedMessage(storage.cleanedPaths.length),
+            paths: storage.cleanedPaths,
+          }
+        : null,
     },
     202
   );

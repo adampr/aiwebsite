@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 §5.18 EXHIBIT CREDITS ON THE EMPLOYEE SCORECARD (sections 5.16/5.18): the hand-authored /work exhibits are page copy, not rows, so their builders were counted by nothing on the staff scorecard and two read 0 published; new `work_static_credits` (migration 0050, EMPTY in git by design, rows written on the VM because this repo is public) feeds a staff-lane-only Exhibits column, honesty-guarded against the generated anchor list, with the published-only doctrine, the company lane and the public /work copy untouched. Previous: 2026-08-29 §5.16 REPOSITORY SUBMISSION ROUND
+Last verified against code: 2026-08-29 §5.16 INTAKE CLEANING (sections 5.16 upload inspection + reviewed-doc precedence + the work:correlate/work:import passages; migration 0053): owner directive "if someone submits a zip and it contains personal info or credentials, instead of erroring out just clean it before you save it" - `secrets_detected` is retired from `ExtractErr`, `secret-patterns.ts` is replaced by `sanitize.ts` (one function returns the cleaned text AND the hit inventory, so a pattern that detects without redacting is unrepresentable), `sanitize-archive.ts` rebuilds the zip carrying untouched entries by reference with their source compression pinned, and `cleaning.ts` `decideStorage()` is the one storage decision all three lanes share (nothing cleaned = the submitted bytes stored untouched; cleaned = the rebuild; rebuild unverifiable = NOTHING stored, never the submitted bytes and never a refusal). Ordinary work email addresses and phone numbers are deliberately NOT redacted. `archive_sha256`/`md_sha256` keep describing what the submitter SENT; `cleaning_json` records what was stored. Previous: 2026-08-29 §5.18 EXHIBIT CREDITS ON THE EMPLOYEE SCORECARD (sections 5.16/5.18): the hand-authored /work exhibits are page copy, not rows, so their builders were counted by nothing on the staff scorecard and two read 0 published; new `work_static_credits` (migration 0050, EMPTY in git by design, rows written on the VM because this repo is public) feeds a staff-lane-only Exhibits column, honesty-guarded against the generated anchor list, with the published-only doctrine, the company lane and the public /work copy untouched. Previous: 2026-08-29 §5.16 REPOSITORY SUBMISSION ROUND
 (sections 5.16 "Exhibit archives" + "Scripted submission lane" + the /work
 page row): every repository on the dev box is now filed on /work under
 adam@xl.net. Six of them already had a hand-authored exhibit card, and those
@@ -4344,10 +4344,50 @@ weakened by this — every guard in this paragraph runs on the parse path; the
 pre-gate only decided which rejection message a submitter saw. On a parse
 failure the pure `nonZipMessage(bytes)` names what the bytes actually are (gzip,
 RAR, 7-Zip, truncated/encrypted zip, else generic) so the reply is a fix rather
-than a verdict. Secret scan BEFORE anything
-else persists: filename + content patterns (`secret-patterns.ts`, mirrors the
-pre-commit hook's bash list side by side; change both) → 422 `secrets_detected`
-listing paths only, with rotate-and-resubmit copy. **Kind inference (2026-08-28, owner directive "no longer ask if its CoWork or
+than a verdict.
+
+**Intake cleaning (2026-08-29, owner directive "if someone submits a zip and it
+contains personal info or credentials, instead of erroring out just clean it
+before you save it").** The scan runs BEFORE anything persists, and it no longer
+refuses: `secrets_detected` is gone from `ExtractErr` and `secret-patterns.ts`
+is replaced by `src/lib/work/sanitize.ts`. `sanitizeText()` returns the cleaned
+text AND the hit inventory, and `textLooksSecret()` is derived from it, so a
+pattern that detects without redacting is unrepresentable — the old boolean
+detector could not be reused as a cleaner (its private-key pattern matched only
+the `-----BEGIN` line, so a naive span replacement would have deleted the header
+and left the key body in the corpus). Two classes redact: CREDENTIALS
+(vendor-prefixed keys, JWTs, whole PEM private-key blocks, connection-string
+passwords, label-anchored secret assignments) and HIGH-CONFIDENCE PERSONAL
+IDENTIFIERS (SSN/ITIN, payment card behind Luhn + an issuer prefix, IBAN behind
+mod-97, ABA routing behind its checksum, banking-context account numbers,
+labelled DOB / passport / driver licence / EIN). **Ordinary work email addresses
+and phone numbers are deliberately NOT redacted**: this corpus is XL.net's own
+tooling documentation, where the address is the subject matter, the editorial
+panel drafts the published card from exactly this text, and `lint.ts` already
+refuses both shapes in every visible card field — measured before ruling, naive
+email/phone patterns fire 75 times on 1 MB of this repo's own docs, every hit
+legitimate. Spans become the literal token `[redacted:<rule-id>]`; the transform
+is idempotent because already-written placeholders are NUL-masked before
+scanning (two rules re-matched their own output otherwise), and deterministic
+because `mergeSkillCorpus` dedupes corpus entries by exact text equality.
+Filename-class hits (`.env`, `*.pem`, `id_rsa`, …) are never inflated and never
+enter the corpus; they are DROPPED from the stored archive. A credential inside
+the one lazily-opened inner archive drops that whole bundled archive and its
+texts, which returns the row to the ordinary doc-missing lane the standalone
+`.md` field rescues — nested archives are never rewritten and re-embedded.
+`src/lib/work/sanitize-archive.ts` rebuilds the zip, carrying untouched entries
+BY REFERENCE with each entry's compression pinned from its source magic, so a
+kept entry is never inflated or recompressed (measured: kept entries keep their
+crc32 and compressed size; a global `STORE` instead of the pin inflated every
+DEFLATE entry and doubled an 8.14 MB fixture to 16.24 MB). `cleaning.ts`
+`decideStorage()` is the ONE storage decision for all three lanes: nothing
+cleaned ⇒ the submitted bytes are stored untouched (a rebuild is never
+byte-identical, so the common path must not pay for one); cleaned ⇒ the rebuild
+is stored; **rebuild unverifiable ⇒ NOTHING is stored** — never a fallback to
+the submitted bytes (that writes the material we were told to remove) and never
+a refusal (the submitter did nothing wrong, our code did). The submission is
+still accepted and reviewed in that case, because the panel needs the corpus,
+not the archive bytes. **Kind inference (2026-08-28, owner directive "no longer ask if its CoWork or
 Code program; figure out which is based on what was uploaded").** Nobody
 declares a kind on any lane. `src/lib/work/classify.ts` owns the decision:
 `classifyWorkKind(signals)` is a pure, deterministic LADDER (never a model
@@ -4489,13 +4529,15 @@ bundle the program lane never read; and an inner-archive failure from that
 pass is re-worded (`rescuePassError`), because extract.ts's Skill copy calls
 the bundle "the packaged Skill inside your zip" and tells the submitter to
 "attach its SKILL.md in the second upload field" — the field they already
-used, which is the only reason the rescue ran. KNOWN AND ACCEPTED asymmetry:
-the rescue path runs the Skill lane's inner-archive secret scan, which the
-program lane never runs, so an identical package can refuse for credentials
-when its architecture doc is attached separately and be accepted when the doc
-is inside the zip. The divergence is always in the STRICTER direction, never
-laxer, so it is left standing rather than closed by widening the program lane
-into nested archives.
+used, which is the only reason the rescue ran. The pre-2026-08-29 asymmetry
+here (the rescue ran the Skill lane's inner-archive secret scan, which the
+program lane never runs, so an identical package could REFUSE for credentials
+when its architecture doc was attached separately and be accepted when the doc
+sat inside the zip) is dissolved rather than closed: nothing refuses for
+carrying credentials on any pass now. What survives of it is narrower and not a
+refusal — the rescue pass opens a bundled archive the program lane never opens,
+so it can find and DROP an inner archive the program pass would have stored
+untouched.
 THE EMAIL LANE RESCUES TOO, on the same shape and for the same reason (the
 `.md` is already downloaded there, so it costs one extra walk and no extra
 network), with ONE deliberate divergence from the web routes: on the web the
@@ -4534,7 +4576,12 @@ SKILL.md at depth ≤1 inside the single lazily-opened inner archive (see the
 header note: one level, one archive, all guards rerun, combined entry cap,
 "!/" display paths); (5) 422 (`skill_doc_missing|too_short|ambiguous`,
 candidates in `paths`). Doc-resolution failures are rescuable ONLY by a valid
-standalone; secrets/invalid/too-complex are always fatal. md_* is populated
+standalone; invalid/too-complex are always fatal. Credentials are no longer a
+failure at all (2026-08-29): they are cleaned, and when the cleaning removes
+files and the submission THEN fails on its own terms, every lane leads the
+refusal with what was taken out (`ExtractErr.droppedPaths` →
+`cleanedBeforeRefusalLead`), because "attach your SKILL.md" is the wrong first
+sentence for a package that was one `.env` we dropped. md_* is populated
 from whichever source won (standalone bytes, or the in-package doc's
 untruncated `docRawBytes`), so retention always emails the `.md` as its own
 attachment. Docs must clear 600 chars of prose after
@@ -4555,6 +4602,16 @@ refuses an `instructions:` key. Legacy
 pre-rework single-file skill rows are untouched (Retry re-reads stored text,
 never files). Persisted: doc text (≤40k), evidence corpus, file manifest
 (≤300 entries), archive name/sha256/bytes + `md_name/md_sha256/md_bytes` —
+**`archive_sha256` and `md_sha256` describe the bytes the SUBMITTER SENT, always,
+even when what was stored is a cleaned rebuild of them**: they are provenance
+values, and `work:import`/`work:correlate` compare them against the submitter's
+own copy of their own file, so redefining them to describe our rebuild would
+make the true original report as never submitted. What was actually written is
+recorded in `cleaning_json` (migration 0051, NULL ⇒ the stored artifact IS the
+submitted artifact, so no backfill and old rows stay correct): dropped/redacted/
+excluded paths, the rule ids that fired, the sha256+length of the stored
+artifact, and `failed` when no archive was retained. The manifest describes the
+STORED artifact, so dropped entries leave it while redacted entries stay —
 all on ONE `work_submissions` row (hard DELETE removes everything). The accepted ORIGINAL upload is kept in `archive_data` (bytea)
 for owner retention, and — since the 100 MB round (2026-08-19) — a DURABLE
 second copy lands in the on-disk **archive store** at accept time
@@ -4838,6 +4895,17 @@ Pure pieces (`planRowBackfill`, `byteLessRowClass`, `parseImportArgs`,
 `scripts/lib/work-archive-ops.ts` and are unit-tested DB-free in test:work
 (the slot gate runs before the sha gate, which runs before the single store
 write; pinned by source order).
+
+**Cleaned rows are never `ready` in this lane (2026-08-29 cleaning round)**, and
+the reason is the two-hash ruling above: the recorded sha describes the package
+AS SUBMITTED, so a local file matching it is the UNCLEANED original, and the
+sha check that normally proves a recovery would here be proving that the
+operator is about to restore material the intake deliberately removed.
+`RowFacts.cleaned` (derived from `cleaning_json`) makes `planSlotRecovery`
+refuse with that sentence and propose no command; `work:import` refuses the
+same row without `--force`, and `work:archive`/`work:backfill` verify stored
+bytes against `cleaning_json`'s hashes rather than the row's stamped ones, so a
+cleaned row no longer prints a false MISMATCH.
 
 **External-recovery correlation (2026-08-29)**: `npm run work:correlate -- <dir>`
 (`scripts/work-archive-correlate.ts`, VM-only because DATABASE_URL resolves

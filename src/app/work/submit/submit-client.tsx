@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  CLEANED_ROW_NOTE,
   HELD_NEXT_STEPS,
   isTransferableStatus,
   KIND_LABELS,
@@ -60,6 +61,7 @@ interface StatusRow {
   owner: string;
   /** Set when the row has been moved since it was created. */
   movedFrom: string | null;
+  cleanedPaths: string[];
   /** §5.16 time saved per month, in MINUTES; null = nothing reported. Added
    * the same day statusView grew it, per this interface's header rule: it is
    * hand-written, so a field the server projects is invisible here with no
@@ -919,6 +921,20 @@ export function SubmitClient({
                 <p className="mt-1 text-xs text-faint">
                   Originally submitted by {r.movedFrom}.
                 </p>
+              )}
+              {/* Rotation has no expiry, so this shows on every status,
+                  published included. The submit dialog said it once and then
+                  closed; this row is where the person who shut the tab can
+                  still find which files to go and rotate. */}
+              {r.cleanedPaths.length > 0 && (
+                <div className="mt-1">
+                  <p className="text-xs text-faint">{CLEANED_ROW_NOTE}</p>
+                  <ul className="mono text-xs text-faint">
+                    {r.cleanedPaths.map((p) => (
+                      <li key={p}>{p}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
               {r.status === "published" && r.slug && (
                 <p className="mt-1">

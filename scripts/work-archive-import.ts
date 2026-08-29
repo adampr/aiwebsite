@@ -109,6 +109,7 @@ import {
   storeArchiveFilesAt,
 } from "../src/lib/work/archive-store";
 import { sanitizeStoredName } from "../src/lib/work/archive-naming";
+import { cleanedPathsOf, parseCleaning } from "../src/lib/work/cleaning";
 import {
   ARCHIVE_OPS_LOCK_KEY,
   MD_SLOT,
@@ -160,6 +161,7 @@ async function main() {
     .select({
       hasArchive: sql<boolean>`${S.archiveData} is not null`,
       hasMd: sql<boolean>`${S.mdData} is not null`,
+      cleaningJson: S.cleaningJson,
     })
     .from(S)
     .where(eq(S.id, id))
@@ -168,6 +170,25 @@ async function main() {
     die(
       "row still holds its original bytes (archive_data/md_data): import is a recovery lane for byte-less rows only. Use npm run work:backfill, which stores the row's own bytes."
     );
+  // A CLEANED ROW REFUSES (§5.16 cleaning, 2026-08-29), and this is the
+  // sharpest edge the two-hash ruling opens. archive_sha256 describes what the
+  // SUBMITTER SENT, deliberately, so work:correlate can still recognise their
+  // copy of their own file. That means a recovered original PASSES the sha
+  // gate here, and filing it would put the credential material we removed back
+  // on disk, hash-verified and looking authoritative. --force still works, for
+  // the operator who has read this and means it.
+  const rowCleaning = parseCleaning(bits[0]?.cleaningJson ?? null);
+  if (rowCleaning && !force) {
+    const removed = cleanedPathsOf(rowCleaning);
+    die(
+      [
+        "row was CLEANED at intake: its recorded sha256 is the hash of the package as SUBMITTED, not of what was stored.",
+        "A local file matching that hash is the uncleaned original, and importing it would restore material that was deliberately removed:",
+        ...removed.map((r) => `  ${r}`),
+        "If you have the cleaned copy and mean to file it, re-run with --force.",
+      ].join("\n")
+    );
+  }
 
   // Per-SLOT ledger gate (admin-deleted included): a ledger row at a slot
   // this run would write refuses (live = no silent double-import;

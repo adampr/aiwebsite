@@ -38,9 +38,13 @@ import {
   MISSING_ARCH_DOC_MESSAGE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
+  cleanedBeforeRefusalLead,
+  cleaningReceiptBlock,
   workSubmissionsEnabled,
   type WorkKind,
 } from "./config";
+import { decideStorage } from "./cleaning";
+import { reportIntakeCleaningIssue } from "@/lib/report-issue";
 import { kindVerdictSentence } from "./classify";
 import {
   composeParagraphs,
@@ -1276,6 +1280,9 @@ export async function handleWorkEmail(
         extracted.code === "missing_architecture_doc" ||
           (extracted.code === "doc_too_short" && failedKind === "program")
           ? {
+              cleaned: extracted.droppedPaths
+                ? cleanedBeforeRefusalLead(extracted.droppedPaths)
+                : null,
               lead: verdictLead,
               diagnosis: extracted.message,
               // The attached document the submitter is about to be told to
@@ -1291,6 +1298,9 @@ export async function handleWorkEmail(
               instruction: MISSING_ARCH_DOC_MESSAGE,
             }
           : {
+              cleaned: extracted.droppedPaths
+                ? cleanedBeforeRefusalLead(extracted.droppedPaths)
+                : null,
               diagnosis: extracted.message,
               evidence: extracted.paths?.length
                 ? [`Files: ${extracted.paths.slice(0, 20).join(", ")}`]
@@ -1475,6 +1485,11 @@ export async function handleWorkEmail(
   let mdMeta:
     | { name: string; sha256: string; bytes: number; data: Buffer }
     | undefined;
+  /** The standalone document's own walk, hoisted so the storage decision below
+   * can see whether IT was cleaned. Null when no .md rode along, or when the
+   * reviewed document came out of the package instead (those bytes are the
+   * package walk's and are already cleaned). */
+  let mdWalk: ExtractOk | null = null;
   // WHEN THE STANDALONE WINS, and the one place this lane deliberately does
   // NOT match the web routes. There, the second upload always outranks the
   // package's own document for either kind, and that is right: the person
@@ -1495,6 +1510,7 @@ export async function handleWorkEmail(
       }
       docText = mdExtract.docText;
       corpus = mergeSkillCorpus(mdExtract, pkgWalk);
+      mdWalk = mdExtract;
       mdMeta = {
         name: mdFile.name.slice(0, 200),
         sha256: mdExtract.archiveSha256,
@@ -1618,6 +1634,19 @@ export async function handleWorkEmail(
   }
 
   // ── Persist + kick (route parity) ────────────────────────────────
+  // Route parity for the cleaning decision too: same function, same rule, so
+  // this lane cannot drift into storing what the web lanes clean.
+  const storage = decideStorage({
+    pkg: pkgWalk,
+    submittedArchive: bytes,
+    md: mdFile && mdWalk ? { extract: mdWalk, submitted: mdFile.bytes } : null,
+  });
+  const mdForRow = mdMeta
+    ? { ...mdMeta, data: storage.mdData ?? mdMeta.data }
+    : undefined;
+  if (storage.cleaned && storage.failed)
+    log(`archive NOT stored: cleaning rebuild failed (${storage.failed})`);
+
   let row;
   try {
     row = await createSubmission({
@@ -1635,8 +1664,9 @@ export async function handleWorkEmail(
       archiveName: pkgName.slice(0, 200),
       archiveSha256: pkgWalk.archiveSha256,
       archiveBytes: pkgWalk.archiveBytes,
-      archiveData: bytes,
-      md: mdMeta,
+      archiveData: storage.archiveData,
+      md: mdForRow,
+      cleaningJson: storage.cleaningJson,
       parentId: predecessor?.id ?? null,
     });
   } catch (err) {
@@ -1667,10 +1697,29 @@ export async function handleWorkEmail(
 
   // Durable second copy at accept time (archive-store.ts), route parity;
   // failure logs and never fails the submission.
-  await storeArchiveFiles(row.id, title, [
-    { name: pkgName.slice(0, 200), data: bytes },
-    ...(mdMeta ? [{ name: mdMeta.name, data: mdMeta.data }] : []),
-  ]);
+  if (storage.cleaned)
+    reportIntakeCleaningIssue({
+      // Keyed by SENDER DOMAIN, not by sender or submission: episodic, so a
+      // repeat from the same organisation bumps a count instead of opening a
+      // row, and the ledger's 500-row read window survives a mail loop.
+      key: `work-intake:cleaned:email:${senderDomain}`,
+      subject: `Credential-shaped content cleaned from a work submission emailed by ${senderDomain}`,
+      detail: [
+        `submission ${row.id} (${title})`,
+        `sender ${sender}`,
+        `cleaned: ${storage.cleanedPaths.join(", ")}`,
+        ...(storage.failed ? [`archive NOT stored: ${storage.failed}`] : []),
+        "The receipt carried the rotate-anyway notice.",
+      ].join("\n"),
+      // This lane DOES reply, and the receipt below carries the notice.
+      emailed: true,
+    });
+
+  if (storage.archiveData)
+    await storeArchiveFiles(row.id, title, [
+      { name: pkgName.slice(0, 200), data: storage.archiveData },
+      ...(mdForRow ? [{ name: mdForRow.name, data: mdForRow.data }] : []),
+    ]);
 
   let kicked: Awaited<ReturnType<typeof kickPanel>>;
   try {
@@ -1759,12 +1808,27 @@ export async function handleWorkEmail(
               `About that title: your email had no usable subject line, so I took the card name from your message. Renaming and removing are both admin-only, so if it should be called something else, tell Adam and he can retitle the card once it publishes.`,
             ]
       : [];
+  // The cleaning block is HOISTED to sit directly under the first line, above
+  // even the title disclosure, and it is deliberately not an "Also:" note.
+  // Every other adaptation note in this reply tells the sender what happened
+  // to their subject line; this one tells them to go rotate a live credential,
+  // and the notes array renders at the very bottom under the blurb-length and
+  // kind-line trivia. Rotation does not go below trivia.
+  const cleaningBlock = storage.cleaned
+    ? [
+        ``,
+        cleaningReceiptBlock(storage.cleanedPaths),
+        ``,
+        `Files: ${storage.cleanedPaths.join(", ")}`,
+      ]
+    : [];
   await sendTronEmail({
     to: sender,
     subject: replySubject,
     headers: replyHeaders,
     text: [
       receipt[0],
+      ...cleaningBlock,
       ...disclosure,
       ...receipt.slice(1),
       ...notes.flatMap((n) => [``, n]),

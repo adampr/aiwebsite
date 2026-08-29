@@ -94,6 +94,23 @@ const META_COMMENTARY_PATTERNS: { re: RegExp; label: string }[] = [
   },
   { re: /\bthe submission\b/i, label: "submission-process language" },
   { re: /\bwithheld\b/i, label: "evidence-status language" },
+  // Intake-process language (2026-08-29, the cleaning round). A redacted
+  // corpus gives the panel a new way to write about OUR pipeline instead of
+  // the tool, which is the 2026-07-31 incident's exact shape.
+  //
+  // "at intake" is ours, never a tool's. The redaction pattern is restricted
+  // to PAST and PERFECT passives on purpose: that is the line between
+  // reporting what happened to this submission and describing what a tool
+  // habitually does. Two published cards say "The proposal is sanitized
+  // first" and "The published copy of the skill is sanitized by design" in
+  // the present tense, and a credential-scrubbing tool submitted tomorrow
+  // would say the same. Widening this to is/are would hold exactly the cards
+  // this page exists for.
+  { re: /\bat intake\b/i, label: "intake-process language" },
+  {
+    re: /\b(?:credential|secret|password|api key|token)s?\b[^.!?]{0,30}\b(?:were|was|have been|had been)\s+(?:redacted|removed|stripped|scrubbed|cleaned|sanitized)\b/i,
+    label: "intake-process language",
+  },
   { re: /\bprovisional(?:ly)?\b/i, label: "evidence-status language" },
   {
     re: /\bevidence (?:was |is |remained )?(?:unavailable|pending|absent|missing|needed)\b/i,
@@ -126,6 +143,13 @@ export function stringViolations(field: string, s: string): string[] {
     v.push(`${field}: contains an email address`);
   if (/(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/.test(s))
     v.push(`${field}: contains a phone number`);
+  // The intake redaction marker (2026-08-29). The panel reads a cleaned
+  // corpus, so a placeholder is sitting right there in the evidence looking
+  // like submitter text. Banned in EVERY field including the title, unlike the
+  // meta-commentary block: a card is about the tool, never about what was
+  // taken out of the package it arrived in, and no tool is named this.
+  if (/\[redacted:/i.test(s))
+    v.push(`${field}: quotes the intake redaction marker`);
   for (const adverb of BANNED_ADVERBS) {
     if (new RegExp(`\\b${adverb}\\b`, "i").test(s))
       v.push(`${field}: contains the frequency adverb "${adverb}"`);

@@ -17,11 +17,13 @@ import { archiveStoreUsage } from "@/lib/work/archive-store";
 import { isExhibitRelPath } from "@/lib/work/archive-naming";
 import { companyById } from "@/lib/roadmap/db";
 import {
+  CLEANED_ADMIN_NOTE,
   KIND_LABELS,
   formatByteSize,
   workSubmissionsEnabled,
   type WorkKind,
 } from "@/lib/work/config";
+import { cleanedPathsOf, parseCleaning } from "@/lib/work/cleaning";
 import { WorkAdminActions } from "./actions-client";
 import { WorkStorageList } from "./storage-actions-client";
 
@@ -230,6 +232,33 @@ export default async function AdminWorkPage() {
                     new version. Kept for rollback.
                   </p>
                 )}
+                {/* The one owner surface that exists for a HELD or FAILED
+                    row, which never sends a retention email, so without this
+                    a cleaned submission that never publishes tells the owner
+                    nothing at all. */}
+                {(() => {
+                  const cleaning = parseCleaning(r.cleaningJson);
+                  if (!cleaning) return null;
+                  const paths = cleanedPathsOf(cleaning);
+                  return (
+                    <div className="mt-2 text-xs text-faint">
+                      <p>{CLEANED_ADMIN_NOTE}</p>
+                      <ul className="mono">
+                        {paths.map((p) => (
+                          <li key={p}>{p}</li>
+                        ))}
+                      </ul>
+                      {cleaning.failed && (
+                        <p>
+                          No archive was retained for this row: the cleaned
+                          rebuild could not be verified ({cleaning.failed}), so
+                          nothing was stored rather than storing the upload as
+                          sent.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
                 {r.panelError && (
                   <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-faint">
                     {r.panelError}

@@ -65,6 +65,7 @@ import {
   storeArchiveFilesAt,
 } from "../src/lib/work/archive-store";
 import { sanitizeStoredName } from "../src/lib/work/archive-naming";
+import { parseCleaning } from "../src/lib/work/cleaning";
 import {
   ARCHIVE_OPS_LOCK_KEY,
   MD_SLOT,
@@ -137,6 +138,7 @@ async function main() {
       mdBytes: S.mdBytes,
       hasArchive: sql<boolean>`${S.archiveData} is not null`,
       hasMd: sql<boolean>`${S.mdData} is not null`,
+      cleaningJson: S.cleaningJson,
     })
     .from(S)
     .orderBy(asc(S.createdAt));
@@ -254,7 +256,14 @@ async function main() {
           continue;
         }
         const l = unclaimed.splice(idx, 1)[0];
-        const stamped = e.slot === MD_SLOT ? row.mdSha256 : row.archiveSha256;
+        // A CLEANED row's stamped hash describes the package as SUBMITTED,
+        // not the cleaned bytes on disk, so comparing against it would print
+        // this note on every cleaned row and train the operator to ignore it.
+        const rowCleaning = parseCleaning(row.cleaningJson);
+        const stamped =
+          e.slot === MD_SLOT
+            ? (rowCleaning?.md?.sha256 ?? row.mdSha256)
+            : (rowCleaning?.archive?.sha256 ?? row.archiveSha256);
         const note =
           stamped && stamped !== l.sha256
             ? " (NOTE: sha256 differs from the row's recorded hash)"

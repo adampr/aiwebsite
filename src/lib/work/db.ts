@@ -78,9 +78,16 @@ export async function createSubmission(opts: {
   archiveName: string;
   archiveSha256: string;
   archiveBytes: number;
-  archiveData: Buffer;
+  /** The bytes to KEEP, which since 2026-08-29 is the cleaned rebuild when the
+   * intake scan found something. NULL is a deliberate outcome, not an error
+   * path: when a rebuild cannot be verified we store no archive at all rather
+   * than fall back to the submitted bytes, because those are precisely the
+   * ones we were told to clean. */
+  archiveData: Buffer | null;
   // The standalone SKILL.md (CoWork Skill kind only).
   md?: { name: string; sha256: string; bytes: number; data: Buffer };
+  /** JSON CleaningRecord summary, or null when nothing was cleaned. */
+  cleaningJson?: string | null;
   /** §5.16 updates: the published card this row proposes to replace. A row
    * with parentId set parks as pending_approval for the admin swap, unless
    * autoApprove was stamped at intake. */
@@ -141,6 +148,7 @@ export async function createSubmission(opts: {
       archiveName: opts.archiveName,
       archiveSha256: opts.archiveSha256,
       archiveBytes: opts.archiveBytes,
+      cleaningJson: opts.cleaningJson ?? null,
       // ?? null rather than leaving it out: an omitted key and an explicit
       // null insert the same row today, but stating it keeps "not reported"
       // visible at the one place every intake lane passes through.
@@ -215,6 +223,10 @@ const LIST_COLS = {
   submitterEmail: S.submitterEmail,
   creatorEmail: S.creatorEmail,
   companyId: S.companyId,
+  // §5.16 cleaning: a small JSON scalar, and the submitter's own list is the
+  // only surface where the rotation instruction survives closing the tab, so
+  // it has to ride the projection the poll already reads.
+  cleaningJson: S.cleaningJson,
   // §5.16 time saved: one small integer, and the submissions lists are the
   // only place the OWNER can edit it after the fact, so the projection that
   // feeds those lists has to carry the current value or the editor would
@@ -243,6 +255,7 @@ export type SubmissionListRow = Pick<
   | "submitterEmail"
   | "creatorEmail"
   | "companyId"
+  | "cleaningJson"
   | "timeSavedMinutes"
 >;
 

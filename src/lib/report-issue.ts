@@ -71,3 +71,40 @@ export function reportFailureEmailIssue(opts: {
     emailed: opts.emailed,
   });
 }
+
+/**
+ * A §5.16 submission whose upload was CLEANED at intake (2026-08-29). NOT a
+ * failure: the submission was accepted and reviewed, and reusing
+ * reportFailureEmailIssue would file a success under a function whose name,
+ * header and `emailed` parameter all say "failure email".
+ *
+ * The owner needs an at-intake channel for this and has none otherwise. There
+ * is no "submission received" owner email anywhere in notify.ts, so a cleaned
+ * submission that is HELD or FAILS would tell the owner nothing, ever: the
+ * retention mail that would have carried the notice only fires on publish.
+ *
+ * WARN, not lower, and the reason is the read path rather than drama:
+ * scripts/issues.mjs ranks WARN at 2 and unknown severities at 4, so anything
+ * softer sorts below every routine fleet warning and is read last, if at all.
+ *
+ * KEYS STAY EPISODIC, exactly as the header above requires: (event class,
+ * lane), never per submission and never per detector class. A per-path or
+ * per-rule key would be dozens of rows per incident and would eat the same
+ * 500-row read window this module exists to protect.
+ */
+export function reportIntakeCleaningIssue(opts: {
+  key: string;
+  subject: string;
+  detail: string;
+  /** True only where a reply actually went out (the email lane). */
+  emailed: boolean;
+}): void {
+  void recordIssue(siteConfig.site.slug, {
+    source: "module",
+    key: opts.key,
+    severity: "WARN",
+    subject: opts.subject,
+    detail: opts.detail,
+    emailed: opts.emailed,
+  });
+}

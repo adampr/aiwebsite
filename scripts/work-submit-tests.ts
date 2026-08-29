@@ -352,8 +352,10 @@ function main(): void {
     "the too-short copy must not name a Skill: this field carries a program's architecture doc just as often"
   );
   assert.equal(
-    standaloneDocMessage(err({ code: "secrets_detected", message: "rotate them" })),
-    "rotate them",
+    // Was "secrets_detected" until the 2026-08-29 cleaning round retired that
+    // code; any kind-neutral code carries the same property.
+    standaloneDocMessage(err({ code: "archive_too_complex", message: "too many files" })),
+    "too many files",
     "kind-neutral copy passes through"
   );
   assert.match(
@@ -361,8 +363,8 @@ function main(): void {
     /Your package contains an archive that could not be read, so the panel could not finish inspecting repo\.zip\./
   );
   assert.equal(
-    rescuePassMessage(err({ code: "secrets_detected", message: "rotate them" }), "repo.zip"),
-    "rotate them"
+    rescuePassMessage(err({ code: "archive_too_complex", message: "too many files" }), "repo.zip"),
+    "too many files"
   );
   {
     const pinned = okPkg({
@@ -389,8 +391,12 @@ function main(): void {
     "a skill's doc failure never reaches this branch: the skill ladder returns ok-with-docMissing"
   );
   assert.ok(
-    !rescueApplies(err({ code: "secrets_detected", kind: "program" })),
-    "a clean standalone must never launder a dirty archive"
+    // The old "a clean standalone must never launder a dirty archive" leg
+    // named secrets_detected, which no longer exists: nothing refuses for
+    // carrying credentials since 2026-08-29, they are cleaned on every pass.
+    // What the branch still must not do is rescue a STRUCTURAL failure.
+    !rescueApplies(err({ code: "archive_too_complex", kind: "program" })),
+    "a standalone document rescues a missing doc, never an unreadable package"
   );
   assert.ok(!rescueApplies(err({ code: "invalid_archive", kind: "program" })));
   assert.ok(!rescueApplies(err({ code: "archive_too_complex", kind: "program" })));
@@ -399,7 +405,7 @@ function main(): void {
   assert.ok(isDocFailure(err({ code: "missing_architecture_doc", kind: "skill" })));
   assert.ok(isDocFailure(err({ code: "doc_too_short", kind: "program" })));
   assert.ok(!isDocFailure(err({ code: "doc_too_short", kind: "skill" })));
-  assert.ok(!isDocFailure(err({ code: "secrets_detected" })));
+  assert.ok(!isDocFailure(err({ code: "invalid_archive" })));
 
   // ---- small shared bits --------------------------------------------------
   assert.equal(docBaseName("wrapper.skill!/pkg/SKILL.md"), "SKILL.md");

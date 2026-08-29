@@ -34,6 +34,7 @@ import {
   readStoredArchive,
 } from "../src/lib/work/archive-store";
 import { sanitizeStoredName } from "../src/lib/work/archive-naming";
+import { parseCleaning } from "../src/lib/work/cleaning";
 
 function usage(msg: string): never {
   console.error(`${msg}\n\nUsage: npm run work:archive -- <uuid> [--out <dir>] [--list]`);
@@ -66,8 +67,16 @@ async function main() {
     if (slot === "01" && row.mdName) return row.mdName;
     return fileName;
   };
+  // For a CLEANED row (§5.16, 2026-08-29) the row's stamped sha describes the
+  // package as SUBMITTED, while the bytes on disk are the cleaned rebuild, so
+  // comparing them would print a MISMATCH on every cleaned row and teach the
+  // operator to ignore the one alarm that matters. The cleaned hashes are
+  // recorded on the row for exactly this.
+  const rowCleaning = parseCleaning(row.cleaningJson);
   const stampedSha = (name: string): string | null =>
-    name === row.mdName ? row.mdSha256 : row.archiveSha256;
+    name === row.mdName
+      ? (rowCleaning?.md?.sha256 ?? row.mdSha256)
+      : (rowCleaning?.archive?.sha256 ?? row.archiveSha256);
 
   const recovered: {
     name: string;

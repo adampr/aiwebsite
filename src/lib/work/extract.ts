@@ -34,13 +34,19 @@ import {
   BOILERPLATE_MD_BASENAMES,
   MISSING_ARCH_DOC_MESSAGE,
   MISSING_SKILL_DOC_MESSAGE,
-  SECRETS_DETECTED_MESSAGE,
   SKILL_DOC_TOO_SHORT_MESSAGE,
   SUPPORT_MD_BASENAMES,
   WORK_CAPS,
   type WorkKind,
 } from "./config";
-import { fileNameLooksSecret, textLooksSecret } from "./secret-patterns";
+import {
+  GUT_RATIO,
+  REDACTION_TOKEN_RE,
+  fileNameLooksSecret,
+  sanitizeText,
+  type RedactionClass,
+} from "./sanitize";
+import { rebuildWithout, type CleanPlan } from "./sanitize-archive";
 import { classifyWorkKind, type KindVerdict } from "./classify";
 
 export interface ManifestEntry {
@@ -75,8 +81,39 @@ export interface ExtractOk {
   corpus: { path: string; text: string }[]; // doc first when resolved
   manifest: ManifestEntry[];
   manifestTruncated: boolean;
+  /** sha256 and length of the bytes the SUBMITTER SENT, always, even when the
+   * archive we keep is a cleaned rebuild of them. This is a provenance value:
+   * work:import and work:correlate compare it against the submitter's own copy
+   * of their own file, so redefining it to describe our rebuild would make the
+   * original report as never submitted. What we actually stored is described
+   * by `cleaning.archive` below. */
   archiveSha256: string;
   archiveBytes: number;
+  /** Present only when the intake scan found something (§5.16 cleaning, owner
+   * directive 2026-08-29). Absent on the overwhelming majority of uploads, and
+   * absence is what tells a caller to store the submitted bytes untouched. */
+  cleaning?: CleaningRecord;
+}
+
+/** What was taken out of an upload, and what we are allowed to keep. Never
+ * carries a matched value, only paths and rule ids. */
+export interface CleaningRecord {
+  /** Display paths dropped from the stored archive entirely. */
+  droppedPaths: { path: string; reason: string }[];
+  /** Display paths whose text was rewritten in place. */
+  redactedPaths: string[];
+  /** Display paths that left the corpus whole (unterminated key material). */
+  excludedPaths: { path: string; reason: string }[];
+  /** Distinct rule ids that fired, for disclosure and the issue ledger. */
+  rules: { ruleId: string; cls: RedactionClass }[];
+  /** The cleaned artifact for this slot (the rebuilt archive, or the rewritten
+   * standalone document): the ONLY bytes a caller may persist. Null when the
+   * rebuild could not be trusted, which means nothing is stored at all - never
+   * a fallback to the submitted bytes, which are the ones we were told to
+   * clean. */
+  stored: { bytes: Buffer; sha256: string; length: number } | null;
+  /** Why `stored` is null. */
+  failed?: string;
 }
 
 export interface ExtractErr {
@@ -87,10 +124,14 @@ export interface ExtractErr {
     | "missing_architecture_doc"
     | "missing_skill_doc"
     | "ambiguous_skill_doc"
-    | "secrets_detected"
     | "doc_too_short";
   message: string;
   paths?: string[];
+  /** Files the cleaning removed before this refusal was reached. A refusal
+   * that says "attach your SKILL.md" is misleading when the package we read
+   * was one .env we then dropped, so the lanes lead with what was taken out
+   * before they give the instruction. */
+  droppedPaths?: string[];
   /** Set on every failure raised AFTER the walk classified the package, so a
    * caller can say WHY it applied the rule that refused (§5.16 kind
    * inference): "this reads as a Code program, because it has a .claude
@@ -109,6 +150,10 @@ export function proseLength(text: string): number {
   const stripped = text
     .replace(/^---\n[\s\S]*?\n---\n/, "")
     .replace(/```[\s\S]*?```/g, "")
+    // A redaction is not prose (2026-08-29). Without this a document that was
+    // mostly credentials would buy its way over archDocMinProseChars with the
+    // placeholders we wrote, and be reviewed as though it said something.
+    .replace(REDACTION_TOKEN_RE, "")
     .replace(/\s+/g, " ")
     .trim();
   return stripped.length;
@@ -273,8 +318,21 @@ export function hasSkillFrontmatter(text: string): boolean {
 interface TextFile {
   path: string; // display path ("!/"-composed for inner entries)
   text: string;
+  /** The bytes of `text`, and they MUST follow it. This buffer becomes
+   * ExtractOk.docRawBytes, which the routes write into the md_* columns and
+   * the retention email attaches as its own file. A cleaner that updated
+   * `text` and left `buf` alone would leave the corpus clean and mail the
+   * original credential out of the building. */
   buf: Buffer;
   size: number;
+  /** Characters replaced by placeholders, for the gut guard in finish(). */
+  redactedChars: number;
+  /** Length of the text BEFORE redaction. The gut guard is a fraction OF THE
+   * ORIGINAL FILE, so it needs the original denominator: dividing by the
+   * cleaned length instead compares removed characters against a string that
+   * has had them removed and the placeholders added back, which is a ratio
+   * that can exceed 1 and does not mean what the threshold says. */
+  originalChars: number;
   /** True when this text came from INSIDE a lazily-opened inner archive.
    * Recorded at walk time rather than recovered by looking for "!/" in the
    * path: normalizePath accepts a directory segment ending in "!", so a real
@@ -285,7 +343,23 @@ interface TextFile {
 
 interface WalkState {
   manifest: ManifestEntry[];
-  secretPaths: string[];
+  /** Entries to omit from the rebuilt archive, keyed by RAW zip name.
+   *
+   * Raw, never the display path: normalizePath rewrites "\" to "/", so a
+   * Windows-authored "dir\.env" has the manifest path "dir/.env" and the zip
+   * key "dir\.env". A plan keyed on the display path would miss it, and the
+   * credential would ride into the stored archive silently and only for
+   * archives authored on Windows. Verified against the pinned jszip: a
+   * backslash name survives load and generate as a backslash key. */
+  drop: Map<string, { path: string; reason: string }>;
+  /** Replacement bytes for entries whose text was rewritten, keyed the same
+   * way. Produced once, at the moment of detection, so the stored archive, the
+   * corpus and the reviewed document can never disagree about what a redacted
+   * file says. */
+  redact: Map<string, Buffer>;
+  redactedPaths: string[];
+  excludedPaths: { path: string; reason: string }[];
+  rules: Map<string, RedactionClass>;
   texts: TextFile[];
   innerArchives: { path: string; entry: JSZip.JSZipObject; size: number }[];
   entryCount: number;
@@ -299,7 +373,14 @@ async function walkLevel(
   zip: JSZip,
   prefix: string,
   collectInner: boolean,
-  state: WalkState
+  state: WalkState,
+  /** Set only when walking INSIDE a lazily-opened inner archive: the outer
+   * entry that contains this level. A hit found in here cannot be patched in
+   * place, because rewriting an inner archive and re-embedding it would be the
+   * first code in this pipeline to treat a nested archive as writable, and it
+   * would cost a second full rebuild inside the one we are already doing. The
+   * whole inner archive is dropped from the outer instead. */
+  owner: { rawName: string; path: string } | null = null
 ): Promise<ExtractErr | null> {
   const entries = Object.values(zip.files).filter((e) => !e.dir);
   state.entryCount += entries.length;
@@ -327,8 +408,18 @@ async function walkLevel(
         ?.uncompressedSize ?? 0;
     state.manifest.push({ path, bytes: size });
     const base = rawPath.split("/").pop() || "";
-    if (fileNameLooksSecret(base)) state.secretPaths.push(path);
-    else if (TEXT_EXT.test(base) && size <= WORK_CAPS.perEntryInflateMaxBytes)
+    if (fileNameLooksSecret(base)) {
+      // The file IS the secret: there is no content-minus-the-secret, so it is
+      // never inflated, never decoded, never in the corpus, and since this
+      // round it leaves the stored archive instead of refusing the upload.
+      const target = owner ?? { rawName: entry.name, path };
+      state.drop.set(target.rawName, {
+        path: target.path,
+        reason: owner
+          ? "bundled archive held a credential file"
+          : "filename marks it as key material",
+      });
+    } else if (TEXT_EXT.test(base) && size <= WORK_CAPS.perEntryInflateMaxBytes)
       candidates.push({ path, entry, size });
     else if (
       collectInner &&
@@ -351,25 +442,56 @@ async function walkLevel(
     state.inflatedBytes += out.buf.length;
     const text = decodeUtf8Text(out.buf);
     if (text === null) continue;
-    if (textLooksSecret(text)) state.secretPaths.push(f.path);
-    else
-      state.texts.push({
-        path: f.path,
-        text,
-        buf: out.buf,
-        size: f.size,
-        inner: prefix !== "",
+    // The ONE detector, and it is the same call that does the removing.
+    const clean = sanitizeText(text);
+    for (const hit of clean.hits) state.rules.set(hit.ruleId, hit.cls);
+    if (clean.excludeFile) {
+      // Key material we could not span (a BEGIN header with no END inside the
+      // block bound). Leaving it in the corpus because a marker was missing is
+      // the one outcome this is all here to prevent, so the file leaves whole.
+      state.excludedPaths.push({ path: f.path, reason: clean.excludeFile });
+      const target = owner ?? { rawName: f.entry.name, path: f.path };
+      state.drop.set(target.rawName, {
+        path: target.path,
+        reason: owner
+          ? "bundled archive held unterminated key material"
+          : "unterminated key material",
       });
+      continue;
+    }
+    if (clean.changed) {
+      state.redactedPaths.push(f.path);
+      if (owner)
+        state.drop.set(owner.rawName, {
+          path: owner.path,
+          reason: "bundled archive held credential material",
+        });
+      else state.redact.set(f.entry.name, Buffer.from(clean.text, "utf8"));
+    }
+    state.texts.push({
+      path: f.path,
+      text: clean.text,
+      // Follows the text, always. See TextFile.buf.
+      buf: clean.changed ? Buffer.from(clean.text, "utf8") : out.buf,
+      // The DECLARED size: ordering and every budget must stay independent of
+      // what redaction did, or two identical uploads could walk differently.
+      size: f.size,
+      redactedChars: clean.redactedChars,
+      originalChars: text.length,
+      inner: prefix !== "",
+    });
   }
   return null;
 }
 
-function secretsErr(paths: string[]): ExtractErr {
+/** The dropped paths a REFUSAL should lead with. A submission whose package
+ * was one .env would otherwise be told to attach the SKILL.md it never had,
+ * with no mention of the file we took out, which is an accurate mechanism
+ * attached to the wrong instruction. */
+function droppedForRefusal(state: WalkState): { droppedPaths?: string[] } {
+  if (state.drop.size === 0) return {};
   return {
-    ok: false,
-    code: "secrets_detected",
-    message: SECRETS_DETECTED_MESSAGE,
-    paths: paths.slice(0, 20),
+    droppedPaths: [...state.drop.values()].map((d) => d.path).slice(0, 20),
   };
 }
 
@@ -439,7 +561,11 @@ export async function inspectArchive(
   }
   const state: WalkState = {
     manifest: [],
-    secretPaths: [],
+    drop: new Map(),
+    redact: new Map(),
+    redactedPaths: [],
+    excludedPaths: [],
+    rules: new Map(),
     texts: [],
     innerArchives: [],
     entryCount: 0,
@@ -453,8 +579,6 @@ export async function inspectArchive(
       code: "archive_too_complex",
       message: `The archive must contain between 1 and ${WORK_CAPS.zipMaxEntries} files (files inside a packaged .skill count toward the limit).`,
     };
-  if (state.secretPaths.length > 0) return secretsErr(state.secretPaths);
-
   // ---- classify (§5.16 kind inference) ----
   // Runs on the OUTER level only: state holds nothing else yet, because the
   // inner open below is gated on the decision this makes. Every later return
@@ -473,11 +597,11 @@ export async function inspectArchive(
   });
   const resolved: WorkKind = kind ?? kindVerdict.kind;
 
-  const finish = (
+  const finish = async (
     doc: TextFile | null,
     docMissing?: "missing" | "too_short" | "ambiguous",
     candidatePaths?: string[]
-  ): ExtractOk => {
+  ): Promise<ExtractOk> => {
     const corpus: { path: string; text: string }[] = [];
     let total = 0;
     let docText = "";
@@ -495,10 +619,31 @@ export async function inspectArchive(
     // caller ran first.
     for (const t of [...state.texts].sort((a, b) => a.size - b.size)) {
       if (doc && t.path === doc.path) continue;
+      // The gut guard: a supporting file that is now mostly placeholders is
+      // not evidence, and handing the panel four kilobytes of redaction tokens
+      // is worse than handing it nothing. The reviewed doc is never dropped
+      // here - if IT was gutted, proseLength has already pushed it under the
+      // prose floor and it refuses through doc_too_short, which is the honest
+      // failure and the one that tells the submitter to expand it.
+      if (t.redactedChars / Math.max(t.originalChars, 1) > GUT_RATIO) continue;
       if (total + t.text.length > WORK_CAPS.corpusTotalMaxChars) continue;
       corpus.push({ path: t.path, text: t.text });
       total += t.text.length;
     }
+    // The manifest describes THE STORED ARTIFACT: it is rendered into the
+    // panel's file listing and re-read by work:reclassify, so it must not name
+    // a file the archive no longer holds. What was removed is recorded in the
+    // cleaning record instead, which is where an audit belongs.
+    const droppedDisplay = [...state.drop.values()].map((d) => d.path);
+    const manifest =
+      droppedDisplay.length === 0
+        ? state.manifest
+        : state.manifest.filter(
+            (m) =>
+              !droppedDisplay.some(
+                (d) => m.path === d || m.path.startsWith(`${d}!/`)
+              )
+          );
     return {
       ok: true,
       kind: resolved,
@@ -509,10 +654,41 @@ export async function inspectArchive(
       ...(docMissing ? { docMissing } : {}),
       ...(candidatePaths ? { candidatePaths } : {}),
       corpus,
-      manifest: state.manifest.slice(0, WORK_CAPS.manifestMaxEntries),
-      manifestTruncated: state.manifest.length > WORK_CAPS.manifestMaxEntries,
+      manifest: manifest.slice(0, WORK_CAPS.manifestMaxEntries),
+      manifestTruncated: manifest.length > WORK_CAPS.manifestMaxEntries,
       archiveSha256: createHash("sha256").update(bytes).digest("hex"),
       archiveBytes: bytes.length,
+      ...(await cleaningRecord()),
+    };
+  };
+
+  /** Rebuild the archive without what the walk found, or report that we could
+   * not. Returns an empty object on the common path so an untouched upload's
+   * result is shaped exactly as it was before this round. */
+  const cleaningRecord = async (): Promise<{ cleaning?: CleaningRecord }> => {
+    if (state.drop.size === 0 && state.redact.size === 0) return {};
+    const plan: CleanPlan = {
+      drop: new Set(state.drop.keys()),
+      redact: state.redact,
+    };
+    const rebuilt = await rebuildWithout(zip, plan);
+    const shared = {
+      droppedPaths: [...state.drop.values()],
+      redactedPaths: state.redactedPaths,
+      excludedPaths: state.excludedPaths,
+      rules: [...state.rules].map(([ruleId, cls]) => ({ ruleId, cls })),
+    };
+    return {
+      cleaning: rebuilt.ok
+        ? {
+            ...shared,
+            stored: {
+              bytes: rebuilt.zip,
+              sha256: rebuilt.sha256,
+              length: rebuilt.zip.length,
+            },
+          }
+        : { ...shared, stored: null, failed: rebuilt.reason },
     };
   };
 
@@ -534,6 +710,7 @@ export async function inspectArchive(
         message: MISSING_ARCH_DOC_MESSAGE,
         kind: resolved,
         kindVerdict,
+        ...droppedForRefusal(state),
       };
     if (proseLength(required.text) < WORK_CAPS.archDocMinProseChars)
       return {
@@ -542,6 +719,7 @@ export async function inspectArchive(
         message: MISSING_ARCH_DOC_MESSAGE,
         kind: resolved,
         kindVerdict,
+        ...droppedForRefusal(state),
       };
     return finish(required);
   }
@@ -630,10 +808,20 @@ export async function inspectArchive(
         innerZip,
         `${inner.path}!/`,
         false,
-        state
+        state,
+        { rawName: inner.entry.name, path: inner.path }
       );
       if (innerErr) return innerErr;
-      if (state.secretPaths.length > 0) return secretsErr(state.secretPaths);
+      if (state.drop.has(inner.entry.name)) {
+        // The bundled archive is leaving the stored package whole, so nothing
+        // read out of it may be reviewed or cited: a card drafted from a
+        // document that is not in the retained artifact has no evidence behind
+        // it. Dropping its texts here puts the submission back on the
+        // doc-missing path, which the standalone .md field already rescues.
+        state.texts = state.texts.filter(
+          (t) => !t.path.startsWith(`${inner.path}!/`)
+        );
+      }
       const innerExact = state.texts.find(
         (t) => t.path.startsWith(`${inner.path}!/`) && isSkillMd(t)
       );
@@ -697,20 +885,49 @@ export function inspectBareMd(
       code: "invalid_archive",
       message: "That .md file is not readable UTF-8 text.",
     };
-  if (textLooksSecret(text))
+  // Cleaned, not refused, exactly like the package (2026-08-29). One intake,
+  // one policy: this file is stored and mailed on the same path the package
+  // is, so refusing it would protect nothing the package lane already gives
+  // up. An unterminated private key is the one case with no span to patch, so
+  // that document leaves rather than being stored with key material in it.
+  const clean = sanitizeText(text);
+  if (clean.excludeFile)
     return {
       ok: false,
-      code: "secrets_detected",
-      message: SECRETS_DETECTED_MESSAGE,
+      code: "invalid_archive",
+      message:
+        "That document carries what looks like the start of a private key with no end marker, so I could not clean it without leaving key material behind. Remove the key block and resend, and rotate that key: it left your machine when you sent it.",
       paths: [name],
     };
-  if (proseLength(text) < WORK_CAPS.archDocMinProseChars)
+  const cleanedText = clean.text;
+  const cleanedBytes = clean.changed ? Buffer.from(cleanedText, "utf8") : bytes;
+  // The floor now runs against the CLEANED text, and proseLength does not
+  // count placeholders, so a document that was mostly credentials falls out
+  // here as too short. That is the honest refusal: it was always subject to
+  // this floor, and the instruction it gives ("expand it") is the right one.
+  if (proseLength(cleanedText) < WORK_CAPS.archDocMinProseChars)
     return {
       ok: false,
       code: "doc_too_short",
       message: SKILL_DOC_TOO_SHORT_MESSAGE,
+      ...(clean.changed ? { droppedPaths: [name] } : {}),
     };
-  const docText = text.slice(0, WORK_CAPS.archDocMaxChars);
+  const docText = cleanedText.slice(0, WORK_CAPS.archDocMaxChars);
+  const cleaning: CleaningRecord | null = clean.changed
+    ? {
+        droppedPaths: [],
+        redactedPaths: [name],
+        excludedPaths: [],
+        rules: [...new Map(clean.hits.map((h) => [h.ruleId, h.cls]))].map(
+          ([ruleId, cls]) => ({ ruleId, cls })
+        ),
+        stored: {
+          bytes: cleanedBytes,
+          sha256: createHash("sha256").update(cleanedBytes).digest("hex"),
+          length: cleanedBytes.length,
+        },
+      }
+    : null;
   return {
     ok: true,
     // A submission that is one document and no package is a Skill by
@@ -721,12 +938,22 @@ export function inspectBareMd(
     kindVerdict: BARE_DOC_VERDICT,
     docText,
     docPath: name,
-    docRawBytes: bytes,
+    // The CLEANED bytes, and this line is the whole reason TextFile.buf exists
+    // in the package lane too: docRawBytes is what the routes write into
+    // md_data and what the retention email attaches as its own file. Leaving
+    // the submitted buffer here would keep the corpus clean and mail the
+    // credential out of the building.
+    docRawBytes: cleanedBytes,
     corpus: [{ path: name, text: docText }],
-    manifest: [{ path: name, bytes: bytes.length }],
+    manifest: [{ path: name, bytes: cleanedBytes.length }],
     manifestTruncated: false,
+    // The SUBMITTED hash and length, same provenance rule as the package lane:
+    // work:import gates a recovered copy of the submitter's own file on this
+    // value, so it has to describe what they sent. What we stored is in
+    // `cleaning.stored`.
     archiveSha256: createHash("sha256").update(bytes).digest("hex"),
     archiveBytes: bytes.length,
+    ...(cleaning ? { cleaning } : {}),
   };
 }
 

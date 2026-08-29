@@ -4,6 +4,7 @@
 import { PANEL_STEP_SLOW_MS, WORK_CAPS } from "./config";
 import { UPDATE_CONFLICT_NOTE, type SubmissionListRow } from "./db";
 import { sameEmail } from "./transfer";
+import { cleanedPathsOf, parseCleaning } from "./cleaning";
 
 export interface SubmissionStatusView {
   id: string;
@@ -56,6 +57,10 @@ export interface SubmissionStatusView {
    * Provenance for a card that reads "submitted by" someone who did not
    * create the row; also the reason the quota did not move with it. */
   movedFrom: string | null;
+  /** Paths the intake scan cleaned out of this upload, empty when it carried
+   * nothing. Shown on EVERY status including published: the success dialog
+   * dies with the dialog, and rotation has no expiry. */
+  cleanedPaths: string[];
   /** Which page this row publishes to, as a label rather than the company
    * UUID: the all-submissions list mixes lanes and two rows under one title
    * would otherwise be indistinguishable. */
@@ -201,6 +206,10 @@ export function statusView(
       row.creatorEmail && !sameEmail(row.creatorEmail, row.submitterEmail)
         ? row.creatorEmail
         : null,
+    cleanedPaths: (() => {
+      const cleaning = parseCleaning(row.cleaningJson);
+      return cleaning ? cleanedPathsOf(cleaning) : [];
+    })(),
     timeSavedMinutes: row.timeSavedMinutes,
     lane: row.companyId === null ? "internal" : "company",
     laneName: row.companyId === null ? null : (opts?.lane?.name ?? null),

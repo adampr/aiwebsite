@@ -18,6 +18,15 @@
 // package for armoring, never "attach nothing". A copy that may bounce is
 // an alarm; zero bytes is a silent loss, and since 2026-08-04 a bounce
 // destroys nothing (the row keeps the bytes permanently).
+//
+// WHAT "ORIGINAL" MEANS HERE SINCE 2026-08-29, and the rule above is only
+// safe because of it: the bytes handed to this module are whatever the row
+// and the archive store hold, and for a cleaned submission (§5.16 intake
+// cleaning) that is already the CLEANED rebuild. The uncleaned upload is
+// never stored, so no fallback path in this file can reach it. Read without
+// this paragraph, the rule looks like it mails the submitted package on every
+// screening failure, which would make this the leak the cleaning round exists
+// to close.
 
 import { createHash } from "node:crypto";
 import JSZip from "jszip";
