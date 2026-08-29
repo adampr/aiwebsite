@@ -149,6 +149,21 @@ export type ComponentView = {
    * the component that was already there.
    */
   added: boolean;
+  /**
+   * ANY of this component's inputs is stored, primary or not.
+   *
+   * The third grade, and it exists because `added` alone produced a THIRD
+   * lie: a row holding only an instructions link is not `added`, so the hub
+   * card fell through to "Nothing listed yet" and read as untouched even
+   * though the admin had typed something. That was a regression against the
+   * old row-existence `savedUnverified`, and a verification pass caught it.
+   *
+   * The division of labour: `added` decides whether to say "add it" (the
+   * primary input is what is missing), `touched` decides whether to say
+   * "nothing listed yet" (nothing at all is stored). `added` implies
+   * `touched`.
+   */
+  touched: boolean;
   /** Every input this component requires is present AND confirmed. Only
    * this may light a step or move the percentage. `added` is always true
    * when this is (folded into view(), pinned in test:roadmap). */
@@ -161,10 +176,13 @@ export type ComponentView = {
 function view(
   row: LinkRow | null,
   added: boolean,
+  touched: boolean,
   enabled: boolean
 ): ComponentView {
   return {
     added: !!row && added,
+    // `added ||` is the stated implication, enforced rather than assumed.
+    touched: !!row && (added || touched),
     // `added &&` is a structural guarantee, not a redundancy: every summary
     // sentence is written on the assumption that counting implies added, so
     // the type must make counting-without-added unrepresentable.
@@ -202,6 +220,16 @@ function urlComponentAdded(row: LinkRow): boolean {
   return !!row.url;
 }
 
+/** ANY input of a URL-bearing component. See ComponentView.touched. */
+function urlComponentTouched(row: LinkRow): boolean {
+  return !!row.url || !!row.docsUrl;
+}
+
+/** ANY input of Developer VMs. */
+function devVmsTouched(row: LinkRow): boolean {
+  return parseEnvironments(row.environmentsJson).length > 0 || !!row.docsUrl;
+}
+
 /** Developer VMs has NO endpoint by design, so its primary input is the
  * hosting environment list. An instructions link alone is NOT this
  * component: "Add Developer VMs" is still the honest sentence when nobody
@@ -215,6 +243,7 @@ export function apiProxyView(row: LinkRow | null): ComponentView {
   return view(
     row,
     !!row && urlComponentAdded(row),
+    !!row && urlComponentTouched(row),
     !!row &&
       fieldCounts(row.urlState, row.urlGraceUntil) &&
       fieldCounts(row.docsState, row.docsGraceUntil)
@@ -230,6 +259,7 @@ export function devVmsView(row: LinkRow | null): ComponentView {
   return view(
     row,
     !!row && devVmsAdded(row),
+    !!row && devVmsTouched(row),
     envs.length > 0 && fieldCounts(row?.docsState, row?.docsGraceUntil)
   );
 }
@@ -239,6 +269,7 @@ export function lakehouseView(row: LinkRow | null): ComponentView {
   return view(
     row,
     !!row && urlComponentAdded(row),
+    !!row && urlComponentTouched(row),
     !!row &&
       fieldCounts(row.urlState, row.urlGraceUntil) &&
       fieldCounts(row.docsState, row.docsGraceUntil)
@@ -302,11 +333,15 @@ export type SecureSummary = {
   /** COUNTING: earning its half right now. */
   apiProxyCounting: boolean;
   devVmsCounting: boolean;
-  /** ADDED: the admin put something into this component. Always true when
-   * the matching *Counting is true. Never write "add X" copy off
-   * *Counting. */
+  /** ADDED: the component's PRIMARY input is stored. Always true when the
+   * matching *Counting is true. Never write "add X" copy off *Counting. */
   apiProxyAdded: boolean;
   devVmsAdded: boolean;
+  /** TOUCHED: ANY input is stored. Decides "nothing listed yet" and nothing
+   * else; "add it" is still honest for a touched component, because what is
+   * missing is the primary input. Implied by *Added. */
+  apiProxyTouched: boolean;
+  devVmsTouched: boolean;
   /** Some counted half is inside a grace window and will drop. */
   failing: boolean;
   /** WHICH counted half is riding grace. Carried per component because an
@@ -326,6 +361,8 @@ export function secureSummary(v: SecureView): SecureSummary {
     devVmsCounting: v.devVms.enabled,
     apiProxyAdded: v.apiProxy.added,
     devVmsAdded: v.devVms.added,
+    apiProxyTouched: v.apiProxy.touched,
+    devVmsTouched: v.devVms.touched,
     failing: v.failing,
     apiProxyFailing: v.apiProxy.failing,
     devVmsFailing: v.devVms.failing,

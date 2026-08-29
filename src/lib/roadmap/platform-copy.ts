@@ -242,22 +242,33 @@ export const ATTEST_WITHDRAW = "Remove my confirmation";
  * always fitted is the 41-character "A link stopped answering · open this
  * step". Every line below is at or under that. */
 export function secureCardLine(s: SecureSummary): string {
-  if (s.failing) return "A link stopped answering · open this step";
-  if (s.done) return "API proxy and developer VMs counting";
-  // The inner branch is the fix. "to go" is now reachable ONLY when the
-  // other component genuinely holds nothing.
+  if (s.failing) return FAILING_CARD_LINE;
+  if (s.done) return "API proxy and Developer VMs counting";
+  // The inner branch is the fix. "to go" is reachable only when the other
+  // component's own address (or environment list) is still missing, which is
+  // exactly when "you still have to add it" is true.
   if (s.apiProxyCounting)
     return s.devVmsAdded
-      ? "API proxy counting · Dev VMs not counting"
+      ? "API proxy counting · Developer VMs not counting"
       : "API proxy counting · Developer VMs to go";
   if (s.devVmsCounting)
     return s.apiProxyAdded
-      ? "Dev VMs counting · API proxy not counting"
+      ? "Developer VMs counting · API proxy not counting"
       : "Developer VMs counting · API proxy to go";
-  if (s.apiProxyAdded || s.devVmsAdded)
+  // TOUCHED, not added: a component holding only an instructions link has
+  // something saved, and falling through to "Nothing listed yet" made the
+  // card read as untouched. That regression is what this grade exists for.
+  if (s.apiProxyTouched || s.devVmsTouched)
     return "Saved, not counting yet · open this step";
   return "Nothing listed yet";
 }
+
+/** Shared by steps 09, 10 and 11, which is why it lives here rather than
+ * inline in the two hubs. "Failing its check" rather than the older "stopped
+ * answering": a rung-2 `internal` field enters its grace window without our
+ * ever having opened a socket to it, so the older wording described a
+ * conversation that never happened. */
+export const FAILING_CARD_LINE = "A link is failing its check · open this step";
 
 /** The closing line on /roadmap/secure.
  *
@@ -291,32 +302,62 @@ export function secureStepLine(s: SecureSummary): string {
  * count, because one component can put two fields in grace at once.
  */
 function graceNote(s: SecureSummary): string {
-  const both = s.apiProxyFailing && s.devVmsFailing;
-  if (both)
-    return "Addresses on both components have started failing their checks. Their own lines above say how long they still count.";
+  // Deliberately does NOT count addresses: one component can put BOTH of its
+  // fields into grace at once, so "an address" would be wrong there.
+  if (s.apiProxyFailing && s.devVmsFailing)
+    return "Checks on both components have started failing. The lines above say how long they still count.";
   const which = s.apiProxyFailing ? "the API proxy" : "Developer VMs";
-  return `An address on ${which} has started failing its check. Its own line above says how long it still counts.`;
+  return `Checks on ${which} have started failing. The lines above say how long it still counts.`;
 }
 
 function secureState(s: SecureSummary): string {
   if (s.done) return "Both components are counting. This step is complete.";
   const half = "which earns half this step.";
   if (s.apiProxyCounting)
-    return s.devVmsAdded
-      ? `The API proxy is counting, ${half} Developer VMs are saved but not counting yet.`
-      : `The API proxy is counting, ${half} Add Developer VMs to finish it.`;
+    return `The API proxy is counting, ${half} ${otherHalf(
+      s.devVmsAdded,
+      s.devVmsTouched,
+      "Developer VMs are",
+      "Add Developer VMs to finish it.",
+      "Developer VMs have an instructions link but no hosting environments yet."
+    )}`;
   if (s.devVmsCounting)
-    return s.apiProxyAdded
-      ? `Developer VMs are counting, ${half} The API proxy is saved but not counting yet.`
-      : `Developer VMs are counting, ${half} Add the API proxy to finish it.`;
+    return `Developer VMs are counting, ${half} ${otherHalf(
+      s.apiProxyAdded,
+      s.apiProxyTouched,
+      "The API proxy is",
+      "Add the API proxy to finish it.",
+      "The API proxy has an instructions link but no address yet."
+    )}`;
   const nothing = "Nothing is counting toward this step yet.";
-  if (s.apiProxyAdded && s.devVmsAdded)
-    return `${nothing} Both components are saved but not counting.`;
-  if (s.apiProxyAdded)
-    return `${nothing} The API proxy is saved but not counting, and Developer VMs are not listed.`;
-  if (s.devVmsAdded)
-    return `${nothing} Developer VMs are saved but not counting, and the API proxy is not listed.`;
-  return nothing;
+  // NOT LISTED is claimed only about a component holding nothing at all.
+  // Saying it about one that has an instructions link saved is the same
+  // class of untruth as the sentence this whole round replaced.
+  if (!s.apiProxyTouched && !s.devVmsTouched) return nothing;
+  const api = s.apiProxyAdded
+    ? "the API proxy is saved but not counting"
+    : s.apiProxyTouched
+      ? "the API proxy has an instructions link but no address yet"
+      : "the API proxy is not listed";
+  const vms = s.devVmsAdded
+    ? "Developer VMs are saved but not counting"
+    : s.devVmsTouched
+      ? "Developer VMs have an instructions link but no hosting environments yet"
+      : "Developer VMs are not listed";
+  return `${nothing} Here, ${api}, and ${vms}.`;
+}
+
+/** The clause describing the half that is NOT counting, by its grade. */
+function otherHalf(
+  added: boolean,
+  touched: boolean,
+  subject: string,
+  addSentence: string,
+  touchedSentence: string
+): string {
+  if (added) return `${subject} saved but not counting yet.`;
+  if (touched) return touchedSentence;
+  return addSentence;
 }
 
 /** The one-word status token beside each line. "Confirmed" is reserved for

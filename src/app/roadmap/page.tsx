@@ -19,7 +19,10 @@ import {
   roadmapEnabled,
 } from "@/lib/roadmap/config";
 import { roadmapStatus } from "@/lib/roadmap/status";
-import { secureCardLine } from "@/lib/roadmap/platform-copy";
+import {
+  FAILING_CARD_LINE,
+  secureCardLine,
+} from "@/lib/roadmap/platform-copy";
 import {
   deniedAdminRequestInWindow,
   openAdminRequest,
@@ -356,14 +359,14 @@ export default async function RoadmapHubPage({ searchParams }: Search) {
     // steps say "not counting" for the same state.
     secure: secureCardLine(status.secure),
     data: status.data.failing
-      ? "A link stopped answering · open this step"
+      ? FAILING_CARD_LINE
       : status.data.done
       ? "Lakehouse listed"
       : status.data.savedUnverified
         ? "Saved, not counting yet · open this step"
         : "Nothing listed yet",
     tools: status.tools.failing
-      ? "A link stopped answering · open this step"
+      ? FAILING_CARD_LINE
       : status.tools.done
       ? `${status.tools.counted} of ${status.tools.total} ${status.tools.total === 1 ? "tool" : "tools"} counting`
       : status.tools.total > 0

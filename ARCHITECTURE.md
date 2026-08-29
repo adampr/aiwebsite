@@ -9030,9 +9030,18 @@ ladder rungs below (reaching it is only the first of them).
   existence, and NOT "any input at all": a proxy row holding only an
   instructions link has no proxy address, and calling that "saved" is the
   exact mirror of the bug the field exists to fix, so "add the API proxy"
-  stays the honest sentence there. `SecureSummary` is the flat projection
-  every summary reads. Copy may call a component missing only from
-  `*Added`, never from `*Counting`.
+  stays the honest sentence there. THE GRADE IS THEREFORE THREE-VALUED, not
+  two: `ComponentView.touched` (ANY input stored, implied by `added`) is the
+  third, and it exists because `added` alone produced a THIRD untruth. A row
+  holding only an instructions link is not `added`, so the hub card fell
+  through to "Nothing listed yet" and read as untouched, which regressed
+  against the old row-existence `savedUnverified`. The division of labour is
+  exact: `added` decides whether to say "add it" (the primary input is what
+  is missing), `touched` decides whether to say "nothing listed yet"
+  (nothing at all is stored), and `enabled` decides credit and nothing else.
+  `SecureSummary` is the flat projection every summary reads. Copy may call
+  a component missing only from `*Added`, never from `*Counting`, and may
+  call it unlisted only from `*Touched`.
 - **10 Data Access** (`/roadmap/data`) — the lakehouse address plus
   instructions.
 - **11 AI Builder Tools** (`/roadmap/tools`) — 1:N tool cards, each with a
@@ -9166,10 +9175,15 @@ address here has stopped answering" binds to whichever component the
 sentence before it named, which in the partial case is the half that is NOT
 failing. It also says "failing its check" rather than "stopped answering",
 because a rung-2 `internal` field can enter grace without our ever having
-opened a socket to it. Steps 10 and 11 keep their inline card chains (one
+opened a socket to it, and for the same reason all three steps now share ONE
+`FAILING_CARD_LINE` ("A link is failing its check") instead of the older "A
+link stopped answering". Steps 10 and 11 keep their inline card chains (one
 component each, so neither can make the step-09 mistake) and now share its
 "Saved, not counting yet" wording rather than saying "not confirmed" for the
-identical state on the same card grid. The runway is deliberately
+identical state on the same card grid. The per-field "Not counting yet:"
+reason also renders for MEMBERS now, not just admins: the levers stay
+admin-only, but a member who is told a component is not counting must be
+able to see why on the same page. The runway is deliberately
 untouched: `RunwayStatus.secure` stays `{done, partial}`, the half is
 genuinely not earned, and "Half done" remains exactly true.
 

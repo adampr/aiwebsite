@@ -469,7 +469,11 @@ export function SingletonForm({
             for a field with no URL, so an empty address or a missing
             instructions link leaves the panel silent. The levers stay
             admin-only; the reason does not. */}
-        {gap && <p className="text-xs" style={faint}>Not counting yet: {gap}</p>}
+        {row && gap && (
+          <p className="text-xs" style={faint}>
+            Not counting yet: {gap}
+          </p>
+        )}
         <p className="text-xs" style={faint}>
           Your company admin keeps this up to date.
         </p>

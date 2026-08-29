@@ -33,7 +33,10 @@ import {
   isPaidStep,
 } from "@/lib/roadmap/config";
 import type { StaffRoadmapStatus } from "@/lib/roadmap/status";
-import { secureCardLine } from "@/lib/roadmap/platform-copy";
+import {
+  FAILING_CARD_LINE,
+  secureCardLine,
+} from "@/lib/roadmap/platform-copy";
 import { RoadmapRunway, RunwayStage } from "@/components/roadmap/runway";
 import { DirectoryCard } from "@/components/roadmap/directory-card";
 import { WorkEntryCard } from "@/components/roadmap/work-entry-card";
@@ -82,14 +85,14 @@ export function StaffHub({
     // and so cannot make that mistake.
     secure: secureCardLine(status.secure),
     data: status.data.failing
-      ? "A link stopped answering · open this step"
+      ? FAILING_CARD_LINE
       : status.data.done
       ? "Lakehouse listed"
       : status.data.savedUnverified
         ? "Saved, not counting yet · open this step"
         : "Nothing listed yet",
     tools: status.tools.failing
-      ? "A link stopped answering · open this step"
+      ? FAILING_CARD_LINE
       : status.tools.done
       ? `${status.tools.counted} of ${status.tools.total} ${status.tools.total === 1 ? "tool" : "tools"} counting`
       : status.tools.total > 0

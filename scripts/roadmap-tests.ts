@@ -60,6 +60,7 @@ import {
   statusCounts,
 } from "../src/lib/roadmap/url-check";
 import {
+  FAILING_CARD_LINE,
   attestedLine,
   internalLine,
   reachedLine,
@@ -568,24 +569,35 @@ ok("PROD SHAPE: a failed api_proxy is ADDED, not counting, and not missing", () 
   }
   // The card names BOTH halves and their states, so nothing on it can be
   // read as "the API proxy is missing".
-  assert.equal(card, "Dev VMs counting · API proxy not counting");
+  assert.equal(card, "Developer VMs counting · API proxy not counting");
   assert.ok(step.includes("The API proxy is saved but not counting yet"), step);
   assert.ok(!step.includes("Add the other component"), step);
 });
 
 ok("step 09 copy: 'to go' and 'Add' survive ONLY where nothing was added", () => {
-  const S = (o: Partial<SecureSummary>): SecureSummary => ({
-    done: false,
-    partial: false,
-    apiProxyCounting: false,
-    devVmsCounting: false,
-    apiProxyAdded: false,
-    devVmsAdded: false,
-    failing: false,
-    apiProxyFailing: false,
-    devVmsFailing: false,
-    ...o,
-  });
+  // `touched` defaults to `added` because added IMPLIES touched; a case that
+  // wants the touched-but-not-added grade sets it explicitly.
+  const S = (o: Partial<SecureSummary>): SecureSummary => {
+    const base = {
+      done: false,
+      partial: false,
+      apiProxyCounting: false,
+      devVmsCounting: false,
+      apiProxyAdded: false,
+      devVmsAdded: false,
+      apiProxyTouched: false,
+      devVmsTouched: false,
+      failing: false,
+      apiProxyFailing: false,
+      devVmsFailing: false,
+      ...o,
+    };
+    return {
+      ...base,
+      apiProxyTouched: base.apiProxyTouched || base.apiProxyAdded,
+      devVmsTouched: base.devVmsTouched || base.devVmsAdded,
+    };
+  };
   // The genuinely-missing halves keep the old imperative wording.
   const vmsMissing = S({ partial: true, apiProxyCounting: true, apiProxyAdded: true });
   assert.equal(secureCardLine(vmsMissing), "API proxy counting · Developer VMs to go");
@@ -623,12 +635,12 @@ ok("step 09 copy: 'to go' and 'Add' survive ONLY where nothing was added", () =>
   const proxyGrace = secureStepLine(
     S({ partial: true, apiProxyCounting: true, apiProxyAdded: true, devVmsAdded: true, failing: true, apiProxyFailing: true })
   );
-  assert.ok(proxyGrace.includes("An address on the API proxy has started failing"), proxyGrace);
+  assert.ok(proxyGrace.includes("Checks on the API proxy have started failing"), proxyGrace);
   assert.ok(!proxyGrace.includes("One address here"), proxyGrace);
   const vmsGrace = secureStepLine(
     S({ partial: true, devVmsCounting: true, devVmsAdded: true, apiProxyAdded: true, failing: true, devVmsFailing: true })
   );
-  assert.ok(vmsGrace.includes("An address on Developer VMs has started failing"), vmsGrace);
+  assert.ok(vmsGrace.includes("Checks on Developer VMs have started failing"), vmsGrace);
   assert.ok(secureStepLine(all[0]!).includes("both components"), "both-failing wording");
   // "stopped answering" is a rung-1 claim: an `internal` field enters grace
   // without our ever having opened a socket to it.
@@ -637,12 +649,13 @@ ok("step 09 copy: 'to go' and 'Add' survive ONLY where nothing was added", () =>
   // Nothing at all still reads exactly as it always did.
   assert.equal(secureCardLine(S({})), "Nothing listed yet");
   assert.equal(secureStepLine(S({})), "Nothing is counting toward this step yet.");
-  // A grace window still outranks every other hub line (unchanged wording,
-  // shared verbatim with steps 10 and 11).
-  assert.ok(secureCardLine(all[0]!).includes("A link stopped answering"));
+  // A grace window still outranks every other hub line, and the line is the
+  // ONE constant steps 09/10/11 share.
+  assert.equal(secureCardLine(all[0]!), FAILING_CARD_LINE);
+  assert.ok(!/stopped answering/.test(FAILING_CARD_LINE));
   // On the step page grace APPENDS, so which half counts is still said.
   assert.ok(secureStepLine(all[0]!).includes("This step is complete."));
-  assert.ok(secureStepLine(all[0]!).includes("failing their checks"));
+  assert.ok(secureStepLine(all[0]!).includes("Checks on both components have started failing"));
   // Site rule: no em dashes in visible copy. Step-page copy has no
   // pre-commit scan, and the ROADMAP_STEPS pin does not reach these.
   for (const line of [...all.map(secureCardLine), ...all.map(secureStepLine)])
@@ -665,8 +678,34 @@ ok("ADDED is the PRIMARY input, so 'saved' is never said about a component with 
       PROD_DEV_VMS!,
     ])
   );
-  assert.ok(/Add the API proxy/.test(secureStepLine(s)), secureStepLine(s));
+  // The step page names exactly what is missing. It must NOT say the proxy
+  // is "saved" (the mirror lie), and it must not claim it is "not listed"
+  // either, because an instructions link IS listed. The card, which has one
+  // short line, keeps "to go": the address is genuinely still to come.
+  const step = secureStepLine(s);
+  assert.ok(step.includes("instructions link but no address yet"), step);
+  assert.ok(!/saved but not counting/.test(step), step);
+  assert.ok(!/not listed/.test(step), step);
   assert.equal(secureCardLine(s), "Developer VMs counting · API proxy to go");
+  // TOUCHED is what stops the hub reading as untouched. A component holding
+  // only an instructions link, with nothing else on the step, used to fall
+  // through to "Nothing listed yet" (a regression this pin exists to catch).
+  const docsOnlyAlone = secureSummary(
+    secureView([secureLink({ kind: "api_proxy", docsUrl: "https://d.example.com/", docsState: "ok" })!])
+  );
+  assert.equal(docsOnlyAlone.apiProxyTouched, true);
+  assert.equal(docsOnlyAlone.apiProxyAdded, false);
+  assert.equal(secureCardLine(docsOnlyAlone), "Saved, not counting yet · open this step");
+  // "not listed" is still correct ABOUT DEV VMS here (no row at all); what
+  // must never be said is that the touched API proxy is not listed.
+  const aloneStep = secureStepLine(docsOnlyAlone);
+  assert.ok(aloneStep.includes("the API proxy has an instructions link"), aloneStep);
+  assert.ok(!aloneStep.includes("the API proxy is not listed"), aloneStep);
+  assert.ok(aloneStep.includes("Developer VMs are not listed"), aloneStep);
+  // Genuinely empty still reads as empty.
+  const empty = secureSummary(secureView([]));
+  assert.equal(secureCardLine(empty), "Nothing listed yet");
+  assert.equal(secureStepLine(empty), "Nothing is counting toward this step yet.");
 
   // dev_vms: the environment list is the component, an instructions link is not.
   assert.equal(devVmsView(secureLink({ kind: "dev_vms", environmentsJson: "[]" }))!.added, false);
