@@ -87,7 +87,7 @@ export function parsePersonFields(bodyIn: unknown):
   const phoneRaw =
     typeof body.phone === "string" ? body.phone.trim().slice(0, 40) : "";
   if (phoneRaw && !/^[0-9+()\-. ext]+$/i.test(phoneRaw))
-    return { ok: false, message: "That phone number does not look right." };
+    return { ok: false, message: "That mobile number does not look right." };
   return {
     ok: true,
     name,

@@ -68,9 +68,9 @@ export default async function RoadmapDirectoryPage() {
           <h1 className="mt-4">The people on this journey</h1>
           <p className="mt-4 max-w-3xl text-sm">
             XL.net&apos;s directory feeds the scorecard: published work is
-            counted per person listed here. Exactly name, email, and phone
-            are kept, nothing more, and no one listed is ever contacted by
-            this site.
+            counted per person listed here. Exactly name, email, and mobile
+            number are kept, nothing more, and no one listed is ever
+            contacted by this site.
           </p>
         </section>
 
@@ -117,9 +117,9 @@ export default async function RoadmapDirectoryPage() {
         <h1 className="mt-4">The people on this journey</h1>
         <p className="mt-4 max-w-3xl text-sm">
           {company.name}&apos;s directory feeds the scorecard: published work
-          is counted per person listed here. Exactly name, email, and phone
-          are kept, nothing more, and no one listed is ever contacted by this
-          site.
+          is counted per person listed here. Exactly name, email, and mobile
+          number are kept, nothing more, and no one listed is ever contacted
+          by this site.
         </p>
       </section>
 

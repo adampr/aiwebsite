@@ -2,8 +2,11 @@
 // API directly (the module's dormant outreach sourcing is cold-lead tooling
 // with its own config surface; this is a client-portal read). Privacy rules:
 // persist EXACTLY {name, email, phone} plus the Apollo person id as the
-// upsert key; the raw response is never persisted or logged; suppressed
-// emails (previously removed by an admin) are skipped and counted.
+// upsert key, where `phone` is the directory's MOBILE column: only an Apollo
+// number typed "mobile" is stored (a work_hq/work_direct/untyped entry is a
+// switchboard or desk line and maps to null); the raw response is never
+// persisted or logged; suppressed emails (previously removed by an admin)
+// are skipped and counted.
 //
 // Failure semantics (ops ruling): fail FAST on any non-OK page (no retry on
 // 429 - the 2/h/company limiter is also the double-click fence), KEEP rows
@@ -35,13 +38,19 @@ export type ApolloImportResult =
       callsUsed: number;
     };
 
+export type ApolloPhoneNumber = {
+  sanitized_number?: string | null;
+  raw_number?: string | null;
+  type?: string | null;
+};
+
 type ApolloPerson = {
   id?: string;
   name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   email?: string | null;
-  phone_numbers?: { sanitized_number?: string | null; raw_number?: string | null }[];
+  phone_numbers?: ApolloPhoneNumber[];
   organization?: { phone?: string | null } | null;
 };
 
@@ -60,9 +69,22 @@ function personEmail(p: ApolloPerson): string | null {
   return email;
 }
 
-function personPhone(p: ApolloPerson): string | null {
-  const n = p.phone_numbers?.[0];
-  return n?.sanitized_number || n?.raw_number || null;
+/**
+ * The directory's phone field is the Mobile column, so only an entry Apollo
+ * types "mobile" may land in it. Apollo lists a person's numbers in no
+ * useful order (observed types: mobile, work_hq, work_direct, home, other)
+ * and the first entry is often the company switchboard, which is how 12
+ * staff rows once carried the HQ line as their "phone". No mobile → null;
+ * the type match is case-insensitive and whitespace-tolerant.
+ */
+export function personPhone(p: ApolloPerson): string | null {
+  const list = Array.isArray(p.phone_numbers) ? p.phone_numbers : [];
+  for (const n of list) {
+    if ((n?.type ?? "").trim().toLowerCase() !== "mobile") continue;
+    const num = n.sanitized_number || n.raw_number || null;
+    if (num) return num;
+  }
+  return null;
 }
 
 // Per-lane in-flight dedup (round 3): two tabs auto-kicking at once must

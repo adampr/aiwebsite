@@ -1297,6 +1297,7 @@ console.log(`\nroadmap-tests: ${passed} checks passed`);
 // both ok and revoked, indeterminate errors never produce missing.
 import { checkDkimWith, type DnsPort } from "../src/lib/roadmap/dkim";
 import { reverifyBinding } from "../src/lib/auth/reverify";
+import { personPhone } from "../src/lib/roadmap/apollo";
 
 type FakeAnswer =
   | { mx: { exchange: string; priority: number }[] }
@@ -1716,6 +1717,73 @@ ok("the nightly re-check never touches an attested field", () => {
   assert.ok(!q.includes("'attested'"), "recheck query must not select attested fields");
   for (const state of ["'ok'", "'internal'", "'failed'"])
     assert.ok(q.includes(state), `recheck query should select ${state}`);
+});
+
+ok("the Apollo importer stores only a mobile-typed number (Mobile column round)", () => {
+  // The directory's phone field is the Mobile column (owner directive
+  // 2026-08-29: "change the column to say Mobile instead of Phone"). Apollo
+  // returns a person's numbers in no useful order and the first entry is
+  // frequently the company switchboard; 12 staff rows carried the HQ line
+  // as their "phone" that way. The mobile-typed entry wins wherever it sits.
+  assert.equal(
+    personPhone({
+      phone_numbers: [
+        { type: "work_hq", sanitized_number: "+18776995638" },
+        { type: "work_direct", sanitized_number: "+18476860200" },
+        { type: "mobile", sanitized_number: "+13125550142" },
+      ],
+    }),
+    "+13125550142"
+  );
+  // sanitized_number wins over raw_number; raw_number is the fallback.
+  assert.equal(
+    personPhone({
+      phone_numbers: [{ type: "mobile", sanitized_number: null, raw_number: "312-555-0142" }],
+    }),
+    "312-555-0142"
+  );
+  assert.equal(
+    personPhone({ phone_numbers: [{ type: " Mobile ", sanitized_number: "+13125550142" }] }),
+    "+13125550142"
+  );
+  // Only switchboard / untyped entries: NOTHING lands in the Mobile column.
+  assert.equal(
+    personPhone({
+      phone_numbers: [
+        { type: "work_hq", sanitized_number: "+18776995638" },
+        { sanitized_number: "+18476860200" },
+        { type: null, raw_number: "847-686-0200" },
+      ],
+    }),
+    null
+  );
+  assert.equal(personPhone({ phone_numbers: [] }), null);
+  assert.equal(personPhone({}), null);
+  // A mobile-typed entry with no number at all is not a number either.
+  assert.equal(
+    personPhone({ phone_numbers: [{ type: "mobile", sanitized_number: "", raw_number: null }] }),
+    null
+  );
+});
+
+ok("the directory table labels the phone field Mobile", () => {
+  // Source pin: the column header, the add-row placeholder and both
+  // aria-labels say Mobile; the `phone` state/field names and the API
+  // payloads are deliberately unchanged (no migration, no API change).
+  const read = (p: string) => readFileSync(p, "utf8");
+  const table = read("src/app/roadmap/(steps)/directory/directory-table.tsx");
+  assert.ok(/<th[^>]*>\s*Mobile\s*<\/th>/.test(table), "Mobile column header");
+  assert.ok(table.includes('placeholder="Mobile (optional)"'));
+  assert.equal(table.split('aria-label="Mobile"').length - 1, 2, "two Mobile aria-labels");
+  assert.ok(!table.includes(">Phone<"));
+  assert.ok(!/<th[^>]*>\s*Phone\s*<\/th>/.test(table), "no Phone column header");
+  assert.ok(!table.includes('aria-label="Phone"'));
+  assert.ok(!table.includes('placeholder="Phone'));
+  // The privacy sentence on the page says mobile number, both lanes, no em dash.
+  const page = read("src/app/roadmap/(steps)/directory/page.tsx");
+  assert.equal(page.split("Exactly name, email, and mobile").length - 1, 2);
+  assert.ok(!page.includes("Exactly name, email, and phone"));
+  assert.ok(!page.includes("\u2014"));
 });
 
 console.log(`\nroadmap-tests (incl. dkim): ${passed} checks passed`);

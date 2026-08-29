@@ -649,8 +649,8 @@ export function DirectoryTable({
               style={inputStyle}
               value={add.phone}
               onChange={(e) => setAdd({ ...add, phone: e.target.value })}
-              placeholder="Phone (optional)"
-              aria-label="Phone"
+              placeholder="Mobile (optional)"
+              aria-label="Mobile"
             />
             <button
               type="submit"
@@ -761,7 +761,7 @@ export function DirectoryTable({
                     Email
                   </th>
                   <th className="border-b border-[var(--xl-line)] py-2 pr-4 font-normal">
-                    Phone
+                    Mobile
                   </th>
                   {isAdmin && (
                     <th className="border-b border-[var(--xl-line)] py-2 font-normal">
@@ -818,7 +818,7 @@ export function DirectoryTable({
                             onChange={(e) =>
                               setEdit({ ...edit, phone: e.target.value })
                             }
-                            aria-label="Phone"
+                            aria-label="Mobile"
                           />
                         </td>
                         <td className="border-b border-[var(--xl-line)] py-2">

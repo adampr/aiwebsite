@@ -8082,6 +8082,15 @@ companyDomain})`; the in-flight dedup map and log lines key on
 apollo_id (raw response never persisted or logged; locked-email
 placeholders → null); upsert on (lane, apollo_id); manual rows never
 clobbered; suppressed sha256 emails skipped and counted (lane-scoped).
+The directory's `phone` field IS the **Mobile** column (owner directive
+2026-08-29; the DB column and API field keep the name `phone`, only the
+human-facing label changed): `personPhone` (exported for the test pin)
+stores only an Apollo `phone_numbers[]` entry typed `"mobile"`
+(`sanitized_number || raw_number`), else null — a `work_hq` /
+`work_direct` / untyped entry is a switchboard or desk line and never
+lands in the column (12 staff rows once carried the HQ line that way and
+were reconciled by hand from the company sheet, source flipped to manual
+so the next import cannot re-write them).
 Page cap 5/run, fail-fast on any non-OK page (no 429 retry — the 3/h/lane
 limiter is also the double-click fence), partial rows KEPT + reported,
 the lane stamp (companies.apollo_last_import_* or staff_roadmap_state)
@@ -9591,7 +9600,7 @@ NEVER `push` — push silently drops them).
 | `companies` | one row per client company, keyed by verified email domain (UNIQUE = the bootstrap race arbiter). CHECK `companies_domain_ck`: lowercase, never xl.net/ai.xl.net, never `%.onmicrosoft.com`. `workshop_attended`/`cohort_attended` (0048, int NOT NULL DEFAULT 0, migration-only >=0 CHECKs): admin-attested paid-step attendance, informational only |
 | `company_admins` | THE stored authorization fact; CASCADE both ways; UNIQUE (company_id, user_id); lookup predicate always company_id AND user_id |
 | `company_admin_requests` | request/approval audit; partial UNIQUE one pending per requester+company; 7-day expiry; decided rows kept |
-| `company_people` | directory: exactly name/email/phone + apollo_id; company_id NULLABLE since 0039 (NULL = the XL.net staff lane); partial UNIQUEs (company_id, lower(email)) and (company_id, apollo_id) plus NULL-lane partials `company_people_email_staff_uq` / `company_people_apollo_staff_uq`; source flips apollo→manual on human edit |
+| `company_people` | directory: exactly name/email/phone + apollo_id (phone = the person's MOBILE number, E.164; the UI labels it Mobile); company_id NULLABLE since 0039 (NULL = the XL.net staff lane); partial UNIQUEs (company_id, lower(email)) and (company_id, apollo_id) plus NULL-lane partials `company_people_email_staff_uq` / `company_people_apollo_staff_uq`; source flips apollo→manual on human edit |
 | `directory_suppressions` | sha256 of removed Apollo emails so deletion survives re-import (the PII itself is not retained); company_id NULLABLE since 0039 (NULL-lane partial `directory_suppr_staff_uq`) |
 | `staff_roadmap_state` | one row (CHECK id=1, seeded by 0039): the staff lane's `apollo_last_import_at/count` - the companies-row stamp has no staff analogue; the write is an UPSERT so a missing row self-heals. Plus `workshop_attended`/`cohort_attended` (0048, int NOT NULL DEFAULT 0, migration-only >=0 CHECKs): the staff analogue of the companies attendance columns, same UPSERT self-heal |
 | `company_governance_docs` | step-1 documents: upload originals (bytea), Governance Builder SNAPSHOTS (markdown copy; `governance_project_id` carries no FK but is the attach-refresh AND edit-again repoint key - re-keyed to the new project when a snapshot is brought back into the builder), or LINK rows (0046: nullable `link_url`, only ever a parseCheckableUrl-validated http/https href — it renders as an anchor, so the scheme gate is the XSS gate; no bytes/text, downloads 404); company_id NULLABLE since 0045 (NULL = the XL.net staff lane, global-admin writes only; every read/write through the required `GovDocScope` param) |
