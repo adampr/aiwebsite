@@ -214,9 +214,19 @@ async function main(): Promise<void> {
     Object.prototype.hasOwnProperty.call(TEAM_CARD_PLACEMENTS, row.slug)
       ? TEAM_CARD_PLACEMENTS[row.slug]
       : null;
+  // Under --keep-position the slug is kept VERBATIM (keepSlug ->
+  // finishPublished), so a derived-base mismatch can no longer break
+  // placements or anchors, and refusing on it was WRONG twice over
+  // (2026-08-30 batch, row 34): (a) a row whose ORIGINAL panel run titled
+  // the card differently from row.title has a slug derived from the card
+  // title, so a plain re-run tripped the die with "-> null"; (b) a long
+  // title's slug is length-capped at mint time, so even an identical title
+  // re-derives a longer base and mismatches. Both are safe under keep. The
+  // note below keeps the operator informed; the retitle-only branch (which
+  // really does mint) keeps its own guard.
   if (keepPosition && slugChanges)
-    die(
-      `--keep-position: this retitle would mint a new slug (${row.slug ?? slugForTitle(row.title)} -> ${newSlugBase}) and placements.ts keys bays on the slug, so the position cannot survive. Retitle without --keep-position and move the TEAM_CARD_PLACEMENTS key in src/lib/work/placements.ts to the new slug in the same change.`
+    console.log(
+      `[work-rerun] note: --keep-position keeps the stored slug verbatim (${row.slug ?? "-"}) although the ${newTitle !== null ? "requested title" : "row title"} derives ${expectedBase}; placements.ts keys and old /work#${row.slug ?? ""} links survive unchanged.`
     );
   if (slugChanges && placedBay) {
     const bayName =
