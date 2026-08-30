@@ -6533,6 +6533,489 @@ async function main() {
     );
   }
 
+  // ---- FIRST_PARTY_PEOPLE disclosure allowlist (owner ruling 2026-08-29/30;
+  // DISCLOSURE-ALLOWLIST seat). Two cards held on names the /work page
+  // itself publishes: "introduced XL.net CEO Adam Radulovic" (row 859ba29b;
+  // the skill's own template introduces him) and "Leo Netter" (which has its
+  // own exhibit on the same page). The allowlist is enforced in the prompt
+  // AND deterministically (clearFirstPartyPeople), so a model that hits
+  // anyway cannot hold the card. personal_names' default, hold any real
+  // private person, is unchanged. ----
+  {
+    const { clearFirstPartyPeople } = await import(
+      "../src/lib/work/first-party"
+    );
+    const { FIRST_PARTY_PEOPLE } = await import("../src/lib/work/config");
+
+    // The register stays tiny, full-name only, dash-free: a bare first name
+    // in the allowlist would make the whole-name rule below vacuous.
+    assert.ok(
+      FIRST_PARTY_PEOPLE.length <= 8,
+      "FIRST_PARTY_PEOPLE stays a tiny explicit register, not a directory"
+    );
+    for (const p of FIRST_PARTY_PEOPLE) {
+      assert.ok(
+        p.name.trim().includes(" "),
+        `allowlist entries are FULL names ("${p.name}")`
+      );
+      assert.ok(
+        !/[–—]/.test(p.name) && !/[–—]/.test(p.role),
+        `no em/en dash in FIRST_PARTY_PEOPLE entry "${p.name}"`
+      );
+    }
+
+    // The live specimens first, then the shapes around them.
+    const alone = clearFirstPartyPeople("Adam Radulovic");
+    assert.deepEqual(alone.cleared, ["Adam Radulovic"], "the CEO's name clears");
+    assert.ok(!alone.holds, "a finding that is ONLY the CEO's name clears");
+    assert.ok(
+      !clearFirstPartyPeople("CEO Adam Radulovic").holds,
+      "a role title before the name is residue, not another person"
+    );
+    assert.ok(
+      !clearFirstPartyPeople("Adam Radulovic (CEO)").holds,
+      "a parenthetical role after the name is residue too"
+    );
+    assert.ok(
+      !clearFirstPartyPeople('"introduced XL.net CEO Adam Radulovic"').holds,
+      "the row 859ba29b specimen clears whole: XL.net is itself a never-hit"
+    );
+    assert.ok(
+      !clearFirstPartyPeople("adam radulovic").holds,
+      "matching is case-insensitive"
+    );
+    assert.ok(!clearFirstPartyPeople("Leo Netter").holds, "the persona clears");
+    assert.ok(
+      !clearFirstPartyPeople("Tron Netter").holds,
+      "the public agent persona clears"
+    );
+    assert.ok(
+      !clearFirstPartyPeople("Troy Netter").holds,
+      "the legacy alias clears"
+    );
+
+    // A finding that ALSO names someone else holds, on the remainder only.
+    const mixed = clearFirstPartyPeople("Adam Radulovic; Jane Doe");
+    assert.deepEqual(mixed.cleared, ["Adam Radulovic"]);
+    assert.ok(mixed.holds, "Jane Doe still holds the card");
+    assert.equal(
+      mixed.remainder,
+      "Jane Doe",
+      "and the hold shows ONLY the remainder"
+    );
+
+    // "Adam" alone is NOT cleared: a bare first name is ambiguous (any Adam
+    // could be a client contact), the credit lane already handles first
+    // names, and ambiguity holds. Whole-name matching only.
+    const bare = clearFirstPartyPeople("Adam");
+    assert.deepEqual(bare.cleared, [], "a bare first name never clears");
+    assert.ok(bare.holds);
+    assert.equal(bare.remainder, "Adam", "an untouched finding passes through");
+    assert.ok(
+      clearFirstPartyPeople("Adam Radulovich").holds &&
+        clearFirstPartyPeople("Adam Radulovich").cleared.length === 0,
+      "whole-name boundary: Radulovich is not Radulovic"
+    );
+    const untouched = clearFirstPartyPeople("Jane Doe of Acme");
+    assert.ok(untouched.holds && untouched.cleared.length === 0);
+    assert.equal(untouched.remainder, "Jane Doe of Acme");
+
+    // Held-reason parsing: "(after first-party clearing)" rides the same
+    // parenthetical slot friendlyHeldReason already grants adjudication.
+    assert.ok(
+      friendlyHeldReason(
+        "disclosure checklist hit:\npersonal_names (after first-party clearing): Jane Doe"
+      )?.startsWith("A person's name:"),
+      "friendly label still applies after the clearing parenthetical"
+    );
+
+    // ---- source pins ----
+    const panelSrcFp = readFileSync("src/lib/work/panel.ts", "utf8");
+    assert.ok(
+      /const neverHits = `Never hits under any item: \$\{sctx\.neverHitNames\.join[\s\S]{0,600}?FIRST_PARTY_PEOPLE\.map/.test(
+        panelSrcFp
+      ),
+      "panel.ts's neverHits sentence interpolates FIRST_PARTY_PEOPLE with their roles"
+    );
+    const stripAt = panelSrcFp.indexOf("clearFirstPartyPeople(");
+    const holdAt = panelSrcFp.indexOf("disclosure checklist hit");
+    assert.ok(
+      stripAt !== -1 && holdAt !== -1 && stripAt < holdAt,
+      "the deterministic strip runs BEFORE the disclosure hold is composed"
+    );
+    assert.ok(
+      /item === "personal_names"/.test(panelSrcFp),
+      "the strip is scoped to personal_names; org-name adjudication is untouched"
+    );
+    const scopeSrcFp = readFileSync("src/lib/work/scope.ts", "utf8");
+    assert.equal(
+      (scopeSrcFp.match(/FIRST_PARTY_PEOPLE\.map\(\(p\) => p\.name\)/g) ?? [])
+        .length,
+      2,
+      "scope.ts folds the people into neverHitNames for BOTH lanes"
+    );
+
+    // ---- placements survival on re-runs (peer requirement 2026-08-30):
+    // TEAM_CARD_PLACEMENTS keys bays on the SLUG, and a slug-changing
+    // retitle silently drops a placed card back into the From the Team run,
+    // so the rerun script must consult placements.ts before the confirm
+    // prompt. ----
+    const rerunSrc = readFileSync("scripts/work-panel-rerun.ts", "utf8");
+    assert.ok(
+      /from "\.\.\/src\/lib\/work\/placements"/.test(rerunSrc),
+      "work-panel-rerun.ts imports placements.ts"
+    );
+    assert.ok(
+      rerunSrc.includes("TEAM_CARD_PLACEMENTS") &&
+        rerunSrc.includes("--keep-position"),
+      "the rerun script checks TEAM_CARD_PLACEMENTS and offers --keep-position"
+    );
+    const warnAt = rerunSrc.indexOf("this card is PLACED");
+    const promptAt = rerunSrc.indexOf("Type yes:");
+    assert.ok(
+      warnAt !== -1 && promptAt !== -1 && warnAt < promptAt,
+      "the placement warning prints BEFORE the confirm prompt"
+    );
+  }
+
+  // ═══ §5.16 ops re-run flags: --no-notify + --keep-position (2026-08-30,
+  // OPS-RERUN seat). Owner directive ("present tense this and other cards
+  // that remain", "with no notify on those 26 past tense fixes"): re-running
+  // the ~26-37 published cards whose TOOL copy is past tense (house rule
+  // corrected in 39257b2) must neither re-fire the publish emails nor move
+  // the cards. Pinned DB-free: panel.ts routes every outcome mail through
+  // local consts that no-op under notify: false, finishPublished restores a
+  // captured published_at + display_rank only when handed one, and the
+  // script's argv rules are pure functions in scripts/lib/work-rerun-ops.ts. ═══
+  {
+    const [{ readFileSync: readRr, readdirSync: rrDir }, { join: rrJoin }] =
+      await Promise.all([import("node:fs"), import("node:path")]);
+    const {
+      firstSentence,
+      parseRerunArgs,
+      rerunPlanLine,
+      summaryFirstSentence,
+    } = await import("./lib/work-rerun-ops");
+
+    // 1) The default is preserved at EVERY call site: nothing outside the
+    // ops script passes a notify/keep* override to kickPanel, so absent
+    // means mail on and a fresh published_at, today's behaviour byte for
+    // byte. The walk fails loud if a new caller appears with an override.
+    const walkRr = (dir: string): string[] =>
+      rrDir(dir, { withFileTypes: true }).flatMap((e) => {
+        if (e.name === "node_modules" || e.name.startsWith(".")) return [];
+        const p = rrJoin(dir, e.name);
+        if (e.isDirectory()) return walkRr(p);
+        return /\.tsx?$/.test(e.name) ? [p] : [];
+      });
+    const rrCallers = [...walkRr("src"), ...walkRr("scripts")].filter(
+      (p) =>
+        !/[-.]tests?\.ts$/.test(p) &&
+        !p.endsWith("src/lib/work/panel.ts") &&
+        !p.endsWith("scripts/work-panel-rerun.ts") &&
+        /kickPanel\s*\(/.test(readRr(p, "utf8"))
+    );
+    for (const known of [
+      "src/app/api/work/submissions/route.ts",
+      "src/app/api/work/submissions/[id]/retry/route.ts",
+      "src/app/api/work/submissions/[id]/rerun/route.ts",
+      "src/app/api/work/submissions/[id]/update/route.ts",
+      "src/lib/work/email-intake.ts",
+      "src/lib/work/queue-drain.ts",
+    ])
+      assert.ok(
+        rrCallers.some((p) => p.endsWith(known)),
+        `the kickPanel call-site walk still sees ${known}`
+      );
+    for (const p of rrCallers) {
+      const src = readRr(p, "utf8");
+      for (const m of src.matchAll(/kickPanel\(([^)]*)\)/g))
+        assert.ok(
+          !/notify|keepPublishedAt|keepDisplayRank/.test(m[1]),
+          `${p} passes a notify/keep override to kickPanel; only scripts/work-panel-rerun.ts may`
+        );
+    }
+
+    // 2) panel.ts: runPanel stays module-private (nothing outside the file
+    // can hand it options), both kick lanes thread opts, and the
+    // suppression seam covers all four outcome notify functions plus the
+    // update pair, with an explicit === false guard so undefined mails.
+    const panelRr = readRr("src/lib/work/panel.ts", "utf8");
+    assert.ok(
+      !/export (?:async )?function runPanel\b/.test(panelRr),
+      "runPanel is module-private"
+    );
+    assert.equal(
+      (panelRr.match(/runPanel\(id, attemptId, brainCap, opts\)/g) ?? []).length,
+      2,
+      "both kick lanes thread opts into runPanel"
+    );
+    assert.ok(
+      /const silent = opts\.notify === false;/.test(panelRr),
+      "the seam guard is an explicit === false (absent/undefined = mail on)"
+    );
+    assert.ok(
+      panelRr.includes("[work] rerun: notifications suppressed for ${id}"),
+      "the one suppression log line exists"
+    );
+    const seamFrom = panelRr.indexOf("--no-notify suppression seam");
+    const seamTo = panelRr.indexOf("end --no-notify seam");
+    assert.ok(seamFrom > 0 && seamTo > seamFrom, "the seam block is delimited");
+    const seamRr = panelRr.slice(seamFrom, seamTo);
+    for (const fn of [
+      "notifyPublished",
+      "deliverArchiveRetention",
+      "notifyHeld",
+      "notifyUpdateAutoPublished",
+      "notifyUpdateConflictHeld",
+      "notifyUpdatePending",
+    ])
+      assert.ok(
+        new RegExp(`const ${fn}: typeof ${fn}Mail = silent`).test(seamRr),
+        `the suppression seam covers ${fn}`
+      );
+    // A direct alias call outside the seam would bypass suppression: each
+    // alias appears exactly three times (the import rename, the seam's
+    // typeof, the seam's else branch).
+    for (const alias of [
+      "notifyPublishedMail",
+      "deliverArchiveRetentionMail",
+      "notifyHeldMail",
+      "notifyUpdateAutoPublishedMail",
+      "notifyUpdateConflictHeldMail",
+      "notifyUpdatePendingMail",
+    ]) {
+      // Retention is the one non-mail-only function: its silent branch must
+      // still CALL the real function (with { silent: true }, which clears
+      // row bytea without sending; 2026-08-30 refutation), so its alias
+      // legitimately appears a fourth time INSIDE the seam. Everything else
+      // stays at import + seam type + notify-on assignment = 3, and any
+      // extra occurrence is a bypass.
+      const expected = alias === "deliverArchiveRetentionMail" ? 4 : 3;
+      assert.equal(
+        (panelRr.match(new RegExp(alias, "g")) ?? []).length,
+        expected,
+        `${alias}: import + seam only; an extra occurrence is a bypass`
+      );
+    }
+    assert.ok(
+      panelRr.includes("deliverArchiveRetentionMail(r, { silent: true })"),
+      "the silent retention branch still clears row bytea (calls the real function silenced)"
+    );
+    assert.ok(
+      readFileSync("src/lib/work/notify.ts", "utf8").includes(
+        "opts?: { silent?: boolean }"
+      ),
+      "deliverArchiveRetention takes the silent option"
+    );
+    // The failure alert is suppressed by the same flag, via the
+    // module-scope set kickPanel arms only after a successful claim.
+    assert.equal(
+      (panelRr.match(/silentAttempts\.add\(attemptId\)/g) ?? []).length,
+      2,
+      "both kick lanes arm the silent set"
+    );
+    assert.ok(
+      /opts\?\.notify === false\) silentAttempts\.add/.test(panelRr),
+      "the set is armed only on an explicit notify: false"
+    );
+    assert.ok(
+      /silentAttempts\.has\(attemptId\)/.test(panelRr),
+      "failRun consults the silent set before notifyPanelFailed"
+    );
+    assert.ok(
+      /silentAttempts\.delete\(attemptId\)/.test(panelRr),
+      "the run's settlement clears the set"
+    );
+
+    // 3) finishPublished: keep is opt-in with now() as the default stamp,
+    // and display_rank is written only on the keep path.
+    const dbRr = readRr("src/lib/work/db.ts", "utf8");
+    assert.ok(
+      /publishedAt: keep \? keep\.publishedAt : new Date\(\),/.test(dbRr),
+      "finishPublished stamps now() unless handed a captured published_at"
+    );
+    assert.ok(
+      /\.\.\.\(keep \? \{ displayRank: keep\.displayRank \} : \{\}\),/.test(dbRr),
+      "display_rank is restored only on the keep path"
+    );
+
+    // 4) The script: argv goes through the pure parser, both flags are
+    // documented in the header, keep-position and no-notify ride ONLY
+    // behind their flags, and the summary says "No email was sent".
+    const scriptRr = readRr("scripts/work-panel-rerun.ts", "utf8");
+    const headerRr = scriptRr.slice(0, scriptRr.indexOf("async function main"));
+    for (const flag of ["--no-notify", "--keep-position"])
+      assert.ok(headerRr.includes(flag), `the header comment documents ${flag}`);
+    assert.ok(
+      /parseRerunArgs\(process\.argv\.slice\(2\)\)/.test(scriptRr),
+      "argv goes through the pure parser"
+    );
+    assert.ok(
+      /\.\.\.\(noNotify \? \{ notify: false \} : \{\}\)/.test(scriptRr),
+      "notify: false rides only behind --no-notify"
+    );
+    assert.ok(
+      /\.\.\.\(keepPosition[\s\S]{0,140}?keepPublishedAt: origPublishedAt/.test(
+        scriptRr
+      ),
+      "keepPublishedAt rides only behind --keep-position (opt-in, never a default)"
+    );
+    assert.ok(
+      scriptRr.includes("No email was sent"),
+      "the console summary states the suppression in words"
+    );
+    const planAtRr = scriptRr.indexOf("rerunPlanLine(");
+    const promptAtRr = scriptRr.indexOf("Type yes:");
+    assert.ok(
+      planAtRr !== -1 && promptAtRr !== -1 && planAtRr < promptAtRr,
+      "the dry plan line prints BEFORE the confirm prompt"
+    );
+    assert.ok(
+      /summaryFirstSentence\(after\.cardJson\)/.test(scriptRr),
+      "the script prints the new summary first sentence after publish"
+    );
+
+    // 5) parseRerunArgs: flags, combinations, refusals.
+    const rrUid = "2d17baef-3130-425c-8689-69617b6811c3";
+    assert.ok(!parseRerunArgs([]).ok, "an id is required");
+    assert.ok(!parseRerunArgs(["not-a-uuid"]).ok, "a non-uuid is refused");
+    {
+      const d = parseRerunArgs([rrUid]);
+      if (!d.ok) assert.fail(`the bare-id parse refused: ${d.error}`);
+      assert.equal(d.args.noNotify, false, "--no-notify is opt-in");
+      assert.equal(d.args.keepPosition, false, "--keep-position is opt-in");
+      assert.equal(d.args.title, null);
+      assert.equal(d.args.retitleOnly, false);
+      assert.equal(d.args.yes, false);
+    }
+    {
+      const d = parseRerunArgs([
+        rrUid,
+        "--no-notify",
+        "--keep-position",
+        "--title",
+        "Better Name",
+        "--yes",
+      ]);
+      if (!d.ok) assert.fail(`the combined parse refused: ${d.error}`);
+      assert.ok(
+        d.args.noNotify && d.args.keepPosition && d.args.title === "Better Name",
+        "both flags combine with each other and with --title"
+      );
+    }
+    {
+      const d = parseRerunArgs([rrUid, "--frobnicate"]);
+      assert.ok(
+        !d.ok && /unknown flag --frobnicate/.test(d.error),
+        "an unknown flag is refused by name, never ignored"
+      );
+    }
+    assert.ok(!parseRerunArgs([rrUid, "--title"]).ok, "--title needs a value");
+    assert.ok(
+      !parseRerunArgs([rrUid, "--title", "A", "--title", "B"]).ok,
+      "--title twice is refused"
+    );
+    assert.ok(
+      !parseRerunArgs([rrUid, "--retitle-only"]).ok,
+      "--retitle-only requires --title"
+    );
+    assert.ok(
+      !parseRerunArgs([rrUid, "--retitle-only", "--title", "T", "--no-notify"])
+        .ok,
+      "--no-notify on the retitle branch is refused, not ignored"
+    );
+    {
+      // --retitle-only WITH --keep-position is the stay-put assertion the
+      // placements guard enforces (the script dies on a slug-changing
+      // retitle under it), so the parse accepts the combination.
+      const d = parseRerunArgs([rrUid, "--retitle-only", "--title", "T", "--keep-position"]);
+      assert.ok(d.ok, "--keep-position combines with --retitle-only (slug guard)");
+    }
+    assert.ok(!parseRerunArgs([rrUid, rrUid]).ok, "a second positional is refused");
+
+    // 6) The plan line names all three side effects in every combination.
+    for (const noNotify of [false, true])
+      for (const keepPosition of [false, true])
+        for (const slugChanges of [false, true]) {
+          const line = rerunPlanLine({
+            noNotify,
+            keepPosition,
+            slugChanges,
+            publishedAt: new Date("2026-07-12T00:00:00Z"),
+            displayRank: 3,
+            slug: "ticket-reply-composer",
+          });
+          assert.ok(
+            /emails:/.test(line) && /position:/.test(line) && /slug:/.test(line),
+            "the plan line covers all three side effects"
+          );
+          assert.ok(
+            noNotify ? /NONE will be sent/.test(line) : /WILL send/.test(line),
+            "the emails verdict is stated either way"
+          );
+          assert.ok(
+            keepPosition ? /KEPT/.test(line) : /WILL move/.test(line),
+            "the position verdict is stated either way"
+          );
+          assert.ok(
+            slugChanges
+              ? /NEW slug/.test(line)
+              : /WILL NOT change/.test(line),
+            "the slug verdict is stated either way"
+          );
+          assert.ok(!/[–—]/.test(line), "no em or en dashes in the plan line");
+        }
+    assert.ok(
+      /none yet/.test(
+        rerunPlanLine({
+          noNotify: false,
+          keepPosition: false,
+          slugChanges: false,
+          publishedAt: null,
+          displayRank: null,
+          slug: null,
+        })
+      ),
+      "a never-published row's plan says the slug is minted fresh"
+    );
+
+    // 7) The tense line the operator reads: first sentences, before/after.
+    assert.equal(
+      firstSentence(
+        "Ticket Reply Composer was a helpdesk app. It drafted replies."
+      ),
+      "Ticket Reply Composer was a helpdesk app.",
+      "the first sentence stops at the first terminator"
+    );
+    assert.equal(
+      firstSentence("No terminator at all"),
+      "No terminator at all",
+      "a summary with no terminator comes back whole"
+    );
+    assert.equal(
+      summaryFirstSentence(
+        JSON.stringify({ summary: "It drafts replies. More detail follows." })
+      ),
+      "It drafts replies."
+    );
+    assert.equal(
+      summaryFirstSentence(null),
+      null,
+      "a held row's nulled cardJson reads as no stored copy"
+    );
+    assert.equal(summaryFirstSentence("{not json"), null, "junk bytes read as none");
+    assert.equal(
+      summaryFirstSentence(JSON.stringify({ title: "x" })),
+      null,
+      "a card with no summary reads as none"
+    );
+
+    // 8) No em or en dashes in the re-run lane's sources.
+    for (const src of [scriptRr, readRr("scripts/lib/work-rerun-ops.ts", "utf8")])
+      assert.ok(!/[–—]/.test(src), "no em or en dashes in the re-run lane");
+  }
+
   console.log("work-tests: all assertions passed.");
 }
 

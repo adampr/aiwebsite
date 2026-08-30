@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-29 §5.16 CHANNEL-POST INTAKE VIA THE SCRIPTED LANE (sections 5.16 "Scripted submission lane" + the canvas passage): a CoWork skill the owner remembered as "in the canvas" was in fact a #ai-development CHANNEL POST (a .skill plus a sample-output report), so the canvas read is now documented as one of two Slack sources and its dependency on Leo Netter's channel MEMBERSHIP is stated (the bot was removed from the channel that day, `files.info` returned `not_visible`, and the token holds no `channels:join`, so only a person can restore the read); the package was filed on the VM with `work:submit --email <builder>` (row = credit under the published-only scorecard, no public byline by the standing ruling), the sample report was deliberately NOT passed as `--md` and NOT retained, because with `--md` the standalone document becomes THE reviewed document at corpus slot 0 and an archive-store file, and a sample output names the clients the tool was run against. NO code, NO schema, NO env, NO route change. Previous: 2026-08-29 /work TEAM-CARD PLACEMENTS (owner directive; sections 4 `/work` row + 5.16 two-lanes passage; rebased onto the FOLLOW-UP EMAILS CONVERTED round, folded into the previous entry below, so the counts here are the seventeen-static ones): a published team card can be lifted out of the "From the Team" run and rendered INSIDE a static bay, after that bay's hand-authored exhibits. `src/lib/work/placements.ts` holds a CODE-SIDE slug -> bay map (seeded: `team-client-site-rescue-mirror` -> "03") plus the pure `splitPlacements()` (placed per bay vs run; unknown slugs and placements naming a bay absent from `static-titles.json` fall back to the run, test-pinned) and `sequencePositions()` (each placed list's and the run's first GLOBAL position, counted from the MAP entries naming a known bay, never from the published rows, so they are build-time constants). It is a code map, not a DB column, because bay membership shifts the hard-coded stripe class of every static exhibit after it: with the placed card at global position 12 the six trailing statics (`#lakehouse` .. `#autotask-ci-intake`, positions 13..18) carry the opposite literal class to the one 6e45b44 left them with, the last static is at 18 (even, plain) and the run starts at 19 (odd, lightline); `CommunitySection` now takes `firstPosition` (computed from the map, no literal offset), `WorkRegistry` takes `{placed, run}` and numbers placed rows inside their bay after its statics, the pager's divider check is scoped to the divider's own following siblings (`[data-team-divider] ~ ...`) so a placed card alone on screen no longer props up an empty divider, and `CommunityCard` gains an opt-in `placed` prop that adds a "From the Team" badge (the card sits above the divider that carries the provenance promise; the default path and the §5.18 company page are byte-identical). Stated cost: while the placed row is NOT published (withdrawn, held, DB down) the seam inside bay 03/04 (`#onboarding-toolkit` -> `#lakehouse`) double-stripes until the map entry is removed; no other seam moves. Rank WITHIN a lane stays DB curation (display_rank). New suite `npm run test:placements` scans page.tsx's real token stream (statics, `<PlacedCards>` slots, `<CommunitySection>`) and walks it for strict stripe alternation in the published, unpublished and DB-down states. No route, schema, env or migration change; the local dev DB has no `work_submissions` rows, so the placement is only visible against production data or a seeded row. Previous: 2026-08-29 §5.16 LIVE TOOLS ARE PRESENT TENSE, AND A CREDIT CAN BE FIXED (sections 5.16 panel/lint passage + the new attribution lane): the house rule "past tense for anything that ran" was being applied to the TOOL, so a live tool published as "Ticket Reply Composer was a browser-based IT helpdesk app" and read as retired (27 of the 96 published summaries opened that way, every one a tool described as if retired, no present-tense card flagged); `HOUSE_STYLE_RULES` now separates the tool (present tense) from a one-time event (past), the editorial critic's "tense slip" is glossed, and `lintCard` fails a past-tense summary OPENER with a "summary" violation the repair grant frees. New `npm run work:attribute` (`scripts/work-attribute.ts` + pure `scripts/lib/work-attribute-ops.ts`, `test:workattribute`) sets or clears `submitter_name` on one row (the column no shipped route or script could change after intake) AT THE NAMED PERSON'S OWN REQUEST, with a best-effort `/work` revalidate; the names-nobody default and the opt-in, first-name-only credit are UNCHANGED, and the converted exhibits stay unattributed by ruling. NO schema, NO env, NO route change. Previous: 2026-08-29 FOLLOW-UP EMAILS CONVERTED (sections 5.16 + the /work row): the ninth builder-made exhibit, `#follow-up-emails` (Luke Barrett, canvas-attributed, owner-ruled), leaves page.tsx and becomes a panel-written team card filed under its builder with no public attribution, on the same one-tool-one-card ruling as the eight earlier today; 18 -> 17 statics, snapshot regenerated; because it sat at position 15 the three statics after it flip stripe class and community.tsx's seam offset moves from `i + 1` to `i` (last static now odd). The package is the canvas SKILL.md, byte-identical, wrapped as a canonical .skill because the package lane takes .zip/.skill only. Two chase-register tasks (§5.21) are open for the two remaining builder-made exhibits whose packages were never posted (Morning Brief, Autotask CI Intake); per the Exhibits retirement one entry below, their builders show their real published count until those cards publish. NO schema, NO env, NO route change. Previous: 2026-08-29 EXHIBITS RETIRED FROM THE EMPLOYEE SCORECARD (sections
+Last verified against code: 2026-08-30 TENSE REPAIR + FIRST-PARTY DISCLOSURE ALLOWLIST (sections 5.16): `FIRST_PARTY_PEOPLE` (config.ts, enforced in the disclosure prompt AND deterministically via pure `clearFirstPartyPeople` before any hold) stops the personal_names item holding cards on XL.net's own public faces, after two same-day false holds (the CEO named by a skill's own template, row 859ba29b; the Leo Netter persona); `npm run work:rerun` gains `--no-notify` (a lexical suppression seam over every panel email, failure alert included) and `--keep-position` (finishPublished restores published_at + display_rank; slug-changing retitles refused under the flag because placements.ts keys bays on slug), built for the owner-directed re-run of the published cards that describe their tool in the past tense under the 39257b2 rule (72 identified; the batch runs on the VM with no email and no page reordering). NO schema, NO env, NO route change. Previous: 2026-08-29 §5.16 CHANNEL-POST INTAKE VIA THE SCRIPTED LANE (sections 5.16 "Scripted submission lane" + the canvas passage): a CoWork skill the owner remembered as "in the canvas" was in fact a #ai-development CHANNEL POST (a .skill plus a sample-output report), so the canvas read is now documented as one of two Slack sources and its dependency on Leo Netter's channel MEMBERSHIP is stated (the bot was removed from the channel that day, `files.info` returned `not_visible`, and the token holds no `channels:join`, so only a person can restore the read); the package was filed on the VM with `work:submit --email <builder>` (row = credit under the published-only scorecard, no public byline by the standing ruling), the sample report was deliberately NOT passed as `--md` and NOT retained, because with `--md` the standalone document becomes THE reviewed document at corpus slot 0 and an archive-store file, and a sample output names the clients the tool was run against. NO code, NO schema, NO env, NO route change. Previous: 2026-08-29 /work TEAM-CARD PLACEMENTS (owner directive; sections 4 `/work` row + 5.16 two-lanes passage; rebased onto the FOLLOW-UP EMAILS CONVERTED round, folded into the previous entry below, so the counts here are the seventeen-static ones): a published team card can be lifted out of the "From the Team" run and rendered INSIDE a static bay, after that bay's hand-authored exhibits. `src/lib/work/placements.ts` holds a CODE-SIDE slug -> bay map (seeded: `team-client-site-rescue-mirror` -> "03") plus the pure `splitPlacements()` (placed per bay vs run; unknown slugs and placements naming a bay absent from `static-titles.json` fall back to the run, test-pinned) and `sequencePositions()` (each placed list's and the run's first GLOBAL position, counted from the MAP entries naming a known bay, never from the published rows, so they are build-time constants). It is a code map, not a DB column, because bay membership shifts the hard-coded stripe class of every static exhibit after it: with the placed card at global position 12 the six trailing statics (`#lakehouse` .. `#autotask-ci-intake`, positions 13..18) carry the opposite literal class to the one 6e45b44 left them with, the last static is at 18 (even, plain) and the run starts at 19 (odd, lightline); `CommunitySection` now takes `firstPosition` (computed from the map, no literal offset), `WorkRegistry` takes `{placed, run}` and numbers placed rows inside their bay after its statics, the pager's divider check is scoped to the divider's own following siblings (`[data-team-divider] ~ ...`) so a placed card alone on screen no longer props up an empty divider, and `CommunityCard` gains an opt-in `placed` prop that adds a "From the Team" badge (the card sits above the divider that carries the provenance promise; the default path and the §5.18 company page are byte-identical). Stated cost: while the placed row is NOT published (withdrawn, held, DB down) the seam inside bay 03/04 (`#onboarding-toolkit` -> `#lakehouse`) double-stripes until the map entry is removed; no other seam moves. Rank WITHIN a lane stays DB curation (display_rank). New suite `npm run test:placements` scans page.tsx's real token stream (statics, `<PlacedCards>` slots, `<CommunitySection>`) and walks it for strict stripe alternation in the published, unpublished and DB-down states. No route, schema, env or migration change; the local dev DB has no `work_submissions` rows, so the placement is only visible against production data or a seeded row. Previous: 2026-08-29 §5.16 LIVE TOOLS ARE PRESENT TENSE, AND A CREDIT CAN BE FIXED (sections 5.16 panel/lint passage + the new attribution lane): the house rule "past tense for anything that ran" was being applied to the TOOL, so a live tool published as "Ticket Reply Composer was a browser-based IT helpdesk app" and read as retired (27 of the 96 published summaries opened that way, every one a tool described as if retired, no present-tense card flagged); `HOUSE_STYLE_RULES` now separates the tool (present tense) from a one-time event (past), the editorial critic's "tense slip" is glossed, and `lintCard` fails a past-tense summary OPENER with a "summary" violation the repair grant frees. New `npm run work:attribute` (`scripts/work-attribute.ts` + pure `scripts/lib/work-attribute-ops.ts`, `test:workattribute`) sets or clears `submitter_name` on one row (the column no shipped route or script could change after intake) AT THE NAMED PERSON'S OWN REQUEST, with a best-effort `/work` revalidate; the names-nobody default and the opt-in, first-name-only credit are UNCHANGED, and the converted exhibits stay unattributed by ruling. NO schema, NO env, NO route change. Previous: 2026-08-29 FOLLOW-UP EMAILS CONVERTED (sections 5.16 + the /work row): the ninth builder-made exhibit, `#follow-up-emails` (Luke Barrett, canvas-attributed, owner-ruled), leaves page.tsx and becomes a panel-written team card filed under its builder with no public attribution, on the same one-tool-one-card ruling as the eight earlier today; 18 -> 17 statics, snapshot regenerated; because it sat at position 15 the three statics after it flip stripe class and community.tsx's seam offset moves from `i + 1` to `i` (last static now odd). The package is the canvas SKILL.md, byte-identical, wrapped as a canonical .skill because the package lane takes .zip/.skill only. Two chase-register tasks (§5.21) are open for the two remaining builder-made exhibits whose packages were never posted (Morning Brief, Autotask CI Intake); per the Exhibits retirement one entry below, their builders show their real published count until those cards publish. NO schema, NO env, NO route change. Previous: 2026-08-29 EXHIBITS RETIRED FROM THE EMPLOYEE SCORECARD (sections
 5.16 "One tool, one card" + 5.18 + the §6 schema listing; migration 0055). Owner ruling, later
 the same day the credits shipped: `/roadmap/scorecard` counts PUBLISHED /work cards only, in
 both lanes, and the "Exhibits" concept on it is retired end to end. OUT OF THE CODE: the
@@ -981,6 +981,38 @@ host-owned `pre-commit.local`); setup-vm pm2 reload carries
 edit dropped). Previous pin v1.5.2 @ cfe2854 (strictly-better repair
 adoption on the blog generate path). Previous pin v1.5.1 @ 78f3d55.
 Next.js 16.2.11).
+
+First-party people (owner ruling 2026-08-29/30, two false personal_names
+holds in one day on names the /work page itself publishes: "introduced
+XL.net CEO Adam Radulovic", row 859ba29b, where the skill's own template
+introduces him, and "Leo Netter", which has its own exhibit on the same
+page): `FIRST_PARTY_PEOPLE` (config.ts) is a tiny explicit register of
+XL.net's own public faces, people in a first-party public role and the
+site's personas (Adam Radulovic as CEO; Leo Netter; Tron Netter; the legacy
+alias Troy Netter), that the disclosure critic must never flag under
+personal_names. It extends the FIRST_PARTY_NAMES precedent (2026-07-30,
+names XL.net SHIPS vs organizations it SERVES) from offerings to people,
+and it is NOT a weakening of the facet: the item's default, hold any real
+private person, is unchanged. Enforced twice: the prompt's never-hits
+sentence names each person WITH their public role (the bare org list
+already contained XL.net when the critic held "XL.net CEO Adam Radulovic"),
+and `clearFirstPartyPeople` (first-party.ts, pure) runs deterministically
+after the critic answers and before the hold is composed, stripping
+allowlisted names (case-insensitive, whole-name only, boundary-checked,
+tolerant of role decorations like "CEO ..." or "... (CEO)") so a model that
+hits anyway cannot hold the card; each clearing logs
+`[work] disclosure: first-party name cleared: <name>` and lands a
+"disclosure first-party clearing" transcript stage for the audit trail. A
+finding that also names anyone else still holds, on the remainder only
+(rendered as `personal_names (after first-party clearing): ...`, which
+friendlyHeldReason's existing parenthetical slot already parses). The
+allowlist deliberately does NOT cover: bare first names ("Adam" alone is
+ambiguous and the credit lane already handles first names; whole-name
+matching only, ambiguity holds), a client company's own people in the §5.18
+company lane (XL.net's CEO and personas are never-hits in EITHER lane, but
+clearing a client's people would be a different owner call), and the
+org-name adjudication path, which is untouched. scope.ts folds the names
+into `neverHitNames` for both lanes.
 
 ---
 
@@ -6436,6 +6468,50 @@ re-run multiple rows accordingly); transcript + card JSON are
 overwritten (dump first); an unchanged title keeps its slug, a changed one
 mints a new slug and old `/work#slug` email fragments degrade to
 top-of-page.
+
+**Copy-correction flags** (2026-08-30, owner directive: "present tense this
+and other cards that remain", "with no notify on those 26 past tense fixes";
+the 39257b2 tense rule left 72 published cards describing their tool in
+the past tense, 26 of them visible to the deterministic lint, and none of
+the default side effects wanted for the correcting re-runs): `--no-notify` threads `notify: false`
+through `kickPanel` into the run, and the re-run's outcome then sends **no
+email of any kind** while the row outcome (published/held/failed) writes
+exactly as always. The seam is lexical, not scattered: panel.ts imports the
+notify functions under `*Mail` aliases, and the top of `runPanelInner`
+declares same-named local consts that no-op under suppression, so every
+existing call site (notifyPublished owner+submitter, deliverArchiveRetention,
+notifyHeld, notifyUpdateAutoPublished, notifyUpdateConflictHeld,
+notifyUpdatePending) routes through it untouched; the failure alert
+(notifyPanelFailed) lives in module-scoped `failRun` and is suppressed via a
+`silentAttempts` set kickPanel arms only after a successful claim and
+`runPanel` clears on settlement. One `[work] rerun: notifications suppressed
+for <id>` line logs per suppressed run, and the script's summary says "No
+email was sent". Every guard is an explicit `=== false`, and every other
+caller (web routes, email intake, queue drain) passes no override, so absent
+means mail on, byte for byte today's behaviour; test:work walks src/ +
+scripts/ for kickPanel call sites and pins each alias's occurrence count so
+a bypass or a defaulting caller fails loud. `--keep-position` captures
+`published_at` + `display_rank` from the row **before** the hold and threads
+them (`keepPublishedAt`/`keepDisplayRank`) into `finishPublished`, which
+restores them instead of stamping now(), so the corrected card keeps its
+place instead of re-entering at the head of the unranked tail; opt-in
+always, never a default, refused on a row with no `published_at` (a held row
+from an earlier aborted attempt still qualifies, though its rank is already
+gone from that hold, which the script says). `updated_at` still moves, so
+the sitemap lastmod (`latestPublishedAt`, greatest(published_at,
+updated_at)) still advances. The slug needs no forcing: `uniqueSlug`
+excludes the row's own id, so an unchanged title re-derives the same slug;
+a slug-changing `--title` under `--keep-position` is refused outright (the
+placements.ts bay map keys on the slug, 2026-08-29 round), and on the
+retitle-only branch the flag means exactly that stay-put guard
+(`--retitle-only` + `--no-notify` is refused instead: that branch never
+emails). Both flags combine with each other and with `--title`; argv rules
+are pure (`scripts/lib/work-rerun-ops.ts`, unknown flags refused by name,
+unit-tested DB-free in test:work). Before the confirm prompt the script
+prints one plan line stating which of the three side effects (emails,
+position, slug) will and will not happen, and after a publish it prints the
+old and new summary's first sentence so the tense fix is verifiable without
+opening /work.
 
 **Statuses:** `received → running → published | held | failed`, plus the two
 update states below (`pending_approval`, `superseded`). Upload

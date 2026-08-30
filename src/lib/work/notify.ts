@@ -476,8 +476,20 @@ export async function sendArchiveRetentionEmail(
  * no longer close to free, which is why clearing returned.
  */
 export async function deliverArchiveRetention(
-  row: SubmissionRow
+  row: SubmissionRow,
+  /** silent (2026-08-30 --no-notify refutation): send NOTHING, but still run
+   * the verify-and-clear below. This function is not mail-only: it is the
+   * ONE row-bytea clearing site, and 27 of the 72 cards in the tense-repair
+   * batch still held bytea, so a mail-only suppression would silently skip
+   * a retention side effect for a third of the batch. Under silent, the
+   * retention COPY is not re-sent (these rows all got theirs at original
+   * publish) and the no-copy WARN is skipped (nothing changed about the
+   * row's copies since that WARN first fired); the clear still only happens
+   * when the store copy re-verifies inside the transaction, so the
+   * 2026-08-04 never-delete-the-only-copy ruling is untouched. */
+  opts?: { silent?: boolean }
 ): Promise<void> {
+  const silent = opts?.silent === true;
   const rowFiles = await archiveDataById(row.id);
   let files = rowFiles;
   let fromStore = false;
@@ -506,6 +518,7 @@ export async function deliverArchiveRetention(
       // vendor 4xx, a missing key or a timeout would leave a console line and
       // nothing else, on precisely the row that has no second copy to fall
       // back on.
+      if (silent) return;
       const sent = await sendArchiveRetentionEmail(row, [], {
         storeVerified: false,
       });
@@ -543,9 +556,12 @@ export async function deliverArchiveRetention(
       preVerified = false;
     }
   }
-  const accepted = await sendArchiveRetentionEmail(row, files, {
-    storeVerified: preVerified,
-  });
+  const accepted = silent
+    ? true // nothing to accept: no mail goes out, and the clear below never
+    : // depended on acceptance (it re-verifies the store copy itself).
+      await sendArchiveRetentionEmail(row, files, {
+        storeVerified: preVerified,
+      });
   // The ONE clearing decision: atomic verify-and-clear (see header).
   let clear: { cleared: boolean; reason?: string } | null = null;
   if (rowFiles.length > 0) {
@@ -565,7 +581,7 @@ export async function deliverArchiveRetention(
         : `[work] archive bytea KEPT on ${row.id}: ${clear.reason ?? "unverified"}`
     );
   }
-  if (!accepted) {
+  if (!accepted && !silent) {
     // A failed retention send used to be a bare console.log — invisible to the
     // operator and to the §5.15 ledger, so the ONLY signal that an archive copy
     // never went out was a bounce webhook nobody correlated. Route it through the

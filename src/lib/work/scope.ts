@@ -8,7 +8,7 @@
 
 import staticTitles from "./static-titles.json";
 import type { SubmissionRow } from "./db";
-import { FIRST_PARTY_NAMES } from "./config";
+import { FIRST_PARTY_NAMES, FIRST_PARTY_PEOPLE } from "./config";
 import { companyById } from "@/lib/roadmap/db";
 
 export type WorkScope = { companyId: string | null };
@@ -58,7 +58,9 @@ const INTERNAL_CONTEXT: ScopeContext = {
     titles: staticTitles.titles,
     facetLabels: staticTitles.facetLabels,
   },
-  neverHitNames: FIRST_PARTY_NAMES,
+  // FIRST_PARTY_PEOPLE (owner ruling 2026-08-29/30): XL.net's own public
+  // faces and personas are never a personal_names hit on XL.net's own page.
+  neverHitNames: [...FIRST_PARTY_NAMES, ...FIRST_PARTY_PEOPLE.map((p) => p.name)],
 };
 
 /** Constants-only for the internal lane (no DB read); one lookup for a
@@ -85,6 +87,12 @@ export async function scopeContext(scope: WorkScope): Promise<ScopeContext> {
     staticTitles: { titles: [], facetLabels: [] },
     neverHitNames: [
       ...FIRST_PARTY_NAMES,
+      // XL.net's CEO and personas are first-party in EITHER lane (owner
+      // ruling 2026-08-29/30): the vendor relationship does not make
+      // XL.net's own public faces someone else's private people. A client
+      // company's OWN people are deliberately NOT added here; that would
+      // be a different owner call.
+      ...FIRST_PARTY_PEOPLE.map((p) => p.name),
       ...(company ? [company.name, company.domain] : []),
     ],
   };

@@ -209,6 +209,27 @@ export const FIRST_PARTY_NAMES = [
   "Claude Code",
 ];
 
+/** First-party PEOPLE and PERSONAS, same register as FIRST_PARTY_NAMES
+ * above (the 2026-07-30 precedent: names XL.net SHIPS are publishable,
+ * organizations it SERVES are not). Owner ruling 2026-08-29/30: the
+ * disclosure checklist's personal_names item held two cards on names the
+ * /work page itself publishes ("introduced XL.net CEO Adam Radulovic", row
+ * 859ba29b, when the skill's own template introduces him; "Leo Netter",
+ * which has its own exhibit on the same page). These are the company's own
+ * public faces, so clearing them is NOT a weakening of personal_names: the
+ * item's default, hold any real private person, is unchanged. Enforced
+ * twice, in the prompt's never-hits sentence AND deterministically in
+ * panel.ts (clearFirstPartyPeople), so a model that hits anyway cannot
+ * hold the card. Add here ONLY for a first-party public role or persona;
+ * a client company's own people are a different owner call and never
+ * belong on this list. */
+export const FIRST_PARTY_PEOPLE: readonly { name: string; role: string }[] = [
+  { name: "Adam Radulovic", role: "XL.net CEO, named in his public role" },
+  { name: "Leo Netter", role: "XL.net AI persona" },
+  { name: "Tron Netter", role: "XL.net public agent persona" },
+  { name: "Troy Netter", role: "legacy alias of Tron Netter" },
+];
+
 /** The ONE held-outcome sentence every surface repeats (held-row UI, retry
  * 409, the submitter held email). Must read true for BOTH audiences:
  * removal is admin-only (owner directive 2026-07-30), so it describes the

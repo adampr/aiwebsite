@@ -604,21 +604,49 @@ export async function finishPublished(
   id: string,
   attemptId: string,
   card: WorkCard,
-  transcriptJson: string
+  transcriptJson: string,
+  /** Ops re-run --keep-position (scripts/work-panel-rerun.ts, 2026-08-30
+   * present-tense correction round): the published_at + display_rank
+   * captured from the row at the moment of the hold. Present, they are
+   * restored so a copy-correction re-run does not move the card; absent
+   * (every web/queue/email caller), the stamp is now() exactly as before.
+   * NEVER a default: only the ops script threads it, via kickPanel.
+   * keep.slug (2026-08-30 refutation): the row's slug, kept VERBATIM.
+   * Re-deriving is NOT safe even for an unchanged title, because uniqueSlug
+   * is history-dependent: a row that published as "team-x-2" (its base was
+   * taken then) re-derives "team-x" once the collider is gone, which moves
+   * every old /work#slug link and drops any placements.ts bay keyed on the
+   * old slug. Under keep, the slug column is simply not recomputed. */
+  keep?: { publishedAt: Date; displayRank: number | null; slug: string | null }
 ): Promise<string | null> {
   const pre = await db
     .select({ companyId: S.companyId })
     .from(S)
     .where(eq(S.id, id))
     .limit(1);
-  const slug = await uniqueSlug(card.title, id, pre[0]?.companyId ?? null);
+  // uniqueSlug excludes the row's own id, so an unchanged title USUALLY
+  // re-derives the same slug on a re-run, but not always (see keep.slug
+  // above); the non-keep path accepts that, the keep path does not.
+  const slug =
+    keep && keep.slug !== null
+      ? keep.slug
+      : await uniqueSlug(card.title, id, pre[0]?.companyId ?? null);
   const res = await db
     .update(S)
     .set({
       status: "published",
       cardJson: JSON.stringify(card),
       slug,
-      publishedAt: new Date(),
+      publishedAt: keep ? keep.publishedAt : new Date(),
+      // display_rank is written ONLY on the keep path (holdPublishedForRerun
+      // cleared it; if an admin re-arranged the lane while the re-run was in
+      // flight, the restored rank can land beside a new occupant and the
+      // admin re-arranges after, the same accepted window as the hold
+      // itself). Every other publish leaves the column untouched, as
+      // before. updated_at moves in both branches, so the sitemap lastmod
+      // (latestPublishedAt reads greatest(published_at, updated_at)) still
+      // advances on a kept-position republish.
+      ...(keep ? { displayRank: keep.displayRank } : {}),
       panelTranscriptJson: transcriptJson.slice(
         0,
         WORK_CAPS.transcriptJsonMaxBytes
