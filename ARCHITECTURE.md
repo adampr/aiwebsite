@@ -989,7 +989,8 @@ introduces him, and "Leo Netter", which has its own exhibit on the same
 page): `FIRST_PARTY_PEOPLE` (config.ts) is a tiny explicit register of
 XL.net's own public faces, people in a first-party public role and the
 site's personas (Adam Radulovic as CEO; Leo Netter; Tron Netter; the legacy
-alias Troy Netter), that the disclosure critic must never flag under
+alias Troy Netter; Taylor Netter, added mid-batch 2026-08-30 on the owner
+confirming it is a persona when the IR Automation card surfaced the name), that the disclosure critic must never flag under
 personal_names. It extends the FIRST_PARTY_NAMES precedent (2026-07-30,
 names XL.net SHIPS vs organizations it SERVES) from offerings to people,
 and it is NOT a weakening of the facet: the item's default, hold any real

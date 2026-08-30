@@ -228,6 +228,9 @@ export const FIRST_PARTY_PEOPLE: readonly { name: string; role: string }[] = [
   { name: "Leo Netter", role: "XL.net AI persona" },
   { name: "Tron Netter", role: "XL.net public agent persona" },
   { name: "Troy Netter", role: "legacy alias of Tron Netter" },
+  // Owner ruling 2026-08-30, during the tense-repair batch: named on the
+  // IR Automation card, confirmed a persona when asked.
+  { name: "Taylor Netter", role: "XL.net AI persona" },
 ];
 
 /** The ONE held-outcome sentence every surface repeats (held-row UI, retry
