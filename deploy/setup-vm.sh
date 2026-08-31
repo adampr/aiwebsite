@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@b5631580f01f3384761d0a960935f5a229f5df634e724b4507608d5eda7f399e
+# aicompany-template: setup-vm.sh.tpl@afb34399579af099a487547915138ab82587e7a0f314a706ffb37aec277fcad7
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -943,13 +943,25 @@ UNIT
 # RuntimeMaxSec=7200 (v1.102.0): the run-level deadline. Type=oneshot never
 # double-starts, so a HUNG run (the v1.99.0 class: a poisoned shared pg
 # client waiting forever) silently blocks EVERY future timer fire — no
-# alert, no catch-up, just a nightly that stops happening. Derivation: max
-# observed run 71 min (2026-08-22); worst-case HONEST run is 12 articles ×
-# the 450s panel ceiling + audio ≈ 100 min; 2h kills only runs that are
-# already dead. Failure surface, named: a systemd SIGTERM/SIGKILL at the
+# alert, no catch-up, just a nightly that stops happening.
+# Derivation, RE-DONE in v1.111.0 (the old one named "the 450s panel ceiling"
+# and panelTimeoutMs is now 660s): a run makes at most FOUR panel-forced writer
+# calls (draft, repair, regenerate, Phase B refresh), so 4x660 + the 600s
+# run-wide re-attach budget + 8x300s non-panel calls + 2 audio renders
+# (313-611s measured, the only phase with no internal ceiling) ~= 114 min
+# against this 120 min deadline. THE 5.7 MIN MARGIN IS WHY panelTimeoutMs IS
+# 660s AND NOT LARGER: at 900s the same sum reaches 130 min and the run dies.
+# roleplay is the binding host — its host-owned 50-daily-retry.conf drop-in (not
+# a render.mjs output, so nothing in this repo gates it) runs the module up to
+# THREE times per invocation, and the historical "71 min max observed run" that
+# sized this deadline was itself a three-attempt night: a 3-run number sizing a
+# 1-run budget. Re-check both against that drop-in before raising either.
+# Failure surface, named: a systemd SIGTERM/SIGKILL at the
 # deadline may skip blog-nightly's data/blog-last-run heartbeat write, so
 # the stamp goes stale — the watchdog's 26h blog-heartbeat age check is the
-# backstop that surfaces a killed-every-night job as a WARN.
+# backstop that surfaces a killed-every-night job as a WARN. So a ceiling
+# raised to REDUCE WARN mail must stay inside this margin, or it manufactures
+# a nightly heartbeat WARN in exchange.
 if [ "1" = "1" ]; then
   blog_delay=$(( 2700 + $(printf '%s' "aiwebsite" | cksum | cut -d' ' -f1) % 2700 ))
   sudo tee /etc/systemd/system/aiwebsite-blog.service >/dev/null <<UNIT
