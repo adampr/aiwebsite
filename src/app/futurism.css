@@ -1411,6 +1411,16 @@ footer li a { display: inline-flex; min-height: 24px; align-items: center; }
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(2px);
 }
+/* Refusal alert (§5.16) — the nested modal the submission form raises over
+   either shell when the server refuses a package or the upload dies; a
+   native dialog nests fine in the top layer, so it inherits the shell above.
+   Narrower than the form dialog (it holds a sentence, not a form), danger
+   carried on the entering edge rather than the text: the server's refusal
+   copy is instructions to read, not decoration to tint. */
+.work-dialog--alert {
+  width: min(calc(100vw - 2rem), 26rem);
+  border-left: 3px solid var(--xl-danger);
+}
 
 /* /work staff entry chip (§5.16) — bordered utility strip so the
    session-gated line reads as a control, not a stray caption. */

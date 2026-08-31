@@ -97,6 +97,18 @@ export function SubmissionForm({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [serverPaths, setServerPaths] = useState<string[]>([]);
+  // Which heading the refusal modal wears. A server refusal and a dead
+  // connection are different facts: "Submission not accepted" over a network
+  // drop would tell the submitter their package was judged when nothing ever
+  // read it.
+  const [serverErrorKind, setServerErrorKind] = useState<"refusal" | "network">(
+    "refusal"
+  );
+  // A deliberate Cancel-upload, kept apart from serverError: the person who
+  // pressed Cancel asked for the stop, so an alertdialog telling them to
+  // check their connection would be a false alarm. They get one quiet inline
+  // line instead.
+  const [cancelled, setCancelled] = useState(false);
   // The refusal REASON, not a boolean. `Boolean(data?.queued)` is what
   // destroyed it before: the one word that would have told a submitter a site
   // update was finishing already travelled over the wire in the 202 body and
@@ -113,7 +125,33 @@ export function SubmissionForm({
   const mdRef = useRef<HTMLInputElement>(null);
   const timeRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const errorDialogRef = useRef<HTMLDialogElement>(null);
+  const submitBtnRef = useRef<HTMLButtonElement>(null);
   const uid = useId();
+
+  // The refusal MODAL (owner ask 2026-08-31: a refused submission was a small
+  // red line under the credit field, and people missed it). A nested native
+  // <dialog> rides the top layer correctly even when this form already sits
+  // inside the outer .work-dialog, so one mechanism serves all three mounts
+  // (/work dialog, /work/submit page, /roadmap/work company dialog). Opened
+  // here, keyed on the error value, NOT at the setState call sites: the
+  // element does not exist until the error has rendered. The `.open` guards
+  // make StrictMode's double-invoke and any re-render a no-op (showModal on
+  // an already-open dialog throws), and dismissal cannot re-open it because
+  // the dep only changes when submit() clears the error first. Esc closes
+  // via native cancel; there is deliberately NO backdrop-click close (house
+  // ruling: hand-rolled backdrop detection false-fires on drag-selects).
+  // Opening focus is native (showModal lands on the OK button, the only
+  // focusable), but the RETURN trip is explicit, via onClose on the dialog:
+  // the submit button is disabled while busy, browsers blur a disabled
+  // element, so <body> is what showModal records as previously focused and
+  // native restoration would dump a keyboard user at the top of the page.
+  useEffect(() => {
+    const d = errorDialogRef.current;
+    if (!d) return;
+    if (serverError && !d.open) d.showModal();
+    else if (!serverError && d.open) d.close();
+  }, [serverError]);
 
   // A landed file clears that field's error immediately (a red border with
   // a green check until the next submit is a contradiction; design-critic
@@ -144,6 +182,7 @@ export function SubmissionForm({
     setFieldErrors({});
     setServerError(null);
     setServerPaths([]);
+    setCancelled(false);
     if (pkgRef.current) pkgRef.current.value = "";
     if (mdRef.current) mdRef.current.value = "";
   }
@@ -152,6 +191,7 @@ export function SubmissionForm({
     e.preventDefault();
     setServerError(null);
     setServerPaths([]);
+    setCancelled(false);
     const errs: Record<string, string> = {};
     if (!pkg) errs.pkg = "Attach your package (.zip or .skill).";
     // The document field is optional (the package usually carries the doc);
@@ -230,6 +270,7 @@ export function SubmissionForm({
       } | null;
       if (!res.ok) {
         // Server 422s carry instructional copy; render it verbatim.
+        setServerErrorKind("refusal");
         setServerError(
           data?.error?.message ?? "Something went wrong. Try again shortly."
         );
@@ -244,9 +285,19 @@ export function SubmissionForm({
       if (context === "page") resetForm();
       onSubmitted?.(data?.id);
     } catch {
-      setServerError(
-        "The upload did not complete. Check your connection and try again; your entries are still here."
-      );
+      // Two aborts share this branch and they are different facts. The
+      // Cancel button aborts with the "user-cancel" reason: the person asked
+      // for the stop, so no modal and no red text, just the quiet note. The
+      // 90 s timeout aborts with no reason ON PURPOSE, so a hung upload
+      // still lands in the alarming branch, as does a genuine network drop.
+      if (ctrl.signal.aborted && ctrl.signal.reason === "user-cancel") {
+        setCancelled(true);
+      } else {
+        setServerErrorKind("network");
+        setServerError(
+          "The upload did not complete. Check your connection and try again; your entries are still here."
+        );
+      }
     } finally {
       clearTimeout(timeout);
       abortRef.current = null;
@@ -563,8 +614,13 @@ export function SubmissionForm({
           placeholder={`First name only. Empty publishes as ${creditTeamName}.`}
         />
       </div>
+      {/* The modal is the attention mechanism; this block is the persistent
+          record, still on screen after OK while the person fixes their
+          package. NO role="alert" here: it mounts in the same commit as the
+          alertdialog and two simultaneous announcements of the same sentence
+          is a race, so the dialog is the single announcer. */}
       {serverError && (
-        <div role="alert" className="text-sm text-red-400">
+        <div className="text-sm text-red-400">
           <p>{serverError}</p>
           {serverPaths.length > 0 && (
             <ul className="mono mt-1 text-xs">
@@ -575,8 +631,50 @@ export function SubmissionForm({
           )}
         </div>
       )}
+      {/* Always mounted, never conditional on serverError: unmounting an OPEN
+          modal dialog skips close(), so the onClose focus return below would
+          never run. The open/close effect above owns its state. onClose fires
+          for OK and Esc alike (React 19 attaches close directly to the
+          element), and it focuses the submit button by ref because native
+          restoration targets <body> here (see the effect's comment). */}
+      <dialog
+        ref={errorDialogRef}
+        className="work-dialog work-dialog--alert"
+        role="alertdialog"
+        aria-labelledby={`${uid}-refusal-title`}
+        aria-describedby={`${uid}-refusal-msg`}
+        onClose={() => submitBtnRef.current?.focus()}
+      >
+        <h2 id={`${uid}-refusal-title`} className="text-lg font-bold">
+          {serverErrorKind === "network"
+            ? "Upload interrupted"
+            : "Submission not accepted"}
+        </h2>
+        {/* The server's sentence, verbatim: refusal bodies are instructional
+            copy written route-side, and they must read identically on all
+            three mounts of this form. */}
+        <div id={`${uid}-refusal-msg`} className="mt-3 text-sm">
+          <p>{serverError}</p>
+          {serverPaths.length > 0 && (
+            <ul className="mono mt-2 text-xs">
+              {serverPaths.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="mt-6">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => errorDialogRef.current?.close()}
+          >
+            OK
+          </button>
+        </div>
+      </dialog>
       <div className="flex flex-wrap items-center gap-4">
-        <button type="submit" className="btn" disabled={busy}>
+        <button ref={submitBtnRef} type="submit" className="btn" disabled={busy}>
           {busy
             ? "Uploading..."
             : updateTarget
@@ -587,10 +685,17 @@ export function SubmissionForm({
           <button
             type="button"
             className="btn btn--text"
-            onClick={() => abortRef.current?.abort()}
+            // The reason string is load-bearing: the catch branch reads it to
+            // tell this deliberate stop apart from the timeout's bare abort.
+            onClick={() => abortRef.current?.abort("user-cancel")}
           >
             Cancel upload
           </button>
+        )}
+        {cancelled && !busy && (
+          <span role="status" className="text-xs text-faint">
+            Upload cancelled. Your entries are still here.
+          </span>
         )}
         {!busy && context === "dialog" && onClose && (
           <button type="button" className="btn btn--text" onClick={onClose}>
