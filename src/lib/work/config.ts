@@ -18,8 +18,9 @@ export const WORK_CAPS = {
   // 2000 -> 20000 with the 100 MB cap (2026-08-19): exceeding this REJECTS
   // the package (archive_too_complex), and a 100 MB code repo commonly has
   // >2000 files (node_modules-free trees included). Per-entry work stays
-  // bounded: only .md/.txt entries under perEntryInflateMaxBytes are ever
-  // inflated, and corpusInflateTotalMaxBytes bounds their combined inflate,
+  // bounded: only .md/.txt entries (plus at most corpusHtmlMaxFiles .html,
+  // below) under perEntryInflateMaxBytes are ever inflated, and
+  // corpusInflateTotalMaxBytes bounds their combined inflate,
   // so 20k entries cost 20k name checks plus a capped text pass, not 20k
   // decompressions.
   zipMaxEntries: 20_000,
@@ -38,9 +39,27 @@ export const WORK_CAPS = {
   archDocMinProseChars: 600,
   archDocMaxChars: 40_000,
   // Evidence corpus: matched doc in full (capped above), then remaining
-  // .md/.txt files ascending by size until this total. Source code is never
+  // .md/.txt files ascending by size, then the admitted .html files (below)
+  // ascending by size, until this total. Source code is otherwise never
   // included. The corpus is the panel's whole universe of verifiable claims.
   corpusTotalMaxChars: 80_000,
+  // Single-file HTML applications (2026-08-31). A program whose whole source
+  // is one .html (markup plus inline script, no build step) has no other file
+  // the panel could read: with a text allowlist of .md/.txt only, its card was
+  // grounded 100% in the architecture document and the evidence critic could
+  // never check a claim against the app itself. extract.ts therefore admits
+  // `.html`/`.htm` entries as corpus text, under these limits: display-path
+  // depth <= 1 (the matchesArchDoc depth rule), outer level only (never from
+  // inside a lazily-opened inner archive), under perEntryInflateMaxBytes, and
+  // at most this many per package in walk order (a site export with fifty
+  // pages is not the case this serves). They ride the SAME TextFile pipeline
+  // as .md/.txt (sanitize + redaction, the `buf` follows `text` rule, the gut
+  // guard, both inflate budgets) and are appended to the corpus LAST, so an
+  // HTML can never displace a document under corpusTotalMaxChars. An HTML
+  // never satisfies a document gate: matchesArchDoc and the Skill ladder are
+  // basename/.md tests, the program lane's architecture-doc requirement stays,
+  // and classify.ts reads text only for .md paths.
+  corpusHtmlMaxFiles: 3,
   // Form fields. The description has NO minimum anywhere (owner directive
   // 2026-08-05: the submitted documents are sufficient to describe the tool;
   // the description is context-only and never published). blurbMinChars

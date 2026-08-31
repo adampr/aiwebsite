@@ -8,6 +8,7 @@ import {
   hasSkillFrontmatter,
   inspectArchive,
   inspectBareMd,
+  isCorpusHtml,
   mergeSkillCorpus,
   nonZipMessage,
   proseLength,
@@ -328,6 +329,280 @@ async function main() {
       );
     }
   }
+
+  // ---- single-file HTML apps enter the corpus (2026-08-31) ----
+  // A Code program whose whole source is one .html (markup + inline script,
+  // no build step) had no file the panel could read: the card was grounded
+  // 100% in the architecture document and the evidence critic could never
+  // check a claim against the app. The rule admits such an HTML as EVIDENCE,
+  // through the same TextFile pipeline as .md/.txt, and never as a document.
+  const APP_HTML =
+    "<!doctype html>\n<html><head><title>Ticket Reply Generator</title></head>\n" +
+    "<body><script>\nfunction draftReply(ticket) { return 'Hello ' + ticket.requester; }\n" +
+    "</script></body></html>\n";
+  assert.equal(WORK_CAPS.corpusHtmlMaxFiles, 3, "small fixed per-package HTML cap");
+  assert.ok(
+    isCorpusHtml("app.html") &&
+      isCorpusHtml("dir/App.HTM") &&
+      !isCorpusHtml("x.md") &&
+      !isCorpusHtml("html.txt"),
+    "isCorpusHtml is a basename extension test"
+  );
+
+  // (i) architecture.md + app.html: program, corpus = [doc, html] in that order,
+  // and the kind is INFERRED (null): the .html changes nothing in classify.ts.
+  const htmlApp = await inspectArchive(
+    await zipOf({ "app.html": APP_HTML, "architecture.md": PROSE }),
+    null,
+    { packageName: "ticket-reply-generator.zip" }
+  );
+  assert.ok(htmlApp.ok, "html app with an architecture doc accepted");
+  if (htmlApp.ok) {
+    assert.equal(htmlApp.kind, "program");
+    assert.equal(htmlApp.kindVerdict.rule, "program_scaffolding");
+    assert.equal(htmlApp.docPath, "architecture.md");
+    assert.deepEqual(
+      htmlApp.corpus.map((c) => c.path),
+      ["architecture.md", "app.html"],
+      "doc first, HTML last"
+    );
+    assert.equal(htmlApp.corpus[1].text, APP_HTML, "the app text itself is the evidence");
+    assert.equal(htmlApp.cleaning, undefined, "a clean HTML leaves no cleaning record");
+  }
+  // The order is by KIND first, size second: a tiny HTML still sits behind a
+  // larger supporting document, so it can never displace one under the cap.
+  const htmlSmall = await inspectArchive(
+    await zipOf({
+      "tiny.html": "<p>x</p>",
+      "architecture.md": PROSE,
+      "notes.md": `${PROSE} notes.`,
+    }),
+    "program"
+  );
+  assert.ok(htmlSmall.ok);
+  if (htmlSmall.ok)
+    assert.deepEqual(
+      htmlSmall.corpus.map((c) => c.path),
+      ["architecture.md", "notes.md", "tiny.html"],
+      "documents ascending by size, then HTML"
+    );
+
+  // (ii) The HTML never satisfies the document gate, however much prose it
+  // carries and whatever it is named.
+  const htmlNoDoc = await inspectArchive(
+    await zipOf({ "app.html": `${APP_HTML}<p>${PROSE}</p>` }),
+    null,
+    { packageName: "app.zip" }
+  );
+  assert.ok(
+    !htmlNoDoc.ok && htmlNoDoc.code === "missing_architecture_doc",
+    "html alone is still refused missing_architecture_doc"
+  );
+  const htmlNamedArch = await inspectArchive(
+    await zipOf({ "architecture.html": `<p>${PROSE}</p>`, "main.py": "x" }),
+    "program"
+  );
+  assert.ok(
+    !htmlNamedArch.ok && htmlNamedArch.code === "missing_architecture_doc",
+    "an .html named architecture is not the architecture doc"
+  );
+
+  // (iii) depth <= 1 on the display path (matchesArchDoc's rule): one wrapper
+  // folder in, two folders out.
+  const htmlDeep = await inspectArchive(
+    await zipOf({
+      "architecture.md": PROSE,
+      "a/b/app.html": APP_HTML,
+      "w/app.html": APP_HTML,
+    }),
+    "program"
+  );
+  assert.ok(htmlDeep.ok);
+  if (htmlDeep.ok) {
+    assert.deepEqual(
+      htmlDeep.corpus.map((c) => c.path),
+      ["architecture.md", "w/app.html"],
+      "depth 1 in, depth 2 out"
+    );
+    assert.ok(
+      htmlDeep.manifest.some((m) => m.path === "a/b/app.html"),
+      "the deep file is still listed"
+    );
+  }
+
+  // (iv) more than corpusHtmlMaxFiles: the first N in WALK order (the outer
+  // archive's central-directory order) are admitted, NOT the N smallest;
+  // within the corpus the admitted ones then sort ascending by size like any
+  // other text. Sizes descend in walk order here so the two orders differ.
+  const manyHtml = await inspectArchive(
+    await zipOf({
+      "architecture.md": PROSE,
+      "one.html": "<p>1</p>".repeat(40),
+      "two.html": "<p>2</p>".repeat(30),
+      "three.html": "<p>3</p>".repeat(20),
+      "four.html": "<p>4</p>",
+      "five.html": "<p>5</p>",
+    }),
+    "program"
+  );
+  assert.ok(manyHtml.ok);
+  if (manyHtml.ok) {
+    assert.deepEqual(
+      manyHtml.corpus.map((c) => c.path).filter(isCorpusHtml),
+      ["three.html", "two.html", "one.html"],
+      "first three in walk order, ascending by size in the corpus"
+    );
+    assert.equal(manyHtml.corpus[0].path, "architecture.md");
+    assert.equal(manyHtml.manifest.length, 6, "the rest stay in the manifest");
+  }
+
+  // (v) A Skill package carrying assets/template.html beside SKILL.md still
+  // resolves skill with SKILL.md as the doc. PINNED: at depth 1 the template
+  // enters the corpus after SKILL.md (a Skill's HTML template is evidence of
+  // what the Skill produces, and the rule is deliberately kind-blind).
+  const skillWithHtml = await inspectArchive(
+    await zipOf({
+      "SKILL.md": `---\nname: t\ndescription: d\n---\n${PROSE}`,
+      "assets/template.html": APP_HTML,
+    }),
+    null,
+    { packageName: "t.skill" }
+  );
+  assert.ok(skillWithHtml.ok && !skillWithHtml.docMissing, "skill with an html asset resolves");
+  if (skillWithHtml.ok) {
+    assert.equal(skillWithHtml.kind, "skill");
+    assert.equal(skillWithHtml.kindVerdict.rule, "skill_package");
+    assert.equal(skillWithHtml.docPath, "SKILL.md");
+    assert.deepEqual(skillWithHtml.corpus.map((c) => c.path), [
+      "SKILL.md",
+      "assets/template.html",
+    ]);
+  }
+  // The Skill ladder never counts an .html: a sole .md beside an index.html is
+  // still the one qualifying document (not ambiguous, not missing), and the
+  // classifier still calls the package a Skill (sole_document; .html is not
+  // in SOURCE_EXT and never was).
+  const soleDocHtml = await inspectArchive(
+    await zipOf({ "guide.md": PROSE, "index.html": APP_HTML }),
+    null,
+    { packageName: "t.zip" }
+  );
+  assert.ok(
+    soleDocHtml.ok &&
+      soleDocHtml.kind === "skill" &&
+      soleDocHtml.kindVerdict.rule === "sole_document" &&
+      soleDocHtml.docPath === "guide.md" &&
+      !soleDocHtml.docMissing,
+    "html is never a Skill doc candidate and never a program signal"
+  );
+  if (soleDocHtml.ok)
+    assert.deepEqual(soleDocHtml.corpus.map((c) => c.path), ["guide.md", "index.html"]);
+  // Inside a lazily-opened inner archive the HTML rule is OFF (outer level
+  // only): the inner SKILL.md is the doc, the inner template is not evidence.
+  const innerHtml = await inspectArchive(
+    await (async () => {
+      const zip = new JSZip();
+      zip.file("pkg.skill", await zipOf({ "SKILL.md": PROSE, "template.html": APP_HTML }));
+      return zip.generateAsync({ type: "nodebuffer" });
+    })(),
+    "skill"
+  );
+  assert.ok(innerHtml.ok && innerHtml.docPath === "pkg.skill!/SKILL.md");
+  if (innerHtml.ok) {
+    assert.ok(
+      !innerHtml.corpus.some((c) => isCorpusHtml(c.path)),
+      "HTML inside an inner archive never enters the corpus"
+    );
+    assert.ok(
+      innerHtml.manifest.some((m) => m.path === "pkg.skill!/template.html"),
+      "but is still listed"
+    );
+  }
+  // mergeSkillCorpus keeps the same order: standalone doc, package documents,
+  // package HTML last.
+  const pkgWithHtml = await inspectArchive(
+    await zipOf({
+      "myskill/SKILL.md": PROSE,
+      "myskill/preview.html": APP_HTML,
+      "myskill/references/notes.md": "Reference notes with enough text to ride along.",
+    }),
+    "skill"
+  );
+  assert.ok(standalone.ok && pkgWithHtml.ok);
+  if (standalone.ok && pkgWithHtml.ok) {
+    const merged = mergeSkillCorpus(standalone, pkgWithHtml);
+    assert.deepEqual(
+      merged.map((c) => c.path),
+      ["SKILL.md", "myskill/SKILL.md", "myskill/references/notes.md", "myskill/preview.html"],
+      "merge: standalone doc, the package's corpus in its own order (its doc, then documents ascending), HTML last"
+    );
+  }
+
+  // (vi) The HTML goes through the same cleaner: an inline credential is
+  // redacted in the corpus, in the stored archive, and the file is recorded
+  // as redacted. (fakeSecretLine is assembled at runtime above so the repo's
+  // pre-commit secrets gate never sees the literal.)
+  const htmlSecret = await inspectArchive(
+    await zipOf({
+      "architecture.md": PROSE,
+      "app.html": `${APP_HTML}<script>const ${fakeSecretLine};</script>\n`,
+    }),
+    "program"
+  );
+  assert.ok(htmlSecret.ok, "an inline credential in the HTML is cleaned, not refused");
+  if (htmlSecret.ok) {
+    assert.deepEqual(htmlSecret.cleaning?.redactedPaths, ["app.html"]);
+    const html = htmlSecret.corpus.find((c) => c.path === "app.html");
+    assert.ok(html, "the cleaned HTML is still evidence");
+    assert.ok(!html!.text.includes("abcdefgh12345678"), "corpus HTML is clean");
+    assert.ok(html!.text.includes("[redacted:"), "and says so where it cut");
+    assert.ok(html!.text.includes("draftReply"), "the rest of the app survives");
+    const rebuilt = await JSZip.loadAsync(htmlSecret.cleaning!.stored!.bytes);
+    const stored = await rebuilt.files["app.html"].async("string");
+    assert.ok(!stored.includes("abcdefgh12345678"), "stored archive HTML is clean");
+    assert.equal(htmlSecret.docPath, "architecture.md", "the doc is untouched");
+  }
+  // The gut guard applies too: an HTML that is mostly credential leaves the
+  // corpus but stays in the manifest, exactly like a .md would.
+  const htmlGutted = await inspectArchive(
+    await zipOf({
+      "architecture.md": PROSE,
+      "k.html": `<script>${fakeSecretLine}</script>`,
+    }),
+    "program"
+  );
+  assert.ok(htmlGutted.ok);
+  if (htmlGutted.ok) {
+    assert.ok(
+      !htmlGutted.corpus.some((c) => c.path === "k.html"),
+      "a gutted HTML is not offered to the panel"
+    );
+    assert.ok(htmlGutted.manifest.some((m) => m.path === "k.html"));
+  }
+
+  // (vii) classify.ts is blind to HTML TEXT: a front-matter-looking body in an
+  // .html cannot fire the skill_document rung, and an .html beside program
+  // scaffolding changes nothing. (The full fixture ladder is pinned under
+  // "kind inference" below and runs unchanged.)
+  assert.equal(
+    classifyWorkKind({
+      packageName: "t.zip",
+      paths: ["notes.html"],
+      innerArchivePaths: [],
+      texts: [{ path: "notes.html", text: "---\nname: x\ndescription: y\n---\nbody" }],
+    }).rule,
+    "default_program",
+    "HTML text never satisfies the Skill front-matter rung"
+  );
+  assert.equal(
+    classifyWorkKind({
+      packageName: "t.zip",
+      paths: ["architecture.md", "app.html"],
+      innerArchivePaths: [],
+      texts: [{ path: "app.html", text: APP_HTML }],
+    }).rule,
+    "program_scaffolding"
+  );
 
   // ---- lint ----
   assert.equal(wordCount("one two  three"), 3);
@@ -6392,6 +6667,89 @@ async function main() {
     false,
     "but a genuine documentation placeholder still survives"
   );
+
+  // C14b. THE PROSE VETO on secret-assignment (2026-08-31). Source files now
+  // enter the corpus (single-file HTML apps), and UI copy in JS object
+  // literals has a high base rate of `password: "<sentence>"` shapes: the
+  // first real package redacted two such lines, told the submitter to rotate
+  // a credential that did not exist, and handed the panel a mangled line. A
+  // credential has no internal whitespace; a sentence does. Fixtures are
+  // assembled at runtime, never as literals the pre-commit secrets gate reads.
+  const PW = ["pass", "word"].join("");
+  const AK = ["API", "KEY"].join("_");
+  const proseKept = [
+    // The two real lines from the package that found this (the value group
+    // used to stop at the apostrophe of "didn't"; it now pairs its
+    // delimiters, and shape 3/4 read the whole sentence).
+    `  ${PW}: "Your account was temporarily locked after several sign-in attempts didn't go through, which is a security safeguard rather than a sign anything is wrong with your account.",`,
+    `  ${PW}: "Password / Account",`,
+    `const ${PW}Error = "Password must be at least 8 characters long";`,
+    // The group spans the gap BETWEEN two string literals: `" + key + "`.
+    `const url = "https://api.example.com/v1/search?apikey=" + key + "&q=" + encodeURIComponent(q);`,
+    `const apiKeyLabel = "Paste the key from the console into this field";`,
+    `${PW}: "two words"`,
+    // Lone shapes, one veto each. An apostrophe inside a double-quoted value
+    // is now visible PAST the apostrophe (paired delimiters) and shape 4 sees
+    // the second word:
+    `${PW}Hint: "Administrator's password"`,
+    // Lone shape 2 (`+` at the end): the identifier is uppercase so shape 4
+    // stays silent and only the concatenation vetoes.
+    `u = "?apikey=" + KEY; alert("x")`.replace("apikey", ["api", "key"].join("")),
+    // A double quote inside a single-quoted value is text, and three tokens.
+    `${PW} = 'Type "yes" to continue'`,
+  ];
+  for (const text of proseKept) {
+    const r = sanitizeText(text);
+    assert.equal(r.changed, false, `prose is not a credential: ${JSON.stringify(text.slice(0, 60))}`);
+    assert.equal(r.hits.length, 0, "and the inventory agrees with the text");
+    assert.equal(r.text, text, "byte-identical");
+  }
+  const stillRedacted = [
+    `${PW}: "hunter2!!"`,
+    `${AK} = "abc123def456ghi789"`,
+    `${PW} = "Vault-Prod-2024!"`,
+    `${AK}: '3f9a1c7e5b2d4a6f8e0c1b3d5f7a9c2e'`,
+    // Paired delimiters: an apostrophe inside a double-quoted credential used
+    // to END the match there and leak the tail (`word!"`); now the whole
+    // literal is the value and the whole literal goes.
+    `${PW}: "secretpass'word!"`,
+    `${PW}: "it's-secret-long"`,
+    // A concatenation whose FIRST literal is itself credential-shaped: the
+    // group stops at the first literal's own closing quote, the inner holds
+    // no `+`, so it redacts (shape 2 only fires when the group spanned the
+    // gap between literals).
+    `${AK} = "abcdefghij" + "klmnopqrst"`,
+  ];
+  for (const text of stillRedacted) {
+    const r = sanitizeText(text);
+    assert.ok(r.changed, `a one-token value is still a credential: ${JSON.stringify(text)}`);
+    assert.equal(r.hits[0]?.ruleId, "secret-assignment");
+    // The FULL quoted value is gone, delimiter to matching delimiter: the
+    // apostrophe cases are the point (before this round `word!` and
+    // `s-secret-long` survived past the apostrophe).
+    const literal = text.match(/"[^"]*"|'[^']*'/)?.[0] ?? "";
+    assert.ok(literal.length >= 10, `fixture parse: ${literal}`);
+    assert.equal(
+      r.text,
+      text.replace(literal, "[redacted:secret-assignment]"),
+      `the whole paired literal is the span: ${r.text}`
+    );
+    assert.equal(r.hits.length, 1, "one hit");
+  }
+  assert.equal(
+    sanitizeText(`${PW}: "secretpass'word!"`).text,
+    `${PW}: [redacted:secret-assignment]`,
+    "nothing leaks past an inner apostrophe"
+  );
+  // PRE-EXISTING, pinned so the veto is not blamed for it: the rule's inner
+  // value floor is 8 characters, so a 7-character `hunter2` never matched.
+  assert.equal(sanitizeText(`${PW}: "hunter2"`).changed, false, "7-char floor predates the veto");
+  // Idempotence with one real hit and one prose veto in the same text.
+  const mixedVeto = `${proseKept[1]}\n${stillRedacted[0]}\n${proseKept[2]}`;
+  const once = sanitizeText(mixedVeto);
+  assert.ok(once.changed && once.hits.length === 1, "exactly the credential line is cut");
+  assert.ok(once.text.includes("Password / Account") && once.text.includes("at least 8 characters"));
+  assert.equal(sanitizeText(once.text).changed, false, "idempotent with a veto beside a hit");
 
   // C15. The value's offset comes from the match's group INDICES, never from
   // indexOf inside the match: when the same digits appear twice in one match,

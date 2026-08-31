@@ -295,7 +295,21 @@ export function nonZipMessage(bytes: Buffer): string {
 
 const TEXT_EXT = /\.(md|mdx|markdown|txt)$/i;
 const MD_EXT = /\.(md|mdx|markdown)$/i;
+/** Single-file HTML applications (2026-08-31, WORK_CAPS.corpusHtmlMaxFiles).
+ * Admitted as corpus TEXT only, through the same TextFile pipeline as
+ * TEXT_EXT, and never as a document: matchesArchDoc, the Skill ladder
+ * (isSkillMd, MD_EXT) and classify.ts's text reads are all basename/.md
+ * tests, so an .html can be evidence and nothing else. */
+const HTML_EXT = /\.(html|htm)$/i;
 const INNER_ARCHIVE_EXT = /\.(skill|zip)$/i;
+
+/** True for a corpus entry admitted under the HTML rule. Used ONLY to order
+ * the corpus (documents first, HTML last) at both assembly sites, finish()
+ * and mergeSkillCorpus(); a path test, so the merge helper can apply it to
+ * an already-built corpus. Exported for scripts/work-tests.ts. */
+export function isCorpusHtml(path: string): boolean {
+  return HTML_EXT.test(baseOf(path));
+}
 // Basename tiers live in config.ts (2026-08-05) so the email attachment
 // picker applies the same lists: BOILERPLATE never qualifies, SUPPORT is
 // demoted only when a better candidate exists.
@@ -365,6 +379,14 @@ interface WalkState {
   entryCount: number;
   /** Inflated text bytes so far, across levels (corpusInflateTotalMaxBytes). */
   inflatedBytes: number;
+  /** HTML entries admitted as text candidates so far, in WALK order (the
+   * central-directory order of the outer archive), against
+   * WORK_CAPS.corpusHtmlMaxFiles. Counted at CANDIDACY so that at most N HTML
+   * entries are ever inflated: an entry that later fails to decode, or falls
+   * past the total inflate budget, still burns its slot. Deterministic and
+   * bounded, which is the property wanted; "the first N that decode" would
+   * cost an unbounded number of inflates on a hostile package. */
+  htmlCandidates: number;
 }
 
 /** One archive level: manifest, secret scan, text extraction. `prefix` is
@@ -422,6 +444,22 @@ async function walkLevel(
     } else if (TEXT_EXT.test(base) && size <= WORK_CAPS.perEntryInflateMaxBytes)
       candidates.push({ path, entry, size });
     else if (
+      // Single-file HTML app rule (WORK_CAPS.corpusHtmlMaxFiles): outer level
+      // only (`prefix === ""` is the same fact TextFile.inner records), display
+      // depth <= 1 (identical to the display path here because the prefix is
+      // empty), the per-entry inflate cap, and the per-package count. It joins
+      // `candidates`, not a parallel list, so the ascending-size inflate loop
+      // below, the sanitize step, the gut guard and both budgets apply to it
+      // byte for byte as they do to a .md.
+      HTML_EXT.test(base) &&
+      prefix === "" &&
+      depthOf(rawPath) <= 1 &&
+      size <= WORK_CAPS.perEntryInflateMaxBytes &&
+      state.htmlCandidates < WORK_CAPS.corpusHtmlMaxFiles
+    ) {
+      state.htmlCandidates++;
+      candidates.push({ path, entry, size });
+    } else if (
       collectInner &&
       INNER_ARCHIVE_EXT.test(base) &&
       depthOf(rawPath) <= 1
@@ -544,8 +582,9 @@ function baseOf(path: string): string {
  * rather than merely acceptable: collecting an inner archive is a push of
  * {path, entry, size} with no inflate and no parse, and the classification
  * chain in walkLevel is an `else if` whose earlier arms (secret filenames,
- * then TEXT_EXT candidates) are disjoint from INNER_ARCHIVE_EXT, so turning
- * the third arm on cannot take an entry away from either. manifest,
+ * then TEXT_EXT candidates, then the HTML_EXT corpus arm) are disjoint from
+ * INNER_ARCHIVE_EXT, so turning the last arm on cannot take an entry away
+ * from any of them. manifest,
  * entryCount, texts, secretPaths and inflatedBytes are byte-identical under
  * both flags; the only delta is a populated innerArchives, which no program
  * path reads. The archive is still walked EXACTLY ONCE, which matters
@@ -586,6 +625,7 @@ export async function inspectArchive(
     innerArchives: [],
     entryCount: 0,
     inflatedBytes: 0,
+    htmlCandidates: 0,
   };
   const walkErr = await walkLevel(zip, "", true, state);
   if (walkErr) return walkErr;
@@ -609,6 +649,13 @@ export async function inspectArchive(
     packageName: opts.packageName ?? "",
     paths: state.manifest.map((m) => m.path),
     innerArchivePaths: state.innerArchives.map((a) => a.path),
+    // Any HTML texts admitted by the corpus rule ride along unfiltered and
+    // are inert here: classify.ts reads a text only for MD_EXT paths at the
+    // package root (its skill_document rung), and every path-based rung saw
+    // .html in `paths` before this round exactly as it does now. Not filtered
+    // on purpose: work:reclassify rebuilds `texts` from corpus_files_json,
+    // which now carries the HTML too, and the ladder must answer the same
+    // either way.
     texts: state.texts.map((t) => ({ path: t.path, text: t.text })),
   });
   const resolved: WorkKind = kind ?? kindVerdict.kind;
@@ -633,7 +680,18 @@ export async function inspectArchive(
     // now the classifier reads the array too, and a sort that reordered it
     // under a later reader would make the reviewed doc depend on which
     // caller ran first.
-    for (const t of [...state.texts].sort((a, b) => a.size - b.size)) {
+    //
+    // ORDER: documents (.md/.txt) ascending by size, then HTML ascending by
+    // size, LAST. Under corpusTotalMaxChars an HTML app can therefore never
+    // displace a document; it only ever uses what the documents left. The
+    // budget check below is a `continue`, not a break, so a small HTML still
+    // enters after a large one was skipped. Same order in mergeSkillCorpus.
+    const ordered = [...state.texts].sort(
+      (a, b) =>
+        Number(isCorpusHtml(a.path)) - Number(isCorpusHtml(b.path)) ||
+        a.size - b.size
+    );
+    for (const t of ordered) {
       if (doc && t.path === doc.path) continue;
       // The gut guard: a supporting file that is now mostly placeholders is
       // not evidence, and handing the panel four kilobytes of redaction tokens
@@ -871,7 +929,14 @@ export function mergeSkillCorpus(
     { path: mdDoc.docPath, text: mdDoc.docText },
   ];
   let total = mdDoc.docText.length;
-  for (const f of pkg.corpus) {
+  // Documents before HTML, the same order finish() produced (pkg.corpus
+  // already has it; the stable sort states the rule here too rather than
+  // relying on the producer), so under corpusTotalMaxChars an HTML app can
+  // never displace a document at this assembly site either.
+  const ordered = [...pkg.corpus].sort(
+    (a, b) => Number(isCorpusHtml(a.path)) - Number(isCorpusHtml(b.path))
+  );
+  for (const f of ordered) {
     if (f.text === mdDoc.docText) continue;
     if (total + f.text.length > WORK_CAPS.corpusTotalMaxChars) continue;
     corpus.push(f);

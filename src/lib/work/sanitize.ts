@@ -91,6 +91,18 @@ interface RedactionRule {
    * a placeholder-looking run by chance, and skipping a real key to spare a
    * fake one is the wrong direction. */
   docVeto?: boolean;
+  /** Skip values that read as PROSE (isProseValue). Set on the label-anchored
+   * secret-assignment rule ONLY, and only because source files now enter the
+   * corpus (single-file HTML apps, 2026-08-31): UI copy in JS object literals
+   * has a high base rate of `password: "Password / Account"` and
+   * `passwordError = "Password must be at least 8 characters long"` shapes,
+   * and the first real package redacted two of them, told the submitter to
+   * rotate a credential that did not exist, and handed the panel a mangled
+   * line. A credential has no internal whitespace; a sentence does. The
+   * accepted miss is a multi-word passphrase in quotes, the same trade the
+   * emails-and-phones ruling in the header made. Never set on a
+   * vendor-prefixed rule, whose value shape is already the whole test. */
+  proseVeto?: boolean;
 }
 
 export const MAX_RECORDED_HITS = 2000;
@@ -129,6 +141,28 @@ const DOC_PLACEHOLDER_RE =
 
 function isDocPlaceholder(value: string): boolean {
   return DOC_PLACEHOLDER_RE.test(value.trim());
+}
+
+/** A captured `"..."` assignment value that reads as prose rather than as a
+ * credential. Three shapes, any one vetoes:
+ *  - the inside begins or ends with a `+` concatenation operator: the group
+ *    spanned the gap BETWEEN two string literals in source (`"?apikey=" + key
+ *    + "&q="`), and the value is code, not a value;
+ *  - three or more whitespace-separated tokens;
+ *  - whitespace followed by a run of three or more lowercase letters (two
+ *    words of a sentence).
+ * The value arrives with PAIRED delimiters (the rule's alternation), so a
+ * quote of the other kind inside it is ordinary text. A real credential is one
+ * token with no internal whitespace (`hunter2!`, hex, base64, a vendor
+ * prefix), so none of these fire on it. Applied INSIDE the match loop, before
+ * the edit is recorded, so the text and the hit inventory can never disagree
+ * about it. */
+function isProseValue(value: string): boolean {
+  if (value.length < 2) return false;
+  const inner = value.slice(1, -1).trim();
+  if (/^\+\s|\s\+$/.test(inner)) return true;
+  if (inner.split(/\s+/).length >= 3) return true;
+  return /\s[a-z]{3,}/.test(inner);
 }
 
 // ---------------------------------------------------------------------------
@@ -272,15 +306,22 @@ export const SANITIZE_RULES: readonly RedactionRule[] = [
     needle: "://",
   },
   // Label-anchored, so the label survives and the reader still learns the step
-  // needs a password. Disjoint classes on both sides of the quote: no
-  // backtracking.
+  // needs a password. The value group PAIRS its delimiters (2026-08-31): each
+  // alternative excludes only its own quote character, so an apostrophe inside
+  // a double-quoted value ("Administrator's password", "it's-secret-long") no
+  // longer ends the match early and leaks the tail. Within each alternative
+  // the classes on both sides of the quote are disjoint: no backtracking, and
+  // an unterminated literal costs one linear scan to the newline. Group 1 is
+  // still the ONE capture (the alternation lives inside it), which is what
+  // valueGroup below reads.
   {
     id: "secret-assignment",
     cls: "credential",
-    re: /\b(?:API[_-]?KEY|APIKEY|SECRET(?:[_-]?KEY)?|CLIENT[_-]?SECRET|PASSWORD|PASSWD|PWD|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|BEARER[_-]?TOKEN|PRIVATE[_-]?KEY)[A-Z0-9_-]{0,24}\s*[:=]\s*(["'][^"'\n]{8,200}["'])/gi,
+    re: /\b(?:API[_-]?KEY|APIKEY|SECRET(?:[_-]?KEY)?|CLIENT[_-]?SECRET|PASSWORD|PASSWD|PWD|ACCESS[_-]?TOKEN|AUTH[_-]?TOKEN|BEARER[_-]?TOKEN|PRIVATE[_-]?KEY)[A-Z0-9_-]{0,24}\s*[:=]\s*("[^"\n]{8,200}"|'[^'\n]{8,200}')/gi,
     valueGroup: 1,
     needle: null,
     docVeto: true,
+    proseVeto: true,
   },
 
   // ---- personal: harmful on one disclosure, shape a regex can claim ----
@@ -500,6 +541,7 @@ export function sanitizeText(text: string): SanitizeResult {
       if (value === undefined || value === "") continue;
       if (rule.verify && !rule.verify(value)) continue;
       if (rule.docVeto && isDocPlaceholder(value)) continue;
+      if (rule.proseVeto && isProseValue(value)) continue;
       // THE GROUP'S REAL OFFSET, from the `d` flag, never m[0].indexOf(value).
       // indexOf finds the FIRST occurrence of that text inside the match,
       // which is a different position whenever the value repeats: for
