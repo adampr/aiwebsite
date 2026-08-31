@@ -150,36 +150,27 @@ if [ -n "$seed_hits" ]; then
   [ -n "${PERSON_MAP_OK:-}" ] || exit 1
 fi
 
-# ── Rendered-file survival gate: the work-archive-store backup (2026-08-29) ──
-# deploy/backup-db.sh is TEMPLATE-RENDERED from @aicompany/core, and the
-# §5.16 work-archive-store block in it is a HOST edit that has no home in
-# the template yet. render.mjs writes every output unconditionally, and
-# deploy.sh's drift gate hashes the MODULE TEMPLATE rather than the rendered
-# bytes, so the next `node packages/aicompany/deploy/render.mjs` deletes the
-# whole block and every existing gate still passes. Nothing reads the block's
-# stamp for freshness either (watchdog.sh checks only the DATABASE
-# heartbeat), so the end state is silent: the last copy of colleagues'
-# submitted work stops being backed up and nobody is told.
+# ── RETIRED 2026-08-31: the work-archive-store survival gate ────────────────
+# This gate refused a staged deploy/backup-db.sh that no longer defined
+# archive_store_backup(), because that block was a HOST edit inside a
+# TEMPLATE-RENDERED file and every re-render deleted it silently (it happened on
+# @aicompany/core v1.110.0 and again on v1.111.0).
 #
-# This is the fail-closed half, at the one moment a wipe becomes permanent:
-# a staged deploy/backup-db.sh that no longer defines archive_store_backup is
-# refused. It is a name check, not a parser. RETIRE THIS GATE the day the
-# block lands in packages/aicompany/deploy/templates/backup-db.sh.tpl, which
-# is the durable home; until then a re-render must be re-applied, not
-# committed as-is.
-if git diff --cached --name-only --diff-filter=ACMR | grep -qx 'deploy/backup-db.sh'; then
-  if ! git show :deploy/backup-db.sh 2>/dev/null | grep -q 'archive_store_backup'; then
-    echo "BLOCKED: deploy/backup-db.sh no longer defines archive_store_backup()." >&2
-    echo "  That is the §5.16 work-archive-store backup (ARCHITECTURE.md §9.6/§9.7)." >&2
-    echo "  A re-render of this template-stamped file deletes it silently and no" >&2
-    echo "  existing gate notices, because the drift check hashes the TEMPLATE." >&2
-    echo "  Re-apply the block on top of the fresh render before committing, or" >&2
-    echo "  port it to packages/aicompany/deploy/templates/backup-db.sh.tpl and" >&2
-    echo "  delete this gate in the same commit." >&2
-    echo "  Bypass ONLY if the block genuinely moved upstream:" >&2
-    echo "    ARCHIVE_BACKUP_OK=1 git commit ..." >&2
-    [ -n "${ARCHIVE_BACKUP_OK:-}" ] || exit 1
-  fi
-fi
+# Its own text said: "RETIRE THIS GATE the day the block lands in
+# packages/aicompany/deploy/templates/backup-db.sh.tpl, which is the durable
+# home." That day is today. v1.114.0 hoisted the engine into the template behind
+# four site-deploy.env keys (BACKUP_EXTRA_NAME/_DIR/_MAX_KB/_WHY, set in
+# deploy/site-deploy.env), so the block now survives every render by
+# construction rather than by an operator remembering to re-apply it.
+#
+# Leaving the gate in place would be worse than useless: it greps for the
+# literal `archive_store_backup`, which the hoisted engine renames to
+# `extra_backup`, so it would BLOCK every future commit of deploy/backup-db.sh.
+#
+# What replaces it, and it is strictly stronger — it detects the render itself
+# rather than a commit of its aftermath, and it covers all 16 rendered files
+# instead of one:
+#   node packages/aicompany/deploy/render.mjs --check   (exit 2 on drift)
+# run as a gate by deploy/deploy.sh immediately after the template-stamp check.
 
 exit 0

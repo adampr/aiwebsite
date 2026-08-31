@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@230d9a753f399f965226115ff11ae93182fb03fe69dc0e0b36db17714eb34cec
+# aicompany-template: deploy.sh.tpl@6d6125639e82a4aa2617b03168642f8ce67546aade14e01c679397b3da65ff79
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -181,6 +181,53 @@ if [ "$stale" -ne 0 ]; then
   exit 1
 fi
 echo "  stamps OK"
+
+# ── Rendered-BODY gate (v1.114.0, §9) ────────────────────────────
+# The stamp gate above proves each rendered file came FROM the current
+# template. It does NOT prove it IS that template's output: it compares the
+# template's own sha256 to the stamp, never the rendered BODY to the template.
+# A hand edit to a rendered file whose template is unchanged therefore passed
+# forever. Measured, not hypothetical: aiwebsite's §5.16 extra-artifact block
+# lived in the rendered deploy/backup-db.sh, and render.mjs deleted it on
+# v1.110.0 and again on v1.111.0 — both times with every gate green, both times
+# restored by hand. `--check` re-renders IN MEMORY (it writes nothing, and
+# creates no directories) and diffs.
+echo ">>> Checking rendered deploy scripts against a fresh render (body, not just stamp)..."
+if ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: node is not on PATH — the rendered-body gate cannot run, and a gate"
+  echo "       that did not run is not a pass. (This is a dev-box deploy; node is"
+  echo "       required for the build anyway.)"
+  exit 1
+fi
+render_check_rc=0
+render_check_out="$(cd "$repo_dir" && node "$module_dir/deploy/render.mjs" --check 2>&1)" || render_check_rc=$?
+if [ "$render_check_rc" -ne 0 ]; then
+  printf '%s\n' "$render_check_out" | sed 's/^/    /'
+  echo ""
+  if [ "$render_check_rc" -eq 1 ]; then
+    # Exit 1 is an ENV/VALIDATION problem, not drift, and it has a different
+    # remedy. The common cause is the ROLLBACK TRAP: an unknown key is fatal in
+    # BOTH directions, so a site-deploy.env carrying keys a NEWER module
+    # introduced fails against an OLDER module. Set new keys AFTER the submodule
+    # bump; remove them before rolling back.
+    echo "render.mjs could not render this host's site-deploy.env at all (exit 1)."
+    echo "This is NOT rendered drift. If you just rolled the module submodule BACK,"
+    echo "remove the site-deploy.env keys the newer module introduced — an unknown"
+    echo "key is fatal in both directions."
+  else
+    echo "A rendered deploy file does not match what render.mjs would produce (exit 2)."
+    echo "A host customisation inside a rendered file is not durable — the next render"
+    echo "deletes it. Move it into the module template behind a site-deploy.env key"
+    echo "(§9.4 BACKUP_EXTRA_* is the worked example), then:"
+    echo "  node packages/aicompany/deploy/render.mjs && git add deploy/ && git commit"
+  fi
+  if [ "${DEPLOY_ALLOW_RENDER_DRIFT:-}" = "1" ]; then
+    echo ""
+    echo ">>> rendered-body gate BYPASSED (DEPLOY_ALLOW_RENDER_DRIFT=1) — shipping the tree as it stands."
+  else
+    exit 1
+  fi
+fi
 
 # ── Rendered-artifact syntax gate (v1.30.3, §9) ──────────────────
 # The stamp check above proves the rendered files MATCH the module templates —

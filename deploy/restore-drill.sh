@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: restore-drill.sh.tpl@51506aae57ba4c304e0a7c824c0a85ed983029b63d67aca85c580d73a274e49c
+# aicompany-template: restore-drill.sh.tpl@5b2cfe7911905282557f7dbf3d3c1206909f314a2ae90c0d7d3952ad8b6d254a
 # Automated backup restore drill (§9.4): prove latest.sql.gz actually restores.
 # Installed as the aiwebsite-restore-drill systemd timer (quarterly). Restores
 # the latest bucket backup into a scratch database, sanity-checks row counts,
@@ -41,7 +41,7 @@ notify() { # subject-after-prefix body — returns 0 iff the mail actually went 
   local key
   key=$(grep -E '^RESEND_API_KEY=' "$env_file" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' | tr -d "'")
   [ -z "$key" ] && return 1
-  curl -s -X POST https://api.resend.com/emails \
+  curl -sf -m 15 -X POST https://api.resend.com/emails \
     -H "Authorization: Bearer $key" \
     -H "Content-Type: application/json" \
     -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":\"adam@xl.net\",\"subject\":\"[aiwebsite] $1\",\"text\":\"$2\",\"headers\":{\"Auto-Submitted\":\"auto-generated\",\"X-Auto-Response-Suppress\":\"All\"}}" >/dev/null || return 1

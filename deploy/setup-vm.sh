@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@afb34399579af099a487547915138ab82587e7a0f314a706ffb37aec277fcad7
+# aicompany-template: setup-vm.sh.tpl@c863919ca92172eeafe033b0c7a6f747b81e95ec89cf313b3ba7baa4a2db7b12
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -880,7 +880,7 @@ if [ -z "$key" ]; then
   record_issue "WARN Disk usage at $usage%" "$disk_body" "disk-usage" 0
   exit 1
 fi
-if curl -s -X POST https://api.resend.com/emails \
+if curl -sf -m 15 -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $key" \
   -H "Content-Type: application/json" \
   -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"adam@xl.net\"],\"subject\":\"[aiwebsite] WARN Disk usage at $usage%\",\"text\":\"$disk_body\",\"headers\":{\"Auto-Submitted\":\"auto-generated\",\"X-Auto-Response-Suppress\":\"All\"}}" >/dev/null; then
@@ -1035,6 +1035,14 @@ After=postgresql.service
 
 [Service]
 Type=oneshot
+# RuntimeMaxSec (v1.114.0): for Type=oneshot systemd disables the start timeout
+# by DEFAULT, so a wedged run blocks every future timer fire with no alert —
+# the same class the blog unit got RuntimeMaxSec=7200 for in v1.102.0. It also
+# bounds the v1.114.0 single-instance flock: without a deadline a wedged run
+# holds that lock forever and every later night exits on contention. 1h against
+# a dump+upload measured in minutes; the 26h backup-heartbeat check remains the
+# outer backstop for a run that dies without alerting.
+RuntimeMaxSec=3600
 ExecStart=/usr/local/bin/aiwebsite-backup-db.sh
 StandardOutput=append:/var/log/aiwebsite-backup.log
 StandardError=append:/var/log/aiwebsite-backup.log
