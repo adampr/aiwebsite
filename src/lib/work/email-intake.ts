@@ -36,6 +36,7 @@ import { claimMetaOnce, getMeta, setMeta } from "@/lib/governance/db";
 import {
   EMAIL_PROMISE,
   MISSING_ARCH_DOC_MESSAGE,
+  PACKAGE_SLIM_GUIDE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
   cleanedBeforeRefusalLead,
@@ -1045,7 +1046,7 @@ export async function handleWorkEmail(
   // through the web form, which really does take the full cap.
   if (pkg.size > WORK_CAPS.uploadMaxBytes) {
     await reject(
-      `That package is too large for the pipeline (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB). Email also cannot carry packages anywhere near that size, so for anything over what mail accepts, upload it on the web instead: ${isCompanyLane ? `${SITE}/roadmap/work` : `${SITE}/work/submit`}.`
+      `That package is too large for the pipeline (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB). ${PACKAGE_SLIM_GUIDE} Email also cannot carry packages anywhere near that size, so upload the slimmed zip on the web instead: ${isCompanyLane ? `${SITE}/roadmap/work` : `${SITE}/work/submit`}.`
     );
     return;
   }

@@ -569,6 +569,46 @@ export const AMBIGUOUS_SKILL_DOC_MESSAGE =
   "SKILL.md. Rename the one the panel should review to SKILL.md, or attach " +
   "it in the second upload field, then resubmit.";
 
+/** The deterministic way out of the oversized-package refusal (2026-08-31
+ * incident: a ~104.8 MB program zip was refused with a bare limit
+ * restatement, so the submitter downgraded to a SKILL.md-only export and the
+ * program lane silently lost the work). ONE source: both web routes (all
+ * three branches each), the client pre-check, the CLI and the email lane
+ * compose from here. */
+export const PACKAGE_SLIM_GUIDE =
+  "Zip the project again without version control history (the .git folder), " +
+  "dependency and environment directories (node_modules, venv, .venv), build " +
+  "outputs, and large data or fixture files. The review reads your documents " +
+  "and source code, so keep those in; the directories above add size and " +
+  "nothing else.";
+
+/** Pass the measured package size when one exists (file.size, bytes.length,
+ * the client's File.size). Do NOT pass Content-Length: it includes multipart
+ * framing and would overstate the package in copy people check against their
+ * own file listing. */
+export function packageTooLargeMessage(sizeBytes?: number | null): string {
+  const limit = `${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB`;
+  // The measured clause is dropped when rounding collapses the size onto the
+  // limit string: formatByteSize renders 100,000,001..100,004,999 bytes as
+  // "100 MB", and "That package is 100 MB, over the 100 MB limit." asserts a
+  // contradiction (refuter finding, 2026-08-31).
+  const measured =
+    typeof sizeBytes === "number" &&
+    Number.isFinite(sizeBytes) &&
+    sizeBytes > WORK_CAPS.uploadMaxBytes
+      ? formatByteSize(sizeBytes)
+      : null;
+  const opener =
+    measured && measured !== limit
+      ? `That package is ${measured}, over the ${limit} limit.`
+      : `That package is over the ${limit} limit.`;
+  return `${opener} ${PACKAGE_SLIM_GUIDE} Then attach the slimmed package.`;
+}
+
+/** Verbatim server sentence for the .md gate, hoisted so routes, CLI and the
+ * client check cannot drift. WORK_CAPS.skillMdMaxBytes is the matching cap. */
+export const DOC_TOO_LARGE_MESSAGE = "That document is too large (limit 1 MB).";
+
 // SECRETS_DETECTED_MESSAGE was deleted on 2026-08-29, not reworded. It said
 // the upload "was not accepted and nothing was stored" and told the submitter
 // to resubmit, and all three of those are false under the cleaning lane. A

@@ -15,8 +15,10 @@ import { createHash } from "node:crypto";
 import { after } from "next/server";
 import { brainHealthy } from "@/lib/governance/brain";
 import {
+  DOC_TOO_LARGE_MESSAGE,
   WORK_CAPS,
   cleanedBeforeRefusalLead,
+  packageTooLargeMessage,
   secretsCleanedMessage,
   workSubmissionsEnabled,
   type WorkKind,
@@ -180,12 +182,14 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
   if (
     Number.isFinite(contentLength) &&
     contentLength > WORK_CAPS.uploadMaxBytes + 5_000_000
-  )
-    return workError(
-      "invalid_request",
-      `That file is too large (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB).`,
-      400
+  ) {
+    console.log(
+      `[work] size-refusal update precheck: submitter=${user.email} target=${id} contentLength=${contentLength} limit=${WORK_CAPS.uploadMaxBytes}`
     );
+    // No measured size: Content-Length includes multipart framing and would
+    // overstate the package in copy people check against their own listing.
+    return workError("invalid_request", packageTooLargeMessage(), 400);
+  }
   let form: FormData;
   try {
     form = await req.formData();
@@ -279,15 +283,23 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
       "The package must be a .zip or .skill file.",
       400
     );
-  if (file.size > WORK_CAPS.uploadMaxBytes)
+  if (file.size > WORK_CAPS.uploadMaxBytes) {
+    console.log(
+      `[work] size-refusal update file: submitter=${user.email} target=${id} file=${JSON.stringify(name.slice(0, 80))} size=${file.size} limit=${WORK_CAPS.uploadMaxBytes}`
+    );
+    return workError("invalid_request", packageTooLargeMessage(file.size), 400);
+  }
+  const bytes = Buffer.from(await file.arrayBuffer());
+  if (bytes.length > WORK_CAPS.uploadMaxBytes) {
+    console.log(
+      `[work] size-refusal update post-read: submitter=${user.email} target=${id} file=${JSON.stringify(name.slice(0, 80))} size=${bytes.length} limit=${WORK_CAPS.uploadMaxBytes}`
+    );
     return workError(
       "invalid_request",
-      `That file is too large (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB).`,
+      packageTooLargeMessage(bytes.length),
       400
     );
-  const bytes = Buffer.from(await file.arrayBuffer());
-  if (bytes.length > WORK_CAPS.uploadMaxBytes)
-    return workError("invalid_request", "That file is too large.", 400);
+  }
   // No magic-byte gate (owner directive 2026-08-05). This is the THIRD
   // inspectArchive call site and it must move with the other two: a package
   // the create lane accepts has to be acceptable as an update, or the same
@@ -310,11 +322,7 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
         400
       );
     if (md.size > WORK_CAPS.skillMdMaxBytes)
-      return workError(
-        "invalid_request",
-        "That document is too large (limit 1 MB).",
-        400
-      );
+      return workError("invalid_request", DOC_TOO_LARGE_MESSAGE, 400);
     mdFile = { name: mdName, bytes: Buffer.from(await md.arrayBuffer()) };
   }
 

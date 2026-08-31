@@ -5,8 +5,9 @@
 // scripts/lib/work-transfer-ops.ts backs work:transfer.
 //
 // NOTHING HERE RE-DERIVES A RULE. Every band, regex, message and ladder step
-// is either imported from the route's own modules (WORK_CAPS and
-// TITLE_KIND_PREFIX_RE from work/config.ts, splitMachineEcho from
+// is either imported from the route's own modules (WORK_CAPS,
+// TITLE_KIND_PREFIX_RE, packageTooLargeMessage and DOC_TOO_LARGE_MESSAGE
+// from work/config.ts, splitMachineEcho from
 // work/names.ts, parseTimeSavedHours from work/time-saved.ts, normalizeTitle
 // from work/db.ts, staticTitles from work/static-titles.json, sameEmail from
 // work/transfer.ts, kindVerdictSentence from work/classify.ts, emailDomain
@@ -30,8 +31,10 @@
 
 import { readFileSync } from "node:fs";
 import {
+  DOC_TOO_LARGE_MESSAGE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
+  packageTooLargeMessage,
   workSubmissionsEnabled,
 } from "../../src/lib/work/config";
 import { kindVerdictSentence, type KindVerdict } from "../../src/lib/work/classify";
@@ -91,27 +94,27 @@ export interface GateSpec {
 }
 
 export const SUBMIT_GATES: readonly GateSpec[] = [
-  { id: "kill_switch", route: "219-224", what: "submissions kill switch (WORK_SUBMISSIONS_ENABLED)" },
-  { id: "daily_quota", route: "239-249", what: "durable submissions/creator/day (countCreatedToday)" },
-  { id: "title_band", route: "298-307", what: "title length band" },
-  { id: "title_kind_prefix", route: "311-316", what: "TITLE_KIND_PREFIX_RE (no category prefix)" },
-  { id: "title_machine_echo", route: "323-328", what: "machine-name echo in the title" },
-  { id: "blurb_max", route: "332-338", what: "description max chars (no minimum)" },
-  { id: "time_saved", route: "350-351", what: "time saved per month (parseTimeSavedHours)" },
-  { id: "published_title_clash", route: "355-367", what: "static exhibit titles + publishedTitleClash" },
-  { id: "active_title_clash", route: "368-381", what: "activeTitleClash" },
-  { id: "attribution", route: "385-397", what: "public credit shape (single first name)" },
-  { id: "package_present", route: "405-411", what: "a package is attached and non-empty" },
-  { id: "package_ext", route: "412-418", what: "package extension .zip or .skill" },
-  { id: "package_size", route: "419-424", what: "package size cap (declared size)" },
-  { id: "package_bytes", route: "425-427", what: "package size cap (bytes actually read)" },
-  { id: "md_ext", route: "445-453", what: "standalone document extension .md/.mdx/.markdown" },
-  { id: "md_size", route: "454-459", what: "standalone document 1 MB cap" },
-  { id: "inspect_archive", route: "465", what: "inspectArchive(bytes, null): the package walk and kind inference" },
-  { id: "standalone_doc", route: "473", what: "inspectBareMd on the standalone document" },
-  { id: "kind_ladder", route: "475-543", what: "kind ladder: accept, standalone-document rescue, or hard refusal" },
-  { id: "doc_precedence", route: "545-598", what: "reviewed-doc precedence and md_* backfill" },
-  { id: "unique_violation", route: "626-638", what: "work_sub_active_title_uq race on insert" },
+  { id: "kill_switch", route: "224-231", what: "submissions kill switch (WORK_SUBMISSIONS_ENABLED)" },
+  { id: "daily_quota", route: "246-256", what: "durable submissions/creator/day (countCreatedToday)" },
+  { id: "title_band", route: "307-317", what: "title length band" },
+  { id: "title_kind_prefix", route: "320-326", what: "TITLE_KIND_PREFIX_RE (no category prefix)" },
+  { id: "title_machine_echo", route: "332-338", what: "machine-name echo in the title" },
+  { id: "blurb_max", route: "342-348", what: "description max chars (no minimum)" },
+  { id: "time_saved", route: "359-360", what: "time saved per month (parseTimeSavedHours)" },
+  { id: "published_title_clash", route: "364-376", what: "static exhibit titles + publishedTitleClash" },
+  { id: "active_title_clash", route: "377-390", what: "activeTitleClash" },
+  { id: "attribution", route: "394-406", what: "public credit shape (single first name)" },
+  { id: "package_present", route: "414-420", what: "a package is attached and non-empty" },
+  { id: "package_ext", route: "421-427", what: "package extension .zip or .skill" },
+  { id: "package_size", route: "428-433", what: "package size cap (declared size)" },
+  { id: "package_bytes", route: "434-445", what: "package size cap (bytes actually read)" },
+  { id: "md_ext", route: "458-470", what: "standalone document extension .md/.mdx/.markdown" },
+  { id: "md_size", route: "471-472", what: "standalone document 1 MB cap" },
+  { id: "inspect_archive", route: "478", what: "inspectArchive(bytes, null): the package walk and kind inference" },
+  { id: "standalone_doc", route: "487", what: "inspectBareMd on the standalone document" },
+  { id: "kind_ladder", route: "489-569", what: "kind ladder: accept, standalone-document rescue, or hard refusal" },
+  { id: "doc_precedence", route: "571-620", what: "reviewed-doc precedence and md_* backfill" },
+  { id: "unique_violation", route: "689-700", what: "work_sub_active_title_uq race on insert" },
 ];
 
 // ── Arguments ──────────────────────────────────────────────────────
@@ -368,44 +371,44 @@ export function parseAttribution(raw: string | null): AttributionParse {
   return { ok: true, attribution: trimmed };
 }
 
-/** route 406-411 */
+/** The missing-package gate. */
 export const PACKAGE_MISSING_MESSAGE = "Attach your package (.zip or .skill).";
 
-/** route 413-418 */
+/** The package extension gate. */
 export function packageNameRefusal(name: string): string | null {
   return /\.(zip|skill)$/.test(name.toLowerCase())
     ? null
     : "The package must be a .zip or .skill file.";
 }
 
-/** route 419-424: the declared size. */
+/** The declared size. The sentence is imported, not copied: since 2026-08-31
+ * both routes, the form and this CLI compose it from config.ts
+ * packageTooLargeMessage (the slimming guide the incident earned). */
 export function packageSizeRefusal(size: number): string | null {
-  return size > WORK_CAPS.uploadMaxBytes
-    ? `That file is too large (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB).`
+  return size > WORK_CAPS.uploadMaxBytes ? packageTooLargeMessage(size) : null;
+}
+
+/** The bytes actually read. Still its own gate, exactly as the route has it,
+ * but the dead-end short sentence is gone: the same full message ships. */
+export function packageBytesRefusal(length: number): string | null {
+  return length > WORK_CAPS.uploadMaxBytes
+    ? packageTooLargeMessage(length)
     : null;
 }
 
-/** route 426-427: the bytes actually read. Deliberately its own gate with
- * its own shorter sentence, exactly as the route has it. */
-export function packageBytesRefusal(length: number): string | null {
-  return length > WORK_CAPS.uploadMaxBytes ? "That file is too large." : null;
-}
-
-/** route 448-453 */
+/** The document extension gate. */
 export function mdNameRefusal(name: string): string | null {
   return /\.(md|mdx|markdown)$/.test(name.toLowerCase())
     ? null
     : "The document must be a .md file.";
 }
 
-/** route 454-459 */
+/** The document size gate. */
 export function mdSizeRefusal(size: number): string | null {
-  return size > WORK_CAPS.skillMdMaxBytes
-    ? "That document is too large (limit 1 MB)."
-    : null;
+  return size > WORK_CAPS.skillMdMaxBytes ? DOC_TOO_LARGE_MESSAGE : null;
 }
 
-// ── The kind ladder (route 475-598) ────────────────────────────────
+// ── The kind ladder (route 489-620) ────────────────────────────────
 
 /** route 70-72 (local `kindRefusal`). A refusal that is a CONSEQUENCE of the
  * inferred kind, said so it can be argued with: the verdict sentence leads,
@@ -449,9 +452,9 @@ export function outerLevelOnly(pkg: ExtractOk): ExtractOk {
   };
 }
 
-/** route 482-484: is this failure the kind the standalone-document rescue
+/** route 496-499: is this failure the kind the standalone-document rescue
  * answers? A program's doc-resolution failure, and only that. The route's
- * remaining conjunct (route 481, a standalone .md was actually attached and
+ * remaining conjunct (route 495, a standalone .md was actually attached and
  * parsed) stays at the call site so TypeScript keeps narrowing it. */
 export function rescueApplies(extracted: ExtractErr): boolean {
   return (
@@ -461,7 +464,7 @@ export function rescueApplies(extracted: ExtractErr): boolean {
   );
 }
 
-/** route 529-531: is this hard failure a doc failure (so the refusal leads
+/** route 548-550: is this hard failure a doc failure (so the refusal leads
  * with the kind verdict and carries the arch-doc instructions)? */
 export function isDocFailure(extracted: ExtractErr): boolean {
   return (
@@ -470,7 +473,7 @@ export function isDocFailure(extracted: ExtractErr): boolean {
   );
 }
 
-/** route 590-591: the md_* name backfilled from a doc that came from INSIDE a
+/** route 606-620: the md_* name backfilled from a doc that came from INSIDE a
  * skill package, so the retention email still carries it as its own
  * attachment. Skill only, exactly as the route has it. */
 export function docBaseName(docPath: string): string {

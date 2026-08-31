@@ -24,7 +24,12 @@
 
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
-import { EMAIL_PROMISE } from "@/lib/work/config";
+import {
+  DOC_TOO_LARGE_MESSAGE,
+  EMAIL_PROMISE,
+  WORK_CAPS,
+  packageTooLargeMessage,
+} from "@/lib/work/config";
 import {
   parseTimeSavedHours,
   TIME_SAVED_MAX_HOURS,
@@ -157,6 +162,22 @@ export function SubmissionForm({
   // a green check until the next submit is a contradiction; design-critic
   // ruling 2026-07-30).
   const takePkg = (f: File | null) => {
+    // Oversized files are refused at choose time, BEFORE any upload: the
+    // server would only say the same thing after the whole package crossed
+    // the wire (and past ~104.8 MB Cloudflare answers with its own HTML
+    // page, never our copy). The file is rejected, not held: keeping it in
+    // state would render the filled check glyph beside a red ring, and the
+    // input is cleared so re-picking a same-named slimmed file fires
+    // onChange again.
+    if (f && f.size > WORK_CAPS.uploadMaxBytes) {
+      setPkg(null);
+      if (pkgRef.current) pkgRef.current.value = "";
+      setFieldErrors((prev) => ({
+        ...prev,
+        pkg: packageTooLargeMessage(f.size),
+      }));
+      return;
+    }
     setPkg(f);
     if (f)
       setFieldErrors((prev) => {
@@ -165,7 +186,21 @@ export function SubmissionForm({
         return next;
       });
   };
-  const takeMd = (f: File | null) => setSkillMd(f);
+  const takeMd = (f: File | null) => {
+    if (f && f.size > WORK_CAPS.skillMdMaxBytes) {
+      setSkillMd(null);
+      if (mdRef.current) mdRef.current.value = "";
+      setFieldErrors((prev) => ({ ...prev, md: DOC_TOO_LARGE_MESSAGE }));
+      return;
+    }
+    setSkillMd(f);
+    if (f)
+      setFieldErrors((prev) => {
+        const next = { ...prev };
+        delete next.md;
+        return next;
+      });
+  };
 
   const setBusyBoth = (b: boolean) => {
     setBusy(b);
@@ -193,7 +228,29 @@ export function SubmissionForm({
     setServerPaths([]);
     setCancelled(false);
     const errs: Record<string, string> = {};
-    if (!pkg) errs.pkg = "Attach your package (.zip or .skill).";
+    // An empty package field KEEPS a standing size refusal rather than
+    // replacing it with the generic attach line: after a choose-time
+    // rejection the field is empty BECAUSE of the size, and swapping the
+    // slimming guidance for "Attach your package" at the moment the person
+    // acts is the incident's dead end reproduced client-side (refuter
+    // finding, 2026-08-31).
+    if (!pkg) errs.pkg = fieldErrors.pkg || "Attach your package (.zip or .skill).";
+    // Belt and braces beside the choose-time check: a File that reached
+    // state without passing through takePkg/takeMd (autofill, a browser
+    // behaving oddly) is still refused before the upload starts. Same
+    // constant, same property (File.size) as the server's live branch, and
+    // the same reject-and-clear as takePkg: leaving the file in state would
+    // render the banned red ring beside a filled check.
+    else if (pkg.size > WORK_CAPS.uploadMaxBytes) {
+      errs.pkg = packageTooLargeMessage(pkg.size);
+      setPkg(null);
+      if (pkgRef.current) pkgRef.current.value = "";
+    }
+    if (skillMd && skillMd.size > WORK_CAPS.skillMdMaxBytes) {
+      errs.md = DOC_TOO_LARGE_MESSAGE;
+      setSkillMd(null);
+      if (mdRef.current) mdRef.current.value = "";
+    }
     // The document field is optional (the package usually carries the doc);
     // only the server can see inside the archive, so no client check exists.
     //
@@ -220,7 +277,8 @@ export function SubmissionForm({
       // focus past a field that is flagged red is how a keyboard user ends
       // up never finding the thing that refused them.
       if (errs.timeSaved) timeRef.current?.focus();
-      else pkgRef.current?.focus();
+      else if (errs.pkg) pkgRef.current?.focus();
+      else mdRef.current?.focus();
       return;
     }
     setBusyBoth(true);
@@ -519,8 +577,19 @@ export function SubmissionForm({
             </>
           )}
         </label>
+        {/* role="alert" because the choose-time size rejection fires with no
+            focus move to re-announce aria-describedby (the picker path leaves
+            focus on the input; the drop path leaves it anywhere), so without
+            a live region a screen reader hears the file land and never hears
+            it refused. The no-role="alert" ruling on this form belongs to the
+            inline SERVER-error block, which races the alertdialog; no client
+            field error ever raises that dialog. */}
         {fieldErrors.pkg && (
-          <p id={`${uid}-pkg-error`} className="mt-1 text-xs text-red-400">
+          <p
+            id={`${uid}-pkg-error`}
+            role="alert"
+            className="mt-1 text-xs text-red-400"
+          >
             {fieldErrors.pkg}
           </p>
         )}
@@ -546,7 +615,9 @@ export function SubmissionForm({
           the package can be a .skill, or a .zip holding one. A program needs
           an architecture.md (or ARCHITECTURE.md, design.md, or a README.md
           with an Architecture section) at the top level or one folder deep:
-          what it does, its components, how data flows. Max 100 MB.
+          what it does, its components, how data flows. Max 100 MB: zip the
+          source and documents, not .git, node_modules, venv, or build
+          outputs.
         </p>
       </div>
       {/* ALWAYS rendered, where it used to appear only for a Skill. Hiding
@@ -560,7 +631,11 @@ export function SubmissionForm({
           SKILL.md or architecture doc (optional)
         </span>
         <label
-          className={"file-drop mt-2" + (skillMd ? " file-drop--filled" : "")}
+          className={
+            "file-drop mt-2" +
+            (fieldErrors.md ? " file-drop--error" : "") +
+            (skillMd ? " file-drop--filled" : "")
+          }
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
@@ -576,7 +651,12 @@ export function SubmissionForm({
             type="file"
             accept=".md,.mdx,.markdown"
             aria-labelledby={`${uid}-md-label`}
-            aria-describedby={`${uid}-md-help`}
+            aria-describedby={
+              fieldErrors.md
+                ? `${uid}-md-error ${uid}-md-help`
+                : `${uid}-md-help`
+            }
+            aria-invalid={Boolean(fieldErrors.md)}
             onChange={(e) => takeMd(e.target.files?.[0] ?? null)}
           />
           <span className="file-drop-glyph" aria-hidden="true">
@@ -594,6 +674,15 @@ export function SubmissionForm({
             </>
           )}
         </label>
+        {fieldErrors.md && (
+          <p
+            id={`${uid}-md-error`}
+            role="alert"
+            className="mt-1 text-xs text-red-400"
+          >
+            {fieldErrors.md}
+          </p>
+        )}
         <p id={`${uid}-md-help`} className="mt-2 text-xs text-faint">
           Skip this if your package already carries the document the panel
           should read, a SKILL.md for a Skill or an architecture doc for a

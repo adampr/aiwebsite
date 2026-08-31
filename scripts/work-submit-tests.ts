@@ -304,15 +304,29 @@ function main(): void {
     /The package must be a \.zip or \.skill file\./
   );
   assert.equal(packageSizeRefusal(WORK_CAPS.uploadMaxBytes), null);
+  // One byte over sits in the window where formatByteSize rounds the size
+  // onto the limit string, so the measured clause is DROPPED rather than
+  // asserting "100 MB is over the 100 MB limit" (refuter finding).
   assert.match(
     packageSizeRefusal(WORK_CAPS.uploadMaxBytes + 1) ?? "",
-    /That file is too large \(limit 100 MB\)\./
+    /^That package is over the 100 MB limit\. Zip the project again without version control history/,
+    "the just-over window keeps the generic opener, never a self-contradiction"
+  );
+  assert.match(
+    packageSizeRefusal(104_800_000) ?? "",
+    /^That package is 104\.8 MB, over the 100 MB limit\. Zip the project again without version control history/,
+    "a clearly-over size is named (the incident's own 104.8 MB)"
+  );
+  assert.match(
+    packageSizeRefusal(WORK_CAPS.uploadMaxBytes + 1) ?? "",
+    /keep those in/,
+    "the anti-downgrade clause survives (the 2026-08-31 incident's lesson)"
   );
   assert.equal(packageBytesRefusal(WORK_CAPS.uploadMaxBytes), null);
   assert.equal(
     packageBytesRefusal(WORK_CAPS.uploadMaxBytes + 1),
-    "That file is too large.",
-    "the post-read gate keeps its own shorter sentence, as in the route"
+    packageSizeRefusal(WORK_CAPS.uploadMaxBytes + 1),
+    "the post-read gate ships the same full message; the dead-end short sentence is gone"
   );
   for (const good of ["SKILL.md", "ARCHITECTURE.MD", "x.mdx", "x.markdown"])
     assert.equal(mdNameRefusal(good), null, good);
@@ -650,13 +664,22 @@ function main(): void {
     );
     pin(PACKAGE_MISSING_MESSAGE, "the missing-package sentence");
     pin("The package must be a .zip or .skill file.", "the package extension sentence");
-    pin(
-      "That file is too large (limit ${Math.floor(WORK_CAPS.uploadMaxBytes / 1_000_000)} MB).",
-      "the package size sentence"
-    );
-    pin("That file is too large.", "the post-read size sentence");
+    // The three size sentences stopped being route literals on 2026-08-31:
+    // route, CLI and form all import packageTooLargeMessage /
+    // DOC_TOO_LARGE_MESSAGE from work/config.ts, so there is no copy left to
+    // drift. What CAN still drift is the route quietly reverting to an
+    // inline sentence, so the pin now asserts the route composes from the
+    // shared source at each gate.
+    pin("packageTooLargeMessage()", "the precheck gate imports its sentence");
+    pin("packageTooLargeMessage(file.size)", "the package size gate imports its sentence");
+    pin("packageTooLargeMessage(bytes.length)", "the post-read gate imports its sentence");
     pin("The document must be a .md file.", "the document extension sentence");
-    pin("That document is too large (limit 1 MB).", "the document size sentence");
+    // The CALL SITE, not the bare constant name: the import line alone would
+    // satisfy an includes() while the gate reverted to an inline literal.
+    pin(
+      'workError("invalid_request", DOC_TOO_LARGE_MESSAGE, 400)',
+      "the document size gate imports its sentence"
+    );
     pin(
       standaloneDocMessage(err({ code: "doc_too_short" })),
       "standaloneDocError's too-short copy"
