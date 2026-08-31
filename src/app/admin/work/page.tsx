@@ -25,6 +25,7 @@ import {
 } from "@/lib/work/config";
 import { cleanedPathsOf, parseCleaning } from "@/lib/work/cleaning";
 import { WorkAdminActions } from "./actions-client";
+import { WorkSubmissionsBrowser } from "./list-client";
 import { WorkStorageList } from "./storage-actions-client";
 
 // Storage rows rendered before the countPeople-style truncation disclosure
@@ -40,6 +41,13 @@ const STATUS_CHIP: Record<string, string> = {
   pending_approval: "pending approval",
   received: "queued",
 };
+
+// Triage (§5.16, 2026-08-31): the statuses that wait on an admin decision,
+// rendered first under "Needs attention" (list-client.tsx). held and
+// pending_approval are the two approval gates; failed is included because a
+// panel failure is also a decision (Re-run or Delete), and a failed row
+// buried under a hundred published ones is a row nobody re-runs.
+const ATTENTION_STATUSES = new Set(["held", "pending_approval", "failed"]);
 
 export default async function AdminWorkPage() {
   // Provider-checked (§5.18): this console now lists COMPANY-private rows
@@ -136,8 +144,8 @@ export default async function AdminWorkPage() {
       {rows.length === 0 ? (
         <p className="text-sm text-faint">No submissions yet.</p>
       ) : (
-        <div className="space-y-4">
-          {rows.map((r) => {
+        <WorkSubmissionsBrowser
+          items={rows.map((r) => {
             const isUpdate = !!r.parentId;
             const target = r.parentId ? byId.get(r.parentId) : undefined;
             const targetLive = !!target && target.status === "published";
@@ -148,7 +156,31 @@ export default async function AdminWorkPage() {
               r.status === "published" &&
               !!target &&
               target.status === "superseded";
-            return (
+            const statusChip = STATUS_CHIP[r.status] ?? r.status;
+            const laneChip =
+              r.companyId === null
+                ? "/work"
+                : (companyNames.get(r.companyId) ?? "company lane");
+            const kindLabel = KIND_LABELS[r.kind as WorkKind] ?? r.kind;
+            // Search haystack for list-client.tsx: everything the row shows
+            // as text plus the raw tokens behind the chips (so "held" and
+            // "pending_approval" both match), lowercased once here so the
+            // client does a plain substring test.
+            const haystack = [
+              r.title,
+              r.slug,
+              r.submitterEmail,
+              statusChip,
+              r.status,
+              kindLabel,
+              r.kind,
+              laneChip,
+              r.id,
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLowerCase();
+            const node = (
               <div
                 key={r.id}
                 id={`sub-${r.id}`}
@@ -157,15 +189,13 @@ export default async function AdminWorkPage() {
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="font-medium">{r.title}</span>
                   <span className="rounded-full border px-2 text-xs">
-                    {STATUS_CHIP[r.status] ?? r.status}
+                    {statusChip}
                   </span>
                   <span className="rounded-full border px-2 text-xs text-faint">
-                    {r.companyId === null
-                      ? "/work"
-                      : (companyNames.get(r.companyId) ?? "company lane")}
+                    {laneChip}
                   </span>
                   <span className="text-faint">
-                    {KIND_LABELS[r.kind as WorkKind] ?? r.kind}
+                    {kindLabel}
                   </span>
                   <span className="text-faint">{r.submitterEmail}</span>
                   {/* Owner directive 2026-08-25: submitted-at in the
@@ -288,8 +318,14 @@ export default async function AdminWorkPage() {
                 />
               </div>
             );
+            return {
+              id: r.id,
+              attention: ATTENTION_STATUSES.has(r.status),
+              haystack,
+              node,
+            };
           })}
-        </div>
+        />
       )}
       <div id="storage" className="space-y-3">
         <h2 className="text-xl font-bold">Uploaded files</h2>
