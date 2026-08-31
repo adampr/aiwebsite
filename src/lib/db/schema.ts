@@ -502,6 +502,89 @@ export const workArchiveFiles = pgTable(
   ]
 );
 
+// WHO BUILT EACH HAND-WRITTEN /work EXHIBIT (§5.16/§5.18). The exhibits on
+// the public Our Work page are page copy in src/app/work/page.tsx, NOT
+// work_submissions rows, so the colleagues who built them were counted by
+// nothing: the §5.18 Employee Scorecard groups published cards by
+// lower(submitter_email), and the builders of the remaining hand-written
+// exhibits therefore read "1 published" while the company showcased two or
+// three of their tools. A row here FOLDS INTO that person's Published count
+// on the staff scorecard (published = cards + live-anchor exhibit credits);
+// there is no separate Exhibits column.
+//
+// HISTORY, because this table has come and gone: created by migration 0052
+// (2026-08-29, feeding a staff-lane Exhibits column), dropped by 0055 later
+// that day when the owner retired the column, and RETURNED by 0056 on
+// 2026-08-31 when the owner asked for the exhibits to count for their
+// builders after all. 0052 and 0055 are applied history and are not edited.
+//
+// WHY A TABLE AND NOT A CHECKED-IN MAP, which is the obvious first idea and
+// is wrong: THIS REPOSITORY IS PUBLIC. A JSON map, a seed INSERT inside a
+// migration, a test fixture or a doc paragraph would publish colleagues'
+// names and addresses to the open internet permanently, and git history
+// would keep them after any revert. The anchor half of the mapping is
+// already public (src/lib/work/static-titles.json is GENERATED from
+// page.tsx and holds ids and titles, never addresses); the EMAIL half is
+// new information about a person and lives ONLY in the production database.
+// Migration 0056 creates this table EMPTY for exactly that reason, and the
+// rows are written on the VM by `npm run work:credit`. Do not add a seed
+// anywhere; the pre-commit gate (scripts/git-hooks/pre-commit.local) rejects
+// an added line that names this table beside an email address.
+//
+// The credit is INTERNAL. It feeds the staff scorecard, which is
+// force-dynamic, robots-noindex and gated to signed-in xl.net staff. It puts
+// no name on the public page, which by owner ruling credits nobody, and it
+// is not the §5.16 card credit (that one is opt-in, first-name-only and
+// typed by the submitter into submitter_name).
+//
+// email is denormalized and lowercased with NO foreign key, the convention
+// the audit columns in this file already follow: the scorecard matches
+// people on lower(email), and a company_people row is a hard DELETE that a
+// re-import replaces with a fresh uuid, so an FK would silently drop the
+// attribution the moment someone left the directory.
+//
+// NO company_id COLUMN, DELIBERATELY. These exhibits are XL.net's own page
+// copy and are meaningless in a client lane; an absent column is enforcement
+// that no reader can forget, unlike a WHERE clause. scorecardRows() reads
+// this table only when scope.companyId is null, so a company scorecard is
+// byte-identical with or without rows here.
+//
+// The key is (anchor_id, lower(email)) rather than anchor_id alone: one
+// exhibit can have two builders, and a PRIMARY KEY on the anchor would make
+// the second credit silently overwrite the first. That index is
+// MIGRATION-ONLY and invisible to drizzle, the 0039
+// company_people_email_staff_uq precedent: drizzle cannot model an
+// expression index, so `drizzle-kit push` would silently drop it and deploys
+// must keep using `drizzle-kit migrate`. lower() is load-bearing rather than
+// cosmetic: every read groups on lower(email), so a raw-column unique index
+// would accept an address typed with a capital letter beside the same
+// address in lower case, and the reader would collapse the two onto one key
+// and count that person's exhibit twice.
+export const workStaticCredits = pgTable(
+  "work_static_credits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // The /work section id, e.g. "lakehouse". Validated at READ time against
+    // the generated anchor list, never by a CHECK: the id set changes
+    // whenever page.tsx changes, and that must not require a migration. A
+    // credit whose exhibit has been retired stops counting the day the
+    // section leaves the page, which is the honest behaviour (one-tool-one-
+    // card conversions, §5.16: the team card takes over the count and the
+    // operator retires the row with `work:credit remove`).
+    anchorId: text("anchor_id").notNull(),
+    email: text("email").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    // Who recorded it. The durable answer to "who says so" for a colleague
+    // who asks to be uncredited; removal is a DELETE by an admin.
+    updatedByEmail: text("updated_by_email").notNull(),
+  }
+);
+
 // Daily budget ledger for the submission panel (governance_usage pattern):
 // survives PM2 restarts, checked at run admission and per brain call.
 export const workUsage = pgTable("work_usage", {

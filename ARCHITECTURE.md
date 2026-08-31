@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-08-31 §5.16 ADMIN TRIAGE + SEARCH (section 5.16 `/admin/work` passage): the admin list is split into "Needs attention" (status `held`, `pending_approval` or `failed`, rendered first, heading kept over "Nothing is waiting on you." when empty) and "Everything else", with a client-side `type="search"` input filtering both sections live against a server-built haystack (title, slug, submitter email, status chip text and raw token, kind label and raw kind, lane chip text, row id) in the new `src/app/admin/work/list-client.tsx` (`WorkSubmissionsBrowser`; page.tsx still fetches and renders every row and passes the JSX as a prop; `sub-<id>` anchors and `WorkAdminActions` props unchanged). NO schema, NO env, NO route change. Previous: 2026-08-30 TENSE REPAIR + FIRST-PARTY DISCLOSURE ALLOWLIST (sections 5.16): `FIRST_PARTY_PEOPLE` (config.ts, enforced in the disclosure prompt AND deterministically via pure `clearFirstPartyPeople` before any hold) stops the personal_names item holding cards on XL.net's own public faces, after two same-day false holds (the CEO named by a skill's own template, row 859ba29b; the Leo Netter persona); `npm run work:rerun` gains `--no-notify` (a lexical suppression seam over every panel email, failure alert included) and `--keep-position` (finishPublished restores published_at + display_rank; slug-changing retitles refused under the flag because placements.ts keys bays on slug), built for the owner-directed re-run of the published cards that describe their tool in the past tense under the 39257b2 rule (72 identified; the batch runs on the VM with no email and no page reordering). NO schema, NO env, NO route change. Previous: 2026-08-29 §5.16 CHANNEL-POST INTAKE VIA THE SCRIPTED LANE (sections 5.16 "Scripted submission lane" + the canvas passage): a CoWork skill the owner remembered as "in the canvas" was in fact a #ai-development CHANNEL POST (a .skill plus a sample-output report), so the canvas read is now documented as one of two Slack sources and its dependency on Leo Netter's channel MEMBERSHIP is stated (the bot was removed from the channel that day, `files.info` returned `not_visible`, and the token holds no `channels:join`, so only a person can restore the read); the package was filed on the VM with `work:submit --email <builder>` (row = credit under the published-only scorecard, no public byline by the standing ruling), the sample report was deliberately NOT passed as `--md` and NOT retained, because with `--md` the standalone document becomes THE reviewed document at corpus slot 0 and an archive-store file, and a sample output names the clients the tool was run against. NO code, NO schema, NO env, NO route change. Previous: 2026-08-29 /work TEAM-CARD PLACEMENTS (owner directive; sections 4 `/work` row + 5.16 two-lanes passage; rebased onto the FOLLOW-UP EMAILS CONVERTED round, folded into the previous entry below, so the counts here are the seventeen-static ones): a published team card can be lifted out of the "From the Team" run and rendered INSIDE a static bay, after that bay's hand-authored exhibits. `src/lib/work/placements.ts` holds a CODE-SIDE slug -> bay map (seeded: `team-client-site-rescue-mirror` -> "03") plus the pure `splitPlacements()` (placed per bay vs run; unknown slugs and placements naming a bay absent from `static-titles.json` fall back to the run, test-pinned) and `sequencePositions()` (each placed list's and the run's first GLOBAL position, counted from the MAP entries naming a known bay, never from the published rows, so they are build-time constants). It is a code map, not a DB column, because bay membership shifts the hard-coded stripe class of every static exhibit after it: with the placed card at global position 12 the six trailing statics (`#lakehouse` .. `#autotask-ci-intake`, positions 13..18) carry the opposite literal class to the one 6e45b44 left them with, the last static is at 18 (even, plain) and the run starts at 19 (odd, lightline); `CommunitySection` now takes `firstPosition` (computed from the map, no literal offset), `WorkRegistry` takes `{placed, run}` and numbers placed rows inside their bay after its statics, the pager's divider check is scoped to the divider's own following siblings (`[data-team-divider] ~ ...`) so a placed card alone on screen no longer props up an empty divider, and `CommunityCard` gains an opt-in `placed` prop that adds a "From the Team" badge (the card sits above the divider that carries the provenance promise; the default path and the §5.18 company page are byte-identical). Stated cost: while the placed row is NOT published (withdrawn, held, DB down) the seam inside bay 03/04 (`#onboarding-toolkit` -> `#lakehouse`) double-stripes until the map entry is removed; no other seam moves. Rank WITHIN a lane stays DB curation (display_rank). New suite `npm run test:placements` scans page.tsx's real token stream (statics, `<PlacedCards>` slots, `<CommunitySection>`) and walks it for strict stripe alternation in the published, unpublished and DB-down states. No route, schema, env or migration change; the local dev DB has no `work_submissions` rows, so the placement is only visible against production data or a seeded row. Previous: 2026-08-29 §5.16 LIVE TOOLS ARE PRESENT TENSE, AND A CREDIT CAN BE FIXED (sections 5.16 panel/lint passage + the new attribution lane): the house rule "past tense for anything that ran" was being applied to the TOOL, so a live tool published as "Ticket Reply Composer was a browser-based IT helpdesk app" and read as retired (27 of the 96 published summaries opened that way, every one a tool described as if retired, no present-tense card flagged); `HOUSE_STYLE_RULES` now separates the tool (present tense) from a one-time event (past), the editorial critic's "tense slip" is glossed, and `lintCard` fails a past-tense summary OPENER with a "summary" violation the repair grant frees. New `npm run work:attribute` (`scripts/work-attribute.ts` + pure `scripts/lib/work-attribute-ops.ts`, `test:workattribute`) sets or clears `submitter_name` on one row (the column no shipped route or script could change after intake) AT THE NAMED PERSON'S OWN REQUEST, with a best-effort `/work` revalidate; the names-nobody default and the opt-in, first-name-only credit are UNCHANGED, and the converted exhibits stay unattributed by ruling. NO schema, NO env, NO route change. Previous: 2026-08-29 FOLLOW-UP EMAILS CONVERTED (sections 5.16 + the /work row): the ninth builder-made exhibit, `#follow-up-emails` (Luke Barrett, canvas-attributed, owner-ruled), leaves page.tsx and becomes a panel-written team card filed under its builder with no public attribution, on the same one-tool-one-card ruling as the eight earlier today; 18 -> 17 statics, snapshot regenerated; because it sat at position 15 the three statics after it flip stripe class and community.tsx's seam offset moves from `i + 1` to `i` (last static now odd). The package is the canvas SKILL.md, byte-identical, wrapped as a canonical .skill because the package lane takes .zip/.skill only. Two chase-register tasks (§5.21) are open for the two remaining builder-made exhibits whose packages were never posted (Morning Brief, Autotask CI Intake); per the Exhibits retirement one entry below, their builders show their real published count until those cards publish. NO schema, NO env, NO route change. Previous: 2026-08-29 EXHIBITS RETIRED FROM THE EMPLOYEE SCORECARD (sections
+Last verified against code: 2026-08-31 §5.18 EXHIBIT CREDITS RETURN, FOLDED INTO PUBLISHED (sections 5.16 "One tool, one card" + 5.18 + 5.21 chain note + the §6 schema listing + §13; migration 0056). Owner report 2026-08-31: the STAFF Employee Scorecard showed `1` in Published for the builders of the three remaining builder-made hand-written /work exhibits (`autotask-ci-intake`; `lakehouse` and `api-gateway`) because those exhibits are page copy in `src/app/work/page.tsx`, not `work_submissions` rows, and `scorecardRows` counted them for nobody; the owner asked for them to count. The 2026-08-29 retirement (the EXHIBITS RETIRED entry further down this chain) is superseded for the MECHANISM and kept for the COLUMN: `work_static_credits` (`workStaticCredits` in `src/lib/db/schema.ts`, the same five columns and the same hand-added UNIQUE on `(anchor_id, lower(email))`, no `company_id`) is back, and a credit whose anchor is still in the GENERATED `static-titles.json` `anchorIds` FOLDS into that person's `published` on the STAFF lane only: `published` = published cards + live-anchor exhibit credits; `scorecardRows` is back to FOUR parallel reads (`[people, counts, requests, exhibitCounts]`), the fourth resolving to `[]` for a company scope so a client scorecard is byte-identical; there is NO `exhibits` field, NO Exhibits column and NO sort tiebreak. `lastPublishedAt` and `timeSavedMinutes` stay cards-only (the fold only ever raises `published`, so "nonzero time saved beside 0 published" stays impossible; the "Most recent" cell now goes faint on a null instant rather than on `published === 0`, identical in the company lane where the two coincide). The credited-only stray drain returns with its `suppressedHashes`/`sha256Hex` guard (a suppressed directory removal is never re-named by a credit). The credit read touches only `work_static_credits`, so held, failed and in-review rows are still never read. Honesty guard as before: a converted exhibit stops counting the day its anchor leaves page.tsx (one-tool-one-card, §5.16), so a team card and its former exhibit can never both count for long, and the operator retires the dead row with `work:credit remove` (this supersedes the "show their real published count until those cards publish" remark, in the entry just above the EXHIBITS RETIRED one, for `autotask-ci-intake`). COPY: the STAFF disclosure now says Published means published cards plus any hand-written Our Work exhibit an administrator has recorded the person as having built, that the credit is internal and stays on the page (no exhibit on the public page names its builder) and to ask an administrator to change or remove an exhibit credit; the staff empty state reads "no published cards or credited exhibits"; the staff-hub blurb names "the Our Work exhibits an administrator has credited to a person"; the COMPANY disclosure (client-visible) and the public /work sentence "The scorecard counts published cards only" (it describes the client lane) are unchanged. NEW MIGRATION `0056_work_static_credits_return`: hand-written `CREATE TABLE IF NOT EXISTS` (0052's column definitions verbatim) + `CREATE UNIQUE INDEX IF NOT EXISTS work_static_credit_uq ON (anchor_id, lower(email))`, journal idx 56 above the 0055 tail, `meta/0056_snapshot.json` generated against 0055 (`0056.prevId` equals `0055.id`; the snapshot carries the table, the expression index stays invisible to drizzle); 0052 and 0055 are applied history and are not edited. THE TABLE SHIPS EMPTY (public repo; the pre-commit person-mapping gate still names it): rows are written on the VM by the restored `npm run work:credit` (`scripts/work-credit.ts` + `scripts/lib/work-credit-ops.ts`, `add` validates the anchor against the generated list, `remove` accepts a retired anchor). The eight rows exported on 2026-08-29 all name anchors retired by the conversion and are NOT re-imported. OPERATOR STEP AFTER THE DEPLOY (on the VM): `work:credit add` for the three anchors above against the builders' xl.net addresses, `--by` the admin; the scorecard is force-dynamic, so the next load shows it. TESTS: the five "exhibits retired" pins in `scripts/roadmap-tests.ts` are replaced by seven credit pins (never seeded + the repo-wide no-address-beside-the-table rule via `git grep`, the fold and staff-only read and inArray guard, the suppression guard, the page copy and no column, the hub blurb, the write path, the 0056 shape and chain). Comments in `scripts/chase-seed.ts`, `src/lib/db/chase-schema.ts` and the pre-commit gate no longer say the table stays dropped. NO env, NO route change. Previous: 2026-08-31 §5.16 ADMIN TRIAGE + SEARCH (section 5.16 `/admin/work` passage): the admin list is split into "Needs attention" (status `held`, `pending_approval` or `failed`, rendered first, heading kept over "Nothing is waiting on you." when empty) and "Everything else", with a client-side `type="search"` input filtering both sections live against a server-built haystack (title, slug, submitter email, status chip text and raw token, kind label and raw kind, lane chip text, row id) in the new `src/app/admin/work/list-client.tsx` (`WorkSubmissionsBrowser`; page.tsx still fetches and renders every row and passes the JSX as a prop; `sub-<id>` anchors and `WorkAdminActions` props unchanged). NO schema, NO env, NO route change. Previous: 2026-08-30 TENSE REPAIR + FIRST-PARTY DISCLOSURE ALLOWLIST (sections 5.16): `FIRST_PARTY_PEOPLE` (config.ts, enforced in the disclosure prompt AND deterministically via pure `clearFirstPartyPeople` before any hold) stops the personal_names item holding cards on XL.net's own public faces, after two same-day false holds (the CEO named by a skill's own template, row 859ba29b; the Leo Netter persona); `npm run work:rerun` gains `--no-notify` (a lexical suppression seam over every panel email, failure alert included) and `--keep-position` (finishPublished restores published_at + display_rank; slug-changing retitles refused under the flag because placements.ts keys bays on slug), built for the owner-directed re-run of the published cards that describe their tool in the past tense under the 39257b2 rule (72 identified; the batch runs on the VM with no email and no page reordering). NO schema, NO env, NO route change. Previous: 2026-08-29 §5.16 CHANNEL-POST INTAKE VIA THE SCRIPTED LANE (sections 5.16 "Scripted submission lane" + the canvas passage): a CoWork skill the owner remembered as "in the canvas" was in fact a #ai-development CHANNEL POST (a .skill plus a sample-output report), so the canvas read is now documented as one of two Slack sources and its dependency on Leo Netter's channel MEMBERSHIP is stated (the bot was removed from the channel that day, `files.info` returned `not_visible`, and the token holds no `channels:join`, so only a person can restore the read); the package was filed on the VM with `work:submit --email <builder>` (row = credit under the published-only scorecard, no public byline by the standing ruling), the sample report was deliberately NOT passed as `--md` and NOT retained, because with `--md` the standalone document becomes THE reviewed document at corpus slot 0 and an archive-store file, and a sample output names the clients the tool was run against. NO code, NO schema, NO env, NO route change. Previous: 2026-08-29 /work TEAM-CARD PLACEMENTS (owner directive; sections 4 `/work` row + 5.16 two-lanes passage; rebased onto the FOLLOW-UP EMAILS CONVERTED round, folded into the previous entry below, so the counts here are the seventeen-static ones): a published team card can be lifted out of the "From the Team" run and rendered INSIDE a static bay, after that bay's hand-authored exhibits. `src/lib/work/placements.ts` holds a CODE-SIDE slug -> bay map (seeded: `team-client-site-rescue-mirror` -> "03") plus the pure `splitPlacements()` (placed per bay vs run; unknown slugs and placements naming a bay absent from `static-titles.json` fall back to the run, test-pinned) and `sequencePositions()` (each placed list's and the run's first GLOBAL position, counted from the MAP entries naming a known bay, never from the published rows, so they are build-time constants). It is a code map, not a DB column, because bay membership shifts the hard-coded stripe class of every static exhibit after it: with the placed card at global position 12 the six trailing statics (`#lakehouse` .. `#autotask-ci-intake`, positions 13..18) carry the opposite literal class to the one 6e45b44 left them with, the last static is at 18 (even, plain) and the run starts at 19 (odd, lightline); `CommunitySection` now takes `firstPosition` (computed from the map, no literal offset), `WorkRegistry` takes `{placed, run}` and numbers placed rows inside their bay after its statics, the pager's divider check is scoped to the divider's own following siblings (`[data-team-divider] ~ ...`) so a placed card alone on screen no longer props up an empty divider, and `CommunityCard` gains an opt-in `placed` prop that adds a "From the Team" badge (the card sits above the divider that carries the provenance promise; the default path and the §5.18 company page are byte-identical). Stated cost: while the placed row is NOT published (withdrawn, held, DB down) the seam inside bay 03/04 (`#onboarding-toolkit` -> `#lakehouse`) double-stripes until the map entry is removed; no other seam moves. Rank WITHIN a lane stays DB curation (display_rank). New suite `npm run test:placements` scans page.tsx's real token stream (statics, `<PlacedCards>` slots, `<CommunitySection>`) and walks it for strict stripe alternation in the published, unpublished and DB-down states. No route, schema, env or migration change; the local dev DB has no `work_submissions` rows, so the placement is only visible against production data or a seeded row. Previous: 2026-08-29 §5.16 LIVE TOOLS ARE PRESENT TENSE, AND A CREDIT CAN BE FIXED (sections 5.16 panel/lint passage + the new attribution lane): the house rule "past tense for anything that ran" was being applied to the TOOL, so a live tool published as "Ticket Reply Composer was a browser-based IT helpdesk app" and read as retired (27 of the 96 published summaries opened that way, every one a tool described as if retired, no present-tense card flagged); `HOUSE_STYLE_RULES` now separates the tool (present tense) from a one-time event (past), the editorial critic's "tense slip" is glossed, and `lintCard` fails a past-tense summary OPENER with a "summary" violation the repair grant frees. New `npm run work:attribute` (`scripts/work-attribute.ts` + pure `scripts/lib/work-attribute-ops.ts`, `test:workattribute`) sets or clears `submitter_name` on one row (the column no shipped route or script could change after intake) AT THE NAMED PERSON'S OWN REQUEST, with a best-effort `/work` revalidate; the names-nobody default and the opt-in, first-name-only credit are UNCHANGED, and the converted exhibits stay unattributed by ruling. NO schema, NO env, NO route change. Previous: 2026-08-29 FOLLOW-UP EMAILS CONVERTED (sections 5.16 + the /work row): the ninth builder-made exhibit, `#follow-up-emails` (Luke Barrett, canvas-attributed, owner-ruled), leaves page.tsx and becomes a panel-written team card filed under its builder with no public attribution, on the same one-tool-one-card ruling as the eight earlier today; 18 -> 17 statics, snapshot regenerated; because it sat at position 15 the three statics after it flip stripe class and community.tsx's seam offset moves from `i + 1` to `i` (last static now odd). The package is the canvas SKILL.md, byte-identical, wrapped as a canonical .skill because the package lane takes .zip/.skill only. Two chase-register tasks (§5.21) are open for the two remaining builder-made exhibits whose packages were never posted (Morning Brief, Autotask CI Intake); per the Exhibits retirement one entry below, their builders show their real published count until those cards publish. NO schema, NO env, NO route change. Previous: 2026-08-29 EXHIBITS RETIRED FROM THE EMPLOYEE SCORECARD (sections
 5.16 "One tool, one card" + 5.18 + the §6 schema listing; migration 0055). Owner ruling, later
 the same day the credits shipped: `/roadmap/scorecard` counts PUBLISHED /work cards only, in
 both lanes, and the "Exhibits" concept on it is retired end to end. OUT OF THE CODE: the
@@ -5301,11 +5301,11 @@ a VM file copy.
 
 WHY THE TWO LANES STAY SEPARATE, now that an exhibit can carry a retained
 artifact (here), which with the page copy is most of what a row carries (a
-named builder is the one thing it does not carry: the `work_static_credits`
-attribution of 2026-08-29 was dropped by migration 0055 later the same day,
-§5.18 "Exhibits retired", and a converted tool's builder is credited by the
-team card's submitter, `work:submit --email`): an exhibit must NOT become a
-row. The editorial
+named builder is the one thing it does not carry ON THE PAGE: the
+`work_static_credits` attribution, §5.18 "Exhibit credits", is internal to the
+staff scorecard's Published count and never renders on /work, and a converted
+tool's builder is credited by the team card's submitter, `work:submit
+--email`): an exhibit must NOT become a row. The editorial
 panel would rewrite the page's best prose into the card template, and
 publishing a card for a tool that already has an exhibit duplicates it on the
 page. The create route enforces the same ruling from the other side.
@@ -5320,19 +5320,25 @@ same round. Eight exhibits were converted on that ruling (`#ticketscribe`,
 `#ticket-summaries`, `#sp-writer`, `#kaseya-ap-builder`, `#tps-client-count`,
 `#log-analyzer`, `#script-master`, `#ticket-reply-composer`), taking the
 static lane from 26 cards to EIGHTEEN and `static-titles.json` to 18 titles,
-18 anchor ids and 54 facet labels. TWO ORDERINGS FALL OUT OF THE CODE AND
+18 anchor ids and 54 facet labels. THREE ORDERINGS FALL OUT OF THE CODE AND
 GOVERN THE OPERATOR RUN, in this order. (1) The removal DEPLOYS before any
 package is submitted, because `POST /api/work/submissions` 409s a title that
 normalizes to a static exhibit title and `npm run work:submit` applies the
 identical gate. (2) The panel runs LAST, because it is told "Title must
 remain <row.title> unless it collides", so submitting before the removal
-ships makes it invent a different name. There is no credit step: the builder
-of a converted tool is credited by the team card's submitter (`work:submit
---email`), not by a credits row. This paragraph first listed a third
-ordering for the eight `work_static_credits` rows; that table was dropped by
-migration 0055 later the same day (§5.18 "Exhibits retired"); its eight
-production rows must be exported to a file outside the repository by the
-operator before the deploy runs the migration. The RETENTION lane described ABOVE is unchanged
+ships makes it invent a different name. (3) The credit row, if the exhibit
+had one (§5.18 "Exhibit credits", back since 2026-08-31): the builder of a
+converted tool is credited going forward by the team card's submitter
+(`work:submit --email`), and the `work_static_credits` row for the retired
+anchor stops counting the day the removal deploys, because `scorecardRows`
+folds in only credits whose anchor is still in the GENERATED
+`static-titles.json`; a team card and its former exhibit can therefore never
+both count for long. The operator then retires the dead row with `npm run
+work:credit remove <anchor> <email> --by <admin>` (`remove` accepts a retired
+anchor for exactly this order; `add` refuses one). Between 0055 (2026-08-29)
+and 0056 (2026-08-31) the table did not exist and this paragraph listed two
+orderings; the eight rows exported before 0055 all name converted anchors
+and are not re-imported. The RETENTION lane described ABOVE is unchanged
 and is now the lane for exhibits that STAY page copy: `work:retain --exhibit` matches the
 snapshot title exactly, so after the deploy it can no longer name any of the
 eight, and pre-existing `exhibits/<slug>/` rows stay (`isExhibitRelPath` keys
@@ -8826,7 +8832,8 @@ text-faint and unlinked; email-less rows annotated; not-in-directory
 submitters flagged with admin-only add; ONE header list for both lanes, Person /
 Published / Time saved / mo / Requested / Working on / Completed / Most recent
 (a staff-lane-only `Exhibits` column existed for a few hours on 2026-08-29 and
-is retired, see "Exhibits retired" below); since 2026-08-27 a `Time saved / mo`
+is retired; since 2026-08-31 a live-anchor exhibit credit folds into the staff
+lane's Published figure instead, see "Exhibit credits" below); since 2026-08-27 a `Time saved / mo`
 column sits immediately after Published, summing that person's self-reported
 `work_submissions.time_saved_minutes` over their PUBLISHED rows in the lane
 and rendered by `formatTimeSavedCompact` - a plain cell, not a `CountCell`,
@@ -8929,45 +8936,61 @@ exists); consumers are the scorecard rows (emails keep mono styling via
 `personLabelParts().kind`), the scorecard click-through, and the requested
 serializers; the public /work card credit is EXEMPT by privacy design
 (single validated first name or team credit, never an email; source-pinned).
-**Exhibits retired (owner ruling 2026-08-29, later the same day).** The
-scorecard counts PUBLISHED `/work` cards only, in both lanes, and nothing on
-it refers to the hand-authored exhibits any more. For a few hours on
-2026-08-29 it did. The exhibits on the public `/work` page are page copy in
-`src/app/work/page.tsx`, not `work_submissions` rows, so the colleagues who
-built them were counted by nothing here and two of them read `0 published`
-while the company showcased their tool; a `work_static_credits` table
-(migration `0052`: `anchor_id` + lowercased `email` + audit columns, UNIQUE on
-`(anchor_id, lower(email))`, empty in git because this repository is public,
-rows written on the VM by `npm run work:credit`) fed a staff-lane-only
-`Exhibits` column, honesty-guarded against the generated anchor list. The
-same day's "one tool, one card" ruling (§5.16) converted the eight exhibits
-that had a named builder into team cards credited through `work:submit
---email`, which left every credit row on production pointing at a retired
-anchor and counting for nobody, and the owner then retired the concept end to
-end. What removed it: migration `0055_drop_work_static_credits` (`DROP TABLE
-IF EXISTS`; the hand-added expression index goes with the table; the eight
-production rows must be exported by the operator to a file outside the
-repository on the VM before the deploy runs the migration, and no address is
-ever committed), the `workStaticCredits` definition in `src/lib/db/schema.ts`,
-the fourth `scorecardRows` query with its `exhibits` field, its sort tiebreak
-and its credit-only stray-row drain (three parallel reads remain: directory
-identities, published aggregates, request counts), the `STAFF_HEADERS` /
-`showExhibits` switch and the Exhibits cell in `page.tsx` (one header list
-for both lanes; the empty state says "no published cards"; the staff
-disclosure no longer mentions exhibits or exhibit credit), the staff-hub
-blurb's "recorded exhibits", `scripts/work-credit.ts`,
-`scripts/lib/work-credit-ops.ts` and the `work:credit` npm script;
-`scripts/roadmap-tests.ts` lost the seven "exhibit credits" tests and gained one
-source-pinned "Exhibits retired" block of five. The honesty guard, the staff-only
-column and the write path are therefore all gone, and the four properties the
-credits paragraph called load-bearing reduce to the published-only doctrine:
-`published` means published cards in both lanes (the company lane's
-shipped/total hero and `totalPublished` both read it), time saved shares the
-Published predicate exactly, so a nonzero time-saved cell beside `0 published`
-remains impossible, and no held or failed row is ever revealed. The exhibits
-themselves are unchanged: eighteen remain on `/work` as page copy,
-`static-titles.json` still gates title uniqueness, and the §5.16 retention
-lane (`work:retain --exhibit`, `exhibits/<slug>/` in the store) still exists.
+**Exhibit credits (shipped 2026-08-29, retired the same day, RETURNED
+2026-08-31 folded into Published).** The exhibits on the public `/work` page
+are page copy in `src/app/work/page.tsx`, not `work_submissions` rows, so on
+their own they count for nobody here: on 2026-08-31 the builders of the three
+remaining builder-made exhibits (`autotask-ci-intake`; `lakehouse` and
+`api-gateway`) read `1 published` while the company showcased two or three of
+their tools, and the owner asked for those exhibits to count. The mechanism
+is the `work_static_credits` table: created by migration `0052` (2026-08-29)
+to feed a staff-lane-only `Exhibits` COLUMN, dropped by `0055` later that day
+when the owner retired the column ("published cards only"), and recreated
+EMPTY by `0056_work_static_credits_return` (`anchor_id` + lowercased `email` +
+audit columns, hand-added UNIQUE on `(anchor_id, lower(email))`, NO
+`company_id` by design; empty in git because this repository is public, rows
+written on the VM by `npm run work:credit list | add <anchor> <email> --by
+<admin> | remove ...`, whose `add` validates the anchor against the generated
+list at the write edge and whose `remove` accepts a retired anchor; the
+pre-commit person-mapping gate rejects an added line naming the table beside
+an address). What changed against the 2026-08-29 design is WHERE the number
+lands: there is no Exhibits column, no `exhibits` field and no sort tiebreak.
+`scorecardRows` runs a FOURTH parallel read on the STAFF lane only
+(`scope.companyId === null`, resolving to `[]` for a company scope so a client
+scorecard is byte-identical), grouping `work_static_credits` by `lower(email)`
+with `inArray(anchor_id, static-titles.json anchorIds)` as the honesty guard,
+and FOLDS the count into `published` for the matching person (`published` =
+published cards + live-anchor exhibit credits) in each of the three drains,
+plus a credited-only stray drain for an address in none of them, which keeps
+the `suppressedHashes`/`sha256Hex` guard so a suppressed directory removal is
+never re-named by a credit. `lastPublishedAt` and `timeSavedMinutes` come from
+cards only (an exhibit is page copy with no publish instant and no
+self-reported minutes; "nonzero time saved beside 0 published" stays
+impossible because the fold only ever raises `published`; the "Most recent"
+cell goes faint on a null instant rather than on `published === 0`, the same
+thing in the company lane). Held, failed and in-review rows are still never
+read: the credit query touches only `work_static_credits`. A converted
+exhibit stops counting the day its anchor leaves page.tsx (§5.16 one tool,
+one card), so a team card and its former exhibit can never both count for
+long, and the operator retires the dead row with `work:credit remove`. Copy:
+the STAFF disclosure says Published means published cards plus any
+hand-written Our Work exhibit an administrator has recorded the person as
+having built, that the credit is internal and stays on this page (no exhibit
+on the public page names its builder), and to ask an administrator to change
+or remove an exhibit credit; the staff empty state names "published cards or
+credited exhibits"; the staff-hub blurb names the credited exhibits; the
+COMPANY disclosure is client-visible copy and did not change; the public
+/work sentence "The scorecard counts published cards only" describes the
+client lane and stays. The eight rows exported from production before `0055`
+all name anchors retired by the conversion and are NOT re-imported; the
+2026-08-31 credits are new rows written on the VM after the deploy.
+`scripts/roadmap-tests.ts` pins the fold, the staff-only read, the inArray
+guard, the suppression guard, the 0056 shape and chain, and, the pre-commit
+gate's rule checked repo-wide with `git grep`, that no file carries an email
+address on a line that names the table. The exhibits themselves are
+unchanged: eighteen remain on `/work` as page copy, `static-titles.json`
+still gates title uniqueness, and the §5.16 retention lane (`work:retain
+--exhibit`, `exhibits/<slug>/` in the store) still exists.
 The only attribution the site carries is the §5.16 card credit on a published
 team card (opt-in, first-name-only, typed by the submitter into
 `submitter_name`).
@@ -9007,9 +9030,11 @@ in-review rows off this page "so it can never reveal that a colleague tried
 and failed", and a nonzero time-saved cell on a person with 0 published
 would break precisely that; the same predicate also excludes superseded
 rows, so an updated card and its predecessor are never both counted. All
-three row-construction sites set the field (directory people `hit?.timeSaved
-?? 0`, published strays `c.timeSaved`, request-only strays a literal 0,
-the `NO_REQUESTS` precedent). Both disclosure paragraphs gained a matching
+four row-construction sites set the field (directory people `hit?.timeSaved
+?? 0`, published strays `c.timeSaved`, request-only strays a literal 0, and
+since 2026-08-31 the credited-only strays of the §5.18 exhibit-credit drain a
+literal 0 too, because a credit carries no minutes; the `NO_REQUESTS`
+precedent). Both disclosure paragraphs gained a matching
 closing pair of sentences - staff lane "Time saved per month is what each
 person reported for themselves about their own work. No one measures or
 verifies it, and it is added up from published cards only.", company lane
@@ -9920,8 +9945,8 @@ colleague by address and records whether they have done what they were asked,
 and this repository is public: a checked-in seed, fixture or map would publish
 a machine-readable delinquency list of real people permanently, and git
 history would keep it after any revert. Same ruling as `0052_work_static_credits`,
-taken the same day for the same reason [that table was itself dropped by `0055` later
-the same day; the ruling stands]. Rows are written on the VM by
+taken the same day for the same reason (that table was dropped by `0055` later
+the same day and came back EMPTY with `0056` on 2026-08-31; the ruling stands). Rows are written on the VM by
 `npm run chase:seed` from a file path or stdin supplied at run time.
 `scripts/chase-tests.ts` pins that every address literal in every chase source
 file is an `example.*` synthetic.
@@ -9939,7 +9964,7 @@ timers failing every day afterwards (it was briefly `0053` too, until
 `0053_work_cleaning` landed). `meta/0054_snapshot.json` was regenerated
 against `0053`'s (verified: `0054.prevId` equals `0053.id`), so the snapshot
 chain is intact and the next `drizzle-kit generate` emits nothing for these
-tables; `0055` chains on `0054` in turn.
+tables; `0055` chains on `0054` in turn, and `0056` on `0055`.
 
 - **`chase_tasks`** - one row per thing XL.net asked a named person to do.
   `assignee_email` / `assignee_name` are SNAPSHOTS (the `company_people` FK is
@@ -10505,15 +10530,25 @@ work_archive_files id uuid PK default random,
                    -- src/lib/work/archive-store.ts, NOT work/db.ts (separate
                    -- lifecycle from work_submissions by design)
 
-work_static_credits: created by 0052 (2026-08-29), dropped by 0055 later the same day;
-                   never carried a committed row. (§5.18 "Exhibits retired": the drop is
-                   `DROP TABLE IF EXISTS`, the hand-added expression index goes with the
-                   table, and the eight production rows must be exported to a file outside
-                   the repository on the VM before the deploy runs the migration.) The
-                   journal has NO idx 50 or 51 and that is deliberate: this table was first
-                   numbered 0050 and withdrawn when the chase migration (then 0051, now
-                   0054, §5.21) was generated against a schema that already carried it, so
-                   the CREATE moved to 0052 above it; a rebuilder must not "fill" the gap.
+work_static_credits: id uuid PK default gen_random_uuid(), anchor_id text NOT NULL (a /work
+                   section id from the GENERATED static-titles.json; validated at read time
+                   and at the work:credit write edge, never by a CHECK, so retiring an
+                   exhibit needs no migration), email text NOT NULL (stored lowercased; NO
+                   FK and NO company_id BY DESIGN: staff lane only, matched on lower(email)),
+                   created_at / updated_at timestamptz NOT NULL default now(),
+                   updated_by_email text NOT NULL; hand-added UNIQUE INDEX
+                   work_static_credit_uq ON (anchor_id, lower(email)), invisible to
+                   drizzle (deploys must `migrate`, never `push`)
+                   -- §5.18 exhibit credits: created by 0052 (2026-08-29), dropped by 0055
+                   -- later that day, RECREATED by 0056 (2026-08-31, IF NOT EXISTS, same
+                   -- columns). SHIPS EMPTY and never carries a committed row (public
+                   -- repo; rows are written on the VM by `npm run work:credit`). Read only
+                   -- by scorecardRows on the staff lane, filtered to live anchors and
+                   -- FOLDED into `published`. The journal has NO idx 50 or 51 and that is
+                   -- deliberate: this table was first numbered 0050 and withdrawn when the
+                   -- chase migration (then 0051, now 0054, §5.21) was generated against a
+                   -- schema that already carried it, so the CREATE moved to 0052 above it;
+                   -- a rebuilder must not "fill" the gap.
 
 blog_audio         slug text PK, data bytea, url text NOT NULL, mime text default 'audio/mpeg',
                    content_hash text, render_hash text, duration_sec int, byte_length int,
@@ -11815,7 +11850,7 @@ ls -la /var/lib/aiwebsite/last-archive-backup-ok # §5.16 store backup (absent =
 
 # Team work submissions (§5.16):
 psql -tAc "select to_regclass('public.work_submissions') is not null"      # t
-psql -tAc "select to_regclass('public.work_static_credits') is null"       # t after 0055 (§5.18 Exhibits retired; the 8-row export lives OUTSIDE the repo on the VM)
+psql -tAc "select to_regclass('public.work_static_credits') is not null"   # t after 0056 (§5.18 exhibit credits; ships EMPTY, rows via `npm run work:credit add` on the VM; the 2026-08-29 export is dead and not re-imported)
 curl -s -o /dev/null -w "%{http_code}" https://ai.xl.net/work              # 200
 curl -s -o /dev/null -w "%{http_code}" https://ai.xl.net/work/submit       # 200 (login redirect resolves)
 curl -s -X POST https://ai.xl.net/api/work/submissions                     # 401 unauthenticated JSON

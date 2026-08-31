@@ -2,12 +2,15 @@
 // read time from the directory joined to PUBLISHED cards plus requested-work
 // activity in LISTED statuses; held, failed, in-review, pending, and
 // rejected rows never appear anywhere here, so the scorecard can never
-// reveal that a colleague tried and failed. Published cards ONLY, both
-// lanes (owner ruling 2026-08-29): the hand-written /work exhibits are page
-// copy rather than rows and are counted by nothing here; the staff-lane
-// Exhibits column and its credit table were retired by migration 0055, so
-// both lanes now share one header list. Zeros render faint, never in
-// warning colors: not-yet is a state, not a verdict. The standing
+// reveal that a colleague tried and failed. "Published" on the STAFF lane
+// is published cards PLUS the hand-written /work exhibits an administrator
+// has credited to the person in work_static_credits (§5.16/§5.18; owner ask
+// 2026-08-31): those exhibits are page copy rather than rows and would
+// otherwise count for nobody. The credit is folded into the one number by
+// scorecardRows, so there is no Exhibits column (the owner retired that
+// column on 2026-08-29) and both lanes share one header list; a company
+// lane is published cards only, exactly as before. Zeros render faint,
+// never in warning colors: not-yet is a state, not a verdict. The standing
 // disclosure header is non-dismissible by design.
 //
 // STAFF LANE (§5.18 unification + staff parity): xl.net staff get the same
@@ -175,10 +178,16 @@ function ScoreRows({
                 has no instant to render, and <LocalTime> has no null form.
                 Widening is safe here: the <section> wrapping this table is
                 overflow-x-auto, so the extra "08:15 PM CDT" scrolls inside
-                the table instead of forcing the page body sideways. */}
+                the table instead of forcing the page body sideways. Faint
+                on a MISSING INSTANT rather than on published === 0: on the
+                staff lane a person whose only published work is a credited
+                exhibit has a nonzero count and nothing to date, and the
+                middot should read faint like every other "no figure" cell.
+                In the company lane the two conditions coincide (cards only),
+                so that lane renders exactly as before. */}
             <td
               className="mono border-b border-[var(--xl-line)] py-2 text-xs"
-              style={row.published === 0 ? faint : undefined}
+              style={row.lastPublishedAt ? undefined : faint}
             >
               {row.lastPublishedAt ? (
                 <LocalTime iso={row.lastPublishedAt.toISOString()} withTime />
@@ -238,16 +247,24 @@ export default async function RoadmapScorecardPage() {
     const rows = await scorecardRows({ companyId: null });
     const directoryRows = rows.filter((r) => r.inDirectory);
     const strayRows = rows.filter((r) => !r.inDirectory);
+    // STAFF disclosure. "Published" is described honestly for this lane:
+    // cards plus credited exhibits, the credit internal and reversible. The
+    // company disclosure below is client-visible copy and does not change.
     const disclosure =
       `This scorecard counts each person in the XL.net directory, their ` +
-      `published cards on the public Our Work page, and their activity on ` +
+      `published work on the public Our Work page, and their activity on ` +
       `the internal requested-work board: approved requests, projects ` +
       `being worked on, and validated completions. It is visible to ` +
-      `signed-in XL.net staff. Drafts, in-review submissions, and pending ` +
-      `or rejected requests never appear here, and it is not used to ` +
-      `evaluate anyone. Time saved per month is what each person reported ` +
-      `for themselves about their own work. No one measures or verifies ` +
-      `it, and it is added up from published cards only.`;
+      `signed-in XL.net staff. Published means published cards plus any ` +
+      `hand-written Our Work exhibit an administrator has recorded the ` +
+      `person as having built. That exhibit credit is internal and stays ` +
+      `on this page: no exhibit on the public page names its builder. Ask ` +
+      `an administrator to change or remove an exhibit credit. Drafts, ` +
+      `in-review submissions, and pending or rejected requests never ` +
+      `appear here, and the scorecard is not used to evaluate anyone. ` +
+      `Time saved per month is what each person reported for themselves ` +
+      `about their own work. No one measures or verifies it, and it is ` +
+      `added up from published cards only.`;
     return (
       <div className="space-y-10">
         <section>
@@ -263,7 +280,7 @@ export default async function RoadmapScorecardPage() {
             <p>
               Nothing to count yet:{" "}
               <Link href="/roadmap/directory">the directory</Link> is empty,
-              there are no published cards on{" "}
+              there are no published cards or credited exhibits on{" "}
               <Link href="/work">Our Work</Link>, and nothing is on{" "}
               <Link href="/work/requested">the requested-work board</Link>.
             </p>

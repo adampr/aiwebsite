@@ -379,6 +379,13 @@
       "when": 1788043710603,
       "tag": "0055_drop_work_static_credits",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1788176147467,
+      "tag": "0056_work_static_credits_return",
+      "breakpoints": true
     }
   ]
 }

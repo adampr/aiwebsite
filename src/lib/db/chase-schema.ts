@@ -19,10 +19,11 @@
 // asked, and THIS REPOSITORY IS PUBLIC (github.com/adampr/aiwebsite): a
 // checked-in seed, fixture or map would publish a machine-readable
 // delinquency list of real people to the open internet permanently, and git
-// history would keep it after any revert. This is the same ruling the
-// former work_static_credits table (0052) took on 2026-08-29 for the same
-// reason; that table was dropped by 0055 the same day, when the scorecard
-// went to published cards only, so do not go looking for it. Rows are
+// history would keep it after any revert. This is the same ruling
+// work_static_credits (schema.ts) took on 2026-08-29 for the same reason;
+// that table was dropped by 0055 and returned EMPTY with 0056 on 2026-08-31,
+// when its exhibit credits began folding into the staff scorecard's
+// Published count. Rows are
 // written on the production VM by `npm run chase:seed`, which reads the
 // people from a file path or stdin supplied at run time and refuses any
 // address that is not already in the site's own staff directory.

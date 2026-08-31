@@ -24,8 +24,10 @@
 // the actor). The work card's count is DB rows in the internal lane; the
 // hand-authored static exhibits on /work are deliberately not counted, so
 // this number can read lower than the /work page's card count. The
-// scorecard card is the same doctrine (owner ruling 2026-08-29): published
-// cards and requested-work activity only, no exhibit credit of any kind.
+// scorecard card differs on one point since 2026-08-31 (§5.18): its
+// Published figure folds in the hand-written exhibits an administrator has
+// credited to a person, so the blurb names that credit; still no drafts or
+// attempts of any kind.
 
 import Link from "next/link";
 import {
@@ -112,7 +114,8 @@ export function StaffHub({
       "Work page.",
     scorecard:
       "Watch builders emerge: published public work and requested-work " +
-      "activity counted per person in the directory. Published cards and " +
+      "activity counted per person in the directory. Published cards, the " +
+      "Our Work exhibits an administrator has credited to a person, and " +
       "approved requests only, never drafts or attempts.",
   };
   const ctas: Record<string, string> = {

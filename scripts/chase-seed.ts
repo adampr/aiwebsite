@@ -7,11 +7,11 @@
 // github.com/adampr/aiwebsite is PUBLIC: a checked-in seed, fixture or map
 // would publish a machine-readable delinquency list of real people to the
 // open internet permanently, and git history keeps it after any revert.
-// Same ruling the former work_static_credits table (0052) took the same day
-// for the same reason; that table was dropped by 0055 later that day, when
-// the scorecard went to published cards only, so do not go looking for it.
-// So this script reads a file path or stdin, and the tables ship
-// empty. Write the list on the VM, run this, delete the file.
+// Same ruling as work_static_credits (0052, dropped by 0055, back EMPTY with
+// 0056 on 2026-08-31 for the staff scorecard's Published count), taken the
+// same day for the same reason. So this script reads a file path or stdin,
+// and the tables ship empty. Write the list on the VM, run this, delete the
+// file.
 //
 // Usage:
 //   npm run chase:seed -- tasks.json            validate and print, write nothing

@@ -11,6 +11,15 @@ import { db, schema } from "@/lib/db";
 // (WorkScope is a type-only import there), so no cycle.
 import { requestCountsByEmail } from "@/lib/work/requests-db";
 import { personLabel } from "@/lib/person-label";
+// The hand-authored /work section ids. GENERATED from page.tsx by
+// scripts/work-static-snapshot.mjs and build-checked, so it is the one
+// list that cannot drift from the page. Used as an honesty guard on the
+// exhibit credits (§5.18): a credit whose exhibit has been retired from the
+// page stops counting the day the section goes, without a migration.
+import staticTitles from "@/lib/work/static-titles.json";
+
+/** The generated /work anchor ids, read once. */
+const STATIC_EXHIBIT_IDS: string[] = staticTitles.anchorIds;
 import { isCompanyEligibleDomain } from "@/lib/roadmap/domains";
 import {
   ROADMAP_CAPS,
@@ -38,6 +47,7 @@ const DS = schema.directorySuppressions;
 const CGD = schema.companyGovernanceDocs;
 const SRS = schema.staffRoadmapState;
 const W = schema.workSubmissions;
+const WSC = schema.workStaticCredits;
 const U = schema.users;
 
 /** Directory lane axis (§5.18 staff parity): companyId null = the XL.net
@@ -942,7 +952,13 @@ export type ScorecardRow = {
   personId: string | null;
   name: string | null;
   email: string | null;
+  /** Published cards in this lane PLUS, on the staff lane only, the
+   * hand-authored /work exhibits an administrator has credited to this
+   * person whose anchor is still on the page (§5.18 exhibit credits,
+   * returned 2026-08-31 folded into this number rather than a column of
+   * their own). A company row is cards only, byte for byte as before. */
   published: number;
+  /** From cards only: an exhibit is page copy with no publish instant. */
   lastPublishedAt: Date | null;
   inDirectory: boolean;
   /** §5.19 requested-work columns. Requested counts LISTED statuses only
@@ -988,14 +1004,25 @@ function scorecardSort(rows: ScorecardRow[]): ScorecardRow[] {
  * pending/rejected row existing at all is information, so those people
  * never appear). Counts PUBLISHED cards only: held, failed, and in-review
  * rows never appear anywhere in the scorecard, so it can never reveal that
- * a colleague tried and failed. Three sources and no more (owner ruling
- * 2026-08-29): the hand-authored /work exhibits are page copy rather than
- * rows and are counted by nothing here; the staff-lane Exhibits column and
- * the work_static_credits table that fed it were retired by migration 0055.
- * Time saved shares the Published predicate exactly, so a nonzero
- * time-saved cell beside a 0 published remains impossible. Stray rows carry
- * name: null by design - work_submissions.submitter_name is a validated
- * single first name and can never satisfy the person-label rule. */
+ * a colleague tried and failed. FOUR sources: directory identities,
+ * published-card aggregates, request counts, and (STAFF LANE ONLY) the
+ * exhibit credits in work_static_credits (§5.16/§5.18; owner ask
+ * 2026-08-31). The hand-authored /work exhibits are page copy rather than
+ * rows, so on their own they count for nobody; a credit row names the
+ * builder, and its count is FOLDED INTO `published` (published = cards +
+ * live-anchor exhibit credits) rather than shown as a column, which the
+ * owner retired on 2026-08-29. The honesty guard is inArray against the
+ * GENERATED anchor list: a converted exhibit stops counting the day its
+ * anchor leaves page.tsx (one-tool-one-card, §5.16), so a team card and its
+ * former exhibit can never both count for long, and the operator retires
+ * the dead row with `work:credit remove`. The credit read touches only
+ * work_static_credits, so held, failed and in-review rows are still never
+ * read. Time saved and lastPublishedAt come from cards only; time saved
+ * shares the Published predicate and the fold only ever RAISES published,
+ * so a nonzero time-saved cell beside a 0 published remains impossible.
+ * Stray rows carry name: null by design - work_submissions.submitter_name
+ * is a validated single first name and can never satisfy the person-label
+ * rule. */
 export async function scorecardRows(
   scope: DirectoryScope
 ): Promise<ScorecardRow[]> {
@@ -1003,7 +1030,7 @@ export async function scorecardRows(
     scope.companyId === null
       ? isNull(W.companyId)
       : eq(W.companyId, scope.companyId);
-  const [people, counts, requests] = await Promise.all([
+  const [people, counts, requests, exhibitCounts] = await Promise.all([
     // directoryIdentities, not listPeople: the render cap must not decide
     // who has a name on the scorecard (see that function's comment).
     directoryIdentities(scope),
@@ -1040,27 +1067,54 @@ export async function scorecardRows(
       .where(and(laneWhere, eq(W.status, "published")))
       .groupBy(sql`lower(${W.submitterEmail})`),
     requestCountsByEmail({ companyId: scope.companyId }),
+    // Exhibit credits, STAFF LANE ONLY. The table carries no company_id (an
+    // absent column is enforcement no reader can forget), so a client lane
+    // gets an empty list rather than a filtered query, and every fold below
+    // adds 0: a company scorecard is byte-identical with or without this
+    // read. inArray against the GENERATED anchor list is the honesty guard:
+    // a credit for a section that has left page.tsx counts for nobody, so
+    // retiring or converting an exhibit cannot leave a phantom number on a
+    // colleague's row. Touches only work_static_credits: no status column
+    // exists here to leak a held or failed submission through.
+    scope.companyId === null && STATIC_EXHIBIT_IDS.length > 0
+      ? db
+          .select({
+            email: sql<string>`lower(${WSC.email})`,
+            n: sql<number>`count(*)::int`,
+          })
+          .from(WSC)
+          .where(inArray(WSC.anchorId, STATIC_EXHIBIT_IDS))
+          .groupBy(sql`lower(${WSC.email})`)
+      : Promise.resolve([] as { email: string; n: number }[]),
   ]);
   const byEmail = new Map(counts.map((c) => [c.email, c]));
+  const exhibitsByEmail = new Map(exhibitCounts.map((c) => [c.email, c.n]));
   const rows: ScorecardRow[] = people.map((p) => {
     const key = p.email?.toLowerCase();
     const hit = key ? byEmail.get(key) : undefined;
     if (key) byEmail.delete(key);
     const req = key ? requests.get(key) : undefined;
     if (key) requests.delete(key);
+    const ex = key ? exhibitsByEmail.get(key) : undefined;
+    if (key) exhibitsByEmail.delete(key);
     return {
       personId: p.id,
       name: p.name,
       email: p.email,
-      published: hit?.n ?? 0,
+      // Cards plus live-anchor exhibit credits (0 in a company lane).
+      published: (hit?.n ?? 0) + (ex ?? 0),
       // ScorecardRow promises a Date; the aggregate hands back a string
       // (see the select above). Coerce HERE, once, so no consumer has to
-      // know that this one field came from a raw expression.
+      // know that this one field came from a raw expression. Cards only:
+      // an exhibit credit has no publish instant to offer.
       lastPublishedAt: hit?.last ? new Date(hit.last) : null,
       // No hit at all means no published cards in this lane, which is also
       // zero reported time: the sum lives in the SAME aggregate row as the
       // count, so the two can never disagree about whether this person has
-      // published work here.
+      // published work here. Cards only, deliberately: an exhibit credit
+      // carries no self-reported minutes, and because the credit fold only
+      // ever RAISES published, "nonzero time saved beside 0 published"
+      // remains impossible.
       timeSavedMinutes: hit?.timeSaved ?? 0,
       inDirectory: true,
       ...(req ?? NO_REQUESTS),
@@ -1069,11 +1123,13 @@ export async function scorecardRows(
   for (const [email, c] of byEmail) {
     const req = requests.get(email);
     requests.delete(email);
+    const ex = exhibitsByEmail.get(email) ?? 0;
+    exhibitsByEmail.delete(email);
     rows.push({
       personId: null,
       name: null,
       email,
-      published: c.n,
+      published: c.n + ex,
       lastPublishedAt: c.last ? new Date(c.last) : null,
       timeSavedMinutes: c.timeSaved,
       inDirectory: false,
@@ -1084,18 +1140,56 @@ export async function scorecardRows(
   // developer on listed rows, never a directory or published match) join as
   // stray rows too - their activity is already lane-public on the board.
   for (const [email, req] of requests) {
+    const ex = exhibitsByEmail.get(email) ?? 0;
+    exhibitsByEmail.delete(email);
     rows.push({
       personId: null,
       name: null,
       email,
-      published: 0,
+      // No published card by construction (byEmail is drained above), so
+      // this is the exhibit credit alone, usually 0.
+      published: ex,
       lastPublishedAt: null,
       // Requested-work-only people have no published card in this lane by
-      // construction (byEmail is drained above), and the column counts
-      // published rows only, so this is zero by the same rule.
+      // construction, and the column counts published rows only, so this is
+      // zero by the same rule (a credit carries no minutes).
       timeSavedMinutes: 0,
       inDirectory: false,
       ...req,
+    });
+  }
+  // Anyone credited with an exhibit who reached none of the three drains
+  // above: not in the directory, no published card, no board activity. Rare
+  // by construction (an exhibit builder is an employee, and the staff
+  // directory is the employee list) but NEVER silently dropped - a credit
+  // that counts for nobody is the bug this table exists to fix, and a stray
+  // row carries the "Not in directory" badge and the admin's add lever.
+  //
+  // EXCEPT for an address the lane has deliberately forgotten. Directory
+  // removal with suppress keeps only sha256(lower(email)) and hard-DELETEs
+  // the row precisely so the person stops being named here; this drain is
+  // the one path that could print their literal address back to every
+  // signed-in colleague, months later, from a credit nobody remembered. The
+  // other three drains are unaffected: reaching them means the person is in
+  // the directory, has a published card, or is on the board, all of which
+  // already name them in this lane. The credit row itself is NOT deleted -
+  // removing it is an admin act, and a suppressed person who is re-added to
+  // the directory gets their exhibit back through drain one.
+  const suppressed =
+    scope.companyId === null && exhibitsByEmail.size > 0
+      ? await suppressedHashes(scope)
+      : new Set<string>();
+  for (const [email, n] of exhibitsByEmail) {
+    if (suppressed.has(sha256Hex(email))) continue;
+    rows.push({
+      personId: null,
+      name: null,
+      email,
+      published: n,
+      lastPublishedAt: null,
+      timeSavedMinutes: 0,
+      inDirectory: false,
+      ...NO_REQUESTS,
     });
   }
   return scorecardSort(rows);
