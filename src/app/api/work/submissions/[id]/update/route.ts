@@ -49,6 +49,7 @@ import {
   verifiedWebAdmin,
   workError,
 } from "@/lib/work/http";
+import { readWorkBody } from "@/lib/work/read-body";
 import { storeArchiveFiles } from "@/lib/work/archive-store";
 import { kickPanel } from "@/lib/work/panel";
 
@@ -190,16 +191,15 @@ export async function POST(req: Request, ctx: Ctx): Promise<Response> {
     // overstate the package in copy people check against their own listing.
     return workError("invalid_request", packageTooLargeMessage(), 400);
   }
-  let form: FormData;
-  try {
-    form = await req.formData();
-  } catch {
-    return workError(
-      "invalid_request",
-      "Send the update as multipart form data.",
-      400
-    );
-  }
+  // The shared reader (read-body.ts, 2026-09-01), same seam as the create
+  // route: multipart, or the raw fallback transport the form retries with
+  // after a middlebox mangles the multipart body. The raw path builds the
+  // same FormData keys, so the pinned-title guard below reads a raw update
+  // exactly as it reads a multipart one (the form sends no title in update
+  // mode on either transport). Failures log and ledger inside the reader.
+  const body = await readWorkBody(req, "update", user.email);
+  if (!body.ok) return workError(body.code, body.message, 400);
+  const form = body.form;
   // Title and kind are pinned; a typed value is a conflict, never silently
   // ignored (the email path's R4/R5 rule).
   if (String(form.get("title") ?? "").trim())

@@ -51,6 +51,7 @@ import {
   verifiedWebAdmin,
   workError,
 } from "@/lib/work/http";
+import { readWorkBody } from "@/lib/work/read-body";
 import { storeArchiveFiles } from "@/lib/work/archive-store";
 import { deployBlocksPanel } from "@/lib/work/deploy-window";
 import { noteQueueWait, queueReasonFor } from "@/lib/work/queue-signal";
@@ -271,8 +272,9 @@ export async function POST(req: Request): Promise<Response> {
       503
     );
 
-  // Content-Length precheck BEFORE any body buffering: req.formData()
-  // holds the whole multipart body in this single fork's memory, so the
+  // Content-Length precheck BEFORE any body buffering: the body reader
+  // below holds the whole body in this single fork's memory on either wire
+  // format (multipart formData, or the raw fallback's arrayBuffer), so the
   // size gate must run before the bytes do. nginx (110m) and the tunnel
   // already cap the wire, but this in-process check is the last line when
   // a request reaches Next another way. Slack covers multipart framing
@@ -290,16 +292,16 @@ export async function POST(req: Request): Promise<Response> {
     // overstate the package in copy people check against their own listing.
     return workError("invalid_request", packageTooLargeMessage(), 400);
   }
-  let form: FormData;
-  try {
-    form = await req.formData();
-  } catch {
-    return workError(
-      "invalid_request",
-      "Send the submission as multipart form data.",
-      400
-    );
-  }
+  // The shared reader (read-body.ts, 2026-09-01): multipart, or the raw
+  // fallback transport the form retries with after a middlebox mangles the
+  // multipart body (the 2026-08-27 incident: six real uploads, every one
+  // killed by the multipart parser throwing). Either way the FormData that
+  // comes back carries the same keys, so everything below is format-blind. A
+  // failure logs the [work] body-unreadable line and mirrors into the issues
+  // ledger inside the reader; the route only speaks the refusal.
+  const body = await readWorkBody(req, "create", user.email);
+  if (!body.ok) return workError(body.code, body.message, 400);
+  const form = body.form;
   // No kind is read from the body. It is not asked on the form, and a value
   // posted under that name is ignored rather than trusted: the package
   // decides (owner directive 2026-08-28), and inspectArchive is handed a null
@@ -351,8 +353,8 @@ export async function POST(req: Request): Promise<Response> {
   // and not later because this is the first line where the value exists, and
   // failing here still spares the caller inspectArchive walking the whole
   // package for a submission that is going to be refused over one number.
-  // (It cannot spare the UPLOAD itself: req.formData() above has already
-  // buffered the multipart body, which is why the size gates run before it.)
+  // (It cannot spare the UPLOAD itself: the body reader above has already
+  // buffered the whole body, which is why the size gates run before it.)
   // form.get() returns null when the field was never sent and a File if
   // something posts one under this name; parseTimeSavedHours refuses by TYPE
   // instead of coercing, so neither can be mistaken for a real report.

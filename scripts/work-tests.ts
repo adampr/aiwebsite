@@ -4300,16 +4300,20 @@ async function main() {
       "mail-screen uses the capped streaming inflate, not e.async(nodebuffer)"
     );
 
-    // Content-Length precheck in BOTH upload routes, before formData().
+    // Content-Length precheck in BOTH upload routes, before the body is
+    // buffered. Since 2026-09-01 the buffering call site is the shared
+    // reader (read-body.ts), which owns req.formData() AND the raw fallback
+    // transport's arrayBuffer read, so the precheck ahead of it covers both
+    // wire formats at once.
     for (const lane of [
       "src/app/api/work/submissions/route.ts",
       "src/app/api/work/submissions/[id]/update/route.ts",
     ]) {
       const src = readFileSync(lane, "utf8");
       const clAt = src.indexOf('req.headers.get("content-length")');
-      const formAt = src.indexOf("await req.formData()");
+      const readAt = src.indexOf("await readWorkBody(");
       assert.ok(
-        clAt > 0 && formAt > clAt,
+        clAt > 0 && readAt > clAt,
         `${lane} checks Content-Length before buffering the body`
       );
     }

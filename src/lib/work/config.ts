@@ -609,6 +609,80 @@ export function packageTooLargeMessage(sizeBytes?: number | null): string {
  * client check cannot drift. WORK_CAPS.skillMdMaxBytes is the matching cap. */
 export const DOC_TOO_LARGE_MESSAGE = "That document is too large (limit 1 MB).";
 
+// ---------------------------------------------------------------------------
+// Unreadable-body refusals (2026-09-01). Six web attempts on 2026-08-27 each
+// uploaded a real multipart body and req.formData() threw every time; the 400
+// said "Send the submission as multipart form data", which is meaningless to a
+// form user whose form DID send multipart, and the work was lost. The two
+// sentences below replace it, split by what the content-type header proves
+// about who is on the other end. ONE source for both routes and the client
+// (the packageTooLargeMessage precedent).
+// ---------------------------------------------------------------------------
+
+/** The request was never multipart, so a script or curl is talking, and the
+ * fix is the wire format itself. The one place "multipart" is allowed in this
+ * copy: this audience needs the term to act. Lane-aware because the obvious
+ * single example would steer update-lane scripts into a guaranteed second
+ * 400: the update route refuses any typed title (refuter finding,
+ * 2026-09-01), so its example carries only the file part. */
+export function notMultipartMessage(lane: "create" | "update"): string {
+  const example =
+    lane === "update"
+      ? 'curl -F "file=@package.zip"'
+      : 'curl -F "title=..." -F "file=@package.zip"';
+  return (
+    "This endpoint accepts uploads as multipart form data; the website form " +
+    "sends that automatically. From a script, send each field as a form " +
+    `part, for example ${example}.`
+  );
+}
+
+/** The request WAS multipart and still could not be parsed: a body something
+ * rewrote in transit (DLP or TLS-inspection middleware is the classic
+ * cause). The website form never surfaces this sentence, because it
+ * auto-retries over the raw transport (raw-package.ts) the moment it sees
+ * the code; the audience left is a script speaking multipart badly or a
+ * client with no retry, so the copy promises only what the FORM does and
+ * never claims a retry already happened (refuter finding, 2026-09-01: the
+ * old single sentence said "the retry failed too" to callers who got no
+ * retry). The email intake address is the real one (Tron.Netter@ai.xl.net;
+ * ai@xl.net does not exist) and "work email address" is lane-neutral: the
+ * intake takes registered company domains as well as xl.net. */
+export const MULTIPART_UNREADABLE_MESSAGE =
+  "Your upload reached the server, but it arrived in a form the server " +
+  "could not read, so your files themselves were never judged. This is " +
+  "usually security or VPN software on the connection altering the upload " +
+  "in transit. The website form retries this automatically another way; if " +
+  "failures persist, email the package to Tron.Netter@ai.xl.net from a " +
+  "work email address.";
+
+/** Every raw-transport refusal (unreadable body, bad framing). This is the
+ * sentence a form user actually reads: the raw POST only ever happens as the
+ * form's automatic second attempt after multipart failed, so "tried twice"
+ * is true by construction here and only here. */
+export const RAW_UNREADABLE_MESSAGE =
+  "Your upload was tried twice, once as a normal form upload and once in a " +
+  "sturdier fallback format, and neither arrived in a form the server could " +
+  "read, so your files themselves were never judged. Something on your " +
+  "connection, usually security or VPN software, is altering uploads in " +
+  "transit. Try a different network or browser, or email the package to " +
+  "Tron.Netter@ai.xl.net from your work email address.";
+
+/** Client-only: a File refused a re-read before the raw retry, which is how
+ * Chrome reports a file that changed on disk after it was chosen. A
+ * distinct, real failure class: the fix is re-picking the file, not
+ * changing networks. Named per field because the form clears the field the
+ * message is about, and this sentence is the only channel a screen-reader
+ * user gets to learn WHICH upload emptied (refuter finding, 2026-09-01). */
+export function fileChangedOnDiskMessage(which: "package" | "document"): string {
+  const noun = which === "package" ? "package file" : "document";
+  return (
+    `The ${noun} you chose changed on disk after you picked it, so the ` +
+    "browser could not read it again to send it. Choose the file again and " +
+    "resubmit."
+  );
+}
+
 // SECRETS_DETECTED_MESSAGE was deleted on 2026-08-29, not reworded. It said
 // the upload "was not accepted and nothing was stored" and told the submitter
 // to resubmit, and all three of those are false under the cleaning lane. A

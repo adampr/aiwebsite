@@ -108,3 +108,37 @@ export function reportIntakeCleaningIssue(opts: {
     emailed: opts.emailed,
   });
 }
+
+/**
+ * A §5.16 web upload whose BODY could not be read at all (2026-09-01; the
+ * 2026-08-27 incident: six real multipart uploads in three minutes, every one
+ * killed by req.formData() throwing, and the only trace was a 14-day nginx
+ * line). Not reportFailureEmailIssue, whose name, header and `emailed`
+ * parameter all describe a failure EMAIL: no email exists on this lane, the
+ * requester saw an HTTP refusal.
+ *
+ * KEYS STAY EPISODIC, exactly as the header above requires: (reason class,
+ * lane) - "work-intake:body-unreadable:web-create" / ":web-update" - never
+ * per request. A deterministic middlebox produces one refusal per attempt and
+ * people retry in bursts (the incident was six in three minutes), so
+ * per-request keys would eat the 500-row read window this module exists to
+ * protect; repeats bump `count` and last-wins keeps the newest content-type
+ * and parser error in `detail`, which is the forensic pair that names the
+ * cause.
+ */
+export function reportUnreadableUploadIssue(opts: {
+  key: string;
+  subject: string;
+  detail: string;
+}): void {
+  void recordIssue(siteConfig.site.slug, {
+    source: "module",
+    key: opts.key,
+    severity: "WARN",
+    subject: opts.subject,
+    detail: opts.detail,
+    // The web lanes send no mail here, so [never-emailed] in the triage
+    // listing is accurate rather than an alarm (the cleaning lane's rule).
+    emailed: false,
+  });
+}

@@ -28,7 +28,20 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyWorkKind } from "../src/lib/work/classify";
-import { WORK_CAPS } from "../src/lib/work/config";
+import {
+  MULTIPART_UNREADABLE_MESSAGE,
+  RAW_UNREADABLE_MESSAGE,
+  WORK_CAPS,
+  fileChangedOnDiskMessage,
+  notMultipartMessage,
+} from "../src/lib/work/config";
+import { bodyRefusalFor } from "../src/lib/work/read-body";
+import {
+  WORK_RAW_CONTENT_TYPE,
+  WORK_RAW_MAGIC,
+  decodeRawWorkPackage,
+  encodeRawWorkPackage,
+} from "../src/lib/work/raw-package";
 import type { ExtractErr, ExtractOk } from "../src/lib/work/extract";
 import staticTitles from "../src/lib/work/static-titles.json";
 import {
@@ -441,6 +454,343 @@ function main(): void {
     writeFileSync(p, "  a description\n\n");
     assert.equal(readBlurb(p), "a description", "trimmed like the form field");
     assert.equal(readBlurb(null), "", "no --blurb-file is an empty description");
+  }
+
+  // ---- §5.16 raw fallback transport + unreadable-body refusals (2026-09-01,
+  // the 2026-08-27 incident: six real multipart uploads all killed by
+  // req.formData() throwing under body-rewriting middleware) ----------------
+  // Codec + reader tests run in one async block: the encoder now returns a
+  // Blob (BlobPart concatenation, so a 100 MB package is never copied into a
+  // second in-memory buffer; refuter finding 2026-09-01) and Blob reads are
+  // async. The block still fails the suite: its catch exits 1.
+  void (async () => {
+    const toBytes = async (b: Blob) => new Uint8Array(await b.arrayBuffer());
+    {
+      // Round-trip fidelity, the full create shape: every field, package AND
+      // standalone doc, binary bytes that are not UTF-8, and the two part
+      // shapes mixed (a Blob part like the form's File, a bytes part).
+      const enc = new TextEncoder();
+      const fileBytes = new Uint8Array([0x50, 0x4b, 3, 4, 0, 255, 128, 7]);
+      const docBytes = enc.encode("# architecture\n\nwords about the tool");
+      const body = encodeRawWorkPackage({
+        fields: {
+          title: "Beacon",
+          blurb: "",
+          attribution: "Adam",
+          timeSavedHours: "6.5",
+        },
+        file: { name: "beacon.zip", data: new Blob([fileBytes]) },
+        doc: { name: "architecture.md", data: docBytes },
+      });
+      assert.equal(
+        body.type,
+        WORK_RAW_CONTENT_TYPE,
+        "the body Blob carries the wire content type"
+      );
+      const bytes = await toBytes(body);
+      assert.equal(
+        new TextDecoder().decode(bytes.subarray(0, 8)),
+        WORK_RAW_MAGIC,
+        "the magic leads the body"
+      );
+      const d = decodeRawWorkPackage(bytes);
+      assert.ok(d.ok);
+      assert.deepEqual(d.fields, {
+        title: "Beacon",
+        blurb: "",
+        attribution: "Adam",
+        timeSavedHours: "6.5",
+      });
+      assert.equal(d.file.name, "beacon.zip");
+      assert.deepEqual([...d.file.bytes], [...fileBytes]);
+      assert.equal(d.doc?.name, "architecture.md");
+      assert.deepEqual([...(d.doc?.bytes ?? [])], [...docBytes]);
+    }
+    {
+      // The update-lane shape: no title, no doc. Absent stays ABSENT, never
+      // "", because the update route 400s a present title and
+      // parseTimeSavedHours reads an absent field as "not reported".
+      const d = decodeRawWorkPackage(
+        await toBytes(
+          encodeRawWorkPackage({
+            fields: { blurb: "b", attribution: "" },
+            file: { name: "repo.zip", data: new Uint8Array([1, 2, 3]) },
+          })
+        )
+      );
+      assert.ok(d.ok);
+      assert.equal(d.fields.title, undefined);
+      assert.equal(d.fields.timeSavedHours, undefined);
+      assert.equal(d.fields.blurb, "b");
+      assert.equal(d.doc, null);
+      assert.deepEqual([...d.file.bytes], [1, 2, 3]);
+    }
+    {
+      // Garbage and tampering refuse with a named reason, never a corrupt
+      // parse: the transport exists BECAUSE something rewrites bodies.
+      const enc = new TextEncoder();
+      const bad = (b: Uint8Array<ArrayBuffer>, re: RegExp, what: string) => {
+        const d = decodeRawWorkPackage(b);
+        assert.ok(!d.ok, what);
+        assert.match(d.error, re, what);
+      };
+      bad(new Uint8Array(0), /too short/, "empty body");
+      bad(new Uint8Array(11), /too short/, "shorter than the header");
+      const good = await toBytes(
+        encodeRawWorkPackage({
+          fields: {},
+          file: { name: "a.zip", data: new Uint8Array([9, 9]) },
+        })
+      );
+      const flipped = new Uint8Array(good);
+      flipped[0] = 0x58;
+      bad(flipped, /bad magic/, "flipped magic byte");
+      bad(
+        new Uint8Array(good.subarray(0, good.byteLength - 1)),
+        /sum/,
+        "one byte lost in transit"
+      );
+      const grown = new Uint8Array(good.byteLength + 1);
+      grown.set(good);
+      bad(grown, /sum/, "one byte grown in transit");
+      const lied = new Uint8Array(good);
+      new DataView(lied.buffer).setUint32(8, 100_000, false);
+      bad(lied, /exceeds body/, "declared metadata length past the body");
+      const mk = (meta: unknown, tailBytes: number) => {
+        const json = enc.encode(JSON.stringify(meta));
+        const out = new Uint8Array(12 + json.byteLength + tailBytes);
+        out.set(enc.encode(WORK_RAW_MAGIC), 0);
+        new DataView(out.buffer).setUint32(8, json.byteLength, false);
+        out.set(json, 12);
+        return out;
+      };
+      {
+        // metadata bytes that are not JSON at all
+        const notJson = new Uint8Array(16);
+        notJson.set(enc.encode(WORK_RAW_MAGIC), 0);
+        new DataView(notJson.buffer).setUint32(8, 4, false);
+        notJson.set(enc.encode("abcd"), 12);
+        bad(notJson, /JSON/, "non-JSON metadata");
+      }
+      bad(mk([1], 0), /not an object/, "array metadata");
+      bad(mk({ fileSize: 2 }, 2), /fileName missing/, "no fileName");
+      bad(mk({ fileName: "a.zip", fileSize: "2" }, 2), /byte length/, "string fileSize");
+      bad(mk({ fileName: "a.zip", fileSize: 2.5 }, 2), /byte length/, "fractional fileSize");
+      bad(
+        mk({ fileName: "a.zip", fileSize: 2, docName: "d.md" }, 2),
+        /travel together/,
+        "docName without docSize"
+      );
+      bad(
+        mk({ fileName: "a.zip", fileSize: 2, title: 5 }, 2),
+        /not a string/,
+        "non-string text field"
+      );
+    }
+    {
+      // The whole server side of the happy raw path, through the REAL
+      // reader: a Request carrying the encoded Blob body comes back as a
+      // FormData with the multipart path's exact keys and byte-identical
+      // files. Runs here because a successful read never touches the ledger
+      // (the suite stays no-DB).
+      const fileBytes = new Uint8Array([0x50, 0x4b, 1, 2, 250]);
+      const docBytes = new TextEncoder().encode("# doc\n\nbody");
+      const raw = encodeRawWorkPackage({
+        fields: { title: "Beacon", blurb: "why", timeSavedHours: "2" },
+        file: { name: "beacon.zip", data: new Blob([fileBytes]) },
+        doc: { name: "SKILL.md", data: docBytes },
+      });
+      const req = new Request("http://localhost/api/work/submissions", {
+        method: "POST",
+        headers: { "content-type": WORK_RAW_CONTENT_TYPE },
+        body: raw,
+      });
+      const { readWorkBody } = await import("../src/lib/work/read-body");
+      const r = await readWorkBody(req, "create", "test@xl.net");
+      assert.ok(r.ok, "the raw happy path parses");
+      assert.equal(r.form.get("title"), "Beacon");
+      assert.equal(r.form.get("blurb"), "why");
+      assert.equal(r.form.get("timeSavedHours"), "2");
+      assert.equal(
+        r.form.get("attribution"),
+        null,
+        "an absent field stays absent from the FormData"
+      );
+      const f = r.form.get("file");
+      assert.ok(f instanceof File);
+      assert.equal(f.name, "beacon.zip");
+      assert.deepEqual([...new Uint8Array(await f.arrayBuffer())], [...fileBytes]);
+      const md = r.form.get("skillMd");
+      assert.ok(md instanceof File);
+      assert.equal(md.name, "SKILL.md");
+      assert.deepEqual([...new Uint8Array(await md.arrayBuffer())], [...docBytes]);
+    }
+    console.log(
+      "work-submit-tests: raw-transport codec + reader assertions passed."
+    );
+  })().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+  // The content-type branch split, lane-aware: a multipart header that failed
+  // to parse is a body garbled in transit (body_unreadable, copy that names
+  // the FORM's auto-retry without claiming one happened); anything else is a
+  // script speaking the wrong format (invalid_request, the copy that teaches
+  // -F, with NO title in the update example because that route refuses a
+  // typed title).
+  assert.deepEqual(bodyRefusalFor("multipart/form-data; boundary=----x", "create"), {
+    code: "body_unreadable",
+    message: MULTIPART_UNREADABLE_MESSAGE,
+  });
+  assert.deepEqual(bodyRefusalFor("MULTIPART/FORM-DATA", "update"), {
+    code: "body_unreadable",
+    message: MULTIPART_UNREADABLE_MESSAGE,
+  });
+  assert.deepEqual(bodyRefusalFor("application/json", "create"), {
+    code: "invalid_request",
+    message: notMultipartMessage("create"),
+  });
+  assert.deepEqual(bodyRefusalFor("", "update"), {
+    code: "invalid_request",
+    message: notMultipartMessage("update"),
+  });
+  assert.match(notMultipartMessage("create"), /curl -F "title=\.\.\." -F "file=@package\.zip"/);
+  assert.match(notMultipartMessage("update"), /curl -F "file=@package\.zip"/);
+  assert.ok(
+    !notMultipartMessage("update").includes("title"),
+    "the update example must not steer a script into the pinned-title 400"
+  );
+  // The copy itself. Both body_unreadable sentences name the REAL intake
+  // address (ai@xl.net does not exist), say the files were never judged, and
+  // never say "multipart" to a form user. The multipart sentence promises
+  // only what the form does (it is what a retry-less script reads); ONLY the
+  // raw sentence may say "tried twice", because a raw POST is by construction
+  // the form's second attempt.
+  for (const msg of [MULTIPART_UNREADABLE_MESSAGE, RAW_UNREADABLE_MESSAGE]) {
+    assert.match(msg, /Tron\.Netter@ai\.xl\.net/);
+    assert.match(msg, /never judged/);
+    assert.ok(
+      !/multipart/i.test(msg),
+      "no wire-format jargon in a body_unreadable refusal"
+    );
+  }
+  assert.match(MULTIPART_UNREADABLE_MESSAGE, /retries this automatically/);
+  assert.ok(
+    !/tried twice|retry failed/.test(MULTIPART_UNREADABLE_MESSAGE),
+    "the multipart sentence never claims a retry already happened"
+  );
+  assert.match(RAW_UNREADABLE_MESSAGE, /tried twice/);
+  assert.match(RAW_UNREADABLE_MESSAGE, /different network or browser/);
+  // The changed-on-disk sentence names WHICH field the form cleared: it is
+  // the only channel a screen-reader user gets.
+  assert.match(
+    fileChangedOnDiskMessage("package"),
+    /^The package file you chose changed on disk/
+  );
+  assert.match(
+    fileChangedOnDiskMessage("document"),
+    /^The document you chose changed on disk/
+  );
+  assert.match(fileChangedOnDiskMessage("package"), /Choose the file again/);
+  assert.equal(WORK_RAW_CONTENT_TYPE, "application/x-work-package");
+  {
+    // CALL-SITE PINS, against the WORKING COPY (this round's own files are
+    // the contract; the committed-route pin block below keeps covering the
+    // literals that predate it). Both routes read their body through the ONE
+    // shared reader, the reader owns the parse plus its log line and ledger
+    // mirror, and the form's retry is keyed on the code alone.
+    const createSrc = readFileSync(
+      resolve(REPO, "src/app/api/work/submissions/route.ts"),
+      "utf8"
+    );
+    const updateSrc = readFileSync(
+      resolve(REPO, "src/app/api/work/submissions/[id]/update/route.ts"),
+      "utf8"
+    );
+    const readBodySrc = readFileSync(
+      resolve(REPO, "src/lib/work/read-body.ts"),
+      "utf8"
+    );
+    const formSrc = readFileSync(
+      resolve(REPO, "src/app/work/submit/submission-form.tsx"),
+      "utf8"
+    );
+    assert.ok(
+      createSrc.includes('await readWorkBody(req, "create", user.email)'),
+      "the create route reads its body through the shared reader"
+    );
+    assert.ok(
+      updateSrc.includes('await readWorkBody(req, "update", user.email)'),
+      "the update route reads its body through the shared reader"
+    );
+    for (const [label, src] of [
+      ["create route", createSrc],
+      ["update route", updateSrc],
+    ] as const) {
+      assert.ok(
+        !src.includes("req.formData()"),
+        `${label}: no direct req.formData() left; the reader owns the parse`
+      );
+      assert.ok(
+        src.indexOf('req.headers.get("content-length")') <
+          src.indexOf("readWorkBody("),
+        `${label}: the Content-Length precheck runs BEFORE the body reader, so it covers the raw arrayBuffer read too`
+      );
+    }
+    assert.ok(
+      readBodySrc.includes(
+        "[work] body-unreadable ${lane} submitter=${submitterEmail}"
+      ),
+      "the one forensic log line (the size-refusal precedent)"
+    );
+    assert.ok(
+      readBodySrc.includes("work-intake:body-unreadable:web-${lane}"),
+      "episodic ledger key: (reason class, lane), never per request"
+    );
+    assert.equal(
+      (readBodySrc.match(/message: RAW_UNREADABLE_MESSAGE/g) ?? []).length,
+      2,
+      "both raw-branch refusals (unreadable body, bad framing) speak the tried-twice copy"
+    );
+    assert.ok(
+      formSrc.includes('data?.error?.code === "body_unreadable"'),
+      "the form retries only on the body_unreadable code"
+    );
+    assert.ok(
+      formSrc.includes("encodeRawWorkPackage(") &&
+        formSrc.includes("WORK_RAW_CONTENT_TYPE"),
+      "the retry rides the shared encoder and content type"
+    );
+    assert.equal(
+      (formSrc.match(/setTimeout\(\(\) => ctrl\.abort\(\), 90_000\)/g) ?? [])
+        .length,
+      2,
+      "a FRESH 90 s window is armed for the raw retry; one shared window kills any package slower than ~45 s mid-retry"
+    );
+    assert.ok(
+      formSrc.includes(".slice(0, 1).arrayBuffer()"),
+      "the one-byte readability probe runs before the Blob body is built, so changed-on-disk keeps its own message"
+    );
+    assert.ok(
+      formSrc.includes('fileChangedOnDiskMessage("package")') &&
+        formSrc.includes('fileChangedOnDiskMessage("document")'),
+      "each changed-on-disk branch names the field it clears"
+    );
+    assert.ok(
+      formSrc.includes('"File could not be read"'),
+      "the changed-on-disk modal heading never claims the package was judged"
+    );
+    assert.ok(
+      (formSrc.match(/cancelledByUser\(\)/g) ?? []).length >= 3,
+      "a user-cancel landing inside a response read is a quiet note, never the alarm modal (guarded after both json reads and in the catch)"
+    );
+    // House rule for the round's new src files: no em or en dashes (escapes,
+    // not the characters, exactly like the scripts scan below).
+    for (const [label, text] of [
+      ["src/lib/work/raw-package.ts", readFileSync(resolve(REPO, "src/lib/work/raw-package.ts"), "utf8")],
+      ["src/lib/work/read-body.ts", readBodySrc],
+    ] as const)
+      assert.ok(!/[\u2013\u2014]/.test(text), `no em or en dashes in ${label}`);
   }
 
   // ---- the gate ladder as data --------------------------------------------

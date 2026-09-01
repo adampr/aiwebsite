@@ -28,8 +28,13 @@ import {
   DOC_TOO_LARGE_MESSAGE,
   EMAIL_PROMISE,
   WORK_CAPS,
+  fileChangedOnDiskMessage,
   packageTooLargeMessage,
 } from "@/lib/work/config";
+import {
+  WORK_RAW_CONTENT_TYPE,
+  encodeRawWorkPackage,
+} from "@/lib/work/raw-package";
 import {
   parseTimeSavedHours,
   TIME_SAVED_MAX_HOURS,
@@ -102,13 +107,15 @@ export function SubmissionForm({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [serverPaths, setServerPaths] = useState<string[]>([]);
-  // Which heading the refusal modal wears. A server refusal and a dead
-  // connection are different facts: "Submission not accepted" over a network
-  // drop would tell the submitter their package was judged when nothing ever
-  // read it.
-  const [serverErrorKind, setServerErrorKind] = useState<"refusal" | "network">(
-    "refusal"
-  );
+  // Which heading the refusal modal wears. A server refusal, a dead
+  // connection and an unreadable local file are three different facts:
+  // "Submission not accepted" over a network drop or a changed-on-disk file
+  // would tell the submitter their package was judged when nothing ever
+  // read it. "file" = the chosen File refused a re-read before the raw
+  // retry (it changed on disk since it was picked).
+  const [serverErrorKind, setServerErrorKind] = useState<
+    "refusal" | "network" | "file"
+  >("refusal");
   // A deliberate Cancel-upload, kept apart from serverError: the person who
   // pressed Cancel asked for the stop, so an alertdialog telling them to
   // check their connection would be a false alarm. They get one quiet inline
@@ -284,7 +291,22 @@ export function SubmissionForm({
     setBusyBoth(true);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-    const timeout = setTimeout(() => ctrl.abort(), 90_000);
+    // ONE 90 s window PER ATTEMPT, not for the whole sequence: the raw retry
+    // re-uploads the same bytes, so a single shared window means a package
+    // that takes over 45 s to upload deterministically dies mid-retry and
+    // shows the connection copy in a loop (refuter finding, 2026-09-01). A
+    // `let`, re-armed before the retry fetch; `finally` clears whichever
+    // timer is live. The ONE AbortController spans both attempts so the
+    // Cancel button keeps working throughout.
+    let timeout = setTimeout(() => ctrl.abort(), 90_000);
+    // The Cancel button's abort carries this reason; the timeout's abort
+    // stays bare ON PURPOSE (see the catch). Read after every await that an
+    // abort can interrupt NON-fatally: res.json() rejects on abort, the
+    // `.catch(() => null)` swallows it, and without this test a user-cancel
+    // landing in that window would fall into the refusal path and raise the
+    // alarm modal at the person who asked for the stop.
+    const cancelledByUser = () =>
+      ctrl.signal.aborted && ctrl.signal.reason === "user-cancel";
     try {
       const form = new FormData();
       // No "kind" field, on either lane. On a create the server infers it
@@ -310,22 +332,104 @@ export function SubmissionForm({
       // would mean changing the create route, the update route and the email
       // lane's equivalent in lockstep for the sake of a label nobody sees.
       if (skillMd) form.set("skillMd", skillMd);
-      const res = await fetch(
-        updateTarget
-          ? `/api/work/submissions/${updateTarget.id}/update`
-          : "/api/work/submissions",
-        {
-          method: "POST",
-          body: form,
-          signal: ctrl.signal,
-        }
-      );
-      const data = (await res.json().catch(() => null)) as {
+      const url = updateTarget
+        ? `/api/work/submissions/${updateTarget.id}/update`
+        : "/api/work/submissions";
+      let res = await fetch(url, {
+        method: "POST",
+        body: form,
+        signal: ctrl.signal,
+      });
+      let data = (await res.json().catch(() => null)) as {
         id?: string;
         error?: { code?: string; message?: string; paths?: string[] };
         queued?: string | null;
         cleaned?: { message: string; paths: string[] } | null;
       } | null;
+      if (cancelledByUser()) {
+        setCancelled(true);
+        return;
+      }
+      if (!res.ok && data?.error?.code === "body_unreadable") {
+        // The multipart body arrived but the server could not parse it,
+        // which in practice means security/VPN middleware rewrote it in
+        // transit (2026-08-27: six real uploads in three minutes, every one
+        // killed this way, work lost). Retry ONCE over the raw transport
+        // (raw-package.ts): an opaque binary body is what those middleboxes
+        // leave alone. Same url, same AbortController (Cancel keeps working
+        // through the retry), fresh 90 s window armed below.
+        // body_unreadable only ever comes back on this code path or on the
+        // raw framing itself, and the raw result falls through to the
+        // ordinary refusal handling below, so there is no second retry.
+        //
+        // Readability PROBE first, one byte per file: the encoder passes the
+        // File objects into the body Blob by reference (no ~200 MB second
+        // copy), which moves a changed-on-disk failure from read time to
+        // send time, where it would masquerade as a network drop. Chrome
+        // refuses to re-read a File that changed on disk since it was
+        // chosen: a distinct, real failure class with its own fix, its own
+        // modal heading (kind "file": nothing judged this package), and a
+        // reject-and-clear of the RIGHT field exactly like takePkg's size
+        // rejection, so re-picking the same name fires onChange again. The
+        // message rides the modal, never fieldErrors (no client field error
+        // may raise the alertdialog, and the inline errors' role="alert"
+        // would race it); it names the cleared field because this sentence
+        // is the only channel a screen-reader user gets.
+        try {
+          await (pkg as File).slice(0, 1).arrayBuffer();
+        } catch {
+          setServerErrorKind("file");
+          setServerError(fileChangedOnDiskMessage("package"));
+          setPkg(null);
+          if (pkgRef.current) pkgRef.current.value = "";
+          return;
+        }
+        if (skillMd) {
+          try {
+            await skillMd.slice(0, 1).arrayBuffer();
+          } catch {
+            setServerErrorKind("file");
+            setServerError(fileChangedOnDiskMessage("document"));
+            setSkillMd(null);
+            if (mdRef.current) mdRef.current.value = "";
+            return;
+          }
+        }
+        // The same fields the multipart body carried, absent when not sent:
+        // no title in update mode (the route 400s a typed one), timeSaved
+        // only when non-empty on a create. The Files ride into the Blob as
+        // parts; the browser streams them at send time.
+        const raw = encodeRawWorkPackage({
+          fields: {
+            ...(updateTarget ? {} : { title }),
+            blurb,
+            attribution,
+            ...(!updateTarget && timeSavedHours.trim() !== ""
+              ? { timeSavedHours: timeSavedHours.trim() }
+              : {}),
+          },
+          file: { name: (pkg as File).name || "upload", data: pkg as File },
+          doc: skillMd
+            ? { name: skillMd.name || "SKILL.md", data: skillMd }
+            : null,
+        });
+        // Fresh 90 s window for the second upload: the retry re-sends the
+        // same bytes, so sharing the first attempt's remainder would kill
+        // any package slower than ~45 s mid-retry, every time.
+        clearTimeout(timeout);
+        timeout = setTimeout(() => ctrl.abort(), 90_000);
+        res = await fetch(url, {
+          method: "POST",
+          body: raw,
+          headers: { "content-type": WORK_RAW_CONTENT_TYPE },
+          signal: ctrl.signal,
+        });
+        data = (await res.json().catch(() => null)) as typeof data;
+        if (cancelledByUser()) {
+          setCancelled(true);
+          return;
+        }
+      }
       if (!res.ok) {
         // Server 422s carry instructional copy; render it verbatim.
         setServerErrorKind("refusal");
@@ -348,7 +452,7 @@ export function SubmissionForm({
       // for the stop, so no modal and no red text, just the quiet note. The
       // 90 s timeout aborts with no reason ON PURPOSE, so a hung upload
       // still lands in the alarming branch, as does a genuine network drop.
-      if (ctrl.signal.aborted && ctrl.signal.reason === "user-cancel") {
+      if (cancelledByUser()) {
         setCancelled(true);
       } else {
         setServerErrorKind("network");
@@ -735,9 +839,14 @@ export function SubmissionForm({
         onClose={() => submitBtnRef.current?.focus()}
       >
         <h2 id={`${uid}-refusal-title`} className="text-lg font-bold">
+          {/* Three headings for three facts. "file": the chosen file could
+              not be re-read for the retry; "Submission not accepted" there
+              would claim the package was judged when nothing ever read it. */}
           {serverErrorKind === "network"
             ? "Upload interrupted"
-            : "Submission not accepted"}
+            : serverErrorKind === "file"
+              ? "File could not be read"
+              : "Submission not accepted"}
         </h2>
         {/* The server's sentence, verbatim: refusal bodies are instructional
             copy written route-side, and they must read identically on all
