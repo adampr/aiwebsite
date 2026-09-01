@@ -30,7 +30,11 @@ import { BOILERPLATE_MD_BASENAMES, type WorkKind } from "./config";
 
 /** Ordered rungs. The name is stable and is written into logs, the receipt
  * copy and the reclassification report, so a verdict can always be traced to
- * the rung that produced it. */
+ * the rung that produced it. One name decides at TWO placements:
+ * `program_scaffolding` straddles `skill_package` (an unambiguously named
+ * architecture doc outranks the extension; a launcher, CLAUDE.md and the
+ * looser doc names do not - see the ordering note on classifyWorkKind), and
+ * both placements report the same name because the rule is the same rule. */
 export type KindRule =
   | "bare_document"
   | "claude_code_project"
@@ -119,6 +123,17 @@ const INNER_SKILL_EXT = /\.(skill|ski)$/i;
 const ARCH_BASENAMES =
   /^(architecture|arch|design|readme-architecture)\.(md|mdx|markdown|txt)$/i;
 
+/** The subset of ARCH_BASENAMES certain enough to outrank the .skill
+ * extension at rung 3. "architecture.md" at a package's root is a statement
+ * of what the thing is, in a name a Skill has no reason to use; "design.md"
+ * and "arch.md" are looser, and a genuine CoWork Skill can plausibly ship a
+ * design note under either name beside its SKILL.md. Those looser names
+ * still convict at the rung-5 placement, so a .zip package classifies
+ * exactly as it always did; the split only decides which evidence is strong
+ * enough to override an explicit Skill export extension. */
+const ARCH_BASENAMES_HOISTED =
+  /^(architecture|readme-architecture)\.(md|mdx|markdown|txt)$/i;
+
 /** Dependency and build manifests: a package that declares dependencies or a
  * build is a program. Depth <= 2 covers a wrapper folder plus one component
  * directory ("app/server/package.json"). */
@@ -140,7 +155,7 @@ const SKILL_DOC = /^skill\.md$/i;
 
 /** Names that are never the document a package is ABOUT. IMPORTED, not
  * duplicated: extract.ts's Skill ladder demotes exactly this list when it
- * resolves a reviewed document, and rung 10 below is a prediction of what
+ * resolves a reviewed document, and rung 11 below is a prediction of what
  * that ladder will do, so the two must not drift. (config.ts is pure
  * constants with no jszip, so this module stays loadable on its own for the
  * reclassification script and the tests.) */
@@ -221,16 +236,37 @@ function atPackageRoot(path: string, wrapper: string | null): boolean {
  * makes the reclassification of historical rows reviewable one rung at a
  * time, which is how the 2026-08-28 pass was checked.
  *
- * The ORDER is the whole design, and the two inversions in it are the
+ * The ORDER is the whole design, and the inversions in it are the
  * interesting part:
  *
- *  - `claude_code_project` (rung 2) outranks `skill_package` (rung 3), so a
+ *  - `claude_code_project` (rung 2) outranks `skill_package` (rung 4), so a
  *    .skill file holding an agent-configured repository is a program. The
  *    extension records how a file was exported; a .claude directory records
  *    what the thing is.
  *
- *  - `program_scaffolding` (rung 4) outranks `wrapped_skill_package` (rung 5)
- *    and `skill_document` (rung 6), and that inversion is load-bearing. A
+ *  - `program_scaffolding` decides at TWO placements, straddling the
+ *    extension rung, and the split is the point. An architecture doc under
+ *    one of the UNAMBIGUOUS names (ARCH_BASENAMES_HOISTED) outranks the
+ *    extension (rung 3): a CoWork Skill never carries an architecture doc at
+ *    its root, so the doc records what the thing is the same way `.claude`
+ *    does, and the flip hands the program lane a file whose NAME that lane
+ *    accepts as the required doc, so it can never end in the lane's
+ *    missing-doc refusal on that count (the lane's prose floor and inflate
+ *    cap still apply to the doc's content; a root architecture.md that is a
+ *    stub is refused doc_too_short, an accepted residual on a shape with no
+ *    corpus occurrence, and the standalone document field remains the
+ *    rescue). Everything else - a launcher, CLAUDE.md, and the looser
+ *    "design"/"arch" doc names a Skill can plausibly use for a design note -
+ *    does NOT outrank the extension (rung 5): on a .skill export those
+ *    signals either come with no document the program lane accepts (a
+ *    doc-less package would be walked into a hard 422, where the Skill
+ *    lane's worst case is a soft doc-missing the standalone upload can
+ *    still rescue) or are too weak to override an explicit Skill export.
+ *    Where the evidence leaves room for doubt, the ladder leans toward the
+ *    lane a wrong answer can walk back from.
+ *
+ *  - `program_scaffolding` also outranks `wrapped_skill_package` (rung 6)
+ *    and `skill_document` (rung 7), and that inversion is load-bearing. A
  *    Claude Code program very often CONTAINS a skill (production has a
  *    program whose zip holds both an ARCHITECTURE.md and a nested .skill, and
  *    another that ships a SKILL.md under .claude/skills/); a CoWork Skill never
@@ -271,20 +307,14 @@ export function classifyWorkKind(signals: KindSignals): KindVerdict {
       ...(ci.length ? [`a CI workflow (${ci[0]})`] : []),
     ]);
 
-  // 3. The package IS a Skill export.
-  if (SKILL_PACKAGE_EXT.test(packageName))
-    return noted(
-      "skill",
-      "skill_package",
-      `the package is a .${baseOf(packageName).split(".").pop()?.toLowerCase()} file`
-    );
-
-  // 4. Program scaffolding the package carries AT ITS OWN ROOT. Each of these
-  //    is a thing a program has and a Skill package does not. The dependency
-  //    manifest is NOT here: it moved below the Skill-document rungs, because
-  //    a Skill that ships helper scripts ships their requirements.txt with
-  //    them, and convicting it on that file while deliberately exempting the
-  //    scripts themselves (see HELPER_DIR) was self-contradictory.
+  // Program scaffolding the package carries AT ITS OWN ROOT. Each of these
+  // is a thing a program has and a Skill package does not. Gathered once,
+  // tested at two rungs (3 and 5) that straddle the extension rung: see the
+  // ordering note above. The dependency manifest is in NEITHER placement: it
+  // sits below the Skill-document rungs, because a Skill that ships helper
+  // scripts ships their requirements.txt with them, and convicting it on
+  // that file while deliberately exempting the scripts themselves (see
+  // HELPER_DIR) was self-contradictory.
   const archDoc = paths.filter(
     (p) => ARCH_BASENAMES.test(baseOf(p)) && atPackageRoot(p, wrapper)
   );
@@ -294,14 +324,40 @@ export function classifyWorkKind(signals: KindSignals): KindVerdict {
   const launcher = paths.filter(
     (p) => LAUNCHER.test(baseOf(p)) && atPackageRoot(p, wrapper)
   );
-  if (archDoc.length || claudeMd.length || launcher.length)
-    return verdict("program", "program_scaffolding", [
+  const scaffolding = () =>
+    verdict("program", "program_scaffolding", [
       ...(archDoc.length ? [`an architecture document (${archDoc[0]})`] : []),
       ...(launcher.length ? [`a launcher (${launcher[0]})`] : []),
       ...(claudeMd.length ? [`project instructions (${claudeMd[0]})`] : []),
     ]);
 
-  // 5. A wrapper zip whose payload is one packaged Skill, by NAME. Exactly
+  // 3. An unambiguously named architecture document, above the extension
+  //    rung. Only that decides this early: it is the one piece of
+  //    scaffolding evidence whose flip hands the program lane a file that
+  //    lane accepts by name, and whose name a Skill has no reason to use.
+  if (archDoc.some((p) => ARCH_BASENAMES_HOISTED.test(baseOf(p))))
+    return scaffolding();
+
+  // 4. The package IS a Skill export. Decisive only when no unambiguous
+  //    architecture doc sits at the package's own root; rung 3 has already
+  //    spoken for the packages that carry one.
+  if (SKILL_PACKAGE_EXT.test(packageName))
+    return noted(
+      "skill",
+      "skill_package",
+      `the package is a .${baseOf(packageName).split(".").pop()?.toLowerCase()} file`
+    );
+
+  // 5. The rest of the program scaffolding: a launcher, project
+  //    instructions, or an arch doc under one of the looser names, at the
+  //    package's own root. BELOW the extension rung on purpose - see the
+  //    ordering note above. For every non-.skill package this placement
+  //    fires exactly where the single rung used to, so nothing outside the
+  //    Skill-export extension classifies differently.
+  if (archDoc.length || claudeMd.length || launcher.length)
+    return scaffolding();
+
+  // 6. A wrapper zip whose payload is one packaged Skill, by NAME. Exactly
   //    one: two packaged Skills is a bundle, and a bundle is not a Skill.
   const innerSkills = innerArchivePaths.filter((p) =>
     INNER_SKILL_EXT.test(baseOf(p))
@@ -311,7 +367,7 @@ export function classifyWorkKind(signals: KindSignals): KindVerdict {
       `one packaged Skill inside the zip (${innerSkills[0]})`,
     ]);
 
-  // 6. A document carrying the Claude Skill front-matter signature. Tested on
+  // 7. A document carrying the Claude Skill front-matter signature. Tested on
   //    ANY .md at the package root, not only one named SKILL.md: extract.ts's
   //    own ladder resolves a Skill's document by uniqueness and by this same
   //    signature, so a package whose doc is "patching-visualizer.md" is a
@@ -329,7 +385,7 @@ export function classifyWorkKind(signals: KindSignals): KindVerdict {
       `a document with Skill front matter (${signed[0]})`,
     ]);
 
-  // 7. A file literally named SKILL.md whose front matter is missing,
+  // 8. A file literally named SKILL.md whose front matter is missing,
   //    malformed, or simply not in the stored corpus. Still a Skill: every
   //    program rung above has missed, and that filename is the submitter's
   //    own statement of what this is.
@@ -339,9 +395,9 @@ export function classifyWorkKind(signals: KindSignals): KindVerdict {
       `a file named SKILL.md (${namedSkillMd[0]})`,
     ]);
 
-  // 8. Declared dependencies or a build. Below the Skill-document rungs by
-  //    the argument at rung 4, above the source rung because it is the
-  //    stronger signal of the two.
+  // 9. Declared dependencies or a build. Below the Skill-document rungs by
+  //    the argument at the scaffolding gather above, above the source rung
+  //    because it is the stronger signal of the two.
   const manifest = paths.filter(
     (p) => DEP_MANIFEST.test(baseOf(p)) && depthOf(p) <= 2
   );
@@ -350,7 +406,7 @@ export function classifyWorkKind(signals: KindSignals): KindVerdict {
       `a dependency manifest (${manifest[0]})`,
     ]);
 
-  // 9. Source code that is not a Skill's helper scripts.
+  // 10. Source code that is not a Skill's helper scripts.
   const source = paths.filter(
     (p) => SOURCE_EXT.test(baseOf(p)) && !HELPER_DIR.test(p)
   );
@@ -359,7 +415,7 @@ export function classifyWorkKind(signals: KindSignals): KindVerdict {
       `program source outside a scripts folder (${source[0]}${source.length > 1 ? ` and ${source.length - 1} more` : ""})`,
     ]);
 
-  // 10. One document and no code. extract.ts's Skill ladder resolves exactly
+  // 11. One document and no code. extract.ts's Skill ladder resolves exactly
   //     this shape (a single non-boilerplate .md at the package root clearing
   //     the prose floor) and accepts it, so calling it a program here would
   //     manufacture a refusal for a package the next stage was happy with.
@@ -369,11 +425,11 @@ export function classifyWorkKind(signals: KindSignals): KindVerdict {
       `one document and no program files (${substantive[0]})`,
     ]);
 
-  // 11. A wrapper holding exactly one archive of any kind, when nothing else
+  // 12. A wrapper holding exactly one archive of any kind, when nothing else
   //     decided. extract.ts opens exactly this shape one level down to look
   //     for a Skill document inside it (the 2026-07-30 owner amendment: "a
   //     wrapper .zip holding the .skill and its .md must work"), and it
-  //     collects `.skill` AND `.zip` for that purpose while rung 5 above can
+  //     collects `.skill` AND `.zip` for that purpose while rung 6 above can
   //     only recognise the named ones. Sending the rest down the Skill lane
   //     is what keeps that amendment working now that nobody declares a kind:
   //     the Skill ladder opens the inner archive and, if it finds nothing,
@@ -384,7 +440,7 @@ export function classifyWorkKind(signals: KindSignals): KindVerdict {
       `one packaged archive inside the zip (${innerArchivePaths[0]})`,
     ]);
 
-  // 12. Nothing matched. Program, and the reason is the refusal it produces
+  // 13. Nothing matched. Program, and the reason is the refusal it produces
   //     rather than the label: a package with no document and no program
   //     scaffolding is going to be refused either way, and the program lane's
   //     refusal names the architecture doc, which is the actionable one.

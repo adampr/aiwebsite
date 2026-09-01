@@ -2034,9 +2034,11 @@ async function main() {
   );
 
   // ---- kind inference (§5.16, owner directive 2026-08-28) ----
-  // The ladder is the contract. Every rung gets a test, and the two ORDER
-  // inversions get one each, because the order is the part a later edit is
-  // most likely to break by "simplifying".
+  // The ladder is the contract. Every rung gets a test, and every ORDER
+  // inversion gets one (agent config over the extension, the hoisted
+  // arch-doc names over the extension, scaffolding over the Skill-document
+  // rungs), because the order is the part a later edit is most likely to
+  // break by "simplifying".
   const sig = (
     packageName: string | null,
     paths: string[],
@@ -2055,11 +2057,11 @@ async function main() {
   });
   const SKILL_FM = `---\nname: thing\ndescription: does a thing\n---\n\n${PROSE}`;
 
-  // rung 1: no package at all
+  // bare_document: no package at all
   assert.equal(classifyWorkKind(sig(null, [])).rule, "bare_document");
   assert.equal(classifyWorkKind(sig(null, [])).kind, "skill");
 
-  // rung 2: agent configuration, CI. Above the .skill rung on purpose.
+  // claude_code_project: agent configuration, CI. Above the extension rung on purpose.
   for (const p of [
     ".claude/settings.json",
     "wrapper/.claude/commands/go.md",
@@ -2080,7 +2082,7 @@ async function main() {
     "ORDER: agent config outranks the .skill extension (the extension records how a file was exported, .claude records what it is)"
   );
 
-  // rung 3: the package is a Skill export
+  // skill_package: the package is a Skill export
   assert.equal(classifyWorkKind(sig("tool.skill", ["SKILL.md"])).rule, "skill_package");
   assert.equal(
     classifyWorkKind(sig("OUTAGE_1.SKI", ["SKILL.md"])).kind,
@@ -2088,7 +2090,55 @@ async function main() {
     "8.3-truncated .SKI is still a Skill package"
   );
 
-  // rung 4: program scaffolding
+  // ORDER: the unambiguous arch-doc names outrank the extension rung.
+  // The real 2026-09-01 shape ("Slack Thread Archiver V3"): a .skill export
+  // wrapping ARCHITECTURE.md + SKILL.md in one folder. The extension records
+  // how the file was exported; an architecture doc at the package's own root
+  // records what it is, and the program lane accepts the convicting file by
+  // name (its prose floor still applies to the content, an accepted
+  // residual).
+  const archOverExt = classifyWorkKind(
+    sig("slack-thread-archiver-v3.0.skill", [
+      "slack-thread-archiver/ARCHITECTURE.md",
+      "slack-thread-archiver/SKILL.md",
+    ])
+  );
+  assert.equal(
+    archOverExt.rule,
+    "program_scaffolding",
+    "ORDER: architecture.md at the package root outranks the .skill extension"
+  );
+  assert.equal(archOverExt.kind, "program");
+  // Everything else in the scaffolding gather stays BELOW the extension on
+  // purpose. A launcher or CLAUDE.md alone comes with no architecture doc
+  // for the program lane to accept, so a program verdict would be a HARD 422
+  // where the Skill lane's worst case is a soft doc-missing the standalone
+  // upload can rescue; the looser "design"/"arch" doc names are ones a
+  // genuine CoWork Skill can plausibly use for a design note beside its
+  // SKILL.md, too weak to override an explicit Skill export. Unsure leans
+  // Skill; every boundary is pinned.
+  assert.equal(
+    classifyWorkKind(sig("tool.skill", ["SKILL.md", "Run.cmd"])).rule,
+    "skill_package",
+    "a launcher-only .skill stays a Skill (no arch doc to hand the program lane)"
+  );
+  assert.equal(
+    classifyWorkKind(sig("tool.skill", ["pkg/CLAUDE.md", "pkg/SKILL.md"])).rule,
+    "skill_package",
+    "a CLAUDE.md-only .skill stays a Skill for the same reason"
+  );
+  assert.equal(
+    classifyWorkKind(sig("tool.skill", ["pkg/SKILL.md", "pkg/design.md"])).rule,
+    "skill_package",
+    "a root design.md does not override an explicit .skill export"
+  );
+  assert.equal(
+    classifyWorkKind(sig("tool.zip", ["pkg/SKILL.md", "pkg/design.md"])).kind,
+    "program",
+    "the same design.md still convicts a .zip package exactly as before"
+  );
+
+  // program_scaffolding: the two placements straddling the extension rung
   for (const p of [
     "architecture.md",
     "proj/ARCHITECTURE.md",
@@ -2203,7 +2253,7 @@ async function main() {
     "ORDER: scaffolding outranks both the wrapped Skill and a signed SKILL.md"
   );
 
-  // rung 5: a wrapper zip whose payload is one packaged Skill
+  // wrapped_skill_package: a wrapper zip whose payload is one packaged Skill
   assert.equal(
     classifyWorkKind(sig("files (2).zip", ["my.skill", "my-SKILL.md"])).rule,
     "wrapped_skill_package"
@@ -2214,7 +2264,7 @@ async function main() {
     "two packaged Skills is a bundle, not a Skill"
   );
 
-  // rung 6/8: the SKILL.md rungs, signed and unsigned
+  // skill_document / skill_document_weak: the SKILL.md rungs, signed and unsigned
   const signed = classifyWorkKind(
     sig("t.zip", ["pkg/SKILL.md"], [{ path: "pkg/SKILL.md", text: SKILL_FM }])
   );
@@ -2225,7 +2275,7 @@ async function main() {
   assert.equal(unsigned.rule, "skill_document_weak");
   assert.equal(unsigned.kind, "skill", "a file named SKILL.md is still the submitter's own statement");
 
-  // rung 7: source outside a helper directory, and the exemption that keeps
+  // program_source: source outside a helper directory, and the exemption that keeps
   // a real Skill (the SOQL translator on production) from being reclassified
   assert.equal(
     classifyWorkKind(sig("t.zip", ["notes.md", "runner.py"])).rule,

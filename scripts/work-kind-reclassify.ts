@@ -291,19 +291,20 @@ function rebuild(row: ScanRow): Rebuilt | { unclassifiable: string } {
 
 /** The one evidence gap that only exists in the light of the verdict.
  *
- * A SKILL.md with no stored text is harmless on most rungs: rungs 1 to 5 never
- * read text at all, and the rung that does (skill_document) either fired or was
- * overtaken by a rung that outranks it. It matters in exactly two places, both
- * BELOW the front-matter rung and both landing on "program": program_source and
- * default_program. Reaching either means skill_document was tried and missed,
- * and with the document's text absent there is no way to tell whether it missed
- * because the front matter was not there or because the text was not stored.
- * That is a question for whoever holds the original package.
+ * A SKILL.md with no stored text is harmless on most rungs: every rung above
+ * the front-matter one (skill_document) never reads text at all, and that
+ * rung either fired or was overtaken by a rung that outranks it. It matters
+ * in exactly two places, both BELOW the front-matter rung and both landing on
+ * "program": program_source and default_program. Reaching either means
+ * skill_document was tried and missed, and with the document's text absent
+ * there is no way to tell whether it missed because the front matter was not
+ * there or because the text was not stored. That is a question for whoever
+ * holds the original package.
  *
  * Written as a rule test rather than a generic "some text is missing" so a
  * correct flip is never withheld for evidence the ladder did not consult: the
- * first cut withheld a .skill package's flip over a SKILL.md text that rung 3
- * had already made irrelevant. */
+ * first cut withheld a .skill package's flip over a SKILL.md text that the
+ * skill_package rung had already made irrelevant. */
 function gapForVerdict(built: Rebuilt, verdict: KindVerdict): string | null {
   if (built.unbackedSkillDocs.length === 0) return null;
   if (verdict.rule !== "program_source" && verdict.rule !== "default_program")
