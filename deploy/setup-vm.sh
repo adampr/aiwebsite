@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@c863919ca92172eeafe033b0c7a6f747b81e95ec89cf313b3ba7baa4a2db7b12
+# aicompany-template: setup-vm.sh.tpl@b3c0051d17080988d83130c90daf38679572e11fb15727a0d0f2aa8ec71a8233
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -537,11 +537,19 @@ bash deploy/stage-build.sh install-brain; sudo touch "$deploy_marker"
 # STAGE, so native rebuilds target the trees that ship at cutover. Trees a
 # hook rebuilds OUTSIDE the default flip set must be declared in host-owned
 # deploy/swap-dirs.txt or the work is silently discarded (MIGRATIONS v1.13.0).
-# ENV CONTRACT: hooks that edit env must edit the LIVE $app_dir/.env by
-# ABSOLUTE path (itsc pin-prod-env does — its ENV_FILE default IS the live
-# path and its hard-verify reads the serving file). setup-vm then re-copies
-# the pinned live .env into stage so migrate/build/config:check validate the
-# exact env that goes live. .env is NEVER generation-flipped.
+# ENV CONTRACT (v1.117.0, §9 — rewritten after the 2026-09-03 topmspnearme
+# incident): deploy.sh ships the dev box's .env as $app_dir/.env.next (0600),
+# never as .env. A hook that edits env edits $AICOMPANY_ENV_FILE — exported
+# below as the INCOMING file when one arrived — and falls back to the live
+# $app_dir/.env by ABSOLUTE path when the variable is unset (itsc/tmnm
+# pin-prod-env.sh honour it in one line; a hook that ignores it still works,
+# it just pins the live file as before). setup-vm then copies the PINNED
+# INCOMING file into stage so migrate/build/config:check validate the exact
+# env that goes live, runs the tenant gate on it, and installs it into the
+# live tree ONLY inside the cutover bracket, atomically, keeping .env.prev
+# until the health gate passes. The live .env is therefore never an unpinned
+# dev copy: a timer or a probe that reads it mid-deploy reads the PREVIOUS
+# validated file. .env is NEVER generation-flipped.
 #
 # SYSTEMD CONTRACT (v1.104.2 — the same trap, found the hard way on roleplay
 # 2026-08-25). A hook that installs or updates systemd units MUST NOT derive
@@ -563,11 +571,72 @@ bash deploy/stage-build.sh install-brain; sudo touch "$deploy_marker"
 #
 # VERIFY, do not assume: `systemctl list-timers '<slug>-*'` after a deploy
 # that was supposed to add or change one.
+# v1.117.0: the incoming .env, if deploy.sh shipped one. Exported for the hook.
+env_next="$app_dir/.env.next"
+if [ -f "$env_next" ]; then
+  chmod 600 "$env_next"   # belt to deploy.sh's braces: never world-readable, whatever the transport did
+  export AICOMPANY_ENV_FILE="$env_next"
+  echo ">>> .env.next received — hooks pin it; it is installed into the live tree inside the cutover bracket"
+else
+  unset AICOMPANY_ENV_FILE
+  echo ">>> no .env.next shipped — live .env kept (a hand-run setup-vm, or a deploy.sh older than this script)"
+fi
 if [ -f "$stage_dir/deploy/post-install.sh" ]; then
   echo ">>> Running host post-install hook (stage cwd)..."
   (cd "$stage_dir" && bash deploy/post-install.sh); sudo touch "$deploy_marker"
 fi
-install -m 600 "$app_dir/.env" "$stage_dir/.env"
+# ── Tenant gate (v1.117.0, §9): the DB URLs that are about to go live must
+# belong to THIS host. A fork-carried URL (topmspnearme's dev .env carries
+# itsupportchicago's brain DB), a missing pin file, or a hand-edited .env would
+# otherwise reach the live tree and fail at the first timer as "password
+# authentication failed" / "role does not exist". Localhost only — a remote DB
+# host may legitimately use another role. Prints user and db, NEVER a password.
+# Escape hatch: TENANT_GATE_OK=1 (deploy.sh passes DEPLOY_TENANT_GATE_OK=1
+# through; every host wrapper inherits env).
+if [ -f "$env_next" ]; then
+  echo ">>> Tenant gate: DATABASE_URL / BRAIN_POSTGRES_URL in .env.next must belong to aiwebsite (localhost only)..."
+  if ! TENANT_SLUG="aiwebsite" node -e '
+    const fs = require("fs");
+    const slug = process.env.TENANT_SLUG;
+    const kv = {};
+    for (const line of fs.readFileSync(process.argv[1], "utf8").split("\n")) {
+      const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+      if (!m) continue;
+      let v = m[2];
+      if ((v.startsWith("\"") && v.endsWith("\"")) || (v.startsWith("\x27") && v.endsWith("\x27"))) v = v.slice(1, -1);
+      kv[m[1]] = v; // last wins — dotenv semantics
+    }
+    let bad = 0;
+    for (const key of ["DATABASE_URL", "BRAIN_POSTGRES_URL"]) {
+      const v = kv[key];
+      if (!v) continue;
+      let u;
+      try { u = new URL(v); } catch { console.error("!!! " + key + ": not a parseable URL"); bad++; continue; }
+      if (u.hostname !== "localhost" && u.hostname !== "127.0.0.1") continue;
+      const user = decodeURIComponent(u.username);
+      const db = u.pathname.replace(/^\//, "");
+      if (user !== slug || db !== slug) {
+        console.error("!!! " + key + ": user \"" + user + "\" db \"" + db + "\" is not \"" + slug + "\" — this URL belongs to another tenant");
+        bad++;
+      } else {
+        console.log("    " + key + ": user/db = " + slug + " ok");
+      }
+    }
+    process.exit(bad ? 1 : 0);
+  ' "$env_next"; then
+    if [ "${TENANT_GATE_OK:-}" = "1" ]; then
+      echo "WARN: tenant gate WAIVED for this run (TENANT_GATE_OK=1) — shipping the file as-is"
+    else
+      echo "ERROR: tenant gate refused .env.next — the live .env is UNTOUCHED and the old build keeps serving."
+      echo "       Fix the pin (deploy/prod-env-pins.env or /etc/aiwebsite/env-pins.env) or the dev-box .env, then redeploy."
+      echo "       .env.next is left in place (0600) for inspection; the next deploy overwrites it."
+      exit 1
+    fi
+  fi
+  install -m 600 "$env_next" "$stage_dir/.env"
+else
+  install -m 600 "$app_dir/.env" "$stage_dir/.env"
+fi
 
 if [ "$build_mode" = "local-artifact" ]; then
   # ── Local-artifact install (§9.2 v1.78.0): NO VM-side build, EVER ──
@@ -692,6 +761,18 @@ fi
 trap '' HUP
 echo ">>> CUTOVER BRACKET START — journaled renames begin (if this log ends before the COMPLETE line, recover with deploy.sh --takeover: it heals first)"
 sudo touch "$deploy_marker"
+# v1.117.0 (§9 ENV SHIP CONTRACT): the validated, pinned .env.next becomes the
+# live .env here — atomically, inside the bracket, with the previous file kept
+# as .env.prev until the health gate passes (restored on rollback, removed on
+# success — no secret copy outlives the deploy).
+if [ -f "$env_next" ]; then
+  # COPY the previous file aside (cp -p keeps 0600), then ONE atomic rename —
+  # there is never an instant without a live .env, even under SIGKILL between
+  # the two steps (a mv/mv pair had exactly that gap).
+  cp -p "$app_dir/.env" "$app_dir/.env.prev"
+  mv -f "$env_next" "$app_dir/.env"
+  echo ">>> .env installed from .env.next (previous kept as .env.prev until the health gate passes)"
+fi
 if [ -f deploy/extra-services.json ]; then
   echo ">>> Stopping extra services for the cutover flip..."
   sudo bash deploy/extra-services.sh stop 200>&- 201>&-
@@ -748,6 +829,10 @@ fi
 if [ -n "$gate_fail" ]; then
   echo "ERROR: post-cutover health gate failed ($gate_fail) — pm2 state follows; rolling back to previous generation"
   pm2 jlist 200>&- 201>&- | head -c 4000 || true
+  # v1.117.0: the env that went live with this generation goes back with it.
+  if [ -f "$app_dir/.env.prev" ]; then
+    mv -f "$app_dir/.env.prev" "$app_dir/.env" && echo ">>> .env restored from .env.prev"
+  fi
   # Rollback ladder (v1.78.0 fix round, L3): every rung is guarded so the
   # script ALWAYS reaches a truthful terminal message + exit 1. Before this,
   # a failed `stage-build.sh rollback` died mid-ladder under set -e: no pm2
@@ -776,6 +861,7 @@ if [ -n "$gate_fail" ]; then
   exit 1
 fi
 echo ">>> CUTOVER COMPLETE — the new build is LIVE (a failure after this line does NOT un-deploy it)"
+rm -f "$app_dir/.env.prev"   # v1.117.0: the health gate passed; no secret copy outlives the deploy
 bash deploy/stage-build.sh purge-trash           # delete the parked N-1 set OUTSIDE the bracket
 
 # ── Config-derived artifacts (live tree now has new node_modules) ─

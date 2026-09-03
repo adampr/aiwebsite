@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: deploy.sh.tpl@6d6125639e82a4aa2617b03168642f8ce67546aade14e01c679397b3da65ff79
+# aicompany-template: deploy.sh.tpl@b440c4a4c2d9c1a598bf76e8647d48d3aa31337e23e15a6a24293d10727bdb2a
 #
 # Deploy ai.xl.net from the dev box to the production VM.
 #
@@ -42,6 +42,7 @@ set -euo pipefail
 # a pre-ship failure used to leak the ~305M tarball into /tmp).
 trap 'code=$?
 if [ -n "${artifact_tmp:-}" ]; then rm -rf "$artifact_tmp"; fi
+if [ -n "${env_ship_dir:-}" ]; then rm -rf "$env_ship_dir"; fi
 for f in ${env_local_stash:-}; do
   if [ -f "$f.deploy-shielded" ]; then mv "$f.deploy-shielded" "$f"; fi
 done
@@ -473,6 +474,7 @@ fi
 # VM contact — no marker, no sync, no mutation, old build serving.
 artifact_local=""
 artifact_tmp=""
+env_ship_dir=""   # v1.117.0: the 0600 .env.next copy, reaped by the EXIT trap above
 local_build_id=""
 local_node_major=""
 if [ "$build_mode" = "local-artifact" ]; then
@@ -682,8 +684,28 @@ echo ">>> Restoring .env.example (the secret-shaped excludes catch it; config:ch
 [ -f "$module_dir/.env.example" ] && push_file "$module_dir/.env.example" "$app_dir/packages/aicompany/"
 true
 
-echo ">>> Copying production .env..."
-push_file "$repo_dir/.env" "$app_dir/"
+# ── ENV SHIP CONTRACT (v1.117.0, §9) ─────────────────────────────
+# NEVER ship the dev box's .env as the live .env. Until v1.116 this step pushed
+# the repo's .env straight into $app_dir/, which put the DEV BOX's credentials
+# into the LIVE tree minutes before the host's pin hook rewrote them. On
+# 2026-09-03 12:25:59Z topmspnearme's blog timer fired inside that window,
+# read the dev DATABASE_URL, and died with "password authentication failed" —
+# and brain-api's probe children had already failed as the SIBLING host's DB
+# role, because that host's dev .env carries it. The file now lands as
+# $app_dir/.env.next (0600) and setup-vm.sh installs it into the live tree
+# ONLY inside the cutover bracket, after the host hook has pinned it and
+# config:check has validated it. Every transport's push_file copies to
+# <dir>/<basename>, so the temp copy is NAMED .env.next; it lives seconds,
+# 0600 in a 0700 mktemp dir, and the EXIT trap reaps it on every exit.
+echo ">>> Shipping .env as .env.next (installed into the live tree only inside the cutover bracket)..."
+env_ship_dir="$(mktemp -d)"
+install -m 600 "$repo_dir/.env" "$env_ship_dir/.env.next"
+push_file "$env_ship_dir/.env.next" "$app_dir/"
+# The gcloud transport's push_file is `cat > <path>`, which creates a NEW file
+# under the remote umask (0644). rsync's -a preserves the 0600. Force it on
+# every transport before anything else can read the file.
+run_remote "chmod 600 $app_dir/.env.next"
+rm -rf "$env_ship_dir"; env_ship_dir=""
 
 # GeoLite2-ASN is gitignored (12 MB binary) but lives inside the otherwise
 # VM-owned data/, so it is shipped explicitly. Powers /admin/companies
@@ -720,9 +742,9 @@ if [ "$build_mode" = "local-artifact" ]; then
   # The expected artifact identity rides the command line (BUILD_ID is
   # base64url-safe): setup-vm hard-fails without it, so a hand-run setup-vm
   # can never silently skip the BUILD_ID/parity gates.
-  run_remote "cd $app_dir && LOCAL_BUILD_ID=$local_build_id LOCAL_NODE_MAJOR=$local_node_major bash deploy/setup-vm.sh"
+  run_remote "cd $app_dir && LOCAL_BUILD_ID=$local_build_id LOCAL_NODE_MAJOR=$local_node_major TENANT_GATE_OK=${DEPLOY_TENANT_GATE_OK:-} bash deploy/setup-vm.sh"
 else
-  run_remote "cd $app_dir && bash deploy/setup-vm.sh"
+  run_remote "cd $app_dir && TENANT_GATE_OK=${DEPLOY_TENANT_GATE_OK:-} bash deploy/setup-vm.sh"
 fi
 
 echo ""
