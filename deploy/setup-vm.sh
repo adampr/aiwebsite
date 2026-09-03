@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@b3c0051d17080988d83130c90daf38679572e11fb15727a0d0f2aa8ec71a8233
+# aicompany-template: setup-vm.sh.tpl@d545662de3933fb8e028f08256c9654d4b36e9c038884d4f2092e923e4a7ce2f
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -1358,7 +1358,12 @@ EOF
 # Run once per deploy (without the email) so fresh knowledge is live from this
 # deploy instead of after the first timer fire.
 echo ">>> Running initial knowledge crawl (no email)..."
-node "$module_dir/scripts/refresh-knowledge.mjs" --config "$app_dir/data/aiwebsite-config.json" --no-email || \
+# v1.117.1: --deploy-self — this crawl is the deploy's OWN, run after CUTOVER
+# COMPLETE with the live .env final; without the flag it waited on the deploy
+# marker touched a few lines above (30-40 min per deploy). The marker stays up
+# until the last step on purpose (§9.5 holds the watchdog off). Timer units
+# never pass the flag.
+node "$module_dir/scripts/refresh-knowledge.mjs" --config "$app_dir/data/aiwebsite-config.json" --no-email --deploy-self || \
   echo "WARN: initial knowledge crawl failed — the persona uses the existing/starter knowledge doc until tonight's timer run"
 
 # ── Cloudflare tunnel ────────────────────────────────────────────
