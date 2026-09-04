@@ -80,6 +80,49 @@
 // (news.ts) was scoped to the sources on the same triad in the same
 // commit and gains a keywords-are-lowercase-search-strings casing rule.
 
+// 2026-09-05 (round 6, 7-seat panel on the five voiceAdherence=2 articles).
+// Two changes, and they differ IN KIND from rounds 1-5: every prior round
+// ADDED or reworded a prohibition, and not one supplied a licensed form or
+// corrected a number that contradicted the host's own config.
+//
+// (1) Item 8's "at most 70 characters" was 22 characters looser than the
+// BLOCKING quality.contract.titleLength [33, 48] band (owner ruling
+// 2026-08-02). The writer drafted headlines against a ceiling that does not
+// exist, then lost voiceAdherence on the stake it had no room for: HEADLINE
+// was cited on 3 of the 5 failing articles, whose titles measure
+// 47/44/45/48/42 — every one within 3 characters of the real limit. This is
+// a defect, not a preference.
+//
+// (2) Item 14 banned first person and reader-directed advice, and nothing
+// else. But the SCORING NOTE's 2 anchor fails "op-ed framing in the news
+// body", which is strictly broader — and that is the standard the reviewer
+// actually applied. Measured across the five: not one of the flagged
+// sentences is first person, and only one is advice; the rest are impersonal
+// synthesis ("The two developments therefore provide different
+// information..."). So the writer complied with the clause it was given and
+// was failed by an anchor it was never shown. That is the same shape as the
+// strategist told to ground against a fact sheet it could not see, and the
+// refresh writer forbidden the one edit its checker demanded — both fixed by
+// showing the writer the standard. Item 14 now states the rule the anchor
+// enforces AND names where the synthesis goes, because the synthesis is not
+// optional: a news article cannot cohere without connective sentences, and a
+// prohibition with no licensed alternative is the rule-fights-itself pattern
+// this file has already recorded twice.
+//
+// DELIBERATELY NOT DONE this round, each killed by a refuting seat:
+// deleting the SCORING NOTE's 4 and 5 anchors (the 4 anchor's wording appears
+// verbatim in the reviewer's own award notes and is the discriminator the
+// panel's whole analysis rests on; the 5 anchor's 0-of-55 is a measurement,
+// not dead text — and changing either breaks comparability with every score
+// ever recorded); removing "unverifiable" clauses from the reviewer's copy
+// (premise falsified — four stored notes show the reviewer already declines
+// to score them, exactly as the SCORING NOTE instructs); deleting item 11's
+// no-repeat clause (33 of 55 stored notes cite repetition; it is the defect
+// readers actually hit); and a BRIDGES clause licensing attributed
+// connective tissue (it relocates an inference into a semicolon and
+// attributes to outlets a comparison they never made — the "in our view"
+// laundering with the prefix moved into the subject).
+
 export const NEWS_ARTICLE_CHECKLIST = `
 PRE-PUBLISH CHECKLIST (each item is a pass/fail drafting rule; I draft and
 revise until every item holds):
@@ -119,7 +162,13 @@ revise until every item holds):
    single-source hedge above is the one exception to this clause.
 8. HEADLINE: composed fresh, never copied from a search-result title; shares
    no run of 4 or more consecutive words with the working title in my brief
-   or with any source title in the fact sheet; at most 70 characters;
+   or with any source title in the fact sheet; at most 48 characters
+   (2026-09-05: was 70, which was 22 characters looser than the BLOCKING
+   quality.contract.titleLength [33, 48] band in site.config.ts, so the
+   writer drafted against a ceiling that does not exist and the reviewer
+   then failed it on the missing stake — HEADLINE was cited on 3 of the 5
+   voiceAdherence=2 articles, whose titles measure 47/44/45/48/42, every
+   one within 3 characters of the real limit);
    contains a named actor, an active verb, and the stake for a small or
    mid-sized business reader; a stake that asserts an effect on such
    businesses (changes, cuts, raises, requires) must be an effect a source
@@ -180,7 +229,26 @@ revise until every item holds):
     source-plus-verb pattern.
 14. OPINION FENCE: first person appears only inside the single closing
     section titled "Tron's take", which is at most a quarter of the article;
-    the body before it contains no advice aimed at the reader.
+    the body before it contains no advice aimed at the reader; and — the
+    part that was missing, added 2026-09-05 — the body before it contains
+    no IMPERSONAL synthesis either. A sentence that tells the reader what
+    two reported facts MEAN together, what a development "therefore"
+    shows, what something "serves as", or how sources "differ", is the
+    publication's judgment whether or not it says "I", and it belongs in
+    Tron's take. The reviewer has always scored it that way (its 2 anchor
+    below fails "op-ed framing in the news body"); this clause did not say
+    so, so the writer complied with the clause and was failed by the
+    anchor. WHERE IT GOES INSTEAD, because the synthesis is not optional
+    and a news article cannot cohere without connective sentences: either
+    (a) move the observation into Tron's take, which is what that section
+    is for, or (b) keep it in the body as ATTRIBUTED REPORTING — name the
+    sources and report what each one said, introducing no predicate they
+    did not state. "GlobeNewswire reported the acquisition terms; Yahoo
+    Finance reported the $100,000 investment" is reporting. "The two
+    developments therefore provide different information" is synthesis.
+    Never bridge by asserting a relationship no source states, and never
+    rescue a synthesis sentence by prefixing "in our view" — an
+    attribution prefix does not turn a judgment into a report.
 15. CONFLICT DISCLOSURE: if Tron's take recommends work in a category
     XL.net sells (managed IT, security assessments, incident response), the
     take contains one plain sentence saying XL.net sells it, and the
