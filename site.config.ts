@@ -1018,7 +1018,10 @@ export const siteConfig = defineSiteConfig({
     // "/roadmap/" with the trailing slash: portal CHILDREN are disallowed
     // (they are noindex anyway; this saves the crawl), while the /roadmap
     // teaser itself stays crawlable (§5.18).
-    extraRobotsDisallow: ["/rfp", "/roadmap/"],
+    // "/internal" covers the whole staff-only tools tree (§5.22, /internal/xlant
+    // today) on the same reasoning as /rfp; those pages also carry
+    // `robots: {index:false, follow:false}` and are absent from the sitemap.
+    extraRobotsDisallow: ["/rfp", "/roadmap/", "/internal"],
     // v1.77.0 subtraction from the module's ALWAYS_DISALLOW (the GSC-incident
     // release): /login is 200 + `noindex, nofollow` and linked from
     // /governance, so the module's own Disallow was precisely what stopped a

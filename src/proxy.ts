@@ -43,6 +43,17 @@ export default createTrackingMiddleware(siteConfig, {
     // §5.10: workshop notification list join/leave (POST/DELETE
     // /api/workshop/notify) — state-changing, session-scoped writes.
     "/api/workshop",
+    // §5.22: POST /api/internal/xlant/device-token rotates the caller's XLAnt
+    // device token, which signs out whatever PC held the previous one. A
+    // cross-site POST could not READ the minted token (CORS), but it could
+    // knock a colleague's PC offline, so it joins the list on the same
+    // defense-in-depth reasoning as /api/roadmap. The module checks
+    // POST/PUT/PATCH/DELETE only, so the installer download GET is untouched.
+    // NOT the whole of /api/internal: /api/internal/track and
+    // /api/internal/issues are secret-authenticated machine POSTs from the
+    // proxy itself, the VM watchdog and the dev box, none of which carry a
+    // browser Origin.
+    "/api/internal/xlant",
   ],
 });
 

@@ -3,7 +3,9 @@
 // The staff nav's "Internal Tools" disclosure (nav restructure 2026-08-19).
 //
 // Not a destination: a button opening a small submenu with an "XL.net" group
-// label and the staff-only tools (today exactly one, RFP Response -> /rfp).
+// label and the staff-only tools (today two: RFP Response -> /rfp and
+// XLAnt -> /internal/xlant). The list is nav-links.ts's, rendered by mapping
+// over item.items, so a third costs nothing here.
 // Rendered only inside the staff variant of the desktop anchor row
 // (nav-anchors.tsx); the phone panel presents the same group as labeled rows
 // (mobile-nav.tsx), so this component never renders below md.
@@ -16,8 +18,10 @@
 // The menu stays in the DOM ([hidden] when closed) so aria-controls always
 // points at a real element and server/client markup stay byte-identical.
 //
-// Client rendering is a UI convenience, NOT the control: /rfp is gated
-// server-side regardless of what this menu shows (staff-probe.ts doctrine).
+// Client rendering is a UI convenience, NOT the control: every destination in
+// here is gated server-side regardless of what this menu shows (/rfp by its
+// layout + pages, /internal/xlant by src/app/internal/layout.tsx and its own
+// page) - the staff-probe.ts doctrine.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";

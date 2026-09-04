@@ -15,7 +15,28 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-09-04 §5.21 NEAR-MATCH COMPLETION + BLOCKED-CONTACT GUARD (`src/lib/chase/detect.ts`, new
+Last verified against code: 2026-09-04 NEW §5.22 XLAnt (INTERNAL TOOL): the XLAnt Windows tray
+helper gets its human-facing home on this host — staff-gated page `/internal/xlant` (installer
+download, three setup steps, one-shot device-token mint with a Copy button), a `/internal` layout
+that gates the whole tree the way `src/app/rfp/layout.tsx` does, two route handlers under
+`/api/internal/xlant/*`, and `src/lib/xlant.ts`. The gate is /rfp's, assembled from its OWN exports
+(`isRfpDomain` + `isVerifiedStaffProvider`, checked in `readRfpUser()`'s order) so this feature
+contains no domain comparison of its own and an edit to `RFP_DOMAINS` moves both gates together; the
+routes answer /rfp's three typed denials, 401 for `unauthenticated` and 403 otherwise, and the
+download GET — a plain `<a>`, so the caller is a browser — 302s an expired session to
+`/login?redirect=/internal/xlant` instead of handing it a JSON file named "download". CORRECTION TO
+THE FIRST DRAFT OF THIS ENTRY: the relay and the artifacts are NOT roleplay's alone. The relay VM
+opens TCP 8403 to both hosts with one NSG /32 rule each — `AllowXLAntRelayFromRoleplay` (pri 221,
+157.55.165.83/32) and `AllowXLAntRelayFromAiWebsite` (52.237.160.75/32, this host), header still
+required either way — and the xlant publish step copies every installer to BOTH VMs (`.part` then
+rename), so `/opt/xlant-artifacts` here really holds XLAnt-Setup-0.2.0.exe + blockmap + latest.yml
+and `latestInstaller()` reads it locally. Only the DEVICE lane (relay passthrough + electron-updater
+feed) stays on roleplay.xl.net. NEW ENV (three, all required together or every XLAnt surface answers
+503): `XLANT_RELAY_URL`, `XLANT_PROXY_SHARED_SECRET`, `XLANT_ARTIFACTS_DIR`.
+`seo.extraRobotsDisallow` gains `/internal`; `src/proxy.ts` `protectedPrefixes` gains
+`/api/internal/xlant`; the nav's Internal Tools submenu gains a second destination. NO schema, NO
+migration; previously
+2026-09-04 §5.21 NEAR-MATCH COMPLETION + BLOCKED-CONTACT GUARD (`src/lib/chase/detect.ts`, new
 `src/lib/chase/contact-policy.ts`, `notify.ts`, `report.ts`, `scripts/chase-seed.ts`; pins in
 `scripts/chase-tests.ts`): the `work_submission` detector gains a SECOND pass, run only when the
 exact identity match finds nothing, that compares stoplisted identity tokens by set containment over
@@ -1886,7 +1907,7 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/auth/sms-prompt` | `createSmsPromptEventHandler` · `channels/texting` | §5.10 |
 | `POST /api/internal/track` | `createTrackHandler` · `tracking/track-api` | §5.6 |
 | `GET/POST /api/internal/issues` | `createIssuesHandler` · `issues/api` (module §5.15, v1.30) — issue-ledger ingest/read; fail-closed on `ISSUE_TRACKER_SECRET`. Written by this VM's watchdog drain over loopback, and by the dev-box synth sweep + `issues.mjs` over public HTTPS | §6 |
-| `src/proxy.ts` (Next 16 proxy convention, Node runtime) | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout`, `/api/governance`, `/api/work`, `/api/rfp` (§5.17), `/api/roadmap` (§5.18), and `/api/workshop` (§5.10)** | §5.6 |
+| `src/proxy.ts` (Next 16 proxy convention, Node runtime) | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout`, `/api/governance`, `/api/work`, `/api/rfp` (§5.17), `/api/roadmap` (§5.18), `/api/workshop` (§5.10), and `/api/internal/xlant` (§5.22)** | §5.6 |
 | `GET/POST /api/admin/messages` | `createAdminMessagesHandler` · `admin/api` | §5.6 |
 | `POST /api/admin/mailbox/send` | `createAdminMailboxSendHandler` · `admin/api` | §5.6 |
 | `GET/POST /api/admin/knowledge/refresh` | `createAdminKnowledgeRefreshHandler` · `admin/api` (wrapper adds `runtime = "nodejs"`) | §5.6 |
@@ -10787,6 +10808,173 @@ rather than hardcoded, so a file added to the lane later cannot fall outside
 the scans that keep a real colleague's address out of a public repository.
 
 
+### 5.22 XLAnt (internal tool) — `/internal/xlant` + `/api/internal/xlant/*`, host-owned, staff-gated
+
+**What XLAnt is.** A separate product in a separate repo (`adampr/xlant`,
+whose `ARCHITECTURE.md` v0.2 is the authority for the relay, the desktop and
+the technician agent): a Windows 11 system-tray app that notices when
+something goes wrong on the PC, asks *"Can I help attempt to resolve the
+error?"*, and — only after the user clicks **Yes** — has an XL.net technician
+agent (a Cursor cloud agent, launched by the XLAnt relay through XL Lakehouse)
+work the problem. The technician reaches the PC only through XLAnt's tool
+bridge, under a shell guard that blocks destructive commands and asks before
+restarts or anything needing administrator rights. The PC holds no provider
+credential — only its device token.
+
+**What THIS host owns, and what it does not.** ai.xl.net is XLAnt's
+HUMAN-facing home only: the page, the installer download, and the device-token
+mint. It is **not** the DEVICE lane. XLAnt desktops keep talking to
+**roleplay.xl.net** for the authenticated relay passthrough
+(`/api/xlant/relay/*`) and the electron-updater feed (`/api/xlant/update/*`),
+because that is the origin the shipped, signed installers are pinned to.
+Moving those here would require re-signing and re-publishing the desktop, so
+this section deliberately ports only the two session-gated surfaces.
+
+**Two origins, both real — the relay and the artifacts are SHARED, not
+roleplay's.** Neither of the two things this section reads lives on the other
+host:
+
+- **The relay** (`xlant-relay`, `135.232.204.158:8403`) accepts both VMs. Two
+  NSG /32 rules open TCP 8403 to it — `AllowXLAntRelayFromRoleplay` (priority
+  221, `157.55.165.83/32`, xl-roleplay-web) and
+  `AllowXLAntRelayFromAiWebsite` (`52.237.160.75/32`, this host) — and every
+  request still carries `X-XLAnt-Proxy-Secret` regardless of source, so the
+  NSG narrows the blast radius and the header is the credential. Verified
+  answering 200 from this VM, 2026-09-04.
+- **The artifacts** are published to BOTH hosts by the xlant repo's own
+  publish step (its `docs/SETUP.md` §4), which writes each file as
+  `<name>.part` and renames it — exe + blockmap first, `latest.yml` last, so a
+  client reading the yml always finds the exe already there. So
+  `/opt/xlant-artifacts` on THIS VM is a real local directory holding
+  `XLAnt-Setup-0.2.0.exe` + `.blockmap` + `latest.yml` (as of 2026-09-04), and
+  `latestInstaller()` reads it locally; nothing here proxies to roleplay. Only
+  roleplay's update feed reads the `.blockmap` and `latest.yml`.
+
+**The shell.** `src/app/internal/layout.tsx` gates the whole `/internal`
+tree with the same `requireRfpPage()` call and owns the DENIAL SCREEN (which
+deliberately does not name which tool was asked for), plus
+`robots: {index:false, follow:false}` inherited by every page beneath it. It
+is defence in depth, not the boundary: a layout does not run for route
+handlers or server actions and renders once per segment tree, so the page
+below re-checks and returns `null` on a refusal rather than drawing a second
+explainer — exactly the `src/app/rfp/{layout,page}.tsx` split.
+
+**The page.** `/internal/xlant` (`src/app/internal/xlant/page.tsx`), server-
+rendered, `dynamic = "force-dynamic"` + `revalidate = 0` (the house posture
+for public pages is ISR; a gated page inheriting it would be rendered once and
+handed to every subsequent viewer, gate included), metadata title absolute
+"XLAnt — XL.net AI" and `robots: {index:false, follow:false}`. Sections: what
+XLAnt does; the download button, labelled
+`Download XLAnt {version} for Windows 11 (NN MB)` or, with no artifact
+published, "No installer has been published yet"; three setup steps (install →
+open the panel from the tray → paste the Windows token and Save & validate,
+step 03 closing with how updates actually arrive: a tray banner, one click to
+download, installed when XLAnt next quits — never "they install themselves");
+the device-token panel, whose copy says a new token replaces whatever XLAnt
+token the person already had **wherever it was minted**, the retired
+roleplay.xl.net downloads page included; a privacy note (the log lives on the user's own PC and
+self-cleans after 90 days — adjustable or off; nothing runs until the user
+clicks Yes). The token button
+(`src/app/internal/xlant/token-button.tsx`) is the page's only client island:
+the token is shown ONCE, in that component's state and nowhere else on this
+host. It inlines the `windows` kind rather than importing `@/lib/xlant`, which
+reads `node:fs` and the shared secret and must never be bundled into a client.
+It renders a **Copy token** button (`navigator.clipboard`, and on an insecure
+origin or a withheld permission it says so and points at the still-selectable
+block rather than failing silently) and wraps the token in `aria-live="polite"`
+so the mint is announced without interrupting. It maps the routes' typed error
+codes to sentences that name the fix; an unmapped code is shown as itself
+rather than replaced by a guess.
+
+**The gate — reused, not re-implemented.** Both the page and both route
+handlers admit exactly the population `/rfp` admits: a verified staff provider
+AND exact-label `xl.net` (§5.17 for the full two-anchor argument — Google on
+the Workspace anchor, Microsoft only with the per-login `mv: true` claim). The
+layout and the page call `requireRfpPage("/internal/xlant")` directly, so a
+signed-out visitor is redirected to `/login?redirect=/internal/xlant` (this
+host's login reads `redirect`, not `next`) and a signed-in non-staff visitor
+gets the same typed-denial explainer /rfp renders rather than a bounce to a
+form they have already satisfied. The route handlers call
+`requireXlantStaff()` (`src/lib/xlant.ts`), which is assembled from /rfp's OWN
+exported helpers — `isRfpDomain(session.email)` for the domain half (never a
+local `=== "xl.net"`, so an edit to `RFP_DOMAINS` moves both gates together)
+and `isVerifiedStaffProvider` for the provider half — checked in
+`readRfpUser()`'s order (domain, then provider) so a session gets the same
+reason from either gate. It returns the whole session, because the mint needs
+`email` and `displayName`, or one of the same three typed denials
+(`unauthenticated` / `wrong_domain` / `wrong_provider`), because "no session"
+and "wrong session" are different answers. **There is literally no domain
+comparison in this feature**: an `@xl.net` suffix test would admit
+`evilxl.net`, and a domain-only test would admit any free Entra tenant
+(`MICROSOFT_TENANT_ID` is `common`) — and what this feature hands out is a
+token that reaches a technician agent on a real PC.
+
+**`src/lib/xlant.ts`** (server only). `xlantConfig()` reads the three env vars
+and returns `null` unless ALL are present and the secret is ≥16 chars — the
+arming gate, so a half-configured host answers 503 on every XLAnt surface
+rather than posting a staff email address to a guessed relay URL.
+`relayInternal(cfg, path, body)` POSTs JSON with the `X-XLAnt-Proxy-Secret`
+header and a 15 s `AbortSignal.timeout` (a hung relay must not hold a staff
+request open until the edge closes it at 100 s). `latestInstaller(cfg)` returns
+`{fileName, size, version}` for the newest match of
+`/^XLAnt-Setup-(\d+\.\d+\.\d+(?:-[\w.]+)?)\.exe$/` by **mtime**, not by parsed
+version, so a republished build of the same version wins and this host invents
+no version ordering. The version group is REQUIRED to look like a version: the
+looser `[\w.-]+` accepts `XLAnt-Setup-x.exe.exe` and would then show "x.exe"
+to a member of staff as the version they are downloading. `.part` names are
+skipped explicitly as well as by the pattern, because the publish step writes
+`<name>.part` and renames. Every failure degrades to `null` (rendered as "no
+installer has been published yet") rather than throwing out of a page render —
+including the race that matters: each candidate is `stat`ed with a
+`.catch(() => null)` and filtered, so a build pruned or renamed between
+`readdir()` and `stat()` cannot 500 the page, and size and mtime are read from
+the SAME stat so a second stat cannot observe a different file at that path.
+`safeArtifactName()` refuses traversal and odd names.
+`XLANT_DEVICE_KINDS = ["windows"]` mirrors the relay's contract (the two repos
+share no code); the enum exists so a second kind never changes the wire shape.
+
+**Routes.** Both `runtime = "nodejs"`, `dynamic = "force-dynamic"`,
+`revalidate = 0`, every response `cache-control: no-store, private`.
+
+| Route | Behaviour |
+|---|---|
+| `GET /api/internal/xlant/download` | Staff-gated stream of the newest installer from the LOCAL `XLANT_ARTIFACTS_DIR` (outside the web root), `Content-Disposition: attachment`, `Content-Length` from the stat, `Cache-Control: private, no-store`. 503 unconfigured · 404 nothing published · 403 for a signed-in non-staff session · and, because the caller is a BROWSER following a plain `<a>` and not a `fetch()`, **302 to `/login?redirect=/internal/xlant`** when there is no session at all, so a page left open past its session expiry sends the staffer to sign in instead of downloading a JSON error object named "download". The redirect URL is resolved against `req.url`, never a configured base, so it cannot leave the host the caller is on. Never linked publicly: a public URL would put an XL.net-signed installer in front of anyone who found the path |
+| `POST /api/internal/xlant/device-token` | Staff-gated mint. Optional body `{kind?: "windows"}` (absent/empty ⇒ windows); the IDENTITY comes from the session, never the body — `relayInternal('/v1/device/issue', {email: session.email.toLowerCase(), displayName: session.displayName ?? <email local part>, kind})` — and answers `{token, kind}`. 503 unconfigured · **401 `unauthenticated`** / **403 `wrong_domain`\|`wrong_provider`** (the `requireRfpUser()` split, so the button can say "sign in again" where that is the actual fix) · 400 malformed body or bad kind · **502** when the relay refuses, does not answer (timeout/DNS/refused), or answers 200 with something that is not JSON carrying a token — the response is parsed with `.json().catch(() => null)`, because a 200 is not a promise of JSON and an intermediary's HTML error page must not become a 500 here. The relay keeps ONE active token per (user, kind) and revokes the previous one, so a mint is also "sign out my old PC", including a PC holding a token minted on the retired roleplay page |
+
+**CSRF.** `src/proxy.ts` `protectedPrefixes` gains `"/api/internal/xlant"`.
+The token mint is state-changing (it signs out whatever PC held the previous
+token); a cross-site POST could not READ the minted token, but it could knock a
+colleague's PC offline, so it joins the hand-maintained list on the same
+defense-in-depth reasoning as `/api/roadmap`. The module checks
+POST/PUT/PATCH/DELETE only, so the download GET is untouched. The prefix is
+deliberately NOT the whole of `/api/internal`: `/api/internal/track` and
+`/api/internal/issues` are secret-authenticated machine POSTs (this host's
+proxy, the VM watchdog, the dev-box sweep) that carry no browser Origin.
+
+**Nav.** `src/components/nav-links.ts` `STAFF_NAV` — the "Internal Tools"
+submenu (group "XL.net") now holds TWO destinations: RFP Response → `/rfp` and
+XLAnt → `/internal/xlant`. As always the client-side staff predicate there is
+an `@xl.net` suffix probe and a UI convenience only; the server gate is the
+control, and an unverified-provider staff session that follows the link lands
+on the explainer.
+
+**Crawlers.** `seo.extraRobotsDisallow` gains `"/internal"` alongside `"/rfp"`
+and `"/roadmap/"`, so the path is disallowed in all 12 robots.txt groups
+(`aiBotsAllowed` emits one per AI crawler); the page also carries its own
+`robots: {index:false, follow:false}`, and `/internal/*` is absent from
+`src/app/sitemap.ts` (a hand-maintained list). `robotsRequiredDisallow` in
+`deploy/synth-inventory.json` and `deploy/seo-scorecard.json` is unchanged —
+those assert `/admin`, `/api`, `/auth` are present, not that nothing else is.
+
+**Env (§10).** `XLANT_RELAY_URL` (`http://135.232.204.158:8403` — the
+`xlant-relay` on the internal VM, reachable from this host AND from
+roleplay's, one NSG /32 rule each), `XLANT_PROXY_SHARED_SECRET` (≥16 chars;
+the same value must sit in the relay's `/etc/xlant.env` and in roleplay's
+`.env` — all three agree or the relay 401s), `XLANT_ARTIFACTS_DIR`
+(`/opt/xlant-artifacts`, a real local directory on this VM). All three
+or none. **No schema, no migration, no DB table**: this host stores nothing
+about XLAnt — the tokens live in the relay's sqlite.
+
 
 ## 6. Database
 
@@ -12362,6 +12550,9 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | Roadmap | `ROADMAP_PANEL_RUNS_DAILY_CAP` | client panel runs/day, default 60 |
 | Roadmap | `APOLLO_API_KEY` | Apollo.io people-search key for the step-2 directory import (host REST call; module outreach stays disabled). Missing = import answers "not set up", never a boot failure |
 | Roadmap | `APOLLO_DAILY_CALL_CAP` | Apollo page fetches/day across all companies, default 100 |
+| XLAnt | `XLANT_RELAY_URL` | §5.22 `xlant-relay` base URL on the internal VM (`http://135.232.204.158:8403`). Reachable from BOTH XLAnt hosts, one NSG /32 rule each — `AllowXLAntRelayFromRoleplay` (pri 221, 157.55.165.83/32) and `AllowXLAntRelayFromAiWebsite` (52.237.160.75/32, this host). Trailing slashes stripped |
+| XLAnt | `XLANT_PROXY_SHARED_SECRET` | §5.22 value of the `X-XLAnt-Proxy-Secret` header, required on every relay request whatever the source IP; **≥16 chars** or the config reads as absent. One value shared three ways: the relay's `/etc/xlant.env`, roleplay's `.env`, and this host's |
+| XLAnt | `XLANT_ARTIFACTS_DIR` | §5.22 LOCAL directory of published `XLAnt-Setup-<version>.exe` installers (`/opt/xlant-artifacts`), OUTSIDE the web root. The xlant publish step copies to both VMs (`.part` then rename), so this host reads its own copy and never proxies to roleplay. **All three or none**: any missing ⇒ every XLAnt surface answers 503 (the arming gate) |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
 | | `TRON_KNOWLEDGE_FILE` | **legacy, no longer read** — the knowledge path is `persona.knowledgeFile` in site.config.ts |
 | Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |
