@@ -15,7 +15,92 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-09-04 /work MORNING BRIEF EXHIBIT RETIRED (the §4 `/work` row +
+Last verified against code: 2026-09-04 §5.22 XLANT DEVICE LANE MOVES HERE (PHASE 1 OF A TWO-PHASE
+CUTOVER) — new `src/app/api/xlant/relay/[[...path]]/route.ts` and
+`src/app/api/xlant/update/[[...path]]/route.ts`, new exports in `src/lib/xlant.ts`, new host nginx
+drop-in `deploy/nginx.d/xlant-device.conf`, pins in `scripts/xlant-tests.ts` (`npm run test:xlant`):
+ai.xl.net now serves BOTH XLAnt lanes — the staff-gated human surfaces it already owned, and the
+allowlisted streaming passthrough `/api/xlant/relay/*` plus the electron-updater feed
+`/api/xlant/update/*` that lived on roleplay.xl.net. The passthrough adds `X-XLAnt-Proxy-Secret` +
+`X-XLAnt-Via: proxy` (which the relay hard-rejects on its internal routes) and SETS both rather than
+passing a caller's through, forwards the caller's own Authorization when there is one, forwards
+Content-Type/Accept/Mcp-Session-Id both ways and the QUERY STRING verbatim (`tools/next?wait=25`,
+`events?since=<cursor>`), forwards no browser Cookie, and reaches only SIX shapes —
+`XLANT_RELAY_ALLOWED`/`isXlantRelayPath()` in `src/lib/xlant.ts`, a MIRROR of the route list in the
+xlant repo's `packages/shared/src/contract.ts`, CHANGE BOTH TOGETHER: `v1/device/hello`,
+`v1/incident/start`, `v1/incident/{id}/(events|decision|chat|close)`, `v1/incident/{id}/tools/next`,
+`v1/incident/{id}/tools/{callId}/result`, `v1/mcp/{bridgeToken}`. Everything else 404s with the
+relay untouched, the INTERNAL `/v1/device/issue`, `/v1/device/verify`, `/v1/status` and
+`/v1/providers/refresh` included. TWO caller kinds: the Windows desktop with `Authorization: Bearer
+<device token>`, and Cursor's cloud VM as an MCP client on `v1/mcp/{token}` carrying NO
+Authorization (the per-run bridge token in the PATH is the whole credential and the RELAY
+authenticates it — unknown 404, ended run 410); upstream 401/404/410 pass through unaltered. BODY
+CAPS, PRE-AUTH because the relay authenticates downstream: 411 when a non-GET declares no
+Content-Length, 413 over 1 MB declared or measured, and the MCP path alone additionally buffers a
+length-less streamed body under the SAME cap, abandoning the read the moment it passes. The upstream
+fetch is WRAPPED — unguarded, a refused connection or the AbortSignal threw out of the handler and
+`next start` answered a bare HTML 500; now 502 `relay unreachable` and 504 `relay timeout`, JSON,
+`private, no-store` like every other refusal. NGINX drop-in, the sanctioned host mechanism
+(`deploy/nginx.conf` is stamped and must never be edited): `location ^~ /api/xlant/ {
+client_max_body_size 2m; <the location / proxy directives, verbatim> }`, because
+`governance-upload.conf` sets `client_max_body_size 110m` at SERVER level for /work uploads and an
+unauthenticated POST could otherwise make nginx buffer 110 MB before the route's 1 MB cap ran
+(roleplay's server-level cap was 25 m, so the lane never carried this surface there). Identical
+timeouts, tighter body cap. `setup-vm.sh` installs `deploy/nginx.d/*` and runs `nginx -t` BEFORE
+cutover, restoring and aborting if it is wrong. The update feed verifies the device Bearer against
+the relay's internal `POST /v1/device/verify` through a per-process memo caching POSITIVES ONLY for
+5 min with oldest-half eviction past 500 entries (a cached negative would lock a real token out for
+the TTL after one relay blip mid-download; flushing the map would re-verify every device at once),
+refuses a token under 20 chars with no relay call, and serves ONLY release artifacts — new
+`isXlantUpdateArtifact()` narrows the traversal-safe name to `latest.yml`, `XLAnt-Setup-x.y.z.exe`
+and `<exe>.blockmap` derived from the SAME installer regex, so `latest.yml.part` (the publish step's
+half-written temp file, previously served as a truncated manifest) and any other operator leftover
+404 — 400 on a name failing `safeArtifactName()`, 401 without a valid token, 404 not-a-release or
+missing, 503 unconfigured, both name checks AFTER the token check so the feed is never a directory
+oracle. `/api/xlant` is deliberately NOT in `src/proxy.ts` `protectedPrefixes`, with the reason
+written into the list: neither caller is a browser and neither sends an Origin, so the module's CSRF
+check would refuse every incident POST, tool result and MCP frame; `/api/internal/xlant` stays IN,
+and the test now EXECUTES the middleware in-process (eight Origin-less device requests pass with no
+Set-Cookie; the control POST to the token mint without an Origin is 403, with one passes) rather
+than grepping the prefix list, which a prefix added inline would have escaped. `maxDuration = 300`
+is declared for PORTABILITY and is INERT here — nothing under `next/dist/server` reads it on a
+self-hosted `next start`, only the build manifest carries it; the ceilings that bind are
+Cloudflare's 100 s edge close and nginx's 120 s `proxy_read_timeout`, and the route's 290 s
+AbortSignal is a backstop below the relay's 240 s tool cap. What can cross the 100 s edge:
+`tools/next` (25 s) never; an MCP `tools/call` blocking on the PC past ~100 s is 524'd (the relay's
+240 s and the route's 290 s are decorative for that case); `/decision{yes}` holds for the brain
+brief (up to 120 s) plus the Cursor create and CAN exceed it — the relay still completes the
+dispatch server-side and the desktop's next events poll sees it. Parity with roleplay, not a
+regression: both vhosts proxy `/` with identical directives (they differ only in listen port,
+server_name and their drop-in sets), and ai.xl.net and
+roleplay.xl.net are hostnames in the SAME Cloudflare zone (xl.net), so zone-level WAF/Bot settings
+are shared and nothing in this repo records a hostname-specific rule; the post-deploy probes (a
+device hello answering 200 with a real token, and the MCP path exercised by a live technician run)
+are the EVIDENCE that the edge does not challenge non-browser POSTs — until they pass it is an
+expectation. The fleet `log_format aic_combined` records `"$request"`, so per-run MCP bridge tokens
+land in `/var/log/nginx/aiwebsite.access.log` in plaintext exactly as they did on roleplay; they are
+random per run and 410 once the run ends. THE MOVE IS PAID FOR BUT THE RETIREMENT IS NOT DONE:
+desktop 0.2.1 is re-signed and re-published with the feed pinned to
+`https://ai.xl.net/api/xlant/update` and a startup rewrite of a persisted roleplay origin, BUT a
+0.2.0 build resolves its feed from its own bundled default and one 0.2.0 desktop is in service
+(measured hello + latest.yml against roleplay at 14:01Z/14:16Z today). So PHASE 1 (this commit)
+publishes 0.2.1 to BOTH hosts' /opt/xlant-artifacts and roleplay KEEPS its copies of both routes,
+its XLANT_* env and NSG rule 221 (157.55.165.83/32) as the transitional bridge, while
+`AllowXLAntRelayFromAiWebsite` (pri 222, 52.237.160.75/32) carries this host; PHASE 2 is PENDING
+with a named trigger — that desktop's first hello arriving via ai.xl.net in this VM's
+`/var/log/nginx/aiwebsite.access.log` — after which roleplay's `xlant-retire` branch (7c01af4)
+deploys, rule 221 is deleted, roleplay's env lines and artifacts go, and publishing returns here
+alone. The xlant repo's `docs/SETUP.md` "Cutover (2026-09-04)" section is the runbook. Artifacts
+here as of 2026-09-04: XLAnt-Setup-0.2.0.exe + .blockmap + latest.yml, with 0.2.1 published the same
+day; KEEP the previous release's exe + blockmap, because electron-updater fetches the OLD blockmap
+from the NEW feed base for a differential update and silently falls back to a full download without
+it. NO schema, NO migration, NO NEW ENV (the same three vars now arm FOUR route handlers instead of
+two; the staff PAGE does not 503 on a half-configured host, it renders without the installer offer),
+NO robots change (@aicompany/core's `ALWAYS_DISALLOW` already carries `/api`), NO tracking change
+(`isPagePath()` already excludes `/api`), NO edit to the stamped `deploy/nginx.conf`. This host
+BUILDS ON THE VM (`DEPLOY_BUILD_MODE` remote, `.next` rsync-excluded), so a green local
+`build:check` proves the code compiles, not that the production artefact was verified.
+Previous: 2026-09-04 /work MORNING BRIEF EXHIBIT RETIRED (the §4 `/work` row +
 §5.16 one-tool-one-card; `src/app/work/page.tsx`, `src/app/work/community.tsx`, regenerated
 `src/lib/work/static-titles.json`, pins in `scripts/work-placements-tests.ts`): the hand-authored
 `#morning-brief` exhibit leaves page.tsx, completing one-tool-one-card for it (the tool's team card
@@ -1918,7 +2003,7 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/auth/sms-prompt` | `createSmsPromptEventHandler` · `channels/texting` | §5.10 |
 | `POST /api/internal/track` | `createTrackHandler` · `tracking/track-api` | §5.6 |
 | `GET/POST /api/internal/issues` | `createIssuesHandler` · `issues/api` (module §5.15, v1.30) — issue-ledger ingest/read; fail-closed on `ISSUE_TRACKER_SECRET`. Written by this VM's watchdog drain over loopback, and by the dev-box synth sweep + `issues.mjs` over public HTTPS | §6 |
-| `src/proxy.ts` (Next 16 proxy convention, Node runtime) | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout`, `/api/governance`, `/api/work`, `/api/rfp` (§5.17), `/api/roadmap` (§5.18), `/api/workshop` (§5.10), and `/api/internal/xlant` (§5.22)** | §5.6 |
+| `src/proxy.ts` (Next 16 proxy convention, Node runtime) | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout`, `/api/governance`, `/api/work`, `/api/rfp` (§5.17), `/api/roadmap` (§5.18), `/api/workshop` (§5.10), and `/api/internal/xlant` (§5.22)**. `/api/xlant` (the §5.22 DEVICE lane) is deliberately EXCLUDED — its callers send no browser `Origin`, so a CSRF check would refuse every device POST | §5.6 |
 | `GET/POST /api/admin/messages` | `createAdminMessagesHandler` · `admin/api` | §5.6 |
 | `POST /api/admin/mailbox/send` | `createAdminMailboxSendHandler` · `admin/api` | §5.6 |
 | `GET/POST /api/admin/knowledge/refresh` | `createAdminKnowledgeRefreshHandler` · `admin/api` (wrapper adds `runtime = "nodejs"`) | §5.6 |
@@ -10819,7 +10904,7 @@ rather than hardcoded, so a file added to the lane later cannot fall outside
 the scans that keep a real colleague's address out of a public repository.
 
 
-### 5.22 XLAnt (internal tool) — `/internal/xlant` + `/api/internal/xlant/*`, host-owned, staff-gated
+### 5.22 XLAnt — `/internal/xlant` + `/api/internal/xlant/*` (staff-gated) + the DEVICE lane `/api/xlant/relay/*` + `/api/xlant/update/*`
 
 **What XLAnt is.** A separate product in a separate repo (`adampr/xlant`,
 whose `ARCHITECTURE.md` v0.2 is the authority for the relay, the desktop and
@@ -10832,34 +10917,157 @@ bridge, under a shell guard that blocks destructive commands and asks before
 restarts or anything needing administrator rights. The PC holds no provider
 credential — only its device token.
 
-**What THIS host owns, and what it does not.** ai.xl.net is XLAnt's
-HUMAN-facing home only: the page, the installer download, and the device-token
-mint. It is **not** the DEVICE lane. XLAnt desktops keep talking to
-**roleplay.xl.net** for the authenticated relay passthrough
-(`/api/xlant/relay/*`) and the electron-updater feed (`/api/xlant/update/*`),
-because that is the origin the shipped, signed installers are pinned to.
-Moving those here would require re-signing and re-publishing the desktop, so
-this section deliberately ports only the two session-gated surfaces.
+**ONE PUBLIC ORIGIN FROM 2026-09-04, AND IT IS THIS ONE.** ai.xl.net carries
+every XLAnt surface a person or a PC reaches, and every NEW device points here.
+Two lanes:
 
-**Two origins, both real — the relay and the artifacts are SHARED, not
-roleplay's.** Neither of the two things this section reads lives on the other
-host:
+- the **HUMAN** lane — the staff-gated page `/internal/xlant`, the installer
+  download and the device-token mint, all behind `requireXlantStaff()`;
+- the **DEVICE** lane — the allowlisted streaming passthrough
+  `/api/xlant/relay/*` and the electron-updater feed `/api/xlant/update/*`,
+  authenticated by the credential the caller carries rather than by a session.
 
-- **The relay** (`xlant-relay`, `135.232.204.158:8403`) accepts both VMs. Two
-  NSG /32 rules open TCP 8403 to it — `AllowXLAntRelayFromRoleplay` (priority
-  221, `157.55.165.83/32`, xl-roleplay-web) and
-  `AllowXLAntRelayFromAiWebsite` (`52.237.160.75/32`, this host) — and every
-  request still carries `X-XLAnt-Proxy-Secret` regardless of source, so the
-  NSG narrows the blast radius and the header is the credential. Verified
-  answering 200 from this VM, 2026-09-04.
-- **The artifacts** are published to BOTH hosts by the xlant repo's own
-  publish step (its `docs/SETUP.md` §4), which writes each file as
-  `<name>.part` and renames it — exe + blockmap first, `latest.yml` last, so a
-  client reading the yml always finds the exe already there. So
-  `/opt/xlant-artifacts` on THIS VM is a real local directory holding
-  `XLAnt-Setup-0.2.0.exe` + `.blockmap` + `latest.yml` (as of 2026-09-04), and
-  `latestInstaller()` reads it locally; nothing here proxies to roleplay. Only
-  roleplay's update feed reads the `.blockmap` and `latest.yml`.
+The device lane moved here from **roleplay.xl.net** on 2026-09-04. The note
+that used to sit in `src/lib/xlant.ts` — *do not move the device lane without
+re-signing and re-publishing the desktop, because the shipped installer pins
+its feed* — was not waived; it was PAID. XLAnt desktop **0.2.1** is re-signed
+and re-published with the updater feed pinned to
+`https://ai.xl.net/api/xlant/update`, its relay base pinned to the matching
+origin, and a startup step that rewrites a persisted roleplay origin.
+
+**THE CUTOVER IS TWO-PHASE, AND PHASE 2 IS PENDING.** A **0.2.0** build
+resolves its update feed from its OWN bundled default, which is roleplay — a
+new origin cannot be pushed to a desktop that has not updated yet. One 0.2.0
+desktop is in service (Adam's PC; measured `hello` + `latest.yml` against
+roleplay.xl.net at 14:01Z and 14:16Z on 2026-09-04), so roleplay cannot be
+switched off underneath it.
+
+- **Phase 1 — this commit, today.** ai.xl.net serves the device lane; the
+  relay's public base URL switches to ai.xl.net; installer 0.2.1 is published
+  to **both** hosts' `/opt/xlant-artifacts`. roleplay **keeps** its copies of
+  both routes, its `XLANT_*` env and NSG rule 221 (`157.55.165.83/32`) as the
+  transitional bridge the 0.2.0 desktop keeps using until it updates.
+- **Phase 2 — pending.** Trigger: that desktop's first `hello` arriving via
+  ai.xl.net, visible in this VM's `/var/log/nginx/aiwebsite.access.log`. Then
+  roleplay's branch `xlant-retire` (`7c01af4`) deploys, NSG rule 221 is
+  deleted, roleplay's `XLANT_*` env lines and its artifacts go, and publishing
+  returns to ai.xl.net only.
+
+The **runbook is the xlant repo's `docs/SETUP.md`, section "Cutover
+(2026-09-04)"** — follow it there rather than a copy here, which would drift.
+
+**The relay and the artifacts during phase 1.**
+
+- **The relay** (`xlant-relay`, `135.232.204.158:8403`) opens TCP 8403 with one
+  NSG /32 rule per host: `AllowXLAntRelayFromAiWebsite` (priority 222,
+  `52.237.160.75/32`, this host) and — until phase 2 deletes it —
+  `AllowXLAntRelayFromRoleplay` (priority 221, `157.55.165.83/32`,
+  xl-roleplay-web). Every request still carries `X-XLAnt-Proxy-Secret`
+  regardless of source: the NSG narrows the blast radius, the header is the
+  credential. Verified answering 200 from this VM, 2026-09-04.
+- **The artifacts** are published by the xlant repo's own publish step (its
+  `docs/SETUP.md` §4), which writes each file as `<name>.part` and renames it —
+  exe + blockmap first, `latest.yml` last, so a client reading the yml always
+  finds the exe already there. During phase 1 it writes to BOTH VMs; at phase 2
+  it returns to this one. Either way `latestInstaller()` and
+  `/api/xlant/update/*` read **this** host's `/opt/xlant-artifacts` and never
+  proxy to roleplay.
+
+**Artifacts inventory (2026-09-04).** `/opt/xlant-artifacts` on this VM held
+`XLAnt-Setup-0.2.0.exe` + `.blockmap` + `latest.yml`; **0.2.1** (exe, blockmap
+and a rewritten `latest.yml`) is published the same day. **Keep the previous
+release's `.exe` and `.blockmap`**: electron-updater asks the NEW feed base for
+the OLD build's blockmap to compute a differential update, and with it missing
+the update degrades silently to a full download — a regression nobody sees
+except in bytes transferred.
+
+MEASURED CAVEAT, so the line above is not read as a promise: this feed serves
+**whole files only**. It answers 200 with the complete body and a
+`Content-Length`, advertises no `Accept-Ranges`, and ignores a `Range` header
+(pinned in `scripts/xlant-tests.ts`), so no differential download can actually
+be served through it today — the fallback is the only path. That is byte-for-
+byte what roleplay's copy did (the route code is the same), so it is parity and
+not a regression, and keeping the old blockmap costs nothing and is what makes
+adding Range support worth doing later. Until that exists, every update is a
+full download.
+
+**nginx: identical timeouts, one tighter body cap.** The vhost is
+module-rendered from the stamped `deploy/` templates (§9 — never edit a
+rendered file), and it is not edited here. One committed **host drop-in** is
+added instead, `deploy/nginx.d/xlant-device.conf`, installed to
+`/etc/nginx/aiwebsite.d/` by `setup-vm.sh` (rsync `--delete`, before the conf
+test) and pulled in by the stamped server block's
+`include /etc/nginx/aiwebsite.d/*.conf;`:
+
+```nginx
+location ^~ /api/xlant/ {
+    client_max_body_size 2m;
+    ... the `location /` proxy directives, copied verbatim ...
+}
+```
+
+**Why.** `governance-upload.conf` sets `client_max_body_size 110m` at SERVER
+level for /work package uploads (§5.16), and that applies to every location —
+so an **unauthenticated** POST to `/api/xlant/relay/*` could make nginx buffer
+up to 110 MB before the route's own 1 MB cap ever ran. (roleplay, where this
+lane used to live, had a 25 m server-level cap and never presented that much
+surface.) 2 m leaves the ROUTE as the thing that draws the 1 MB line — a caller
+slightly over the cap still gets the route's JSON 413 rather than nginx's HTML
+one — while ending a multi-megabyte flood at the edge of the process. `^~` so
+the prefix wins over any regex location the stamped conf grows later. If the
+file is malformed, `setup-vm.sh`'s `nginx -t` restores the previous config and
+**aborts the deploy before cutover**, which is the right direction of failure.
+The one gap: if `nginx -t` was ALREADY failing before the deploy for an
+unrelated reason, `setup-vm.sh` installs no nginx config and the deploy
+continues — the lane would then fall through to `location /` under the 110 m
+cap until the next healthy deploy, so a pre-existing nginx failure on this VM is
+something to clear before shipping this lane.
+Everything else in the block is copied verbatim from `location /`
+(`proxy_pass`, the six `proxy_set_header`s, `proxy_cache_bypass`,
+`proxy_read_timeout 120s`, `proxy_send_timeout 120s`), and
+`scripts/xlant-tests.ts` asserts line-by-line that it stays that way. So the
+lane's TIMEOUTS are identical to the rest of the site and to roleplay's; only
+the body ceiling is tighter.
+
+**Timing: what can actually cross the 100 s edge ceiling.** Cloudflare closes
+an idle response at **100 s** (524). That is the operative limit — tighter than
+nginx's `proxy_read_timeout 120s`, and far tighter than the route's 290 s
+`AbortSignal` or the relay's 240 s `TOOL_CALL_MAX_MS`, both of which are
+backstops rather than the thing that fires. Per call:
+
+- `tools/next?wait=25` — the long poll holds 25 s. **Never** reaches the
+  ceiling.
+- `events?since=`, `hello`, `incident/start`, `chat`, `close` — sub-second.
+- an MCP `tools/call` that blocks on the PC past ~100 s — **524 at the edge**.
+  The relay's 240 s cap and the route's 290 s are decorative for this case:
+  Cursor sees the 524, and the technician retries.
+- `incident/{id}/decision` with **yes** — holds the response for the brain
+  brief (up to 120 s) plus the Cursor create, so it **can** exceed 100 s. When
+  it does, the relay still completes the dispatch server-side and the desktop's
+  next `events` poll sees the result; the 524 costs a round trip, not the run.
+
+All of this is **parity with roleplay, not a regression**: both vhosts proxy
+`/` with identical directives (they differ only in listen port, `server_name`
+and their drop-in sets), and the lane sat behind the same 100 s edge there.
+
+**Edge posture — what is actually known.** ai.xl.net and roleplay.xl.net are
+hostnames in the SAME Cloudflare zone (`xl.net`), so zone-level WAF and Bot
+Management settings are shared by construction, and nothing in this repo
+records a hostname-specific rule for either. That is the whole basis for
+expecting the edge to treat this lane as it treated roleplay's — an identical
+origin vhost inside one zone, not a byte-for-byte comparison of edge config,
+which this repo cannot see. The **evidence** is the post-deploy probe pair: a
+device `hello` answering 200 with a real token, and the MCP path exercised by a
+live technician run. Until those pass, "the edge does not challenge
+non-browser POSTs on this hostname" is an expectation, not a measurement.
+
+**Access logging.** The fleet `log_format aic_combined` records `"$request"`,
+so the full request line lands in `/var/log/nginx/aiwebsite.access.log` — which
+means **per-run MCP bridge tokens appear there in plaintext**, exactly as they
+did on roleplay. They are random per run and answer 410 once the run ends, so
+the exposure is a finished run's identifier in a root-readable VM log; it is
+noted rather than fixed because changing the fleet log format is a module
+concern, not a host one.
 
 **The shell.** `src/app/internal/layout.tsx` gates the whole `/internal`
 tree with the same `requireRfpPage()` call and owns the DENIAL SCREEN (which
@@ -10940,17 +11148,147 @@ including the race that matters: each candidate is `stat`ed with a
 `.catch(() => null)` and filtered, so a build pruned or renamed between
 `readdir()` and `stat()` cannot 500 the page, and size and mtime are read from
 the SAME stat so a second stat cannot observe a different file at that path.
-`safeArtifactName()` refuses traversal and odd names.
-`XLANT_DEVICE_KINDS = ["windows"]` mirrors the relay's contract (the two repos
-share no code); the enum exists so a second kind never changes the wire shape.
+`safeArtifactName()` refuses traversal and odd names — defence in depth for
+the staff download (whose name comes from `readdir()`), and the ACTUAL
+boundary for the update feed, whose name arrives from the network: a single
+path segment, no leading `.` or `-`, no `/`, and an explicit `..` test kept so
+a future loosening of either character class cannot silently re-open
+traversal. `XLANT_DEVICE_KINDS = ["windows"]` mirrors the relay's contract (the
+two repos share no code); the enum exists so a second kind never changes the
+wire shape.
 
-**Routes.** Both `runtime = "nodejs"`, `dynamic = "force-dynamic"`,
-`revalidate = 0`, every response `cache-control: no-store, private`.
+The DEVICE lane adds three things to the same module, all exported as data
+plus a predicate so `scripts/xlant-tests.ts` can pin them with no server:
+
+- **`XLANT_RELAY_ALLOWED`** (a `readonly RegExp[]`) and
+  **`isXlantRelayPath(rel)`** — the passthrough allowlist, six anchored
+  patterns, described below.
+- **`XLANT_MCP_PATH`** and **`isXlantMcpPath(rel)`** — which of the six is the
+  MCP endpoint, the one path allowed to send a body with no declared length.
+- **`verifyDeviceToken(cfg, token)`** and its per-process memo, described
+  under the update feed below (`xlantVerifyCacheSize()` and
+  `resetXlantVerifyCache()` exist for the tests and for operator diagnostics;
+  nothing in the request path reads them).
+- **`isXlantUpdateArtifact(name)`** — the update feed's RELEASE gate, which is
+  a different question from `safeArtifactName()`'s traversal gate and is why
+  both exist. A name can be perfectly safe and still be something the feed has
+  no business publishing: `latest.yml.part` is the publish step's half-written
+  temp file, and an updater that read one would parse a truncated manifest.
+  Exactly three shapes pass, all derived from the SAME `XLANT_INSTALLER_RE` the
+  staff download uses so the filename convention lives in one place —
+  `latest.yml`, `XLAnt-Setup-<version>.exe`, and that name plus `.blockmap`.
+
+**Routes — the HUMAN lane (staff-gated).** Both `runtime = "nodejs"`,
+`dynamic = "force-dynamic"`, `revalidate = 0`, every response
+`cache-control: no-store, private`.
 
 | Route | Behaviour |
 |---|---|
 | `GET /api/internal/xlant/download` | Staff-gated stream of the newest installer from the LOCAL `XLANT_ARTIFACTS_DIR` (outside the web root), `Content-Disposition: attachment`, `Content-Length` from the stat, `Cache-Control: private, no-store`. 503 unconfigured · 404 nothing published · 403 for a signed-in non-staff session · and, because the caller is a BROWSER following a plain `<a>` and not a `fetch()`, **302 to `/login?redirect=/internal/xlant`** when there is no session at all, so a page left open past its session expiry sends the staffer to sign in instead of downloading a JSON error object named "download". The redirect URL is resolved against `req.url`, never a configured base, so it cannot leave the host the caller is on. Never linked publicly: a public URL would put an XL.net-signed installer in front of anyone who found the path |
 | `POST /api/internal/xlant/device-token` | Staff-gated mint. Optional body `{kind?: "windows"}` (absent/empty ⇒ windows); the IDENTITY comes from the session, never the body — `relayInternal('/v1/device/issue', {email: session.email.toLowerCase(), displayName: session.displayName ?? <email local part>, kind})` — and answers `{token, kind}`. 503 unconfigured · **401 `unauthenticated`** / **403 `wrong_domain`\|`wrong_provider`** (the `requireRfpUser()` split, so the button can say "sign in again" where that is the actual fix) · 400 malformed body or bad kind · **502** when the relay refuses, does not answer (timeout/DNS/refused), or answers 200 with something that is not JSON carrying a token — the response is parsed with `.json().catch(() => null)`, because a 200 is not a promise of JSON and an intermediary's HTML error page must not become a 500 here. The relay keeps ONE active token per (user, kind) and revokes the previous one, so a mint is also "sign out my old PC", including a PC holding a token minted on the retired roleplay page |
+
+**Routes — the DEVICE lane (no session, ever).** Both `runtime = "nodejs"`,
+`dynamic = "force-dynamic"`, `revalidate = 0`, every response
+`Cache-Control: private, no-store`. Neither caller is a browser, so neither
+route reads a cookie and neither is CSRF-checked (see **CSRF** below).
+
+| Route | Behaviour |
+|---|---|
+| `GET\|POST /api/xlant/relay/[[...path]]` | Allowlisted streaming passthrough to `XLANT_RELAY_URL`. Adds `X-XLAnt-Proxy-Secret` and `X-XLAnt-Via: proxy` (the relay hard-rejects its INTERNAL routes when they carry that header, so nothing arriving through here can reach the token mint even if the allowlist were wrong); forwards the caller's own `Authorization` **when there is one**, and `Content-Type` / `Accept` / `Mcp-Session-Id` in both directions; forwards the QUERY STRING verbatim. Body caps and timeouts below. `AbortSignal.timeout(290_000)`; `maxDuration = 300` is declared for PORTABILITY and is inert here (see the timing note). Answers 503 unconfigured · **404** for any path off the allowlist · **411** when a non-GET declares no `Content-Length` (except the MCP path) · **413** over 1 MB · **502** when the relay does not answer (ECONNREFUSED / DNS / TLS) · **504** when the `AbortSignal` fires · otherwise the relay's own status, headers and streamed body, unaltered — 401 (revoked device token), 404 (unknown bridge token) and 410 (ended run) all belong to the relay and must reach the caller as they are. The upstream `fetch` is wrapped: unguarded, a down relay throws out of the handler and `next start` answers a bare HTML 500 |
+| `GET /api/xlant/update/[[...path]]` | The electron-updater **generic** feed: `latest.yml`, `XLAnt-Setup-x.y.z.exe`, `<exe>.blockmap`, streamed from `XLANT_ARTIFACTS_DIR` (outside the web root) with `Content-Length` taken from the same `stat()` the stream is opened against, `Content-Type: text/yaml` for `.yml` and `application/octet-stream` otherwise. Gated by `Authorization: Bearer <device token>` — the updater is a background process inside the tray app and cannot carry a browser cookie. 503 unconfigured · **401** with no token, a malformed header, or a token the relay does not recognise · **400** on a name failing `safeArtifactName()` (checked BEFORE any filesystem call; a multi-segment catch-all is joined with `/`, which that predicate refuses, so traversal cannot reach `join()`) · **404** when the name is safe but is not a RELEASE (`isXlantUpdateArtifact()` — so `latest.yml.part` and anything else an operator leaves in the directory are refused), and 404 when a release-shaped name is simply not there. Both name checks run AFTER the token check, so the feed is never a directory oracle for an anonymous caller |
+
+**The allowlist is a MIRROR — change it and the xlant contract together.**
+`XLANT_RELAY_ALLOWED` is a copy of the route list in the xlant repo's
+`packages/shared/src/contract.ts`, and the relay mirrors the same list a third
+time on its own side. The two repos share no code, so the only thing keeping
+them honest is that rule and `scripts/xlant-tests.ts`. Six anchored patterns,
+matched against the catch-all segments joined with `/` (no leading slash, no
+query string):
+
+```
+^v1/device/hello$
+^v1/incident/start$
+^v1/incident/[\w-]+/(events|decision|chat|close)$
+^v1/incident/[\w-]+/tools/next$
+^v1/incident/[\w-]+/tools/[\w-]+/result$
+^v1/mcp/[\w-]+$
+```
+
+Anchored at BOTH ends and `[\w-]+` for every id, on purpose. These are the ONLY
+relay paths reachable from the public internet; everything else the relay
+serves is an INTERNAL route — `/v1/device/issue` (the token mint),
+`/v1/device/verify`, `/v1/status`, `/v1/providers/refresh` — callable only by
+this host's own server-side code, with the shared secret and WITHOUT
+`X-XLAnt-Via: proxy`. An unanchored or prefix-matching test would publish the
+mint; `[\w-]` admits no separator, no dot and no `%2f`, so a second path
+segment cannot hide inside an id. Anything off the list gets 404, not 403: an
+unallowlisted path is not a thing this origin has.
+
+**Two kinds of caller, authenticating differently.**
+
+- **The Windows desktop**, with `Authorization: Bearer <device token>`, for
+  `v1/device/hello`, the incident routes, and the tool bridge it long-polls
+  (`v1/incident/{id}/tools/next?wait=25`, a GET, and the matching
+  `.../tools/{callId}/result` POST). The query string is load-bearing on both
+  polls (`?wait=`, `?since=<cursor>`), which is why it is forwarded verbatim.
+- **Cursor's cloud VM, acting as an MCP client**, on `v1/mcp/{bridgeToken}`
+  (Streamable HTTP, JSON-RPC 2.0). Those requests carry **no** device
+  `Authorization` header at all — the per-run bridge token in the PATH is the
+  whole credential, and the **relay** authenticates it: an unknown token 404s,
+  a finished run 410s. The passthrough forwards them as they arrive and adds
+  nothing of its own. `Accept` decides the reply shape (`application/json` vs
+  `text/event-stream`) and `Mcp-Session-Id` carries the session, so both are
+  forwarded in both directions. A GET on the MCP path is forwarded too, and the
+  relay answers 405 (there is no server-initiated stream).
+
+**`maxDuration = 300` is declared, and inert on this host.** Nothing under
+`next/dist/server` reads it on a self-hosted `next start` — only the build
+manifest carries it (measured 2026-09-04). It stays in the file so a move to a
+platform that DOES enforce a per-function budget inherits a 300 s one rather
+than a default that would cut the long polls. The ceilings that actually bind
+here are Cloudflare's 100 s edge close and nginx's 120 s
+`proxy_read_timeout`, neither of which lives in this repo's route code; the
+route's own 290 s `AbortSignal` is a backstop below the relay's 240 s tool cap,
+not the thing that fires first.
+
+**nginx caps the body before the route does.** `deploy/nginx.d/xlant-device.conf`
+sets `client_max_body_size 2m` on `location ^~ /api/xlant/`, narrowing the
+host-wide 110 m — see the nginx passage above for why a pre-auth route must not
+inherit an upload ceiling.
+
+**Body caps, applied PRE-AUTH.** This route runs before anything has
+authenticated the caller — the relay does that downstream — so an
+unauthenticated body must never be allowed to expand in this shared host's
+memory. XLAnt sends only JSON (no audio, no uploads), so **1 MB** is generous;
+the largest bodies are a capped incident detail, a tool result, or an MCP
+`tools/call` frame. A non-GET with **no `Content-Length`** is refused **411**,
+and a declared length over the cap is **413** *before* the body is read. The
+declared length is a claim, not a fact, so the buffered length is re-checked
+after the read and 413s too. The **MCP path alone** is exempt from the 411:
+MCP clients normally declare a length, but some stream the frame instead
+(`Transfer-Encoding: chunked` on h1, no length header at all on h2), so there
+is nothing to check up front — that body is buffered under the SAME 1 MB cap
+and the read is abandoned the moment it passes. The desktop always declares a
+length, so it never reaches that branch.
+
+**The verify cache (positives only).** `verifyDeviceToken(cfg, token)` asks the
+relay's internal `POST /v1/device/verify` (200 ⇒ active) through a per-process
+`Map`, because one upgrade fetches `latest.yml`, then the `.exe`, then the
+`.blockmap` and must not cost three relay round-trips. It caches **positives
+only, for 5 minutes**:
+
+- a **negative is not cached** — caching it would let a stream of garbage
+  tokens evict real entries, and, the case that actually bites, would lock a
+  genuine token out for the whole TTL after one transient relay blip in the
+  middle of a download;
+- a relay that **throws** (timeout, DNS, refused) is a negative for that one
+  request and is likewise not remembered, so the next request re-asks;
+- past **500** entries the **oldest half** is evicted (a `Map` preserves
+  insertion order) rather than the whole map flushed, so a burst cannot make
+  every device re-verify at once;
+- a token shorter than **20 characters** is refused **before any network
+  call** — it is not a shape the relay ever mints, and an empty
+  `Authorization: Bearer` must not cost a round-trip.
 
 **CSRF.** `src/proxy.ts` `protectedPrefixes` gains `"/api/internal/xlant"`.
 The token mint is state-changing (it signs out whatever PC held the previous
@@ -10962,6 +11300,23 @@ deliberately NOT the whole of `/api/internal`: `/api/internal/track` and
 `/api/internal/issues` are secret-authenticated machine POSTs (this host's
 proxy, the VM watchdog, the dev-box sweep) that carry no browser Origin.
 
+**`/api/xlant` is deliberately NOT in that list, and must stay out** — the
+reason is written into the list itself so a future tidy-up cannot "complete"
+it. The DEVICE lane's callers are the XLAnt Windows desktop and Cursor's cloud
+VM; neither is a browser, neither sends an `Origin` header, and the module's
+CSRF check refuses an originless POST. Adding the prefix would therefore refuse
+every incident start, decision, chat line, tool result and MCP frame on this
+host. Those routes are authenticated by the credential they carry instead — a
+device Bearer token, or an MCP bridge token in the path that the RELAY
+validates — and `scripts/xlant-tests.ts` asserts that no configured prefix
+covers `/api/xlant/relay/*` or `/api/xlant/update/*` while
+`/api/internal/xlant` is still present.
+
+**Page-view tracking is untouched.** The module's `isPagePath()`
+(`packages/aicompany/src/tracking/middleware.ts`) already returns `false` for
+any path starting with `/api`, so neither device route can be counted as a
+visit or reach the AI-agent log; nothing about the tracking wrapper changes.
+
 **Nav.** `src/components/nav-links.ts` `STAFF_NAV` — the "Internal Tools"
 submenu (group "XL.net") now holds TWO destinations: RFP Response → `/rfp` and
 XLAnt → `/internal/xlant`. As always the client-side staff predicate there is
@@ -10970,21 +11325,91 @@ control, and an unverified-provider staff session that follows the link lands
 on the explainer.
 
 **Crawlers.** `seo.extraRobotsDisallow` gains `"/internal"` alongside `"/rfp"`
-and `"/roadmap/"`, so the path is disallowed in all 12 robots.txt groups
+and `"/roadmap/"` — and needs nothing for the device lane, because
+@aicompany/core's `ALWAYS_DISALLOW` (`packages/aicompany/src/seo/robots.ts`)
+already carries `"/api"` and this host's `seo.robotsUnblock` subtracts only
+`"/login"`, so `/api/xlant/*` is disallowed in every group without a
+site.config change. `"/internal"` is disallowed in all 12 robots.txt groups
 (`aiBotsAllowed` emits one per AI crawler); the page also carries its own
 `robots: {index:false, follow:false}`, and `/internal/*` is absent from
 `src/app/sitemap.ts` (a hand-maintained list). `robotsRequiredDisallow` in
 `deploy/synth-inventory.json` and `deploy/seo-scorecard.json` is unchanged —
 those assert `/admin`, `/api`, `/auth` are present, not that nothing else is.
 
+**Tests.** `npm run test:xlant` (`scripts/xlant-tests.ts`), tsx +
+`node:assert`, no DB and nothing leaving the box. **Two halves.**
+
+The PURE half exercises the predicates as functions: the allowlist is exactly
+six anchored, flag-free shapes; it accepts every surface the contract names and
+refuses prefix variants, traversal, empty and bare segments, each of the
+relay's INTERNAL routes by name, and every URL metacharacter (`? # % \ @ : .`,
+whitespace, quotes) in an id position; MCP path detection, including that
+nothing the allowlist refused is an MCP path, so the length-less-body
+concession cannot be reached around it; `safeArtifactName()` on traversal,
+absolute paths and odd names; `isXlantUpdateArtifact()` on the release trio and
+against `.part` files and operator leftovers; `XLANT_INSTALLER_RE` including
+the `x.exe.exe` case the strict version group exists for; and
+`verifyDeviceToken()`'s cache against a stubbed `globalThis.fetch` — a positive
+cached, a refusal not cached, a relay that throws returning false and not
+cached (with the next request succeeding rather than sitting out the TTL),
+oldest-half eviction at the 500 boundary (501 fits, the 502nd insert leaves 252
+and the newest survivors still cost no round-trip), and a short token refused
+with zero fetches.
+
+The LIVE half **runs the real route handlers and the real middleware
+in-process** against a fake relay on 127.0.0.1 and a scratch artifacts
+directory, because the pure half cannot see what the handlers put on the wire.
+It pins: the proxy secret and `X-XLAnt-Via: proxy` are SET by us while a
+caller-supplied `X-XLAnt-Via`, `X-XLAnt-Proxy-Secret` and `Cookie` are NOT
+forwarded; `Authorization` forwarded on device paths and never invented on the
+MCP path; every INTERNAL relay route 404s **with the relay untouched**; 411,
+413 (declared and streamed, with the streamed read abandoned just past 1 MB
+rather than drained) and an exactly-1 MB body forwarded; the query string
+verbatim; upstream 401/404/410/405/500 status and body passing through
+unchanged; `Mcp-Session-Id` and an SSE content-type echoing back; a refused
+connection answering **502** and the `AbortSignal` answering **504** (in both
+shapes undici raises); the arming gate 503-ing both routes without contacting
+anything; and, on the feed, 401 (absent, short and revoked tokens — the revoked
+one costing a relay call every time), one verify covering the whole
+`latest.yml` → `.exe` → `.blockmap` upgrade, correct `Content-Length` and
+content types, 400 for traversal (with a real file outside the artifacts dir
+proven unreachable) and 404 for `latest.yml.part` and other non-releases.
+Finally the MIDDLEWARE is executed: eight Origin-less device requests pass with
+no `Set-Cookie`, while the control POST to `/api/internal/xlant/device-token`
+without an Origin is **403** and the same POST with one passes — which is what
+makes the pass a measurement rather than a disabled check. (The first cut
+asserted this by grepping `src/proxy.ts` for quoted prefixes; that regex would
+miss a prefix added inline.)
+
+Two source legs hold what types cannot: both routes still declare their runtime
+knobs (`nodejs`, force-dynamic, `maxDuration = 300`,
+`AbortSignal.timeout(290_000)`, `private, no-store`) and still import the
+shared allowlist rather than carrying a second copy; and the nginx drop-in
+still carries `client_max_body_size 2m` under `location ^~ /api/xlant/` with
+**every** directive of the stamped `location /` block present verbatim.
+
+**Deploying this.** This host **builds on the VM** (`DEPLOY_BUILD_MODE`
+defaults to remote and `.next` is rsync-excluded, §9), so a green
+`npm run build:check` on the dev box proves the code compiles and trips no
+banned warning — it is not a verification of the artefact production will
+serve. The drop-in adds one more pre-cutover gate: `setup-vm.sh` installs
+`deploy/nginx.d/*` and runs `nginx -t` before the switch, restoring the
+previous config and aborting the deploy if this file is wrong.
+
 **Env (§10).** `XLANT_RELAY_URL` (`http://135.232.204.158:8403` — the
-`xlant-relay` on the internal VM, reachable from this host AND from
-roleplay's, one NSG /32 rule each), `XLANT_PROXY_SHARED_SECRET` (≥16 chars;
-the same value must sit in the relay's `/etc/xlant.env` and in roleplay's
-`.env` — all three agree or the relay 401s), `XLANT_ARTIFACTS_DIR`
-(`/opt/xlant-artifacts`, a real local directory on this VM). All three
-or none. **No schema, no migration, no DB table**: this host stores nothing
-about XLAnt — the tokens live in the relay's sqlite.
+`xlant-relay` on the internal VM), `XLANT_PROXY_SHARED_SECRET` (≥16 chars; the
+same value must sit in the relay's `/etc/xlant.env`, and until phase 2 in
+roleplay's `.env` too — all must agree or the relay 401s),
+`XLANT_ARTIFACTS_DIR` (`/opt/xlant-artifacts`, a real local directory on this
+VM). All three or none, and the same three now arm FOUR route handlers rather
+than two. **The staff PAGE does not 503 on a half-configured host** — it
+renders without the installer offer (`page.tsx` calls `latestInstaller()` only
+when `xlantConfig()` returned a config), because a page that refuses tells a
+member of staff nothing they can act on; the four ROUTE HANDLERS are what
+answer 503. The device lane added no env var of its own. **No schema, no
+migration, no DB table**: this host stores nothing about XLAnt — the tokens
+live in the relay's sqlite, and the update feed's verify cache is per-process
+memory that dies with the worker.
 
 
 ## 6. Database
@@ -12561,9 +12986,9 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | Roadmap | `ROADMAP_PANEL_RUNS_DAILY_CAP` | client panel runs/day, default 60 |
 | Roadmap | `APOLLO_API_KEY` | Apollo.io people-search key for the step-2 directory import (host REST call; module outreach stays disabled). Missing = import answers "not set up", never a boot failure |
 | Roadmap | `APOLLO_DAILY_CALL_CAP` | Apollo page fetches/day across all companies, default 100 |
-| XLAnt | `XLANT_RELAY_URL` | §5.22 `xlant-relay` base URL on the internal VM (`http://135.232.204.158:8403`). Reachable from BOTH XLAnt hosts, one NSG /32 rule each — `AllowXLAntRelayFromRoleplay` (pri 221, 157.55.165.83/32) and `AllowXLAntRelayFromAiWebsite` (52.237.160.75/32, this host). Trailing slashes stripped |
-| XLAnt | `XLANT_PROXY_SHARED_SECRET` | §5.22 value of the `X-XLAnt-Proxy-Secret` header, required on every relay request whatever the source IP; **≥16 chars** or the config reads as absent. One value shared three ways: the relay's `/etc/xlant.env`, roleplay's `.env`, and this host's |
-| XLAnt | `XLANT_ARTIFACTS_DIR` | §5.22 LOCAL directory of published `XLAnt-Setup-<version>.exe` installers (`/opt/xlant-artifacts`), OUTSIDE the web root. The xlant publish step copies to both VMs (`.part` then rename), so this host reads its own copy and never proxies to roleplay. **All three or none**: any missing ⇒ every XLAnt surface answers 503 (the arming gate) |
+| XLAnt | `XLANT_RELAY_URL` | §5.22 `xlant-relay` base URL on the internal VM (`http://135.232.204.158:8403`). One NSG /32 rule per host opens TCP 8403: `AllowXLAntRelayFromAiWebsite` (pri 222, 52.237.160.75/32, this host) and — until the two-phase cutover's PHASE 2 deletes it — `AllowXLAntRelayFromRoleplay` (pri 221, 157.55.165.83/32). Trailing slashes stripped. Read by the staff mint AND by the `/api/xlant/relay/*` passthrough |
+| XLAnt | `XLANT_PROXY_SHARED_SECRET` | §5.22 value of the `X-XLAnt-Proxy-Secret` header, required on every relay request whatever the source IP; **≥16 chars** or the config reads as absent. One value in the relay's `/etc/xlant.env` and this host's `.env`, plus roleplay's `.env` until phase 2 retires it |
+| XLAnt | `XLANT_ARTIFACTS_DIR` | §5.22 LOCAL directory of published `XLAnt-Setup-<version>.exe` installers plus `latest.yml` and `*.blockmap` (`/opt/xlant-artifacts`), OUTSIDE the web root. The xlant publish step writes `.part` then renames, to BOTH VMs during phase 1 of the cutover and to this one alone after phase 2; this host always reads its OWN copy and never proxies. Keep the previous release's exe + blockmap (electron-updater needs the OLD blockmap for a differential update). Read by the staff download AND by the `/api/xlant/update/*` feed. **All three or none**: any missing ⇒ the four XLAnt route handlers answer 503 (the arming gate); the staff page still renders, without the installer offer |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
 | | `TRON_KNOWLEDGE_FILE` | **legacy, no longer read** — the knowledge path is `persona.knowledgeFile` in site.config.ts |
 | Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |

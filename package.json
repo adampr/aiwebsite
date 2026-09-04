@@ -52,6 +52,7 @@
     "test:staffcount": "tsx scripts/rfp-staff-count-tests.ts",
     "test:rfpletter": "tsx scripts/rfp-letter-tests.ts",
     "test:rfpgaps": "tsx scripts/rfp-gaps-tests.ts",
+    "test:xlant": "tsx scripts/xlant-tests.ts",
     "test:deploysafe": "bash scripts/deploy-safe-tests.sh"
   },
   "dependencies": {

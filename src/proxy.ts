@@ -54,6 +54,17 @@ export default createTrackingMiddleware(siteConfig, {
     // proxy itself, the VM watchdog and the dev box, none of which carry a
     // browser Origin.
     "/api/internal/xlant",
+    // NOT "/api/xlant" — deliberately, and it must stay out. §5.22's DEVICE
+    // lane (`/api/xlant/relay/*`, `/api/xlant/update/*`) is called by the
+    // XLAnt Windows desktop and by Cursor's cloud VM as an MCP client. Neither
+    // is a browser, neither sends an Origin header, and the module's CSRF
+    // check refuses an originless POST — so adding this prefix would break
+    // every incident start, decision, chat, tool result and MCP frame on this
+    // host. Those routes are authenticated instead by the credential they
+    // carry: a device Bearer token, or an MCP bridge token in the path that
+    // the RELAY validates. `/api/internal/xlant` above stays IN: it is the
+    // browser-called half (a staff page's fetch), and it is the one that
+    // rotates a token.
   ],
 });
 
