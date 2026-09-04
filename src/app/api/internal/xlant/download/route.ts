@@ -40,7 +40,14 @@ export async function GET(req: Request): Promise<Response> {
       // so this cannot send anyone to a different host than the one they are
       // on. The destination is a fixed internal path; nothing user-supplied
       // reaches it.
-      return Response.redirect(new URL("/login?redirect=/internal/xlant", req.url), 302);
+      // Relative Location on purpose: behind the reverse proxy `req.url` is the
+      // INTERNAL origin (http://localhost:3000), and resolving against it sent
+      // signed-out staff to localhost (measured on the first deploy). The
+      // browser resolves a relative Location against the public origin.
+      return new Response(null, {
+        status: 302,
+        headers: { Location: "/login?redirect=/internal/xlant", "Cache-Control": "private, no-store" },
+      });
     }
     return fail(gate.reason, 403);
   }
