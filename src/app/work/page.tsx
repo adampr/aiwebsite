@@ -961,7 +961,7 @@ export default async function WorkPage() {
         </div>
 
         {/* 10. QBR Machine */}
-        <section id="qbr-machine" className="panel rise">
+        <section id="qbr-machine" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -1029,7 +1029,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 11. Onboarding Toolkit */}
-        <section id="onboarding-toolkit" className="panel panel--lightline rise">
+        <section id="onboarding-toolkit" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production

@@ -1,9 +1,10 @@
 // /work team-card PLACEMENTS (owner directive 2026-08-29): a published
 // team card (§5.16, a `work_submissions` row) can be lifted out of the
 // "From the Team" run at the foot of bay 05 and rendered INSIDE one of the
-// static bays, after that bay's hand-authored exhibits. The first and only
-// seeded placement is "Client Site Rescue Mirror" into "03 · Client
-// Delivery".
+// static bays, after that bay's hand-authored exhibits. Seeded 2026-08-29
+// with "Client Site Rescue Mirror" into "03 · Client Delivery"; on
+// 2026-09-04 (owner directive) "MyCoach" joined "02 · What It Runs" and
+// "XLAnt" joined "03 · Client Delivery".
 //
 // WHY THIS IS A CODE MAP AND NOT A DB COLUMN. The static exhibits in
 // src/app/work/page.tsx carry HARD-CODED stripe classes (`panel rise` at an
@@ -40,6 +41,8 @@ import type { PublishedCard } from "./db";
 export const TEAM_CARD_PLACEMENTS: Readonly<Record<string, string>> =
   Object.freeze({
     "team-client-site-rescue-mirror": "03",
+    "team-mycoach": "02",
+    "team-xlant": "03",
   });
 
 export interface PlacementSplit {
