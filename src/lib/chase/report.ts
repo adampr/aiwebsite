@@ -30,6 +30,7 @@
 // No em dashes or en dashes (site rule).
 
 import { adminRecipient, sendGovernanceEmail } from "@/lib/governance/budget";
+import { scrubBlockedContacts } from "./contact-policy";
 import {
   CHASE_CAPS,
   CHASE_REPORT_SUBJECT,
@@ -100,6 +101,10 @@ export interface ReportInput {
    * would read them as ordinary outstanding people who are ignoring him,
    * when in fact nothing has been sent at all. */
   unreachable?: Map<string, string>;
+  /** Test seam ONLY: the blocked-contact hash set the scrub compares
+   * against. Production callers leave it unset (contact-policy.ts's policy
+   * applies); the test suite injects hashes of invented identities. */
+  blockedContactHashes?: ReadonlySet<string>;
 }
 
 /** PURE. Split the live rows into the report's four groups. Order matters:
@@ -151,12 +156,21 @@ function askedLine(t: ReportTask, now: Date): string {
   return `  Asked ${formatDay(when)} (${days} day${days === 1 ? "" : "s"} ago) by ${normalizeEmail(t.requesterEmail)}`;
 }
 
-function lastSendLine(t: ReportTask, lastSend: Map<string, ChaseSendFact>): string {
+function lastSendLine(
+  t: ReportTask,
+  lastSend: Map<string, ChaseSendFact>,
+  // The row's blocked-contact cleaner: fact.detail is a stored failure
+  // message (vendor text plus whatever the send path interpolated), so it
+  // is scrubbed like every other free-text string the report prints.
+  cleanDetail: (t: ReportTask, v: string) => string
+): string {
   const fact = lastSend.get(normalizeEmail(t.assigneeEmail));
   const reminders = `reminders sent: ${t.nudgeCount}`;
   if (!fact)
     return `  ${reminders} · last email: none on record${t.consecutiveSendFailures > 0 ? ` · ${t.consecutiveSendFailures} send failure(s) in a row` : ""}`;
-  const detail = fact.detail ? ` (${clip(fact.detail, 120)})` : "";
+  const detail = fact.detail
+    ? ` (${clip(cleanDetail(t, fact.detail), 120)})`
+    : "";
   const failing =
     t.consecutiveSendFailures > 0
       ? ` · ${t.consecutiveSendFailures} send failure(s) in a row, so treat this as a delivery problem before a person problem`
@@ -166,14 +180,45 @@ function lastSendLine(t: ReportTask, lastSend: Map<string, ChaseSendFact>): stri
 
 /** PURE. The whole report body. */
 export function buildReportBody(input: ReportInput): string {
-  const s = partitionForReport(input.live);
+  // BLOCKED-CONTACT BACKSTOP, the report's twin of composeNudge's: the
+  // seed gate (chase-seed.ts gate 6) is the fence, this covers a row
+  // seeded before it existed. Every human-entered or stored free-text
+  // string the report interpolates is scrubbed with the row's requester as
+  // the replacement: title, assignee name, the paused/blocked reasons, the
+  // said-done note and both actor stamps (markedDoneBy/closedBy are
+  // operator-typed on the admin paths), plus the last-send failure detail
+  // at its print site below. NOT scrubbed, deliberately: ids, dates,
+  // statuses and the addresses this module normalizes itself. The row's
+  // per-task `detail` column is not read by the report at all.
+  const cleanFor = (t: ReportTask, v: string): string =>
+    scrubBlockedContacts(
+      v,
+      normalizeEmail(t.requesterEmail),
+      input.blockedContactHashes
+    );
+  const scrubTask = (t: ReportTask): ReportTask => {
+    const clean = (v: string | null): string | null =>
+      v === null ? null : cleanFor(t, v);
+    return {
+      ...t,
+      title: clean(t.title) ?? t.title,
+      assigneeName: clean(t.assigneeName) ?? t.assigneeName,
+      pausedReason: clean(t.pausedReason),
+      blockedReason: clean(t.blockedReason),
+      markedDoneNote: clean(t.markedDoneNote),
+      markedDoneBy: clean(t.markedDoneBy),
+      closedBy: clean(t.closedBy),
+    };
+  };
+  const recentlyClosed = input.recentlyClosed.map(scrubTask);
+  const s = partitionForReport(input.live.map(scrubTask));
   const needsRuling = s.paused.length + s.blocked.length;
   const out: string[] = [
     `Weekly chase report, ${utcDateKey(input.now)} (UTC).`,
     ``,
     `This email is sent every week whether or not anyone is outstanding. If a Monday goes by with no report, the job is broken; it does not mean everyone is up to date.`,
     ``,
-    `Outstanding: ${s.outstanding.length}. Said done but not confirmed: ${s.claimedDone.length}. Needing a ruling from you: ${needsRuling}. Closed in the last ${CHASE_CAPS.recentlyClosedDays} days: ${input.recentlyClosed.length}.`,
+    `Outstanding: ${s.outstanding.length}. Said done but not confirmed: ${s.claimedDone.length}. Needing a ruling from you: ${needsRuling}. Closed in the last ${CHASE_CAPS.recentlyClosedDays} days: ${recentlyClosed.length}.`,
   ];
 
   if (!input.nudgesEnabled)
@@ -205,7 +250,7 @@ export function buildReportBody(input: ReportInput): string {
       out.push(`  Ask: ${clip(t.title, CHASE_CAPS.titleMaxChars)}`);
       out.push(idLine(t));
       out.push(askedLine(t, input.now));
-      out.push(lastSendLine(t, input.lastSend));
+      out.push(lastSendLine(t, input.lastSend, cleanFor));
       const gone = unreachableLine(t, input.unreachable);
       if (gone) out.push(gone);
     }
@@ -271,13 +316,13 @@ export function buildReportBody(input: ReportInput): string {
   // 5. Closed recently.
   out.push(
     ``,
-    `5. CLOSED IN THE LAST ${CHASE_CAPS.recentlyClosedDays} DAYS (${input.recentlyClosed.length})`
+    `5. CLOSED IN THE LAST ${CHASE_CAPS.recentlyClosedDays} DAYS (${recentlyClosed.length})`
   );
-  if (input.recentlyClosed.length === 0) {
+  if (recentlyClosed.length === 0) {
     out.push(`   None.`);
   } else {
     out.push(``);
-    for (const t of input.recentlyClosed) {
+    for (const t of recentlyClosed) {
       out.push(
         `- ${who(t)} · ${clip(t.title, CHASE_CAPS.titleMaxChars)} · ${t.status} ${formatDay(t.closedAt)} by ${clip(t.closedBy ?? "unknown", 60)}`
       );

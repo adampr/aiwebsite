@@ -49,6 +49,7 @@
 
 import { sanitizeHeaderValue } from "@/lib/governance/approval";
 import { sendGovernanceEmail } from "@/lib/governance/budget";
+import { findBlockedContacts, scrubBlockedContacts } from "./contact-policy";
 import {
   CHASE_CAPS,
   CHASE_NUDGE_SUBJECT,
@@ -89,6 +90,11 @@ export interface NudgeInput {
   overseerEmail: string;
   tasks: NudgeTask[];
   now: Date;
+  /** Test seam ONLY: the blocked-contact hash set the scrub compares
+   * against. Production callers leave it unset (the policy in
+   * contact-policy.ts applies); the test suite injects hashes of invented
+   * identities, because the real ones must never appear in a fixture. */
+  blockedContactHashes?: ReadonlySet<string>;
 }
 
 export interface ComposedEmail {
@@ -118,19 +124,53 @@ function requesterPhrase(tasks: NudgeTask[]): string {
 
 /** PURE. The whole nudge, header set included. */
 export function composeNudge(input: NudgeInput): ComposedEmail {
-  const name = clip(input.assigneeName, 80) || "there";
-  const askers = requesterPhrase(input.tasks);
-  const named = input.tasks.slice(0, CHASE_CAPS.tasksPerEmail);
-  const extra = input.tasks.length - named.length;
+  // BLOCKED-CONTACT BACKSTOP. The seed gate (chase-seed.ts gate 6) is the
+  // real fence, but a row seeded before the gate existed is still in the
+  // register, so every human-entered string this email interpolates
+  // (title, detail, actionUrl, the assignee's name) is scrubbed here too.
+  // The replacement is the item's own requester: the one human this email
+  // already names as the contact, so a scrubbed sentence still points
+  // somewhere a reader can write. EXCEPT when the requester address ITSELF
+  // trips the detector: it is both unprintable and unusable as anyone's
+  // replacement, so the overseer stands in for that item everywhere BEFORE
+  // any other use (requester phrase, Asked by, the no-link fallback, the
+  // Reply-To sentence) - the overseer really can stop the emails, which is
+  // the one promise every use of the address carries.
+  const overseer = normalizeEmail(input.overseerEmail);
+  const hashes = input.blockedContactHashes;
+  const safeRequester = (raw: string): string => {
+    const addr = normalizeEmail(raw);
+    return findBlockedContacts(addr, hashes).length > 0 ? overseer : addr;
+  };
+  const tasks = input.tasks.map((t) => {
+    const requester = safeRequester(t.requesterEmail);
+    return {
+      ...t,
+      requesterEmail: requester,
+      title: scrubBlockedContacts(t.title, requester, hashes),
+      detail: scrubBlockedContacts(t.detail, requester, hashes),
+      actionUrl:
+        t.actionUrl === null
+          ? null
+          : scrubBlockedContacts(t.actionUrl, requester, hashes),
+    };
+  });
+  const replyToSafe = safeRequester(input.requesterEmail);
+  const name =
+    clip(scrubBlockedContacts(input.assigneeName, replyToSafe, hashes), 80) ||
+    "there";
+  const askers = requesterPhrase(tasks);
+  const named = tasks.slice(0, CHASE_CAPS.tasksPerEmail);
+  const extra = tasks.length - named.length;
 
   const lines: string[] = [
     `Hi ${name},`,
     ``,
     `This is an automatic weekday reminder from the XL.net AI site about work ${askers} asked you for. It is still open in our register, so one of these goes out each weekday until it is done. One email a day, however many items are on it.`,
     ``,
-    input.tasks.length === 1
+    tasks.length === 1
       ? `What was asked:`
-      : `What was asked (${input.tasks.length} items):`,
+      : `What was asked (${tasks.length} items):`,
   ];
 
   named.forEach((t, i) => {
@@ -195,10 +235,10 @@ export function composeNudge(input: NudgeInput): ComposedEmail {
   // The overseer is named because the requester alone is not guaranteed to
   // be able to stop anything: the only lever is chase:admin on the VM. When
   // the requester IS the overseer, saying "and copy yourself" would be
-  // noise, so the sentence collapses.
-  const overseer = normalizeEmail(input.overseerEmail);
+  // noise, so the sentence collapses. (overseer is hoisted to the top of
+  // this function: the blocked-requester substitution needs it first.)
   lines.push(
-    overseer && !requesters(input.tasks).includes(overseer)
+    overseer && !requesters(tasks).includes(overseer)
       ? `- Not yours, already handled somewhere else, or you need more time? Write to ${askers} and copy ${overseer}, who can pause or cancel the request so these emails stop.`
       : `- Not yours, already handled somewhere else, or you need more time? Write to ${askers}. They can pause or cancel the request and these emails stop.`
   );
@@ -207,8 +247,8 @@ export function composeNudge(input: NudgeInput): ComposedEmail {
   // email mixes requesters, saying "write to A or B" without saying which
   // one the Reply button reaches sends "item 4 is not mine" to somebody who
   // has nothing to do with item 4.
-  const askerList = requesters(input.tasks);
-  const replyTo = normalizeEmail(input.requesterEmail);
+  const askerList = requesters(tasks);
+  const replyTo = replyToSafe;
   const others = askerList.filter((a) => a !== replyTo);
   lines.push(``);
   if (others.length === 0)
@@ -246,9 +286,26 @@ export function nudgeHeaders(): Record<string, string> {
 }
 
 /** The one address a reply must reach, sanitized. Exported so the test suite
- * can pin that a stored value carrying a CR cannot inject a header. */
-export function nudgeReplyTo(requesterEmail: string): string {
-  return sanitizeHeaderValue(normalizeEmail(requesterEmail), 200);
+ * can pin that a stored value carrying a CR cannot inject a header.
+ *
+ * The SAME blocked-contact substitution composeNudge applies to the body's
+ * Reply-To sentence runs here, on the header itself. The body and the header
+ * must name one address: a scrubbed sentence saying "replying reaches the
+ * overseer" over a header that still routes the reply to a machine-account
+ * mailbox would send "this is not mine, stop" to software after all, which is
+ * the exact failure the Reply-To design exists to prevent. */
+export function nudgeReplyTo(
+  requesterEmail: string,
+  overseerEmail?: string,
+  blockedContactHashes?: ReadonlySet<string>
+): string {
+  const addr = normalizeEmail(requesterEmail);
+  const safe =
+    overseerEmail !== undefined &&
+    findBlockedContacts(addr, blockedContactHashes).length > 0
+      ? normalizeEmail(overseerEmail)
+      : addr;
+  return sanitizeHeaderValue(safe, 200);
 }
 
 /** Compose and send one person's nudge. Never throws on a vendor problem:
@@ -262,6 +319,10 @@ export async function sendChaseNudge(input: NudgeInput): Promise<boolean> {
     subject: mail.subject,
     text: mail.text,
     headers: mail.headers,
-    replyTo: nudgeReplyTo(input.requesterEmail),
+    replyTo: nudgeReplyTo(
+      input.requesterEmail,
+      input.overseerEmail,
+      input.blockedContactHashes
+    ),
   });
 }

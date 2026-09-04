@@ -35,7 +35,7 @@
 //     "detectorMdSha256": "optional, reserved, not read in this round"
 //   }
 //
-// FIVE GATES, and a failure of ANY of them refuses the WHOLE batch rather
+// SIX GATES, and a failure of ANY of them refuses the WHOLE batch rather
 // than seeding part of it. A half-seeded register is worse than none: some
 // people start getting daily email about a list the operator believes was
 // rejected. (With --apply the inserts additionally run inside ONE
@@ -61,6 +61,14 @@
 //      watches the site for the work implies a place on the site to do it,
 //      and a reminder with no link is one the reader cannot act on. `manual`
 //      may omit it: the nudge then names the requester as the destination.
+//   6. No row may name a machine-account identity in ANY field the
+//      reminders or the report could print: title, detail, both addresses,
+//      assignee name, actionUrl, blockedReason, detectorArg
+//      (src/lib/chase/contact-policy.ts, hashes only, this repo is
+//      public). A seeded detail once named one as a relaying contact and
+//      the nudge mailed that sentence to a colleague; the human contact is
+//      always the requester. The compose-time scrub is the backstop for
+//      legacy rows; THIS gate is the fence.
 //
 // DUPLICATES ARE THE DATABASE'S JOB, NOT THIS SCRIPT'S. The insert is
 // ON CONFLICT DO NOTHING against chase_task_live_uq (lower(assignee_email),
@@ -83,6 +91,7 @@ import {
   normalizeEmail,
   oneLine,
 } from "../src/lib/chase/config";
+import { seedRowContactRefusal } from "../src/lib/chase/contact-policy";
 import { db } from "../src/lib/db";
 import {
   insertTask,
@@ -264,7 +273,7 @@ async function main(): Promise<void> {
   console.log(`[chase-seed] ${apply ? "APPLY" : "DRY RUN (writes nothing)"}`);
   console.log(`[chase-seed] source: ${source} (${json.length} row(s))`);
 
-  // ── Gates 2, 3, 4: shape ─────────────────────────────────────────
+  // ── Gates 2, 3, 4, 6: shape and the blocked-contact fence ────────
   // The ORIGINAL index rides along with each accepted row. Without it the
   // gate-1 refusal below would number rows by their position in the
   // survivors list, so "row 3 is not in the directory" could point at row 5
@@ -273,8 +282,21 @@ async function main(): Promise<void> {
   const refusals: string[] = [];
   json.forEach((raw, i) => {
     const parsed = parseRow(raw, i);
-    if (parsed.ok) rows.push({ at: i + 1, row: parsed.row });
-    else refusals.push(parsed.error);
+    if (!parsed.ok) {
+      refusals.push(parsed.error);
+      return;
+    }
+    // Gate 6: a row naming a machine-account identity never reaches the
+    // directory read, let alone an insert. The refusal deliberately does
+    // NOT echo what matched (echoing it into a terminal or a pasted log is
+    // the naming the guard exists to stop); the helper names the row by its
+    // scrubbed title.
+    const contact = seedRowContactRefusal(parsed.row);
+    if (contact) {
+      refusals.push(`row ${i + 1}: ${contact}`);
+      return;
+    }
+    rows.push({ at: i + 1, row: parsed.row });
   });
 
   // ── Gate 1: BOTH addresses must already be in the site's own records ─

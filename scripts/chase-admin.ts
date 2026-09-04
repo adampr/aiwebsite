@@ -10,11 +10,11 @@
 //
 //   unblock   blocked -> open. Starts the weekday email.
 //   open      paused  -> open. Restarts the weekday email, and RE-DATES the
-//             ask to now: the only automatic pause is the identical-
-//             resubmission rule, and the submission that caused it is still
-//             there, so keeping the old opened_at would let the next run
-//             re-pause the row inside the same run and make this command
-//             silently inert.
+//             ask to now: both automatic pauses (the identical-resubmission
+//             rule, and the near-matched submission the review still holds)
+//             rest on a submission that is still there, so keeping the old
+//             opened_at would let the next run re-pause the row inside the
+//             same run and make this command silently inert.
 //   pause     open    -> paused. Stops the email; --reason required.
 //   close     -> done.      "They did it and I have seen it."
 //   decline   -> declined.  "They said no, or it is not theirs." --reason required.

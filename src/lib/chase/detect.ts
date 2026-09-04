@@ -15,7 +15,12 @@
 //                      somebody who finished weeks ago.
 //   work_submission    They were asked to SEND a package. A /work
 //                      submission row created by them, at or after the ask,
-//                      whose package identity matches detector_arg.
+//                      whose package identity matches detector_arg. Two
+//                      passes: an EXACT identity match closes on any
+//                      status, and only when that finds nothing, a
+//                      NEAR MATCH on shared identity tokens (below) closes
+//                      on a published row or pauses on one the review
+//                      still holds.
 //   work_update_child  They were asked to FIX a published card. A child row
 //                      (parent_id = detector_arg) created by them, at or
 //                      after the ask. ANY status closes it, including one
@@ -33,6 +38,26 @@
 // takes it out of the send selector and puts it in the weekly report's
 // "paused" section, where a person decides what to tell them.
 //
+// WHY work_submission GAINED A SECOND PASS. The exact identity match is a
+// string equality over packageIdentity(), and a real colleague answered a
+// real ask with a package whose file name wrapped the asked-for identity in
+// packaging words ("<identity> ... Package.zip" against a detector_arg of
+// just the identity). The panel held it, an admin published it, and the
+// exact pass kept saying no_matching_submission: she was nagged for two
+// more weekdays AFTER her card was live on the site, under copy that
+// promised the reminders would close on their own the morning after the
+// work showed up. That is the identical-resubmission failure in different
+// clothes (nagging somebody who has plainly answered), so it gets the same
+// two remedies: a CLOSE when the near-matching work is published (it is on
+// the site; the promise in the email is now true), and a PAUSE while the
+// review still holds it (XL.net has the package and the next move belongs
+// to the panel or the admin, not to the person being emailed). The pass is
+// deliberately SECOND and deliberately token-based rather than fuzzy: an
+// exact match keeps its close-on-any-status behaviour untouched, and set
+// containment over stoplisted tokens cannot be tripped by a wholly
+// unrelated package that happens to share a generic word, which the same
+// person had also submitted the same day.
+//
 // NOT read in this round: chase_tasks.detector_md_sha256. The column is
 // there for a future identity match on the SKILL.md digest (stable across a
 // re-export, unlike archive_sha256); this round matches on the two things
@@ -41,7 +66,7 @@
 
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { normalizeEmail, sameEmail } from "./config";
+import { clip, formatDay, normalizeEmail, sameEmail } from "./config";
 
 const W = schema.workSubmissions;
 
@@ -66,6 +91,11 @@ export interface SubmissionCandidate {
   archiveSha256: string | null;
   corpusFilesJson: string | null;
   parentId: string | null;
+  /** The card title the submitter typed. The near-match pass reads it as a
+   * third identity string: the incident package's ARCHIVE name buried the
+   * asked-for identity in packaging words, but its title carried it
+   * plainly, and either one alone should have been enough. */
+  title: string;
 }
 
 export interface ChaseCandidates {
@@ -94,6 +124,27 @@ export type ChaseVerdict =
 export const IDENTICAL_RESUBMISSION_REASON =
   "They sent the same package again (identical checksum to the one it was meant to replace), so nothing changed. Reminders are paused because they believe they have answered; someone needs to tell them what to change.";
 
+/** The paused_reason for a near-matched submission the review still holds.
+ * Printed in the weekly report, so it names the three facts the owner needs
+ * to check the verdict without opening a database: what they called it,
+ * what the file was called, and when it arrived. Exported for the tests. */
+export function nearMatchPauseReason(row: SubmissionCandidate): string {
+  // Clip budgets picked so the WORST case stays under pauseTask's 500-char
+  // slice (test-pinned): the closing sentence is the one that tells the
+  // operator what to do in BOTH outcomes, and a slice must never be what
+  // deletes it. Both outcomes are spelled because detection reads OPEN rows
+  // only: a paused row is never re-examined, so a later publish of this
+  // submission will NOT auto-close the task; the weekly report surfaces it
+  // and the operator rules.
+  const archive = row.archiveName
+    ? ` (archive ${clip(row.archiveName, 48)})`
+    : "";
+  return (
+    `They submitted "${clip(row.title, 60)}"${archive} on ${formatDay(row.createdAt)} and it looks like this ask under a different name; the review has it, so the next move is XL.net's, not theirs, and reminders are paused. ` +
+    `If the card publishes, close this with chase:admin close; if the review turns it away, chase:admin open resumes the reminders and re-dates the ask so the same submission cannot immediately re-pause it.`
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Pure identity helpers
  * ------------------------------------------------------------------ */
@@ -114,6 +165,120 @@ export function packageIdentity(raw: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
+
+/** Tokens that carry NO identity: the generic packaging words people wrap a
+ * package name in. "Morning" answered with "<something> Brief Package.zip"
+ * must match on the words that name the thing, and only on those; without
+ * the stoplist, every package that says "package" would share a token with
+ * every other. Version tags are here too because "v2" names a revision, not
+ * a work. Small ON PURPOSE: every word added here widens what counts as
+ * "the same thing", and a near match closes tasks. */
+export const IDENTITY_STOP_TOKENS: ReadonlySet<string> = new Set([
+  "package",
+  "skill",
+  "cowork",
+  "app",
+  "tool",
+  "final",
+  "update",
+  "updated",
+  "new",
+  "copy",
+  "file",
+  "my",
+  "the",
+  "a",
+  "an",
+  "of",
+  "for",
+  "v1",
+  "v2",
+  "v3",
+]);
+
+function tokensOf(identity: string): Set<string> {
+  const out = new Set<string>();
+  for (const tok of identity.split("-"))
+    if (tok && !IDENTITY_STOP_TOKENS.has(tok)) out.add(tok);
+  return out;
+}
+
+/** packageIdentity, split into its hyphen-separated tokens, minus the
+ * stop-token list. An EMPTY result means the string carries no identity at
+ * all ("package.zip", "My Update v2") and can never near-match anything:
+ * matching on nothing would make every archive the answer to every ask.
+ * For FILE-SHAPED strings (archive names, front-matter names,
+ * detector_arg) only; titles go through titleIdentityTokens. */
+export function identityTokens(raw: string): Set<string> {
+  return tokensOf(packageIdentity(raw));
+}
+
+/** The tokenizer for TITLES: lowercase, collapse every non-alphanumeric
+ * run to a hyphen, stoplist. Deliberately NOT packageIdentity, whose
+ * basename split and extension strip are file-name moves that mangle
+ * prose: "Ticket Notes w/ AI" would reduce to its pseudo-basename "AI"
+ * (a false match for any ask carrying that token), and
+ * "Morning brief / final" to "final", then to nothing (a false miss for
+ * the ask it plainly answers). A title has no path and no extension, so
+ * neither move belongs. */
+export function titleIdentityTokens(raw: string): Set<string> {
+  return tokensOf(collapseProse(raw));
+}
+
+/** The prose half of packageIdentity: lowercase, collapse, no basename
+ * split, no extension strip. Also the identity string the near-match
+ * evidence records for a title match. */
+function collapseProse(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function isSubsetOf(a: Set<string>, b: Set<string>): boolean {
+  for (const t of a) if (!b.has(t)) return false;
+  return true;
+}
+
+/** The near-match containment test. Both directions are allowed, but NOT
+ * symmetrically: the ask naming LESS than the package ("morning" vs
+ * "morning-brief-package", the incident direction) is always a match,
+ * while the package naming less than the ask must cover at least HALF the
+ * wanted tokens (ceil(wanted/2)). Without that floor, any candidate
+ * sharing ONE generic-ish token with a long ask would answer it: a
+ * published "Digest v2" ({digest}) would falsely close a
+ * "slack-digest-composer" ask ({slack, digest, composer}), which is a
+ * different tool entirely. With it, {morning} still answers a
+ * "morning-brief" ask (1 of 2) and {digest} does not answer that
+ * three-token ask (1 of 3). The remaining aperture is the SINGLE-TOKEN
+ * detector_arg ("morning" matches every package carrying that token),
+ * accepted as designed: the operator chose how specific the ask's
+ * identity is, and the pass is already fenced to the assignee's own
+ * rows, at or after the ask, and to published/in-review statuses. */
+function nearMatchTokens(wanted: Set<string>, s: Set<string>): boolean {
+  if (isSubsetOf(wanted, s)) return true;
+  return isSubsetOf(s, wanted) && s.size >= Math.ceil(wanted.size / 2);
+}
+
+/** The /work statuses on which a NEAR match pauses instead of closing.
+ * The full work_submissions vocabulary is WorkStatus in
+ * src/lib/work/config.ts: received | running | published | held | failed |
+ * pending_approval | superseded. These four mean "XL.net has the package
+ * and the next move is the panel's or the admin's" (waiting to start, in
+ * review, held for a person, waiting for the approval click), so emailing
+ * the submitter "please send it" every morning would nag them for work
+ * they have already handed over. The two EXCLUDED non-published statuses
+ * are excluded because continuing to chase is correct there: "failed"
+ * means the review stopped and the next move (retry) is the submitter's,
+ * and "superseded" is the rollback reservoir of a card that was replaced,
+ * which answers nothing. Exported so the test suite pins the set against
+ * the vocabulary. */
+export const NEAR_MATCH_PAUSE_STATUSES: ReadonlySet<string> = new Set([
+  "received",
+  "running",
+  "held",
+  "pending_approval",
+]);
 
 /** The `name:` of a leading YAML front-matter block. Anchored at column 0
  * exactly like extract.ts hasSkillFrontmatter, so a nested
@@ -200,12 +365,20 @@ export function matchCompletion(
   if (task.detector === "work_submission") {
     const want = packageIdentity(task.detectorArg);
     if (!want) return { kind: "none", reason: "unusable_detector_arg" };
+    // The front-matter name is parsed out of JSON per row; cached so the
+    // two passes share one parse instead of doing it twice per candidate.
+    const fmCache = new Map<SubmissionCandidate, string | null>();
+    const fmName = (row: SubmissionCandidate): string | null => {
+      if (!fmCache.has(row))
+        fmCache.set(row, skillFrontMatterName(row.corpusFilesJson));
+      return fmCache.get(row) ?? null;
+    };
     for (const row of oldestFirst(candidates.submissions)) {
       if (!byAssignee(row, task.assigneeEmail)) continue;
       if (!atOrAfter(row, openedAt)) continue;
       const byName =
         row.archiveName !== null && packageIdentity(row.archiveName) === want;
-      const skillName = skillFrontMatterName(row.corpusFilesJson);
+      const skillName = fmName(row);
       const byFrontMatter =
         skillName !== null && packageIdentity(skillName) === want;
       if (!byName && !byFrontMatter) continue;
@@ -222,6 +395,105 @@ export function matchCompletion(
           submittedAt: row.createdAt.toISOString(),
         },
       };
+    }
+
+    // SECOND PASS: the near match, only when the exact pass found nothing.
+    // Same candidates, same ownership and time-floor filters; the identity
+    // test loosens from string equality to token-set containment over THREE
+    // identity strings per row (archive name, SKILL.md front-matter name,
+    // card title). The verdict is deliberately weaker than the exact
+    // pass's: a near match closes ONLY on a published row (the work is on
+    // the site, so the email's own promise has come true) and pauses on a
+    // row the review still holds; anything else keeps chasing. An empty
+    // wanted-token set skips the pass entirely, because a detector_arg made
+    // of packaging words would near-match everything.
+    const wanted = identityTokens(task.detectorArg);
+    if (wanted.size > 0) {
+      // Every near-matching row, oldest-first, with WHICH field matched:
+      // the close evidence and the pause reason both have to say what was
+      // compared, or the operator reading them cannot check the verdict.
+      const near: {
+        row: SubmissionCandidate;
+        field: string;
+        identity: string;
+      }[] = [];
+      for (const row of oldestFirst(candidates.submissions)) {
+        if (!byAssignee(row, task.assigneeEmail)) continue;
+        if (!atOrAfter(row, openedAt)) continue;
+        // Each identity string with ITS tokenizer: file-shaped strings go
+        // through packageIdentity, the title through the prose tokenizer
+        // (see titleIdentityTokens for why they must differ).
+        const skillName = fmName(row);
+        const idents: [string, string, Set<string>][] = [
+          ...(row.archiveName !== null
+            ? [
+                [
+                  "archive_name",
+                  packageIdentity(row.archiveName),
+                  identityTokens(row.archiveName),
+                ] as [string, string, Set<string>],
+              ]
+            : []),
+          ...(skillName !== null
+            ? [
+                [
+                  "skill_front_matter_name",
+                  packageIdentity(skillName),
+                  identityTokens(skillName),
+                ] as [string, string, Set<string>],
+              ]
+            : []),
+          [
+            "title",
+            collapseProse(row.title),
+            titleIdentityTokens(row.title),
+          ] as [string, string, Set<string>],
+        ];
+        for (const [field, identity, s] of idents) {
+          if (s.size === 0) continue;
+          if (nearMatchTokens(wanted, s)) {
+            near.push({ row, field, identity });
+            break;
+          }
+        }
+      }
+      // Published outranks everything: if any near-matching row is live on
+      // the site, the oldest such row closes the task even when a younger
+      // one is still mid-review.
+      const published = near.find((n) => n.row.status === "published");
+      if (published) {
+        return {
+          kind: "close",
+          submissionId: published.row.id,
+          matchedOn: "near_match_published",
+          evidence: {
+            detector: "work_submission",
+            submissionId: published.row.id,
+            matchedOn: "near_match_published",
+            matchedField: published.field,
+            wantedIdentity: want,
+            submissionIdentity: published.identity,
+            submissionStatus: published.row.status,
+            submittedAt: published.row.createdAt.toISOString(),
+          },
+        };
+      }
+      const inReview = near.find((n) =>
+        NEAR_MATCH_PAUSE_STATUSES.has(n.row.status)
+      );
+      if (inReview) {
+        // Reminders resume only through `chase:admin open`, which RE-DATES
+        // the time floor to now (openTask's from-paused rule, built for the
+        // identical-resubmission pause), so the very submission that paused
+        // the row cannot immediately re-pause it on the next run.
+        // Cap-aware: pauseTask slices its reason to 500 chars, so the two
+        // human-entered strings are clipped here rather than trusted.
+        return {
+          kind: "pause",
+          submissionId: inReview.row.id,
+          reason: nearMatchPauseReason(inReview.row),
+        };
+      }
     }
     return { kind: "none", reason: "no_matching_submission" };
   }
@@ -288,6 +560,7 @@ const SUB_COLS = {
   archiveSha256: W.archiveSha256,
   corpusFilesJson: W.corpusFilesJson,
   parentId: W.parentId,
+  title: W.title,
 } as const;
 
 /** Everything this task could possibly be closed by. Narrowed in SQL by the

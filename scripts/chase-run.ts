@@ -88,7 +88,8 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Step 2. Close what has been done, pause the identical resubmissions.
+/** Step 2. Close what has been done, pause what must not be nagged (the
+ * identical resubmission, and the near-matched submission the review holds).
  * Returns how many rows changed, AND the ids it acted on: a dry run writes
  * nothing, so without that set the very next read would hand those same
  * tasks to the send phase and print "WOULD SEND" for people a live run
@@ -135,8 +136,11 @@ async function detectCompletions(now: Date): Promise<{
           if (ok) closed++;
         } else closed++;
       } else {
+        // The verdict's own reason says WHICH pause this is (identical
+        // resubmission, or a near-matched submission still in review), so
+        // the log quotes it rather than hardcoding one cause.
         log(
-          `  PAUSE ${t.id.slice(0, 8)} ${normalizeEmail(t.assigneeEmail)} "${clip(t.title, 60)}" (identical resubmission ${verdict.submissionId.slice(0, 8)})`
+          `  PAUSE ${t.id.slice(0, 8)} ${normalizeEmail(t.assigneeEmail)} "${clip(t.title, 60)}" (submission ${verdict.submissionId.slice(0, 8)}: ${clip(verdict.reason, 90)})`
         );
         handledIds.add(t.id);
         if (!DRY) {

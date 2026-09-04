@@ -41,13 +41,25 @@ import {
 } from "../src/lib/chase/config";
 import {
   IDENTICAL_RESUBMISSION_REASON,
+  IDENTITY_STOP_TOKENS,
+  NEAR_MATCH_PAUSE_STATUSES,
+  identityTokens,
   matchCompletion,
+  nearMatchPauseReason,
   packageIdentity,
   skillFrontMatterName,
+  titleIdentityTokens,
   type ChaseCandidates,
   type ChaseTaskFacts,
   type SubmissionCandidate,
 } from "../src/lib/chase/detect";
+import {
+  BLOCKED_CONTACT_SHA256,
+  findBlockedContacts,
+  scrubBlockedContacts,
+  seedRowContactRefusal,
+} from "../src/lib/chase/contact-policy";
+import { createHash } from "node:crypto";
 import {
   buildReportBody,
   partitionForReport,
@@ -220,6 +232,10 @@ function sub(over: Partial<SubmissionCandidate> = {}): SubmissionCandidate {
     archiveSha256: "a".repeat(64),
     corpusFilesJson: null,
     parentId: null,
+    // Deliberately unrelated to the default detector_arg, so a fixture that
+    // means to test the exact pass cannot quietly pass on a title near
+    // match instead.
+    title: "Quarterly Numbers",
     ...over,
   };
 }
@@ -507,6 +523,327 @@ section("skillFrontMatterName reads SKILL.md and nothing else", () => {
   assert.equal(skillFrontMatterName("not json"), null);
   assert.equal(skillFrontMatterName("{}"), null);
   assert.equal(skillFrontMatterName(JSON.stringify([null, 3, "x"])), null);
+});
+
+/* ------------------------------------------------------------------ *
+ * 3b. The near match (work_submission's second pass)
+ *
+ * The prod incident this pins: an ask with detector_arg "morning" was
+ * answered with an archive whose identity wrapped the asked-for word in
+ * packaging words, the panel held it, an admin published it, and the exact
+ * pass kept nagging for two more weekdays AFTER the card was live, under
+ * copy promising the reminders close on their own once the work shows up.
+ * ------------------------------------------------------------------ */
+
+section("identityTokens strips the stoplist and folds like packageIdentity", () => {
+  assert.deepEqual(
+    [...identityTokens("Morning_Brief_Package.zip")].sort(),
+    ["brief", "morning"]
+  );
+  assert.deepEqual([...identityTokens("morning")], ["morning"]);
+  // A string made ONLY of packaging words carries no identity at all.
+  assert.equal(identityTokens("package.zip").size, 0);
+  assert.equal(identityTokens("My Skill Package v2.zip").size, 0);
+  assert.equal(identityTokens("   ").size, 0);
+  // The stoplist is the documented set, not a moving target.
+  for (const t of ["package", "skill", "cowork", "update", "v2", "the"])
+    assert.ok(IDENTITY_STOP_TOKENS.has(t), `"${t}" is a stop token`);
+  assert.ok(!IDENTITY_STOP_TOKENS.has("morning"), "real words are not");
+});
+
+section("a near match on the ARCHIVE NAME closes once the row is published", () => {
+  // packageIdentity("Morning_Brief_Package.zip") is "morning-brief-package",
+  // which the exact pass compares to "morning" and rejects: the very bug.
+  const v = matchCompletion(
+    task({ detectorArg: "morning" }),
+    candidates({
+      submissions: [sub({ archiveName: "Morning_Brief_Package.zip" })],
+    })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.matchedOn, "near_match_published");
+  assert.equal(v.evidence.matchedField, "archive_name");
+  assert.equal(v.evidence.submissionStatus, "published");
+  assert.equal(v.evidence.wantedIdentity, "morning");
+  assert.equal(v.evidence.submissionIdentity, "morning-brief-package");
+});
+
+section("a near match on the TITLE alone closes too", () => {
+  // The archive name a tool generated carries no identity the ask named,
+  // but the card title the person typed does. Either alone is enough.
+  const v = matchCompletion(
+    task({ detectorArg: "morning" }),
+    candidates({
+      submissions: [
+        sub({ archiveName: "upload-final.zip", title: "Morning Brief" }),
+      ],
+    })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.matchedOn, "near_match_published");
+  assert.equal(v.evidence.matchedField, "title");
+});
+
+section("containment works in BOTH directions", () => {
+  // The ask can name more than the file ("morning-brief" vs "Morning.zip")
+  // or less than it; both are the same person answering the same ask.
+  const narrow = matchCompletion(
+    task({ detectorArg: "morning-brief" }),
+    candidates({ submissions: [sub({ archiveName: "Morning.zip" })] })
+  );
+  assert.equal(narrow.kind, "close");
+  const wide = matchCompletion(
+    task({ detectorArg: "brief" }),
+    candidates({
+      submissions: [sub({ archiveName: "Morning_Brief_Package.zip" })],
+    })
+  );
+  assert.equal(wide.kind, "close");
+});
+
+section("the candidate-subset direction has a coverage floor", () => {
+  // One shared token out of three must NOT be an answer: a published
+  // "Digest v2" is a different tool from a "slack-digest-composer" ask,
+  // however much they both digest. The floor is ceil(wanted/2).
+  const oneOfThree = matchCompletion(
+    task({ detectorArg: "slack-digest-composer" }),
+    candidates({
+      submissions: [
+        sub({ archiveName: "digest-v2.zip", title: "Digest v2" }),
+      ],
+    })
+  );
+  assert.deepEqual(oneOfThree, {
+    kind: "none",
+    reason: "no_matching_submission",
+  });
+  // One of TWO still answers: {morning} covers ceil(2/2) of
+  // "morning-brief" (the direction the containment test above pins).
+  // Two of three answers too.
+  const twoOfThree = matchCompletion(
+    task({ detectorArg: "slack-digest-composer" }),
+    candidates({ submissions: [sub({ archiveName: "Slack Digest.zip" })] })
+  );
+  assert.equal(twoOfThree.kind, "close");
+});
+
+section("titles tokenize as PROSE, never through packageIdentity", () => {
+  // packageIdentity's basename split and extension strip are file-name
+  // moves. On a title they mangle: "Ticket Notes w/ AI" would reduce to
+  // its pseudo-basename "AI" (a false close for any ask carrying that
+  // token) and "Morning brief / final" to "final", then to nothing (a
+  // false miss for the ask it plainly answers).
+  assert.deepEqual(
+    [...titleIdentityTokens("Ticket Notes w/ AI")].sort(),
+    ["ai", "notes", "ticket", "w"]
+  );
+  assert.deepEqual(
+    [...titleIdentityTokens("Morning brief / final")].sort(),
+    ["brief", "morning"]
+  );
+  // The contrast that makes the split necessary: the FILE tokenizer sees
+  // only the pseudo-basename.
+  assert.equal(identityTokens("Morning brief / final").size, 0);
+  // "Ticket Notes w/ AI" must not answer an "ai-triage" ask: {ai} is one
+  // of the title's four tokens, {ticket,notes,w,ai} is not inside
+  // {ai,triage}, and {ai,triage} is not inside the title's set.
+  const falseClose = matchCompletion(
+    task({ detectorArg: "ai-triage" }),
+    candidates({
+      submissions: [
+        sub({ archiveName: "upload-99.zip", title: "Ticket Notes w/ AI" }),
+      ],
+    })
+  );
+  assert.deepEqual(falseClose, {
+    kind: "none",
+    reason: "no_matching_submission",
+  });
+  // And "Morning brief / final" answers a "morning" ask via the title.
+  const falseMiss = matchCompletion(
+    task({ detectorArg: "morning" }),
+    candidates({
+      submissions: [
+        sub({ archiveName: "upload-99.zip", title: "Morning brief / final" }),
+      ],
+    })
+  );
+  assert.equal(falseMiss.kind, "close");
+  if (falseMiss.kind !== "close") return;
+  assert.equal(falseMiss.evidence.matchedField, "title");
+});
+
+section("the near match PAUSES while the review still holds the package", () => {
+  for (const status of [...NEAR_MATCH_PAUSE_STATUSES]) {
+    const v = matchCompletion(
+      task({ detectorArg: "morning" }),
+      candidates({
+        submissions: [
+          sub({
+            archiveName: "Morning_Brief_Package.zip",
+            title: "Morning Brief",
+            status,
+          }),
+        ],
+      })
+    );
+    assert.equal(v.kind, "pause", `status ${status} pauses the task`);
+    if (v.kind !== "pause") continue;
+    // The reason has to be actionable from the weekly report alone: what
+    // they called it, what the file was called, when it arrived, whose
+    // move it is, and how to restart the reminders.
+    assert.ok(v.reason.includes("Morning Brief"), "names the title");
+    assert.ok(v.reason.includes("Morning_Brief_Package.zip"), "the archive");
+    assert.ok(v.reason.includes("2026-08-25"), "the submitted date");
+    assert.ok(/XL\.net/.test(v.reason), "says whose move it is");
+    // BOTH outcomes, because a paused row is never re-examined by the
+    // detector: a later publish will not auto-close it, so the reason has
+    // to tell the operator the move for that case too.
+    assert.ok(/chase:admin close/.test(v.reason), "the it-published move");
+    assert.ok(/chase:admin open/.test(v.reason), "and how to restart");
+    assert.ok(v.reason.length <= 500, "fits pauseTask's 500-char slice");
+    assert.ok(!/[\u2013\u2014]/.test(v.reason), "no long dashes");
+  }
+});
+
+section("the pause reason survives the 500-char slice at WORST case", () => {
+  // pauseTask slices to 500; the closing how-to-restart sentence must never
+  // be what the slice deletes, so the composer's own clips keep the whole
+  // reason under the cap even for maximal inputs.
+  const r = nearMatchPauseReason(
+    sub({ archiveName: `${"A".repeat(200)}.zip`, title: "T".repeat(300) })
+  );
+  assert.ok(r.length <= 500, `worst case is ${r.length} chars`);
+  assert.ok(/chase:admin open/.test(r), "the restart instruction survives");
+});
+
+section("the near-match pause set matches the /work status vocabulary", () => {
+  // WorkStatus (src/lib/work/config.ts): received | running | published |
+  // held | failed | pending_approval | superseded. The pause set is exactly
+  // the four where XL.net has the package and the next move is the panel's
+  // or the admin's. "failed" keeps chasing (the next move, retry, is the
+  // submitter's) and "superseded" is a replaced card's rollback reservoir,
+  // which answers nothing.
+  assert.deepEqual(
+    [...NEAR_MATCH_PAUSE_STATUSES].sort(),
+    ["held", "pending_approval", "received", "running"]
+  );
+  for (const status of ["failed", "superseded"]) {
+    const v = matchCompletion(
+      task({ detectorArg: "morning" }),
+      candidates({
+        submissions: [sub({ archiveName: "Morning_Brief_Package.zip", status })],
+      })
+    );
+    assert.deepEqual(
+      v,
+      { kind: "none", reason: "no_matching_submission" },
+      `status ${status} keeps chasing`
+    );
+  }
+});
+
+section("an EXACT match still wins, and still closes on ANY status", () => {
+  // The second pass runs only when the first found nothing: an exact
+  // identity on a held row closes (the pre-existing contract), it does not
+  // pause.
+  const v = matchCompletion(
+    task({ detectorArg: "morning-brief-package" }),
+    candidates({
+      submissions: [
+        sub({ archiveName: "Morning_Brief_Package.zip", status: "held" }),
+      ],
+    })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.matchedOn, "archive_name");
+});
+
+section("a WHOLLY UNRELATED submission stays none (the vendor-tool case)", () => {
+  // The same person really did submit an unrelated tool the same day the
+  // incident package was in review. Sharing zero identity tokens with the
+  // ask, it must neither close nor pause the task, published or not.
+  const unrelated = sub({
+    archiveName: "vendorticketlookup.zip",
+    title: "Vendor Ticket Matcher",
+  });
+  const alone = matchCompletion(
+    task({ detectorArg: "morning" }),
+    candidates({ submissions: [unrelated] })
+  );
+  assert.deepEqual(alone, { kind: "none", reason: "no_matching_submission" });
+  // Beside the real (held) package, the verdict is the PAUSE on the real
+  // one, never a close on the unrelated published row.
+  const beside = matchCompletion(
+    task({ detectorArg: "morning" }),
+    candidates({
+      submissions: [
+        unrelated,
+        sub({
+          id: "99999999-9999-4999-8999-999999999999",
+          archiveName: "Morning_Brief_Package.zip",
+          status: "held",
+          createdAt: new Date("2026-08-26T09:00:00Z"),
+        }),
+      ],
+    })
+  );
+  assert.equal(beside.kind, "pause");
+  if (beside.kind !== "pause") return;
+  assert.equal(beside.submissionId, "99999999-9999-4999-8999-999999999999");
+});
+
+section("a stop-token-only string never near-matches anything", () => {
+  // "package.zip" tokenizes to the empty set: matching on nothing would
+  // make every archive the answer to every ask.
+  const emptyRow = matchCompletion(
+    task({ detectorArg: "morning" }),
+    candidates({
+      submissions: [sub({ archiveName: "package.zip", title: "New Update" })],
+    })
+  );
+  assert.deepEqual(emptyRow, {
+    kind: "none",
+    reason: "no_matching_submission",
+  });
+  // And a detector_arg of packaging words skips the whole second pass.
+  const emptyWant = matchCompletion(
+    task({ detectorArg: "skill-package" }),
+    candidates({ submissions: [sub({ archiveName: "Morning.zip" })] })
+  );
+  assert.deepEqual(emptyWant, {
+    kind: "none",
+    reason: "no_matching_submission",
+  });
+});
+
+section("published outranks in-review, and the OLDEST published wins", () => {
+  const held = sub({
+    id: "44444444-4444-4444-8444-444444444444",
+    archiveName: "Morning_Brief_Package.zip",
+    status: "held",
+    createdAt: new Date("2026-08-21T00:00:00Z"),
+  });
+  const pubOld = sub({
+    id: "55555555-5555-4555-8555-555555555555",
+    archiveName: "Morning Brief v2.zip",
+    createdAt: new Date("2026-08-24T00:00:00Z"),
+  });
+  const pubNew = sub({
+    id: "66666666-6666-4666-8666-666666666666",
+    archiveName: "Morning Brief v3.zip",
+    createdAt: new Date("2026-08-27T00:00:00Z"),
+  });
+  const v = matchCompletion(
+    task({ detectorArg: "morning" }),
+    candidates({ submissions: [pubNew, held, pubOld] })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.submissionId, pubOld.id, "oldest PUBLISHED, not oldest row");
 });
 
 /* ------------------------------------------------------------------ *
@@ -1167,6 +1504,322 @@ section("address helpers fold case and refuse junk", () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * 7b. The blocked-contact guard
+ *
+ * The production identities live ONLY as sha256 digests (the repo is
+ * public), so every test here INJECTS its own hash set over invented
+ * identities and never touches BLOCKED_CONTACT_SHA256's members beyond
+ * counting them. The invented pair below is fictional on purpose.
+ * ------------------------------------------------------------------ */
+
+const inj = (s: string) =>
+  createHash("sha256").update(s.toLowerCase()).digest("hex");
+const FAKE_EMAIL = "robot.persona@example.com";
+const FAKE_NAME = "Robot Persona";
+const INJECTED: ReadonlySet<string> = new Set([inj(FAKE_EMAIL), inj(FAKE_NAME)]);
+
+section("the production policy is four digests and nothing readable", () => {
+  assert.equal(BLOCKED_CONTACT_SHA256.size, 4);
+  for (const h of BLOCKED_CONTACT_SHA256)
+    assert.ok(/^[0-9a-f]{64}$/.test(h), "sha256 hex, lowercased");
+});
+
+section("a blocked requester never reaches the Reply-To HEADER either", () => {
+  // The body substitution alone is not enough: a scrubbed sentence naming
+  // the overseer over a header still routing replies to a machine-account
+  // mailbox would send "this is not mine, stop" to software after all.
+  assert.equal(
+    nudgeReplyTo(FAKE_EMAIL, "overseer@example.net", INJECTED),
+    "overseer@example.net"
+  );
+  // An ordinary requester is untouched, with or without the hash set.
+  assert.equal(
+    nudgeReplyTo("Asker@Example.com", "overseer@example.net", INJECTED),
+    "asker@example.com"
+  );
+  // No overseer passed (the pre-guard call shape) stays the plain address.
+  assert.equal(nudgeReplyTo(FAKE_EMAIL), FAKE_EMAIL);
+});
+
+section("the detector finds an email and a name bigram, case-folded", () => {
+  const text = `Ask ROBOT persona, or write to Robot.Persona@Example.com today.`;
+  const spans = findBlockedContacts(text, INJECTED);
+  assert.equal(spans.length, 2);
+  assert.deepEqual(
+    spans.map((s) => s.kind),
+    ["name", "email"]
+  );
+  assert.equal(text.slice(spans[0].start, spans[0].end), "ROBOT persona");
+  assert.equal(
+    text.slice(spans[1].start, spans[1].end),
+    "Robot.Persona@Example.com"
+  );
+  // A name closing a sentence is still found: the word class swallows the
+  // trailing period, and the trimmed bigram is hashed too.
+  const ended = findBlockedContacts("Write to Robot Persona.", INJECTED);
+  assert.equal(ended.length, 1);
+  assert.equal(
+    "Write to Robot Persona.".slice(ended[0].start, ended[0].end),
+    "Robot Persona",
+    "the punctuation stays outside the span"
+  );
+  // Clean text, and near misses, find nothing.
+  assert.equal(findBlockedContacts("Ask Doer Example.", INJECTED).length, 0);
+  assert.equal(findBlockedContacts("Robot alone", INJECTED).length, 0);
+  assert.equal(
+    findBlockedContacts("other.robot@example.com", INJECTED).length,
+    0
+  );
+});
+
+section("scrub replaces a bare mention with the requester address", () => {
+  assert.equal(
+    scrubBlockedContacts(
+      `Send it to ${FAKE_EMAIL} today.`,
+      "asker@example.com",
+      INJECTED
+    ),
+    "Send it to asker@example.com today."
+  );
+  assert.equal(
+    scrubBlockedContacts(
+      `Ask ${FAKE_NAME} for the list.`,
+      "asker@example.com",
+      INJECTED
+    ),
+    "Ask asker@example.com for the list."
+  );
+  // A mention inside an ORDINARY parenthetical keeps the shell: only the
+  // relay wrappers exist solely to name the identity.
+  assert.equal(
+    scrubBlockedContacts(
+      `The list (ask ${FAKE_NAME}) is ready.`,
+      "asker@example.com",
+      INJECTED
+    ),
+    "The list (ask asker@example.com) is ready."
+  );
+});
+
+section("a relay parenthetical goes WHOLE, not just the name inside it", () => {
+  // "(relayed by <replacement>)" would promote the replacement address to a
+  // claim nobody made, so the wrapper goes with its contents.
+  assert.equal(
+    scrubBlockedContacts(
+      `Adam (relayed by ${FAKE_NAME}) has decided to proceed.`,
+      "asker@example.com",
+      INJECTED
+    ),
+    "Adam has decided to proceed."
+  );
+  assert.equal(
+    scrubBlockedContacts(
+      `Approved (via ${FAKE_EMAIL}).`,
+      "asker@example.com",
+      INJECTED
+    ),
+    "Approved."
+  );
+  assert.equal(
+    scrubBlockedContacts(
+      `Approved (per ${FAKE_NAME}), ship it.`,
+      "asker@example.com",
+      INJECTED
+    ),
+    "Approved, ship it."
+  );
+  // Two mentions inside one wrapper collapse to ONE deletion.
+  assert.equal(
+    scrubBlockedContacts(
+      `Adam (relayed by ${FAKE_NAME}, ${FAKE_EMAIL}) agreed.`,
+      "asker@example.com",
+      INJECTED
+    ),
+    "Adam agreed."
+  );
+  // Untouched text comes back byte-identical.
+  const clean = "Nothing to see (via the portal) here.";
+  assert.equal(scrubBlockedContacts(clean, "asker@example.com", INJECTED), clean);
+});
+
+section("the seed gate refuses a poisoned row without echoing the identity", () => {
+  const row = {
+    title: "Send the morning package",
+    detail: "Please send it.",
+    assigneeEmail: "doer@example.com",
+    assigneeName: "Doer Example",
+    requesterEmail: "asker@example.com",
+  };
+  assert.equal(seedRowContactRefusal(row, INJECTED), null, "clean row passes");
+  for (const poisoned of [
+    { ...row, detail: `Please send it (relayed by ${FAKE_NAME}).` },
+    { ...row, detail: `Write to ${FAKE_EMAIL} when done.` },
+    { ...row, assigneeName: FAKE_NAME },
+    { ...row, requesterEmail: FAKE_EMAIL },
+    { ...row, title: `Ask ${FAKE_NAME} about the brief` },
+    // The optional trio is covered too: every field a reminder or the
+    // report could ever print.
+    { ...row, actionUrl: `https://ai.xl.net/work?ask=${FAKE_EMAIL}` },
+    { ...row, blockedReason: `Waiting on ${FAKE_NAME} to confirm.` },
+    { ...row, detectorArg: FAKE_EMAIL },
+  ]) {
+    const msg = seedRowContactRefusal(poisoned, INJECTED);
+    assert.ok(msg, "the poisoned row is refused");
+    if (!msg) continue;
+    assert.ok(
+      !msg.toLowerCase().includes(FAKE_NAME.toLowerCase()) &&
+        !msg.toLowerCase().includes(FAKE_EMAIL),
+      "the refusal never echoes what it matched"
+    );
+    assert.ok(/machine-account identity/.test(msg), "and says why");
+    assert.ok(/requester/.test(msg), "and who the contact must be");
+  }
+});
+
+section("composeNudge scrubs a poisoned legacy row (the backstop)", () => {
+  const mail = composeNudge({
+    // The assignee's own display name and the action URL are as
+    // human-entered as the title, and both are interpolated.
+    assigneeName: FAKE_NAME,
+    assigneeEmail: "doer@example.com",
+    requesterEmail: "asker@example.com",
+    overseerEmail: "overseer@example.net",
+    now: new Date("2026-08-31T13:00:00Z"),
+    blockedContactHashes: INJECTED,
+    tasks: [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        title: `Send the morning brief to ${FAKE_NAME}`,
+        detail: `Adam (relayed by ${FAKE_NAME}) wants it; write to ${FAKE_EMAIL}.`,
+        actionUrl: `https://ai.xl.net/work/submit?ref=${FAKE_EMAIL}`,
+        openedAt: OPENED,
+        requesterEmail: "asker@example.com",
+        detector: "work_submission",
+      },
+    ],
+  });
+  assert.ok(!mail.text.toLowerCase().includes(FAKE_NAME.toLowerCase()));
+  assert.ok(!mail.text.includes(FAKE_EMAIL));
+  assert.ok(
+    mail.text.includes("Send the morning brief to asker@example.com"),
+    "a bare mention becomes the requester"
+  );
+  assert.ok(
+    mail.text.includes("Adam wants it; write to asker@example.com."),
+    "the relay wrapper is gone whole"
+  );
+});
+
+section("a BLOCKED requester is replaced by the overseer, everywhere", () => {
+  // The requester address is the scrub's own replacement value, so an
+  // unchecked one would be pasted back into every sentence the scrub
+  // guards. When it trips the detector, the overseer stands in for that
+  // item before any other use: the overseer really can stop the emails,
+  // which is the promise every use of the address carries.
+  const mail = composeNudge({
+    assigneeName: "Doer Example",
+    assigneeEmail: "doer@example.com",
+    requesterEmail: FAKE_EMAIL,
+    overseerEmail: "overseer@example.net",
+    now: new Date("2026-08-31T13:00:00Z"),
+    blockedContactHashes: INJECTED,
+    tasks: [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        title: `Send the package to ${FAKE_NAME}`,
+        detail: "We need it for the handover.",
+        actionUrl: null,
+        openedAt: OPENED,
+        requesterEmail: FAKE_EMAIL,
+        detector: "manual",
+      },
+    ],
+  });
+  assert.ok(!mail.text.includes(FAKE_EMAIL), "the address never prints");
+  assert.ok(!mail.text.toLowerCase().includes(FAKE_NAME.toLowerCase()));
+  assert.ok(
+    mail.text.includes("Asked by overseer@example.net"),
+    "the per-item asker line names the overseer"
+  );
+  assert.ok(
+    mail.text.includes("send it to overseer@example.net directly"),
+    "so does the no-link fallback"
+  );
+  assert.ok(
+    mail.text.includes("Replying to this email reaches overseer@example.net"),
+    "and the Reply-To sentence"
+  );
+  assert.ok(
+    mail.text.includes("Send the package to overseer@example.net"),
+    "and the scrub replacement itself is the substituted address"
+  );
+});
+
+section("the weekly report scrubs every free-text string it prints", () => {
+  const body = buildReportBody({
+    now: new Date("2026-08-31T15:00:00Z"),
+    blockedContactHashes: INJECTED,
+    live: [
+      reportTask({
+        title: `Chase the ${FAKE_NAME} handover`,
+        status: "paused",
+        pausedReason: `Waiting on ${FAKE_EMAIL} to answer.`,
+      }),
+      reportTask({
+        id: "22222222-2222-4222-8222-222222222222",
+        title: "Send the report",
+        status: "blocked",
+        blockedReason: `Adam (relayed by ${FAKE_NAME}) has not ruled yet.`,
+      }),
+      // The said-done stamps are operator-typed on the admin paths, and
+      // the assignee display name is as human-entered as a title.
+      reportTask({
+        id: "44444444-4444-4444-8444-444444444444",
+        assigneeName: FAKE_NAME,
+        status: "open",
+        markedDoneAt: new Date("2026-08-29T00:00:00Z"),
+        markedDoneBy: FAKE_EMAIL,
+        markedDoneNote: `Handed to ${FAKE_NAME} last week.`,
+      }),
+      // The last-send failure detail is stored vendor text.
+      reportTask({
+        id: "55555555-5555-4555-8555-555555555555",
+        status: "open",
+      }),
+    ],
+    recentlyClosed: [
+      reportTask({
+        id: "33333333-3333-4333-8333-333333333333",
+        title: `Ping ${FAKE_NAME}`,
+        status: "done",
+        closedAt: new Date("2026-08-30T00:00:00Z"),
+        closedBy: FAKE_EMAIL,
+      }),
+    ],
+    lastSend: new Map([
+      [
+        "doer@example.com",
+        {
+          sendDate: "2026-08-28",
+          outcome: "refused",
+          detail: `vendor said no, contact ${FAKE_EMAIL}`,
+          taskCount: 1,
+        },
+      ],
+    ]),
+    nudgesEnabled: true,
+  });
+  assert.ok(!body.toLowerCase().includes(FAKE_NAME.toLowerCase()));
+  assert.ok(!body.includes(FAKE_EMAIL));
+  assert.ok(body.includes("Waiting on asker@example.com to answer."));
+  assert.ok(body.includes("Adam has not ruled yet."));
+  assert.ok(body.includes("Said done 2026-08-29 by asker@example.com"));
+  assert.ok(body.includes("Handed to asker@example.com last week."));
+  assert.ok(body.includes("vendor said no, contact asker@example.com"));
+  assert.ok(body.includes("done 2026-08-30 by asker@example.com"));
+});
+
+/* ------------------------------------------------------------------ *
  * 8. Source scrapes: the invariants types cannot hold
  * ------------------------------------------------------------------ */
 
@@ -1231,7 +1884,7 @@ section("the report job never learns to skip an empty week", () => {
   );
 });
 
-section("the seeding gates are all five still there", () => {
+section("the seeding gates are all six still there", () => {
   const s = src("scripts/chase-seed.ts");
   assert.ok(s.includes("knownDirectoryEmails"), "gate 1: the directory check");
   assert.ok(
@@ -1242,6 +1895,10 @@ section("the seeding gates are all five still there", () => {
   assert.ok(/a blocked row needs blockedReason/.test(s), "gate 3");
   assert.ok(/needs detectorArg/.test(s), "gate 4");
   assert.ok(/needs actionUrl \(gate 5\)/.test(s), "gate 5: a link to act on");
+  assert.ok(
+    s.includes("seedRowContactRefusal"),
+    "gate 6: no row may name a machine-account identity as a contact"
+  );
   assert.ok(
     s.includes("db.transaction"),
     "the --apply loop is ONE transaction: a half-written batch emails people about a list the operator was told was refused"
@@ -1279,6 +1936,21 @@ section("the admin console guards an attribution unblock", () => {
   );
   for (const op of ["unblock", "open", "pause", "close", "decline", "cancel"])
     assert.ok(s.includes(`"${op}"`), `the ${op} op exists`);
+});
+
+section("both outbound builders run the blocked-contact scrub", () => {
+  // The seed gate is the fence; these two calls are the backstop for a row
+  // seeded before the gate existed. Losing either one silently reopens the
+  // incident (a machine-account identity mailed as a contact), so their
+  // presence is pinned the way the claim-before-send order is.
+  assert.ok(
+    src("src/lib/chase/notify.ts").includes("scrubBlockedContacts("),
+    "composeNudge scrubs title and detail"
+  );
+  assert.ok(
+    src("src/lib/chase/report.ts").includes("scrubBlockedContacts("),
+    "buildReportBody scrubs titles and reasons"
+  );
 });
 
 section("this round ships NO web surface: no route, no page, no reply lane", () => {
@@ -1348,10 +2020,11 @@ section("the report's claim is released unless the send was ACCEPTED", () => {
 });
 
 section("reopening a PAUSED row really restarts the reminders", () => {
-  // The only automatic pause is the identical-resubmission rule, and the
-  // submission that caused it is still there. Preserving opened_at would let
-  // the next run re-pause the row inside the same run, making chase:admin
-  // open silently inert and the pause a one-way trip.
+  // Both automatic pauses (identical resubmission, and a near-matched
+  // submission the review still holds) rest on a submission that is still
+  // there. Preserving opened_at would let the next run re-pause the row
+  // inside the same run, making chase:admin open silently inert and the
+  // pause a one-way trip.
   const d = src("src/lib/chase/db.ts");
   const open = d.indexOf("export async function openTask(");
   assert.ok(open > 0);
