@@ -1,10 +1,11 @@
 // GET /api/xlant/update/{latest.yml | XLAnt-Setup-x.y.z.exe | *.blockmap} —
 // the electron-updater generic feed (ARCHITECTURE.md §5.22). Moved here from
 // roleplay.xl.net on 2026-09-04; desktop 0.2.1 is re-signed and re-published
-// with `provider: generic, url: https://ai.xl.net/api/xlant/update`. roleplay
-// keeps its copy through phase 1 of the cutover, because a 0.2.0 desktop
-// resolves this feed from its OWN bundled default and one is still in service
-// — see §5.22 and the xlant repo's docs/SETUP.md "Cutover (2026-09-04)".
+// with `provider: generic, url: https://ai.xl.net/api/xlant/update`.
+// roleplay.xl.net has carried nothing of XLAnt since 2026-09-04, so this is
+// the only feed any desktop reaches and this VM's XLANT_ARTIFACTS_DIR is the
+// only published copy — see §5.22 and the xlant repo's docs/SETUP.md
+// "Cutover (2026-09-04)".
 //
 // Gated by the per-user DEVICE token, not by a session: the updater is a
 // background process inside the tray app and cannot carry a browser cookie.

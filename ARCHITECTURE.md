@@ -15,7 +15,36 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-09-04 §5.22 XLANT DEVICE LANE MOVES HERE (PHASE 1 OF A TWO-PHASE
+Last verified against code: 2026-09-04 §5.22 XLANT ORIGIN MOVE PHASE 2 DONE (docs and comments
+only — ARCHITECTURE.md §5.22 and the §10 env rows, `.env.example`'s XLAnt block,
+`src/lib/xlant.ts`'s header, both `src/app/api/xlant/*` route headers,
+`deploy/nginx.d/xlant-device.conf`'s comments; NO code, NO schema, NO migration, NO env, NO route
+change, and `npm run test:xlant`'s 32 legs still pass untouched): the two-phase cutover bd39d1b
+left PENDING is FINISHED, and ai.xl.net is now XLAnt's ONLY public origin for both lanes. THE
+NAMED TRIGGER FIRED, AND IT IS MEASURED: the one fielded 0.2.0 desktop (Adam Radulovic's PC)
+fetched 0.2.1 through roleplay's feed at 15:24Z on 2026-09-04 and has talked only to ai.xl.net
+since 15:28Z, and roleplay saw no XLAnt device traffic after 15:24:33Z — so the transitional
+bridge phase 1 kept for exactly that PC had no user left to serve. WHAT WAS RETIRED, all of it
+today: roleplay's master fast-forwarded to branch `xlant-retire` (`7c01af4`) and deployed, so
+roleplay.xl.net now serves NOTHING of XLAnt — no relay passthrough, no updater feed; NSG rule
+`AllowXLAntRelayFromRoleplay` (priority 221, `157.55.165.83/32` → TCP 8403) is DELETED, leaving
+`AllowXLAntRelayFromAiWebsite` (priority 222, `52.237.160.75/32`, this host) as the ONLY rule
+opening the relay to a web host (MyCoach's priority 220 on :8402 is a different service and was
+not touched); the three `XLANT_*` lines are gone from roleplay's `.env`, and
+`/opt/xlant-artifacts` is removed on that VM. The shared secret is therefore shared with the RELAY
+ALONE now — roleplay's copy was deleted and THE VALUE WAS NOT ROTATED, so this host's `.env` and
+the relay's `/etc/xlant.env` still hold what they held; rotating it remains a two-file change, not
+a three-file one. Publishing returns to THIS host only: `/opt/xlant-artifacts` here is the only
+published copy, inventory as of 2026-09-04 `XLAnt-Setup-0.2.0.exe` + `.blockmap`,
+`XLAnt-Setup-0.2.1.exe` + `.blockmap`, and a `latest.yml` pointing at 0.2.1. The 0.2.0 pair STAYS:
+electron-updater asks the NEW feed base for the OLD build's blockmap to compute a differential
+update and degrades silently to a full download without it (and this feed still serves whole files
+only — no `Accept-Ranges`, `Range` ignored — so the full download is the only path today
+regardless, which is parity with what roleplay's identical route did, not a regression). Nothing
+about the routes, the allowlist, the body caps, the timeouts or the arming gate changed; what
+changed is that every sentence this doc wrote as "until phase 2" or "the transitional bridge" is
+now a record of something that has happened.
+Previous: 2026-09-04 §5.22 XLANT DEVICE LANE MOVES HERE (PHASE 1 OF A TWO-PHASE
 CUTOVER) — new `src/app/api/xlant/relay/[[...path]]/route.ts` and
 `src/app/api/xlant/update/[[...path]]/route.ts`, new exports in `src/lib/xlant.ts`, new host nginx
 drop-in `deploy/nginx.d/xlant-device.conf`, pins in `scripts/xlant-tests.ts` (`npm run test:xlant`):
@@ -10935,47 +10964,55 @@ and re-published with the updater feed pinned to
 `https://ai.xl.net/api/xlant/update`, its relay base pinned to the matching
 origin, and a startup step that rewrites a persisted roleplay origin.
 
-**THE CUTOVER IS TWO-PHASE, AND PHASE 2 IS PENDING.** A **0.2.0** build
-resolves its update feed from its OWN bundled default, which is roleplay — a
-new origin cannot be pushed to a desktop that has not updated yet. One 0.2.0
-desktop is in service (Adam's PC; measured `hello` + `latest.yml` against
-roleplay.xl.net at 14:01Z and 14:16Z on 2026-09-04), so roleplay cannot be
-switched off underneath it.
+**THE CUTOVER IS DONE — BOTH PHASES, 2026-09-04.** It was staged in two because
+a **0.2.0** build resolves its update feed from its OWN bundled default, which
+was roleplay: a new origin cannot be pushed to a desktop that has not updated
+yet, and one 0.2.0 desktop was in service (Adam Radulovic's PC), so roleplay
+could not be switched off underneath it.
 
-- **Phase 1 — this commit, today.** ai.xl.net serves the device lane; the
-  relay's public base URL switches to ai.xl.net; installer 0.2.1 is published
-  to **both** hosts' `/opt/xlant-artifacts`. roleplay **keeps** its copies of
-  both routes, its `XLANT_*` env and NSG rule 221 (`157.55.165.83/32`) as the
-  transitional bridge the 0.2.0 desktop keeps using until it updates.
-- **Phase 2 — pending.** Trigger: that desktop's first `hello` arriving via
-  ai.xl.net, visible in this VM's `/var/log/nginx/aiwebsite.access.log`. Then
-  roleplay's branch `xlant-retire` (`7c01af4`) deploys, NSG rule 221 is
-  deleted, roleplay's `XLANT_*` env lines and its artifacts go, and publishing
-  returns to ai.xl.net only.
+- **Phase 1 (commit `bd39d1b`).** ai.xl.net began serving the device lane; the
+  relay's public base URL switched to ai.xl.net; installer 0.2.1 was published
+  to both hosts' `/opt/xlant-artifacts`, and roleplay kept its copies of both
+  routes, its `XLANT_*` env and NSG rule 221 as the bridge for that one PC.
+- **Phase 2 — DONE, later the same day.** The named trigger fired, and it is
+  MEASURED: that desktop fetched 0.2.1 through roleplay's feed at **15:24Z** on
+  2026-09-04 and has talked **only to ai.xl.net since 15:28Z**, and roleplay
+  saw **no XLAnt device traffic after 15:24:33Z**. Then roleplay's master was
+  fast-forwarded to branch `xlant-retire` (`7c01af4`) and deployed, so
+  **roleplay.xl.net serves nothing of XLAnt** — neither route, no feed; NSG
+  rule `AllowXLAntRelayFromRoleplay` (221) was DELETED; the three `XLANT_*`
+  lines were removed from roleplay's `.env` and `/opt/xlant-artifacts` was
+  removed on that VM; and publishing returns to this host alone.
+
+**ai.xl.net is now XLAnt's ONLY public origin** — the human surfaces and the
+device lane alike. Nothing outside this host and the internal relay VM carries
+any part of the product.
 
 The **runbook is the xlant repo's `docs/SETUP.md`, section "Cutover
 (2026-09-04)"** — follow it there rather than a copy here, which would drift.
 
-**The relay and the artifacts during phase 1.**
+**The relay and the artifacts.**
 
-- **The relay** (`xlant-relay`, `135.232.204.158:8403`) opens TCP 8403 with one
-  NSG /32 rule per host: `AllowXLAntRelayFromAiWebsite` (priority 222,
-  `52.237.160.75/32`, this host) and — until phase 2 deletes it —
-  `AllowXLAntRelayFromRoleplay` (priority 221, `157.55.165.83/32`,
-  xl-roleplay-web). Every request still carries `X-XLAnt-Proxy-Secret`
+- **The relay** (`xlant-relay`, `135.232.204.158:8403`) opens TCP 8403 to ONE
+  web host: `AllowXLAntRelayFromAiWebsite` (priority 222, `52.237.160.75/32`,
+  this host) is now the only NSG rule that reaches it, phase 2 having deleted
+  `AllowXLAntRelayFromRoleplay` (221, `157.55.165.83/32`, xl-roleplay-web).
+  (MyCoach's priority 220 rule on :8402 is a different service on the same NSG
+  and was not touched.) Every request still carries `X-XLAnt-Proxy-Secret`
   regardless of source: the NSG narrows the blast radius, the header is the
   credential. Verified answering 200 from this VM, 2026-09-04.
 - **The artifacts** are published by the xlant repo's own publish step (its
   `docs/SETUP.md` §4), which writes each file as `<name>.part` and renames it —
   exe + blockmap first, `latest.yml` last, so a client reading the yml always
-  finds the exe already there. During phase 1 it writes to BOTH VMs; at phase 2
-  it returns to this one. Either way `latestInstaller()` and
-  `/api/xlant/update/*` read **this** host's `/opt/xlant-artifacts` and never
-  proxy to roleplay.
+  finds the exe already there. Since phase 2 it writes to THIS VM only, and
+  `/opt/xlant-artifacts` here is the only published copy that exists anywhere;
+  `latestInstaller()` and `/api/xlant/update/*` read it directly and have never
+  proxied to another host.
 
-**Artifacts inventory (2026-09-04).** `/opt/xlant-artifacts` on this VM held
-`XLAnt-Setup-0.2.0.exe` + `.blockmap` + `latest.yml`; **0.2.1** (exe, blockmap
-and a rewritten `latest.yml`) is published the same day. **Keep the previous
+**Artifacts inventory (2026-09-04) — and this is the only copy.**
+`/opt/xlant-artifacts` on this VM holds `XLAnt-Setup-0.2.0.exe` + `.blockmap`,
+`XLAnt-Setup-0.2.1.exe` + `.blockmap`, and a `latest.yml` pointing at **0.2.1**
+(before today the directory held the 0.2.0 trio alone). **Keep the previous
 release's `.exe` and `.blockmap`**: electron-updater asks the NEW feed base for
 the OLD build's blockmap to compute a differential update, and with it missing
 the update degrades silently to a full download — a regression nobody sees
@@ -11398,8 +11435,9 @@ previous config and aborting the deploy if this file is wrong.
 
 **Env (§10).** `XLANT_RELAY_URL` (`http://135.232.204.158:8403` — the
 `xlant-relay` on the internal VM), `XLANT_PROXY_SHARED_SECRET` (≥16 chars; the
-same value must sit in the relay's `/etc/xlant.env`, and until phase 2 in
-roleplay's `.env` too — all must agree or the relay 401s),
+same value must sit in the relay's `/etc/xlant.env`, which since phase 2 is the
+only OTHER copy — roleplay's was deleted on 2026-09-04 and the value was NOT
+rotated — and the two must agree or the relay 401s),
 `XLANT_ARTIFACTS_DIR` (`/opt/xlant-artifacts`, a real local directory on this
 VM). All three or none, and the same three now arm FOUR route handlers rather
 than two. **The staff PAGE does not 503 on a half-configured host** — it
@@ -12986,9 +13024,9 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | Roadmap | `ROADMAP_PANEL_RUNS_DAILY_CAP` | client panel runs/day, default 60 |
 | Roadmap | `APOLLO_API_KEY` | Apollo.io people-search key for the step-2 directory import (host REST call; module outreach stays disabled). Missing = import answers "not set up", never a boot failure |
 | Roadmap | `APOLLO_DAILY_CALL_CAP` | Apollo page fetches/day across all companies, default 100 |
-| XLAnt | `XLANT_RELAY_URL` | §5.22 `xlant-relay` base URL on the internal VM (`http://135.232.204.158:8403`). One NSG /32 rule per host opens TCP 8403: `AllowXLAntRelayFromAiWebsite` (pri 222, 52.237.160.75/32, this host) and — until the two-phase cutover's PHASE 2 deletes it — `AllowXLAntRelayFromRoleplay` (pri 221, 157.55.165.83/32). Trailing slashes stripped. Read by the staff mint AND by the `/api/xlant/relay/*` passthrough |
-| XLAnt | `XLANT_PROXY_SHARED_SECRET` | §5.22 value of the `X-XLAnt-Proxy-Secret` header, required on every relay request whatever the source IP; **≥16 chars** or the config reads as absent. One value in the relay's `/etc/xlant.env` and this host's `.env`, plus roleplay's `.env` until phase 2 retires it |
-| XLAnt | `XLANT_ARTIFACTS_DIR` | §5.22 LOCAL directory of published `XLAnt-Setup-<version>.exe` installers plus `latest.yml` and `*.blockmap` (`/opt/xlant-artifacts`), OUTSIDE the web root. The xlant publish step writes `.part` then renames, to BOTH VMs during phase 1 of the cutover and to this one alone after phase 2; this host always reads its OWN copy and never proxies. Keep the previous release's exe + blockmap (electron-updater needs the OLD blockmap for a differential update). Read by the staff download AND by the `/api/xlant/update/*` feed. **All three or none**: any missing ⇒ the four XLAnt route handlers answer 503 (the arming gate); the staff page still renders, without the installer offer |
+| XLAnt | `XLANT_RELAY_URL` | §5.22 `xlant-relay` base URL on the internal VM (`http://135.232.204.158:8403`). ONE NSG /32 rule opens TCP 8403 to a web host: `AllowXLAntRelayFromAiWebsite` (pri 222, 52.237.160.75/32, this host). The cutover's PHASE 2 deleted `AllowXLAntRelayFromRoleplay` (pri 221, 157.55.165.83/32) on 2026-09-04, and MyCoach's pri 220 on :8402 is a different service. Trailing slashes stripped. Read by the staff mint AND by the `/api/xlant/relay/*` passthrough |
+| XLAnt | `XLANT_PROXY_SHARED_SECRET` | §5.22 value of the `X-XLAnt-Proxy-Secret` header, required on every relay request whatever the source IP; **≥16 chars** or the config reads as absent. One value, in the relay's `/etc/xlant.env` and this host's `.env` and nowhere else — phase 2 deleted roleplay's copy on 2026-09-04 WITHOUT rotating the value |
+| XLAnt | `XLANT_ARTIFACTS_DIR` | §5.22 LOCAL directory of published `XLAnt-Setup-<version>.exe` installers plus `latest.yml` and `*.blockmap` (`/opt/xlant-artifacts`), OUTSIDE the web root. The xlant publish step writes `.part` then renames, to THIS VM alone since phase 2 of the cutover (2026-09-04), so this is the only published copy anywhere; this host always reads it directly and never proxies. Inventory as of 2026-09-04: 0.2.0 exe + blockmap, 0.2.1 exe + blockmap, `latest.yml` → 0.2.1. Keep the previous release's exe + blockmap (electron-updater needs the OLD blockmap for a differential update). Read by the staff download AND by the `/api/xlant/update/*` feed. **All three or none**: any missing ⇒ the four XLAnt route handlers answer 503 (the arming gate); the staff page still renders, without the installer offer |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
 | | `TRON_KNOWLEDGE_FILE` | **legacy, no longer read** — the knowledge path is `persona.knowledgeFile` in site.config.ts |
 | Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |

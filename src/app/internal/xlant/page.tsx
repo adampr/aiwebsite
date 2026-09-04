@@ -143,7 +143,7 @@ export default async function XlantPage() {
           <strong>once</strong>, right here, so copy it before you leave the
           page. Generating a new one replaces whatever XLAnt token you already
           had, wherever it came from — including one you generated on the old
-          roleplay.xl.net downloads page, which is being retired today — and the
+          roleplay.xl.net downloads page, now retired — and the
           PC holding it is signed out. That is exactly what you want when you
           move to a new machine, and exactly what you do not want by accident.
         </p>

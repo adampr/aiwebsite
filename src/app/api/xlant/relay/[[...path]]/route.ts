@@ -1,11 +1,10 @@
 // GET|POST /api/xlant/relay/* — the DEVICE passthrough to the XLAnt relay on
 // the internal VM (ARCHITECTURE.md §5.22). Moved here from roleplay.xl.net on
 // 2026-09-04 with desktop 0.2.1, which is re-signed and re-published with its
-// relay base and updater feed pinned to https://ai.xl.net. The cutover is
-// TWO-PHASE: roleplay keeps its copy of this route as a transitional bridge
-// for the one 0.2.0 desktop still in service (a 0.2.0 build resolves its feed
-// from its own bundled default), and phase 2 retires it — see §5.22 and the
-// xlant repo's docs/SETUP.md "Cutover (2026-09-04)".
+// relay base and updater feed pinned to https://ai.xl.net. roleplay.xl.net has
+// carried nothing of XLAnt since 2026-09-04 — its copy of this route went with
+// the rest of the retirement that day, and this host is the only public origin
+// — see §5.22 and the xlant repo's docs/SETUP.md "Cutover (2026-09-04)".
 //
 // It adds the shared proxy secret and `X-XLAnt-Via: proxy` (the relay hard-
 // rejects its INTERNAL routes when they carry that header, so a request that

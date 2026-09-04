@@ -22,32 +22,26 @@
 //     (`/api/xlant/update/*`, gated by verifyDeviceToken() and narrowed to
 //     release artifacts by isXlantUpdateArtifact()).
 //
-// THE CUTOVER IS TWO-PHASE, AND PHASE 2 HAS NOT HAPPENED. The previous note
-// here said not to move the device lane without re-signing and re-publishing
-// the desktop, because the shipped installer pins its feed. That is paid:
-// desktop 0.2.1 is re-signed with the feed pinned to
-// https://ai.xl.net/api/xlant/update and rewrites a persisted roleplay origin
-// at startup. But a 0.2.0 build resolves its feed from its OWN bundled
-// default, and one 0.2.0 desktop is in service (measured: hello + latest.yml
-// against roleplay.xl.net at 14:01Z and 14:16Z on 2026-09-04), so roleplay
-// cannot be switched off underneath it.
+// THE MOVE IS COMPLETE. The previous note here said not to move the device
+// lane without re-signing and re-publishing the desktop, because the shipped
+// installer pins its feed. That was paid: desktop 0.2.1 is re-signed with the
+// feed pinned to https://ai.xl.net/api/xlant/update and rewrites a persisted
+// roleplay origin at startup. The cutover ran in two phases on 2026-09-04
+// because a 0.2.0 build resolves its feed from its OWN bundled default and one
+// 0.2.0 desktop was still in service, so roleplay held a bridge until that PC
+// updated. It updated (measured: it fetched 0.2.1 through roleplay's feed at
+// 15:24Z, has talked only to ai.xl.net since 15:28Z, and roleplay saw no XLAnt
+// device traffic after 15:24:33Z), and the bridge came down the same day:
+// roleplay.xl.net has carried nothing of XLAnt since 2026-09-04 — branch
+// `xlant-retire` (7c01af4) is deployed there, its XLANT_* env lines are gone
+// and its /opt/xlant-artifacts is removed.
 //
-//   · PHASE 1 (this commit): this host serves the device lane, the relay's
-//     public base URL points here, and 0.2.1 is published to BOTH hosts'
-//     /opt/xlant-artifacts. roleplay KEEPS its copies of both routes, its
-//     XLANT_* env and NSG rule 221 (157.55.165.83/32) as the transitional
-//     bridge that the 0.2.0 desktop keeps using until it updates.
-//   · PHASE 2 (PENDING; trigger: that desktop's first hello arriving via
-//     ai.xl.net in this VM's /var/log/nginx/aiwebsite.access.log): roleplay's
-//     branch `xlant-retire` (7c01af4) deploys, NSG rule 221 is deleted,
-//     roleplay's XLANT_* env lines and its artifacts go, and publishing
-//     returns to ai.xl.net only.
-//
-// The xlant repo's docs/SETUP.md "Cutover (2026-09-04)" section is the
-// runbook; do not restate its steps here. Until phase 2 lands, TWO NSG /32
-// rules still open TCP 8403 (222 for this host, 221 for roleplay) and the
-// installers exist on both VMs — latestInstaller() and the update feed read
-// THIS host's copy either way, never roleplay's.
+// So ONE NSG /32 rule now opens TCP 8403 to a web host (222, this host; 221
+// for roleplay was deleted), and /opt/xlant-artifacts on this VM is the ONLY
+// published copy of the installers — latestInstaller() and the update feed
+// read it directly and have never proxied anywhere. The xlant repo's
+// docs/SETUP.md "Cutover (2026-09-04)" section is the runbook; do not restate
+// its steps here.
 //
 // ARMING GATE. All three env vars must be present (XLANT_RELAY_URL,
 // XLANT_PROXY_SHARED_SECRET ≥16 chars, XLANT_ARTIFACTS_DIR) or xlantConfig()
