@@ -16,7 +16,6 @@
     "XL API Gateway",
     "SpamSlayer",
     "Beacon",
-    "Morning Brief",
     "Autotask CI Intake"
   ],
   "facetLabels": [
@@ -65,9 +64,6 @@
     "Match Before Build",
     "Claude Talks, Code Decides",
     "Writes Wait for the Owner",
-    "The Day, Drawn First",
-    "The List That Subtracts",
-    "No New Access",
     "A Column Is Not a Field",
     "Parents Already on File",
     "Where a Person Comes In"
@@ -88,7 +84,6 @@
     "api-gateway",
     "spamslayer",
     "beacon",
-    "morning-brief",
     "autotask-ci-intake"
   ],
   "bays": [
@@ -187,11 +182,6 @@
     {
       "id": "beacon",
       "title": "Beacon",
-      "bay": "05"
-    },
-    {
-      "id": "morning-brief",
-      "title": "Morning Brief",
       "bay": "05"
     },
     {

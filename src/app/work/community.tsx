@@ -30,11 +30,11 @@
 // published rows, because the static classes below a placed card were
 // flipped against the map, and had the run followed the rows instead, an
 // unpublished placement would have moved this seam too (refuter finding).
-// Today's derivation: 17 statics + 4 placements (#team-mycoach at
+// Today's derivation: 16 statics + 4 placements (#team-mycoach at
 // position 10, closing bay 02; bay 03's three placed cards at 13-15,
 // after #onboarding-toolkit) put the last static, #autotask-ci-intake,
-// at position 21, ODD, lightline, so the run starts at 22, EVEN, plain.
-// With a placed row unpublished the run still starts at 22 and only the
+// at position 20, EVEN, plain, so the run starts at 21, ODD, lightline.
+// With a placed row unpublished the run still starts at 21 and only the
 // seam out of that card's own bay double-stripes, until the map entry is
 // removed; both placed bays now hold ODD counts, so with every row
 // absent TWO seams double-stripe (bay 02's exit and bay 03's exit),
@@ -59,7 +59,10 @@
 // shifted by two so their classes held); later that day the XLing card
 // became bay 03's third placement, moving the last static to 21 (odd)
 // and the run to 22 (plain), with bays 04-05's six statics flipped back
-// to the classes 6e45b44 left them with.
+// to the classes 6e45b44 left them with; later still (2026-09-04) the
+// #morning-brief exhibit retired (one tool, one card: its team card had
+// published), the last static fell to 20 (even) and the run to 21
+// (lightline), with #autotask-ci-intake alone flipping.
 // The offset lives here, not in work-card.tsx, because the company page
 // (§5.18 /roadmap/work) opens its own alternation with no statics above it
 // and must keep starting plain.
