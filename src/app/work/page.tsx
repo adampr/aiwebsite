@@ -82,10 +82,13 @@ export default async function WorkPage() {
   // (§5.16: the hand-authored exhibits never depend on the DB). Since the
   // placement round that page is not quite the pre-placement one: the
   // statics after a placed card's bay carry classes flipped for it, so with
-  // its row absent the seam inside that bay (#onboarding-toolkit ->
-  // #lakehouse) double-stripes until the map entry in placements.ts is
-  // removed. Every OTHER seam, the "From the Team" one included, holds,
-  // because sequencePositions() counts the map, not the rows.
+  // every placed row absent the seam out of each ODD-count bay
+  // double-stripes (today both placed bays are odd, one card in 02 and
+  // three in 03, so #your-ai-roadmap -> #qbr-machine AND
+  // #onboarding-toolkit -> #lakehouse) until the map entries in
+  // placements.ts are removed. Every OTHER seam, the "From the Team" one
+  // included, holds, because sequencePositions() counts the map, not the
+  // rows.
   let team: PublishedCard[] = [];
   try {
     // INTERNAL_SCOPE (§5.18): the public page renders ONLY the staff lane;
@@ -1092,10 +1095,11 @@ export default async function WorkPage() {
             human-in-the-loop · audit everything
           </p>
         </section>
-        {/* Placed team cards (placements.ts): today, Client Site Rescue
-            Mirror at global position 12, which is why the six static
-            exhibits after it (#lakehouse .. #autotask-ci-intake) carry the
-            OPPOSITE hard-coded stripe class to the one 6e45b44 (the
+        {/* Placed team cards (placements.ts): today bay 03 holds THREE
+            placed cards at global positions 13-15 (four placements in all,
+            with #team-mycoach at 10), so the six static exhibits after
+            this slot (#lakehouse .. #autotask-ci-intake, at 16-21) are
+            back on the SAME hard-coded stripe class 6e45b44 (the
             #follow-up-emails conversion) left them with. */}
         <PlacedCards bay="03" placed={placed} positions={positions} />
       </section>
@@ -1111,7 +1115,7 @@ export default async function WorkPage() {
         </div>
 
         {/* 12. XL Lakehouse */}
-        <section id="lakehouse" className="panel panel--lightline rise">
+        <section id="lakehouse" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> In production
@@ -1178,7 +1182,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 13. XL API Gateway */}
-        <section id="api-gateway" className="panel rise">
+        <section id="api-gateway" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
               <span className="dot" /> In development
@@ -1261,7 +1265,7 @@ export default async function WorkPage() {
         </div>
 
         {/* 14. SpamSlayer */}
-        <section id="spamslayer" className="panel panel--lightline rise">
+        <section id="spamslayer" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · internal
@@ -1331,7 +1335,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 16. Beacon */}
-        <section id="beacon" className="panel rise">
+        <section id="beacon" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
               <span className="dot" /> Built · final setup
@@ -1430,7 +1434,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 17. Morning Brief */}
-        <section id="morning-brief" className="panel panel--lightline rise">
+        <section id="morning-brief" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · internal
@@ -1505,7 +1509,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 18. Autotask CI Intake */}
-        <section id="autotask-ci-intake" className="panel rise">
+        <section id="autotask-ci-intake" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · internal

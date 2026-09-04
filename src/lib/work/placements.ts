@@ -4,7 +4,8 @@
 // static bays, after that bay's hand-authored exhibits. Seeded 2026-08-29
 // with "Client Site Rescue Mirror" into "03 · Client Delivery"; on
 // 2026-09-04 (owner directive) "MyCoach" joined "02 · What It Runs" and
-// "XLAnt" joined "03 · Client Delivery".
+// "XLAnt" joined "03 · Client Delivery"; later the same day (owner
+// directive) "XLing" became bay 03's third placed card.
 //
 // WHY THIS IS A CODE MAP AND NOT A DB COLUMN. The static exhibits in
 // src/app/work/page.tsx carry HARD-CODED stripe classes (`panel rise` at an
@@ -43,6 +44,7 @@ export const TEAM_CARD_PLACEMENTS: Readonly<Record<string, string>> =
     "team-client-site-rescue-mirror": "03",
     "team-mycoach": "02",
     "team-xlant": "03",
+    "team-xling": "03",
   });
 
 export interface PlacementSplit {

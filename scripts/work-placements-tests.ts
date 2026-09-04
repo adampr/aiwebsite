@@ -9,8 +9,8 @@
 // slot follows its bay's last static and precedes the next bay's first,
 // CommunitySection last), and then walked for strict lightline/plain
 // alternation from #brain in three DB states: the placed row published, the
-// placed row absent (exactly one seam, inside the bay it left), and DB down
-// or empty. Run: npm run test:placements (tsx, no DB).
+// placed row absent (one seam per odd-count bay, inside the bay it left;
+// today two), and DB down or empty. Run: npm run test:placements (tsx, no DB).
 
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
@@ -58,10 +58,11 @@ const test = (name: string, fn: () => void) => {
 
 // ---------------------------------------------------------------- splitter
 
-test("seeded placements: Rescue Mirror + XLAnt -> bay 03, MyCoach -> bay 02", () => {
+test("seeded placements: Rescue Mirror + XLAnt + XLing -> bay 03, MyCoach -> bay 02", () => {
   assert.strictEqual(TEAM_CARD_PLACEMENTS["team-client-site-rescue-mirror"], "03");
   assert.strictEqual(TEAM_CARD_PLACEMENTS["team-mycoach"], "02");
   assert.strictEqual(TEAM_CARD_PLACEMENTS["team-xlant"], "03");
+  assert.strictEqual(TEAM_CARD_PLACEMENTS["team-xling"], "03");
   assert.ok(BAYS.includes("02"), "bay 02 exists in static-titles.json");
   assert.ok(BAYS.includes("03"), "bay 03 exists in static-titles.json");
 });
@@ -109,16 +110,17 @@ test("positions: counted from the MAP (known bays only), never from rows", () =>
   const { placedStart, runFirst } = sequencePositions(EXHIBITS, BAYS);
   const upTo03 = countIn("01") + countIn("02") + countIn("03");
   // bay 03's start counts the ONE bay-02 map entry ahead of it; bay 04's
-  // counts all three placements (one in 02, two in 03).
+  // counts all four placements (one in 02, three in 03).
   assert.strictEqual(placedStart.get("03"), upTo03 + 1 + 1);
-  assert.strictEqual(placedStart.get("04"), upTo03 + 3 + countIn("04") + 1);
-  assert.strictEqual(runFirst, EXHIBITS.length + 3 + 1);
+  assert.strictEqual(placedStart.get("04"), upTo03 + 4 + countIn("04") + 1);
+  assert.strictEqual(runFirst, EXHIBITS.length + 4 + 1);
   assert.deepStrictEqual([...placedStart.keys()], BAYS);
   // Today's numbers, stated so a change to either side is a visible edit.
   assert.strictEqual(EXHIBITS.length, 17);
   assert.strictEqual(placedStart.get("02"), 10);
   assert.strictEqual(placedStart.get("03"), 13);
-  assert.strictEqual(runFirst, 21);
+  assert.strictEqual(placedStart.get("04"), 18);
+  assert.strictEqual(runFirst, 22);
 });
 
 test("positions: an entry naming an unknown bay counts zero, matching its fallback to the run", () => {
@@ -223,27 +225,35 @@ test("parity walk, published: statics + placed card + run alternate strictly fro
   assert.strictEqual(at + 1, 13, "bay 03's placed list starts at 13");
   assert.strictEqual(seq[at - 1].id, "onboarding-toolkit");
   assert.strictEqual(seq[at + 1].id, "team-xlant");
-  assert.strictEqual(seq[at + 2].id, "lakehouse");
-  assert.strictEqual(seq[20].id, "r1");
-  assert.strictEqual(seq[20].cls, LIGHT, "run starts at 21, lightline");
+  assert.strictEqual(seq[at + 2].id, "team-xling");
+  assert.strictEqual(seq[at + 3].id, "lakehouse");
+  assert.strictEqual(seq[21].id, "r1");
+  assert.strictEqual(seq[21].cls, PLAIN, "run starts at 22, plain");
 });
 
-test("parity walk, placed rows unpublished: exactly one seam, at the odd-count bay's exit; the run seam holds", () => {
-  // Bay 03's two absent placements shift the tail by an EVEN count, so its
-  // exit seam holds; bay 02's single absent placement is the one that
-  // double-stripes, at its exit into bay 03.
+test("parity walk, placed rows unpublished: one seam per odd-count bay's exit, today two; the run seam holds", () => {
+  // BOTH placed bays now hold ODD counts (one card in 02, three in 03),
+  // so each bay's exit double-stripes: bay 02's into bay 03 and bay 03's
+  // into bay 04. The two odd shifts cancel by bay 04, so bays 04-05 and
+  // the "From the Team" seam hold.
   const seq = render([card("r1"), card("r2")]);
-  assert.deepStrictEqual(seams(seq), ["your-ai-roadmap->qbr-machine"]);
+  assert.deepStrictEqual(seams(seq), [
+    "your-ai-roadmap->qbr-machine",
+    "onboarding-toolkit->lakehouse",
+  ]);
   const r1 = seq.findIndex((r) => r.id === "r1");
   assert.strictEqual(r1 + 1, 18, "run follows the 17 statics directly");
   assert.strictEqual(seq[r1 - 1].id, "autotask-ci-intake");
   assert.notStrictEqual(seq[r1 - 1].cls, seq[r1].cls, "the From the Team seam does not double-stripe");
 });
 
-test("parity walk, DB down or empty: statics only, the same single seam and nothing else", () => {
+test("parity walk, DB down or empty: statics only, the same two seams and nothing else", () => {
   const seq = render([]);
   assert.strictEqual(seq.length, EXHIBITS.length);
-  assert.deepStrictEqual(seams(seq), ["your-ai-roadmap->qbr-machine"]);
+  assert.deepStrictEqual(seams(seq), [
+    "your-ai-roadmap->qbr-machine",
+    "onboarding-toolkit->lakehouse",
+  ]);
 });
 
 // ---------------------------------------------------- source invariants

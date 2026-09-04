@@ -30,13 +30,15 @@
 // published rows, because the static classes below a placed card were
 // flipped against the map, and had the run followed the rows instead, an
 // unpublished placement would have moved this seam too (refuter finding).
-// Today's derivation: 17 statics + 3 placements (#team-mycoach at
-// position 10, closing bay 02; #team-xlant and
-// #team-client-site-rescue-mirror at 13-14, inside bay 03) put the last
-// static, #autotask-ci-intake, at position 20, EVEN, plain, so the run
-// starts at 21, ODD, lightline. With a placed row unpublished the run
-// still starts at 21 and only the seam out of that card's own bay
-// double-stripes, until the map entry is removed. Inserting or
+// Today's derivation: 17 statics + 4 placements (#team-mycoach at
+// position 10, closing bay 02; bay 03's three placed cards at 13-15,
+// after #onboarding-toolkit) put the last static, #autotask-ci-intake,
+// at position 21, ODD, lightline, so the run starts at 22, EVEN, plain.
+// With a placed row unpublished the run still starts at 22 and only the
+// seam out of that card's own bay double-stripes, until the map entry is
+// removed; both placed bays now hold ODD counts, so with every row
+// absent TWO seams double-stripe (bay 02's exit and bay 03's exit),
+// and the seams cancel by bay 04. Inserting or
 // removing an ODD number of cards anywhere before the run flips every
 // hard-coded static class after that point (see placements.ts for why bay
 // membership is a build-time fact), and scripts/work-placements-tests.ts
@@ -54,7 +56,10 @@
 // it back, and replaced the literal offset with the computed position; on
 // 2026-09-04 #team-mycoach joined bay 02 and #team-xlant bay 03, moving
 // the last static to 20 (even, bay 03's two statics flipped, bays 04-05
-// shifted by two so their classes held).
+// shifted by two so their classes held); later that day the XLing card
+// became bay 03's third placement, moving the last static to 21 (odd)
+// and the run to 22 (plain), with bays 04-05's six statics flipped back
+// to the classes 6e45b44 left them with.
 // The offset lives here, not in work-card.tsx, because the company page
 // (§5.18 /roadmap/work) opens its own alternation with no statics above it
 // and must keep starting plain.
