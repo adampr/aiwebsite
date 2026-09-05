@@ -4,8 +4,9 @@
 //
 //   npm run test:xlant
 //
-// TWO HALVES. Sections 1-6 are pure: the allowlist, the artifact predicates and
-// the verify cache, exercised as functions. Sections 7-9 EXECUTE THE REAL ROUTE
+// TWO HALVES. Sections 1-7 are pure: the allowlist, the artifact predicates, the
+// platform enums and the verify cache, exercised as functions. Sections 8-10
+// EXECUTE THE REAL ROUTE
 // HANDLERS AND THE REAL MIDDLEWARE in-process against a fake XLAnt relay on
 // 127.0.0.1 and a scratch artifacts directory, because the pure half cannot see
 // what the handlers actually put on the wire — which headers reach the relay,
@@ -30,6 +31,13 @@
 //   · `safeArtifactName()` (the traversal gate) and `isXlantUpdateArtifact()`
 //     (the RELEASE gate), which are different questions and are both needed:
 //     `latest.yml.part` is a safe name and a truncated manifest;
+//   · the MAC half of contract 0.5.0 — the two device kinds, the two Mac
+//     architectures, the `XLAnt-<version>-<arm64|x64>-mac.zip` filename
+//     contract (and the arch-less `XLAnt-<version>-mac.zip` that a build which
+//     lost its explicit `artifactName` would emit, refused on purpose), the
+//     download route's query-string decision, the Content-Type table, and the
+//     pre-mint `/v1/status` probe that keeps a pre-0.5.0 relay from being
+//     reported as "the relay refused the token mint";
 //   · `verifyDeviceToken()`'s cache — positives cached, negatives and relay
 //     failures NOT cached, oldest-half eviction past the cap, a too-short
 //     token refused without a relay round-trip;
@@ -45,20 +53,37 @@
 
 import assert from "node:assert";
 import http from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  XLANT_DEVICE_KINDS,
   XLANT_INSTALLER_RE,
+  XLANT_MAC_ARCHES,
+  XLANT_MAC_BUNDLE_RE,
   XLANT_MCP_PATH,
   XLANT_RELAY_ALLOWED,
+  isXlantDeviceKind,
+  isXlantMacArch,
   isXlantMcpPath,
   isXlantRelayPath,
   isXlantUpdateArtifact,
+  latestInstaller,
+  latestMacBundle,
+  probeRelayMacSupport,
   resetXlantVerifyCache,
   safeArtifactName,
   verifyDeviceToken,
+  xlantArtifactContentType,
+  xlantDownloadRequest,
   xlantVerifyCacheSize,
   type XlantConfig,
 } from "../src/lib/xlant";
@@ -200,11 +225,19 @@ await leg("the MCP shape is one of the allowlisted six", () => {
 // 3. safeArtifactName — the update feed's traversal gate
 // ---------------------------------------------------------------------------
 
-await leg("the three names electron-updater actually asks for pass", () => {
+await leg("every name electron-updater actually asks for passes", () => {
   for (const n of [
+    // Windows.
     "latest.yml",
     "XLAnt-Setup-0.2.1.exe",
     "XLAnt-Setup-0.2.1.exe.blockmap",
+    // macOS (contract 0.5.0). The traversal gate must not be what refuses
+    // these, or the release gate below would never get a say.
+    "latest-mac.yml",
+    "XLAnt-0.5.0-arm64-mac.zip",
+    "XLAnt-0.5.0-arm64-mac.zip.blockmap",
+    "XLAnt-0.5.0-x64-mac.zip",
+    "XLAnt-0.5.0-x64-mac.zip.blockmap",
   ]) {
     assert.ok(safeArtifactName(n), `should accept ${n}`);
   }
@@ -246,6 +279,70 @@ await leg("exactly the manifest, an installer and its blockmap are releases", ()
   }
 });
 
+await leg("the macOS manifest, both bundles and their blockmaps are releases", () => {
+  // The names electron-builder actually wrote on the build box, 2026-09-05:
+  // `--mac zip --arm64` produced XLAnt-0.4.2-arm64-mac.zip, its .blockmap and
+  // latest-mac.yml. The x64 twin is the same pattern with the other arch.
+  for (const n of [
+    "latest-mac.yml",
+    "XLAnt-0.5.0-arm64-mac.zip",
+    "XLAnt-0.5.0-arm64-mac.zip.blockmap",
+    "XLAnt-0.5.0-x64-mac.zip",
+    "XLAnt-0.5.0-x64-mac.zip.blockmap",
+    "XLAnt-0.4.2-arm64-mac.zip",
+    "XLAnt-1.10.0-beta.3-x64-mac.zip",
+    "XLAnt-1.10.0-beta.3-x64-mac.zip.blockmap",
+  ]) {
+    assert.ok(isXlantUpdateArtifact(n), `should publish ${n}`);
+  }
+  // The Windows manifest is NOT the Mac one and vice versa: a macOS client
+  // asks for latest-mac.yml and nothing else, so neither name may drift into
+  // meaning both.
+  assert.notEqual("latest.yml", "latest-mac.yml");
+});
+
+await leg("no Mac name outside the two-arch zip contract is a release", () => {
+  for (const n of [
+    // The publish step's half-written temp files, the reason the release gate
+    // exists at all: served, latest-mac.yml.part hands electron-updater a
+    // truncated manifest.
+    "latest-mac.yml.part",
+    "XLAnt-0.5.0-arm64-mac.zip.part",
+    "XLAnt-0.5.0-arm64-mac.zip.blockmap.part",
+    // A build whose explicit `mac.artifactName` was lost: electron-builder's
+    // default drops "-${arch}" for its DEFAULT arch, which is x64, so the
+    // Intel zip arrives with no architecture in its name. Refused, because
+    // serving an unlabelled bundle to whoever clicked "Intel" is a guess.
+    "XLAnt-0.5.0-mac.zip",
+    "XLAnt-0.5.0-mac.zip.blockmap",
+    // A universal bundle: the desktop builds two zips, not three.
+    "XLAnt-0.5.0-universal-mac.zip",
+    "XLAnt-0.5.0-universal-mac.zip.blockmap",
+    // Other targets nobody publishes here.
+    "XLAnt-0.5.0-mac.dmg",
+    "XLAnt-0.5.0-arm64-mac.dmg",
+    "XLAnt-0.5.0-arm64-mac.pkg",
+    "XLAnt-0.5.0-arm64-mac.zip.blockmap.blockmap",
+    // Architecture spellings that are not ours.
+    "XLAnt-0.5.0-aarch64-mac.zip",
+    "XLAnt-0.5.0-x86_64-mac.zip",
+    "XLAnt-0.5.0-ARM64-mac.zip",
+    // Version shapes the strict group refuses, same reason as the installer's.
+    "XLAnt-x-arm64-mac.zip",
+    "XLAnt-0.5-arm64-mac.zip",
+    "XLAnt-0.5.0.1-arm64-mac.zip",
+    // The Windows prefix on a Mac bundle, and a prefixed name.
+    "XLAnt-Setup-0.5.0-arm64-mac.zip",
+    "prefix-XLAnt-0.5.0-arm64-mac.zip",
+    // Manifest near-misses.
+    "latest-mac.yaml",
+    "latest-mac.yml.bak",
+    "latest-linux.yml",
+  ]) {
+    assert.ok(!isXlantUpdateArtifact(n), `should NOT publish ${n}`);
+  }
+});
+
 await leg("a safe name is not automatically a publishable one", () => {
   for (const n of [
     // The publish step's half-written temp files. `latest.yml.part` is the one
@@ -256,7 +353,6 @@ await leg("a safe name is not automatically a publishable one", () => {
     // Anything else an operator may leave in the directory.
     "notes.txt",
     "latest.yml.bak",
-    "latest-mac.yml",
     "XLAnt-Setup-x.exe.exe",
     "XLAnt-Setup-1.2.exe",
     "XLAnt-Setup-0.2.1.exe.blockmap.blockmap",
@@ -270,7 +366,7 @@ await leg("a safe name is not automatically a publishable one", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. The installer filename regex
+// 5. The two filename regexes
 // ---------------------------------------------------------------------------
 
 await leg("the installer regex captures a real version and nothing else", () => {
@@ -296,8 +392,175 @@ await leg("the installer regex captures a real version and nothing else", () => 
   }
 });
 
+await leg("the Mac bundle regex captures a real version AND the architecture", () => {
+  const arm = XLANT_MAC_BUNDLE_RE.exec("XLAnt-0.5.0-arm64-mac.zip");
+  assert.equal(arm?.[1], "0.5.0");
+  assert.equal(arm?.[2], "arm64");
+  const intel = XLANT_MAC_BUNDLE_RE.exec("XLAnt-1.10.0-beta.3-x64-mac.zip");
+  assert.equal(intel?.[1], "1.10.0-beta.3");
+  assert.equal(intel?.[2], "x64");
+  // Both regexes are anchored and flag-free for the same reasons the allowlist
+  // is: an unanchored pattern matches a longer name that merely contains one,
+  // and a /g regex answers differently on identical input.
+  for (const re of [XLANT_INSTALLER_RE, XLANT_MAC_BUNDLE_RE]) {
+    assert.ok(re.source.startsWith("^"), `not ^-anchored: ${re.source}`);
+    assert.ok(re.source.endsWith("$"), `not $-anchored: ${re.source}`);
+    assert.equal(re.flags, "", `unexpected flags on ${re.source}`);
+  }
+  // The two never claim the same file, so "is this a Windows or a Mac build?"
+  // has exactly one answer for every name.
+  for (const n of [
+    "XLAnt-Setup-0.5.0.exe",
+    "XLAnt-0.5.0-arm64-mac.zip",
+    "XLAnt-0.5.0-x64-mac.zip",
+  ]) {
+    assert.notEqual(
+      XLANT_INSTALLER_RE.test(n),
+      XLANT_MAC_BUNDLE_RE.test(n),
+      `${n} matched both or neither filename contract`
+    );
+  }
+});
+
 // ---------------------------------------------------------------------------
-// 6. verifyDeviceToken — the cache, against a stubbed global fetch
+// 6. Contract 0.5.0's platform words: the kinds, the architectures, what the
+//    download route decides from a query string, and the Content-Type table
+// ---------------------------------------------------------------------------
+
+await leg("the device kinds are exactly the contract's two", () => {
+  // A MIRROR of DEVICE_KINDS in the xlant repo's packages/shared/src/contract.ts
+  // (the two repos share no code). The relay keeps one active token per
+  // (user, kind), so a third entry here that the relay does not know would mint
+  // nothing and revoke nothing.
+  assert.deepEqual([...XLANT_DEVICE_KINDS], ["windows", "mac"]);
+  for (const k of ["windows", "mac"]) {
+    assert.ok(isXlantDeviceKind(k), `should accept ${k}`);
+  }
+  for (const k of [
+    "Windows",
+    "MAC",
+    "macos",
+    "darwin",
+    "linux",
+    "ios",
+    "windows ",
+    "",
+    null,
+    undefined,
+    7,
+    ["mac"],
+  ]) {
+    assert.ok(!isXlantDeviceKind(k), `should refuse ${JSON.stringify(k)}`);
+  }
+});
+
+await leg("the Mac architectures are exactly arm64 and x64", () => {
+  assert.deepEqual([...XLANT_MAC_ARCHES], ["arm64", "x64"]);
+  assert.ok(isXlantMacArch("arm64"));
+  assert.ok(isXlantMacArch("x64"));
+  for (const a of [
+    // Spellings other toolchains use. None of them names a file this host
+    // publishes, and admitting one would 404 a staffer at the download.
+    "aarch64",
+    "amd64",
+    "x86_64",
+    "ARM64",
+    "x64 ",
+    // The bundle the desktop deliberately does not build.
+    "universal",
+    "",
+    null,
+    undefined,
+    64,
+  ]) {
+    assert.ok(!isXlantMacArch(a), `should refuse ${JSON.stringify(a)}`);
+  }
+});
+
+await leg("the download route's query string decides one build, or refuses", () => {
+  const ask = (qs: string) => xlantDownloadRequest(new URLSearchParams(qs));
+  // No query at all is the WINDOWS installer — the link this host has served
+  // since the page existed, and the one an old bookmark still carries.
+  assert.deepEqual(ask(""), { ok: true, platform: "windows" });
+  assert.deepEqual(ask("platform=windows"), { ok: true, platform: "windows" });
+  // `arch` is meaningless for Windows and is IGNORED, not refused: there is one
+  // Windows build and a stray parameter must not break a working link.
+  assert.deepEqual(ask("platform=windows&arch=arm64"), {
+    ok: true,
+    platform: "windows",
+  });
+  assert.deepEqual(ask("platform=mac&arch=arm64"), {
+    ok: true,
+    platform: "mac",
+    arch: "arm64",
+  });
+  assert.deepEqual(ask("platform=mac&arch=x64"), {
+    ok: true,
+    platform: "mac",
+    arch: "x64",
+  });
+  // A Mac ask with no architecture is refused rather than defaulted: the two
+  // zips are not interchangeable, and an arm64 bundle on an Intel Mac does not
+  // launch.
+  for (const qs of [
+    "platform=mac",
+    "platform=mac&arch=",
+    "platform=mac&arch=universal",
+    "platform=mac&arch=x86_64",
+    "platform=mac&arch=ARM64",
+  ]) {
+    const got = ask(qs);
+    assert.deepEqual(got, { ok: false, error: "arch must be 'arm64' or 'x64'" }, qs);
+  }
+  for (const qs of [
+    "platform=",
+    "platform=Mac",
+    "platform=macos",
+    "platform=linux",
+    "platform=darwin&arch=arm64",
+  ]) {
+    assert.deepEqual(
+      ask(qs),
+      { ok: false, error: "platform must be 'windows' or 'mac'" },
+      qs
+    );
+  }
+});
+
+await leg("every publishable name has one Content-Type and no sniffing", () => {
+  for (const [name, want] of [
+    ["latest.yml", "text/yaml"],
+    ["latest-mac.yml", "text/yaml"],
+    ["XLAnt-Setup-0.5.0.exe", "application/octet-stream"],
+    ["XLAnt-Setup-0.5.0.exe.blockmap", "application/octet-stream"],
+    ["XLAnt-0.5.0-arm64-mac.zip", "application/zip"],
+    ["XLAnt-0.5.0-x64-mac.zip", "application/zip"],
+    // The blockmap of a zip is a BLOCKMAP, not a zip: it ends in .blockmap, so
+    // the .zip test (an endsWith on the whole name) must not claim it.
+    ["XLAnt-0.5.0-arm64-mac.zip.blockmap", "application/octet-stream"],
+    ["XLAnt-0.5.0-x64-mac.zip.blockmap", "application/octet-stream"],
+  ] as const) {
+    assert.equal(xlantArtifactContentType(name), want, name);
+  }
+  // Every name the release gate publishes gets a type from this table, so the
+  // feed can never answer with an empty or invented content type.
+  for (const n of [
+    "latest.yml",
+    "latest-mac.yml",
+    "XLAnt-Setup-9.9.9.exe",
+    "XLAnt-Setup-9.9.9.exe.blockmap",
+    "XLAnt-9.9.9-arm64-mac.zip",
+    "XLAnt-9.9.9-arm64-mac.zip.blockmap",
+    "XLAnt-9.9.9-x64-mac.zip",
+    "XLAnt-9.9.9-x64-mac.zip.blockmap",
+  ]) {
+    assert.ok(isXlantUpdateArtifact(n), `precondition: ${n}`);
+    assert.match(xlantArtifactContentType(n), /^[a-z]+\/[\w.+-]+$/, n);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 7. verifyDeviceToken — the cache, against a stubbed global fetch
 // ---------------------------------------------------------------------------
 
 const cfg: XlantConfig = {
@@ -396,7 +659,7 @@ globalThis.fetch = realFetch;
 resetXlantVerifyCache();
 
 // ===========================================================================
-// 7. THE REAL HANDLERS, in-process, against a fake relay
+// 8. THE REAL HANDLERS, in-process, against a fake relay
 // ===========================================================================
 
 // A scratch artifacts directory plus a sibling holding a file that must never
@@ -412,6 +675,28 @@ writeFileSync(join(ART, "XLAnt-Setup-9.9.9.exe"), Buffer.alloc(4096, 7));
 writeFileSync(join(ART, "XLAnt-Setup-9.9.9.exe.blockmap"), Buffer.alloc(64, 3));
 writeFileSync(join(ART, "latest.yml.part"), "HALF WRITTEN\n");
 writeFileSync(join(OUTSIDE, "secret.txt"), "SYNTHETIC-NEVER-SERVE\n");
+
+// The macOS half of the same directory (contract 0.5.0). One manifest naming
+// both architectures, one zip and one blockmap each, plus the shapes the
+// release gate has to refuse while sitting in the SAME directory: the
+// half-written temp file, a universal bundle nobody builds, and the arch-less
+// name a build that lost its explicit `mac.artifactName` would produce.
+const YML_MAC =
+  "version: 9.9.9\nfiles:\n  - url: XLAnt-9.9.9-arm64-mac.zip\n  - url: XLAnt-9.9.9-x64-mac.zip\n";
+writeFileSync(join(ART, "latest-mac.yml"), YML_MAC);
+writeFileSync(join(ART, "XLAnt-9.9.9-arm64-mac.zip"), Buffer.alloc(8192, 11));
+writeFileSync(join(ART, "XLAnt-9.9.9-arm64-mac.zip.blockmap"), Buffer.alloc(96, 5));
+writeFileSync(join(ART, "XLAnt-9.9.9-x64-mac.zip"), Buffer.alloc(6144, 13));
+writeFileSync(join(ART, "XLAnt-9.9.9-x64-mac.zip.blockmap"), Buffer.alloc(80, 6));
+writeFileSync(join(ART, "latest-mac.yml.part"), "HALF WRITTEN\n");
+writeFileSync(join(ART, "XLAnt-9.9.9-universal-mac.zip"), Buffer.alloc(32, 1));
+writeFileSync(join(ART, "XLAnt-9.9.9-mac.zip"), Buffer.alloc(32, 2));
+// A PREVIOUS arm64 release, kept the way the real directory keeps the previous
+// build, and deliberately stamped NEWER than 9.9.9 so "newest by mtime" is
+// measured rather than accidentally agreeing with "highest version".
+writeFileSync(join(ART, "XLAnt-9.9.8-arm64-mac.zip"), Buffer.alloc(1024, 9));
+const NEWER = Date.now() / 1000 + 60;
+utimesSync(join(ART, "XLAnt-9.9.8-arm64-mac.zip"), NEWER, NEWER);
 
 interface RelayCall {
   method: string;
@@ -775,6 +1060,135 @@ await leg("relay: down is 502 and slow is 504, never a bare 500", async () => {
   }
 });
 
+// --- the artifacts directory, read the way the staff page reads it ---------
+
+// The same three env vars the routes read, as a value the lib functions take
+// directly (they are pure over a config, which is why the page can call them
+// during a render).
+const artCfg: XlantConfig = {
+  relayUrl: `http://127.0.0.1:${RELAY_PORT}`,
+  proxySecret: SECRET,
+  artifactsDir: ART,
+};
+
+await leg("latestInstaller sees the Windows build and no Mac bundle", async () => {
+  const found = await latestInstaller(artCfg);
+  assert.equal(found?.fileName, "XLAnt-Setup-9.9.9.exe");
+  assert.equal(found?.version, "9.9.9");
+  assert.equal(found?.size, 4096, "size comes from the same stat as the mtime");
+});
+
+await leg("latestMacBundle answers per ARCHITECTURE, never per newest zip", async () => {
+  // The two zips of one release differ only in mtime, so a single
+  // newest-of-all would hand whichever finished writing last to everybody.
+  const arm = await latestMacBundle(artCfg, "arm64");
+  const intel = await latestMacBundle(artCfg, "x64");
+  assert.equal(intel?.fileName, "XLAnt-9.9.9-x64-mac.zip");
+  assert.equal(intel?.version, "9.9.9");
+  assert.equal(intel?.arch, "x64");
+  assert.equal(intel?.size, 6144);
+  // NEWEST BY MTIME, not by parsed version: 9.9.8 was stamped later, and a
+  // republished build of an older version must win exactly as it does on the
+  // Windows side. This host invents no version ordering.
+  assert.equal(arm?.fileName, "XLAnt-9.9.8-arm64-mac.zip");
+  assert.equal(arm?.version, "9.9.8");
+  assert.equal(arm?.arch, "arm64");
+  assert.equal(arm?.size, 1024);
+});
+
+await leg("a directory with no Mac build, and an unreadable one, are null", async () => {
+  const onlyWindows = mkdtempSync(join(tmpdir(), "xlant-nomac-"));
+  writeFileSync(join(onlyWindows, "XLAnt-Setup-9.9.9.exe"), Buffer.alloc(8, 1));
+  // The shapes that sit in a real directory and are NOT a servable bundle: the
+  // publish step's temp file, a universal build and the arch-less name a build
+  // without an explicit artifactName emits.
+  writeFileSync(join(onlyWindows, "XLAnt-9.9.9-arm64-mac.zip.part"), "HALF\n");
+  writeFileSync(join(onlyWindows, "XLAnt-9.9.9-universal-mac.zip"), "U\n");
+  writeFileSync(join(onlyWindows, "XLAnt-9.9.9-mac.zip"), "N\n");
+  try {
+    for (const arch of ["arm64", "x64"] as const) {
+      assert.equal(
+        await latestMacBundle({ ...artCfg, artifactsDir: onlyWindows }, arch),
+        null,
+        `${arch} must not fall back to a name outside the contract`
+      );
+    }
+    assert.ok(await latestInstaller({ ...artCfg, artifactsDir: onlyWindows }));
+  } finally {
+    rmSync(onlyWindows, { recursive: true, force: true });
+  }
+  // An unreadable directory is "nothing published", never a thrown page: this
+  // runs inside a server render.
+  const gone = { ...artCfg, artifactsDir: join(ROOT, "does-not-exist") };
+  assert.equal(await latestInstaller(gone), null);
+  assert.equal(await latestMacBundle(gone, "arm64"), null);
+});
+
+// --- the pre-mint probe ----------------------------------------------------
+
+await leg("the Mac probe GETs /v1/status on the INTERNAL lane", async () => {
+  relayReset(200, '{"ok":true,"platforms":["windows","mac"]}');
+  assert.equal(await probeRelayMacSupport(artCfg), "supported");
+  assert.equal(relayCalls.length, 1);
+  assert.equal(relayCalls[0].method, "GET", "express routes /v1/status by GET");
+  assert.equal(relayCalls[0].url, "/v1/status");
+  assert.equal(relayCalls[0].headers["x-xlant-proxy-secret"], SECRET);
+  assert.equal(
+    relayCalls[0].headers["x-xlant-via"],
+    undefined,
+    "the internal lane must NOT carry the proxy marker — the relay rejects it"
+  );
+  assert.equal(relayCalls[0].body, "", "a GET carries no body");
+});
+
+await leg("a relay that does not name 'mac' is unsupported, not broken", async () => {
+  // EVERY relay in production before 0.5.0: /v1/status answers 200 and simply
+  // has no `platforms` key. That is the case this probe exists for.
+  for (const body of [
+    '{"ok":true,"version":"0.4.2"}',
+    '{"ok":true,"platforms":[]}',
+    '{"ok":true,"platforms":["windows"]}',
+    // A `platforms` that is not a list is not a list of platforms.
+    '{"ok":true,"platforms":"windows,mac"}',
+    '{"ok":true,"platforms":{"mac":true}}',
+    '{"ok":true,"platforms":null}',
+  ]) {
+    relayReset(200, body);
+    assert.equal(await probeRelayMacSupport(artCfg), "unsupported", body);
+  }
+  // …and the nearest allow: 'mac' anywhere in the list is support.
+  for (const body of [
+    '{"ok":true,"platforms":["mac"]}',
+    '{"ok":true,"platforms":["windows","mac"]}',
+    '{"ok":true,"platforms":["mac","windows","linux"]}',
+  ]) {
+    relayReset(200, body);
+    assert.equal(await probeRelayMacSupport(artCfg), "supported", body);
+  }
+});
+
+await leg("a relay we cannot READ is 'unreadable', a different answer", async () => {
+  // "The Mac lane is not deployed" and "the relay is down" are different
+  // problems with different people to tell, so they must not collapse.
+  for (const [status, body] of [
+    [500, '{"error":"boom"}'],
+    [401, '{"error":"unauthorized"}'],
+    [404, "not found"],
+  ] as const) {
+    relayReset(status, body);
+    assert.equal(await probeRelayMacSupport(artCfg), "unreadable", String(status));
+  }
+  // A 200 is not a promise of JSON: an intermediary can answer 200 with an
+  // HTML error page, and an unguarded .json() would throw out of the mint.
+  relayReset(200, "<html>gateway</html>");
+  assert.equal(await probeRelayMacSupport(artCfg), "unreadable");
+  relayReset(200, "null");
+  assert.equal(await probeRelayMacSupport(artCfg), "unreadable");
+  // Nothing listening at all.
+  const dead: XlantConfig = { ...artCfg, relayUrl: "http://127.0.0.1:1" };
+  assert.equal(await probeRelayMacSupport(dead), "unreadable");
+});
+
 const GOOD = "synthetic-device-token-aaaaaaaa";
 const auth = { authorization: `Bearer ${GOOD}` };
 
@@ -851,6 +1265,94 @@ await leg("update: one verify serves the whole yml -> exe -> blockmap upgrade", 
   assert.equal(exe.headers.get("content-length"), "4096");
   assert.equal(map.status, 200);
   assert.equal(map.headers.get("content-length"), "64");
+});
+
+await leg("update: the macOS upgrade — latest-mac.yml -> zip -> blockmap", async () => {
+  resetXlantVerifyCache();
+  relayReset(200, "{}");
+  const yml = await updateRoute.GET(
+    new Request(`${U}/api/xlant/update/latest-mac.yml`, { headers: auth }),
+    ctx("latest-mac.yml")
+  );
+  assert.equal(yml.status, 200);
+  assert.equal(relayCalls.length, 1, "verified once");
+  assert.equal(relayCalls[0].url, "/v1/device/verify");
+  assert.equal(yml.headers.get("content-type"), "text/yaml");
+  assert.equal(
+    yml.headers.get("content-length"),
+    String(Buffer.byteLength(YML_MAC))
+  );
+  assert.equal(yml.headers.get("cache-control"), "private, no-store");
+
+  const zip = await updateRoute.GET(
+    new Request(`${U}/api/xlant/update/XLAnt-9.9.9-arm64-mac.zip`, {
+      headers: auth,
+    }),
+    ctx("XLAnt-9.9.9-arm64-mac.zip")
+  );
+  const map = await updateRoute.GET(
+    new Request(`${U}/api/xlant/update/XLAnt-9.9.9-arm64-mac.zip.blockmap`, {
+      headers: auth,
+    }),
+    ctx("XLAnt-9.9.9-arm64-mac.zip.blockmap")
+  );
+  assert.equal(relayCalls.length, 1, "the whole upgrade costs ONE verify");
+  assert.equal(zip.status, 200);
+  assert.equal(zip.headers.get("content-type"), "application/zip");
+  assert.equal(zip.headers.get("content-length"), "8192");
+  assert.equal(map.status, 200);
+  // The blockmap of a zip is a blockmap, not a zip.
+  assert.equal(map.headers.get("content-type"), "application/octet-stream");
+  assert.equal(map.headers.get("content-length"), "96");
+
+  // The Intel twin, so neither architecture is served by accident.
+  const intel = await updateRoute.GET(
+    new Request(`${U}/api/xlant/update/XLAnt-9.9.9-x64-mac.zip`, {
+      headers: auth,
+    }),
+    ctx("XLAnt-9.9.9-x64-mac.zip")
+  );
+  assert.equal(intel.status, 200);
+  assert.equal(intel.headers.get("content-length"), "6144");
+});
+
+await leg("update: the Mac names that EXIST but are not releases are 404", async () => {
+  // Every file below is really on disk in the scratch artifacts dir, so a 404
+  // here is the release gate's verdict and not a missing file — which is the
+  // only version of this test worth having.
+  resetXlantVerifyCache();
+  relayReset(200, "{}");
+  await updateRoute.GET(
+    new Request(`${U}/api/xlant/update/latest-mac.yml`, { headers: auth }),
+    ctx("latest-mac.yml")
+  );
+  for (const rel of [
+    // The publish step's half-written manifest: served, electron-updater parses
+    // a truncated manifest.
+    "latest-mac.yml.part",
+    // A universal bundle the desktop does not build.
+    "XLAnt-9.9.9-universal-mac.zip",
+    // The arch-less name a build without an explicit `mac.artifactName`
+    // emits for x64. Refused, so a mis-named publish fails loudly here rather
+    // than handing an unlabelled bundle to whoever asked for Intel.
+    "XLAnt-9.9.9-mac.zip",
+  ]) {
+    const res = await updateRoute.GET(
+      new Request(`${U}/api/xlant/update/${rel}`, { headers: auth }),
+      ctx(rel)
+    );
+    assert.equal(res.status, 404, `GET ${rel}`);
+    assert.deepEqual(await res.json(), { error: "not found" });
+  }
+  // A release-shaped Mac name that is simply not there is the same 404, so the
+  // feed is not a directory oracle even for a device that IS signed in.
+  const absent = await updateRoute.GET(
+    new Request(`${U}/api/xlant/update/XLAnt-1.2.3-arm64-mac.zip`, {
+      headers: auth,
+    }),
+    ctx("XLAnt-1.2.3-arm64-mac.zip")
+  );
+  assert.equal(absent.status, 404);
 });
 
 await leg("update: whole files only — Range is ignored, no Accept-Ranges", async () => {
@@ -931,7 +1433,7 @@ await leg("both routes answer 503 on a half-configured host", async () => {
 });
 
 // ===========================================================================
-// 8. THE REAL MIDDLEWARE, in-process
+// 9. THE REAL MIDDLEWARE, in-process
 // ===========================================================================
 
 await leg("CSRF: Origin-less device POSTs pass, /api/internal/xlant does not", async () => {
@@ -978,7 +1480,7 @@ await leg("CSRF: Origin-less device POSTs pass, /api/internal/xlant does not", a
 });
 
 // ===========================================================================
-// 9. Source invariants the type system cannot express
+// 10. Source invariants the type system cannot express
 // ===========================================================================
 
 const readRepo = (rel: string) =>
@@ -1009,6 +1511,75 @@ await leg("both device routes keep the runtime knobs they depend on", () => {
   assert.ok(
     !relaySrc.includes("/^v1"),
     "the relay route must not carry its own copy of the allowlist"
+  );
+});
+
+await leg("the staff download keeps its runtime knobs and its one decision", () => {
+  const src = readRepo("src/app/api/internal/xlant/download/route.ts");
+  assert.match(src, /export const runtime = "nodejs";/);
+  assert.match(src, /export const dynamic = "force-dynamic";/);
+  assert.match(src, /"Cache-Control": "private, no-store"/);
+  // The platform/arch decision is the pure function pinned in section 6, not a
+  // second copy of the same branching: a second copy is a second thing to
+  // forget when a third build target appears.
+  assert.match(src, /xlantDownloadRequest\(/);
+  assert.ok(
+    !src.includes('params.get("platform")'),
+    "the route must not re-read the query string itself"
+  );
+});
+
+await leg("every download link the page draws is one the route accepts", () => {
+  const page = readRepo("src/app/internal/xlant/page.tsx");
+  // JSX attributes are plain JS strings, so `&` is literal here — no entity
+  // decoding, and what the browser requests is what this reads.
+  const hrefs = [
+    ...page.matchAll(/href="(\/api\/internal\/xlant\/download[^"]*)"/g),
+  ].map((m) => m[1]);
+  assert.equal(hrefs.length, 3, "one Windows link and two Mac links");
+  const seen: string[] = [];
+  for (const href of hrefs) {
+    const qs = href.includes("?") ? href.slice(href.indexOf("?") + 1) : "";
+    const want = xlantDownloadRequest(new URLSearchParams(qs));
+    assert.ok(want.ok, `the page links a download the route refuses: ${href}`);
+    seen.push(want.platform === "mac" ? `mac:${want.arch}` : want.platform);
+  }
+  assert.deepEqual(seen.sort(), ["mac:arm64", "mac:x64", "windows"]);
+  // One token button per kind, mounted inside its own card.
+  assert.match(page, /<DeviceTokenButton kind="windows" \/>/);
+  assert.match(page, /<DeviceTokenButton kind="mac" \/>/);
+});
+
+await leg("the Mac mint probes first, and the button can read the refusals", () => {
+  const mint = readRepo("src/app/api/internal/xlant/device-token/route.ts");
+  const button = readRepo("src/app/internal/xlant/token-button.tsx");
+  // The probe is guarded by the kind: a Windows mint has worked since day one
+  // and must not acquire a second relay round-trip, let alone a second way to
+  // fail.
+  assert.match(mint, /if \(kind === "mac"\) \{/);
+  assert.match(mint, /probeRelayMacSupport\(cfg\)/);
+  assert.ok(
+    mint.indexOf("probeRelayMacSupport") <
+      mint.indexOf('relayInternal(cfg, "/v1/device/issue"'),
+    "the probe must run BEFORE the mint, or it proves nothing"
+  );
+  assert.ok(mint.includes(JSON.stringify("kind must be 'windows' or 'mac'")));
+  // A typed code is a fine thing to log and a poor thing to read. Both
+  // sentences a staffer can actually provoke from the Mac button must exist
+  // verbatim in the button's map, or the page shows a raw error string.
+  for (const sentence of [
+    "the relay does not support Mac tokens yet (needs relay 0.5.0)",
+    "the XLAnt relay did not answer",
+  ]) {
+    const quoted = JSON.stringify(sentence);
+    assert.ok(mint.includes(quoted), `the mint should answer ${quoted}`);
+    assert.ok(button.includes(quoted), `the button cannot read ${quoted}`);
+  }
+  // The client island must never import the server module: it reads node:fs
+  // and the XLAnt shared secret, and bundling it into a client would ship both.
+  assert.ok(
+    !/^\s*import\b[^;]*["']@\/lib\/xlant["']/m.test(button),
+    "the token button must inline its kinds, not import the server module"
   );
 });
 

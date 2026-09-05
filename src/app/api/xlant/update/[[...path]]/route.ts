@@ -1,7 +1,13 @@
-// GET /api/xlant/update/{latest.yml | XLAnt-Setup-x.y.z.exe | *.blockmap} —
-// the electron-updater generic feed (ARCHITECTURE.md §5.22). Moved here from
-// roleplay.xl.net on 2026-09-04; desktop 0.2.1 is re-signed and re-published
-// with `provider: generic, url: https://ai.xl.net/api/xlant/update`.
+// GET /api/xlant/update/{latest.yml | latest-mac.yml | XLAnt-Setup-x.y.z.exe |
+// XLAnt-x.y.z-<arm64|x64>-mac.zip | *.blockmap} — the electron-updater generic
+// feed (ARCHITECTURE.md §5.22). Moved here from roleplay.xl.net on 2026-09-04;
+// desktop 0.2.1 is re-signed and re-published with
+// `provider: generic, url: https://ai.xl.net/api/xlant/update`.
+//
+// ONE FEED, TWO PLATFORMS since contract 0.5.0. electron-updater picks its own
+// manifest by platform (`latest.yml` on Windows, `latest-mac.yml` on macOS) and
+// asks this same base URL for it, so the Mac build needed no new route and no
+// new env — only three more names through isXlantUpdateArtifact() below.
 // roleplay.xl.net has carried nothing of XLAnt since 2026-09-04, so this is
 // the only feed any desktop reaches and this VM's XLANT_ARTIFACTS_DIR is the
 // only published copy — see §5.22 and the xlant repo's docs/SETUP.md
@@ -29,6 +35,7 @@ import {
   isXlantUpdateArtifact,
   safeArtifactName,
   verifyDeviceToken,
+  xlantArtifactContentType,
   xlantConfig,
 } from "@/lib/xlant";
 
@@ -81,9 +88,10 @@ export async function GET(
   const stream = Readable.toWeb(createReadStream(full)) as ReadableStream;
   return new Response(stream, {
     headers: {
-      "Content-Type": name.endsWith(".yml")
-        ? "text/yaml"
-        : "application/octet-stream",
+      // text/yaml for a manifest, application/zip for a macOS bundle, and
+      // application/octet-stream for the .exe and both blockmaps — one table,
+      // shared with the staff download, pinned in scripts/xlant-tests.ts.
+      "Content-Type": xlantArtifactContentType(name),
       "Content-Length": String(size),
       // A gated binary must never be cached by us or by anything between us
       // and the PC asking for it.

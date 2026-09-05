@@ -2,17 +2,27 @@
 // device token, staff-gated (ARCHITECTURE.md §5.22).
 //
 // The identity is taken from the SESSION, never from the request body: the
-// token this returns is what lets a PC reach the technician lane as that
+// token this returns is what lets a machine reach the technician lane as that
 // person, so a caller must not be able to name someone else. Optional JSON
-// body `{ kind?: "windows" }` (absent or empty body ⇒ windows, the only kind
-// XLAnt has). The relay keeps one active token per (user, kind) and revokes
-// the previous one on mint, so this is also "sign out my old PC".
+// body `{ kind?: "windows" | "mac" }` (absent or empty body ⇒ windows, which
+// is what every caller sent before contract 0.5.0). The relay keeps one active
+// token per (user, kind) and revokes the previous one of THAT KIND on mint, so
+// this is also "sign out my old PC" — and a Mac mint leaves a Windows token
+// alone.
+//
+// A `mac` mint PROBES FIRST. See probeRelayMacSupport() for the argument; the
+// short version is that a pre-0.5.0 relay refuses the kind with a generic 400
+// this host would report as "relay refused the token mint", which sends a
+// member of staff hunting for a fault that is really "the Mac lane is not
+// deployed yet". A Windows mint does not probe: it has worked since day one
+// and must not acquire a new way to fail.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 import {
   isXlantDeviceKind,
+  probeRelayMacSupport,
   relayInternal,
   requireXlantStaff,
   xlantConfig,
@@ -65,8 +75,28 @@ export async function POST(req: Request): Promise<Response> {
   const body = await readBody(req);
   if (body === null) return fail("body must be a JSON object", 400);
   const kindRaw = body.kind ?? "windows";
-  if (!isXlantDeviceKind(kindRaw)) return fail("kind must be 'windows'", 400);
+  if (!isXlantDeviceKind(kindRaw)) {
+    return fail("kind must be 'windows' or 'mac'", 400);
+  }
   const kind: XlantDeviceKind = kindRaw;
+
+  if (kind === "mac") {
+    const probe = await probeRelayMacSupport(cfg);
+    // 503, not 502: the host is armed and the relay is answering — the
+    // capability is simply not deployed yet, and it arrives with a relay
+    // upgrade rather than a retry. The sentence names the version so an
+    // operator reading it knows exactly what to ship.
+    if (probe === "unsupported") {
+      return fail(
+        "the relay does not support Mac tokens yet (needs relay 0.5.0)",
+        503
+      );
+    }
+    // We could not read the capability at all, which is NOT the same claim.
+    // Same sentence and status the mint itself uses for an unreachable relay,
+    // so the button says one true thing either way.
+    if (probe === "unreadable") return fail("the XLAnt relay did not answer", 502);
+  }
 
   const email = session.email.toLowerCase();
   let res: Response;

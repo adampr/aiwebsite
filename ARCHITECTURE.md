@@ -15,7 +15,7 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-Last verified against code: 2026-09-05 @aicompany/core v1.121.0 ADOPTED (submodule 3684bd4) + EDITORIAL CHECKLIST ROUND 6. A seven-seat panel was asked to redo this host's five voiceAdherence=2 articles and concluded REPAIR 0 by the proposed voice remit: two of the five stored judge notes describe DOCUMENTS THAT NO LONGER EXIST (the 07-15 article was replaced on 07-16 under its own published editor's note and never re-judged; its note faults a TechCrunch citation the live page does not contain), those same two notes quote ZERO sentences verbatim because they predate this host's 2026-07-26 move to anchored calibration, `integris-…-09-04` cannot pass arithmetically (19/6 = 3.17, and vA->3 gives 3.33 against a 3.5 floor), and r(voiceAdherence, lifetime impressions) = -0.011 across 55 articles carrying 723 impressions and 2 clicks. THE CORE ISSUE was in this file's own checklist and is fixed here: item 14 banned first person and reader-directed advice and NOTHING ELSE, while the SCORING NOTE's 2 anchor fails 'op-ed framing in the news body' — strictly broader, and the standard the reviewer actually applied. Not one flagged sentence is first person; most are impersonal synthesis. The writer complied with the clause it was given and was failed by an anchor it was never shown. Item 14 now states the rule AND names where the synthesis goes (Tron's take, or attributed reporting), because a prohibition with no licensed alternative is the rule-fights-itself pattern this file already records twice. Item 8's 'at most 70 characters' is corrected to 48 — the BLOCKING quality.contract.titleLength band this host has enforced since 2026-08-02, i.e. the writer was drafting headlines against a ceiling 22 characters looser than reality and then losing voiceAdherence on the stake it had no room for (HEADLINE cited on 3 of the 5; titles measure 47/44/45/48/42). ROUND 6 DIFFERS IN KIND FROM ROUNDS 1-5: every prior round ADDED or reworded a prohibition and not one corrected a number that contradicted this host's own config or supplied a licensed form. Explicitly NOT done, each killed by a refuting seat: deleting the SCORING NOTE's 4 and 5 anchors (breaks comparability with every score ever recorded), removing 'unverifiable' clauses from the reviewer's copy (premise falsified — four stored notes show it already declines to score them), deleting item 11's no-repeat clause (33 of 55 notes cite repetition), and a BRIDGES clause (laundering). MODULE SIDE, and it outranks the request: `preserveAnchors` stamped renamed sections with the previous section-set's anchors, so `ais-self-regulation-…-2026-07-16` served all seven sections under wrong ids and the canonical `#trons-take` deep link landed on a NEWS section. Fixed at the root, plus a deterministic `blog-fix-doc-defects.ts` sweep for that row and for the nine articles still carrying 'I am an AI' — a phrase THIS host's styleGuide mandated until 2026-07-30 and the contract gate rejects; removing it costs no transparency because authorship.disclosure carries a fuller one in every byline. NO schema, NO env, NO route change, NO template change. Previous: 2026-09-04 @aicompany/core v1.120.0 ADOPTED (submodule aee8175; §5.11 blog): THE RUN NOW SURVIVES OUR OWN DEPLOY RESTARTING THE BRAIN. A deploy cutover reloads pm2 (site + brain-api + skills-host); a blog nightly already in flight is systemd, not pm2, so it survives — and used to throw its phase away when its brain-api dependency blinked, reporting the loopback refusal as an "LLM outage". v1.120.0 adds a bounded reconnect at the single brain-call choke point on a LOOPBACK ECONNREFUSED only: wait on observed /health readiness, re-POST ONCE, per-RUN budget 60s. Budget-neutral (the call is charged before the request); cannot mask a cold outage (brainPreflight runs first) nor a crashloop (that yields ECONNRESET); startedAt is re-seated so the wait cannot inflate the wall-clock figure whose token MAILS; and it is never silent (run line + blog-brain-local-restart ledger row, emailed:false). THREE deploy-side designs were rejected first — a blocking guard (six measured defects, 3h46m-5h06m/day un-deployable), an advisory print-and-proceed (this fleet deploys from agent sessions inside a BLOCKING call, so nobody can act on stdout before the cutover), and moving BLOG_ONCALENDAR (its commit-hour basis is falsified by the incident, which landed in an hour with zero commits). IT REMOVES ONE ARROW ONLY: a deploy still restarts the brain under a running job. NO schema, NO env, NO route change, NO template change (no render.mjs re-render, no drift-gate crossing). Previous: 2026-09-04 @aicompany/core v1.119.0 ADOPTED (submodule 78cf88f) — a REPORT-HONESTY release whose headline item deliberately DID NOT SHIP: a seven-seat panel designed the symmetric deploy->nightly guard for v1.117.0's one-directional mutex and two critic seats rejected it on six measured defects (see packages/aicompany/architecture.md §9.3). THE ITEM MOST RELEVANT TO THIS HOST is the week-over-week line. It was gated on a bare `thisWeek < lastWeek` and printed "WARN: week-over-week decline (v1 collapse-detection signal)" while `classifyWow` — which requires BOTH a >=50-session baseline AND a >=20% drop — had returned `ok` and opened no episode. Measured on THIS host 2026-09-04: 304 vs 330 = -7.9%, printed as a WARN, on a host whose blog sessions had roughly doubled over the same 30 days. Deleting the line was proposed and REFUSED as laundering-shaped, because real nights sit at -17.2% and -18.3% — under the bound but worth the operator's eyes. Every night now prints the signed percentage plus the bound it did not cross. ALSO for this host: the 140-char nightly SUBJECT (which is the email subject too) now announces its cut instead of severing "correct via admin if needed" mid-word. NOT CHANGED, deliberately: this host's `blog.quality.posture: "publish_indexed"`. Tightening it to `publish` was costed and rejected — it would have noindexed 7 of the last 29 articles into a host with `refreshPerWeek: 0` and `refreshMinAgeDays: 3650`, i.e. a drain rate of ZERO and 7 permanent orphans, and it ADDS +7 mails/30d; it also contradicts the standing owner directive recorded at site.config.ts:770. The open question that IS worth the owner's time is separate and named in the ledger: 5 of 55 live articles score voiceAdherence=2 under this host's ANCHORED calibration, where 2 is reserved for pervasive non-conformance and clause citations are required below 3 — and the ledger detail does not carry those citations, so a reader cannot tell whether the anchoring regressed or the articles really are off-voice. NO schema, NO env, NO route change, NO template change — `render.mjs --check` reports all 16 rendered files match a fresh render at this pin. See packages/aicompany/MIGRATIONS.md v1.119.0. Previous: 2026-09-04 §5.22 XLANT ORIGIN MOVE PHASE 2 DONE (docs and comments
+Last verified against code: 2026-09-05 §5.22 XLANT GAINS A SECOND CLIENT KIND: THE MAC. The xlant repo's wire contract reached 0.5.0 (`DEVICE_KINDS = ['windows','mac']`, `PLATFORMS`, `IncidentStartRequest.platform`), and this host mirrors it in the four places it has to. `XLANT_DEVICE_KINDS` is now `["windows", "mac"]`, so `POST /api/internal/xlant/device-token` accepts `{kind:"mac"}` — but only after a PRE-MINT PROBE of the relay's internal `GET /v1/status` (`probeRelayMacSupport()`, a new read-side `relayInternalGet()`): a relay older than 0.5.0 has no `platforms` key, refuses the kind with a generic 400, and this host would have reported that as "relay refused the token mint" — a sentence that sends a staffer hunting for a fault on their own side of a healthy system. Three answers, three sentences: `supported` mints, `unsupported` is **503 "the relay does not support Mac tokens yet (needs relay 0.5.0)"**, and a relay that cannot be READ (timeout, non-2xx, non-JSON) is the mint's own **502 "the XLAnt relay did not answer"**, because "the Mac lane is not deployed" and "the relay is down" are different problems with different people to tell. A WINDOWS mint does not probe: it has worked since day one and must not acquire a second way to fail. The UPDATE FEED gains three names — `latest-mac.yml`, `XLAnt-<version>-<arm64|x64>-mac.zip` and that name plus `.blockmap` — with no new route and no new env, because electron-updater picks its own manifest by platform and asks the same base URL for it. THE ARCHITECTURE IN THE ZIP NAME IS LOAD-BEARING: electron-builder's default mac pattern drops `-${arch}` for its DEFAULT arch, which is x64 (builder-util `arch.js`, `defaultArchFromString(undefined) === Arch.x64`), so a build that loses the desktop's explicit `mac.artifactName` names its Intel zip `XLAnt-0.5.0-mac.zip` — refused here on purpose, along with `universal`, so a mis-named publish fails loudly rather than handing an unlabelled bundle to whoever clicked "Intel". `GET /api/internal/xlant/download` takes `?platform=mac&arch=arm64|x64` (no query = the Windows installer, the link an old bookmark still carries; `arch` is REQUIRED for mac and has no default — an arm64 bundle on an Intel Mac does not launch), decided by the pure `xlantDownloadRequest()` so every branch is pinned without a session. Content types are one shared table (`xlantArtifactContentType()`): `.yml` → text/yaml, `.zip` → application/zip, everything else (the `.exe`, both blockmaps) → application/octet-stream. `/internal/xlant` is now TWO CARDS, one per kind, each with its own downloads, its own numbered steps and its own token button (`<DeviceTokenButton kind=…>`), because the Mac story genuinely differs: a zip rather than an installer, /Applications before the helper will install, and — stated plainly, because it is the truth of this release — an unsigned build that Gatekeeper blocks on first open until Privacy & Security → "Open Anyway", and that macOS will not let update itself. The token copy is corrected in both cards: a mint revokes the previous token OF THAT KIND and leaves the other machine signed in. `scripts/xlant-tests.ts` 32 → 50 legs. NO schema, NO migration, NO new env var, NO new route. Previous: 2026-09-05 @aicompany/core v1.121.0 ADOPTED (submodule 3684bd4) + EDITORIAL CHECKLIST ROUND 6. A seven-seat panel was asked to redo this host's five voiceAdherence=2 articles and concluded REPAIR 0 by the proposed voice remit: two of the five stored judge notes describe DOCUMENTS THAT NO LONGER EXIST (the 07-15 article was replaced on 07-16 under its own published editor's note and never re-judged; its note faults a TechCrunch citation the live page does not contain), those same two notes quote ZERO sentences verbatim because they predate this host's 2026-07-26 move to anchored calibration, `integris-…-09-04` cannot pass arithmetically (19/6 = 3.17, and vA->3 gives 3.33 against a 3.5 floor), and r(voiceAdherence, lifetime impressions) = -0.011 across 55 articles carrying 723 impressions and 2 clicks. THE CORE ISSUE was in this file's own checklist and is fixed here: item 14 banned first person and reader-directed advice and NOTHING ELSE, while the SCORING NOTE's 2 anchor fails 'op-ed framing in the news body' — strictly broader, and the standard the reviewer actually applied. Not one flagged sentence is first person; most are impersonal synthesis. The writer complied with the clause it was given and was failed by an anchor it was never shown. Item 14 now states the rule AND names where the synthesis goes (Tron's take, or attributed reporting), because a prohibition with no licensed alternative is the rule-fights-itself pattern this file already records twice. Item 8's 'at most 70 characters' is corrected to 48 — the BLOCKING quality.contract.titleLength band this host has enforced since 2026-08-02, i.e. the writer was drafting headlines against a ceiling 22 characters looser than reality and then losing voiceAdherence on the stake it had no room for (HEADLINE cited on 3 of the 5; titles measure 47/44/45/48/42). ROUND 6 DIFFERS IN KIND FROM ROUNDS 1-5: every prior round ADDED or reworded a prohibition and not one corrected a number that contradicted this host's own config or supplied a licensed form. Explicitly NOT done, each killed by a refuting seat: deleting the SCORING NOTE's 4 and 5 anchors (breaks comparability with every score ever recorded), removing 'unverifiable' clauses from the reviewer's copy (premise falsified — four stored notes show it already declines to score them), deleting item 11's no-repeat clause (33 of 55 notes cite repetition), and a BRIDGES clause (laundering). MODULE SIDE, and it outranks the request: `preserveAnchors` stamped renamed sections with the previous section-set's anchors, so `ais-self-regulation-…-2026-07-16` served all seven sections under wrong ids and the canonical `#trons-take` deep link landed on a NEWS section. Fixed at the root, plus a deterministic `blog-fix-doc-defects.ts` sweep for that row and for the nine articles still carrying 'I am an AI' — a phrase THIS host's styleGuide mandated until 2026-07-30 and the contract gate rejects; removing it costs no transparency because authorship.disclosure carries a fuller one in every byline. NO schema, NO env, NO route change, NO template change. Previous: 2026-09-04 @aicompany/core v1.120.0 ADOPTED (submodule aee8175; §5.11 blog): THE RUN NOW SURVIVES OUR OWN DEPLOY RESTARTING THE BRAIN. A deploy cutover reloads pm2 (site + brain-api + skills-host); a blog nightly already in flight is systemd, not pm2, so it survives — and used to throw its phase away when its brain-api dependency blinked, reporting the loopback refusal as an "LLM outage". v1.120.0 adds a bounded reconnect at the single brain-call choke point on a LOOPBACK ECONNREFUSED only: wait on observed /health readiness, re-POST ONCE, per-RUN budget 60s. Budget-neutral (the call is charged before the request); cannot mask a cold outage (brainPreflight runs first) nor a crashloop (that yields ECONNRESET); startedAt is re-seated so the wait cannot inflate the wall-clock figure whose token MAILS; and it is never silent (run line + blog-brain-local-restart ledger row, emailed:false). THREE deploy-side designs were rejected first — a blocking guard (six measured defects, 3h46m-5h06m/day un-deployable), an advisory print-and-proceed (this fleet deploys from agent sessions inside a BLOCKING call, so nobody can act on stdout before the cutover), and moving BLOG_ONCALENDAR (its commit-hour basis is falsified by the incident, which landed in an hour with zero commits). IT REMOVES ONE ARROW ONLY: a deploy still restarts the brain under a running job. NO schema, NO env, NO route change, NO template change (no render.mjs re-render, no drift-gate crossing). Previous: 2026-09-04 @aicompany/core v1.119.0 ADOPTED (submodule 78cf88f) — a REPORT-HONESTY release whose headline item deliberately DID NOT SHIP: a seven-seat panel designed the symmetric deploy->nightly guard for v1.117.0's one-directional mutex and two critic seats rejected it on six measured defects (see packages/aicompany/architecture.md §9.3). THE ITEM MOST RELEVANT TO THIS HOST is the week-over-week line. It was gated on a bare `thisWeek < lastWeek` and printed "WARN: week-over-week decline (v1 collapse-detection signal)" while `classifyWow` — which requires BOTH a >=50-session baseline AND a >=20% drop — had returned `ok` and opened no episode. Measured on THIS host 2026-09-04: 304 vs 330 = -7.9%, printed as a WARN, on a host whose blog sessions had roughly doubled over the same 30 days. Deleting the line was proposed and REFUSED as laundering-shaped, because real nights sit at -17.2% and -18.3% — under the bound but worth the operator's eyes. Every night now prints the signed percentage plus the bound it did not cross. ALSO for this host: the 140-char nightly SUBJECT (which is the email subject too) now announces its cut instead of severing "correct via admin if needed" mid-word. NOT CHANGED, deliberately: this host's `blog.quality.posture: "publish_indexed"`. Tightening it to `publish` was costed and rejected — it would have noindexed 7 of the last 29 articles into a host with `refreshPerWeek: 0` and `refreshMinAgeDays: 3650`, i.e. a drain rate of ZERO and 7 permanent orphans, and it ADDS +7 mails/30d; it also contradicts the standing owner directive recorded at site.config.ts:770. The open question that IS worth the owner's time is separate and named in the ledger: 5 of 55 live articles score voiceAdherence=2 under this host's ANCHORED calibration, where 2 is reserved for pervasive non-conformance and clause citations are required below 3 — and the ledger detail does not carry those citations, so a reader cannot tell whether the anchoring regressed or the articles really are off-voice. NO schema, NO env, NO route change, NO template change — `render.mjs --check` reports all 16 rendered files match a fresh render at this pin. See packages/aicompany/MIGRATIONS.md v1.119.0. Previous: 2026-09-04 §5.22 XLANT ORIGIN MOVE PHASE 2 DONE (docs and comments
 only — ARCHITECTURE.md §5.22 and the §10 env rows, `.env.example`'s XLAnt block,
 `src/lib/xlant.ts`'s header, both `src/app/api/xlant/*` route headers,
 `deploy/nginx.d/xlant-device.conf`'s comments; NO code, NO schema, NO migration, NO env, NO route
@@ -10936,15 +10936,25 @@ the scans that keep a real colleague's address out of a public repository.
 ### 5.22 XLAnt — `/internal/xlant` + `/api/internal/xlant/*` (staff-gated) + the DEVICE lane `/api/xlant/relay/*` + `/api/xlant/update/*`
 
 **What XLAnt is.** A separate product in a separate repo (`adampr/xlant`,
-whose `ARCHITECTURE.md` v0.2 is the authority for the relay, the desktop and
-the technician agent): a Windows 11 system-tray app that notices when
-something goes wrong on the PC, asks *"Can I help attempt to resolve the
-error?"*, and — only after the user clicks **Yes** — has an XL.net technician
-agent (a Cursor cloud agent, launched by the XLAnt relay through XL Lakehouse)
-work the problem. The technician reaches the PC only through XLAnt's tool
-bridge, under a shell guard that blocks destructive commands and asks before
-restarts or anything needing administrator rights. The PC holds no provider
-credential — only its device token.
+whose `ARCHITECTURE.md` is the authority for the relay, the desktop and
+the technician agent): a Windows 11 system-tray app — and, since wire contract
+**0.5.0** (2026-09-05), the same app in the **macOS menu bar** — that notices
+when something goes wrong on the machine, asks *"Can I help attempt to resolve
+the error?"*, and — only after the user clicks **Yes** — has an XL.net
+technician agent (a Cursor cloud agent, launched by the XLAnt relay through XL
+Lakehouse) work the problem. The technician reaches the machine only through
+XLAnt's tool bridge, under a shell guard that blocks destructive commands and
+asks before restarts or anything needing administrator rights. The machine
+holds no provider credential — only its device token.
+
+**TWO CLIENT KINDS SINCE 0.5.0, AND THEY ARE SEPARATE ALL THE WAY DOWN.** The
+contract's `DEVICE_KINDS` is `['windows','mac']` and the relay keeps one ACTIVE
+token per **(user, kind)**, so a person with both machines holds a `windows`
+token AND a `mac` token and minting either leaves the other signed in. This
+host mirrors that in four places and nowhere else: `XLANT_DEVICE_KINDS` in
+`src/lib/xlant.ts`, the mint's accepted `kind`, the artifacts the update feed
+will publish, and the page's two cards. Nothing about the DEVICE lane's shape
+changed — same routes, same allowlist, same env, no schema.
 
 **ONE PUBLIC ORIGIN FROM 2026-09-04, AND IT IS THIS ONE.** ai.xl.net carries
 every XLAnt surface a person or a PC reaches, and every NEW device points here.
@@ -11017,6 +11027,39 @@ release's `.exe` and `.blockmap`**: electron-updater asks the NEW feed base for
 the OLD build's blockmap to compute a differential update, and with it missing
 the update degrades silently to a full download — a regression nobody sees
 except in bytes transferred.
+
+**The macOS artifacts land in the SAME directory (0.5.0).** electron-builder's
+`--mac zip` writes, per release, `XLAnt-<version>-arm64-mac.zip` +
+`.blockmap`, `XLAnt-<version>-x64-mac.zip` + `.blockmap`, and ONE
+`latest-mac.yml` naming both — measured on the build box 2026-09-05, where
+`electron-builder --mac zip --arm64` produced `XLAnt-0.4.2-arm64-mac.zip`, its
+blockmap and `latest-mac.yml`. electron-updater picks its manifest by platform
+(`latest.yml` on Windows, `latest-mac.yml` on macOS) and asks the same feed
+base for it, so the Mac build needed **no new route, no new env var and no new
+directory** — only three more names through `isXlantUpdateArtifact()`.
+
+**The architecture in the zip name is load-bearing.** electron-builder's
+DEFAULT mac pattern is `${productName}-${version}` + (arch === defaultArch ?
+"" : "-${arch}") + `-${os}.${ext}`, and its default arch is x64
+(`builder-util`'s `arch.js`: `defaultArchFromString(undefined) === Arch.x64`).
+A build that loses the desktop's explicit
+`mac.artifactName: "XLAnt-${version}-${arch}-mac.${ext}"` therefore names its
+Intel zip `XLAnt-<version>-mac.zip`, with **no architecture in it at all**.
+That name is refused here on purpose, and so is `universal` (the desktop builds
+two zips, not three): serving an unlabelled bundle to whoever clicked "Intel"
+is a guess, and an Apple-silicon bundle on an Intel Mac does not launch. A
+mis-named publish failing loudly at this feed is the outcome worth having. The
+xlant repo's `apps/desktop/electron-builder.yml` is where that pin lives —
+**this host and that file move together.**
+
+**The Mac build is UNSIGNED, and the page says so.** electron-builder skips
+macOS code signing off macOS, so a build produced on the Linux build box
+carries no Developer ID: Gatekeeper refuses the first open until the person
+uses System Settings → Privacy & Security → **Open Anyway**, and
+electron-updater's macOS path (Squirrel.Mac) will not install an update into an
+unsigned app, so the Mac has no self-update. Both facts are stated in the Mac
+card's steps rather than discovered by a staffer who thinks the download is
+broken. A signed Mac lane is a follow-up, not this round.
 
 MEASURED CAVEAT, so the line above is not read as a promise: this feed serves
 **whole files only**. It answers 200 with the complete body and a
@@ -11115,32 +11158,71 @@ handlers or server actions and renders once per segment tree, so the page
 below re-checks and returns `null` on a refusal rather than drawing a second
 explainer — exactly the `src/app/rfp/{layout,page}.tsx` split.
 
-**The page.** `/internal/xlant` (`src/app/internal/xlant/page.tsx`), server-
-rendered, `dynamic = "force-dynamic"` + `revalidate = 0` (the house posture
+**The page — TWO CARDS SINCE 0.5.0, one per client kind.**
+`/internal/xlant` (`src/app/internal/xlant/page.tsx`), server-rendered,
+`dynamic = "force-dynamic"` + `revalidate = 0` (the house posture
 for public pages is ISR; a gated page inheriting it would be rendered once and
 handed to every subsequent viewer, gate included), metadata title absolute
-"XLAnt — XL.net AI" and `robots: {index:false, follow:false}`. Sections: what
-XLAnt does; the download button, labelled
-`Download XLAnt {version} for Windows 11 (NN MB)` or, with no artifact
-published, "No installer has been published yet"; three setup steps (install →
-open the panel from the tray → paste the Windows token and Save & validate,
-step 03 closing with how updates actually arrive: a tray banner, one click to
-download, installed when XLAnt next quits — never "they install themselves");
-the device-token panel, whose copy says a new token replaces whatever XLAnt
-token the person already had **wherever it was minted**, the retired
-roleplay.xl.net downloads page included; a privacy note (the log lives on the user's own PC and
+"XLAnt — XL.net AI" and `robots: {index:false, follow:false}`.
+
+The shell is: what XLAnt does; one **Download** section carrying the token rule
+that is now true of both kinds (*one token per machine and one per kind; your
+Windows token and your Mac token are separate, and generating one never signs
+the other out*; a token is shown once; a new token of a kind replaces whatever
+token of THAT KIND the person had, wherever it was minted, the retired
+roleplay.xl.net downloads page included, and signs that machine out); then the
+two cards; then the privacy note (the log lives on the user's own machine and
 self-cleans after 90 days — adjustable or off; nothing runs until the user
-clicks Yes). The token button
-(`src/app/internal/xlant/token-button.tsx`) is the page's only client island:
-the token is shown ONCE, in that component's state and nowhere else on this
-host. It inlines the `windows` kind rather than importing `@/lib/xlant`, which
-reads `node:fs` and the shared secret and must never be bundled into a client.
-It renders a **Copy token** button (`navigator.clipboard`, and on an insecure
-origin or a withheld permission it says so and points at the still-selectable
-block rather than failing silently) and wraps the token in `aria-live="polite"`
-so the mint is announced without interrupting. It maps the routes' typed error
-codes to sentences that name the fix; an unmapped code is shown as itself
-rather than replaced by a guess.
+clicks Yes).
+
+Each card is self-contained — its downloads, its numbered steps, its own token
+button — because one merged set of steps would have to hedge every line:
+
+- **XLAnt for Windows.** One button, `Download XLAnt {version} for Windows 11
+  (NN MB)`, or "XLAnt for Windows 11: not published yet". Three steps (install → open the panel
+  from the tray → paste the Windows token and Save & validate, step 03 closing
+  with how updates actually arrive: a tray banner, one click to download,
+  installed when XLAnt next quits — never "they install themselves").
+- **XLAnt for Mac**, headed "macOS 13 or later". TWO buttons, Apple silicon and
+  Intel, each with its own version and MB or its own "not published yet", plus
+  a line telling a staffer how to tell the two apart (Apple menu → About This
+  Mac → the Chip or Processor line) — the two zips are not interchangeable.
+  FIVE steps, and every extra one is a real difference rather than padding:
+  unzip; drag XLAnt into **/Applications** (the administrator helper refuses to
+  install for an app anywhere else, because a daemon running as root must not
+  run code from a folder the user can edit); **open it and allow it once** —
+  this build is not signed by Apple, macOS blocks the first open with "cannot
+  be opened because Apple cannot check it for malicious software", and the fix
+  is System Settings → Privacy & Security → **Open Anyway**; paste the Mac
+  token and Save & validate (with the plain statement that an unsigned build
+  cannot update itself, so a new version means returning to this page); and
+  "Install the administrator helper…" from the XLAnt menu — an administrator's
+  password once, after which elevated repairs need no password box, and XLAnt
+  still asks first, in words. Skipping the helper leaves XLAnt working, with
+  administrator work going to XL.net instead.
+
+Every one of those download links is checked against
+`xlantDownloadRequest()` in `scripts/xlant-tests.ts`, so a card cannot link a
+query string its own route refuses.
+
+The token button (`src/app/internal/xlant/token-button.tsx`) is the page's only
+client island and is mounted **once per kind**, inside its card: the token is
+shown ONCE, in that component's state and nowhere else on this host, and two
+mounted instances hold separate state so showing a Mac token cannot blank a
+Windows one the staffer has not copied yet. It inlines the two kinds rather
+than importing `@/lib/xlant`, which reads `node:fs` and the shared secret and
+must never be bundled into a client (pinned: no `import … from "@/lib/xlant"`
+in that file). Its per-kind copy states the true revocation — *"Any Mac still
+using an older XLAnt Mac token of yours has just been signed out. Your Windows
+token is untouched."* and the mirror image for Windows — which is the sentence
+the single-kind era got wrong for free. It renders a **Copy token** button
+(`navigator.clipboard`, and on an insecure origin or a withheld permission it
+says so and points at the still-selectable block rather than failing silently)
+and wraps the token in `aria-live="polite"` so the mint is announced without
+interrupting. It maps the routes' typed error codes to sentences that name the
+fix — including the new 503, which points at whoever deploys the relay rather
+than at the staffer — and an unmapped code is shown as itself rather than
+replaced by a guess.
 
 **The gate — reused, not re-implemented.** Both the page and both route
 handlers admit exactly the population `/rfp` admits: a verified staff provider
@@ -11171,11 +11253,22 @@ arming gate, so a half-configured host answers 503 on every XLAnt surface
 rather than posting a staff email address to a guessed relay URL.
 `relayInternal(cfg, path, body)` POSTs JSON with the `X-XLAnt-Proxy-Secret`
 header and a 15 s `AbortSignal.timeout` (a hung relay must not hold a staff
-request open until the edge closes it at 100 s). `latestInstaller(cfg)` returns
+request open until the edge closes it at 100 s); `relayInternalGet(cfg, path)`
+is the read side of the same lane, added for the Mac pre-mint probe because
+express routes `/v1/status` by GET and a POST to it is a 404. Neither sends
+`X-XLAnt-Via: proxy` — the relay hard-rejects its internal routes when they
+carry that marker, and the passthrough sets it, so the marker is exactly what
+separates the two lanes. `latestInstaller(cfg)` returns
 `{fileName, size, version}` for the newest match of
 `/^XLAnt-Setup-(\d+\.\d+\.\d+(?:-[\w.]+)?)\.exe$/` by **mtime**, not by parsed
 version, so a republished build of the same version wins and this host invents
-no version ordering. The version group is REQUIRED to look like a version: the
+no version ordering. `latestMacBundle(cfg, arch)` is its macOS twin over
+`/^XLAnt-(\d+\.\d+\.\d+(?:-[\w.]+)?)-(arm64|x64)-mac\.zip$/`, returning the
+same shape plus `arch`, and it is **per architecture rather than newest-of-all**
+because the two zips of one release differ only in mtime — a single
+newest-of-all would hand whichever finished writing last to everybody. Both go
+through one private `newestArtifact(dir, accept)`, so the readdir/stat race and
+the `.part` skip are written once. The version group is REQUIRED to look like a version: the
 looser `[\w.-]+` accepts `XLAnt-Setup-x.exe.exe` and would then show "x.exe"
 to a member of staff as the version they are downloading. `.part` names are
 skipped explicitly as well as by the pattern, because the publish step writes
@@ -11190,9 +11283,38 @@ the staff download (whose name comes from `readdir()`), and the ACTUAL
 boundary for the update feed, whose name arrives from the network: a single
 path segment, no leading `.` or `-`, no `/`, and an explicit `..` test kept so
 a future loosening of either character class cannot silently re-open
-traversal. `XLANT_DEVICE_KINDS = ["windows"]` mirrors the relay's contract (the
-two repos share no code); the enum exists so a second kind never changes the
-wire shape.
+traversal.
+
+`XLANT_DEVICE_KINDS = ["windows", "mac"]` mirrors `DEVICE_KINDS` in the relay's
+contract (the two repos share no code, so the two arrays move in the same
+round), and `XLANT_MAC_ARCHES = ["arm64", "x64"]` mirrors what the desktop
+actually builds — `universal` is deliberately absent, and so are the spellings
+other toolchains use (`aarch64`, `amd64`, `x86_64`), none of which names a file
+this host publishes.
+
+**`probeRelayMacSupport(cfg)` — the pre-mint probe.** A `mac` mint asks the
+relay's internal `GET /v1/status` first and answers one of three words.
+`supported` (the response's `platforms` array contains `'mac'`) mints;
+`unsupported` (it answered, and `platforms` is absent or lacks `'mac'` — which
+is EVERY relay in production before 0.5.0) is a refusal; `unreadable` (no
+answer, a non-2xx, or a body that is not JSON) is a third answer and not folded
+into the second, because "the Mac lane is not deployed" and "the relay is down"
+are different problems with different people to tell. It exists because without
+it a pre-0.5.0 relay's generic 400 on an unknown `kind` would reach a staffer
+as "relay refused the token mint", a sentence that sends them looking for a
+fault on their own side of a perfectly healthy system. It is NOT cached: a mint
+is a staff button press, and a memo would go on refusing Mac tokens for its
+whole TTL after the relay is upgraded.
+
+**`xlantDownloadRequest(params)`** turns the staff download's query string into
+`{platform:"windows"}`, `{platform:"mac", arch}` or a typed refusal — a pure
+function, so `scripts/xlant-tests.ts` pins every branch without a session
+(`readSession()` needs a Next request scope the test harness cannot enter).
+**`xlantArtifactContentType(name)`** is the one name→type table both download
+lanes use: `.yml` → `text/yaml`, `.zip` → `application/zip`, everything else
+(the `.exe` and both `.blockmap`s) → `application/octet-stream`. The `.zip`
+test is an `endsWith` on the WHOLE name, so `…-mac.zip.blockmap` is a blockmap
+and not a zip.
 
 The DEVICE lane adds three things to the same module, all exported as data
 plus a predicate so `scripts/xlant-tests.ts` can pin them with no server:
@@ -11211,9 +11333,12 @@ plus a predicate so `scripts/xlant-tests.ts` can pin them with no server:
   both exist. A name can be perfectly safe and still be something the feed has
   no business publishing: `latest.yml.part` is the publish step's half-written
   temp file, and an updater that read one would parse a truncated manifest.
-  Exactly three shapes pass, all derived from the SAME `XLANT_INSTALLER_RE` the
-  staff download uses so the filename convention lives in one place —
-  `latest.yml`, `XLAnt-Setup-<version>.exe`, and that name plus `.blockmap`.
+  **Six** shapes pass since 0.5.0, all derived from the SAME two regexes the
+  staff downloads use so each filename convention lives in one place —
+  `latest.yml`, `XLAnt-Setup-<version>.exe` and that name plus `.blockmap`;
+  `latest-mac.yml`, `XLAnt-<version>-<arm64|x64>-mac.zip` and that name plus
+  `.blockmap`. The blockmap arm strips ONE `.blockmap` and re-asks, which is
+  what refuses `…exe.blockmap.blockmap` and a bare `.blockmap`.
 
 **Routes — the HUMAN lane (staff-gated).** Both `runtime = "nodejs"`,
 `dynamic = "force-dynamic"`, `revalidate = 0`, every response
@@ -11221,8 +11346,8 @@ plus a predicate so `scripts/xlant-tests.ts` can pin them with no server:
 
 | Route | Behaviour |
 |---|---|
-| `GET /api/internal/xlant/download` | Staff-gated stream of the newest installer from the LOCAL `XLANT_ARTIFACTS_DIR` (outside the web root), `Content-Disposition: attachment`, `Content-Length` from the stat, `Cache-Control: private, no-store`. 503 unconfigured · 404 nothing published · 403 for a signed-in non-staff session · and, because the caller is a BROWSER following a plain `<a>` and not a `fetch()`, **302 to `/login?redirect=/internal/xlant`** when there is no session at all, so a page left open past its session expiry sends the staffer to sign in instead of downloading a JSON error object named "download". The redirect URL is resolved against `req.url`, never a configured base, so it cannot leave the host the caller is on. Never linked publicly: a public URL would put an XL.net-signed installer in front of anyone who found the path |
-| `POST /api/internal/xlant/device-token` | Staff-gated mint. Optional body `{kind?: "windows"}` (absent/empty ⇒ windows); the IDENTITY comes from the session, never the body — `relayInternal('/v1/device/issue', {email: session.email.toLowerCase(), displayName: session.displayName ?? <email local part>, kind})` — and answers `{token, kind}`. 503 unconfigured · **401 `unauthenticated`** / **403 `wrong_domain`\|`wrong_provider`** (the `requireRfpUser()` split, so the button can say "sign in again" where that is the actual fix) · 400 malformed body or bad kind · **502** when the relay refuses, does not answer (timeout/DNS/refused), or answers 200 with something that is not JSON carrying a token — the response is parsed with `.json().catch(() => null)`, because a 200 is not a promise of JSON and an intermediary's HTML error page must not become a 500 here. The relay keeps ONE active token per (user, kind) and revokes the previous one, so a mint is also "sign out my old PC", including a PC holding a token minted on the retired roleplay page |
+| `GET /api/internal/xlant/download` | Staff-gated stream of the newest build from the LOCAL `XLANT_ARTIFACTS_DIR` (outside the web root), `Content-Disposition: attachment`, `Content-Length` from the stat, `Content-Type` from `xlantArtifactContentType()` (so a Mac zip is `application/zip`), `Cache-Control: private, no-store`. **`?platform=mac&arch=arm64|x64`** picks a macOS bundle; no query at all is the Windows installer, which is what every link on this host asked for before the Mac card existed and what an old bookmark still carries. `arch` is REQUIRED for mac and has no default (an Apple-silicon bundle on an Intel Mac does not launch, so there is nothing honest to guess) and is IGNORED for windows (one build; a stray parameter must not break a working link). The decision is the pure `xlantDownloadRequest()`, pinned branch by branch in `scripts/xlant-tests.ts`. 503 unconfigured · **400** `platform must be 'windows' or 'mac'` / `arch must be 'arm64' or 'x64'`, read AFTER the gate so a malformed query never tells an anonymous caller what parameters this route takes · 404 nothing published for that platform (`no installer published yet` / `no Mac build published yet`) · 403 for a signed-in non-staff session · and, because the caller is a BROWSER following a plain `<a>` and not a `fetch()`, **302 to `/login?redirect=/internal/xlant`** when there is no session at all, so a page left open past its session expiry sends the staffer to sign in instead of downloading a JSON error object named "download". The redirect URL is resolved against `req.url`, never a configured base, so it cannot leave the host the caller is on. Never linked publicly: a public URL would put an XL.net-signed installer in front of anyone who found the path |
+| `POST /api/internal/xlant/device-token` | Staff-gated mint. Optional body `{kind?: "windows" \| "mac"}` (absent/empty ⇒ windows, which is what every caller sent before contract 0.5.0); the IDENTITY comes from the session, never the body — `relayInternal('/v1/device/issue', {email: session.email.toLowerCase(), displayName: session.displayName ?? <email local part>, kind})` — and answers `{token, kind}`. 503 unconfigured · **401 `unauthenticated`** / **403 `wrong_domain`\|`wrong_provider`** (the `requireRfpUser()` split, so the button can say "sign in again" where that is the actual fix) · 400 malformed body or bad kind · **502** when the relay refuses, does not answer (timeout/DNS/refused), or answers 200 with something that is not JSON carrying a token — the response is parsed with `.json().catch(() => null)`, because a 200 is not a promise of JSON and an intermediary's HTML error page must not become a 500 here. The relay keeps ONE active token per (user, kind) and revokes the previous one OF THAT KIND, so a mint is also "sign out my old PC" — including a PC holding a token minted on the retired roleplay page — and a Mac mint leaves a Windows token alone. A **`mac` mint probes first** (`probeRelayMacSupport()`): **503 `the relay does not support Mac tokens yet (needs relay 0.5.0)`** when the relay answers without `'mac'` in `platforms`, and the mint's own **502 `the XLAnt relay did not answer`** when the probe cannot be read at all. A windows mint does not probe |
 
 **Routes — the DEVICE lane (no session, ever).** Both `runtime = "nodejs"`,
 `dynamic = "force-dynamic"`, `revalidate = 0`, every response
@@ -11232,7 +11357,7 @@ route reads a cookie and neither is CSRF-checked (see **CSRF** below).
 | Route | Behaviour |
 |---|---|
 | `GET\|POST /api/xlant/relay/[[...path]]` | Allowlisted streaming passthrough to `XLANT_RELAY_URL`. Adds `X-XLAnt-Proxy-Secret` and `X-XLAnt-Via: proxy` (the relay hard-rejects its INTERNAL routes when they carry that header, so nothing arriving through here can reach the token mint even if the allowlist were wrong); forwards the caller's own `Authorization` **when there is one**, and `Content-Type` / `Accept` / `Mcp-Session-Id` in both directions; forwards the QUERY STRING verbatim. Body caps and timeouts below. `AbortSignal.timeout(290_000)`; `maxDuration = 300` is declared for PORTABILITY and is inert here (see the timing note). Answers 503 unconfigured · **404** for any path off the allowlist · **411** when a non-GET declares no `Content-Length` (except the MCP path) · **413** over 1 MB · **502** when the relay does not answer (ECONNREFUSED / DNS / TLS) · **504** when the `AbortSignal` fires · otherwise the relay's own status, headers and streamed body, unaltered — 401 (revoked device token), 404 (unknown bridge token) and 410 (ended run) all belong to the relay and must reach the caller as they are. The upstream `fetch` is wrapped: unguarded, a down relay throws out of the handler and `next start` answers a bare HTML 500 |
-| `GET /api/xlant/update/[[...path]]` | The electron-updater **generic** feed: `latest.yml`, `XLAnt-Setup-x.y.z.exe`, `<exe>.blockmap`, streamed from `XLANT_ARTIFACTS_DIR` (outside the web root) with `Content-Length` taken from the same `stat()` the stream is opened against, `Content-Type: text/yaml` for `.yml` and `application/octet-stream` otherwise. Gated by `Authorization: Bearer <device token>` — the updater is a background process inside the tray app and cannot carry a browser cookie. 503 unconfigured · **401** with no token, a malformed header, or a token the relay does not recognise · **400** on a name failing `safeArtifactName()` (checked BEFORE any filesystem call; a multi-segment catch-all is joined with `/`, which that predicate refuses, so traversal cannot reach `join()`) · **404** when the name is safe but is not a RELEASE (`isXlantUpdateArtifact()` — so `latest.yml.part` and anything else an operator leaves in the directory are refused), and 404 when a release-shaped name is simply not there. Both name checks run AFTER the token check, so the feed is never a directory oracle for an anonymous caller |
+| `GET /api/xlant/update/[[...path]]` | The electron-updater **generic** feed: `latest.yml`, `XLAnt-Setup-x.y.z.exe`, `<exe>.blockmap` and — since 0.5.0 — `latest-mac.yml`, `XLAnt-x.y.z-<arm64\|x64>-mac.zip`, `<zip>.blockmap`, streamed from `XLANT_ARTIFACTS_DIR` (outside the web root) with `Content-Length` taken from the same `stat()` the stream is opened against and `Content-Type` from `xlantArtifactContentType()` (`text/yaml` · `application/zip` · `application/octet-stream`). electron-updater picks its own manifest by platform and asks this same base URL for it, so macOS needed no new route and no new env. Gated by `Authorization: Bearer <device token>` — the updater is a background process inside the tray app and cannot carry a browser cookie. 503 unconfigured · **401** with no token, a malformed header, or a token the relay does not recognise · **400** on a name failing `safeArtifactName()` (checked BEFORE any filesystem call; a multi-segment catch-all is joined with `/`, which that predicate refuses, so traversal cannot reach `join()`) · **404** when the name is safe but is not a RELEASE (`isXlantUpdateArtifact()` — so `latest.yml.part` and anything else an operator leaves in the directory are refused), and 404 when a release-shaped name is simply not there. Both name checks run AFTER the token check, so the feed is never a directory oracle for an anonymous caller |
 
 **The allowlist is a MIRROR — change it and the xlant contract together.**
 `XLANT_RELAY_ALLOWED` is a copy of the route list in the xlant repo's
@@ -11383,9 +11508,18 @@ relay's INTERNAL routes by name, and every URL metacharacter (`? # % \ @ : .`,
 whitespace, quotes) in an id position; MCP path detection, including that
 nothing the allowlist refused is an MCP path, so the length-less-body
 concession cannot be reached around it; `safeArtifactName()` on traversal,
-absolute paths and odd names; `isXlantUpdateArtifact()` on the release trio and
-against `.part` files and operator leftovers; `XLANT_INSTALLER_RE` including
-the `x.exe.exe` case the strict version group exists for; and
+absolute paths and odd names; `isXlantUpdateArtifact()` on both release trios
+and against `.part` files and operator leftovers; `XLANT_INSTALLER_RE`
+including the `x.exe.exe` case the strict version group exists for;
+`XLANT_MAC_BUNDLE_RE` including the arch-less `XLAnt-0.5.0-mac.zip` a build
+without an explicit `mac.artifactName` emits, `universal`, and the `aarch64` /
+`x86_64` spellings other toolchains use (with the pin that no name matches both
+filename contracts, so "Windows or Mac build?" has exactly one answer);
+`XLANT_DEVICE_KINDS` and `XLANT_MAC_ARCHES` with their near-misses;
+`xlantDownloadRequest()` on every branch — no query is windows, `arch` ignored
+for windows, `arch` REQUIRED for mac, and each refusal's exact sentence;
+`xlantArtifactContentType()` on every publishable name, including that a
+`…-mac.zip.blockmap` is a blockmap and not a zip; and
 `verifyDeviceToken()`'s cache against a stubbed `globalThis.fetch` — a positive
 cached, a refusal not cached, a relay that throws returning false and not
 cached (with the next request succeeding rather than sitting out the TTL),
@@ -11408,9 +11542,24 @@ connection answering **502** and the `AbortSignal` answering **504** (in both
 shapes undici raises); the arming gate 503-ing both routes without contacting
 anything; and, on the feed, 401 (absent, short and revoked tokens — the revoked
 one costing a relay call every time), one verify covering the whole
-`latest.yml` → `.exe` → `.blockmap` upgrade, correct `Content-Length` and
-content types, 400 for traversal (with a real file outside the artifacts dir
-proven unreachable) and 404 for `latest.yml.part` and other non-releases.
+`latest.yml` → `.exe` → `.blockmap` upgrade AND the whole
+`latest-mac.yml` → `.zip` → `.blockmap` one, correct `Content-Length` and
+content types on both, 400 for traversal (with a real file outside the
+artifacts dir proven unreachable) and 404 for `latest.yml.part` and other
+non-releases — including `latest-mac.yml.part`, a universal bundle and the
+arch-less zip, each of which is REALLY ON DISK in the scratch directory so the
+404 is the release gate's verdict rather than a missing file.
+
+The Mac half also runs `latestInstaller()` / `latestMacBundle()` against that
+same scratch directory (per-architecture answers; newest by mtime pinned by
+stamping an OLDER version NEWER, so it cannot accidentally agree with "highest
+version"; `.part`, `universal` and the arch-less name all failing to become a
+fallback; an unreadable directory answering `null` rather than throwing out of
+a render) and `probeRelayMacSupport()` against the fake relay: that it is a
+**GET** to `/v1/status` carrying the shared secret and NOT the proxy marker;
+that a missing, empty, non-array or windows-only `platforms` is `unsupported`
+while `'mac'` anywhere in the list is `supported`; and that a non-2xx, a
+non-JSON 200 and a refused connection are all `unreadable`, a third answer.
 Finally the MIDDLEWARE is executed: eight Origin-less device requests pass with
 no `Set-Cookie`, while the control POST to `/api/internal/xlant/device-token`
 without an Origin is **403** and the same POST with one passes — which is what
@@ -11418,12 +11567,21 @@ makes the pass a measurement rather than a disabled check. (The first cut
 asserted this by grepping `src/proxy.ts` for quoted prefixes; that regex would
 miss a prefix added inline.)
 
-Two source legs hold what types cannot: both routes still declare their runtime
-knobs (`nodejs`, force-dynamic, `maxDuration = 300`,
+Five source legs hold what types cannot: both device routes still declare their
+runtime knobs (`nodejs`, force-dynamic, `maxDuration = 300`,
 `AbortSignal.timeout(290_000)`, `private, no-store`) and still import the
-shared allowlist rather than carrying a second copy; and the nginx drop-in
-still carries `client_max_body_size 2m` under `location ^~ /api/xlant/` with
-**every** directive of the stamped `location /` block present verbatim.
+shared allowlist rather than carrying a second copy; the staff download keeps
+its own knobs and does NOT re-read the query string itself (the decision stays
+in the one pure function); **every `href` the page draws for that route is fed
+back through `xlantDownloadRequest()`**, so a card cannot link a query string
+its own route refuses, and the page mounts exactly one `<DeviceTokenButton>`
+per kind; the Mac mint calls `probeRelayMacSupport()` **before**
+`/v1/device/issue` and under a `kind === "mac"` guard, its two staff-visible
+sentences exist verbatim in the button's message map (a code with no sentence
+is shown raw to a staffer), and the client island still carries no
+`import … from "@/lib/xlant"`; and the nginx drop-in still carries
+`client_max_body_size 2m` under `location ^~ /api/xlant/` with **every**
+directive of the stamped `location /` block present verbatim.
 
 **Deploying this.** This host **builds on the VM** (`DEPLOY_BUILD_MODE`
 defaults to remote and `.next` is rsync-excluded, §9), so a green
@@ -11441,10 +11599,11 @@ rotated — and the two must agree or the relay 401s),
 `XLANT_ARTIFACTS_DIR` (`/opt/xlant-artifacts`, a real local directory on this
 VM). All three or none, and the same three now arm FOUR route handlers rather
 than two. **The staff PAGE does not 503 on a half-configured host** — it
-renders without the installer offer (`page.tsx` calls `latestInstaller()` only
-when `xlantConfig()` returned a config), because a page that refuses tells a
-member of staff nothing they can act on; the four ROUTE HANDLERS are what
-answer 503. The device lane added no env var of its own. **No schema, no
+renders with every download reading "not published yet" (`page.tsx` calls
+`latestInstaller()` and `latestMacBundle()` only when `xlantConfig()` returned
+a config), because a page that refuses tells a member of staff nothing they can
+act on; the four ROUTE HANDLERS are what answer 503. Neither the device lane
+nor the Mac kind added an env var of its own. **No schema, no
 migration, no DB table**: this host stores nothing about XLAnt — the tokens
 live in the relay's sqlite, and the update feed's verify cache is per-process
 memory that dies with the worker.
@@ -13026,7 +13185,7 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | Roadmap | `APOLLO_DAILY_CALL_CAP` | Apollo page fetches/day across all companies, default 100 |
 | XLAnt | `XLANT_RELAY_URL` | §5.22 `xlant-relay` base URL on the internal VM (`http://135.232.204.158:8403`). ONE NSG /32 rule opens TCP 8403 to a web host: `AllowXLAntRelayFromAiWebsite` (pri 222, 52.237.160.75/32, this host). The cutover's PHASE 2 deleted `AllowXLAntRelayFromRoleplay` (pri 221, 157.55.165.83/32) on 2026-09-04, and MyCoach's pri 220 on :8402 is a different service. Trailing slashes stripped. Read by the staff mint AND by the `/api/xlant/relay/*` passthrough |
 | XLAnt | `XLANT_PROXY_SHARED_SECRET` | §5.22 value of the `X-XLAnt-Proxy-Secret` header, required on every relay request whatever the source IP; **≥16 chars** or the config reads as absent. One value, in the relay's `/etc/xlant.env` and this host's `.env` and nowhere else — phase 2 deleted roleplay's copy on 2026-09-04 WITHOUT rotating the value |
-| XLAnt | `XLANT_ARTIFACTS_DIR` | §5.22 LOCAL directory of published `XLAnt-Setup-<version>.exe` installers plus `latest.yml` and `*.blockmap` (`/opt/xlant-artifacts`), OUTSIDE the web root. The xlant publish step writes `.part` then renames, to THIS VM alone since phase 2 of the cutover (2026-09-04), so this is the only published copy anywhere; this host always reads it directly and never proxies. Inventory as of 2026-09-04: 0.2.0 exe + blockmap, 0.2.1 exe + blockmap, `latest.yml` → 0.2.1. Keep the previous release's exe + blockmap (electron-updater needs the OLD blockmap for a differential update). Read by the staff download AND by the `/api/xlant/update/*` feed. **All three or none**: any missing ⇒ the four XLAnt route handlers answer 503 (the arming gate); the staff page still renders, without the installer offer |
+| XLAnt | `XLANT_ARTIFACTS_DIR` | §5.22 LOCAL directory of published `XLAnt-Setup-<version>.exe` installers plus `latest.yml` and `*.blockmap` — and, since contract 0.5.0, the macOS set beside them in the SAME directory: `XLAnt-<version>-<arm64\|x64>-mac.zip` + `.blockmap` and one `latest-mac.yml` (`/opt/xlant-artifacts`), OUTSIDE the web root. The xlant publish step writes `.part` then renames, to THIS VM alone since phase 2 of the cutover (2026-09-04), so this is the only published copy anywhere; this host always reads it directly and never proxies. Inventory as of 2026-09-04: 0.2.0 exe + blockmap, 0.2.1 exe + blockmap, `latest.yml` → 0.2.1. Keep the previous release's exe + blockmap (electron-updater needs the OLD blockmap for a differential update). Read by the staff download AND by the `/api/xlant/update/*` feed. **All three or none**: any missing ⇒ the four XLAnt route handlers answer 503 (the arming gate); the staff page still renders, with every download reading "not published yet" |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
 | | `TRON_KNOWLEDGE_FILE` | **legacy, no longer read** — the knowledge path is `persona.knowledgeFile` in site.config.ts |
 | Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |

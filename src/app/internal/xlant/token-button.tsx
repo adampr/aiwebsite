@@ -4,13 +4,35 @@
 // shown ONCE and never re-rendered from the server: it exists in this
 // component's state and nowhere else on this host.
 //
-// The kind is inlined rather than imported from @/lib/xlant — that module
+// The kinds are inlined rather than imported from @/lib/xlant — that module
 // reads node:fs and the shared secret, and must never be bundled into a
-// client. Windows is XLAnt's only device kind, so there is exactly one button.
+// client. One button per kind, and the page renders one inside each platform
+// card: the relay keeps one active token per (user, KIND), so a Mac mint
+// revokes the person's previous Mac token and leaves their Windows PC signed
+// in. Two mounted instances hold separate state for the same reason — showing
+// a Mac token must not blank the Windows one the staffer has not copied yet.
 
 import { useState } from "react";
 
-type Kind = "windows";
+type Kind = "windows" | "mac";
+
+/** The words each kind puts on screen. Split out so the two cards cannot drift
+ * into describing the same mint differently, and so `revoked` can say the true
+ * thing for each: issuing one kind never touches the other. */
+const COPY: Record<Kind, { platform: string; machine: string; revoked: string }> = {
+  windows: {
+    platform: "Windows",
+    machine: "PC",
+    revoked:
+      "Any PC still using an older XLAnt Windows token of yours, including one minted on the old roleplay.xl.net page, has just been signed out. Your Mac token is untouched.",
+  },
+  mac: {
+    platform: "Mac",
+    machine: "Mac",
+    revoked:
+      "Any Mac still using an older XLAnt Mac token of yours has just been signed out. Your Windows token is untouched.",
+  },
+};
 
 // The route answers a typed reason, not prose (401 unauthenticated, 403
 // wrong_domain / wrong_provider, plus the relay codes). A code is a fine thing
@@ -31,20 +53,25 @@ const MESSAGES: Record<string, string> = {
     "The XLAnt relay answered without a token. Nothing has changed — try again in a moment.",
   "XLAnt is not configured on this host":
     "XLAnt is not configured on this server yet. Tell whoever set it up.",
+  // The pre-mint probe (see the device-token route): the relay is up and
+  // answering, it simply predates the Mac lane. Nothing to retry and nothing
+  // the staffer can do, so the sentence points at the person who ships relays.
+  "the relay does not support Mac tokens yet (needs relay 0.5.0)":
+    "The XLAnt relay is not running the Mac release yet, so a Mac token cannot be issued. Nothing has changed. Ask whoever deploys the relay for 0.5.0.",
 };
 
-export function DeviceTokenButton() {
+export function DeviceTokenButton({ kind }: { kind: Kind }) {
   const [token, setToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copyNote, setCopyNote] = useState<string | null>(null);
+  const copy = COPY[kind];
 
   async function mint() {
     setBusy(true);
     setError(null);
     setCopyNote(null);
     try {
-      const kind: Kind = "windows";
       const res = await fetch("/api/internal/xlant/device-token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -68,7 +95,7 @@ export function DeviceTokenButton() {
     }
   }
 
-  async function copy() {
+  async function copyToken() {
     if (!token) return;
     // navigator.clipboard is absent on an insecure origin and can reject when
     // the browser withholds permission. Either way the token is still on
@@ -95,8 +122,8 @@ export function DeviceTokenButton() {
         {busy
           ? "Generating..."
           : token
-            ? "Generate a new Windows token"
-            : "Generate Windows token"}
+            ? `Generate a new ${copy.platform} token`
+            : `Generate ${copy.platform} token`}
       </button>
 
       {/* Polite, not assertive: the token appears in response to the viewer's
@@ -105,7 +132,7 @@ export function DeviceTokenButton() {
       <div aria-live="polite">
         {token && (
           <div className="panel panel--raised mt-6">
-            <span className="sys-label">Windows token</span>
+            <span className="sys-label">{copy.platform} token</span>
             <code
               className="mono mt-4 block rounded-lg border p-4 text-xs"
               style={{
@@ -117,15 +144,13 @@ export function DeviceTokenButton() {
               {token}
             </code>
             <p className="mt-4 flex flex-wrap items-center gap-4">
-              <button type="button" onClick={copy} className="btn">
+              <button type="button" onClick={copyToken} className="btn">
                 Copy token
               </button>
               {copyNote && <span className="text-sm text-faint">{copyNote}</span>}
             </p>
             <p className="mt-4 text-sm">
-              Copy it now — it is not shown again. Any PC still using an older
-              XLAnt token of yours, including one minted on the old
-              roleplay.xl.net page, has just been signed out.
+              Copy it now — it is not shown again. {copy.revoked}
             </p>
           </div>
         )}
