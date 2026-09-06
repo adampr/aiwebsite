@@ -436,7 +436,7 @@ export function safeArtifactName(name: string): boolean {
  * `packages/shared/src/contract.ts` (the two repos share no code, and the
  * relay mirrors this same list on its side) — **change the contract and this
  * array together, in the same round**. Exported as data, and paired with the
- * predicate below, so `scripts/xlant-tests.ts` can pin the exact seven shapes
+ * predicate below, so `scripts/xlant-tests.ts` can pin the exact eight shapes
  * without standing up a server.
  *
  * Anchored at both ends on purpose. These are the ONLY relay paths reachable
@@ -457,6 +457,11 @@ export const XLANT_RELAY_ALLOWED: readonly RegExp[] = [
   // projection. Device-authenticated on the relay; answers ONLY the token's
   // own person. Exact path, like hello: no id segment, so nothing to widen.
   /^v1\/device\/credits$/,
+  // v0.10 (2026-09-06): after the person confirms in Settings, the desktop asks
+  // for a SHORT-LIVED signed grant to put the machine back to a restore point
+  // the relay itself took before a fix run. Device-authenticated on the relay;
+  // the relay checks the point is that person's, on that machine. Exact path.
+  /^v1\/device\/restore-grant$/,
   /^v1\/incident\/start$/,
   /^v1\/incident\/[\w-]+\/(events|decision|chat|close)$/,
   /^v1\/incident\/[\w-]+\/tools\/next$/,
