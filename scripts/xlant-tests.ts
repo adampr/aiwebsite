@@ -18,7 +18,7 @@
 //
 // What is pinned:
 //
-//   · the relay ALLOWLIST — the exact six shapes and nothing else. That list
+//   · the relay ALLOWLIST — the exact seven shapes and nothing else. That list
 //     is a MIRROR of the route list in the xlant repo's
 //     packages/shared/src/contract.ts, and the relay mirrors it a third time;
 //     if a change to the contract does not appear here, the two sides have
@@ -100,11 +100,11 @@ async function leg(label: string, fn: () => void | Promise<void>) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. The relay allowlist — exactly six shapes
+// 1. The relay allowlist — exactly seven shapes
 // ---------------------------------------------------------------------------
 
-await leg("the allowlist holds exactly the six contract shapes", () => {
-  assert.equal(XLANT_RELAY_ALLOWED.length, 6);
+await leg("the allowlist holds exactly the seven contract shapes", () => {
+  assert.equal(XLANT_RELAY_ALLOWED.length, 7);
   for (const re of XLANT_RELAY_ALLOWED) {
     // Anchored at BOTH ends: an unanchored entry matches any longer path that
     // merely contains an allowed one.
@@ -118,6 +118,7 @@ await leg("the allowlist holds exactly the six contract shapes", () => {
 
 const ACCEPTED = [
   "v1/device/hello",
+  "v1/device/credits",
   "v1/incident/start",
   "v1/incident/inc_123/events",
   "v1/incident/inc_123/decision",
@@ -139,6 +140,10 @@ const REJECTED = [
   "v1/device/hello/x",
   "v1/device/hello/",
   "xv1/device/hello",
+  "v1/device/credits/x",
+  "v1/device/credits/",
+  "v1/device/creditsx",
+  "v1/device/credit",
   "v1/incident/start/x",
   "v1/incident/inc_123/events/x",
   "v1/incident/inc_123/tools/next/x",
@@ -214,7 +219,7 @@ await leg("only v1/mcp/{bridgeToken} is the MCP path", () => {
   }
 });
 
-await leg("the MCP shape is one of the allowlisted six", () => {
+await leg("the MCP shape is one of the allowlisted seven", () => {
   assert.ok(
     XLANT_RELAY_ALLOWED.some((re) => re.source === XLANT_MCP_PATH.source),
     "XLANT_MCP_PATH must be one of XLANT_RELAY_ALLOWED"
