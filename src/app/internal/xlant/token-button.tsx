@@ -24,7 +24,7 @@ const COPY: Record<Kind, { platform: string; machine: string; revoked: string }>
     platform: "Windows",
     machine: "PC",
     revoked:
-      "Any PC still using an older XLAnt Windows token of yours, including one minted on the old roleplay.xl.net page, has just been signed out. Your Mac token is untouched.",
+      "Any PC still using an older XLAnt Windows token of yours has just been signed out. Your Mac token is untouched.",
   },
   mac: {
     platform: "Mac",
