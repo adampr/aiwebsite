@@ -1,6 +1,26 @@
 // /internal/xlant — XLAnt's human-facing home (ARCHITECTURE.md §5.22): the
-// downloads, the per-user device-token mints, and how to set them up. XL.net
-// staff only; the technician agent runs on XL-managed machines.
+// downloads, the per-computer device-token mints, how to set them up, and the
+// list of the caller's own computers holding a live token. XL.net staff only;
+// the technician agent runs on XL-managed machines.
+//
+// ONE TOKEN PER COMPUTER SINCE 2026-09-08, and the Download section's
+// paragraph is the page's statement of it. The old paragraph said a new token
+// of a kind replaced whatever token of that kind the person held and signed
+// that machine out — which was true of the relay then, was the defect a person
+// with two laptops reported, and is false now. A mint replaces NOTHING today:
+// a token nobody pastes anywhere expires seven days after it was generated,
+// and signing a computer out is a deliberate act in "Your computers" below,
+// which is why that section exists at all.
+//
+// AND THE REINSTALL SENTENCE NAMES THE RIGHT MOMENT (refuter R2, F8). The
+// relay binds a device to a computer NAME at `/incident/start`, not at hello,
+// so a reinstalled XLAnt does not retire the computer's old token by
+// connecting — it retires it the first time it reports something, which is
+// either a problem it spotted or the daily check-up. Until then BOTH rows are
+// live and "Your computers" shows two of them for one laptop, under a section
+// whose own sentence says a row is one computer. The paragraph says so, and
+// points at Sign out for the spare, because the person who has just handed a
+// laptop back is exactly the person acting on this sentence.
 //
 // TWO CARDS SINCE CONTRACT 0.5.0, one per client kind, because the two are
 // separate all the way down: a different build, a different token, a different
@@ -26,6 +46,7 @@ import {
   xlantConfig,
   type InstallerInfo,
 } from "@/lib/xlant";
+import { DevicesList } from "./devices-list";
 import { DeviceTokenButton } from "./token-button";
 
 export const dynamic = "force-dynamic";
@@ -178,18 +199,20 @@ export default async function XlantPage() {
           <strong>&ldquo;Can I help attempt to resolve the error?&rdquo;</strong>
         </p>
         <p className="mt-4">
-          Click <strong>Yes</strong> and an XL.net technician agent goes to
-          work on it, keeping you posted in plain language the whole time — no
-          jargon, no ticket queue, no waiting on hold. Click <strong>No</strong>{" "}
-          and it steps out of your way. You can also open the panel and simply
-          ask XLAnt for a hand whenever you want one.
+          Click <strong>Yes</strong> and XLAnt goes to work on it, keeping you
+          posted in plain language the whole time — no jargon, no ticket queue,
+          no waiting on hold. Click <strong>No</strong> and it steps out of
+          your way. You can also open the panel and simply ask XLAnt for a hand
+          whenever you want one.
         </p>
         <p className="mt-4">
-          The technician reaches your machine only through XLAnt, and only while
-          you are watching. It never runs anything you would not want it to: a
-          shell guard blocks destructive commands outright, and anything that
-          needs a restart or administrator rights is asked for first, in words,
-          before it happens.
+          XLAnt works on your machine only through this connection, and
+          nothing on it is changed until you click <strong>Yes</strong>. Once a
+          day it takes a look at how the machine is doing without being asked —
+          that check-up only looks. It never runs anything you would not want
+          it to: a shell guard blocks destructive commands outright, and
+          anything that needs a restart or administrator rights is asked for
+          first, in words, before it happens.
         </p>
       </section>
 
@@ -199,15 +222,23 @@ export default async function XlantPage() {
         <span className="sys-label">Download</span>
         <h2 className="mt-6">Get it on your machine</h2>
         <p className="mt-6">
-          One token per machine, and one per kind: your Windows token and your
-          Mac token are separate, and generating one never signs the other out.
-          A token is shown <strong>once</strong>, right here, so copy it before
-          you leave the page. Generating a new token of a kind replaces
-          whatever XLAnt token of that kind you already had, wherever it came
-          from — including one you generated on the old roleplay.xl.net
-          downloads page, now retired — and the machine holding it is signed
-          out. That is exactly what you want when you move to a new machine, and
-          exactly what you do not want by accident.
+          One token per computer, and as many computers as you have: a Windows
+          token for each PC, a Mac token for each Mac. A token is shown{" "}
+          <strong>once</strong>, right here, so copy it before you leave the
+          page. Generating a token never signs another computer out — every
+          machine you have already set up keeps working, whichever kind it is,
+          and generating a second token changes nothing about the first. A
+          token you generate and never paste anywhere expires on its own{" "}
+          <strong>seven days</strong>{" "}
+          later, so one that gets away from you stops being useful without
+          anybody having to do anything. And when you set XLAnt up again on a
+          computer that already had it, the old token there is retired the
+          first time the new one reports something — a problem it has spotted,
+          or the daily check-up — so until that happens you may see two rows
+          below for the one computer, the newer of them still without a name.
+          To sign a computer out on purpose — a laptop you have handed back,
+          one you have lost, the spare row after a reinstall — use{" "}
+          <strong>Your computers</strong> below.
         </p>
       </section>
 
@@ -254,13 +285,27 @@ export default async function XlantPage() {
       </section>
 
       <section className="panel">
+        <span className="sys-label">Your computers</span>
+        <h2 className="mt-6">Signed in right now</h2>
+        <p className="mt-6 text-sm">
+          A row is one token and the computer holding it: sign it out and that
+          token stops working the moment you click, and none of your other
+          computers is touched. A computer puts its name here the first time it
+          reports something, so a row can sit without a name for a while — that
+          is normal, and the computer is working.
+        </p>
+        <DevicesList />
+      </section>
+
+      <section className="panel">
         <span className="sys-label">A note on privacy</span>
         <p className="mt-4 text-sm">
           XLAnt keeps its log on your own machine, and that log self-cleans
           after 90 days — adjustable, or off entirely, in the app&rsquo;s
-          settings. Nothing runs on your machine until you click{" "}
-          <strong>Yes</strong>: until then XLAnt is only watching for errors,
-          and a <strong>No</strong> ends it there.
+          settings. Nothing on your machine is changed until you click{" "}
+          <strong>Yes</strong>: until then XLAnt is watching for errors and
+          taking its daily look, neither of which changes anything, and a{" "}
+          <strong>No</strong> ends it there.
         </p>
       </section>
 

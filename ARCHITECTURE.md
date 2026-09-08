@@ -15,6 +15,8 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
+Last verified against code: 2026-09-08 §5.22 XLANT: ONE TOKEN PER COMPUTER, AND A PAGE THAT CAN SIGN ONE OUT. The person's report was two sentences long — "every time I get a new token to install on a workstation, the other workstation tokens are invalidated" — and the relay's own rows say the same thing without adjectives: on 2026-09-08 ONE person held EIGHT Windows tokens issued since 09-04 across TWO machines (`xl-lpt-aradulovic1` and `xl-lpt-aradulovic3`), every mint revoked the previous one (`store.issueDevice` kept one ACTIVE token per (email, kind)), and FOURTEEN open pieces of work were closed `superseded` by those re-issues (audit rows 09-06 00:42Z, 09-06 20:22Z, 09-07 01:56Z, 09-08 00:02Z). Each machine's token died the moment the other was set up. The relay half of the cure is a peer round in the `adampr/xlant` repo (`/v1/device/issue` now REVOKES NOTHING AT ALL — an unused token is dealt with by time instead, expiring seven days after it was generated, and `DeviceSummary` carries that clock as `expiresAt` — plus new INTERNAL `GET /v1/device/list` and `POST /v1/device/revoke`); THIS host's half is the page, which had been telling members of staff the old rule as though it were a feature ("exactly what you want when you move to a new machine"). THE DOWNLOAD PARAGRAPH IS REWRITTEN to what is true: one token per computer and as many computers as you have, a Windows token for each PC and a Mac token for each Mac; a token shown once; generating one never signs another computer out and changes nothing about the first; a token you generate and never paste anywhere EXPIRES ON ITS OWN SEVEN DAYS LATER; a reinstall on a computer that already had XLAnt retires that computer's older token the first time the new install REPORTS SOMETHING — a problem, or the daily check-up — because the relay binds a machine name at `/incident/start` and not at connect, so until then one laptop legitimately shows TWO rows and the page says so; and signing a computer out is a deliberate act in the new section below. The retired **roleplay.xl.net** clause is deleted rather than reworded (that host has carried nothing of XLAnt since 2026-09-04, and a live page naming it sends a staffer somewhere that cannot help them), and per peer round xlant-a0 "an XL.net technician agent goes to work" becomes "XLAnt goes to work" and "The technician reaches your machine only through XLAnt" becomes "XLAnt reaches your machine only through this connection". NEW SECTION "Your computers" — a second client island, `src/app/internal/xlant/devices-list.tsx`, mounted ONCE after the two platform cards and before the privacy note — draws one row per computer holding a live token: Windows/Mac (or "Computer" for a kind this host does not recognise), the machine name — and THREE answers where a lesser page would have two, since the relay binds that name at the computer's first incident: a row that has never been seen reads "not connected yet", one that HAS reported but is still nameless reads "no name yet", because telling a staffer their working PC never arrived is the very sentence that would send them back up the page to mint another token for it — the client version or "—", how long ago it was last seen in words ("just now", "N minutes/hours/days ago", "never"), the seven-day clock on an unused token ("expires today" / "expires in N days", days FLOORED so the time left is never overstated, "expired" for an instant already past, and nothing at all for a row with no clock), an open-work count only above zero, and a **Sign out** button behind a one-line confirm that names the consequence instead of asking "are you sure". Empty is "No computers yet — generate a token above.", and a failed read does NOT clear the rows already drawn, because an empty section under an error message reads as "you have no computers" — the one thing this list must never say by accident. TWO NEW ROUTES, both staff-gated by the same `requireXlantStaff()` and both taking the identity from the SESSION and nothing else: `GET /api/internal/xlant/devices` (→ `relayInternalGet('/v1/device/list?email=…')`, re-read through a new pure `xlantDeviceSummaries()` which holds `expiresAt` to a stricter standard than its neighbours because that field alone is drawn as a countdown; an unreadable answer is a **502**, NEVER an empty list) and `POST /api/internal/xlant/devices/revoke` (body `{deviceId}` only, `[A-Za-z0-9_-]{1,80}` — the relay's ids are UUIDs, confirmed 2026-09-08 — and the relay's 404 passed through as a 404 with a sentence a staffer can act on). The mint and the list are coupled by ONE window event, `xlant:devices-changed`, because the token buttons and the island are separate mounts with no shared parent and a `router.refresh()` would blank a token the staffer had not copied yet. THE TEST SUITE LEARNED TO HOLD A SESSION: `scripts/xlant-tests.ts` **50 → 68 legs**, with a new section 8b that executes the staff handlers in-process inside a FAKED Next request scope (Next's own `workAsyncStorage`/`workUnitAsyncStorage` given a `type: 'request'` store, the cookie minted by the REAL `signSession()` under a synthetic secret, the global `AsyncLocalStorage` installed by a one-line `data:` module that has to be the file's first import). That is what turns the load-bearing property from a written claim into a measurement: **a body `email` is IGNORED** by both the sign-out and the mint, and the relay is told the session's lowercased address. THREE SENTENCES DID NOT SURVIVE REVIEW AND WERE CORRECTED IN A FIX ROUND: SPEC D3's own "and only while you are watching" is false by default (the desktop ships `dailyScan: true` and that check-up's preamble says "nobody is watching"), so the hero now says nothing is CHANGED without a Yes and the unattended pass only looks — and the privacy note, which carried the same claim in other words, moved with it; the reinstall sentence named the wrong moment (above); and the Sign out confirm said nothing about the work it ends, though the row it sits on was already showing "N open" — the relay's `revokeDevice` closes EVERY non-terminal row of that device and notifies only the device it has just signed out, so the confirm now names the count. A fourth correction is about a state rather than a sentence: the relay back-fills a machine name from a device's OWN later incidents only, so on deploy day the fleet's existing computers arrive in this list NAMELESS, and the section says in words that a row without a name is normal and the computer is working. NO schema, NO migration, NO new env var, NO new allowlist shape — `v1/device/list` and `v1/device/revoke` are INTERNAL relay routes reached server-side only and join the REJECTION list, so the allowlist still holds exactly EIGHT anchored patterns — and NO new CSRF prefix, both new routes inheriting `/api/internal/xlant` (the middleware leg now proves the sign-out refuses an Origin-less POST, which is the route that most needs it). NOT CHANGED: the DEVICE lane, the update feed, the artifacts directory, the arming gate, the two client kinds, and the mint's Mac probe. Verified: `npx tsc --noEmit`, `npm run test:xlant` (68 legs, all passing), `npm run build:check` (exit 0; its `jsx-spacing` scanner blocked one boundary in the new Download paragraph — a JSX text node carrying both a newline and an entity loses its leading space, so `<strong>seven days</strong> later,` would have shipped as "seven dayslater" — fixed with an explicit `{" "}` and pinned by a leg that EXECUTES `scripts/check-jsx-spacing.mjs` over the three XLAnt `.tsx` files rather than restating its rule).
+
 Last verified against code: 2026-09-08 §5.16 THE SITE'S OWN OUTBOUND SUBJECTS CAN NO LONGER TITLE A CARD, AND THE PUBLISHED-TITLE GUARD MATCHES AGAIN. Incident: the §5.21 chase nudge goes out under the FIXED subject `CHASE_NUDGE_SUBJECT` ("Reminder about work XL.net asked you for"), colleagues answer it by replying WITH THE PACKAGE ATTACHED, `titleFromSubject` strips the "Re:" and the leftover cleared every gate — two published prod cards carried the nudge's subject as their title (2026-09-04 and 2026-09-08) while both packages declared their real names in SKILL.md. FIX ONE, the echo screen: `email-parse.ts` gains `isSystemSubjectEcho` — EXACT key-normalized match (the `isPlaceholderSubject` normalization, factored into the shared `subjectKey`) against `SYSTEM_ECHO_SUBJECTS`, the enumerated outbound subjects that solicit an archive reply: `CHASE_NUDGE_SUBJECT` + `CHASE_REPORT_SUBJECT`, IMPORTED from `src/lib/chase/config.ts` (pure; strictly read-only, no import goes the other way) so a rewording travels automatically (parity leg in `scripts/work-tests.ts` imports both sides). Each constant is screened in raw AND `titleFromSubject` form (the report subject's `[aiwebsite]` prefix is a bracket tag that strip removes); enumerated constants ONLY, never heuristics — "Reminder Bot", "Work Reminder Tool" and the nudge subject plus any extra words still title cards. The notify.ts templated subjects ("Your work submission is held for review: X", ...) are deliberately NOT screened: they are inline template literals ending in the REAL card title (screening means unimportable string copies, the drift the parity rule forbids), and a package reply to one of them is the update flow, whose pinned title never runs the ladder. The whole rung-2 gate is now the pure pinnable `subjectProvidesTitle(subjectRaw, subjectStripped)` in `email-parse.ts` (placeholder screen + echo screen, each on both forms, plus the 4-60 band; the intake's local `outOfBand` moved there as `titleOutOfBand`), and a screened echo FALLS THROUGH to rungs 3-4 exactly like a placeholder. `noTitleMessage` gains a tailored FIRST branch for the echo case (the honest sentence: the subject is the reminder's, not the tool's; the fix is a "Title:" body line or a fresh email — never "your subject came out as ..."). Update-lane interplay verified: a reply-to-nudge carrying "Update Card:" now SKIPS the subject-vs-predecessor mismatch check (`subjectUsable` false), so it proceeds on the pinned predecessor title where it used to FALSE-REJECT on the nudge subject naming a different tool. FIX TWO, the guard hole (how the 09-08 twin passed `publishedTitleClash`, answered — no stale build required): all three `db.ts` title matchers (`activeTitleClash`, `publishedTitleClash`, `resolveUpdateTarget`) collapsed whitespace with an inline `'\s+'` inside a drizzle `sql` template literal, and a JS template literal COOKS that unrecognized escape to `'s+'` — Postgres was replacing runs of the LETTER s, so any title containing an s slipped every matcher at runtime while the same expression typed into psql (backslash intact) matched, which is exactly what the hand-run investigation saw. The active matchers were backstopped by the `work_sub_active_title_uq` unique index (raw-SQL migrations, correct backslash); PUBLISHED titles have NO index, so `publishedTitleClash` was the only guard on them and it never matched a title with an s in it. The pattern is now the BOUND PARAMETER `TITLE_NORM_WS = "\\s+"` (db.ts), pinned three ways in `scripts/work-submit-tests.ts`: the constant's exact value, regex-vs-`normalizeTitle` behavioral parity (including on the incident title, where the cooked and real patterns visibly disagree), and a db.ts source pin that all three matchers bind the constant and none inlines a quoted pattern. NO schema, NO env, NO route change. Verified: `npx tsc --noEmit`, `npm run test:work`, `npm run test:worksubmit`, `npm run test:workexhibit`, `npm run test:workupdate`, `npm run test:workattribute`.
 
 Last verified against code: 2026-09-08 /work AUTOTASK CI INTAKE EXHIBIT RETIRED (the §4 `/work` row + §5.16 one-tool-one-card; `src/app/work/page.tsx`, `src/app/work/community.tsx`, regenerated `src/lib/work/static-titles.json`, pins in `scripts/work-placements-tests.ts`): the hand-authored `#autotask-ci-intake` exhibit leaves page.tsx, completing one-tool-one-card for it (its team card, `work_submissions` row 8e989c65 from the builder's `autotask-ci-intake.skill` package, is already published; the operator retitles that card "Autotask CI Intake" at deploy time, which the regenerated snapshot's 409 title gate now permits), so statics go 16 -> 15, bay 05 holds `#spamslayer`, `#beacon`, and the snapshot is regenerated (15 titles, 15 anchor ids, 45 facet labels, 5 bays). Stripe and seam arithmetic re-derived: the retired exhibit was the LAST static (global position 20, even, plain), so NO literal stripe class flips anywhere, the run starts at 20 (EVEN, plain; was 21), placedStart 10/13/18 and the two unpublished-placement seams (`#your-ai-roadmap` -> `#qbr-machine`, `#onboarding-toolkit` -> `#lakehouse`) are unchanged; static comment ordinal 18 leaves the tail of the sequence (the deliberate holes at 15 and 17 remain; ordinals are never renumbered). §5.18 credit interaction, by design and unchanged in code: the exhibit-credit fold reads the GENERATED `anchorIds`, so any `work_static_credits` row anchored on `autotask-ci-intake` stops counting the day this deploys (honesty guard); the operator retires the dead row with `work:credit remove`, which accepts a retired anchor. NO schema, NO migration, NO env, NO route change. Verified: `npm run test:placements` (19/19), `npx tsc --noEmit`, `node scripts/work-static-snapshot.mjs --check`, `npm run test:work`, `test:worksubmit`, `test:workexhibit`, `test:correlate`, `test:roadmap`.
@@ -11078,13 +11080,33 @@ asks before restarts or anything needing administrator rights. The machine
 holds no provider credential — only its device token.
 
 **TWO CLIENT KINDS SINCE 0.5.0, AND THEY ARE SEPARATE ALL THE WAY DOWN.** The
-contract's `DEVICE_KINDS` is `['windows','mac']` and the relay keeps one ACTIVE
-token per **(user, kind)**, so a person with both machines holds a `windows`
-token AND a `mac` token and minting either leaves the other signed in. This
-host mirrors that in four places and nowhere else: `XLANT_DEVICE_KINDS` in
-`src/lib/xlant.ts`, the mint's accepted `kind`, the artifacts the update feed
-will publish, and the page's two cards. Nothing about the DEVICE lane's shape
-changed — same routes, same allowlist, same env, no schema.
+contract's `DEVICE_KINDS` is `['windows','mac']`, so a person with both
+machines holds `windows` tokens AND `mac` tokens and minting either leaves the
+other alone. This host mirrors that in four places and nowhere else:
+`XLANT_DEVICE_KINDS` in `src/lib/xlant.ts`, the mint's accepted `kind`, the
+artifacts the update feed will publish, and the page's two cards. Nothing about
+the DEVICE lane's shape changed — same routes, same allowlist, same env, no
+schema.
+
+**AND ONE TOKEN PER COMPUTER SINCE 2026-09-08 — the kind is not a count.**
+Until that date the relay kept one ACTIVE token per **(email, kind)** and every
+mint revoked the previous one, so setting up a second laptop signed the first
+one out. That is not a design this host is free to describe either way: it was
+measured. One person, two machines (`xl-lpt-aradulovic1` and
+`xl-lpt-aradulovic3`), **eight** Windows tokens issued since 09-04, each mint
+killing the other machine's token, and **14** open pieces of work closed
+`superseded` by those re-issues. **`POST /v1/device/issue` now revokes nothing
+at all.** A token that is never used is dealt with by TIME rather than by the
+next mint: it EXPIRES seven days after it was generated, so a token that got
+away from somebody stops being useful without any other token of theirs being
+disturbed, and generating a second one meanwhile changes nothing about the
+first. `DeviceSummary` carries that clock as `expiresAt` (an ISO instant, set
+only while a token has never connected and is inside its window; null once the
+computer has reported in). Signing a computer out became an explicit act:
+`POST /v1/device/revoke`, reached from this host's own "Your computers"
+section. What that changes HERE is the page's words, two new staff routes and
+one client island — no schema, no env, no allowlist entry (both relay routes
+are INTERNAL) and no new CSRF prefix.
 
 **ONE PUBLIC ORIGIN FROM 2026-09-04, AND IT IS THIS ONE.** ai.xl.net carries
 every XLAnt surface a person or a PC reaches, and every NEW device points here.
@@ -11296,14 +11318,90 @@ handed to every subsequent viewer, gate included), metadata title absolute
 "XLAnt — XL.net AI" and `robots: {index:false, follow:false}`.
 
 The shell is: what XLAnt does; one **Download** section carrying the token rule
-that is now true of both kinds (*one token per machine and one per kind; your
-Windows token and your Mac token are separate, and generating one never signs
-the other out*; a token is shown once; a new token of a kind replaces whatever
-token of THAT KIND the person had, wherever it was minted, the retired
-roleplay.xl.net downloads page included, and signs that machine out); then the
-two cards; then the privacy note (the log lives on the user's own machine and
+(rewritten 2026-09-08 — see below); then the two cards; then **Your
+computers**; then the privacy note (the log lives on the user's own machine and
 self-cleans after 90 days — adjustable or off; nothing runs until the user
 clicks Yes).
+
+**THE TOKEN RULE, AND WHY IT WAS REWRITTEN.** The paragraph used to say that a
+new token of a kind replaced whatever token of that kind the person held —
+wherever it was minted, the retired roleplay.xl.net downloads page included —
+and signed that machine out, "exactly what you want when you move to a new
+machine, and exactly what you do not want by accident". Every clause of that
+was true of the relay at the time and is false now, and the person it cost was
+the one holding two laptops. It reads, in full:
+
+> One token per computer, and as many computers as you have: a Windows token
+> for each PC, a Mac token for each Mac. A token is shown **once**, right here,
+> so copy it before you leave the page. Generating a token never signs another
+> computer out — every machine you have already set up keeps working, whichever
+> kind it is, and generating a second token changes nothing about the first. A
+> token you generate and never paste anywhere expires on its own **seven days**
+> later, so one that gets away from you stops being useful without anybody
+> having to do anything. And when you set XLAnt up again on a computer that
+> already had it, the old token there is retired the first time the new one
+> reports something — a problem it has spotted, or the daily check-up — so
+> until that happens you may see two rows below for the one computer, the newer
+> of them still without a name. To sign a computer out on purpose — a laptop
+> you have handed back, one you have lost, the spare row after a reinstall —
+> use **Your computers** below.
+
+**THE REINSTALL SENTENCE NAMES AN INCIDENT, NOT A CONNECT (refuter R2, F8).**
+The relay binds a device to a machine NAME at `/incident/start`; a device that
+merely says hello is touched (`lastSeenAt` moves) but stays nameless. So a
+reinstalled XLAnt does NOT retire that computer's older token by connecting —
+it retires it the first time it reports something, which is either a problem it
+spotted or the daily check-up. Until then BOTH tokens are live and **"Your
+computers" shows two rows for one laptop**, one named and one not. The first
+draft of this paragraph said "the first time that computer reports in", which
+is the moment a person acts on when they hand a laptop back, and it outran the
+code by one whole event. The page now says what happens and points at Sign out
+for the spare row, and the section's own sentence was corrected with it: a row
+is **one token and the computer holding it**, not one computer, because the
+bijection the old wording promised is exactly what a reinstall breaks.
+
+**AND THE NAMELESS ROW IS NOT A FAULT (refuter R3).** The relay back-fills a
+machine name from a device's OWN later incidents only, so on deploy day the
+fleet's existing computers arrive in this list nameless — the one active
+machine reads "Windows · no name yet · 3 open" until it next reports. A page
+that showed that without a word would have invented a fault for a staffer to
+chase, so the section says a computer puts its name here the first time it
+reports something, that a row can sit without a name for a while, and that this
+is normal and the computer is working.
+
+The roleplay.xl.net clause is GONE rather than reworded: that host has carried
+nothing of XLAnt since 2026-09-04, and a live page naming it sends a staffer
+somewhere that cannot help them. Two more sentences moved in the same edit, on
+the product's own rule that XLAnt is the thing that does the work (peer round
+xlant-a0): *"an XL.net technician agent goes to work"* is now *"XLAnt goes to
+work"*, and *"The technician reaches your machine only through XLAnt, and only
+while you are watching"* became *"XLAnt works on your machine only through this
+connection, and nothing on it is changed until you click **Yes**. Once a day it
+takes a look at how the machine is doing without being asked — that check-up
+only looks."* The rest of that paragraph — the shell guard, the asking before
+restarts and administrator work — is untouched.
+
+**"ONLY WHILE YOU ARE WATCHING" DID NOT SURVIVE REVIEW, AND SHOULD NOT HAVE
+(refuter R2, F9).** SPEC D3 asked for that clause and it is false by default:
+the desktop ships `dailyScan: true`, and that check-up's own preamble tells the
+technician *"nobody is watching"*. It reaches the PC through the `xlant_pc`
+tools while the person is away. What IS true is the pair of claims above —
+nothing is CHANGED without a Yes, and the unattended pass only looks — so that
+is what the page says. **The privacy note carried the same claim in other
+words** (*"Nothing runs on your machine until you click Yes"*) and was
+corrected with it, because fixing one of two sentences making one false claim
+leaves a page that contradicts itself on the point it just fixed.
+
+**The "Your computers" section** sits AFTER both platform cards and BEFORE the
+privacy note, because it is about machines that are already set up and a
+staffer reading top to bottom meets it after the two ways to set one up. Its
+explanation is two sentences: *"A row is one token and the computer holding it:
+sign it out and that token stops working the moment you click, and none of your
+other computers is touched. A computer puts its name here the first time it
+reports something, so a row can sit without a name for a while — that is
+normal, and the computer is working."* — a row, a consequence, the blast radius
+and the one state that would otherwise read as a fault. It mounts the island
+once.
 
 Each card is self-contained — its downloads, its numbered steps, its own token
 button — because one merged set of steps would have to hedge every line:
@@ -11342,10 +11440,17 @@ mounted instances hold separate state so showing a Mac token cannot blank a
 Windows one the staffer has not copied yet. It inlines the two kinds rather
 than importing `@/lib/xlant`, which reads `node:fs` and the shared secret and
 must never be bundled into a client (pinned: no `import … from "@/lib/xlant"`
-in that file). Its per-kind copy states the true revocation — *"Any Mac still
-using an older XLAnt Mac token of yours has just been signed out. Your Windows
-token is untouched."* and the mirror image for Windows — which is the sentence
-the single-kind era got wrong for free. It renders a **Copy token** button
+in that file). Its per-kind copy states what a mint does and no longer does —
+*"Your other computers stay signed in. If you do not paste this Mac token into
+a Mac, it expires on its own seven days from now."* and the mirror image for
+Windows, which names a PC. (Until 2026-09-08 it said *"Any Mac still using an
+older XLAnt Mac token of yours has just been signed out"*, which was true then,
+is the defect a person with two laptops reported, and is pinned as a string
+that must NOT appear in that file again. *"Copy it now — it is not shown again."* stays,
+because that part never stopped being true.) After a successful mint — and only
+after one, since a refused mint changed nothing — it dispatches
+`xlant:devices-changed` on `window`, which is how the list below learns to
+re-read itself. It renders a **Copy token** button
 (`navigator.clipboard`, and on an insecure origin or a withheld permission it
 says so and points at the still-selectable block rather than failing silently)
 and wraps the token in `aria-live="polite"` so the mint is announced without
@@ -11353,6 +11458,73 @@ interrupting. It maps the routes' typed error codes to sentences that name the
 fix — including the new 503, which points at whoever deploys the relay rather
 than at the staffer — and an unmapped code is shown as itself rather than
 replaced by a guess.
+
+**The computer list (`src/app/internal/xlant/devices-list.tsx`, 2026-09-08) is
+the page's SECOND client island**, and it is a client island for a different
+reason from the button's: the list is a live reading rather than a property of
+the page, and a server-rendered snapshot would be stale the moment a token is
+minted or a computer signed out. It reads `GET /api/internal/xlant/devices` on
+mount and draws one row per computer: **Windows** / **Mac** (or "Computer" for
+a kind this host does not recognise — guessing Windows for a Mac is worse than
+a generic word), the machine name, the client version or **"—"**, **how long
+ago it was last seen in words** — "just now", "N minutes ago", "N hours ago",
+"N days ago", "never" — the **seven-day clock** on a token nobody has pasted
+anywhere yet, an **open-work count only above zero**, and a **Sign out**
+button.
+
+**THE NAME SLOT HAS THREE ANSWERS, NOT TWO, and the third one matters.** The
+relay binds `machineName` at the computer's FIRST `/incident/start`, so a
+nameless row is not necessarily an unused token: an install that has said hello
+and had nothing go wrong yet has connected, is working, and is still nameless.
+`lastSeenAt` therefore decides the words — never seen is **"not connected
+yet"**, seen but unnamed is **"no name yet"** — because telling a staffer their
+working PC never arrived is exactly the sentence that would send them back up
+the page to mint another token for it, which is the behaviour this whole round
+exists to stop.
+
+**The clock.** `expiresAt` arrives set only while a token has never connected
+and is inside its seven-day window, and null once the computer has reported in;
+it is the one field this host checks is a REAL INSTANT before passing on
+(`xlantDeviceSummaries()`), because it is the one drawn as a countdown and a
+string that is not a date would become a fabricated number of days. The words
+are "expires today" under a day and "expires in N days" above it, with the days
+**floored** — 47 hours left reads "expires in 1 day", since overstating the
+time somebody has is the expensive direction of that error — and an instant
+already past reads "expired" rather than a positive count (the relay lists
+ACTIVE devices only, so it should never arrive). A row with no clock says
+nothing about one. Empty is *"No computers yet — generate a token above."*, the status
+line is `aria-live="polite"`, and a failed read does NOT clear the rows it
+already drew: an empty section under an error message reads as "you have no
+computers", which is the one thing this list must never say by accident. A
+timestamp in the FUTURE reads "just now" (the timestamp is the relay's clock
+and the words are rendered on the staffer's) and an unparseable one reads
+"unknown", never an invented duration.
+
+Sign out is behind a one-line `window.confirm` that names the consequence
+rather than asking "are you sure" — *"Sign X out of XLAnt? Its token stops
+working immediately, and that computer needs a new one from this page to come
+back."* — **plus, when the row shows open work, the rest of the consequence
+(refuter R2, F10): *"The 2 pieces of work XLAnt still has open on it end with
+it."*** The relay's `revokeDevice` closes EVERY non-terminal row of that device
+as `superseded`, a ticket being verified and a wrap-up included, with no
+successor to move them to, and the only party it notifies is the device that
+has just been signed out — so nobody hears. The row is already showing "N open"
+a few pixels away; a confirm that stayed silent about it would be asking the
+person to agree to something the page had itself put in front of them. Both
+shapes are `confirmWords()`, exported and pinned. The list is re-read afterwards whether the revoke succeeded or
+was refused, because a refusal can mean the relay had already signed that
+computer out. Like the token button it must never import `@/lib/xlant` (a test
+pins both files), so the row shape is a hand-kept mirror of
+`XlantDeviceSummary`.
+
+**The mint and the list are coupled by ONE window event.** The two token
+buttons and this island are separate mounts inside separate sections with no
+shared parent state, so after a successful mint the button dispatches
+`xlant:devices-changed` and the island listens for it. A `router.refresh()`
+would have re-rendered the server component and blanked a token the staffer had
+not copied yet — the token lives in that button's state and nowhere else on
+this host, which is the whole design of the mint. The event name is spelled in
+both files, and a test compares the two literals rather than trusting them.
 
 **The gate — reused, not re-implemented.** Both the page and both route
 handlers admit exactly the population `/rfp` admits: a verified staff provider
@@ -11477,7 +11649,9 @@ plus a predicate so `scripts/xlant-tests.ts` can pin them with no server:
 | Route | Behaviour |
 |---|---|
 | `GET /api/internal/xlant/download` | Staff-gated stream of the newest build from the LOCAL `XLANT_ARTIFACTS_DIR` (outside the web root), `Content-Disposition: attachment`, `Content-Length` from the stat, `Content-Type` from `xlantArtifactContentType()` (so a Mac zip is `application/zip`), `Cache-Control: private, no-store`. **`?platform=mac&arch=arm64|x64`** picks a macOS bundle; no query at all is the Windows installer, which is what every link on this host asked for before the Mac card existed and what an old bookmark still carries. `arch` is REQUIRED for mac and has no default (an Apple-silicon bundle on an Intel Mac does not launch, so there is nothing honest to guess) and is IGNORED for windows (one build; a stray parameter must not break a working link). The decision is the pure `xlantDownloadRequest()`, pinned branch by branch in `scripts/xlant-tests.ts`. 503 unconfigured · **400** `platform must be 'windows' or 'mac'` / `arch must be 'arm64' or 'x64'`, read AFTER the gate so a malformed query never tells an anonymous caller what parameters this route takes · 404 nothing published for that platform (`no installer published yet` / `no Mac build published yet`) · 403 for a signed-in non-staff session · and, because the caller is a BROWSER following a plain `<a>` and not a `fetch()`, **302 to `/login?redirect=/internal/xlant`** when there is no session at all, so a page left open past its session expiry sends the staffer to sign in instead of downloading a JSON error object named "download". The redirect URL is resolved against `req.url`, never a configured base, so it cannot leave the host the caller is on. Never linked publicly: a public URL would put an XL.net-signed installer in front of anyone who found the path |
-| `POST /api/internal/xlant/device-token` | Staff-gated mint. Optional body `{kind?: "windows" \| "mac"}` (absent/empty ⇒ windows, which is what every caller sent before contract 0.5.0); the IDENTITY comes from the session, never the body — `relayInternal('/v1/device/issue', {email: session.email.toLowerCase(), displayName: session.displayName ?? <email local part>, kind})` — and answers `{token, kind}`. 503 unconfigured · **401 `unauthenticated`** / **403 `wrong_domain`\|`wrong_provider`** (the `requireRfpUser()` split, so the button can say "sign in again" where that is the actual fix) · 400 malformed body or bad kind · **502** when the relay refuses, does not answer (timeout/DNS/refused), or answers 200 with something that is not JSON carrying a token — the response is parsed with `.json().catch(() => null)`, because a 200 is not a promise of JSON and an intermediary's HTML error page must not become a 500 here. The relay keeps ONE active token per (user, kind) and revokes the previous one OF THAT KIND, so a mint is also "sign out my old PC" — including a PC holding a token minted on the retired roleplay page — and a Mac mint leaves a Windows token alone. A **`mac` mint probes first** (`probeRelayMacSupport()`): **503 `the relay does not support Mac tokens yet (needs relay 0.5.0)`** when the relay answers without `'mac'` in `platforms`, and the mint's own **502 `the XLAnt relay did not answer`** when the probe cannot be read at all. A windows mint does not probe |
+| `POST /api/internal/xlant/device-token` | Staff-gated mint. Optional body `{kind?: "windows" \| "mac"}` (absent/empty ⇒ windows, which is what every caller sent before contract 0.5.0); the IDENTITY comes from the session, never the body — `relayInternal('/v1/device/issue', {email: session.email.toLowerCase(), displayName: session.displayName ?? <email local part>, kind})` — and answers `{token, kind}`. 503 unconfigured · **401 `unauthenticated`** / **403 `wrong_domain`\|`wrong_provider`** (the `requireRfpUser()` split, so the button can say "sign in again" where that is the actual fix) · 400 malformed body or bad kind · **502** when the relay refuses, does not answer (timeout/DNS/refused), or answers 200 with something that is not JSON carrying a token — the response is parsed with `.json().catch(() => null)`, because a 200 is not a promise of JSON and an intermediary's HTML error page must not become a 500 here. Since 2026-09-08 a mint is NO LONGER "sign out my old PC" — it revokes NOTHING. A token that is never pasted anywhere is dealt with by TIME instead: it expires seven days after it was generated, so nothing a person already uses is ever disturbed by their next mint, and a second token generated meanwhile changes nothing about the first. Explicit sign-out moved to `POST /api/internal/xlant/devices/revoke` below, which is where the security property the old behaviour gave away for free now lives. This route answers `{token, kind}` and NOTHING ELSE the relay attached — the seven-day clock reaches the staffer through the button's own fixed sentence and through the computer list's `expiresAt`, never by echoing a field this host did not look at. A Mac mint still leaves a Windows token alone, and always did. A **`mac` mint probes first** (`probeRelayMacSupport()`): **503 `the relay does not support Mac tokens yet (needs relay 0.5.0)`** when the relay answers without `'mac'` in `platforms`, and the mint's own **502 `the XLAnt relay did not answer`** when the probe cannot be read at all. A windows mint does not probe |
+| `GET /api/internal/xlant/devices` | Staff-gated read of the caller's OWN computers — the ones holding a live token right now (2026-09-08). No parameters and no body: the identity is `relayInternalGet('/v1/device/list?email=' + encodeURIComponent(session.email.toLowerCase()))` and there is nothing a caller can say to name somebody else. Answers `{devices}`, each row re-read through the pure `xlantDeviceSummaries()` rather than relayed, so a field the relay grows or one it sends as the wrong type cannot reach the client island as an unrendered object; a row with no usable `deviceId` is DROPPED (that id is what Sign out posts back, so a row without one is a button that cannot work), an unrecognised `kind` is `null`, never `"windows"`, and **`expiresAt` is held to a stricter standard than its neighbours** — a string that does not parse as an instant becomes `null`, because that field is drawn as a countdown and a non-date would become a fabricated number of days. 503 unconfigured · **401 `unauthenticated`** / **403 `wrong_domain`\|`wrong_provider`** · **502** in three flavours with three sentences: `the XLAnt relay did not answer` (timeout/DNS/refused), `relay refused the device list` (a non-2xx), and `relay returned no device list` (a 200 whose `devices` is not an array — **never an empty list**, because "No computers yet" is a sentence this page prints and a person with two laptops must not read it because the relay hiccuped and go and mint a third token) |
+| `POST /api/internal/xlant/devices/revoke` | Staff-gated sign-out of ONE of the caller's own computers (2026-09-08). Body `{deviceId}` and nothing else that is read: 1-80 characters of `[A-Za-z0-9_-]` — the same opaque id class as the allowlist's `[\w-]`, **underscore included**, because that is the shape of this product's ids and a stricter class would refuse a Sign out on ids the relay actually issues. The body is read AFTER the gate, so a malformed one never tells an anonymous caller what this route takes, and a body `email` is not read, not merged and not trusted — `relayInternal('/v1/device/revoke', {email: session.email.toLowerCase(), deviceId})`. Answers `{ok: true, deviceId}`; the relay's own `superseded` count is not echoed, because the page has no true sentence to hang on it and the reloaded list answers the question that was actually asked. 503 · 401/403 · 400 malformed body or id · **404 `that computer is not yours or is already signed out`** — the relay's own 404, passed through rather than flattened into the 502 bucket, because "nothing to do" and "we could not do it" ask for different next steps · **502** `relay refused the sign-out` / `the XLAnt relay did not answer`. THIS ROUTE IS THE REPLACEMENT for a property the old mint gave away for free: until 2026-09-08 "my laptop was stolen" was answered by pressing Generate, and the same behaviour signed a working second machine out every time somebody set up a new one |
 
 **Routes — the DEVICE lane (no session, ever).** Both `runtime = "nodejs"`,
 `dynamic = "force-dynamic"`, `revalidate = 0`, every response
@@ -11589,11 +11763,16 @@ only, for 5 minutes**:
   `Authorization: Bearer` must not cost a round-trip.
 
 **CSRF.** `src/proxy.ts` `protectedPrefixes` gains `"/api/internal/xlant"`.
-The token mint is state-changing (it signs out whatever PC held the previous
-token); a cross-site POST could not READ the minted token, but it could knock a
-colleague's PC offline, so it joins the hand-maintained list on the same
-defense-in-depth reasoning as `/api/roadmap`. The module checks
-POST/PUT/PATCH/DELETE only, so the download GET is untouched. The prefix is
+The token mint is state-changing; a cross-site POST could not READ the minted
+token, but it could spend somebody's allowance and churn their tokens, so it
+joins the hand-maintained list on the same defense-in-depth reasoning as
+`/api/roadmap`. **The 2026-09-08 sign-out needed no new prefix — it inherits
+this one**, which is the whole reason it lives at
+`/api/internal/xlant/devices/revoke`, and it is the route that most needs the
+check: a cross-site POST to it would take a colleague's laptop off the air from
+a page they merely visited. The middleware leg now runs BOTH staff POSTs, not
+just the mint. The module checks POST/PUT/PATCH/DELETE only, so the download
+GET and the computer-list GET are untouched. The prefix is
 deliberately NOT the whole of `/api/internal`: `/api/internal/track` and
 `/api/internal/issues` are secret-authenticated machine POSTs (this host's
 proxy, the VM watchdog, the dev-box sweep) that carry no browser Origin.
@@ -11703,6 +11882,55 @@ makes the pass a measurement rather than a disabled check. (The first cut
 asserted this by grepping `src/proxy.ts` for quoted prefixes; that regex would
 miss a prefix added inline.)
 
+**The staff routes are executed too, since 2026-09-08, inside a FAKED request
+scope** (section 8b). Everything else in this file runs without a session,
+because `readSession()` reads `next/headers` and `next/headers` needs a Next
+request scope — which is why the staff routes used to be pinned by reading
+their source and why `xlantDownloadRequest()` was extracted as a pure function
+in the first place. That stopped being good enough when a route that hands out
+and takes away access to real machines arrived, because the property that
+matters most about it cannot be seen in a grep: that the email the relay is
+told comes from the SESSION and never from the request body. So the harness
+gives Next's own `workAsyncStorage`/`workUnitAsyncStorage` a minimal
+`type: 'request'` store built from one cookie string, and mints that cookie
+with the REAL `signSession()` under a synthetic `SESSION_COOKIE_SECRET`;
+nothing is stubbed, and the route, the gate, the /rfp domain and provider
+predicates and the relay call are all shipped code. Two mechanics worth
+knowing. Next's storage decides ONCE, when its module first loads, whether a
+real `AsyncLocalStorage` exists (it reads `globalThis.AsyncLocalStorage`, which
+Node does not define), so the global is installed by a one-line `data:` module
+imported ABOVE everything else in the file — an ES module statement cannot run
+before an import, and the first import already pulls `next/headers` in. And
+`readSession()`'s archived-account check wants a database, fails OPEN without
+one by design, and therefore prints one `archived-session check failed open`
+line per distinct email into the test output; that line is expected. What the
+legs pin: the arming gate answering **503 with no request scope at all**
+(proof it runs before the session is read); **401** signed out and **403**
+`wrong_domain` / `wrong_provider` with the relay untouched; the list going out
+as a **GET** to `/v1/device/list?email=adam%40xl.net` — lowercased and
+percent-escaped — carrying the shared secret and NOT the proxy marker; **a body
+`email` ignored by both the sign-out and the mint**, with the session's address
+sent instead and the string "victim" absent from the wire; an unreadable list
+answering 502 and never an empty one; the refusal, the silence and the relay's
+404 each getting their own status and sentence, per route; and eleven malformed
+`deviceId`s plus four non-object bodies answering 400 **with zero relay calls**;
+plus, on the pure side, the three answers of the name slot, the day boundary of
+the expiry words in both directions, every non-instant `expiresAt` collapsing
+to null, and both shapes of the sign-out confirm including its open-work
+clause. The page's PROSE pins read the file with its whitespace collapsed,
+because JSX wraps a sentence across source lines and a pin that only worked
+while a sentence happened to fit on one line would go quiet on the next
+reflow — which is how a false sentence survives a rewrite.
+A first leg checks the harness itself IN BOTH DIRECTIONS, and the positive
+half is the one that earns its keep (refuter R3): a scope whose cookie jar is
+broken answers "no session" for every caller, so a self-check that asserted
+only the 401 stayed green while eight product legs went red — R3 measured
+exactly that by mutating the jar. It now also requires that a signed staff
+session is READ, admitted by the real `requireXlantStaff()`, and reaches the
+relay as that person, so a Next upgrade that moves those internals fails by
+name instead of looking like eight product defects. (Re-measured after the fix:
+the same mutation now fails nine legs, the self-check first among them.)
+
 Five source legs hold what types cannot: both device routes still declare their
 runtime knobs (`nodejs`, force-dynamic, `maxDuration = 300`,
 `AbortSignal.timeout(290_000)`, `private, no-store`) and still import the
@@ -11718,6 +11946,22 @@ is shown raw to a staffer), and the client island still carries no
 `import … from "@/lib/xlant"`; and the nginx drop-in still carries
 `client_max_body_size 2m` under `location ^~ /api/xlant/` with **every**
 directive of the stamped `location /` block present verbatim.
+
+Three more joined them on 2026-09-08, and each refuses a SHAPE of mistake that
+the behavioural legs would only catch after somebody made it: both computer
+routes still declare their four knobs and still read
+`session.email.toLowerCase()` with no `body.email` anywhere in the file (the
+edit a hurried hand makes is "just fall back to the body"); the page no longer
+names `roleplay.xl.net`, no longer says "XL.net technician agent", no longer
+carries the single-token-per-kind sentence, no longer claims XLAnt acts "only
+while you are watching" or that "Nothing runs on your machine until you click
+Yes", no longer says the old token goes "the first time that computer reports
+in", no longer promises "A row is one computer holding one token", does say
+"One token per computer", does say a nameless row "is normal, and the computer
+is working", and does mount `<DevicesList />`; and the button no longer
+contains "has just been signed out", still contains "Copy it now — it is not shown again.", and
+spells `xlant:devices-changed` identically to the island that listens for it —
+with NEITHER island importing `@/lib/xlant`.
 
 **Deploying this.** This host **builds on the VM** (`DEPLOY_BUILD_MODE`
 defaults to remote and `.next` is rsync-excluded, §9), so a green

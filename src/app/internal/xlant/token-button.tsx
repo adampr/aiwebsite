@@ -7,30 +7,56 @@
 // The kinds are inlined rather than imported from @/lib/xlant — that module
 // reads node:fs and the shared secret, and must never be bundled into a
 // client. One button per kind, and the page renders one inside each platform
-// card: the relay keeps one active token per (user, KIND), so a Mac mint
-// revokes the person's previous Mac token and leaves their Windows PC signed
-// in. Two mounted instances hold separate state for the same reason — showing
-// a Mac token must not blank the Windows one the staffer has not copied yet.
+// card, because a Windows token and a Mac token are for different builds and
+// are minted through different paths (only the Mac mint probes the relay
+// first). Two mounted instances hold separate state so showing a Mac token
+// cannot blank the Windows one the staffer has not copied yet.
+//
+// WHAT A MINT DOES, AND WHAT IT NO LONGER DOES (2026-09-08). It used to revoke
+// the person's previous token of that kind, which meant setting up a second
+// laptop signed the first one out — measured in production, one person's two
+// machines took turns being the only one that worked, eight tokens deep. A
+// mint now revokes NOTHING. A token that is never pasted anywhere is dealt
+// with by time instead — it expires seven days after it was generated — and a
+// reinstall on a computer that already had XLAnt retires that computer's own
+// older token the first time the new install REPORTS SOMETHING (a problem, or
+// the daily check-up), which is when the relay learns the machine name — not
+// when it connects. So the sentence under a fresh token says the true thing
+// twice over: nothing else of yours was signed out, and this one is on a clock
+// until you use it. The page's Download paragraph carries the reinstall
+// timing, because that is where somebody reads it.
+//
+// A SUCCESSFUL MINT ALSO TELLS THE PAGE. The "Your computers" island below is
+// a separate mount with no shared parent state, so the button announces itself
+// on `window` (`xlant:devices-changed`) and the island re-reads its list,
+// where the new token shows up as a computer that has not connected yet. The
+// event name is spelled in both files and a test pins that the two agree.
 
 import { useState } from "react";
 
 type Kind = "windows" | "mac";
 
+/** The event the "Your computers" island listens for. Spelled here rather than
+ * imported so this file keeps its one-import rule; `devices-list.tsx` exports
+ * the same literal as DEVICES_CHANGED_EVENT and a test compares them. */
+const DEVICES_CHANGED_EVENT = "xlant:devices-changed";
+
 /** The words each kind puts on screen. Split out so the two cards cannot drift
- * into describing the same mint differently, and so `revoked` can say the true
- * thing for each: issuing one kind never touches the other. */
-const COPY: Record<Kind, { platform: string; machine: string; revoked: string }> = {
+ * into describing the same mint differently, and so `others` can name the
+ * right machine in each: a mint touches nothing else of the person's, and the
+ * token it just produced is the one on a seven-day clock. */
+const COPY: Record<Kind, { platform: string; machine: string; others: string }> = {
   windows: {
     platform: "Windows",
     machine: "PC",
-    revoked:
-      "Any PC still using an older XLAnt Windows token of yours has just been signed out. Your Mac token is untouched.",
+    others:
+      "Your other computers stay signed in. If you do not paste this Windows token into a PC, it expires on its own seven days from now.",
   },
   mac: {
     platform: "Mac",
     machine: "Mac",
-    revoked:
-      "Any Mac still using an older XLAnt Mac token of yours has just been signed out. Your Windows token is untouched.",
+    others:
+      "Your other computers stay signed in. If you do not paste this Mac token into a Mac, it expires on its own seven days from now.",
   },
 };
 
@@ -46,9 +72,9 @@ const MESSAGES: Record<string, string> = {
   wrong_provider:
     "This session could not verify your address. Sign in again with your xl.net Google or Microsoft account.",
   "relay refused the token mint":
-    "The XLAnt relay refused the request. Nothing has changed — your existing token still works.",
+    "The XLAnt relay refused the request. Nothing has changed — every computer you have set up stays signed in.",
   "the XLAnt relay did not answer":
-    "The XLAnt relay did not answer. Nothing has changed — your existing token still works. Try again in a moment.",
+    "The XLAnt relay did not answer. Nothing has changed — every computer you have set up stays signed in. Try again in a moment.",
   "relay returned no token":
     "The XLAnt relay answered without a token. Nothing has changed — try again in a moment.",
   "XLAnt is not configured on this host":
@@ -88,6 +114,10 @@ export function DeviceTokenButton({ kind }: { kind: Kind }) {
         );
       }
       setToken(json.token);
+      // The list below is a separate mount, so it is told rather than
+      // re-rendered. Fired only after a token actually arrived: a refused mint
+      // changed nothing and must not make the list flicker.
+      window.dispatchEvent(new CustomEvent(DEVICES_CHANGED_EVENT));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -150,7 +180,7 @@ export function DeviceTokenButton({ kind }: { kind: Kind }) {
               {copyNote && <span className="text-sm text-faint">{copyNote}</span>}
             </p>
             <p className="mt-4 text-sm">
-              Copy it now — it is not shown again. {copy.revoked}
+              Copy it now — it is not shown again. {copy.others}
             </p>
           </div>
         )}

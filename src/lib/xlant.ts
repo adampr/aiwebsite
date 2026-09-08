@@ -16,14 +16,32 @@
 // artifacts directory carries a Windows installer feed (`latest.yml`) beside a
 // macOS one (`latest-mac.yml`), and neither side can sign the other out.
 //
+// ONE TOKEN PER COMPUTER SINCE 2026-09-08, AND AS MANY COMPUTERS AS A PERSON
+// HAS. Until this round the relay kept ONE active token per (email, kind), so
+// every mint signed the person's previous machine of that kind out — measured
+// in production on 2026-09-08, one person with two laptops
+// (`xl-lpt-aradulovic1` and `…3`) held eight Windows tokens issued since 09-04
+// and each set-up killed the other, closing 14 open pieces of work as
+// `superseded`. `POST /v1/device/issue` now REVOKES NOTHING AT ALL. A token
+// that is never used is dealt with by TIME rather than by the next mint: it
+// EXPIRES seven days after it was generated, so a token that got away from
+// somebody stops being useful without any other token of theirs being
+// disturbed, and generating a second one meanwhile changes nothing about the
+// first. Signing a computer out is an explicit act instead: `POST /v1/device/revoke`, which is
+// what this host's `/api/internal/xlant/devices/revoke` calls. NOTHING about
+// the two kinds changed; what changed is the count within a kind.
+//
 // ONE PUBLIC ORIGIN FROM 2026-09-04, AND IT IS THIS ONE. ai.xl.net carries
 // every XLAnt surface a person or a PC reaches, and every NEW device points
 // here:
 //
 //   · HUMAN — the staff-gated page `/internal/xlant`, the build download
-//     (`/api/internal/xlant/download`, `?platform=mac&arch=…` for a Mac) and
-//     the device-token mint (`/api/internal/xlant/device-token`, one token per
-//     kind), all behind requireXlantStaff().
+//     (`/api/internal/xlant/download`, `?platform=mac&arch=…` for a Mac), the
+//     device-token mint (`/api/internal/xlant/device-token`, one token per
+//     COMPUTER since 2026-09-08) and the caller's own computer list and
+//     sign-out (`GET /api/internal/xlant/devices`,
+//     `POST /api/internal/xlant/devices/revoke`), all behind
+//     requireXlantStaff().
 //   · DEVICE — the authenticated relay passthrough
 //     (`/api/xlant/relay/*`, allowlisted below) and the electron-updater feed
 //     (`/api/xlant/update/*`, gated by verifyDeviceToken() and narrowed to
@@ -72,10 +90,13 @@ export interface XlantConfig {
 
 /** Device-token kinds the XLAnt relay accepts — mirrors DEVICE_KINDS in the
  * xlant repo's shared contract (the two repos share no code, so this array and
- * that one move in the same round). `mac` arrived with contract 0.5.0. The
- * relay keeps one ACTIVE token per (user, kind), which is why the two kinds sit
- * in one enum rather than one flag: minting a Mac token revokes the person's
- * previous MAC token and leaves their Windows one alone. */
+ * that one move in the same round). `mac` arrived with contract 0.5.0.
+ *
+ * The kind is not a count and never was: it decides which BUILD a token is
+ * for, and a person holds as many tokens of a kind as they have computers of
+ * that kind (2026-09-08). What the kind still separates is the install story —
+ * a Windows mint and a Mac mint reach different artifacts, and only the Mac
+ * mint probes the relay first. */
 export const XLANT_DEVICE_KINDS = ["windows", "mac"] as const;
 export type XlantDeviceKind = (typeof XLANT_DEVICE_KINDS)[number];
 
@@ -173,10 +194,16 @@ export async function relayInternal(
   });
 }
 
-/** The same internal lane, read side. `GET /v1/status` is the only internal
- * route this host reads, and express routes it by METHOD — a POST to it is a
- * 404, so the mint's probe cannot reuse relayInternal() above. Same secret,
- * same 15s ceiling, same absence of the proxy marker. */
+/** The same internal lane, read side, for the internal routes this host READS:
+ * `GET /v1/status` (the mint's Mac probe) and, since 2026-09-08,
+ * `GET /v1/device/list?email=…` (the page's "Your computers" section). Express
+ * routes both by METHOD — a POST to either is a 404 — so neither can reuse
+ * relayInternal() above. Same secret, same 15s ceiling, same absence of the
+ * proxy marker.
+ *
+ * `path` carries its own query string when it has one, and the CALLER escapes
+ * the values (encodeURIComponent): an email address is user-controlled text,
+ * and a raw `&` or `#` in one would otherwise invent a second parameter. */
 export async function relayInternalGet(
   cfg: XlantConfig,
   path: string
@@ -236,6 +263,114 @@ export async function probeRelayMacSupport(
   const platforms = json.platforms;
   if (!Array.isArray(platforms)) return "unsupported";
   return platforms.includes("mac") ? "supported" : "unsupported";
+}
+
+/**
+ * ONE COMPUTER, as the relay describes it on its internal
+ * `GET /v1/device/list?email=…` (the xlant contract's `DeviceSummary`, marked
+ * internal there). Mirrored here rather than imported, like every other shape
+ * in this file: the two repos share no code.
+ *
+ * `machineName` is null until the computer has actually reported an incident —
+ * the relay binds it at the first `/incident/start`. That is NOT the same as
+ * "has not connected": an install that has said hello and nothing more is
+ * connected and still nameless, so the page reads `lastSeenAt` before choosing
+ * its words for a null name.
+ *
+ * `expiresAt` is set only while a token has never connected and is still
+ * inside its seven-day window; it is null once the computer has reported in,
+ * and null for a row that is not on a clock. It is the only field here the
+ * page renders as a COUNTDOWN, which is why it is the only one this host
+ * checks is a real instant before passing it on.
+ */
+export interface XlantDeviceSummary {
+  deviceId: string;
+  /** null when the relay named a kind this host does not know — a third
+   * client kind would arrive here before this file learned the word, and
+   * guessing "windows" for a Mac is worse than saying "computer". */
+  kind: XlantDeviceKind | null;
+  machineName: string | null;
+  userName: string | null;
+  clientVersion: string | null;
+  createdAt: string;
+  lastSeenAt: string | null;
+  /** ISO instant, or null when the token is not on a clock (see above). */
+  expiresAt: string | null;
+  openIncidents: number;
+}
+
+/** A pure re-read of what the relay sent, so the browser is handed a shape
+ * this host has checked rather than whatever arrived.
+ *
+ * NOT a schema validator and not trying to be: the relay is a trusted peer
+ * behind a shared secret and an NSG /32. What this buys is that a field the
+ * relay grows, or one it sends as the wrong type, cannot reach the client
+ * island as an unrendered object or a "[object Object]" in a table cell — the
+ * island renders every field it is given. A non-array (the relay answering
+ * something else entirely, or an intermediary's HTML) is `null`, which the
+ * route reports as a 502 rather than an empty list, because "you have no
+ * computers" and "we could not read your computers" are different sentences.
+ *
+ * A row with no usable `deviceId` is DROPPED rather than rendered: the id is
+ * what the Sign out button posts back, so a row without one is a button that
+ * cannot work. Everything else degrades to null / 0. */
+function instantOrNull(v: string | null): string | null {
+  return v !== null && Number.isFinite(Date.parse(v)) ? v : null;
+}
+
+export function xlantDeviceSummaries(
+  value: unknown
+): XlantDeviceSummary[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: XlantDeviceSummary[] = [];
+  for (const raw of value) {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const r = raw as Record<string, unknown>;
+    const deviceId = typeof r.deviceId === "string" ? r.deviceId.trim() : "";
+    if (!deviceId) continue;
+    const str = (v: unknown): string | null =>
+      typeof v === "string" && v.trim() !== "" ? v : null;
+    out.push({
+      deviceId,
+      kind: isXlantDeviceKind(r.kind) ? r.kind : null,
+      machineName: str(r.machineName),
+      userName: str(r.userName),
+      clientVersion: str(r.clientVersion),
+      createdAt: typeof r.createdAt === "string" ? r.createdAt : "",
+      lastSeenAt: str(r.lastSeenAt),
+      // Stricter than its neighbours on purpose: this one becomes "expires in
+      // N days" on screen, and a string that is not an instant would become a
+      // fabricated countdown or a silently dropped one. Anything that does not
+      // parse is null, and the row then says nothing at all about expiry —
+      // which is the truthful answer to "we cannot tell".
+      expiresAt: instantOrNull(str(r.expiresAt)),
+      openIncidents:
+        typeof r.openIncidents === "number" &&
+        Number.isFinite(r.openIncidents) &&
+        r.openIncidents > 0
+          ? Math.floor(r.openIncidents)
+          : 0,
+    });
+  }
+  return out;
+}
+
+/** The shape of a `deviceId` this host will forward to the relay's revoke:
+ * 1-80 characters of `[A-Za-z0-9_-]`. The relay decides whether the id is real
+ * and whether it is the caller's; this only refuses what could never be an id,
+ * so a stray path segment, a query, an `&` or a JSON fragment never reaches
+ * the internal lane inside a body field.
+ *
+ * THE UNDERSCORE IS DELIBERATE and matches `[\w-]` in XLANT_RELAY_ALLOWED
+ * below — this product's opaque ids (incident ids, tool call ids, bridge
+ * tokens) are `[A-Za-z0-9_-]` strings, and a class that omitted `_` would 400
+ * a Sign out button on ids the relay actually issues. What the class still
+ * excludes is everything that could mean something somewhere else: no dot, no
+ * slash, no `%`, no `&`, no whitespace. */
+export const XLANT_DEVICE_ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
+
+export function isXlantDeviceId(v: unknown): v is string {
+  return typeof v === "string" && XLANT_DEVICE_ID_RE.test(v);
 }
 
 export interface InstallerInfo {
