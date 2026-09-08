@@ -42,8 +42,11 @@ import {
   docDeclaredNames,
   isPlaceholderSubject,
   isSenderIdentity,
+  isSystemSubjectEcho,
   looksLikeAWorkName,
   nameKey,
+  SYSTEM_ECHO_SUBJECTS,
+  subjectProvidesTitle,
   parseSubmissionBody,
   pickAttachments,
   resolveSubjectTitle,
@@ -55,6 +58,13 @@ import {
   validateInferredTitle,
   validateWeakTitle,
 } from "../src/lib/work/email-parse";
+// READ-ONLY chase-lane import (the module is pure by contract): the parity
+// leg below pins that the system-echo screen equals the live outbound
+// constants, so a subject rewording can never silently unscreen.
+import {
+  CHASE_NUDGE_SUBJECT,
+  CHASE_REPORT_SUBJECT,
+} from "../src/lib/chase/config";
 import {
   HOUSE_RULES,
   MISSING_ARCH_DOC_MESSAGE,
@@ -1773,6 +1783,76 @@ async function main() {
       !isPlaceholderSubject(s) && !isPlaceholderSubject(stripped(s)),
       `real subject not treated as a placeholder: ${s}`
     );
+
+  // System-subject echoes (2026-09-08 incident): a colleague answers the
+  // §5.21 chase nudge by replying with their package attached, and the
+  // stripped reply subject IS the nudge subject. Two prod cards published
+  // under "Reminder about work XL.net asked you for" before this screen.
+  // Parity FIRST: the screened set is exactly the live chase constants,
+  // imported from the sending module on both sides of this assertion.
+  assert.deepEqual(
+    [...SYSTEM_ECHO_SUBJECTS],
+    [CHASE_NUDGE_SUBJECT, CHASE_REPORT_SUBJECT],
+    "the echo screen enumerates exactly the chase lane's outbound subjects"
+  );
+  for (const s of SYSTEM_ECHO_SUBJECTS)
+    assert.ok(
+      isSystemSubjectEcho(s) && isSystemSubjectEcho(stripped(s)),
+      `live outbound subject screened in raw and stripped form: ${s}`
+    );
+  for (const s of [
+    "Re: Reminder about work XL.net asked you for",
+    "RE: RE: Reminder about work XL.net asked you for",
+    "[EXTERNAL] RE: Fwd: Reminder about work XL.net asked you for",
+    "Re: Reminder about work XL.net asked you for (2)",
+    "Re: [aiwebsite] Weekly chase report: outstanding requests",
+  ])
+    assert.ok(
+      isSystemSubjectEcho(stripped(s)),
+      `echo recognized after transport strip: ${s}`
+    );
+  // The raw report subject matches even before the strip (the bracket tag is
+  // part of the constant itself, keyed the same way on both sides).
+  assert.ok(
+    isSystemSubjectEcho("[aiwebsite] Weekly chase report: outstanding requests"),
+    "raw report subject screened without any transport strip"
+  );
+  // Near misses stay legitimate: enumerated-constant matching only, never
+  // heuristics like "contains reminder". Extra words are a different subject.
+  for (const s of [
+    "Reminder Bot",
+    "Work Reminder Tool",
+    "Ticket Wizard",
+    "Reminder about work XL.net asked you for today",
+    "My Reminder about work XL.net asked you for",
+    "Weekly chase report",
+  ])
+    assert.ok(
+      !isSystemSubjectEcho(s) && !isSystemSubjectEcho(stripped(s)),
+      `legitimate near-miss not screened: ${s}`
+    );
+
+  // The composite rung-2 predicate the intake actually runs (subjectUsable):
+  // placeholder, echo, and band in one pinnable seam.
+  const usable = (s: string) => subjectProvidesTitle(s, stripped(s));
+  assert.ok(usable("Re: Ticket Wizard"), "ordinary subject still titles");
+  assert.ok(usable("Fwd: Patching Visualizer"), "forwarded subject still titles");
+  assert.ok(!usable("Re: Reminder about work XL.net asked you for"), "nudge echo unusable");
+  assert.ok(
+    !usable("[EXTERNAL] RE: Fwd: Reminder about work XL.net asked you for"),
+    "tagged nested echo unusable"
+  );
+  assert.ok(
+    !usable("Re: [aiwebsite] Weekly chase report: outstanding requests"),
+    "report echo unusable"
+  );
+  assert.ok(!usable("Fwd: (no subject)"), "placeholder still unusable");
+  assert.ok(!usable(`Re: ${"x".repeat(61)}`), "over-band still unusable");
+  assert.ok(!usable("Re: abc"), "under-band still unusable");
+  assert.ok(
+    usable("Reminder about work XL.net asked you for today"),
+    "the nudge subject plus extra words is an authored subject and titles"
+  );
 
   for (const bad of [
     "https://example.com/tool",

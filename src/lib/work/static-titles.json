@@ -15,8 +15,7 @@
     "XL Lakehouse",
     "XL API Gateway",
     "SpamSlayer",
-    "Beacon",
-    "Autotask CI Intake"
+    "Beacon"
   ],
   "facetLabels": [
     "Remembers Whose Memory It Is",
@@ -63,10 +62,7 @@
     "Errs Toward Caution",
     "Match Before Build",
     "Claude Talks, Code Decides",
-    "Writes Wait for the Owner",
-    "A Column Is Not a Field",
-    "Parents Already on File",
-    "Where a Person Comes In"
+    "Writes Wait for the Owner"
   ],
   "anchorIds": [
     "brain",
@@ -83,8 +79,7 @@
     "lakehouse",
     "api-gateway",
     "spamslayer",
-    "beacon",
-    "autotask-ci-intake"
+    "beacon"
   ],
   "bays": [
     {
@@ -182,11 +177,6 @@
     {
       "id": "beacon",
       "title": "Beacon",
-      "bay": "05"
-    },
-    {
-      "id": "autotask-ci-intake",
-      "title": "Autotask CI Intake",
       "bay": "05"
     }
   ]

@@ -3,9 +3,10 @@
 // resolution, every refusal string in the route's own wording, the kind
 // ladder's pure pieces, and the gate ORDER as data.
 //
-// NO DATABASE, no brain, no network: everything here is pure, and the one
-// DB-backed import (normalizeTitle, via work/db.ts) rides the module's lazy
-// drizzle proxy and is never asked to connect. Run: npx tsx
+// NO DATABASE, no brain, no network: everything here is pure, and the
+// DB-backed imports (normalizeTitle and TITLE_NORM_WS, from work/db.ts
+// directly and via the ops module) ride the module's lazy
+// drizzle proxy and are never asked to connect. Run: npx tsx
 // scripts/work-submit-tests.ts (or npm run test:submit once the script line
 // is added).
 //
@@ -28,6 +29,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { classifyWorkKind } from "../src/lib/work/classify";
+// DB-backed module, but these two are pure values and the import rides the
+// lazy drizzle proxy (never asked to connect), same as the ops import below.
+import { normalizeTitle, TITLE_NORM_WS } from "../src/lib/work/db";
 import {
   MULTIPART_UNREADABLE_MESSAGE,
   RAW_UNREADABLE_MESSAGE,
@@ -293,6 +297,57 @@ function main(): void {
     uniqueViolationMessage("Beacon"),
     /A submission titled "Beacon" is already in the pipeline\. Check your submissions page at \/work\/submit\./
   );
+
+  // ---- the SQL twin of normalizeTitle (2026-09-08 published-twin incident) --
+  // The three db.ts title matchers (activeTitleClash, publishedTitleClash,
+  // resolveUpdateTarget) collapse whitespace in SQL. The pattern used to be
+  // an inline '\s+' in a drizzle sql template, and a JS template literal
+  // cooks that unrecognized escape down to 's+': Postgres was told to
+  // replace runs of the LETTER s, so any title containing an s slipped every
+  // matcher (the published "Reminder about work XL.net asked you for" card
+  // gained an accepted twin; the active-status unique index backstopped the
+  // active matchers, but published titles have no index and app code is the
+  // only guard). The pattern is now the bound parameter TITLE_NORM_WS.
+  assert.strictEqual(
+    TITLE_NORM_WS,
+    String.raw`\s+`,
+    "the bound pattern is backslash-s-plus, three characters"
+  );
+  assert.equal(TITLE_NORM_WS.charCodeAt(0), 92, "leading char is a real backslash");
+  {
+    // Behavioral parity: a regex built from the constant collapses exactly
+    // what normalizeTitle collapses.
+    const viaConstant = (s: string) =>
+      s.trim().replace(new RegExp(TITLE_NORM_WS, "g"), " ").toLowerCase();
+    for (const t of [
+      "Reminder about work XL.net asked you for",
+      "  Two   Spaces\tand\ttabs ",
+      "Assess  Systems",
+    ])
+      assert.equal(viaConstant(t), normalizeTitle(t), `parity on ${JSON.stringify(t)}`);
+    // The trap itself, on the incident title: the cooked letter-s pattern
+    // and the real whitespace class disagree, which is the whole bug.
+    const incident = "Reminder about work XL.net asked you for";
+    assert.notEqual(
+      incident.replace(/s+/g, " "),
+      incident.replace(/\s+/g, " "),
+      "the incident title distinguishes the cooked pattern from the real class"
+    );
+    // Source pin (working copy, the exhibit-tests normalizeTitle precedent:
+    // this pins the file under test in THIS tree). All three matchers bind
+    // the constant; none inlines a quoted pattern in a template literal.
+    const dbSrc = readFileSync(resolve(REPO, "src/lib/work/db.ts"), "utf8");
+    const bound = "regexp_replace(${S.title}, ${TITLE_NORM_WS}, ' ', 'g')";
+    assert.equal(
+      dbSrc.split(bound).length - 1,
+      3,
+      "all three db.ts title matchers use the bound whitespace parameter"
+    );
+    assert.ok(
+      !dbSrc.includes("regexp_replace(${S.title}, '"),
+      "no db.ts matcher passes an inline quoted pattern to regexp_replace"
+    );
+  }
 
   // ---- attribution -------------------------------------------------------
   assert.deepEqual(parseAttribution(null), { ok: true, attribution: null });

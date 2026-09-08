@@ -116,14 +116,14 @@ test("positions: counted from the MAP (known bays only), never from rows", () =>
   assert.strictEqual(runFirst, EXHIBITS.length + 4 + 1);
   assert.deepStrictEqual([...placedStart.keys()], BAYS);
   // Today's numbers, stated so a change to either side is a visible edit.
-  // By hand: statics per bay are 1 + 8 + 2 + 2 + 3 = 16 (the #morning-brief
-  // exhibit retired 2026-09-04), placements 1 in 02 + 3 in 03, so the run
-  // starts at 16 + 4 + 1 = 21.
-  assert.strictEqual(EXHIBITS.length, 16);
+  // By hand: statics per bay are 1 + 8 + 2 + 2 + 2 = 15 (the
+  // #autotask-ci-intake exhibit retired 2026-09-08), placements 1 in 02 +
+  // 3 in 03, so the run starts at 15 + 4 + 1 = 20.
+  assert.strictEqual(EXHIBITS.length, 15);
   assert.strictEqual(placedStart.get("02"), 10);
   assert.strictEqual(placedStart.get("03"), 13);
   assert.strictEqual(placedStart.get("04"), 18);
-  assert.strictEqual(runFirst, 21);
+  assert.strictEqual(runFirst, 20);
 });
 
 test("positions: an entry naming an unknown bay counts zero, matching its fallback to the run", () => {
@@ -230,8 +230,8 @@ test("parity walk, published: statics + placed card + run alternate strictly fro
   assert.strictEqual(seq[at + 1].id, "team-xlant");
   assert.strictEqual(seq[at + 2].id, "team-xling");
   assert.strictEqual(seq[at + 3].id, "lakehouse");
-  assert.strictEqual(seq[20].id, "r1");
-  assert.strictEqual(seq[20].cls, LIGHT, "run starts at 21, lightline");
+  assert.strictEqual(seq[19].id, "r1");
+  assert.strictEqual(seq[19].cls, PLAIN, "run starts at 20, plain");
 });
 
 test("parity walk, placed rows unpublished: one seam per odd-count bay's exit, today two; the run seam holds", () => {
@@ -245,8 +245,8 @@ test("parity walk, placed rows unpublished: one seam per odd-count bay's exit, t
     "onboarding-toolkit->lakehouse",
   ]);
   const r1 = seq.findIndex((r) => r.id === "r1");
-  assert.strictEqual(r1 + 1, 17, "run follows the 16 statics directly");
-  assert.strictEqual(seq[r1 - 1].id, "autotask-ci-intake");
+  assert.strictEqual(r1 + 1, 16, "run follows the 15 statics directly");
+  assert.strictEqual(seq[r1 - 1].id, "beacon");
   assert.notStrictEqual(seq[r1 - 1].cls, seq[r1].cls, "the From the Team seam does not double-stripe");
 });
 

@@ -1682,6 +1682,21 @@ export function normalizeTitle(title: string): string {
   return title.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+/** The whitespace class normalizeTitle's SQL twin collapses, passed to
+ * Postgres as a BOUND PARAMETER (three characters on the wire: backslash, s,
+ * plus). NEVER inline it in a sql template: a JS template literal cooks the
+ * unrecognized backslash-s escape down to a bare "s", so the inline form
+ * this replaced sent regexp_replace(title, 's+', ' ', 'g') to Postgres and
+ * every title containing the letter s slipped all three matchers below,
+ * while the same expression typed into psql (where the backslash survives)
+ * matched fine. That is how the 2026-09-08 "Reminder about work XL.net
+ * asked you for" twin passed publishedTitleClash against its published
+ * 09-04 double: the work_sub_active_title_uq index (raw-SQL migrations
+ * 0025/0033/0035, correct backslash) covers ACTIVE statuses only, so for
+ * published titles this application code is the ONLY guard. Pinned in
+ * scripts/work-submit-tests.ts. */
+export const TITLE_NORM_WS = "\\s+";
+
 /** An active (received/running/held) row from ANY submitter IN THIS SCOPE
  * whose normalized title matches; each lane is one page, a duplicate is a
  * duplicate — but two tenants may both build an "Outage Checker" (the 0035
@@ -1698,7 +1713,7 @@ export async function activeTitleClash(
       and(
         inScope(scope),
         inArray(S.status, ["received", "running", "held", "pending_approval"]),
-        sql`lower(btrim(regexp_replace(${S.title}, '\s+', ' ', 'g'))) = ${norm}`
+        sql`lower(btrim(regexp_replace(${S.title}, ${TITLE_NORM_WS}, ' ', 'g'))) = ${norm}`
       )
     )
     .limit(1);
@@ -1722,7 +1737,7 @@ export async function publishedTitleClash(
         inScope(scope),
         eq(S.status, "published"),
         ...(opts?.exceptId ? [ne(S.id, opts.exceptId)] : []),
-        sql`lower(btrim(regexp_replace(${S.title}, '\s+', ' ', 'g'))) = ${norm}`
+        sql`lower(btrim(regexp_replace(${S.title}, ${TITLE_NORM_WS}, ' ', 'g'))) = ${norm}`
       )
     )
     .limit(1);
@@ -1753,7 +1768,7 @@ export async function resolveUpdateTarget(
     .where(
       and(
         published,
-        sql`lower(btrim(regexp_replace(${S.title}, '\s+', ' ', 'g'))) = ${norm}`
+        sql`lower(btrim(regexp_replace(${S.title}, ${TITLE_NORM_WS}, ' ', 'g'))) = ${norm}`
       )
     )
     .limit(1);

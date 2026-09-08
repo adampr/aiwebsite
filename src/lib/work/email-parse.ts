@@ -4,6 +4,13 @@
 // pattern). NO EM DASHES in any string (site rule).
 
 import { sanitizeHeaderValue } from "@/lib/governance/approval";
+// Pure by that module's own contract ("No DB, no fetch, no site.config
+// import"), so this file stays testable without a database. READ-ONLY
+// dependency: never add imports going the other way.
+import {
+  CHASE_NUDGE_SUBJECT,
+  CHASE_REPORT_SUBJECT,
+} from "@/lib/chase/config";
 import {
   BOILERPLATE_MD_BASENAMES,
   SUPPORT_MD_BASENAMES,
@@ -103,19 +110,98 @@ const PLACEHOLDER_SUBJECT_KEYS = new Set([
   "out of office",
 ]);
 
+/** The shared subject-denylist key: wrapping brackets/quotes off, whitespace
+ * collapsed, lowercased. One normalization for BOTH denylists below, so the
+ * placeholder screen and the system-echo screen can never drift apart. */
+function subjectKey(subject: string): string {
+  return subject
+    .replace(/^[\s([<{"'*`]+/, "")
+    .replace(/[\s)\]>}"'*`]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 /** True when a subject carries no author intent. MUST be run against BOTH the
  * raw header and the transport-stripped value: real forwards arrive as
  * "Fwd: (no subject)" and "[EXTERNAL] (no subject)", which only reduce to the
  * bare placeholder after titleFromSubject (panel critic finding 2026-07-31 —
  * screening the raw header alone left the bug live). */
 export function isPlaceholderSubject(subject: string): boolean {
-  const key = subject
-    .replace(/^[\s([<{"'*`]+/, "")
-    .replace(/[\s)\]>}"'*`]+$/, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-  return PLACEHOLDER_SUBJECT_KEYS.has(key);
+  return PLACEHOLDER_SUBJECT_KEYS.has(subjectKey(subject));
+}
+
+/** The site's OWN outbound subjects that solicit a reply carrying the
+ * person's work (§5.21 chase lane). A colleague answers the weekday nudge by
+ * replying WITH THEIR PACKAGE ATTACHED, the reply subject is "Re: <nudge
+ * subject>", titleFromSubject strips the "Re:", and until 2026-09-08 the
+ * leftover cleared every gate and titled the card: two published prod cards
+ * carried "Reminder about work XL.net asked you for" while the packages
+ * themselves declared the real names. A subject that is one of these strings
+ * is exactly the isPlaceholderSubject class (no author intent), so the
+ * ladder must fall through to the rungs that read the submitter's own text.
+ *
+ * ENUMERATED CONSTANTS ONLY, imported from the module that sends them, so a
+ * future rewording travels here automatically (parity pinned in
+ * scripts/work-tests.ts). Never heuristics like "contains reminder": a false
+ * positive silently blocks a legitimately authored subject ("Reminder Bot"
+ * must keep working). Each constant is screened in its raw form AND its
+ * titleFromSubject form, because the report subject's "[aiwebsite]" tag is a
+ * bracket tag that strip removes.
+ *
+ * Deliberately ABSENT: the /work notification subjects in notify.ts
+ * ("Your work submission is held for review: X", ...). They are inline
+ * template literals ending in the real card title, so screening them would
+ * mean copying strings this file cannot import (the drift the parity rule
+ * exists to prevent), and a reply to one of them carrying a package is the
+ * update flow, which pins its title to the predecessor and never runs the
+ * ladder. If notify.ts ever grows a STABLE subject that asks for an archive,
+ * export it there and add it here. */
+export const SYSTEM_ECHO_SUBJECTS: readonly string[] = [
+  CHASE_NUDGE_SUBJECT,
+  CHASE_REPORT_SUBJECT,
+];
+
+const SYSTEM_ECHO_KEYS = new Set(
+  SYSTEM_ECHO_SUBJECTS.flatMap((s) => [
+    subjectKey(s),
+    subjectKey(titleFromSubject(s)),
+  ])
+);
+
+/** True when the subject is (after key normalization) one of the site's own
+ * outbound subjects above: a transport echo, never the tool's name. Run
+ * against BOTH the raw header and the transport-stripped value, the
+ * isPlaceholderSubject rule ("[EXTERNAL] RE: Fwd: <nudge subject>" only
+ * reduces to the bare echo after titleFromSubject). */
+export function isSystemSubjectEcho(subject: string): boolean {
+  return SYSTEM_ECHO_KEYS.has(subjectKey(subject));
+}
+
+/** The 4-60 title band, shared by the authored-title reject and the subject
+ * rung (moved from email-intake.ts on 2026-09-08 so subjectProvidesTitle
+ * below is pinnable without the intake's DB imports). */
+export function titleOutOfBand(t: string): boolean {
+  return t.length < WORK_CAPS.titleMinChars || t.length > WORK_CAPS.titleMaxChars;
+}
+
+/** Rung 2 of the title ladder as ONE pinnable predicate: the subject may
+ * title the card only when it is not a client placeholder, not an echo of a
+ * subject this site sent, and inside the band. Both denylists run against
+ * BOTH forms (real replies arrive "Re: Re: X", forwards "[EXTERNAL] Fwd: X");
+ * the band runs on the stripped value only, since the raw header carries
+ * transport framing the card never sees. */
+export function subjectProvidesTitle(
+  subjectRaw: string,
+  subjectStripped: string
+): boolean {
+  return (
+    !isPlaceholderSubject(subjectRaw) &&
+    !isPlaceholderSubject(subjectStripped) &&
+    !isSystemSubjectEcho(subjectRaw) &&
+    !isSystemSubjectEcho(subjectStripped) &&
+    !titleOutOfBand(subjectStripped)
+  );
 }
 
 /** Strip leading category/kind prefixes from a SUBJECT-DERIVED title

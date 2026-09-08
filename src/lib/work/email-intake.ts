@@ -83,6 +83,7 @@ import {
   HOSTILE_TITLE_CHARS,
   isPlaceholderSubject,
   isSenderIdentity,
+  isSystemSubjectEcho,
   nameKey,
   parseSubmissionBody,
   pickAttachments,
@@ -90,7 +91,9 @@ import {
   resolveSubjectTitle,
   senderIdentityTokens,
   stripMachineEcho,
+  subjectProvidesTitle,
   titleFromSubject,
+  titleOutOfBand,
   UPDATE_SUBJECT_RE,
   validateWeakTitle,
   type AttachmentMeta,
@@ -253,11 +256,9 @@ async function warnAdmin(
 
 // HOSTILE_TITLE_CHARS moved to email-parse.ts (the extracted
 // resolveSubjectTitle chain needs it there); imported above for the
-// authored-title gate.
-
-function outOfBand(t: string): boolean {
-  return t.length < WORK_CAPS.titleMinChars || t.length > WORK_CAPS.titleMaxChars;
-}
+// authored-title gate. The local outOfBand helper moved there too as
+// titleOutOfBand (2026-09-08: the whole rung-2 predicate is now the pinnable
+// email-parse.ts subjectProvidesTitle).
 
 /** The duplicate-title rejection copy, or null when the title is free. Split
  * out of the admission flow because it now runs at two points: in place for a
@@ -316,6 +317,17 @@ const TITLE_THROTTLED = [
 function noTitleMessage(subjectRaw: string, subjectStripped: string): string {
   const example = `Name: Patching Visualizer`;
   const tail = `Everything else about your email was fine.`;
+  // A screened system echo FIRST (2026-09-08): telling a colleague who
+  // replied to the chase nudge that their subject "came out as" the nudge's
+  // own text and is the wrong length would be wrong in a new way. The honest
+  // sentence is that the subject is the reminder's, not the tool's, and the
+  // fix is the documented "Title:" escape hatch.
+  if (isSystemSubjectEcho(subjectRaw) || isSystemSubjectEcho(subjectStripped))
+    return [
+      `Your email replies to one of this site's own reminder emails, so its subject line ("${subjectStripped.slice(0, 80)}") is the reminder's subject, not your tool's name. I looked through your message for the name of the tool as well and could not settle on one. ${tail}`,
+      ``,
+      `Put a line like "Title: Patching Visualizer" anywhere in the body and reply again with the package attached, or send a fresh email with the tool's name as the subject.`,
+    ].join("\n");
   if (subjectStripped.length > WORK_CAPS.titleMaxChars)
     return [
       `The usable part of your subject line runs to ${subjectStripped.length} characters and a card title has to be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars}, so I looked through your message for a shorter name and could not settle on one. ${tail}`,
@@ -888,7 +900,7 @@ export async function handleWorkEmail(
     );
     return;
   }
-  if (!isUpdate && authoredTitle !== null && outOfBand(authoredTitle)) {
+  if (!isUpdate && authoredTitle !== null && titleOutOfBand(authoredTitle)) {
     await reject(
       `The title line in the body ("Title:", "Skill Name:", and similar) becomes the card title, and it must be ${WORK_CAPS.titleMinChars} to ${WORK_CAPS.titleMaxChars} characters. Yours came out as "${authoredTitle.slice(0, 80)}". Fix that one line and resend.`
     );
@@ -901,13 +913,13 @@ export async function handleWorkEmail(
   // below when the subject wins the title.
   const { title: subjectStripped, echoStripped: subjectEchoStripped } =
     resolveSubjectTitle(subjectRaw);
-  // isPlaceholderSubject runs against BOTH the raw header and the
-  // transport-stripped value: real forwards arrive as "Fwd: (no subject)" and
-  // only reduce to the bare placeholder after titleFromSubject.
-  const subjectUsable =
-    !isPlaceholderSubject(subjectRaw) &&
-    !isPlaceholderSubject(subjectStripped) &&
-    !outOfBand(subjectStripped);
+  // The rung-2 gate lives in email-parse.ts subjectProvidesTitle so tests pin
+  // it whole: the placeholder screen AND the system-subject-echo screen
+  // (2026-09-08: a reply to the §5.21 chase nudge, work attached, published
+  // TWICE under the nudge's own subject), each against BOTH the raw header
+  // and the transport-stripped value (real replies arrive "Re: Re: X",
+  // forwards "[EXTERNAL] Fwd: X"), plus the 4-60 band on the stripped value.
+  const subjectUsable = subjectProvidesTitle(subjectRaw, subjectStripped);
   // §5.16 updates: a BODY-directive update whose subject names a different
   // tool is the pasted-release-notes shape (an "Update Card:" line inside
   // quoted prose converting an intended create; refutation F2). The padded
