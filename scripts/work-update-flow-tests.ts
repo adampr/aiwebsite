@@ -118,12 +118,29 @@ async function main() {
   );
   assert.equal(await resolveUpdateTarget("ZZTEST no such card", { companyId: null }), null);
 
-  // publishedTitleClash exceptId carve-out.
-  assert.equal(await publishedTitleClash(TITLE, { companyId: null }), true);
+  // publishedTitleClash exceptId carve-out, and the clashing-row shape
+  // (2026-09-08 already-published resend round): the matcher returns the row
+  // with archive_sha256 so the intake lanes can tell a resend of the
+  // published package from a genuine collision. Truthiness callers keep
+  // working; a free title is null.
+  const pubClash = await publishedTitleClash(TITLE, { companyId: null });
+  assert.ok(pubClash, "published title clashes (truthy row)");
+  assert.equal(pubClash!.id, parent.id, "clash resolves to the published row");
+  assert.equal(pubClash!.title, TITLE, "row carries the stored title");
+  assert.equal(pubClash!.slug, "team-zztest-update-flow-probe", "row carries the slug");
+  assert.ok(
+    !("submitterEmail" in pubClash!),
+    "the clash row deliberately omits the owner's address (not public, no caller needs it)"
+  );
+  assert.equal(
+    pubClash!.archiveSha256,
+    "0".repeat(64),
+    "row carries archive_sha256 for the byte-identity comparison"
+  );
   assert.equal(
     await publishedTitleClash(TITLE, { companyId: null }, { exceptId: parent.id }),
-    false,
-    "exceptId excludes the predecessor"
+    null,
+    "exceptId excludes the predecessor (free title is null)"
   );
 
   // excludeId keeps the pinned title/facets out of the panel sets.

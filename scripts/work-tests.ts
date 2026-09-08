@@ -70,8 +70,13 @@ import {
   MISSING_ARCH_DOC_MESSAGE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
+  alreadyPublishedAckEmail,
+  alreadyPublishedWebMessage,
   formatByteSize,
   nextStorageReportDueMs,
+  publishedClashEmailRefusal,
+  publishedClashWebMessage,
+  sameSubmittedArchive,
 } from "../src/lib/work/config";
 import {
   composeParagraphs,
@@ -7506,6 +7511,178 @@ async function main() {
     // 8) No em or en dashes in the re-run lane's sources.
     for (const src of [scriptRr, readRr("scripts/lib/work-rerun-ops.ts", "utf8")])
       assert.ok(!/[–—]/.test(src), "no em or en dashes in the re-run lane");
+  }
+
+  // ---------------------------------------------------------------------
+  // 2026-09-08 already-published resend recognition (§5.16). Incident: a
+  // colleague's already-handled package (autotask-ci-intake.skill) was
+  // forwarded to the email intake to confirm the matter was closed; the
+  // published-title clash refused it with "pick a different title and
+  // resend", advice that manufactures a duplicate card of bytes the site
+  // already holds. Both intake lanes now compare the incoming archive's
+  // sha256 against the clashing published row's archive_sha256, and the
+  // reply splits: proven-identical bytes get an acknowledgement, anything
+  // else a refusal with lane-honest options.
+  // ---------------------------------------------------------------------
+  {
+    const { readFileSync: readAp } = await import("node:fs");
+
+    // ---- the decision: proven identity only ----
+    const sha = "a".repeat(64);
+    assert.equal(sameSubmittedArchive(sha, sha), true, "equal hashes are the same package");
+    assert.equal(sameSubmittedArchive(sha, "b".repeat(64)), false);
+    assert.equal(
+      sameSubmittedArchive(null, sha),
+      false,
+      "a failed download can never prove identity"
+    );
+    assert.equal(
+      sameSubmittedArchive(sha, null),
+      false,
+      "a legacy row with no stored hash can never prove identity"
+    );
+    assert.equal(sameSubmittedArchive(null, null), false, "two unknowns are not equal");
+
+    // ---- the ack is an acknowledgement, not a refusal ----
+    const acks = [false, true].map((lane) =>
+      alreadyPublishedAckEmail("Autotask CI Intake", lane)
+    );
+    for (const ack of acks) {
+      assert.ok(
+        !ack.startsWith("I could not accept"),
+        "the ack never leads with the refusal preamble"
+      );
+      assert.ok(!/could not accept/i.test(ack), "the ack contains no refusal language");
+      assert.ok(ack.includes('"Autotask CI Intake"'), "the ack names the published card");
+      // Submission identity, never stored-bytes identity: on a cleaned row
+      // the stored artifact is a rebuild, so "byte-for-byte what the site
+      // holds" would be literally false there.
+      assert.ok(
+        /the same package that was submitted/.test(ack),
+        "the ack claims identity of the submission"
+      );
+      assert.ok(!/byte-for-byte/.test(ack), "the ack never claims stored-bytes identity");
+      assert.ok(/Nothing new was stored/.test(ack), "the ack says nothing was stored");
+      assert.ok(/nothing more needs to be sent/.test(ack), "the ack closes the loop");
+    }
+    assert.ok(
+      alreadyPublishedAckEmail("T", false).includes("https://ai.xl.net/work"),
+      "staff ack points at the public /work page"
+    );
+    assert.ok(
+      alreadyPublishedAckEmail("T", true).includes("https://ai.xl.net/roadmap/work"),
+      "company ack points at the private Your Work lane"
+    );
+
+    // ---- refusal options are honest per lane ----
+    const staffRef = publishedClashEmailRefusal("Autotask CI Intake", false);
+    assert.ok(
+      staffRef.includes('"Update Card: Autotask CI Intake"'),
+      "staff refusal names the update lane with the published title"
+    );
+    assert.ok(
+      /whoever its versions belong to now, or from Adam/.test(staffRef),
+      "staff refusal mirrors the canProposeUpdate ownership copy"
+    );
+    assert.ok(/different title/.test(staffRef), "staff refusal keeps the different-tool option");
+    const coRef = publishedClashEmailRefusal("Autotask CI Intake", true);
+    assert.ok(
+      !coRef.includes("Update Card:"),
+      "company refusal never advertises the staff-only update lane"
+    );
+    assert.ok(/different title/.test(coRef), "company refusal keeps the different-tool option");
+    assert.ok(/XL\.net/.test(coRef), "company refusal offers the reply-so-we-can-help path");
+
+    // ---- web parity copy ----
+    const webSame = alreadyPublishedWebMessage("Autotask CI Intake", false);
+    assert.ok(
+      /was already submitted and is published as "Autotask CI Intake" on \/work,/.test(
+        webSame
+      ),
+      "web same-bytes copy names the card and the page, as submission identity"
+    );
+    assert.ok(!/byte-for-byte/.test(webSame), "web copy never claims stored-bytes identity");
+    assert.ok(/nothing to submit/.test(webSame), "web same-bytes copy says there is nothing to submit");
+    assert.ok(
+      alreadyPublishedWebMessage("T", true).includes("/roadmap/work"),
+      "company web same-bytes copy points at the private lane"
+    );
+    const webDiff = publishedClashWebMessage("Autotask CI Intake", false);
+    assert.ok(
+      webDiff.includes('"Submit an update"') && webDiff.includes("/work/submit"),
+      "staff web refusal names the real update affordance"
+    );
+    // Ownership-first: /work/submit renders that button only on rows the
+    // viewer owns (isMine), so the copy must gate the button on ownership
+    // and give a non-owner a path that exists.
+    assert.ok(
+      /belong to you/.test(webDiff) && /ask whoever owns it, or Adam/.test(webDiff),
+      "staff web refusal is ownership-first, with a non-owner path"
+    );
+    const webDiffCo = publishedClashWebMessage("T", true);
+    assert.ok(
+      !/Submit an update/.test(webDiffCo) && !/Update Card:/.test(webDiffCo),
+      "company web refusal advertises no update lane (staff-only in v1)"
+    );
+
+    // House rule: no em or en dashes in any of the new user-visible copy.
+    for (const s of [...acks, staffRef, coRef, webSame, webDiff, webDiffCo])
+      assert.ok(!/[–—]/.test(s), "no em or en dashes in the new copy");
+
+    // ---- source pins: the email lane's split, and the untouched paths ----
+    const apSrc = readAp("src/lib/work/email-intake.ts", "utf8");
+    assert.ok(
+      apSrc.includes("text: alreadyPublishedAckEmail("),
+      "the ack goes out through sendTronEmail directly, like the receipt"
+    );
+    assert.ok(
+      !apSrc.includes("reject(alreadyPublishedAckEmail"),
+      "the ack never composes through reject() (it is not a failure)"
+    );
+    assert.ok(
+      apSrc.includes('already-published resend ${row.id} sent=${sent ? "yes" : "no"}'),
+      "the ack log line records the delivery outcome"
+    );
+    assert.ok(
+      apSrc.includes("work-intake:ack-not-delivered:"),
+      "an undelivered ack is mirrored into the issues ledger"
+    );
+    assert.ok(
+      apSrc.includes("reject(publishedClashEmailRefusal("),
+      "the differing-bytes case is still a refusal through reject()"
+    );
+    assert.ok(
+      apSrc.includes('crypto.createHash("sha256").update(clashBytes)'),
+      "the strong-title guard hashes the bounded download on a published clash"
+    );
+    assert.ok(
+      apSrc.includes("settlePublishedClash(dup.row, pkgWalk.archiveSha256)"),
+      "the weak-title guard compares the walk's provenance sha, no second download"
+    );
+    // Static-exhibit clash unchanged: the static branch refuses with the
+    // legacy sentence BEFORE the published-row lookup, so no download and no
+    // sha logic ever runs for an exhibit title (there is no row to compare).
+    const staticIdx = apSrc.indexOf(
+      "staticTitles.titles.some((t: string) => normalizeTitle(t) === norm)"
+    );
+    const publishedIdx = apSrc.indexOf("await publishedTitleClash(");
+    assert.ok(
+      staticIdx !== -1 && publishedIdx !== -1 && staticIdx < publishedIdx,
+      "the static-title check precedes the published-row lookup"
+    );
+    assert.ok(
+      apSrc.includes(
+        'message: `A published card already uses this title. Pick a different title (the subject line, or a "Title:" line in the body) and resend.`'
+      ),
+      "the static-exhibit refusal copy is unchanged"
+    );
+    const apRouteSrc = readAp("src/app/api/work/submissions/route.ts", "utf8");
+    assert.ok(
+      apRouteSrc.includes(
+        '"A published card already uses this title. Pick a different title."'
+      ),
+      "the web static-exhibit refusal copy is unchanged"
+    );
   }
 
   console.log("work-tests: all assertions passed.");

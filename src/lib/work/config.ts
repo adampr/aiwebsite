@@ -610,6 +610,107 @@ export function packageTooLargeMessage(sizeBytes?: number | null): string {
 export const DOC_TOO_LARGE_MESSAGE = "That document is too large (limit 1 MB).";
 
 // ---------------------------------------------------------------------------
+// Already-published-package recognition (§5.16, 2026-09-08 incident). A
+// colleague's already-handled package was forwarded to the email intake to
+// confirm the matter was closed; the published-title clash refused it with
+// "pick a different title and resend", advice that manufactures a duplicate
+// card of bytes the site already holds byte-for-byte. Both intake lanes now
+// compare the incoming archive's sha256 (of the RAW submitted bytes, the
+// extract.ts provenance value createSubmission stores) against the clashing
+// published row's archive_sha256 before composing a reply. These helpers are
+// pure and live here so the copy has one owner and scripts/work-tests.ts can
+// pin the split: identical bytes get an ACKNOWLEDGEMENT, never a refusal;
+// anything else gets a refusal whose options are honest for the lane.
+
+/** True only when BOTH sha256 values exist and agree: the incoming archive is
+ * byte-for-byte the package the published card already holds. Null on either
+ * side (a failed download, a legacy row with no stored hash) must read as
+ * "not proven the same", because the acknowledgement's claim ("the site
+ * already has it") is only honest when the bytes are proven identical. */
+export function sameSubmittedArchive(
+  incomingSha256: string | null,
+  publishedSha256: string | null
+): boolean {
+  return (
+    incomingSha256 !== null &&
+    publishedSha256 !== null &&
+    incomingSha256 === publishedSha256
+  );
+}
+
+/** Email acknowledgement for a resend of an already-published package. NOT a
+ * refusal: it never leads with the refusal preamble ("I could not accept
+ * ..."), never goes through the reject() failure mirror (nothing failed; the
+ * oversight BCC already hands the admin a copy), and never names the
+ * published card's owner (their address is not public). */
+export function alreadyPublishedAckEmail(
+  publishedTitle: string,
+  isCompanyLane: boolean
+): string {
+  const page = isCompanyLane
+    ? "your company's Your Work page at https://ai.xl.net/roadmap/work"
+    : "https://ai.xl.net/work";
+  // "The same package that was submitted", never "byte-for-byte what is
+  // stored": archive_sha256 hashes the RAW submitted bytes, and on a cleaned
+  // row the stored artifact is a rebuild of them, so a stored-bytes identity
+  // claim would be literally false there. The identity proven is of the
+  // SUBMISSION.
+  return [
+    `Good news: this one is already in. The package attached to this email is the same package that was submitted and published as "${publishedTitle}" on ${page}, so the site already has this work. Nothing new was stored, and nothing more needs to be sent.`,
+    ``,
+    `If you meant to submit a different tool, send it with its own title and package.`,
+  ].join("\n");
+}
+
+/** Email refusal for a published-title clash whose incoming bytes differ from
+ * (or could not be proven identical to) the published card's. Staff lane
+ * names the update lane, because "pick a different title" alone steers a new
+ * version of the same tool into a duplicate card; the update-lane sentence
+ * mirrors the canProposeUpdate refusal (versions belong to someone now, or
+ * Adam). Company lane must NOT advertise "Update Card:" (updates are
+ * staff-only in v1), so its second option is a reply the XL.net team can act
+ * on. */
+export function publishedClashEmailRefusal(
+  publishedTitle: string,
+  isCompanyLane: boolean
+): string {
+  if (isCompanyLane)
+    return `A published card already uses this title. If this is a different tool, pick a different title (the subject line, or a "Title:" line in the body) and resend. If you meant to replace the published card, reply to this email and the XL.net team can help.`;
+  return `A published card already uses this title. If this is a new version of that card, add a line reading "Update Card: ${publishedTitle}" to the body and resend; updates to a published card are accepted from whoever its versions belong to now, or from Adam. If it is a different tool, pick a different title (the subject line, or a "Title:" line in the body) and resend.`;
+}
+
+/** Web-route 409 body when the uploaded file is byte-for-byte the published
+ * card's package. Still code "duplicate_title" (client-compatible); the copy
+ * is what changes, because "pick a different title" for bytes the site
+ * already holds is the wrong instruction. */
+export function alreadyPublishedWebMessage(
+  publishedTitle: string,
+  isCompanyLane: boolean
+): string {
+  const page = isCompanyLane
+    ? "your company's Your Work page at /roadmap/work"
+    : "/work";
+  // Submission identity, not stored-bytes identity: see alreadyPublishedAckEmail.
+  return `This exact package was already submitted and is published as "${publishedTitle}" on ${page}, so there is nothing to submit.`;
+}
+
+/** Web-route 409 body for a published-title clash whose bytes differ or
+ * could not be compared. Staff copy names the real web update affordance
+ * (the "Submit an update" button on /work/submit, §5.16); company web
+ * submitters have no update lane in v1, so their options stay honest. */
+export function publishedClashWebMessage(
+  publishedTitle: string,
+  isCompanyLane: boolean
+): string {
+  if (isCompanyLane)
+    return `A published card already uses this title. Pick a different title, or contact XL.net if you meant to replace the published card.`;
+  // Ownership-first: /work/submit renders the "Submit an update" button only
+  // on rows the viewer owns (isMine, submit-client.tsx), so leading a
+  // non-owner to the button points at a dead end.
+  return `A published card already uses this title. If that card's versions belong to you, use the "Submit an update" button beside it on your submissions page at /work/submit; otherwise ask whoever owns it, or Adam, to send the update. If it is a different tool, pick a different title.`;
+}
+
+// ---------------------------------------------------------------------------
 // Unreadable-body refusals (2026-09-01). Six web attempts on 2026-08-27 each
 // uploaded a real multipart body and req.formData() threw every time; the 400
 // said "Send the submission as multipart form data", which is meaningless to a

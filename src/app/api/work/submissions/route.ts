@@ -14,8 +14,11 @@ import {
   DOC_TOO_LARGE_MESSAGE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
+  alreadyPublishedWebMessage,
   cleanedBeforeRefusalLead,
   packageTooLargeMessage,
+  publishedClashWebMessage,
+  sameSubmittedArchive,
   secretsCleanedMessage,
   workSubmissionsEnabled,
   type WorkKind,
@@ -365,17 +368,44 @@ export async function POST(req: Request): Promise<Response> {
   // submission per title, from anyone; failed rows never block.
   const norm = normalizeTitle(title);
   // Hand-authored exhibit titles are a /work-only concept; company lanes
-  // check only their own scope.
+  // check only their own scope. An exhibit has no submission row and no
+  // stored archive hash, so this branch keeps the plain refusal: "the site
+  // already has it" can never be proven against one.
   if (
-    (!isCompanyLane &&
-      staticTitles.titles.some((t: string) => normalizeTitle(t) === norm)) ||
-    (await publishedTitleClash(title, user.scope))
+    !isCompanyLane &&
+    staticTitles.titles.some((t: string) => normalizeTitle(t) === norm)
   )
     return workError(
       "duplicate_title",
       "A published card already uses this title. Pick a different title.",
       409
     );
+  const published = await publishedTitleClash(title, user.scope);
+  if (published) {
+    // Already-published-package recognition (2026-09-08 email-lane incident,
+    // mirrored here for parity): before refusing, ask whether the uploaded
+    // file IS the package the clashing card already holds. The multipart
+    // body is already buffered, so hashing the file costs no extra I/O; the
+    // sha256 is of the RAW submitted bytes, the same provenance value
+    // createSubmission stores into archive_sha256. Both answers stay a 409
+    // with code "duplicate_title" (client-compatible); only the copy splits.
+    // A missing or empty file, or a legacy row with no stored hash, cannot
+    // prove identity and gets the options copy.
+    const clashFile = form.get("file");
+    const incomingSha =
+      clashFile instanceof File && clashFile.size > 0
+        ? createHash("sha256")
+            .update(Buffer.from(await clashFile.arrayBuffer()))
+            .digest("hex")
+        : null;
+    return workError(
+      "duplicate_title",
+      sameSubmittedArchive(incomingSha, published.archiveSha256)
+        ? alreadyPublishedWebMessage(published.title, isCompanyLane)
+        : publishedClashWebMessage(published.title, isCompanyLane),
+      409
+    );
+  }
   const clash = await activeTitleClash(title, user.scope);
   if (clash)
     return workError(

@@ -39,8 +39,11 @@ import {
   PACKAGE_SLIM_GUIDE,
   TITLE_KIND_PREFIX_RE,
   WORK_CAPS,
+  alreadyPublishedAckEmail,
   cleanedBeforeRefusalLead,
   cleaningReceiptBlock,
+  publishedClashEmailRefusal,
+  sameSubmittedArchive,
   workSubmissionsEnabled,
   type WorkKind,
 } from "./config";
@@ -64,6 +67,7 @@ import {
   publishedTitleClash,
   resolveUpdateTarget,
   userIdForEmail,
+  type PublishedClashRow,
   type SubmissionRow,
 } from "./db";
 import type { WorkScope } from "./scope";
@@ -151,8 +155,9 @@ async function sendTronEmail(opts: {
   }
   const tronTo = [opts.to];
   const bcc = oversightBcc(tronTo);
-  // Last net before the wire, for the three sends that do not compose through
-  // reject() (warnAdmin, the company-row-vanished notice, the receipt). It
+  // Last net before the wire, for the four sends that do not compose through
+  // reject() (warnAdmin, the company-row-vanished notice, the receipt, and
+  // the already-published resend acknowledgement). It
   // acts ONLY on a body that actually repeats a paragraph, so an ordinary
   // body goes out byte-identical, and it says what it caught: a silent net
   // masks the assembly bug it is covering for. Deliberately BEFORE
@@ -260,38 +265,75 @@ async function warnAdmin(
 // titleOutOfBand (2026-09-08: the whole rung-2 predicate is now the pinnable
 // email-parse.ts subjectProvidesTitle).
 
-/** The duplicate-title rejection copy, or null when the title is free. Split
- * out of the admission flow because it now runs at two points: in place for a
- * title resolved from the subject or a body directive, and again the moment a
- * weak title resolves after archive inspection. */
+/** The duplicate-title verdict, or null when the title is free. Split out of
+ * the admission flow because it runs at two points: in place for a title
+ * resolved from the subject or a body directive, and again the moment a weak
+ * title resolves after archive inspection.
+ *
+ * Restructured 2026-09-08 (already-published resend incident): a PUBLISHED
+ * clash on the create path returns the clashing ROW instead of finished
+ * copy, because the right reply depends on a fact this function does not
+ * hold, whether the incoming archive's bytes are the very bytes that card
+ * already holds; the caller settles that through settlePublishedClash. Every
+ * other outcome stays a finished refusal message: a static-exhibit clash has
+ * no row to compare against, and a published clash on the UPDATE path
+ * (exceptId) means a DIFFERENT card holds the pinned title, where a
+ * byte-comparison against that stranger's card answers nothing. */
+type TitleGuardVerdict =
+  | { kind: "refuse"; message: string }
+  | { kind: "publishedClash"; row: PublishedClashRow };
+
 async function titleGuardMessage(
   title: string,
   sender: string,
   scope: WorkScope,
   update?: { exceptId: string }
-): Promise<string | null> {
+): Promise<TitleGuardVerdict | null> {
   const isCompany = scope.companyId !== null;
   const trackUrl = isCompany ? `${SITE}/roadmap/work` : `${SITE}/work/submit`;
   const norm = normalizeTitle(title);
   // Hand-authored exhibits are /work-only; company lanes clash only within
-  // their own scope (§5.18).
+  // their own scope (§5.18). No download and no sha comparison on this
+  // branch, deliberately: an exhibit has no submission row and no stored
+  // archive hash, so "the site already has it" can never be proven and the
+  // refusal stands as it always has.
   if (
-    (!isCompany &&
-      staticTitles.titles.some((t: string) => normalizeTitle(t) === norm)) ||
-    (await publishedTitleClash(title, scope, { exceptId: update?.exceptId }))
+    !isCompany &&
+    staticTitles.titles.some((t: string) => normalizeTitle(t) === norm)
   )
-    return `A published card already uses this title. Pick a different title (the subject line, or a "Title:" line in the body) and resend.`;
+    return {
+      kind: "refuse",
+      message: `A published card already uses this title. Pick a different title (the subject line, or a "Title:" line in the body) and resend.`,
+    };
+  const published = await publishedTitleClash(title, scope, {
+    exceptId: update?.exceptId,
+  });
+  if (published)
+    return update
+      ? {
+          kind: "refuse",
+          message: `A published card already uses this title. Pick a different title (the subject line, or a "Title:" line in the body) and resend.`,
+        }
+      : { kind: "publishedClash", row: published };
   const clash = await activeTitleClash(title, scope);
   if (clash) {
     if (update)
-      return clash.submitterEmail === sender
-        ? `You already have an update to "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to replace it with this version.`
-        : `A teammate already has an update to "${title}" in review. Only one update per card can be open at a time, so check with them or wait until theirs is decided.`;
-    return clash.submitterEmail === sender
-      ? isCompany
-        ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it at ${trackUrl}.`
-        : `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
-      : `A teammate already has a submission titled "${title}" in review. Pick a different title, or check with them before resubmitting.`;
+      return {
+        kind: "refuse",
+        message:
+          clash.submitterEmail === sender
+            ? `You already have an update to "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to replace it with this version.`
+            : `A teammate already has an update to "${title}" in review. Only one update per card can be open at a time, so check with them or wait until theirs is decided.`,
+      };
+    return {
+      kind: "refuse",
+      message:
+        clash.submitterEmail === sender
+          ? isCompany
+            ? `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it at ${trackUrl}.`
+            : `You already have a submission titled "${title}" in the pipeline (status: ${clash.status}). Check it at ${SITE}/work/submit. Removing a submission is admin-only, so ask Adam to clear it if you want to resubmit under this title.`
+          : `A teammate already has a submission titled "${title}" in review. Pick a different title, or check with them before resubmitting.`,
+    };
   }
   return null;
 }
@@ -671,6 +713,58 @@ export async function handleWorkEmail(
       ].join("\n"),
       emailed: sent,
     });
+  };
+
+  /** Settle a published-title clash against the incoming archive's bytes
+   * (2026-09-08 incident: adam@ forwarded the already-published
+   * autotask-ci-intake package to ask whether the matter was closed, and the
+   * reply said to pick a different title and resend, advice that
+   * manufactures a duplicate card of bytes the site already holds). Equal
+   * sha256 of the RAW submitted bytes: an ACKNOWLEDGEMENT, sent directly
+   * like the receipt and never through reject(), because nothing failed and
+   * the reject() failure mirror would file a non-failure into the triage;
+   * the oversight BCC on sendTronEmail already hands the admin a copy.
+   * Differing or unavailable sha: still a refusal, with options that are
+   * honest for the lane (config.ts publishedClashEmailRefusal). The log line
+   * carries ids and the delivery outcome only, never body content, and
+   * neither reply ever echoes the published card owner's address (not
+   * public). An UNDELIVERED ack (send failure, or the company reply bound
+   * going silent) is mirrored into the §5.15 issues ledger, because the
+   * sender is left believing their mail went unanswered; it is a delivery
+   * failure, not a submission failure, so it gets its own episodic key
+   * rather than reject()'s mirror or warnAdmin's dropped-unverified-mail
+   * copy. */
+  const settlePublishedClash = async (
+    row: PublishedClashRow,
+    incomingSha256: string | null
+  ): Promise<void> => {
+    if (sameSubmittedArchive(incomingSha256, row.archiveSha256)) {
+      let sent = false;
+      if (companyReplyAllowed())
+        sent = await sendTronEmail({
+          to: sender,
+          subject: replySubject,
+          headers: replyHeaders,
+          text: alreadyPublishedAckEmail(row.title, isCompanyLane),
+        });
+      log(
+        `already-published resend ${row.id} sent=${sent ? "yes" : "no"} by=${hashKey(sender)}`
+      );
+      if (!sent)
+        reportFailureEmailIssue({
+          key: `work-intake:ack-not-delivered:${senderDomain || "unknown"}`,
+          subject: `Already-published resend acknowledgement not delivered (${senderDomain || "unknown domain"})`,
+          detail: [
+            `A DKIM-verified sender re-sent a package that is already published, and the acknowledgement reply could not be delivered (the send failed, or the company reply bound suppressed it).`,
+            `Published row: ${row.id}`,
+            `Sender: ${sender}`,
+            `Nothing was stored, and the resend itself needs no action; the sender just never learned that.`,
+          ].join("\n"),
+          emailed: false,
+        });
+      return;
+    }
+    await reject(publishedClashEmailRefusal(row.title, isCompanyLane));
   };
 
   // ── Admission, in the route's order ──────────────────────────────
@@ -1103,12 +1197,17 @@ export async function handleWorkEmail(
   }
 
   // ── Duplicate-title guard (route parity) ─────────────────────────
-  // Runs HERE for an already-resolved title, so a clash still costs no
-  // download; a weakly-resolved title cannot exist yet and is guarded a
-  // second time the moment it resolves, below. An update carries its
-  // predecessor's pinned title, which must not clash against the
-  // predecessor itself (exceptId); the active-row check then catches a
-  // second in-flight update to the same card.
+  // Runs HERE for an already-resolved title. A static or active clash still
+  // costs no download; a PUBLISHED clash now costs exactly one bounded
+  // download for this DKIM-verified sender (2026-09-08), because hashing the
+  // submitted bytes is what converts a wrong refusal ("pick a different
+  // title" for a package the site already holds) into a correct
+  // acknowledgement. A failed download leaves the sha unavailable and falls
+  // through to the refusal, never a hard error. A weakly-resolved title
+  // cannot exist yet and is guarded a second time the moment it resolves,
+  // below. An update carries its predecessor's pinned title, which must not
+  // clash against the predecessor itself (exceptId); the active-row check
+  // then catches a second in-flight update to the same card.
   if (title !== null) {
     const dup = await titleGuardMessage(
       title,
@@ -1116,8 +1215,22 @@ export async function handleWorkEmail(
       { companyId: company?.id ?? null },
       isUpdate ? { exceptId: predecessor!.id } : undefined
     );
+    if (dup?.kind === "publishedClash") {
+      const clashBytes = await downloadAttachment(
+        emailId,
+        pkg.id,
+        WORK_CAPS.uploadMaxBytes
+      );
+      await settlePublishedClash(
+        dup.row,
+        clashBytes
+          ? crypto.createHash("sha256").update(clashBytes).digest("hex")
+          : null
+      );
+      return;
+    }
     if (dup) {
-      await reject(dup);
+      await reject(dup.message);
       return;
     }
   }
@@ -1643,8 +1756,19 @@ export async function handleWorkEmail(
     }
     log(`title ${titleSource} len=${title.length} by=${hashKey(sender)}`);
     const dup = await titleGuardMessage(title, sender, { companyId: company?.id ?? null });
+    // This is the guard site today's incident hit (a forward of the
+    // published autotask-ci-intake package resolved its title by inference).
+    // The archive is already downloaded and walked here, and
+    // pkgWalk.archiveSha256 hashes the bytes the submitter SENT even when the
+    // stored archive is a cleaned rebuild (extract.ts provenance contract,
+    // the same value createSubmission stores), so the comparison costs no
+    // second download.
+    if (dup?.kind === "publishedClash") {
+      await settlePublishedClash(dup.row, pkgWalk.archiveSha256);
+      return;
+    }
     if (dup) {
-      await reject(dup);
+      await reject(dup.message);
       return;
     }
   }

@@ -1720,17 +1720,39 @@ export async function activeTitleClash(
   return rows[0] ?? null;
 }
 
-/** A published community card already using this title. exceptId (§5.16
- * updates): an update row carries its predecessor's pinned title, which must
- * not clash against the predecessor itself; every other caller omits it. */
+/** The row a published-title clash resolved to. archiveSha256 is the sha256
+ * of the RAW bytes that row's submitter sent (extract.ts provenance
+ * contract), nullable on legacy rows; the intake lanes compare it against an
+ * incoming archive to tell a resend of an already-published package from a
+ * genuine title collision (2026-09-08 incident). Deliberately NO
+ * submitterEmail: a published card's owner address is not public (house
+ * rule), no caller needs it, and not selecting it keeps it out of the leak
+ * surface entirely. */
+export interface PublishedClashRow {
+  id: string;
+  title: string;
+  slug: string | null;
+  archiveSha256: string | null;
+}
+
+/** A published community card already using this title, as the clashing row
+ * (null when the title is free; truthiness callers keep working). exceptId
+ * (§5.16 updates): an update row carries its predecessor's pinned title,
+ * which must not clash against the predecessor itself; every other caller
+ * omits it. */
 export async function publishedTitleClash(
   title: string,
   scope: WorkScope,
   opts?: { exceptId?: string }
-): Promise<boolean> {
+): Promise<PublishedClashRow | null> {
   const norm = normalizeTitle(title);
   const rows = await db
-    .select({ id: S.id })
+    .select({
+      id: S.id,
+      title: S.title,
+      slug: S.slug,
+      archiveSha256: S.archiveSha256,
+    })
     .from(S)
     .where(
       and(
@@ -1741,7 +1763,7 @@ export async function publishedTitleClash(
       )
     )
     .limit(1);
-  return rows.length > 0;
+  return rows[0] ?? null;
 }
 
 /** Resolve an "Update Card:" value to the published community card it names.

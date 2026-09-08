@@ -347,6 +347,16 @@ function main(): void {
       !dbSrc.includes("regexp_replace(${S.title}, '"),
       "no db.ts matcher passes an inline quoted pattern to regexp_replace"
     );
+    // 2026-09-08 already-published resend round: publishedTitleClash returns
+    // the clashing ROW (truthiness callers keep working) and selects
+    // archive_sha256, the value the intake lanes compare against an incoming
+    // archive to tell a resend of a published package from a genuine
+    // collision. The DB-backed half of this pin (the returned row's fields)
+    // lives in scripts/work-update-flow-tests.ts.
+    assert.ok(
+      dbSrc.includes("archiveSha256: S.archiveSha256"),
+      "publishedTitleClash selects archive_sha256 for the byte-identity comparison"
+    );
   }
 
   // ---- attribution -------------------------------------------------------
