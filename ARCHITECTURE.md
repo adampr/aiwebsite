@@ -15,6 +15,8 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
+Last verified against code: 2026-09-08 §5.21 WORK_UPDATE_CHILD GAINS A FRESH-SUBMISSION SECOND PASS (`src/lib/chase/detect.ts`; pins in `scripts/chase-tests.ts`): when the child pass finds NO child row of the parent card, the detector now asks whether the assignee answered the fix-your-card ask by submitting the named package as a FRESH submission (`parent_id` null) instead of an update child, fixing the prod incident where a colleague's correctly named fresh package was published and the 13:00 run still nagged him 18 minutes after he had answered (the same failure class as the 2026-09-04 `work_submission` near-match incident: the detector's lane narrower than the ways a person can answer). `candidatesFor` for `work_update_child` now fetches the parent card's FULL candidate projection (`ChaseCandidates.parent: SubmissionCandidate | null` replaces the old `parentArchiveSha256` field; `archive_data`/`md_data` still never selected) plus EVERYBODY'S at-or-after-`opened_at` submissions through the same factored query the `work_submission` lane runs (both detectors' candidate queries dropped their SQL ownership filter for the third pass below; the pure fences partition byAssignee per pass). Parent and candidate each contribute up to three identity strings (archive name and SKILL.md front-matter name, file-shaped through `packageIdentity`; the card title, prose through `titleIdentityTokens`); an EXACT `packageIdentity` equality between any file-shaped pair (both sides required to carry at least one non-stop token, so packaging-word names like "Package v2.zip" never exact-match) feeds the shared verdict ladder first, and only when the exact set yields NO VERDICT the same ladder runs over the NEAR `nearMatchTokens` containment set over every pair (an exact set whose rows are all failed/superseded must not smother a published near answer), the ladder for BOTH being the `work_submission` near-match one, deliberately weaker than the child lane's close-on-any-status: published CLOSES on the oldest published match (`matchedOn: "fresh_submission_published"`; evidence names which parent field met which candidate field, both identity strings, status and arrival), received/running/held/pending_approval PAUSES with `freshSubmissionPauseReason` (same 500-char budget and both-outcomes operator instructions as the near-match reason), failed/superseded keep chasing; a candidate whose `archive_sha256` equals the parent's (case-folded, both present) is the same-bytes re-send and pauses with the identical-resubmission reason instead of ever closing; the parent row itself and any row whose `parent_id` names the parent are excluded. The final none-reason stays `no_update_child` (pinned), now meaning no child row, no matching fresh submission, and nothing relayed by another hand. SAME DAY, SECOND INCIDENT, THIRD PASS: a colleague answered a send-the-package ask by emailing the package to the requester, who filed it from their OWN account; it published, and both assignee-fenced passes were blind to the not-byAssignee row, so the colleague was nagged every run for a package the site already held. BOTH detectors therefore end with a RECEIVED-BY-ANOTHER-HAND pass that runs only when every assignee-fenced pass produced no verdict and can only PAUSE, never close (closing would falsely record that the assignee answered): candidates are rows NOT byAssignee at or after `opened_at`; matching is EXACT file-shaped identity only, no near matching and no titles, non-stop token on both sides (for `work_submission` against `packageIdentity(detector_arg)`; for `work_update_child` against the parent's archive/front-matter identities, where additionally somebody else's CHILD of the card pauses with no identity test, and in both legs a row byte-identical to the parent is ignored entirely); statuses `published`/`NEAR_MATCH_PAUSE_STATUSES` pause, failed/superseded are ignored; the pause reason is the new `relayedPackagePauseReason` (filer as `coalesce(creator_email, submitter_email)`, title, archive, date, an explicit MAY-be-their-own-work-relayed hedge, and both operator moves including the §5.16 /work ownership transfer, under the same 500-char budget). Also: the weekly report's `Paused because:` clip is raised from 300 to 500 to match `pauseTask`'s stored slice, because every composed reason ends with the operator instructions and the old clip deleted exactly that sentence. NO schema, NO env, NO route change. Verified: `npx tsc --noEmit -p .`, `npm run test:chase` (120 sections).
+
 Last verified against code: 2026-09-06 §5.22 XLANT'S DEVICE LANE GAINS ONE MORE ROUTE: `v1/device/restore-grant`. The xlant contract (v0.10, 2026-09-06) adds `POST {RELAY_PREFIX}/v1/device/restore-grant`: after the person confirms in the desktop's Settings, the desktop asks the relay for a SHORT-LIVED signed grant to put the machine back to a Windows System Restore point the relay itself took before one of its fix runs; the relay checks the point is that person's on that machine and signs exactly one command, nothing is stored. On this host that is ONE allowlist entry, `^v1/device/restore-grant$`, beside `credits` — exact, anchored, flag-free — and the `scripts/xlant-tests.ts` legs count EIGHT shapes and reject the `restore-grant/`, `restore-grant/x`, `restore-grantx` and `restore` near-misses. No new route, no new env. Verified: `npx tsc --noEmit`, `npm run test:xlant`.
 
 Last verified against code: 2026-09-06 §5.22 XLANT'S DEVICE LANE GAINS ONE ROUTE: `v1/device/credits`. The xlant repo's contract (v0.7, 2026-09-06) adds `GET {RELAY_PREFIX}/v1/device/credits` — the device's own person's standing this month (allowance, spent, held, remaining, the renewal instant, a run-rate projection and a `level` the relay decides), read by the desktop's settings card each time it opens. On this host that is ONE allowlist entry, `^v1/device/credits$`, beside `hello` — exact, anchored, flag-free, no id segment — and the `scripts/xlant-tests.ts` legs now count SEVEN shapes and reject the `credits/`, `credits/x`, `creditsx` and `credit` near-misses. No new route, no new env, no change to the internal `/v1/usage*` group (which stays server-side only: a device must never read another person's spending, and this route cannot — the relay keys it on the bearer token). A relay older than 0.7 answers the forwarded path with its own 404 (`{"ok":false,"code":"bad_request","message":"no such route"}`), and a host older than this note answers `404 {"error":"not found"}`; the desktop maps either to one "server not updated yet" line. Verified: `npx tsc --noEmit`, `npm run test:xlant` (all legs), `npm run build:check`.
@@ -10707,13 +10709,17 @@ is PURE; the candidate queries sit beside it and fetch nothing else.
   row is the bug that emails somebody every weekday forever after they have
   done the work, while telling them the system already noticed.
 - `work_submission` - a `work_submissions` row created by the assignee at or
-  after `opened_at` whose package identity matches `detector_arg`. TWO PASSES,
-  in order. The EXACT pass matches `packageIdentity(detector_arg)` by string
+  after `opened_at` whose package identity matches `detector_arg`. THREE
+  PASSES, in order (the candidate query fetches EVERYBODY'S rows at or after
+  `opened_at`, capped at 500 oldest-first; ownership is partitioned in the
+  pure function per pass, because the third pass needs rows the assignee did
+  not file). The EXACT pass matches `packageIdentity(detector_arg)` by string
   equality against `archive_name` or the SKILL.md front-matter `name:` recorded
   in `corpus_files_json`, and closes on ANY status (unchanged contract).
   Identity comparison folds case, path and extension ("Software Brain.zip" =
   "software-brain"). The NEAR-MATCH pass runs ONLY when the exact pass found
-  nothing, over the same assignee-owned at-or-after-`opened_at` candidates: a
+  nothing, over the same at-or-after-`opened_at` candidates the pure fences
+  narrow to the assignee's own rows: a
   file-shaped identity string (`archive_name`, front-matter name,
   `detector_arg`) tokenizes to `packageIdentity(x).split("-")` and the card
   `title` (now in the candidate projection) to lowercase-plus-collapse only
@@ -10755,27 +10761,115 @@ is PURE; the candidate queries sit beside it and fetch nothing else.
   Ownership counts through EITHER anchor, `coalesce(creator_email,
   submitter_email)` or the current `submitter_email`, because a §5.16 transfer
   is precisely the gesture that moves a row onto the person who really did the
-  work. The reopen-resets-`opened_at` rule below covers this pause too: both
-  automatic pauses rest on a submission still sitting at or after the old
-  floor.
-- `work_update_child` - a child row with `parent_id = detector_arg` created by
+  work. The reopen-resets-`opened_at` rule below covers this pause too: every
+  automatic pause rests on a submission still sitting at or after the old
+  floor. **The RECEIVED-BY-ANOTHER-HAND pass runs ONLY when both
+  assignee-fenced passes produced no verdict, and can only PAUSE, never
+  close** (closing would falsely record that the assignee answered): a row
+  NOT byAssignee, at or after `opened_at`, in a status where the site holds
+  the package (`published` or `NEAR_MATCH_PAUSE_STATUSES`; failed and
+  superseded are ignored), whose `archive_name` or SKILL.md front-matter
+  name EXACTLY equals `packageIdentity(detector_arg)` with at least one
+  non-stop token on BOTH sides. No near matching and no titles: the pass has
+  no assignee fence, so the aperture stays the narrowest in the file. The
+  oldest qualifying row pauses the task with `relayedPackagePauseReason`,
+  which names the filer (`creator_email`, `submitter_email` when null),
+  title, archive and date, says the row MAY be the assignee's own work
+  relayed by someone else, and spells both operator moves: `chase:admin
+  close` if it settles the ask (plus the §5.16 /work ownership transfer if
+  the work is really the assignee's), `chase:admin open` to resume and
+  re-date if their own submission is still wanted. Same 500-char budget
+  discipline as the other composed reasons, and the reason rides the same
+  scrub/report path every stored pause reason does. The pass exists because
+  a second colleague answered a send-the-package ask by emailing the package
+  to the requester, who filed it from their own account; it published, and
+  the assignee-fenced passes were blind to the row, so the colleague was
+  nagged every run for a package the site already held.
+- `work_update_child` - THREE PASSES, in order. The CHILD pass: a child row with
+  `parent_id = detector_arg` created by
   the assignee at or after `opened_at`. The id compare is CASE-FOLDED on both
   sides and `chase:seed` lowercases the arg: Postgres renders every uuid it
   returns in lowercase while uuid equality in SQL is not textual, so an
   uppercase `detector_arg` would find the child and then be discarded by the
   pure filter, which reads as "they never did it". **ANY status closes it**, held and
   failed included: the ball has left the assignee and the next move is
-  XL.net's. **EXCEPT** when the child's `archive_sha256` equals the parent's:
+  XL.net's. **EXCEPT** when the child's `archive_sha256` equals the parent's
+  (read off `ChaseCandidates.parent`, the parent card's own candidate row,
+  which replaced the old digest-only `parentArchiveSha256` field):
   they re-sent the identical package, nothing changed, but they plainly believe
   they answered, so the task PAUSES with a reason instead of closing, which
   takes it out of the send selector and puts it in the weekly report for a
   person to act on. A null digest on either side is unknown, not identical, and
-  closes. **Reopening a paused row RESETS `opened_at` to now** (`chase:admin
+  closes. **The FRESH-SUBMISSION pass runs ONLY when the child pass finds no
+  child row at all** (an existing child settles the verdict): the person may
+  have answered the fix-your-card ask by submitting the named package anew
+  (`parent_id` null) instead of filing an update child, which is exactly what
+  a real colleague did (his fresh archive's identity equalled the parent
+  card's SKILL.md front-matter name, the panel published it, and the child
+  pass nagged him 18 minutes later). `candidatesFor` therefore also fetches,
+  for this detector, the parent card's full candidate projection and
+  EVERYBODY'S at-or-after-`opened_at` submissions through the same factored
+  query the `work_submission` lane runs, and its children query likewise
+  carries no ownership filter any more (`archive_data`/`md_data` still never
+  selected; the pure fences partition byAssignee per pass, and the relay
+  pass below reads the rest). Parent and candidate each contribute up to
+  three
+  identity strings: archive name and SKILL.md front-matter name (file-shaped,
+  through `packageIdentity`/`identityTokens`) and the card title (prose,
+  through `titleIdentityTokens`). An EXACT `packageIdentity` string equality
+  between any file-shaped candidate identity and any file-shaped parent
+  identity marks a row, with titles never taking part in exact and BOTH
+  sides required to carry at least one non-stop token (an archive named only
+  in packaging words, "Package v2.zip", reduces to identity "package-v2"
+  with an empty token set and must not exact-equal an unrelated same-named
+  upload); the shared verdict ladder runs over the exact set first, and only
+  when that yields NO VERDICT (not merely when no exact row exists: an exact
+  set whose every row is failed or superseded must not smother a published
+  near answer) it runs again over the NEAR set, a `nearMatchTokens`
+  containment over every (parent identity as wanted, candidate identity)
+  pair, titles included on both
+  sides. The verdict ladder is the `work_submission` near-match one for BOTH
+  exact and near, deliberately weaker than the child lane's
+  close-on-any-status because a fresh row never declared itself to be about
+  the card: a published match CLOSES on the oldest published row
+  (`matchedOn: "fresh_submission_published"`; evidence records the pass, the
+  exact/near kind, which parent field met which candidate field, both
+  identity strings, the submission id, status and arrival time, so an
+  operator can check the verdict without a database), a
+  `NEAR_MATCH_PAUSE_STATUSES` row PAUSES with `freshSubmissionPauseReason`
+  (a sibling of the near-match reason with the same 500-char budget and the
+  same both-outcomes operator instructions), and failed/superseded keep
+  chasing. A candidate whose `archive_sha256` equals the parent's
+  (case-folded, both present) is the same-bytes re-send and must never
+  close: it pauses with the identical-resubmission reason, and only when it
+  would otherwise have produced a verdict, so an unrelated identical-sha row
+  pauses nothing and a failed identical row keeps chasing. Excluded from the
+  fresh
+  candidates: the parent row itself (by id, case-folded) and any row whose
+  `parent_id` names the parent, which belongs to the child pass and must not
+  be readmitted here if that pass's filters rejected it. **The
+  RECEIVED-BY-ANOTHER-HAND pass runs last, only when the child and fresh
+  passes produced no verdict, and can only PAUSE** (same rationale and same
+  composed reason as the `work_submission` relay pass above), in two legs in
+  order of claim strength: (a) somebody ELSE'S child of the card, any
+  qualifying status (`published` or `NEAR_MATCH_PAUSE_STATUSES`), no
+  identity test needed because the row declared itself to be about the card;
+  (b) somebody else's fresh row whose file-shaped identity EXACTLY equals
+  the parent's archive or front-matter identity through the same guarded
+  exact rung the fresh pass uses (no near, no titles, non-stop token on both
+  sides). In BOTH legs a row byte-identical to the parent
+  (`archive_sha256` equal, both present, case-folded) is ignored entirely,
+  not even paused on: a relayed copy of the unchanged parent answers
+  nothing, and nothing about somebody else's copy says the assignee believes
+  they answered. The final `none`
+  reason stays `no_update_child` (test-pinned, and the dry-run vocabulary
+  operators already read); it now means no child row, no matching fresh
+  submission, and nothing relayed by another hand. **Reopening a paused row RESETS `opened_at` to now** (`chase:admin
   open`), because the resubmission that paused it is still sitting there at or
   after the old floor: preserving the floor would let the next run re-pause the
   row inside the same run, making the operator's gesture silently inert and an
-  automatic pause a one-way trip (the near-match pause above leans on the same
-  reset). Reopening a BLOCKED row
+  automatic pause a one-way trip (the near-match, fresh-submission and
+  relay pauses all lean on the same reset). Reopening a BLOCKED row
   keeps an `opened_at` it already had, since that ask was never re-made.
 - `chase_tasks.detector_md_sha256` exists for a future digest match and is NOT
   read in this round. Deliberate, not forgotten.

@@ -15,19 +15,29 @@
 //                      somebody who finished weeks ago.
 //   work_submission    They were asked to SEND a package. A /work
 //                      submission row created by them, at or after the ask,
-//                      whose package identity matches detector_arg. Two
+//                      whose package identity matches detector_arg. Three
 //                      passes: an EXACT identity match closes on any
-//                      status, and only when that finds nothing, a
+//                      status; only when that finds nothing, a
 //                      NEAR MATCH on shared identity tokens (below) closes
 //                      on a published row or pauses on one the review
-//                      still holds.
+//                      still holds; and only when both assignee-fenced
+//                      passes produce no verdict, a RECEIVED-BY-ANOTHER-HAND
+//                      pass (below) can PAUSE, never close, on somebody
+//                      else's exact-named row.
 //   work_update_child  They were asked to FIX a published card. A child row
 //                      (parent_id = detector_arg) created by them, at or
 //                      after the ask. ANY status closes it, including one
 //                      the panel held: the ball has left the assignee and
 //                      the next move belongs to XL.net, so continuing to
 //                      email them would be asking for something they have
-//                      already handed over.
+//                      already handed over. Three passes: when NO child row
+//                      exists, a FRESH-SUBMISSION pass (below) asks whether
+//                      the person answered by submitting the named package
+//                      anew instead of filing an update child, and when
+//                      that too produces no verdict, the
+//                      RECEIVED-BY-ANOTHER-HAND pass (below) can PAUSE on
+//                      somebody else's child of the card or exact-named
+//                      fresh row.
 //
 // The one exception inside work_update_child is the reason this file has a
 // third verdict. If the child's archive_sha256 equals the parent's, they
@@ -58,15 +68,62 @@
 // unrelated package that happens to share a generic word, which the same
 // person had also submitted the same day.
 //
+// WHY work_update_child GAINED A SECOND PASS. A colleague answered a
+// fix-your-card ask by submitting the named package as a FRESH submission
+// (parent_id null) rather than as an update child of the card: the package
+// carried exactly the identity the ask was about (his new archive name
+// equalled the parent card's SKILL.md front-matter name), the panel
+// published it, and the child pass, which looks only at parent_id, said
+// no_update_child and nagged him minutes after he had answered. Same
+// failure class as the work_submission incident above (the detector's lane
+// narrower than the ways a person can answer), so it gets the same shape of
+// remedy, run ONLY when the child pass finds no child at all: the parent
+// card contributes up to three identity strings (archive name and SKILL.md
+// front-matter name, file-shaped; title, prose), each fresh submission by
+// the assignee at or after the ask contributes the same three, and an EXACT
+// packageIdentity equality between any file-shaped pair, or failing that a
+// NEAR token containment over any pair, marks the row as the answer. The
+// verdict ladder is the work_submission near-match one for BOTH exact and
+// near, deliberately weaker than the child lane's close-on-any-status,
+// because the fresh row was never declared to be about this card: published
+// CLOSES (the work is on the site), a status the review holds PAUSES with a
+// composed reason, failed and superseded keep chasing. A fresh row whose
+// archive_sha256 equals the parent's is the same-bytes re-send and must
+// never close; if it would otherwise have produced a verdict (a failed or
+// superseded identical row matches but keeps chasing like any other failed
+// row), it pauses with the identical-resubmission reason instead.
+//
+// WHY BOTH DETECTORS GAINED A RECEIVED-BY-ANOTHER-HAND PASS. A second
+// colleague, in the same complaint class, answered a send-the-package ask
+// by emailing the package to the requester, who filed it from their OWN
+// account: the archive carried exactly the asked-for identity, its title
+// was the pasted reminder subject, the panel published it, and both
+// assignee-fenced passes were blind to the row (it is not byAssignee), so
+// the colleague was nagged every run for a package the site already held.
+// The remedy runs ONLY after every assignee-fenced pass produced no
+// verdict, and can only PAUSE, never close: closing would falsely record
+// that the assignee answered, and this pass cannot know whose work the
+// relayed row really is. Its aperture is deliberately the narrowest in the
+// file, because it has no assignee fence: EXACT packageIdentity equality
+// over file-shaped identities only (no near matching, no titles), each
+// side required to carry at least one non-stop token, statuses limited to
+// published and the in-review set, and for work_update_child a row
+// byte-identical to the parent is ignored entirely (a relayed copy of the
+// unchanged parent answers nothing) while somebody else's CHILD of the
+// card, which declared itself to be about the card, pauses without an
+// identity test. The composed reason names who filed what and when, and
+// hands the operator both moves, including the /work ownership transfer
+// that puts a relayed row onto the person who really did the work.
+//
 // NOT read in this round: chase_tasks.detector_md_sha256. The column is
 // there for a future identity match on the SKILL.md digest (stable across a
 // re-export, unlike archive_sha256); this round matches on the two things
 // the ask named, archive_name and the SKILL.md front-matter name, and
 // leaving the column unread is deliberate rather than forgotten.
 
-import { and, asc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, eq, gte } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { clip, formatDay, normalizeEmail, sameEmail } from "./config";
+import { clip, formatDay, sameEmail } from "./config";
 
 const W = schema.workSubmissions;
 
@@ -99,14 +156,20 @@ export interface SubmissionCandidate {
 }
 
 export interface ChaseCandidates {
-  /** work_submission lane. */
+  /** The assignee's own submissions at or after the ask. Read by BOTH
+   * detectors: the work_submission passes, and work_update_child's
+   * fresh-submission pass. */
   submissions: SubmissionCandidate[];
   /** work_update_child lane: the children of detector_arg. */
   children: SubmissionCandidate[];
-  /** The parent's archive digest, for the identical-resubmission test.
-   * null when unknown, which counts as NOT identical: a pause is a stronger
-   * claim than a close and must never rest on a missing value. */
-  parentArchiveSha256: string | null;
+  /** work_update_child lane: the parent card's own row, for the
+   * identical-resubmission digest test and for the identity strings the
+   * fresh-submission pass compares against. Replaces the former
+   * parentArchiveSha256 field so one fetch carries both needs. null when
+   * the parent row is gone, which disables both uses: a pause is a
+   * stronger claim than a close and must never rest on a missing value,
+   * and an identity match against nothing is not a match. */
+  parent: SubmissionCandidate | null;
 }
 
 export type ChaseVerdict =
@@ -142,6 +205,47 @@ export function nearMatchPauseReason(row: SubmissionCandidate): string {
   return (
     `They submitted "${clip(row.title, 60)}"${archive} on ${formatDay(row.createdAt)} and it looks like this ask under a different name; the review has it, so the next move is XL.net's, not theirs, and reminders are paused. ` +
     `If the card publishes, close this with chase:admin close; if the review turns it away, chase:admin open resumes the reminders and re-dates the ask so the same submission cannot immediately re-pause it.`
+  );
+}
+
+/** The paused_reason for a fresh submission that answers a fix-your-card
+ * ask while the review still holds it. A sibling of nearMatchPauseReason
+ * with the same 500-char-budget discipline (pauseTask slices its reason to
+ * 500, test-pinned) and the same both-outcomes operator instructions,
+ * because a paused row is never re-examined by the detector: a later
+ * publish of this submission will NOT auto-close the task. The clips are
+ * tighter than the sibling's (40/32 against 60/48) because this sentence
+ * carries more fixed words; the worst case is pinned by the test suite. */
+export function freshSubmissionPauseReason(row: SubmissionCandidate): string {
+  const archive = row.archiveName
+    ? ` (archive ${clip(row.archiveName, 32)})`
+    : "";
+  return (
+    `They answered this ask with a fresh submission, "${clip(row.title, 40)}"${archive} on ${formatDay(row.createdAt)}, instead of an update to the card; the review has it, so the next move is XL.net's, not theirs, and reminders are paused. ` +
+    `If the card publishes, close this with chase:admin close; if the review turns it away, chase:admin open resumes the reminders and re-dates the ask so the same submission cannot immediately re-pause it.`
+  );
+}
+
+/** The paused_reason when the asked-for package arrived from ANOTHER
+ * account (the received-by-another-hand pass). Same discipline as its two
+ * siblings: clip budgets keeping the worst case under pauseTask's 500-char
+ * slice (test-pinned), both operator moves spelled, no long dashes, and
+ * only claims this code can stand behind: it says the row MAY be the
+ * assignee's own work relayed, never that it is. The filer named is the
+ * row's historical author (creator_email, submitter_email when that is
+ * null): the account that actually filed it, which on a later §5.16
+ * transfer is exactly the provenance the operator needs to see. All three
+ * interpolated values are human-entered and clip() collapses control
+ * characters, and the whole string rides the same scrub path every stored
+ * pause reason does (report-side blocked-contact scrub included). */
+export function relayedPackagePauseReason(row: SubmissionCandidate): string {
+  const who = clip(row.creatorEmail ?? row.submitterEmail, 32);
+  const archive = row.archiveName
+    ? ` (archive ${clip(row.archiveName, 24)})`
+    : "";
+  return (
+    `A package matching this ask arrived from another account: ${who} filed "${clip(row.title, 24)}"${archive} on ${formatDay(row.createdAt)}; it may be their own work relayed by someone else, so reminders are paused. ` +
+    `If it settles the ask, close it with chase:admin close, and if the work is really theirs a /work ownership transfer moves the row onto them; if their own submission is still wanted, chase:admin open resumes the reminders and re-dates the ask.`
   );
 }
 
@@ -251,10 +355,15 @@ function isSubsetOf(a: Set<string>, b: Set<string>): boolean {
  * different tool entirely. With it, {morning} still answers a
  * "morning-brief" ask (1 of 2) and {digest} does not answer that
  * three-token ask (1 of 3). The remaining aperture is the SINGLE-TOKEN
- * detector_arg ("morning" matches every package carrying that token),
- * accepted as designed: the operator chose how specific the ask's
- * identity is, and the pass is already fenced to the assignee's own
- * rows, at or after the ask, and to published/in-review statuses. */
+ * wanted set ("morning" matches every package carrying that token),
+ * accepted as designed. The wanted side is an operator-typed detector_arg
+ * in the work_submission lane but, since the fresh-submission pass, can
+ * also be a parent CARD's archive name, front-matter name or title, which
+ * nobody chose with matching in mind; the aperture stands anyway because
+ * every caller of this test is fenced to the assignee's own rows, at or
+ * after the ask, and its verdicts to the published/in-review status
+ * ladder, so the widest possible miss pauses a task for an operator to
+ * rule on rather than closing one. */
 function nearMatchTokens(wanted: Set<string>, s: Set<string>): boolean {
   if (isSubsetOf(wanted, s)) return true;
   return isSubsetOf(s, wanted) && s.size >= Math.ceil(wanted.size / 2);
@@ -362,17 +471,20 @@ export function matchCompletion(
   if (!task.detectorArg) return { kind: "none", reason: "no_detector_arg" };
   const openedAt = task.openedAt;
 
+  // The front-matter name is parsed out of JSON per row; cached so the
+  // passes that read it (both work_submission passes, and
+  // work_update_child's fresh-submission pass, which parses the parent's
+  // too) share one parse per row instead of repeating it.
+  const fmCache = new Map<SubmissionCandidate, string | null>();
+  const fmName = (row: SubmissionCandidate): string | null => {
+    if (!fmCache.has(row))
+      fmCache.set(row, skillFrontMatterName(row.corpusFilesJson));
+    return fmCache.get(row) ?? null;
+  };
+
   if (task.detector === "work_submission") {
     const want = packageIdentity(task.detectorArg);
     if (!want) return { kind: "none", reason: "unusable_detector_arg" };
-    // The front-matter name is parsed out of JSON per row; cached so the
-    // two passes share one parse instead of doing it twice per candidate.
-    const fmCache = new Map<SubmissionCandidate, string | null>();
-    const fmName = (row: SubmissionCandidate): string | null => {
-      if (!fmCache.has(row))
-        fmCache.set(row, skillFrontMatterName(row.corpusFilesJson));
-      return fmCache.get(row) ?? null;
-    };
     for (const row of oldestFirst(candidates.submissions)) {
       if (!byAssignee(row, task.assigneeEmail)) continue;
       if (!atOrAfter(row, openedAt)) continue;
@@ -495,6 +607,47 @@ export function matchCompletion(
         };
       }
     }
+
+    // THIRD PASS: RECEIVED BY ANOTHER HAND, only when both assignee-fenced
+    // passes produced no verdict (see the file header for the incident).
+    // Somebody ELSE filed a package carrying exactly the asked-for
+    // identity, plausibly the assignee's own emailed answer relayed by the
+    // requester. This pass can only PAUSE: closing would falsely record
+    // that the assignee answered, and nothing here can know whose work the
+    // row really is. Because it has no assignee fence, the aperture is the
+    // narrowest in the file: EXACT packageIdentity equality over
+    // file-shaped identities only (no near matching, no titles), and both
+    // sides must carry at least one non-stop token, so an ask or archive
+    // named only in packaging words can never trip it. Published and
+    // in-review rows pause (the site holds the package either way);
+    // failed and superseded answer nothing and are ignored. Oldest
+    // qualifying row is the one named, the file-wide convention.
+    if (wanted.size > 0) {
+      for (const row of oldestFirst(candidates.submissions)) {
+        if (byAssignee(row, task.assigneeEmail)) continue;
+        if (!atOrAfter(row, openedAt)) continue;
+        if (
+          row.status !== "published" &&
+          !NEAR_MATCH_PAUSE_STATUSES.has(row.status)
+        )
+          continue;
+        const byName =
+          row.archiveName !== null &&
+          packageIdentity(row.archiveName) === want &&
+          identityTokens(row.archiveName).size > 0;
+        const skillName = fmName(row);
+        const byFrontMatter =
+          skillName !== null &&
+          packageIdentity(skillName) === want &&
+          identityTokens(skillName).size > 0;
+        if (!byName && !byFrontMatter) continue;
+        return {
+          kind: "pause",
+          submissionId: row.id,
+          reason: relayedPackagePauseReason(row),
+        };
+      }
+    }
     return { kind: "none", reason: "no_matching_submission" };
   }
 
@@ -511,35 +664,303 @@ export function matchCompletion(
         byAssignee(row, task.assigneeEmail) &&
         atOrAfter(row, openedAt)
     );
-    if (kids.length === 0) return { kind: "none", reason: "no_update_child" };
-    const parentSha = candidates.parentArchiveSha256;
+    const parentSha = candidates.parent?.archiveSha256 ?? null;
     // "Identical" needs BOTH digests present. A null on either side is
     // unknown, and unknown must not be strong enough to pause somebody.
     const isIdentical = (row: SubmissionCandidate) =>
       parentSha !== null &&
       row.archiveSha256 !== null &&
       row.archiveSha256.toLowerCase() === parentSha.toLowerCase();
-    const real = kids.filter((row) => !isIdentical(row));
-    if (real.length > 0) {
-      const row = real[0];
-      return {
-        kind: "close",
-        submissionId: row.id,
-        matchedOn: "update_child",
-        evidence: {
-          detector: "work_update_child",
+    if (kids.length > 0) {
+      // THE CHILD PASS, semantics untouched: an existing child row settles
+      // the verdict and the fresh-submission pass below never runs.
+      const real = kids.filter((row) => !isIdentical(row));
+      if (real.length > 0) {
+        const row = real[0];
+        return {
+          kind: "close",
           submissionId: row.id,
-          parentId,
-          childStatus: row.status,
-          submittedAt: row.createdAt.toISOString(),
-        },
+          matchedOn: "update_child",
+          evidence: {
+            detector: "work_update_child",
+            submissionId: row.id,
+            parentId,
+            childStatus: row.status,
+            submittedAt: row.createdAt.toISOString(),
+          },
+        };
+      }
+      return {
+        kind: "pause",
+        submissionId: kids[0].id,
+        reason: IDENTICAL_RESUBMISSION_REASON,
       };
     }
-    return {
-      kind: "pause",
-      submissionId: kids[0].id,
-      reason: IDENTICAL_RESUBMISSION_REASON,
+
+    // THE FRESH-SUBMISSION PASS, only when no child row exists (see the
+    // file header for the incident that earned it). The person may have
+    // answered the fix-your-card ask by submitting the named package anew
+    // (parent_id null) instead of filing an update child, so the parent
+    // card's identity strings are compared against the assignee's own
+    // fresh submissions, the same candidate shape the work_submission lane
+    // reads. Without the parent row there is nothing to compare against
+    // and the pass cannot run.
+    const parent = candidates.parent;
+    // Up to three identity strings per row. File-shaped strings (archive
+    // name, SKILL.md front-matter name) tokenize through packageIdentity;
+    // the title through the prose tokenizer (see titleIdentityTokens for
+    // why they must differ). An empty identity or token set contributes
+    // nothing: matching on nothing would make every archive the answer to
+    // every ask.
+    type Ident = { field: string; identity: string; tokens: Set<string> };
+    const fileIdentsOf = (row: SubmissionCandidate): Ident[] => {
+      const out: Ident[] = [];
+      if (row.archiveName !== null) {
+        const identity = packageIdentity(row.archiveName);
+        if (identity)
+          out.push({
+            field: "archive_name",
+            identity,
+            tokens: identityTokens(row.archiveName),
+          });
+      }
+      const skillName = fmName(row);
+      if (skillName !== null) {
+        const identity = packageIdentity(skillName);
+        if (identity)
+          out.push({
+            field: "skill_front_matter_name",
+            identity,
+            tokens: identityTokens(skillName),
+          });
+      }
+      return out;
     };
+    const allIdentsOf = (row: SubmissionCandidate): Ident[] => [
+      ...fileIdentsOf(row),
+      {
+        field: "title",
+        identity: collapseProse(row.title),
+        tokens: titleIdentityTokens(row.title),
+      },
+    ];
+    const parentFileIdents = parent ? fileIdentsOf(parent) : [];
+
+    type FreshMatch = {
+      row: SubmissionCandidate;
+      parentField: string;
+      candidateField: string;
+      parentIdentity: string;
+      candidateIdentity: string;
+    };
+    // The EXACT rung, shared by the fresh pass and the relay pass below:
+    // string equality of packageIdentity between any file-shaped candidate
+    // identity and any file-shaped parent identity. Titles are prose and
+    // never take part. BOTH sides must carry at least one non-stop token:
+    // "Package v2.zip" reduces to the identity "package-v2" but to an
+    // EMPTY token set, and letting it exact-equal an unrelated upload that
+    // happens to share the generic name would be matching on packaging
+    // words, exactly what the tokenizer's stoplist exists to forbid.
+    const findExact = (row: SubmissionCandidate): FreshMatch | null => {
+      for (const c of fileIdentsOf(row))
+        for (const p of parentFileIdents)
+          if (
+            c.tokens.size > 0 &&
+            p.tokens.size > 0 &&
+            c.identity === p.identity
+          )
+            return {
+              row,
+              parentField: p.field,
+              candidateField: c.field,
+              parentIdentity: p.identity,
+              candidateIdentity: c.identity,
+            };
+      return null;
+    };
+
+    if (parent) {
+      const parentAllIdents = allIdentsOf(parent).filter(
+        (p) => p.tokens.size > 0
+      );
+
+      // Excluded on purpose: the parent row itself (a card is not its own
+      // fix), and any row claiming parent_id = the parent, which belongs
+      // to the child pass; if the child pass's ownership or time filters
+      // rejected such a row, this pass must not readmit it.
+      const eligible = oldestFirst(candidates.submissions).filter(
+        (row) =>
+          byAssignee(row, task.assigneeEmail) &&
+          atOrAfter(row, openedAt) &&
+          row.id.toLowerCase() !== parentId &&
+          (row.parentId ?? "").toLowerCase() !== parentId
+      );
+
+      // NEAR: the same nearMatchTokens containment the work_submission
+      // lane uses, over every (parent identity as wanted, candidate
+      // identity) pair, titles included on both sides.
+      const findNear = (row: SubmissionCandidate): FreshMatch | null => {
+        for (const p of parentAllIdents)
+          for (const c of allIdentsOf(row))
+            if (c.tokens.size > 0 && nearMatchTokens(p.tokens, c.tokens))
+              return {
+                row,
+                parentField: p.field,
+                candidateField: c.field,
+                parentIdentity: p.identity,
+                candidateIdentity: c.identity,
+              };
+        return null;
+      };
+
+      // The verdict ladder, deliberately WEAKER than the child lane's
+      // close-on-any-status for both exact and near (the work_submission
+      // near-match rationale): the row never declared itself to be about
+      // the parent card, so only a published row, where the email's own
+      // promise has come true, closes. The identical-resubmission guard
+      // partitions first: a same-bytes re-send must never close, and
+      // pauses only when it would otherwise have produced a verdict, so a
+      // failed or superseded identical row keeps chasing like any other
+      // failed row. A real (changed-bytes) row outranks the identical
+      // re-send in both upper rungs: new bytes are the thing the ask
+      // wanted, and the composed reason on them is the more actionable
+      // one. Returns null when the match set yields NO verdict, so the
+      // caller can fall through to the next, weaker match set.
+      const ladder = (
+        matches: FreshMatch[],
+        matchKind: string
+      ): ChaseVerdict | null => {
+        if (matches.length === 0) return null;
+        const real = matches.filter((m) => !isIdentical(m.row));
+        const dup = matches.filter((m) => isIdentical(m.row));
+        // matches is oldest-first (eligible is), so find() is the oldest.
+        const published = real.find((m) => m.row.status === "published");
+        if (published) {
+          return {
+            kind: "close",
+            submissionId: published.row.id,
+            matchedOn: "fresh_submission_published",
+            evidence: {
+              detector: "work_update_child",
+              pass: "fresh_submission",
+              match: matchKind,
+              submissionId: published.row.id,
+              parentId,
+              parentField: published.parentField,
+              candidateField: published.candidateField,
+              parentIdentity: published.parentIdentity,
+              candidateIdentity: published.candidateIdentity,
+              submissionStatus: published.row.status,
+              submittedAt: published.row.createdAt.toISOString(),
+            },
+          };
+        }
+        const inReview = real.find((m) =>
+          NEAR_MATCH_PAUSE_STATUSES.has(m.row.status)
+        );
+        if (inReview) {
+          return {
+            kind: "pause",
+            submissionId: inReview.row.id,
+            reason: freshSubmissionPauseReason(inReview.row),
+          };
+        }
+        const dupWouldVerdict = dup.find(
+          (m) =>
+            m.row.status === "published" ||
+            NEAR_MATCH_PAUSE_STATUSES.has(m.row.status)
+        );
+        if (dupWouldVerdict) {
+          return {
+            kind: "pause",
+            submissionId: dupWouldVerdict.row.id,
+            reason: IDENTICAL_RESUBMISSION_REASON,
+          };
+        }
+        return null;
+      };
+
+      // EXACT first: when any exact row yields a verdict, it stands, even
+      // when a near-named sibling row carries a friendlier status (a held
+      // exact answer pauses; the review has the exact thing). But an
+      // exact set whose every row is failed or superseded yields NO
+      // verdict, and must NOT suppress the near set: a person whose exact
+      // resubmission failed and whose renamed retry was published has
+      // plainly answered, and swallowing the near pass there would nag
+      // them forever.
+      const exact: FreshMatch[] = [];
+      for (const row of eligible) {
+        const m = findExact(row);
+        if (m) exact.push(m);
+      }
+      const exactVerdict = ladder(exact, "exact");
+      if (exactVerdict) return exactVerdict;
+      const near: FreshMatch[] = [];
+      for (const row of eligible) {
+        const m = findNear(row);
+        if (m) near.push(m);
+      }
+      const nearVerdict = ladder(near, "near");
+      if (nearVerdict) return nearVerdict;
+    }
+
+    // THIRD PASS: RECEIVED BY ANOTHER HAND, only when every
+    // assignee-fenced pass produced no verdict (see the file header for
+    // the incident). Can only PAUSE, never close: closing would falsely
+    // record that the assignee answered. Two legs, in order of claim
+    // strength. A row byte-identical to the parent is ignored entirely in
+    // both: a relayed copy of the unchanged parent answers nothing, and
+    // unlike the assignee-fenced identical guard it does not even pause,
+    // because nothing about somebody else's unchanged copy says the
+    // assignee believes they answered.
+    const relayStatus = (row: SubmissionCandidate) =>
+      row.status === "published" || NEAR_MATCH_PAUSE_STATUSES.has(row.status);
+    // Leg (a): somebody ELSE filed a child of the card. The child row
+    // declared itself to be about this very card, so no identity test is
+    // needed; failed and superseded answer nothing, as everywhere.
+    const otherKids = oldestFirst(candidates.children).filter(
+      (row) =>
+        (row.parentId ?? "").toLowerCase() === parentId &&
+        !byAssignee(row, task.assigneeEmail) &&
+        atOrAfter(row, openedAt) &&
+        relayStatus(row) &&
+        !isIdentical(row)
+    );
+    if (otherKids.length > 0) {
+      return {
+        kind: "pause",
+        submissionId: otherKids[0].id,
+        reason: relayedPackagePauseReason(otherKids[0]),
+      };
+    }
+    // Leg (b): somebody else's FRESH row named exactly like the card.
+    // EXACT file-shaped identities only, through the same guarded
+    // findExact the fresh pass uses: no assignee fence means no near
+    // matching and no titles, the narrowest aperture in the file.
+    if (parent) {
+      for (const row of oldestFirst(candidates.submissions)) {
+        if (byAssignee(row, task.assigneeEmail)) continue;
+        if (!atOrAfter(row, openedAt)) continue;
+        if (row.id.toLowerCase() === parentId) continue;
+        if ((row.parentId ?? "").toLowerCase() === parentId) continue;
+        if (!relayStatus(row)) continue;
+        if (isIdentical(row)) continue;
+        if (!findExact(row)) continue;
+        return {
+          kind: "pause",
+          submissionId: row.id,
+          reason: relayedPackagePauseReason(row),
+        };
+      }
+    }
+    // The final reason stays "no_update_child" on purpose: it now means
+    // "no child row, no matching fresh submission, and nothing relayed by
+    // another hand". The string is pinned by existing tests and is the
+    // vocabulary operators already read in dry runs; renaming it would
+    // split one outcome across several names for no diagnostic gain (the
+    // dry run shows the detector, and any match that mattered would have
+    // produced a verdict above).
+    return { kind: "none", reason: "no_update_child" };
   }
 
   return { kind: "none", reason: "unknown_detector" };
@@ -564,30 +985,39 @@ const SUB_COLS = {
 } as const;
 
 /** Everything this task could possibly be closed by. Narrowed in SQL by the
- * two facts an index can use (the assignee and the time floor); the
- * identity match itself stays in the pure function. */
+ * time floor alone; ownership is deliberately NOT a SQL filter any more,
+ * because the received-by-another-hand pass needs rows the assignee did
+ * not file, and every assignee-fenced pass re-checks ownership in the pure
+ * function (byAssignee) where a test can see it. The table is small and
+ * the limits below cap the worst case. The identity match itself stays in
+ * the pure function. */
 export async function candidatesFor(
   task: ChaseTaskFacts
 ): Promise<ChaseCandidates> {
   const empty: ChaseCandidates = {
     submissions: [],
     children: [],
-    parentArchiveSha256: null,
+    parent: null,
   };
   if (task.detector === "manual" || !task.openedAt || !task.detectorArg)
     return empty;
-  const who = normalizeEmail(task.assigneeEmail);
-  const mine = sql`(lower(${W.submitterEmail}) = ${who} OR lower(coalesce(${W.creatorEmail}, ${W.submitterEmail})) = ${who})`;
+  const openedAt = task.openedAt;
 
-  if (task.detector === "work_submission") {
-    const submissions = await db
+  // EVERYBODY'S rows at or after the ask: ONE query shape for both
+  // detectors (the work_submission passes read it, and so do
+  // work_update_child's fresh-submission and relay passes), factored so
+  // the lanes cannot drift apart in time-floor semantics. The pure
+  // function partitions byAssignee per pass.
+  const recentSubmissions = () =>
+    db
       .select(SUB_COLS)
       .from(W)
-      .where(and(gte(W.createdAt, task.openedAt), mine))
+      .where(gte(W.createdAt, openedAt))
       .orderBy(asc(W.createdAt))
       .limit(500);
-    return { ...empty, submissions };
-  }
+
+  if (task.detector === "work_submission")
+    return { ...empty, submissions: await recentSubmissions() };
 
   if (task.detector === "work_update_child") {
     // detector_arg is a submission uuid; a malformed one would make
@@ -598,27 +1028,28 @@ export async function candidatesFor(
       )
     )
       return empty;
+    // Children of the card by ANYONE at or after the ask: the child pass
+    // filters byAssignee purely, and the relay pass's leg (a) reads the
+    // rest.
     const children = await db
       .select(SUB_COLS)
       .from(W)
-      .where(
-        and(
-          eq(W.parentId, task.detectorArg),
-          gte(W.createdAt, task.openedAt),
-          mine
-        )
-      )
+      .where(and(eq(W.parentId, task.detectorArg), gte(W.createdAt, openedAt)))
       .orderBy(asc(W.createdAt))
       .limit(200);
+    // The parent's FULL candidate projection (still SUB_COLS: archive_data
+    // and md_data stay unselected), because the fresh-submission pass
+    // needs its identity strings, not just its digest.
     const parent = await db
-      .select({ archiveSha256: W.archiveSha256 })
+      .select(SUB_COLS)
       .from(W)
       .where(eq(W.id, task.detectorArg))
       .limit(1);
     return {
       ...empty,
       children,
-      parentArchiveSha256: parent[0]?.archiveSha256 ?? null,
+      submissions: await recentSubmissions(),
+      parent: parent[0] ?? null,
     };
   }
 

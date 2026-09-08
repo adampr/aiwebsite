@@ -289,7 +289,12 @@ export function buildReportBody(input: ReportInput): string {
       out.push(`- ${who(t)}`);
       out.push(`  Ask: ${clip(t.title, CHASE_CAPS.titleMaxChars)}`);
       out.push(idLine(t));
-      out.push(`  Paused because: ${clip(t.pausedReason ?? "no reason recorded", 300)}`);
+      // 500, not less: pauseTask stores at most 500 chars, and the
+      // composed automatic reasons run 388 to 491 at worst with their
+      // closing sentence, the operator instructions, at the END. A shorter
+      // clip here deleted exactly the part of the reason the owner is
+      // supposed to act on; 500 shows precisely what is stored.
+      out.push(`  Paused because: ${clip(t.pausedReason ?? "no reason recorded", 500)}`);
       out.push(askedLine(t, input.now));
     }
   }

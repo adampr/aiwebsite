@@ -88,8 +88,10 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Step 2. Close what has been done, pause what must not be nagged (the
- * identical resubmission, and the near-matched submission the review holds).
+/** Step 2. Close what has been done, pause what must not be nagged (every
+ * automatic pause: the identical resubmission, the near-matched submission
+ * the review holds, the fresh submission answering an update ask, and the
+ * package that arrived from another hand).
  * Returns how many rows changed, AND the ids it acted on: a dry run writes
  * nothing, so without that set the very next read would hand those same
  * tasks to the send phase and print "WOULD SEND" for people a live run
@@ -137,8 +139,10 @@ async function detectCompletions(now: Date): Promise<{
         } else closed++;
       } else {
         // The verdict's own reason says WHICH pause this is (identical
-        // resubmission, or a near-matched submission still in review), so
-        // the log quotes it rather than hardcoding one cause.
+        // resubmission, a near-matched submission still in review, a
+        // fresh submission answering an update ask while the review holds
+        // it, or a package that arrived from another hand), so the log
+        // quotes it rather than hardcoding one cause.
         log(
           `  PAUSE ${t.id.slice(0, 8)} ${normalizeEmail(t.assigneeEmail)} "${clip(t.title, 60)}" (submission ${verdict.submissionId.slice(0, 8)}: ${clip(verdict.reason, 90)})`
         );

@@ -43,10 +43,12 @@ import {
   IDENTICAL_RESUBMISSION_REASON,
   IDENTITY_STOP_TOKENS,
   NEAR_MATCH_PAUSE_STATUSES,
+  freshSubmissionPauseReason,
   identityTokens,
   matchCompletion,
   nearMatchPauseReason,
   packageIdentity,
+  relayedPackagePauseReason,
   skillFrontMatterName,
   titleIdentityTokens,
   type ChaseCandidates,
@@ -241,10 +243,31 @@ function sub(over: Partial<SubmissionCandidate> = {}): SubmissionCandidate {
 }
 
 function candidates(over: Partial<ChaseCandidates> = {}): ChaseCandidates {
-  return { submissions: [], children: [], parentArchiveSha256: null, ...over };
+  return { submissions: [], children: [], parent: null, ...over };
 }
 
 const PARENT_ID = "33333333-3333-4333-8333-333333333333";
+
+/** The parent card for work_update_child fixtures. INVENTED identities only
+ * (this repo is public): the archive name, front-matter name and title are
+ * fictional and deliberately DIFFER from each other, mirroring the very
+ * mismatch a fix-your-card ask is usually about. */
+function parentRow(over: Partial<SubmissionCandidate> = {}): SubmissionCandidate {
+  return sub({
+    id: PARENT_ID,
+    createdAt: new Date("2026-07-01T00:00:00Z"),
+    archiveName: "orbit-proposal-base-references.skill",
+    archiveSha256: "a".repeat(64),
+    corpusFilesJson: JSON.stringify([
+      {
+        path: "SKILL.md",
+        text: "---\nname: building-orbit-proposals\ndescription: d\n---\nbody",
+      },
+    ]),
+    title: "Orbit Proposal Builder",
+    ...over,
+  });
+}
 
 section("manual tasks are never closed by a query", () => {
   const v = matchCompletion(
@@ -323,6 +346,10 @@ section("a submission that PREDATES the ask is not evidence of it", () => {
 });
 
 section("somebody else's submission never closes this person's task", () => {
+  // Since the received-by-another-hand pass it PAUSES instead of being
+  // ignored (their exact-named published row is the relay shape, pinned in
+  // its own section below); what it must never do is CLOSE, which would
+  // record that the assignee answered.
   const v = matchCompletion(
     task(),
     candidates({
@@ -331,7 +358,9 @@ section("somebody else's submission never closes this person's task", () => {
       ],
     })
   );
-  assert.deepEqual(v, { kind: "none", reason: "no_matching_submission" });
+  assert.equal(v.kind, "pause");
+  if (v.kind !== "pause") return;
+  assert.ok(v.reason.includes("another account"));
 });
 
 section("either ownership anchor counts: creator OR current submitter", () => {
@@ -381,7 +410,7 @@ section("work_update_child closes on ANY child status", () => {
       task({ detector: "work_update_child", detectorArg: PARENT_ID }),
       candidates({
         children: [sub({ parentId: PARENT_ID, status, archiveSha256: "b".repeat(64) })],
-        parentArchiveSha256: "a".repeat(64),
+        parent: parentRow(),
       })
     );
     assert.equal(v.kind, "close", `status ${status} closes the task`);
@@ -391,7 +420,7 @@ section("work_update_child closes on ANY child status", () => {
 section("work_update_child with no child leaves the task open", () => {
   const v = matchCompletion(
     task({ detector: "work_update_child", detectorArg: PARENT_ID }),
-    candidates({ children: [], parentArchiveSha256: "a".repeat(64) })
+    candidates({ children: [], parent: parentRow() })
   );
   assert.deepEqual(v, { kind: "none", reason: "no_update_child" });
 });
@@ -406,7 +435,7 @@ section("an UPPERCASE detector_arg uuid still matches the child", () => {
     task({ detector: "work_update_child", detectorArg: parent }),
     candidates({
       children: [sub({ parentId: parent.toLowerCase(), archiveSha256: "beef" })],
-      parentArchiveSha256: "cafe",
+      parent: parentRow({ archiveSha256: "cafe" }),
     })
   );
   assert.equal(v.kind, "close");
@@ -417,7 +446,7 @@ section("a child of a DIFFERENT parent does not close this task", () => {
     task({ detector: "work_update_child", detectorArg: PARENT_ID }),
     candidates({
       children: [sub({ parentId: "66666666-6666-4666-8666-666666666666" })],
-      parentArchiveSha256: "a".repeat(64),
+      parent: parentRow(),
     })
   );
   assert.deepEqual(v, { kind: "none", reason: "no_update_child" });
@@ -429,7 +458,7 @@ section("THE IDENTICAL RESUBMISSION PAUSES, and never nags again", () => {
     task({ detector: "work_update_child", detectorArg: PARENT_ID }),
     candidates({
       children: [sub({ parentId: PARENT_ID, archiveSha256: sha })],
-      parentArchiveSha256: sha,
+      parent: parentRow({ archiveSha256: sha }),
     })
   );
   assert.equal(v.kind, "pause");
@@ -445,7 +474,7 @@ section("the identical test is case-insensitive on the digest", () => {
     task({ detector: "work_update_child", detectorArg: PARENT_ID }),
     candidates({
       children: [sub({ parentId: PARENT_ID, archiveSha256: "A".repeat(64) })],
-      parentArchiveSha256: "a".repeat(64),
+      parent: parentRow(),
     })
   );
   assert.equal(v.kind, "pause");
@@ -457,7 +486,7 @@ section("a MISSING digest is unknown, not identical, so it closes", () => {
     task({ detector: "work_update_child", detectorArg: PARENT_ID }),
     candidates({
       children: [sub({ parentId: PARENT_ID, archiveSha256: null })],
-      parentArchiveSha256: "a".repeat(64),
+      parent: parentRow(),
     })
   );
   assert.equal(nullChild.kind, "close");
@@ -465,7 +494,7 @@ section("a MISSING digest is unknown, not identical, so it closes", () => {
     task({ detector: "work_update_child", detectorArg: PARENT_ID }),
     candidates({
       children: [sub({ parentId: PARENT_ID, archiveSha256: "a".repeat(64) })],
-      parentArchiveSha256: null,
+      parent: parentRow({ archiveSha256: null }),
     })
   );
   assert.equal(nullParent.kind, "close");
@@ -485,12 +514,642 @@ section("one real fix beside a duplicate closes the task", () => {
           createdAt: new Date("2026-08-26T00:00:00Z"),
         }),
       ],
-      parentArchiveSha256: sha,
+      parent: parentRow({ archiveSha256: sha }),
     })
   );
   assert.equal(v.kind, "close");
   if (v.kind !== "close") return;
   assert.equal(v.submissionId, "88888888-8888-4888-8888-888888888888");
+});
+
+/* ------------------------------------------------------------------ *
+ * 3a. The fresh-submission pass (work_update_child's second pass)
+ *
+ * The prod incident this pins, with INVENTED identities of the same token
+ * structure: a colleague was asked to fix his published card (whose archive
+ * name and SKILL.md front-matter name disagreed), and answered by
+ * submitting the correctly named package as a FRESH submission (parent_id
+ * null) rather than an update child. His new archive's identity exactly
+ * equalled the parent card's front-matter name, the panel published it,
+ * and the child pass, seeing no child of the card, nagged him 18 minutes
+ * after he had answered.
+ * ------------------------------------------------------------------ */
+
+const CHILD_TASK = {
+  detector: "work_update_child",
+  detectorArg: PARENT_ID,
+} as const;
+
+/** The incident-shaped fresh answer: archive identity = the parent's
+ * front-matter name, parent's own archive name differs, the title is a
+ * pasted reminder subject that carries no card identity, and the bytes
+ * are new (a sha unlike the parent's). */
+function freshAnswer(over: Partial<SubmissionCandidate> = {}): SubmissionCandidate {
+  return sub({
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    archiveName: "building-orbit-proposals.zip",
+    archiveSha256: "d".repeat(64),
+    corpusFilesJson: JSON.stringify([
+      {
+        path: "building-orbit-proposals/SKILL.md",
+        text: "---\nname: building-orbit-proposals\ndescription: d\n---\nbody",
+      },
+    ]),
+    title: "Reminder about work you were asked for",
+    ...over,
+  });
+}
+
+section("THE FRESH-SUBMISSION REPLAY: an update ask answered anew CLOSES", () => {
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({ parent: parentRow(), submissions: [freshAnswer()] })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.matchedOn, "fresh_submission_published");
+  assert.equal(v.submissionId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  // The evidence lets an operator check the verdict without a database:
+  // which parent field met which candidate field, both identity strings,
+  // and the row's status and arrival time.
+  assert.equal(v.evidence.detector, "work_update_child");
+  assert.equal(v.evidence.pass, "fresh_submission");
+  assert.equal(v.evidence.match, "exact");
+  assert.equal(v.evidence.parentField, "skill_front_matter_name");
+  assert.equal(v.evidence.candidateField, "archive_name");
+  assert.equal(v.evidence.parentIdentity, "building-orbit-proposals");
+  assert.equal(v.evidence.candidateIdentity, "building-orbit-proposals");
+  assert.equal(v.evidence.submissionStatus, "published");
+  assert.equal(v.evidence.submittedAt, AFTER.toISOString());
+});
+
+section("a child row settles it: the fresh pass NEVER runs beside one", () => {
+  // A real (changed-bytes) child closes as before, even when a fresh
+  // published answer also exists; the fresh pass is a fallback for the
+  // empty-child case only.
+  const child = sub({
+    id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    parentId: PARENT_ID,
+    archiveSha256: "b".repeat(64),
+    status: "held",
+  });
+  const withChild = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      children: [child],
+      submissions: [child, freshAnswer()],
+    })
+  );
+  assert.equal(withChild.kind, "close");
+  if (withChild.kind !== "close") return;
+  assert.equal(withChild.matchedOn, "update_child");
+  assert.equal(withChild.submissionId, child.id);
+  // And an identical child still pauses, fresh published answer or not:
+  // the child lane's verdict is untouched by this round.
+  const dupChild = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      children: [sub({ parentId: PARENT_ID, archiveSha256: "a".repeat(64) })],
+      submissions: [freshAnswer()],
+    })
+  );
+  assert.equal(dupChild.kind, "pause");
+  if (dupChild.kind !== "pause") return;
+  assert.equal(dupChild.reason, IDENTICAL_RESUBMISSION_REASON);
+});
+
+section("a fresh match PAUSES while the review still holds it", () => {
+  for (const status of [...NEAR_MATCH_PAUSE_STATUSES]) {
+    const v = matchCompletion(
+      task(CHILD_TASK),
+      candidates({ parent: parentRow(), submissions: [freshAnswer({ status })] })
+    );
+    assert.equal(v.kind, "pause", `status ${status} pauses the task`);
+    if (v.kind !== "pause") continue;
+    // Actionable from the weekly report alone, both outcomes spelled.
+    assert.ok(v.reason.includes("fresh submission"), "names the shape");
+    assert.ok(
+      v.reason.includes("Reminder about work you were asked for"),
+      "names the title"
+    );
+    assert.ok(v.reason.includes("building-orbit-proposals.zip"), "the archive");
+    assert.ok(v.reason.includes("2026-08-25"), "the submitted date");
+    assert.ok(/XL\.net/.test(v.reason), "says whose move it is");
+    assert.ok(/chase:admin close/.test(v.reason), "the it-published move");
+    assert.ok(/chase:admin open/.test(v.reason), "and how to restart");
+    assert.ok(v.reason.length <= 500, "fits pauseTask's 500-char slice");
+    assert.ok(!/[\u2013\u2014]/.test(v.reason), "no long dashes");
+  }
+});
+
+section("the fresh pause reason survives the 500-char slice at WORST case", () => {
+  const r = freshSubmissionPauseReason(
+    sub({ archiveName: `${"A".repeat(200)}.zip`, title: "T".repeat(300) })
+  );
+  assert.ok(r.length <= 500, `worst case is ${r.length} chars`);
+  assert.ok(/chase:admin open/.test(r), "the restart instruction survives");
+});
+
+section("a fresh match on failed or superseded keeps chasing", () => {
+  for (const status of ["failed", "superseded"]) {
+    const v = matchCompletion(
+      task(CHILD_TASK),
+      candidates({ parent: parentRow(), submissions: [freshAnswer({ status })] })
+    );
+    assert.deepEqual(
+      v,
+      { kind: "none", reason: "no_update_child" },
+      `status ${status} keeps chasing`
+    );
+  }
+});
+
+section("the identical re-send through the fresh lane pauses, never closes", () => {
+  // Same bytes as the parent card (sha equal, case-folded): nothing was
+  // fixed, however exactly the identity matches and even though the row
+  // is published; but they plainly believe they answered, so pause.
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      submissions: [freshAnswer({ archiveSha256: "A".repeat(64) })],
+    })
+  );
+  assert.equal(v.kind, "pause");
+  if (v.kind !== "pause") return;
+  assert.equal(v.reason, IDENTICAL_RESUBMISSION_REASON);
+});
+
+section("a real fresh fix beside an identical re-send closes on the real one", () => {
+  const real = freshAnswer({
+    id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    archiveSha256: "e".repeat(64),
+    createdAt: new Date("2026-08-26T00:00:00Z"),
+  });
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      submissions: [freshAnswer({ archiveSha256: "a".repeat(64) }), real],
+    })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.submissionId, real.id);
+});
+
+section("a fresh NEAR match closes on published, via the TITLE tokenizer", () => {
+  // No file-shaped identity relates ("upload-77.zip", no corpus), but the
+  // card title the person typed near-matches the parent card's title.
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      submissions: [
+        freshAnswer({
+          archiveName: "upload-77.zip",
+          corpusFilesJson: null,
+          title: "Orbit Proposal Builder v2",
+        }),
+      ],
+    })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.matchedOn, "fresh_submission_published");
+  assert.equal(v.evidence.match, "near");
+  assert.equal(v.evidence.parentField, "title");
+  assert.equal(v.evidence.candidateField, "title");
+});
+
+section("an EXACT fresh match outranks a NEAR one, across statuses", () => {
+  // When any exact row yields a VERDICT, it stands, so a held exact
+  // answer pauses even though a near-named sibling row is published. The
+  // near row is deliberately OLDER than the exact one: an implementation
+  // that interleaved exact and near per row, oldest-first, would close on
+  // the near row and fail this pin.
+  const exactHeld = freshAnswer({ status: "held" });
+  const nearPublished = freshAnswer({
+    id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    archiveName: "upload-77.zip",
+    corpusFilesJson: null,
+    title: "Orbit Proposal Builder v2",
+    createdAt: new Date("2026-08-21T00:00:00Z"),
+  });
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      submissions: [exactHeld, nearPublished],
+    })
+  );
+  assert.equal(v.kind, "pause");
+  if (v.kind !== "pause") return;
+  assert.equal(v.submissionId, exactHeld.id);
+});
+
+section("an exact set with NO verdict does not smother a near match", () => {
+  // The person's exact resubmission FAILED and their renamed retry was
+  // published: the exact set yields no verdict (failed keeps chasing), so
+  // the ladder must fall through to the near set and close, or the person
+  // who plainly answered is nagged forever.
+  const exactFailed = freshAnswer({ status: "failed" });
+  const nearPublished = freshAnswer({
+    id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    archiveName: "upload-77.zip",
+    corpusFilesJson: null,
+    title: "Orbit Proposal Builder v2",
+    createdAt: new Date("2026-08-26T00:00:00Z"),
+  });
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      submissions: [exactFailed, nearPublished],
+    })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.submissionId, nearPublished.id);
+  assert.equal(v.evidence.match, "near");
+});
+
+section("a parent named only in packaging words never exact-matches", () => {
+  // packageIdentity("Package v2.zip") is "package-v2", a nonempty string
+  // whose every token is stoplisted. String equality alone would let it
+  // exact-close on any unrelated upload sharing the generic name, so the
+  // exact rung requires a non-stop token on BOTH sides.
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow({
+        archiveName: "Package v2.zip",
+        corpusFilesJson: null,
+        title: "Quarterly Numbers",
+      }),
+      submissions: [
+        freshAnswer({
+          archiveName: "Package v2.zip",
+          corpusFilesJson: null,
+          title: "Weekly Sync Notes",
+        }),
+      ],
+    })
+  );
+  assert.deepEqual(v, { kind: "none", reason: "no_update_child" });
+});
+
+section("an unrelated fresh submission keeps chasing", () => {
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      submissions: [
+        freshAnswer({
+          archiveName: "vendor-lookup.zip",
+          corpusFilesJson: null,
+          title: "Vendor Lookup",
+        }),
+      ],
+    })
+  );
+  assert.deepEqual(v, { kind: "none", reason: "no_update_child" });
+});
+
+section("no parent row means no fresh pass, so the task stays open", () => {
+  // The parent card is gone (deleted row): there is nothing to compare
+  // identities against, and a pause or close must never rest on nothing.
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({ parent: null, submissions: [freshAnswer()] })
+  );
+  assert.deepEqual(v, { kind: "none", reason: "no_update_child" });
+});
+
+section("the parent itself and its children never answer the fresh pass", () => {
+  // The parent row (by id) is not its own fix, and a row claiming
+  // parent_id = the parent belongs to the child pass: if the child pass's
+  // filters rejected it, this pass must not readmit it.
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      submissions: [
+        parentRow({ createdAt: AFTER, status: "published" }),
+        freshAnswer({ parentId: PARENT_ID.toUpperCase() }),
+      ],
+    })
+  );
+  assert.deepEqual(v, { kind: "none", reason: "no_update_child" });
+});
+
+section("the fresh pass keeps the shared fences: owner and time floor", () => {
+  // A row predating the ask answers nothing anywhere.
+  const tooEarly = freshAnswer({ createdAt: BEFORE });
+  const early = matchCompletion(
+    task(CHILD_TASK),
+    candidates({ parent: parentRow(), submissions: [tooEarly] })
+  );
+  assert.deepEqual(early, { kind: "none", reason: "no_update_child" });
+  // Somebody else's exact-named row can never CLOSE through the fresh
+  // pass; since the received-by-another-hand pass it PAUSES instead
+  // (pinned in its own section below).
+  const someoneElses = freshAnswer({
+    submitterEmail: "someone@example.org",
+    creatorEmail: "someone@example.org",
+  });
+  const other = matchCompletion(
+    task(CHILD_TASK),
+    candidates({ parent: parentRow(), submissions: [someoneElses, tooEarly] })
+  );
+  assert.equal(other.kind, "pause");
+  if (other.kind !== "pause") return;
+  assert.ok(other.reason.includes("another account"));
+});
+
+section("the OLDEST published fresh match is the one recorded", () => {
+  const older = freshAnswer({
+    id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    createdAt: new Date("2026-08-22T00:00:00Z"),
+  });
+  const newer = freshAnswer({
+    id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    createdAt: new Date("2026-08-27T00:00:00Z"),
+  });
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({ parent: parentRow(), submissions: [newer, older] })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.submissionId, older.id);
+});
+
+/* ------------------------------------------------------------------ *
+ * 3b. The received-by-another-hand pass (both detectors' last pass)
+ *
+ * The second prod incident this pins, with INVENTED identities: a
+ * colleague answered a send-the-package ask by emailing the package to
+ * the requester, who filed it from their OWN account (title = the pasted
+ * reminder subject, archive named exactly as asked). The panel published
+ * it, and both assignee-fenced passes were blind to the row, so the
+ * colleague was nagged every run for a package the site already held. The
+ * pass can only PAUSE: closing would falsely record that the assignee
+ * answered.
+ * ------------------------------------------------------------------ */
+
+/** The relayed row: filed by another account, named exactly as asked. */
+function relayRow(over: Partial<SubmissionCandidate> = {}): SubmissionCandidate {
+  return sub({
+    id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    submitterEmail: "relay@example.com",
+    creatorEmail: null,
+    archiveName: "vendor-ci-intake.skill",
+    archiveSha256: "f".repeat(64),
+    corpusFilesJson: JSON.stringify([
+      { path: "SKILL.md", text: "---\nname: vendor-ci-intake\n---\nbody" },
+    ]),
+    title: "Reminder about work you were asked for",
+    ...over,
+  });
+}
+
+section("A RELAYED EXACT PACKAGE PAUSES, never closes (work_submission)", () => {
+  for (const status of ["published", ...NEAR_MATCH_PAUSE_STATUSES]) {
+    const v = matchCompletion(
+      task({ detectorArg: "vendor-ci-intake" }),
+      candidates({ submissions: [relayRow({ status })] })
+    );
+    assert.equal(v.kind, "pause", `status ${status} pauses the task`);
+    if (v.kind !== "pause") continue;
+    // The reason is actionable from the weekly report alone and claims
+    // only what this code knows: who filed what, when, that it MAY be
+    // relayed work, and both operator moves including the ownership
+    // transfer that would fix attribution.
+    assert.ok(v.reason.includes("another account"), "says where it came from");
+    assert.ok(v.reason.includes("relay@example.com"), "names the filer");
+    assert.ok(v.reason.includes("vendor-ci-intake.skill"), "the archive");
+    assert.ok(v.reason.includes("2026-08-25"), "the filed date");
+    assert.ok(/may be their own work/.test(v.reason), "a maybe, not a claim");
+    assert.ok(/chase:admin close/.test(v.reason), "the it-settles move");
+    assert.ok(/ownership transfer/.test(v.reason), "the attribution move");
+    assert.ok(/chase:admin open/.test(v.reason), "and how to restart");
+    assert.ok(v.reason.length <= 500, "fits pauseTask's 500-char slice");
+    assert.ok(!/[\u2013\u2014]/.test(v.reason), "no long dashes");
+  }
+  // The front-matter name alone is enough, like everywhere file-shaped.
+  const byFm = matchCompletion(
+    task({ detectorArg: "vendor-ci-intake" }),
+    candidates({
+      submissions: [relayRow({ archiveName: "upload-3.zip" })],
+    })
+  );
+  assert.equal(byFm.kind, "pause");
+});
+
+section("a relayed package on failed or superseded is ignored", () => {
+  for (const status of ["failed", "superseded"]) {
+    const v = matchCompletion(
+      task({ detectorArg: "vendor-ci-intake" }),
+      candidates({ submissions: [relayRow({ status })] })
+    );
+    assert.deepEqual(v, { kind: "none", reason: "no_matching_submission" });
+  }
+});
+
+section("the relay pass matches EXACT file identities only, never near", () => {
+  // Two of the ask's three tokens, and a title carrying all of them:
+  // plenty for the assignee-fenced near pass, nothing for a pass with no
+  // assignee fence. The aperture stays narrow on purpose.
+  const v = matchCompletion(
+    task({ detectorArg: "vendor-ci-intake" }),
+    candidates({
+      submissions: [
+        relayRow({
+          archiveName: "Vendor CI.zip",
+          corpusFilesJson: null,
+          title: "Vendor CI Intake",
+        }),
+      ],
+    })
+  );
+  assert.deepEqual(v, { kind: "none", reason: "no_matching_submission" });
+});
+
+section("the assignee's own answer outranks the relay pass", () => {
+  // When the assignee's near-named row and somebody else's exact-named
+  // row are both published, the verdict is the assignee's CLOSE, never
+  // the relay pause: the fenced passes run first.
+  const v = matchCompletion(
+    task({ detectorArg: "vendor-ci-intake" }),
+    candidates({
+      submissions: [relayRow(), sub({ archiveName: "Vendor Intake.zip" })],
+    })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.matchedOn, "near_match_published");
+  assert.equal(v.submissionId, "22222222-2222-4222-8222-222222222222");
+});
+
+section("a stop-token-only ask never trips the relay pass either", () => {
+  const v = matchCompletion(
+    task({ detectorArg: "skill-package" }),
+    candidates({
+      submissions: [relayRow({ archiveName: "Skill Package.zip", corpusFilesJson: null })],
+    })
+  );
+  assert.deepEqual(v, { kind: "none", reason: "no_matching_submission" });
+});
+
+section("somebody else's CHILD of the card pauses the update ask", () => {
+  const otherChild = (status: string) =>
+    sub({
+      id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      parentId: PARENT_ID,
+      submitterEmail: "relay@example.com",
+      creatorEmail: "relay@example.com",
+      archiveSha256: "b".repeat(64),
+      status,
+    });
+  for (const status of ["published", "held"]) {
+    const v = matchCompletion(
+      task(CHILD_TASK),
+      candidates({ parent: parentRow(), children: [otherChild(status)] })
+    );
+    assert.equal(v.kind, "pause", `status ${status} pauses the task`);
+    if (v.kind !== "pause") continue;
+    assert.ok(v.reason.includes("relay@example.com"), "names the filer");
+  }
+  const failed = matchCompletion(
+    task(CHILD_TASK),
+    candidates({ parent: parentRow(), children: [otherChild("failed")] })
+  );
+  assert.deepEqual(failed, { kind: "none", reason: "no_update_child" });
+});
+
+section("a relayed copy byte-identical to the parent answers nothing", () => {
+  // Somebody else re-filing the UNCHANGED parent bytes is not an answer
+  // and, unlike the assignee's own identical re-send, not even a pause:
+  // nothing about it says the assignee believes they answered.
+  const identicalChild = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      children: [
+        sub({
+          id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+          parentId: PARENT_ID,
+          submitterEmail: "relay@example.com",
+          creatorEmail: "relay@example.com",
+          archiveSha256: "a".repeat(64),
+        }),
+      ],
+    })
+  );
+  assert.deepEqual(identicalChild, { kind: "none", reason: "no_update_child" });
+  const identicalFresh = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      submissions: [
+        freshAnswer({
+          submitterEmail: "relay@example.com",
+          creatorEmail: "relay@example.com",
+          archiveSha256: "A".repeat(64),
+        }),
+      ],
+    })
+  );
+  assert.deepEqual(identicalFresh, { kind: "none", reason: "no_update_child" });
+});
+
+section("somebody else's fresh row named like the card pauses the ask", () => {
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      submissions: [
+        freshAnswer({
+          submitterEmail: "relay@example.com",
+          creatorEmail: "relay@example.com",
+        }),
+      ],
+    })
+  );
+  assert.equal(v.kind, "pause");
+  if (v.kind !== "pause") return;
+  assert.ok(v.reason.includes("relay@example.com"));
+  assert.ok(v.reason.includes("another account"));
+});
+
+section("the assignee's fresh answer outranks the relay pass too", () => {
+  const v = matchCompletion(
+    task(CHILD_TASK),
+    candidates({
+      parent: parentRow(),
+      submissions: [
+        freshAnswer({
+          id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+          submitterEmail: "relay@example.com",
+          creatorEmail: "relay@example.com",
+        }),
+        freshAnswer(),
+      ],
+    })
+  );
+  assert.equal(v.kind, "close");
+  if (v.kind !== "close") return;
+  assert.equal(v.matchedOn, "fresh_submission_published");
+  assert.equal(v.submissionId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+});
+
+section("the relay pause reason survives the 500-char slice at WORST case", () => {
+  const r = relayedPackagePauseReason(
+    sub({
+      submitterEmail: `${"s".repeat(120)}@example.com`,
+      creatorEmail: `${"c".repeat(120)}@example.com`,
+      archiveName: `${"A".repeat(200)}.zip`,
+      title: "T".repeat(300),
+    })
+  );
+  assert.ok(r.length <= 500, `worst case is ${r.length} chars`);
+  assert.ok(/chase:admin close/.test(r) && /chase:admin open/.test(r));
+  assert.ok(/ownership transfer/.test(r));
+});
+
+section("the weekly report shows a composed pause reason WHOLE", () => {
+  // The report used to clip pausedReason to 300, which deleted exactly
+  // the closing operator-instructions sentence of every composed reason
+  // (388 to 491 chars at worst); the clip is now the 500 pauseTask
+  // stores, so the moves the owner is told to make actually reach him.
+  const body = buildReportBody({
+    now: new Date("2026-08-31T15:00:00Z"),
+    live: [
+      reportTask({
+        status: "paused",
+        pausedReason: relayedPackagePauseReason(relayRow()),
+      }),
+      reportTask({
+        id: "22222222-2222-4222-8222-222222222222",
+        status: "paused",
+        pausedReason: freshSubmissionPauseReason(relayRow()),
+      }),
+    ],
+    recentlyClosed: [],
+    lastSend: new Map(),
+    nudgesEnabled: true,
+  });
+  assert.ok(
+    body.includes("chase:admin open resumes the reminders and re-dates the ask."),
+    "the relay reason's closing move survives"
+  );
+  assert.ok(
+    body.includes("cannot immediately re-pause it."),
+    "the fresh reason's closing move survives"
+  );
 });
 
 section("packageIdentity folds names people and tools spell differently", () => {
@@ -2020,8 +2679,10 @@ section("the report's claim is released unless the send was ACCEPTED", () => {
 });
 
 section("reopening a PAUSED row really restarts the reminders", () => {
-  // Both automatic pauses (identical resubmission, and a near-matched
-  // submission the review still holds) rest on a submission that is still
+  // Every automatic pause (identical resubmission, a near-matched
+  // submission the review still holds, a fresh submission answering an
+  // update ask, and a package relayed by another hand) rests on a
+  // submission that is still
   // there. Preserving opened_at would let the next run re-pause the row
   // inside the same run, making chase:admin open silently inert and the
   // pause a one-way trip.

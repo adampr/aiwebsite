@@ -461,10 +461,12 @@ export async function pauseTask(opts: {
  *
  *   from 'blocked'  stamp it only if it was never set. The ask has not been
  *                   re-made; work done before it still must not close it.
- *   from 'paused'   RESET it to now(), unconditionally. Both automatic
- *                   pauses in this feature (the identical-resubmission
- *                   rule, and the near-matched submission the review still
- *                   holds) rest on a submission that is still sitting
+ *   from 'paused'   RESET it to now(), unconditionally. Every automatic
+ *                   pause in this feature (the identical-resubmission
+ *                   rule, the near-matched submission the review still
+ *                   holds, the fresh submission answering an update ask,
+ *                   and the package that arrived from another hand) rests
+ *                   on a submission that is still sitting
  *                   there at or after the old floor. Preserving the floor
  *                   would let the very next chase-run re-pause the row
  *                   inside the same run, making the operator's `chase:admin
