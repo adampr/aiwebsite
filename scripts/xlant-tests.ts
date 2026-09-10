@@ -152,6 +152,8 @@ const ACCEPTED = [
   "v1/incident/inc_123/decision",
   "v1/incident/inc_123/chat",
   "v1/incident/inc_123/close",
+  // 0.13.1 (2026-09-09): the thumbs route, one more word in the same alternation.
+  "v1/incident/inc_123/feedback",
   "v1/incident/inc-123/tools/next",
   "v1/incident/inc_123/tools/call-7/result",
   "v1/mcp/bridge_token_abc-123",
@@ -175,6 +177,11 @@ const REJECTED = [
   "v1/device/restore-grant/x",
   "v1/device/restore-grant/",
   "v1/device/restore-grantx",
+  // 0.13.1: the thumbs route's near-misses — a bare word, a trailing slash, a plural, a suffix.
+  "v1/incident/feedback",
+  "v1/incident/inc_123/feedback/",
+  "v1/incident/inc_123/feedbacks",
+  "v1/incident/inc_123/feedbackx",
   "v1/device/restore",
   "v1/incident/start/x",
   "v1/incident/inc_123/events/x",

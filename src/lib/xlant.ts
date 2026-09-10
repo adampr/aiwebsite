@@ -598,7 +598,13 @@ export const XLANT_RELAY_ALLOWED: readonly RegExp[] = [
   // the relay checks the point is that person's, on that machine. Exact path.
   /^v1\/device\/restore-grant$/,
   /^v1\/incident\/start$/,
-  /^v1\/incident\/[\w-]+\/(events|decision|chat|close)$/,
+  // 0.13.1 (2026-09-09): `feedback` — the thumbs. A thumbs UP closes the
+  // incident as the person's own verdict; a thumbs DOWN records a tagged row
+  // on the relay (who, which computer, when, which XLAnt, what they typed)
+  // and the relay's brain reviews the incident for issues. Same shape as the
+  // other per-incident routes: one more word in the alternation, no new
+  // pattern, so the legs still count EIGHT shapes.
+  /^v1\/incident\/[\w-]+\/(events|decision|chat|close|feedback)$/,
   /^v1\/incident\/[\w-]+\/tools\/next$/,
   /^v1\/incident\/[\w-]+\/tools\/[\w-]+\/result$/,
   /^v1\/mcp\/[\w-]+$/,
