@@ -9,6 +9,30 @@
       "Bash(gcloud compute scp:*)",
       "Bash(gcloud compute ssh:*)"
     ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/lakehouse-checkpoint.mjs --hook stop || true",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/lakehouse-checkpoint.mjs --hook session-start || true",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
   }
 }
-

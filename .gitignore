@@ -30,3 +30,14 @@ next-env.d.ts
 # Self-hosted webinar recording(s): too large for git; deploy.sh rsyncs the
 # working tree, so the file ships to the VM from the dev box (ARCHITECTURE.md §5.10).
 /public/media/*.mp4
+
+# Lakehouse checkpoint kit baseline — secrets must never enter git history
+!.env.*.example
+!.env.template
+!.env.sample
+*.keystore
+id_rsa*
+id_ed25519*
+.git-credentials
+.claude/settings.local.json
+.lakehouse/
