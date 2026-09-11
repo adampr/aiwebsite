@@ -15,6 +15,18 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
+> **Module pin: @aicompany/core v1.125.0 (2026-09-11), submodule ad94d48 (= tag v1.125.0).**
+> Adopted from v1.124.0 (27fab13). Host action: none required by the module (this
+> host runs no Phase B — `refreshPerWeek: 0` — so only the nightly footer wording
+> and one writer-path keyword usage line change here). Same round, host-owned:
+> brain v1.152 (#831) + the registry deploy exclude and the hardened seed
+> pre-pass in scripts/deploy-safe.sh (sshpass transport: pre-pass SKIPPED with a
+> loud WARN, never silent — the run's own degrade_alert already mails UNKNOWN
+> BASELINE on that transport). Module notes and the signed mail delta:
+> packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
+
+Last verified against code: 2026-09-11 (§7/§9.1/§9.7 registry seed pre-pass, re-verified against the code; the 2026-09-10 round recorded below is otherwise unchanged) BRAIN PIN v1.150 `00d6c54` -> v1.152 `fba6b12` (annotated tag v1.152; NEVER xldev main, whose five untagged commits also report "v1.152" at build `132739980893` against the tag's canonical `210f3f3d9893` — the v1.149 collision shape) + THE MODEL-REGISTRY DEPLOY STOMP CLOSED: the fleet port of roleplay `c864725` (2026-09-09), same day as itsupportchicago and topmspnearme. Why: the blog `writer-model-flapping` WARN is a TRUE detection of a brain ROUTING-head event (aicompany `BlogWarningsHistory.md` §7.40, C3 routing sub-kind; mailed on roleplay 09-09 and itsupportchicago 09-10) with two upstream causes — a band-tie `json_completion` seat that re-ranks on drift alone (xldev #831 v1.152 SEAT HYSTERESIS holds it: on a PASS-gated, non-latency_critical exit the latest successful `router_v2` head keeps the seat while it clears every gate, trails the raw winner by <= 0.05 and costs <= x1.5; `/v1/model-routing` gains a per-task `seat {incumbent, incumbentAt, held, rawWinner, lead, why}`) and every deploy STOMPING brain-api's runtime `packages/brain/data/model-registry.json` with the committed dev snapshot (this host's rsync `--delete`; the reverted file reads stale, so the running brain-api refreshed within 30 s and re-promoted from it — the `aiwebsite.stage` copy's `updated_at` 2026-09-08T16:13:38Z is that deploy day's refresh). This host's head history was not separately measured. The span also carries v1.151 #829 (session history + `working_state` scoped to the envelope's requester, anonymous rows kept — this host's web chat threads on them; a new `storeMessages:false` field this host does not send) and #830 (file-backed private memory, OFF unless `BRAIN_MEMORY_FILES_DIR` is set: 0 such keys in the dev and VM `.env`, measured), plus `8552dad` (heads-baseline regen) and upstream `de82f8f` (a committed registry refresh that by this change no longer reaches the VM). ENV-NEUTRAL, verified from the xldev diff (`.env.example` adds two commented-out #830 keys only; lockfile = workspace version strings; no DDL). HOST SIDE: `deploy/rsync-excludes.txt` lists the registry + its `.tmp` (unanchored like the `.freeze` line; dry-run proof against the rendered `deploy.sh:401-464`/`stage-build.sh:159-168` exclude code: HEAD's list ships the file and `--delete` removes the `.tmp`, the new list does neither, `measured-ttft.json` still ships); `scripts/deploy-safe.sh` gains section 6b, a REGISTRY SEED PRE-PASS (§7 "Model registry = VM-owned runtime state", §9.7), the ONE VM read in the wrapper that refuses on failure; `scripts/deploy-safe-tests.sh` 92 -> 129 assertions (the stub ssh now runs the wrapper's REAL remote bodies against a fake app dir). Measured before the change: VM registry `updated_at` 2026-09-10T16:17:18Z, 22 `auto_promote` events, a SUPERSET of the committed v1.152 copy (664 vs 663 models, identical 54 routable / 71 curated), so withholding the committed copy loses nothing at this pin. Expected post-deploy brain build = the canonical `210f3f3d9893` (this host's v1.150 already reports its canonical `d73f7c112830`: rsync `--delete` leaves no zombie source files, unlike the two gcloud-iap hosts). No env, schema, route, unit or rendered-template change. **2026-09-11 — THE SEED PRE-PASS PORTED TO THE FIXED REFERENCE.** `scripts/deploy-safe.sh` section 6b was the UNFIXED first draft of a block that `deploy/deploy-itsc.sh` and `deploy/deploy-tmnm.sh` (byte-identical on the two gcloud-iap hosts) had already had hardened by a refuting panel on 2026-09-10. Seven defects closed, all of them proven there, none of them re-derived here: the seed now comes from the repo's COMMITTED PIN (`git rev-parse HEAD:packages/brain` then `git -C packages/brain cat-file blob <pin>:data/model-registry.json`) rather than the submodule's checked-out HEAD — which on this host is off the pin RIGHT NOW (pin `00d6c54` = 69 curated / 445,949 bytes; checkout `fba6b12` = 71), so the draft would have seeded a registry the repo does not pin — and is VALIDATED as a registry (>= 10 curated rows by brain's own rule) before it is hashed, with sha256("") `e3b0c442…b855` and any non-hex/short hash refused, closing the path where an unreadable blob hashed empty, an empty stream "verified", and a 0-byte registry got linked and rewritten feed-only; the probe CLASSIFIES present-valid / present-degenerate / absent with the same predicate run on the VM and REFUSES loudly on degenerate with the re-seed steps instead of preserving it for ever; every remote call is time-bounded (`vm_ssh_bounded`, 90 s x 3 probe / 180 s x 3 push) and retried, which is safe because `ln -T` never replaces a path and refuses to link INTO a directory; a lost push answer says the VM MAY OR MAY NOT hold the file instead of "nothing was placed"; and the probe sweeps `.model-registry.json.seed.*` temps older than 10 minutes on the live and `.stage` trees. ONE DELIBERATE DEVIATION from the reference, which this host forces: the legacy `sshpass` transport (`--allow-sshpass`, still advertised in `deploy/site-deploy.env`) now SKIPS the pre-pass with a loud WARN naming the manual seed command, because the draft's blanket refusal on "ssh-key pre-flight not ready" broke that break-glass path and speaking sshpass would mean handling `AIWEBSITE_PW`, which this wrapper deliberately never touches; an ssh-key transport that is merely not ready still refuses. §7 gains the full contract plus the ROLLBACK story (re-pin to `00d6c54`, KEEP the exclude; brain-api runs from SOURCE, which lands at step 3's rsync BEFORE the cutover bracket, so a post-copy failure is HALF-SHIPPED even though `deploy.sh`'s banner says production was not touched). `scripts/deploy-safe-tests.sh` 129 -> 183 assertions, still hermetic (3.8 s, no VM, no network); the fixture's brain "submodule" now carries three different registries so the pin-vs-HEAD-vs-working discrimination is real. WORKING TREE ONLY — not committed, not deployed; the VM was never contacted, so the VM-side half of the block (jq present, `ln -T` behaviour under the real deploy user, the sweep) is covered only by the stub harness.
+
 Last verified against code: 2026-09-08 §5.16 A RESEND OF AN ALREADY-PUBLISHED PACKAGE IS ACKNOWLEDGED, NEVER REFUSED WITH "PICK A DIFFERENT TITLE". Incident (same day): a colleague's already-handled package (autotask-ci-intake.skill) was forwarded to the email intake to confirm the matter was closed; the title resolved by inference to the published card's own title, `publishedTitleClash` fired, and the refusal instructed "pick a different title ... and resend" — advice that manufactures a duplicate card of bytes the site already holds byte-for-byte. FIX: `publishedTitleClash` (db.ts) now returns the clashing row `{id, title, slug, archiveSha256} | null` (deliberately NO submitterEmail: not public, no caller needs it; truthiness callers unchanged: update route exceptId path, `scripts/work-submit.ts`, `scripts/work-panel-rerun.ts`); `titleGuardMessage` (email-intake.ts) returns a discriminated verdict (`refuse` message vs `publishedClash` row — static-exhibit and update-path published clashes stay plain refusals, active-clash copy untouched); BOTH email guard sites settle a published clash through `settlePublishedClash`, comparing sha256 of the RAW submitted bytes (extract.ts provenance value, the same one `createSubmission` stores into `archive_sha256`) against the row's hash. Equal and both non-null: an ACKNOWLEDGEMENT via `sendTronEmail` directly (never `reject()`/the failure mirror — nothing failed; oversight BCC copies the admin), phrased as SUBMISSION identity ("the same package that was submitted and published as ..."), never stored-bytes identity, because on a cleaned row the stored artifact is a rebuild of the raw bytes the sha describes; log line `already-published resend <rowId> sent=yes|no by=<senderHash>`, owner address never echoed, and an UNDELIVERED ack (send failure or the company reply bound) mirrors into the §5.15 ledger under `work-intake:ack-not-delivered:<domain>` (emailed:false). Differing/unavailable: still `reject()`, with lane-honest options — staff copy names the `"Update Card: <title>"` lane (accepted from whoever the card's versions belong to now, or from Adam) plus a different title; company copy never advertises the staff-only update lane. The pre-download strong-title site now pays ONE bounded `downloadAttachment` on a published clash only (DKIM-verified sender; failed download degrades to the refusal); the post-inspection weak-title site (the incident's) reuses `pkgWalk.archiveSha256` free. Web route parity: the create route's published-clash branch hashes `form.get("file")` (body already buffered) and answers 409 `duplicate_title` with either the nothing-to-submit copy or the ownership-first options copy (the "Submit an update" button on /work/submit renders only on rows the viewer owns, so the copy gates it on ownership and gives a non-owner a real path; company web copy advertises no update lane). Pure copy/decision helpers in config.ts (`sameSubmittedArchive`, `alreadyPublishedAckEmail`, `publishedClashEmailRefusal`, `alreadyPublishedWebMessage`, `publishedClashWebMessage`), pinned in `scripts/work-tests.ts` (ack never composes through reject and never leads "I could not accept"; company copy never says "Update Card:"; static path unchanged, no download/sha) with the row shape pinned in `scripts/work-update-flow-tests.ts` and a db.ts select pin in `scripts/work-submit-tests.ts`. NO schema, NO env change. Verified: `npx tsc --noEmit`, `npm run test:work`, `npm run test:worksubmit`, `npm run test:workupdate`, `npm run test:workexhibit`, `npm run test:workattribute`.
 
 Last verified against code: 2026-09-08 §5.22 XLANT: ONE TOKEN PER COMPUTER, AND A PAGE THAT CAN SIGN ONE OUT. The person's report was two sentences long — "every time I get a new token to install on a workstation, the other workstation tokens are invalidated" — and the relay's own rows say the same thing without adjectives: on 2026-09-08 ONE person held EIGHT Windows tokens issued since 09-04 across TWO machines (`xl-lpt-aradulovic1` and `xl-lpt-aradulovic3`), every mint revoked the previous one (`store.issueDevice` kept one ACTIVE token per (email, kind)), and FOURTEEN open pieces of work were closed `superseded` by those re-issues (audit rows 09-06 00:42Z, 09-06 20:22Z, 09-07 01:56Z, 09-08 00:02Z). Each machine's token died the moment the other was set up. The relay half of the cure is a peer round in the `adampr/xlant` repo (`/v1/device/issue` now REVOKES NOTHING AT ALL — an unused token is dealt with by time instead, expiring seven days after it was generated, and `DeviceSummary` carries that clock as `expiresAt` — plus new INTERNAL `GET /v1/device/list` and `POST /v1/device/revoke`); THIS host's half is the page, which had been telling members of staff the old rule as though it were a feature ("exactly what you want when you move to a new machine"). THE DOWNLOAD PARAGRAPH IS REWRITTEN to what is true: one token per computer and as many computers as you have, a Windows token for each PC and a Mac token for each Mac; a token shown once; generating one never signs another computer out and changes nothing about the first; a token you generate and never paste anywhere EXPIRES ON ITS OWN SEVEN DAYS LATER; a reinstall on a computer that already had XLAnt retires that computer's older token the first time the new install REPORTS SOMETHING — a problem, or the daily check-up — because the relay binds a machine name at `/incident/start` and not at connect, so until then one laptop legitimately shows TWO rows and the page says so; and signing a computer out is a deliberate act in the new section below. The retired **roleplay.xl.net** clause is deleted rather than reworded (that host has carried nothing of XLAnt since 2026-09-04, and a live page naming it sends a staffer somewhere that cannot help them), and per peer round xlant-a0 "an XL.net technician agent goes to work" becomes "XLAnt goes to work" and "The technician reaches your machine only through XLAnt" becomes "XLAnt reaches your machine only through this connection". NEW SECTION "Your computers" — a second client island, `src/app/internal/xlant/devices-list.tsx`, mounted ONCE after the two platform cards and before the privacy note — draws one row per computer holding a live token: Windows/Mac (or "Computer" for a kind this host does not recognise), the machine name — and THREE answers where a lesser page would have two, since the relay binds that name at the computer's first incident: a row that has never been seen reads "not connected yet", one that HAS reported but is still nameless reads "no name yet", because telling a staffer their working PC never arrived is the very sentence that would send them back up the page to mint another token for it — the client version or "—", how long ago it was last seen in words ("just now", "N minutes/hours/days ago", "never"), the seven-day clock on an unused token ("expires today" / "expires in N days", days FLOORED so the time left is never overstated, "expired" for an instant already past, and nothing at all for a row with no clock), an open-work count only above zero, and a **Sign out** button behind a one-line confirm that names the consequence instead of asking "are you sure". Empty is "No computers yet — generate a token above.", and a failed read does NOT clear the rows already drawn, because an empty section under an error message reads as "you have no computers" — the one thing this list must never say by accident. TWO NEW ROUTES, both staff-gated by the same `requireXlantStaff()` and both taking the identity from the SESSION and nothing else: `GET /api/internal/xlant/devices` (→ `relayInternalGet('/v1/device/list?email=…')`, re-read through a new pure `xlantDeviceSummaries()` which holds `expiresAt` to a stricter standard than its neighbours because that field alone is drawn as a countdown; an unreadable answer is a **502**, NEVER an empty list) and `POST /api/internal/xlant/devices/revoke` (body `{deviceId}` only, `[A-Za-z0-9_-]{1,80}` — the relay's ids are UUIDs, confirmed 2026-09-08 — and the relay's 404 passed through as a 404 with a sentence a staffer can act on). The mint and the list are coupled by ONE window event, `xlant:devices-changed`, because the token buttons and the island are separate mounts with no shared parent and a `router.refresh()` would blank a token the staffer had not copied yet. THE TEST SUITE LEARNED TO HOLD A SESSION: `scripts/xlant-tests.ts` **50 → 68 legs**, with a new section 8b that executes the staff handlers in-process inside a FAKED Next request scope (Next's own `workAsyncStorage`/`workUnitAsyncStorage` given a `type: 'request'` store, the cookie minted by the REAL `signSession()` under a synthetic secret, the global `AsyncLocalStorage` installed by a one-line `data:` module that has to be the file's first import). That is what turns the load-bearing property from a written claim into a measurement: **a body `email` is IGNORED** by both the sign-out and the mint, and the relay is told the session's lowercased address. THREE SENTENCES DID NOT SURVIVE REVIEW AND WERE CORRECTED IN A FIX ROUND: SPEC D3's own "and only while you are watching" is false by default (the desktop ships `dailyScan: true` and that check-up's preamble says "nobody is watching"), so the hero now says nothing is CHANGED without a Yes and the unattended pass only looks — and the privacy note, which carried the same claim in other words, moved with it; the reinstall sentence named the wrong moment (above); and the Sign out confirm said nothing about the work it ends, though the row it sits on was already showing "N open" — the relay's `revokeDevice` closes EVERY non-terminal row of that device and notifies only the device it has just signed out, so the confirm now names the count. A fourth correction is about a state rather than a sentence: the relay back-fills a machine name from a device's OWN later incidents only, so on deploy day the fleet's existing computers arrive in this list NAMELESS, and the section says in words that a row without a name is normal and the computer is working. NO schema, NO migration, NO new env var, NO new allowlist shape — `v1/device/list` and `v1/device/revoke` are INTERNAL relay routes reached server-side only and join the REJECTION list, so the allowlist still holds exactly EIGHT anchored patterns — and NO new CSRF prefix, both new routes inheriting `/api/internal/xlant` (the middleware leg now proves the sign-out refuses an Origin-less POST, which is the route that most needs it). NOT CHANGED: the DEVICE lane, the update feed, the artifacts directory, the arming gate, the two client kinds, and the mint's Mac probe. Verified: `npx tsc --noEmit`, `npm run test:xlant` (68 legs, all passing), `npm run build:check` (exit 0; its `jsx-spacing` scanner blocked one boundary in the new Download paragraph — a JSX text node carrying both a newline and an entity loses its leading space, so `<strong>seven days</strong> later,` would have shipped as "seven dayslater" — fixed with an explicit `{" "}` and pinned by a leg that EXECUTES `scripts/check-jsx-spacing.mjs` over the three XLAnt `.tsx` files rather than restating its rule).
@@ -12907,8 +12919,10 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
   the same day (its `widenPgIntegerColumns` boot migration failed on views depending
   on altered columns — `test_ui_issue_reports` / `audio_related` — crash-looping
   brain-api in prod); v1.99.2 made the widen pass best-effort (view-blocked ALTER
-  warns loudly and boot continues) and was re-adopted. **Current submodule pin:
-  v1.107 (48730ec, 2026-07-24, hotfix branch off v1.106 7a32616)** — xldev
+  warns loudly and boot continues) and was re-adopted. **Submodule pin at that time:
+  v1.107 (48730ec, 2026-07-24, hotfix branch off v1.106 7a32616)** (historical — the
+  CURRENT pin is v1.152 `fba6b12`, 2026-09-10; see the registry bullet at the end of this
+  list and the top-of-file entry) — xldev
   Issue #718: the vendor PG adapter reconnects on server-side connection loss
   and brain-api `/health` deep-checks the DB (503 + `db:"error"`). Root cause
   of the 2026-07-24 chat outage on THIS host (every turn = one instant
@@ -12978,6 +12992,111 @@ payload}`, `error`. The site's chat route filters this down to the widget's 4-ev
 - The brain's Postgres adapter is ONE synchronous `pg-native` connection — every brain query
   blocks its whole event loop, so site-side transactions on brain tables must stay short
   (§5.9 FORGET collects sessions before BEGIN).
+- **Model registry = VM-owned runtime state (2026-09-10, brain pin v1.152 `fba6b12`).**
+  brain-api's GoalScheduler refreshes `packages/brain/data/model-registry.json` IN-PROCESS —
+  at every boot (`lastModelRegistryRefresh` starts at 0), every 24 h, and sooner once the
+  file's `updated_at` is more than 25 h old — from the AA feed, the provider listers under
+  this VM's keys, the #796 auto-promoter and the VM's own PG probe aggregates; the
+  promoter's idempotency belt is a prior `auto_promote` event IN THAT FILE. Until
+  2026-09-10 every deploy's rsync reverted it to the committed dev snapshot and the next
+  refresh re-promoted and could move routing heads. Now `deploy/rsync-excludes.txt` keeps it
+  out of both rsyncs (dev->live, live->stage), and `scripts/deploy-safe.sh` section 6b runs a
+  **seed pre-pass** after every refusal (dirty tree, `--ack`) and before `deploy.sh`.
+  HARDENED 2026-09-11 to the behaviour of `deploy/deploy-itsc.sh` and
+  `deploy/deploy-tmnm.sh` (byte-identical blocks on the two gcloud-iap hosts, fixed there
+  by a refuting panel on 2026-09-10 while this host still carried the first draft), so the
+  contract is now:
+  - **WHAT COUNTS AS A REGISTRY** — one jq predicate, run on the dev box against the seed
+    and on the VM against the live file: `.models` is an array holding **>= 10 CURATED
+    rows**, curated by brain's own rule (`provenance`, else "no `aa_slug` = curated",
+    `refresh-model-registry.ts:101`). The floor is a bound, not a proof: a from-nothing
+    refresh mints feed rows only and the #796 auto-promoter is capped at 3 per run and has
+    promoted 2 distinct models in the whole committed history, while every real registry
+    measured 2026-09-10/11 holds 69-71 (this host's committed pin `00d6c54` = 69 curated /
+    445,949 bytes / `updated_at` 2026-08-28T13:50:10Z, the submodule's checked-out
+    `fba6b12` = 71, this VM 71, itsc 71, tmnm 70).
+  - **THE PROBE CLASSIFIES, it does not merely test existence** —
+    `REGISTRY_STATE=present-valid | present-degenerate | present-unverifiable | absent |
+    no-app-dir`, with size, `.models|length`, curated count and `updated_at` in the line.
+    `present-valid` is left alone (that is the whole point). `present-degenerate` — too few
+    curated rows, or a DIRECTORY at the path — **REFUSES the deploy and prints the two
+    re-seed steps**; it is never auto-overwritten, because when the VM's copy is real the
+    VM is the authority and only a human can tell the two apart. `present-unverifiable`
+    (no `jq` on the VM) and any unknown token refuse too. The probe also SWEEPS
+    `.model-registry.json.seed.*` temps older than 10 minutes on the live and `.stage`
+    trees — a killed push is the only thing that creates them and nothing else ever
+    removes them (rsync does not delete an excluded path, and live->stage copies them).
+  - **THE SEED IS THE COMMITTED PIN, validated before it is hashed** — the gitlink this
+    repo records at HEAD (`git rev-parse HEAD:packages/brain`), read from the submodule's
+    object store (`git -C packages/brain cat-file blob <pin>:data/model-registry.json`).
+    Never the submodule's checked-out HEAD, which routinely sits off the pin (it does
+    today: pin `00d6c54`, checkout `fba6b12`), and never the working file, so neither
+    `--dirty-ok` nor an uncommitted pin bump can seed a dev-box edit. The blob must satisfy
+    the predicate above BEFORE its sha256 is taken, and the empty-input hash
+    `e3b0c442…b855` plus any non-hex or short hash is refused by name: without that, an
+    unreadable or empty blob hashes to sha256("") , the empty stream the VM receives
+    "verifies" against it, and a 0-byte registry is linked — which brain-api then rewrites
+    as a feed-only registry, the exact failure the pre-pass exists to prevent.
+  - **EVERY REMOTE CALL IS TIME-BOUNDED AND RETRIED** — `vm_ssh_bounded <seconds>` (the
+    marker read's ssh options, its own bound): probe 90 s x 3 attempts, push 180 s x 3,
+    10 s apart, and only a MISSING token retries — any answer is final. A repeat push is
+    safe because `ln -T` never replaces a path: an attempt that landed and lost only its
+    answer comes back `exists`, and the re-probe must then find a VALID registry or the
+    run refuses. `-T` also means an existing DIRECTORY at the target is never linked INTO.
+  - **A LOST ANSWER IS REPORTED AS LOST** — "the VM MAY OR MAY NOT now hold it, re-run:
+    the probe reports which", never "nothing was placed", which is false in exactly the
+    case that matters.
+  - **THE sshpass TRANSPORT SKIPS THE PRE-PASS, loudly** — and this is the one deliberate
+    deviation from the two gcloud-iap wrappers, which have a single transport each. This
+    host still advertises the legacy `sshpass` break-glass transport
+    (`DEPLOY_TRANSPORT` + `--allow-sshpass`), which the wrapper deliberately cannot speak
+    because it would have to handle `AIWEBSITE_PW`. The first draft refused whenever the
+    ssh-key pre-flight was "not ready", and a non-ssh-key transport is one of those
+    reasons, so it broke the break-glass path outright. It now prints a WARN naming the
+    consequence and the manual seed command
+    (`git -C packages/brain cat-file blob "$(git rev-parse HEAD:packages/brain):data/model-registry.json" | ssh <user>@<vm> "cat > <app dir>/packages/brain/data/model-registry.json"`)
+    and proceeds. An ssh-key transport that is NOT ready (no `.env` coordinates, missing
+    key) still REFUSES: there the wrapper is configured to be able to tell and cannot.
+    The skip is never silent beyond the log: the same conditions make `ssh_ready=no`, so
+    the baseline is UNKNOWN and the post-deploy `degrade_alert` mails
+    `WARN deploy shipped with an UNKNOWN BASELINE` naming the transport as the reason.
+    (`CLAUDE.md`'s "Deploying (required)" paragraph still describes the pre-pass without
+    this skip — it is an owed edit, not a shipped one.)
+  Unlike the section-3 marker read, the pre-pass REFUSES when it cannot tell: an
+  unreachable box is refused by `deploy.sh`'s own liveness probe anyway, while degrading
+  would let a VM with no registry boot brain-api on an empty document and write a
+  FEED-ONLY registry (`refresh-model-registry.ts` starts from `{models: []}` when the file
+  is absent) that later runs would keep as "present".
+  Consequences: (a) the VM's registry diverges from git BY DESIGN — read it on the VM;
+  (b) a hand-curated edit to the committed JSON (a curated row for a model not on the AA
+  feed, a `price_override`, a `no_auto_promote`, a hand retirement, a registry SHAPE
+  migration — the loader is fail-open) no longer rides a deploy. **Re-seed runbook:** on the
+  VM as the deploy user, `mv /var/www/aiwebsite/packages/brain/data/model-registry.json{,.pre-reseed-$(date +%F)}`,
+  then AT ONCE from the dev box `bash scripts/deploy-safe.sh` (with `--ack=<sha>` if it asks);
+  it must print `pushed the committed pin` — `left alone` means brain-api rewrote a
+  feed-only file in between (a restart or its 24 h cadence): move that aside too and
+  re-run. A degenerate file reached by any other route gives the same two steps in the
+  refusal text itself. A re-seed costs one `AUTO_PROMOTE`/`HEADS_MOVED` cycle plus a
+  re-page of the retained alarm sets (`price_alarms`, `provider_lister_seen`,
+  `lifecycle_events`).
+  Nothing backs the file up (`backup-db.sh`/`restore-drill.sh` never touch
+  `packages/brain/data`); `packages/brain/data/model-registry.json.freeze` stays excluded
+  as before.
+  **ROLLBACK STORY for the brain pin that this exclude rides with (read before reverting
+  anything).** Reverting the brain pin means: re-pin to `00d6c54` and **KEEP the
+  `rsync-excludes.txt` entries and the pre-pass**. The two are independent — the exclude
+  fixes a deploy STOMPING runtime state and is correct at every pin — and dropping the
+  exclude to "undo the round" re-opens the stomp while the VM's registry is now the only
+  copy of 22 `auto_promote` events. The asymmetry that makes this urgent: **brain-api runs
+  from SOURCE** (`ecosystem.config.cjs` → `apps/brain-api/src/server.ts`), and the source
+  reaches the live tree at `deploy.sh` step 3's rsync, which is BEFORE the cutover bracket.
+  So a run that fails AFTER the copy step but before/inside the cutover leaves the **new
+  brain source live for the next restart** even though the Next.js build did not flip —
+  while `deploy.sh`'s failure banner says "production was NOT touched — the old build is
+  still serving", which is true of the *build* and false of brain-api. Treat that state as
+  **half-shipped**: the stage rollback set (`*.old`/`*.new`) covers `node_modules` and
+  `.next` and never reverts the brain source, so the only way back is to re-pin, re-run the
+  wrapper, and confirm brain-api's reported build id on `:3211/health`.
 
 ---
 
@@ -13128,6 +13247,12 @@ committed; edit the template (module repo) or `site-deploy.env`, never the outpu
 
 ### 9.1 Deploy flow (`deploy/deploy.sh`, run from the dev box)
 
+0. Entry is `scripts/deploy-safe.sh` (§9.7): dirty-tree refusal, the VM-marker commit-set
+   gate and `--ack`, then — since 2026-09-10, hardened 2026-09-11 — the registry seed
+   pre-pass (pushes the COMMITTED PIN's `packages/brain/data/model-registry.json` only onto
+   a VM that has none; never overwrites, refuses a degenerate VM copy, refuses when it
+   cannot tell, and SKIPS with a WARN on the `sshpass` transport; §7 "Model registry =
+   VM-owned runtime state"), then `deploy/deploy.sh` as a child.
 1. **Template-stamp drift gate** (above) — aborts before touching the VM.
 2. Transport per `site-deploy.env`: **`ssh-key`** since 2026-07-12 (dev-box key
    `~/.ssh/id_ed25519` authorized on the VM; key path from `AIWEBSITE_SSH_KEY` in
@@ -13137,7 +13262,8 @@ committed; edit the template (module repo) or `site-deploy.env`, never the outpu
    (A `gcloud-iap` variant exists for GCP.)
 3. `rsync -az --delete` repo → `/var/www/aiwebsite`, **excluding** `.git`, `node_modules`,
    `.next`, brain caches, `.env`, `/data/` (VM-generated knowledge must survive the delete),
-   and — v1.13.0 — the staged-deploy `*.old`/`*.new` generation dirs (the VM-side rollback
+   the host list in `deploy/rsync-excludes.txt` (since 2026-09-10 incl. brain-api's runtime
+   `packages/brain/data/model-registry.json` + `.tmp`), and — v1.13.0 — the staged-deploy `*.old`/`*.new` generation dirs (the VM-side rollback
    set must survive the delete too). deploy.sh also touches the deploy↔watchdog marker
    BEFORE the sync so a watchdog staged rebuild can never stage half-synced sources.
 4. rsync the production `.env` separately; ship `data/GeoLite2-ASN.mmdb` explicitly if
@@ -13539,12 +13665,39 @@ past the 64 KiB pipe buffer gave `printf` a SIGPIPE, which errexit turned into
 a bare exit 141 with no banner and no refusal text, a hard stop in the one
 path designed never to refuse. The marker is written ONLY by `scripts/deploy-safe.sh`, so a direct
 `deploy/deploy.sh` run leaves it stale and the next pre-flight over-reports
-the range, which is the safe direction. `scripts/deploy-safe-tests.sh` (92
-assertions, no VM and no network: a throwaway git repo with stub `ssh` and
+the range, which is the safe direction. Since 2026-09-10 the wrapper also runs
+section 6b, the REGISTRY SEED PRE-PASS (§7 "Model registry = VM-owned runtime
+state" carries the whole contract), after every refusal above and before
+`deploy.sh`; it is the one VM read here that refuses on failure rather than
+degrading, for the reason given there — except on the `sshpass` transport, which
+it SKIPS with a WARN naming the manual seed step, because speaking sshpass would
+mean handling `AIWEBSITE_PW` and the first draft's refusal there broke the
+break-glass path. The marker read and the pre-pass share one ssh option list;
+only the time bound differs (`vm_ssh` 25 s for the two short marker lines,
+`vm_ssh_bounded` 90 s per probe and 180 s per push for a ~450 KB blob).
+`scripts/deploy-safe-tests.sh` (183
+assertions since 2026-09-11, was 129 on 2026-09-10 and 92 before that; no VM and no network: a throwaway git repo with stub `ssh` and
 stub `deploy/deploy.sh`) covers the argument handling, both refusal shapes,
 the commit-range formatting, every degradation path, the stderr-noise and
-oversized-marker read hazards, and that a `--dirty-ok` run never logs "clean
-tree". Run it with `npm run test:deploysafe`.
+oversized-marker read hazards, that a `--dirty-ok` run never logs "clean
+tree", and the registry pre-pass — the stub `ssh` runs the wrapper's REAL remote
+bodies against a fake app dir, and the fixture's "submodule" carries three
+DIFFERENT registries (the committed pin, a checked-out HEAD one commit past it,
+an uncommitted working edit) so the B1 case is a real discrimination rather than
+a tautology: present-and-valid left alone; absent and no-app-dir seeded with the
+PIN's blob, never the submodule HEAD's and never the working copy; a
+probe-to-push race kept and re-probed; a DEGENERATE VM registry and a DIRECTORY
+at the path refused without being touched; an EMPTY and a non-registry committed
+blob refused with nothing placed; a LOST push answer refused with wording that
+never claims nothing was placed (the fixture proves the file really did land);
+stale seed temps swept on live and `.stage` while a fresh one survives; a dead
+probe and a missing pin refused before `deploy.sh`; the `sshpass` transport NOT
+refused; an ssh-key transport with a missing key still refused; refused runs
+never reaching the pre-pass. `SSH_STUB_MODE=fail` fails the
+marker traffic only, so case 8 still isolates the marker degrade path; total ssh
+loss is case 22d. `DEPLOY_SAFE_REG_RETRY_SLEEP=0` (the suite sets it) shortens
+only the pause between retries, never the per-attempt bound or the retry count.
+Run it with `npm run test:deploysafe`.
 
 **THE CUTOVER DEPLOY IS THE ONE THIS GATE DOES NOT COVER, UNLESS THE MARKER IS
 SEEDED FIRST.** The gate is driven entirely by a marker only this wrapper ever

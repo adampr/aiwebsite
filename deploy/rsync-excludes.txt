@@ -19,3 +19,32 @@ packages/brain/data/model-registry.json.freeze
 # checkout deploys. Cost: a NEW/re-encoded video no longer rides the sync and must
 # be pushed to the VM explicitly, exactly like data/GeoLite2-ASN.mmdb.
 public/media
+# packages/brain/data/model-registry.json — brain-api's RUNTIME registry, VM-owned
+# since 2026-09-10 (fleet port of roleplay c864725, 2026-09-09; the mechanism is
+# aicompany BlogWarningsHistory.md §7.40). brain-api's GoalScheduler rewrites it
+# in-process at EVERY boot, then every 24h, and sooner once its updated_at is
+# >25h old: auto-promotions (provenance feed->curated, routable),
+# lifecycle_events, price_alarms, probe_quarantined. The committed copy is a
+# dev-box snapshot (at brain v1.150 updated_at 2026-08-28T13:50Z; at v1.152
+# 2026-09-05T01:48Z). Every deploy's rsync (deploy.sh sync_dir, ssh-key) replaced
+# the live file with that snapshot; the promoter's only idempotency belt is "a
+# prior auto_promote event" IN THAT FILE, and the reverted file reads stale, so
+# the running brain-api refreshed within 30 s and re-promoted from the snapshot
+# (measured here 2026-09-10: the aiwebsite.stage copy carries updated_at
+# 2026-09-08T16:13:38Z = that deploy day's refresh, copied live->stage).
+# rsync never deletes an excluded path (not --delete-excluded), so the live file
+# is simply left alone; stage-build.sh prepare reads this same list, so
+# live->stage leaves it alone too (nothing in stage reads it — the site imports
+# no brain code — and cutover flips only node_modules,
+# packages/brain/node_modules, .next). Fresh VM: an exclude also skips a path
+# the VM LACKS — scripts/deploy-safe.sh's registry seed pre-pass pushes the
+# committed copy once, only when absent, never over an existing file.
+# UNANCHORED like the .freeze line above: rsync matches it against the end of
+# the path, and the suffix occurs exactly once in the tree. measured-ttft.json
+# beside it deliberately still ships (roleplay c864725: its L-tier rows must
+# ride releases).
+packages/brain/data/model-registry.json
+# Belt: the refresh writes model-registry.json.tmp then renames it; an rsync
+# --delete landing inside that one-write window would remove the .tmp and fail
+# that refresh.
+packages/brain/data/model-registry.json.tmp
