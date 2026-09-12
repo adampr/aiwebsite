@@ -138,6 +138,23 @@ async function forward(
   if (accept) headers["Accept"] = accept;
   const session = req.headers.get("mcp-session-id");
   if (session) headers["Mcp-Session-Id"] = session;
+  // The country Cloudflare put on this request, under the relay's own name
+  // (xlant contract 0.13.3, the language round): the relay reads
+  // `X-XLAnt-Country` as the third signal of which LANGUAGE it writes to a
+  // person in, and it reads it ONLY behind the proxy secret — which is added
+  // here and which no caller has, so a PC can never name its own country.
+  // Only Cloudflare can put `cf-ipcountry` on a request that gets this far:
+  // nginx listens on 127.0.0.1 behind cloudflared (deploy/nginx.conf), so
+  // there is no origin to reach around it, and Cloudflare replaces whatever a
+  // client sent. The SHAPE is still checked here, because a header forwarded
+  // unchecked is a header the next proxy in front of this one gets to shape:
+  // two ASCII letters, upper-cased, and nothing else goes on the wire.
+  // Cloudflare's `XX` (unknown) and `T1` (Tor) pass that shape and are read as
+  // "nowhere" by the relay, which is the one place that decision belongs.
+  const country = req.headers.get("cf-ipcountry");
+  if (country && /^[A-Za-z]{2}$/.test(country)) {
+    headers["X-XLAnt-Country"] = country.toUpperCase();
+  }
 
   let body: BodyInit | undefined;
   if (req.method !== "GET" && req.method !== "HEAD") {

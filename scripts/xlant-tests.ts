@@ -1032,6 +1032,60 @@ await leg("relay: our secret and Via are SET, the caller's are not forwarded", a
   assert.equal(res.headers.get("cache-control"), "private, no-store");
 });
 
+await leg("relay: Cloudflare's country rides as X-XLAnt-Country, and nothing else does", async () => {
+  // xlant contract 0.13.3 (the language round): the relay decides which
+  // LANGUAGE a person reads XLAnt in, and the third of its four signals is the
+  // country THIS request came from. Only Cloudflare can say it — nginx listens
+  // on 127.0.0.1 behind cloudflared and Cloudflare replaces any client value —
+  // and the relay only reads the header behind the proxy secret that is added
+  // on this hop. What this leg pins is the three halves of that sentence: the
+  // value is forwarded, it is forwarded UPPER-CASED under our own name, and a
+  // caller's own X-XLAnt-Country never survives.
+  const country = async (headers: Record<string, string>) => {
+    relayReset();
+    const res = await relayRoute.POST(
+      new Request(`${U}/api/xlant/relay/v1/device/hello`, {
+        method: "POST",
+        body: "{}",
+        headers: { "content-length": "2", "content-type": "application/json", ...headers },
+      }),
+      ctx("v1/device/hello")
+    );
+    assert.equal(res.status, 200);
+    assert.equal(relayCalls.length, 1);
+    return relayCalls[0].headers["x-xlant-country"];
+  };
+
+  assert.equal(
+    await country({ "cf-ipcountry": "de", "x-xlant-country": "GB" }),
+    "DE",
+    "Cloudflare's country, upper-cased — and never the caller's own header"
+  );
+  assert.equal(
+    await country({ "x-xlant-country": "GB" }),
+    undefined,
+    "no cf-ipcountry, no header: a device may not name its own country"
+  );
+  assert.equal(
+    await country({}),
+    undefined,
+    "a request Cloudflare said nothing about carries nothing — the relay clears the column on every hello, and absent is truer than stale"
+  );
+  // Cloudflare's own unknown markers pass the SHAPE and are read as "nowhere"
+  // by the relay (languagePolicy.cleanRegion); anything that is not two ASCII
+  // letters is not a country and stops here.
+  assert.equal(await country({ "cf-ipcountry": "XX" }), "XX");
+  // (a header VALUE is trimmed by the Headers class, so " US " would arrive as
+  //  "US" and is not a case this can express — the list is what really differs)
+  for (const bad of ["T1", "USA", "d", "de-DE", "12", "u5", "../x"]) {
+    assert.equal(
+      await country({ "cf-ipcountry": bad }),
+      undefined,
+      `cf-ipcountry ${JSON.stringify(bad)} is not a country code`
+    );
+  }
+});
+
 await leg("relay: off-list and INTERNAL paths 404 without touching the relay", async () => {
   for (const rel of [
     "v1/device/issue",
