@@ -31,9 +31,14 @@
 // what this host's `/api/internal/xlant/devices/revoke` calls. NOTHING about
 // the two kinds changed; what changed is the count within a kind.
 //
-// ONE PUBLIC ORIGIN FROM 2026-09-04, AND IT IS THIS ONE. ai.xl.net carries
-// every XLAnt surface a person or a PC reaches, and every NEW device points
-// here:
+// THIS HOST WAS THE ONLY PUBLIC ORIGIN FROM 2026-09-04, AND IS THE LEGACY
+// FRONT SINCE 2026-09-13. XLAnt's canonical origin is now `https://xlant.ai`,
+// which serves its own copy of the DEVICE lane (that repo's
+// `src/lib/xlant.ts` and `src/app/api/xlant/**` — a faithful port of these
+// files). Nothing here was switched off and nothing is cut off: every desktop
+// in the field reads this host until it updates to a build pinned to
+// xlant.ai, in-flight technician runs keep the MCP url they were given, and
+// the HUMAN surface is not moving this round at all. What this host carries:
 //
 //   · HUMAN — the staff-gated page `/internal/xlant`, the build download
 //     (`/api/internal/xlant/download`, `?platform=mac&arch=…` for a Mac), the
@@ -41,11 +46,16 @@
 //     COMPUTER since 2026-09-08) and the caller's own computer list and
 //     sign-out (`GET /api/internal/xlant/devices`,
 //     `POST /api/internal/xlant/devices/revoke`), all behind
-//     requireXlantStaff().
+//     requireXlantStaff(). THESE STAY HERE: a mint is an act by a member of
+//     XL.net staff, authenticated by an XL.net session that lives on this
+//     host, and moving that surface is a separate round.
 //   · DEVICE — the authenticated relay passthrough
 //     (`/api/xlant/relay/*`, allowlisted below) and the electron-updater feed
 //     (`/api/xlant/update/*`, gated by verifyDeviceToken() and narrowed to
-//     release artifacts by isXlantUpdateArtifact()).
+//     release artifacts by isXlantUpdateArtifact()). These are the two the
+//     canonical front now also serves, and the two that are retired here when
+//     the fleet has moved — the trigger and the steps are the xlant repo's
+//     docs/SETUP.md "Cutover to xlant.ai (2026-09-13)".
 //
 // THE MOVE IS COMPLETE. The previous note here said not to move the device
 // lane without re-signing and re-publishing the desktop, because the shipped
@@ -61,12 +71,20 @@
 // `xlant-retire` (7c01af4) is deployed there, its XLANT_* env lines are gone
 // and its /opt/xlant-artifacts is removed.
 //
-// So ONE NSG /32 rule now opens TCP 8403 to a web host (222, this host; 221
-// for roleplay was deleted), and /opt/xlant-artifacts on this VM is the ONLY
-// published copy of the builds — latestInstaller(), latestMacBundle() and the
-// update feed read it directly and have never proxied anywhere. The xlant repo's
-// docs/SETUP.md "Cutover (2026-09-04)" section is the runbook; do not restate
-// its steps here.
+// So ONE NSG /32 rule opens TCP 8403 to a web host (222, this host; 221 for
+// roleplay was deleted), and /opt/xlant-artifacts on this VM is A published
+// copy of the builds — latestInstaller(), latestMacBundle() and the update
+// feed read it directly and have never proxied anywhere. It stopped being the
+// ONLY one on 2026-09-13: the release step now writes this host's directory
+// and the canonical front's, both forward-only, for as long as this front
+// stands. The xlant repo's docs/SETUP.md "Cutover (2026-09-04)" section is the
+// runbook for the move that brought the lane here, and "Cutover to xlant.ai
+// (2026-09-13)" is the one for the move away from it; do not restate either's
+// steps here.
+//
+// THE FRONT HEADER (2026-09-13). The passthrough below now tells the relay
+// WHICH FRONT served each request, so "has every machine moved off this host
+// yet?" is a question with an answer. See XLANT_FRONT_HOST.
 //
 // ARMING GATE. All three env vars must be present (XLANT_RELAY_URL,
 // XLANT_PROXY_SHARED_SECRET ≥16 chars, XLANT_ARTIFACTS_DIR) or xlantConfig()
@@ -81,6 +99,22 @@ import { join } from "node:path";
 import { readSession, type SessionData } from "@aicompany/core/auth/session";
 import { siteConfig } from "site.config";
 import { isRfpDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
+
+/** The hostname this front puts on every relay call as `X-XLAnt-Front`
+ * (2026-09-13, the origin move). Since that day XLAnt has TWO fronts in front
+ * of one relay — the canonical `xlant.ai` and this one, the legacy — and the
+ * relay cannot otherwise tell them apart: both authenticate with the same
+ * shared secret. It records the value per device (on every hello) and per
+ * technician run, which is what makes the retirement of this host's device
+ * lane a measurement rather than a guess.
+ *
+ * A CONSTANT, never anything a caller sent. The relay reads the header only
+ * behind the proxy secret, which is added on the hop below and which no caller
+ * has, and it shape-checks what arrives (lower-case, `^[a-z0-9.-]{1,80}$`); a
+ * PC that could name its own front would make the measurement say the fleet
+ * had moved while none of it had. The canonical front exports the same-named
+ * constant with its own hostname — see the xlantai repo's src/lib/xlant.ts. */
+export const XLANT_FRONT_HOST = "ai.xl.net";
 
 export interface XlantConfig {
   relayUrl: string;
@@ -169,13 +203,16 @@ export async function requireXlantStaff(): Promise<
 }
 
 /** Authenticated POST to the XLAnt relay's internal lane. The shared secret is
- * the only credential the relay accepts; the NSG rule above decides who may
- * reach port 8403 at all, and from 2026-09-04 this host is the only one that
- * may.
+ * the only credential the relay accepts; the NSG rule above decides which web
+ * host may reach port 8403 at all. From 2026-09-04 this host was the only one;
+ * since 2026-09-13 the canonical front (xlant.ai, on the dev box inside the
+ * relay's own VNet) reaches the same port too, with the same secret.
  *
  * Note what is NOT sent: `X-XLAnt-Via: proxy`. The relay hard-rejects its
  * internal routes when they carry that marker, and the passthrough sets it —
- * so the marker is exactly what separates this lane from that one. */
+ * so the marker is exactly what separates this lane from that one. Nor
+ * `X-XLAnt-Front`: that header describes a request a DEVICE made through a
+ * front, and this is not one. */
 export async function relayInternal(
   cfg: XlantConfig,
   path: string,
@@ -424,7 +461,9 @@ export const XLANT_MAC_BUNDLE_RE =
  * Newest file in the artifacts dir matching `accept`, by mtime.
  *
  * The artifacts dir lives OUTSIDE the web root and is filled by the xlant
- * repo's publish step; the copy on THIS VM is the one that is read.
+ * repo's publish step; the copy on THIS VM is the one THIS host reads (since
+ * 2026-09-13 the publish step writes the canonical front's copy as well, and
+ * the two are kept forward-only independently).
  *
  * Newest by mtime, not by parsed version: a republished build of the same
  * version must win, and a version string is not an ordering this host is
@@ -568,16 +607,19 @@ export function safeArtifactName(name: string): boolean {
 
 /**
  * THE ALLOWLIST. A MIRROR of the route list in the xlant repo's
- * `packages/shared/src/contract.ts` (the two repos share no code, and the
- * relay mirrors this same list on its side) — **change the contract and this
- * array together, in the same round**. Exported as data, and paired with the
- * predicate below, so `scripts/xlant-tests.ts` can pin the exact eight shapes
- * without standing up a server.
+ * `packages/shared/src/contract.ts` (the repos share no code, and the relay
+ * mirrors this same list on its side) — and, since 2026-09-13, of the
+ * canonical front's copy in the xlantai repo's `src/lib/xlant.ts` as well.
+ * **Change the contract and BOTH fronts together, in the same round**: a path
+ * that reaches one front and 404s at the other is a desktop that works or does
+ * not depending on which build it is running. Exported as data, and paired
+ * with the predicate below, so `scripts/xlant-tests.ts` can pin the exact
+ * eight shapes without standing up a server.
  *
- * Anchored at both ends on purpose. These are the ONLY relay paths reachable
- * from the public internet; everything else the relay serves is an INTERNAL
- * route (`/v1/device/issue`, `/v1/device/verify`, `/v1/status`,
- * `/v1/providers/refresh`) that only this host's server-side code may call,
+ * Anchored at both ends on purpose. These are the ONLY relay paths a front may
+ * forward; everything else the relay serves is an INTERNAL route
+ * (`/v1/device/issue`, `/v1/device/verify`, `/v1/status`,
+ * `/v1/providers/refresh`) that only a front's server-side code may call,
  * with the shared secret and without `X-XLAnt-Via: proxy`. An unanchored or
  * prefix-matching test would publish the token mint itself.
  *

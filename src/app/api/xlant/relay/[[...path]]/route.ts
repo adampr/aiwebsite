@@ -3,15 +3,28 @@
 // 2026-09-04 with desktop 0.2.1, which is re-signed and re-published with its
 // relay base and updater feed pinned to https://ai.xl.net. roleplay.xl.net has
 // carried nothing of XLAnt since 2026-09-04 — its copy of this route went with
-// the rest of the retirement that day, and this host is the only public origin
-// — see §5.22 and the xlant repo's docs/SETUP.md "Cutover (2026-09-04)".
+// the rest of the retirement that day — see §5.22 and the xlant repo's
+// docs/SETUP.md "Cutover (2026-09-04)".
 //
-// It adds the shared proxy secret and `X-XLAnt-Via: proxy` (the relay hard-
+// SINCE 2026-09-13 THIS HOST IS THE LEGACY FRONT, NOT THE ONLY ORIGIN.
+// XLAnt's canonical origin is https://xlant.ai, which serves a faithful port
+// of this route; this one keeps serving, unchanged, for every desktop in the
+// field that has not updated to a build pinned there, and for every technician
+// run already holding an ai.xl.net MCP url. Nothing is cut off. The HUMAN
+// surface (`/internal/xlant` and `/api/internal/xlant/*`) is not moving at
+// all this round. The retirement of THIS device lane is measured and later:
+// the xlant repo's docs/SETUP.md "Cutover to xlant.ai (2026-09-13)" carries
+// the trigger and the steps.
+//
+// It adds the shared proxy secret, `X-XLAnt-Via: proxy` (the relay hard-
 // rejects its INTERNAL routes when they carry that header, so a request that
-// arrives through here can never reach the token mint), forwards the caller's
-// own Authorization header when there is one, and streams bodies both ways.
-// Only the hello / incident / tool-bridge / MCP surface is reachable — the
-// allowlist lives in `@/lib/xlant` and mirrors the xlant repo's contract.
+// arrives through here can never reach the token mint) and `X-XLAnt-Front`
+// (which front served this request — the instrument the retirement decision
+// above is made from), forwards the caller's own Authorization header when
+// there is one, and streams bodies both ways. Only the hello / incident /
+// tool-bridge / MCP surface is reachable — the allowlist lives in
+// `@/lib/xlant` and mirrors the xlant repo's contract and the canonical
+// front's copy of the same list.
 //
 // TWO kinds of caller arrive here, and they authenticate differently:
 //   · the Windows desktop, with `Authorization: Bearer <device token>`, for
@@ -39,7 +52,12 @@ export const revalidate = 0;
 // enforce a function budget does not silently cut the long polls.
 export const maxDuration = 300;
 
-import { isXlantMcpPath, isXlantRelayPath, xlantConfig } from "@/lib/xlant";
+import {
+  XLANT_FRONT_HOST,
+  isXlantMcpPath,
+  isXlantRelayPath,
+  xlantConfig,
+} from "@/lib/xlant";
 
 // Cap BEFORE buffering: this route runs pre-auth (the relay authenticates
 // downstream), so an unauthenticated body must never be allowed to expand in
@@ -126,6 +144,14 @@ async function forward(
   const headers: Record<string, string> = {
     "X-XLAnt-Proxy-Secret": cfg.proxySecret,
     "X-XLAnt-Via": "proxy",
+    // WHICH FRONT served this request (2026-09-13). A fixed constant, never
+    // anything the caller sent — the dictionary is BUILT here rather than
+    // copied from the request, so a PC's own X-XLAnt-Front is not dropped, it
+    // is simply never read. The relay reads this only behind the proxy secret
+    // added above, shape-checks it, and records it on the device's row and in
+    // the journal; it is how "has every machine moved to xlant.ai yet?"
+    // becomes a question with an answer instead of a guess.
+    "X-XLAnt-Front": XLANT_FRONT_HOST,
   };
   const auth = req.headers.get("authorization");
   if (auth) headers["Authorization"] = auth;

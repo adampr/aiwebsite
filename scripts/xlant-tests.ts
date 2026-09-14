@@ -50,6 +50,15 @@
 //   · `verifyDeviceToken()`'s cache — positives cached, negatives and relay
 //     failures NOT cached, oldest-half eviction past the cap, a too-short
 //     token refused without a relay round-trip;
+//   · THE FRONT HEADER (2026-09-13, the origin move) — every relay call this
+//     host makes carries `X-XLAnt-Front: ai.xl.net`, on every allowlisted
+//     path, and a caller's own `X-XLAnt-Front` never survives the hop. XLAnt
+//     now has TWO fronts over one relay (the canonical xlant.ai and this one,
+//     the legacy), authenticating with the SAME secret, so this header is the
+//     only thing that tells the relay which one a device came through — and
+//     that measurement is what decides when this host's device lane may be
+//     retired. A PC that could name its own front would answer that question
+//     falsely;
 //   · and, live: forwarded vs withheld headers, the body caps, query-string
 //     preservation, upstream status pass-through, 502/504 when the relay is
 //     down or slow, the arming gate, and that the CSRF middleware lets an
@@ -91,6 +100,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   XLANT_DEVICE_KINDS,
+  XLANT_FRONT_HOST,
   XLANT_INSTALLER_RE,
   XLANT_MAC_ARCHES,
   XLANT_MAC_BUNDLE_RE,
@@ -1001,7 +1011,7 @@ function relayReset(
 // absent from the DOM RequestInit type.
 type StreamInit = RequestInit & { duplex: "half" };
 
-await leg("relay: our secret and Via are SET, the caller's are not forwarded", async () => {
+await leg("relay: our secret, Via and Front are SET, the caller's are not forwarded", async () => {
   relayReset();
   const res = await relayRoute.POST(
     new Request(`${U}/api/xlant/relay/v1/device/hello`, {
@@ -1014,6 +1024,11 @@ await leg("relay: our secret and Via are SET, the caller's are not forwarded", a
         // Spoofs a caller might try. None may reach the relay.
         "x-xlant-via": "caller-spoof",
         "x-xlant-proxy-secret": "SYNTHETIC-ATTACKER-VALUE",
+        // 2026-09-13: a PC that could name its own FRONT would make the
+        // retirement measurement say the fleet had moved to xlant.ai while
+        // none of it had — and the retirement is what switches this host's
+        // device lane off.
+        "x-xlant-front": "xlant.ai",
         cookie: "session=abc",
       },
     }),
@@ -1024,12 +1039,36 @@ await leg("relay: our secret and Via are SET, the caller's are not forwarded", a
   const h = relayCalls[0].headers;
   assert.equal(h["x-xlant-proxy-secret"], SECRET, "the secret must be OURS");
   assert.equal(h["x-xlant-via"], "proxy", "Via must be SET, not passed through");
+  assert.equal(
+    h["x-xlant-front"],
+    "ai.xl.net",
+    "this front names ITSELF, never what the caller claimed"
+  );
   assert.equal(h["authorization"], "Bearer synthetic-device-token-0001");
   assert.equal(h["content-type"], "application/json");
   assert.equal(h["cookie"], undefined, "no browser cookie may reach the relay");
   assert.equal(relayCalls[0].body, '{"a":1}');
   assert.equal(relayCalls[0].url, "/v1/device/hello");
   assert.equal(res.headers.get("cache-control"), "private, no-store");
+});
+
+await leg("relay: the front rides EVERY allowlisted path, and it is this host", async () => {
+  // The relay stamps the device's row from the hello and logs the front when
+  // an MCP bridge opens, so a front that only named itself on hello would
+  // leave every technician run unattributable. The value is the exported
+  // constant rather than a literal typed twice: the canonical front
+  // (xlant.ai, the xlantai repo) exports the same-named constant with its own
+  // hostname, and the two must not drift into different header sets.
+  assert.equal(XLANT_FRONT_HOST, "ai.xl.net");
+  assert.match(XLANT_FRONT_HOST, /^[a-z0-9.-]{1,80}$/, "the relay's own shape check");
+  for (const rel of ACCEPTED) {
+    relayReset();
+    await relayRoute.GET(new Request(`${U}/api/xlant/relay/${rel}`), ctx(rel));
+    assert.equal(relayCalls.length, 1, rel);
+    assert.equal(relayCalls[0].headers["x-xlant-front"], XLANT_FRONT_HOST, rel);
+    assert.equal(relayCalls[0].headers["x-xlant-via"], "proxy", rel);
+    assert.equal(relayCalls[0].headers["x-xlant-proxy-secret"], SECRET, rel);
+  }
 });
 
 await leg("relay: Cloudflare's country rides as X-XLAnt-Country, and nothing else does", async () => {

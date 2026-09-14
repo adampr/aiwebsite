@@ -2,16 +2,26 @@
 // XLAnt-x.y.z-<arm64|x64>-mac.zip | *.blockmap} — the electron-updater generic
 // feed (ARCHITECTURE.md §5.22). Moved here from roleplay.xl.net on 2026-09-04;
 // desktop 0.2.1 is re-signed and re-published with
-// `provider: generic, url: https://ai.xl.net/api/xlant/update`.
+// `provider: generic, url: https://ai.xl.net/api/xlant/update` — which is what
+// every build published before the 0.13.5 re-pin to xlant.ai still carries.
 //
 // ONE FEED, TWO PLATFORMS since contract 0.5.0. electron-updater picks its own
 // manifest by platform (`latest.yml` on Windows, `latest-mac.yml` on macOS) and
 // asks this same base URL for it, so the Mac build needed no new route and no
 // new env — only three more names through isXlantUpdateArtifact() below.
-// roleplay.xl.net has carried nothing of XLAnt since 2026-09-04, so this is
-// the only feed any desktop reaches and this VM's XLANT_ARTIFACTS_DIR is the
-// only published copy — see §5.22 and the xlant repo's docs/SETUP.md
-// "Cutover (2026-09-04)".
+//
+// TWO FEEDS SINCE 2026-09-13, and this is the LEGACY one. XLAnt's canonical
+// origin is https://xlant.ai, whose own copy of this route serves the same
+// files from its own XLANT_ARTIFACTS_DIR, and the xlant repo's release step
+// publishes every build to BOTH (binaries before manifests, forward-only on
+// each) for as long as this front stands. This feed is therefore what every
+// desktop published before that day still reads — a shipped installer
+// resolves its feed from its OWN bundled default, never from a setting, so a
+// new origin cannot be pushed to a PC that has not updated. Switching this off
+// before the fleet has moved is exactly how a machine gets stranded: see
+// §5.22 and the xlant repo's docs/SETUP.md "Cutover (2026-09-04)" for the
+// move that brought the lane here and "Cutover to xlant.ai (2026-09-13)" for
+// the measured retirement of it.
 //
 // Gated by the per-user DEVICE token, not by a session: the updater is a
 // background process inside the tray app and cannot carry a browser cookie.
