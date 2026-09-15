@@ -13,8 +13,8 @@
 //
 // TWO CLIENT KINDS SINCE 0.5.0, and they are separate all the way down: a
 // person with both machines holds a `windows` token AND a `mac` token, the
-// artifacts directory carries a Windows installer feed (`latest.yml`) beside a
-// macOS one (`latest-mac.yml`), and neither side can sign the other out.
+// artifacts directory carries a Windows installer beside a macOS bundle per
+// architecture, and neither side can sign the other out.
 //
 // ONE TOKEN PER COMPUTER SINCE 2026-09-08, AND AS MANY COMPUTERS AS A PERSON
 // HAS. Until this round the relay kept ONE active token per (email, kind), so
@@ -31,14 +31,11 @@
 // what this host's `/api/internal/xlant/devices/revoke` calls. NOTHING about
 // the two kinds changed; what changed is the count within a kind.
 //
-// THIS HOST WAS THE ONLY PUBLIC ORIGIN FROM 2026-09-04, AND IS THE LEGACY
-// FRONT SINCE 2026-09-13. XLAnt's canonical origin is now `https://xlant.ai`,
-// which serves its own copy of the DEVICE lane (that repo's
-// `src/lib/xlant.ts` and `src/app/api/xlant/**` — a faithful port of these
-// files). Nothing here was switched off and nothing is cut off: every desktop
-// in the field reads this host until it updates to a build pinned to
-// xlant.ai, in-flight technician runs keep the MCP url they were given, and
-// the HUMAN surface is not moving this round at all. What this host carries:
+// THIS HOST WAS THE ONLY PUBLIC ORIGIN FROM 2026-09-04, WAS THE LEGACY FRONT
+// FROM 2026-09-13, AND HAS CARRIED NO DEVICE LANE SINCE 2026-09-15. XLAnt's
+// canonical origin is `https://xlant.ai`, which serves the DEVICE lane (that
+// repo's `src/lib/xlant.ts` and `src/app/api/xlant/**`, a faithful port of what
+// used to live here). What this host carries now, and all it carries:
 //
 //   · HUMAN — the staff-gated page `/internal/xlant`, the build download
 //     (`/api/internal/xlant/download`, `?platform=mac&arch=…` for a Mac), the
@@ -48,49 +45,55 @@
 //     `POST /api/internal/xlant/devices/revoke`), all behind
 //     requireXlantStaff(). THESE STAY HERE: a mint is an act by a member of
 //     XL.net staff, authenticated by an XL.net session that lives on this
-//     host, and moving that surface is a separate round.
-//   · DEVICE — the authenticated relay passthrough
-//     (`/api/xlant/relay/*`, allowlisted below) and the electron-updater feed
-//     (`/api/xlant/update/*`, gated by verifyDeviceToken() and narrowed to
-//     release artifacts by isXlantUpdateArtifact()). These are the two the
-//     canonical front now also serves, and the two that are retired here when
-//     the fleet has moved — the trigger and the steps are the xlant repo's
-//     docs/SETUP.md "Cutover to xlant.ai (2026-09-13)".
+//     host, and moving that surface is a separate round — the shipping desktop
+//     still tells a person their token comes from
+//     `https://ai.xl.net/internal/xlant`.
+//   · DEVICE — GONE, 2026-09-15. `/api/xlant/relay/*` (the authenticated
+//     passthrough) and `/api/xlant/update/*` (the electron-updater feed) were
+//     deleted, and with them everything only they used: the passthrough
+//     allowlist, the front-host stamp, the update-manifest names and the
+//     device-token verify cache. Nothing under `/api/xlant` exists on this
+//     host any more, and a request for one is a plain 404 from Next.
 //
-// THE MOVE IS COMPLETE. The previous note here said not to move the device
-// lane without re-signing and re-publishing the desktop, because the shipped
-// installer pins its feed. That was paid: desktop 0.2.1 is re-signed with the
-// feed pinned to https://ai.xl.net/api/xlant/update and rewrites a persisted
-// roleplay origin at startup. The cutover ran in two phases on 2026-09-04
-// because a 0.2.0 build resolves its feed from its OWN bundled default and one
-// 0.2.0 desktop was still in service, so roleplay held a bridge until that PC
-// updated. It updated (measured: it fetched 0.2.1 through roleplay's feed at
-// 15:24Z, has talked only to ai.xl.net since 15:28Z, and roleplay saw no XLAnt
-// device traffic after 15:24:33Z), and the bridge came down the same day:
-// roleplay.xl.net has carried nothing of XLAnt since 2026-09-04 — branch
-// `xlant-retire` (7c01af4) is deployed there, its XLANT_* env lines are gone
-// and its /opt/xlant-artifacts is removed.
+// THE RETIREMENT WAS A MEASUREMENT, NOT A GUESS — which is the whole reason
+// the front header existed. From 2026-09-13 every relay call this front made
+// carried `X-XLAnt-Front: ai.xl.net` (the canonical front sends its own name),
+// and the relay recorded it per device (`devices.front_host`) and per
+// technician run (`incidents.mcp_origin`). Measured against the relay's own
+// database at 2026-09-15T18:30Z: ZERO active devices on
+// `front_host='ai.xl.net'`. Every workstation in the field reports 0.13.6 or
+// later and `front_host='xlant.ai'`; the last holdout, XL-LPT-JON1, updated to
+// 0.13.9 and flipped at 18:30Z. A shipped installer resolves its feed from its
+// OWN bundled default rather than from a setting — a new origin cannot be
+// pushed to a PC that has not updated — so a count of what the fleet actually
+// talks to was the only honest trigger for this deletion. The xlant repo's
+// docs/SETUP.md "Cutover to xlant.ai (2026-09-13)" is the runbook; do not
+// restate its steps here.
 //
-// So ONE NSG /32 rule opens TCP 8403 to a web host (222, this host; 221 for
-// roleplay was deleted), and /opt/xlant-artifacts on this VM is A published
-// copy of the builds — latestInstaller(), latestMacBundle() and the update
-// feed read it directly and have never proxied anywhere. It stopped being the
-// ONLY one on 2026-09-13: the release step now writes this host's directory
-// and the canonical front's, both forward-only, for as long as this front
-// stands. The xlant repo's docs/SETUP.md "Cutover (2026-09-04)" section is the
-// runbook for the move that brought the lane here, and "Cutover to xlant.ai
-// (2026-09-13)" is the one for the move away from it; do not restate either's
-// steps here.
+// WHAT DID NOT GO WITH IT, and why each stays:
 //
-// THE FRONT HEADER (2026-09-13). The passthrough below now tells the relay
-// WHICH FRONT served each request, so "has every machine moved off this host
-// yet?" is a question with an answer. See XLANT_FRONT_HOST.
+//   · /opt/xlant-artifacts on this VM. latestInstaller() and latestMacBundle()
+//     read that directory directly for the staff download and have never
+//     proxied anywhere; the xlant repo's release step keeps publishing the
+//     INSTALLERS to it (it stopped publishing this host's update MANIFESTS —
+//     `latest.yml` / `latest-mac.yml` — on the same day, because with the feed
+//     gone nothing here reads them). Nothing was deleted from the directory:
+//     the manifests already there are simply leftovers now, and the staff
+//     readers have never looked at them.
+//   · The NSG /32 rule opening TCP 8403 from this web host (222; 221 for
+//     roleplay was deleted on 2026-09-04, when roleplay.xl.net stopped
+//     carrying any of XLAnt). The mint, the sign-out, the computer list and
+//     the Mac probe all call the relay's INTERNAL lane from this host's server
+//     side, so the path to the relay is still load-bearing.
+//   · All three env vars. See the arming gate below — this module is
+//     all-or-nothing, and dropping one would 503 the staff page's every route.
 //
 // ARMING GATE. All three env vars must be present (XLANT_RELAY_URL,
 // XLANT_PROXY_SHARED_SECRET ≥16 chars, XLANT_ARTIFACTS_DIR) or xlantConfig()
-// returns null and all FOUR route handlers answer 503 — the staff page itself
-// still renders, with every download reading "not published yet", because a
-// page that 500s or 503s tells a member of staff nothing they can act on. Half-configured is not a
+// returns null and all FOUR staff route handlers answer 503 — the staff page
+// itself still renders, with every download reading "not published yet",
+// because a page that 500s or 503s tells a member of staff nothing they can
+// act on. Half-configured is not a
 // state this feature has: guessing a relay URL would send a staff email
 // address to whatever answers at the guess.
 
@@ -99,22 +102,6 @@ import { join } from "node:path";
 import { readSession, type SessionData } from "@aicompany/core/auth/session";
 import { siteConfig } from "site.config";
 import { isRfpDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
-
-/** The hostname this front puts on every relay call as `X-XLAnt-Front`
- * (2026-09-13, the origin move). Since that day XLAnt has TWO fronts in front
- * of one relay — the canonical `xlant.ai` and this one, the legacy — and the
- * relay cannot otherwise tell them apart: both authenticate with the same
- * shared secret. It records the value per device (on every hello) and per
- * technician run, which is what makes the retirement of this host's device
- * lane a measurement rather than a guess.
- *
- * A CONSTANT, never anything a caller sent. The relay reads the header only
- * behind the proxy secret, which is added on the hop below and which no caller
- * has, and it shape-checks what arrives (lower-case, `^[a-z0-9.-]{1,80}$`); a
- * PC that could name its own front would make the measurement say the fleet
- * had moved while none of it had. The canonical front exports the same-named
- * constant with its own hostname — see the xlantai repo's src/lib/xlant.ts. */
-export const XLANT_FRONT_HOST = "ai.xl.net";
 
 export interface XlantConfig {
   relayUrl: string;
@@ -209,10 +196,13 @@ export async function requireXlantStaff(): Promise<
  * relay's own VNet) reaches the same port too, with the same secret.
  *
  * Note what is NOT sent: `X-XLAnt-Via: proxy`. The relay hard-rejects its
- * internal routes when they carry that marker, and the passthrough sets it —
- * so the marker is exactly what separates this lane from that one. Nor
- * `X-XLAnt-Front`: that header describes a request a DEVICE made through a
- * front, and this is not one. */
+ * internal routes when they carry that marker, and a front's device
+ * passthrough sets it — so the marker is exactly what separates this lane from
+ * that one. It still matters here with this host's passthrough gone
+ * (2026-09-15): the marker is the relay's rule, not this file's, and the
+ * canonical front's passthrough goes on setting it. Nor is `X-XLAnt-Front`
+ * sent: that header describes a request a DEVICE made through a front, and
+ * this is not one. */
 export async function relayInternal(
   cfg: XlantConfig,
   path: string,
@@ -398,10 +388,10 @@ export function xlantDeviceSummaries(
  * so a stray path segment, a query, an `&` or a JSON fragment never reaches
  * the internal lane inside a body field.
  *
- * THE UNDERSCORE IS DELIBERATE and matches `[\w-]` in XLANT_RELAY_ALLOWED
- * below — this product's opaque ids (incident ids, tool call ids, bridge
- * tokens) are `[A-Za-z0-9_-]` strings, and a class that omitted `_` would 400
- * a Sign out button on ids the relay actually issues. What the class still
+ * THE UNDERSCORE IS DELIBERATE — this product's opaque ids (incident ids, tool
+ * call ids, bridge tokens) are `[A-Za-z0-9_-]` strings, matching the `[\w-]`
+ * the relay's own route shapes use, and a class that omitted `_` would 400 a
+ * Sign out button on ids the relay actually issues. What the class still
  * excludes is everything that could mean something somewhere else: no dot, no
  * slash, no `%`, no `&`, no whitespace. */
 export const XLANT_DEVICE_ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -463,7 +453,12 @@ export const XLANT_MAC_BUNDLE_RE =
  * The artifacts dir lives OUTSIDE the web root and is filled by the xlant
  * repo's publish step; the copy on THIS VM is the one THIS host reads (since
  * 2026-09-13 the publish step writes the canonical front's copy as well, and
- * the two are kept forward-only independently).
+ * the two are kept forward-only independently). Since 2026-09-15 this host's
+ * copy receives INSTALLERS ONLY — with the update feed gone, nothing here
+ * reads `latest.yml` / `latest-mac.yml`, and the release step no longer
+ * publishes them to this VM. The manifests already in the directory were left
+ * where they are; they match neither pattern below, so they were never
+ * candidates anyway.
  *
  * Newest by mtime, not by parsed version: a republished build of the same
  * version must win, and a version string is not an ordering this host is
@@ -586,134 +581,28 @@ export function xlantDownloadRequest(
 }
 
 /**
- * Serve a file from the artifacts dir, refusing traversal and odd names. For
- * the staff download it is defence in depth (that name comes from readdir(),
- * not from a request); for the update feed it is the ACTUAL boundary — the
- * electron-updater asks for `latest.yml`, `XLAnt-Setup-x.y.z.exe` and
- * `<exe>.blockmap` by name, and the name arrives from the network. A single
- * path segment only: the leading class rejects a name starting with `.` or
- * `-`, the body class admits no `/` (so a multi-segment catch-all joined with
- * "/" can never pass), and the explicit `..` test is kept because a future
- * loosening of either class must not silently re-open traversal.
+ * Serve a file from the artifacts dir, refusing traversal and odd names.
+ *
+ * It guards ONE caller now (the staff download), where it is defence in depth:
+ * that name comes from readdir(), not from a request. Until 2026-09-15 it was
+ * also the ACTUAL boundary of the update feed, whose names arrived from the
+ * network — that feed is gone, and this check is deliberately NOT relaxed to
+ * match, because an artifacts directory an operator writes by hand is exactly
+ * where a name worth refusing turns up. A single path segment only: the
+ * leading class rejects a name starting with `.` or `-`, the body class admits
+ * no `/` (so a joined multi-segment path can never pass), and the explicit
+ * `..` test is kept because a future loosening of either class must not
+ * silently re-open traversal.
  */
 export function safeArtifactName(name: string): boolean {
   return /^[\w][\w.-]*$/.test(name) && !name.includes("..");
 }
 
-// ---------------------------------------------------------------------------
-// The DEVICE lane (§5.22): what /api/xlant/relay/* may forward, and how
-// /api/xlant/update/* checks a device token.
-// ---------------------------------------------------------------------------
-
 /**
- * THE ALLOWLIST. A MIRROR of the route list in the xlant repo's
- * `packages/shared/src/contract.ts` (the repos share no code, and the relay
- * mirrors this same list on its side) — and, since 2026-09-13, of the
- * canonical front's copy in the xlantai repo's `src/lib/xlant.ts` as well.
- * **Change the contract and BOTH fronts together, in the same round**: a path
- * that reaches one front and 404s at the other is a desktop that works or does
- * not depending on which build it is running. Exported as data, and paired
- * with the predicate below, so `scripts/xlant-tests.ts` can pin the exact
- * eight shapes without standing up a server.
+ * What to put in `Content-Type` for a name the staff download has already
+ * accepted. Three answers and no sniffing:
  *
- * Anchored at both ends on purpose. These are the ONLY relay paths a front may
- * forward; everything else the relay serves is an INTERNAL route
- * (`/v1/device/issue`, `/v1/device/verify`, `/v1/status`,
- * `/v1/providers/refresh`) that only a front's server-side code may call,
- * with the shared secret and without `X-XLAnt-Via: proxy`. An unanchored or
- * prefix-matching test would publish the token mint itself.
- *
- * `[\w-]+` for ids and tokens: incident ids, tool call ids and MCP bridge
- * tokens are all opaque `[A-Za-z0-9_-]` strings, so no separator, no dot and
- * no `%2f` can hide a second path segment inside one.
- */
-export const XLANT_RELAY_ALLOWED: readonly RegExp[] = [
-  /^v1\/device\/hello$/,
-  // v0.7 (2026-09-06): the person's own credits for the settings card — what
-  // is left of this month's allowance, when it renews, and the run-rate
-  // projection. Device-authenticated on the relay; answers ONLY the token's
-  // own person. Exact path, like hello: no id segment, so nothing to widen.
-  /^v1\/device\/credits$/,
-  // v0.10 (2026-09-06): after the person confirms in Settings, the desktop asks
-  // for a SHORT-LIVED signed grant to put the machine back to a restore point
-  // the relay itself took before a fix run. Device-authenticated on the relay;
-  // the relay checks the point is that person's, on that machine. Exact path.
-  /^v1\/device\/restore-grant$/,
-  /^v1\/incident\/start$/,
-  /^v1\/incident\/[\w-]+\/(events|decision|chat|close)$/,
-  /^v1\/incident\/[\w-]+\/tools\/next$/,
-  /^v1\/incident\/[\w-]+\/tools\/[\w-]+\/result$/,
-  /^v1\/mcp\/[\w-]+$/,
-];
-
-/** The one allowlisted path that is NOT a device surface: the Streamable-HTTP
- * MCP endpoint Cursor's cloud VM calls. Those requests carry NO device
- * Authorization header — the per-run bridge token in the PATH is the whole
- * credential and the RELAY authenticates it (unknown ⇒ 404, ended run ⇒ 410),
- * so the passthrough forwards them as they arrive and adds nothing. */
-export const XLANT_MCP_PATH = /^v1\/mcp\/[\w-]+$/;
-
-/** `rel` is the catch-all segments joined with "/" — no leading slash, no
- * query string. */
-export function isXlantRelayPath(rel: string): boolean {
-  return XLANT_RELAY_ALLOWED.some((re) => re.test(rel));
-}
-
-/** True for the MCP endpoint, which the passthrough treats differently in one
- * respect only: a body with no declared length is buffered rather than
- * refused (see the relay route). */
-export function isXlantMcpPath(rel: string): boolean {
-  return XLANT_MCP_PATH.test(rel);
-}
-
-/** The updater's manifest filenames, fixed by electron-updater's generic
- * provider: one per platform, both in the same directory. A macOS client asks
- * for `latest-mac.yml` and never for `latest.yml`, and neither manifest names
- * the other's builds, so publishing a Mac release cannot disturb a Windows PC
- * mid-upgrade. */
-export const XLANT_UPDATE_MANIFEST = "latest.yml";
-export const XLANT_UPDATE_MANIFEST_MAC = "latest-mac.yml";
-
-/**
- * The update feed's RELEASE gate, which is a different question from
- * `safeArtifactName()`'s traversal gate and must not be confused with it. A
- * name can be perfectly safe and still be something this feed has no business
- * publishing: `latest.yml.part` is the publish step's half-written temp file
- * (electron-updater reading one would parse a truncated manifest), and
- * anything else an operator leaves in the directory — a note, a signing log, a
- * pruned build's leftovers — is not a release artifact either.
- *
- * Six shapes are served, all derived from the SAME two regexes the staff
- * downloads use, so a filename convention can only change in one place:
- *
- *   · `latest.yml`                          — the Windows manifest;
- *   · `XLAnt-Setup-<version>.exe`           — the Windows installer;
- *   · `XLAnt-Setup-<version>.exe.blockmap`  — its blockmap;
- *   · `latest-mac.yml`                      — the macOS manifest;
- *   · `XLAnt-<version>-<arm64|x64>-mac.zip` — a macOS bundle;
- *   · that name plus `.blockmap`            — its blockmap.
- *
- * The blockmap arm strips ONE `.blockmap` and re-asks: that is what refuses
- * `…exe.blockmap.blockmap` and a bare `.blockmap`, and it is why the suffix is
- * handled here rather than folded into either regex.
- *
- * Anything else is 404, and the route applies this AFTER the device-token
- * check so the feed never becomes a directory oracle for an anonymous caller.
- */
-export function isXlantUpdateArtifact(name: string): boolean {
-  if (name === XLANT_UPDATE_MANIFEST || name === XLANT_UPDATE_MANIFEST_MAC) {
-    return true;
-  }
-  const suffix = ".blockmap";
-  const base = name.endsWith(suffix) ? name.slice(0, -suffix.length) : name;
-  return XLANT_INSTALLER_RE.test(base) || XLANT_MAC_BUNDLE_RE.test(base);
-}
-
-/**
- * What to put in `Content-Type` for a name this feed (or the staff download)
- * has already accepted. Three answers and no sniffing:
- *
- *   · `.yml`      → `text/yaml`, the manifest electron-updater parses;
+ *   · `.yml`      → `text/yaml`, an electron-updater manifest;
  *   · `.zip`      → `application/zip`, the macOS bundle;
  *   · everything else (the `.exe` and both `.blockmap`s) →
  *     `application/octet-stream`.
@@ -722,77 +611,15 @@ export function isXlantUpdateArtifact(name: string): boolean {
  * a binary blockmap rather than a zip — so the `.zip` test must be an
  * endsWith on the WHOLE name, which it is.
  *
- * This lives beside the release gate rather than in the route because the two
- * answer the same question about the same name, and `scripts/xlant-tests.ts`
- * can then pin every pair without standing up a server.
+ * THE WHOLE TABLE IS KEPT, not narrowed to the two names the staff download
+ * can actually reach (2026-09-15, when the update feed that served the other
+ * four went). It is a total function of a filename and costs nothing; a
+ * narrowed one would answer `application/octet-stream` for a `.yml` the day
+ * something asked, which is a wrong answer where "no answer" was wanted.
+ * `scripts/xlant-tests.ts` pins every pair without standing up a server.
  */
 export function xlantArtifactContentType(name: string): string {
   if (name.endsWith(".yml")) return "text/yaml";
   if (name.endsWith(".zip")) return "application/zip";
   return "application/octet-stream";
-}
-
-// Device-token verification for the update feed, memoized per process so a
-// single upgrade (latest.yml, then the .exe, then the .blockmap) does not make
-// three relay round-trips. This cache is XLAnt's own; nothing else shares it.
-const verifyCache = new Map<string, { until: number }>();
-const VERIFY_TTL_MS = 5 * 60_000;
-const VERIFY_CACHE_MAX = 500;
-
-/**
- * Is `token` an ACTIVE XLAnt device token? Asked of the relay's internal
- * `POST /v1/device/verify` (200 ⇒ active), through a cache that stores
- * **positives only**:
- *
- *   · a negative result is not cached, because caching it would let a stream
- *     of garbage tokens evict real entries, and — the case that matters —
- *     would lock a genuine token out for the whole TTL after one transient
- *     relay blip mid-download;
- *   · a relay that throws (timeout, DNS, refused) is a negative for THIS
- *     request and is likewise not remembered, so the next request re-asks;
- *   · when the map passes VERIFY_CACHE_MAX entries the OLDEST HALF is evicted
- *     (Map preserves insertion order) rather than the whole map flushed, so a
- *     burst cannot sign every device out at once.
- *
- * The short-token test runs BEFORE any network call: a token shorter than 20
- * characters is not a shape the relay ever mints, and an empty
- * `Authorization: Bearer` must not cost a relay round-trip.
- */
-export async function verifyDeviceToken(
-  cfg: XlantConfig,
-  token: string
-): Promise<boolean> {
-  if (!token || token.length < 20) return false;
-  const hit = verifyCache.get(token);
-  if (hit && hit.until > Date.now()) return true;
-  let ok = false;
-  try {
-    const res = await relayInternal(cfg, "/v1/device/verify", { token });
-    ok = res.ok;
-  } catch {
-    ok = false;
-  }
-  if (ok) {
-    if (verifyCache.size > VERIFY_CACHE_MAX) {
-      let toDrop = Math.floor(verifyCache.size / 2);
-      for (const key of verifyCache.keys()) {
-        if (toDrop-- <= 0) break;
-        verifyCache.delete(key);
-      }
-    }
-    verifyCache.set(token, { until: Date.now() + VERIFY_TTL_MS });
-  }
-  return ok;
-}
-
-/** Live entry count — for `scripts/xlant-tests.ts` and operator diagnostics.
- * Nothing in the request path reads it. */
-export function xlantVerifyCacheSize(): number {
-  return verifyCache.size;
-}
-
-/** Drop every memoized positive. Used by the tests to isolate legs; in
- * production the TTL and the eviction are the only things that empty it. */
-export function resetXlantVerifyCache(): void {
-  verifyCache.clear();
 }

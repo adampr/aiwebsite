@@ -25,6 +25,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-15 §5.22 THIS HOST'S XLANT DEVICE LANE IS DECOMMISSIONED; THE STAFF PAGE STAYS. The retirement trigger written down on 2026-09-13 fired. Measured against the relay's own database at 2026-09-15T18:30Z (`xlant-relay-ctl db`): ZERO active devices with `front_host='ai.xl.net'` — every workstation in the field reports 0.13.6 or later and `front_host='xlant.ai'`, the last holdout XL-LPT-JON1 (jonathan@xl.net) having updated to 0.13.9 and flipped at 18:30Z. That count is what the `X-XLAnt-Front` header was added for, because a shipped installer resolves its feed from its OWN bundled default and no origin can be pushed to a PC that has not updated. DELETED: `src/app/api/xlant/relay/[[...path]]/route.ts` and `src/app/api/xlant/update/[[...path]]/route.ts` (the whole `src/app/api/xlant` tree), and from `src/lib/xlant.ts` everything only they used — `XLANT_RELAY_ALLOWED`/`isXlantRelayPath()`, `XLANT_MCP_PATH`/`isXlantMcpPath()`, `XLANT_FRONT_HOST`, `XLANT_UPDATE_MANIFEST`/`XLANT_UPDATE_MANIFEST_MAC`/`isXlantUpdateArtifact()`, and `verifyDeviceToken()` with `xlantVerifyCacheSize()`/`resetXlantVerifyCache()` and the positives-only memo. Deadness was determined by grepping every symbol for remaining callers, NOT by which section of the file it sat in: `safeArtifactName()` and `xlantArtifactContentType()` stay because `/api/internal/xlant/download` calls both, and neither was narrowed to the names the staff download can now reach. KEPT AND UNBROKEN, deliberately: `/internal/xlant` and all four `/api/internal/xlant/*` routes — the shipping desktop still tells a person their token comes from https://ai.xl.net/internal/xlant (the xlant repo's `apps/desktop/src/renderer/connectLogic.ts` CONNECT_HELP) — and ALL THREE ENV VARS, because `xlantConfig()` is all-or-nothing and the mint, the list, the sign-out and the download each need it. `deploy/nginx.d/xlant-device.conf` is KEPT too, comments rewritten: `/api/xlant/*` is now a Next 404, but nginx buffers a body before the app sees the path and the server-level ceiling is 110 m, so the 2 m cap still ends an anonymous flood at a publicly known path — and `setup-vm.sh` rsyncs that directory with `--delete`, so deleting the file here would take the cap off the VM. `scripts/xlant-tests.ts` lost the legs that executed the two deleted handlers (the allowlist, the MCP split, the release gate, the feed's traversal/token/body legs, the verify cache, the device half of the middleware leg and the device routes' source leg) and was renumbered 1-7 with no holes; those invariants live in the xlantai repo's tests with the lane they describe. `.env.example`'s XLAnt block and the §10 rows now say the manifests are no longer published here (INSTALLERS ONLY) — nothing was deleted from `/opt/xlant-artifacts`, and the stale manifests there match neither filename pattern the staff download uses, which the test fixture reproduces on purpose. NO env var removed, NO schema, NO migration, NO staff-surface change. Verified: `npx tsc --noEmit` (clean — after `npx next typegen`, because the gitignored `.next/types/validator.ts` still named the two deleted routes) and `npm run test:xlant` (37 legs, all passing). WORKING TREE ONLY — not committed, not deployed; no production VM was contacted.
+
 Last verified against code: 2026-09-13 §5.22 XLANT'S CANONICAL ORIGIN IS NOW xlant.ai, AND THIS HOST IS THE LEGACY FRONT. The device lane did not move, it was COPIED: the xlantai repo (dev box xl-adamdev-app, behind Cloudflare tunnel 42b38fb2) now serves a faithful port of `/api/xlant/relay/[[...path]]` and `/api/xlant/update/[[...path]]` on top of its own `src/lib/xlant.ts`, against the SAME relay (`http://52.162.163.88:8403` over the VNet) with the SAME `XLANT_PROXY_SHARED_SECRET`. This host keeps serving both routes unchanged, and keeps the WHOLE HUMAN SURFACE (`/internal/xlant`, the mint, the downloads, "Your computers") — a mint is an act by a member of XL.net staff with an XL.net session, and moving that is a separate round. Nothing is cut off: a shipped desktop resolves its feed from its OWN bundled default, so every build published before the xlant repo's 0.13.5 re-pin reads THIS feed until it updates, and a technician run already holding an `ai.xl.net` MCP url keeps it. WHAT CHANGED HERE, in code: one header. The passthrough now sends `X-XLAnt-Front: ai.xl.net` (the exported constant `XLANT_FRONT_HOST` in `src/lib/xlant.ts`; the canonical front sends `xlant.ai` from the same-named constant of its own) on every relay call. The relay reads it ONLY behind the proxy secret, shape-checks it (`^[a-z0-9.-]{1,80}$`) and records it per device (`devices.front_host`) and per run (`incidents.mcp_origin`), which is what turns "has the fleet moved?" into a query instead of a guess — and that measurement is the retirement trigger for this host's device lane (the xlant repo's docs/SETUP.md "Cutover to xlant.ai (2026-09-13)" carries it; it is NOT executed and no route is retired today). A caller's own `X-XLAnt-Front` cannot survive the hop for the same reason its `X-XLAnt-Proxy-Secret` cannot: the header dictionary is BUILT, never copied from the request. Also corrected here: `/opt/xlant-artifacts` on this VM is no longer the only published copy of the builds (the release step writes the canonical xlant.ai host's directory FIRST and this VM's second, forward-only on each), and NSG rule 222 is no longer the only path to :8403 (the dev box sits in the relay's own VNet). Pinned in `scripts/xlant-tests.ts` section 8: the front header on every allowlisted path, and a caller's spoofed one never forwarded.
 
 Last verified against code: 2026-09-11 (§7/§9.1/§9.7 registry seed pre-pass, re-verified against the code; the 2026-09-10 round recorded below is otherwise unchanged) BRAIN PIN v1.150 `00d6c54` -> v1.152 `fba6b12` (annotated tag v1.152; NEVER xldev main, whose five untagged commits also report "v1.152" at build `132739980893` against the tag's canonical `210f3f3d9893` — the v1.149 collision shape) + THE MODEL-REGISTRY DEPLOY STOMP CLOSED: the fleet port of roleplay `c864725` (2026-09-09), same day as itsupportchicago and topmspnearme. Why: the blog `writer-model-flapping` WARN is a TRUE detection of a brain ROUTING-head event (aicompany `BlogWarningsHistory.md` §7.40, C3 routing sub-kind; mailed on roleplay 09-09 and itsupportchicago 09-10) with two upstream causes — a band-tie `json_completion` seat that re-ranks on drift alone (xldev #831 v1.152 SEAT HYSTERESIS holds it: on a PASS-gated, non-latency_critical exit the latest successful `router_v2` head keeps the seat while it clears every gate, trails the raw winner by <= 0.05 and costs <= x1.5; `/v1/model-routing` gains a per-task `seat {incumbent, incumbentAt, held, rawWinner, lead, why}`) and every deploy STOMPING brain-api's runtime `packages/brain/data/model-registry.json` with the committed dev snapshot (this host's rsync `--delete`; the reverted file reads stale, so the running brain-api refreshed within 30 s and re-promoted from it — the `aiwebsite.stage` copy's `updated_at` 2026-09-08T16:13:38Z is that deploy day's refresh). This host's head history was not separately measured. The span also carries v1.151 #829 (session history + `working_state` scoped to the envelope's requester, anonymous rows kept — this host's web chat threads on them; a new `storeMessages:false` field this host does not send) and #830 (file-backed private memory, OFF unless `BRAIN_MEMORY_FILES_DIR` is set: 0 such keys in the dev and VM `.env`, measured), plus `8552dad` (heads-baseline regen) and upstream `de82f8f` (a committed registry refresh that by this change no longer reaches the VM). ENV-NEUTRAL, verified from the xldev diff (`.env.example` adds two commented-out #830 keys only; lockfile = workspace version strings; no DDL). HOST SIDE: `deploy/rsync-excludes.txt` lists the registry + its `.tmp` (unanchored like the `.freeze` line; dry-run proof against the rendered `deploy.sh:401-464`/`stage-build.sh:159-168` exclude code: HEAD's list ships the file and `--delete` removes the `.tmp`, the new list does neither, `measured-ttft.json` still ships); `scripts/deploy-safe.sh` gains section 6b, a REGISTRY SEED PRE-PASS (§7 "Model registry = VM-owned runtime state", §9.7), the ONE VM read in the wrapper that refuses on failure; `scripts/deploy-safe-tests.sh` 92 -> 129 assertions (the stub ssh now runs the wrapper's REAL remote bodies against a fake app dir). Measured before the change: VM registry `updated_at` 2026-09-10T16:17:18Z, 22 `auto_promote` events, a SUPERSET of the committed v1.152 copy (664 vs 663 models, identical 54 routable / 71 curated), so withholding the committed copy loses nothing at this pin. Expected post-deploy brain build = the canonical `210f3f3d9893` (this host's v1.150 already reports its canonical `d73f7c112830`: rsync `--delete` leaves no zombie source files, unlike the two gcloud-iap hosts). No env, schema, route, unit or rendered-template change. **2026-09-11 — THE SEED PRE-PASS PORTED TO THE FIXED REFERENCE.** `scripts/deploy-safe.sh` section 6b was the UNFIXED first draft of a block that `deploy/deploy-itsc.sh` and `deploy/deploy-tmnm.sh` (byte-identical on the two gcloud-iap hosts) had already had hardened by a refuting panel on 2026-09-10. Seven defects closed, all of them proven there, none of them re-derived here: the seed now comes from the repo's COMMITTED PIN (`git rev-parse HEAD:packages/brain` then `git -C packages/brain cat-file blob <pin>:data/model-registry.json`) rather than the submodule's checked-out HEAD — which on this host is off the pin RIGHT NOW (pin `00d6c54` = 69 curated / 445,949 bytes; checkout `fba6b12` = 71), so the draft would have seeded a registry the repo does not pin — and is VALIDATED as a registry (>= 10 curated rows by brain's own rule) before it is hashed, with sha256("") `e3b0c442…b855` and any non-hex/short hash refused, closing the path where an unreadable blob hashed empty, an empty stream "verified", and a 0-byte registry got linked and rewritten feed-only; the probe CLASSIFIES present-valid / present-degenerate / absent with the same predicate run on the VM and REFUSES loudly on degenerate with the re-seed steps instead of preserving it for ever; every remote call is time-bounded (`vm_ssh_bounded`, 90 s x 3 probe / 180 s x 3 push) and retried, which is safe because `ln -T` never replaces a path and refuses to link INTO a directory; a lost push answer says the VM MAY OR MAY NOT hold the file instead of "nothing was placed"; and the probe sweeps `.model-registry.json.seed.*` temps older than 10 minutes on the live and `.stage` trees. ONE DELIBERATE DEVIATION from the reference, which this host forces: the legacy `sshpass` transport (`--allow-sshpass`, still advertised in `deploy/site-deploy.env`) now SKIPS the pre-pass with a loud WARN naming the manual seed command, because the draft's blanket refusal on "ssh-key pre-flight not ready" broke that break-glass path and speaking sshpass would mean handling `AIWEBSITE_PW`, which this wrapper deliberately never touches; an ssh-key transport that is merely not ready still refuses. §7 gains the full contract plus the ROLLBACK story (re-pin to `00d6c54`, KEEP the exclude; brain-api runs from SOURCE, which lands at step 3's rsync BEFORE the cutover bracket, so a post-copy failure is HALF-SHIPPED even though `deploy.sh`'s banner says production was not touched). `scripts/deploy-safe-tests.sh` 129 -> 183 assertions, still hermetic (3.8 s, no VM, no network); the fixture's brain "submodule" now carries three different registries so the pin-vs-HEAD-vs-working discrimination is real. WORKING TREE ONLY — not committed, not deployed; the VM was never contacted, so the VM-side half of the block (jq present, `ln -T` behaviour under the real deploy user, the sweep) is covered only by the stub harness.
@@ -2062,7 +2064,7 @@ match the redirect URIs registered with Google/Microsoft).
 | `POST /api/auth/sms-prompt` | `createSmsPromptEventHandler` · `channels/texting` | §5.10 |
 | `POST /api/internal/track` | `createTrackHandler` · `tracking/track-api` | §5.6 |
 | `GET/POST /api/internal/issues` | `createIssuesHandler` · `issues/api` (module §5.15, v1.30) — issue-ledger ingest/read; fail-closed on `ISSUE_TRACKER_SECRET`. Written by this VM's watchdog drain over loopback, and by the dev-box synth sweep + `issues.mjs` over public HTTPS | §6 |
-| `src/proxy.ts` (Next 16 proxy convention, Node runtime) | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout`, `/api/governance`, `/api/work`, `/api/rfp` (§5.17), `/api/roadmap` (§5.18), `/api/workshop` (§5.10), and `/api/internal/xlant` (§5.22)**. `/api/xlant` (the §5.22 DEVICE lane) is deliberately EXCLUDED — its callers send no browser `Origin`, so a CSRF check would refuse every device POST | §5.6 |
+| `src/proxy.ts` (Next 16 proxy convention, Node runtime) | `createTrackingMiddleware(siteConfig, {protectedPrefixes})` — the module's five default CSRF prefixes **plus the host's `/api/checkout`, `/api/governance`, `/api/work`, `/api/rfp` (§5.17), `/api/roadmap` (§5.18), `/api/workshop` (§5.10), and `/api/internal/xlant` (§5.22)**. `/api/xlant` is deliberately EXCLUDED and stays so — it was the §5.22 DEVICE lane, whose callers sent no browser `Origin` (a CSRF check would have refused every device POST); the lane was decommissioned on 2026-09-15 and both route files deleted, so nothing answers there now | §5.6 |
 | `GET/POST /api/admin/messages` | `createAdminMessagesHandler` · `admin/api` | §5.6 |
 | `POST /api/admin/mailbox/send` | `createAdminMailboxSendHandler` · `admin/api` | §5.6 |
 | `GET/POST /api/admin/knowledge/refresh` | `createAdminKnowledgeRefreshHandler` · `admin/api` (wrapper adds `runtime = "nodejs"`) | §5.6 |
@@ -11136,7 +11138,7 @@ rather than hardcoded, so a file added to the lane later cannot fall outside
 the scans that keep a real colleague's address out of a public repository.
 
 
-### 5.22 XLAnt — `/internal/xlant` + `/api/internal/xlant/*` (staff-gated) + the DEVICE lane `/api/xlant/relay/*` + `/api/xlant/update/*`
+### 5.22 XLAnt — `/internal/xlant` + `/api/internal/xlant/*` (staff-gated). The DEVICE lane `/api/xlant/relay/*` + `/api/xlant/update/*` was DECOMMISSIONED here on 2026-09-15
 
 **What XLAnt is.** A separate product in a separate repo (`adampr/xlant`,
 whose `ARCHITECTURE.md` is the authority for the relay, the desktop and
@@ -11184,10 +11186,12 @@ ai.xl.net carries every XLAnt surface a person or a PC reaches, and carried
 every new device until the origin move. Two lanes:
 
 - the **HUMAN** lane — the staff-gated page `/internal/xlant`, the installer
-  download and the device-token mint, all behind `requireXlantStaff()`;
+  download and the device-token mint, all behind `requireXlantStaff()`. **This
+  is what is left here;**
 - the **DEVICE** lane — the allowlisted streaming passthrough
   `/api/xlant/relay/*` and the electron-updater feed `/api/xlant/update/*`,
   authenticated by the credential the caller carries rather than by a session.
+  **Decommissioned on 2026-09-15** (see below); `xlant.ai` serves it.
 
 The device lane moved here from **roleplay.xl.net** on 2026-09-04. The note
 that used to sit in `src/lib/xlant.ts` — *do not move the device lane without
@@ -11230,11 +11234,54 @@ until it updates, and a technician run already holding an `ai.xl.net` MCP url
 keeps it. The whole HUMAN surface stays here for now (the mint needs an XL.net
 staff session, which lives on this host); moving it is a separate round.
 
-One thing changed in this host's code for it: the passthrough now sends
+One thing changed in this host's code for it: the passthrough sent
 `X-XLAnt-Front: ai.xl.net` (`XLANT_FRONT_HOST`) on every relay call, so the
-relay can record which front each device and each run came through. That
-measurement is the retirement trigger for this host's device lane, and the
-retirement is NOT executed: no route here is switched off today.
+relay could record which front each device and each run came through. That
+measurement was the retirement trigger for this host's device lane — and on
+2026-09-15 it fired.
+
+**THE DEVICE LANE IS DECOMMISSIONED HERE — 2026-09-15. THE STAFF PAGE STAYS.**
+`src/app/api/xlant/relay/[[...path]]/route.ts` and
+`src/app/api/xlant/update/[[...path]]/route.ts` are DELETED, and with them
+everything in `src/lib/xlant.ts` that only they used: `XLANT_RELAY_ALLOWED` /
+`isXlantRelayPath()`, `XLANT_MCP_PATH` / `isXlantMcpPath()`,
+`XLANT_FRONT_HOST`, `XLANT_UPDATE_MANIFEST` / `XLANT_UPDATE_MANIFEST_MAC` /
+`isXlantUpdateArtifact()`, and `verifyDeviceToken()` with its positives-only
+memo (`xlantVerifyCacheSize()`, `resetXlantVerifyCache()`). Nothing under
+`/api/xlant` answers on this host any more; `xlant.ai` has served that lane
+since 2026-09-13 and is now the only place it lives.
+
+**THE TRIGGER, MEASURED.** Read from the relay's own database at
+**2026-09-15T18:30Z** (`xlant-relay-ctl db`): **ZERO active devices with
+`front_host='ai.xl.net'`**. Every workstation in the field is on **0.13.6 or
+later** and reports `front_host='xlant.ai'`; the last holdout, **XL-LPT-JON1**
+(jonathan@xl.net), updated to 0.13.9 and flipped at 18:30Z. That count is the
+whole reason the front header was added on 2026-09-13: a shipped installer
+resolves its feed from its OWN bundled default rather than from a setting, so
+no origin can be pushed to a PC that has not updated, and nothing but a count
+of what the fleet actually talks to could say the move was finished. The owner
+authorised the decommission on that measurement.
+
+**WHAT STAYS, and it is the half a person touches.** The staff-gated page
+`/internal/xlant`, the installer download, the device-token mint, the computer
+list and the sign-out — `src/app/internal/xlant/*` and
+`src/app/api/internal/xlant/*` — are untouched and must keep working: the
+SHIPPING desktop still tells a person "Your token from
+`https://ai.xl.net/internal/xlant`" (`apps/desktop/src/renderer/connectLogic.ts`,
+`CONNECT_HELP`, in the xlant repo). **All three env vars stay set** —
+`xlantConfig()` is all-or-nothing, the mint and the computer list call the
+relay's INTERNAL lane through `relayInternal()` / `relayInternalGet()`, and the
+download streams from `XLANT_ARTIFACTS_DIR` — so dropping any one of them 503s
+the whole staff surface. What the release step stopped publishing here is the
+update MANIFESTS (`latest.yml`, `latest-mac.yml`): nothing on this host reads
+them now. INSTALLERS keep arriving, because the staff download picks the newest
+one off this VM's own disk. Nothing was deleted from `/opt/xlant-artifacts`.
+
+Everything below this line that describes the device lane in the present tense
+describes what this host served **until 2026-09-15**; it is kept because the
+reasoning (the allowlist mirror, the pre-auth body caps, the verify cache) is
+what the canonical front now carries, and because a decommission is easier to
+audit against the thing it removed.
 
 The **runbooks are the xlant repo's `docs/SETUP.md`, sections "Cutover
 (2026-09-04)"** (the move that brought the lane here) **and "Cutover to
@@ -11263,8 +11310,11 @@ a copy here, which would drift.
   only; since 2026-09-13 it writes BOTH fronts' directories — the canonical
   xlant.ai host's FIRST and this VM's second, forward-only on each — so
   `/opt/xlant-artifacts` here is one of two published copies;
-  `latestInstaller()` and `/api/xlant/update/*` read it directly and have never
-  proxied to another host.
+  `latestInstaller()` read it directly then and reads it directly now, and this
+  host has never proxied artifacts to another. **Since 2026-09-15 this VM
+  receives INSTALLERS ONLY** — with `/api/xlant/update/*` gone, nothing here
+  reads `latest.yml` / `latest-mac.yml`, so the release step stopped writing
+  them to this front. Nothing already in the directory was removed.
 
 **Artifacts inventory (2026-09-04) — one of TWO published copies since
 2026-09-13.** The xlant repo's release step now writes the CANONICAL front's
@@ -11312,8 +11362,8 @@ unsigned app, so the Mac has no self-update. Both facts are stated in the Mac
 card's steps rather than discovered by a staffer who thinks the download is
 broken. A signed Mac lane is a follow-up, not this round.
 
-MEASURED CAVEAT, so the line above is not read as a promise: this feed serves
-**whole files only**. It answers 200 with the complete body and a
+MEASURED CAVEAT, so the line above is not read as a promise: this feed served
+**whole files only** while it existed here (retired 2026-09-15). It answers 200 with the complete body and a
 `Content-Length`, advertises no `Accept-Ranges`, and ignores a `Range` header
 (pinned in `scripts/xlant-tests.ts`), so no differential download can actually
 be served through it today — the fallback is the only path. That is byte-for-
@@ -11322,7 +11372,16 @@ not a regression, and keeping the old blockmap costs nothing and is what makes
 adding Range support worth doing later. Until that exists, every update is a
 full download.
 
-**nginx: identical timeouts, one tighter body cap.** The vhost is
+**nginx: identical timeouts, one tighter body cap — and the drop-in OUTLIVES
+the lane.** With both routes deleted (2026-09-15) `/api/xlant/*` is a 404 from
+Next, but nginx buffers a request body before the app sees the path, so the
+2 m cap still ends an anonymous multi-megabyte POST to a publicly known path at
+the cheapest place. The file is therefore KEPT: `setup-vm.sh` rsyncs
+`deploy/nginx.d/` with `--delete`, so removing it here would take the cap off
+the VM at the next deploy, and that is an ops decision rather than a
+consequence of deleting a route. Its comments were rewritten to say this; the
+`location` block itself is byte-identical. What follows is why it exists. The
+vhost is
 module-rendered from the stamped `deploy/` templates (§9 — never edit a
 rendered file), and it is not edited here. One committed **host drop-in** is
 added instead, `deploy/nginx.d/xlant-device.conf`, installed to
@@ -11360,7 +11419,9 @@ Everything else in the block is copied verbatim from `location /`
 lane's TIMEOUTS are identical to the rest of the site and to roleplay's; only
 the body ceiling is tighter.
 
-**Timing: what can actually cross the 100 s edge ceiling.** Cloudflare closes
+**Timing: what could actually cross the 100 s edge ceiling** (history from
+2026-09-15 — these calls reach xlant.ai now, whose own vhost carries the same
+shape). Cloudflare closes
 an idle response at **100 s** (524). That is the operative limit — tighter than
 nginx's `proxy_read_timeout 120s`, and far tighter than the route's 290 s
 `AbortSignal` or the relay's 240 s `TOOL_CALL_MAX_MS`, both of which are
@@ -11680,11 +11741,13 @@ including the race that matters: each candidate is `stat`ed with a
 `readdir()` and `stat()` cannot 500 the page, and size and mtime are read from
 the SAME stat so a second stat cannot observe a different file at that path.
 `safeArtifactName()` refuses traversal and odd names — defence in depth for
-the staff download (whose name comes from `readdir()`), and the ACTUAL
-boundary for the update feed, whose name arrives from the network: a single
-path segment, no leading `.` or `-`, no `/`, and an explicit `..` test kept so
-a future loosening of either character class cannot silently re-open
-traversal.
+the staff download (whose name comes from `readdir()`), and, until 2026-09-15,
+the ACTUAL boundary for the update feed, whose name arrived from the network: a
+single path segment, no leading `.` or `-`, no `/`, and an explicit `..` test
+kept so a future loosening of either character class cannot silently re-open
+traversal. It was NOT relaxed when the feed went: an artifacts directory
+written by an operator and a publish step is exactly where a name worth
+refusing turns up.
 
 `XLANT_DEVICE_KINDS = ["windows", "mac"]` mirrors `DEVICE_KINDS` in the relay's
 contract (the two repos share no code, so the two arrays move in the same
@@ -11711,14 +11774,21 @@ whole TTL after the relay is upgraded.
 `{platform:"windows"}`, `{platform:"mac", arch}` or a typed refusal — a pure
 function, so `scripts/xlant-tests.ts` pins every branch without a session
 (`readSession()` needs a Next request scope the test harness cannot enter).
-**`xlantArtifactContentType(name)`** is the one name→type table both download
-lanes use: `.yml` → `text/yaml`, `.zip` → `application/zip`, everything else
-(the `.exe` and both `.blockmap`s) → `application/octet-stream`. The `.zip`
-test is an `endsWith` on the WHOLE name, so `…-mac.zip.blockmap` is a blockmap
-and not a zip.
+**`xlantArtifactContentType(name)`** was the one name→type table both download
+lanes used and is now the staff download's alone: `.yml` → `text/yaml`, `.zip`
+→ `application/zip`, everything else (the `.exe` and both `.blockmap`s) →
+`application/octet-stream`. The `.zip` test is an `endsWith` on the WHOLE name,
+so `…-mac.zip.blockmap` is a blockmap and not a zip. It was deliberately NOT
+narrowed to the two answers the staff download can now reach: it is a total
+function of a filename and costs nothing, and a narrowed one would answer
+`application/octet-stream` for a `.yml` the day something asked.
 
-The DEVICE lane adds three things to the same module, all exported as data
-plus a predicate so `scripts/xlant-tests.ts` can pin them with no server:
+**The DEVICE lane's own exports are GONE (2026-09-15).** They were four, all
+exported as data plus a predicate so `scripts/xlant-tests.ts` could pin them
+with no server, and they were deleted with the two routes that used them —
+nothing else in this repo called any of them (grepped, symbol by symbol). They
+are described here as what was removed; the canonical front carries its own
+copies:
 
 - **`XLANT_RELAY_ALLOWED`** (a `readonly RegExp[]`) and
   **`isXlantRelayPath(rel)`** — the passthrough allowlist, eight anchored
@@ -11727,8 +11797,8 @@ plus a predicate so `scripts/xlant-tests.ts` can pin them with no server:
   MCP endpoint, the one path allowed to send a body with no declared length.
 - **`verifyDeviceToken(cfg, token)`** and its per-process memo, described
   under the update feed below (`xlantVerifyCacheSize()` and
-  `resetXlantVerifyCache()` exist for the tests and for operator diagnostics;
-  nothing in the request path reads them).
+  `resetXlantVerifyCache()` existed for the tests and for operator diagnostics;
+  nothing in the request path read them).
 - **`isXlantUpdateArtifact(name)`** — the update feed's RELEASE gate, which is
   a different question from `safeArtifactName()`'s traversal gate and is why
   both exist. A name can be perfectly safe and still be something the feed has
@@ -11752,23 +11822,28 @@ plus a predicate so `scripts/xlant-tests.ts` can pin them with no server:
 | `GET /api/internal/xlant/devices` | Staff-gated read of the caller's OWN computers — the ones holding a live token right now (2026-09-08). No parameters and no body: the identity is `relayInternalGet('/v1/device/list?email=' + encodeURIComponent(session.email.toLowerCase()))` and there is nothing a caller can say to name somebody else. Answers `{devices}`, each row re-read through the pure `xlantDeviceSummaries()` rather than relayed, so a field the relay grows or one it sends as the wrong type cannot reach the client island as an unrendered object; a row with no usable `deviceId` is DROPPED (that id is what Sign out posts back, so a row without one is a button that cannot work), an unrecognised `kind` is `null`, never `"windows"`, and **`expiresAt` is held to a stricter standard than its neighbours** — a string that does not parse as an instant becomes `null`, because that field is drawn as a countdown and a non-date would become a fabricated number of days. 503 unconfigured · **401 `unauthenticated`** / **403 `wrong_domain`\|`wrong_provider`** · **502** in three flavours with three sentences: `the XLAnt relay did not answer` (timeout/DNS/refused), `relay refused the device list` (a non-2xx), and `relay returned no device list` (a 200 whose `devices` is not an array — **never an empty list**, because "No computers yet" is a sentence this page prints and a person with two laptops must not read it because the relay hiccuped and go and mint a third token) |
 | `POST /api/internal/xlant/devices/revoke` | Staff-gated sign-out of ONE of the caller's own computers (2026-09-08). Body `{deviceId}` and nothing else that is read: 1-80 characters of `[A-Za-z0-9_-]` — the same opaque id class as the allowlist's `[\w-]`, **underscore included**, because that is the shape of this product's ids and a stricter class would refuse a Sign out on ids the relay actually issues. The body is read AFTER the gate, so a malformed one never tells an anonymous caller what this route takes, and a body `email` is not read, not merged and not trusted — `relayInternal('/v1/device/revoke', {email: session.email.toLowerCase(), deviceId})`. Answers `{ok: true, deviceId}`; the relay's own `superseded` count is not echoed, because the page has no true sentence to hang on it and the reloaded list answers the question that was actually asked. 503 · 401/403 · 400 malformed body or id · **404 `that computer is not yours or is already signed out`** — the relay's own 404, passed through rather than flattened into the 502 bucket, because "nothing to do" and "we could not do it" ask for different next steps · **502** `relay refused the sign-out` / `the XLAnt relay did not answer`. THIS ROUTE IS THE REPLACEMENT for a property the old mint gave away for free: until 2026-09-08 "my laptop was stolen" was answered by pressing Generate, and the same behaviour signed a working second machine out every time somebody set up a new one |
 
-**Routes — the DEVICE lane (no session, ever).** Both `runtime = "nodejs"`,
-`dynamic = "force-dynamic"`, `revalidate = 0`, every response
-`Cache-Control: private, no-store`. Neither caller is a browser, so neither
-route reads a cookie and neither is CSRF-checked (see **CSRF** below).
+**Routes — the DEVICE lane (RETIRED 2026-09-15; both files deleted).** What
+follows is what this host served until that day, kept because the canonical
+front is a faithful port of it and because an audit of a removal needs the
+thing removed. Both were `runtime = "nodejs"`, `dynamic = "force-dynamic"`,
+`revalidate = 0`, every response `Cache-Control: private, no-store`. Neither
+caller was a browser, so neither route read a cookie and neither was
+CSRF-checked (see **CSRF** below).
 
 | Route | Behaviour |
 |---|---|
 | `GET\|POST /api/xlant/relay/[[...path]]` | Allowlisted streaming passthrough to `XLANT_RELAY_URL`. Adds `X-XLAnt-Proxy-Secret` and `X-XLAnt-Via: proxy` (the relay hard-rejects its INTERNAL routes when they carry that header, so nothing arriving through here can reach the token mint even if the allowlist were wrong); forwards the caller's own `Authorization` **when there is one**, and `Content-Type` / `Accept` / `Mcp-Session-Id` in both directions; since 2026-09-12 (xlant contract 0.13.3, the language round) also SETS `X-XLAnt-Country` from Cloudflare's `cf-ipcountry` — two ASCII letters, upper-cased, or nothing — which the relay reads, behind the proxy secret only, as the third of four signals for which language it writes to a person in; a caller's own `x-xlant-country` is not in the forwarded set, so a PC can never name its own country; forwards the QUERY STRING verbatim. Body caps and timeouts below. `AbortSignal.timeout(290_000)`; `maxDuration = 300` is declared for PORTABILITY and is inert here (see the timing note). Answers 503 unconfigured · **404** for any path off the allowlist · **411** when a non-GET declares no `Content-Length` (except the MCP path) · **413** over 1 MB · **502** when the relay does not answer (ECONNREFUSED / DNS / TLS) · **504** when the `AbortSignal` fires · otherwise the relay's own status, headers and streamed body, unaltered — 401 (revoked device token), 404 (unknown bridge token) and 410 (ended run) all belong to the relay and must reach the caller as they are. The upstream `fetch` is wrapped: unguarded, a down relay throws out of the handler and `next start` answers a bare HTML 500 |
 | `GET /api/xlant/update/[[...path]]` | The electron-updater **generic** feed: `latest.yml`, `XLAnt-Setup-x.y.z.exe`, `<exe>.blockmap` and — since 0.5.0 — `latest-mac.yml`, `XLAnt-x.y.z-<arm64\|x64>-mac.zip`, `<zip>.blockmap`, streamed from `XLANT_ARTIFACTS_DIR` (outside the web root) with `Content-Length` taken from the same `stat()` the stream is opened against and `Content-Type` from `xlantArtifactContentType()` (`text/yaml` · `application/zip` · `application/octet-stream`). electron-updater picks its own manifest by platform and asks this same base URL for it, so macOS needed no new route and no new env. Gated by `Authorization: Bearer <device token>` — the updater is a background process inside the tray app and cannot carry a browser cookie. 503 unconfigured · **401** with no token, a malformed header, or a token the relay does not recognise · **400** on a name failing `safeArtifactName()` (checked BEFORE any filesystem call; a multi-segment catch-all is joined with `/`, which that predicate refuses, so traversal cannot reach `join()`) · **404** when the name is safe but is not a RELEASE (`isXlantUpdateArtifact()` — so `latest.yml.part` and anything else an operator leaves in the directory are refused), and 404 when a release-shaped name is simply not there. Both name checks run AFTER the token check, so the feed is never a directory oracle for an anonymous caller |
 
-**The allowlist is a MIRROR — change it and the xlant contract together.**
-`XLANT_RELAY_ALLOWED` is a copy of the route list in the xlant repo's
-`packages/shared/src/contract.ts`, and the relay mirrors the same list a third
-time on its own side. The two repos share no code, so the only thing keeping
-them honest is that rule and `scripts/xlant-tests.ts`. Eight anchored patterns,
-matched against the catch-all segments joined with `/` (no leading slash, no
-query string):
+**The allowlist WAS a MIRROR — and this host is no longer one of the mirrors
+(2026-09-15).** `XLANT_RELAY_ALLOWED` was a copy of the route list in the xlant
+repo's `packages/shared/src/contract.ts`, which the relay mirrors on its own
+side and the canonical front mirrors in its own `src/lib/xlant.ts`. With this
+copy deleted, a contract change is now a TWO-place change (the relay and
+xlant.ai) rather than three, and `scripts/xlant-tests.ts` no longer pins the
+list — that duty moved to the xlantai repo's tests with the lane. Eight
+anchored patterns, matched against the catch-all segments joined with `/` (no
+leading slash, no query string):
 
 ```
 ^v1/device/hello$
@@ -11822,10 +11897,11 @@ here are Cloudflare's 100 s edge close and nginx's 120 s
 route's own 290 s `AbortSignal` is a backstop below the relay's 240 s tool cap,
 not the thing that fires first.
 
-**nginx caps the body before the route does.** `deploy/nginx.d/xlant-device.conf`
-sets `client_max_body_size 2m` on `location ^~ /api/xlant/`, narrowing the
-host-wide 110 m — see the nginx passage above for why a pre-auth route must not
-inherit an upload ceiling.
+**nginx capped the body before the route did, and still caps it.**
+`deploy/nginx.d/xlant-device.conf` sets `client_max_body_size 2m` on
+`location ^~ /api/xlant/`, narrowing the host-wide 110 m — see the nginx
+passage above for why a pre-auth route must not inherit an upload ceiling, and
+for why the cap was kept after the route was deleted.
 
 **Body caps, applied PRE-AUTH.** This route runs before anything has
 authenticated the caller — the relay does that downstream — so an
@@ -11876,17 +11952,18 @@ deliberately NOT the whole of `/api/internal`: `/api/internal/track` and
 `/api/internal/issues` are secret-authenticated machine POSTs (this host's
 proxy, the VM watchdog, the dev-box sweep) that carry no browser Origin.
 
-**`/api/xlant` is deliberately NOT in that list, and must stay out** — the
-reason is written into the list itself so a future tidy-up cannot "complete"
-it. The DEVICE lane's callers are the XLAnt Windows desktop and Cursor's cloud
-VM; neither is a browser, neither sends an `Origin` header, and the module's
-CSRF check refuses an originless POST. Adding the prefix would therefore refuse
-every incident start, decision, chat line, tool result and MCP frame on this
-host. Those routes are authenticated by the credential they carry instead — a
-device Bearer token, or an MCP bridge token in the path that the RELAY
-validates — and `scripts/xlant-tests.ts` asserts that no configured prefix
-covers `/api/xlant/relay/*` or `/api/xlant/update/*` while
-`/api/internal/xlant` is still present.
+**`/api/xlant` is still deliberately NOT in that list, and there is nothing
+under it to protect any more (2026-09-15).** The reason is written into the
+list itself so a future tidy-up cannot "complete" it. While the lane lived
+here its callers were the XLAnt Windows desktop and Cursor's cloud VM; neither
+is a browser, neither sends an `Origin` header, and the module's CSRF check
+refuses an originless POST — so adding the prefix would have refused every
+incident start, decision, chat line, tool result and MCP frame on this host.
+Those routes were authenticated by the credential they carried instead. The
+middleware leg in `scripts/xlant-tests.ts` lost its device half with the lane
+and keeps the half that measures something: BOTH staff POSTs refuse an
+Origin-less POST and pass a same-origin one, and the computer-list GET is not
+refused.
 
 **Page-view tracking is untouched.** The module's `isPagePath()`
 (`packages/aicompany/src/tracking/middleware.ts`) already returns `false` for
@@ -11915,15 +11992,16 @@ those assert `/admin`, `/api`, `/auth` are present, not that nothing else is.
 **Tests.** `npm run test:xlant` (`scripts/xlant-tests.ts`), tsx +
 `node:assert`, no DB and nothing leaving the box. **Two halves.**
 
-The PURE half exercises the predicates as functions: the allowlist is exactly
-eight anchored, flag-free shapes; it accepts every surface the contract names and
-refuses prefix variants, traversal, empty and bare segments, each of the
-relay's INTERNAL routes by name, and every URL metacharacter (`? # % \ @ : .`,
-whitespace, quotes) in an id position; MCP path detection, including that
-nothing the allowlist refused is an MCP path, so the length-less-body
-concession cannot be reached around it; `safeArtifactName()` on traversal,
-absolute paths and odd names; `isXlantUpdateArtifact()` on both release trios
-and against `.part` files and operator leftovers; `XLANT_INSTALLER_RE`
+**The suite lost its device half on 2026-09-15**, with the routes it executed:
+the allowlist legs, the MCP-path split, the release gate, the update feed's own
+traversal, token and body legs, and the verify cache. Those invariants did not
+stop mattering — they moved to the xlantai repo's tests with the lane they
+describe, and a copy kept here would pin code this host no longer has. The
+sections were renumbered 1-7 rather than left with holes.
+
+The PURE half exercises the predicates as functions: `safeArtifactName()` on
+traversal, absolute paths and odd names, and on every name the real artifacts
+directory holds; `XLANT_INSTALLER_RE`
 including the `x.exe.exe` case the strict version group exists for;
 `XLANT_MAC_BUNDLE_RE` including the arch-less `XLAnt-0.5.0-mac.zip` a build
 without an explicit `mac.artifactName` emits, `universal`, and the `aarch64` /
@@ -11931,55 +12009,43 @@ without an explicit `mac.artifactName` emits, `universal`, and the `aarch64` /
 filename contracts, so "Windows or Mac build?" has exactly one answer);
 `XLANT_DEVICE_KINDS` and `XLANT_MAC_ARCHES` with their near-misses;
 `xlantDownloadRequest()` on every branch — no query is windows, `arch` ignored
-for windows, `arch` REQUIRED for mac, and each refusal's exact sentence;
-`xlantArtifactContentType()` on every publishable name, including that a
-`…-mac.zip.blockmap` is a blockmap and not a zip; and
-`verifyDeviceToken()`'s cache against a stubbed `globalThis.fetch` — a positive
-cached, a refusal not cached, a relay that throws returning false and not
-cached (with the next request succeeding rather than sitting out the TTL),
-oldest-half eviction at the 500 boundary (501 fits, the 502nd insert leaves 252
-and the newest survivors still cost no round-trip), and a short token refused
-with zero fetches.
+for windows, `arch` REQUIRED for mac, and each refusal's exact sentence; and
+`xlantArtifactContentType()` on every name the directory holds, including that
+a `…-mac.zip.blockmap` is a blockmap and not a zip (the table is still pinned
+across all eight names, not narrowed to the two the staff download reaches).
 
 The LIVE half **runs the real route handlers and the real middleware
 in-process** against a fake relay on 127.0.0.1 and a scratch artifacts
 directory, because the pure half cannot see what the handlers put on the wire.
-It pins: the proxy secret and `X-XLAnt-Via: proxy` are SET by us while a
-caller-supplied `X-XLAnt-Via`, `X-XLAnt-Proxy-Secret` and `Cookie` are NOT
-forwarded; `Authorization` forwarded on device paths and never invented on the
-MCP path; every INTERNAL relay route 404s **with the relay untouched**; 411,
-413 (declared and streamed, with the streamed read abandoned just past 1 MB
-rather than drained) and an exactly-1 MB body forwarded; the query string
-verbatim; upstream 401/404/410/405/500 status and body passing through
-unchanged; `Mcp-Session-Id` and an SSE content-type echoing back; a refused
-connection answering **502** and the `AbortSignal` answering **504** (in both
-shapes undici raises); the arming gate 503-ing both routes without contacting
-anything; and, on the feed, 401 (absent, short and revoked tokens — the revoked
-one costing a relay call every time), one verify covering the whole
-`latest.yml` → `.exe` → `.blockmap` upgrade AND the whole
-`latest-mac.yml` → `.zip` → `.blockmap` one, correct `Content-Length` and
-content types on both, 400 for traversal (with a real file outside the
-artifacts dir proven unreachable) and 404 for `latest.yml.part` and other
-non-releases — including `latest-mac.yml.part`, a universal bundle and the
-arch-less zip, each of which is REALLY ON DISK in the scratch directory so the
-404 is the release gate's verdict rather than a missing file.
+Until 2026-09-15 it pinned the passthrough and the feed as well — the proxy
+secret and `X-XLAnt-Via: proxy` set by us while the caller's own headers were
+not forwarded, every INTERNAL relay route 404-ing with the relay untouched, the
+411/413 body caps including the streamed read abandoned just past 1 MB, the
+query string verbatim, upstream status and `Mcp-Session-Id` passing through,
+502 for a refused connection and 504 for the `AbortSignal`, and the feed's 401
+/ one-verify-per-upgrade / traversal-400 / non-release-404 legs. Those went
+with the handlers they executed.
 
-The Mac half also runs `latestInstaller()` / `latestMacBundle()` against that
-same scratch directory (per-architecture answers; newest by mtime pinned by
+What it runs now: `latestInstaller()` / `latestMacBundle()` against that
+scratch directory (per-architecture answers; newest by mtime pinned by
 stamping an OLDER version NEWER, so it cannot accidentally agree with "highest
 version"; `.part`, `universal` and the arch-less name all failing to become a
 fallback; an unreadable directory answering `null` rather than throwing out of
-a render) and `probeRelayMacSupport()` against the fake relay: that it is a
+a render — with the stale `latest.yml` / `latest-mac.yml` still in the fixture,
+because they are still in the real directory) and `probeRelayMacSupport()`
+against the fake relay: that it is a
 **GET** to `/v1/status` carrying the shared secret and NOT the proxy marker;
 that a missing, empty, non-array or windows-only `platforms` is `unsupported`
 while `'mac'` anywhere in the list is `supported`; and that a non-2xx, a
 non-JSON 200 and a refused connection are all `unreadable`, a third answer.
-Finally the MIDDLEWARE is executed: eight Origin-less device requests pass with
-no `Set-Cookie`, while the control POST to `/api/internal/xlant/device-token`
-without an Origin is **403** and the same POST with one passes — which is what
-makes the pass a measurement rather than a disabled check. (The first cut
-asserted this by grepping `src/proxy.ts` for quoted prefixes; that regex would
-miss a prefix added inline.)
+Finally the MIDDLEWARE is executed: both staff POSTs
+(`/api/internal/xlant/device-token` and `…/devices/revoke`) are **403** without
+an `Origin` and pass with one, and the computer-list GET is not refused. Its
+other half — eight Origin-less device requests passing with no `Set-Cookie` —
+went with the device lane on 2026-09-15; what is left is the half that can
+still fail if the check is disabled. (The first cut asserted this by grepping
+`src/proxy.ts` for quoted prefixes; that regex would miss a prefix added
+inline.)
 
 **The staff routes are executed too, since 2026-09-08, inside a FAKED request
 scope** (section 8b). Everything else in this file runs without a session,
@@ -12030,10 +12096,9 @@ relay as that person, so a Next upgrade that moves those internals fails by
 name instead of looking like eight product defects. (Re-measured after the fix:
 the same mutation now fails nine legs, the self-check first among them.)
 
-Five source legs hold what types cannot: both device routes still declare their
-runtime knobs (`nodejs`, force-dynamic, `maxDuration = 300`,
-`AbortSignal.timeout(290_000)`, `private, no-store`) and still import the
-shared allowlist rather than carrying a second copy; the staff download keeps
+Four source legs hold what types cannot (the fifth, which pinned the two device
+routes' runtime knobs and their use of the shared allowlist, went with those
+routes on 2026-09-15): the staff download keeps
 its own knobs and does NOT re-read the query string itself (the decision stays
 in the one pure function); **every `href` the page draws for that route is fed
 back through `xlantDownloadRequest()`**, so a card cannot link a query string
@@ -12044,7 +12109,8 @@ sentences exist verbatim in the button's message map (a code with no sentence
 is shown raw to a staffer), and the client island still carries no
 `import … from "@/lib/xlant"`; and the nginx drop-in still carries
 `client_max_body_size 2m` under `location ^~ /api/xlant/` with **every**
-directive of the stamped `location /` block present verbatim.
+directive of the stamped `location /` block present verbatim — a leg that
+outlives the lane on purpose, see the nginx passage above.
 
 Three more joined them on 2026-09-08, and each refuses a SHAPE of mistake that
 the behavioural legs would only catch after somebody made it: both computer
@@ -12070,22 +12136,26 @@ serve. The drop-in adds one more pre-cutover gate: `setup-vm.sh` installs
 `deploy/nginx.d/*` and runs `nginx -t` before the switch, restoring the
 previous config and aborting the deploy if this file is wrong.
 
-**Env (§10).** `XLANT_RELAY_URL` (`http://135.232.204.158:8403` — the
-`xlant-relay` on the internal VM), `XLANT_PROXY_SHARED_SECRET` (≥16 chars; the
-same value must sit in the relay's `/etc/xlant.env`, which since phase 2 is the
-only OTHER copy — roleplay's was deleted on 2026-09-04 and the value was NOT
-rotated — and the two must agree or the relay 401s),
-`XLANT_ARTIFACTS_DIR` (`/opt/xlant-artifacts`, a real local directory on this
-VM). All three or none, and the same three now arm FOUR route handlers rather
-than two. **The staff PAGE does not 503 on a half-configured host** — it
-renders with every download reading "not published yet" (`page.tsx` calls
-`latestInstaller()` and `latestMacBundle()` only when `xlantConfig()` returned
-a config), because a page that refuses tells a member of staff nothing they can
-act on; the four ROUTE HANDLERS are what answer 503. Neither the device lane
-nor the Mac kind added an env var of its own. **No schema, no
-migration, no DB table**: this host stores nothing about XLAnt — the tokens
-live in the relay's sqlite, and the update feed's verify cache is per-process
-memory that dies with the worker.
+**Env (§10) — ALL THREE STAY, and the decommission removed none of them.**
+`XLANT_RELAY_URL` (the `xlant-relay` on the internal VM),
+`XLANT_PROXY_SHARED_SECRET` (≥16 chars; the same value must sit in the relay's
+`/etc/xlant.env` and, since 2026-09-13, in the canonical front's `.env`, and
+they must agree or the relay 401s), `XLANT_ARTIFACTS_DIR`
+(`/opt/xlant-artifacts`, a real local directory on this VM). All three or none.
+The count of route handlers they arm went from SIX back to **FOUR** on
+2026-09-15 — the four staff routes — and every one of them still needs all
+three: the mint and the computer list reach the relay's internal lane
+(`relayInternal` / `relayInternalGet`), the sign-out does too, and the download
+streams from the artifacts directory. **The staff PAGE does not 503 on a
+half-configured host** — it renders with every download reading "not published
+yet" (`page.tsx` calls `latestInstaller()` and `latestMacBundle()` only when
+`xlantConfig()` returned a config), because a page that refuses tells a member
+of staff nothing they can act on; the ROUTE HANDLERS are what answer 503.
+Neither the device lane, nor the Mac kind, nor its retirement added or removed
+an env var. **No schema, no migration, no DB table**: this host stores nothing
+about XLAnt — the tokens live in the relay's sqlite, and the update feed's
+verify cache was per-process memory that died with the worker and is now
+deleted outright.
 
 
 ## 6. Database
@@ -13803,9 +13873,9 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | Roadmap | `ROADMAP_PANEL_RUNS_DAILY_CAP` | client panel runs/day, default 60 |
 | Roadmap | `APOLLO_API_KEY` | Apollo.io people-search key for the step-2 directory import (host REST call; module outreach stays disabled). Missing = import answers "not set up", never a boot failure |
 | Roadmap | `APOLLO_DAILY_CALL_CAP` | Apollo page fetches/day across all companies, default 100 |
-| XLAnt | `XLANT_RELAY_URL` | §5.22 `xlant-relay` base URL on the internal VM (`http://135.232.204.158:8403`). ONE NSG /32 rule opens TCP 8403 to a web host: `AllowXLAntRelayFromAiWebsite` (pri 222, 52.237.160.75/32, this host). The cutover's PHASE 2 deleted `AllowXLAntRelayFromRoleplay` (pri 221, 157.55.165.83/32) on 2026-09-04, and MyCoach's pri 220 on :8402 is a different service. Trailing slashes stripped. Read by the staff mint AND by the `/api/xlant/relay/*` passthrough |
-| XLAnt | `XLANT_PROXY_SHARED_SECRET` | §5.22 value of the `X-XLAnt-Proxy-Secret` header, required on every relay request whatever the source IP; **≥16 chars** or the config reads as absent. ONE value, shared by every party that is allowed to talk to the relay: the relay's own `/etc/xlant.env`, this host's `.env` and — since 2026-09-13 — the canonical front xlant.ai's `.env`, and nowhere else. Phase 2 deleted roleplay's copy on 2026-09-04 WITHOUT rotating the value; the origin move added a copy WITHOUT rotating it either, so a rotation is now a three-place change |
-| XLAnt | `XLANT_ARTIFACTS_DIR` | §5.22 LOCAL directory of published `XLAnt-Setup-<version>.exe` installers plus `latest.yml` and `*.blockmap` — and, since contract 0.5.0, the macOS set beside them in the SAME directory: `XLAnt-<version>-<arm64\|x64>-mac.zip` + `.blockmap` and one `latest-mac.yml` (`/opt/xlant-artifacts`), OUTSIDE the web root. The xlant publish step writes `.part` then renames — to THIS VM alone from phase 2 of the cutover (2026-09-04) until 2026-09-13, and since then to BOTH fronts: the canonical xlant.ai host's `/opt/xlant-artifacts` FIRST and this VM's second, forward-only on each, so this is one of two published copies; this host always reads its own directly and never proxies. Inventory as of 2026-09-04: 0.2.0 exe + blockmap, 0.2.1 exe + blockmap, `latest.yml` → 0.2.1. Keep the previous release's exe + blockmap (electron-updater needs the OLD blockmap for a differential update). Read by the staff download AND by the `/api/xlant/update/*` feed. **All three or none**: any missing ⇒ the four XLAnt route handlers answer 503 (the arming gate); the staff page still renders, with every download reading "not published yet" |
+| XLAnt | `XLANT_RELAY_URL` | §5.22 `xlant-relay` base URL on the internal VM. ONE NSG /32 rule opens TCP 8403 to a web host: `AllowXLAntRelayFromAiWebsite` (pri 222, 52.237.160.75/32, this host). The cutover's PHASE 2 deleted `AllowXLAntRelayFromRoleplay` (pri 221, 157.55.165.83/32) on 2026-09-04, and MyCoach's pri 220 on :8402 is a different service. Trailing slashes stripped. **Still REQUIRED after the device lane's decommission (2026-09-15):** the `/api/xlant/relay/*` passthrough that also read it is deleted, but the staff mint, the computer list, the sign-out and the pre-mint Mac probe all call the relay's INTERNAL lane from this host's server side |
+| XLAnt | `XLANT_PROXY_SHARED_SECRET` | §5.22 value of the `X-XLAnt-Proxy-Secret` header, required on every relay request whatever the source IP; **≥16 chars** or the config reads as absent. ONE value, shared by every party that is allowed to talk to the relay: the relay's own `/etc/xlant.env`, this host's `.env` and — since 2026-09-13 — the canonical front xlant.ai's `.env`, and nowhere else. Phase 2 deleted roleplay's copy on 2026-09-04 WITHOUT rotating the value; the origin move added a copy WITHOUT rotating it either, so a rotation is a three-place change. Retiring this host's device lane on 2026-09-15 did NOT change that count: this host still authenticates to the relay's internal lane with this secret for every mint, list and sign-out |
+| XLAnt | `XLANT_ARTIFACTS_DIR` | §5.22 LOCAL directory of published `XLAnt-Setup-<version>.exe` installers plus `*.blockmap` — and, since contract 0.5.0, the macOS set beside them in the SAME directory: `XLAnt-<version>-<arm64\|x64>-mac.zip` + `.blockmap` (`/opt/xlant-artifacts`), OUTSIDE the web root. The xlant publish step writes `.part` then renames — to THIS VM alone from phase 2 of the cutover (2026-09-04) until 2026-09-13, and since then to BOTH fronts: the canonical xlant.ai host's `/opt/xlant-artifacts` FIRST and this VM's second, forward-only on each, so this is one of two published copies; this host always reads its own directly and never proxies. **Since 2026-09-15 this VM receives INSTALLERS ONLY** — the update MANIFESTS (`latest.yml`, `latest-mac.yml`) are no longer published here because the `/api/xlant/update/*` feed that read them is deleted; the copies already on disk were LEFT ALONE and match neither filename pattern the staff download uses. Keep the previous release's exe + blockmap (the canonical feed's electron-updater needs the OLD blockmap for a differential update). Read now by the staff download alone. **All three or none**: any missing ⇒ the four XLAnt staff route handlers answer 503 (the arming gate); the staff page still renders, with every download reading "not published yet" |
 | Site | `NEXT_PUBLIC_BASE_URL` (`https://ai.xl.net`), `NEXT_PUBLIC_SITE_NAME` (`XL.net AI`) | |
 | | `TRON_KNOWLEDGE_FILE` | **legacy, no longer read** — the knowledge path is `persona.knowledgeFile` in site.config.ts |
 | Crawl | `KNOWLEDGE_NOTIFY_EMAIL` / `ADMIN_EMAIL` | report recipient fallbacks |
