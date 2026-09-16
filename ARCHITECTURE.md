@@ -15,7 +15,10 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-> **Module pin: @aicompany/core v1.131.0 (2026-09-16), submodule a174182 (= tag v1.131.0).**
+> **Module pin: @aicompany/core v1.133.0 (2026-09-16), submodule 188cb55 (= tag v1.133.0).**
+> §5.3 v1.133.0 REPLY ELIGIBILITY ON (owner-approved 2026-09-16, site.config `channels.email.replyPolicy { enabled: true, protectedNames: ["Adam Radulovic"] }`): the persona answers a stranger only when the mail is addressed to the persona mailbox (`channels.email.mailbox`, Tron.Netter@ai.xl.net), carries no RFC 3834 auto-response signal, does not wear a protected display name on a non-owner address, authenticates at the receiving hop (raw header block via `raw.download_url`, fail closed), is under the 5/day brain-turn cap, and one tool-less brain screen classifies it as a genuine inquiry. Refusals are forwarded to oversight with a named kind (`FWD <kind> inbound:`) or, for screened lures/bulk, recorded on ONE self-retiring ledger row — the sender receives nothing, and the failureMessage apology never runs for a screen failure. Before this pin the handler answered every authenticated stranger, exactly as itsupportchicago did before its two 2026-09-14/15 phishing replies. Module spec: packages/aicompany/architecture.md §5.3 "Reply eligibility"; MIGRATIONS v1.133.0 (mail delta 0 on the measured week, ≤0 steady).
+>
+> Previous pin: v1.131.0 (2026-09-16), submodule a174182.
 > Adopted from v1.130.0 (0e23941). NO template change, no re-render, no schema, no env key.
 > **What changes here:** the module's §19.4 `bannedPhrases` gate stops MUTATING. Through
 > v1.130.0 it deleted every hit as a bare case-insensitive SUBSTRING and called it a fix,

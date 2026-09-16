@@ -227,6 +227,11 @@ export const siteConfig = defineSiteConfig({
     email: {
       enabled: true,
       tools: "none",
+      // §5.3 v1.133.0: the persona answers a stranger only after the module's reply
+      // eligibility clears the mail (recipient, RFC 3834, name impersonation,
+      // receiving-hop auth, daily cap, intent screen) — refusals are forwarded to
+      // oversight or recorded, never answered. Owner-approved 2026-09-16.
+      replyPolicy: { enabled: true, protectedNames: ["Adam Radulovic"] },
       mailbox: PERSONA_MAILBOXES[0],
       // Retired persona mailbox (owner ruling 2026-08-06: there is no Troy;
       // everything sends from Tron). Kept ONLY so replies on threads the
