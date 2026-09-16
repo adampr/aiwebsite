@@ -252,10 +252,19 @@ export const siteConfig = defineSiteConfig({
       // mail to it that reaches this handler is log-only here, not a WARN.
       // Its MX is Resend inbound only (no person receives mail there) and its
       // webhook subscribes to received/bounced/complained, so its bounces
-      // still alert on its own host. topmspnearme.net is deliberately NOT
-      // here (RC 4/15): tmnm has no Resend webhook, so the WARN this host
-      // sends is the only surface for tmnm inbound mail.
+      // still alert on its own host. topmspnearme.net was deliberately NOT
+      // here until 2026-09-16 evening (RC 4/15): tmnm had no Resend webhook,
+      // so the WARN this host sent was the only surface for tmnm inbound mail.
+      // Both of RC's preconditions now hold — tmnm's own webhook (2c468547-…,
+      // per-endpoint secret, verified end to end 16:08Z) and the owner-relay
+      // hardening — so tmnm mail reaching this account-wide handler is the
+      // sibling's to answer, log-only here. The first event after the webhook
+      // went live proved the point: this host mailed a recipient-mismatch WARN
+      // for a message tmnm had already recorded.
       siblingSites: [
+        "finderai@topmspnearme.net",
+        "data@topmspnearme.net",
+        "topmspnearme.net",
         "chi@itsupportchicago.net",
         "itsupportchicago.net",
         "coach@roleplay.xl.net",
