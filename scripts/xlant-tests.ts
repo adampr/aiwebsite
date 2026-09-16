@@ -5,56 +5,53 @@
 //
 //   npm run test:xlant
 //
-// IT USED TO COVER TWO LANES AND NOW COVERS ONE. The DEVICE lane
-// (`/api/xlant/relay/*` and `/api/xlant/update/*`) was decommissioned on
-// 2026-09-15, once the relay measured zero active devices still reaching this
-// front, and the legs that executed those two route handlers went with the
-// handlers: the allowlist, the MCP-path split, the release gate, the update
-// feed's own traversal and body legs, and the device-token verify cache. What
-// is left is the HUMAN half, which did not move and must not break — the staff
-// page, the download, the mint, the computer list and the sign-out.
+// IT COVERED TWO LANES, THEN ONE, AND NOW COVERS THE IDENTITY HALF OF ONE. The
+// DEVICE lane (`/api/xlant/relay/*` and `/api/xlant/update/*`) was
+// decommissioned on 2026-09-15 once the relay measured zero active devices
+// still reaching this front. Later the same day the BYTES went too:
+// `/api/internal/xlant/download` was deleted and XLAnt's installers are served
+// from https://xlant.ai/account/download, which reads the relay's own monthly
+// allowance for whoever is signed in there. The legs that exercised the
+// artifacts directory and the download's query string went with the route —
+// `safeArtifactName()`, both filename regexes, the Mac architecture enum,
+// `xlantDownloadRequest()`, the Content-Type table and the newest-by-mtime
+// readers are all in the xlantai repo now, where the files they describe
+// actually live.
 //
-// TWO HALVES STILL. Sections 1-3b are pure: the artifact predicates, the
-// filename contracts, the platform enums and the shape this host hands the
-// browser, exercised as functions. Sections 4-7 EXECUTE THE REAL ROUTE
-// HANDLERS AND THE REAL MIDDLEWARE in-process against a fake XLAnt relay on
-// 127.0.0.1 and a scratch artifacts directory, because the pure half cannot see
-// what the handlers actually put on the wire — which headers reach the relay,
-// which caller-supplied headers do NOT, what a caller gets back when the relay
-// is down. (A first cut of this file asserted the CSRF exclusion by grepping
-// `src/proxy.ts` for quoted prefixes; that regex would miss a prefix added
-// inline, so the middleware is now run instead.) No network leaves the box: the
-// only server is one this file starts and stops.
+// WHAT IS LEFT IS IDENTITY, and it did not move for a reason: a mint is an act
+// by a member of XL.net staff, authenticated by an XL.net session that lives on
+// the xl.net zone, and xlant.ai cannot see that cookie. So this file covers the
+// staff page, the mint, the computer list and the sign-out.
+//
+// TWO HALVES STILL. Sections 1-2 are pure: the device kinds, the device-id
+// class and the shape this host hands the browser, exercised as functions.
+// Sections 3-6 EXECUTE THE REAL ROUTE HANDLERS AND THE REAL MIDDLEWARE
+// in-process against a fake XLAnt relay on 127.0.0.1, because the pure half
+// cannot see what the handlers actually put on the wire — which headers reach
+// the relay, which caller-supplied headers do NOT, what a caller gets back when
+// the relay is down. (A first cut of this file asserted the CSRF exclusion by
+// grepping `src/proxy.ts` for quoted prefixes; that regex would miss a prefix
+// added inline, so the middleware is now run instead.) No network leaves the
+// box: the only server is one this file starts and stops.
 //
 // What is pinned:
 //
 //   · ONE TOKEN PER COMPUTER (2026-09-08) — the staff routes
 //     `GET /api/internal/xlant/devices` and
 //     `POST /api/internal/xlant/devices/revoke`, executed in-process against a
-//     REAL SIGNED SESSION (see section 5 for how the request scope is faked
+//     REAL SIGNED SESSION (see section 3 for how the request scope is faked
 //     and why that is worth doing): who is refused, that the relay is told the
 //     SESSION's email and never a body's, that an unreadable list is a 502 and
 //     never an empty one, and that a bad device id never leaves this host;
-//   · `safeArtifactName()`, the traversal gate on the one name the staff
-//     download opens a stream against. It is defence in depth there — the name
-//     comes from readdir() — and it is kept at its old width on purpose: the
-//     directory is written by an operator and a publish step, which is exactly
-//     where a name worth refusing turns up;
-//   · the MAC half of contract 0.5.0 — the two device kinds, the two Mac
-//     architectures, the `XLAnt-<version>-<arm64|x64>-mac.zip` filename
-//     contract (and the arch-less `XLAnt-<version>-mac.zip` that a build which
-//     lost its explicit `artifactName` would emit, refused on purpose), the
-//     download route's query-string decision, the Content-Type table, and the
-//     pre-mint `/v1/status` probe that keeps a pre-0.5.0 relay from being
-//     reported as "the relay refused the token mint";
-//   · the artifacts directory read the way the staff page reads it: newest by
-//     MTIME rather than by parsed version, per ARCHITECTURE for the Mac zips,
-//     and null — never a throw — for a directory that is empty or unreadable.
-//     The stale update manifests still sitting in that directory are part of
-//     the fixture, because they are part of the real one;
-//   · and, live: the arming gate, and that the CSRF middleware still refuses an
-//     Origin-less POST to `/api/internal/xlant` while letting the list GET
-//     through.
+//   · the MAC half of contract 0.5.0 that is still THIS host's: the two device
+//     kinds, and the pre-mint `/v1/status` probe that keeps a pre-0.5.0 relay
+//     from being reported as "the relay refused the token mint";
+//   · THE PAGE'S OWN SENTENCES, including the ones it must NOT say — a mint
+//     that revokes something, a row that is a computer, and, since the bytes
+//     moved, any offer to download from here;
+//   · and, live: the arming gate — now TWO vars, not three — and that the CSRF
+//     middleware still refuses an Origin-less POST to `/api/internal/xlant`
+//     while letting the list GET through.
 //
 // NO REAL TOKENS. Every token here is a synthetic filler string; a real device
 // token reaches a technician agent on somebody's PC and git history would keep
@@ -64,7 +61,7 @@
 // (`work-unit-async-storage`) decides ONCE, when its module is first loaded,
 // whether a real AsyncLocalStorage exists: it reads `globalThis.AsyncLocalStorage`,
 // which Node does not define, and falls back to a stub whose `.run()` throws
-// and whose `.getStore()` is always undefined. Section 5 needs a real one, and
+// and whose `.getStore()` is always undefined. Section 4 needs a real one, and
 // the very next import below (`../src/lib/xlant`) pulls that module in through
 // @aicompany/core/auth/session -> next/headers. ES modules evaluate in source
 // order and a statement cannot run before an import, so the only place left to
@@ -78,32 +75,14 @@ import "data:text/javascript,import{AsyncLocalStorage}from'node:async_hooks';glo
 import assert from "node:assert";
 import { execFileSync } from "node:child_process";
 import http from "node:http";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   XLANT_DEVICE_KINDS,
-  XLANT_INSTALLER_RE,
-  XLANT_MAC_ARCHES,
-  XLANT_MAC_BUNDLE_RE,
   isXlantDeviceId,
   isXlantDeviceKind,
-  isXlantMacArch,
-  latestInstaller,
-  latestMacBundle,
   probeRelayMacSupport,
-  safeArtifactName,
-  xlantArtifactContentType,
   xlantDeviceSummaries,
-  xlantDownloadRequest,
   type XlantConfig,
 } from "../src/lib/xlant";
 
@@ -119,109 +98,18 @@ async function leg(label: string, fn: () => void | Promise<void>) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. safeArtifactName — the staff download's traversal gate
+// 1. Contract 0.5.0's device kinds, the device-id class, and the shape this
+//    host hands the browser
 // ---------------------------------------------------------------------------
-
-await leg("every name the artifacts directory really holds passes", () => {
-  for (const n of [
-    // Windows.
-    "latest.yml",
-    "XLAnt-Setup-0.2.1.exe",
-    "XLAnt-Setup-0.2.1.exe.blockmap",
-    // macOS (contract 0.5.0). The gate is about the SHAPE of a name, not about
-    // which names this host will serve — the filename contracts in section 2
-    // are what decide that, and they must be the ones that get the say.
-    "latest-mac.yml",
-    "XLAnt-0.5.0-arm64-mac.zip",
-    "XLAnt-0.5.0-arm64-mac.zip.blockmap",
-    "XLAnt-0.5.0-x64-mac.zip",
-    "XLAnt-0.5.0-x64-mac.zip.blockmap",
-  ]) {
-    assert.ok(safeArtifactName(n), `should accept ${n}`);
-  }
-});
-
-await leg("traversal, absolute paths and odd names are refused", () => {
-  for (const n of [
-    "",
-    ".",
-    "..",
-    "../.env",
-    "../../etc/passwd",
-    "a/../b",
-    "sub/latest.yml",
-    "/etc/passwd",
-    ".env",
-    "-rf",
-    "latest.yml .txt",
-    "latest yml",
-    "XLAnt Setup.exe",
-  ]) {
-    assert.ok(!safeArtifactName(n), `should refuse ${JSON.stringify(n)}`);
-  }
-});
-
-// ---------------------------------------------------------------------------
-// 2. The two filename regexes
-// ---------------------------------------------------------------------------
-
-await leg("the installer regex captures a real version and nothing else", () => {
-  assert.equal(XLANT_INSTALLER_RE.exec("XLAnt-Setup-0.2.1.exe")?.[1], "0.2.1");
-  assert.equal(
-    XLANT_INSTALLER_RE.exec("XLAnt-Setup-1.10.0-beta.3.exe")?.[1],
-    "1.10.0-beta.3"
-  );
-  for (const n of [
-    // The defect the strict pattern exists for: a loose [\w.-]+ accepts this
-    // and would then show "x.exe" to staff as the version being downloaded.
-    "XLAnt-Setup-x.exe.exe",
-    "XLAnt-Setup-.exe",
-    "XLAnt-Setup-1.2.exe",
-    "XLAnt-Setup-1.2.3.4.exe",
-    "XLAnt-Setup-0.2.1.exe.blockmap",
-    "XLAnt-Setup-0.2.1.exe.part",
-    "xlant-setup-0.2.1.exe",
-    "latest.yml",
-    "prefix-XLAnt-Setup-0.2.1.exe",
-  ]) {
-    assert.ok(!XLANT_INSTALLER_RE.test(n), `should refuse ${n}`);
-  }
-});
-
-await leg("the Mac bundle regex captures a real version AND the architecture", () => {
-  const arm = XLANT_MAC_BUNDLE_RE.exec("XLAnt-0.5.0-arm64-mac.zip");
-  assert.equal(arm?.[1], "0.5.0");
-  assert.equal(arm?.[2], "arm64");
-  const intel = XLANT_MAC_BUNDLE_RE.exec("XLAnt-1.10.0-beta.3-x64-mac.zip");
-  assert.equal(intel?.[1], "1.10.0-beta.3");
-  assert.equal(intel?.[2], "x64");
-  // Both regexes are anchored and flag-free for the same reasons the allowlist
-  // is: an unanchored pattern matches a longer name that merely contains one,
-  // and a /g regex answers differently on identical input.
-  for (const re of [XLANT_INSTALLER_RE, XLANT_MAC_BUNDLE_RE]) {
-    assert.ok(re.source.startsWith("^"), `not ^-anchored: ${re.source}`);
-    assert.ok(re.source.endsWith("$"), `not $-anchored: ${re.source}`);
-    assert.equal(re.flags, "", `unexpected flags on ${re.source}`);
-  }
-  // The two never claim the same file, so "is this a Windows or a Mac build?"
-  // has exactly one answer for every name.
-  for (const n of [
-    "XLAnt-Setup-0.5.0.exe",
-    "XLAnt-0.5.0-arm64-mac.zip",
-    "XLAnt-0.5.0-x64-mac.zip",
-  ]) {
-    assert.notEqual(
-      XLANT_INSTALLER_RE.test(n),
-      XLANT_MAC_BUNDLE_RE.test(n),
-      `${n} matched both or neither filename contract`
-    );
-  }
-});
-
-// ---------------------------------------------------------------------------
-// 3. Contract 0.5.0's platform words: the kinds, the architectures, what the
-//    download route decides from a query string, and the Content-Type table
-// ---------------------------------------------------------------------------
+//
+// THE ARTIFACT PREDICATES LEFT THIS FILE ON 2026-09-15 with the route that was
+// their only caller. `safeArtifactName()`, `XLANT_INSTALLER_RE`,
+// `XLANT_MAC_BUNDLE_RE`, `XLANT_MAC_ARCHES` / `isXlantMacArch()`,
+// `xlantDownloadRequest()` and `xlantArtifactContentType()` are all in the
+// xlantai repo now, pinned there against the directory they actually read. They
+// were not dropped on the way: `xlantDownloadRequest()` in particular was
+// carried across verbatim, because its two rules are cheap to lose — no query
+// at all means WINDOWS, and `arch` is REQUIRED for mac with no default.
 
 await leg("the device kinds are exactly the contract's two", () => {
   // A MIRROR of DEVICE_KINDS in the xlant repo's packages/shared/src/contract.ts
@@ -251,117 +139,9 @@ await leg("the device kinds are exactly the contract's two", () => {
   }
 });
 
-await leg("the Mac architectures are exactly arm64 and x64", () => {
-  assert.deepEqual([...XLANT_MAC_ARCHES], ["arm64", "x64"]);
-  assert.ok(isXlantMacArch("arm64"));
-  assert.ok(isXlantMacArch("x64"));
-  for (const a of [
-    // Spellings other toolchains use. None of them names a file this host
-    // publishes, and admitting one would 404 a staffer at the download.
-    "aarch64",
-    "amd64",
-    "x86_64",
-    "ARM64",
-    "x64 ",
-    // The bundle the desktop deliberately does not build.
-    "universal",
-    "",
-    null,
-    undefined,
-    64,
-  ]) {
-    assert.ok(!isXlantMacArch(a), `should refuse ${JSON.stringify(a)}`);
-  }
-});
-
-await leg("the download route's query string decides one build, or refuses", () => {
-  const ask = (qs: string) => xlantDownloadRequest(new URLSearchParams(qs));
-  // No query at all is the WINDOWS installer — the link this host has served
-  // since the page existed, and the one an old bookmark still carries.
-  assert.deepEqual(ask(""), { ok: true, platform: "windows" });
-  assert.deepEqual(ask("platform=windows"), { ok: true, platform: "windows" });
-  // `arch` is meaningless for Windows and is IGNORED, not refused: there is one
-  // Windows build and a stray parameter must not break a working link.
-  assert.deepEqual(ask("platform=windows&arch=arm64"), {
-    ok: true,
-    platform: "windows",
-  });
-  assert.deepEqual(ask("platform=mac&arch=arm64"), {
-    ok: true,
-    platform: "mac",
-    arch: "arm64",
-  });
-  assert.deepEqual(ask("platform=mac&arch=x64"), {
-    ok: true,
-    platform: "mac",
-    arch: "x64",
-  });
-  // A Mac ask with no architecture is refused rather than defaulted: the two
-  // zips are not interchangeable, and an arm64 bundle on an Intel Mac does not
-  // launch.
-  for (const qs of [
-    "platform=mac",
-    "platform=mac&arch=",
-    "platform=mac&arch=universal",
-    "platform=mac&arch=x86_64",
-    "platform=mac&arch=ARM64",
-  ]) {
-    const got = ask(qs);
-    assert.deepEqual(got, { ok: false, error: "arch must be 'arm64' or 'x64'" }, qs);
-  }
-  for (const qs of [
-    "platform=",
-    "platform=Mac",
-    "platform=macos",
-    "platform=linux",
-    "platform=darwin&arch=arm64",
-  ]) {
-    assert.deepEqual(
-      ask(qs),
-      { ok: false, error: "platform must be 'windows' or 'mac'" },
-      qs
-    );
-  }
-});
-
-await leg("every publishable name has one Content-Type and no sniffing", () => {
-  for (const [name, want] of [
-    ["latest.yml", "text/yaml"],
-    ["latest-mac.yml", "text/yaml"],
-    ["XLAnt-Setup-0.5.0.exe", "application/octet-stream"],
-    ["XLAnt-Setup-0.5.0.exe.blockmap", "application/octet-stream"],
-    ["XLAnt-0.5.0-arm64-mac.zip", "application/zip"],
-    ["XLAnt-0.5.0-x64-mac.zip", "application/zip"],
-    // The blockmap of a zip is a BLOCKMAP, not a zip: it ends in .blockmap, so
-    // the .zip test (an endsWith on the whole name) must not claim it.
-    ["XLAnt-0.5.0-arm64-mac.zip.blockmap", "application/octet-stream"],
-    ["XLAnt-0.5.0-x64-mac.zip.blockmap", "application/octet-stream"],
-  ] as const) {
-    assert.equal(xlantArtifactContentType(name), want, name);
-  }
-  // The table is TOTAL over every name the artifacts directory holds — not
-  // just the two the staff download can reach — so it can never answer with an
-  // empty or invented content type. It was not narrowed when the update feed
-  // that served the other six went (2026-09-15): a narrowed table would answer
-  // `application/octet-stream` for a `.yml` the day something asked, which is
-  // a wrong answer where there was no answer wanted.
-  for (const n of [
-    "latest.yml",
-    "latest-mac.yml",
-    "XLAnt-Setup-9.9.9.exe",
-    "XLAnt-Setup-9.9.9.exe.blockmap",
-    "XLAnt-9.9.9-arm64-mac.zip",
-    "XLAnt-9.9.9-arm64-mac.zip.blockmap",
-    "XLAnt-9.9.9-x64-mac.zip",
-    "XLAnt-9.9.9-x64-mac.zip.blockmap",
-  ]) {
-    assert.match(xlantArtifactContentType(n), /^[a-z]+\/[\w.+-]+$/, n);
-  }
-});
-
 // ---------------------------------------------------------------------------
-// 3b. The computer list (2026-09-08): the shape this host hands the browser,
-//     the id it will forward, and the words the island prints
+// 2. The computer list (2026-09-08): the shape this host hands the browser,
+//    the id it will forward, and the words the island prints
 // ---------------------------------------------------------------------------
 
 await leg("a device id is this product's own opaque id class and nothing else", () => {
@@ -554,46 +334,16 @@ await leg("the island says how long ago in words, and never invents one", async 
 });
 
 // ===========================================================================
-// 4. THE ARTIFACTS DIRECTORY AND THE PRE-MINT PROBE, against a fake relay
+// 3. THE PRE-MINT PROBE, against a fake relay
 // ===========================================================================
-
-// A scratch artifacts directory, filled the way the real one on the VM is:
-// the builds the staff download serves, and — in the SAME directory, which is
-// the point — everything it must refuse to call a build. The update manifests
-// are among them now: the feed that read them went on 2026-09-15 and the
-// release step no longer publishes them here, but the copies already on disk
-// were left where they were, so a reader that started matching them would be
-// matching real files.
-const ROOT = mkdtempSync(join(tmpdir(), "xlant-tests-"));
-const ART = join(ROOT, "artifacts");
-mkdirSync(ART);
-const YML = "version: 9.9.9\npath: XLAnt-Setup-9.9.9.exe\n";
-writeFileSync(join(ART, "latest.yml"), YML);
-writeFileSync(join(ART, "XLAnt-Setup-9.9.9.exe"), Buffer.alloc(4096, 7));
-writeFileSync(join(ART, "XLAnt-Setup-9.9.9.exe.blockmap"), Buffer.alloc(64, 3));
-writeFileSync(join(ART, "latest.yml.part"), "HALF WRITTEN\n");
-
-// The macOS half of the same directory (contract 0.5.0). One manifest naming
-// both architectures, one zip and one blockmap each, plus the shapes
-// latestMacBundle() has to refuse while sitting in the SAME directory: the
-// half-written temp file, a universal bundle nobody builds, and the arch-less
-// name a build that lost its explicit `mac.artifactName` would produce.
-const YML_MAC =
-  "version: 9.9.9\nfiles:\n  - url: XLAnt-9.9.9-arm64-mac.zip\n  - url: XLAnt-9.9.9-x64-mac.zip\n";
-writeFileSync(join(ART, "latest-mac.yml"), YML_MAC);
-writeFileSync(join(ART, "XLAnt-9.9.9-arm64-mac.zip"), Buffer.alloc(8192, 11));
-writeFileSync(join(ART, "XLAnt-9.9.9-arm64-mac.zip.blockmap"), Buffer.alloc(96, 5));
-writeFileSync(join(ART, "XLAnt-9.9.9-x64-mac.zip"), Buffer.alloc(6144, 13));
-writeFileSync(join(ART, "XLAnt-9.9.9-x64-mac.zip.blockmap"), Buffer.alloc(80, 6));
-writeFileSync(join(ART, "latest-mac.yml.part"), "HALF WRITTEN\n");
-writeFileSync(join(ART, "XLAnt-9.9.9-universal-mac.zip"), Buffer.alloc(32, 1));
-writeFileSync(join(ART, "XLAnt-9.9.9-mac.zip"), Buffer.alloc(32, 2));
-// A PREVIOUS arm64 release, kept the way the real directory keeps the previous
-// build, and deliberately stamped NEWER than 9.9.9 so "newest by mtime" is
-// measured rather than accidentally agreeing with "highest version".
-writeFileSync(join(ART, "XLAnt-9.9.8-arm64-mac.zip"), Buffer.alloc(1024, 9));
-const NEWER = Date.now() / 1000 + 60;
-utimesSync(join(ART, "XLAnt-9.9.8-arm64-mac.zip"), NEWER, NEWER);
+//
+// THE SCRATCH ARTIFACTS DIRECTORY WENT WITH THE DOWNLOAD (2026-09-15). This
+// section used to build one — the installer, both Mac zips, the stale
+// manifests, the half-written `.part` and the shapes the readers had to refuse
+// — because the staff page read a real directory during its render. It does
+// not any more: the builds are published on xlant.ai and that repo's tests own
+// the fixture. What is left here is the relay, which is the only thing this
+// host still talks to.
 
 interface RelayCall {
   method: string;
@@ -634,7 +384,9 @@ process.env.SKIP_ENV_VALIDATION = "1";
 process.env.INTERNAL_TRACK_SECRET ??= "synthetic-track-secret";
 process.env.XLANT_RELAY_URL = `http://127.0.0.1:${RELAY_PORT}`;
 process.env.XLANT_PROXY_SHARED_SECRET = SECRET;
-process.env.XLANT_ARTIFACTS_DIR = ART;
+// XLANT_ARTIFACTS_DIR is deliberately NOT set: it left the arming gate on
+// 2026-09-15 with the download, and setting it here would let a gate that had
+// quietly grown a third var back again pass this file unnoticed.
 
 // The env is set BEFORE the staff routes are imported further down, which is
 // the ordering those routes actually rely on (they read it per request).
@@ -648,75 +400,19 @@ function relayReset(
   relayReply = { status, body, headers };
 }
 
-// --- the artifacts directory, read the way the staff page reads it ---------
-
-// The same three env vars the routes read, as a value the lib functions take
-// directly (they are pure over a config, which is why the page can call them
-// during a render).
-const artCfg: XlantConfig = {
+// The same two env vars the routes read, as a value probeRelayMacSupport()
+// takes directly (it is pure over a config, which is why the mint can call it
+// without re-reading the environment).
+const relayCfg: XlantConfig = {
   relayUrl: `http://127.0.0.1:${RELAY_PORT}`,
   proxySecret: SECRET,
-  artifactsDir: ART,
 };
-
-await leg("latestInstaller sees the Windows build and no Mac bundle", async () => {
-  const found = await latestInstaller(artCfg);
-  assert.equal(found?.fileName, "XLAnt-Setup-9.9.9.exe");
-  assert.equal(found?.version, "9.9.9");
-  assert.equal(found?.size, 4096, "size comes from the same stat as the mtime");
-});
-
-await leg("latestMacBundle answers per ARCHITECTURE, never per newest zip", async () => {
-  // The two zips of one release differ only in mtime, so a single
-  // newest-of-all would hand whichever finished writing last to everybody.
-  const arm = await latestMacBundle(artCfg, "arm64");
-  const intel = await latestMacBundle(artCfg, "x64");
-  assert.equal(intel?.fileName, "XLAnt-9.9.9-x64-mac.zip");
-  assert.equal(intel?.version, "9.9.9");
-  assert.equal(intel?.arch, "x64");
-  assert.equal(intel?.size, 6144);
-  // NEWEST BY MTIME, not by parsed version: 9.9.8 was stamped later, and a
-  // republished build of an older version must win exactly as it does on the
-  // Windows side. This host invents no version ordering.
-  assert.equal(arm?.fileName, "XLAnt-9.9.8-arm64-mac.zip");
-  assert.equal(arm?.version, "9.9.8");
-  assert.equal(arm?.arch, "arm64");
-  assert.equal(arm?.size, 1024);
-});
-
-await leg("a directory with no Mac build, and an unreadable one, are null", async () => {
-  const onlyWindows = mkdtempSync(join(tmpdir(), "xlant-nomac-"));
-  writeFileSync(join(onlyWindows, "XLAnt-Setup-9.9.9.exe"), Buffer.alloc(8, 1));
-  // The shapes that sit in a real directory and are NOT a servable bundle: the
-  // publish step's temp file, a universal build and the arch-less name a build
-  // without an explicit artifactName emits.
-  writeFileSync(join(onlyWindows, "XLAnt-9.9.9-arm64-mac.zip.part"), "HALF\n");
-  writeFileSync(join(onlyWindows, "XLAnt-9.9.9-universal-mac.zip"), "U\n");
-  writeFileSync(join(onlyWindows, "XLAnt-9.9.9-mac.zip"), "N\n");
-  try {
-    for (const arch of ["arm64", "x64"] as const) {
-      assert.equal(
-        await latestMacBundle({ ...artCfg, artifactsDir: onlyWindows }, arch),
-        null,
-        `${arch} must not fall back to a name outside the contract`
-      );
-    }
-    assert.ok(await latestInstaller({ ...artCfg, artifactsDir: onlyWindows }));
-  } finally {
-    rmSync(onlyWindows, { recursive: true, force: true });
-  }
-  // An unreadable directory is "nothing published", never a thrown page: this
-  // runs inside a server render.
-  const gone = { ...artCfg, artifactsDir: join(ROOT, "does-not-exist") };
-  assert.equal(await latestInstaller(gone), null);
-  assert.equal(await latestMacBundle(gone, "arm64"), null);
-});
 
 // --- the pre-mint probe ----------------------------------------------------
 
 await leg("the Mac probe GETs /v1/status on the INTERNAL lane", async () => {
   relayReset(200, '{"ok":true,"platforms":["windows","mac"]}');
-  assert.equal(await probeRelayMacSupport(artCfg), "supported");
+  assert.equal(await probeRelayMacSupport(relayCfg), "supported");
   assert.equal(relayCalls.length, 1);
   assert.equal(relayCalls[0].method, "GET", "express routes /v1/status by GET");
   assert.equal(relayCalls[0].url, "/v1/status");
@@ -742,7 +438,7 @@ await leg("a relay that does not name 'mac' is unsupported, not broken", async (
     '{"ok":true,"platforms":null}',
   ]) {
     relayReset(200, body);
-    assert.equal(await probeRelayMacSupport(artCfg), "unsupported", body);
+    assert.equal(await probeRelayMacSupport(relayCfg), "unsupported", body);
   }
   // …and the nearest allow: 'mac' anywhere in the list is support.
   for (const body of [
@@ -751,7 +447,7 @@ await leg("a relay that does not name 'mac' is unsupported, not broken", async (
     '{"ok":true,"platforms":["mac","windows","linux"]}',
   ]) {
     relayReset(200, body);
-    assert.equal(await probeRelayMacSupport(artCfg), "supported", body);
+    assert.equal(await probeRelayMacSupport(relayCfg), "supported", body);
   }
 });
 
@@ -764,21 +460,21 @@ await leg("a relay we cannot READ is 'unreadable', a different answer", async ()
     [404, "not found"],
   ] as const) {
     relayReset(status, body);
-    assert.equal(await probeRelayMacSupport(artCfg), "unreadable", String(status));
+    assert.equal(await probeRelayMacSupport(relayCfg), "unreadable", String(status));
   }
   // A 200 is not a promise of JSON: an intermediary can answer 200 with an
   // HTML error page, and an unguarded .json() would throw out of the mint.
   relayReset(200, "<html>gateway</html>");
-  assert.equal(await probeRelayMacSupport(artCfg), "unreadable");
+  assert.equal(await probeRelayMacSupport(relayCfg), "unreadable");
   relayReset(200, "null");
-  assert.equal(await probeRelayMacSupport(artCfg), "unreadable");
+  assert.equal(await probeRelayMacSupport(relayCfg), "unreadable");
   // Nothing listening at all.
-  const dead: XlantConfig = { ...artCfg, relayUrl: "http://127.0.0.1:1" };
+  const dead: XlantConfig = { ...relayCfg, relayUrl: "http://127.0.0.1:1" };
   assert.equal(await probeRelayMacSupport(dead), "unreadable");
 });
 
 // ===========================================================================
-// 5. THE STAFF ROUTES, in-process, WITH A REAL SIGNED SESSION
+// 4. THE STAFF ROUTES, in-process, WITH A REAL SIGNED SESSION
 // ===========================================================================
 //
 // Everything above this line runs without a session, and until 2026-09-08 that
@@ -1200,7 +896,7 @@ await leg("a deviceId that could never be one is 400, and never leaves this host
 });
 
 // ===========================================================================
-// 6. THE REAL MIDDLEWARE, in-process
+// 5. THE REAL MIDDLEWARE, in-process
 // ===========================================================================
 
 await leg("CSRF: the staff POSTs are refused without an Origin, the list GET is not", async () => {
@@ -1241,46 +937,115 @@ await leg("CSRF: the staff POSTs are refused without an Origin, the list GET is 
 });
 
 // ===========================================================================
-// 7. Source invariants the type system cannot express
+// 6. Source invariants the type system cannot express
 // ===========================================================================
 
 const readRepo = (rel: string) =>
   readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 
-await leg("the staff download keeps its runtime knobs and its one decision", () => {
-  const src = readRepo("src/app/api/internal/xlant/download/route.ts");
-  assert.match(src, /export const runtime = "nodejs";/);
-  assert.match(src, /export const dynamic = "force-dynamic";/);
-  assert.match(src, /"Cache-Control": "private, no-store"/);
-  // The platform/arch decision is the pure function pinned in section 3, not a
-  // second copy of the same branching: a second copy is a second thing to
-  // forget when a third build target appears.
-  assert.match(src, /xlantDownloadRequest\(/);
-  assert.ok(
-    !src.includes('params.get("platform")'),
-    "the route must not re-read the query string itself"
-  );
-});
-
-await leg("every download link the page draws is one the route accepts", () => {
+await leg("the page sends people to xlant.ai for the bytes, and offers none itself", () => {
   const page = readRepo("src/app/internal/xlant/page.tsx");
-  // JSX attributes are plain JS strings, so `&` is literal here — no entity
-  // decoding, and what the browser requests is what this reads.
-  const hrefs = [
-    ...page.matchAll(/href="(\/api\/internal\/xlant\/download[^"]*)"/g),
-  ].map((m) => m[1]);
-  assert.equal(hrefs.length, 3, "one Windows link and two Mac links");
-  const seen: string[] = [];
-  for (const href of hrefs) {
-    const qs = href.includes("?") ? href.slice(href.indexOf("?") + 1) : "";
-    const want = xlantDownloadRequest(new URLSearchParams(qs));
-    assert.ok(want.ok, `the page links a download the route refuses: ${href}`);
-    seen.push(want.platform === "mac" ? `mac:${want.arch}` : want.platform);
+  const prose = page.replace(/\s+/g, " ");
+
+  // THE URL, character for character. The same string is written into the
+  // Internal Tools submenu (src/components/nav-links.ts) and served by
+  // src/app/account/download/page.tsx in the xlantai repo. The three move in
+  // one round or the menu and the page lead to a 404, and no test on this host
+  // can see the other end of it — so the spelling is pinned in both places
+  // here, which is the most this repo can do.
+  const URL_ = "https://xlant.ai/account/download";
+  assert.ok(
+    page.includes(`const DOWNLOAD_URL = ${JSON.stringify(URL_)};`),
+    "the page must spell XLAnt's download area exactly once, as a constant"
+  );
+  const nav = readRepo("src/components/nav-links.ts");
+  assert.ok(
+    nav.includes(`href: ${JSON.stringify(URL_)}`),
+    "the Internal Tools submenu must point at the same URL as the page"
+  );
+  assert.ok(
+    nav.includes("external: true"),
+    "an absolute href must be marked external, or next/link tries to route it"
+  );
+
+  // AN ABSOLUTE HREF IS NEVER A <Link>. next/link prefetches and then routes
+  // through THIS app's router, which has no such route; the house pattern for
+  // a link off this site is a plain <a rel="noopener">.
+  assert.match(page, /<a href=\{DOWNLOAD_URL\} rel="noopener"/);
+  for (const rel of [
+    "src/components/internal-tools-menu.tsx",
+    "src/components/mobile-nav.tsx",
+  ]) {
+    const src = readRepo(rel);
+    assert.match(src, /l\.external \? \(/, `${rel}: no external branch`);
+    assert.match(src, /rel="noopener"/, `${rel}: the external row is not an <a>`);
+    // …and an external row is never "the page you are on": a pathname here
+    // cannot be inside another origin, so the test could only ever be false.
+    assert.ok(
+      !/aria-current=\{[^}]*\}\s*\n?\s*>\s*\n?\s*\{l\.label\}\s*\n?\s*<\/a>/.test(src),
+      `${rel}: an external row must carry no aria-current`
+    );
   }
-  assert.deepEqual(seen.sort(), ["mac:arm64", "mac:x64", "windows"]);
+  assert.ok(
+    !readRepo("src/components/internal-tools-menu.tsx").includes(
+      "item.items.some((l) => pathname.startsWith(l.href))"
+    ),
+    "the toggle must skip external destinations when it decides it is current"
+  );
+
+  // THE BYTES ARE NOT HERE ANY MORE (2026-09-15), and the page must not
+  // pretend otherwise: no download route, no download button, no claim that a
+  // new version can be fetched from this page. That last one is the Mac step,
+  // which told staff to come back here for every update — false the moment the
+  // mirror stopped, and a Mac cannot update itself.
+  assert.ok(
+    !page.includes("/api/internal/xlant/download"),
+    "the deleted download route is still linked"
+  );
+  assert.ok(
+    !prose.includes("come back to this page and repeat these steps"),
+    "the Mac card still sends staff here for an update this page cannot serve"
+  );
+  assert.ok(
+    !prose.includes("not published yet"),
+    "the page still speaks as if it could read an artifacts directory"
+  );
+  assert.match(prose, /download it again from XLAnt's download area/);
+  // The one sentence that keeps the split legible to the person reading it.
+  assert.match(
+    prose,
+    /The token each machine needs is generated here, on this page, and nowhere else/
+  );
   // One token button per kind, mounted inside its own card.
   assert.match(page, /<DeviceTokenButton kind="windows" \/>/);
   assert.match(page, /<DeviceTokenButton kind="mac" \/>/);
+});
+
+await leg("the deleted download route is really gone, and nothing still imports it", () => {
+  const gone = new URL(
+    "../src/app/api/internal/xlant/download/route.ts",
+    import.meta.url
+  );
+  assert.ok(!existsSync(gone), "the staff download route is still on disk");
+  // The arming gate is TWO vars now. A third would 503 the mint, the list and
+  // the sign-out the day an operator tidies a var nothing reads out of the
+  // VM's .env — which is the whole reason it was split out of the gate in the
+  // same edit that deleted the route it was for.
+  const lib = readRepo("src/lib/xlant.ts");
+  assert.ok(
+    !lib.includes("process.env.XLANT_ARTIFACTS_DIR"),
+    "the arming gate still READS an artifacts directory nothing serves"
+  );
+  assert.match(lib, /if \(!relayUrl \|\| proxySecret\.length < 16\) return null;/);
+  // An IMPORT, not a mention: the header explains where the readers went, and
+  // naming node:fs in that sentence must not fail this leg.
+  assert.ok(
+    !/^\s*import\b[^;]*["']node:(fs|fs\/promises|path)["']/m.test(lib),
+    "the lib still reads a disk it has no reader for"
+  );
+  // The three surviving staff routes, and only those three.
+  const dir = new URL("../src/app/api/internal/xlant/", import.meta.url);
+  assert.deepEqual(readdirSync(dir).sort(), ["device-token", "devices"]);
 });
 
 await leg("the Mac mint probes first, and the button can read the refusals", () => {
@@ -1308,8 +1073,9 @@ await leg("the Mac mint probes first, and the button can read the refusals", () 
     assert.ok(mint.includes(quoted), `the mint should answer ${quoted}`);
     assert.ok(button.includes(quoted), `the button cannot read ${quoted}`);
   }
-  // The client island must never import the server module: it reads node:fs
-  // and the XLAnt shared secret, and bundling it into a client would ship both.
+  // The client island must never import the server module: it reads the XLAnt
+  // shared secret out of the environment, and bundling it into a client would
+  // ship it.
   assert.ok(
     !/^\s*import\b[^;]*["']@\/lib\/xlant["']/m.test(button),
     "the token button must inline its kinds, not import the server module"
@@ -1327,7 +1093,7 @@ await leg("the computer-list routes keep their knobs and their session-only iden
     assert.match(src, /export const revalidate = 0;/, `${rel}: revalidate`);
     assert.match(src, /"cache-control": "no-store, private"/, `${rel}: cache`);
     // The identity is the session's, lowercased, and there is no second
-    // reader of an email anywhere in the file. Section 5 proves the behaviour
+    // reader of an email anywhere in the file. Section 4 proves the behaviour
     // against the fake relay; this refuses the SHAPE of the mistake, which is
     // the one a hurried edit makes ("just fall back to the body").
     assert.match(src, /session\.email\.toLowerCase\(\)/, `${rel}: session email`);
@@ -1409,6 +1175,23 @@ await leg("the page states the token rule this build actually implements", () =>
     !prose.includes("A row is one computer holding one token"),
     "the section still promises one row per computer"
   );
+  // 2026-09-15: THIS PAGE IS NOT THE DOWNLOAD ANY MORE. The Mac steps in
+  // particular used to end "come back to this page and repeat these steps",
+  // which the page cannot honour — and a Mac build does not update itself, so
+  // that sentence was a staffer's only route to a new version. The where-the-
+  // bytes-are assertions live in their own leg above; what is pinned here is
+  // that no sentence left on the page claims this host serves a build.
+  for (const claim of [
+    "Download XLAnt",
+    "not published yet",
+    "/api/internal/xlant/download",
+    "signed by XL.net · updates arrive as a tray banner · download",
+  ]) {
+    assert.ok(!prose.includes(claim), `the page still says: ${claim}`);
+  }
+  // The page's own title says what it is now, so a staffer who lands on it
+  // looking for a build is told in the tab.
+  assert.match(page, /title: \{ absolute: "XLAnt tokens & computers — XL\.net AI" \}/);
 });
 
 await leg("the mint and the list agree, and neither island imports the server module", () => {
@@ -1452,8 +1235,10 @@ await leg("the mint and the list agree, and neither island imports the server mo
     /addEventListener\(DEVICES_CHANGED_EVENT/,
     "the list must listen for it"
   );
-  // Both islands: @/lib/xlant reads node:fs and the XLAnt shared secret, and
-  // bundling it into a client would ship both.
+  // Both islands: @/lib/xlant reads the XLAnt shared secret out of the
+  // environment, and bundling it into a client would ship it. (It read node:fs
+  // too until 2026-09-15; the artifacts readers went with the download, and
+  // the rule did not change — one credential is reason enough.)
   for (const [name, src] of [
     ["token button", button],
     ["devices list", island],
@@ -1532,8 +1317,9 @@ await leg("the nginx drop-in still caps /api/xlant below the host default", () =
 
 // ---------------------------------------------------------------------------
 
+// The fake relay is the only thing this file still has to take down: the
+// scratch artifacts tree went with the download it existed for (2026-09-15).
 relay.close();
-rmSync(ROOT, { recursive: true, force: true });
 
 if (failures) {
   console.error(`\n${failures} failing`);

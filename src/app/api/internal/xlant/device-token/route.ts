@@ -1,14 +1,22 @@
-// POST /api/internal/xlant/device-token — mint (or rotate) the caller's XLAnt
-// device token, staff-gated (ARCHITECTURE.md §5.22).
+// POST /api/internal/xlant/device-token — mint a device token for one of the
+// caller's computers, staff-gated (ARCHITECTURE.md §5.22).
 //
 // The identity is taken from the SESSION, never from the request body: the
 // token this returns is what lets a machine reach the technician lane as that
 // person, so a caller must not be able to name someone else. Optional JSON
 // body `{ kind?: "windows" | "mac" }` (absent or empty body ⇒ windows, which
-// is what every caller sent before contract 0.5.0). The relay keeps one active
-// token per (user, kind) and revokes the previous one of THAT KIND on mint, so
-// this is also "sign out my old PC" — and a Mac mint leaves a Windows token
-// alone.
+// is what every caller sent before contract 0.5.0).
+//
+// A MINT REVOKES NOTHING, and this header said otherwise until 2026-09-15. It
+// used to claim the relay kept one active token per (user, kind) and revoked
+// the previous one on mint, "so this is also 'sign out my old PC'". That was
+// true of the relay until 2026-09-08 and has been false since: `POST
+// /v1/device/issue` revokes nothing at all (the xlant repo's
+// apps/relay/src/store.ts), a person holds one token per COMPUTER, and a token
+// nobody pastes anywhere expires seven days after it was generated. Signing a
+// computer out is `POST /api/internal/xlant/devices/revoke` next door, aimed
+// at one row of the caller's own list — which is the only reason that route
+// exists. A staff page must not promise a rotation that does not happen.
 //
 // A `mac` mint PROBES FIRST. See probeRelayMacSupport() for the argument; the
 // short version is that a pre-0.5.0 relay refuses the kind with a generic 400

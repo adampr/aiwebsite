@@ -5,8 +5,8 @@
 // component's state and nowhere else on this host.
 //
 // The kinds are inlined rather than imported from @/lib/xlant — that module
-// reads node:fs and the shared secret, and must never be bundled into a
-// client. One button per kind, and the page renders one inside each platform
+// reads the XLAnt shared secret out of the environment and must never be
+// bundled into a client. One button per kind, and the page renders one inside each platform
 // card, because a Windows token and a Mac token are for different builds and
 // are minted through different paths (only the Mac mint probes the relay
 // first). Two mounted instances hold separate state so showing a Mac token

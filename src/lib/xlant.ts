@@ -1,7 +1,12 @@
 // XLAnt integration helpers (ARCHITECTURE.md §5.22). SERVER ONLY — this
-// module reads node:fs and the XLAnt shared secret out of the environment;
-// nothing here may be imported from a "use client" file (the token button
-// talks to the route handler instead).
+// module reads the XLAnt shared secret out of the environment and calls the
+// relay's internal lane with it; nothing here may be imported from a "use
+// client" file (the token button talks to the route handler instead).
+//
+// IT NO LONGER READS A DISK. Until 2026-09-15 this file also held the
+// artifacts-directory readers behind the staff download; the bytes moved to
+// xlant.ai that day (see below) and node:fs went with them. What is left is
+// identity and the relay.
 //
 // WHAT XLAnt IS. A separate product in a separate repo (`adampr/xlant`, whose
 // ARCHITECTURE.md is the authority for the relay, the desktop and the
@@ -13,8 +18,8 @@
 //
 // TWO CLIENT KINDS SINCE 0.5.0, and they are separate all the way down: a
 // person with both machines holds a `windows` token AND a `mac` token, the
-// artifacts directory carries a Windows installer beside a macOS bundle per
-// architecture, and neither side can sign the other out.
+// two are built and published separately (on xlant.ai, since 2026-09-15), and
+// neither side can sign the other out.
 //
 // ONE TOKEN PER COMPUTER SINCE 2026-09-08, AND AS MANY COMPUTERS AS A PERSON
 // HAS. Until this round the relay kept ONE active token per (email, kind), so
@@ -32,22 +37,33 @@
 // the two kinds changed; what changed is the count within a kind.
 //
 // THIS HOST WAS THE ONLY PUBLIC ORIGIN FROM 2026-09-04, WAS THE LEGACY FRONT
-// FROM 2026-09-13, AND HAS CARRIED NO DEVICE LANE SINCE 2026-09-15. XLAnt's
-// canonical origin is `https://xlant.ai`, which serves the DEVICE lane (that
-// repo's `src/lib/xlant.ts` and `src/app/api/xlant/**`, a faithful port of what
-// used to live here). What this host carries now, and all it carries:
+// FROM 2026-09-13, HAS CARRIED NO DEVICE LANE SINCE 2026-09-15, AND SERVES NO
+// BYTES AT ALL SINCE THE SAME DAY. XLAnt's canonical origin is
+// `https://xlant.ai`, which serves the DEVICE lane (that repo's
+// `src/lib/xlant.ts` and `src/app/api/xlant/**`, a faithful port of what used
+// to live here) AND, from this round, the signed-in download at
+// `https://xlant.ai/account/download`. What this host carries now, and all it
+// carries:
 //
-//   · HUMAN — the staff-gated page `/internal/xlant`, the build download
-//     (`/api/internal/xlant/download`, `?platform=mac&arch=…` for a Mac), the
-//     device-token mint (`/api/internal/xlant/device-token`, one token per
-//     COMPUTER since 2026-09-08) and the caller's own computer list and
-//     sign-out (`GET /api/internal/xlant/devices`,
+//   · IDENTITY — the staff-gated page `/internal/xlant`, which is the
+//     token-and-computers page and nothing else: the device-token mint
+//     (`/api/internal/xlant/device-token`, one token per COMPUTER since
+//     2026-09-08) and the caller's own computer list and sign-out
+//     (`GET /api/internal/xlant/devices`,
 //     `POST /api/internal/xlant/devices/revoke`), all behind
-//     requireXlantStaff(). THESE STAY HERE: a mint is an act by a member of
-//     XL.net staff, authenticated by an XL.net session that lives on this
-//     host, and moving that surface is a separate round — the shipping desktop
+//     requireXlantStaff(). THESE STAY HERE, and the reason is a fact about
+//     cookies rather than a preference: a mint is an act by a member of XL.net
+//     staff, authenticated by an XL.net session, and that session lives on the
+//     xl.net zone where xlant.ai cannot see it. The shipping desktop also
 //     still tells a person their token comes from
-//     `https://ai.xl.net/internal/xlant`.
+//     `https://ai.xl.net/internal/xlant`, and a build in the field never
+//     updates its own bundled strings.
+//   · BYTES — GONE, 2026-09-15. `/api/internal/xlant/download` was deleted and
+//     with it every artifacts-directory reader in this file. XLAnt's installers
+//     are published on xlant.ai, and the staff page links there. What proves
+//     entitlement over there is the relay's own monthly allowance for the
+//     signed-in address — the same relay this file talks to — so nothing was
+//     invented to replace this gate.
 //   · DEVICE — GONE, 2026-09-15. `/api/xlant/relay/*` (the authenticated
 //     passthrough) and `/api/xlant/update/*` (the electron-updater feed) were
 //     deleted, and with them everything only they used: the passthrough
@@ -72,33 +88,33 @@
 //
 // WHAT DID NOT GO WITH IT, and why each stays:
 //
-//   · /opt/xlant-artifacts on this VM. latestInstaller() and latestMacBundle()
-//     read that directory directly for the staff download and have never
-//     proxied anywhere; the xlant repo's release step keeps publishing the
-//     INSTALLERS to it (it stopped publishing this host's update MANIFESTS —
-//     `latest.yml` / `latest-mac.yml` — on the same day, because with the feed
-//     gone nothing here reads them). Nothing was deleted from the directory:
-//     the manifests already there are simply leftovers now, and the staff
-//     readers have never looked at them.
 //   · The NSG /32 rule opening TCP 8403 from this web host (222; 221 for
 //     roleplay was deleted on 2026-09-04, when roleplay.xl.net stopped
 //     carrying any of XLAnt). The mint, the sign-out, the computer list and
 //     the Mac probe all call the relay's INTERNAL lane from this host's server
-//     side, so the path to the relay is still load-bearing.
-//   · All three env vars. See the arming gate below — this module is
-//     all-or-nothing, and dropping one would 503 the staff page's every route.
+//     side, so the path to the relay is still load-bearing — and this round
+//     therefore reduces NO attack surface here. Closing that reach is the
+//     prize of the day the mint itself moves, not of this one.
+//   · XLANT_RELAY_URL and XLANT_PROXY_SHARED_SECRET. See the arming gate
+//     below; without them there is no mint, no list and no sign-out.
+//   · /opt/xlant-artifacts on this VM, which is now a FROZEN ARCHIVE. The
+//     release step stopped copying builds here on 2026-09-15 and nothing in
+//     this repo reads the directory any more. Nothing was deleted from it and
+//     nothing should be: the owner's standing rule, and the cheapest possible
+//     way to keep the last two-front release recoverable.
 //
-// ARMING GATE. All three env vars must be present (XLANT_RELAY_URL,
-// XLANT_PROXY_SHARED_SECRET ≥16 chars, XLANT_ARTIFACTS_DIR) or xlantConfig()
-// returns null and all FOUR staff route handlers answer 503 — the staff page
-// itself still renders, with every download reading "not published yet",
-// because a page that 500s or 503s tells a member of staff nothing they can
-// act on. Half-configured is not a
+// ARMING GATE, AND IT IS TWO VARS NOW, NOT THREE. XLANT_RELAY_URL and
+// XLANT_PROXY_SHARED_SECRET (≥16 chars) must both be present or xlantConfig()
+// returns null and all THREE surviving staff route handlers answer 503 — the
+// staff page itself still renders, because a page that 500s or 503s tells a
+// member of staff nothing they can act on. XLANT_ARTIFACTS_DIR came OUT of
+// this gate in the same edit that deleted the download, and the order mattered:
+// leaving a var in an all-or-nothing gate that nothing reads means the day an
+// operator tidies it out of the VM's .env, the mint and the sign-out 503 at
+// once, for a directory nobody was reading. Half-configured is still not a
 // state this feature has: guessing a relay URL would send a staff email
 // address to whatever answers at the guess.
 
-import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
 import { readSession, type SessionData } from "@aicompany/core/auth/session";
 import { siteConfig } from "site.config";
 import { isRfpDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
@@ -106,7 +122,6 @@ import { isRfpDomain, isVerifiedStaffProvider } from "@/lib/rfp/access";
 export interface XlantConfig {
   relayUrl: string;
   proxySecret: string;
-  artifactsDir: string;
 }
 
 /** Device-token kinds the XLAnt relay accepts — mirrors DEVICE_KINDS in the
@@ -116,7 +131,7 @@ export interface XlantConfig {
  * The kind is not a count and never was: it decides which BUILD a token is
  * for, and a person holds as many tokens of a kind as they have computers of
  * that kind (2026-09-08). What the kind still separates is the install story —
- * a Windows mint and a Mac mint reach different artifacts, and only the Mac
+ * a Windows token and a Mac token are for different builds, and only the Mac
  * mint probes the relay first. */
 export const XLANT_DEVICE_KINDS = ["windows", "mac"] as const;
 export type XlantDeviceKind = (typeof XLANT_DEVICE_KINDS)[number];
@@ -128,29 +143,14 @@ export function isXlantDeviceKind(v: unknown): v is XlantDeviceKind {
   );
 }
 
-/** The two Mac builds. electron-builder emits one zip per architecture and one
- * shared `latest-mac.yml` naming both, so this host has to be told which one a
- * staffer is asking for — there is no defensible guess: handing an Intel Mac an
- * arm64 bundle produces an app that will not launch. `universal` is
- * deliberately NOT here; the desktop does not build one. */
-export const XLANT_MAC_ARCHES = ["arm64", "x64"] as const;
-export type XlantMacArch = (typeof XLANT_MAC_ARCHES)[number];
-
-export function isXlantMacArch(v: unknown): v is XlantMacArch {
-  return (
-    typeof v === "string" && (XLANT_MAC_ARCHES as readonly string[]).includes(v)
-  );
-}
-
-/** The three vars, or null. Never a partial config — see the arming gate note. */
+/** Both vars, or null. Never a partial config — see the arming gate note. */
 export function xlantConfig(): XlantConfig | null {
   const relayUrl = (process.env.XLANT_RELAY_URL ?? "")
     .trim()
     .replace(/\/+$/, "");
   const proxySecret = (process.env.XLANT_PROXY_SHARED_SECRET ?? "").trim();
-  const artifactsDir = (process.env.XLANT_ARTIFACTS_DIR ?? "").trim();
-  if (!relayUrl || proxySecret.length < 16 || !artifactsDir) return null;
-  return { relayUrl, proxySecret, artifactsDir };
+  if (!relayUrl || proxySecret.length < 16) return null;
+  return { relayUrl, proxySecret };
 }
 
 /** Same three denial reasons readRfpUser() returns, so the two gates cannot
@@ -400,226 +400,28 @@ export function isXlantDeviceId(v: unknown): v is string {
   return typeof v === "string" && XLANT_DEVICE_ID_RE.test(v);
 }
 
-export interface InstallerInfo {
-  fileName: string;
-  size: number;
-  version: string;
-}
-
-/** A published macOS bundle. Same three fields as an installer plus the
- * architecture, because the page offers one button per architecture and has to
- * label them. */
-export interface MacBundleInfo extends InstallerInfo {
-  arch: XlantMacArch;
-}
-
-/**
- * The installer filename contract. The version is REQUIRED to look like a
- * version (`1.2.3`, optionally `-beta.1`): a loose `[\w.-]+` accepts
- * `XLAnt-Setup-x.exe.exe` and would then present "x.exe" to a member of staff
- * as the version they are downloading. A file that does not match is not an
- * installer this page will serve.
- */
-export const XLANT_INSTALLER_RE =
-  /^XLAnt-Setup-(\d+\.\d+\.\d+(?:-[\w.]+)?)\.exe$/;
-
-/**
- * The macOS bundle filename contract, and it is electron-builder's, not ours:
- * the desktop's `mac.artifactName` is `XLAnt-${version}-${arch}-mac.${ext}`,
- * which produced `XLAnt-0.4.2-arm64-mac.zip` + `.blockmap` + `latest-mac.yml`
- * on a real `electron-builder --mac zip --arm64` run (measured on the build
- * box, 2026-09-05).
- *
- * THE ARCHITECTURE IS REQUIRED, and that is the load-bearing part of this
- * pattern rather than a decoration. electron-builder's DEFAULT mac pattern is
- * `${productName}-${version}` + (arch === defaultArch ? "" : "-${arch}") +
- * `-${os}.${ext}` and its default arch is x64 (builder-util `arch.js`,
- * `defaultArchFromString(undefined) === Arch.x64`) — so a build that loses the
- * explicit `artifactName` names its Intel zip `XLAnt-0.5.0-mac.zip`, with no
- * architecture in it at all. That name is refused here on purpose: an
- * unlabelled bundle served to whoever clicked "Intel" is a guess, and the
- * publish failing loudly is the outcome worth having.
- *
- * The same reason rules out `universal`: the desktop builds two zips, not
- * three, so `XLAnt-0.5.0-universal-mac.zip` in the directory is somebody's
- * experiment and not a release this feed knows how to describe.
- */
-export const XLANT_MAC_BUNDLE_RE =
-  /^XLAnt-(\d+\.\d+\.\d+(?:-[\w.]+)?)-(arm64|x64)-mac\.zip$/;
-
-/**
- * Newest file in the artifacts dir matching `accept`, by mtime.
- *
- * The artifacts dir lives OUTSIDE the web root and is filled by the xlant
- * repo's publish step; the copy on THIS VM is the one THIS host reads (since
- * 2026-09-13 the publish step writes the canonical front's copy as well, and
- * the two are kept forward-only independently). Since 2026-09-15 this host's
- * copy receives INSTALLERS ONLY — with the update feed gone, nothing here
- * reads `latest.yml` / `latest-mac.yml`, and the release step no longer
- * publishes them to this VM. The manifests already in the directory were left
- * where they are; they match neither pattern below, so they were never
- * candidates anyway.
- *
- * Newest by mtime, not by parsed version: a republished build of the same
- * version must win, and a version string is not an ordering this host is
- * entitled to invent.
- *
- * Everything here degrades to null rather than throwing, because this runs
- * inside a page render: an unreadable directory, a directory with no match,
- * and — the race that matters — a file that vanishes between readdir() and
- * stat() (the publish step renames `<name>.part` into place and an operator
- * may prune old builds at any moment) all mean "nothing to offer", which the
- * page states plainly. `.part` files are skipped by construction (they do not
- * end in .exe or .zip), and the check is spelled out below so it survives a
- * future loosening of either pattern.
- */
-async function newestArtifact(
-  artifactsDir: string,
-  accept: (name: string) => boolean
-): Promise<{ fileName: string; size: number } | null> {
-  let names: string[];
-  try {
-    names = await readdir(artifactsDir);
-  } catch {
-    return null;
-  }
-  const candidates = names.filter((n) => !n.endsWith(".part") && accept(n));
-  if (candidates.length === 0) return null;
-
-  // One stat per file, and its size is taken from the SAME stat as its mtime:
-  // a second stat could observe a different file at the same path.
-  const stats = await Promise.all(
-    candidates.map(async (fileName) => {
-      const st = await stat(join(artifactsDir, fileName)).catch(() => null);
-      if (!st || !st.isFile()) return null;
-      return { fileName, mtime: st.mtimeMs, size: st.size };
-    })
-  );
-  const present = stats.filter((s): s is NonNullable<typeof s> => s !== null);
-  if (present.length === 0) return null;
-
-  present.sort((a, b) => b.mtime - a.mtime);
-  const newest = present[0];
-  return { fileName: newest.fileName, size: newest.size };
-}
-
-/** Newest published Windows installer, or null. */
-export async function latestInstaller(
-  cfg: XlantConfig
-): Promise<InstallerInfo | null> {
-  const newest = await newestArtifact(cfg.artifactsDir, (n) =>
-    XLANT_INSTALLER_RE.test(n)
-  );
-  if (!newest) return null;
-  return {
-    ...newest,
-    // Non-null by construction: the name passed XLANT_INSTALLER_RE above.
-    version: XLANT_INSTALLER_RE.exec(newest.fileName)![1],
-  };
-}
-
-/**
- * Newest published macOS bundle FOR ONE ARCHITECTURE, or null.
- *
- * Per architecture rather than "the newest mac zip" because the two are
- * published together and are not interchangeable: the arm64 and x64 zips of
- * one release differ only in mtime, so a single newest-of-all would hand
- * whichever finished writing last to everybody.
- */
-export async function latestMacBundle(
-  cfg: XlantConfig,
-  arch: XlantMacArch
-): Promise<MacBundleInfo | null> {
-  const newest = await newestArtifact(cfg.artifactsDir, (n) => {
-    const m = XLANT_MAC_BUNDLE_RE.exec(n);
-    return m !== null && m[2] === arch;
-  });
-  if (!newest) return null;
-  return {
-    ...newest,
-    // Non-null by construction: the name passed XLANT_MAC_BUNDLE_RE above.
-    version: XLANT_MAC_BUNDLE_RE.exec(newest.fileName)![1],
-    arch,
-  };
-}
-
-/**
- * Which build `GET /api/internal/xlant/download` was asked for, decided from
- * the query string alone so every branch is pinnable without a session (the
- * route itself is staff-gated, and `readSession()` needs a Next request scope
- * that `scripts/xlant-tests.ts` has no way to enter).
- *
- * No query at all is the WINDOWS installer: that is the link this host has
- * served since the page existed and the one an old bookmark still carries, and
- * a default that changed under it would hand a member of staff the wrong
- * operating system's build.
- *
- * `arch` is required for mac and has no default. The arm64 and x64 zips are
- * not interchangeable — an Apple-silicon bundle on an Intel Mac does not
- * launch — so there is nothing honest to guess, and the two buttons on the
- * page always name one. It is IGNORED for windows rather than refused: there
- * is one Windows build, and a stray parameter must not break a working link.
- */
-export type XlantDownloadRequest =
-  | { ok: true; platform: "windows" }
-  | { ok: true; platform: "mac"; arch: XlantMacArch }
-  | { ok: false; error: string };
-
-export function xlantDownloadRequest(
-  params: URLSearchParams
-): XlantDownloadRequest {
-  const platform = params.get("platform") ?? "windows";
-  if (platform === "windows") return { ok: true, platform };
-  if (platform !== "mac") {
-    return { ok: false, error: "platform must be 'windows' or 'mac'" };
-  }
-  const arch = params.get("arch");
-  if (!isXlantMacArch(arch)) {
-    return { ok: false, error: "arch must be 'arm64' or 'x64'" };
-  }
-  return { ok: true, platform, arch };
-}
-
-/**
- * Serve a file from the artifacts dir, refusing traversal and odd names.
- *
- * It guards ONE caller now (the staff download), where it is defence in depth:
- * that name comes from readdir(), not from a request. Until 2026-09-15 it was
- * also the ACTUAL boundary of the update feed, whose names arrived from the
- * network — that feed is gone, and this check is deliberately NOT relaxed to
- * match, because an artifacts directory an operator writes by hand is exactly
- * where a name worth refusing turns up. A single path segment only: the
- * leading class rejects a name starting with `.` or `-`, the body class admits
- * no `/` (so a joined multi-segment path can never pass), and the explicit
- * `..` test is kept because a future loosening of either class must not
- * silently re-open traversal.
- */
-export function safeArtifactName(name: string): boolean {
-  return /^[\w][\w.-]*$/.test(name) && !name.includes("..");
-}
-
-/**
- * What to put in `Content-Type` for a name the staff download has already
- * accepted. Three answers and no sniffing:
- *
- *   · `.yml`      → `text/yaml`, an electron-updater manifest;
- *   · `.zip`      → `application/zip`, the macOS bundle;
- *   · everything else (the `.exe` and both `.blockmap`s) →
- *     `application/octet-stream`.
- *
- * Order matters: `…-mac.zip.blockmap` ends in `.blockmap`, not `.zip`, and is
- * a binary blockmap rather than a zip — so the `.zip` test must be an
- * endsWith on the WHOLE name, which it is.
- *
- * THE WHOLE TABLE IS KEPT, not narrowed to the two names the staff download
- * can actually reach (2026-09-15, when the update feed that served the other
- * four went). It is a total function of a filename and costs nothing; a
- * narrowed one would answer `application/octet-stream` for a `.yml` the day
- * something asked, which is a wrong answer where "no answer" was wanted.
- * `scripts/xlant-tests.ts` pins every pair without standing up a server.
- */
-export function xlantArtifactContentType(name: string): string {
-  if (name.endsWith(".yml")) return "text/yaml";
-  if (name.endsWith(".zip")) return "application/zip";
-  return "application/octet-stream";
-}
+// ---------------------------------------------------------------------------
+// WHAT USED TO BE HERE, and where it went (2026-09-15). Everything below this
+// line was the ARTIFACTS half: `newestArtifact()`, `latestInstaller()`,
+// `latestMacBundle()`, `InstallerInfo` / `MacBundleInfo`,
+// `XLANT_INSTALLER_RE`, `XLANT_MAC_BUNDLE_RE`, `XLANT_MAC_ARCHES` /
+// `isXlantMacArch()`, `safeArtifactName()`, `xlantArtifactContentType()` and
+// `xlantDownloadRequest()`. They existed for one caller,
+// `/api/internal/xlant/download`, which was deleted with them.
+//
+// They are not gone from the product. The same filename contracts, the same
+// newest-by-mtime-per-architecture rule and the same query-string decision now
+// live in the xlantai repo, where the builds are published and where the
+// download is served — `src/lib/xlant.ts` and `src/app/api/account/download`
+// there. `xlantDownloadRequest()` was carried across verbatim rather than
+// rewritten, because its two rules are easy to lose and expensive to lose: no
+// query at all means WINDOWS (an old bookmark keeps working), and `arch` is
+// REQUIRED for mac with no default (the arm64 and x64 zips are not
+// interchangeable, and an Apple-silicon bundle on an Intel Mac does not
+// launch).
+//
+// Deadness was determined by grepping every symbol for remaining callers, not
+// by which section of the file it sat in (ARCHITECTURE.md:28's standing rule).
+// The device kinds above STAY: the mint reads them, and a kind is not an
+// artifact.
+// ---------------------------------------------------------------------------

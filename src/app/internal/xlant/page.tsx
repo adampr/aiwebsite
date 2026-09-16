@@ -1,16 +1,42 @@
-// /internal/xlant — XLAnt's human-facing home (ARCHITECTURE.md §5.22): the
-// downloads, the per-computer device-token mints, how to set them up, and the
-// list of the caller's own computers holding a live token. XL.net staff only;
-// the technician agent runs on XL-managed machines.
+// /internal/xlant — XLAnt's TOKEN AND COMPUTERS page for XL.net staff
+// (ARCHITECTURE.md §5.22). The per-computer device-token mints, how to set a
+// machine up, and the list of the caller's own computers holding a live token.
+// XL.net staff only; the technician agent runs on XL-managed machines.
 //
-// ONE TOKEN PER COMPUTER SINCE 2026-09-08, and the Download section's
-// paragraph is the page's statement of it. The old paragraph said a new token
-// of a kind replaced whatever token of that kind the person held and signed
-// that machine out — which was true of the relay then, was the defect a person
-// with two laptops reported, and is false now. A mint replaces NOTHING today:
-// a token nobody pastes anywhere expires seven days after it was generated,
-// and signing a computer out is a deliberate act in "Your computers" below,
-// which is why that section exists at all.
+// THE BYTES LEFT THIS PAGE ON 2026-09-15, AND THE TOKEN DID NOT. Until then
+// this page also served the installers, streamed from /opt/xlant-artifacts on
+// this VM by a staff-gated route. XLAnt's own site now publishes them —
+// https://xlant.ai/account/download — so the three Download buttons and the
+// four artifacts reads behind them are gone, and one link takes their place.
+//
+// WHY THE SPLIT IS NOT ARBITRARY. A download is bytes; a mint is an act by a
+// named member of XL.net staff. The bytes can live anywhere that can prove the
+// person is entitled to them, and xlant.ai proves that by reading the relay's
+// own monthly allowance for whoever is signed in there. The mint cannot move
+// with them: it is authorised by an XL.net STAFF SESSION, that cookie lives on
+// the xl.net zone, and xlant.ai is a different domain that cannot see it. So
+// this page stays at exactly the URL every shipping XLAnt build already prints
+// under its token box — "From https://ai.xl.net/internal/xlant" — for a build
+// that will never update its own strings. Do not move it, do not redirect it.
+//
+// THE REST OF THAT PRINTED LINE IS NOW HALF TRUE, AND HONESTY ABOUT IT IS THE
+// POINT. It ends "(Internal Tools → XLAnt)", and since 2026-09-15 no row in
+// that menu is called "XLAnt": the owner asked that picking XLAnt out of the
+// pulldown lead to the download, so the menu holds "XLAnt (download)" →
+// xlant.ai and "XLAnt token & computers" → here. The URL still lands here
+// whoever pastes it; the menu path is the part a fielded build now gets wrong,
+// and the only real fix is a desktop release, tracked with the other four help
+// strings in the xlant repo's docs/SETUP.md §3. Nothing on this page may claim
+// that line is still correct word for word — it is not.
+//
+// ONE TOKEN PER COMPUTER SINCE 2026-09-08, and the token paragraph is the
+// page's statement of it. The old paragraph said a new token of a kind
+// replaced whatever token of that kind the person held and signed that machine
+// out — which was true of the relay then, was the defect a person with two
+// laptops reported, and is false now. A mint replaces NOTHING today: a token
+// nobody pastes anywhere expires seven days after it was generated, and
+// signing a computer out is a deliberate act in "Your computers" below, which
+// is why that section exists at all.
 //
 // AND THE REINSTALL SENTENCE NAMES THE RIGHT MOMENT (refuter R2, F8). The
 // relay binds a device to a computer NAME at `/incident/start`, not at hello,
@@ -36,16 +62,12 @@
 //
 // force-dynamic + revalidate 0 are load-bearing, not defaults: the house
 // posture for public pages is ISR, and a gated page inheriting that would be
-// rendered once and handed to every subsequent viewer, gate included.
+// rendered once and handed to every subsequent viewer, gate included. They
+// stay after the artifact reads went: the two islands below are client
+// components, but the GATE above them is this render's.
 
 import type { Metadata } from "next";
 import { requireRfpPage } from "@/lib/rfp/access";
-import {
-  latestInstaller,
-  latestMacBundle,
-  xlantConfig,
-  type InstallerInfo,
-} from "@/lib/xlant";
 import { DevicesList } from "./devices-list";
 import { DeviceTokenButton } from "./token-button";
 
@@ -55,11 +77,16 @@ export const revalidate = 0;
 export const metadata: Metadata = {
   // Absolute: the layout template would otherwise render "XLAnt — XL.net AI |
   // XL.net AI".
-  title: { absolute: "XLAnt — XL.net AI" },
+  title: { absolute: "XLAnt tokens & computers — XL.net AI" },
   // Also set on the /internal layout; repeated here so a future refactor of
   // either cannot quietly un-noindex a staff page.
   robots: { index: false, follow: false },
 };
+
+/** XLAnt's download area, spelled once and linked once. The same string lives
+ * in src/components/nav-links.ts's Internal Tools submenu; if the two ever
+ * disagree, one of them leads to a 404. */
+const DOWNLOAD_URL = "https://xlant.ai/account/download";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
 
@@ -111,9 +138,14 @@ const MAC_STEPS: readonly SetupStep[] = [
     body: "This build is not signed by Apple yet, so macOS blocks the first open and says XLAnt “cannot be opened because Apple cannot check it for malicious software”. Click Done, open System Settings → Privacy & Security, scroll to Security, and click Open Anyway beside XLAnt. Open XLAnt again and confirm. That is a one-off; every later launch is ordinary. XLAnt has no window — it lives in the menu bar at the top of your screen.",
   },
   {
+    // The update sentence names the DOWNLOAD AREA, not this page. This page has
+    // not held the builds since 2026-09-15, so "come back to this page and
+    // repeat these steps" would send a Mac staffer somewhere with nothing on
+    // it — and a Mac cannot update itself, so that sentence is the only thing
+    // standing between them and a build that never moves again.
     num: "04",
     title: "Paste your Mac token, then Save & validate",
-    body: "On first run XLAnt asks for a device token — that is how it knows the Mac is yours. Generate one below, paste it in, and click Save & validate. Because this build is unsigned, macOS will not let it update itself: when a new version is published, come back to this page and repeat these steps.",
+    body: "On first run XLAnt asks for a device token — that is how it knows the Mac is yours. Generate one below, paste it in, and click Save & validate. Because this build is unsigned, macOS will not let it update itself: when a new version is published, download it again from XLAnt's download area at the top of this page and set it up the same way.",
   },
   {
     num: "05",
@@ -121,36 +153,6 @@ const MAC_STEPS: readonly SetupStep[] = [
     body: "From the XLAnt menu choose “Install the administrator helper…”. macOS asks for an administrator’s password once. After that, anything that needs administrator rights runs without another password box — and XLAnt still asks you first, in words, before it does it. Skip this and XLAnt works, but a repair that needs an administrator has to go to XL.net instead.",
   },
 ] as const;
-
-/** One download button, or the plain truth that there is nothing to offer.
- * The label is assembled as ONE string so it cannot ship with a stray double
- * space, and the MB is the size the browser will report. `forWhat` names the
- * machine rather than the file, because that is the choice a staffer is
- * actually making — "Apple silicon" or "Intel", not "arm64" or "x64". */
-function DownloadButton({
-  artifact,
-  href,
-  forWhat,
-}: {
-  artifact: InstallerInfo | null;
-  href: string;
-  forWhat: string;
-}) {
-  if (!artifact) {
-    return (
-      <p className="mt-4 text-sm" style={faint}>
-        XLAnt for {forWhat}: not published yet.
-      </p>
-    );
-  }
-  return (
-    <p className="mt-4">
-      <a href={href} className="btn btn--primary no-underline">
-        {`Download XLAnt ${artifact.version} for ${forWhat} (${Math.round(artifact.size / 1024 / 1024)} MB)`}
-      </a>
-    </p>
-  );
-}
 
 function SetupSteps({ steps }: { steps: readonly SetupStep[] }) {
   return (
@@ -171,18 +173,6 @@ function SetupSteps({ steps }: { steps: readonly SetupStep[] }) {
 export default async function XlantPage() {
   const gate = await requireRfpPage("/internal/xlant");
   if (!gate.ok) return null; // the layout renders the denial
-
-  const cfg = xlantConfig();
-  // Four reads of the same directory, all of which degrade to null: an
-  // unarmed host, an unreadable directory or a platform nobody has published
-  // yet each render as "not published yet" rather than refusing the page.
-  const [installer, macArm64, macX64] = cfg
-    ? await Promise.all([
-        latestInstaller(cfg),
-        latestMacBundle(cfg, "arm64"),
-        latestMacBundle(cfg, "x64"),
-      ])
-    : [null, null, null];
 
   return (
     <div className="mx-auto max-w-3xl space-y-16">
@@ -222,6 +212,34 @@ export default async function XlantPage() {
         <span className="sys-label">Download</span>
         <h2 className="mt-6">Get it on your machine</h2>
         <p className="mt-6">
+          The builds live on XLAnt&rsquo;s own site — Windows, and both Mac
+          builds — and you sign in there with your work address to get them:
+        </p>
+        <p className="mt-4">
+          {/* A plain anchor, not <Link>: another origin. The visible text is
+              the URL itself so it can be read off a screen and typed into a
+              machine that is not this one — which is exactly the situation a
+              person setting up a second laptop is in. */}
+          <a href={DOWNLOAD_URL} rel="noopener" className="btn btn--primary no-underline">
+            {DOWNLOAD_URL}
+          </a>
+        </p>
+        <p className="mt-4 text-sm" style={faint}>
+          Two Mac builds are offered there and they are not interchangeable:
+          Apple silicon is every Mac with an M-series chip, Intel is the older
+          ones. If you are not sure, open the Apple menu → About This Mac and
+          read the Chip or Processor line.
+        </p>
+        <p className="mt-4 text-sm">
+          The token each machine needs is generated here, on this page, and
+          nowhere else — the download area does not issue one.
+        </p>
+      </section>
+
+      <section>
+        <span className="sys-label">Tokens</span>
+        <h2 className="mt-6">One token per computer</h2>
+        <p className="mt-6">
           One token per computer, and as many computers as you have: a Windows
           token for each PC, a Mac token for each Mac. A token is shown{" "}
           <strong>once</strong>, right here, so copy it before you leave the
@@ -245,12 +263,7 @@ export default async function XlantPage() {
       <section className="panel">
         <span className="sys-label">XLAnt for Windows</span>
         <h2 className="mt-6">Windows 11</h2>
-        <DownloadButton
-          artifact={installer}
-          href="/api/internal/xlant/download"
-          forWhat="Windows 11"
-        />
-        <p className="mono mt-4 text-xs" style={faint}>
+        <p className="mono mt-6 text-xs" style={faint}>
           windows 11 · signed by XL.net · updates arrive as a tray banner
         </p>
         <SetupSteps steps={WINDOWS_STEPS} />
@@ -260,24 +273,8 @@ export default async function XlantPage() {
       <section className="panel">
         <span className="sys-label">XLAnt for Mac</span>
         <h2 className="mt-6">macOS 13 or later</h2>
-        <p className="mt-6 text-sm">
-          Two builds, and they are not interchangeable. Apple silicon is every
-          Mac with an M-series chip; Intel is the older ones. If you are not
-          sure, open the Apple menu → About This Mac and read the Chip or
-          Processor line.
-        </p>
-        <DownloadButton
-          artifact={macArm64}
-          href="/api/internal/xlant/download?platform=mac&arch=arm64"
-          forWhat="Apple silicon"
-        />
-        <DownloadButton
-          artifact={macX64}
-          href="/api/internal/xlant/download?platform=mac&arch=x64"
-          forWhat="Intel"
-        />
-        <p className="mono mt-4 text-xs" style={faint}>
-          macos 13+ · not signed by Apple yet · allow it once in Privacy &
+        <p className="mono mt-6 text-xs" style={faint}>
+          macos 13+ · not signed by Apple yet · allow it once in Privacy &amp;
           Security · no self-update
         </p>
         <SetupSteps steps={MAC_STEPS} />

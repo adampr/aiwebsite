@@ -3,9 +3,19 @@
 // The staff nav's "Internal Tools" disclosure (nav restructure 2026-08-19).
 //
 // Not a destination: a button opening a small submenu with an "XL.net" group
-// label and the staff-only tools (today two: RFP Response -> /rfp and
-// XLAnt -> /internal/xlant). The list is nav-links.ts's, rendered by mapping
-// over item.items, so a third costs nothing here.
+// label and the staff-only tools (today three: RFP Response -> /rfp, XLAnt
+// (download) -> https://xlant.ai/account/download, and XLAnt token &
+// computers -> /internal/xlant). The list is nav-links.ts's, rendered by
+// mapping over item.items, so a fourth costs nothing here.
+//
+// ONE OF THEM IS ON ANOTHER ORIGIN (2026-09-15), which is the only reason this
+// component has a branch in its map at all. XLAnt's installers live on
+// xlant.ai now and nowhere else, so the download row is an ABSOLUTE href, and
+// an absolute href must not reach next/link: <Link> prefetches and then routes
+// it through THIS app's router, which has no such route. It is drawn as a
+// plain <a rel="noopener"> instead — the house pattern for a link that leaves
+// this site (src/app/contact/page.tsx). See the `current` note below for the
+// other half of it.
 // Rendered only inside the staff variant of the desktop anchor row
 // (nav-anchors.tsx); the phone panel presents the same group as labeled rows
 // (mobile-nav.tsx), so this component never renders below md.
@@ -19,9 +29,11 @@
 // points at a real element and server/client markup stay byte-identical.
 //
 // Client rendering is a UI convenience, NOT the control: every destination in
-// here is gated server-side regardless of what this menu shows (/rfp by its
-// layout + pages, /internal/xlant by src/app/internal/layout.tsx and its own
-// page) - the staff-probe.ts doctrine.
+// here that is ON THIS HOST is gated server-side regardless of what this menu
+// shows (/rfp by its layout + pages, /internal/xlant by
+// src/app/internal/layout.tsx and its own page) - the staff-probe.ts doctrine.
+// The external one is another origin's to gate, and it does: xlant.ai reads
+// the relay's own allowance for whoever is signed in there.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -82,11 +94,17 @@ export function InternalToolsMenu({ item }: { item: NavMenuItem }) {
     };
   }, [open]);
 
-  // The toggle lights up while the viewer is inside one of its destinations.
+  // The toggle lights up while the viewer is inside one of its destinations ON
+  // THIS HOST. An external destination is skipped rather than tested: a
+  // pathname here can never be inside another origin, so the test could only
+  // ever be false, and a comparison that cannot be true is a comparison that
+  // will be misread later.
   // Styled off data-current, not aria-current: aria-current marks the current
   // item WITHIN a set of links, and this toggle is a button, not a link (the
   // real aria-current sits on the menu link below).
-  const current = item.items.some((l) => pathname.startsWith(l.href));
+  const current = item.items.some(
+    (l) => !l.external && pathname.startsWith(l.href)
+  );
 
   return (
     <div className="nav-tools" ref={rootRef}>
@@ -114,16 +132,31 @@ export function InternalToolsMenu({ item }: { item: NavMenuItem }) {
           exist per document (one staff nav row). */}
       <div id="internal-tools-menu" className="nav-tools-menu" hidden={!open}>
         <span className="nav-tools-group">{item.group}</span>
-        {item.items.map((l) => (
-          <Link
-            key={l.href}
-            href={l.href}
-            aria-current={pathname.startsWith(l.href) ? "page" : undefined}
-            onClick={() => setOpen(false)}
-          >
-            {l.label}
-          </Link>
-        ))}
+        {item.items.map((l) =>
+          l.external ? (
+            // No aria-current: this row is never the page you are on, because
+            // it is not on this site. `rel="noopener"` without target="_blank"
+            // is deliberate — the menu navigates in place, and the attribute
+            // costs nothing while making the intent of an absolute href plain.
+            <a
+              key={l.href}
+              href={l.href}
+              rel="noopener"
+              onClick={() => setOpen(false)}
+            >
+              {l.label}
+            </a>
+          ) : (
+            <Link
+              key={l.href}
+              href={l.href}
+              aria-current={pathname.startsWith(l.href) ? "page" : undefined}
+              onClick={() => setOpen(false)}
+            >
+              {l.label}
+            </Link>
+          )
+        )}
       </div>
     </div>
   );

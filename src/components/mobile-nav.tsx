@@ -42,7 +42,9 @@
 // variant swap after the shared probe resolves (accepted precedent — see
 // nav-links.ts). The staff variant's "Internal Tools" submenu renders here
 // as a labeled group: an index-numbered "Internal Tools · XL.net" header
-// row, then its destinations as indented links.
+// row, then its destinations as indented links — except an `external` one
+// (XLAnt's download moved to xlant.ai on 2026-09-15), which is a plain <a>
+// because next/link would route an absolute URL through this app's router.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -153,16 +155,31 @@ export function MobileNav({ children }: { children?: React.ReactNode }) {
                   </span>
                   {item.label} · {item.group}
                 </span>
-                {item.items.map((l) => (
-                  <Link
-                    key={l.href}
-                    href={l.href}
-                    aria-current={pathname.startsWith(l.href) ? "page" : undefined}
-                    onClick={() => setOpen(false)}
-                  >
-                    {l.label}
-                  </Link>
-                ))}
+                {item.items.map((l) =>
+                  l.external ? (
+                    // Another origin: a plain anchor, and no aria-current,
+                    // because a pathname on this host can never be inside it.
+                    <a
+                      key={l.href}
+                      href={l.href}
+                      rel="noopener"
+                      onClick={() => setOpen(false)}
+                    >
+                      {l.label}
+                    </a>
+                  ) : (
+                    <Link
+                      key={l.href}
+                      href={l.href}
+                      aria-current={
+                        pathname.startsWith(l.href) ? "page" : undefined
+                      }
+                      onClick={() => setOpen(false)}
+                    >
+                      {l.label}
+                    </Link>
+                  )
+                )}
               </div>
             );
           }

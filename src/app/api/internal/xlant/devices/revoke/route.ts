@@ -64,8 +64,11 @@ export async function POST(req: Request): Promise<Response> {
   }
   const session = gate.session;
 
-  // Read AFTER the gate, like the staff download's query string: a malformed
-  // body must never tell an anonymous caller what parameters this route takes.
+  // Read AFTER the gate: a malformed body must never tell an anonymous caller
+  // what parameters this route takes. (The staff download used to read its
+  // query string in the same order and for the same reason; it was deleted on
+  // 2026-09-15 when XLAnt's builds moved to xlant.ai, and this is the last
+  // place that discipline is written down on this host.)
   const body = await readBody(req);
   if (body === null) return fail("body must be a JSON object", 400);
   if (!isXlantDeviceId(body.deviceId)) {

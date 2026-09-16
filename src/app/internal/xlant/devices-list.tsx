@@ -7,11 +7,11 @@
 // and a server-rendered snapshot would be stale in both directions.
 //
 // IT IMPORTS NOTHING FROM `@/lib/xlant`, and that is a rule rather than an
-// accident: that module reads node:fs and the XLAnt shared secret, and
-// bundling it into a client would ship both. The row shape below is therefore
-// a hand-kept mirror of `XlantDeviceSummary` there, exactly as the token
-// button inlines the two device kinds. A test pins the absence of the import
-// for both files.
+// accident: that module reads the XLAnt shared secret out of the environment,
+// and bundling it into a client would ship it. The row shape below is
+// therefore a hand-kept mirror of `XlantDeviceSummary` there, exactly as the
+// token button inlines the two device kinds. A test pins the absence of the
+// import for both files.
 //
 // WHY THIS SECTION EXISTS. Until 2026-09-08 a person held one token per kind
 // and every mint signed their previous machine out, so there was nothing to
