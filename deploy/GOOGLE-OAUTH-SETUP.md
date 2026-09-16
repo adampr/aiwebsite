@@ -32,7 +32,7 @@ project is fine, or create a dedicated one.
 
 ## 3. Wire it into the app
 
-In `/home/linuxuser/aiwebsite/.env` fill in the two empty values:
+In `/home/linuxuser/Development/aiwebsite/.env` fill in the two empty values:
 
 ```
 GOOGLE_CLIENT_ID=<client id>.apps.googleusercontent.com

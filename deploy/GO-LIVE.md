@@ -70,7 +70,7 @@ Cloudflare dashboard:
 ### 2. Deploy to the VM (one command, dev box)
 
 ```bash
-cd ~/aiwebsite && bash deploy/deploy.sh
+cd ~/Development/aiwebsite && bash deploy/deploy.sh
 ```
 
 This rsyncs the repo + submodule + `.env` + tunnel credentials to
