@@ -15,6 +15,24 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
+> **Module pin: @aicompany/core v1.131.0 (2026-09-16), submodule a174182 (= tag v1.131.0).**
+> Adopted from v1.130.0 (0e23941). NO template change, no re-render, no schema, no env key.
+> **What changes here:** the module's §19.4 `bannedPhrases` gate stops MUTATING. Through
+> v1.130.0 it deleted every hit as a bare case-insensitive SUBSTRING and called it a fix,
+> which breaks the sentence — measured on roleplay, where "unlocks" became " s" and held three
+> articles as drafts. **This host's exposure was the more dangerous one and it never fired:**
+> `quality.posture` here is `publish_indexed`, so a damaged sentence would have been PUBLISHED
+> INDEXED rather than held. One scrub fire in 71 rows (2026-07-12), no debris in the corpus —
+> checked. From this pin the gate detects and reports (boundary-anchored, stem-tolerant), and
+> enforcement lives in the prompts: the writer prompt already carried this host's list ("the
+> fact sheet", "the source material", "the AI landscape", "delve into", …) and the
+> refresh/repair prompt now carries a "never introduce" constraint plus one bounded in-place
+> substitution licence. Expect a new advisory report line when a banned phrase is present —
+> it sets no verdict, carries no token and cannot mail on its own. Also available:
+> `--panel-required` on a targeted refresh (adopts nothing unless a cross-lab panel convenes).
+> Notes and signed mail deltas: packages/aicompany/MIGRATIONS.md v1.131.0.
+> PRIOR PIN LINE (unchanged below): v1.130.0.
+>
 > **Module pin: @aicompany/core v1.130.0 (2026-09-16), submodule 0e23941 (= tag v1.130.0).**
 > Adopted from v1.129.1 (e9ac269). TEMPLATE CHANGE — re-rendered (watchdog, setup-vm,
 > hi-speed, stage-build; `render.mjs --check` clean). Host actions taken: `PEER_MONITOR_PEERS`
