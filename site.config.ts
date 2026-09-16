@@ -245,12 +245,24 @@ export const siteConfig = defineSiteConfig({
       // BEFORE the coach@roleplay.xl.net inbound route goes live). The XL
       // Roleplay Coach persona sends from coach@roleplay.xl.net (previously
       // roleplay@ai.xl.net, kept during the transition window).
+      //
+      // xlant.ai entries added 2026-09-16 (Panel C row 1/2, refutation RC 3).
+      // xlant.ai shares this Resend account and got its own webhook on
+      // 2026-09-12; its persona (xlant@xlant.ai) handles its own mail, so
+      // mail to it that reaches this handler is log-only here, not a WARN.
+      // Its MX is Resend inbound only (no person receives mail there) and its
+      // webhook subscribes to received/bounced/complained, so its bounces
+      // still alert on its own host. topmspnearme.net is deliberately NOT
+      // here (RC 4/15): tmnm has no Resend webhook, so the WARN this host
+      // sends is the only surface for tmnm inbound mail.
       siblingSites: [
         "chi@itsupportchicago.net",
         "itsupportchicago.net",
         "coach@roleplay.xl.net",
         "roleplay.xl.net",
         "roleplay@ai.xl.net",
+        "xlant.ai",
+        "xlant@xlant.ai",
       ],
       // Legacy behavior: brain session per sender (+ normalized subject is a
       // module "thread" refinement aiwebsite does NOT adopt at parity).

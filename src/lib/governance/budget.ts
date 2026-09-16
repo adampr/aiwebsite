@@ -7,6 +7,7 @@
 // effect the moment an approval lands. Server-only (DB imports).
 
 import { oversightBcc } from "@/lib/oversight-bcc";
+import { autoResponseSuppress } from "@/lib/auto-response-headers";
 import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 import {
   ALERT_STAMP_KEYS,
@@ -172,7 +173,16 @@ export async function sendGovernanceEmail(opts: {
         text: withTronSignature(opts.text),
         ...(bcc && { bcc }),
         ...(opts.replyTo ? { reply_to: opts.replyTo } : {}),
-        ...(opts.headers ? { headers: opts.headers } : {}),
+        // RFC 3834 (2026-09-16, RC 7): defaults at the seam, CALLER WINS, so
+        // the chase nudge's own nudgeHeaders() still decide its values. The
+        // suppress value follows the audience: `All` only when the operator
+        // is the sole recipient, so the submitter-facing call sites in
+        // work/notify.ts get `OOF, AutoReply` without touching each one.
+        headers: {
+          "Auto-Submitted": "auto-generated",
+          "X-Auto-Response-Suppress": autoResponseSuppress(sendTo, adminRecipient()),
+          ...(opts.headers ?? {}),
+        },
       }),
       signal: AbortSignal.timeout(20_000),
     });

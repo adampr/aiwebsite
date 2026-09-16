@@ -371,6 +371,12 @@ async function sendEmail(subject: string, body: string): Promise<void> {
         to: [to],
         subject,
         text: `${body.trimEnd()}\n\n${SIGNATURE}`,
+        // RFC 3834 (2026-09-16, RC 7): operator-only mail. The 2026-09-14
+        // "Governance standards refresh" bounce was this header-less send.
+        headers: {
+          "Auto-Submitted": "auto-generated",
+          "X-Auto-Response-Suppress": "All",
+        },
       }),
       signal: AbortSignal.timeout(20_000),
     });

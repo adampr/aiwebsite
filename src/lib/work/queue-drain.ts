@@ -49,6 +49,7 @@ import {
 import { queuedWorkCandidates, submissionById } from "./db";
 import { kickPanel } from "./panel";
 import { noteQueueWait } from "./queue-signal";
+import { retireIntakeCleaningRows } from "./intake-issue-retire";
 
 const PASS_CANDIDATES = 10;
 // Keyset pages per pass: enough that ten perpetually-skipped rows at the
@@ -257,6 +258,17 @@ export function startWorkQueueDrain(): void {
     drainWorkQueue().catch((err) =>
       console.log(
         `[work-drain] tick failed: ${err instanceof Error ? err.message.slice(0, 200) : "unknown"}`
+      )
+    );
+    // §5.15(ii) retirement of the cleaned-intake ledger rows (2026-09-16,
+    // RC 14b). HERE, beside the drain with its OWN catch, and never inside
+    // drainWorkQueue(): that returns early on the submissions kill switch and
+    // is re-kicked by the fast retry, neither of which should decide whether
+    // a ledger row closes. Self-throttled to one evaluation per 15 min, and
+    // inert until the module pin carries the CAS resolve (intake-issue-retire.ts).
+    retireIntakeCleaningRows().catch((err) =>
+      console.log(
+        `[work-retire] evaluation failed: ${err instanceof Error ? err.message.slice(0, 200) : "unknown"}`
       )
     );
   };

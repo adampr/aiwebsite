@@ -426,6 +426,13 @@ export async function sendArchiveRetentionEmail(
               ]
             : []
         ),
+        // RFC 3834 (2026-09-16, RC 7). Operator-only by construction (the
+        // no-BCC carve-out above: the recipient IS the overseer), so the
+        // suppress value is the fixed `All` the rendered alert senders use.
+        headers: {
+          "Auto-Submitted": "auto-generated",
+          "X-Auto-Response-Suppress": "All",
+        },
       }),
       signal: AbortSignal.timeout(60_000),
     });

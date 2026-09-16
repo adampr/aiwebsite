@@ -37,6 +37,18 @@ done
 # (script exit 1 = retention/cleanup failure; standards-refresh failures are
 # WARN-emailed in-script and exit 0). Reads RESEND_API_KEY literally from the
 # shared .env (backup-db.sh pattern) — never sourced.
+#
+# All four alert scripts in this file share one send shape (2026-09-16,
+# refutation RC 7). The body is built by `jq -nc --arg`, never string-spliced:
+# the log tail is arbitrary bytes, and the old `sed 's/"/\\"/g'` escaping
+# produced INVALID JSON for a tail holding a backslash or a tab, which is what
+# a crashing job tends to print. The body carries the RFC 3834 pair with
+# X-Auto-Response-Suppress "All" (operator-only mail, the same values the
+# module's rendered alert senders use). `curl -sf` makes a Resend 4xx a
+# failure (the old `-sS ... || true` exited 0 on a 422), and a failure is
+# written to the journal under the `aiwebsite-alert` tag and exits 1, so the
+# alert unit itself shows in `systemctl --failed`. Offline proof, no network:
+# `npm run test:alertbody` (scripts/alert-body-tests.sh).
 sudo tee /usr/local/bin/aiwebsite-governance-alert.sh >/dev/null <<'ALERT'
 #!/usr/bin/env bash
 set -u
@@ -45,11 +57,23 @@ KEY=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2
 TO=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | cut -d, -f1)
 TO="${TO:-adam@xl.net}"
 [ -z "$KEY" ] && exit 0
-TAIL=$(tail -c 1500 /var/log/aiwebsite-governance.log 2>/dev/null | sed 's/"/\\"/g' | tr '\n' ' ')
-curl -sS -m 20 -X POST https://api.resend.com/emails \
+TAIL=$(tail -c 1500 /var/log/aiwebsite-governance.log 2>/dev/null)
+if ! BODY=$(jq -nc \
+  --arg from "ai.xl.net Watchdog <noreply@ai.xl.net>" \
+  --arg to "$TO" \
+  --arg subject "[aiwebsite] CRITICAL Governance timer unit FAILED" \
+  --arg text "aiwebsite-governance.service exited nonzero. The 30-day retention sweep may not have run. Log tail: $TAIL" \
+  '{from: $from, to: [$to], subject: $subject, text: $text,
+    headers: {"Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All"}}'); then
+  logger -t aiwebsite-alert "governance alert body could not be built (jq)"
+  exit 1
+fi
+if ! curl -sf -m 20 -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"$TO\"],\"subject\":\"[aiwebsite] CRITICAL Governance timer unit FAILED\",\"text\":\"aiwebsite-governance.service exited nonzero. The 30-day retention sweep may not have run. Log tail: $TAIL\"}" \
-  >/dev/null || true
+  --data-binary "$BODY" >/dev/null; then
+  logger -t aiwebsite-alert "governance alert send failed"
+  exit 1
+fi
 ALERT
 sudo chmod 0755 /usr/local/bin/aiwebsite-governance-alert.sh
 
@@ -124,11 +148,23 @@ KEY=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2
 TO=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | cut -d, -f1)
 TO="${TO:-adam@xl.net}"
 [ -z "$KEY" ] && exit 0
-TAIL=$(tail -c 1500 /var/log/aiwebsite-linkcheck.log 2>/dev/null | sed 's/"/\\"/g' | tr '\n' ' ')
-curl -sS -m 20 -X POST https://api.resend.com/emails \
+TAIL=$(tail -c 1500 /var/log/aiwebsite-linkcheck.log 2>/dev/null)
+if ! BODY=$(jq -nc \
+  --arg from "ai.xl.net Watchdog <noreply@ai.xl.net>" \
+  --arg to "$TO" \
+  --arg subject "[aiwebsite] CRITICAL roadmap link re-check FAILED" \
+  --arg text "aiwebsite-linkcheck.service exited nonzero. No roadmap links were re-checked, so verification state is frozen until the next run. A single link failing is NORMAL and is recorded per field; this fires only when the job itself died. Log tail: $TAIL" \
+  '{from: $from, to: [$to], subject: $subject, text: $text,
+    headers: {"Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All"}}'); then
+  logger -t aiwebsite-alert "linkcheck alert body could not be built (jq)"
+  exit 1
+fi
+if ! curl -sf -m 20 -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"$TO\"],\"subject\":\"[aiwebsite] CRITICAL roadmap link re-check FAILED\",\"text\":\"aiwebsite-linkcheck.service exited nonzero. No roadmap links were re-checked, so verification state is frozen until the next run. A single link failing is NORMAL and is recorded per field; this fires only when the job itself died. Log tail: $TAIL\"}" \
-  >/dev/null || true
+  --data-binary "$BODY" >/dev/null; then
+  logger -t aiwebsite-alert "linkcheck alert send failed"
+  exit 1
+fi
 ALERT
 sudo chmod 0755 /usr/local/bin/aiwebsite-linkcheck-alert.sh
 
@@ -207,11 +243,23 @@ KEY=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2
 TO=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | cut -d, -f1)
 TO="${TO:-adam@xl.net}"
 [ -z "$KEY" ] && exit 0
-TAIL=$(tail -c 1500 /var/log/aiwebsite-chase.log 2>/dev/null | sed 's/"/\\"/g' | tr '\n' ' ')
-curl -sS -m 20 -X POST https://api.resend.com/emails \
+TAIL=$(tail -c 1500 /var/log/aiwebsite-chase.log 2>/dev/null)
+if ! BODY=$(jq -nc \
+  --arg from "ai.xl.net Watchdog <noreply@ai.xl.net>" \
+  --arg to "$TO" \
+  --arg subject "[aiwebsite] CRITICAL chase weekday job FAILED" \
+  --arg text "aiwebsite-chase.service exited nonzero. Nobody was reminded today, and completed tasks may not have been closed. A single REFUSED send is normal and is recorded on the ledger row; this fires only when the job itself died. Log tail: $TAIL" \
+  '{from: $from, to: [$to], subject: $subject, text: $text,
+    headers: {"Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All"}}'); then
+  logger -t aiwebsite-alert "chase alert body could not be built (jq)"
+  exit 1
+fi
+if ! curl -sf -m 20 -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"$TO\"],\"subject\":\"[aiwebsite] CRITICAL chase weekday job FAILED\",\"text\":\"aiwebsite-chase.service exited nonzero. Nobody was reminded today, and completed tasks may not have been closed. A single REFUSED send is normal and is recorded on the ledger row; this fires only when the job itself died. Log tail: $TAIL\"}" \
-  >/dev/null || true
+  --data-binary "$BODY" >/dev/null; then
+  logger -t aiwebsite-alert "chase alert send failed"
+  exit 1
+fi
 ALERT
 sudo chmod 0755 /usr/local/bin/aiwebsite-chase-alert.sh
 
@@ -277,11 +325,23 @@ KEY=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2
 TO=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | cut -d, -f1)
 TO="${TO:-adam@xl.net}"
 [ -z "$KEY" ] && exit 0
-TAIL=$(tail -c 1500 /var/log/aiwebsite-chase-report.log 2>/dev/null | sed 's/"/\\"/g' | tr '\n' ' ')
-curl -sS -m 20 -X POST https://api.resend.com/emails \
+TAIL=$(tail -c 1500 /var/log/aiwebsite-chase-report.log 2>/dev/null)
+if ! BODY=$(jq -nc \
+  --arg from "ai.xl.net Watchdog <noreply@ai.xl.net>" \
+  --arg to "$TO" \
+  --arg subject "[aiwebsite] CRITICAL chase weekly report FAILED" \
+  --arg text "aiwebsite-chase-report.service exited nonzero, so this week's outstanding-work report did NOT go out. That report is sent every week even when nobody is outstanding, precisely so that its silence means breakage; this alert is that silence being explained. Log tail: $TAIL" \
+  '{from: $from, to: [$to], subject: $subject, text: $text,
+    headers: {"Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All"}}'); then
+  logger -t aiwebsite-alert "chase-report alert body could not be built (jq)"
+  exit 1
+fi
+if ! curl -sf -m 20 -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
-  -d "{\"from\":\"ai.xl.net Watchdog <noreply@ai.xl.net>\",\"to\":[\"$TO\"],\"subject\":\"[aiwebsite] CRITICAL chase weekly report FAILED\",\"text\":\"aiwebsite-chase-report.service exited nonzero, so this week's outstanding-work report did NOT go out. That report is sent every week even when nobody is outstanding, precisely so that its silence means breakage; this alert is that silence being explained. Log tail: $TAIL\"}" \
-  >/dev/null || true
+  --data-binary "$BODY" >/dev/null; then
+  logger -t aiwebsite-alert "chase-report alert send failed"
+  exit 1
+fi
 ALERT
 sudo chmod 0755 /usr/local/bin/aiwebsite-chase-report-alert.sh
 

@@ -53,7 +53,10 @@
     "test:rfpletter": "tsx scripts/rfp-letter-tests.ts",
     "test:rfpgaps": "tsx scripts/rfp-gaps-tests.ts",
     "test:xlant": "tsx scripts/xlant-tests.ts",
-    "test:deploysafe": "bash scripts/deploy-safe-tests.sh"
+    "test:deploysafe": "bash scripts/deploy-safe-tests.sh",
+    "test:resendheaders": "node scripts/check-resend-headers.mjs --self-test && node scripts/check-resend-headers.mjs",
+    "test:alertbody": "bash scripts/alert-body-tests.sh",
+    "test:intakeretire": "tsx scripts/intake-retire-tests.ts"
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",

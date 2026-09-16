@@ -5,6 +5,7 @@
 // signature). No em dashes in any copy.
 
 import { oversightBcc } from "@/lib/oversight-bcc";
+import { autoResponseSuppress } from "@/lib/auto-response-headers";
 import { adminRecipient } from "@/lib/governance/budget";
 import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 
@@ -37,6 +38,13 @@ async function sendRoadmapEmail(opts: {
         // put the owner in the visible `to` (so external company admins can
         // see he is on the thread); it only adds a copy where he was absent.
         ...(bcc && { bcc }),
+        // RFC 3834 (2026-09-16, RC 7): company admins and requesters are
+        // people, so `OOF, AutoReply` unless the operator is the only
+        // recipient (the new-company notice).
+        headers: {
+          "Auto-Submitted": "auto-generated",
+          "X-Auto-Response-Suppress": autoResponseSuppress(opts.to, adminRecipient()),
+        },
       }),
       signal: AbortSignal.timeout(20_000),
     });

@@ -150,6 +150,37 @@ if [ -n "$seed_hits" ]; then
   [ -n "${PERSON_MAP_OK:-}" ] || exit 1
 fi
 
+# ── RFC 3834 header gate (2026-09-16, refutation RC 8) ─────────────────────
+# Every raw Resend send in src/, scripts/ and deploy/ must carry
+# Auto-Submitted + X-Auto-Response-Suppress, counted PER CALL SITE: a file
+# needs at least as many Auto-Submitted occurrences as send sites, so a
+# script that fixed three of its four alert bodies still fails. Reads the
+# STAGED blobs (git grep --cached), so a partially staged file is judged on
+# what is actually being committed. Discovery is floored at 13 files, so a
+# broken scan exits 2 instead of passing on nothing. Evidence and rules:
+# scripts/check-resend-headers.mjs; ARCHITECTURE.md §5.4.
+#
+# Exit 1 (a finding) is bypassable for a false positive only; exit 2 (the
+# check could not run, or discovery fell under the floor) is not.
+#   RESEND_HEADERS_OK=1 git commit ...
+if git diff --cached --name-only --diff-filter=ACMRD | grep -qE '^(src|scripts|deploy)/'; then
+  if [ ! -r scripts/check-resend-headers.mjs ]; then
+    echo "BLOCKED: scripts/check-resend-headers.mjs is missing — the RFC 3834 header gate" >&2
+    echo "  cannot run, and a gate that did not run is not a pass. Restore it." >&2
+    exit 1
+  fi
+  node scripts/check-resend-headers.mjs --staged >&2
+  rh_status=$?
+  if [ "$rh_status" -ne 0 ] && [ "$rh_status" -ne 1 ]; then
+    echo "BLOCKED: the RFC 3834 header gate could not run (exit $rh_status). It fails closed." >&2
+    exit 1
+  fi
+  if [ "$rh_status" -eq 1 ] && [ -z "${RESEND_HEADERS_OK:-}" ]; then
+    echo "  Bypass for a false positive only:  RESEND_HEADERS_OK=1 git commit ..." >&2
+    exit 1
+  fi
+fi
+
 # ── RETIRED 2026-08-31: the work-archive-store survival gate ────────────────
 # This gate refused a staged deploy/backup-db.sh that no longer defined
 # archive_store_backup(), because that block was a HOST edit inside a

@@ -19,6 +19,7 @@
 
 import crypto from "node:crypto";
 import { oversightBcc } from "@/lib/oversight-bcc";
+import { autoResponseSuppress } from "@/lib/auto-response-headers";
 import { ledgerReasonSlug, reportFailureEmailIssue } from "@/lib/report-issue";
 import { Resend } from "resend";
 import { isAdmin } from "@aicompany/core/auth/guard";
@@ -192,7 +193,15 @@ async function sendTronEmail(opts: {
         // correspondent with AI-composed prose, and until now no human ever
         // saw a copy of what the persona said to them.
         ...(bcc && { bcc }),
-        ...(opts.headers ? { headers: opts.headers } : {}),
+        // RFC 3834 (2026-09-16, RC 7). A human-directed lane: most of its
+        // call sites answer a submitter or an arbitrary correspondent, so the
+        // suppress value is `OOF, AutoReply` unless the operator is the only
+        // recipient (warnAdmin). Caller-supplied headers win.
+        headers: {
+          "Auto-Submitted": "auto-generated",
+          "X-Auto-Response-Suppress": autoResponseSuppress(tronTo, adminRecipient()),
+          ...(opts.headers ?? {}),
+        },
       }),
       signal: AbortSignal.timeout(20_000),
     });

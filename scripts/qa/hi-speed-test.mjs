@@ -118,7 +118,14 @@ async function reportByEmail(subject, text) {
     const r = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ from, to, subject, text }),
+      // RFC 3834 (2026-09-16, RC 7): an operator alert, so `All`.
+      body: JSON.stringify({
+        from,
+        to,
+        subject,
+        text,
+        headers: { 'Auto-Submitted': 'auto-generated', 'X-Auto-Response-Suppress': 'All' },
+      }),
       signal: AbortSignal.timeout(15_000),
     });
     return r.ok ? `emailed ${to}` : `email send failed: HTTP ${r.status}`;

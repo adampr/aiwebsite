@@ -36,6 +36,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-16 §5.3/§5.4/§5.16/§9.7 MAIL-REPORT ROUND (Panel C + refutation RC; the aiwebsite items RC 3, 7, 8 and 14 only). (1) `siblingSites` gains `xlant.ai` + `xlant@xlant.ai`; topmspnearme.net is deliberately NOT added (tmnm has no Resend webhook, so this host's WARN is the only surface for its inbound mail). (2) The 8 host-owned Resend send files that carried NO RFC 3834 headers now do (§5.4 "Host-owned raw senders"): the four seams `sendGovernanceEmail`, `sendTronEmail`, `sendRequestsEmail` and `sendRoadmapEmail` derive `X-Auto-Response-Suppress` from the audience (`src/lib/auto-response-headers.ts`: `All` only when ADMIN_EMAIL is the sole visible recipient, otherwise `OOF, AutoReply`; caller headers win), the retention mail, `scripts/governance-standards-refresh.ts` and `scripts/qa/hi-speed-test.mjs` send `All`, and all FOUR `deploy/post-install.sh` alert bodies are rebuilt with `jq -nc --arg`, sent `curl -sf -m 20`, and on failure `logger -t aiwebsite-alert "<alert> send failed"` + exit 1. No `Precedence`, no `auto-replied`. (3) Per-call-site gate `scripts/check-resend-headers.mjs` (per file, `Auto-Submitted` count ≥ send-site count; discovery floor 13 files; wired into `scripts/git-hooks/pre-commit.local` on the staged blobs); on a41ec9b5 it failed with 8 of 14 files. (4) `retireIntakeCleaningRows()` (`src/lib/work/intake-issue-retire.ts`) closes open `work-intake:cleaned:*` rows by CAS resolve from the work-queue tick (§5.16); INERT on the v1.129.1 pin until @aicompany/core >= v1.130.0 declares `IssueResolveEvent.lastSeenAtMax`. Tests, offline: `npm run test:resendheaders`, `test:alertbody` (baseline: the old bodies are INVALID JSON for a hostile tail), `test:intakeretire`. Signed mail delta: 0 per night (the responder condition is not active; the headers remove bounce WARNs on a responder day and recover no mail), and a small negative for mail to xlant@xlant.ai that used to WARN here (Panel C row 2: about -0.25/week).
+
 Last verified against code: 2026-09-16 BRAIN PIN v1.153 `1339e15` -> v1.154 `453bced` (annotated tag v1.154, released the same morning; this host skips ever running v1.153 on its own, since both bumps ship in one deploy). xldev #856 CONSUMER PARTITIONS, INERT HERE: a brain-api bearer token now resolves to a "consumer", each with its own table prefix, routing config and usage ledger, but only when `BRAIN_CONSUMERS` is set. Measured 0 `BRAIN_CONSUMER*` lines in this repo's `.env` (which the deploy copies onto the VM, so a consumer block would belong here and nowhere else). Unset, the registry holds only the default consumer built from today's flat `BRAIN_API_KEYS` / `BRAIN_DB_TABLE_PREFIX` / `BRAIN_PRIORITY_*`, and behaviour is unchanged: no migration (the count stays at 52), no new tables, no routing movement. New surfaces regardless: `GET /v1/consumer`, `GET /v1/usage/chargeback`, and `consumers:[{"id":"default","db":"ok"}]` on `/health` (`ok` now requires every partition probe, which with no consumers is the default probe alone). BOOT POSTURE CHANGE worth knowing before anyone edits the env: an invalid or colliding consumer roster is `[brain-api] FATAL: consumer configuration invalid` + exit(1), a pm2 restart loop, never a fallback. SDK: an optional per-call `invocation.routingPriorities` (absent = byte-identical request) and `client.consumer()`; this host's module talks to brain-api over HTTP and sends neither. No dependency change (workspace version strings only). Rollback: re-pin `packages/brain` to `1339e15`. Operator sheet: `packages/brain/docs/deploy/v1.154-operator-sheets.md` sheet 3.
 
 Last verified against code: 2026-09-16 BRAIN PIN v1.152 `fba6b12` -> v1.153 `1339e15` (annotated tag v1.153; NOT xldev main, whose later `b245af5` is an untagged registry-data refresh). The xldev prompt-cache train, #845-#855, 46 commits. Hosts already serving it: roleplay and itsupportchicago (brain-api 1.153.0), leonetter, and the dev stack. What changes here: Claude calls move from Anthropic's OpenAI-compat endpoint to the native Messages API with cache breakpoints (compat reported no cache fields and cached nothing; this host was 57% Anthropic by spend over the prior 30 days); Gemini moves to native generateContent (the compat endpoint KEEPS ONLY THE LAST SYSTEM MESSAGE, so a Gemini call carrying more than one system message ran without the Brain's system prompt); prompt assembly becomes prefix-stable (static system, append-only history, one volatile block after the latest user message); openai/deepinfra send `prompt_cache_key` and xai sends `x-grok-conv-id`. SCHEMA: migration 52 `ALTER TABLE usage_events ADD COLUMN cache_write_tokens INTEGER` (additive, nullable; `applyMigrations` now holds a per-prefix `pg_advisory_lock`, bounded by the adapter's 5 s `lock_timeout`), already applied on itsupportchicago's production DB without incident. ENV: seven switches. Six default to the new behaviour and exist to roll back (`BRAIN_ANTHROPIC_TRANSPORT`, `BRAIN_GEMINI_TRANSPORT`, `BRAIN_PROMPT_CACHE_LAYOUT`, `BRAIN_PROVIDER_CACHE_HINTS`, `BRAIN_OPENAI_CACHE_RETENTION`, `BRAIN_XAI_CONV_KEY`); `BRAIN_TRIAGE_PROMPT_LAYOUT` defaults to `legacy` in code (`packages/core/src/triage.ts:158`, only `stable` opts in) even though the tag's `.env.example` shows `=stable`, so the triage classifier's bytes do not change here; measured 0 of them set in this repo's `.env` and 0 in the VM's `/var/www/aiwebsite/.env`, so this host takes the defaults, the same as roleplay and itsupportchicago. `BRAIN_OPENAI_CACHE_RETENTION=24h` is a data-retention posture (OpenAI keeps cached prefixes, which carry memories and history, for a day); `off` reverts it. No host-side code, route, unit or rendered-template change. Rollback: re-pin `packages/brain` to `fba6b12`, or set the matching switch.
@@ -1641,7 +1643,10 @@ aiwebsite/
 │                               governance-standards-refresh.ts + governance-tests.ts (§5.12,
 │                               §8.1; tsx, load .env via scripts/lib/governance-env.ts FIRST,
 │                               top-level imports only). The legacy refresh-tron-knowledge.mjs
-│                               is DELETED — the module's crawler is the only one (§8)
+│                               is DELETED — the module's crawler is the only one (§8);
+│                               check-resend-headers.mjs (RFC 3834 per-call-site gate, §5.4)
+│                               + alert-body-tests.sh (post-install alert bodies, §9.7) +
+│                               intake-retire-tests.ts (cleaned-row retirement, §5.16)
 ├── deploy/                     site-deploy.env + files RENDERED from the module's
 │                               deploy/templates (stamped; §9) + host extras (GO-LIVE.md,
 │                               GOOGLE-OAUTH-SETUP.md, generated seed-persona-memories.sql,
@@ -2176,9 +2181,18 @@ fail-closed sender-authenticity gate (Authentication-Results parsing → memory 
 §5.9), reply with signature block + AI disclosure + quoted original. aiwebsite facts:
 
 - Mailbox **Tron.Netter@ai.xl.net** (`channels.email.mailbox`); the Resend account is
-  shared with itsupportchicago.net, so `siblingSites:
-  ["chi@itsupportchicago.net", "itsupportchicago.net"]` guards against answering the
-  sibling persona's mail and persona↔persona reply loops.
+  shared with itsupportchicago.net, roleplay.xl.net, xlant.ai and topmspnearme.net, and
+  every inbound webhook sees every domain's mail, so `siblingSites:
+  ["chi@itsupportchicago.net", "itsupportchicago.net", "coach@roleplay.xl.net",
+  "roleplay.xl.net", "roleplay@ai.xl.net", "xlant.ai", "xlant@xlant.ai"]` guards against
+  answering a sibling persona's mail and persona↔persona reply loops, and makes mail
+  addressed to a sibling log-only here instead of a mailed "recipient is not this
+  persona's mailbox" WARN. **xlant.ai added 2026-09-16** (refutation RC 3): its own
+  webhook exists since 2026-09-12 and its persona handles its own mail; its MX is Resend
+  inbound only, and its webhook subscribes to received/bounced/complained, so its
+  bounces still alert on its own host. **topmspnearme.net is deliberately absent**
+  (RC 4/15): tmnm has no Resend webhook, so that WARN is the only surface for tmnm
+  inbound mail; it joins only after tmnm has a webhook with its own signing secret.
 - `threading: "sender"` — legacy behavior kept at parity: brain session per sender
   (`sessionId: "email2-<addr>-<thread>"`), not the module's per-subject refinement.
 - Memory gate pins `memory.emailAuthservId: "amazonses.com"` (Resend inbound is
@@ -2281,6 +2295,46 @@ silence). aiwebsite facts:
   while a module-mailer alert to the same address DELIVERED seven seconds
   later. Re-render after any module bump crossing v1.93.0, or the rendered
   copies silently lose the headers again.
+- **Host-owned raw senders carry RFC 3834 headers too (2026-09-16, Panel C row 3 +
+  refutation RC 7/8).** On 2026-09-14 a receiving-side responder at adam@xl.net drew a
+  DSN on 6 of 7 header-less sends and 0 of 9 headered ones (the delivered-then-DSN
+  class: those mails were delivered, the headers remove the bounce WARNs, they recover
+  no mail). Eight host-owned files had NO headers. Every raw send now writes the
+  literal `"Auto-Submitted": "auto-generated"` at the call site plus
+  `X-Auto-Response-Suppress`, whose VALUE follows the audience:
+  - The four seams that can reach a person (`sendGovernanceEmail` in
+    `governance/budget.ts`, `sendTronEmail` in `work/email-intake.ts`,
+    `sendRequestsEmail` in `work/requests-notify.ts`, `sendRoadmapEmail` in
+    `roadmap/notify.ts`) call `autoResponseSuppress(to, adminRecipient())`
+    (`src/lib/auto-response-headers.ts`, pure): `All` only when every visible
+    recipient normalizes (`extractAddress`) to the operator, otherwise
+    `OOF, AutoReply` (the `chase/notify.ts` `nudgeHeaders()` precedent; `All` would
+    also suppress Exchange delivery reports a client's mailbox may be the only
+    source of). `sendGovernanceEmail` sets these as DEFAULTS and merges
+    `opts.headers` over them, so the chase nudge's own values win and the
+    submitter-facing call sites in `work/notify.ts` get `OOF, AutoReply` untouched.
+  - Operator-only sends use the fixed `All`: the retention mail
+    (`sendArchiveRetentionEmail`, addressed to `adminRecipient()` by construction),
+    `scripts/governance-standards-refresh.ts`, and `scripts/qa/hi-speed-test.mjs`.
+    The last is a verbatim fleet-canonical copy (xldev `scripts/qa/`); this is a
+    deliberate local edit, and the canonical copy plus the itsc/roleplay copies
+    still lack the headers (cross-panel).
+  - The four `deploy/post-install.sh` OnFailure alert scripts (§9.7).
+  - Never `Precedence`, never `Auto-Submitted: auto-replied` (RC 7).
+  **Gate:** `scripts/check-resend-headers.mjs` discovers every file under `src/`,
+  `scripts/` and `deploy/` containing the Resend send URL or an SDK `emails.send(`
+  call (`git grep -o`; `--staged` reads the index) and fails (exit 1) any file whose
+  `Auto-Submitted` count is below its send-site count, so three fixed bodies out of
+  four still fail. Discovery is floored at 13 files (14 on 2026-09-16) and exits 2
+  below it, so a broken scan cannot pass vacuously. Run: `npm run test:resendheaders`
+  (self-test + scan). Wired into `scripts/git-hooks/pre-commit.local` whenever a
+  staged path is under those three directories; exit 1 is bypassable for a false
+  positive with `RESEND_HEADERS_OK=1`, exit 2 is not. On a41ec9b5 it reported 8 of 14
+  files (post-install.sh 4 sends/0 headers, and 1/0 each for
+  governance-standards-refresh.ts, hi-speed-test.mjs, budget.ts, roadmap/notify.ts,
+  email-intake.ts, work/notify.ts, requests-notify.ts). Module-internal sends
+  (`@aicompany/core` `sendEmail`) and the rendered deploy scripts are not host code;
+  the module owns their headers.
 
 #### Archived accounts (module v1.74, migration `0037_archive_users`)
 
@@ -7383,6 +7437,46 @@ titles/emails): `started interval=60s`, `kick id=… from=received|stale-running
 `pass candidates=N kicked=K skipped=S stop=<reason|none>`, `tick failed: …`.
 Worst-case added spend is the PRE-EXISTING ceilings realized autonomously
 (2400 internal + 600 company brain calls/day) — the drain raises no cap.
+
+**Cleaned-intake ledger retirement (2026-09-16, Panel C row 5 + refutation RC
+14).** A cleaned upload opens an episodic WARN row `work-intake:cleaned:<lane>`
+(`web-create`, `web-update`, `email:<senderDomain>`; `reportIntakeCleaningIssue`),
+because until publish the owner has no other channel for it: the
+`(CLEANED AT INTAKE)` retention mail is sent only on publish. Nothing closed those
+rows (measured 2026-09-16: 7 cleaned submissions, all published, row open at x7).
+`retireIntakeCleaningRows()` (`src/lib/work/intake-issue-retire.ts`) is the §5.15(ii)
+predicate: (1) read the open `source='module'` rows `LIKE 'work-intake:cleaned:%'`
+with their `last_seen_at` FIRST; (2) then `SELECT DISTINCT status FROM
+work_submissions WHERE cleaning_json IS NOT NULL`; (3) if that set is non-empty and
+every status is in the ALLOW-list {`published`, `superseded`} (`superseded` is
+reachable only from `published`), resolve each row with `resolvedBy
+auto:work-intake-cleaned-reviewed`, a note naming the statuses and the CAS bound,
+and **`lastSeenAtMax` = that row's snapshot `last_seen_at`** (a compare-and-set:
+a cleaned submission inserted after the status scan records before the resolve,
+bumps `last_seen_at`, and the resolve matches nothing; one recorded after the resolve
+opens a fresh episode). Any other status, including one this code has never heard
+of, keeps every cleaned row open (the scan is lane-agnostic: the table does not
+record the lane). An EMPTY status set also keeps the rows (all cleaned submissions
+deleted is not evidence any reached publish). A row with no readable `last_seen_at`
+is never resolved. `work-intake:cleaning-failed:<lane>` rows are never touched: the
+LIKE prefix cannot match them and `isCleanedKey()` re-checks in code. **Pin guard:**
+`lastSeenAtMax` is @aicompany/core v1.130.0's `IssueResolveEvent` field; on an older
+pin a resolve would be unconditional, so the predicate is INERT (reads nothing,
+logs `[work-retire] inert: … needs >= 1.130.0` once per process) whenever
+`packages/aicompany/package.json` is below 1.130.0 or unreadable. The event type is
+widened locally (`CasResolveEvent`) so the file typechecks on both pins;
+`npm run test:intakeretire` fails if a pin at or above 1.130.0 does not declare the
+field. **Where it runs:** the work-queue `tick` closure in `startWorkQueueDrain()`,
+beside `drainWorkQueue()` with its OWN `.catch` (`[work-retire] evaluation failed:
+…`), never inside `drainWorkQueue()` (which returns early on the submissions kill
+switch and is re-kicked by the fast retry); self-throttled to one evaluation per 15
+min per process (`globalThis.__workIntakeCleanedRetire`), first at the 15 s boot
+tick. **Consequence: `WORK_QUEUE_DRAIN_ENABLED=0` also disables this retirement**, as
+do the other drain start gates (development server, unsupervised checkout without
+`WORK_QUEUE_DRAIN_FORCE=1`); with the drain off, cleaned rows stay open for a person.
+Log lines only on an outcome: `retired N cleaned-intake row(s): …`, `kept N … (CAS
+lost)`, `resolve failed for …`. Tests (injected deps, no DB):
+`npm run test:intakeretire`.
 
 **Deploy window (2026-08-07, owner report "there is a work queued not
 starting, even though nothing is currently being processed"; 3-seat focused
@@ -13521,6 +13615,25 @@ which are not in this table):
 | `aiwebsite-linkcheck` | 05:50 UTC daily | `scripts/roadmap-link-recheck.ts` | §5.20 evidence-ladder re-check. Installed by the host post-install hook (§9.2), NOT setup-vm.sh. `Persistent=false` on purpose: the hook runs before cutover, so a catch-up fire would execute against the pre-deploy tree. Own OnFailure unit (`aiwebsite-linkcheck-alert`); a single failing LINK is normal and recorded per field, so the alert fires only when the job itself dies. |
 | `aiwebsite-chase` | Mon..Fri 13:00 (+ ≤300 s jitter) | §5.21 chase register weekday reminders: `scripts/chase-run.ts` detects completions FIRST, then emails each assignee with an open request once per UTC day (the `chase_send_day_uq` claim row, inserted before the send, is the double-send guarantee). Installed by `deploy/post-install.sh` (host-owned), NOT setup-vm.sh. `Persistent=false` for the linkcheck reason: the hook runs before `db:migrate` and the cutover, so a catch-up fire on the introducing deploy would run against the old tree with no `chase_*` tables. `Persistent=false` does not cover a GENUINE fire during a deploy, so the script additionally exits quietly while the deploy marker is fresh (governance's guard). Own OnFailure unit (`aiwebsite-chase-alert`) and own log `/var/log/aiwebsite-chase.log`; a REFUSED send is normal, recorded on the ledger row and reported on Monday, so the alert fires only when the job itself dies. Kill switch `WORK_CHASE_ENABLED=0`; note every nudge is BCC'd to `oversight.bccEmail`, i.e. one copy per assignee per weekday |
 | `aiwebsite-chase-report` | Mon 15:00 (+ ≤300 s jitter) | §5.21 weekly outstanding-work report to `ADMIN_EMAIL`: `scripts/chase-report.ts`. **Sends every week even when nothing is outstanding**, so its silence means the job is broken rather than that everyone is up to date; ledgered as a `chase_sends` row with `kind='report'` so a restart cannot double-send it. Installed by `deploy/post-install.sh`; `Persistent=false`, plus the same deploy-marker stand-down. **A REFUSED send exits 1 here** (unlike the weekday job), so `aiwebsite-chase-report-alert` turns a week with no report into a CRITICAL email rather than silence the owner is left to interpret; the claim row is reclaimable until a send is accepted, so `npm run chase:report` by hand the same day actually sends. Own log `/var/log/aiwebsite-chase-report.log`. Kill switch `WORK_CHASE_REPORT_ENABLED=0` (separate from the reminder switch on purpose) |
+
+**The four host-hook alert scripts** (`/usr/local/bin/aiwebsite-{governance,linkcheck,chase,chase-report}-alert.sh`,
+written by `deploy/post-install.sh` on every deploy) share one send shape since
+2026-09-16 (refutation RC 7): read `RESEND_API_KEY` and the first `ADMIN_EMAIL`
+entry literally from the shared `.env` (exit 0 with no key), take `tail -c 1500` of
+the job's own log, build the body with `jq -nc --arg` (never string-spliced; the old
+`sed 's/"/\\"/g'` escaping produced INVALID JSON for a tail holding a backslash or a
+tab) including `headers: {"Auto-Submitted": "auto-generated",
+"X-Auto-Response-Suppress": "All"}`, POST with `curl -sf -m 20` (the old `-sS … ||
+true` exited 0 on a Resend 422), and on a jq or send failure `logger -t
+aiwebsite-alert "<alert> send failed"` (journal: `journalctl -t aiwebsite-alert`) and
+exit 1, so the alert unit itself shows in `systemctl --failed`. `jq` is installed by
+setup-vm.sh. Offline proof: `npm run test:alertbody` cuts each heredoc out of
+post-install.sh, stubs `curl`/`logger`, feeds a hostile tail (quotes, `\"`,
+backslashes, tabs, CR/LF, ESC, backticks, `$(…)`, a UTF-8 character cut in half) and
+requires `jq -e .`, the header pair, the subject, the round-tripped text, `-sf -m 20`,
+the failure log line and the keyless no-op; `POST_INSTALL_SRC=<old copy>` runs the
+same suite against a previous version (the a41ec9b5 copy fails with 4 INVALID JSON
+bodies).
 
 ---
 

@@ -7,6 +7,7 @@
 // copy.
 
 import { oversightBcc } from "@/lib/oversight-bcc";
+import { autoResponseSuppress } from "@/lib/auto-response-headers";
 import { adminRecipient } from "@/lib/governance/budget";
 import { TRON_FROM, withTronSignature } from "@/lib/tron-signature";
 import { companyAdminEmails } from "@/lib/roadmap/db";
@@ -41,6 +42,13 @@ async function sendRequestsEmail(opts: {
         subject: opts.subject,
         text: withTronSignature(opts.text),
         ...(bcc && { bcc }),
+        // RFC 3834 (2026-09-16, RC 7): requesters, developers and company
+        // admins are people, so `OOF, AutoReply` unless the operator is the
+        // only recipient.
+        headers: {
+          "Auto-Submitted": "auto-generated",
+          "X-Auto-Response-Suppress": autoResponseSuppress(opts.to, adminRecipient()),
+        },
       }),
       signal: AbortSignal.timeout(20_000),
     });
