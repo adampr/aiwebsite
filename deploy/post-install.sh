@@ -52,11 +52,24 @@ done
 sudo tee /usr/local/bin/aiwebsite-governance-alert.sh >/dev/null <<'ALERT'
 #!/usr/bin/env bash
 set -u
+# A CRITICAL that cannot be mailed must still reach a human (diff refuter D1 A1/A2):
+# spool a ledger row (source watchdog, own file) that issues.mjs list shows.
+unsent() {
+  command -v jq >/dev/null 2>&1 || return 0
+  local d="/var/lib/aiwebsite/issue-spool.d"; mkdir -p "$d" 2>/dev/null || return 0
+  jq -nc --arg why "${1:-unknown}" --arg ts "$(date -u +%FT%TZ)" \
+    '{action:"record",source:"watchdog",key:"alert-unsent-governance",severity:"CRITICAL",subject:("CRITICAL aiwebsite-governance alert could not be mailed: "+$why),detail:("The aiwebsite-governance alert unit fired because its job failed, but the alert mail did not go out ("+$why+"). Check journalctl -t aiwebsite-alert and the job log. Resolve by hand once the send path works."),emailed:false,seenAt:$ts}' \
+    >> "$d/alert-unsent.ndjson" 2>/dev/null || true
+}
 ENV_FILE="/var/www/aiwebsite/.env"
 KEY=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
 TO=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | cut -d, -f1)
 TO="${TO:-adam@xl.net}"
-[ -z "$KEY" ] && exit 0
+if [ -z "$KEY" ]; then
+  logger -t aiwebsite-alert "governance alert NOT sent: RESEND_API_KEY missing"
+  unsent "RESEND_API_KEY missing"
+  exit 1
+fi
 TAIL=$(tail -c 1500 /var/log/aiwebsite-governance.log 2>/dev/null)
 if ! BODY=$(jq -nc \
   --arg from "ai.xl.net Watchdog <noreply@ai.xl.net>" \
@@ -66,12 +79,14 @@ if ! BODY=$(jq -nc \
   '{from: $from, to: [$to], subject: $subject, text: $text,
     headers: {"Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All"}}'); then
   logger -t aiwebsite-alert "governance alert body could not be built (jq)"
+  unsent "jq could not build the body"
   exit 1
 fi
 if ! curl -sf -m 20 -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   --data-binary "$BODY" >/dev/null; then
   logger -t aiwebsite-alert "governance alert send failed"
+  unsent "Resend refused the send or was unreachable"
   exit 1
 fi
 ALERT
@@ -143,11 +158,24 @@ UNIT
 sudo tee /usr/local/bin/aiwebsite-linkcheck-alert.sh >/dev/null <<'ALERT'
 #!/usr/bin/env bash
 set -u
+# A CRITICAL that cannot be mailed must still reach a human (diff refuter D1 A1/A2):
+# spool a ledger row (source watchdog, own file) that issues.mjs list shows.
+unsent() {
+  command -v jq >/dev/null 2>&1 || return 0
+  local d="/var/lib/aiwebsite/issue-spool.d"; mkdir -p "$d" 2>/dev/null || return 0
+  jq -nc --arg why "${1:-unknown}" --arg ts "$(date -u +%FT%TZ)" \
+    '{action:"record",source:"watchdog",key:"alert-unsent-linkcheck",severity:"CRITICAL",subject:("CRITICAL aiwebsite-linkcheck alert could not be mailed: "+$why),detail:("The aiwebsite-linkcheck alert unit fired because its job failed, but the alert mail did not go out ("+$why+"). Check journalctl -t aiwebsite-alert and the job log. Resolve by hand once the send path works."),emailed:false,seenAt:$ts}' \
+    >> "$d/alert-unsent.ndjson" 2>/dev/null || true
+}
 ENV_FILE="/var/www/aiwebsite/.env"
 KEY=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
 TO=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | cut -d, -f1)
 TO="${TO:-adam@xl.net}"
-[ -z "$KEY" ] && exit 0
+if [ -z "$KEY" ]; then
+  logger -t aiwebsite-alert "linkcheck alert NOT sent: RESEND_API_KEY missing"
+  unsent "RESEND_API_KEY missing"
+  exit 1
+fi
 TAIL=$(tail -c 1500 /var/log/aiwebsite-linkcheck.log 2>/dev/null)
 if ! BODY=$(jq -nc \
   --arg from "ai.xl.net Watchdog <noreply@ai.xl.net>" \
@@ -157,12 +185,14 @@ if ! BODY=$(jq -nc \
   '{from: $from, to: [$to], subject: $subject, text: $text,
     headers: {"Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All"}}'); then
   logger -t aiwebsite-alert "linkcheck alert body could not be built (jq)"
+  unsent "jq could not build the body"
   exit 1
 fi
 if ! curl -sf -m 20 -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   --data-binary "$BODY" >/dev/null; then
   logger -t aiwebsite-alert "linkcheck alert send failed"
+  unsent "Resend refused the send or was unreachable"
   exit 1
 fi
 ALERT
@@ -238,11 +268,24 @@ sudo chown "$APP_USER":"$APP_USER" /var/log/aiwebsite-linkcheck.log 2>/dev/null 
 sudo tee /usr/local/bin/aiwebsite-chase-alert.sh >/dev/null <<'ALERT'
 #!/usr/bin/env bash
 set -u
+# A CRITICAL that cannot be mailed must still reach a human (diff refuter D1 A1/A2):
+# spool a ledger row (source watchdog, own file) that issues.mjs list shows.
+unsent() {
+  command -v jq >/dev/null 2>&1 || return 0
+  local d="/var/lib/aiwebsite/issue-spool.d"; mkdir -p "$d" 2>/dev/null || return 0
+  jq -nc --arg why "${1:-unknown}" --arg ts "$(date -u +%FT%TZ)" \
+    '{action:"record",source:"watchdog",key:"alert-unsent-chase",severity:"CRITICAL",subject:("CRITICAL aiwebsite-chase alert could not be mailed: "+$why),detail:("The aiwebsite-chase alert unit fired because its job failed, but the alert mail did not go out ("+$why+"). Check journalctl -t aiwebsite-alert and the job log. Resolve by hand once the send path works."),emailed:false,seenAt:$ts}' \
+    >> "$d/alert-unsent.ndjson" 2>/dev/null || true
+}
 ENV_FILE="/var/www/aiwebsite/.env"
 KEY=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
 TO=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | cut -d, -f1)
 TO="${TO:-adam@xl.net}"
-[ -z "$KEY" ] && exit 0
+if [ -z "$KEY" ]; then
+  logger -t aiwebsite-alert "chase alert NOT sent: RESEND_API_KEY missing"
+  unsent "RESEND_API_KEY missing"
+  exit 1
+fi
 TAIL=$(tail -c 1500 /var/log/aiwebsite-chase.log 2>/dev/null)
 if ! BODY=$(jq -nc \
   --arg from "ai.xl.net Watchdog <noreply@ai.xl.net>" \
@@ -252,12 +295,14 @@ if ! BODY=$(jq -nc \
   '{from: $from, to: [$to], subject: $subject, text: $text,
     headers: {"Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All"}}'); then
   logger -t aiwebsite-alert "chase alert body could not be built (jq)"
+  unsent "jq could not build the body"
   exit 1
 fi
 if ! curl -sf -m 20 -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   --data-binary "$BODY" >/dev/null; then
   logger -t aiwebsite-alert "chase alert send failed"
+  unsent "Resend refused the send or was unreachable"
   exit 1
 fi
 ALERT
@@ -320,11 +365,24 @@ UNIT
 sudo tee /usr/local/bin/aiwebsite-chase-report-alert.sh >/dev/null <<'ALERT'
 #!/usr/bin/env bash
 set -u
+# A CRITICAL that cannot be mailed must still reach a human (diff refuter D1 A1/A2):
+# spool a ledger row (source watchdog, own file) that issues.mjs list shows.
+unsent() {
+  command -v jq >/dev/null 2>&1 || return 0
+  local d="/var/lib/aiwebsite/issue-spool.d"; mkdir -p "$d" 2>/dev/null || return 0
+  jq -nc --arg why "${1:-unknown}" --arg ts "$(date -u +%FT%TZ)" \
+    '{action:"record",source:"watchdog",key:"alert-unsent-chase-report",severity:"CRITICAL",subject:("CRITICAL aiwebsite-chase-report alert could not be mailed: "+$why),detail:("The aiwebsite-chase-report alert unit fired because its job failed, but the alert mail did not go out ("+$why+"). Check journalctl -t aiwebsite-alert and the job log. Resolve by hand once the send path works."),emailed:false,seenAt:$ts}' \
+    >> "$d/alert-unsent.ndjson" 2>/dev/null || true
+}
 ENV_FILE="/var/www/aiwebsite/.env"
 KEY=$(grep -E '^RESEND_API_KEY=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
 TO=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- | cut -d, -f1)
 TO="${TO:-adam@xl.net}"
-[ -z "$KEY" ] && exit 0
+if [ -z "$KEY" ]; then
+  logger -t aiwebsite-alert "chase-report alert NOT sent: RESEND_API_KEY missing"
+  unsent "RESEND_API_KEY missing"
+  exit 1
+fi
 TAIL=$(tail -c 1500 /var/log/aiwebsite-chase-report.log 2>/dev/null)
 if ! BODY=$(jq -nc \
   --arg from "ai.xl.net Watchdog <noreply@ai.xl.net>" \
@@ -334,12 +392,14 @@ if ! BODY=$(jq -nc \
   '{from: $from, to: [$to], subject: $subject, text: $text,
     headers: {"Auto-Submitted": "auto-generated", "X-Auto-Response-Suppress": "All"}}'); then
   logger -t aiwebsite-alert "chase-report alert body could not be built (jq)"
+  unsent "jq could not build the body"
   exit 1
 fi
 if ! curl -sf -m 20 -X POST https://api.resend.com/emails \
   -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   --data-binary "$BODY" >/dev/null; then
   logger -t aiwebsite-alert "chase-report alert send failed"
+  unsent "Resend refused the send or was unreachable"
   exit 1
 fi
 ALERT

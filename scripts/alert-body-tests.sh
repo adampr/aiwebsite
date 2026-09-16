@@ -98,7 +98,7 @@ run_case() { # alert-name log-basename subject-needle
   body_src="$(extract "aiwebsite-$name-alert.sh")"
   if [ -z "$body_src" ]; then bad "$name: heredoc not found in post-install.sh"; return; fi
   printf '%s\n' "$body_src" \
-    | sed -e "s#/var/www/aiwebsite/.env#$d/app.env#g" -e "s#/var/log/#$d/log/#g" \
+    | sed -e "s#/var/www/aiwebsite/.env#$d/app.env#g" -e "s#/var/log/#$d/log/#g" -e "s#/var/lib/#$d/lib/#g" \
     > "$d/alert.sh"
   if bash -n "$d/alert.sh"; then ok "$name: extracted script parses"; else bad "$name: syntax error"; return; fi
   if grep -q '/var/' "$d/alert.sh"; then bad "$name: an unrewritten /var path remains"; fi
@@ -144,13 +144,19 @@ run_case() { # alert-name log-basename subject-needle
   grep -qxF -- "-t aiwebsite-alert $name alert send failed" "$d/logger.txt" 2>/dev/null \
     && ok "$name: logger -t aiwebsite-alert \"$name alert send failed\"" \
     || { bad "$name: failure not logged"; cat "$d/logger.txt" 2>/dev/null; }
+  jq -e --arg k "alert-unsent-$name" 'select(.key == $k and .source == "watchdog" and .severity == "CRITICAL" and .emailed == false)' "$d/lib/aiwebsite/issue-spool.d/alert-unsent.ndjson" >/dev/null 2>&1 \
+    && ok "$name: a refused send spools a CRITICAL ledger row" || bad "$name: refused send left no ledger row"
 
-  # 3. no key: silent no-op, no send
-  rm -f "$d/curl.argv" "$d/logger.txt"
+  # 3. no key: NOT silent (diff refuter D1 A2) — no send, logged, non-zero, ledger row
+  rm -f "$d/curl.argv" "$d/logger.txt" "$d/lib/aiwebsite/issue-spool.d/alert-unsent.ndjson"
   printf 'ADMIN_EMAIL=ops@example.test\n' > "$d/app.env"
   STUB_DIR="$d" CURL_RC=0 PATH="$stubs:$PATH" bash "$d/alert.sh"; rc=$?
-  [ "$rc" = 0 ] && [ ! -e "$d/curl.argv" ] && ok "$name: no RESEND_API_KEY -> exit 0, no send" \
-    || bad "$name: keyless run sent or failed (rc=$rc)"
+  [ "$rc" != 0 ] && [ ! -e "$d/curl.argv" ] && ok "$name: no RESEND_API_KEY -> no send, non-zero exit" \
+    || bad "$name: keyless run sent or exited 0 (rc=$rc)"
+  grep -qxF -- "-t aiwebsite-alert $name alert NOT sent: RESEND_API_KEY missing" "$d/logger.txt" 2>/dev/null \
+    && ok "$name: keyless run is logged" || bad "$name: keyless run not logged"
+  jq -e --arg k "alert-unsent-$name" 'select(.key == $k)' "$d/lib/aiwebsite/issue-spool.d/alert-unsent.ndjson" >/dev/null 2>&1 \
+    && ok "$name: keyless run spools a ledger row" || bad "$name: keyless run left no ledger row"
 }
 
 if bash -n "$src"; then ok "post-install.sh parses"; else bad "post-install.sh syntax error"; fi

@@ -13619,19 +13619,24 @@ which are not in this table):
 **The four host-hook alert scripts** (`/usr/local/bin/aiwebsite-{governance,linkcheck,chase,chase-report}-alert.sh`,
 written by `deploy/post-install.sh` on every deploy) share one send shape since
 2026-09-16 (refutation RC 7): read `RESEND_API_KEY` and the first `ADMIN_EMAIL`
-entry literally from the shared `.env` (exit 0 with no key), take `tail -c 1500` of
+entry literally from the shared `.env` (a missing key is NOT silent — it is logged and exits 1), take `tail -c 1500` of
 the job's own log, build the body with `jq -nc --arg` (never string-spliced; the old
 `sed 's/"/\\"/g'` escaping produced INVALID JSON for a tail holding a backslash or a
 tab) including `headers: {"Auto-Submitted": "auto-generated",
 "X-Auto-Response-Suppress": "All"}`, POST with `curl -sf -m 20` (the old `-sS … ||
 true` exited 0 on a Resend 422), and on a jq or send failure `logger -t
 aiwebsite-alert "<alert> send failed"` (journal: `journalctl -t aiwebsite-alert`) and
-exit 1, so the alert unit itself shows in `systemctl --failed`. `jq` is installed by
+exit 1, so the alert unit itself shows in `systemctl --failed`. **Nothing reads
+`systemctl --failed`, so (diff refuter D1 A1/A2, same day) every unsent case — no key,
+jq failure, refused send — also spools a CRITICAL ledger row (`source: watchdog`, key
+`alert-unsent-<alert>`, own spool file `alert-unsent.ndjson`, `emailed:false`) that
+`issues.mjs list` shows; resolve it by hand once the send path works (the row IS the
+undelivered CRITICAL).** `jq` is installed by
 setup-vm.sh. Offline proof: `npm run test:alertbody` cuts each heredoc out of
 post-install.sh, stubs `curl`/`logger`, feeds a hostile tail (quotes, `\"`,
 backslashes, tabs, CR/LF, ESC, backticks, `$(…)`, a UTF-8 character cut in half) and
 requires `jq -e .`, the header pair, the subject, the round-tripped text, `-sf -m 20`,
-the failure log line and the keyless no-op; `POST_INSTALL_SRC=<old copy>` runs the
+the failure log line, the keyless non-zero exit and both spooled ledger rows; `POST_INSTALL_SRC=<old copy>` runs the
 same suite against a previous version (the a41ec9b5 copy fails with 4 INVALID JSON
 bodies).
 
