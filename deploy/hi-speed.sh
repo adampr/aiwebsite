@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: hi-speed.sh.tpl@0cb0a8c7102e6f1e25aa31147e64ed585534949c013382d0f01ec7ba72354c51
+# aicompany-template: hi-speed.sh.tpl@a29122d6b2672235e7a12799949fc423dee555a85bcc82a7f068c0d9c0632d8f
 # ai.xl.net nightly "Hi" speed gate (§9.9 v1.20.0) — ALERT-ONLY.
 # Runs the HOST repo's probe (scripts/qa/hi-speed-test.mjs, verbatim copy of
 # xldev scripts/qa/hi_speed_test.mjs) against the loopback brain with the VM
@@ -24,6 +24,10 @@ heartbeat="$app_root/data/hi-speed-last-run"
 issues_file="$app_root/data/hi-speed-open-issues.md"
 scratch="/tmp/aiwebsite-hi-speed-attempt1.md"
 stamp() { date +%s > "$heartbeat" 2>/dev/null || true; }
+# v1.130.0: consecutive passing nightly runs. data/ survives deploys; SKIP
+# nights (deploy marker, brain down) neither count nor reset.
+pass_streak_file="$app_root/data/hi-speed-pass-streak"
+passes_to_resolve=3
 
 # ── Issue ledger hook (§5.15 v1.30) — spool-first, strictly best-effort ──
 # Mirrors every alert email into the per-host reported_issues table via the
@@ -50,11 +54,36 @@ record_issue() { # 1=severity-prefixed subject 2=body 3=issue key 4=emailed 0|1 
   return 0
 }
 
+# §5.15 retirement (v1.130.0). A breach row resolves only after
+# $passes_to_resolve CONSECUTIVE passing nightly runs, never on one pass (RA
+# 2026-09-16): §9.9 calls itsc's breach an intermittent designed pressure
+# signal, and a one-night resolve hid a chronic 2-of-7 breacher from
+# build-start triage. A passing run is the gate passing (attempt 1, or
+# attempt 2 of best-of-2 — by design a single blip is not a breach). Any
+# failed run resets the count. The resolve is written once, on the run that
+# reaches the threshold, so the ledger is not re-written every night. The
+# 5000ms threshold is unchanged.
+record_pass_night() { # 1=how it passed
+  local n
+  n=$(cat "$pass_streak_file" 2>/dev/null || echo 0)
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  n=$(( n + 1 ))
+  echo "$n" > "$pass_streak_file" 2>/dev/null || true
+  echo "PASS (${1:-}) — consecutive passing nights: $n"
+  if [ "$n" -eq "$passes_to_resolve" ]; then
+    record_issue "HI-SPEED WARN nightly gate breach self-cleared: $n consecutive passing nightly runs (threshold 5000ms unchanged)" \
+      "self-cleared: the nightly hi-speed gate passed on $n consecutive runs on $(hostname) (latest $(date -Is), ${1:-})." \
+      "hi-speed-breach" 0 1 "auto:self-cleared"
+  fi
+  return 0
+}
+reset_pass_streak() { echo 0 > "$pass_streak_file" 2>/dev/null || true; }
+
 marker_mtime=$(stat -c %Y "$deploy_marker" 2>/dev/null || echo 0)
 if [ "$marker_mtime" != 0 ] && (( $(date +%s) - marker_mtime < deploy_grace_seconds )); then
   echo "SKIP: deploy in progress — probe not run"; stamp; exit 0
 fi
-[ -f "$probe" ] || { echo "ERROR: $probe missing — host repo copy not deployed"; stamp; exit 1; }
+[ -f "$probe" ] || { echo "ERROR: $probe missing — host repo copy not deployed"; reset_pass_streak; stamp; exit 1; }
 
 # Boot/downtime pre-gate (§9.9 M2): Persistent=true catch-up fires can land
 # while pm2 is still resurrecting the brain after a reboot. DOWN is the
@@ -81,14 +110,15 @@ export HI_SPEED_ALERT_TO="adam@xl.net"
 # blip must not mail; two in a row must.
 if env RESEND_API_KEY= node "$probe" --label 'aiwebsite' --url "$brain_url" \
      --env "$app_root/.env" --open-issues "$scratch"; then
-  rm -f "$scratch"; stamp; exit 0
+  rm -f "$scratch"; record_pass_night "attempt 1"; stamp; exit 0
 fi
 rm -f "$scratch"
 echo "attempt 1 over threshold or failed — re-probing (best-of-2), alerting armed"
 if node "$probe" --label 'aiwebsite' --url "$brain_url" \
      --env "$app_root/.env" --open-issues "$issues_file"; then
-  # §5.15: a passing second attempt closes any open breach episode.
-  record_issue "HI-SPEED WARN nightly gate breach" "self-cleared: a later probe passed" "hi-speed-breach" 0 1 "auto:self-cleared"
+  # A passing second attempt is a passing NIGHT; it no longer closes an open
+  # breach episode by itself (v1.130.0 — see record_pass_night).
+  record_pass_night "attempt 2 of best-of-2"
   stamp; exit 0
 fi
 # §5.15 wrapper-level hook: the MAIL itself is sent by the host repo's probe
@@ -100,4 +130,5 @@ fi
 record_issue "HI-SPEED WARN nightly gate breach (best-of-2)" \
   "Both hi-speed probe attempts were over the 5000ms threshold or failed on $(hostname) at $(date -Is). Details: $issues_file (data/hi-speed-open-issues.md, §9.9)." \
   "hi-speed-breach" 1
+reset_pass_streak
 stamp; exit 1

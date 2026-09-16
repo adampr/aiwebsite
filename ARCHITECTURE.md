@@ -15,6 +15,19 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
+> **Module pin: @aicompany/core v1.130.0 (2026-09-16), submodule 0e23941 (= tag v1.130.0).**
+> Adopted from v1.129.1 (e9ac269). TEMPLATE CHANGE — re-rendered (watchdog, setup-vm,
+> hi-speed, stage-build; `render.mjs --check` clean). Host actions taken: `PEER_MONITOR_PEERS`
+> gains topmspnearme.net and xlant.ai (no host watched either — §9.7 full mesh), so
+> peer-monitor.sh re-rendered too; the cleaned-intake retirement's version feature-detect
+> now sees ≥ 1.130.0 and passes `lastSeenAtMax` (test:intakeretire tripwire green). What
+> changes here: the stage copy keeps only `.env`/`.env.example` and reaps the stage
+> `.env.next` leftover; the synth heartbeat WARN self-resolves; logrotate keeps 8 weeks;
+> the aggregate-report row (Microsoft arm) is stable and self-retiring. aiwebsite is not a
+> local-artifact host, so the page-alarm defer change does not apply. Owner-directed
+> same-day fleet deploy (canary soak waived). Module notes and signed mail deltas:
+> packages/aicompany/MIGRATIONS.md v1.130.0.
+
 > **Module pin: @aicompany/core v1.129.1 (2026-09-16), submodule e9ac269 (= tag v1.129.1).**
 > Adopted from v1.128.0 (ca21640). The v1.127.0 and v1.128.0 bumps did not update
 > this line, so the v1.125.0 entry below was the last one written. Host action:

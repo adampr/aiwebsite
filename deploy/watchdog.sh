@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: watchdog.sh.tpl@07dd4fdf7122646cc1f196b0b95ba18b33e3067c790d68300e8bfe43385f05fd
+# aicompany-template: watchdog.sh.tpl@fb3ca442e78cdf9016cf4891e3420df725555467de7248764e914c543345591e
 # ai.xl.net watchdog — persistent health-check loop (§9.5).
 # Checks PostgreSQL, nginx, cloudflared, and the three PM2 apps
 # (aiwebsite :3000, brain-api :3211, skills-host :3213)
@@ -41,6 +41,11 @@ pid_file="/var/run/aiwebsite-watchdog.pid"
 lock_file="/var/run/aiwebsite-watchdog.lock"
 deploy_marker="/var/run/aiwebsite-deploy-in-progress"
 deploy_grace_seconds=1800     # defer repair ACTIONS while the deploy marker is fresher than this (§9.5)
+# v1.130.0: open local-artifact page CRITICAL + its consecutive-green counter
+# (tmpfs, beside the marker: a reboot drops it and the row stays open for a
+# human, the same rule as the deploy-defer stamps). See note_page_green.
+page_alarm_stamp="/var/run/aiwebsite-page-render-local-artifact-open"
+page_alarm_greens_to_resolve=3
 log_file="/var/log/aiwebsite-watchdog.log"
 throttle_dir="/tmp/aiwebsite-watchdog-throttle"
 issue_throttle_seconds=86400  # 24 hours per unique issue
@@ -87,6 +92,9 @@ page_check_urls=(
 # above. The heartbeat gate is consumed in check_freshness.
 synth_pages='/blog|27000 /texting|12000 /api/auth/session'
 synth_heartbeat_enabled='1'
+# v1.130.0: one resolve of synth-heartbeat is owed at process start and after
+# every stale pass; check_synth_heartbeat pays it on the next fresh pass.
+synth_heartbeat_resolve_owed=1
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -108,6 +116,18 @@ deploy_in_progress() {
   marker_mtime=$(stat -c %Y "$deploy_marker" 2>/dev/null) || return 1
   age=$(( $(date +%s) - marker_mtime ))
   (( age < deploy_grace_seconds ))
+}
+
+# v1.130.0: is the VM half of a deploy (setup-vm.sh) RUNNING right now? A fresh
+# marker alone must not silence the local-artifact page alarm (RA 2026-09-16):
+# deploy.sh touches the marker BEFORE the source sync and the artifact ship,
+# while the live .next is still untouched, and a setup-vm that dies after its
+# last touch leaves a fresh marker behind for up to 30 min. pgrep, NEVER a
+# flock probe on the deploy lock: even a brief watchdog hold can make a
+# starting setup-vm's `flock -n` abort a deploy after the artifact ship. The
+# [d] bracket keeps the pattern from matching a shell that merely quotes it.
+deploy_pipeline_running() {
+  pgrep -f '[d]eploy/setup-vm\.sh' >/dev/null 2>&1
 }
 
 load_resend_key() {
@@ -222,6 +242,12 @@ send_email() {
     # pressure); everything else keeps the default.
     local key_throttle="$issue_throttle_seconds"
     [[ "$issue_key" == "earlyoom-kill" ]] && key_throttle=3600
+    # v1.130.0 re-arm: a key whose episode AUTO-RESOLVED since its last mail
+    # (rearm_throttle) throttles at 1h, not 24h. Without it a resolved alarm
+    # that recurs inside the 24h window opened a new episode nobody was ever
+    # mailed about; with it a flapping fault still mails at most once an hour.
+    # The marker is consumed by the next successful send below.
+    [[ -e "$throttle_file.rearmed" ]] && key_throttle=3600
     if (( now - last_sent < key_throttle )); then
       log "INFO: Email throttled for issue '$issue_key' (last sent $(( now - last_sent ))s ago): $subject"
       record_issue "$1" "$body" "$issue_key" 0
@@ -248,12 +274,25 @@ send_email() {
       "$(echo "$html_body" | sed 's/"/\\"/g' | tr -d '\n')")" \
     >> "$log_file" 2>&1 && {
       date +%s > "$throttle_file"
+      rm -f "$throttle_file.rearmed" 2>/dev/null || true
       log "INFO: Alert email sent: $subject"
       record_issue "$1" "$body" "$issue_key" 1
     } || {
       log "WARN: Failed to send alert email: $subject"
       record_issue "$1" "$body" "$issue_key" 0
     }
+}
+
+# v1.130.0: called where an episode AUTO-RESOLVES. Drops that key's throttle
+# from 24h to 1h until its next successful send (see send_email): a recurrence
+# mails once the last mail is >=1h old instead of hiding for a day. The safe
+# key is derived exactly as send_email derives it.
+rearm_throttle() { # 1=issue key
+  local safe_key
+  safe_key=$(printf '%s' "${1:-}" | tr '/:. ' '____')
+  mkdir -p "$throttle_dir" 2>/dev/null || true
+  : > "$throttle_dir/$safe_key.rearmed" 2>/dev/null || true
+  return 0
 }
 
 restart_and_alert() {
@@ -421,15 +460,46 @@ check_cutover_journal() {
     run_as_pm2_user "pm2 restart aiwebsite brain-api skills-host" >> "$log_file" 2>&1 || true
     send_email \
       "WARN Healed an interrupted cutover (renames rolled back; no build)" \
-      "A cutover journal was found at $journal with no deploy in progress — a flip died mid-rename (likely connection death inside the cutover bracket).\nstage-build.sh heal rolled the flip fully BACKWARD (renames only; this host never builds) and pm2 was restarted.\nThe PREVIOUS generation is serving. Re-run the deploy from the dev box: bash deploy/deploy.sh --takeover" \
+      "A cutover journal was found at $journal with no deploy in progress — a flip died mid-rename (likely connection death inside the cutover bracket).\nstage-build.sh heal rolled the flip fully BACKWARD (renames only; this host never builds) and pm2 was restarted.\nThe PREVIOUS generation is serving. Re-run the deploy from the dev box through this host's deploy wrapper, the entrypoint named in the host repo's CLAUDE.md — never bare deploy/deploy.sh (the wrappers carry the dirty-tree gate and, where the host needs it, the 2FA window). The wrapper takes over the interrupted deploy itself or forwards --takeover; check its usage line." \
       "cutover-heal"
     record_issue "WARN Healed an interrupted cutover (renames rolled back; no build)" "self-healed: journal rolled backward, previous generation restored" "cutover-heal" 0 1 "auto:self-healed"
   else
     send_email \
       "CRITICAL Interrupted cutover found and heal FAILED (local-artifact host)" \
-      "A cutover journal exists at $journal (flip died mid-rename) and stage-build.sh heal FAILED — the live tree may be half-flipped and the site broken.\nManual recovery NOW: on the VM, cd $app_root && bash deploy/stage-build.sh heal (inspect its error), then pm2 restart aiwebsite brain-api skills-host. Then redeploy from the dev box with --takeover." \
+      "A cutover journal exists at $journal (flip died mid-rename) and stage-build.sh heal FAILED — the live tree may be half-flipped and the site broken.\nManual recovery NOW: on the VM, cd $app_root && bash deploy/stage-build.sh heal (inspect its error), then pm2 restart aiwebsite brain-api skills-host. Then redeploy from the dev box through this host's deploy wrapper, the entrypoint named in the host repo's CLAUDE.md (it takes over itself or forwards --takeover) — never bare deploy/deploy.sh." \
       "cutover-heal-fail"
   fi
+}
+
+# ── Local-artifact page CRITICAL auto-resolve (v1.130.0) ──────────
+# Before v1.130.0 nothing retired page-render-local-artifact, so every one was
+# a hand-close. One green pass is NOT enough (RA 2026-09-16): a flapping / would
+# resolve, recur inside the 24h throttle, and open an episode nobody is mailed
+# about. So the row resolves after $page_alarm_greens_to_resolve CONSECUTIVE
+# green page passes. The OK branch only runs when BOTH / and /login passed (the
+# health pre-gate returns before it), so a /login-only green cannot count. The
+# counter lives in $page_alarm_stamp: the ledger is written once per episode,
+# never every pass, and a failing pass resets it to 0 (check_pages). On resolve
+# the key's throttle re-arms at 1h (rearm_throttle).
+note_page_green() {
+  [ -e "$page_alarm_stamp" ] || return 0
+  local n
+  n=$(cat "$page_alarm_stamp" 2>/dev/null || echo 0)
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  n=$(( n + 1 ))
+  if (( n < page_alarm_greens_to_resolve )); then
+    echo "$n" > "$page_alarm_stamp" 2>/dev/null || true
+    log "INFO: page-render-local-artifact green page pass $n/$page_alarm_greens_to_resolve"
+    return 0
+  fi
+  record_issue \
+    "WARN page checks green on $n consecutive passes after a local-artifact page alarm — no repair was performed on this host by the page alarm" \
+    "self-healed: / and /login passed on $n consecutive page passes (5 min apart). The page alarm on a local-artifact host is alert-only: the watchdog did not rebuild, flip or restart anything for it, so whatever cleared it (a redeploy, a service restart recorded under its own restart-* key, or a transient) happened outside this alarm." \
+    "page-render-local-artifact" 0 1 "auto:self-healed"
+  rearm_throttle "page-render-local-artifact"
+  rm -f "$page_alarm_stamp" 2>/dev/null || true
+  log "RESOLVE: page-render-local-artifact — $n consecutive green page passes"
+  return 0
 }
 
 check_pages() {
@@ -442,6 +512,8 @@ check_pages() {
   hc=$(curl -sf -m 5 "$site_health_url" 2>&1) || hc=""
   if [[ -z "$hc" ]] || ! echo "$hc" | grep -q '"status":"ok"'; then
     log "INFO: Skipping page checks -- health endpoint down"
+    # A health-down pass is not green: it breaks the v1.130.0 streak too.
+    if [ -e "$page_alarm_stamp" ]; then echo 0 > "$page_alarm_stamp" 2>/dev/null || true; fi
     return
   fi
 
@@ -475,10 +547,30 @@ check_pages() {
     # rebuilds automatically", which would be a lie here. Recovery is a
     # dev-box redeploy (auto-rolls-back to .next.old on health failure).
     if [[ "$build_mode" == "local-artifact" ]]; then
+      # Any failing pass breaks the green streak toward auto-resolve.
+      if [ -e "$page_alarm_stamp" ]; then echo 0 > "$page_alarm_stamp" 2>/dev/null || true; fi
+      # v1.130.0 deploy-aware defer, ledger-only (the v1.102.0 precedent), and
+      # with NO rebuild promise: this host never builds on the VM. Gated on a
+      # fresh marker AND a running setup-vm.sh (RA 2026-09-16), so a deploy
+      # still in its dev-box sync/ship phase, or one that crashed and left a
+      # fresh marker, gets the loud path below.
+      if deploy_in_progress && deploy_pipeline_running; then
+        log "DEFER: pages failing while setup-vm.sh runs (marker <${deploy_grace_seconds}s) — local-artifact host: recorded, not emailed, no rebuild owed"
+        # Stamp BEFORE the record (the v1.52 bug direction), as restart_and_alert does.
+        mark_deploy_defer "page-render-local-artifact-deploy-defer"
+        record_issue \
+          "WARN Page errors during a live deploy — local-artifact host (recorded, not emailed)" \
+          "Pages returning errors:\n$detail_list\n\nA deploy is live on this VM: $deploy_marker is younger than 30 min AND a deploy/setup-vm.sh process is running. Not emailed by policy (v1.102.0): deploys are session-driven and the deploying terminal owns this window. This host is DEPLOY_BUILD_MODE=local-artifact, so no VM rebuild is owed or attempted.\nIf pages still fail on a pass where setup-vm.sh is no longer running, or the marker is gone or older than 30 min, the watchdog records CRITICAL page-render-local-artifact (mailed unless that key's throttle holds: 24h after its last mail, 1h once an episode has auto-resolved).\nResidual visibility while deferred: peer-monitor and the cutover health gate probe only /api/health, so a pages-fail/health-OK outage in this window is seen only by the dev-box synth sweep." \
+          "page-render-local-artifact-deploy-defer" 0
+        return
+      fi
       log "ALERT-ONLY: pages failing but VM-side rebuild is DISABLED (DEPLOY_BUILD_MODE=local-artifact)"
+      # Open (or restart) the green-pass counter BEFORE the record: a stray
+      # stamp only resolves a key with no open row, which is a no-op.
+      echo 0 > "$page_alarm_stamp" 2>/dev/null || log "WARN: could not stamp $page_alarm_stamp — page-render-local-artifact will not auto-resolve"
       send_email \
         "CRITICAL Page errors — VM rebuild disabled (local-artifact host)" \
-        "Pages returning errors:\n$detail_list\n\nThis host is DEPLOY_BUILD_MODE=local-artifact: the watchdog will NOT rebuild on the VM (that workload caused the 2026-08-08 outage). Recover from the dev box: bash deploy/deploy.sh (builds locally, ships the artifact, auto-rolls-back on health failure). Manual rollback on the VM: stage-build.sh rollback (or mv .next .next.bad && mv .next.old .next) then pm2 restart aiwebsite." \
+        "Pages returning errors:\n$detail_list\n\nThis host is DEPLOY_BUILD_MODE=local-artifact: the watchdog will NOT rebuild on the VM (that workload caused the 2026-08-08 outage). Recover by redeploying from the dev box through this host's deploy wrapper, the entrypoint named in the host repo's CLAUDE.md — never bare deploy/deploy.sh (the wrapper builds locally, ships the artifact, and the deploy auto-rolls-back on health failure). Manual rollback on the VM: stage-build.sh rollback (or mv .next .next.bad && mv .next.old .next) then pm2 restart aiwebsite.\nThis row auto-resolves after $page_alarm_greens_to_resolve consecutive green page passes (5 min apart); the watchdog performs no repair for it." \
         "page-render-local-artifact"
       return
     fi
@@ -547,6 +639,8 @@ check_pages() {
     # /login timed out. Resolving on health alone would have closed the row on
     # the same pass that opened it.
     clear_deploy_defer "page-render-deploy-defer" "page checks passing again after a deploy-window deferral"
+    clear_deploy_defer "page-render-local-artifact-deploy-defer" "page checks passing again after a live-deploy deferral (local-artifact host; no rebuild was owed)"
+    note_page_green
   fi
 }
 
@@ -614,6 +708,48 @@ file_age_alert() { # path, label, severity, issue_key, remedy [, threshold_secon
   return 0
 }
 
+# Synthetic-sweep heartbeat (§9.8 v1.17.0): the dev-box sweep stamps this
+# file over ssh after every completed run. Render-key-gated so
+# non-participating (gcloud-iap) hosts never false-fire. Seeded on first
+# sight — a fresh enable must not fire "missing" before the first sweep
+# lands — and chowned to $pm2_user so the ssh login user can overwrite it
+# (the watchdog runs as root).
+#
+# v1.130.0: the stale WARN auto-resolves when the stamp is fresh again (RA
+# 2026-09-16: a >2h runner cutover left a hand-close row). The owed flag is in
+# MEMORY, not a /var/run stamp: it starts at 1, so the first fresh pass after a
+# watchdog start pays one resolve (closing a row opened before a reboot or a
+# redeploy; a resolve for a key with no open row is an endpoint no-op), every
+# stale pass re-arms it, and every other fresh pass writes nothing — the ledger
+# is never written per pass.
+check_synth_heartbeat() {
+  [ "$synth_heartbeat_enabled" = "1" ] || return 0
+  if [ ! -f "$app_root/data/synth-last-sweep" ]; then
+    if date +%s > "$app_root/data/synth-last-sweep" 2>/dev/null; then
+      chown "$pm2_user" "$app_root/data/synth-last-sweep" 2>/dev/null || true
+      log "INFO: seeded synth sweep heartbeat"
+    fi
+    # A SEEDED file proves nothing about the runner: never let the next pass read
+    # it as "fresh again" and resolve an open stale row (diff refuter D1).
+    synth_heartbeat_resolve_owed=0
+    return 0
+  fi
+  if file_age_alert "$app_root/data/synth-last-sweep" "Synthetic sweep heartbeat" "SYNTH WARN" "synth-heartbeat" \
+    "The dev-box sweep runner has not stamped in >2h (8 missed 15-min cycles) — dead cron or dead runner. On the dev box: crontab -l | grep synth-sweep (the entries run from ~/.local/share/aicompany-cron/aicompany and only while ~/.local/state/aicompany-synth/LEGACY-RUNNER-RETIRED exists); tail ~/.local/state/aicompany-synth/sweep.log (RUNBOOK: Synthetic sweep)." \
+    7200; then
+    if [ "$synth_heartbeat_resolve_owed" = "1" ]; then
+      record_issue "SYNTH WARN synthetic sweep heartbeat fresh again (stamped within 2h)" \
+        "self-healed: $app_root/data/synth-last-sweep was stamped within the 2h threshold on a later watchdog pass." \
+        "synth-heartbeat" 0 1 "auto:self-healed"
+      synth_heartbeat_resolve_owed=0
+    fi
+  else
+    log "FAIL: synth sweep heartbeat stale"
+    synth_heartbeat_resolve_owed=1
+  fi
+  return 0
+}
+
 check_freshness() {
   # Heartbeat check applies only when setup-vm enabled the backup timers
   # (BACKUP_BUCKET set) — otherwise it would alert nightly about a timer
@@ -642,25 +778,7 @@ check_freshness() {
       3024000 \
       || log "FAIL: blog digest state missing/stale"
   fi
-  # Synthetic-sweep heartbeat (§9.8 v1.17.0): the dev-box sweep stamps this
-  # file over ssh after every completed run. Render-key-gated so
-  # non-participating (gcloud-iap) hosts never false-fire. Seeded on first
-  # sight — a fresh enable must not fire "missing" before the first sweep
-  # lands — and chowned to $pm2_user so the ssh login user can overwrite it
-  # (the watchdog runs as root).
-  if [ "$synth_heartbeat_enabled" = "1" ]; then
-    if [ ! -f "$app_root/data/synth-last-sweep" ]; then
-      if date +%s > "$app_root/data/synth-last-sweep" 2>/dev/null; then
-        chown "$pm2_user" "$app_root/data/synth-last-sweep" 2>/dev/null || true
-        log "INFO: seeded synth sweep heartbeat"
-      fi
-    else
-      file_age_alert "$app_root/data/synth-last-sweep" "Synthetic sweep heartbeat" "SYNTH WARN" "synth-heartbeat" \
-        "The dev-box sweep runner has not stamped in >2h (8 missed 15-min cycles) — dead cron or dead runner. On the dev box: crontab -l | grep synth-sweep; tail ~/.local/state/aicompany-synth/sweep.log (RUNBOOK: Synthetic sweep)." \
-        7200 \
-        || log "FAIL: synth sweep heartbeat stale"
-    fi
-  fi
+  check_synth_heartbeat
 
   # §9.9 v1.20.0: nightly hi-speed gate dead-man. hi-speed.sh stamps
   # data/hi-speed-last-run on EVERY exit path (incl. skips); >26h of silence

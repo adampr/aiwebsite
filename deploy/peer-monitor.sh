@@ -40,7 +40,7 @@ state_dir="${PEER_MONITOR_STATE:-/var/lib/aiwebsite/peer-monitor}"
 alert_to="${PEER_MONITOR_TO:-adam@xl.net}"
 alert_from="${PEER_MONITOR_FROM:-ai.xl.net Watchdog <noreply@ai.xl.net>}"
 # name|url pairs; a peer is healthy when the URL returns HTTP 200 within 15s.
-peers="${PEER_MONITOR_PEERS_OVERRIDE:-itsupportchicago.net|https://itsupportchicago.net/api/health roleplay.xl.net|https://roleplay.xl.net/api/health}"
+peers="${PEER_MONITOR_PEERS_OVERRIDE:-itsupportchicago.net|https://itsupportchicago.net/api/health roleplay.xl.net|https://roleplay.xl.net/api/health topmspnearme.net|https://topmspnearme.net/api/health xlant.ai|https://xlant.ai/api/health}"
 # Optional E.164 SMS escalation target (render key PEER_MONITOR_SMS_TO — may
 # be absent/empty in site-deploy.env, which disables the SMS path entirely).
 sms_to="${PEER_MONITOR_SMS_TO_OVERRIDE:-}"

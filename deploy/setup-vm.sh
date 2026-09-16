@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: setup-vm.sh.tpl@d545662de3933fb8e028f08256c9654d4b36e9c038884d4f2092e923e4a7ce2f
+# aicompany-template: setup-vm.sh.tpl@2fa81b749966a254e27eed1118c7c790938e69273184d05fd4264c00341e1863
 set -euo pipefail
 
 # One-time VM provisioning for ai.xl.net (idempotent — safe to re-run on every
@@ -1338,7 +1338,15 @@ fi
 echo ">>> Timers installed:"
 systemctl list-timers "aiwebsite-*" --no-pager || true
 
-# ── logrotate for non-PM2 logs (§9.5: weekly, keep 4, compress) ──
+# ── logrotate for non-PM2 logs (§9.5: weekly, keep 8, compress) ──
+# keep 8 (v1.130.0, BlogWarningsHistory §7.23): at rotate 4 the retained span
+# was 28 + d days (d = age of the current file, 0-7), so a 30-night blog series
+# was intact only ~71% of the time and its head aged out before the row
+# matured. 8 weeks = 56 + d days covers it always, for ~+5M of compressed logs
+# per host. ONE stanza on purpose: the aiwebsite-*.log glob already covers
+# -blog.log, and a second stanza matching the same files makes logrotate skip
+# entries unpredictably. No maxsize: size-triggered rotation would SHORTEN the
+# retention in days for exactly the series this exists to keep.
 # NOTE: this site's nginx logs (/var/log/nginx/aiwebsite.*.log) are deliberately
 # NOT listed here — the distro's /etc/logrotate.d/nginx glob already covers
 # them (daily, rotate 14 on Debian), and a duplicate logrotate entry makes it
@@ -1346,7 +1354,7 @@ systemctl list-timers "aiwebsite-*" --no-pager || true
 sudo tee /etc/logrotate.d/aiwebsite >/dev/null <<'EOF'
 /var/log/aiwebsite-*.log {
     weekly
-    rotate 4
+    rotate 8
     compress
     missingok
     notifempty

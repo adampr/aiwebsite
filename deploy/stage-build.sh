@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# aicompany-template: stage-build.sh.tpl@00bd8c312aba1a16a58e79631f5274a6d4fd0281ea61d1cf2819109c4617f064
+# aicompany-template: stage-build.sh.tpl@9043bf5356345c1668bbbc4d94b51852a79fe137db69ff20c0c34987ed1fcc16
 set -euo pipefail
 # Staged-build engine (v1.13.0, §9.2): all mutation happens in the sibling
 # stage tree; the live tree changes only during a renames-only journaled flip.
@@ -171,8 +171,45 @@ prepare() {
   # NOTE: extra_flip trees are NOT excluded — they are inputs the host hook
   # rebuilds in stage (roleplay vendor natives). rsync 24 (files vanished:
   # live-tree writers) is tolerated; anything else aborts.
-  rc=0; rsync -a --delete "${excl[@]}" "$app/" "$stage/" || rc=$?
+  #
+  # v1.130.0 SECRETS: of the top-level env files, ONLY .env (above) and
+  # .env.example (config:check requires it) are staged. A bare
+  # `rsync -a --delete` carried every .env.<suffix> in the live app dir into
+  # <app>.stage/: a hand-made .env.bak-* became a second full copy of the live
+  # secrets on two production VMs, and the shipped .env.next (v1.117.0) got a
+  # stage twin on every deploy. Nothing reads a stage .env.<suffix> — verified
+  # against setup-vm.sh, deploy.sh and this file: setup-vm installs
+  # "$stage_dir/.env" FROM the LIVE-dir .env.next by absolute path, .env.prev
+  # exists only in the live dir, and the pin hooks edit $AICOMPANY_ENV_FILE (the
+  # live-dir .env.next). The .env.next contract is untouched: it still lives in
+  # the LIVE app dir. Anchored (leading /) = the transfer root only; the
+  # includes precede the exclude because rsync's FIRST matching rule wins, and
+  # they precede the host excludes for the same reason.
+  env_filter=(--include /.env.example --include /.env --exclude '/.env.*')
+  rc=0; rsync -a --delete "${env_filter[@]}" "${excl[@]}" "$app/" "$stage/" || rc=$?
   { [ "$rc" -eq 0 ] || [ "$rc" -eq 24 ]; } || exit "$rc"
+  reap_stage_env_copies
+}
+
+# v1.130.0: --delete never removes an EXCLUDED path (no --delete-excluded), so
+# the filter above stops new copies but would leave every copy staged before
+# this release in place. Reap them: any top-level .env.<suffix> in the stage
+# tree except .env.example. .env itself does not match the glob. A file that
+# cannot be removed is named, never skipped silently, and does not abort the
+# deploy (the filter already keeps it from being refreshed).
+reap_stage_env_copies() {
+  local f
+  for f in "$stage"/.env.*; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    [ -d "$f" ] && continue
+    [ "$(basename "$f")" = ".env.example" ] && continue
+    if rm -f -- "$f"; then
+      echo ">>> stage: removed $(basename "$f") (a secret-shaped copy; never staged since v1.130.0)"
+    else
+      echo "WARN: could not remove $f — a copy of live secrets; remove it by hand"
+    fi
+  done
+  return 0
 }
 
 install_site()  { run_capped install "$stage" npm ci --include=dev; }
