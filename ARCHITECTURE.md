@@ -15,6 +15,17 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
+> **Module pin: @aicompany/core v1.129.1 (2026-09-16), submodule e9ac269 (= tag v1.129.1).**
+> Adopted from v1.128.0 (ca21640). The v1.127.0 and v1.128.0 bumps did not update
+> this line, so the v1.125.0 entry below was the last one written. Host action:
+> none required by the module — no schema, env or template change (no re-render),
+> and this host sets no `chatWidget.reportIntro`, so v1.129.0 step 3 has nothing
+> to re-read. What changes here: a message typed in "Report an issue" mode is filed
+> as the report without a model in the loop; the page-context block tells the
+> persona the page is its own site and never a source; the blog hero call sends
+> the documented `response_format` instead of `response_modalities`. Signed mail
+> delta 0. Module notes: packages/aicompany/MIGRATIONS.md v1.129.0 + v1.129.1.
+
 > **Module pin: @aicompany/core v1.125.0 (2026-09-11), submodule ad94d48 (= tag v1.125.0).**
 > Adopted from v1.124.0 (27fab13). Host action: none required by the module (this
 > host runs no Phase B — `refreshPerWeek: 0` — so only the nightly footer wording
