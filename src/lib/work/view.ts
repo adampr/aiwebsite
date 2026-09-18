@@ -1,10 +1,11 @@
 // Status projections for the submit page poll (§5.16). Never leaks another
 // user's data: routes only call these on rows the caller owns (or as admin).
 
-import { PANEL_STEP_SLOW_MS, WORK_CAPS } from "./config";
+import { PANEL_STAGES, PANEL_STEP_SLOW_MS, WORK_CAPS } from "./config";
 import { UPDATE_CONFLICT_NOTE, type SubmissionListRow } from "./db";
 import { sameEmail } from "./transfer";
 import { cleanedPathsOf, parseCleaning } from "./cleaning";
+import { parseQualityJson, type WorkQualityAssessment } from "./quality";
 
 export interface SubmissionStatusView {
   id: string;
@@ -80,6 +81,14 @@ export interface SubmissionStatusView {
    * lane and on the own-list path, which never mixes tenants. */
   laneName: string | null;
   laneDomain: string | null;
+  /** §5.16 quality round (2026-09-18): the reconciled quality assessment,
+   * parsed defensively (parseQualityJson) so a junk or future-versioned
+   * column degrades to null, never to a crash. Internal-only data: the
+   * submitter's own list and the admin lists are the only callers, both
+   * already owner-or-admin per the file header's standing rule. Null on
+   * every pre-round row and on runs with WORK_QUALITY_ENABLED=0; both
+   * surfaces render the null case. */
+  quality: WorkQualityAssessment | null;
 }
 
 // Plain-language labels for the machine-written panel_error checklist keys.
@@ -137,7 +146,10 @@ export function statusView(
     if (row.status === "running" && p?.stage) {
       stage = p.stage;
       stageIndex = p.stageIndex ?? 0;
-      stageCount = p.stageCount ?? 9;
+      // Derived, never a literal: the 2026-09-18 quality pair moved the
+      // count from 9 to 11 and a hardcoded fallback would misreport again
+      // on the next stage change.
+      stageCount = p.stageCount ?? PANEL_STAGES.length;
       waiting = p.waiting === true;
       // Derived from the STAGE START the beat pump writes, never from
       // panel_heartbeat_at: the pump refreshes that column every 45 s for the
@@ -211,6 +223,7 @@ export function statusView(
       return cleaning ? cleanedPathsOf(cleaning) : [];
     })(),
     timeSavedMinutes: row.timeSavedMinutes,
+    quality: parseQualityJson(row.qualityJson),
     lane: row.companyId === null ? "internal" : "company",
     laneName: row.companyId === null ? null : (opts?.lane?.name ?? null),
     laneDomain: row.companyId === null ? null : (opts?.lane?.domain ?? null),

@@ -70,6 +70,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-18 §5.16 QUALITY ROUND. Every panel run now carries a NON-GATING quality assessment of the SUBMITTED WORK ITSELF (its documents, never the card copy): two new stages, `quality assessor` and `quality refuter`, sit after the editorial critic and before synthesis in `PANEL_STAGES` (now 11 stages; the /work/submit progress copy says "eleven steps" and the tracker's stage count derives from `PANEL_STAGES.length`), both through the existing `call()` seam (heartbeats, transcript, budget, roadmap dual-ledger, `UNTRUSTED_FRAME`, do_not_store envelope), both tolerating null and both UNARMED for recovery (`PANEL_RECOVERABLE_STAGES` unchanged at 7). The assessor scores the five fixed `WORK_QUALITY_DIMENSIONS` (config.ts: documentation, robustness, safety, clarity, reusability; rubrics verbatim) 1-5, each score paired with an exact supporting quote from the documents; the refuter's mandate is to build the strongest case each score is wrong, contradicting quote required; `reconcileQuality` (new pure `src/lib/work/quality.ts`) resolves the two in code with `quoteInCorpus` as the SYMMETRIC arbiter — an unverifiable assessor quote nulls the score (`unsupported: true`, dimension kept as a visible gap), an unverifiable challenge is dropped, and a surviving challenge marks the dimension `contested` with {direction, reason} while the score NEVER moves (humans read contested marks; code invents no compromise number). Persisted mid-run, pre-synthesis, via the attempt-fenced `setQualityAssessment` into the new nullable `work_submissions.quality_json` (migration 0057, ADD COLUMN IF NOT EXISTS), so every terminal path — disclosure hold, lint hold, blocking hold, update park, publish, failure — keeps it; unusable assessor output stores nothing, a failed refuter stores an assessor-only verdict, and a write blip cannot fail the run. Nothing from either stage feeds synthesis, the card, lint, the disclosure gate or card_json; prompts forbid process prose in every field. Rendered on the two INTERNAL surfaces only: /admin/work per row (dimension scores with "no verified evidence" for nulled ones, contested direction + reason, strengths/improvements/missed-risks lines) and the /work/submit list (compact: one dimension line with contested direction, plus the prose lines; `statusView` projects `quality` via `parseQualityJson`, which degrades junk or future versions to null, and every reader renders null as nothing). The public /work page is deliberately untouched (publishing a grade on a colleague's card is an owner-level call). Kill switch `WORK_QUALITY_ENABLED` (unset = on; "0" skips both stages, rows simply carry no assessment; admission headroom is a ceiling and stays 20 either way). Budget honesty: `WORK_CAPS.brainCallsWorstCasePerRun` 18 → 20 (11 dispatches + 7 armed recoveries + 2 spare) and `WORK_BRAIN_DAILY_CAP` default 7200 → 8000 in lockstep (400 × 20; `ROADMAP_BRAIN_DAILY_CAP` deliberately stays 1200 — 60 × 20 fits exactly). Tests: `test:work` pins the stage order and labels, the worst case, the non-recoverable invariant, `workQualityEnabled`, the full `reconcileQuality` decision table, `parseQualityJson` and the statusView projection.
+
 Last verified against code: 2026-09-16 §5.3/§5.4/§5.16/§9.7 MAIL-REPORT ROUND (Panel C + refutation RC; the aiwebsite items RC 3, 7, 8 and 14 only). (1) `siblingSites` gains `xlant.ai` + `xlant@xlant.ai`; topmspnearme.net was deliberately NOT (until 2026-09-16 evening — added once tmnm's own Resend webhook existed and was verified end to end; see site.config.ts) — added (tmnm has no Resend webhook, so this host's WARN is the only surface for its inbound mail). (2) The 8 host-owned Resend send files that carried NO RFC 3834 headers now do (§5.4 "Host-owned raw senders"): the four seams `sendGovernanceEmail`, `sendTronEmail`, `sendRequestsEmail` and `sendRoadmapEmail` derive `X-Auto-Response-Suppress` from the audience (`src/lib/auto-response-headers.ts`: `All` only when ADMIN_EMAIL is the sole visible recipient, otherwise `OOF, AutoReply`; caller headers win), the retention mail, `scripts/governance-standards-refresh.ts` and `scripts/qa/hi-speed-test.mjs` send `All`, and all FOUR `deploy/post-install.sh` alert bodies are rebuilt with `jq -nc --arg`, sent `curl -sf -m 20`, and on failure `logger -t aiwebsite-alert "<alert> send failed"` + exit 1. No `Precedence`, no `auto-replied`. (3) Per-call-site gate `scripts/check-resend-headers.mjs` (per file, `Auto-Submitted` count ≥ send-site count; discovery floor 13 files; wired into `scripts/git-hooks/pre-commit.local` on the staged blobs); on a41ec9b5 it failed with 8 of 14 files. (4) `retireIntakeCleaningRows()` (`src/lib/work/intake-issue-retire.ts`) closes open `work-intake:cleaned:*` rows by CAS resolve from the work-queue tick (§5.16); INERT on the v1.129.1 pin until @aicompany/core >= v1.130.0 declares `IssueResolveEvent.lastSeenAtMax`. Tests, offline: `npm run test:resendheaders`, `test:alertbody` (baseline: the old bodies are INVALID JSON for a hostile tail), `test:intakeretire`. Signed mail delta: 0 per night (the responder condition is not active; the headers remove bounce WARNs on a responder day and recover no mail), and a small negative for mail to xlant@xlant.ai that used to WARN here (Panel C row 2: about -0.25/week).
 
 Last verified against code: 2026-09-17 BRAIN PIN v1.157 `566ce26` -> v1.158 `6b9a577` (annotated tag v1.158). **v1.158 (xldev #867) — the forced-panel legs stop buying a cache entry that has already expired.** An Anthropic cache entry lives five minutes, measured from the START of the request that writes it. On the blog path the draft leg GENERATES A WHOLE ARTICLE (measured total_ms 91-288 s) and the cross-lab critic runs after it, so by the time the revision's request begins the draft's entry is 331-460 s old. Only 16 of 54 production pairs start inside the window at all — a 29.6% structural ceiling against a 69.4% break-even — so both forced-panel legs now decline the message-level marker, and v1.157's panelForced branch is deleted rather than left unreachable. Eight internal one-shot lanes (triage, both memory extractors, the addressed classifier, two pinned-correction legs, the goal planner and evaluator) declare the same policy; six lanes with a corrective re-ask or a repeated dispatch deliberately do not, because a marker is also the READ anchor. **Deliberately NOT shipped:** an OpenAI lever (prompt_cache_options explicit mode) was measured and held, because two independent refuters measured that wiring it to the same declaration would destroy reads worth more than the writes it saves — the forced-panel OpenAI seat reads 72% of its input across 35 paired calls. No env change, no migration, no routing change. Rollback: BRAIN_ANTHROPIC_ONESHOT_BREAKPOINTS=legacy (also off/compat) plus a restart, or pin back to v1.157. This host runs the nightly blog module, so it is one of the three surfaces the change actually reaches; the morning after the pin lands, `json_panel_revision` rows should show cache writes falling to ~0 while cached stays 0 (it was always 0 — that leg never read).
@@ -6628,7 +6630,9 @@ usual).
 **Panel job** (`panel.ts`, in-process `after()` like the governance
 turn-runner; no route deadline, claim/fence columns survive PM2 restarts).
 Admission (kick.ts order): kill switch → `deployInProgress()` marker →
-`brainHealthy()` → budget (run admitted only if `brain_calls + 10 ≤ cap`, so a
+`brainHealthy()` → budget (run admitted only if `brain_calls + 20 ≤ cap` —
+the `brainCallsWorstCasePerRun` ceiling, unconditional even with the
+quality pair disabled — so a
 started run always finishes; then `panel_runs` spend) → global serialization
 (one live-heartbeat run site-wide; the brain is shared with voice) → atomic
 claim (fresh `panel_attempt_id` nonce; stale = heartbeat older than 240 s;
@@ -6657,18 +6661,44 @@ meta-commentary; the shared rules constant is now split in `config.ts` —
 `HOUSE_STYLE_RULES` for docs-blind stages, `HOUSE_RULES` = style + evidence
 clauses, concatenation asserted byte-identical in work-tests — so no
 docs-blind stage ever carries an evidence mandate it cannot execute); (6)
-disclosure critic — a **binary** checklist (client/company names, personal
-names beyond the approved credit, hostnames/IPs, credential shapes, dollar
-figures, ticket numbers, emails, phones), each item answered
-quote-or-"none found"; scalar safety scores are deliberately banned here
-(blog round-5 judge-calibration lesson); (7) synthesis — receives the FULL
-documents block (ground truth) plus the claims inventory alongside the
-draft and critic outputs (UNTRUSTED_FRAME applies, it carries submitted
-text), resolves all critic findings into the card JSON, and is explicitly
-licensed to REJECT a critic finding the documents contradict (a "no
-document was submitted" claim is wrong by construction); card copy may
-contain no commentary about the review, panel, critics, or evidence
-availability. Any disclosure hit → `held`, no retry. Then the deterministic
+quality assessor + (7) quality refuter — the NON-GATING pair (§5.16 quality
+round, 2026-09-18), run after the editorial critic and BEFORE synthesis so
+every terminal path (disclosure hold, lint hold, blocking hold, update
+park, publish, failure) already has the verdict persisted: the assessor
+scores the five fixed `WORK_QUALITY_DIMENSIONS` (config.ts —
+documentation, robustness, safety, clarity, reusability; rubrics seen
+verbatim) 1-5 against the DOCUMENTS, every score paired with an exact
+supporting quote; the refuter sees the documents plus the assessor output
+and is mandated to build the strongest case each score is wrong
+(contradicting quote required, empty challenges only when it genuinely
+cannot); `reconcileQuality` (`src/lib/work/quality.ts`, pure,
+unit-tested) resolves them in code with `quoteInCorpus` as the symmetric
+arbiter — an unverifiable assessor quote nulls the score (`unsupported:
+true`, dimension kept), an unverifiable challenge is dropped, a surviving
+challenge marks the dimension `contested` with {direction, reason} and the
+score never moves. Stored pre-synthesis through the attempt-fenced
+`setQualityAssessment` into `work_submissions.quality_json`; both stages
+tolerate null (failed assessor = no assessment, failed refuter =
+assessor-only), neither is recovery-armed, `WORK_QUALITY_ENABLED=0` skips
+both, and nothing from either feeds synthesis, the card, lint or the
+disclosure gate — the output renders only on /admin/work and the
+submitter's /work/submit list, never the public card, and both prompts
+forbid naming the review/panel/pipeline in any prose field; (8)
+synthesis — receives the FULL documents block (ground truth) plus the
+claims inventory alongside the draft and critic outputs (UNTRUSTED_FRAME
+applies, it carries submitted text), resolves all critic findings into
+the card JSON, and is explicitly licensed to REJECT a critic finding the
+documents contradict (a "no document was submitted" claim is wrong by
+construction); card copy may contain no commentary about the review,
+panel, critics, or evidence availability; (9) disclosure critic — runs on
+the synthesis output, i.e. what actually publishes: a **binary** checklist
+(client/company names, personal names beyond the approved credit,
+hostnames/IPs, credential shapes, dollar figures, ticket numbers, emails,
+phones), each item answered quote-or-"none found"; scalar safety scores
+are deliberately banned here (blog round-5 judge-calibration lesson; the
+quality pair's 1-5 scores are EDITORIAL quality with a mandatory evidence
+quote each, a different instrument, and none of them reach this
+gate). Any disclosure hit → `held`, no retry. Then the deterministic
 lint (`lint.ts`, code not model): strict schema {title, categoryBadge enum,
 summary 40-90 words, body 1-2 ¶, exactly 3 facets (label ≤28 chars, text
 25-70 words), footer 2-5 fragments}; bans em/en dashes, tag-shaped text
@@ -6774,12 +6804,13 @@ the build's `previewModeId` from `.next/prerender-manifest.json`, which
 regenerates the page even from the email path's detached context; ISR 300 s
 stays the self-healing floor), Resend emails to owner + submitter
 (`notify.ts`, governance `sendGovernanceEmail`; every send is From `TRON_FROM`
-and signed with `tronSignature()` at the seam). ~8 calls/run, worst case 18
-(9 stage dispatches + one recovery dispatch on each of the 7 stages whose
-null result fails or holds the row + 2 spare; stages 4 and 5 tolerate null
+and signed with `tronSignature()` at the seam). ~10 calls/run, worst case 20
+(11 stage dispatches + one recovery dispatch on each of the 7 stages whose
+null result fails or holds the row + 2 spare; stages 4 through 7 — the two
+critics and the quality pair — tolerate null
 and are unarmed); ledger `work_usage` (day PK), caps `WORK_BRAIN_DAILY_CAP`
-(default 7200) / `WORK_PANEL_RUNS_DAILY_CAP` (default 400), invariant
-runs x worst case <= calls, 400 x 18 = 7200. Every exit path lands
+(default 8000) / `WORK_PANEL_RUNS_DAILY_CAP` (default 400), invariant
+runs x worst case <= calls, 400 x 20 = 8000. Every exit path lands
 `published`, `held` (owner email carries reason + draft JSON), or `failed`
 (`panel_error`); crashes are caught and recorded, and every terminal failure
 now emails the operator AND the submitter (see PANEL FAILURE CONTRACT
@@ -6798,8 +6829,10 @@ The seam lives in exactly ONE place, `runPanelInner`'s `call()`;
 600 s pool shared by the WHOLE run (`panelRecoveryRunBudgetMs`; per stage it
 would be 90 minutes of the single site-wide panel slot for one submission).
 Armed stages are the 7 whose null result fails or holds the row
-(`PANEL_RECOVERABLE_STAGES`); stages 4 and 5 tolerate null by design and are
-unarmed, so a critic can never eat the pool synthesis is about to need.
+(`PANEL_RECOVERABLE_STAGES`); stages 4 through 7 (the two critics and the
+quality pair) tolerate null by design and are
+unarmed, so a critic or quality stage can never eat the pool synthesis is
+about to need.
 The decision is the pure `panelRecoveryPlan()` in `work/config.ts`, pinned by
 `test:work`: on `timeout` it re-attaches, on `transport` or `parse` it
 re-dispatches with a FRESH envelope, and on `budget` it never retries
@@ -12541,6 +12574,20 @@ work_submissions   id uuid PK, user_id uuid NULL FK users ON DELETE SET NULL (pu
                    the person who reported it. rollbackSwappedUpdate never writes this
                    column, so a restored parent keeps its own value. The scorecard sums
                    it over PUBLISHED rows only, §5.18),
+                   quality_json text NULL (migration 0057: §5.16 quality round,
+                   2026-09-18 — the reconciled assessor/refuter quality assessment of
+                   the work itself, a bounded version-1 JSON (quality.ts
+                   WorkQualityAssessment: five dimensions each with
+                   score/quote/note/unsupported/contested/challenge, strengths,
+                   improvements, missedRisks, contestedCount, assessedAt), written
+                   MID-RUN before synthesis by the attempt-fenced setQualityAssessment
+                   (UPDATE fenced on id + panel_attempt_id + status='running') so held
+                   and failed rows keep it and a superseded run can never overwrite a
+                   newer claim. NULL forever on pre-round rows and on runs with
+                   WORK_QUALITY_ENABLED=0; every reader goes through parseQualityJson,
+                   which degrades junk or a future version to null. Internal surfaces
+                   only — /admin/work and the submitter's /work/submit list — never
+                   card_json and never the public page),
                    created_at/updated_at
                    -- §5.16, migration 0022; one row carries everything so hard DELETE
                    -- (admin-only remove/unpublish) removes the whole submission
@@ -13983,13 +14030,14 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | | `GOVERNANCE_TAVILY_DAILY_CAP` (default 300) / `GOVERNANCE_BRAIN_DAILY_CAP` (default 1500) | global daily budgets in the `governance_usage` ledger (~7 Tavily calls per fresh domain incl. standard probes; brain ~$0.10/turn so 1500 ≈ $150/day worst case); runtime-overridable via the email approval loop, clamped to BUDGET_CEILINGS (§5.12) |
 | | `GOVERNANCE_TAVILY_MONTHLY_WARN` (default 6000) | MTD Tavily WARN threshold in the governance timer's report |
 | Work submissions | `WORK_SUBMISSIONS_ENABLED` | kill switch (§5.16): `0` = intake + panel admission stop (503), published cards keep rendering. Unset = enabled |
-| | `WORK_BRAIN_DAILY_CAP` (default 7200) / `WORK_PANEL_RUNS_DAILY_CAP` (default 400) | global daily panel budgets in the `work_usage` ledger; a run is admitted only when its worst case (18 calls) still fits under the call cap, so keep runs × 18 ≤ calls. Tripled 2400 → 7200 on 2026-08-25 with the worst case re-derived 10 → 18; both are commented OUT in `.env.example`, so the CODE defaults in `src/lib/work/config.ts` are what production runs |
+| | `WORK_BRAIN_DAILY_CAP` (default 8000) / `WORK_PANEL_RUNS_DAILY_CAP` (default 400) | global daily panel budgets in the `work_usage` ledger; a run is admitted only when its worst case (20 calls) still fits under the call cap, so keep runs × 20 ≤ calls. Tripled 2400 → 7200 on 2026-08-25 with the worst case re-derived 10 → 18, then 7200 → 8000 on 2026-09-18 when the quality pair took the worst case 18 → 20; both are commented OUT in `.env.example`, so the CODE defaults in `src/lib/work/config.ts` are what production runs |
+| | `WORK_QUALITY_ENABLED` | §5.16 quality round (2026-09-18) kill switch: `0` skips both quality stages, so rows simply carry no assessment and both internal surfaces render nothing; unset = enabled. Admission headroom stays at the 20-call worst case either way — the ceiling is deliberately not conditional |
 | | `WORK_QUEUE_DRAIN_ENABLED` / `WORK_QUEUE_DRAIN_FORCE` | §5.16 queue drain: `ENABLED=0` stops only the automatic re-kick timer (intake + manual Retry keep working; unset = on); `FORCE=1` lets a non-supervised checkout (dev test) run the drain despite the cwd + NODE_ENV gates |
 | | `WORK_ARCHIVE_DIR` | §5.16 archive-store root; unset = `data/work-archives` under the cwd (survives deploys — data/ is excluded from rsync; gitignored on the dev box) |
 | | `WORK_ARCHIVE_BACKUP_MAX_KB` | Ceiling in KB on the store `deploy/backup-db.sh` will package into the nightly `aiwebsite-work-archives_<ts>.tar.gz` (§9.7). Not a disk guard (the script does its own free-space arithmetic): crossing it uploads NOTHING and raises a CRITICAL. Unset = 2097152 (2 GiB). It lives in `.env` rather than in the script because `backup-db.sh` is template-rendered, so an operator raising the ceiling by editing the constant would have the change reverted by the next render |
 | | `WORK_STORAGE_REPORT_ENABLED` / `WORK_STORAGE_REPORT_FORCE` | §5.16 weekly storage report: `ENABLED=0` stops only the Monday 14:00 UTC usage email (store + admin console keep working; unset = on); `FORCE=1` lets a non-supervised checkout run the reporter despite the cwd + NODE_ENV gates |
 | Roadmap | `ROADMAP_ENABLED` | §5.18 writes kill switch (unset/1 = on; 0 pauses bootstrap, requests, imports, directory/doc edits, company submissions both lanes; reads stay up) |
-| Roadmap | `ROADMAP_BRAIN_DAILY_CAP` | client-population brain slice, default 1200 (dual-entry with WORK_BRAIN_DAILY_CAP). Raised 600 → 1200 on 2026-08-25 in lockstep with `WORK_CAPS.brainCallsWorstCasePerRun` 10 → 18: `admitCompanyRun` (roadmap/db.ts) headroom-checks the WORK worst case against THIS cap, so leaving it at 600 would have cut company admission from 60 runs a day to 33 (60 × 18 = 1080 ≤ 1200) |
+| Roadmap | `ROADMAP_BRAIN_DAILY_CAP` | client-population brain slice, default 1200 (dual-entry with WORK_BRAIN_DAILY_CAP). Raised 600 → 1200 on 2026-08-25 in lockstep with `WORK_CAPS.brainCallsWorstCasePerRun` 10 → 18: `admitCompanyRun` (roadmap/db.ts) headroom-checks the WORK worst case against THIS cap, so leaving it at 600 would have cut company admission from 60 runs a day to 33; the 2026-09-18 quality pair took the worst case to 20 and this cap deliberately stayed 1200, which 60 × 20 = 1200 fits exactly with zero spare |
 | Roadmap | `ROADMAP_PANEL_RUNS_DAILY_CAP` | client panel runs/day, default 60 |
 | Roadmap | `APOLLO_API_KEY` | Apollo.io people-search key for the step-2 directory import (host REST call; module outreach stays disabled). Missing = import answers "not set up", never a boot failure |
 | Roadmap | `APOLLO_DAILY_CALL_CAP` | Apollo page fetches/day across all companies, default 100 |

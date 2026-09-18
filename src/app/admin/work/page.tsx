@@ -24,6 +24,7 @@ import {
   type WorkKind,
 } from "@/lib/work/config";
 import { cleanedPathsOf, parseCleaning } from "@/lib/work/cleaning";
+import { parseQualityJson } from "@/lib/work/quality";
 import { WorkAdminActions } from "./actions-client";
 import { WorkSubmissionsBrowser } from "./list-client";
 import { WorkStorageList } from "./storage-actions-client";
@@ -306,6 +307,57 @@ export default async function AdminWorkPage() {
                     </pre>
                   </details>
                 )}
+                {/* §5.16 quality round (2026-09-18): the reconciled
+                    assessor/refuter verdict on the WORK ITSELF, stored
+                    pre-synthesis so held and failed rows carry it too.
+                    parseQualityJson degrades junk or future versions to
+                    null, and null renders nothing: every pre-round row and
+                    every WORK_QUALITY_ENABLED=0 run simply has no block.
+                    Informational only; it gates nothing and no control
+                    reads it. */}
+                {(() => {
+                  const q = parseQualityJson(r.qualityJson);
+                  if (!q) return null;
+                  return (
+                    <div className="mt-2 space-y-1 text-xs text-faint">
+                      <p>
+                        <span className="text-light">Quality</span> ·{" "}
+                        {q.dimensions
+                          .map(
+                            (d) =>
+                              `${d.key} ${
+                                d.score !== null
+                                  ? `${d.score}/5`
+                                  : "no verified evidence"
+                              }${d.contested ? " (contested)" : ""}`
+                          )
+                          .join(" · ")}
+                      </p>
+                      {q.dimensions.map((d) =>
+                        d.contested && d.challenge ? (
+                          <p key={d.key}>
+                            {d.key} contested as{" "}
+                            {d.challenge.direction === "too_high"
+                              ? "too high"
+                              : "too low"}
+                            {d.challenge.reason
+                              ? `: ${d.challenge.reason}`
+                              : ""}
+                          </p>
+                        ) : null
+                      )}
+                      {q.strengths.length > 0 && (
+                        <p>Strengths: {q.strengths.join(" ")}</p>
+                      )}
+                      {q.improvements.length > 0 && (
+                        <p>Improvements: {q.improvements.join(" ")}</p>
+                      )}
+                      {q.missedRisks.length > 0 && (
+                        <p>Missed risks: {q.missedRisks.join(" ")}</p>
+                      )}
+                    </div>
+                  );
+                })()}
                 <WorkAdminActions
                   id={r.id}
                   status={r.status}

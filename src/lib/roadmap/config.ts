@@ -153,7 +153,11 @@ export const ROADMAP_CAPS = {
   // WORK_CAPS.brainCallsWorstCasePerRun 10 -> 18. admitCompanyRun
   // (roadmap/db.ts) headroom-checks the WORK worst case against THIS cap, so
   // leaving it at 600 would have silently cut company admission from 60 runs
-  // a day to 33. 60 x 18 = 1080 <= 1200.
+  // a day to 33. 60 x 18 = 1080 <= 1200. 2026-09-18: worst case 18 -> 20
+  // (§5.16 quality pair); 60 x 20 = 1200 fits this cap exactly, the 120-call
+  // slack is spent. Accepted rather than raised: admitCompanyRun headroom-
+  // checks ACTUAL ledger usage plus one worst case, not run count times
+  // worst case, and typical runs spend ~12 calls.
   brainCallsPerDayDefault: 1200,
   panelRunsPerDayDefault: 60,
   apolloCallsPerDayDefault: 100,

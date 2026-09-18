@@ -386,6 +386,17 @@ export const workSubmissions = pgTable(
     panelTranscriptJson: text("panel_transcript_json"), // capped audit trail
     panelError: text("panel_error"),
     cardJson: text("card_json"),
+    // §5.16 quality round (2026-09-18): the reconciled quality assessment
+    // (src/lib/work/quality.ts WorkQualityAssessment, version-tagged JSON).
+    // Written mid-run by setQualityAssessment (attempt-fenced, status
+    // running) right after the quality assessor/refuter pair and before the
+    // disclosure stage, so held/parked/failed-later rows keep it. NON-GATING
+    // and internal-only: it never feeds card_json, lint, or the disclosure
+    // gate, and renders only on /admin/work and the submitter's own
+    // /work/submit list. NULL forever on pre-round rows and whenever either
+    // the assessor call failed or WORK_QUALITY_ENABLED=0; every reader
+    // handles null (parseQualityJson).
+    qualityJson: text("quality_json"),
     // Set the first time a run holds this row; NEVER cleared. Bars submitter
     // retry on any once-held submission (a failed admin re-run must not
     // reopen retry-until-the-critic-blinks; 2026-07-30 panel ruling).

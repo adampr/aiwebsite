@@ -232,6 +232,12 @@ const LIST_COLS = {
   // feeds those lists has to carry the current value or the editor would
   // open empty on a row that already reports one.
   timeSavedMinutes: S.timeSavedMinutes,
+  // §5.16 quality round (2026-09-18): the reconciled quality assessment, a
+  // small bounded JSON scalar (five dimensions with capped strings). The
+  // submitter's own list is one of the two internal surfaces that render
+  // it, so it rides the projection the poll already reads; null forever on
+  // rows that predate the round or ran with WORK_QUALITY_ENABLED=0.
+  qualityJson: S.qualityJson,
 };
 
 /** A row narrowed to what statusView() projects. Keep this in step with
@@ -257,6 +263,7 @@ export type SubmissionListRow = Pick<
   | "companyId"
   | "cleaningJson"
   | "timeSavedMinutes"
+  | "qualityJson"
 >;
 
 /** The /work/submit "your submissions" list (GET /api/work/submissions).
@@ -545,6 +552,11 @@ export async function claimPanel(
       panelStartedAt: new Date(),
       panelHeartbeatAt: new Date(),
       panelError: null,
+      // Freshest-run-wins: a re-claim (submitter Retry, admin re-run, stale
+      // recovery) clears the prior attempt's assessment, so a run whose
+      // assessor fails, or one under WORK_QUALITY_ENABLED=0, leaves the row
+      // with NO assessment rather than a stale one from an older attempt.
+      qualityJson: null,
       panelRuns: sql`CASE WHEN ${S.panelRunsDate} = ${today} THEN ${S.panelRuns} + 1 ELSE 1 END`,
       panelRunsDate: today,
       updatedAt: new Date(),
@@ -575,6 +587,35 @@ export async function heartbeat(
       updatedAt: new Date(),
     })
     .where(and(eq(S.id, id), eq(S.panelAttemptId, attemptId)));
+}
+
+/** Persist the reconciled quality assessment (§5.16 quality round,
+ * 2026-09-18) mid-run, right after the two quality stages and BEFORE the
+ * disclosure stage, so every terminal path (hold, park, publish, even a
+ * later failure) keeps it. Attempt-fenced like every panel write, PLUS
+ * status = running: heartbeat's two-column fence is enough for a column only
+ * the live run reads, but quality_json outlives the run on every terminal
+ * status, so a zombie worker from a superseded claim must not overwrite a
+ * newer run's finished claim (typed operators only; a JS Date inside a raw
+ * sql`` fragment is the postgres.js crash class, and none is needed here).
+ * Returns whether the row took the write; the caller treats false as
+ * observability, never a gate (the assessment is non-gating by design). */
+export async function setQualityAssessment(
+  id: string,
+  attemptId: string,
+  qualityJson: string
+): Promise<boolean> {
+  const res = await db
+    .update(S)
+    .set({
+      qualityJson,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(eq(S.id, id), eq(S.panelAttemptId, attemptId), eq(S.status, "running"))
+    )
+    .returning({ id: S.id });
+  return res.length > 0;
 }
 
 async function uniqueSlug(

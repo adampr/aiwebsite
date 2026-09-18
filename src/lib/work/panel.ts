@@ -2,7 +2,9 @@
 // on the owner's human review panels for /work: three writers with distinct
 // focuses draft the card, three counterpart critics refute it, one synthesis
 // call resolves the findings, and a deterministic lint (lint.ts) gates
-// publication. Runs in-process via Next after() (turn-runner pattern) with
+// publication. A non-gating quality assessor/refuter pair (quality.ts,
+// 2026-09-18) additionally scores the submitted work itself for the two
+// internal surfaces. Runs in-process via Next after() (turn-runner pattern) with
 // claim/fence columns; every exit path lands the row in published, held, or
 // failed.
 //
@@ -42,9 +44,15 @@ import {
   panelRecoveryPlan,
   workBrainDailyCap,
   workPanelRunsDailyCap,
+  workQualityEnabled,
   workSubmissionsEnabled,
   type PanelFailReason,
 } from "./config";
+import {
+  qualityAssessorPrompts,
+  qualityRefuterPrompts,
+  reconcileQuality,
+} from "./quality";
 import { scopeContext, scopeOf, type ScopeContext } from "./scope";
 import {
   anotherPanelRunning,
@@ -57,6 +65,7 @@ import {
   publishedTitleAndFacetSets,
   readTodayWorkUsage,
   refundWorkRun,
+  setQualityAssessment,
   submissionById,
   trySpendWork,
   type SubmissionRow,
@@ -599,7 +608,7 @@ async function runPanelInner(
   /**
    * THE ONE recovery seam. It lives here and nowhere else: callPanelBrain
    * stays exactly one dispatch, which is what keeps title inference's 20 s
-   * lane untouched and what keeps the worst case at 16 calls instead of 32.
+   * lane untouched and what keeps the worst case at 18 calls instead of 36.
    *
    * ONE recovery attempt per armed stage, from a pool shared by the WHOLE
    * run. reattachBrainTurn re-POSTs the envelope BYTE-IDENTICALLY, exactly
@@ -608,9 +617,10 @@ async function runPanelInner(
    * rides node:http, where the caller's budget IS the ceiling, which is the
    * only reason a 600 s wait is real. Measured on this box on 2026-08-25: the
    * brain finished a 625.1 s turn against a 450 s ceiling and a same-promptId
-   * re-POST returned it in 6 ms. Stages 4 and 5 are deliberately unarmed (they
-   * tolerate null), and budget is never recovered (retrying a ledger refusal
-   * spends against a wall that does not move).
+   * re-POST returned it in 6 ms. Stages 4 through 7 (the two critics and the
+   * two quality stages) are deliberately unarmed (they tolerate null), and
+   * budget is never recovered (retrying a ledger refusal spends against a
+   * wall that does not move).
    *
    * The pump's stop() runs in the finally BEFORE any fail site, so no
    * straggler beat can rewrite panel_heartbeat_at after failPanel nulls it.
@@ -813,6 +823,64 @@ async function runPanelInner(
     `Draft card:\n${JSON.stringify(draft).slice(0, 8000)}\n\nExisting /work card titles (the draft title must not collide): ${takenTitles}.\nExisting facet titles (no facet label may collide): ${takenFacets}.\n\nList every style rule violation, echoed phrasing device, hype word, tense slip (the tool described in the past tense as if retired, or a one-time event in the present), or title or facet collision found in the draft text itself. Findings about documents, evidence, or the review process are outside your view and must not appear. Return {"violations": [{"where": "...", "problem": "...", "fix": "..."}]}.`
   );
 
+  // 6 + 7. Quality pair (§5.16 quality round, 2026-09-18): the assessor
+  // scores the SUBMITTED WORK from its documents against the five fixed
+  // WORK_QUALITY_DIMENSIONS, the refuter tries to knock each score down,
+  // and reconcileQuality (quality.ts) resolves them in code with
+  // quoteInCorpus as the only arbiter of evidence. NON-GATING by invariant:
+  // both stages tolerate null exactly like the two critics above (never in
+  // PANEL_RECOVERABLE_STAGES, so they can never eat the recovery pool
+  // synthesis needs), a failed assessor just leaves the row without an
+  // assessment, and a failed refuter leaves an uncontested one. Persisted
+  // HERE, before synthesis and every gate, via the attempt-fenced
+  // setQualityAssessment, so every terminal path (disclosure hold, lint
+  // hold, blocking hold, update park, publish) already carries it. Nothing
+  // from these stages feeds synthesis, lint, the disclosure gate, or
+  // card_json; the output renders on the two internal surfaces only.
+  // Transcript entries come free via call(). The kill switch skips both
+  // calls outright (the row then simply has no assessment); admission
+  // headroom stays at brainCallsWorstCasePerRun either way, a ceiling,
+  // never a conditional.
+  if (workQualityEnabled(process.env)) {
+    const qa = qualityAssessorPrompts(UNTRUSTED_FRAME, docs);
+    const qualityAssessor = await call("quality assessor", qa.system, qa.user);
+    if (qualityAssessor) {
+      const qr = qualityRefuterPrompts(UNTRUSTED_FRAME, docs, qualityAssessor);
+      const qualityRefuter = await call("quality refuter", qr.system, qr.user);
+      const assessment = reconcileQuality(
+        qualityAssessor,
+        qualityRefuter,
+        corpus.map((c) => c.text).join("\n")
+      );
+      if (assessment) {
+        // try/catch of its own: every other DB write here may crash the run
+        // to failRun, but a quality persistence blip must not fail a run the
+        // assessment was never allowed to gate.
+        try {
+          const wrote = await setQualityAssessment(
+            id,
+            attemptId,
+            JSON.stringify(assessment)
+          );
+          if (!wrote)
+            console.log(
+              `[work-panel] quality write fenced out on ${id} (superseded claim)`
+            );
+        } catch (err) {
+          console.log(
+            `[work-panel] quality write failed on ${id}: ${err instanceof Error ? err.message.slice(0, 200) : "unknown"}`
+          );
+        }
+      } else {
+        console.log(
+          `[work-panel] quality assessment unusable on ${id}; row carries none`
+        );
+      }
+    }
+    // A null assessor is a transient infra condition, not a verdict: the
+    // refuter is skipped (nothing to refute) and the run continues.
+  }
+
   // Enforced blocking signal (2026-07-31: the boolean was write-only). Only
   // a literal true WITH at least one strike blocks: a bare verdict carrying
   // no evidence is not enforceable, and a failed call (null) is a transient
@@ -838,7 +906,7 @@ async function runPanelInner(
       ? `evidence critic blocking verdict (draft misstates what the tool is):\n${strikeLines(evidenceCritic.strikes)}`
       : "";
 
-  // 6. Synthesis: resolve critics into the final card. Critic refutations are
+  // 8. Synthesis: resolve critics into the final card. Critic refutations are
   // normal input here, not a failure state.
   const schemaSpec = `{"title": string (${WORK_CAPS.titleMinChars}-${WORK_CAPS.titleMaxChars} chars), "categoryBadge": one of [${CATEGORY_BADGES.map((c) => `"${c}"`).join(", ")}], "summary": string (${WORK_CAPS.summaryMinWords}-${WORK_CAPS.summaryMaxWords} words), "body": [${WORK_CAPS.bodyParagraphsMin}-${WORK_CAPS.bodyParagraphsMax} paragraphs], "facets": [exactly 3 {"label", "text"}], "footerLine": [${WORK_CAPS.footerFragmentsMin}-${WORK_CAPS.footerFragmentsMax} fragments]}`;
   // Synthesis sees the DOCUMENTS (2026-07-31): the pre-incident prompt
@@ -858,7 +926,7 @@ async function runPanelInner(
     return;
   }
 
-  // 7. Disclosure critic ON THE SYNTHESIS OUTPUT (what actually publishes):
+  // 9. Disclosure critic ON THE SYNTHESIS OUTPUT (what actually publishes):
   // binary checklist, quote or "none found" per item; scalar safety scores
   // are banned here (the blog round-5 incident). Calibration 2026-07-30
   // (the vendor-name incident, three false holds on the first real
@@ -920,7 +988,7 @@ async function runPanelInner(
     otherHits.push("disclosure critic call failed; holding by default");
   }
 
-  // 8. Adjudication, ONLY for org-name hits (the one genuinely ambiguous
+  // 10. Adjudication, ONLY for org-name hits (the one genuinely ambiguous
   // item). The model proposes clearing evidence; CODE verifies every quote
   // against the submitted documents, so an invented quote cannot talk the
   // gate open. Everything else holds immediately.

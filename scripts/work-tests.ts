@@ -2641,6 +2641,9 @@ async function main() {
     // §5.16 cleaning (2026-08-29): null means the stored artifact IS the
     // submitted one, which is the state of every row that predates the round.
     cleaningJson: null as string | null,
+    // §5.16 quality round (2026-09-18): null on every pre-round row and on
+    // runs with the kill switch off; statusView projects it parsed.
+    qualityJson: null as string | null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -4931,7 +4934,7 @@ async function main() {
     assert.ok(
       WORK_CAPS.panelRunsPerDayDefault * WORK_CAPS.brainCallsWorstCasePerRun <=
         WORK_CAPS.brainCallsPerDayDefault,
-      "work admission invariant: runs x worst case <= calls (400 x 18 = 7200)"
+      "work admission invariant: runs x worst case <= calls (400 x 20 = 8000)"
     );
     // roadmap/db.ts admitCompanyRun headroom-checks the WORK worst case
     // against the ROADMAP ledger, so the two constants move in lockstep or
@@ -4940,13 +4943,13 @@ async function main() {
       ROADMAP_CAPS.panelRunsPerDayDefault *
         WORK_CAPS.brainCallsWorstCasePerRun <=
         ROADMAP_CAPS.brainCallsPerDayDefault,
-      "company admission invariant: 60 x 18 = 1080 <= ROADMAP brain cap"
+      "company admission invariant: 60 x 20 = 1200 <= ROADMAP brain cap"
     );
     // Arming another stage for recovery must be a TEST failure, never a
     // silent overrun of the reservation every admission is made against.
     assert.ok(
       panelBrainCallsWorstCase() <= WORK_CAPS.brainCallsWorstCasePerRun,
-      "9 stages + 7 armed recoveries fits inside brainCallsWorstCasePerRun"
+      "11 stages + 7 armed recoveries fits inside brainCallsWorstCasePerRun"
     );
     // undici enforces an un-raisable 300 s headersTimeout on callBrain's
     // fetch path, so anything at or above it here is silently inert.
@@ -5000,7 +5003,7 @@ async function main() {
       panelRecoveryPlan({ ...planBase, reason: "timeout", recoverable: false })
         .attempt,
       false,
-      "an unarmed stage (4 and 5 tolerate null) never spends the pool"
+      "an unarmed stage (4 through 7 tolerate null) never spends the pool"
     );
     assert.equal(
       panelRecoveryPlan({
@@ -5238,6 +5241,308 @@ async function main() {
     assert.ok(
       failedView.error && !failedView.error.includes("#"),
       "a failed row's error is plain prose, with no machine tag"
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // 2026-09-18 quality round (§5.16): two NON-GATING panel stages score the
+  // submitted work itself across five fixed dimensions; reconcileQuality
+  // (quality.ts) is the pure arbiter and this no-DB suite is where its
+  // contract is pinned.
+  // ---------------------------------------------------------------------
+  {
+    const {
+      PANEL_RECOVERABLE_STAGES,
+      PANEL_STAGES,
+      WORK_CAPS: caps,
+      WORK_QUALITY_DIMENSIONS,
+      WORK_STAGE_LABELS,
+      workQualityEnabled,
+    } = await import("../src/lib/work/config");
+    const {
+      parseQualityJson,
+      qualityAssessorPrompts,
+      qualityRefuterPrompts,
+      reconcileQuality,
+    } = await import("../src/lib/work/quality");
+
+    // ---- the stage pair: position, labels, budget, and non-gating ----
+    const qi = (PANEL_STAGES as readonly string[]).indexOf("quality assessor");
+    assert.ok(qi > -1, "PANEL_STAGES carries the quality assessor");
+    assert.equal(
+      PANEL_STAGES[qi - 1],
+      "editorial critic",
+      "the assessor sits right after the editorial critic"
+    );
+    assert.equal(
+      PANEL_STAGES[qi + 1],
+      "quality refuter",
+      "the refuter follows the assessor"
+    );
+    assert.equal(
+      PANEL_STAGES[qi + 2],
+      "synthesis",
+      "the pair sits BEFORE synthesis, so every terminal path has the assessment"
+    );
+    assert.ok(
+      WORK_STAGE_LABELS["quality assessor"] &&
+        WORK_STAGE_LABELS["quality refuter"],
+      "both quality stages carry submitter-readable labels"
+    );
+    assert.equal(
+      caps.brainCallsWorstCasePerRun,
+      20,
+      "the worst case rose by exactly the two new calls (18 -> 20)"
+    );
+    // Non-gating means unarmed: a quality stage must never be able to eat
+    // the recovery pool synthesis needs.
+    for (const stage of ["quality assessor", "quality refuter"] as const)
+      assert.ok(
+        !(PANEL_RECOVERABLE_STAGES as readonly string[]).includes(stage),
+        `${stage} is NOT recovery-armed (non-gating, tolerates null)`
+      );
+
+    // ---- the five fixed dimensions ----
+    assert.deepEqual(
+      WORK_QUALITY_DIMENSIONS.map((d) => d.key),
+      ["documentation", "robustness", "safety", "clarity", "reusability"],
+      "the dimension keys are the five fixed ones, in rubric order"
+    );
+
+    // ---- kill switch (workSubmissionsEnabled semantics) ----
+    const qEnv = (v?: string): NodeJS.ProcessEnv =>
+      (v === undefined
+        ? {}
+        : { WORK_QUALITY_ENABLED: v }) as unknown as NodeJS.ProcessEnv;
+    assert.equal(workQualityEnabled(qEnv()), true, "quality defaults on");
+    assert.equal(workQualityEnabled(qEnv("0")), false, "0 disables quality");
+    assert.equal(workQualityEnabled(qEnv("1")), true, "1 stays on");
+
+    // ---- prompts: rubrics verbatim, frame carried, no process prose ----
+    const ap = qualityAssessorPrompts("FRAME_SENTINEL", "DOCS_SENTINEL");
+    assert.ok(
+      ap.system.includes("FRAME_SENTINEL") && ap.user.includes("DOCS_SENTINEL"),
+      "the assessor prompt carries the untrusted frame and the documents"
+    );
+    for (const d of WORK_QUALITY_DIMENSIONS)
+      assert.ok(
+        ap.user.includes(d.rubric),
+        `the assessor sees the ${d.key} rubric verbatim`
+      );
+    assert.ok(
+      ap.system.includes("will be discarded"),
+      "the assessor is told an unquoted score is discarded"
+    );
+    const rp = qualityRefuterPrompts("FRAME_SENTINEL", "DOCS_SENTINEL", {
+      marker: "ASSESSOR_SENTINEL",
+    });
+    assert.ok(
+      rp.system.includes("FRAME_SENTINEL") &&
+        rp.user.includes("ASSESSOR_SENTINEL"),
+      "the refuter sees the frame and the assessor output"
+    );
+    assert.ok(
+      /refute/i.test(rp.system),
+      "the refuter's mandate is refutation, said outright"
+    );
+    for (const s of [ap.system, ap.user, rp.system, rp.user]) {
+      assert.ok(!/[–—]/.test(s), "quality prompts carry no em/en dash");
+      assert.ok(
+        s.includes("Never mention this review") || !/panel|pipeline/i.test(s),
+        "prose fields are barred from naming the pipeline"
+      );
+    }
+
+    // ---- reconcileQuality: the whole decision table ----
+    const q1 = "The tool retries the export three times before it gives up.";
+    const q2 =
+      "Setup takes one command and the readme lists every input and output.";
+    const corpusText = `FILE: SKILL.md\n${q1}\n${q2}`;
+    const assessor = {
+      dimensions: [
+        { key: "robustness", score: 4, quote: q1, note: "retries visible" },
+        // Quote nowhere in the documents: kept, score DISCARDED.
+        {
+          key: "documentation",
+          score: 5,
+          quote: "this exact line appears nowhere in the documents",
+          note: "n",
+        },
+        // Duplicate key: first occurrence wins, this one is dropped.
+        { key: "documentation", score: 2, quote: q2, note: "dup" },
+        // Unknown key and junk entries: dropped, never coerced.
+        { key: "velocity", score: 3, quote: q1 },
+        "junk",
+        42,
+        null,
+        // Out-of-band score: clamped into 1..5.
+        { key: "clarity", score: 99.7, quote: q2, note: "x".repeat(9000) },
+        // Verified quote but junk score: kept, unsupported (no
+        // evidence-backed usable score to caption).
+        { key: "reusability", score: "4", quote: q2, note: "string score" },
+      ],
+      strengths: ["Concrete retry design.", 42, "Readable setup.", "Short.", "Beyond the cap"],
+      improvements: ["Add failure modes to the document."],
+      extraneous: "ignored",
+    };
+    const refuter = {
+      challenges: [
+        // Verified quote: survives, marks robustness contested.
+        { key: "robustness", direction: "too_high", reason: "one retry path only", quote: q2 },
+        // Invented quote: dropped; an invented quote cannot move a score.
+        { key: "clarity", direction: "too_low", reason: "r", quote: "also nowhere in the documents at all" },
+        // Bad direction: dropped.
+        { key: "documentation", direction: "sideways", reason: "r", quote: q1 },
+        // No surviving dimension under that key: dropped.
+        { key: "safety", direction: "too_high", reason: "r", quote: q1 },
+      ],
+      missedRisks: ["No rollback story.", "No rate limit.", "Beyond the cap"],
+    };
+    const rec = reconcileQuality(assessor, refuter, corpusText);
+    assert.ok(rec, "a usable assessor output reconciles");
+    assert.equal(rec.version, 1, "the stored shape is version-tagged");
+    assert.equal(rec.dimensions.length, 4, "junk and duplicate dimensions drop");
+    const byKey = Object.fromEntries(rec.dimensions.map((d) => [d.key, d]));
+    assert.equal(byKey.robustness.score, 4, "a supported score survives");
+    assert.equal(
+      byKey.robustness.contested,
+      true,
+      "a verified challenge marks the dimension contested"
+    );
+    assert.equal(
+      byKey.robustness.challenge?.direction,
+      "too_high",
+      "the challenge rides along as {direction, reason}"
+    );
+    assert.equal(
+      byKey.documentation.score,
+      null,
+      "a score whose quote fails quoteInCorpus is DISCARDED"
+    );
+    assert.equal(
+      byKey.documentation.unsupported,
+      true,
+      "the unverified dimension is kept, marked unsupported"
+    );
+    assert.equal(byKey.clarity.score, 5, "an out-of-band score clamps to 1..5");
+    assert.equal(
+      byKey.reusability.score,
+      null,
+      "a verified quote with a junk score stores no score"
+    );
+    assert.equal(
+      byKey.reusability.unsupported,
+      true,
+      "unsupported tracks the score, not just the quote"
+    );
+    assert.equal(
+      byKey.clarity.contested,
+      false,
+      "an invented refuter quote cannot contest a score"
+    );
+    assert.ok(
+      byKey.clarity.note.length <= 200,
+      "model-written strings are length-capped"
+    );
+    assert.equal(rec.contestedCount, 1, "contestedCount counts survivors only");
+    assert.equal(rec.missedRisks.length, 2, "missedRisks caps at 2");
+    assert.equal(rec.strengths.length, 3, "strengths caps at 3, junk dropped");
+    assert.ok(
+      !Number.isNaN(Date.parse(rec.assessedAt)),
+      "assessedAt is a real ISO timestamp"
+    );
+    // The refuter failing entirely (null) still yields an assessor-only
+    // assessment: NON-GATING means partial beats nothing.
+    const solo = reconcileQuality(assessor, null, corpusText);
+    assert.ok(solo, "a failed refuter still stores the assessor's half");
+    assert.equal(solo.contestedCount, 0, "nothing contested without a refuter");
+    assert.deepEqual(solo.missedRisks, [], "no missedRisks without a refuter");
+    // Unusable assessor output: null, never a crash and never a junk row.
+    for (const bad of [
+      null,
+      undefined,
+      [],
+      "text",
+      { dimensions: "nope" },
+      { dimensions: [] },
+      { dimensions: [{ key: "velocity", score: 3, quote: q1 }] },
+    ])
+      assert.equal(
+        reconcileQuality(bad, refuter, corpusText),
+        null,
+        "unusable assessor output stores nothing"
+      );
+
+    // ---- parseQualityJson: the defensive reader every surface uses ----
+    assert.ok(
+      parseQualityJson(JSON.stringify(rec)),
+      "the stored JSON round-trips through the reader"
+    );
+    assert.equal(parseQualityJson(null), null, "null column reads as null");
+    assert.equal(parseQualityJson("{not json"), null, "junk reads as null");
+    assert.equal(
+      parseQualityJson(JSON.stringify({ version: 2, dimensions: [] })),
+      null,
+      "a future version degrades to null, never a crash"
+    );
+    // The reader REBUILDS the shape (hand-SQL'd rows have precedent): a
+    // malformed version-1 row degrades or cleans, never crashes a surface.
+    assert.equal(
+      parseQualityJson(JSON.stringify({ version: 1, dimensions: [null, 42] })),
+      null,
+      "a version-1 row with only junk dimension entries reads as null"
+    );
+    const sparse = parseQualityJson(
+      JSON.stringify({
+        version: 1,
+        dimensions: [
+          { key: "documentation" },
+          { key: "velocity", score: 3 },
+          { key: "robustness", score: 4, contested: true, challenge: null },
+        ],
+        strengths: "not an array",
+        contestedCount: 99,
+      })
+    );
+    assert.ok(sparse, "a sparse but keyed version-1 row still reads");
+    assert.equal(sparse.dimensions.length, 2, "unknown dimension keys drop");
+    assert.equal(
+      sparse.dimensions[0].score,
+      null,
+      "a missing score reads as null, marked unsupported"
+    );
+    assert.equal(sparse.dimensions[0].unsupported, true, "…and unsupported");
+    assert.equal(
+      sparse.dimensions[1].contested,
+      false,
+      "contested without a challenge object reads as uncontested"
+    );
+    assert.deepEqual(sparse.strengths, [], "junk strengths read as empty");
+    assert.equal(
+      sparse.contestedCount,
+      0,
+      "contestedCount is recomputed, never trusted from the row"
+    );
+
+    // ---- statusView projects the parsed assessment ----
+    const qView = statusView({
+      ...baseRow,
+      qualityJson: JSON.stringify(rec),
+    });
+    assert.equal(
+      qView.quality?.dimensions.length,
+      4,
+      "statusView projects the parsed quality assessment"
+    );
+    assert.equal(
+      statusView({ ...baseRow }).quality,
+      null,
+      "a row with no assessment projects null"
+    );
+    assert.equal(
+      statusView({ ...baseRow, qualityJson: "{junk" }).quality,
+      null,
+      "a junk column projects null, never a crash"
     );
   }
 

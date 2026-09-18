@@ -33,6 +33,7 @@ import {
   TIME_SAVED_MAX_HOURS,
 } from "@/lib/work/time-saved";
 import { personLabel } from "@/lib/person-label";
+import type { WorkQualityAssessment } from "@/lib/work/quality";
 import { ReviewProgress } from "./review-progress";
 import { SubmissionForm } from "./submission-form";
 
@@ -74,6 +75,11 @@ interface StatusRow {
    * hand-written, so a field the server projects is invisible here with no
    * compile error until someone reads the payload. */
   timeSavedMinutes: number | null;
+  /** §5.16 quality round (2026-09-18): the reconciled quality assessment,
+   * already parsed server-side (view.ts parseQualityJson), or null on every
+   * pre-round row and on runs with the quality pair disabled. Added the same
+   * day statusView grew it, per this interface's header rule. */
+  quality: WorkQualityAssessment | null;
   lane: "internal" | "company";
   /** Company lane only: which tenant, and the domain its rows may move to. */
   laneName: string | null;
@@ -1055,6 +1061,56 @@ export function SubmitClient({
                     >
                       Review in the admin queue
                     </a>
+                  )}
+                </div>
+              )}
+              {/* §5.16 quality round (2026-09-18): the panel's reconciled
+                  quality read on the work itself, compact. One line of
+                  dimension scores plus the assessment's own prose lines;
+                  contested marks carry the refuter's direction here and the
+                  full reason lives on /admin/work. Rendered wherever the
+                  projection carries one (both views are already owner-or-
+                  admin scoped server-side); null renders nothing, which is
+                  every pre-round row and every run with the quality pair
+                  disabled. Informational only: no control reads it and it
+                  never changes a status. */}
+              {r.quality && (
+                <div className="mt-2 space-y-1">
+                  <p className="mono text-xs text-faint">
+                    Quality ·{" "}
+                    {r.quality.dimensions
+                      .map(
+                        (d) =>
+                          `${d.key} ${
+                            d.score !== null
+                              ? `${d.score}/5`
+                              : "no verified evidence"
+                          }${
+                            d.contested && d.challenge
+                              ? ` (contested: may be ${
+                                  d.challenge.direction === "too_high"
+                                    ? "too high"
+                                    : "too low"
+                                })`
+                              : ""
+                          }`
+                      )
+                      .join(" · ")}
+                  </p>
+                  {r.quality.strengths.length > 0 && (
+                    <p className="text-xs text-faint">
+                      Strengths: {r.quality.strengths.join(" ")}
+                    </p>
+                  )}
+                  {r.quality.improvements.length > 0 && (
+                    <p className="text-xs text-faint">
+                      Improvements: {r.quality.improvements.join(" ")}
+                    </p>
+                  )}
+                  {r.quality.missedRisks.length > 0 && (
+                    <p className="text-xs text-faint">
+                      Missed risks: {r.quality.missedRisks.join(" ")}
+                    </p>
                   )}
                 </div>
               )}

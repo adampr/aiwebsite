@@ -100,15 +100,18 @@ export const WORK_CAPS = {
   // brainCallsWorstCasePerRun still fits under the call cap, so a started
   // run can always finish. Sized so the GLOBAL caps never bite before the
   // per-user quotas (owner directive 2026-07-30 after hitting the old 6/day
-  // global): 400 runs x 18 worst-case calls = 7200. Env-overridable.
+  // global): 400 runs x 20 worst-case calls = 8000. Env-overridable.
   // A stage may now cost a dispatch PLUS one recovery dispatch, so the worst
-  // case is 9 stage dispatches + 7 recovery dispatches (stages 4 and 5 are
-  // unarmed) + 2 spare = 18. Raising this constant also tightens company
-  // admission: src/lib/roadmap/db.ts admitCompanyRun checks it against the
-  // ROADMAP ledger, so ROADMAP_CAPS.brainCallsPerDayDefault moves with it.
-  brainCallsPerDayDefault: 7200,
+  // case is 11 stage dispatches + 7 recovery dispatches (stages 4 through 7,
+  // the two critics and the two quality stages, are unarmed) + 2 spare = 20
+  // (18 -> 20 with the quality assessor/refuter pair, 2026-09-18; the call
+  // cap moved 7200 -> 8000 in lockstep so the run cap still never bites
+  // first). Raising this constant also tightens company admission:
+  // src/lib/roadmap/db.ts admitCompanyRun checks it against the ROADMAP
+  // ledger, so ROADMAP_CAPS.brainCallsPerDayDefault moves with it.
+  brainCallsPerDayDefault: 8000,
   panelRunsPerDayDefault: 400,
-  brainCallsWorstCasePerRun: 18,
+  brainCallsWorstCasePerRun: 20,
   // Measured legitimate evidence-writer call on 2026-08-25: 75_587 ms, so the
   // old 90_000 left 14.4 s of margin on a NORMAL day. 150_000 is about 2x the
   // measured worst stage. HARD CEILING: this rides callBrain plain fetch,
@@ -353,6 +356,16 @@ export type WorkStatus =
  * intake and panel admission; already-published cards keep rendering). */
 export function workSubmissionsEnabled(env: NodeJS.ProcessEnv): boolean {
   return env.WORK_SUBMISSIONS_ENABLED !== "0";
+}
+
+/** Quality-assessment kill switch (§5.16 quality round, 2026-09-18;
+ * workSubmissionsEnabled pattern: default ON, set "0" to skip both quality
+ * stages; rows then simply carry no assessment and both internal surfaces
+ * degrade to their null rendering). The worst-case admission stays at
+ * brainCallsWorstCasePerRun regardless: admission headroom is a ceiling,
+ * never a conditional. */
+export function workQualityEnabled(env: NodeJS.ProcessEnv): boolean {
+  return env.WORK_QUALITY_ENABLED !== "0";
 }
 
 export function workBrainDailyCap(env: NodeJS.ProcessEnv): number {
@@ -907,6 +920,15 @@ export const PANEL_STAGES = [
   "structure writer",
   "evidence critic",
   "editorial critic",
+  // Quality pair (2026-09-18): the assessor scores the SUBMITTED WORK itself
+  // against WORK_QUALITY_DIMENSIONS, the refuter tries to knock each score
+  // down, and code reconciles the two (src/lib/work/quality.ts). BEFORE
+  // synthesis on purpose: the assessment reads only the documents, so it
+  // depends on nothing later, and every terminal path (disclosure hold, lint
+  // hold, blocking hold, update park, publish) already has it persisted.
+  // Internal surfaces only; nothing here ever feeds the card.
+  "quality assessor",
+  "quality refuter",
   "synthesis",
   "disclosure critic",
   "adjudication",
@@ -915,8 +937,11 @@ export const PANEL_STAGES = [
 export type PanelStage = (typeof PANEL_STAGES)[number];
 
 /** Stages whose null result FAILS or HOLDS the row, and therefore the only
- * ones recovery is armed on. 4 and 5 tolerate null by design (panel.ts), so a
- * critic can never eat the pool synthesis needs. */
+ * ones recovery is armed on. 4 through 7 (the two critics and the two
+ * quality stages) tolerate null by design (panel.ts), so none of them can
+ * ever eat the pool synthesis needs. The quality pair stays unarmed for the
+ * same reason it is non-gating: a null assessment just leaves the row
+ * without one. */
 export const PANEL_RECOVERABLE_STAGES: readonly PanelStage[] = [
   "evidence writer",
   "voice writer",
@@ -941,14 +966,55 @@ export const WORK_STAGE_LABELS: Record<PanelStage, string> = {
   "structure writer": "Building the card's sections and its fact footer",
   "evidence critic": "Checking every claim against your documents",
   "editorial critic": "Checking the writing against the house rules",
+  "quality assessor": "Assessing the quality of the work itself",
+  "quality refuter": "Challenging the quality assessment against your documents",
   synthesis: "Merging the review notes into the final card",
   "disclosure critic": "Checking that nothing private made it into the card",
   adjudication: "Deciding whether a flagged name is safe to publish",
   repair: "Fixing the last wording issues",
 };
 
-/** `Step 4 of 9 · Checking every claim against your documents`. An unknown
- * stage degrades to `Step 4 of 9` with no separator, never to a blank and
+/** The quality assessment's five fixed dimensions (§5.16 quality round,
+ * 2026-09-18). The assessor sees each rubric VERBATIM and must pair every
+ * score with an exact supporting quote from the documents; a score whose
+ * quote fails quoteInCorpus is discarded in code (src/lib/work/quality.ts
+ * reconcileQuality: dimension kept, score nulled, unsupported true).
+ * Editorial quality only, rendered on the two INTERNAL surfaces
+ * (/admin/work and the submitter's own /work/submit list), never the public
+ * card. The safety key is least-privilege and blast-radius awareness in the
+ * design the documents describe, NOT the disclosure gate's client-name
+ * mandate; that gate is a separate stage and is untouched by this pair. */
+export const WORK_QUALITY_DIMENSIONS = [
+  {
+    key: "documentation",
+    rubric:
+      "does the document actually let a colleague run or use the thing: setup, inputs, outputs, failure modes",
+  },
+  {
+    key: "robustness",
+    rubric:
+      "error handling, edge cases, and guardrails visible in the documents and code excerpts",
+  },
+  {
+    key: "safety",
+    rubric:
+      "least privilege, secrets handling, and blast-radius awareness in the design the documents describe",
+  },
+  {
+    key: "clarity",
+    rubric:
+      "is the design legible: naming, structure, one purpose per piece",
+  },
+  {
+    key: "reusability",
+    rubric: "could another XL.net person adopt it without the author",
+  },
+] as const;
+export type WorkQualityDimensionKey =
+  (typeof WORK_QUALITY_DIMENSIONS)[number]["key"];
+
+/** `Step 4 of 11 · Checking every claim against your documents`. An unknown
+ * stage degrades to `Step 4 of 11` with no separator, never to a blank and
  * never to a confident wrong sentence. */
 export function workStageLine(
   stage: string | null,

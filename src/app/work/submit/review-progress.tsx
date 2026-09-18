@@ -261,7 +261,7 @@ export function ReviewProgress({
         // deliberately makes runs longer, so a 22 minute run would be told by
         // our own caption that it is abnormal.
         <p className="text-xs text-faint">
-          Not every review needs all nine steps, so many finish sooner.
+          Not every review needs all eleven steps, so many finish sooner.
         </p>
       )}
       {data.status === "failed" && (
