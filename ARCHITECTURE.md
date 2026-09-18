@@ -11540,7 +11540,15 @@ itself.
    sign-out and Mac probe were the last callers). Closing it is an OWNER
    action and is recorded here as OWED — do not close it from a session.
    (Its sibling `AllowXLAntRelayFromRoleplay`, pri 221, was already deleted
-   2026-09-04; MyCoach's pri 220 on :8402 is a different service.)
+   2026-09-04; MyCoach's pri 220 on :8402 is a different service.) The rule
+   lives on the relay VM's NSG `xl-leonetter-app-nsg`, and the page it is
+   closed on is:
+
+   https://portal.azure.com/#@9dba33c9-d308-45ff-bb8d-4eedc89d7c01/resource/subscriptions/970c6d49-4527-4c16-bb20-b19da71e3326/resourceGroups/xl-leonetter-app-rg/providers/Microsoft.Network/networkSecurityGroups/xl-leonetter-app-nsg/overview
+
+   (that resource id is the xlant repo's docs/SETUP.md, not a guess; the
+   Azure CLI on this box is deliberately signed out after every release, so
+   it could not be read from the subscription live.)
 
 **Where the capability went.** `https://xlant.ai` is XLAnt's only web
 surface: it publishes the installers (`/account/download` — the staff nav's
