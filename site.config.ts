@@ -1044,10 +1044,12 @@ export const siteConfig = defineSiteConfig({
     // "/roadmap/" with the trailing slash: portal CHILDREN are disallowed
     // (they are noindex anyway; this saves the crawl), while the /roadmap
     // teaser itself stays crawlable (§5.18).
-    // "/internal" covers the whole staff-only tools tree (§5.22, /internal/xlant
-    // today) on the same reasoning as /rfp; those pages also carry
-    // `robots: {index:false, follow:false}` and are absent from the sitemap.
-    extraRobotsDisallow: ["/rfp", "/roadmap/", "/internal"],
+    // "/internal" left this list on 2026-09-18: the whole staff-only tools
+    // tree (/internal/xlant, the one page under it) was deleted with the
+    // XLAnt token process (§5.22 decommission record), so the path is a 404
+    // now and there is nothing left to hide from a crawler. It was never in
+    // the sitemap.
+    extraRobotsDisallow: ["/rfp", "/roadmap/"],
     // v1.77.0 subtraction from the module's ALWAYS_DISALLOW (the GSC-incident
     // release): /login is 200 + `noindex, nofollow` and linked from
     // /governance, so the module's own Disallow was precisely what stopped a

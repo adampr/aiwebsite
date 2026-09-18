@@ -11,7 +11,8 @@
 // breakpoint.
 //
 // WHAT GOES IN THE PANEL: the session-variant destination list (five
-// entries in every variant; see nav-links.ts), plus the session-gated links
+// entries anonymous/member, six for staff; see nav-links.ts), plus the
+// session-gated links
 // (YourWorkLink) as `children`. An earlier draft kept those in the bar,
 // arguing a second instance would double the session probe. A review pass
 // refuted that from the code: roadmap-probe.ts holds a module-scoped
@@ -40,11 +41,13 @@
 // HYDRATION: server HTML and the client's first render are identical (the
 // anonymous list, panel present but [hidden]); signed-in viewers get the
 // variant swap after the shared probe resolves (accepted precedent — see
-// nav-links.ts). The staff variant's "Internal Tools" submenu renders here
-// as a labeled group: an index-numbered "Internal Tools · XL.net" header
-// row, then its destinations as indented links — except an `external` one
-// (XLAnt's download moved to xlant.ai on 2026-09-15), which is a plain <a>
-// because next/link would route an absolute URL through this app's router.
+// nav-links.ts). Every entry is a numbered row; the staff "Internal Tools"
+// group is GONE (2026-09-18, retired with the XLAnt token page — see
+// nav-links.ts), so the group rendering left this file with it. An
+// `external` entry (staff XLAnt -> xlant.ai) is a plain <a rel="noopener">
+// because next/link would route an absolute URL through this app's router,
+// and it never carries aria-current — a pathname on this host can never be
+// inside another origin.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -140,47 +143,27 @@ export function MobileNav({ children }: { children?: React.ReactNode }) {
           containing-block note in futurism.css §7b. */}
       <div id="mobile-nav-panel" className="mobile-nav-panel" hidden={!open}>
         {items.map((item, i) => {
-          // The numerals index the CURRENT variant's five top-level entries
-          // (01-05 in every session state), so the sequence never lies.
+          // The numerals index the CURRENT variant's top-level entries
+          // (01-05 anonymous/member, 01-06 staff), so the sequence never
+          // lies.
           const index = String(i + 1).padStart(2, "0");
-          if (item.kind === "menu") {
-            // Staff-only "Internal Tools" as a labeled group: the header row
-            // takes the entry's index and is not interactive; the group's
-            // destinations render indented beneath it.
+          if (item.external) {
+            // Another origin (staff XLAnt -> xlant.ai): a plain anchor, and
+            // no aria-current, because a pathname on this host can never be
+            // inside it. `rel="noopener"` without target="_blank" is
+            // deliberate — the row navigates in place.
             return (
-              <div key={item.label} className="mobile-nav-group">
-                <span className="mobile-nav-group-label">
-                  <span className="mobile-nav-index" aria-hidden="true">
-                    {index}
-                  </span>
-                  {item.label} · {item.group}
+              <a
+                key={item.href}
+                href={item.href}
+                rel="noopener"
+                onClick={() => setOpen(false)}
+              >
+                <span className="mobile-nav-index" aria-hidden="true">
+                  {index}
                 </span>
-                {item.items.map((l) =>
-                  l.external ? (
-                    // Another origin: a plain anchor, and no aria-current,
-                    // because a pathname on this host can never be inside it.
-                    <a
-                      key={l.href}
-                      href={l.href}
-                      rel="noopener"
-                      onClick={() => setOpen(false)}
-                    >
-                      {l.label}
-                    </a>
-                  ) : (
-                    <Link
-                      key={l.href}
-                      href={l.href}
-                      aria-current={
-                        pathname.startsWith(l.href) ? "page" : undefined
-                      }
-                      onClick={() => setOpen(false)}
-                    >
-                      {l.label}
-                    </Link>
-                  )
-                )}
-              </div>
+                {item.label}
+              </a>
             );
           }
           // "/" only matches itself; every other destination owns its

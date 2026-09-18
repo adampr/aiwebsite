@@ -43,28 +43,20 @@ export default createTrackingMiddleware(siteConfig, {
     // §5.10: workshop notification list join/leave (POST/DELETE
     // /api/workshop/notify) — state-changing, session-scoped writes.
     "/api/workshop",
-    // §5.22: POST /api/internal/xlant/device-token rotates the caller's XLAnt
-    // device token, which signs out whatever PC held the previous one. A
-    // cross-site POST could not READ the minted token (CORS), but it could
-    // knock a colleague's PC offline, so it joins the list on the same
-    // defense-in-depth reasoning as /api/roadmap. The module checks
-    // POST/PUT/PATCH/DELETE only, so the installer download GET is untouched.
-    // NOT the whole of /api/internal: /api/internal/track and
-    // /api/internal/issues are secret-authenticated machine POSTs from the
-    // proxy itself, the VM watchdog and the dev box, none of which carry a
-    // browser Origin.
-    "/api/internal/xlant",
-    // NOT "/api/xlant", and there is nothing there to protect: §5.22's DEVICE
-    // lane (`/api/xlant/relay/*`, `/api/xlant/update/*`) was decommissioned on
-    // 2026-09-15 once the relay measured zero devices still on this front, and
-    // both route files are deleted — the canonical origin xlant.ai serves that
-    // lane now. The prefix is named here only so the next person does not add
-    // it back on sight: those callers were the XLAnt desktop and Cursor's
-    // cloud VM as an MCP client, neither a browser and neither sending an
-    // Origin, so this module's CSRF check would have refused every one of
-    // their POSTs. `/api/internal/xlant` above stays IN: it is the
-    // browser-called half (a staff page's fetch), and it is the one that
-    // rotates a token.
+    // NOTHING XLANT REMAINS HERE (§5.22 decommission record). The prefix
+    // "/api/internal/xlant" left this list on 2026-09-18 when the XLAnt
+    // identity lane (device-token mint, computer list, sign-out) was deleted
+    // from this host — the desktop enrols via an approved code on
+    // https://xlant.ai/connect now, so there is no route under it to protect.
+    // "/api/xlant" (the DEVICE lane, decommissioned 2026-09-15) stays out
+    // too, and neither should ever be re-added on sight: the device callers
+    // were the XLAnt desktop and an MCP client, neither a browser and neither
+    // sending an Origin, so a CSRF check would have refused every one of
+    // their POSTs. Also NOT the whole of /api/internal: all three surviving
+    // trees — /api/internal/track, /api/internal/issues and
+    // /api/internal/seo-rubric — are secret-authenticated machine POSTs from
+    // the proxy itself, the VM watchdog and the dev box, none of which carry
+    // a browser Origin.
   ],
 });
 

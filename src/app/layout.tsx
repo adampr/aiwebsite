@@ -137,7 +137,10 @@ export default function RootLayout({
               {/* Bar copy. Hidden below md by `.nav > div > .nav-staff` (§7b) —
                   the panel carries it there. Two instances share one probe.
                   (StaffRfpLink retired 2026-08-19: staff reach RFP Response
-                  via the Internal Tools submenu in the anchor row/panel.) */}
+                  from the anchor row/panel. It rode the Internal Tools
+                  submenu until 2026-09-18, when that disclosure went with the
+                  XLAnt token page and RFP Response became a plain staff link
+                  again — ARCHITECTURE.md §5.22.) */}
               <YourWorkLink />
               {/* Stays visible at every width: a STATUS, not a destination, and
                   the owner asked for it displayed prominently. */}
