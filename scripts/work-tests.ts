@@ -5261,6 +5261,7 @@ async function main() {
     } = await import("../src/lib/work/config");
     const {
       parseQualityJson,
+      publicQualityLine,
       qualityAssessorPrompts,
       qualityRefuterPrompts,
       reconcileQuality,
@@ -5544,6 +5545,142 @@ async function main() {
       null,
       "a junk column projects null, never a crash"
     );
+
+    // ---- publicQualityLine: the ONE line the public /work card prints ----
+    // Owner ruling 2026-09-18 (same day, repealing the morning's
+    // internal-only rule). work-card.tsx calls this helper and nothing
+    // else, so pinning it pins what renders. `rec` above has robustness 4
+    // (contested), documentation null, clarity 5, reusability null.
+    assert.equal(publicQualityLine(null), null, "no assessment, no line");
+    const line = publicQualityLine(rec);
+    assert.equal(
+      line,
+      "Quality · robustness 4/5 (contested) · clarity 5/5 · assessed by the editorial panel",
+      "scored dimensions only, stored order, (contested) mark, source suffix"
+    );
+    assert.ok(line, "the reconciled fixture renders a line");
+    assert.ok(
+      !line.includes("documentation") && !line.includes("reusability"),
+      "unsupported dimensions are OMITTED publicly, never captioned"
+    );
+    assert.ok(
+      !/no verified evidence/i.test(line),
+      "the public line never says 'no verified evidence' about a colleague's tool"
+    );
+    assert.ok(
+      !/too high|too low|one retry path/.test(line),
+      "the refuter's direction and reason stay on the internal surfaces"
+    );
+    for (const prose of [
+      ...rec.strengths,
+      ...rec.improvements,
+      ...rec.missedRisks,
+    ])
+      assert.ok(
+        !line.includes(prose),
+        "strengths, improvements and missed risks never render publicly"
+      );
+    assert.ok(
+      line.startsWith("Quality · ") &&
+        line.endsWith(" · assessed by the editorial panel"),
+      "the line opens with its label and closes by naming its source"
+    );
+    assert.ok(!/[–—]/.test(line), "the public line carries no em or en dash");
+    assert.equal(
+      publicQualityLine(solo),
+      "Quality · robustness 4/5 · clarity 5/5 · assessed by the editorial panel",
+      "an uncontested assessment renders without any mark"
+    );
+    // Every dimension unsupported: null, never an empty "Quality · " stub
+    // (the time-saved precedent: a line that says nothing is worse than
+    // no line).
+    const allUnsupported = parseQualityJson(
+      JSON.stringify({
+        version: 1,
+        dimensions: [{ key: "documentation" }, { key: "safety", score: null }],
+      })
+    );
+    assert.ok(allUnsupported, "the all-unsupported fixture still parses");
+    assert.equal(
+      publicQualityLine(allUnsupported),
+      null,
+      "no scored dimension, no line"
+    );
+    // Defence in depth over the reader (refuter finding): a hand-edited row
+    // can carry a score AND unsupported: true, or repeat a key; neither
+    // reaches the public page.
+    const decoupled = publicQualityLine({
+      version: 1,
+      dimensions: [
+        {
+          key: "safety",
+          score: 4,
+          quote: "",
+          note: "",
+          unsupported: true,
+          contested: false,
+          challenge: null,
+        },
+        {
+          key: "clarity",
+          score: 3,
+          quote: "",
+          note: "",
+          unsupported: false,
+          contested: false,
+          challenge: null,
+        },
+        {
+          key: "clarity",
+          score: 5,
+          quote: "",
+          note: "",
+          unsupported: false,
+          contested: true,
+          challenge: { direction: "too_low", reason: "" },
+        },
+      ],
+      strengths: [],
+      improvements: [],
+      missedRisks: [],
+      contestedCount: 1,
+      assessedAt: "",
+    });
+    assert.equal(
+      decoupled,
+      "Quality · clarity 3/5 · assessed by the editorial panel",
+      "an unsupported-but-scored dimension is omitted and a repeated key prints once"
+    );
+    // The render path: the template goes through the helper (so the pins
+    // above cover the page) and carries no internal-only caption of its
+    // own. The line sits above the time-saved line, which stays above the
+    // footer byline.
+    {
+      const { readFileSync } = await import("node:fs");
+      const cardSrc = readFileSync("src/components/work-card.tsx", "utf8");
+      // Comments stripped first: the template's own comments quote the
+      // banned captions to explain the rule, and prose comments are not
+      // rendered copy.
+      const flatCard = cardSrc
+        .replace(/\/\*[\s\S]*?\*\//g, " ")
+        .replace(/\/\/[^\n]*/g, " ")
+        .replace(/\s+/g, " ");
+      assert.ok(
+        flatCard.includes("publicQualityLine(item.quality)"),
+        "work-card.tsx renders the public line through publicQualityLine"
+      );
+      assert.ok(
+        !/no verified evidence|too high|too low/.test(flatCard),
+        "the public template prints no internal-only caption of its own"
+      );
+      const qAt = flatCard.indexOf("{quality && ");
+      const tAt = flatCard.indexOf("{timeSaved && ");
+      const fAt = flatCard.indexOf("{footer}");
+      assert.ok(
+        qAt > 0 && tAt > qAt && fAt > tAt,
+        "quality line above time-saved line above the footer byline"
+      );
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -6105,6 +6242,15 @@ async function main() {
         "Every claim below is drawn from the submitted documents, apart from a time saved figure, which is reported by the submitter and labelled that way on the card."
       ),
       "the /work intro names the one claim the panel did not verify"
+    );
+    // 2026-09-18: the quality scores went public, and every score IS
+    // quote-backed, so the promise holds; the intro says the scoring exists
+    // and what ties it to the documents, in one plain sentence.
+    assert.ok(
+      flat(communitySrc).includes(
+        "The panel also scores each submitted tool on five quality dimensions; a card prints only the scores the panel could tie to a line in the submitted documents, and marks as contested any score the panel argued against itself, in either direction."
+      ),
+      "the /work intro says the panel scores each tool, that only quote-backed scores print, and what contested means"
     );
     // Scoped to the paragraph, not the file: line 11's ordering comment
     // carries a legitimate em dash, and prose comments are not site copy.

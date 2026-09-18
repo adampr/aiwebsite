@@ -360,10 +360,11 @@ export function workSubmissionsEnabled(env: NodeJS.ProcessEnv): boolean {
 
 /** Quality-assessment kill switch (§5.16 quality round, 2026-09-18;
  * workSubmissionsEnabled pattern: default ON, set "0" to skip both quality
- * stages; rows then simply carry no assessment and both internal surfaces
- * degrade to their null rendering). The worst-case admission stays at
- * brainCallsWorstCasePerRun regardless: admission headroom is a ceiling,
- * never a conditional. */
+ * stages; rows then simply carry no assessment and every surface, the
+ * public card line included, degrades to its null rendering). The
+ * work:quality backfill lane honours the same switch. The worst-case
+ * admission stays at brainCallsWorstCasePerRun regardless: admission
+ * headroom is a ceiling, never a conditional. */
 export function workQualityEnabled(env: NodeJS.ProcessEnv): boolean {
   return env.WORK_QUALITY_ENABLED !== "0";
 }
@@ -926,7 +927,8 @@ export const PANEL_STAGES = [
   // synthesis on purpose: the assessment reads only the documents, so it
   // depends on nothing later, and every terminal path (disclosure hold, lint
   // hold, blocking hold, update park, publish) already has it persisted.
-  // Internal surfaces only; nothing here ever feeds the card.
+  // Nothing here ever feeds card_json; the public card prints the scores
+  // as its own line off the row (quality.ts publicQualityLine).
   "quality assessor",
   "quality refuter",
   "synthesis",
@@ -979,9 +981,11 @@ export const WORK_STAGE_LABELS: Record<PanelStage, string> = {
  * score with an exact supporting quote from the documents; a score whose
  * quote fails quoteInCorpus is discarded in code (src/lib/work/quality.ts
  * reconcileQuality: dimension kept, score nulled, unsupported true).
- * Editorial quality only, rendered on the two INTERNAL surfaces
- * (/admin/work and the submitter's own /work/submit list), never the public
- * card. The safety key is least-privilege and blast-radius awareness in the
+ * Editorial quality only. Rendered on the public /work card as one score
+ * line (scored dimensions only, contested marks, source-attributed; owner
+ * ruling 2026-09-18) and in full on the two internal surfaces (/admin/work
+ * and the submitter's own /work/submit list); it never enters card_json.
+ * The safety key is least-privilege and blast-radius awareness in the
  * design the documents describe, NOT the disclosure gate's client-name
  * mandate; that gate is a separate stage and is untouched by this pair. */
 export const WORK_QUALITY_DIMENSIONS = [

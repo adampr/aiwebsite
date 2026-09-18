@@ -43,6 +43,7 @@ function card(slug: string): PublishedCard {
     publishedAt: new Date("2026-08-29T00:00:00Z"),
     docPath: "",
     timeSavedMinutes: null,
+    quality: null,
   };
 }
 

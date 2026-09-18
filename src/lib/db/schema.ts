@@ -390,12 +390,15 @@ export const workSubmissions = pgTable(
     // (src/lib/work/quality.ts WorkQualityAssessment, version-tagged JSON).
     // Written mid-run by setQualityAssessment (attempt-fenced, status
     // running) right after the quality assessor/refuter pair and before the
-    // disclosure stage, so held/parked/failed-later rows keep it. NON-GATING
-    // and internal-only: it never feeds card_json, lint, or the disclosure
-    // gate, and renders only on /admin/work and the submitter's own
-    // /work/submit list. NULL forever on pre-round rows and whenever either
-    // the assessor call failed or WORK_QUALITY_ENABLED=0; every reader
-    // handles null (parseQualityJson).
+    // disclosure stage, so held/parked/failed-later rows keep it. NON-GATING:
+    // it never feeds card_json, lint, or the disclosure gate. Rendered on
+    // the public /work card as one score line (quality.ts publicQualityLine,
+    // scored dimensions only; owner ruling 2026-09-18) and in full on
+    // /admin/work and the submitter's own /work/submit list. NULL on
+    // pre-round rows until the work:quality backfill lane assesses them
+    // (setQualityAssessmentPublished, which never bumps updated_at), and
+    // whenever the assessor call failed or WORK_QUALITY_ENABLED=0; every
+    // reader handles null (parseQualityJson).
     qualityJson: text("quality_json"),
     // Set the first time a run holds this row; NEVER cleared. Bars submitter
     // retry on any once-held submission (a failed admin re-run must not

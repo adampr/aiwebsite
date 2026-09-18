@@ -96,7 +96,11 @@ export function CommunitySection({
           it, and holds anything it cannot verify for a human decision. Every
           claim below is drawn from the submitted documents, apart from a
           time saved figure, which is reported by the submitter and labelled
-          that way on the card.
+          that way on the card. The panel also scores each submitted tool on
+          five quality dimensions; a card prints only the scores the panel
+          could tie to a line in the submitted documents, and marks as
+          contested any score the panel argued against itself, in either
+          direction.
         </p>
       </div>
       {cards.map((item, i) => (

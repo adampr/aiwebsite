@@ -24,6 +24,9 @@ import { db, schema } from "@/lib/db";
 import { WORK_CAPS, type WorkKind } from "./config";
 import type { WorkCard } from "./lint";
 import { slugForTitle } from "./lint";
+// Value import, and safe as one: quality.ts is PURE (config + lint only),
+// so it cannot cycle back here.
+import { parseQualityJson, type WorkQualityAssessment } from "./quality";
 // Value import, and safe as one: transfer.ts is PURE (its only imports are
 // @/lib/rfp/access and ./config, both of which this file already pulls in),
 // so it cannot cycle back through the DB layer the way scope.ts does below.
@@ -234,9 +237,11 @@ const LIST_COLS = {
   timeSavedMinutes: S.timeSavedMinutes,
   // §5.16 quality round (2026-09-18): the reconciled quality assessment, a
   // small bounded JSON scalar (five dimensions with capped strings). The
-  // submitter's own list is one of the two internal surfaces that render
-  // it, so it rides the projection the poll already reads; null forever on
-  // rows that predate the round or ran with WORK_QUALITY_ENABLED=0.
+  // submitter's own list renders it in full (scores, contested direction,
+  // prose), so it rides the projection the poll already reads; the public
+  // /work card gets it through publishedCards() instead. Null forever on
+  // rows that predate the round (until the work:quality backfill lane
+  // assesses them) or ran with WORK_QUALITY_ENABLED=0.
   qualityJson: S.qualityJson,
 };
 
@@ -357,6 +362,17 @@ export interface PublishedCard {
    * WorkCard JSON, precisely because it is not panel output: the panel never
    * saw this number and the template has to say so when it prints it. */
   timeSavedMinutes: number | null;
+  /** §5.16 quality round, made PUBLIC by owner ruling 2026-09-18: the
+   * panel's reconciled quality assessment of the work itself, read
+   * defensively (parseQualityJson: junk or a future version degrades to
+   * null, never to a broken /work page). It rides the CARD, not the panel's
+   * WorkCard JSON, because card_json is the lint-gated editorial artifact
+   * and the assessment is a separate, non-gating instrument; the template
+   * prints ONE score line from it via quality.ts publicQualityLine (scored
+   * dimensions only, source-attributed) and nothing else. Null on every
+   * pre-round row until the work:quality backfill assesses it, and on runs
+   * with WORK_QUALITY_ENABLED=0; null renders no line. */
+  quality: WorkQualityAssessment | null;
 }
 
 /** Published cards for the public /work section, newest publish first so a
@@ -400,6 +416,9 @@ export async function publishedCards(scope: WorkScope): Promise<PublishedCard[]>
         publishedAt: r.publishedAt ?? r.createdAt,
         docPath,
         timeSavedMinutes: r.timeSavedMinutes,
+        // Inside the try on purpose, though parseQualityJson never throws:
+        // the card's fate and the line's fate belong together.
+        quality: parseQualityJson(r.qualityJson),
       });
     } catch {
       // a malformed row renders nothing rather than breaking the page
@@ -616,6 +635,75 @@ export async function setQualityAssessment(
     )
     .returning({ id: S.id });
   return res.length > 0;
+}
+
+/** The quality BACKFILL write (§5.16, owner ruling 2026-09-18: the scores
+ * went public, so every card published before the quality round needs an
+ * assessment without a re-run). Called only by scripts/work-quality-backfill.ts
+ * (`npm run work:quality`), never by the panel: the panel's own write is
+ * setQualityAssessment above, attempt-fenced on a RUNNING row. This one has
+ * no attempt to fence on (nothing is claimed; the card is never touched), so
+ * its predicate is id + status = 'published' + (force ? any : quality_json
+ * IS NULL): a row that left published under the backfill (an ops re-run
+ * pulled it to held, an update swap superseded it) takes nothing, and
+ * without --force a row the panel or a concurrent backfill assessed in the
+ * meantime keeps that assessment. Writes quality_json and NOTHING else,
+ * deliberately NOT updated_at: the sitemap lastmod reads
+ * greatest(published_at, updated_at) and retention semantics key off the
+ * row's last real change, and an assessment of the SAME documents is not a
+ * change to the card. Typed operators only (the sql``+Date crash class).
+ * Returns whether the row took the write. */
+export async function setQualityAssessmentPublished(
+  id: string,
+  qualityJson: string,
+  opts: { force: boolean }
+): Promise<boolean> {
+  const res = await db
+    .update(S)
+    .set({ qualityJson })
+    .where(
+      and(
+        eq(S.id, id),
+        eq(S.status, "published"),
+        ...(opts.force ? [] : [isNull(S.qualityJson)])
+      )
+    )
+    .returning({ id: S.id });
+  return res.length > 0;
+}
+
+/** Every row the quality backfill may consider: published with a card, ALL
+ * lanes (a §5.18 company row's assessment renders on that company's own
+ * /roadmap work page through the same template), oldest publish first so a
+ * budget stop leaves the newest cards for tomorrow's run and the order is
+ * stable across runs (created_at breaks ties; a published row with no
+ * published_at, if any, sorts last under Postgres ASC NULLS LAST). A LIGHT
+ * projection on purpose: the candidate list is printed on every dry run,
+ * so it must not drag every row's corpus text along; the script reads each
+ * candidate's full row (submissionById) only when it is about to assess
+ * it. quality_json rides along as the raw column so the pure candidate
+ * filter (scripts/lib/work-quality-ops.ts) tests exactly the predicate the
+ * write uses, `IS NULL`, never a parsed view of it. */
+export async function qualityBackfillRows(): Promise<
+  {
+    id: string;
+    title: string;
+    companyId: string | null;
+    publishedAt: Date | null;
+    qualityJson: string | null;
+  }[]
+> {
+  return db
+    .select({
+      id: S.id,
+      title: S.title,
+      companyId: S.companyId,
+      publishedAt: S.publishedAt,
+      qualityJson: S.qualityJson,
+    })
+    .from(S)
+    .where(and(eq(S.status, "published"), isNotNull(S.cardJson)))
+    .orderBy(asc(S.publishedAt), asc(S.createdAt));
 }
 
 async function uniqueSlug(

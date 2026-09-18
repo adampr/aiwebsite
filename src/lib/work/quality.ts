@@ -10,9 +10,15 @@
 // NON-GATING BY DESIGN (the invariant every caller must keep): nothing in
 // this module can fail, hold, or delay a panel run. A null assessor result
 // means the row carries no assessment; a null refuter result means an
-// uncontested one. The output renders on the two INTERNAL surfaces only
-// (/admin/work and the submitter's own /work/submit list) and never feeds
-// synthesis, lint, the disclosure gate, or card_json.
+// uncontested one. The output never feeds synthesis, lint, the disclosure
+// gate, or card_json. It RENDERS on three surfaces (owner ruling
+// 2026-09-18, repealing the same morning's internal-only rule): the public
+// /work card as ONE compact score line (publicQualityLine below: scored
+// dimensions only, "(contested)" marks, source-attributed), and in full on
+// the two internal surfaces (/admin/work and the submitter's own
+// /work/submit list), which alone show the refuter's direction and reason,
+// the unsupported dimensions, and the strengths/improvements/missed-risks
+// prose.
 //
 // This file is PURE (config + lint imports only, both client-safe): the
 // no-DB test:work suite pins reconcileQuality here. The prompt builders
@@ -246,6 +252,48 @@ export function parseQualityJson(
   }
 }
 
+/** The one line the PUBLIC card prints (owner ruling 2026-09-18; the
+ * /work card template calls this and nothing else). Pure and pinned by
+ * test:work, so the test covers exactly what renders. Rules:
+ *   - only dimensions with a numeric score render, as `key N/5`, in stored
+ *     (rubric) order; an unsupported or null-score dimension is OMITTED, not
+ *     captioned: the public page must never print "no verified evidence"
+ *     against a colleague's tool. No scored dimension at all -> null, and
+ *     the caller renders nothing (the time-saved precedent: a line that
+ *     says nothing is worse than no line).
+ *   - a contested dimension carries " (contested)" only; the refuter's
+ *     direction and reason stay on the internal surfaces, as do the
+ *     strengths/improvements/missedRisks prose.
+ *   - the line names its source, " · assessed by the editorial panel" (the
+ *     noun the /work intro uses for the same panel), because
+ *     /work opens with "Every claim below is drawn from the submitted
+ *     documents": every surviving score IS quote-backed, and saying who
+ *     scored it is what keeps that promise honest (the "reported by the
+ *     submitter" precedent on the time-saved line).
+ *   - middots as separators; never an em or en dash (site rule on visible
+ *     copy). Keys come from WORK_QUALITY_DIMENSIONS, never from the row, so
+ *     no model-written string reaches the public page through here.
+ * Rendered: `Quality · documentation 4/5 · robustness 3/5 (contested) ·
+ * safety 5/5 · assessed by the editorial panel`. */
+export function publicQualityLine(
+  assessment: WorkQualityAssessment | null
+): string | null {
+  if (!assessment) return null;
+  const parts: string[] = [];
+  // Defence in depth over the reader: score and unsupported are coupled by
+  // reconcileQuality, but a hand-edited row can decouple them, and a
+  // repeated key must not print twice.
+  const seen = new Set<string>();
+  for (const d of assessment.dimensions) {
+    if (d.score === null || d.unsupported || !isDimensionKey(d.key)) continue;
+    if (seen.has(d.key)) continue;
+    seen.add(d.key);
+    parts.push(`${d.key} ${d.score}/5${d.contested ? " (contested)" : ""}`);
+  }
+  if (parts.length === 0) return null;
+  return `Quality · ${parts.join(" · ")} · assessed by the editorial panel`;
+}
+
 /** The rubric lines the assessor sees, verbatim from config. */
 function rubricLines(): string {
   return WORK_QUALITY_DIMENSIONS.map((d) => `- ${d.key}: ${d.rubric}`).join(
@@ -254,7 +302,7 @@ function rubricLines(): string {
 }
 
 // Both prompts describe the WORK, never the process (the meta-copy
-// precedent): even though quality text renders only on internal surfaces,
+// precedent): the prose fields render only on the internal surfaces, but
 // prose about "the panel" or "this review" in a note or improvement line is
 // still commentary about our pipeline instead of the tool, so it is
 // forbidden at the prompt.

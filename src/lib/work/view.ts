@@ -83,11 +83,14 @@ export interface SubmissionStatusView {
   laneDomain: string | null;
   /** §5.16 quality round (2026-09-18): the reconciled quality assessment,
    * parsed defensively (parseQualityJson) so a junk or future-versioned
-   * column degrades to null, never to a crash. Internal-only data: the
-   * submitter's own list and the admin lists are the only callers, both
-   * already owner-or-admin per the file header's standing rule. Null on
-   * every pre-round row and on runs with WORK_QUALITY_ENABLED=0; both
-   * surfaces render the null case. */
+   * column degrades to null, never to a crash. This projection's callers
+   * are the submitter's own list and the admin lists, both already
+   * owner-or-admin per the file header's standing rule, and they render the
+   * FULL assessment (contested direction and reason, unsupported
+   * dimensions, the prose lines); the public /work card renders only the
+   * compact score line, and gets it through publishedCards(), not through
+   * here (owner ruling 2026-09-18). Null on every pre-round row and on runs
+   * with WORK_QUALITY_ENABLED=0; every surface renders the null case. */
   quality: WorkQualityAssessment | null;
 }
 

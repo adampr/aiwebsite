@@ -13,6 +13,7 @@
 // off, so the run on /work and the §5.18 company page stay byte-identical.
 
 import type { PublishedCard } from "@/lib/work/db";
+import { publicQualityLine } from "@/lib/work/quality";
 import { formatTimeSavedPhrase } from "@/lib/work/time-saved";
 
 export function CommunityCard({
@@ -36,6 +37,13 @@ export function CommunityCard({
   // would read as a card claiming the work saves nobody any time, which is a
   // claim nobody made.
   const timeSaved = formatTimeSavedPhrase(item.timeSavedMinutes);
+  // §5.16 quality assessment, public since the owner ruling of 2026-09-18.
+  // ONE pure helper decides the whole line (test:work pins it): scored
+  // dimensions only, so the public page never says "no verified evidence"
+  // about a colleague's tool; "(contested)" without the refuter's
+  // direction or reason; source named in the line; null when the row has
+  // no assessment or no scored dimension, and then nothing renders.
+  const quality = publicQualityLine(item.quality);
   return (
     <section
       id={item.slug}
@@ -73,7 +81,11 @@ export function CommunityCard({
           documents" - this number is not: it is typed by the submitter and no
           stage of the review ever checks it. Naming the source in the line
           itself is what keeps the promise true. It sits ABOVE the footer so
-          the byline stays the card's last line. */}
+          the byline stays the card's last line. The quality line sits above
+          it for the same reason and carries its own attribution: every
+          score on it is quote-backed, so the promise holds, and the line
+          still says who scored it. */}
+      {quality && <p className="mono mt-6 text-xs text-faint">{quality}</p>}
       {timeSaved && (
         <p className="mono mt-6 text-xs text-faint">
           Time saved · {timeSaved}, reported by the submitter
