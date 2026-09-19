@@ -2,7 +2,10 @@
 
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { loginErrorMessages } from "@aicompany/core/auth/login-errors";
+import {
+  loginErrorMessages,
+  loginNoticeCodes,
+} from "@aicompany/core/auth/login-errors";
 
 export default function LoginPage() {
   return (
@@ -25,6 +28,12 @@ function LoginCard() {
   const errorMessage = errorCode
     ? searchParams.get("message") || loginErrorMessages[errorCode] || "Something went wrong. Please try again."
     : "";
+  // Some codes travel in ?error= because that is the one param every login
+  // page already reads, but they are a step in a sign-in that is going WELL
+  // (module v1.137: confirm_email, "we sent you a confirmation link"). Red
+  // alert styling would read as a failure and send the person round again, so
+  // a notice gets the ordinary text colour and role="status".
+  const isNotice = errorCode !== null && loginNoticeCodes.has(errorCode);
 
   const redirectParam = redirectTo ? `?redirect=${encodeURIComponent(redirectTo)}` : "";
 
@@ -58,7 +67,11 @@ function LoginCard() {
         </a>
 
         {errorMessage && (
-          <p className="text-center text-sm" style={{ color: "#e5484d" }} role="alert">
+          <p
+            className="text-center text-sm"
+            style={{ color: isNotice ? "var(--xl-text)" : "#e5484d" }}
+            role={isNotice ? "status" : "alert"}
+          >
             {errorMessage}
           </p>
         )}

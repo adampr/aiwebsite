@@ -500,6 +500,29 @@ export const siteConfig = defineSiteConfig({
     // Historical cookie name — existing sessions must survive adoption.
     sessionCookieName: "aix_session",
     sessionTtlDays: 30,
+    // OAuth identity binding (module §5.5 v1.137). An address is accepted
+    // from a Google/Microsoft account only once THAT ACCOUNT has proved it,
+    // and the default proof is a one-time link mailed to the address. The map
+    // below is the one place that link is skipped for Microsoft:
+    // 9dba33c9-d308-45ff-bb8d-4eedc89d7c01 is the Entra directory that has
+    // xl.net as a VERIFIED domain (read 2026-09-19 from
+    // https://login.microsoftonline.com/xl.net/v2.0/.well-known/openid-configuration),
+    // so a token issued by that directory for an @xl.net address carries the
+    // domain owner's own word about who holds the mailbox. It is scoped to
+    // xl.net: the same directory signing in as someone@example.com gets no
+    // vouch from this entry. Every other Microsoft account, in any other
+    // tenant, confirms by email once and never again.
+    //
+    // MICROSOFT_TENANT_ID stays "common" (or unset) on this host. Pinning it
+    // to a GUID would make the module trust that directory for EVERY address
+    // it reports, not only the domains listed here, which is a strictly wider
+    // grant than this map and is not the grant that was reasoned about.
+    // maxIdleDays / confirmTtlMinutes keep the module defaults (180 / 30).
+    oauthBinding: {
+      trustedMicrosoftTenants: {
+        "xl.net": ["9dba33c9-d308-45ff-bb8d-4eedc89d7c01"],
+      },
+    },
   },
 
   admin: {

@@ -10,6 +10,11 @@ registerTables({
   users: schema.users,
   // magic-link sign-in (§5.18): auth.providers.magicLink is on.
   magicLinks: schema.magicLinks,
+  // OAuth identity binding (module §5.5 v1.137) — REQUIRED, not optional-WARN,
+  // while google or microsoft is on: an OAuth door whose binding table is
+  // missing must fail boot, never fall back to trusting the reported email.
+  oauthIdentities: schema.oauthIdentities,
+  oauthConfirmations: schema.oauthConfirmations,
   authLogs: schema.authLogs,
   pageVisits: schema.pageVisits,
   ipOrgs: schema.ipOrgs,

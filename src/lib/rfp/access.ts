@@ -50,6 +50,17 @@
 // and `mv` are set server-side and covered by the session HMAC
 // (auth/session.ts + oauth-hardened.ts), so neither is client-supplied.
 //
+// SECOND BELT SINCE MODULE v1.137, AND THIS GATE DID NOT MOVE. The identity
+// binding now stands in front of the whole forgery: the attacker's tenant can
+// still PATCH Graph `mail` to anything@xl.net, but their provider account holds
+// no oauth_identities row for that address and earns no vouch, so the sign-in
+// is HELD and a confirmation link goes to the real mailbox, which they cannot
+// open in their own browser. mv was deliberately NOT widened to mean "bound":
+// the operator's trusted-tenant word (site.config.ts) binds an xl.net Microsoft
+// account with no email at all, and that is the operator's word about a
+// DIRECTORY, not Microsoft's word about a MAILBOX. This predicate keeps asking
+// for the second.
+//
 // This is deliberately NOT src/lib/work/http.ts's requireXlUser(). That gate
 // is domain-only and guards work submissions; sharing it would silently
 // inherit the weak predicate here, and any future softening of one would move

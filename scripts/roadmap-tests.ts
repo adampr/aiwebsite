@@ -9,9 +9,14 @@
 
 import assert from "node:assert/strict";
 import {
-  decodeJwtPayload,
+  googleVerdict,
+  microsoftVerdict,
   strictClaimTrue,
 } from "../src/lib/auth/oauth-hardened";
+import {
+  decodeGoogleIdToken,
+  decodeMicrosoftIdToken,
+} from "@aicompany/core/auth/oauth-identity";
 import {
   FREEMAIL_DOMAINS,
   isCompanyEligibleDomain,
@@ -22,7 +27,11 @@ import {
   isVerifiedStaffProvider,
   RFP_PROVIDERS,
 } from "../src/lib/rfp/access";
-import { isStaffSession, SILENT_REVERIFY_PROVIDERS } from "../src/lib/roadmap/access";
+import {
+  isStaffSession,
+  isTrustedSession,
+  SILENT_REVERIFY_PROVIDERS,
+} from "../src/lib/roadmap/access";
 import type { SessionData } from "@aicompany/core/auth/session";
 import { INTERNAL_SCOPE, scopeOf } from "../src/lib/work/scope";
 import { readFileSync, existsSync } from "node:fs";
@@ -103,18 +112,207 @@ ok("strictClaimTrue accepts only true and 'true'", () => {
   assert.equal(strictClaimTrue({}), false);
 });
 
-// ---- decodeJwtPayload ----
-ok("decodeJwtPayload roundtrips a payload and rejects junk", () => {
-  const payload = { aud: "client", tid: "t", xms_edov: "false", exp: 9 };
-  const jwt = [
-    Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"),
+// ---- the `mv` verdicts (module v1.137 vouch functions, host meaning) ----
+// The hardened callback no longer keeps its own copy of this judgement: it
+// calls the module's googleVouch / microsoftVouch through the two verdicts
+// below. These pins are the host's statement of what `mv` MEANS, because
+// isVerifiedStaffProvider (src/lib/rfp/access.ts) reads it as "the provider
+// proved this address" and the module's map also has an OPERATOR-trust arm
+// that must never reach it.
+const MV_CLIENT_ID = "our-client-id";
+const MV_TID = "9dba33c9-d308-45ff-bb8d-4eedc89d7c01"; // the xl.net directory
+const MV_OID = "11111111-2222-3333-4444-555555555555";
+function mvJwt(payload: Record<string, unknown>): string {
+  return [
+    Buffer.from(JSON.stringify({ alg: "RS256" })).toString("base64url"),
     Buffer.from(JSON.stringify(payload)).toString("base64url"),
     "sig",
   ].join(".");
-  assert.deepEqual(decodeJwtPayload(jwt), payload);
-  assert.equal(decodeJwtPayload("not-a-jwt"), null);
-  assert.equal(decodeJwtPayload("a.b"), null);
-  assert.equal(decodeJwtPayload(`x.${Buffer.from("[1]").toString("base64url")}.y`), null);
+}
+const mvFuture = (): number => Math.floor(Date.now() / 1000) + 600;
+function msClaims(extra: Record<string, unknown>) {
+  return decodeMicrosoftIdToken(
+    mvJwt({
+      aud: MV_CLIENT_ID,
+      iss: `https://login.microsoftonline.com/${MV_TID}/v2.0`,
+      tid: MV_TID,
+      oid: MV_OID,
+      exp: mvFuture(),
+      ...extra,
+    }),
+    { clientId: MV_CLIENT_ID }
+  );
+}
+function googleClaims(extra: Record<string, unknown>) {
+  return decodeGoogleIdToken(
+    mvJwt({
+      aud: MV_CLIENT_ID,
+      iss: "https://accounts.google.com",
+      sub: "google-subject-1",
+      exp: mvFuture(),
+      ...extra,
+    }),
+    { clientId: MV_CLIENT_ID }
+  );
+}
+
+ok("the id token decoders refuse a foreign aud, an expired token and junk", () => {
+  assert.notEqual(msClaims({ email: "adam@xl.net" }), null);
+  assert.equal(
+    decodeMicrosoftIdToken(
+      mvJwt({
+        aud: "somebody-elses-app",
+        iss: `https://login.microsoftonline.com/${MV_TID}/v2.0`,
+        tid: MV_TID,
+        oid: MV_OID,
+        exp: mvFuture(),
+      }),
+      { clientId: MV_CLIENT_ID }
+    ),
+    null
+  );
+  // iss naming a DIFFERENT directory than the tid claim: forged or broken.
+  assert.equal(
+    decodeMicrosoftIdToken(
+      mvJwt({
+        aud: MV_CLIENT_ID,
+        iss: "https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/v2.0",
+        tid: MV_TID,
+        oid: MV_OID,
+        exp: mvFuture(),
+      }),
+      { clientId: MV_CLIENT_ID }
+    ),
+    null
+  );
+  assert.equal(msClaims({ exp: Math.floor(Date.now() / 1000) - 3600 }), null);
+  assert.equal(msClaims({ tid: "not-a-guid" }), null);
+  assert.equal(decodeMicrosoftIdToken("not-a-jwt", { clientId: MV_CLIENT_ID }), null);
+  assert.equal(decodeMicrosoftIdToken("a.b", { clientId: MV_CLIENT_ID }), null);
+  assert.notEqual(googleClaims({ email: "adam@gmail.com" }), null);
+  assert.equal(
+    decodeGoogleIdToken(mvJwt({ aud: MV_CLIENT_ID, iss: "https://evil.example", sub: "s", exp: mvFuture() }), {
+      clientId: MV_CLIENT_ID,
+    }),
+    null
+  );
+});
+
+ok("microsoftVerdict mints mv ONLY on strict xms_edov for the token's own email", () => {
+  const verified = msClaims({ email: "adam@xl.net", xms_edov: true });
+  assert.equal(microsoftVerdict({ claims: verified, email: "adam@xl.net" }), true);
+  assert.equal(microsoftVerdict({ claims: verified, email: "ADAM@XL.NET" }), true);
+  // Entra's JSON-string serialization of the same claim.
+  assert.equal(
+    microsoftVerdict({ claims: msClaims({ email: "adam@xl.net", xms_edov: "true" }), email: "adam@xl.net" }),
+    true
+  );
+  assert.equal(
+    microsoftVerdict({ claims: msClaims({ email: "adam@xl.net", xms_edov: "false" }), email: "adam@xl.net" }),
+    false
+  );
+  assert.equal(
+    microsoftVerdict({ claims: msClaims({ email: "adam@xl.net", xms_edov: 1 }), email: "adam@xl.net" }),
+    false
+  );
+  // The claim speaks for the TOKEN's email, never for the Graph `mail` the
+  // upsert keys on: a tenant admin who PATCHes mail to somebody else's
+  // address gets no mv out of their own verified domain.
+  assert.equal(
+    microsoftVerdict({ claims: verified, email: "victim@othercompany.com" }),
+    false
+  );
+  // No xms_edov at all: the trusted-tenant word (site.config.ts) may BIND
+  // this account, but it is the operator's word and must not mint mv.
+  assert.equal(
+    microsoftVerdict({ claims: msClaims({ email: "adam@xl.net" }), email: "adam@xl.net" }),
+    false
+  );
+  assert.equal(microsoftVerdict({ claims: null, email: "adam@xl.net" }), false);
+  assert.equal(microsoftVerdict({ claims: verified, email: null }), false);
+});
+
+ok("googleVerdict mints mv only for a mailbox Google actually runs", () => {
+  assert.equal(
+    googleVerdict({ claims: googleClaims({ email: "a@gmail.com", email_verified: true }), email: "a@gmail.com" }),
+    true
+  );
+  // A Workspace domain Google verified: hd must EQUAL the address's domain.
+  assert.equal(
+    googleVerdict({
+      claims: googleClaims({ email: "adam@xl.net", email_verified: true, hd: "XL.NET" }),
+      email: "adam@xl.net",
+    }),
+    true
+  );
+  assert.equal(
+    googleVerdict({
+      claims: googleClaims({ email: "adam@xl.net", email_verified: true, hd: "other.com" }),
+      email: "adam@xl.net",
+    }),
+    false
+  );
+  // email_verified alone on a third-party address is NOT proof of who reads
+  // it today (Google's own words); that person confirms by email once.
+  assert.equal(
+    googleVerdict({
+      claims: googleClaims({ email: "adam@somewhere.com", email_verified: true }),
+      email: "adam@somewhere.com",
+    }),
+    false
+  );
+  assert.equal(
+    googleVerdict({ claims: googleClaims({ email: "a@gmail.com", email_verified: "false" }), email: "a@gmail.com" }),
+    false
+  );
+  // The token must be talking about the address userinfo reported.
+  assert.equal(
+    googleVerdict({ claims: googleClaims({ email: "a@gmail.com", email_verified: true }), email: "b@gmail.com" }),
+    false
+  );
+  assert.equal(googleVerdict({ claims: null, email: "a@gmail.com" }), false);
+});
+
+// ---- isTrustedSession (the roadmap tenancy key, module v1.137) ----
+ok("isTrustedSession rests on the module's proof claim, not on the provider name", () => {
+  const base: SessionData = {
+    userId: "u1",
+    email: "person@client.com",
+    displayName: "A Person",
+    provider: "microsoft",
+    iat: 0,
+    exp: 0,
+  };
+  // Bound OAuth sign-in: proved, with or without mv.
+  assert.equal(isTrustedSession({ ...base, emailProof: "oauth-binding" }), true);
+  assert.equal(
+    isTrustedSession({ ...base, provider: "google", emailProof: "oauth-binding" }),
+    true
+  );
+  assert.equal(
+    isTrustedSession({ ...base, emailProof: "oauth-binding", mv: false }),
+    true
+  );
+  // The emailed link, either door.
+  assert.equal(
+    isTrustedSession({ ...base, provider: "magic-link", emailProof: "magic-link" }),
+    true
+  );
+  // Back-compat: a magic-link cookie minted before the claim existed.
+  assert.equal(isTrustedSession({ ...base, provider: "magic-link" }), true);
+  // A forged or unknown proof value proves nothing. (The cast is the point:
+  // only a JS caller or a hand-edited cookie can get here, and it must fail.)
+  const forgedWord = { ...base, emailProof: "sure-trust-me" } as unknown as SessionData;
+  const forgedShape = { ...base, emailProof: true } as unknown as SessionData;
+  assert.equal(isTrustedSession(forgedWord), false);
+  assert.equal(isTrustedSession(forgedShape), false);
+  // No claim and no mv: nothing says this address is theirs. (In production a
+  // google/microsoft cookie in this shape never even verifies - the module's
+  // verifySessionToken refuses it - but the predicate must not depend on that.)
+  assert.equal(isTrustedSession(base), false);
+  // The pre-v1.137 mv arm, kept for the staff verdict.
+  assert.equal(isTrustedSession({ ...base, mv: true }), true);
+  assert.equal(isTrustedSession({ ...base, provider: "email", mv: true }), false);
 });
 
 // ---- domain classification ----
@@ -155,8 +353,11 @@ ok("emailDomain stays strict for tenancy use", () => {
 });
 
 // ---- Microsoft staff parity (2026-08-09) ----
-// The nOAuth hole stays closed on the Microsoft lane by the per-login mv
-// claim ALONE, so these pins are the security boundary: anything other than
+// Since the module v1.137 identity binding there are TWO things between a
+// forged tenant and a staff surface - the binding (no oauth_identities row for
+// that provider account, so the sign-in is held and a link goes to the real
+// mailbox) and this claim. mv was deliberately not widened to the binding, so
+// these pins are still the boundary on this lane: anything other than
 // boolean true must fail, including the string "true" that Entra's optional
 // claim serialization produces (the strictClaimTrue family above).
 ok("isVerifiedStaffProvider: google needs no mv, microsoft needs mv === true", () => {
@@ -2353,14 +2554,22 @@ ok("exhibit credits: migration 0056 recreates the table and the lower(email) uni
   assert.ok(!mig.includes("@"), "no email address");
   assert.ok(!/[—–]/.test(mig), "no em or en dashes");
   assert.ok(mig.includes("NOT to be re-imported"), "header retires the 2026-08-29 export");
-  // Journal tail is 0056, above 0055, and the snapshot chain is honest.
+  // 0056 is journaled directly above 0055 and the snapshot chain is honest.
+  // FOUND BY TAG, NOT BY POSITION. This read "the journal tail is 0056" when
+  // it was written, which made it an assertion about every FUTURE round: the
+  // 0057 work-quality round journaled a migration above it and left this
+  // suite red until 0058 found it. What 0056 needs to be true is its own
+  // place in the ledger order drizzle applies, which is what is checked now.
   const journal = JSON.parse(readFileSync("drizzle/migrations/meta/_journal.json", "utf8"));
-  const tail = journal.entries[journal.entries.length - 1];
-  assert.equal(tail.tag, "0056_work_static_credits_return");
+  const at = journal.entries.findIndex(
+    (e: { tag: string }) => e.tag === "0056_work_static_credits_return"
+  );
+  assert.ok(at > 0, "0056 is journaled");
+  const tail = journal.entries[at];
   assert.equal(tail.idx, 56);
   assert.equal(tail.version, "7");
   assert.equal(tail.breakpoints, true);
-  const prev = journal.entries[journal.entries.length - 2];
+  const prev = journal.entries[at - 1];
   assert.equal(prev.tag, "0055_drop_work_static_credits");
   assert.ok(tail.when > prev.when, "0056 is newer than 0055 in the ledger order drizzle applies");
   const snap = JSON.parse(readFileSync("drizzle/migrations/meta/0056_snapshot.json", "utf8"));
@@ -2379,6 +2588,141 @@ ok("exhibit credits: migration 0056 recreates the table and the lower(email) uni
   const schema = readFileSync("src/lib/db/schema.ts", "utf8");
   assert.ok(schema.includes('export const workStaticCredits = pgTable(\n  "work_static_credits",'));
   assert.ok(schema.includes("RETURNED by 0056"));
+});
+
+// ---- OAuth identity binding: schema, registry, migration (module v1.137) ----
+ok("migration 0058 creates the two OAuth binding tables and nothing else, chained on 0057", () => {
+  const path = "drizzle/migrations/0058_oauth_identities.sql";
+  assert.ok(existsSync(path), "0058 exists");
+  const mig = readFileSync(path, "utf8");
+  assert.ok(
+    mig.includes('CREATE TABLE IF NOT EXISTS "oauth_identities" ('),
+    "IF NOT EXISTS create for oauth_identities"
+  );
+  assert.ok(
+    mig.includes('CREATE TABLE IF NOT EXISTS "oauth_confirmations" ('),
+    "IF NOT EXISTS create for oauth_confirmations"
+  );
+  // The two keys the module's gate depends on: the upsert target of
+  // recordBinding, and the single-use token lookup.
+  assert.ok(
+    mig.includes('CONSTRAINT "oauth_identities_provider_subject_email_key" UNIQUE("provider","subject","email")'),
+    "the binding upsert target"
+  );
+  assert.ok(
+    mig.includes('CONSTRAINT "oauth_confirmations_token_hash_unique" UNIQUE("token_hash")'),
+    "one row per emailed token"
+  );
+  assert.ok(
+    mig.includes('CREATE INDEX IF NOT EXISTS "oauth_identities_email_idx" ON "oauth_identities" USING btree ("email");'),
+    "the by-address sweep index revokeOAuthIdentities uses"
+  );
+  // Both tables ship EMPTY: a row here asserts that a named person's mailbox
+  // was proved, so a seed would hand an account an address it never proved.
+  assert.ok(
+    !/^\s*(insert|drop|delete|update)\b/im.test(mig),
+    "no insert, drop, delete or update"
+  );
+  assert.ok(!mig.includes("@"), "no email address");
+  assert.ok(!/[—–]/.test(mig), "no em or en dashes");
+  const statements = mig.match(/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/gim) ?? [];
+  assert.equal(statements.length, 3, "two tables and one index");
+  // Journaled as the tail, above 0057, with an honest snapshot chain: a file
+  // numbered below a committed migration is skipped silently on a database
+  // that already ran the higher one, and the site then REFUSES TO BOOT
+  // because both tables are required whenever google or microsoft is on.
+  const journal = JSON.parse(readFileSync("drizzle/migrations/meta/_journal.json", "utf8"));
+  const tail = journal.entries[journal.entries.length - 1];
+  assert.equal(tail.tag, "0058_oauth_identities");
+  assert.equal(tail.idx, 58);
+  assert.equal(tail.version, "7");
+  assert.equal(tail.breakpoints, true);
+  const prev = journal.entries[journal.entries.length - 2];
+  assert.equal(prev.tag, "0057_work_quality");
+  assert.ok(tail.when > prev.when, "0058 is newer than 0057 in the ledger order");
+  const snap = JSON.parse(readFileSync("drizzle/migrations/meta/0058_snapshot.json", "utf8"));
+  const snap57 = JSON.parse(readFileSync("drizzle/migrations/meta/0057_snapshot.json", "utf8"));
+  assert.equal(snap.prevId, snap57.id, "0058 chains off 0057");
+  assert.ok(
+    !JSON.stringify(snap57).includes("oauth_identities"),
+    "0057 snapshot still has neither table"
+  );
+  for (const t of ["public.oauth_identities", "public.oauth_confirmations"]) {
+    assert.ok(snap.tables[t], `0058 snapshot carries ${t}`);
+  }
+  assert.deepEqual(Object.keys(snap.tables["public.oauth_identities"].columns), [
+    "id",
+    "provider",
+    "subject",
+    "email",
+    "verified_via",
+    "verified_at",
+    "last_seen_at",
+    "revoked_at",
+    "created_at",
+  ]);
+});
+
+ok("both binding tables are composed from the module factories and REGISTERED", () => {
+  const schema = readFileSync("src/lib/db/schema.ts", "utf8");
+  assert.ok(schema.includes("export const oauthIdentities = makeOauthIdentitiesTable();"));
+  assert.ok(schema.includes("export const oauthConfirmations = makeOauthConfirmationsTable();"));
+  // Registration is what makes them the tables the module's gate reads and
+  // writes; composing without registering fails BOOT, by design, because an
+  // OAuth door without its binding table must never fall back to trusting
+  // the email the provider reported.
+  const registry = readFileSync("src/lib/db/index.ts", "utf8");
+  assert.ok(registry.includes("oauthIdentities: schema.oauthIdentities,"));
+  assert.ok(registry.includes("oauthConfirmations: schema.oauthConfirmations,"));
+});
+
+ok("the hardened callback mints emailProof and calls the module's gate, not a fork of it", () => {
+  const src = readFileSync("src/lib/auth/oauth-hardened.ts", "utf8");
+  // One implementation of the judgement: the module's.
+  assert.ok(src.includes('from "@aicompany/core/auth/oauth-identity"'));
+  for (const fn of [
+    "gateOAuthIdentity",
+    "consumeOAuthConfirmation",
+    "isOAuthConfirmRequest",
+    "decodeGoogleIdToken",
+    "decodeMicrosoftIdToken",
+    "googleVouch",
+    "microsoftVouch",
+  ]) {
+    assert.ok(src.includes(fn), `the callback uses the module's ${fn}`);
+  }
+  // Every session this file mints carries the proof claim, spread LAST so a
+  // sessionExtras hook can neither forge nor drop it. Without it the module's
+  // verifySessionToken refuses the cookie and the person loops to /login.
+  assert.ok(src.includes('emailProof: "oauth-binding" as const'));
+  assert.ok(src.includes("const { emailProof: _reserved, ...extras }"));
+  // Exactly one signSession call: the single minting path the header claims.
+  assert.equal((src.match(/signSession\(/g) ?? []).length, 1);
+  // The silent re-verify lane can never show "check your email".
+  assert.ok(src.includes("silent: isSilentRoundTrip"));
+  assert.ok(!/[—–]/.test(readFileSync("src/app/login/page.tsx", "utf8")), "login copy has no em or en dashes");
+});
+
+ok("the login page renders a notice code as a notice, not a red alert", () => {
+  const page = readFileSync("src/app/login/page.tsx", "utf8");
+  assert.ok(page.includes("loginNoticeCodes"), "the module's set decides");
+  assert.ok(page.includes('role={isNotice ? "status" : "alert"}'));
+  assert.ok(page.includes('color: isNotice ? "var(--xl-text)" : "#e5484d"'));
+});
+
+ok("site.config trusts the xl.net directory by GUID, and pins nothing wider", () => {
+  const cfg = readFileSync("site.config.ts", "utf8");
+  assert.ok(cfg.includes("oauthBinding: {"));
+  assert.ok(
+    cfg.includes('"xl.net": ["9dba33c9-d308-45ff-bb8d-4eedc89d7c01"]'),
+    "the Entra directory that has xl.net as a verified domain"
+  );
+  // The trust is DOMAIN-SCOPED. A GUID MICROSOFT_TENANT_ID would trust that
+  // directory for every address it reports, which is a wider grant than this.
+  assert.ok(
+    readFileSync(".env.example", "utf8").includes("MICROSOFT_TENANT_ID=common"),
+    "the tenant stays common"
+  );
 });
 
 console.log(`\nroadmap-tests (incl. dkim): ${passed} checks passed`);

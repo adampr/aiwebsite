@@ -43,6 +43,8 @@ import {
   makeBlogPostsTable,
   makeIpOrgsTable,
   makeMemoryDeletionLogsTable,
+  makeOauthConfirmationsTable,
+  makeOauthIdentitiesTable,
   makePageVisitsTable,
   makePhoneVerificationsTable,
   makeReportedIssuesTable,
@@ -662,3 +664,14 @@ export * from "./chase-schema";
 // tokens. Registered with the module client in index.ts; enabled 2026-08-04
 // as the roadmap's provider-agnostic trusted sign-in lane (§5.18).
 export const magicLinks = makeMagicLinksTable();
+
+// OAuth identity binding (module §5.5 v1.137). oauth_identities says which
+// provider ACCOUNT - its provider-immutable subject, never the email it
+// reports - may sign in as which address; oauth_confirmations holds the held
+// sign-ins waiting on a one-time emailed link. BOTH are required at boot
+// while auth.providers.google or .microsoft is on (module requiredTableKeys),
+// so they are registered in index.ts beside magicLinks. The site mounts its
+// own callbacks (src/lib/auth/oauth-hardened.ts), which call the module's
+// gate, so these are the tables that gate reads and writes.
+export const oauthIdentities = makeOauthIdentitiesTable();
+export const oauthConfirmations = makeOauthConfirmationsTable();

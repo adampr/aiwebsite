@@ -17,15 +17,30 @@
 //    Google-trust argument is DOMAIN-SPECIFIC (xl.net is a Google Workspace
 //    domain); for arbitrary client domains a Google account can carry an
 //    unverified email.
-// So the roadmap trusts only sessions whose email was VERIFIED at sign-in:
-// the host-owned hardened callbacks (src/lib/auth/oauth-hardened.ts) stamp
-// an HMAC-covered per-login `mv: true` claim when the provider proved
-// mailbox/domain ownership (Google `email_verified`, Microsoft `xms_edov`),
-// and magic-link sign-in proves mailbox control by construction. The claim
-// is per-login, never a stored users-row flag: a stored flag would let a
-// later forged login inherit an earlier genuine verification.
+// So the roadmap trusts only sessions whose email was PROVED at sign-in.
+// Since module v1.137 that proof is the OAuth identity binding: an address is
+// accepted from a provider account only once that account (its immutable
+// subject, never the email it reports) has proved it reads the mailbox, by a
+// one-time emailed link or by a vouch narrow enough to stand in for one. The
+// session records it as `emailProof`, the module's sessionProvesMailbox()
+// reads it, and a google/microsoft cookie WITHOUT it is refused outright by
+// verifySessionToken. Magic-link sign-in proves mailbox control by
+// construction and carries the same claim.
+//
+// The per-login `mv: true` claim from the host-owned hardened callbacks
+// (src/lib/auth/oauth-hardened.ts) still exists and still means exactly what
+// it meant: the PROVIDER's own word proved this address (Google
+// email_verified on an account Google runs, Microsoft xms_edov). It is no
+// longer what this gate turns on - the binding is stronger and covers every
+// session - but it is still the staff verdict in src/lib/rfp/access.ts. It is
+// per-login, never a stored users-row flag: a stored flag would let a later
+// forged login inherit an earlier genuine verification.
 
-import { readSession, type SessionData } from "@aicompany/core/auth/session";
+import {
+  readSession,
+  sessionProvesMailbox,
+  type SessionData,
+} from "@aicompany/core/auth/session";
 import { isAdmin } from "@aicompany/core/auth/guard";
 import { redirect } from "next/navigation";
 import { siteConfig } from "site.config";
@@ -47,21 +62,27 @@ import {
 } from "@/lib/roadmap/domains";
 
 /**
- * Is this session's email claim VERIFIED enough to be a tenancy key?
+ * Is this session's email claim PROVED enough to be a tenancy key?
  *
- * - magic-link: proves mailbox control by construction.
- * - google / microsoft: only with the per-login `mv: true` claim from the
- *   hardened callbacks (strict-normalized email_verified / xms_edov; a
- *   session minted before the hardened callbacks shipped, or via an
- *   unverified account, has no claim and is untrusted here while remaining
- *   signed in for every public feature).
- * Adding a provider here is a security decision, not a convenience.
+ * The module's own predicate answers it (v1.137): true for a session whose
+ * address was proved by the emailed magic link, or by an OAuth sign-in that
+ * passed the identity-binding gate, or (back-compat, magic-link only) by a
+ * cookie minted before the claim existed. Using the module's function rather
+ * than restating it is deliberate: the roadmap's tenancy boundary and the
+ * module's definition of "this address is theirs" must not be able to drift.
+ *
+ * The second arm is the pre-v1.137 rule, kept and now nearly unreachable:
+ * verifySessionToken REFUSES a google/microsoft cookie that carries no proof
+ * claim, so every live session with `mv` also has `emailProof` and was
+ * already admitted above. It stays because `mv` is still the STAFF verdict
+ * (src/lib/rfp/access.ts) and a future door could mint it.
+ *
+ * Widening either arm is a security decision, not a convenience.
  */
 export function isTrustedSession(s: SessionData): boolean {
+  if (sessionProvesMailbox(s)) return true;
   const p = s.provider?.trim().toLowerCase();
-  if (p === "magic-link") return true;
-  if (p === "google" || p === "microsoft") return s.mv === true;
-  return false;
+  return (p === "google" || p === "microsoft") && s.mv === true;
 }
 
 export type RoadmapPrincipal = {
@@ -180,6 +201,17 @@ export type RoadmapHubView =
  * trusted check (catches pre-hardening staff sessions) AND before the
  * principal path (xl.net is RESERVED, so a trusted staff session would
  * otherwise land in the "use your work email" explainer).
+ *
+ * WHAT v1.137 DID TO THE "unverified" BRANCH, and why it is still here. Every
+ * session the OAuth doors now mint has passed the binding gate, so it proves
+ * its mailbox and isTrustedSession admits it: the branch, and with it the
+ * silent re-verify bounce, is unreachable for a live Google or Microsoft
+ * session. That is the binding doing the job the silent lane was built to do
+ * (it existed to rescue pre-hardening sessions, which verifySessionToken now
+ * refuses outright). The branch still guards a session that proves nothing -
+ * a future door, or a provider this host renames - and the reverify route
+ * makes the same isTrustedSession check before it bounces, so the two can
+ * never disagree and loop.
  */
 export async function readRoadmapHubView(): Promise<RoadmapHubView> {
   const session = await readSession(siteConfig);

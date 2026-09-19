@@ -15,7 +15,10 @@
 > only what this host configures and mounts (site.config.ts values, wrapper routes, the
 > host-owned tables and scripts); rebuild the module from its own doc.
 
-> **Module pin: @aicompany/core v1.133.0 (2026-09-16), submodule 188cb55 (= tag v1.133.0).**
+> **Module pin: @aicompany/core v1.137.0 (2026-09-19), submodule at the `v1.137.0` tag = `48f23d8`.**
+> §5.4/§5.5 v1.137.0 OAUTH IDENTITY BINDING ADOPTED. NEW MIGRATION `0058_oauth_identities` (two tables, `oauth_identities` + `oauth_confirmations`, both REQUIRED at boot while `auth.providers.google || .microsoft`). NEW site.config key `auth.oauthBinding.trustedMicrosoftTenants` (`xl.net` → the Entra directory `9dba33c9-d308-45ff-bb8d-4eedc89d7c01`). NEW optional env `MICROSOFT_TRUSTED_TENANTS` (unset here). The module no longer believes the email a provider reports: an address is accepted from a Google or Microsoft account only once THAT account's immutable subject has proved it, and the session records the proof as `emailProof: "oauth-binding"`. **EVERY EXISTING GOOGLE/MICROSOFT SESSION ON THIS HOST DIES AT CUTOVER** — the module's `verifySessionToken` refuses a `google`/`microsoft` payload with no proof claim, because those cookies were minted by the doors that trusted the reported email and there is no telling an honest one from a forged one after the fact. Everyone signed in through an OAuth door signs in once more; magic-link sessions are untouched. This host does NOT mount the module callback (§5.4 "OAuth identity binding"), so the adoption is a rewiring of `src/lib/auth/oauth-hardened.ts` onto the module's exported gate, not a version bump. v1.136.0's `site_page_chunks` is deliberately NOT adopted (retrieval fails closed without the table; adoption is a separate owner decision with a crawl cost).
+>
+> Previous pin: v1.133.0 (2026-09-16), submodule 188cb55 (= tag v1.133.0).
 > §5.3 v1.133.0 REPLY ELIGIBILITY ON (owner-approved 2026-09-16, site.config `channels.email.replyPolicy { enabled: true, protectedNames: ["Adam Radulovic"] }`): the persona answers a stranger only when the mail is addressed to the persona mailbox (`channels.email.mailbox`, Tron.Netter@ai.xl.net), carries no RFC 3834 auto-response signal, does not wear a protected display name on a non-owner address, authenticates at the receiving hop (raw header block via `raw.download_url`, fail closed), is under the 5/day brain-turn cap, and one tool-less brain screen classifies it as a genuine inquiry. Refusals are forwarded to oversight with a named kind (`FWD <kind> inbound:`) or, for screened lures/bulk, recorded on ONE self-retiring ledger row — the sender receives nothing, and the failureMessage apology never runs for a screen failure. Before this pin the handler answered every authenticated stranger, exactly as itsupportchicago did before its two 2026-09-14/15 phishing replies. Module spec: packages/aicompany/architecture.md §5.3 "Reply eligibility"; MIGRATIONS v1.133.0 (mail delta 0 on the measured week, ≤0 steady).
 >
 > Previous pin: v1.131.0 (2026-09-16), submodule a174182.
@@ -2394,6 +2397,89 @@ silence). aiwebsite facts:
   email-intake.ts, work/notify.ts, requests-notify.ts). Module-internal sends
   (`@aicompany/core` `sendEmail`) and the rendered deploy scripts are not host code;
   the module owns their headers.
+
+#### OAuth identity binding (module v1.137, migration `0058_oauth_identities`)
+
+**What was wrong.** Both doors keyed `users.email` on the address the provider
+reported. Microsoft's is Graph `mail`, which the admin of whatever Entra tenant the
+account lives in can PATCH to anything, and `MICROSOFT_TENANT_ID=common` means anyone
+can bring their own tenant: the published nOAuth forgery. Google's userinfo was read
+without looking at `email_verified` at all. This host had ONE mitigation, the per-login
+`mv` claim, and it covered only the surfaces that read it (§5.17, §5.18) — every other
+signed-in surface believed the forged address.
+
+**What is true now.** The module binds the provider's IMMUTABLE account id to the
+address, and this host calls exactly the module's exported gate — there is no second
+copy of that judgement in `src/`:
+
+- **Subject.** Google: the ID TOKEN's `sub`, and the sign-in is refused when userinfo's
+  `sub` differs (OIDC Core 5.3.4). Microsoft: `tid:oid` from the ID TOKEN, lowercased.
+  Graph's `id` is deliberately NOT compared with `oid` — for personal Microsoft accounts
+  they are not documented to be equal and the check would lock out every outlook.com
+  user. No usable id token means no subject, which fails `userinfo`.
+- **The EMAIL derivation did not change** (Google userinfo `email`; Microsoft Graph
+  `mail || userPrincipalName`). Changing it would re-key existing `users` rows. The id
+  token judges and NAMES the account; it never supplies the address.
+- **The gate.** `gateOAuthIdentity()` runs at the head of the single session-minting
+  `try` block in `src/lib/auth/oauth-hardened.ts`, after the archived check and
+  `rejectEmail` (its documented precondition: a rejected or archived address is never
+  sent mail). `bound` continues; `held` returns the module's `/login` redirect and mints
+  NOTHING, leaving any existing cookie alone.
+- **Held sign-ins.** An unknown account claiming an address gets a one-time link mailed
+  to that address, and the binding is written only when the link is opened IN THE
+  BROWSER THAT STARTED THE SIGN-IN (two secrets: the mailed token and a nonce cookie,
+  `aiwebsite_oauth_confirm_google` / `aiwebsite_oauth_confirm_microsoft` — named PER
+  PROVIDER, so a hold on one door never disturbs a hold on the other, and a link minted
+  for one provider presented on the other's callback finds no row at all).
+  The link lands on the SAME callback path (`?confirm=`), so this host gained no route,
+  no middleware matcher and no CSRF entry: `isOAuthConfirmRequest()` claims it at the
+  top of the handler, before the `code`/`state` check.
+- **Vouches that skip the mail.** Google: `email_verified` strictly true AND the token's
+  own email IS the address AND Google runs that mailbox (`@gmail.com`/`@googlemail.com`
+  or `hd` equal to the address's domain). Microsoft: `xms_edov` strictly true for the
+  token's own `email` claim, or the OPERATOR's trusted-tenant word — `site.config.ts`
+  maps `xl.net` to `9dba33c9-d308-45ff-bb8d-4eedc89d7c01`, the Entra directory that has
+  xl.net as a verified domain (read 2026-09-19 from
+  `https://login.microsoftonline.com/xl.net/v2.0/.well-known/openid-configuration`).
+  `MICROSOFT_TENANT_ID` stays `common`: pinning it to a GUID would trust that directory
+  for EVERY address it reports, which is wider than the domain-scoped map.
+- **`mv` DID NOT CHANGE ITS MEANING**, only where its code lives. `googleVerdict()` /
+  `microsoftVerdict()` in `oauth-hardened.ts` are the same rule expressed through the
+  module's vouch functions, called with NO operator trust passed in, so a
+  trusted-tenant binding never mints `mv`. The one tightening: Google's `mv` now also
+  requires a Gmail/Workspace mailbox, because `email_verified` on a third-party address
+  is, in Google's own words, a check made when the account was created and not a verdict
+  about who reads the mailbox today. Those people prove the address by email once, which
+  is stronger, and §5.18 admits them on the binding.
+- **Session claim.** Every session this file mints carries `emailProof: "oauth-binding"`,
+  spread after the `sessionExtras` hook and stripped from it (a reserved claim, like
+  `userId`/`email`). Hosts ask `sessionProvesMailbox(session)`; §5.18's
+  `isTrustedSession` now does.
+- **The silent re-verify lane (§5.18) passes `silent: true`.** A `prompt=none` round trip
+  has no UI and must never mail anybody: the gate then decides without doing anything
+  durable (no confirmation row, no cookie, no mail, no rate-limit spend, no `auth_logs`
+  row) and a `held` answer is treated exactly as a round trip that came back without
+  `mv` — the existing session is untouched, the `aix_rv` guard is kept so the hub renders
+  the verification screen rather than bouncing again, and one `auth_logs` failure row
+  records it.
+- **Both tables are REQUIRED at boot** (module `requiredTableKeys`) whenever google or
+  microsoft is on, which is why they are in `registerTables` (§6): an OAuth door whose
+  binding table is missing must fail to start, never fall back to trusting the email.
+
+**Cutover cost, stated plainly:** everyone signed in with Google or Microsoft is signed
+out once by the deploy and signs in again. Accounts that get a vouch (xl.net Microsoft,
+Gmail, Google Workspace domains) see no email; everyone else confirms once, ever.
+
+**One rule this deliberately does NOT inherit.** §5.18's magic-link wrapper refuses to
+mail a sign-in link to an xl.net or ai.xl.net address, because a magic link IS a session
+in an email and ai.xl.net is a machine-read intake mailbox. The confirmation link is not
+that: on its own it signs nobody in, because binding needs the mailed token AND the nonce
+cookie held by the browser that started the sign-in — a robot that opens it consumes
+nothing and binds nothing, and the link stays alive for the real person. So the
+confirmation mail is NOT domain-suppressed; suppressing it would lock out any staff
+account that failed to earn a vouch rather than protect anything. In practice no staff
+address should ever receive one: an @xl.net Microsoft sign-in is vouched by the trusted
+tenant, and an @xl.net Google sign-in by the Workspace `hd` claim.
 
 #### Archived accounts (module v1.74, migration `0037_archive_users`)
 
@@ -8529,6 +8615,16 @@ per-login `mv: true` claim (Microsoft parity, 2026-08-09). It is deliberately NO
   explainer naming both sign-ins), never a blank surface.
 - It changes nothing for members of the public who sign in with Microsoft
   elsewhere.
+- **The nOAuth path now has a SECOND door in front of it (module v1.137, §5.4),
+  and this gate did not move.** The forger's tenant can still PATCH `mail` to
+  `someone@xl.net`, but their provider account holds no `oauth_identities`
+  binding for that address and earns no vouch (their `tid` is not the trusted
+  xl.net directory, and `xms_edov` is false for a domain they do not own), so
+  the sign-in is HELD and a confirmation link goes to the real mailbox, which
+  they cannot open in their own browser. `mv` was deliberately NOT widened to
+  the binding: it still means "the provider's own word proved this address",
+  the trusted-tenant vouch never mints it, and this gate still requires it for
+  Microsoft. The binding is a belt in front of the braces, not a replacement.
 - `provider` and `mv` are set server-side (users row / hardened callback) and
   covered by the session HMAC, so neither is client-supplied.
 - Subdomains do NOT pass: `@ai.xl.net` is this system's own automation
@@ -9439,7 +9535,25 @@ sold-out and date-TBA states on its own clock, and since a company that
 already bought is told the same thing.
 
 **Trust model (the §5.18 core).** A session is roadmap-trusted iff its email
-claim was VERIFIED at sign-in:
+claim was PROVED at sign-in. **Since the module v1.137 pin that question has ONE
+answer for the whole fleet and the roadmap asks it rather than restating it:**
+`isTrustedSession()` returns `sessionProvesMailbox(session)` from
+`@aicompany/core/auth/session`, which is true for a session carrying
+`emailProof` (`"magic-link"` from the emailed link, `"oauth-binding"` from an
+OAuth sign-in that passed the identity-binding gate — §5.4) and, for
+back-compat, for a `magic-link` cookie minted before the claim existed. The
+old `mv` arm is kept below it and is now nearly unreachable: the module's
+`verifySessionToken` REFUSES a google/microsoft cookie with no proof claim, so
+every live session that carries `mv` carries `emailProof` too and was already
+admitted. `mv` has not changed meaning and is still the STAFF verdict (§5.17).
+**Consequence, stated because it is easy to miss:** every session the OAuth
+doors now mint proves its mailbox, so the "unverified" hub branch and with it
+the SILENT RE-VERIFY LANE below are unreachable for a live Google or Microsoft
+session. That is the binding doing the job the silent lane was built to do (it
+existed to rescue pre-hardening sessions, which no longer verify at all). Both
+`readRoadmapHubView()` and `/api/auth/reverify` make the same
+`isTrustedSession` check, so they cannot disagree and loop. The two proofs, as
+they stand today:
 - `magic-link` — proves mailbox control by construction. Enabled 2026-08-04:
   `auth.providers.magicLink: true`, `magic_links` registered in
   `registerTables`, module factories mounted at `POST /api/auth/email/request`
@@ -9452,15 +9566,21 @@ claim was VERIFIED at sign-in:
   in a 10-minute `aix_return` cookie) and `GET /auth/email/verify` (HOST
   WRAPPER: rewrites the module's hard-coded `/` success redirect to the
   cookie's path).
-- `google` / `microsoft` — only with the per-login HMAC-covered `mv: true`
-  session claim minted by the HOST-OWNED HARDENED CALLBACKS
+- `google` / `microsoft` — the identity binding (§5.4, module v1.137): the
+  provider ACCOUNT behind the sign-in holds a live `oauth_identities` row for
+  this address, written by a one-time emailed link or by a vouch narrow enough
+  to stand in for one, and the session says so with `emailProof:
+  "oauth-binding"`. The HOST-OWNED HARDENED CALLBACKS
   (`src/lib/auth/oauth-hardened.ts`, mounted at both `/auth/*/callback`
-  routes in place of the module handlers). Same pipeline as the module
+  routes in place of the module handlers) run the module's pipeline
   (state check, exchange, profile, rejectEmail/classifyUser, upsertUser,
-  auth_logs, cookie) plus the verification the module discards: Google's
-  userinfo `email_verified`, and for Microsoft the id_token's `xms_edov`
-  (Microsoft's published nOAuth mitigation) with `aud`/`iss`/`exp`
-  validated. EMAIL CONTINUITY: the upsert email stays exactly what the
+  auth_logs, cookie) and call the module's gate at the head of the one
+  session-minting `try` block; a `held` answer mints nothing at all. They add
+  one thing the module's callback does not: the per-login HMAC-covered
+  `mv: true` claim, stamped when the PROVIDER's own word proved the address —
+  Google `email_verified` on a mailbox Google runs, or for Microsoft the
+  id_token's `xms_edov` (Microsoft's published nOAuth mitigation) with
+  `aud`/`iss`/`exp` validated. EMAIL CONTINUITY: the upsert email stays exactly what the
   module used (Google userinfo email; Graph `mail || userPrincipalName`) so
   no users rows fork; the id_token JUDGES the email, never IS it. STRICTNESS
   RULE (refutation blocker): Entra serializes optional claims as strings on
@@ -9468,16 +9588,24 @@ claim was VERIFIED at sign-in:
   verification claim goes through `strictClaimTrue()` (only `true` or
   `"true"` pass; `scripts/roadmap-tests.ts` pins it). The one-time Entra
   setup (optional claims `email` + `xms_edov` on the ID token) was completed
-  2026-08-04, so a Microsoft login now mints `mv` whenever `xms_edov` is
-  strictly true; sessions minted BEFORE that date carry no `mv` and are
-  re-verified either by the silent lane or by an explicit re-login (reserved
-  staff domains never get the email-link lane). The claim is per-login,
+  2026-08-04, so a Microsoft login mints `mv` whenever `xms_edov` is
+  strictly true. Sessions minted BEFORE that date no longer exist: since
+  v1.137 a google/microsoft cookie with no `emailProof` does not verify at
+  all, so the whole pre-hardening population signed in again through the
+  binding gate. The claim is per-login,
   never a stored users-row flag (a stored flag would let a later forged
-  login inherit an earlier genuine verification). PIPELINE-PARITY RULE
+  login inherit an earlier genuine verification). SINCE v1.137 `mv` IS NOT
+  WHAT THIS SECTION GATES ON — the binding is, and `mv` survives as the
+  §5.17 staff verdict; the verdict functions moved onto the module's vouch
+  helpers (`googleVerdict`/`microsoftVerdict` call `googleVouch`/
+  `microsoftVouch` with NO operator trust passed in, so the trusted-tenant
+  word that binds an xl.net Microsoft account never mints `mv`).
+  PIPELINE-PARITY RULE
   (module v1.74): because these handlers REIMPLEMENT the pipeline, a refusal
   the module adds to `handleOAuthUser()` does NOT reach this site — it must be
-  mirrored here by hand. `isEmailArchived()` is (§5.4 "Archived accounts");
-  the next one has the same obligation.
+  mirrored here by hand. `isEmailArchived()` is (§5.4 "Archived accounts"),
+  and the v1.137 binding gate is the second; the next one has the same
+  obligation.
 
 **Domain classification** (`src/lib/roadmap/domains.ts`, constants in code):
 `RESERVED_DOMAINS` xl.net + ai.xl.net (would shadow the staff intake lane;
@@ -11621,12 +11749,16 @@ One local **PostgreSQL** instance, one database **`aiwebsite`** (role `aiwebsite
 brain tables carry the prefix **`brain_`** (`BRAIN_DB_TABLE_PREFIX`).
 
 **Site tables** — drizzle-managed. `src/lib/db/schema.ts` is the single source of truth:
-the 12 shared tables are composed from **@aicompany/core's schema factories** (module
+the 20 shared tables are composed from **@aicompany/core's schema factories** (module
 architecture.md §6 — `makeUsersTable({...textingUserColumns})`, `makeAuthLogsTable`,
 `makePageVisitsTable`, `makeIpOrgsTable`, `makeAdminEmailsTable`, `makeSmsConsentLogsTable`,
 `makePhoneVerificationsTable`, `makeSmsPromptEventsTable`, `makeSmsMemoryNoticesTable`,
 `makeMemoryDeletionLogsTable`, `makeBlogPostsTable` — added at blog adoption, migration
-`0006` — and `makeSmsNoticesTable`, added at the v1.2.1 bump, migration `0007`) plus the
+`0006` — `makeSmsNoticesTable`, added at the v1.2.1 bump, migration `0007`, and since
+then `makeBlogHeroImagesTable`, `makeBlogAudioTable`, `makeBlogMetricsTable`,
+`makeReportedIssuesTable`, `makeSeoRubricRecordsTable`, `makeMagicLinksTable` (§5.18)
+and, at the v1.137 pin, `makeOauthIdentitiesTable` + `makeOauthConfirmationsTable`
+— migration `0058`, §6.z) plus the
 host-owned `contact_submissions`; the composed
 shapes are byte-identical to the legacy inline definitions (existing rows are the module's
 source shape — module MIGRATIONS.md). `src/lib/db/index.ts` registers the composed set with
@@ -12300,7 +12432,18 @@ returned account is discarded without touching the session (login_hint is
 non-binding; without this a browser signed into a different account at the
 same provider would be silently identity-swapped); (c) aix_rv deleted ONLY
 when mv was minted; success-without-mv keeps the guard and appends
-?verify=<provider>_unverified so the confirm screen can explain. (3) The confirm screen
+?verify=<provider>_unverified so the confirm screen can explain; (d) since
+the module v1.137 pin the callback passes `silent: true` to
+`gateOAuthIdentity()` on exactly this round-trip, because a prompt=none trip
+has no UI and must NEVER mail anybody a confirmation link. The gate then
+decides without doing anything durable (no confirmation row, no nonce cookie,
+no mail, no rate-limit spend, no auth_logs row of its own) and a `held` answer
+is handled exactly as success-without-mv is: the existing session is untouched,
+the guard is kept, the person returns to the roadmap, and one auth_logs failure
+row (`silent reverify unbound account`) is the trace. THE WHOLE BRANCH IS NOW
+COLD IN PRACTICE: every OAuth session that exists after v1.137 proves its
+mailbox, so the hub admits it and never fires the bounce (see the trust model
+above). (3) The confirm screen
 reads as VERIFICATION ("One last check", "You are signed in as {email} and
 your session is fine"), shows the session address as static text (the
 editable input was relabeled-login dishonesty), suppresses the email option
@@ -12400,6 +12543,48 @@ NEVER `push` — push silently drops them).
 | `work_submissions.company_id` | the tenancy axis: NULL = public /work lane, RESTRICT on delete; CHECK `work_sub_company_no_update_ck` (company updates impossible); title-uniqueness indexes re-created per-tenant with unchanged names |
 | `work_submissions.time_saved_minutes` | 0049, nullable, NULL = not reported: the submitter's self-reported minutes saved per month (§5.16). The scorecard's `Time saved / mo` column sums it per person inside the EXISTING counts aggregate, so it inherits that query's `status = 'published'` predicate - published-only is mandatory here, since a nonzero cell on a person with 0 published would reveal that a colleague was held or failed, and the same predicate keeps a superseded card from being counted beside its replacement. Migration-only CHECK 1..44640 |
 | `work_requests` | §5.19 requested-work board (migration 0038, own file `work-requests-schema.ts`): same company_id axis (NULL = internal lane, RESTRICT); status machine + caps columns; migration-only CHECKs (status set, value >= 0, claimed-implies-developer) and partial indexes for the 5-open and 3-concurrent cap counts. Offboarding purge order: these rows BEFORE the companies row |
+
+### 6.z OAuth identity binding tables (module v1.137, migration 0058)
+
+Two module-factory tables, composed in `schema.ts` beside `magic_links` and registered in
+`src/lib/db/index.ts`. They are **required at boot** while `auth.providers.google` or
+`.microsoft` is on, so this migration is not optional for the cutover: without them the
+site refuses to start rather than fall back to trusting the email a provider reported
+(§5.4 "OAuth identity binding"). Both ship EMPTY and are written only by the module's
+gate during a sign-in — a row here asserts that a named person's mailbox was proved, so
+a seed would hand an account an address it never proved.
+
+```sql
+oauth_identities   id serial PK, provider text NOT NULL,          -- 'google' | 'microsoft'
+                   subject text NOT NULL,                          -- google: sub; microsoft: tid:oid (lowercased)
+                   email text NOT NULL,                            -- lowercased
+                   verified_via text NOT NULL,                     -- 'email-link' | 'provider' | 'trusted-tenant'
+                   verified_at timestamptz NOT NULL,
+                   last_seen_at timestamptz NOT NULL default now(),
+                   revoked_at timestamptz, created_at timestamptz default now(),
+                   UNIQUE oauth_identities_provider_subject_email_key (provider, subject, email),
+                   INDEX  oauth_identities_email_idx (email)
+                   -- live = revoked_at IS NULL AND last_seen_at within auth.oauthBinding
+                   -- .maxIdleDays (180 here, the module default): a mailbox can change
+                   -- hands, so an unused binding is re-confirmed rather than trusted
+                   -- forever. The UNIQUE is recordBinding()'s upsert target, so
+                   -- re-confirming revives the SAME row instead of stacking another.
+
+oauth_confirmations id serial PK, provider text NOT NULL, subject text NOT NULL,
+                   email text NOT NULL, display_name text,
+                   token_hash text NOT NULL UNIQUE,                -- sha256 of the emailed token
+                   browser_hash text NOT NULL,                     -- sha256 of the nonce in the STARTING browser
+                   redirect text,                                  -- raw requested target, re-validated when used
+                   expires_at timestamptz NOT NULL,                -- auth.oauthBinding.confirmTtlMinutes (30)
+                   used_at timestamptz, created_at timestamptz default now()
+                   -- TWO secrets, both stored only as hashes. The nonce is the whole
+                   -- point: without it a stranger starts a sign-in, the real owner gets
+                   -- a mail, clicks it to see what it is, and has just approved the
+                   -- stranger's account. A missing or wrong nonce leaves the row ALIVE
+                   -- and binds nothing, so a mail scanner's pre-fetch costs nobody
+                   -- anything. Single use is a WHERE clause on the UPDATE, not a code
+                   -- path, so two concurrent clicks cannot both win.
+```
 
 ## 7. The brain contract (what the site depends on)
 
@@ -13352,7 +13537,8 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | Admin | `INTERNAL_TRACK_SECRET` | auth for middleware→`/api/internal/track` beacons; unset = visit tracking off (SEO/Companies pages stay empty) |
 | | `MAXMIND_DB_PATH` | optional; default `<cwd>/data/GeoLite2-ASN.mmdb` (IP→org for /admin/companies) |
 | | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | `https://ai.xl.net/auth/google/callback` (GCP project `xl-website-1682362315172`, client "ai.xl.net") |
-| | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` / `MICROSOFT_REDIRECT_URI` / `MICROSOFT_TENANT_ID` (default `common`) | Entra app `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c` |
+| | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` / `MICROSOFT_REDIRECT_URI` / `MICROSOFT_TENANT_ID` (default `common`) | Entra app `e66a2e8f-c1c1-4b63-9ffe-245db7d5363c`. `MICROSOFT_TENANT_ID` stays `common`: a GUID here would make the module's binding trust that directory for EVERY address it reports (§5.4), which is wider than the domain-scoped `site.config.ts` map |
+| | `MICROSOFT_TRUSTED_TENANTS` | **optional, UNSET here** (module v1.137, §5.4). `"domain=tid;domain=tid,tid"`, merged with `auth.oauthBinding.trustedMicrosoftTenants` in site.config.ts, which already carries the xl.net entry. It exists for a directory that must not be committed to a public repo. Tolerant: a typo drops that entry (those people get one confirmation mail) instead of taking the site down |
 | Stripe | `STRIPE_SECRET_KEY` | secret API key for `/api/checkout` (§5.10); unset ⇒ the route returns 503 and the /builders buy buttons show a friendly error |
 | | `STRIPE_PRICE_COHORT` | optional dashboard-managed Price ID override; unset ⇒ inline `price_data` ($495/mo recurring) |
 | Ticket Tailor | `TICKETTAILOR_API_KEY` | box-office API key (`api.tickettailor.com/v1`, §5.10): used ops-side to manage workshop events AND read by the site's 5-min registration-alert poller (`workshop/orders-watch.ts`); unset ⇒ the poller logs why and skips |
@@ -13453,6 +13639,18 @@ curl -s -X POST -H 'Origin: https://ai.xl.net' https://ai.xl.net/api/work/reques
 # /roadmap/scorecard renders the staff table with First-Last-or-email labels, every
 # (steps) page shows the runway shell instead of the old text strip, and a stale pre-mv
 # staff session must NOT see a blank (steps) shell.
+
+# OAuth identity binding (§5.4, module v1.137, migration 0058):
+psql -tAc "select to_regclass('public.oauth_identities') is not null"      # t
+psql -tAc "select to_regclass('public.oauth_confirmations') is not null"   # t
+# Both are REQUIRED at boot while google/microsoft are on: if either is missing the site
+# does not start, which is the designed failure. Then sign in with Google or Microsoft:
+psql -tAc "select provider, verified_via, count(*) from oauth_identities group by 1,2"
+# An xl.net Microsoft sign-in must read 'trusted-tenant' or 'provider' and send NO email;
+# an unknown outside account must send ONE confirmation mail, land on
+# /login?error=confirm_email rendered as a NOTICE (role=status, not red), and mint NO
+# session until the link is opened in the SAME browser. Everyone signed in with Google or
+# Microsoft before the cutover is signed out once: that is the dead-cookie rule, not a bug.
 
 # Governance (§5.12/§8.1) — or run everything below via deploy/verify-governance.sh:
 systemctl cat aiwebsite-governance.service | grep -E 'ExecStart|OnFailure|max-old-space'
