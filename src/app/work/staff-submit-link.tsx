@@ -68,8 +68,13 @@ export function StaffSubmitLink({
       <p className="staff-bar">
         <span className="badge badge--light">Staff</span>
         <span className="text-faint">Built something?</span>
+        {/* Chip, not underline: a plain click opens a dialog, so this acts
+            as a button; its "Your submissions" sibling stays a real
+            underlined link. .linklike is unlayered and beats the layered
+            .staff-bar a underline; the bar's min-height still applies. */}
         <a
           href="/work/submit"
+          className="linklike"
           aria-haspopup="dialog"
           onClick={(e) => {
             // Modifier/middle clicks keep real-link semantics (new tab).

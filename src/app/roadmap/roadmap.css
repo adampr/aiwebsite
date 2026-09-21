@@ -586,7 +586,7 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
    CASCADE RULE (refuter-verified): do NOT set `transition` on .rmp-card -
    this unlayered rule would clobber the layered .rise entrance transition.
    Transitions live only on .rmp-card::before (opacity), .rmp-card-cta
-   (color/underline), and .rmp-arrow (transform); border and background
+   (color/border/glow), and .rmp-arrow (transform); border and background
    changes on the card itself snap, accepted. */
 .rmp-card {
   position: relative;
@@ -620,14 +620,20 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   opacity: 1;
 }
 
-/* The CTA: mono, tracked, uppercase (the register .btn--text carried
-   before its 2026-09-21 compact-ghost redefinition) with a hairline
-   underline that brightens and glows on hover. NOT in the underline-only
-   button sweep: the pressable surface here is the whole CARD (the ::after
-   overlay below), whose own border and lightline answer for the
-   affordance; the underline is a label accent, not the boundary.
-   Element-agnostic: it is a
-   <Link> on every step card and a <button> on the directory idle card.
+/* The CTA: mono, tracked, uppercase in the sys-label register, worn as a
+   compact-ghost CHIP. Round 2 of the 2026-09-21 button sweep: round 1
+   scoped this class out on the theory that the whole CARD is the pressable
+   surface and the underline was only a label accent; the owner reviewed
+   production and overruled that - "See XL.net Work" and "Read the
+   document" still read as underlined hyperlinks. So the CTA now carries
+   the same hairline boundary as every other secondary control in the
+   ladder (.btn--primary > .btn > .btn--text > .linklike; futurism.css §5,
+   globals.css): idle --xl-line-bright full border, and the card's own
+   :has() hover/focus brightens it to --xl-light with the standard glow,
+   so the chip lights WITH the card border + lightline choreography.
+   Element-agnostic by declaration (border/background/cursor all explicit),
+   though today all eight sites render it on a <Link>; the directory idle
+   card's only <button> is the separate .rmp-card-action Recheck.
    MUST stay position: static so its ::after overlay resolves its containing
    block at the positioned .rmp-card. NEVER put this class on a control
    outside an .rmp-card: .panel is also position: relative, so the overlay
@@ -635,9 +641,8 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
 .rmp-card-cta {
   display: inline-block;
   margin-top: 1.25rem;
-  padding: 0.35rem 0 0.3rem;
-  border: 0;
-  border-bottom: 1px solid var(--xl-light-dim);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--xl-line-bright);
   background: none;
   cursor: pointer;
   font-family: var(--font-mono, monospace);
@@ -662,9 +667,9 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
 .rmp-card:hover .rmp-card-cta,
 .rmp-card-cta:focus-visible {
   color: var(--xl-light);
-  border-bottom-color: var(--xl-light);
-  /* bottom-only spread: the underline's glow, not a box halo */
-  box-shadow: 0 8px 8px -8px var(--xl-light-glow);
+  border-color: var(--xl-light);
+  /* the .btn hover glow, at chip scale */
+  box-shadow: 0 0 12px var(--xl-light-glow);
 }
 
 /* Focus: the card lights like hover via :has() above; this outline is the

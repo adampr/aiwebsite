@@ -506,8 +506,9 @@ html.pager-active .work-pager {
 .work-pager-foot:empty { display: none; }
 .work-pager-sizes {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-4);
+  gap: var(--sp-2);
   border: none;
   margin: 0;
   padding: 0;
@@ -517,21 +518,38 @@ html.pager-active .work-pager {
   margin-right: var(--sp-2);
   color: var(--xl-text-faint);
 }
+/* Page-size radios: a segmented control, so it speaks the round-2
+   (2026-09-21) chip grammar - bordered options, selected = lit dim border
+   + light wash - instead of the pre-sweep bare text whose only selected
+   marker was an underline (the look the owner ruled out for buttons).
+   These are <label>s around sr-only radios, hence .is-active from the
+   island and :has() for focus. The wash is two-tier like
+   .btn--text[aria-pressed], for ONE pressed-state grammar sitewide. On
+   this control's own background (the pager sits on bg-0) the light-theme
+   8% wash still passes 4.5:1 (measured 5.03); the 5% tier exists because
+   the shared grammar must also hold on bg-1/bg-2, where 8% fails. */
 .work-pager-size {
   cursor: pointer;
+  border: 1px solid var(--xl-line-bright);
+  padding: var(--sp-1) var(--sp-2);
   color: var(--xl-light-dim);
-  transition: color var(--dur-fast) var(--ease-drift);
+  transition: color var(--dur-fast) var(--ease-drift),
+              border-color var(--dur-fast) var(--ease-drift),
+              background var(--dur-fast) var(--ease-drift);
 }
-.work-pager-size:hover { color: var(--xl-light); }
+.work-pager-size:hover { color: var(--xl-light); border-color: var(--xl-light-dim); }
 .work-pager-size.is-active {
   color: var(--xl-light);
-  text-shadow: 0 0 12px var(--xl-light-glow);
-  border-bottom: 1px solid var(--xl-light);
-  padding-bottom: 2px;
+  border-color: var(--xl-light-dim);
+  background: color-mix(in oklch, var(--xl-light) 8%, transparent);
+}
+.work-pager-size.is-active:hover { border-color: var(--xl-light); }
+[data-theme="light"] .work-pager-size.is-active {
+  background: color-mix(in oklch, var(--xl-light) 5%, transparent);
 }
 .work-pager-size:has(input:focus-visible) {
   outline: 1px solid var(--xl-light-dim);
-  outline-offset: 4px;
+  outline-offset: 2px;
 }
 .work-pager-nav {
   display: flex;
