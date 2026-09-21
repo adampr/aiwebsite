@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-21 §5.12 NESTED-INDENT FIDELITY ROUND 24 (owner report on the deployed round 23: "nested indentation is still not being followed" for the AUP). ROOT CAUSE: body content depth ignored the INNER heading it sat under - blockToDocx computed list depthOffset and paragraph indent from headingShift alone, and profileListBlock indexed the profile at sectionDepth+1 regardless, so a list under a "###" sub-heading rendered at the sub-heading's own w:ind (both 720*(shift+2)) and the deliverable nested flat; round 23's e2e never caught it because its doc fixture had no inner headings and the rubric's "generated-only deeper levels are not penalized" hid exactly that region. FIX, render-side only (no migration, stored rows heal at next render): normalizeSectionBlocks tracks the inner-heading depth context and converts list markers at the level they SIT at (a lone "### a." heading's bullets now wear "i.", the 3-level cycle wraps under deeper heads), and renderDocx threads the same context into blockToDocx so lists step one ladder past their heading (2160/2880 under a top-level section's sub-heading; 1440/2160 directly under the title, byte-identical), loose paragraphs align at their heading's text column, bullets and ordered subs included; flat/profile-null renders stay byte-identical. MEASUREMENT: the rubric's indentation-ladder part now requires generated depths BEYOND a strictly rising template ladder to keep rising (docx bytes only, flat/mixed templates unaffected); pre-fix the owner-shaped fixtures score 0.87 (mixed profile: species + ladder) and 0.97 (all-decimal: ladder only, the owner's actual case), post-fix 1.000. New pins: r24 docx byte pins, the lone-sub-heading species pin, deep-flat/deep-rise rubric pins, and two full-pipeline e2e fixtures with "###"-over-list sections (mixed and all-decimal) pinned at 100 percent; ONE round-22 pin re-pinned (bullets under "### Deep" now convert at the level they sit at - the old expectation was the bug). Pane residual accepted: the doc pane keeps its flat CSS list indent (docx is the deliverable); marker species stay pane/docx-identical via the shared pass.
+
 Last verified against code: 2026-09-21 §5.12 EDITING-NOTES WINDOW, GOVERNANCE SIDE
 (completes the 2026-09-21 owner directive whose RFP half is the entry below). The
 governance doc pane's editor-process notes, the "Updated just now" change summary
@@ -4408,9 +4410,19 @@ byte-identical when the profile is null: heading paragraphs carry bold +
 neutral-black runs (the docx package's Heading defaults are blue and
 non-bold), label + real tab + title with a LEFT tab stop at the ladder
 position (the template's number+tab shape), and w:ind left = 720*(depth+1)
-hanging 360; loose body paragraphs indent to their section's ladder position;
-ordered-list numbering configs take a depthOffset so items ride one step
-below their section; unconverted bullets ride the same ladder.
+hanging 360. Round 24 makes body depth INNER-HEADING AWARE (the round-23
+ladder hung everything off the section alone, so a list under a "###"
+sub-heading shared the sub-heading's indent and nesting rendered flat -
+the owner's AUP complaint): both renderers' shared pass
+(`normalizeSectionBlocks`) tracks the depth of the heading each block sits
+under and converts list markers at that depth (bullets under a lone "a."
+sub-heading wear "i."; the >=3-level cycle wraps under deeper heads), and
+`renderDocx` threads the same context into paragraph/list emission - loose
+body paragraphs align at the text column of the heading they sit under,
+ordered-list numbering configs take depthOffset = shift + innerDepth + 1
+(items one full ladder step past their heading, subs one deeper),
+unconverted bullets ride the same ladder. A list directly under the
+section title keeps its round-23 bytes exactly.
 Refuter-forced guards, revised in round 23: same-species stacking is ALLOWED
 (the owner's re-saved template genuinely numbers decimal under decimal; depth
 is distinguished by the profile-gated indent ladder and bold headings, not by
@@ -4431,10 +4443,17 @@ only - section set/order 0.30, per-level numbering 0.30, indentation ladder
 0.15, heading emphasis 0.10, foreign list styles 0.15, with styles.xml
 bold/indent chain resolution and Word-correct w:b negation - with a
 CLI: `npx tsx scripts/lib/governance-rubric.ts <template.docx>
-<generated.docx>`) scoring the FULL pipeline (fixture template ->
+<generated.docx>`; round 24 extends the ladder part: when the template's
+observed ladder strictly rises, generated depths BEYOND its deepest
+observed depth must keep rising too, closing the blind spot where
+deeper-than-template nesting could collapse flat unpenalized) scoring the
+FULL pipeline (fixture template ->
 extractStyleSampleText -> bucket titles + profile -> adopted-outline
 renderDocx) pinned at exactly 100 percent, plus a sparse-outline e2e pinning
-the owner's real failure shape (References omitted, Scope empty) at 100 - in
+the owner's real failure shape (References omitted, Scope empty) at 100,
+plus round 24's two owner-shaped e2e fixtures (sections carrying "###"
+inner headings over lists with a nested sub-list, mixed-profile and
+all-decimal) pinned at 100 - in
 `scripts/governance-tests.ts`. ACCEPTED DESIGN: the rubric is structural, so
 a complete-but-hollow skeleton scores 1.0; the countermeasures are the adopt
 prompt's coverage pressure and the receipt/note honesty above. Deliberately NOT adopted: the section SET (blueprint

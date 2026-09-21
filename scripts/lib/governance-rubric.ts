@@ -822,6 +822,33 @@ export function scoreStructureMatch(template: DocxStructure, generated: DocxStru
         label: `d${a}->d${b} ${tSign > 0 ? "rises" : tSign < 0 ? "falls" : "flat"} (${template.levelIndent[a]}->${template.levelIndent[b]} vs ${gInd(a)}->${gInd(b)})`,
       });
     }
+    // Round 24 extension: a template whose observed ladder strictly rises at
+    // every step states the rule "each nesting level sits one step deeper".
+    // Generated depths BEYOND the template's deepest observed depth must
+    // keep rising too: the round-24 failure (list paragraphs under an inner
+    // heading sharing the heading's indent) collapsed exactly in that
+    // deeper-than-template region, where "generated-only deeper levels are
+    // not penalized" used to hide it. Templates whose own ladder is flat or
+    // mixed state no such rule and score exactly as before.
+    const strictlyRising =
+      iDepths.length >= 2 &&
+      iDepths.every(
+        (d, k) => k === 0 || template.levelIndent[d] > template.levelIndent[iDepths[k - 1]]
+      );
+    if (strictlyRising) {
+      const gDepths = Object.keys(generated.levelIndent)
+        .map(Number)
+        .sort((a, b) => a - b)
+        .filter((d) => d >= iDepths[iDepths.length - 1]);
+      for (let i = 1; i < gDepths.length; i++) {
+        const a = gDepths[i - 1];
+        const b = gDepths[i];
+        checks.push({
+          ok: (generated.levelIndent[b] ?? 0) > (generated.levelIndent[a] ?? 0),
+          label: `generated d${a}->d${b} keeps rising past the template ladder (${generated.levelIndent[a]}->${generated.levelIndent[b]})`,
+        });
+      }
+    }
     if (checks.length === 0) {
       indentScore = 1;
       indentDetail = "single flush depth, nothing to progress";

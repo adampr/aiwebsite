@@ -168,7 +168,15 @@ function blockToDocx(
   headingShift: 0 | 1 = 0,
   // Round 23: true = render under a NumberingProfile (bold neutral
   // headings, the Word indent ladder). False = byte-identical output.
-  profiled = false
+  profiled = false,
+  // Round 24: the inner-heading depth this block sits UNDER (0 = directly
+  // under the section title; after a heading at normalized level L the
+  // caller passes L). Body paragraphs align at the heading's own text
+  // column and list items step one past it, so nesting under a "###"
+  // sub-heading finally indents deeper than nesting under the section
+  // title. Headings ignore it (their own level is their depth). Only the
+  // profiled ladder consumes it, so flat renders stay byte-identical.
+  innerDepth = 0
 ): (Paragraph | Table)[] {
   const ladder = (depth: number, hanging: boolean) =>
     profiled
@@ -211,8 +219,9 @@ function blockToDocx(
         new Paragraph({
           children: inlineRuns(block.inline),
           spacing: { after: 160 },
-          // Loose body text aligns under its section heading's text.
-          ...ladder(headingShift, false),
+          // Loose body text aligns under the text of the heading it sits
+          // under: the section title (innerDepth 0) or an inner heading.
+          ...ladder(headingShift + innerDepth, false),
         }),
       ];
     case "list": {
@@ -239,7 +248,7 @@ function blockToDocx(
         profiled
           ? {
               indent: {
-                left: 720 * (headingShift + 2 + level),
+                left: 720 * (headingShift + innerDepth + 2 + level),
                 hanging: 360,
               },
             }
@@ -250,7 +259,7 @@ function blockToDocx(
           format: block.format ?? "decimal",
           start: block.start ?? 1,
           sep: block.sep ?? ".",
-          depthOffset: profiled ? headingShift + 1 : 0,
+          depthOffset: profiled ? headingShift + innerDepth + 1 : 0,
           sub: firstSub
             ? {
                 format: firstSub.format ?? "decimal",
@@ -281,7 +290,7 @@ function blockToDocx(
               format: "decimal",
               start: 1,
               sep: ".",
-              depthOffset: profiled ? headingShift + 1 : 0,
+              depthOffset: profiled ? headingShift + innerDepth + 1 : 0,
               sub: {
                 format: it.sub.format ?? "decimal",
                 start: it.sub.start ?? 1,
@@ -657,6 +666,13 @@ export async function renderDocx(
       );
       continue;
     }
+    // Inner-heading depth context (round 24): blocks after a heading at
+    // normalized level L sit at depth L under the section, so their ladder
+    // and numbering configs step one past the heading's own position.
+    // Mirrors the tracking inside normalizeSectionBlocks (which converts
+    // list MARKERS by the same depth), so marker species and w:ind always
+    // agree about where a list sits.
+    let innerDepth = 0;
     for (const block of normalizeSectionBlocks(
       parseMarkdown(section.markdown),
       row.flatIndex,
@@ -664,8 +680,10 @@ export async function renderDocx(
       row.innerBase,
       opts.profile ?? null,
       depth
-    ))
-      children.push(...blockToDocx(block, orderedRef, depth, profiled));
+    )) {
+      children.push(...blockToDocx(block, orderedRef, depth, profiled, innerDepth));
+      if (block.t === "heading") innerDepth = Math.min(block.level, 4);
+    }
   }
 
   children.push(

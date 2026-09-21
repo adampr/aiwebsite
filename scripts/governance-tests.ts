@@ -7241,14 +7241,45 @@ function check(name: string, cond: boolean): void {
       labels[0] === "a. " && labels[1] === "i. "
     );
     check(
-      "r22 render: bullets convert to ordered lists per the profile level",
+      // Round 24 re-pin (the old expectation WAS the owner's bug): this
+      // list sits under the "### Deep" heading (depth 2, marker "i."), so
+      // it wears the level PAST that heading - the 3-level cycle wraps to
+      // decimal - instead of repeating level 1's "a." flat. Its sub items
+      // sit one deeper still (cycle level 4 = lowerLetter).
+      "r22 render: bullets convert per the profile level they sit at",
       !!list &&
         list.t === "list" &&
         list.ordered === true &&
-        list.format === "lowerLetter" &&
+        list.format === "decimal" &&
         list.start === 1 &&
         list.items[0].sub?.ordered === true &&
-        list.items[0].sub.format === "lowerRoman"
+        list.items[0].sub.format === "lowerLetter"
+    );
+    // Round 24: with a LONE sub-heading the list under it wears the level
+    // past the heading's ("a. Heading" over "i." items), the flagship
+    // template's own laddering; before the fix it repeated "a." flat.
+    // Shared by both renderers via normalizeSectionBlocks, so the doc pane
+    // and the .docx agree about the species.
+    const lone = numbering22.normalizeSectionBlocks(
+      parseMarkdown("### Only deep\n\n- One item.\n- Two item."),
+      3,
+      null,
+      null,
+      P,
+      0
+    );
+    const loneHead = lone.find((b) => b.t === "heading");
+    const loneList = lone.find((b) => b.t === "list");
+    check(
+      "r24 render: a lone sub-heading's list wears the next level (roman)",
+      !!loneHead &&
+        loneHead.t === "heading" &&
+        loneHead.inline[0]?.t === "text" &&
+        loneHead.inline[0].text === "a. " &&
+        !!loneList &&
+        loneList.t === "list" &&
+        loneList.ordered === true &&
+        loneList.format === "lowerRoman"
     );
     const nested = numbering22.normalizeSectionBlocks(
       parseMarkdown("- One item.\n- Two item."),
@@ -7681,6 +7712,71 @@ function check(name: string, cond: boolean): void {
       );
     }
     {
+      // Round 24 (the owner's "nested indentation still not followed"):
+      // body content steps the ladder one past the INNER heading it sits
+      // under, not one past the section title regardless. A list under a
+      // "###" sub-heading lands a full step deeper than the sub-heading's
+      // text (2160 under a top-level section), its sub-items one deeper
+      // still (2880); a list directly under the section title keeps the
+      // round-23 step (1440/2160) byte-identically; loose paragraphs align
+      // at the text column of whichever heading they sit under.
+      const d24: GovernanceDoc = {
+        slug: "ai-usage-policy",
+        title: "AI Acceptable Use Policy",
+        stub: false,
+        sections: [
+          {
+            id: "tool-rules",
+            title: "Tool rules",
+            markdown:
+              "Intro line about the rules.\n\n### Inner rules\n\n1. First rule applies.\n   1. First sub rule applies.\n\nTrailing note under the inner heading.",
+          },
+          { id: "flat-rules", title: "Flat rules", markdown: "1. Flat rule applies." },
+        ],
+      };
+      const z = await JSZip22.loadAsync(
+        await renderDocx22(d24, { draft: false, kind: kind22, profile: P })
+      );
+      const xml = await z.file("word/document.xml")!.async("string");
+      const num = await z.file("word/numbering.xml")!.async("string");
+      const abstractFor = (paraXml: string): string => {
+        const id = /<w:numId w:val="(\d+)"/.exec(paraXml);
+        if (!id) return "";
+        const ref = new RegExp(
+          `<w:num w:numId="${id[1]}"[^>]*>\\s*<w:abstractNumId w:val="(\\d+)"`
+        ).exec(num);
+        if (!ref) return "";
+        const at = num.indexOf(`w:abstractNumId="${ref[1]}"`);
+        const end = num.indexOf("</w:abstractNum>", at);
+        return at === -1 || end === -1 ? "" : num.slice(at, end);
+      };
+      const lefts = (abs: string) =>
+        [...abs.matchAll(/<w:ind w:left="(\d+)"/g)].map((m) => m[1]).join(",");
+      check(
+        "r24 docx: a list under a sub-heading steps one ladder past it",
+        (() => {
+          const deep = abstractFor(paraAround(xml, "First rule applies."));
+          const head = paraAround(xml, ">Inner rules<");
+          return (
+            head.includes('w:left="1440"') &&
+            lefts(deep) === "2160,2880" &&
+            deep.length > 0
+          );
+        })()
+      );
+      check(
+        "r24 docx: a list directly under the section title keeps 1440/2160",
+        lefts(abstractFor(paraAround(xml, "Flat rule applies."))) === "1440,2160"
+      );
+      check(
+        "r24 docx: loose paragraphs align at their heading's text column",
+        paraAround(xml, "Intro line about the rules.").includes('w:left="720"') &&
+          paraAround(xml, "Trailing note under the inner heading.").includes(
+            'w:left="1440"'
+          )
+      );
+    }
+    {
       // Round 23.5 fix 7 (accepted expansion): a plain markdown sample
       // ("## 1. Purpose" over a decimal list) mints a profile too, and it
       // renders with the same bold + ladder treatment.
@@ -7809,6 +7905,9 @@ function check(name: string, cond: boolean): void {
       // Add a firstLine-only w:ind on section paragraphs (must not clobber
       // the lvl indent).
       firstLineNoise?: boolean;
+      // Round 24: add a FOURTH level (ilvl 3, decimal) at this left indent
+      // plus one item on it, for deeper-than-template ladder pins.
+      deepItem?: number;
     }
   ): Promise<Buffer> => {
     const bold = fx?.bold ?? true;
@@ -7822,6 +7921,7 @@ function check(name: string, cond: boolean): void {
       { left: 720, hanging: 360 },
       { left: 1440, hanging: 360 },
       { left: 2160, hanging: 180 },
+      { left: fx?.deepItem ?? 2880, hanging: 180 },
     ];
     const lvl = (ilvl: number, fmt: string, txt: string) =>
       `<w:lvl w:ilvl="${ilvl}"><w:start w:val="1"/><w:numFmt w:val="${fmt}"/>` +
@@ -7837,6 +7937,7 @@ function check(name: string, cond: boolean): void {
       lvl(0, formats[0], "%1.") +
       lvl(1, formats[1], "%2.") +
       lvl(2, formats[2], "%3.") +
+      (fx?.deepItem ? lvl(3, "decimal", "%4.") : "") +
       `</w:abstractNum>` +
       `<w:num w:numId="10"><w:abstractNumId w:val="0"/></w:num>` +
       `</w:numbering>`;
@@ -7879,6 +7980,7 @@ function check(name: string, cond: boolean): void {
     });
     paras.push(listP(1, run("First step of the policy", bold)));
     paras.push(listP(2, run("Start describing the second part.", false)));
+    if (fx?.deepItem) paras.push(listP(3, run("Start describing the deepest part.", false)));
     const documentXml =
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"` +
@@ -7998,6 +8100,32 @@ function check(name: string, cond: boolean): void {
     "rubric: a flush-left render scores the indentation part below 1",
     flushScore.parts[2].name === "indentation ladder" && flushScore.parts[2].score < 1
   );
+  /* Round 24 extension: a strictly rising template ladder makes the rubric
+     police generated depths BEYOND the template's deepest observed depth
+     too. The round-24 failure lived exactly there: lists under inner
+     headings shared the heading's indent, at depths the template never
+     observes, and "deeper levels are not penalized" hid it. A deeper level
+     that keeps rising still scores 1. */
+  {
+    const deepFlat = await rubric.extractDocxStructure(
+      await buildFixtureDocx(FIXTURE_SECTIONS, { deepItem: 2160 })
+    );
+    const deepFlatScore = rubric.scoreStructureMatch(fixture, deepFlat);
+    check(
+      "rubric r24: flat nesting deeper than the template scores the indent part below 1",
+      deepFlatScore.parts[2].name === "indentation ladder" &&
+        deepFlatScore.parts[2].score < 1 &&
+        deepFlatScore.parts[2].detail.includes("keeps rising past the template ladder") &&
+        deepFlatScore.parts.every((p, i) => i === 2 || p.score === 1)
+    );
+    const deepRise = await rubric.extractDocxStructure(
+      await buildFixtureDocx(FIXTURE_SECTIONS, { deepItem: 2880 })
+    );
+    check(
+      "rubric r24: rising nesting deeper than the template still scores 1",
+      rubric.scoreStructureMatch(fixture, deepRise).total === 1
+    );
+  }
   /* The owner's re-saved template numbers DECIMAL at every level: depths are
      distinguished only by ilvl and the indent ladder, never by marker-format
      inference when real numbering is present. */
@@ -8194,6 +8322,106 @@ function check(name: string, cond: boolean): void {
       "rubric e2e sparse: TOTAL structure match is 100%",
       rubric.scoreStructureMatch(fixture, sparse).total === 1
     );
+
+    /* Round 24: the owner's real failing shape. His AUP sections carry
+       "###" inner headings over their lists (the round-23 e2e doc had
+       none), so body content renders at depths the template ladder never
+       observes; before the fix every such list shared its heading's
+       indent and the deliverable nested flat. This doc puts inner
+       headings + lists (and a nested sub-list) in BOTH a fused
+       single-section bucket and a truly nested Policy section, and must
+       score a perfect match against the template. */
+    const doc24 = {
+      ...doc,
+      sections: [
+        { id: "sec-purpose", title: "Why this exists", markdown: "This policy governs assistant use." },
+        { id: "sec-scope", title: "Who it covers", markdown: "All staff and contractors." },
+        {
+          id: "sec-defs",
+          title: "Terms",
+          markdown:
+            "Definitions used throughout.\n\n### Kinds of tools\n\n- Assistant tools generate content.\n- Automation tools act on systems.",
+        },
+        { id: "sec-roles", title: "Roles", markdown: "The owner reviews quarterly." },
+        { id: "sec-refs", title: "Sources", markdown: "See the register." },
+        {
+          id: "sec-tools",
+          title: "Approved tools",
+          markdown:
+            "Use only listed tools.\n\n### Approved list\n\n- ToolOne stays approved.\n- ToolTwo stays approved.\n  - Keep its accounts separate.\n\n### Not approved\n\n- Anything unlisted stays banned.",
+        },
+        { id: "sec-data", title: "Data rules", markdown: "Never paste client data." },
+      ],
+    };
+    const rendered24 = await renderR22(doc24, {
+      draft: false,
+      kind: "usage_policy",
+      numbering: styleR22(extracted.text),
+      profile,
+      sampleTitles: titles ?? FIXTURE_SECTIONS,
+    });
+    const generated24 = await rubric.extractDocxStructure(rendered24);
+    const result24 = rubric.scoreStructureMatch(fixture, generated24);
+    check(
+      `rubric e2e r24: inner-heading nesting scores 100% (${result24.parts
+        .map((p) => p.score.toFixed(2))
+        .join("/")})`,
+      result24.total === 1
+    );
+
+    /* Round 24, all-decimal: the owner's actual template numbers DECIMAL at
+       every level and his stored AUP writes literal "1." ordered lists, so
+       marker species can never flag the failure there; only the indent
+       ladder can. Full pipeline on the all-decimal fixture, same doc shape,
+       pinned at 100%. */
+    const allDecBuf = await buildFixtureDocx(FIXTURE_SECTIONS, {
+      formats: ["decimal", "decimal", "decimal"],
+    });
+    const allDecExtract = await extractR22("policy-template.docx", allDecBuf);
+    check("rubric e2e r24: all-decimal fixture ingests", allDecExtract.ok === true);
+    if (allDecExtract.ok) {
+      const decProfile = profileR22(allDecExtract.text);
+      check(
+        "rubric e2e r24: all-decimal profile derives with numbered body",
+        decProfile !== null &&
+          decProfile.bodyNumbered === true &&
+          decProfile.levels.every((l) => l.fmt === "decimal" && l.sep === ".")
+      );
+      const decDoc = {
+        ...doc24,
+        sections: doc24.sections.map((s) =>
+          s.id === "sec-tools"
+            ? {
+                ...s,
+                markdown:
+                  "Use only listed tools.\n\n### Approved list\n\n1. ToolOne stays approved.\n2. ToolTwo stays approved.\n   1. Keep its accounts separate.\n\n### Not approved\n\n1. Anything unlisted stays banned.",
+              }
+            : s.id === "sec-defs"
+              ? {
+                  ...s,
+                  markdown:
+                    "Definitions used throughout.\n\n### Kinds of tools\n\n1. Assistant tools generate content.\n2. Automation tools act on systems.",
+                }
+              : s
+        ),
+      };
+      const decRendered = await renderR22(decDoc, {
+        draft: false,
+        kind: "usage_policy",
+        numbering: styleR22(allDecExtract.text),
+        profile: decProfile,
+        sampleTitles: bucketsR22(allDecExtract.text) ?? FIXTURE_SECTIONS,
+      });
+      const decFixture = await rubric.extractDocxStructure(allDecBuf);
+      const decGenerated = await rubric.extractDocxStructure(decRendered);
+      const decResult = rubric.scoreStructureMatch(decFixture, decGenerated);
+      check(
+        `rubric e2e r24: the all-decimal owner shape scores 100% (${decResult.parts
+          .map((p) => p.score.toFixed(2))
+          .join("/")})`,
+        decResult.total === 1
+      );
+    }
   }
 }
 

@@ -1036,14 +1036,17 @@ function profileListFormat(lv: ProfileLevel): ListFormat {
 
 /** Body-list adoption (round 22): when the sample numbers its body items
  * and has no bullets, a draft's bullet lists render ordered per the
- * profile level at their depth (list level = section depth + 1, subs one
- * deeper). Ordered lists and ordered subs keep their literal shape. */
+ * profile level at their depth (list level = base depth + 1, subs one
+ * deeper). Ordered lists and ordered subs keep their literal shape.
+ * `baseDepth` is the section depth PLUS the inner-heading depth the list
+ * sits under (round 24): a list under a "###" sub-heading wears the level
+ * one past the sub-heading's, exactly as the template nests its items. */
 function profileListBlock(
   b: Block & { t: "list" },
   profile: NumberingProfile,
-  sectionDepth: number
+  baseDepth: number
 ): Block {
-  const subLv = profileLevelAt(profile, sectionDepth + 2);
+  const subLv = profileLevelAt(profile, baseDepth + 2);
   let subChanged = false;
   const items = b.items.map((it) => {
     if (!it.sub || it.sub.ordered) return it;
@@ -1060,7 +1063,7 @@ function profileListBlock(
     };
   });
   if (b.ordered) return subChanged ? { ...b, items } : b;
-  const lv = profileLevelAt(profile, sectionDepth + 1);
+  const lv = profileLevelAt(profile, baseDepth + 1);
   return {
     t: "list",
     ordered: true,
@@ -1084,6 +1087,10 @@ function profileListBlock(
  * scheme at (sectionDepth + heading depth + 1): bare markers for bare
  * levels ("a. ", "i. "), the compound path for composite ones; and bullet
  * lists convert per profileListBlock when the profile says bodyNumbered.
+ * Converted lists index the profile at the depth they actually SIT at
+ * (round 24): section depth plus the depth of the inner heading above
+ * them, so a list under a "###" sub-heading wears the next level's
+ * species instead of repeating the one directly under the section title.
  */
 export function normalizeSectionBlocks(
   blocks: Block[],
@@ -1111,11 +1118,16 @@ export function normalizeSectionBlocks(
       ? nestedBaseLabel(sectionNum, null, style, profile)
       : subPrefix(sectionNum, style ?? "decimal"));
   const alphaRun = alphaHeadingRun(blocks);
+  // Inner-heading depth context (round 24): 0 before any heading, then one
+  // past the last heading's rebased depth. Blocks are mapped in order, so
+  // the closure variable is the depth each non-heading block sits under.
+  let innerDepth = 0;
   return blocks.map((b, bi): Block => {
     if (b.t === "list" && profile?.bodyNumbered)
-      return profileListBlock(b, profile, sectionDepth);
+      return profileListBlock(b, profile, sectionDepth + innerDepth);
     if (b.t !== "heading") return b;
     const depth = b.level - min;
+    innerDepth = Math.min(depth, 3) + 1;
     let inline = stripInlineNumber(b.inline);
     if (alphaRun.has(bi)) inline = stripAlphaMarker(inline);
     let label = "";
