@@ -620,8 +620,13 @@ a.rmp-stop:focus-visible .rmp-node-cell[data-state]::after {
   opacity: 1;
 }
 
-/* The CTA: btn--text register (mono, tracked, uppercase) with a hairline
-   underline that brightens and glows on hover. Element-agnostic: it is a
+/* The CTA: mono, tracked, uppercase (the register .btn--text carried
+   before its 2026-09-21 compact-ghost redefinition) with a hairline
+   underline that brightens and glows on hover. NOT in the underline-only
+   button sweep: the pressable surface here is the whole CARD (the ::after
+   overlay below), whose own border and lightline answer for the
+   affordance; the underline is a label accent, not the boundary.
+   Element-agnostic: it is a
    <Link> on every step card and a <button> on the directory idle card.
    MUST stay position: static so its ::after overlay resolves its containing
    block at the positioned .rmp-card. NEVER put this class on a control

@@ -204,18 +204,61 @@
   .tabstrip--rail { display: flex; }
 }
 
-/* Inline jump links (change summary, open confirm items). */
+/* Inline action chips (change summary, open confirm items, row actions).
+   Formerly "link-alike" underlined bare text; redefined 2026-09-21 (owner
+   directive: an underline says hyperlink, and a button disguised as prose
+   is not obviously clickable) as the SMALLEST bordered control in the
+   ladder (.btn--primary > .btn > .btn--text > this): the .gov-chip hairline
+   recipe at inline scale. `font: inherit` stays so parent-level type still
+   reaches the chip and it sits inside a sentence. This class is UNLAYERED,
+   so utilities placed on the chip itself (text-xs, text-faint) lose to its
+   font/color - they always lost to the old underlined class too, so the
+   equally-lit Keep/Cancel legs match production, not a hierarchy this
+   round invented or removed. No global coarse-pointer 44px here:
+   these chips live mid-sentence and a min-height would inflate the line
+   box; the one control that needs it (question-pane's "Change") carries
+   min-h-11 in markup, which this class leaves uncontested.
+   The .rfpdoc override further down restores the former underlined-text
+   rendering ON the proposal paper, which must not change (§5.17.5). */
 .linklike {
+  display: inline-block;
   background: none;
-  border: none;
-  padding: 0;
+  border: 1px solid var(--xl-line-bright);
+  padding: var(--sp-1) var(--sp-2);
   cursor: pointer;
   font: inherit;
   color: var(--xl-light);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--xl-light-dim);
+  text-decoration: none;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease-drift),
+              color var(--dur-fast) var(--ease-drift);
 }
+.linklike:hover { border-color: var(--xl-light); }
+/* Inert states (new with the border: the old bare-text class had none, but
+   row-actions and the governance panes pass disabled while a write is in
+   flight, and a chip that stays lit while dead is the futurism.css §5
+   incident class). :hover twins so pointing at one never relights it. */
+.linklike:disabled,
+.linklike:disabled:hover,
+.linklike[aria-disabled="true"],
+.linklike[aria-disabled="true"]:hover {
+  color: var(--xl-text-faint);
+  border-color: var(--xl-line);
+  cursor: default;
+}
+/* Busy holds a dim light, same grammar as .btn[aria-busy]. */
+.linklike[aria-busy="true"],
+.linklike[aria-busy="true"]:hover {
+  color: var(--xl-light);
+  border-color: var(--xl-light-dim);
+}
+/* Disclosure chips: inline-block suppresses <summary>'s native list-item
+   marker, so the caret is explicit — and therefore consistent across all
+   three summaries — and flips with the disclosure state. */
+summary.linklike { list-style: none; }
+summary.linklike::-webkit-details-marker { display: none; }
+summary.linklike::before { content: "\25B8\00A0"; }
+details[open] > summary.linklike::before { content: "\25BE\00A0"; }
 
 /* Suggestion chips: toggle in and out of the textarea as "; "-joined
    segments, never auto-submit. Pressed state is derived from the text. */
@@ -669,6 +712,9 @@
     margin-bottom: 12pt;
   }
   .workbar, .staff-bar, .btn { display: none; }
+  /* A chip's border is a screen affordance; on paper the action is dead,
+     so print the label as the plain text it was before the chip round. */
+  .linklike { border: none; padding: 0; }
 }
 
 /* RFP workspace (§5.17 round 2). The rail scrolls itself at lg so the draft
@@ -1179,14 +1225,61 @@ select.input option {
 }
 .rfpdoc select.input option { background: #ffffff; color: #15163b; }
 .rfpdoc .input::placeholder { color: #8a8ca6; }
-.rfpdoc .linklike { color: #2f31c5; text-decoration-color: #3d7fd9; }
+/* Controls ON the paper keep the DOCUMENT's grammar: the sheet mirrors the
+   docx/pdf exports page-for-page (§5.17.5) and its rendering must not
+   change, so the 2026-09-21 chip redefinitions of .linklike and .btn--text
+   are rolled back here to their former underlined-text look, byte for
+   byte. These rules are unlayered, so they outrank the futurism.css
+   layer(base) definitions wholesale. */
+.rfpdoc .linklike {
+  display: revert; /* buttons back to UA inline-block, summary to list-item */
+  border: 0;
+  padding: 0;
+  color: #2f31c5;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: #3d7fd9;
+}
+.rfpdoc summary.linklike { list-style: revert; }
+/* Both disclosure states: the open-state caret rule above is (0,2,3) and
+   would beat a lone (0,2,2) .rfpdoc kill-switch, printing a second caret
+   next to the restored native marker whenever the summary is open. */
+.rfpdoc summary.linklike::before,
+.rfpdoc details[open] > summary.linklike::before { content: none; }
 .rfpdoc .text-faint { color: #5b5d78; }
 .rfpdoc .btn--primary {
   background: #2f31c5;
   border-color: #2f31c5;
   color: #ffffff;
 }
-.rfpdoc .btn--text { color: #2f31c5; }
+.rfpdoc .btn--text {
+  color: #2f31c5;
+  border: 0;
+  padding: var(--sp-2) 0;
+  font-size: var(--text-sm);
+  letter-spacing: 0.28em;
+  white-space: nowrap;
+  flex-shrink: 0;
+  position: relative;
+}
+.rfpdoc .btn--text::after {
+  content: '';
+  position: absolute;
+  left: 0; bottom: 0;
+  width: 100%; height: 1px;
+  background: var(--xl-light-dim);
+  transition: box-shadow var(--dur-med) var(--ease-drift), background var(--dur-med) var(--ease-drift);
+}
+.rfpdoc .btn--text:hover { box-shadow: none; }
+.rfpdoc .btn--text:hover::after { background: var(--xl-light); box-shadow: 0 0 10px var(--xl-light-glow); }
+.rfpdoc .btn--text:disabled::after,
+.rfpdoc .btn--text[aria-disabled="true"]::after { background: var(--xl-line); box-shadow: none; }
+/* Mirror the <=640px .btn relaxation these buttons had before the
+   restoration rules above started outranking it (unlayered beats the
+   layer(base) media twin). */
+@media (max-width: 640px) {
+  .rfpdoc .btn--text { white-space: normal; letter-spacing: 0.12em; }
+}
 /* Below lg the rail does not stick, so the pane switcher must: from deep in
    a long draft, Questions/Checks/Tron were a full-page scroll away. Sits
    directly under the runbar, which is itself sticky. */

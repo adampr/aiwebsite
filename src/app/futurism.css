@@ -291,6 +291,11 @@ a:hover { text-shadow: 0 0 16px var(--xl-light-glow); }
   text-underline-offset: 3px;
   text-decoration-color: var(--xl-light-dim);
 }
+/* …but a bordered button-Link in a panel paragraph (the /rfp landing and
+   access screens) already carries its non-color cue as the border; a prose
+   underline inside a chip would re-read as a hyperlink. 0-3-2 outranks the
+   0-1-2 rule above. */
+.panel p a.btn.btn--text { text-decoration: none; }
 
 code, kbd, .mono { font-family: var(--font-mono); font-size: 0.85em; }
 
@@ -621,22 +626,31 @@ html.pager-active .work-pager {
   box-shadow: 0 0 20px var(--xl-sand-glow), inset 0 0 20px oklch(0.8 0.06 75 / 0.05);
 }
 
-/* Text button — underline of light */
+/* Text button — a COMPACT GHOST. This variant used to be bare text over a
+   1px ::after underline; that reads as a hyperlink, not a control (owner
+   directive 2026-09-21: underline-only buttons are not obviously
+   clickable). It now keeps .btn's hairline border and steps DOWN in size
+   instead: sys-label register (--text-xs, 0.18em) and tight padding, so
+   dense rows and pane actions stay quiet without losing the pressable
+   boundary. Hierarchy: .btn--primary (filled) > .btn (full ghost) >
+   .btn--text (compact ghost) > .linklike (inline chip, globals.css).
+   Labels WRAP: this variant lives inside prose-width panes and dense rows
+   where .btn's nowrap min-content width would overflow a 390px viewport.
+   Hover/inert states come from the .btn rules below unchanged.
+   text-decoration: none covers the <Link>/<a> usages that never carried
+   the .no-underline utility (an anchor underline inside a bordered chip
+   would resurrect the old false-link reading).
+   The .rfpdoc override in globals.css restores the former underlined-text
+   rendering ON the proposal paper, which must not change (§5.17.5). */
 .btn--text {
-  border: none;
-  padding: var(--sp-2) 0;
-  position: relative;
+  padding: var(--sp-2) var(--sp-4);
+  font-size: var(--text-xs);
+  letter-spacing: 0.18em;
+  white-space: normal;
+  flex-shrink: 1;
+  text-align: center;
+  text-decoration: none;
 }
-.btn--text::after {
-  content: '';
-  position: absolute;
-  left: 0; bottom: 0;
-  width: 100%; height: 1px;
-  background: var(--xl-light-dim);
-  transition: box-shadow var(--dur-med) var(--ease-drift), background var(--dur-med) var(--ease-drift);
-}
-.btn--text:hover { box-shadow: none; }
-.btn--text:hover::after { background: var(--xl-light); box-shadow: 0 0 10px var(--xl-light-glow); }
 
 /* Disabled — the light withdraws. Placed after every variant so it wins
    their base and hover rules at equal specificity. */
@@ -647,7 +661,10 @@ html.pager-active .work-pager {
   box-shadow: none;
   cursor: default;
 }
-.btn--text:disabled::after { background: var(--xl-line); box-shadow: none; }
+/* (.btn--text needs no :disabled twin any more: with the underline ::after
+   gone, the .btn:disabled rule above dims its border and text like every
+   other ghost. The .rfpdoc restoration in globals.css carries its own
+   disabled underline rules.) */
 
 /* aria-disabled on ANY .btn variant. The claim that used to live in the
    comment below - that a plain .btn with aria-disabled "carries its own
@@ -657,9 +674,11 @@ html.pager-active .work-pager {
    does nothing is the exact failure the 2026-08-09 directory round was
    reported for. Specificity 0-2-0 beats .btn--primary/.btn--sand (0-1-0),
    so the filled and warm variants dim too; the :hover twin holds the same
-   values so pointing at an inert button never relights it. Placed BEFORE
-   the .btn--text twin, which must keep winning for text buttons at equal
-   specificity. */
+   values so pointing at an inert button never relights it. Since the
+   compact-ghost redefinition, .btn--text is covered by this rule as well:
+   the pager arrows keep aria-disabled (never the disabled ATTRIBUTE, which
+   blurs focus to <body> and restarts a keyboard user's Tab at the top of
+   the document) and dim through here. */
 .btn[aria-disabled="true"],
 .btn[aria-disabled="true"]:hover {
   color: var(--xl-text-faint);
@@ -677,16 +696,10 @@ html.pager-active .work-pager {
   color: var(--xl-light);
 }
 
-/* The `disabled` ATTRIBUTE blurs a focused button to <body>, so pressing a
-   pager arrow onto the last page would drop a keyboard user back to the top
-   of the document; aria-disabled keeps it reachable. Placed after the
-   :hover rules so it wins at equal specificity. */
-.btn--text[aria-disabled="true"] {
-  color: var(--xl-text-faint);
-  box-shadow: none;
-  cursor: default;
-}
-.btn--text[aria-disabled="true"]::after { background: var(--xl-line); box-shadow: none; }
+/* (The former .btn--text[aria-disabled] twin — needed to outrank its own
+   :hover::after underline rules — is gone with the underline; the
+   .btn[aria-disabled] pair above now owns the inert look for every
+   variant.) */
 
 /* SELECTED, which is the opposite of inert (§5.16 transfer round: the
    /work/submit "Your submissions | All submissions" pair). The first draft
@@ -696,10 +709,16 @@ html.pager-active .work-pager {
    (switchView no-ops on re-selection), so aria-pressed is the whole story
    and it needs its own lit state. Placed last so it wins at equal
    specificity. */
-.btn--text[aria-pressed="true"] { color: var(--xl-light); }
-.btn--text[aria-pressed="true"]::after {
-  background: var(--xl-light);
-  box-shadow: 0 0 10px var(--xl-light-glow);
+.btn--text[aria-pressed="true"] {
+  color: var(--xl-light);
+  border-color: var(--xl-light-dim);
+  background: color-mix(in oklch, var(--xl-light) 8%, transparent);
+}
+.btn--text[aria-pressed="true"]:hover { border-color: var(--xl-light); }
+/* Light theme: --xl-light is a mid blue there, and the 8% wash pulls its
+   12px label below 4.5:1 on a panel background; 5% keeps AA. */
+[data-theme="light"] .btn--text[aria-pressed="true"] {
+  background: color-mix(in oklch, var(--xl-light) 5%, transparent);
 }
 
 /* Busy is not merely disabled: while a submit is in flight the button
@@ -1283,8 +1302,10 @@ footer li a { display: inline-flex; min-height: 24px; align-items: center; }
 /* Opt-in wrap for CTAs inside width-capped cards (pricing subgrid): between
    640px and the max-w-5xl cap the two-column card interior is narrower than
    a nowrap tracked-caps label, so let exactly these buttons wrap. Scoped as
-   an opt-in class because a global rule would break .btn--text underlines
-   (single ::after hairline under the last line) and .btn--stable geometry. */
+   an opt-in class because a global rule would break .btn--stable geometry.
+   (.btn--text wraps on its own since the compact-ghost redefinition; its
+   old single-::after-underline objection to a global rule died with the
+   underline.) */
 @media (min-width: 640px) {
   .btn--wrap { white-space: normal; text-align: center; }
   .badge--wrap { white-space: normal; }
