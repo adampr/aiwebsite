@@ -1354,6 +1354,13 @@ export function Workspace({ projectId }: { projectId: string }) {
         (next.status === "drafting" || next.status === "review")
       ) {
         setHighlights(next.changedSections);
+        // The change-summary refs describe the PREVIOUS rev's documents and
+        // the turn was another tab's, so this tab shows no stale receipt;
+        // the flashKey bump re-arms a dismissed editing-notes window per
+        // its hides-until-the-next-update promise (and replays the flash
+        // wash on the sections this refresh highlights).
+        setChangedNow(null);
+        setFlashKey((k) => k + 1);
         // Same durable chips for a turn another tab ran: this tab holds the
         // pre-turn docs too, so the count delta is just as honest here.
         {
@@ -2602,6 +2609,10 @@ export function Workspace({ projectId }: { projectId: string }) {
     setView(next);
     setHighlights({});
     setChangedNow(null);
+    // The overflow note claims "The rest are highlighted in the draft",
+    // which the line above just made false on the final document; the
+    // final view carries no editing-process notes beyond the outline note.
+    setShowNote(null);
     setAnnounce(confirmedAnnouncement(attach));
     if (!attach) {
       setConfirmBusy(false);

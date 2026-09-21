@@ -441,6 +441,21 @@ export function Workspace({
 
   // ---- the live-update choreography (governance pattern) ----
   const [highlights, setHighlights] = useState<Set<string>>(new Set());
+  // Editing-notes window dismissal (owner directive 2026-09-21): the X on
+  // the receipt window hides ONLY the window, never the highlights set,
+  // which also drives the per-section "Updated" chips. What is stored is
+  // the SIGNATURE of the receipt content at dismissal (the sorted joined
+  // highlight labels); the window hides while the current signature equals
+  // it, so a merge that adds a section changes the signature and the window
+  // returns with the new content. Per-mount state only, never persisted.
+  const [receiptDismissedSig, setReceiptDismissedSig] = useState<
+    string | null
+  >(null);
+  const receiptSig = [...highlights].sort().join("\u0000");
+  // Dismissal moves focus to the document section landmark (tabIndex -1 on
+  // it exists for exactly this) so keyboard and AT users are not dropped on
+  // <body> when the X unmounts under them.
+  const docPaneRef = useRef<HTMLElement | null>(null);
   // Per-label flash sequence. The keyed div's key reads this map
   // UNCONDITIONALLY, so a key only changes when a NEW flash lands on that
   // label (replaying the wash) — never when the 15s expiry clears the
@@ -668,6 +683,10 @@ export function Workspace({
         window.clearTimeout(highlightTimer.current);
       highlightTimer.current = window.setTimeout(() => {
         setHighlights(new Set());
+        // Expiry forgets the window dismissal with the set, so the NEXT
+        // receipt always shows even when it happens to name exactly the
+        // sections the dismissed one did.
+        setReceiptDismissedSig(null);
         highlightTimer.current = null;
       }, 15000);
       const typing = ["TEXTAREA", "INPUT"].includes(
@@ -1567,6 +1586,19 @@ export function Workspace({
         next.delete(p.label);
         return next;
       });
+      // A pure removal carries no new information: drop the label from a
+      // stored dismissal signature too, so a dismissed editing-notes window
+      // does not re-show announcing only the content the user already
+      // dismissed. (The rename path below is different on purpose: it ends
+      // in showChanged with a genuinely new label, and must re-show.)
+      setReceiptDismissedSig((sig) =>
+        sig === null
+          ? null
+          : sig
+              .split("\u0000")
+              .filter((l) => l !== p.label)
+              .join("\u0000")
+      );
       if (editing === p.label) setEditing(null);
       if (scope === p.label) setScope(DOC_LABEL);
       return { label: p.label };
@@ -2602,6 +2634,8 @@ export function Workspace({
             matches — an order-utility swap once ran focus through dozens of
             per-section buttons before the guided flow. ---- */}
         <section
+          ref={docPaneRef}
+          tabIndex={-1}
           className={`${mobile === "draft" ? "block" : "hidden"} lg:block min-w-0 rfp-docpane`}
           aria-label="The document. Updates as you answer."
         >
@@ -2610,24 +2644,45 @@ export function Workspace({
               promises "updates as you answer") and expiry empties the
               region without unmounting it. */}
           <div className="rfp-doc-receipt" role="status">
-            {highlights.size > 0 && (
-              <p className="mb-3 text-sm">
-                <span className="sys-label">Updated just now</span>
-                {[...highlights].map((h) => (
+            {/* The receipt renders inside the editing-notes window (owner
+                directive 2026-09-21, chrome shared with the governance doc
+                pane via doc-notes.css): obviously UI, never proposal text.
+                The X hides the window under its content signature; the
+                highlights set is untouched, so the section chips live on. */}
+            {highlights.size > 0 && receiptSig !== receiptDismissedSig && (
+              <div className="doc-notes">
+                <div className="doc-notes-head">
+                  <span className="doc-notes-label">Editing notes</span>
                   <button
-                    key={h}
                     type="button"
-                    className="linklike"
-                    onClick={() => jumpTo(h)}
+                    className="doc-notes-x"
+                    aria-label="Close editing notes"
+                    onClick={() => {
+                      setReceiptDismissedSig(receiptSig);
+                      docPaneRef.current?.focus();
+                    }}
                   >
-                    {h === "__pricing"
-                      ? "Investment"
-                      : h === LETTER_LABEL
-                        ? LETTER_TITLE
-                        : secKicker(h)}
+                    {"×"}
                   </button>
-                ))}
-              </p>
+                </div>
+                <p className="doc-notes-line text-sm">
+                  <span className="sys-label">Updated just now</span>
+                  {[...highlights].map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      className="linklike"
+                      onClick={() => jumpTo(h)}
+                    >
+                      {h === "__pricing"
+                        ? "Investment"
+                        : h === LETTER_LABEL
+                          ? LETTER_TITLE
+                          : secKicker(h)}
+                    </button>
+                  ))}
+                </p>
+              </div>
             )}
           </div>
           {structure.length === 0 ? (

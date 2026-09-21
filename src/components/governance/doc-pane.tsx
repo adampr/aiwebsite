@@ -6,7 +6,7 @@
 // the "Updated just now" change summary with jump links. The pane never
 // blanks during updates; it always renders the last committed documents.
 
-import { Fragment, useMemo, type CSSProperties } from "react";
+import { Fragment, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { GovernanceDoc, ProjectStatus } from "@/lib/governance/types";
 import {
   parseMarkdown,
@@ -556,6 +556,65 @@ export function DocPane({
     return m;
   }, [resolvedMarks]);
 
+  // Round 18b honesty note, round 23 semantics, hoisted to doc level so it
+  // renders in the editing-notes window (owner directive 2026-09-21) instead
+  // of inside the document block: once dismissible it is no longer a note
+  // that stands forever, it re-arms whenever flashKey moves (the
+  // flashKey-keyed dismissal below), so "where did References go" is
+  // always answered again on the next update. Renders ONLY while the adoption
+  // left sample headings empty (post-23 reconcile) or dropped them (legacy
+  // rows below the match threshold); clean adoptions say nothing (the
+  // structure is its own receipt).
+  const outlineNote = useMemo(() => {
+    if (!doc?.outline?.length) return null;
+    if (groupedOkDocs != null && !groupedOkDocs.has(doc.slug)) return null;
+    // Round 23: the note derives from the PLAN, not the stored
+    // outline - post-23 adoptions store every sample title, so
+    // dropped-title math reads [] exactly when empty headings DO
+    // render and need explaining. The legacy dropped-titles note
+    // stays for rows where the reconcile is inactive (a replaced
+    // sample below the match threshold): those titles truly do
+    // not appear.
+    const emptyLabels = renderRows
+      .flatMap((r) => (r.kind === "bucket" && r.empty ? [r.label] : []))
+      .slice(0, 12);
+    const dropped =
+      !emptyLabels.length &&
+      sampleOutlineTitles?.length &&
+      !outlineReconciled(doc, sampleOutlineTitles)
+        ? droppedOutlineTitles(doc, sampleOutlineTitles)
+        : [];
+    if (!emptyLabels.length && !dropped.length) return null;
+    return emptyLabels.length
+      ? emptyLabels.length === 1
+        ? `Grouped to match your format sample. Its "${emptyLabels[0]}" heading has no matching content here yet, so it appears as an empty heading.`
+        : emptyLabels.length === 2
+          ? `Grouped to match your format sample. Its "${emptyLabels[0]}" and "${emptyLabels[1]}" headings have no matching content here yet, so they appear as empty headings.`
+          : `Grouped to match your format sample. ${emptyLabels.length} of its headings have no matching content here yet, so they appear as empty headings.`
+      : dropped.length === 1
+        ? `Grouped to match your format sample. Its "${dropped[0]}" heading has no matching content here, so it does not appear.`
+        : dropped.length === 2
+          ? `Grouped to match your format sample. Its "${dropped[0]}" and "${dropped[1]}" headings have no matching content here, so they do not appear.`
+          : `Grouped to match your format sample. ${dropped.length} of its headings have no matching content here, so they do not appear.`;
+  }, [doc, renderRows, sampleOutlineTitles, groupedOkDocs]);
+
+  // Editing-notes window dismissal (owner directive 2026-09-21): the X hides
+  // only the window; jump targets, chips and highlights are untouched.
+  // Keyed to flashKey, never to the window's content: closing the editing
+  // notes hides them until the next update. flashKey bumps on every
+  // doc-updating turn, on keep, and on a cross-tab rev refresh, so a
+  // dismissal lasts exactly until one of those; intra-turn content drift
+  // (a doc-tab switch changing the outline note) can never resurrect a
+  // dismissed window. changedNow may survive a keep by design, so the
+  // re-armed window can name the prior turn's sections, matching the
+  // pane's committed display behavior. Per-mount state, never persisted.
+  const [dismissedFlash, setDismissedFlash] = useState<number | null>(null);
+  const hasNotes =
+    (changedNow?.length ?? 0) > 0 || !!showNote || !!outlineNote;
+  // Dismissal moves focus to the pane section (tabIndex 0) so keyboard and
+  // AT users are not dropped on <body> when the X unmounts under them.
+  const paneRef = useRef<HTMLElement | null>(null);
+
   const footer =
     status === "review"
       ? "Ready for your review"
@@ -565,6 +624,7 @@ export function DocPane({
 
   return (
     <section
+      ref={paneRef}
       aria-label="Document draft. Updates as you answer."
       tabIndex={0}
       className="panel docpane min-w-0"
@@ -599,30 +659,62 @@ export function DocPane({
         doc && <span className="sys-label">{doc.title}</span>
       )}
 
-      {changedNow && changedNow.length > 0 && (
-        <p className="mt-4 text-sm">
-          Updated just now:{" "}
-          {changedNow.map((c, i) => (
-            <span key={`${c.doc}:${c.section}`}>
-              {i > 0 && ", "}
-              <button
-                type="button"
-                className="linklike"
-                onClick={() => onJump(c.doc, c.section, true)}
-              >
-                {documents.length > 1
-                  ? `${documents.find((d) => d.slug === c.doc)?.title ?? c.doc} · ${c.title}`
-                  : c.title}
-              </button>
-            </span>
-          ))}
-        </p>
-      )}
-
-      {showNote && (
-        <p className="mt-2 max-w-none text-xs" style={faint}>
-          {showNote}
-        </p>
+      {/* The editor-process notes render inside the editing-notes window
+          (chrome in src/app/doc-notes.css, shared with the RFP receipt) so
+          they read as UI, never as document content. Empty window renders
+          nothing at all. The stub and Planned notes below stay in the doc
+          block (they describe the document for its reader), and the footer
+          retention line is never dismissible. */}
+      {hasNotes && flashKey !== dismissedFlash && (
+        <div className="doc-notes">
+          <div className="doc-notes-head">
+            <span className="doc-notes-label">Editing notes</span>
+            <button
+              type="button"
+              className="doc-notes-x"
+              aria-label="Close editing notes"
+              onClick={() => {
+                setDismissedFlash(flashKey);
+                paneRef.current?.focus();
+              }}
+            >
+              {"×"}
+            </button>
+          </div>
+          {changedNow && changedNow.length > 0 && (
+            <p className="text-sm">
+              Updated just now:{" "}
+              {changedNow.map((c, i) => (
+                <span key={`${c.doc}:${c.section}`}>
+                  {i > 0 && ", "}
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => onJump(c.doc, c.section, true)}
+                  >
+                    {documents.length > 1
+                      ? `${documents.find((d) => d.slug === c.doc)?.title ?? c.doc} · ${c.title}`
+                      : c.title}
+                  </button>
+                </span>
+              ))}
+            </p>
+          )}
+          {showNote && (
+            <p className="mt-2 max-w-none text-xs" style={faint}>
+              {showNote}
+            </p>
+          )}
+          {outlineNote && (
+            <p
+              className="mt-2 max-w-none text-xs"
+              style={faint}
+              data-qa="doc-outline-note"
+            >
+              {outlineNote}
+            </p>
+          )}
+        </div>
       )}
 
       {!doc && (
@@ -649,48 +741,9 @@ export function DocPane({
                   : "Sections marked Planned are drafted as the interview goes on."}
             </p>
           )}
-          {/* Round 18b durable honesty note (panel rule: receipts are
-              ephemeral; "where did References go" needs a standing answer).
-              Renders ONLY while the adoption dropped sample headings; clean
-              adoptions say nothing (the structure is its own receipt). */}
-          {(() => {
-            if (!doc.outline?.length) return null;
-            if (groupedOkDocs != null && !groupedOkDocs.has(doc.slug))
-              return null;
-            // Round 23: the note derives from the PLAN, not the stored
-            // outline - post-23 adoptions store every sample title, so
-            // dropped-title math reads [] exactly when empty headings DO
-            // render and need explaining. The legacy dropped-titles note
-            // stays for rows where the reconcile is inactive (a replaced
-            // sample below the match threshold): those titles truly do
-            // not appear.
-            const emptyLabels = renderRows
-              .flatMap((r) => (r.kind === "bucket" && r.empty ? [r.label] : []))
-              .slice(0, 12);
-            const dropped =
-              !emptyLabels.length &&
-              sampleOutlineTitles?.length &&
-              !outlineReconciled(doc, sampleOutlineTitles)
-                ? droppedOutlineTitles(doc, sampleOutlineTitles)
-                : [];
-            if (!emptyLabels.length && !dropped.length) return null;
-            const text = emptyLabels.length
-              ? emptyLabels.length === 1
-                ? `Grouped to match your format sample. Its "${emptyLabels[0]}" heading has no matching content here yet, so it appears as an empty heading.`
-                : emptyLabels.length === 2
-                  ? `Grouped to match your format sample. Its "${emptyLabels[0]}" and "${emptyLabels[1]}" headings have no matching content here yet, so they appear as empty headings.`
-                  : `Grouped to match your format sample. ${emptyLabels.length} of its headings have no matching content here yet, so they appear as empty headings.`
-              : dropped.length === 1
-                ? `Grouped to match your format sample. Its "${dropped[0]}" heading has no matching content here, so it does not appear.`
-                : dropped.length === 2
-                  ? `Grouped to match your format sample. Its "${dropped[0]}" and "${dropped[1]}" headings have no matching content here, so they do not appear.`
-                  : `Grouped to match your format sample. ${dropped.length} of its headings have no matching content here, so they do not appear.`;
-            return (
-              <p className="text-xs" style={faint} data-qa="doc-outline-note">
-                {text}
-              </p>
-            );
-          })()}
+          {/* The round 18b/23 outline honesty note moved to the
+              editing-notes window above (outlineNote memo): dismissible,
+              re-armed by the flashKey-keyed dismissal on the next update. */}
           {renderRows.map((row, ri) => {
             if (row.kind === "bucket")
               return (

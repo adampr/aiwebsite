@@ -73,6 +73,45 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-21 §5.12 EDITING-NOTES WINDOW, GOVERNANCE SIDE
+(completes the 2026-09-21 owner directive whose RFP half is the entry below). The
+governance doc pane's editor-process notes, the "Updated just now" change summary
+with its jump links, the capped-reveal overflow note, and the round 18b/23 outline
+fine-print note (which moved OUT of the document block, hoisted to a doc-level
+`outlineNote` memo carrying round 23's plan-derived gating and both wording
+branches verbatim, `data-qa="doc-outline-note"` intact), now render inside the
+dismissible "Editing notes" window (`.doc-notes`, chrome shared with the RFP
+receipt via `src/app/doc-notes.css`). The X (aria-label "Close editing notes")
+stores the current flashKey and the window hides while flashKey equals it:
+closing the editing notes hides them until the next update, tab-independent and
+immune to intra-turn content drift (a doc-tab switch changing the outline note
+can never resurrect a dismissed window). flashKey bumps on every doc-updating
+turn, on keep, and on a cross-tab rev refresh (which also clears the stale
+change summary, whose refs describe the previous rev's documents); changedNow
+may survive a keep by design, so the re-armed window can name the prior turn's
+sections. Per-mount state, nothing persisted, an empty window renders nothing,
+and dismissal moves focus to the pane section (tabIndex 0) instead of dropping
+it on body. confirmFinal clears showNote alongside highlights/changedNow, so
+the final document carries no editing-process note claiming "the rest are
+highlighted" over highlights that no longer exist. (The RFP receipt keeps its
+own separate dismissal machinery: a sorted-highlights content signature with
+the 15s expiry reset and the remove-path signature shrink, plus the same
+focus-to-document-landmark move on dismissal.) The stub note and
+the "Sections marked Planned" note stay in the document block (they describe the
+document for its reader), and the footer retention line ("Ready for your review" /
+"Draft · updates as you answer · auto-deletes ...") stays outside the window,
+never dismissible. No route, schema, or env change.
+
+Last verified against code: 2026-09-21 §5.17 EDITING-NOTES WINDOW, RFP SIDE (owner
+directive 2026-09-21: editor-process receipts must read as UI chrome, never as
+document text). The RFP workspace's "Updated just now" receipt now renders inside a
+dismissible "Editing notes" window; chrome classes live in the new
+`src/app/doc-notes.css`, imported by `src/app/layout.tsx` directly after globals.css
+and designed to be shared with the governance doc pane, whose adoption of the same
+window follows after governance round 23 (that round owns doc-pane.tsx at this
+writing). Details in §5.17 (Round 6 additions, the receipt passage) and the Styling section. No
+route, schema, or env change.
+
 Last verified against code: 2026-09-21 §5.12 TEMPLATE FIDELITY ROUND 23 (owner report on the deployed round 22: indentation and bolding not followed, Scope not numbered 2, References missing; panel-implemented, twin-refuted, all MAJORs fixed in-round). FOUR MOVES. (1) SKELETON COMPLETENESS: the empty-bucket drop was the Scope/References root cause - the adopt path now stores the FULL sample title sequence (omitted/emptied titles persist as [] buckets at their positions), remove_section keeps emptied buckets, and a render-side reconcile (planOutline/sectionDisplayLabel/renderDocx/renderZip gain sampleTitles) interleaves absent titles as empty headings for rows stored before this round - the owner's live 4-of-6-bucket row heals on next load with Scope at 2 and References at 5; gated by outlineReconciled (>= ceil(uniqueTitles/2) stored-matched, so a REPLACED sample cannot mangle the interim render - refuter-executed repro), dead-id sample buckets keep their position, the determination lead takes no ordinal under the reconcile, and the doc-pane note/receipt stay honest ('appears as an empty heading'; 'X of them stay empty'). (2) WORD PRESENTATION, profile-gated: bold + neutral-black heading runs (docx-npm defaults are blue non-bold - the owner's bolding complaint), label+TAB+title with a left tab stop, and the Word indent ladder w:ind left=720*(depth+1) hanging 360 on headings/body, depthOffset on list configs, bullets included (the indentation complaint). (3) INGEST: the owner's re-saved template leaked w:p attribute residue (w14:paraId=...>) into stored text - fixed at extraction (skipParaTagRemainder) plus scrubAttributeResidue healing leaked rows at read time for ALL filenames (strict attribute-shaped spans only; refuter-executed content-loss cases pass through); AND the round-22.5 same-species truncation is REVERTED: the re-save genuinely numbers decimal under decimal, so such profiles fire and depth is distinguished by indent+bold (the original refutation's harm), section-word/unnumbered-heading guards intact. (4) MEASUREMENT: the rubric grew to five parts (sections .30 / numbering .30 / indentation ladder .15 / heading emphasis .10 / foreign styles .15) with styles.xml bold+indent chain resolution, Word-correct w:b negation (0/false/off/none anywhere in the tag), attributed-w:p fixtures, and a sparse-outline e2e pinning the owner's real failure shape at 100 percent; ACCEPTED DESIGN: structural rubric scores a complete-but-hollow skeleton 1.0 (countermeasures: adopt-prompt coverage pressure + receipt honesty). Real prod row verified end to end from a read-only dump. Sections 5.12 updated below.
 
 Last verified against code: 2026-09-21 §5.12 TEMPLATE STRUCTURE FIDELITY ROUND (round 22, panel-implemented + twin-refuted): an uploaded format sample's SKELETON AND PER-LEVEL NUMBERING are now matched exactly, closing the owner report that a policy-template .docx (bold numbered ListParagraph headings, 1./a./i. scheme) produced an AUP with self-invented Heading1 sections and bullet lists. Four moves. (1) INGEST (style-sample.ts): a numbered paragraph whose leading BOLD run is title-shaped (<=80 chars, <=10 words, no terminal sentence punctuation) now extracts as a heading at ilvl+2, with a glued non-bold body run split onto its own line; armed only when a numbering model exists AND the document has fewer than two live non-Title style headings (Title excluded, pStyle/outlineLvl reads cut at w:pPrChange); bold reads only the w:b tag's OWN w:val (0/false/off/none = off), never a sibling toggle's. (2) PROFILE (numbering.ts detectNumberingProfile): a per-level NumberingProfile {fmt, sep, composite}[] + bodyNumbered is DERIVED from stored sample text at every read edge (view.ts styleSample.profile, download route), never persisted, so legacy rows adopt on next load (deliberate, owner intent - a silent one-time restyle). Guards, each refuter-forced: consecutive same-species bare levels truncate (a decimal body list under decimal headings is a LIST, not a multilevel scheme); the body-only fallback fires ONLY when the sample has <=1 heading line AND detectNumberingStyle agrees with the derived level 0 (section-word and unnumbered-heading samples keep flat rendering); null profile is byte-identical to pre-22 output (proven old-vs-new across ~4000 combinations and full renderDocx outputs). (3) RENDER (numbering.ts/outline.ts/docx.ts/doc-pane.tsx): sectionTitleText/nestedBaseLabel/nestedSectionTitleText/normalizeSectionBlocks/planOutline/sectionDisplayLabel gain an optional profile; non-composite levels emit BARE markers (a. Title, i. Item), composite keep dot-joined paths; depths past a >=3-level profile cycle (faithful to Word defs), past a 2-level profile fall back to bare decimal; bullet lists convert to ordered in the level's format when bodyNumbered; docx list configs gain lowerRoman/upperRoman and per-level separators (lvlText %n<sep>); ACCEPTED RESIDUAL: the doc pane renders list markers via CSS list-style-type so a ")" separator shows as "." on the web while the .docx is faithful. (4) MEASUREMENT: scripts/lib/governance-rubric.ts is an implementation-independent structure rubric (docx bytes only, jszip; separator-aware, section anchors, degenerate-structure guard) with a CLI; suite blocks 35 (27 ingest/profile/render pins) and 36 pin the FULL pipeline (fixture template -> extractStyleSampleText -> bucket titles + profile -> adopted-outline renderDocx -> rubric) at EXACTLY 100 percent; the owner's real template scored 1.000 end to end and the shipped-bad draft scores 0.164 against it. Prompt delta: adoptInstruction now asks the model to give EVERY sample title at least one section before skipping one (host-side empty-bucket tolerance unchanged). Known gaps, documented not fixed: Heading-styled templates with a single-level numbered body yield no profile (draft bullets stay bullets); the roadmap snapshot bridge stays numbering-free by design. Sections 5.12 (style-sample row, numbering authority, rendering contract, docx list model, planOutline row) updated below.
@@ -1349,12 +1388,16 @@ determination lead takes NO ordinal while the reconcile is active, and plan
 rows carry empty/matched flags.
 Receipts report adoption with verified counts on every run ending incl.
 stopped/shrunk, newly stored adoptions render only after the run ends
-(groupedOkDocs hold), and a durable doc-pane note names up to two sample headings that hold no
+(groupedOkDocs hold), and a doc-pane note names up to two sample headings that hold no
 content - since round 23 derived from the PLAN's empty-flagged bucket rows
 ("appears as an empty heading", firing for post-23 and legacy rows alike; the
 legacy "does not appear" wording remains only where the reconcile is
 inactive), with the adoption receipt appending "X of them stay empty" when
-X > 0. Companion fix: the PDF
+X > 0. Since the same-day editing-notes round the note renders inside the
+dismissible "Editing notes" window rather than standing in the document
+block; the flashKey-keyed dismissal re-arms it on the next update (see the
+§5.12 EDITING-NOTES WINDOW entry above), so the honesty answer is re-given
+even after a dismissal. Companion fix: the PDF
 extractor recovers section titles whose auto-numbers got glued to the line
 END ("Purpose1.") via an ascending-chain guard into real "## 1. Purpose"
 headings; the view exposes styleSample.outlineTitles (derived).
@@ -1963,7 +2006,10 @@ Base behaviors: `html` gets `scroll-behavior: smooth` **plus `scroll-padding-top
 same-page anchor targets clear the sticky header (smooth scroll reverts to `auto` under
 `prefers-reduced-motion`); prose links inside panels (`.panel p a`) are underlined
 (`text-underline-offset: 3px`, decoration `--xl-light-dim`) — a non-color cue per WCAG 1.4.1,
-since link-vs-body contrast is below 3:1.
+since link-vs-body contrast is below 3:1. A third stylesheet, `src/app/doc-notes.css`
+(imported by `src/app/layout.tsx` directly after globals.css; unlayered, like globals.css's
+own component rules), holds only the editing-notes window chrome (`.doc-notes*`) shared by
+the governance and RFP document panes (§5.12, §5.17).
 
 `futurism.css` §1c additionally defines every `--site-*` token of the module theme contract
 (`packages/aicompany/architecture.md` §4.2) in both themes (`:root` dark defaults +
@@ -9201,7 +9247,23 @@ flat-fee headline, welcome line, contact grid). Host furniture stays
 claim-free by design: certifications/percentages/dates belong in drafted,
 cited sections only. The "Updated just now" receipt names sheets
 ("Section 8", "Investment") and self-expires after 15s so "just now"
-stays true; expiry also drops the flash key, which remounts a section, so
+stays true. Since 2026-09-21 the receipt line renders inside a dismissible
+"Editing notes" window (`.doc-notes` / `.doc-notes-head` / `.doc-notes-x`,
+styled in `src/app/doc-notes.css`, imported by `src/app/layout.tsx` right
+after globals.css and shared with the governance doc pane): obvious UI
+chrome (spaced-caps label, 1px `--xl-line-bright` border, a bg-2/bg-1
+color-mix fill so both themes derive it from tokens) so the receipt can
+never read as proposal text. The X (`aria-label` "Close editing notes",
+U+00D7 glyph) stores the receipt's content signature (the sorted
+NUL-joined highlight labels) in per-mount state and the window hides only
+while the live signature equals the stored one, so a merge that adds a
+section brings it back; the 15s expiry that empties the set also clears
+the stored signature. The X never mutates the `highlights` set (the
+per-section "Updated" chips keep working), moves focus to the document
+section landmark (`tabIndex={-1}` on `.rfp-docpane`) instead of dropping it
+on body, and the `.rfp-doc-receipt` `role="status"` wrapper stays
+permanently mounted, exactly as before.
+Expiry also drops the flash key, which remounts a section, so
 the timer must never be extended past casual-edit latitude without
 checking where `editing`/`editText` live (parent state — a remount keeps
 text but drops focus). Docx/pdf emitters mirror this whole sheet anatomy,

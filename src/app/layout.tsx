@@ -20,6 +20,7 @@ import { YourWorkLink } from "@/components/your-work-link";
 import { RoadmapPercentBadge } from "@/components/roadmap-percent-badge";
 import { ChatWidgetMount } from "@/components/chat-widget-mount";
 import "./globals.css";
+import "./doc-notes.css";
 
 export const metadata: Metadata = {
   title: {
