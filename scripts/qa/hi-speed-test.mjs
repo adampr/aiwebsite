@@ -58,6 +58,8 @@ async function measure() {
       'content-type': 'application/json',
       accept: 'application/x-ndjson',
       ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
+      // Issue #872: the calling service's unique name (brain v1.163 binds it to the key).
+      'x-brain-service': (env.BRAIN_SERVICE_NAME || '').trim() || 'aiwebsite',
     },
     body: JSON.stringify({ sessionId, promptId, messages: [{ role: 'user', content: 'Hi' }] }),
     signal: AbortSignal.timeout(Math.max(thresholdMs * 6, 30_000)),

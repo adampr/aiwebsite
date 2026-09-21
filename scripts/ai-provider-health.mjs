@@ -200,6 +200,8 @@ async function completionProbe(provider, model) {
       headers: {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
+        // Issue #872: the calling service's unique name (brain v1.163 binds it to the key).
+        "X-Brain-Service": (env.BRAIN_SERVICE_NAME || "").trim() || "aiwebsite",
       },
       body: JSON.stringify({
         model,
