@@ -4206,11 +4206,15 @@ function check(name: string, cond: boolean): void {
     kind
   );
   check(
-    "outline: removing a section prunes its bucket from the stored outline",
-    pruned.documents[0].outline?.length === 2 &&
+    // Round 23: an emptied bucket STAYS as a title-only heading so the
+    // sample's skeleton (names, order, positions) survives removals.
+    "outline: removing a section prunes the id but keeps its emptied bucket",
+    pruned.documents[0].outline?.length === 3 &&
       !pruned.documents[0].outline!.some((b) =>
         b.sections.includes("violations")
-      )
+      ) &&
+      pruned.documents[0].outline![2].title === "Enforcement" &&
+      pruned.documents[0].outline![2].sections.length === 0
   );
 
   // Plan: bucket rows, nested labels, fused single-section buckets, and
@@ -4418,10 +4422,15 @@ function check(name: string, cond: boolean): void {
     { bucketTitles: allowlist }
   );
   check(
-    "outline: titles reworded to the sample and reordered to its sequence",
+    // Round 23: the stored outline carries the FULL sample sequence;
+    // titles the model filed nothing under persist as empty buckets at
+    // their sample position (Definitions here), so positional numbering
+    // holds and the skeleton never thins.
+    "outline: titles reworded to the sample, reordered, gaps stored empty",
     JSON.stringify(reordered.documents[0].outline) ===
       JSON.stringify([
         { title: "Purpose", sections: ["purpose-scope"] },
+        { title: "Definitions", sections: [] },
         { title: "Policy", sections: ["approved-tools", "data-rules"] },
         { title: "Enforcement", sections: ["violations"] },
       ])
@@ -5780,7 +5789,10 @@ function check(name: string, cond: boolean): void {
         JSON.stringify(["Purpose", "Policy", "Enforcement"])
   );
   check(
-    "adopt19c: 18e apply path drops a cast-in empty bucket and the honesty surface reports it",
+    // Round 23: a cast-in empty bucket is KEPT at its sample position (the
+    // stored outline always carries the full sample sequence), so the
+    // dropped-titles honesty surface reports nothing dropped.
+    "adopt19c: 18e apply path keeps a cast-in empty bucket at its position",
     (() => {
       const allowlist = ["Purpose", "Definitions", "Policy", "Enforcement"];
       const r = applyOps(
@@ -5800,13 +5812,15 @@ function check(name: string, cond: boolean): void {
         kind,
         { bucketTitles: allowlist }
       );
-      const titles = r.documents[0].outline?.map((b) => b.title) ?? [];
+      const outline = r.documents[0].outline ?? [];
       return (
         r.errors.length === 0 &&
-        JSON.stringify(titles) === JSON.stringify(["Purpose", "Policy", "Enforcement"]) &&
+        JSON.stringify(outline.map((b) => b.title)) ===
+          JSON.stringify(allowlist) &&
+        outline[1].sections.length === 0 &&
         JSON.stringify(
           outlineMod.droppedOutlineTitles(r.documents[0], allowlist)
-        ) === JSON.stringify(["Definitions"])
+        ) === JSON.stringify([])
       );
     })()
   );
@@ -6623,6 +6637,9 @@ function check(name: string, cond: boolean): void {
     style?: string;
     numId?: string;
     ilvl?: number;
+    // attrs: raw attributes on the w:p tag itself (Word re-saves carry
+    // w14:paraId / rsid marks there; round 23).
+    attrs?: string;
     // rpr: raw rPr innards, for shapes bold:true cannot spell (sibling
     // toggles beside <w:b/>, attribute-stuffed tags, w:val variants).
     runs: { text: string; bold?: boolean; rpr?: string }[];
@@ -6638,7 +6655,8 @@ function check(name: string, cond: boolean): void {
           `<w:r><w:rPr>${r.rpr ?? (r.bold ? "<w:b/>" : "")}</w:rPr><w:t xml:space="preserve">${r.text}</w:t></w:r>`
       )
       .join("");
-    return `<w:p><w:pPr>${style}${numPr}</w:pPr>${runs}</w:p>`;
+    const open = opts.attrs ? `<w:p ${opts.attrs}>` : "<w:p>";
+    return `${open}<w:pPr>${style}${numPr}</w:pPr>${runs}</w:p>`;
   };
   const doc22 = (paras: string) =>
     `<w:document><w:body>${paras}</w:body></w:document>`;
@@ -6840,6 +6858,151 @@ function check(name: string, cond: boolean): void {
       );
     })()
   );
+  check(
+    // Round 23 (FIX D): attributed w:p tags (Word re-saves: w14:paraId /
+    // rsid marks) must not leak their attribute list into the text; an
+    // attribute value carrying a literal ">" must not cut the tag short.
+    "r23 ingest: w:p attributes never leak into extracted text",
+    (() => {
+      const attrs =
+        'w14:paraId="AAAA0001" w14:textId="77777777" w:rsidR="00AA00AA" w:rsidRDefault="00000000"';
+      const attributed = doc22(
+        para({ style: "Title", attrs, runs: [{ text: "Alpha Template" }] }) +
+          para({
+            style: "ListParagraph",
+            numId: "10",
+            ilvl: 0,
+            attrs,
+            runs: [{ text: "Purpose", bold: true }],
+          }) +
+          para({
+            attrs: 'w14:paraId="AAAA0002" w:dummy="a>b" w:rsidP="00BB00BB"',
+            runs: [{ text: "Plain body text." }],
+          })
+      );
+      const t = docxXmlToText(attributed, mkModel());
+      return (
+        t === "# Alpha Template\n## 1. Purpose\nPlain body text." &&
+        !t.includes("w14:") &&
+        !t.includes("w:rsid")
+      );
+    })()
+  );
+  {
+    const ss23 = await import("../src/lib/governance/style-sample");
+    // Generic replica of the round-22 leak SHAPE (never the prod strings):
+    // residue in the leading run of a body line, a heading line, a
+    // marker-led line, an attribute value holding ">", and a debris-only
+    // tail line that must drop.
+    const junk = [
+      'w14:paraId="AAAA0001" w14:textId="77777777" w:rsidR="00AA00AA" w:rsidRDefault="00000000">Alpha intro line',
+      '# w14:paraId="AAAA0002" w:rsidR="00AA00AA">Alpha Template',
+      "## 1. Purpose",
+      '1. w14:paraId="AAAA0003" w:rsidR="00AA00AA" w:rsidP="00BB00BB">System basics for widgets.',
+      '1. w14:paraId="AAAA0004" w:dummy="a>b" w:rsidP="00BB00BB">Quoted-gt attribute value.',
+      'w14:paraId="AAAA0005" w:rsidR="00AA00AA">',
+    ].join("\n");
+    const clean = [
+      "Alpha intro line",
+      "# Alpha Template",
+      "## 1. Purpose",
+      "1. System basics for widgets.",
+      "1. Quoted-gt attribute value.",
+    ].join("\n");
+    const scrubbed = ss23.scrubAttributeResidue(junk);
+    check(
+      "r23 scrub: residue lines heal, debris-only lines drop",
+      scrubbed === clean &&
+        !scrubbed!.includes("w14:") &&
+        !scrubbed!.includes("w:rsid")
+    );
+    check(
+      "r23 scrub: idempotent, and clean text passes through byte-identical",
+      ss23.scrubAttributeResidue(scrubbed) === scrubbed &&
+        ss23.scrubAttributeResidue(clean) === clean &&
+        ss23.scrubAttributeResidue(tplText) === tplText
+    );
+    check(
+      "r23 scrub: runs for .docx rows through the read-edge heal",
+      ss23.healSampleHeadings(junk, "template.docx") === clean
+    );
+    check(
+      "r23 scrub: residue past real words is content, never scrubbed",
+      (() => {
+        const quoted =
+          'The exporter writes w14:paraId="AAAA9999" attributes into tags.\n' +
+          'w14:paraId="AAAA0001">Alpha line';
+        const out = ss23.scrubAttributeResidue(quoted)!;
+        return (
+          out.split("\n")[0] ===
+            'The exporter writes w14:paraId="AAAA9999" attributes into tags.' &&
+          out.split("\n")[1] === "Alpha line"
+        );
+      })()
+    );
+    check(
+      // Round 23.5 fix 4a: the cut fires only across a strictly
+      // attribute-shaped span ending at ">", so prose ABOUT the attribute
+      // and prose containing an innocent ">" both survive whole.
+      "r23 scrub: non-attribute spans never cut, innocent > survives",
+      (() => {
+        const proseA =
+          'w14:paraId="ABC1" is the attribute Word writes into paragraphs.\n' +
+          'w14:paraId="AAAA0001">Alpha line';
+        const proseB =
+          '1. w14:paraId="ABC1" markers appear in >90 percent of re-saves.\n' +
+          'w14:paraId="AAAA0001">Beta line';
+        const outA = ss23.scrubAttributeResidue(proseA)!.split("\n");
+        const outB = ss23.scrubAttributeResidue(proseB)!.split("\n");
+        return (
+          outA[0] ===
+            'w14:paraId="ABC1" is the attribute Word writes into paragraphs.' &&
+          outA[1] === "Alpha line" &&
+          outB[0] ===
+            '1. w14:paraId="ABC1" markers appear in >90 percent of re-saves.' &&
+          outB[1] === "Beta line"
+        );
+      })()
+    );
+    check(
+      // Round 23.5 fix 4b: composite, parenthesized, and roman-run list
+      // markers gate the leading run like bare markers do.
+      "r23 scrub: composite, paren, and roman marker prefixes heal",
+      ss23.scrubAttributeResidue(
+        [
+          '1.1 w14:paraId="A001" w:rsidR="B002">Nested item text.',
+          '(a) w14:paraId="A003">Paren item text.',
+          'iv. w14:paraId="A004">Roman item text.',
+        ].join("\n")
+      ) ===
+        [
+          "1.1 Nested item text.",
+          "(a) Paren item text.",
+          "iv. Roman item text.",
+        ].join("\n")
+    );
+    check(
+      // Round 23.5 fix 4c: rows leaked with ONLY rsid attributes heal too.
+      "r23 scrub: rsid-only residue triggers the same strict cut",
+      ss23.scrubAttributeResidue(
+        '1. w:rsidR="00AA00AA" w:rsidP="00BB00BB">Text here.\nPlain line.'
+      ) === "1. Text here.\nPlain line."
+    );
+    check(
+      // Round 23.5 fix 4d: loop-until-stable clears stacked tags in one
+      // call, so a second call is a byte-identical no-op.
+      "r23 scrub: a six-tag line clears in one idempotent pass",
+      (() => {
+        const six =
+          '1. w14:paraId="A1">w14:textId="B2">w:rsidR="C3">w:rsidP="D4">w14:paraId="E5">w:rsidRDefault="F6">Deep text.';
+        const once = ss23.scrubAttributeResidue(six);
+        return (
+          once === "1. Deep text." &&
+          ss23.scrubAttributeResidue(once) === once
+        );
+      })()
+    );
+  }
 
   // --- detectNumberingProfile: per-level schemes from the stored markers.
   const tplProfile = detectNumberingProfile(tplText);
@@ -6926,18 +7089,55 @@ function check(name: string, cond: boolean): void {
         null
   );
   check(
-    "r22 profile: decimal headings over a decimal body list never stack",
-    detectNumberingProfile(
-      [
-        "## 1. Purpose",
-        "This policy exists for reasons.",
-        "1. First step of the process.",
-        "2. Second step of the process.",
-        "## 2. Scope",
-        "1. Review annually.",
-        "2. Update as needed.",
-      ].join("\n")
-    ) === null
+    // Round 23 reversal: real Word templates genuinely number consecutive
+    // levels decimal, so same-species stacking FIRES; the renderers
+    // distinguish depths the way Word does (indent ladder, bold headings),
+    // pinned in the docx checks below.
+    "r23 profile: decimal under decimal fires as a real multilevel scheme",
+    (() => {
+      const p = detectNumberingProfile(
+        [
+          "## 1. Purpose",
+          "This policy exists for reasons.",
+          "1. First step of the process.",
+          "2. Second step of the process.",
+          "## 2. Scope",
+          "1. Review annually.",
+          "2. Update as needed.",
+        ].join("\n")
+      );
+      return (
+        p !== null &&
+        p.levels.map((l) => `${l.fmt}${l.sep}`).join(",") ===
+          "decimal.,decimal." &&
+        p.bodyNumbered === true
+      );
+    })()
+  );
+  check(
+    // Hash depth is the one depth signal an all-decimal template has: a
+    // body "1." right after a markered "### 1." heading is that heading's
+    // CHILD, never a restart of the heading chain.
+    "r23 profile: deep decimal headings anchor their level, body 1. nests",
+    (() => {
+      const p = detectNumberingProfile(
+        [
+          "## 1. Alpha",
+          "Body text here.",
+          "## 2. Beta",
+          "1. First item here.",
+          "## 3. Gamma",
+          "### 1. Step one here",
+          "1. Child item here.",
+          "### 2. Step two here",
+          "1. Child item again.",
+        ].join("\n")
+      );
+      return (
+        p !== null &&
+        p.levels.map((l) => l.fmt).join(",") === "decimal,decimal,decimal"
+      );
+    })()
   );
   check(
     "r22 profile: unmarkered or section-word headings keep the flat style",
@@ -7200,12 +7400,17 @@ function check(name: string, cond: boolean): void {
       await renderDocx22(d, { draft: false, kind: kind22 })
     );
     const flatDoc = await flat.file("word/document.xml")!.async("string");
+    // Profiled headings split label and title around a real tab (round 23
+    // fix 6), so containment checks read the run-JOINED text, which stays
+    // "1. Purpose" by construction (the label run keeps its space).
+    const runText = (xml: string) =>
+      xml.replace(/<w:tab\/>/g, "").replace(/<[^>]{1,300}>/g, "");
     check(
       "r22 docx: profile labels sections and nests bare letter markers",
-      profiledDoc.includes("1. Purpose") &&
-        profiledDoc.includes("2. Policy") &&
-        profiledDoc.includes("a. Approved tools") &&
-        profiledDoc.includes("b. Data rules")
+      runText(profiledDoc).includes("1. Purpose") &&
+        runText(profiledDoc).includes("2. Policy") &&
+        runText(profiledDoc).includes("a. Approved tools") &&
+        runText(profiledDoc).includes("b. Data rules")
     );
     check(
       "r22 docx: converted lists carry lowerRoman in word/numbering.xml",
@@ -7216,6 +7421,327 @@ function check(name: string, cond: boolean): void {
       !profiledDoc.includes('<w:numId w:val="1"/>') &&
         flatDoc.includes('<w:numId w:val="1"/>')
     );
+
+    // --- Round 23: skeleton completeness (render-side reconcile), bold +
+    // neutral profiled headings, and the Word indent ladder.
+    const titles6 = [
+      "Purpose",
+      "Scope",
+      "Definitions",
+      "Roles and Responsibilities",
+      "References",
+      "Policy",
+    ];
+    const d23: GovernanceDoc = {
+      slug: "ai-usage-policy",
+      title: "AI Acceptable Use Policy",
+      stub: false,
+      sections: [
+        { id: "purpose-scope", title: "Why this exists", markdown: "Body one." },
+        { id: "definitions", title: "Definitions", markdown: "Terms here." },
+        { id: "roles", title: "Roles", markdown: "Owner reviews quarterly." },
+        {
+          id: "approved-tools",
+          title: "Approved tools",
+          markdown:
+            "Use only listed tools.\n- Keep accounts separate.\n- Log usage weekly.",
+        },
+        { id: "data-rules", title: "Data rules", markdown: "Never paste client data." },
+      ],
+      // The owner's real stored shape: Scope and References ABSENT.
+      outline: [
+        { title: "Purpose", sections: ["purpose-scope"] },
+        { title: "Definitions", sections: ["definitions"] },
+        { title: "Roles and Responsibilities", sections: ["roles"] },
+        { title: "Policy", sections: ["approved-tools", "data-rules"] },
+      ],
+    };
+    const plan23 = outline22.planOutline(d23, null, P, titles6)!;
+    check(
+      "r23 plan: absent sample titles interleave as empty headings, positional",
+      plan23.length === 8 &&
+        plan23[1].sectionId === null &&
+        plan23[1].label === "2. Scope" &&
+        plan23[1].top === true &&
+        plan23[1].fused === false &&
+        plan23[1].innerBase === null &&
+        plan23[4].sectionId === null &&
+        plan23[4].label === "5. References" &&
+        plan23[5].label === "6. Policy" &&
+        plan23[6].label === "a. Approved tools" &&
+        plan23[7].label === "b. Data rules" &&
+        plan23.filter((e) => e.sectionId !== null).length ===
+          d23.sections.length
+    );
+    check(
+      "r23 plan: without sample titles the round-22 plan is byte-identical",
+      JSON.stringify(outline22.planOutline(d23, null, P)) ===
+        JSON.stringify(outline22.planOutline(d23, null, P, null)) &&
+        outline22.planOutline(d23, null, P)!.length === 6
+    );
+    check(
+      "r23 plan: a stored-empty bucket renders as a heading, never fuses",
+      (() => {
+        const emptied: GovernanceDoc = {
+          ...d23,
+          outline: [
+            ...d23.outline!,
+            { title: "References", sections: [] },
+          ],
+        };
+        const p = outline22.planOutline(emptied, null, P)!;
+        const row = p.find((e) => e.label.includes("References"));
+        return (
+          !!row && row.sectionId === null && !row.fused && row.top === true
+        );
+      })()
+    );
+    check(
+      "r23 plan: quoting surfaces shift with the reconciled positions",
+      outline22.sectionDisplayLabel(d23, "approved-tools", null, null, titles6) ===
+        "6.1 Approved tools" &&
+        outline22.sectionDisplayLabel(d23, "approved-tools", null, P, titles6) ===
+          "a. Approved tools"
+    );
+    check(
+      // Round 23 fix 1: the honesty surfaces derive from the PLAN, so
+      // empty heading rows carry the flag they read.
+      "r23 plan: empty heading rows carry the empty flag, filled rows none",
+      plan23[1].empty === true &&
+        plan23[4].empty === true &&
+        plan23.filter((e) => e.empty === true).length === 2
+    );
+    check(
+      // Round 23 fix 2: a replaced sample whose titles match under half of
+      // the stored buckets does NOT reconcile - the stored outline renders
+      // exactly as without sample titles; the owner's 4-of-6 row does.
+      "r23 plan: reconcile needs half the sample titles already stored",
+      (() => {
+        const replaced = ["Alpha", "Beta", "Gamma"];
+        return (
+          outline22.outlineReconciled(d23, titles6) === true &&
+          outline22.outlineReconciled(d23, replaced) === false &&
+          JSON.stringify(outline22.planOutline(d23, null, P, replaced)) ===
+            JSON.stringify(outline22.planOutline(d23, null, P)) &&
+          outline22.planOutline(d23, null, P, replaced)!.length === 6
+        );
+      })()
+    );
+    check(
+      // Round 23 fix 3: a sample-MATCHED bucket whose ids all died keeps
+      // its position as an empty heading; unmatched drift dead-ids skip.
+      "r23 plan: dead-id sample buckets keep their position as empty headings",
+      (() => {
+        const dead: GovernanceDoc = {
+          slug: "ai-usage-policy",
+          title: "AI Acceptable Use Policy",
+          stub: false,
+          sections: [
+            { id: "approved-tools", title: "Approved tools", markdown: "Body." },
+          ],
+          outline: [
+            { title: "Purpose", sections: ["gone-id"] },
+            { title: "Policy", sections: ["approved-tools"] },
+          ],
+        };
+        const withTitles = outline22.planOutline(dead, null, P, [
+          "Purpose",
+          "Policy",
+        ])!;
+        const without = outline22.planOutline(dead, null, P)!;
+        return (
+          withTitles.length === 2 &&
+          withTitles[0].sectionId === null &&
+          withTitles[0].label === "1. Purpose" &&
+          withTitles[0].empty === true &&
+          withTitles[1].label === "2. Policy" &&
+          without.length === 1 &&
+          without[0].label === "1. Policy"
+        );
+      })()
+    );
+    check(
+      // Round 23 fix 3: under an active reconcile the unfiled determination
+      // lead keeps its place but not an ordinal, so the sample's titles
+      // keep their exact positions.
+      "r23 plan: determination lead takes no ordinal under the reconcile",
+      (() => {
+        const det: GovernanceDoc = {
+          slug: "ai-usage-policy",
+          title: "AI Acceptable Use Policy",
+          stub: true,
+          sections: [
+            { id: "determination", title: "Determination", markdown: "Body." },
+            { id: "purpose-scope", title: "Why this exists", markdown: "Body." },
+          ],
+          outline: [{ title: "Purpose", sections: ["purpose-scope"] }],
+        };
+        const p = outline22.planOutline(det, null, P, ["Purpose", "Scope"])!;
+        const legacy = outline22.planOutline(det, null, P)!;
+        return (
+          p[0].sectionId === "determination" &&
+          p[0].label === "Determination" &&
+          p[1].label === "1. Purpose" &&
+          p[2].label === "2. Scope" &&
+          legacy[0].label === "1. Determination" &&
+          legacy[1].label === "2. Purpose"
+        );
+      })()
+    );
+
+    const paraAround = (xml: string, needle: string) => {
+      const at = xml.indexOf(needle);
+      if (at === -1) return "";
+      const start = xml.lastIndexOf("<w:p", at);
+      const end = xml.indexOf("</w:p>", at);
+      return start === -1 || end === -1 ? "" : xml.slice(start, end);
+    };
+    const full = await JSZip22.loadAsync(
+      await renderDocx22(d23, {
+        draft: false,
+        kind: kind22,
+        profile: P,
+        sampleTitles: titles6,
+      })
+    );
+    const fullDoc = await full.file("word/document.xml")!.async("string");
+    const fullNum = await full.file("word/numbering.xml")!.async("string");
+    check(
+      "r23 docx: all six template sections render, empties included",
+      (() => {
+        const joined = runText(fullDoc);
+        return titles6.every((t, i) => joined.includes(`${i + 1}. ${t}`));
+      })()
+    );
+    check(
+      "r23 docx: profiled headings are bold and neutral, flat stays untouched",
+      (() => {
+        const head = paraAround(fullDoc, ">Purpose<");
+        const nested = paraAround(fullDoc, ">Approved tools<");
+        return (
+          head.includes("<w:b/>") &&
+          head.includes('w:val="000000"') &&
+          nested.includes("<w:b/>") &&
+          !fullDoc.includes("2E74B5") &&
+          !flatDoc.includes('w:val="000000"')
+        );
+      })()
+    );
+    check(
+      "r23 docx: the Word indent ladder rides semantic depth",
+      (() => {
+        const head = paraAround(fullDoc, ">Purpose<");
+        const nested = paraAround(fullDoc, ">Approved tools<");
+        const body = paraAround(fullDoc, "Body one.");
+        return (
+          head.includes('w:left="720"') &&
+          head.includes('w:hanging="360"') &&
+          nested.includes('w:left="1440"') &&
+          body.includes('w:left="720"') &&
+          // list under the NESTED section: 720 * (1 + 1 + 1) = 2160
+          fullNum.includes('w:left="2160"') &&
+          // flat render keeps today's fixed ladder and no body indents
+          !paraAround(flatDoc, "Body one.").includes("w:ind")
+        );
+      })()
+    );
+    check(
+      // Round 23 fix 6: label run + real tab + title, tab stop at the
+      // paragraph's left indent; flat headings carry no tab.
+      "r23 docx: profiled heading titles column at the ladder via a tab",
+      (() => {
+        const head = paraAround(fullDoc, ">Purpose<");
+        const flatHead = paraAround(flatDoc, "1. Purpose");
+        return (
+          head.includes("<w:tab/>") &&
+          head.includes('w:pos="720"') &&
+          paraAround(fullDoc, ">Approved tools<").includes('w:pos="1440"') &&
+          !flatHead.includes("<w:tab")
+        );
+      })()
+    );
+    {
+      // Round 23 fix 5: unconverted bullets (profile present, bodyNumbered
+      // false) ride the same depth ladder as ordered items.
+      const buf = await renderDocx22(d23, {
+        draft: false,
+        kind: kind22,
+        profile: { levels: P.levels, bodyNumbered: false },
+        sampleTitles: titles6,
+      });
+      const xml = await (await JSZip22.loadAsync(buf))
+        .file("word/document.xml")!
+        .async("string");
+      const bullet = paraAround(xml, "Keep accounts separate.");
+      check(
+        "r23 docx: bullet paragraphs under a profile ride the depth ladder",
+        bullet.includes('<w:numId w:val="1"/>') &&
+          bullet.includes('w:left="2160"') &&
+          bullet.includes('w:hanging="360"')
+      );
+    }
+    {
+      // Round 23.5 fix 7 (accepted expansion): a plain markdown sample
+      // ("## 1. Purpose" over a decimal list) mints a profile too, and it
+      // renders with the same bold + ladder treatment.
+      const mdProfile = detectNumberingProfile(
+        [
+          "## 1. Purpose",
+          "This policy exists for reasons.",
+          "1. First step of the process.",
+          "2. Second step of the process.",
+          "## 2. Scope",
+          "1. Review annually.",
+          "2. Update as needed.",
+        ].join("\n")
+      );
+      const flatMd: GovernanceDoc = {
+        slug: d23.slug,
+        title: d23.title,
+        stub: false,
+        sections: d23.sections,
+      };
+      const buf = await renderDocx22(flatMd, {
+        draft: false,
+        kind: kind22,
+        profile: mdProfile,
+      });
+      const xml = await (await JSZip22.loadAsync(buf))
+        .file("word/document.xml")!
+        .async("string");
+      const head = paraAround(xml, ">Why this exists<");
+      check(
+        "r23 docx: the markdown-sample profile class renders bold + ladder",
+        mdProfile !== null &&
+          runText(xml).includes("1. Why this exists") &&
+          head.includes("<w:b/>") &&
+          head.includes('w:val="000000"') &&
+          head.includes('w:left="720"')
+      );
+    }
+    {
+      const za = await JSZip22.loadAsync(
+        await renderDocx22(d23, { draft: false, kind: kind22 })
+      );
+      const zb = await JSZip22.loadAsync(
+        await renderDocx22(d23, {
+          draft: false,
+          kind: kind22,
+          profile: null,
+          sampleTitles: null,
+        })
+      );
+      const [da, db, na, nb] = await Promise.all([
+        za.file("word/document.xml")!.async("string"),
+        zb.file("word/document.xml")!.async("string"),
+        za.file("word/numbering.xml")!.async("string"),
+        zb.file("word/numbering.xml")!.async("string"),
+      ]);
+      check(
+        "r23 docx: profile-null output is byte-identical across the new params",
+        da === db && na === nb
+      );
+    }
   }
 
   // --- Prompt: adoption now asks for full skeleton coverage, and the
@@ -7241,16 +7767,21 @@ function check(name: string, cond: boolean): void {
   );
 }
 
-/* 36. Round 22 rubric: template-vs-generated docx structure match. The scorer
-   (scripts/lib/governance-rubric.ts) is implementation-independent: it reads
-   docx bytes only, so it cannot be gamed by the render code it measures. The
-   synthetic fixture is a faithful structural replica of the owner's policy
-   template (verified against the real file out of repo): six generic section
-   titles as bold ListParagraph runs on one real Word multilevel definition
-   (decimal "1." / lowerLetter "a." / lowerRoman "i."), one glued bold-heading
-   + plain-body paragraph, zero bullets. The final checks run the REAL
-   pipeline: fixture -> extractStyleSampleText -> bucket titles + profile ->
-   adopted-outline render -> rubric score, pinned at exactly 1. */
+/* 36. Round 22/23 rubric: template-vs-generated docx structure match. The
+   scorer (scripts/lib/governance-rubric.ts) is implementation-independent:
+   it reads docx bytes only, so it cannot be gamed by the render code it
+   measures. Five parts: section set/order 0.30, numbering scheme (format +
+   separator) per level 0.30, indentation ladder 0.15, heading emphasis 0.10,
+   no foreign list styles 0.15. The synthetic fixture is a faithful
+   structural replica of the owner's policy template (verified against the
+   real file out of repo): six generic section titles as bold ListParagraph
+   runs on one real Word multilevel definition (decimal "1." / lowerLetter
+   "a." / lowerRoman "i.", indents 720/1440/2160 with hanging 360/360/180),
+   one glued bold-heading + plain-body paragraph, zero bullets, and
+   ATTRIBUTED <w:p> tags exactly like a re-saved Word file carries (bare
+   tags once hid an attribute-residue extraction bug). The final checks run
+   the REAL pipeline: fixture -> extractStyleSampleText -> bucket titles +
+   profile -> adopted-outline render -> rubric score, pinned at exactly 1. */
 {
   const JSZip = (await import("jszip")).default;
   const rubric = await import("./lib/governance-rubric");
@@ -7263,49 +7794,96 @@ function check(name: string, cond: boolean): void {
   );
   const { renderDocx: renderR22 } = await import("../src/lib/governance/docx");
 
-  const buildFixtureDocx = async (sectionTitles: string[]): Promise<Buffer> => {
+  const buildFixtureDocx = async (
+    sectionTitles: string[],
+    fx?: {
+      bold?: boolean;
+      indents?: boolean;
+      formats?: [string, string, string];
+      // Raw rPr XML used for "bold" runs (gaming pins swap in negated tags).
+      boldTag?: string;
+      // pStyle for depth-0 section paragraphs (style-chain pins).
+      sectionStyle?: string;
+      // Ship word/styles.xml with this content when set.
+      stylesXml?: string;
+      // Add a firstLine-only w:ind on section paragraphs (must not clobber
+      // the lvl indent).
+      firstLineNoise?: boolean;
+    }
+  ): Promise<Buffer> => {
+    const bold = fx?.bold ?? true;
+    const indents = fx?.indents ?? true;
+    const formats = fx?.formats ?? ["decimal", "lowerLetter", "lowerRoman"];
+    const boldTag = fx?.boldTag ?? "<w:b/>";
+    const sectionStyle = fx?.sectionStyle ?? "ListParagraph";
     const esc = (s: string) =>
       s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const IND = [
+      { left: 720, hanging: 360 },
+      { left: 1440, hanging: 360 },
+      { left: 2160, hanging: 180 },
+    ];
     const lvl = (ilvl: number, fmt: string, txt: string) =>
       `<w:lvl w:ilvl="${ilvl}"><w:start w:val="1"/><w:numFmt w:val="${fmt}"/>` +
-      `<w:lvlText w:val="${txt}"/><w:lvlJc w:val="left"/></w:lvl>`;
+      `<w:lvlText w:val="${txt}"/><w:lvlJc w:val="left"/>` +
+      (indents
+        ? `<w:pPr><w:ind w:left="${IND[ilvl].left}" w:hanging="${IND[ilvl].hanging}"/></w:pPr>`
+        : "") +
+      `</w:lvl>`;
     const numberingXml =
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
       `<w:abstractNum w:abstractNumId="0">` +
-      lvl(0, "decimal", "%1.") +
-      lvl(1, "lowerLetter", "%2.") +
-      lvl(2, "lowerRoman", "%3.") +
+      lvl(0, formats[0], "%1.") +
+      lvl(1, formats[1], "%2.") +
+      lvl(2, formats[2], "%3.") +
       `</w:abstractNum>` +
       `<w:num w:numId="10"><w:abstractNumId w:val="0"/></w:num>` +
       `</w:numbering>`;
-    const run = (text: string, bold: boolean) =>
-      `<w:r>${bold ? "<w:rPr><w:b/></w:rPr>" : ""}<w:t xml:space="preserve">${esc(text)}</w:t></w:r>`;
-    const listP = (ilvl: number, runsXml: string) =>
-      `<w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="${ilvl}"/>` +
-      `<w:numId w:val="10"/></w:numPr></w:pPr>${runsXml}</w:p>`;
+    // Attributed paragraph tags, varied per paragraph, like real Word files
+    // since 2010 carry (w14:paraId / w14:textId / w:rsidR).
+    let paraSeq = 0;
+    const pOpen = () => {
+      paraSeq++;
+      const hex = paraSeq.toString(16).toUpperCase().padStart(8, "0");
+      const tex = (paraSeq + 0x1000).toString(16).toUpperCase().padStart(8, "0");
+      return `<w:p w14:paraId="${hex}" w14:textId="${tex}" w:rsidR="00${hex.slice(2)}">`;
+    };
+    const run = (text: string, b: boolean) =>
+      `<w:r>${b ? `<w:rPr>${boldTag}</w:rPr>` : ""}<w:t xml:space="preserve">${esc(text)}</w:t></w:r>`;
+    const listP = (ilvl: number, runsXml: string, style = "ListParagraph") =>
+      `${pOpen()}<w:pPr><w:pStyle w:val="${style}"/><w:numPr><w:ilvl w:val="${ilvl}"/>` +
+      `<w:numId w:val="10"/></w:numPr>` +
+      (ilvl === 0 && fx?.firstLineNoise ? `<w:ind w:firstLine="200"/>` : "") +
+      `</w:pPr>${runsXml}</w:p>`;
     const plainP = (runsXml: string, style?: string) =>
-      `<w:p>${style ? `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>` : ""}${runsXml}</w:p>`;
-    const [s1, s2, s3, s4, s5, s6] = sectionTitles;
-    const bodyXml =
-      plainP(run("Policy Template Fixture", false), "Title") +
-      plainP(run("Generated for structural testing.", false)) +
-      listP(0, run(s1, true) + run(" Describe the first step.", false)) +
-      listP(0, run(s2, true)) +
-      listP(0, run(s3, true)) +
-      listP(1, run("Describe the second step.", false)) +
-      listP(0, run(s4, true)) +
-      listP(1, run("Describe the third step.", false)) +
-      listP(0, run(s5, true)) +
-      listP(1, run("Describe the fourth step.", false)) +
-      listP(2, run("Start describing the steps.", false)) +
-      listP(0, run(s6, true)) +
-      listP(1, run("First step of the policy", true)) +
-      listP(2, run("Start describing the second part.", false));
+      `${pOpen()}${style ? `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>` : ""}${runsXml}</w:p>`;
+    const ORDINALS = ["second", "third", "fourth", "fifth", "sixth"];
+    const paras: string[] = [
+      plainP(run("Policy Template Fixture", false), "Title"),
+      plainP(run("Generated for structural testing.", false)),
+    ];
+    const last = sectionTitles.length - 1;
+    sectionTitles.forEach((t, i) => {
+      paras.push(
+        listP(
+          0,
+          run(t, bold) + (i === 0 && bold ? run(" Describe the first step.", false) : ""),
+          sectionStyle
+        )
+      );
+      if (i >= 2 && i < last) {
+        paras.push(listP(1, run(`Describe the ${ORDINALS[i - 2] ?? "next"} step.`, false)));
+        if (i === last - 1) paras.push(listP(2, run("Start describing the steps.", false)));
+      }
+    });
+    paras.push(listP(1, run("First step of the policy", bold)));
+    paras.push(listP(2, run("Start describing the second part.", false)));
     const documentXml =
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
-      `<w:body>${bodyXml}<w:sectPr/></w:body></w:document>`;
+      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"` +
+      ` xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml">` +
+      `<w:body>${paras.join("")}<w:sectPr/></w:body></w:document>`;
     const zip = new JSZip();
     zip.file(
       "[Content_Types].xml",
@@ -7315,6 +7893,9 @@ function check(name: string, cond: boolean): void {
         `<Default Extension="xml" ContentType="application/xml"/>` +
         `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
         `<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>` +
+        (fx?.stylesXml
+          ? `<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>`
+          : "") +
         `</Types>`
     );
     zip.file(
@@ -7333,6 +7914,7 @@ function check(name: string, cond: boolean): void {
     );
     zip.file("word/document.xml", documentXml);
     zip.file("word/numbering.xml", numberingXml);
+    if (fx?.stylesXml) zip.file("word/styles.xml", fx.stylesXml);
     return zip.generateAsync({ type: "nodebuffer" });
   };
 
@@ -7359,6 +7941,20 @@ function check(name: string, cond: boolean): void {
       Object.keys(fixture.levelScheme).length === 3
   );
   check("rubric: fixture has no bullets", fixture.hasBullets === false);
+  check(
+    "rubric: fixture indent ladder is 720/1440/2160",
+    fixture.levelIndent[0] === 720 &&
+      fixture.levelIndent[1] === 1440 &&
+      fixture.levelIndent[2] === 2160
+  );
+  check(
+    "rubric: fixture heading emphasis is bold at depths 0 and 1",
+    fixture.emphasis[0] === true && fixture.emphasis[1] === true
+  );
+  check(
+    "rubric: attributed w:p tags leave no residue in extracted titles",
+    fixture.sections.every((s) => !/[<>="]/.test(s))
+  );
 
   const self = rubric.scoreStructureMatch(fixture, fixture);
   check("rubric: self-match totals exactly 1", self.total === 1);
@@ -7373,15 +7969,132 @@ function check(name: string, cond: boolean): void {
   check("rubric: shuffled sections score below 1", shuffledScore.total < 1);
   check(
     "rubric: shuffle penalty hits the section part only",
-    shuffledScore.parts[0].score < 1 &&
-      shuffledScore.parts[1].score === 1 &&
-      shuffledScore.parts[2].score === 1
+    shuffledScore.parts[0].score < 1 && shuffledScore.parts.slice(1).every((p) => p.score === 1)
+  );
+
+  /* Negative controls (round 23): each blind spot the owner hit must move
+     its own part, so a 100% can never again coexist with a flat, unbolded
+     or section-dropping render. */
+  const noRefs = await rubric.extractDocxStructure(
+    await buildFixtureDocx(FIXTURE_SECTIONS.filter((t) => t !== "References"))
+  );
+  check(
+    "rubric: a render missing References scores the section part below 1",
+    rubric.scoreStructureMatch(fixture, noRefs).parts[0].score < 1
+  );
+  const unbolded = await rubric.extractDocxStructure(
+    await buildFixtureDocx(FIXTURE_SECTIONS, { bold: false })
+  );
+  const unboldedScore = rubric.scoreStructureMatch(fixture, unbolded);
+  check(
+    "rubric: a non-bold render scores the emphasis part 0",
+    unboldedScore.parts[3].name === "heading emphasis" && unboldedScore.parts[3].score === 0
+  );
+  const flush = await rubric.extractDocxStructure(
+    await buildFixtureDocx(FIXTURE_SECTIONS, { indents: false })
+  );
+  const flushScore = rubric.scoreStructureMatch(fixture, flush);
+  check(
+    "rubric: a flush-left render scores the indentation part below 1",
+    flushScore.parts[2].name === "indentation ladder" && flushScore.parts[2].score < 1
+  );
+  /* The owner's re-saved template numbers DECIMAL at every level: depths are
+     distinguished only by ilvl and the indent ladder, never by marker-format
+     inference when real numbering is present. */
+  const allDec = await rubric.extractDocxStructure(
+    await buildFixtureDocx(FIXTURE_SECTIONS, { formats: ["decimal", "decimal", "decimal"] })
+  );
+  check(
+    "rubric: all-decimal template keeps three ilvl depths and a rising ladder",
+    Object.keys(allDec.levelScheme).length === 3 &&
+      allDec.levelScheme[0] === "decimal" &&
+      allDec.levelScheme[1] === "decimal" &&
+      allDec.levelScheme[2] === "decimal" &&
+      allDec.levelIndent[0] === 720 &&
+      allDec.levelIndent[1] === 1440 &&
+      allDec.levelIndent[2] === 2160 &&
+      allDec.sections.length === 6 &&
+      rubric.scoreStructureMatch(allDec, allDec).total === 1
+  );
+
+  /* Round 24 gaming pins: a negated w:b must never read as bold, wherever
+     w:val sits in the tag - Word renders these NOT bold and the ingest side
+     reads them as off, so the measurement must too. */
+  const negatedBoldTags: [string, string][] = [
+    ["w:val=off", `<w:b w:val="off"/>`],
+    ["w:val=0 after another attribute", `<w:b w:x="y" w:val="0"/>`],
+  ];
+  for (const [label, tag] of negatedBoldTags) {
+    const gamed = await rubric.extractDocxStructure(
+      await buildFixtureDocx(FIXTURE_SECTIONS, { boldTag: tag })
+    );
+    const gamedScore = rubric.scoreStructureMatch(fixture, gamed);
+    check(
+      `rubric: run-level negated bold (${label}) scores the emphasis part 0`,
+      gamed.emphasis[0] !== true &&
+        gamedScore.parts[3].name === "heading emphasis" &&
+        gamedScore.parts[3].score === 0
+    );
+  }
+
+  /* Round 24 style-chain pins: bold and indent that live only in styles.xml
+     (2-deep basedOn chain, like Word's own ListParagraph defaults) must
+     reach the measurement; a style-level negated w:b must not. */
+  const styleChainXml = (leafRpr: string) =>
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+    `<w:style w:type="paragraph" w:styleId="BaseHead">` +
+    `<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr>` +
+    `<w:rPr><w:b/></w:rPr>` +
+    `</w:style>` +
+    `<w:style w:type="paragraph" w:styleId="SectionHead">` +
+    `<w:basedOn w:val="BaseHead"/>${leafRpr}` +
+    `</w:style>` +
+    `</w:styles>`;
+  const chained = await rubric.extractDocxStructure(
+    await buildFixtureDocx(FIXTURE_SECTIONS, {
+      bold: false,
+      indents: false,
+      sectionStyle: "SectionHead",
+      stylesXml: styleChainXml(""),
+    })
+  );
+  check(
+    "rubric: a 2-deep style chain delivers bold and indent to sections",
+    chained.emphasis[0] === true &&
+      chained.levelIndent[0] === 720 &&
+      chained.sections.length === 6
+  );
+  const chainedOff = await rubric.extractDocxStructure(
+    await buildFixtureDocx(FIXTURE_SECTIONS, {
+      bold: false,
+      indents: false,
+      sectionStyle: "SectionHead",
+      stylesXml: styleChainXml(`<w:rPr><w:b w:val="off"/></w:rPr>`),
+    })
+  );
+  check(
+    "rubric: a style-level w:val=off overrides inherited bold to NOT bold",
+    chainedOff.emphasis[0] !== true
+  );
+
+  /* Round 24: a firstLine-only paragraph w:ind is not a left override and
+     must not clobber the numbering level's indent. */
+  const flNoise = await rubric.extractDocxStructure(
+    await buildFixtureDocx(FIXTURE_SECTIONS, { firstLineNoise: true })
+  );
+  check(
+    "rubric: a firstLine-only w:ind never clobbers the lvl indent",
+    flNoise.levelIndent[0] === 720 &&
+      flNoise.levelIndent[1] === 1440 &&
+      flNoise.levelIndent[2] === 2160
   );
 
   /* The real pipeline, end to end: the fixture template goes through sample
      ingest exactly as an upload would, the derived bucket titles become the
      adopted outline of a drafted doc (the partition the turn-zero prompt
-     instructs), and the render must score a PERFECT structural match. */
+     instructs), and the render must score a PERFECT structural match - now
+     including the indent ladder and bold heading emphasis. */
   const extracted = await extractR22("policy-template.docx", fixtureBuf);
   check("rubric e2e: fixture template ingests", extracted.ok === true);
   if (extracted.ok) {
@@ -7431,6 +8144,56 @@ function check(name: string, cond: boolean): void {
       check(`rubric e2e: ${part.name} scores 1 (${part.detail})`, part.score === 1);
     }
     check("rubric e2e: TOTAL structure match is 100%", result.total === 1);
+
+    /* Round 23: the owner's real failure - the adopted outline OMITTED
+       References and left Scope without sections, and the render silently
+       dropped them. The render must deliver the full template skeleton
+       anyway: all six sections, Scope at position 2, References at 5.
+       Wired: renderDocx carries sampleTitles (the reconcile parameter), and
+       the sparse doc holds ONLY the filed sections, mirroring the owner's
+       real row where the model partitioned everything it kept. */
+    const sparseTitles = titles ?? FIXTURE_SECTIONS;
+    const sparseDoc = {
+      ...doc,
+      sections: doc.sections.filter(
+        (s) => !["sec-scope", "sec-refs"].includes(s.id)
+      ),
+      outline: sparseTitles
+        .filter((t) => t !== "References")
+        .map((title) => ({
+          title,
+          sections:
+            title === "Scope"
+              ? []
+              : title === "Policy"
+                ? ["sec-tools", "sec-data"]
+                : [
+                    ({
+                      Purpose: "sec-purpose",
+                      Definitions: "sec-defs",
+                      "Roles and Responsibilities": "sec-roles",
+                    } as Record<string, string>)[title] ?? "sec-purpose",
+                  ],
+        })),
+    };
+    const sparseRendered = await renderR22(sparseDoc, {
+      draft: false,
+      kind: "usage_policy",
+      numbering: styleR22(extracted.text),
+      profile,
+      sampleTitles: sparseTitles,
+    });
+    const sparse = await rubric.extractDocxStructure(sparseRendered);
+    check(
+      "rubric e2e sparse: all six sections survive an outline missing References with Scope empty",
+      sparse.sections.length === 6 &&
+        sparse.sections[1] === "Scope" &&
+        sparse.sections[4] === "References"
+    );
+    check(
+      "rubric e2e sparse: TOTAL structure match is 100%",
+      rubric.scoreStructureMatch(fixture, sparse).total === 1
+    );
   }
 }
 

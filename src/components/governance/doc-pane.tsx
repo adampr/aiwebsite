@@ -26,7 +26,11 @@ import {
   type NumberingProfile,
   type NumberingStyle,
 } from "@/lib/governance/numbering";
-import { droppedOutlineTitles, planOutline } from "@/lib/governance/outline";
+import {
+  droppedOutlineTitles,
+  outlineReconciled,
+  planOutline,
+} from "@/lib/governance/outline";
 import { fmtDate } from "./shared";
 
 const faint = { color: "var(--xl-text-faint)" } as const;
@@ -485,46 +489,58 @@ export function DocPane({
   // in PLAN order (bucket headings + nested sections); without one, rows are
   // the flat section list, byte-identical to the pre-18b pane. Every
   // existing section appears exactly once either way (planOutline invariant).
-  const renderRows = useMemo(() => {
+  type BucketRow = { kind: "bucket"; label: string; empty: boolean };
+  type SecRow = {
+    kind: "sec";
+    s: NonNullable<typeof doc>["sections"][number];
+    si: number;
+    meta: {
+      label: string;
+      nested: boolean;
+      base: string | null;
+    } | null;
+  };
+  const renderRows = useMemo((): (BucketRow | SecRow)[] => {
     if (!doc) return [];
-    type Row = {
-      s: (typeof doc.sections)[number];
-      si: number;
-      meta: {
-        label: string;
-        nested: boolean;
-        base: string | null;
-        bucket: string | null;
-      } | null;
-    };
     const grouped = groupedOkDocs == null || groupedOkDocs.has(doc.slug);
-    const plan = grouped ? planOutline(doc, numbering, profile ?? null) : null;
+    // Round 23: the sample's title sequence rides into the plan so sample
+    // headings the outline left empty still render, at their positions.
+    const plan = grouped
+      ? planOutline(
+          doc,
+          numbering,
+          profile ?? null,
+          sampleOutlineTitles ?? null
+        )
+      : null;
     if (!plan)
-      return doc.sections.map((s, si): Row => ({ s, si, meta: null }));
+      return doc.sections.map(
+        (s, si): SecRow => ({ kind: "sec", s, si, meta: null })
+      );
     const bySec = new Map(doc.sections.map((s, si) => [s.id, { s, si }]));
-    const rows: Row[] = [];
-    let pendingBucket: string | null = null;
+    const rows: (BucketRow | SecRow)[] = [];
     for (const e of plan) {
       if (e.sectionId === null) {
-        pendingBucket = e.label;
+        // Bucket heading row: its own row now (round 23), so a bucket
+        // with nothing under it still renders as an empty heading.
+        rows.push({ kind: "bucket", label: e.label, empty: e.empty === true });
         continue;
       }
       const rec = bySec.get(e.sectionId);
       if (!rec) continue;
       rows.push({
+        kind: "sec",
         s: rec.s,
         si: rec.si,
         meta: {
           label: e.label,
           nested: !e.top,
           base: e.innerBase,
-          bucket: pendingBucket,
         },
       });
-      pendingBucket = null;
     }
     return rows;
-  }, [doc, numbering, profile, groupedOkDocs]);
+  }, [doc, numbering, profile, groupedOkDocs, sampleOutlineTitles]);
 
   // Stable per-section mark arrays: a fresh .filter() per render defeats
   // SectionBody's parse memo for every marked section on every reveal tick
@@ -638,14 +654,33 @@ export function DocPane({
               Renders ONLY while the adoption dropped sample headings; clean
               adoptions say nothing (the structure is its own receipt). */}
           {(() => {
-            if (!doc.outline?.length || !sampleOutlineTitles?.length)
-              return null;
+            if (!doc.outline?.length) return null;
             if (groupedOkDocs != null && !groupedOkDocs.has(doc.slug))
               return null;
-            const dropped = droppedOutlineTitles(doc, sampleOutlineTitles);
-            if (!dropped.length) return null;
-            const text =
-              dropped.length === 1
+            // Round 23: the note derives from the PLAN, not the stored
+            // outline - post-23 adoptions store every sample title, so
+            // dropped-title math reads [] exactly when empty headings DO
+            // render and need explaining. The legacy dropped-titles note
+            // stays for rows where the reconcile is inactive (a replaced
+            // sample below the match threshold): those titles truly do
+            // not appear.
+            const emptyLabels = renderRows
+              .flatMap((r) => (r.kind === "bucket" && r.empty ? [r.label] : []))
+              .slice(0, 12);
+            const dropped =
+              !emptyLabels.length &&
+              sampleOutlineTitles?.length &&
+              !outlineReconciled(doc, sampleOutlineTitles)
+                ? droppedOutlineTitles(doc, sampleOutlineTitles)
+                : [];
+            if (!emptyLabels.length && !dropped.length) return null;
+            const text = emptyLabels.length
+              ? emptyLabels.length === 1
+                ? `Grouped to match your format sample. Its "${emptyLabels[0]}" heading has no matching content here yet, so it appears as an empty heading.`
+                : emptyLabels.length === 2
+                  ? `Grouped to match your format sample. Its "${emptyLabels[0]}" and "${emptyLabels[1]}" headings have no matching content here yet, so they appear as empty headings.`
+                  : `Grouped to match your format sample. ${emptyLabels.length} of its headings have no matching content here yet, so they appear as empty headings.`
+              : dropped.length === 1
                 ? `Grouped to match your format sample. Its "${dropped[0]}" heading has no matching content here, so it does not appear.`
                 : dropped.length === 2
                   ? `Grouped to match your format sample. Its "${dropped[0]}" and "${dropped[1]}" headings have no matching content here, so they do not appear.`
@@ -656,7 +691,18 @@ export function DocPane({
               </p>
             );
           })()}
-          {renderRows.map(({ s, si, meta }) => {
+          {renderRows.map((row, ri) => {
+            if (row.kind === "bucket")
+              return (
+                <h3
+                  key={`bucket-${ri}`}
+                  className="doc-h doc-bucket text-xl"
+                  aria-label={row.label}
+                >
+                  {row.label}
+                </h3>
+              );
+            const { s, si, meta } = row;
             const changed = (highlights[doc.slug] ?? []).includes(s.id);
             const asked = (asking[doc.slug] ?? []).includes(s.id);
             const planned = (placeholders[doc.slug] ?? []).includes(s.id);
@@ -697,14 +743,17 @@ export function DocPane({
             const SecTag = meta?.nested ? "h4" : "h3";
             return (
               <Fragment key={changed ? `${s.id}-${flashKey}` : s.id}>
-                {meta?.bucket != null && (
-                  <h3 className="doc-h doc-bucket text-xl" aria-label={meta.bucket}>
-                    {meta.bucket}
-                  </h3>
-                )}
               <section
                 id={secDomId(doc.slug, s.id)}
                 className={cls}
+                // Round 23, profile-gated: nested sections indent under
+                // their bucket so the pane's shape mirrors the docx
+                // ladder (proportional, not pixel-matched).
+                style={
+                  profile && meta?.nested
+                    ? { marginLeft: "1.25rem" }
+                    : undefined
+                }
               >
                 <SecTag className="doc-h text-lg" tabIndex={-1} data-sec-heading>
                   {meta

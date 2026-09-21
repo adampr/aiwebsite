@@ -17,6 +17,7 @@ import {
   sectionTitleText,
   nestedSectionTitleText,
   nestedBaseLabel,
+  stripLeadingNumber,
   type NumberingProfile,
   type NumberingStyle,
 } from "./numbering";
@@ -32,9 +33,12 @@ export function sectionDisplayLabel(
   doc: GovernanceDoc,
   sectionId: string,
   style: NumberingStyle | null,
-  profile: NumberingProfile | null = null
+  profile: NumberingProfile | null = null,
+  // Round 23: empty sample headings shift the positional numbers, so the
+  // quoting surfaces must plan with the same titles the pane renders with.
+  sampleTitles: string[] | null = null
 ): string {
-  const plan = planOutline(doc, style, profile);
+  const plan = planOutline(doc, style, profile, sampleTitles);
   if (plan) {
     const e = plan.find((x) => x.sectionId === sectionId);
     if (e) return e.label;
@@ -97,6 +101,35 @@ export interface OutlinePlanEntry {
   /** Fused row: a bucket holding exactly one section renders once, the
    * template's wording winning the visible title. */
   fused: boolean;
+  /** Title-only bucket heading row (round 23): nothing renders under it.
+   * The honesty surfaces (pane note, receipt) derive from this. */
+  empty?: boolean;
+}
+
+/**
+ * Whether the render-side reconcile is IN EFFECT for this doc and sample
+ * (round 23): at least half of the sample's titles (unique, canon-matched,
+ * ceil) must already be stored buckets. Below that the outline belongs to
+ * a DIFFERENT sample generation (a replaced sample mid-debt-window), and
+ * interleaving would prepend a wall of empty headings and renumber every
+ * real section behind them; the stored outline then renders as round 22
+ * did, restyled numbering only, until the reformat re-adopts.
+ */
+export function outlineReconciled(
+  doc: GovernanceDoc,
+  sampleTitles: string[] | null | undefined
+): boolean {
+  if (!hasOutline(doc) || !sampleTitles?.length) return false;
+  const canonSample = new Set(
+    sampleTitles.map((t) => canonOutlineTitle(t)).filter(Boolean)
+  );
+  if (!canonSample.size) return false;
+  const matched = new Set(
+    doc
+      .outline!.map((b) => canonOutlineTitle(b.title))
+      .filter((c) => canonSample.has(c))
+  ).size;
+  return matched * 2 >= canonSample.size;
 }
 
 /** True when this doc renders through an adopted outline. */
@@ -113,13 +146,58 @@ export function hasOutline(doc: GovernanceDoc): boolean {
 export function planOutline(
   doc: GovernanceDoc,
   style: NumberingStyle | null,
-  profile: NumberingProfile | null = null
+  profile: NumberingProfile | null = null,
+  // Round 23 reconcile: the sample's title sequence. Sample titles absent
+  // from the stored outline interleave as EMPTY top-level heading rows at
+  // their sample position, so the skeleton stays complete and numbering
+  // stays positional (Scope is always 2, References always 5) even for
+  // rows stored before adoption kept empty buckets. Never applied to a
+  // doc without an outline: grouping is never invented.
+  sampleTitles: string[] | null = null
 ): OutlinePlanEntry[] | null {
   if (!hasOutline(doc)) return null;
   const byId = new Map(doc.sections.map((s) => [s.id, s]));
   const filed = new Set<string>();
   const entries: OutlinePlanEntry[] = [];
   let num = 0;
+
+  // Sample-matched buckets render an empty heading even when their ids no
+  // longer resolve (the position is the sample's promise); unmatched
+  // (drift) buckets with dead ids keep today's skip.
+  type PlanBucket = {
+    b: { title: string; sections: string[] };
+    matched: boolean;
+  };
+  let buckets: PlanBucket[] = doc.outline!.map((b) => ({
+    b,
+    matched: false,
+  }));
+  const reconciled = outlineReconciled(doc, sampleTitles);
+  if (reconciled) {
+    const stored = new Map<string, { title: string; sections: string[] }>();
+    for (const { b } of buckets) {
+      const c = canonOutlineTitle(b.title);
+      if (!stored.has(c)) stored.set(c, b);
+    }
+    const usedCanon = new Set<string>();
+    const merged: PlanBucket[] = [];
+    for (const t of sampleTitles!) {
+      const clean = stripOutlineNumbering(t);
+      const c = canonOutlineTitle(t);
+      if (!clean || usedCanon.has(c)) continue;
+      usedCanon.add(c);
+      merged.push({
+        b: stored.get(c) ?? { title: clean, sections: [] },
+        matched: true,
+      });
+    }
+    // Stored buckets outside the sample sequence (drift) keep rendering,
+    // after the sample's titles, in stored order.
+    for (const { b } of buckets)
+      if (!usedCanon.has(canonOutlineTitle(b.title)))
+        merged.push({ b, matched: false });
+    buckets = merged;
+  }
 
   const unfiledLead = doc.sections.filter(
     (s) =>
@@ -128,6 +206,19 @@ export function planOutline(
   );
   for (const s of unfiledLead) {
     filed.add(s.id);
+    // Under an active reconcile the lead keeps its place but NOT an
+    // ordinal: the sample's titles own the positional numbers (Scope is
+    // always 2), and the determination's number is not a required element.
+    if (reconciled) {
+      entries.push({
+        sectionId: s.id,
+        label: stripLeadingNumber(s.title.trim()),
+        top: true,
+        innerBase: null,
+        fused: false,
+      });
+      continue;
+    }
     num++;
     entries.push({
       sectionId: s.id,
@@ -138,11 +229,29 @@ export function planOutline(
     });
   }
 
-  for (const bucket of doc.outline!) {
+  for (const { b: bucket, matched } of buckets) {
     const secs = bucket.sections
       .map((id) => byId.get(id))
       .filter((s): s is NonNullable<typeof s> => !!s && !filed.has(s.id));
-    if (!secs.length) continue;
+    if (!secs.length) {
+      // A DELIBERATELY empty bucket (stored [] after round 23, a sample
+      // title interleaved above, or a SAMPLE-MATCHED bucket whose ids all
+      // died) renders as a title-only top-level heading, keeping the
+      // sample's skeleton and positions complete; an unmatched (drift)
+      // bucket whose listed ids merely fail to resolve stays skipped,
+      // exactly as before.
+      if (bucket.sections.length > 0 && !matched) continue;
+      num++;
+      entries.push({
+        sectionId: null,
+        label: sectionTitleText(num, bucket.title, style, profile),
+        top: true,
+        innerBase: null,
+        fused: false,
+        empty: true,
+      });
+      continue;
+    }
     num++;
     if (secs.length === 1) {
       // Fused: the template's heading IS the section's visible title.

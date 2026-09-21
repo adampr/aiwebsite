@@ -642,7 +642,8 @@ export function QuestionPane({
               doc,
               sid,
               view.styleSample?.numbering ?? null,
-              view.styleSample?.profile ?? null
+              view.styleSample?.profile ?? null,
+              view.styleSample?.outlineTitles ?? null
             ),
           },
         ];

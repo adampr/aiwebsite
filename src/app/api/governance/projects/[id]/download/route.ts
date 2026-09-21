@@ -15,6 +15,7 @@ import {
   detectNumberingProfile,
   detectNumberingStyle,
 } from "@/lib/governance/numbering";
+import { sampleBucketTitles } from "@/lib/governance/prompt";
 import { healSampleHeadings } from "@/lib/governance/style-sample";
 import type {
   GovernanceDoc,
@@ -60,6 +61,9 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
   // Round 22: the per-level scheme rides beside the flat style, derived
   // from the same healed text the view derives from.
   const profile = sampleText ? detectNumberingProfile(sampleText) : null;
+  // Round 23: the sample's title sequence for the skeleton reconcile, so
+  // downloads keep every sample heading at its position (empty ones too).
+  const sampleTitles = sampleText ? sampleBucketTitles(sampleText) : null;
   // Round 17: the sample's stored letterhead rides every generated file
   // (empty strings mean "scanned, nothing found" and render nothing).
   const letterhead = {
@@ -78,6 +82,7 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
         reviewSummary: row.reviewSummary,
         numbering,
         profile,
+        sampleTitles,
         letterhead,
         openConfirmCount: openConfirmItems(docs).length,
         skippedCount: transcript.filter((t) => t.skipped).length,
@@ -99,6 +104,7 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
       kind: row.kind as GovernanceKind,
       numbering,
       profile,
+      sampleTitles,
       letterhead,
     });
     await touchActivity(row.id);

@@ -605,7 +605,8 @@ export function Workspace({ projectId }: { projectId: string }) {
                     doc,
                     sid,
                     viewRef.current?.styleSample?.numbering ?? null,
-                    viewRef.current?.styleSample?.profile ?? null
+                    viewRef.current?.styleSample?.profile ?? null,
+                    viewRef.current?.styleSample?.outlineTitles ?? null
                   )
                 : sid,
           });
@@ -2240,7 +2241,8 @@ export function Workspace({ projectId }: { projectId: string }) {
             doc,
             sid,
             next.styleSample?.numbering ?? null,
-            next.styleSample?.profile ?? null
+            next.styleSample?.profile ?? null,
+            next.styleSample?.outlineTitles ?? null
           ),
         });
     }
@@ -2278,17 +2280,22 @@ export function Workspace({ projectId }: { projectId: string }) {
       const d = adopted[0];
       const buckets = d.outline!.length;
       const secs = d.sections.length;
-      let clause = ` I also arranged the document under your sample's outline: all ${secs} ${secs === 1 ? "section is" : "sections are"} filed under its ${buckets} ${buckets === 1 ? "heading" : "headings"}.`;
+      // Round 23: adoptions store the FULL sample sequence, so the count
+      // sentence must own up to headings that hold nothing.
+      const emptyCount = d.outline!.filter(
+        (b) => b.sections.length === 0
+      ).length;
+      let clause = ` I also arranged the document under your sample's outline: all ${secs} ${secs === 1 ? "section is" : "sections are"} filed under its ${buckets} ${buckets === 1 ? "heading" : "headings"}${emptyCount > 0 ? `; ${emptyCount} ${emptyCount === 1 ? "of them stays" : "of them stay"} empty` : ""}.`;
       const dropped = droppedOutlineTitles(
         d,
         next.styleSample?.outlineTitles ?? []
       );
       if (dropped.length === 1)
-        clause += ` Your sample's "${dropped[0]}" heading had no matching content, so I left it out rather than pad it.`;
+        clause += ` Your sample's "${dropped[0]}" heading had no matching content, so it stays as an empty heading rather than padded content.`;
       else if (dropped.length === 2)
-        clause += ` Your sample's "${dropped[0]}" and "${dropped[1]}" headings had no matching content, so I left them out rather than pad them.`;
+        clause += ` Your sample's "${dropped[0]}" and "${dropped[1]}" headings had no matching content, so they stay as empty headings rather than padded content.`;
       else if (dropped.length >= 3)
-        clause += ` ${dropped.length} of your sample's headings had no matching content, so I left them out rather than pad them.`;
+        clause += ` ${dropped.length} of your sample's headings had no matching content, so they stay as empty headings rather than padded content.`;
       return clause;
     })();
     if (opts?.stopped) {

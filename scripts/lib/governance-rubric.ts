@@ -41,6 +41,17 @@ export interface DocxStructure {
   hasBullets: boolean;
   /** Total structural items observed (headings + list items + literal-marker items). */
   itemCount: number;
+  /** depth -> dominant left indent in twips. Precedence per paragraph:
+   *  paragraph w:ind (only when it carries w:left/w:start) > numbering lvl
+   *  w:pPr w:ind (numbered items) > the pStyle chain's w:ind (basedOn
+   *  resolved) > docDefaults w:ind > 0. */
+  levelIndent: Record<number, number>;
+  /** depth (0 and 1 only) -> whether the heading-shaped items at that depth
+   *  are bold (bold lead runs or a bold paragraph style resolved through
+   *  styles.xml). Depth 0 measures every section item; depth 1 measures
+   *  heading-shaped items only (Heading styles or bold title leads) and is
+   *  absent when that depth has none. */
+  emphasis: Record<number, boolean>;
 }
 
 export interface RubricPart {
@@ -135,12 +146,41 @@ function schemeValue(fmt: string, sep: string): string {
   return sep === ")" ? fmt + ")" : fmt;
 }
 
-function parseNumbering(xml: string | null): Map<number, Map<number, string>> {
-  const byNumId = new Map<number, Map<number, string>>();
+interface NumLevel {
+  scheme: string; // serialized numFmt + separator (see levelScheme)
+  indent: number | null; // lvl w:pPr w:ind w:left in twips, null when absent
+}
+
+/** Left indent from the first w:ind tag in scope, or null when the scope
+ *  has no w:ind OR its w:ind carries no w:left/w:start (a firstLine- or
+ *  hanging-only w:ind is not a left override and must fall through). */
+function leftOf(chunk: string): number | null {
+  const at = chunk.indexOf("<w:ind ");
+  if (at === -1) return null;
+  const end = chunk.indexOf(">", at);
+  const tag = chunk.slice(at, end === -1 ? chunk.length : end + 1);
+  const left = tag.match(/w:left="(-?\d+)"/) ?? tag.match(/w:start="(-?\d+)"/);
+  return left ? parseInt(left[1], 10) : null;
+}
+
+/** Read the w:b tag in scope: null when absent, else whether it turns bold
+ *  ON. The negation scans the tag's own attributes wherever w:val sits
+ *  (0/false/off/none in any position mean off), so a gamed
+ *  <w:b w:x="y" w:val="0"/> or <w:b w:val="off"/> never reads as bold. */
+function readBoldTag(scope: string): boolean | null {
+  const m = scope.match(/<w:b(?=[\s/>])[^>]*>/);
+  if (!m) return null;
+  const val = m[0].match(/w:val="([^"]*)"/);
+  if (!val) return true;
+  return !/^(?:0|false|off|none)$/i.test(val[1]);
+}
+
+function parseNumbering(xml: string | null): Map<number, Map<number, NumLevel>> {
+  const byNumId = new Map<number, Map<number, NumLevel>>();
   if (!xml) return byNumId;
 
-  // abstractNumId -> (ilvl -> numFmt)
-  const abstracts = new Map<number, Map<number, string>>();
+  // abstractNumId -> (ilvl -> {numFmt, indent})
+  const abstracts = new Map<number, Map<number, NumLevel>>();
   let i = 0;
   for (;;) {
     const a = xml.indexOf("<w:abstractNum ", i);
@@ -150,7 +190,7 @@ function parseNumbering(xml: string | null): Map<number, Map<number, string>> {
     const block = xml.slice(a, b);
     const idM = block.match(/w:abstractNumId="(\d+)"/);
     if (idM) {
-      const lvls = new Map<number, string>();
+      const lvls = new Map<number, NumLevel>();
       // The ilvl attribute sits on the <w:lvl> open tag; scan open tags directly.
       const lvlRe = /<w:lvl [^>]*w:ilvl="(\d+)"[^>]*>/g;
       let m: RegExpExecArray | null;
@@ -161,7 +201,10 @@ function parseNumbering(xml: string | null): Map<number, Map<number, string>> {
         const fmtM = body.match(/<w:numFmt w:val="([^"]+)"/);
         const fmt = fmtM ? fmtM[1] : "none";
         const lvlTextM = body.match(/<w:lvlText w:val="([^"]*)"/);
-        lvls.set(parseInt(m[1], 10), schemeValue(fmt, sepFromLvlText(lvlTextM ? lvlTextM[1] : null)));
+        lvls.set(parseInt(m[1], 10), {
+          scheme: schemeValue(fmt, sepFromLvlText(lvlTextM ? lvlTextM[1] : null)),
+          indent: leftOf(body),
+        });
       }
       abstracts.set(parseInt(idM[1], 10), lvls);
     }
@@ -182,6 +225,78 @@ function parseNumbering(xml: string | null): Map<number, Map<number, string>> {
     }
   }
   return byNumId;
+}
+
+/* ------------------------------------------------------------------ */
+/* styles.xml: styleId -> bold + left indent (resolved via basedOn),   */
+/* plus the docDefaults left indent                                    */
+/* ------------------------------------------------------------------ */
+
+interface StyleInfo {
+  bold: boolean;
+  indent: number | null; // resolved style-chain left indent, null when unset
+}
+
+function parseStyles(xml: string | null): {
+  byId: Map<string, StyleInfo>;
+  docDefaultIndent: number | null;
+} {
+  const byId = new Map<string, StyleInfo>();
+  let docDefaultIndent: number | null = null;
+  if (!xml) return { byId, docDefaultIndent };
+
+  const ddStart = xml.indexOf("<w:docDefaults>");
+  if (ddStart !== -1) {
+    const ddEnd = xml.indexOf("</w:docDefaults>", ddStart);
+    docDefaultIndent = leftOf(xml.slice(ddStart, ddEnd === -1 ? xml.length : ddEnd));
+  }
+
+  const own = new Map<
+    string,
+    { bold: boolean | null; indent: number | null; basedOn: string | null }
+  >();
+  const styleRe = /<w:style [^>]*>/g;
+  let m: RegExpExecArray | null;
+  while ((m = styleRe.exec(xml))) {
+    const idM = m[0].match(/w:styleId="([^"]+)"/);
+    if (!idM) continue;
+    const start = m.index;
+    const end = xml.indexOf("</w:style>", start);
+    const block = xml.slice(start, end === -1 ? xml.length : end);
+    const basedM = block.match(/<w:basedOn w:val="([^"]+)"/);
+    // The style-scoped run properties: the first <w:rPr> in the block.
+    const rprStart = block.indexOf("<w:rPr>");
+    let bold: boolean | null = null;
+    if (rprStart !== -1) {
+      const rprEnd = block.indexOf("</w:rPr>", rprStart);
+      bold = readBoldTag(block.slice(rprStart, rprEnd === -1 ? block.length : rprEnd));
+    }
+    // The style-scoped paragraph properties: the first <w:pPr> in the block.
+    let indent: number | null = null;
+    const pprStart = block.indexOf("<w:pPr>");
+    if (pprStart !== -1) {
+      const pprEnd = block.indexOf("</w:pPr>", pprStart);
+      indent = leftOf(block.slice(pprStart, pprEnd === -1 ? block.length : pprEnd));
+    }
+    own.set(idM[1], { bold, indent, basedOn: basedM ? basedM[1] : null });
+  }
+  const resolve = (id: string, hops: number): StyleInfo => {
+    const memo = byId.get(id);
+    if (memo) return memo;
+    const s = own.get(id);
+    let out: StyleInfo = { bold: false, indent: null };
+    if (s && hops < 8) {
+      const parent = s.basedOn ? resolve(s.basedOn, hops + 1) : { bold: false, indent: null };
+      out = {
+        bold: s.bold !== null ? s.bold : parent.bold,
+        indent: s.indent !== null ? s.indent : parent.indent,
+      };
+    }
+    byId.set(id, out);
+    return out;
+  };
+  for (const id of own.keys()) resolve(id, 0);
+  return { byId, docDefaultIndent };
 }
 
 /* -------------------------------- */
@@ -338,8 +453,7 @@ function parseRuns(pBody: string): Run[] {
   for (const rBody of elementChunks(pBody, "w:r")) {
     const prEnd = rBody.indexOf("</w:rPr>");
     const rPr = prEnd === -1 ? "" : rBody.slice(0, prEnd);
-    let bold = /<w:b(?:\s[^>]*)?\/>/.test(rPr) || /<w:b(?:\s[^>]*)?>/.test(rPr);
-    if (bold && /<w:b w:val="(?:0|false|none)"/.test(rPr)) bold = false;
+    const bold = readBoldTag(rPr) === true;
     let text = "";
     for (const tBody of elementChunks(rBody, "w:t")) text += decodeEntities(tBody);
     if (text.length) runs.push({ bold, text });
@@ -364,6 +478,8 @@ export async function extractDocxStructure(buf: Buffer): Promise<DocxStructure> 
   const numFile = zip.file("word/numbering.xml");
   const numXml = numFile ? await numFile.async("string") : null;
   const numbering = parseNumbering(numXml);
+  const stylesFile = zip.file("word/styles.xml");
+  const styles = parseStyles(stylesFile ? await stylesFile.async("string") : null);
 
   // Only the body; ignore headers/footers (they live in separate parts anyway).
   const bodyStart = docXml.indexOf("<w:body");
@@ -374,6 +490,9 @@ export async function extractDocxStructure(buf: Buffer): Promise<DocxStructure> 
     fmt: string; // numbering format observed for this item ("none" when unmarked heading)
     title: string;
     isBullet: boolean;
+    indent: number; // effective left indent in twips
+    bold: boolean; // bold lead runs or a bold paragraph style
+    headingShaped: boolean; // Heading style or a bold title-shaped lead
   }
   const items: Item[] = [];
   let hasBullets = false;
@@ -412,6 +531,18 @@ export async function extractDocxStructure(buf: Buffer): Promise<DocxStructure> 
           .trim()
       : fullText;
 
+    // Left-indent precedence: paragraph w:ind (with a real w:left/w:start) >
+    // numbering lvl w:pPr w:ind > pStyle chain > docDefaults > 0. A
+    // firstLine/hanging-only w:ind is not a left override (leftOf -> null).
+    const paraInd = leftOf(pPr);
+    const styleInfo = style !== null ? styles.byId.get(style) : undefined;
+    const styleInd = styleInfo ? styleInfo.indent : null;
+    const fallbackInd = styleInd ?? styles.docDefaultIndent ?? 0;
+    const allBold = runs.length > 0 && runs.every((r) => r.bold || r.text.trim().length === 0);
+    const boldLeadish = (hasBoldLead || allBold) && leadText.length > 0;
+    const itemBold = boldLeadish || styleInfo?.bold === true;
+    const titleShaped = boldLeadish && leadText.length <= 100;
+
     // 1) Heading styles: depth = heading level - 1.
     const hm = style ? style.match(/^Heading([1-6])$/) : null;
     if (hm) {
@@ -420,7 +551,15 @@ export async function extractDocxStructure(buf: Buffer): Promise<DocxStructure> 
       const fmt = mk ? schemeValue(mk.fmt, mk.sep) : "none";
       if (mk) updateMarkerContext(ctx, mk);
       lastHeadingDepth = depth;
-      items.push({ depth, fmt, title: stripLeadingMarker(leadText), isBullet: mk ? mk.fmt === "bullet" : false });
+      items.push({
+        depth,
+        fmt,
+        title: stripLeadingMarker(leadText),
+        isBullet: mk ? mk.fmt === "bullet" : false,
+        indent: paraInd ?? fallbackInd,
+        bold: itemBold,
+        headingShaped: true,
+      });
       continue;
     }
 
@@ -431,26 +570,35 @@ export async function extractDocxStructure(buf: Buffer): Promise<DocxStructure> 
       const ilvlStr = attrOf(pPr, "w:ilvl", "w:val");
       const ilvl = ilvlStr ? parseInt(ilvlStr, 10) : 0;
       const lvls = numbering.get(numId);
-      const fmt = lvls ? lvls.get(ilvl) ?? "none" : "none";
+      const lvl = lvls ? lvls.get(ilvl) : undefined;
+      const fmt = lvl ? lvl.scheme : "none";
       const isBullet = fmt === "bullet";
       // Under heading styles, list items nest below the last heading. In a
       // heading-less template, BULLET items nest below the last bold
       // numbered section anchor (numbered non-bullet items keep their own
-      // ilvl - they share the template's multilevel scheme).
+      // ilvl - they share the template's multilevel scheme). Depth for real
+      // numbering always comes from ilvl plus these shifts, never from
+      // marker-format inference.
       let depth: number;
       if (lastHeadingDepth !== null) depth = lastHeadingDepth + 1 + ilvl;
       else if (isBullet && lastBoldNumberedAnchor !== null) depth = lastBoldNumberedAnchor + 1 + ilvl;
       else depth = ilvl;
       if (isBullet) hasBullets = true;
       if (fullText.length === 0) continue; // empty numbered paragraph: not structure
-      if (!isBullet && depth === 0) {
+      if (!isBullet && depth === 0 && titleShaped) {
         // Anchor only on a bold title-shaped lead (glued bold heading or a
         // fully bold short title); numbered non-bold body items never anchor.
-        const allBold = runs.length > 0 && runs.every((r) => r.bold || r.text.trim().length === 0);
-        const titleShaped = (hasBoldLead || allBold) && leadText.length > 0 && leadText.length <= 100;
-        if (titleShaped) lastBoldNumberedAnchor = depth;
+        lastBoldNumberedAnchor = depth;
       }
-      items.push({ depth, fmt, title: stripLeadingMarker(leadText), isBullet });
+      items.push({
+        depth,
+        fmt,
+        title: stripLeadingMarker(leadText),
+        isBullet,
+        indent: paraInd ?? lvl?.indent ?? fallbackInd,
+        bold: itemBold,
+        headingShaped: titleShaped,
+      });
       continue;
     }
 
@@ -466,6 +614,9 @@ export async function extractDocxStructure(buf: Buffer): Promise<DocxStructure> 
         fmt: schemeValue(mk.fmt, mk.sep),
         title: leadStripped,
         isBullet: mk.fmt === "bullet",
+        indent: paraInd ?? fallbackInd,
+        bold: itemBold,
+        headingShaped: titleShaped,
       });
       continue;
     }
@@ -483,34 +634,52 @@ export async function extractDocxStructure(buf: Buffer): Promise<DocxStructure> 
           .map((it) => it.title)
           .filter((t) => t.length > 0);
 
-  // Dominant format per depth (ties resolved by first occurrence).
-  const counts = new Map<number, Map<string, number>>();
-  const firstSeen = new Map<number, string[]>();
-  for (const it of items) {
-    if (!counts.has(it.depth)) {
-      counts.set(it.depth, new Map());
-      firstSeen.set(it.depth, []);
-    }
-    const c = counts.get(it.depth)!;
-    c.set(it.fmt, (c.get(it.fmt) ?? 0) + 1);
-    const order = firstSeen.get(it.depth)!;
-    if (!order.includes(it.fmt)) order.push(it.fmt);
-  }
-  const levelScheme: Record<number, string> = {};
-  for (const [depth, c] of counts) {
-    let best = "none";
-    let bestN = -1;
-    for (const fmt of firstSeen.get(depth)!) {
-      const n = c.get(fmt)!;
-      if (n > bestN) {
-        bestN = n;
-        best = fmt;
+  // Dominant value per depth (ties resolved by first occurrence).
+  function dominantByDepth<T extends string | number>(pairs: [number, T][]): Record<number, T> {
+    const counts = new Map<number, Map<T, number>>();
+    const firstSeen = new Map<number, T[]>();
+    for (const [depth, v] of pairs) {
+      if (!counts.has(depth)) {
+        counts.set(depth, new Map());
+        firstSeen.set(depth, []);
       }
+      const c = counts.get(depth)!;
+      c.set(v, (c.get(v) ?? 0) + 1);
+      const order = firstSeen.get(depth)!;
+      if (!order.includes(v)) order.push(v);
     }
-    levelScheme[depth] = best;
+    const out: Record<number, T> = {};
+    for (const [depth, c] of counts) {
+      let best: T | null = null;
+      let bestN = -1;
+      for (const v of firstSeen.get(depth)!) {
+        const n = c.get(v)!;
+        if (n > bestN) {
+          bestN = n;
+          best = v;
+        }
+      }
+      if (best !== null) out[depth] = best;
+    }
+    return out;
   }
 
-  return { sections, levelScheme, hasBullets, itemCount: items.length };
+  const levelScheme = dominantByDepth(items.map((it): [number, string] => [it.depth, it.fmt]));
+  const levelIndent = dominantByDepth(items.map((it): [number, number] => [it.depth, it.indent]));
+
+  // Emphasis at depths 0 and 1: depth 0 measures every section item (post
+  // boilerplate), depth 1 only heading-shaped items; a depth with no
+  // qualifying items stays absent.
+  const scoped = firstTop === -1 ? [] : items.slice(firstTop);
+  const emphasis: Record<number, boolean> = {};
+  for (const d of [0, 1]) {
+    const pool = scoped.filter((it) => it.depth === d && (d === 0 || it.headingShaped));
+    if (pool.length === 0) continue;
+    const boldN = pool.filter((it) => it.bold).length;
+    emphasis[d] = boldN * 2 > pool.length;
+  }
+
+  return { sections, levelScheme, hasBullets, itemCount: items.length, levelIndent, emphasis };
 }
 
 /* -------- */
@@ -557,9 +726,11 @@ export function scoreStructureMatch(template: DocxStructure, generated: DocxStru
     return {
       total: 0,
       parts: [
-        { name: "section set and order", weight: 0.4, score: 0, detail },
-        { name: "numbering scheme per level", weight: 0.4, score: 0, detail },
-        { name: "no foreign list styles", weight: 0.2, score: 0, detail },
+        { name: "section set and order", weight: 0.3, score: 0, detail },
+        { name: "numbering scheme per level", weight: 0.3, score: 0, detail },
+        { name: "indentation ladder", weight: 0.15, score: 0, detail },
+        { name: "heading emphasis", weight: 0.1, score: 0, detail },
+        { name: "no foreign list styles", weight: 0.15, score: 0, detail },
       ],
     };
   }
@@ -590,7 +761,7 @@ export function scoreStructureMatch(template: DocxStructure, generated: DocxStru
     sectionScore = 0.5 * jaccard + 0.5 * lcsRatio;
     sectionDetail = `template ${t.length} vs generated ${g.length}; overlap ${inter}/${union} (jaccard ${jaccard.toFixed(3)}), lcs ${lcs} (ratio ${lcsRatio.toFixed(3)})`;
   }
-  parts.push({ name: "section set and order", weight: 0.4, score: sectionScore, detail: sectionDetail });
+  parts.push({ name: "section set and order", weight: 0.3, score: sectionScore, detail: sectionDetail });
 
   // Part 2: numbering scheme per level (0.40), over depths observed in the
   // template. A generated format that conflicts at a template-observed depth
@@ -616,13 +787,78 @@ export function scoreStructureMatch(template: DocxStructure, generated: DocxStru
     levelScore = matched / tDepths.length;
     levelDetail = per.join("; ");
   }
-  parts.push({ name: "numbering scheme per level", weight: 0.4, score: levelScore, detail: levelDetail });
+  parts.push({ name: "numbering scheme per level", weight: 0.3, score: levelScore, detail: levelDetail });
 
-  // Part 3: no foreign list styles (0.20)
+  // Part 3: indentation ladder (0.15). Absolute twips are NOT compared - a
+  // uniformly shifted ladder with the same progression scores 1. Over the
+  // template-observed indent depths: the first observed depth must be
+  // indented when the template's is, and each consecutive depth pair must
+  // progress the same way (rise stays a rise, flat stays flat).
+  const iDepths = Object.keys(template.levelIndent)
+    .map(Number)
+    .sort((a, b) => a - b);
+  const gInd = (d: number) => generated.levelIndent[d] ?? 0;
+  let indentScore: number;
+  let indentDetail: string;
+  if (iDepths.length === 0) {
+    indentScore = 1;
+    indentDetail = "template observes no indent depths";
+  } else {
+    const checks: { ok: boolean; label: string }[] = [];
+    const d0 = iDepths[0];
+    if (template.levelIndent[d0] > 0) {
+      checks.push({
+        ok: gInd(d0) > 0,
+        label: `d${d0} indented (${template.levelIndent[d0]} vs ${gInd(d0)})`,
+      });
+    }
+    for (let i = 1; i < iDepths.length; i++) {
+      const a = iDepths[i - 1];
+      const b = iDepths[i];
+      const tSign = Math.sign(template.levelIndent[b] - template.levelIndent[a]);
+      const gSign = Math.sign(gInd(b) - gInd(a));
+      checks.push({
+        ok: tSign === gSign,
+        label: `d${a}->d${b} ${tSign > 0 ? "rises" : tSign < 0 ? "falls" : "flat"} (${template.levelIndent[a]}->${template.levelIndent[b]} vs ${gInd(a)}->${gInd(b)})`,
+      });
+    }
+    if (checks.length === 0) {
+      indentScore = 1;
+      indentDetail = "single flush depth, nothing to progress";
+    } else {
+      const passed = checks.filter((c) => c.ok).length;
+      indentScore = passed / checks.length;
+      indentDetail = checks.map((c) => `${c.label}${c.ok ? "" : " MISMATCH"}`).join("; ");
+    }
+  }
+  parts.push({ name: "indentation ladder", weight: 0.15, score: indentScore, detail: indentDetail });
+
+  // Part 4: heading emphasis (0.10). One-directional: only depths where the
+  // TEMPLATE's headings are bold require generated bold; a non-bold template
+  // never penalizes generated bold (Word convention tolerance).
+  const empDepths = [0, 1].filter((d) => template.emphasis[d] === true);
+  let empScore: number;
+  let empDetail: string;
+  if (empDepths.length === 0) {
+    empScore = 1;
+    empDetail = "template shows no bold headings, nothing required";
+  } else {
+    const hits = empDepths.filter((d) => generated.emphasis[d] === true);
+    empScore = hits.length / empDepths.length;
+    empDetail = empDepths
+      .map(
+        (d) =>
+          `d${d}: template bold vs generated ${generated.emphasis[d] === true ? "bold" : generated.emphasis[d] === false ? "not bold" : "(absent)"}${generated.emphasis[d] === true ? "" : " MISMATCH"}`
+      )
+      .join("; ");
+  }
+  parts.push({ name: "heading emphasis", weight: 0.1, score: empScore, detail: empDetail });
+
+  // Part 5: no foreign list styles (0.15)
   const bulletsOk = generated.hasBullets ? template.hasBullets : true;
   parts.push({
     name: "no foreign list styles",
-    weight: 0.2,
+    weight: 0.15,
     score: bulletsOk ? 1 : 0,
     detail: bulletsOk
       ? `bullets: template=${template.hasBullets} generated=${generated.hasBullets} (compatible)`
@@ -665,6 +901,13 @@ async function main(): Promise<void> {
       `  levelScheme: ${Object.entries(s.levelScheme)
         .map(([d, f]) => `${d}=${f}`)
         .join(" ")}`
+    );
+    console.log(
+      `  levelIndent: ${Object.entries(s.levelIndent)
+        .map(([d, v]) => `${d}=${v}`)
+        .join(" ")}   emphasis: ${Object.entries(s.emphasis)
+        .map(([d, v]) => `${d}=${v ? "bold" : "plain"}`)
+        .join(" ") || "(none)"}`
     );
     console.log(`  hasBullets: ${s.hasBullets}   itemCount: ${s.itemCount}`);
   };

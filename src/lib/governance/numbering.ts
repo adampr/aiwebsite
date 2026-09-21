@@ -679,6 +679,11 @@ interface ProfileChain {
   fmt: ProfileLevel["fmt"];
   sep: "." | ")";
   expect: number;
+  /** Last link came from a HEADING line: a body-line restart of the same
+   * species then belongs one level DEEPER, not to this chain (an
+   * all-decimal template's "1." item under "### 1. Step" is a child, and
+   * flat text carries no other depth evidence). */
+  fromHeading: boolean;
 }
 
 /** Does `tok` fire as the next link of `c`? Same separator always; a lone
@@ -699,15 +704,17 @@ function chainFires(c: ProfileChain, tok: ProfileToken): boolean {
 
 /** The chain `tok` STARTS, or null. A lone "i."/"I." starts a ROMAN chain
  * (letters start at "a"; the letter reading of i is 9, never a start). */
-function chainStart(tok: ProfileToken): ProfileChain | null {
+function chainStart(tok: ProfileToken, fromHeading: boolean): ProfileChain | null {
   if (tok.compositeParts > 0 || tok.fmt === "decimalZero") return null;
   if (tok.romanAlt === 1)
     return {
       fmt: tok.fmt === "lowerLetter" ? "lowerRoman" : "upperRoman",
       sep: tok.sep,
       expect: 2,
+      fromHeading,
     };
-  if (tok.value === 1) return { fmt: tok.fmt, sep: tok.sep, expect: 2 };
+  if (tok.value === 1)
+    return { fmt: tok.fmt, sep: tok.sep, expect: 2, fromHeading };
   return null;
 }
 
@@ -833,11 +840,13 @@ export function detectNumberingProfile(text: string): NumberingProfile | null {
       continue;
     }
     if (tok.fmt === "decimalZero") continue;
+    const isHeading = e.hashes > 0;
     let fired = false;
     for (let d = 0; d < 3; d++) {
       const c = chains[d];
       if (c && chainFires(c, tok)) {
         c.expect++;
+        c.fromHeading = isHeading;
         vote(d, c);
         for (let r = d + 1; r < 3; r++) chains[r] = null;
         fired = true;
@@ -845,13 +854,20 @@ export function detectNumberingProfile(text: string): NumberingProfile | null {
       }
     }
     if (fired) continue;
-    const start = chainStart(tok);
+    const start = chainStart(tok, isHeading);
     if (!start) continue;
     // A restart of an existing level (same species, back to 1) stays that
-    // level; a NEW species one level deeper opens the next chain.
+    // level; a NEW species one level deeper opens the next chain. A BODY
+    // restart of a HEADING-anchored chain goes one level deeper instead:
+    // hash depth is the one depth signal an all-decimal template has.
     for (let d = 0; d < 3; d++) {
       const c = chains[d];
-      if (c && c.fmt === start.fmt && c.sep === start.sep) {
+      if (
+        c &&
+        c.fmt === start.fmt &&
+        c.sep === start.sep &&
+        (isHeading || !c.fromHeading)
+      ) {
         chains[d] = start;
         vote(d, start);
         for (let r = d + 1; r < 3; r++) chains[r] = null;
@@ -911,18 +927,10 @@ export function detectNumberingProfile(text: string): NumberingProfile | null {
       }
     }
   }
-  // Bare same-species stacking (decimal headings over a decimal body list,
-  // the commonest extraction shape) is a LIST, not a Word multilevel
-  // scheme: three depths would render indistinguishable bare markers. The
-  // levels above the repeat survive when they still make a profile.
-  for (let i = 1; i < levels.length; i++) {
-    const a = levels[i - 1];
-    const b = levels[i];
-    if (!a.composite && !b.composite && a.fmt === b.fmt && a.sep === b.sep) {
-      levels.length = i;
-      break;
-    }
-  }
+  // Same-species stacking (decimal under decimal) is allowed (round 23):
+  // real Word templates genuinely number consecutive levels decimal, and
+  // the renderers now distinguish depths the way Word does, by the indent
+  // ladder and bold headings, never by rejecting the profile.
   if (levels.length < 2) return null;
   return {
     levels,

@@ -367,6 +367,30 @@ function countStyleHeadings(xml: string): number {
   return n;
 }
 
+/** Round 23: the paragraph split consumes only "<w:p" plus ONE boundary
+ * character, so a re-saved document whose w:p tags carry attributes
+ * (w14:paraId, rsid marks) leaves each chunk starting MID-TAG, and the
+ * plain-text collector then reads the attribute list as text ("w14:paraId=
+ * ...>System - ..."). Consume through the tag's own closing ">" first,
+ * quote-aware so an attribute value holding a literal ">" cannot end the
+ * tag early. A clean chunk opens with a child tag ("<w:pPr>"/"<w:r>"), so
+ * hitting "<" before any ">" means the tag was already closed by the
+ * split. Linear single pass. */
+function skipParaTagRemainder(chunk: string): string {
+  let quote: string | null = null;
+  for (let i = 0; i < chunk.length; i++) {
+    const ch = chunk[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "<") return chunk;
+    else if (ch === ">") return chunk.slice(i + 1);
+  }
+  return chunk;
+}
+
 /** indexOf walk for "<w:tbl" followed by whitespace or ">" (skips w:tblPr
  * and friends), starting at `from`. */
 function findTableStart(xml: string, from: number): number {
@@ -415,7 +439,7 @@ export function docxXmlToText(
     // inside <w:pPr>/<w:pStyle> and shred the paragraph.
     const plain = xml.slice(pos, plainEnd);
     for (const p of plain.split(/<w:p[\s>]/)) {
-      const line = paraToLine(p, model, counters, boldHeads);
+      const line = paraToLine(skipParaTagRemainder(p), model, counters, boldHeads);
       if (line && !push(line)) return out.join("\n");
     }
     if (tblStart === -1) break;
@@ -752,10 +776,97 @@ export function recoverLeadingNumberedHeadings(lines: string[]): string[] {
  */
 const NON_PDF_SAMPLE_NAME = /\.(docx|md|txt)$/i;
 
+/* Round 23: rows stored under the round-22 extractor keep w:p attribute
+ * residue in their text ('1. w14:paraId="..." ... w:rsidP="...">System -
+ * ...'; the Title line as '# w14:...>Policy Template'). The extraction
+ * bug is fixed (skipParaTagRemainder), but the stored text is the only
+ * copy, so this targeted scrub runs for ALL rows at the same read edges
+ * healSampleHeadings does. Per line: when a w14:paraId=" token sits in
+ * the leading non-content run (nothing but a heading/list marker before
+ * it), everything from the token through the tag's ">" goes (quote-aware,
+ * so attribute values holding ">" cannot cut short), leftover attribute
+ * fragments in that run collapse the same way, and a line that ends up
+ * empty or as bare attribute debris drops. Idempotent and linear; clean
+ * text passes through byte-identical. */
+
+// The run BEFORE the residue may hold only heading hashes and/or one list
+// marker (bare, composite "1.1", parenthesized "(a)", or a roman run):
+// residue past real words is content (quoted XML in a policy about XML),
+// never scrubbed.
+const RESIDUE_PREFIX =
+  /^(?:#{1,6}\s+)?(?:\d{1,3}(?:\.\d{1,3}){0,4}[.)]?\s+|[A-Za-z]{1,7}[.)]\s+|\([A-Za-z0-9]{1,3}\)\s+|[-*]\s+)?\s*$/;
+// A whole line of nothing but attribute assignments (optional ">" tail).
+const RESIDUE_ONLY_LINE =
+  /^(?:[A-Za-z][\w:.-]{0,40}="[^"]{0,200}"\s*){1,20}>?$/;
+// From the trigger token, the cut must reach a ">" across NOTHING but
+// attribute pairs and whitespace. This is what keeps prose ABOUT these
+// attributes intact: 'w14:paraId="ABC" is the attribute Word writes...'
+// has no attribute-shaped ">", and '...writes >90% of the time' fails the
+// shape on its prose, so neither is ever cut.
+const RESIDUE_SPAN =
+  /^(?:[\w:.-]{1,60}="[^"]{0,300}"\s{0,10}){0,30}>$/;
+const RSID_TOKEN = /w:rsid[A-Za-z]{0,20}="/;
+
+/** Index just past the first ">" outside quotes, or -1. */
+function quoteAwareTagEnd(s: string, from: number): number {
+  let quote: string | null = null;
+  for (let i = from; i < s.length; i++) {
+    const ch = s[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === ">") return i + 1;
+  }
+  return -1;
+}
+
+/** Earliest residue trigger token in the line, or -1. */
+function residueTokenAt(line: string): number {
+  let at = -1;
+  for (const tok of ['w14:paraId="', 'w14:textId="']) {
+    const i = line.indexOf(tok);
+    if (i !== -1 && (at === -1 || i < at)) at = i;
+  }
+  const m = RSID_TOKEN.exec(line);
+  if (m && (at === -1 || m.index < at)) at = m.index;
+  return at;
+}
+
+export function scrubAttributeResidue(text: string | null): string | null {
+  if (!text) return text;
+  if (!text.includes('w14:paraId="') && !RSID_TOKEN.test(text)) return text;
+  const out: string[] = [];
+  for (let line of text.split("\n")) {
+    let changed = false;
+    // Loop until stable (a line can carry several leaked tags), bounded.
+    for (let pass = 0; pass < 16; pass++) {
+      const at = residueTokenAt(line);
+      if (at === -1 || !RESIDUE_PREFIX.test(line.slice(0, at))) break;
+      const end = quoteAwareTagEnd(line, at);
+      // Only a strictly attribute-shaped span through its ">" is residue;
+      // anything else is content and the line passes through untouched.
+      if (end === -1 || !RESIDUE_SPAN.test(line.slice(at, end))) break;
+      line = line.slice(0, at) + line.slice(end);
+      changed = true;
+    }
+    if (changed) {
+      const t = line.trim();
+      // Empty husk, marker-only husk, or bare attribute debris: drop.
+      if (!t || RESIDUE_PREFIX.test(line) || RESIDUE_ONLY_LINE.test(t))
+        continue;
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 export function healSampleHeadings(
   text: string | null,
   name: string | null
 ): string | null {
+  // The residue scrub runs for EVERY row (the round-22 leak hit .docx
+  // rows, which the recovery gate below deliberately skips).
+  text = scrubAttributeResidue(text);
   if (!text || (name !== null && NON_PDF_SAMPLE_NAME.test(name))) return text;
   let headings = 0;
   for (const line of text.split("\n"))

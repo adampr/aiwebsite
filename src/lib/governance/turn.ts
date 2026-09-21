@@ -475,16 +475,14 @@ export function applyOps(
           d.sections.splice(idx, 1);
           mark(op.doc, op.section);
           // Keep an adopted outline consistent: the removed id leaves its
-          // bucket; a bucket emptied by removals disappears (render is
-          // lenient anyway, this just keeps the stored shape honest).
+          // bucket. Round 23: a bucket emptied by removals STAYS, as a
+          // title-only heading - the sample's skeleton (names, order,
+          // positional numbers) survives content removal.
           if (d.outline) {
-            d.outline = d.outline
-              .map((b) => ({
-                title: b.title,
-                sections: b.sections.filter((id) => id !== op.section),
-              }))
-              .filter((b) => b.sections.length > 0);
-            if (!d.outline.length) delete d.outline;
+            d.outline = d.outline.map((b) => ({
+              title: b.title,
+              sections: b.sections.filter((id) => id !== op.section),
+            }));
           }
         }
         break;
@@ -571,14 +569,23 @@ export function applyOps(
             const i = idxOf(b.title);
             byIdx.set(i, [...(byIdx.get(i) ?? []), ...b.sections]);
           }
-          // Round 19c: validated ops carry no empty buckets, but applyOps
-          // also takes hand-built shapes - an emptied bucket disappears
-          // (the remove_section pruning invariant), never stores [].
-          const merged = [...byIdx.keys()]
-            .sort((a, b) => a - b)
-            .map((i) => ({ title: allowed[i], sections: byIdx.get(i)! }))
-            .filter((b) => b.sections.length > 0);
-          if (merged.length) d.outline = merged;
+          // Round 23: the stored outline ALWAYS carries the FULL sample
+          // title sequence. Titles the model filed nothing under are
+          // stored as EMPTY buckets at their sample position (titles come
+          // from the fenced allowlist, so the host invents nothing), and
+          // numbering stays positional: the sample's second heading is
+          // always 2, whatever the model omitted.
+          const merged: { title: string; sections: string[] }[] = [];
+          const seenCanon = new Set<string>();
+          allowed.forEach((t, i) => {
+            if (seenCanon.has(canonAllowed[i])) return;
+            seenCanon.add(canonAllowed[i]);
+            merged.push({ title: t, sections: byIdx.get(i) ?? [] });
+          });
+          // An adoption that filed NOTHING (possible only on a doc with
+          // zero sections) stores no outline: a skeleton of headings over
+          // no content is not a grouping.
+          if (merged.some((b) => b.sections.length > 0)) d.outline = merged;
           else delete d.outline;
           break;
         }

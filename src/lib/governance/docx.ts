@@ -53,22 +53,66 @@ import {
 } from "./config";
 import { standardsDate } from "./standards";
 
-function inlineRuns(inline: Inline[]): (TextRun | ExternalHyperlink)[] {
+// Round 23, profile-gated heading treatment: a profile means the sample's
+// TEXT carries a multilevel marker signal - a bold-headed Word template,
+// but equally a plain markdown/text sample whose lines spell the scheme
+// out ("## 1. Purpose" over a decimal list). That whole class styles its
+// numbered headings as emphasized document text, and the docx package's
+// default heading styles are non-bold blue (2E74B5); run properties
+// override the style, so profiled headings carry these.
+const PROFILE_HEAD = { bold: true, color: "000000" } as const;
+
+// Profiled heading label shape: one space-free marker plus one space, the
+// exact string every label composer emits. Split on it so the label rides
+// its own run with a real TAB to the ladder position, aligning titles the
+// way the template's own number+tab items do.
+const PROFILE_LABEL_RE = /^\S{1,12} $/;
+
+/** Profiled heading children: marker run + tab + title runs; null when the
+ * inline carries no label-shaped lead (deeper unnumbered headings). */
+function profiledHeadingRuns(
+  inline: Inline[]
+): (TextRun | ExternalHyperlink)[] | null {
+  const first = inline[0];
+  if (!first || first.t !== "text" || !PROFILE_LABEL_RE.test(first.text))
+    return null;
+  // The label keeps its trailing space (run-joined text stays "a. Title"
+  // for any tab-blind text extraction); the tab still owns the alignment.
+  return [
+    new TextRun({ text: first.text, ...PROFILE_HEAD }),
+    new TextRun({ children: [new Tab()], ...PROFILE_HEAD }),
+    ...inlineRuns(inline.slice(1), PROFILE_HEAD),
+  ];
+}
+
+function inlineRuns(
+  inline: Inline[],
+  head: typeof PROFILE_HEAD | null = null
+): (TextRun | ExternalHyperlink)[] {
+  const extra = head ?? {};
   return inline.map((x) => {
     switch (x.t) {
       case "bold":
-        return new TextRun({ text: x.text, bold: true });
+        return new TextRun({ text: x.text, ...extra, bold: true });
       case "italic":
-        return new TextRun({ text: x.text, italics: true });
+        return new TextRun({ text: x.text, italics: true, ...extra });
       case "code":
-        return new TextRun({ text: x.text, font: "Consolas" });
+        return new TextRun({ text: x.text, font: "Consolas", ...extra });
       case "link":
+        // Hyperlink runs keep their style (color included): a link must
+        // stay recognizable even inside a profiled heading.
         return new ExternalHyperlink({
           link: x.href,
-          children: [new TextRun({ text: x.text, style: "Hyperlink" })],
+          children: [
+            new TextRun({
+              text: x.text,
+              style: "Hyperlink",
+              ...(head ? { bold: true } : {}),
+            }),
+          ],
         });
       default:
-        return new TextRun({ text: x.text });
+        return new TextRun({ text: x.text, ...extra });
     }
   });
 }
@@ -105,6 +149,11 @@ interface OrderedNumCfg {
   format: ListFormat;
   start: number;
   sep: "." | ")";
+  // Round 23 (profile-gated): semantic base depth of the list's section
+  // plus one, so items ride the standard Word ladder (left = 720 * (depth
+  // + 1)): items under a top-level section sit at 1440, under a nested
+  // section at 2160. 0 = today's fixed 720/1440 (byte-identical).
+  depthOffset: number;
   sub: { format: ListFormat; start: number; sep: "." | ")" } | null;
 }
 
@@ -113,24 +162,58 @@ function blockToDocx(
   orderedRef: (cfg: OrderedNumCfg) => string,
   // Round 18b: sections nested under a skeleton bucket demote their inner
   // headings one Word level so the navigation-pane outline stays strict
-  // (bucket H1, section H2, inner H3...).
-  headingShift: 0 | 1 = 0
+  // (bucket H1, section H2, inner H3...). This shift IS the section's
+  // semantic depth (0 top-level, 1 nested), which the profiled indent
+  // ladder below hangs off.
+  headingShift: 0 | 1 = 0,
+  // Round 23: true = render under a NumberingProfile (bold neutral
+  // headings, the Word indent ladder). False = byte-identical output.
+  profiled = false
 ): (Paragraph | Table)[] {
+  const ladder = (depth: number, hanging: boolean) =>
+    profiled
+      ? {
+          indent: {
+            left: 720 * (depth + 1),
+            ...(hanging ? { hanging: 360 } : {}),
+          },
+        }
+      : {};
   switch (block.t) {
     case "heading": {
       const lvl = Math.min(block.level + headingShift, 4) as 1 | 2 | 3 | 4;
+      const tabbed = profiled ? profiledHeadingRuns(block.inline) : null;
       return [
         new Paragraph({
           heading: INNER_HEADING[lvl],
-          children: inlineRuns(block.inline),
+          children:
+            tabbed ?? inlineRuns(block.inline, profiled ? PROFILE_HEAD : null),
           spacing: INNER_HEADING_SPACING[lvl],
+          // Inner heading at normalized level L sits at semantic depth
+          // headingShift + L, stepping the same ladder its section does.
+          ...ladder(headingShift + block.level, true),
+          ...(tabbed
+            ? {
+                tabStops: [
+                  {
+                    type: TabStopType.LEFT,
+                    position: 720 * (headingShift + block.level + 1),
+                  },
+                ],
+              }
+            : {}),
           keepNext: true,
         }),
       ];
     }
     case "paragraph":
       return [
-        new Paragraph({ children: inlineRuns(block.inline), spacing: { after: 160 } }),
+        new Paragraph({
+          children: inlineRuns(block.inline),
+          spacing: { after: 160 },
+          // Loose body text aligns under its section heading's text.
+          ...ladder(headingShift, false),
+        }),
       ];
     case "list": {
       // Each ordered list gets its OWN concrete numbering instance: the docx
@@ -149,12 +232,25 @@ function blockToDocx(
             spacing: { after: 60 },
           })
         );
+      // Unconverted bullets (profile present, bodyNumbered false) ride the
+      // same depth ladder as ordered items: a direct w:ind outranks the
+      // default bullet numbering's fixed indents (round 23 fix 5).
+      const bulletIndent = (level: 0 | 1) =>
+        profiled
+          ? {
+              indent: {
+                left: 720 * (headingShift + 2 + level),
+                hanging: 360,
+              },
+            }
+          : {};
       if (block.ordered) {
         const firstSub = block.items.find((it) => it.sub?.ordered)?.sub;
         const reference = orderedRef({
           format: block.format ?? "decimal",
           start: block.start ?? 1,
           sep: block.sep ?? ".",
+          depthOffset: profiled ? headingShift + 1 : 0,
           sub: firstSub
             ? {
                 format: firstSub.format ?? "decimal",
@@ -170,12 +266,12 @@ function blockToDocx(
               si,
               it.sub!.ordered
                 ? { numbering: { reference, level: 1 } }
-                : { bullet: { level: 1 } }
+                : { bullet: { level: 1 }, ...bulletIndent(1) }
             );
         }
       } else {
         for (const it of block.items) {
-          item(it.inline, { bullet: { level: 0 } });
+          item(it.inline, { bullet: { level: 0 }, ...bulletIndent(0) });
           if (!it.sub) continue;
           if (it.sub.ordered) {
             // Per sub-RUN reference: the parent bullet never fires level 0,
@@ -185,6 +281,7 @@ function blockToDocx(
               format: "decimal",
               start: 1,
               sep: ".",
+              depthOffset: profiled ? headingShift + 1 : 0,
               sub: {
                 format: it.sub.format ?? "decimal",
                 start: it.sub.start ?? 1,
@@ -194,7 +291,8 @@ function blockToDocx(
             for (const si of it.sub.items)
               item(si, { numbering: { reference: subRef, level: 1 } });
           } else {
-            for (const si of it.sub.items) item(si, { bullet: { level: 1 } });
+            for (const si of it.sub.items)
+              item(si, { bullet: { level: 1 }, ...bulletIndent(1) });
           }
         }
       }
@@ -374,6 +472,10 @@ export async function renderDocx(
     // The sample's per-level numbering profile (round 22); null keeps the
     // flat style's rendering byte-identical. Derived like `numbering`.
     profile?: NumberingProfile | null;
+    // Round 23: the sample's title sequence for the render-side skeleton
+    // reconcile (empty headings at their sample positions). Only consulted
+    // when the doc has an adopted outline.
+    sampleTitles?: string[] | null;
     // The sample's stored letterhead (round 17); empty/null strings mean
     // no adopted frame and the output stays byte-identical to pre-17.
     letterhead?: SampleFrame | null;
@@ -442,7 +544,12 @@ export async function renderDocx(
   // renders the sample's skeleton (bucket H1, nested sections H2, inner
   // headings one level deeper), sharing the SAME plan the doc pane renders
   // from so the two can never disagree. plan null = today's flat document.
-  const plan = planOutline(doc, opts.numbering ?? null, opts.profile ?? null);
+  const plan = planOutline(
+    doc,
+    opts.numbering ?? null,
+    opts.profile ?? null,
+    opts.sampleTitles ?? null
+  );
   const rows: {
     section: (typeof doc.sections)[number] | null;
     label: string;
@@ -489,14 +596,46 @@ export async function renderDocx(
       });
     }
   }
+  const profiled = Boolean(opts.profile);
   for (const row of rows) {
+    const depth = row.nested ? 1 : 0;
+    // Profiled headings are bold and neutral with the Word indent ladder,
+    // label + TAB + title so the title columns at the ladder position the
+    // way the template's own number+tab items do (round 23); profile null
+    // keeps today's runs exactly.
+    const sp = profiled ? row.label.indexOf(" ") : -1;
+    const labelRuns =
+      sp > 0 && PROFILE_LABEL_RE.test(row.label.slice(0, sp + 1))
+        ? [
+            new TextRun({ text: row.label.slice(0, sp + 1), ...PROFILE_HEAD }),
+            new TextRun({
+              children: [new Tab(), row.label.slice(sp + 1)],
+              ...PROFILE_HEAD,
+            }),
+          ]
+        : [
+            new TextRun({
+              text: row.label,
+              ...(profiled ? PROFILE_HEAD : {}),
+            }),
+          ];
     children.push(
       new Paragraph({
         heading: row.nested ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1,
-        children: [new TextRun({ text: row.label })],
+        children: labelRuns,
         spacing: row.nested
           ? { before: 240, after: 100 }
           : { before: 280, after: 120 },
+        ...(profiled
+          ? { indent: { left: 720 * (depth + 1), hanging: 360 } }
+          : {}),
+        ...(labelRuns.length > 1
+          ? {
+              tabStops: [
+                { type: TabStopType.LEFT, position: 720 * (depth + 1) },
+              ],
+            }
+          : {}),
         keepNext: true,
       })
     );
@@ -513,6 +652,7 @@ export async function renderDocx(
             }),
           ],
           spacing: { after: 160 },
+          ...(profiled ? { indent: { left: 720 * (depth + 1) } } : {}),
         })
       );
       continue;
@@ -523,9 +663,9 @@ export async function renderDocx(
       opts.numbering ?? null,
       row.innerBase,
       opts.profile ?? null,
-      row.nested ? 1 : 0
+      depth
     ))
-      children.push(...blockToDocx(block, orderedRef, row.nested ? 1 : 0));
+      children.push(...blockToDocx(block, orderedRef, depth, profiled));
   }
 
   children.push(
@@ -577,7 +717,11 @@ export async function renderDocx(
             text: `%1${cfg.sep}`,
             alignment: AlignmentType.START,
             start: cfg.start,
-            style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+            style: {
+              paragraph: {
+                indent: { left: 720 * (1 + cfg.depthOffset), hanging: 360 },
+              },
+            },
           },
           {
             level: 1,
@@ -585,7 +729,11 @@ export async function renderDocx(
             text: `%2${cfg.sub?.sep ?? "."}`,
             alignment: AlignmentType.START,
             start: cfg.sub?.start ?? 1,
-            style: { paragraph: { indent: { left: 1440, hanging: 360 } } },
+            style: {
+              paragraph: {
+                indent: { left: 720 * (2 + cfg.depthOffset), hanging: 360 },
+              },
+            },
           },
         ],
       })),
@@ -707,6 +855,7 @@ export async function renderZip(opts: {
   skippedCount: number;
   numbering?: NumberingStyle | null;
   profile?: NumberingProfile | null;
+  sampleTitles?: string[] | null;
   letterhead?: SampleFrame | null;
 }): Promise<Buffer> {
   const zip = new JSZip();
@@ -718,6 +867,7 @@ export async function renderZip(opts: {
       kind: opts.kind,
       numbering: opts.numbering ?? null,
       profile: opts.profile ?? null,
+      sampleTitles: opts.sampleTitles ?? null,
       letterhead: opts.letterhead ?? null,
     });
     zip.file(names.get(doc.slug)!, buf);
