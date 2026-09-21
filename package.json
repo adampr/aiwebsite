@@ -35,6 +35,7 @@
     "work:import": "tsx scripts/work-archive-import.ts",
     "work:correlate": "tsx scripts/work-archive-correlate.ts",
     "work:submit": "tsx scripts/work-submit.ts",
+    "work:update": "tsx scripts/work-update.ts",
     "work:attribute": "tsx scripts/work-attribute.ts",
     "work:retain": "tsx scripts/work-exhibit-retain.ts",
     "work:package": "tsx scripts/work-repo-package.ts",

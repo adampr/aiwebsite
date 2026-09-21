@@ -83,9 +83,10 @@ export default async function WorkPage() {
   // placement round that page is not quite the pre-placement one: the
   // statics after a placed card's bay carry classes flipped for it, so with
   // every placed row absent the seam out of each ODD-count bay
-  // double-stripes (today both placed bays are odd, one card in 02 and
-  // three in 03, so #your-ai-roadmap -> #qbr-machine AND
-  // #onboarding-toolkit -> #lakehouse) until the map entries in
+  // double-stripes (today all three placed bays are odd, one card in 02,
+  // three in 03 and one in 04, so #your-ai-roadmap -> #qbr-machine,
+  // #onboarding-toolkit -> #lakehouse AND #api-gateway -> #spamslayer)
+  // until the map entries in
   // placements.ts are removed. Every OTHER seam, the "From the Team" one
   // included, holds, because sequencePositions() counts the map, not the
   // rows.
@@ -1267,7 +1268,7 @@ export default async function WorkPage() {
         </div>
 
         {/* 14. SpamSlayer */}
-        <section id="spamslayer" className="panel rise">
+        <section id="spamslayer" className="panel panel--lightline rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge badge--ok">
               <span className="dot" /> Live · internal
@@ -1337,7 +1338,7 @@ export default async function WorkPage() {
         </section>
 
         {/* 16. Beacon */}
-        <section id="beacon" className="panel panel--lightline rise">
+        <section id="beacon" className="panel rise">
           <div className="flex flex-wrap items-center gap-4">
             <span className="badge">
               <span className="dot" /> Built · final setup

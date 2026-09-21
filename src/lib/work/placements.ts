@@ -5,7 +5,10 @@
 // with "Client Site Rescue Mirror" into "03 · Client Delivery"; on
 // 2026-09-04 (owner directive) "MyCoach" joined "02 · What It Runs" and
 // "XLAnt" joined "03 · Client Delivery"; later the same day (owner
-// directive) "XLing" became bay 03's third placed card.
+// directive) "XLing" became bay 03's third placed card; on 2026-09-21
+// (owner directive) "Data Map Agent" became the FIRST card placed into
+// "04 · The Access Layer", beside the Lakehouse and the API gateway it
+// catalogues through.
 //
 // WHY THIS IS A CODE MAP AND NOT A DB COLUMN. The static exhibits in
 // src/app/work/page.tsx carry HARD-CODED stripe classes (`panel rise` at an
@@ -42,6 +45,7 @@ import type { PublishedCard } from "./db";
 export const TEAM_CARD_PLACEMENTS: Readonly<Record<string, string>> =
   Object.freeze({
     "team-client-site-rescue-mirror": "03",
+    "team-data-map-agent": "04",
     "team-mycoach": "02",
     "team-xlant": "03",
     "team-xling": "03",

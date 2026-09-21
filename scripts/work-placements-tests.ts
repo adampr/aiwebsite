@@ -114,17 +114,18 @@ test("positions: counted from the MAP (known bays only), never from rows", () =>
   // counts all four placements (one in 02, three in 03).
   assert.strictEqual(placedStart.get("03"), upTo03 + 1 + 1);
   assert.strictEqual(placedStart.get("04"), upTo03 + 4 + countIn("04") + 1);
-  assert.strictEqual(runFirst, EXHIBITS.length + 4 + 1);
+  assert.strictEqual(runFirst, EXHIBITS.length + 5 + 1);
   assert.deepStrictEqual([...placedStart.keys()], BAYS);
   // Today's numbers, stated so a change to either side is a visible edit.
   // By hand: statics per bay are 1 + 8 + 2 + 2 + 2 = 15 (the
   // #autotask-ci-intake exhibit retired 2026-09-08), placements 1 in 02 +
-  // 3 in 03, so the run starts at 15 + 4 + 1 = 20.
+  // 3 in 03 + 1 in 04 (#team-data-map-agent, 2026-09-21), so the run
+  // starts at 15 + 5 + 1 = 21.
   assert.strictEqual(EXHIBITS.length, 15);
   assert.strictEqual(placedStart.get("02"), 10);
   assert.strictEqual(placedStart.get("03"), 13);
   assert.strictEqual(placedStart.get("04"), 18);
-  assert.strictEqual(runFirst, 20);
+  assert.strictEqual(runFirst, 21);
 });
 
 test("positions: an entry naming an unknown bay counts zero, matching its fallback to the run", () => {
@@ -231,19 +232,27 @@ test("parity walk, published: statics + placed card + run alternate strictly fro
   assert.strictEqual(seq[at + 1].id, "team-xlant");
   assert.strictEqual(seq[at + 2].id, "team-xling");
   assert.strictEqual(seq[at + 3].id, "lakehouse");
-  assert.strictEqual(seq[19].id, "r1");
-  assert.strictEqual(seq[19].cls, PLAIN, "run starts at 20, plain");
+  // Bay 04's first (and only) placed card closes the Access Layer, between
+  // #api-gateway and bay 05's first static.
+  const dm = seq.findIndex((r) => r.id === "team-data-map-agent");
+  assert.strictEqual(dm + 1, 18, "bay 04's placed list starts at 18");
+  assert.strictEqual(seq[dm - 1].id, "api-gateway");
+  assert.strictEqual(seq[dm + 1].id, "spamslayer");
+  assert.strictEqual(seq[20].id, "r1");
+  assert.strictEqual(seq[20].cls, LIGHT, "run starts at 21, lightline");
 });
 
-test("parity walk, placed rows unpublished: one seam per odd-count bay's exit, today two; the run seam holds", () => {
-  // BOTH placed bays now hold ODD counts (one card in 02, three in 03),
-  // so each bay's exit double-stripes: bay 02's into bay 03 and bay 03's
-  // into bay 04. The two odd shifts cancel by bay 04, so bays 04-05 and
-  // the "From the Team" seam hold.
+test("parity walk, placed rows unpublished: one seam per odd-count bay's exit, today three; the run seam holds", () => {
+  // ALL THREE placed bays hold ODD counts (one card in 02, three in 03,
+  // one in 04), so each bay's exit double-stripes: bay 02's into bay 03,
+  // bay 03's into bay 04 and bay 04's into bay 05. The "From the Team"
+  // seam still holds: nothing is placed in bay 05, so #beacon and the
+  // run's first card keep adjacent map positions.
   const seq = render([card("r1"), card("r2")]);
   assert.deepStrictEqual(seams(seq), [
     "your-ai-roadmap->qbr-machine",
     "onboarding-toolkit->lakehouse",
+    "api-gateway->spamslayer",
   ]);
   const r1 = seq.findIndex((r) => r.id === "r1");
   assert.strictEqual(r1 + 1, 16, "run follows the 15 statics directly");
@@ -251,12 +260,13 @@ test("parity walk, placed rows unpublished: one seam per odd-count bay's exit, t
   assert.notStrictEqual(seq[r1 - 1].cls, seq[r1].cls, "the From the Team seam does not double-stripe");
 });
 
-test("parity walk, DB down or empty: statics only, the same two seams and nothing else", () => {
+test("parity walk, DB down or empty: statics only, the same three seams and nothing else", () => {
   const seq = render([]);
   assert.strictEqual(seq.length, EXHIBITS.length);
   assert.deepStrictEqual(seams(seq), [
     "your-ai-roadmap->qbr-machine",
     "onboarding-toolkit->lakehouse",
+    "api-gateway->spamslayer",
   ]);
 });
 

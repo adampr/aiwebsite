@@ -30,15 +30,16 @@
 // published rows, because the static classes below a placed card were
 // flipped against the map, and had the run followed the rows instead, an
 // unpublished placement would have moved this seam too (refuter finding).
-// Today's derivation: 15 statics + 4 placements (#team-mycoach at
+// Today's derivation: 15 statics + 5 placements (#team-mycoach at
 // position 10, closing bay 02; bay 03's three placed cards at 13-15,
-// after #onboarding-toolkit) put the last static, #beacon, at
-// position 19, ODD, lightline, so the run starts at 20, EVEN, plain.
-// With a placed row unpublished the run still starts at 20 and only the
+// after #onboarding-toolkit; #team-data-map-agent at 18, closing bay 04
+// after #api-gateway) put the last static, #beacon, at
+// position 20, EVEN, plain, so the run starts at 21, ODD, lightline.
+// With a placed row unpublished the run still starts at 21 and only the
 // seam out of that card's own bay double-stripes, until the map entry is
-// removed; both placed bays now hold ODD counts, so with every row
-// absent TWO seams double-stripe (bay 02's exit and bay 03's exit),
-// and the seams cancel by bay 04. Inserting or
+// removed; all three placed bays hold ODD counts, so with every row
+// absent THREE seams double-stripe (bay 02's exit, bay 03's exit and
+// bay 04's exit), and the run's own seam still holds. Inserting or
 // removing an ODD number of cards anywhere before the run flips every
 // hard-coded static class after that point (see placements.ts for why bay
 // membership is a build-time fact), and scripts/work-placements-tests.ts
