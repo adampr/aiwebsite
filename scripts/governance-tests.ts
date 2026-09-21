@@ -261,6 +261,7 @@ function check(name: string, cond: boolean): void {
     "src/app/api/governance/projects/[id]/reopen/route.ts",
     "src/lib/governance/snapshot.ts",
     "src/app/api/roadmap/docs/[id]/edit/route.ts",
+    "scripts/lib/governance-rubric.ts",
   ]) {
     const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
     check(`no banned chars in ${rel}`, !/[–—‘’“”]/.test(text));
@@ -6593,6 +6594,844 @@ function check(name: string, cond: boolean): void {
       );
     })()
   );
+}
+
+/* 35. Round 22: sample structure fidelity. Bold-numbered ListParagraph
+ *     headings ingest as real headings (the flagship template's shape, which
+ *     starved the whole outline machinery), the per-level NumberingProfile
+ *     derives from stored sample text, and both renderers follow it: bare
+ *     "a."/"i." markers per depth, bullet lists rendered ordered when the
+ *     sample numbers its body, lowerRoman in word/numbering.xml. A null
+ *     profile stays byte-identical to pre-round-22 output. */
+{
+  const numbering22 = await import("../src/lib/governance/numbering");
+  const outline22 = await import("../src/lib/governance/outline");
+  const prompt22 = await import("../src/lib/governance/prompt");
+  const { detectNumberingProfile } = numbering22;
+  type Profile22 = import("../src/lib/governance/numbering").NumberingProfile;
+
+  // Fixture helpers: the round-15d shapes, para() extended with bold runs.
+  const NUM_XML = (abstracts: string, nums: string) =>
+    `<w:numbering>${abstracts}${nums}</w:numbering>`;
+  const lvl = (ilvl: number, fmt: string, txt: string) =>
+    `<w:lvl w:ilvl="${ilvl}"><w:start w:val="1"/><w:numFmt w:val="${fmt}"/><w:lvlText w:val="${txt}"/></w:lvl>`;
+  const abs = (id: string, lvls: string) =>
+    `<w:abstractNum w:abstractNumId="${id}">${lvls}</w:abstractNum>`;
+  const num = (numId: string, absId: string) =>
+    `<w:num w:numId="${numId}"><w:abstractNumId w:val="${absId}"/></w:num>`;
+  const para = (opts: {
+    style?: string;
+    numId?: string;
+    ilvl?: number;
+    // rpr: raw rPr innards, for shapes bold:true cannot spell (sibling
+    // toggles beside <w:b/>, attribute-stuffed tags, w:val variants).
+    runs: { text: string; bold?: boolean; rpr?: string }[];
+  }) => {
+    const numPr =
+      opts.numId !== undefined
+        ? `<w:numPr>${opts.ilvl !== undefined ? `<w:ilvl w:val="${opts.ilvl}"/>` : ""}<w:numId w:val="${opts.numId}"/></w:numPr>`
+        : "";
+    const style = opts.style ? `<w:pStyle w:val="${opts.style}"/>` : "";
+    const runs = opts.runs
+      .map(
+        (r) =>
+          `<w:r><w:rPr>${r.rpr ?? (r.bold ? "<w:b/>" : "")}</w:rPr><w:t xml:space="preserve">${r.text}</w:t></w:r>`
+      )
+      .join("");
+    return `<w:p><w:pPr>${style}${numPr}</w:pPr>${runs}</w:p>`;
+  };
+  const doc22 = (paras: string) =>
+    `<w:document><w:body>${paras}</w:body></w:document>`;
+  const mkModel = () =>
+    buildNumberingModel(
+      NUM_XML(
+        abs(
+          "0",
+          lvl(0, "decimal", "%1.") +
+            lvl(1, "lowerLetter", "%2.") +
+            lvl(2, "lowerRoman", "%3.")
+        ),
+        num("10", "0")
+      ),
+      null
+    );
+
+  // --- Ingest: the flagship shape (bold numbered ListParagraphs, one with
+  // a glued non-bold body run, non-bold sub items, deeper bold headings).
+  const templateXml = doc22(
+    para({ style: "Title", runs: [{ text: "Alpha Template" }] }) +
+      para({
+        style: "ListParagraph",
+        numId: "10",
+        ilvl: 0,
+        runs: [
+          { text: "Purpose", bold: true },
+          { text: " This template governs widget policies." },
+        ],
+      }) +
+      para({
+        style: "ListParagraph",
+        numId: "10",
+        ilvl: 0,
+        runs: [{ text: "Scope", bold: true }],
+      }) +
+      para({
+        style: "ListParagraph",
+        numId: "10",
+        ilvl: 1,
+        runs: [{ text: "Keep data safe." }],
+      }) +
+      para({
+        style: "ListParagraph",
+        numId: "10",
+        ilvl: 0,
+        runs: [{ text: "Policy", bold: true }],
+      }) +
+      para({
+        style: "ListParagraph",
+        numId: "10",
+        ilvl: 1,
+        runs: [{ text: "Step one of the policy", bold: true }],
+      }) +
+      para({
+        style: "ListParagraph",
+        numId: "10",
+        ilvl: 2,
+        runs: [{ text: "Start on the first widget step." }],
+      }) +
+      para({
+        style: "ListParagraph",
+        numId: "10",
+        ilvl: 1,
+        runs: [{ text: "Step two of the policy", bold: true }],
+      }) +
+      para({
+        style: "ListParagraph",
+        numId: "10",
+        ilvl: 2,
+        runs: [{ text: "Start on the second widget step." }],
+      })
+  );
+  const tplText = docxXmlToText(templateXml, mkModel());
+  check(
+    "r22 ingest: bold numbered ListParagraphs become headings, glued body splits",
+    tplText ===
+      [
+        "# Alpha Template",
+        "## 1. Purpose",
+        "This template governs widget policies.",
+        "## 2. Scope",
+        "a. Keep data safe.",
+        "## 3. Policy",
+        "### a. Step one of the policy",
+        "i. Start on the first widget step.",
+        "### b. Step two of the policy",
+        "i. Start on the second widget step.",
+      ].join("\n")
+  );
+  check(
+    "r22 ingest: bucket titles now derive from the recognized headings",
+    JSON.stringify(prompt22.sampleBucketTitles(tplText)) ===
+      JSON.stringify(["Purpose", "Scope", "Policy"]) &&
+      sampleOutline(tplText) !== null
+  );
+  check(
+    "r22 ingest: a document with real Heading styles is untouched by the path",
+    (() => {
+      const styled = doc22(
+        para({ style: "Heading1", runs: [{ text: "Intro" }] }) +
+          para({ style: "Heading1", runs: [{ text: "Rules" }] }) +
+          para({
+            style: "ListParagraph",
+            numId: "10",
+            ilvl: 0,
+            runs: [
+              { text: "Purpose", bold: true },
+              { text: " This template governs widget policies." },
+            ],
+          })
+      );
+      return (
+        docxXmlToText(styled, mkModel()) ===
+        "# Intro\n# Rules\n1. Purpose This template governs widget policies."
+      );
+    })()
+  );
+  check(
+    "r22 ingest: sentence-shaped and unbolded numbered paragraphs stay body lines",
+    (() => {
+      const body = doc22(
+        para({
+          style: "ListParagraph",
+          numId: "10",
+          ilvl: 0,
+          runs: [{ text: "All access is revoked immediately.", bold: true }],
+        }) +
+          para({
+            style: "ListParagraph",
+            numId: "10",
+            ilvl: 0,
+            runs: [{ text: "Review the log weekly" }],
+          })
+      );
+      return (
+        docxXmlToText(body, mkModel()) ===
+        "1. All access is revoked immediately.\n2. Review the log weekly"
+      );
+    })()
+  );
+  check(
+    "r22 ingest: only the w:b tag's own w:val decides, and off means off",
+    (() => {
+      // A sibling toggle's w:val (<w:i w:val="0"/>) must not defeat the
+      // bold read; w:val="off" is a legal ST_OnOff false; an
+      // attribute-stuffed <w:b> longer than any fixed window still reads
+      // its own w:val="0".
+      const mixed = doc22(
+        para({
+          style: "ListParagraph",
+          numId: "10",
+          ilvl: 0,
+          runs: [{ text: "Purpose", rpr: '<w:b/><w:i w:val="0"/>' }],
+        }) +
+          para({
+            style: "ListParagraph",
+            numId: "10",
+            ilvl: 0,
+            runs: [{ text: "Scope", rpr: '<w:b w:val="off"/>' }],
+          }) +
+          para({
+            style: "ListParagraph",
+            numId: "10",
+            ilvl: 0,
+            runs: [
+              {
+                text: "Policy",
+                rpr: `<w:b w:stuffing="${"x".repeat(80)}" w:val="0"/>`,
+              },
+            ],
+          })
+      );
+      return (
+        docxXmlToText(mixed, mkModel()) === "## 1. Purpose\n2. Scope\n3. Policy"
+      );
+    })()
+  );
+  check(
+    "r22 ingest: a cover Title plus one stray Heading never disarms the path",
+    (() => {
+      // Title is a doc title, not a section heading, and a stale
+      // tracked-change heading style (pPrChange, no current text) must not
+      // count toward the two-heading gate either.
+      const covered = doc22(
+        para({ style: "Title", runs: [{ text: "Alpha Template" }] }) +
+          para({ style: "Heading1", runs: [{ text: "Appendix" }] }) +
+          '<w:p><w:pPr><w:pPrChange w:id="1"><w:pPr><w:pStyle w:val="Heading2"/></w:pPr></w:pPrChange></w:pPr></w:p>' +
+          para({
+            style: "ListParagraph",
+            numId: "10",
+            ilvl: 0,
+            runs: [{ text: "Purpose", bold: true }],
+          })
+      );
+      return (
+        docxXmlToText(covered, mkModel()) ===
+        "# Alpha Template\n# Appendix\n## 1. Purpose"
+      );
+    })()
+  );
+
+  // --- detectNumberingProfile: per-level schemes from the stored markers.
+  const tplProfile = detectNumberingProfile(tplText);
+  check(
+    "r22 profile: decimal/lowerLetter/lowerRoman bare levels, bodyNumbered",
+    tplProfile !== null &&
+      JSON.stringify(tplProfile) ===
+        JSON.stringify({
+          levels: [
+            { fmt: "decimal", sep: ".", composite: false },
+            { fmt: "lowerLetter", sep: ".", composite: false },
+            { fmt: "lowerRoman", sep: ".", composite: false },
+          ],
+          bodyNumbered: true,
+        })
+  );
+  check(
+    "r22 profile: 'i.' after a letter chain reaching h stays a letter",
+    (() => {
+      const letters = [
+        "## 1. Alpha",
+        ..."abcdefghij".split("").map((c) => `${c}. Item ${c} here.`),
+        "## 2. Beta",
+        "a. Item again.",
+      ].join("\n");
+      const p = detectNumberingProfile(letters);
+      return (
+        p !== null &&
+        p.levels.length === 2 &&
+        p.levels[1].fmt === "lowerLetter"
+      );
+    })()
+  );
+  check(
+    "r22 profile: 'i., ii., iii.' under letters is a roman third level",
+    (() => {
+      const roman = [
+        "## 1. Alpha",
+        "a. First item here.",
+        "i. Sub one here.",
+        "ii. Sub two here.",
+        "iii. Sub three here.",
+        "b. Second item here.",
+        "## 2. Beta",
+        "Body prose.",
+      ].join("\n");
+      const p = detectNumberingProfile(roman);
+      return (
+        p !== null &&
+        p.levels.length === 3 &&
+        p.levels[1].fmt === "lowerLetter" &&
+        p.levels[2].fmt === "lowerRoman"
+      );
+    })()
+  );
+  check(
+    "r22 profile: '1.1' sub-markers detect as a composite level",
+    (() => {
+      const comp = [
+        "## 1. Alpha",
+        "Body.",
+        "### 1.1 Beta",
+        "Body.",
+        "### 1.2 Gamma",
+        "Body.",
+        "## 2. Delta",
+        "Body.",
+      ].join("\n");
+      const p = detectNumberingProfile(comp);
+      return (
+        p !== null &&
+        p.levels.length === 2 &&
+        p.levels[0].fmt === "decimal" &&
+        p.levels[1].composite === true
+      );
+    })()
+  );
+  check(
+    "r22 profile: no multi-level signal means null",
+    detectNumberingProfile("Plain prose only.\nMore prose.") === null &&
+      detectNumberingProfile("## 1. Alpha\nBody.\n## 2. Beta\nBody.") ===
+        null &&
+      detectNumberingProfile("## Section One\nBody.\n## Section Two\nBody.") ===
+        null
+  );
+  check(
+    "r22 profile: decimal headings over a decimal body list never stack",
+    detectNumberingProfile(
+      [
+        "## 1. Purpose",
+        "This policy exists for reasons.",
+        "1. First step of the process.",
+        "2. Second step of the process.",
+        "## 2. Scope",
+        "1. Review annually.",
+        "2. Update as needed.",
+      ].join("\n")
+    ) === null
+  );
+  check(
+    "r22 profile: unmarkered or section-word headings keep the flat style",
+    detectNumberingProfile(
+      [
+        "## Section 1: Purpose",
+        "a. One item here.",
+        "i. Sub one here.",
+        "ii. Sub two here.",
+        "## Section 2: Scope",
+        "a. One item here.",
+      ].join("\n")
+    ) === null &&
+      detectNumberingProfile(
+        [
+          "## Purpose",
+          "a. One item here.",
+          "i. Sub one here.",
+          "ii. Sub two here.",
+          "## Scope",
+          "a. One item here.",
+        ].join("\n")
+      ) === null
+  );
+  check(
+    "r22 profile: the one-title legacy fallback still fires when flat agrees",
+    (() => {
+      const legacy = [
+        "# Alpha Template",
+        "1. Purpose overview here.",
+        "2. Scope overview here.",
+        "3. Policy items follow.",
+        "a. First item here.",
+        "i. Sub one here.",
+        "ii. Sub two here.",
+        "b. Second item here.",
+      ].join("\n");
+      const p = detectNumberingProfile(legacy);
+      return (
+        p !== null &&
+        p.levels.map((l) => l.fmt).join(",") ===
+          "decimal,lowerLetter,lowerRoman"
+      );
+    })()
+  );
+  check(
+    "r22 profile: bullet-heavy samples keep bodyNumbered false",
+    (() => {
+      const bullets = [
+        "## 1. Alpha",
+        "a. One numbered item.",
+        "b. Two numbered item.",
+        ...Array.from({ length: 9 }, (_, i) => `- Bullet ${i} here.`),
+        "## 2. Beta",
+        "Body.",
+      ].join("\n");
+      const p = detectNumberingProfile(bullets);
+      return p !== null && p.bodyNumbered === false;
+    })()
+  );
+
+  // --- Render: labels and body lists follow the profile at their depth.
+  const P: Profile22 = {
+    levels: [
+      { fmt: "decimal", sep: ".", composite: false },
+      { fmt: "lowerLetter", sep: ".", composite: false },
+      { fmt: "lowerRoman", sep: ".", composite: false },
+    ],
+    bodyNumbered: true,
+  };
+  check(
+    "r22 render: title composers emit bare per-level markers",
+    numbering22.sectionTitleText(3, "Data handling", "decimal", P) ===
+      "3. Data handling" &&
+      numbering22.nestedSectionTitleText(6, 2, "Data rules", null, P) ===
+        "b. Data rules" &&
+      numbering22.sectionTitleText(2, "Scope", null, {
+        levels: [
+          { fmt: "decimal", sep: ")", composite: false },
+          { fmt: "lowerLetter", sep: ")", composite: false },
+        ],
+        bodyNumbered: false,
+      }) === "2) Scope"
+  );
+  {
+    const md = "## First\ntext\n### Deep\nmore\n- One item.\n  - Sub item.\n- Two item.";
+    const withP = numbering22.normalizeSectionBlocks(
+      parseMarkdown(md),
+      3,
+      null,
+      null,
+      P,
+      0
+    );
+    const labels = withP
+      .filter((b) => b.t === "heading")
+      .map((b) => (b.t === "heading" && b.inline[0]?.t === "text" ? b.inline[0].text : ""));
+    const list = withP.find((b) => b.t === "list");
+    check(
+      "r22 render: inner headings carry bare a./i. markers at their depth",
+      labels[0] === "a. " && labels[1] === "i. "
+    );
+    check(
+      "r22 render: bullets convert to ordered lists per the profile level",
+      !!list &&
+        list.t === "list" &&
+        list.ordered === true &&
+        list.format === "lowerLetter" &&
+        list.start === 1 &&
+        list.items[0].sub?.ordered === true &&
+        list.items[0].sub.format === "lowerRoman"
+    );
+    const nested = numbering22.normalizeSectionBlocks(
+      parseMarkdown("- One item.\n- Two item."),
+      2,
+      null,
+      "6.1",
+      P,
+      1
+    );
+    check(
+      "r22 render: a nested section's list rides one level deeper (roman)",
+      nested[0].t === "list" &&
+        nested[0].ordered === true &&
+        nested[0].format === "lowerRoman"
+    );
+    // Depths past a THREE-level profile repeat the detected cycle (a
+    // nested section's depth-1 heading sits at level 3, wrapping to
+    // decimal); a TWO-level profile proves no cycle, so its deeper levels
+    // fall back to bare decimal instead of wearing the section format.
+    const cycled = numbering22.normalizeSectionBlocks(
+      parseMarkdown("## First\ntext\n### Deep\nmore"),
+      2,
+      null,
+      "6.1",
+      P,
+      1
+    );
+    const cyc = cycled
+      .filter((b) => b.t === "heading")
+      .map((b) => (b.t === "heading" && b.inline[0]?.t === "text" ? b.inline[0].text : ""));
+    check(
+      "r22 render: depths past a three-level profile repeat the cycle",
+      cyc[0] === "i. " && cyc[1] === "1. "
+    );
+    const twoLevel = numbering22.normalizeSectionBlocks(
+      parseMarkdown("## First\ntext\n### Deep\nmore"),
+      3,
+      null,
+      null,
+      {
+        levels: [
+          { fmt: "upperRoman", sep: ".", composite: false },
+          { fmt: "upperLetter", sep: ".", composite: false },
+        ],
+        bodyNumbered: false,
+      },
+      0
+    );
+    const twoL = twoLevel
+      .filter((b) => b.t === "heading")
+      .map((b) => (b.t === "heading" && b.inline[0]?.t === "text" ? b.inline[0].text : ""));
+    check(
+      "r22 render: a two-level profile falls back to decimal past its end",
+      twoL[0] === "A. " && twoL[1] === "1. "
+    );
+  }
+  check(
+    "r22 render: null profile stays byte-identical to the flat style",
+    (() => {
+      const md = "## First\ntext\n### Deeper\n- one\n- two\n## Second";
+      const plain = numbering22.normalizeSectionBlocks(parseMarkdown(md), 3, "roman");
+      const explicit = numbering22.normalizeSectionBlocks(
+        parseMarkdown(md),
+        3,
+        "roman",
+        null,
+        null,
+        0
+      );
+      const labels = plain
+        .filter((b) => b.t === "heading")
+        .map((b) => (b.t === "heading" && b.inline[0]?.t === "text" ? b.inline[0].text : ""));
+      const list = plain.find((b) => b.t === "list");
+      return (
+        JSON.stringify(plain) === JSON.stringify(explicit) &&
+        labels[0] === "III.1 " &&
+        labels[1] === "III.1.1 " &&
+        !!list &&
+        list.t === "list" &&
+        list.ordered === false &&
+        numbering22.sectionTitleText(3, "Data handling", "roman") ===
+          "III. Data handling"
+      );
+    })()
+  );
+  check(
+    "r22 render: quoting surfaces still go through the one label composer",
+    (() => {
+      const d: GovernanceDoc = {
+        slug: "ai-usage-policy",
+        title: "AI Acceptable Use Policy",
+        stub: false,
+        sections: [
+          { id: "purpose-scope", title: "Why this exists", markdown: "Body." },
+          { id: "approved-tools", title: "Approved tools", markdown: "Body." },
+          { id: "data-rules", title: "Data rules", markdown: "Body." },
+        ],
+        outline: [
+          { title: "Purpose", sections: ["purpose-scope"] },
+          { title: "Policy", sections: ["approved-tools", "data-rules"] },
+        ],
+      };
+      const plan = outline22.planOutline(d, null, P)!;
+      return (
+        plan[0].label === "1. Purpose" &&
+        plan[1].label === "2. Policy" &&
+        plan[2].label === "a. Approved tools" &&
+        plan[3].label === "b. Data rules" &&
+        outline22.sectionDisplayLabel(d, "data-rules", null, P) ===
+          "b. Data rules" &&
+        outline22.sectionDisplayLabel(d, "data-rules", null) ===
+          "2.2 Data rules"
+      );
+    })()
+  );
+
+  // --- Word export: the profile reaches word/numbering.xml, and the same
+  // document rendered profile-less keeps its bullets (paired pin).
+  {
+    const { renderDocx: renderDocx22 } = await import(
+      "../src/lib/governance/docx"
+    );
+    const { default: JSZip22 } = await import("jszip");
+    const d: GovernanceDoc = {
+      slug: "ai-usage-policy",
+      title: "AI Acceptable Use Policy",
+      stub: false,
+      sections: [
+        { id: "purpose-scope", title: "Why this exists", markdown: "Body one." },
+        {
+          id: "approved-tools",
+          title: "Approved tools",
+          markdown: "Use only listed tools.\n- Keep accounts separate.\n- Log usage weekly.",
+        },
+        { id: "data-rules", title: "Data rules", markdown: "Never paste client data." },
+      ],
+      outline: [
+        { title: "Purpose", sections: ["purpose-scope"] },
+        { title: "Policy", sections: ["approved-tools", "data-rules"] },
+      ],
+    };
+    const kind22 = "usage_policy" as const;
+    const profiled = await JSZip22.loadAsync(
+      await renderDocx22(d, { draft: false, kind: kind22, profile: P })
+    );
+    const profiledDoc = await profiled.file("word/document.xml")!.async("string");
+    const profiledNum = await profiled.file("word/numbering.xml")!.async("string");
+    const flat = await JSZip22.loadAsync(
+      await renderDocx22(d, { draft: false, kind: kind22 })
+    );
+    const flatDoc = await flat.file("word/document.xml")!.async("string");
+    check(
+      "r22 docx: profile labels sections and nests bare letter markers",
+      profiledDoc.includes("1. Purpose") &&
+        profiledDoc.includes("2. Policy") &&
+        profiledDoc.includes("a. Approved tools") &&
+        profiledDoc.includes("b. Data rules")
+    );
+    check(
+      "r22 docx: converted lists carry lowerRoman in word/numbering.xml",
+      profiledNum.includes('w:val="lowerRoman"')
+    );
+    check(
+      "r22 docx: zero bullet paragraphs with the profile, bullets without it",
+      !profiledDoc.includes('<w:numId w:val="1"/>') &&
+        flatDoc.includes('<w:numId w:val="1"/>')
+    );
+  }
+
+  // --- Prompt: adoption now asks for full skeleton coverage, and the
+  // r21 fence and provenance pins are untouched by the added sentence.
+  check(
+    "r22 prompt: adoption asks that every sample title get a section",
+    (() => {
+      const m = buildRestyleUserMessage({
+        kind: "usage_policy",
+        documents: scaffoldDocuments("usage_policy"),
+        focusRefs: ["ai-usage-policy#purpose-scope"],
+        adoptTitles: ["Purpose", "Policy", "Enforcement"],
+      });
+      return (
+        m.includes(
+          "give EVERY sample title at least one section whenever any current section reasonably belongs under it"
+        ) &&
+        m.includes("prefer the sample's own grouping") &&
+        m.includes("<<<SAMPLE_TITLES\n- Purpose\n- Policy\n- Enforcement\nSAMPLE_TITLES>>>") &&
+        m.includes("from nowhere else")
+      );
+    })()
+  );
+}
+
+/* 36. Round 22 rubric: template-vs-generated docx structure match. The scorer
+   (scripts/lib/governance-rubric.ts) is implementation-independent: it reads
+   docx bytes only, so it cannot be gamed by the render code it measures. The
+   synthetic fixture is a faithful structural replica of the owner's policy
+   template (verified against the real file out of repo): six generic section
+   titles as bold ListParagraph runs on one real Word multilevel definition
+   (decimal "1." / lowerLetter "a." / lowerRoman "i."), one glued bold-heading
+   + plain-body paragraph, zero bullets. The final checks run the REAL
+   pipeline: fixture -> extractStyleSampleText -> bucket titles + profile ->
+   adopted-outline render -> rubric score, pinned at exactly 1. */
+{
+  const JSZip = (await import("jszip")).default;
+  const rubric = await import("./lib/governance-rubric");
+  const { extractStyleSampleText: extractR22 } = await import(
+    "../src/lib/governance/style-sample"
+  );
+  const { sampleBucketTitles: bucketsR22 } = await import("../src/lib/governance/prompt");
+  const { detectNumberingProfile: profileR22, detectNumberingStyle: styleR22 } = await import(
+    "../src/lib/governance/numbering"
+  );
+  const { renderDocx: renderR22 } = await import("../src/lib/governance/docx");
+
+  const buildFixtureDocx = async (sectionTitles: string[]): Promise<Buffer> => {
+    const esc = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const lvl = (ilvl: number, fmt: string, txt: string) =>
+      `<w:lvl w:ilvl="${ilvl}"><w:start w:val="1"/><w:numFmt w:val="${fmt}"/>` +
+      `<w:lvlText w:val="${txt}"/><w:lvlJc w:val="left"/></w:lvl>`;
+    const numberingXml =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+      `<w:abstractNum w:abstractNumId="0">` +
+      lvl(0, "decimal", "%1.") +
+      lvl(1, "lowerLetter", "%2.") +
+      lvl(2, "lowerRoman", "%3.") +
+      `</w:abstractNum>` +
+      `<w:num w:numId="10"><w:abstractNumId w:val="0"/></w:num>` +
+      `</w:numbering>`;
+    const run = (text: string, bold: boolean) =>
+      `<w:r>${bold ? "<w:rPr><w:b/></w:rPr>" : ""}<w:t xml:space="preserve">${esc(text)}</w:t></w:r>`;
+    const listP = (ilvl: number, runsXml: string) =>
+      `<w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="${ilvl}"/>` +
+      `<w:numId w:val="10"/></w:numPr></w:pPr>${runsXml}</w:p>`;
+    const plainP = (runsXml: string, style?: string) =>
+      `<w:p>${style ? `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>` : ""}${runsXml}</w:p>`;
+    const [s1, s2, s3, s4, s5, s6] = sectionTitles;
+    const bodyXml =
+      plainP(run("Policy Template Fixture", false), "Title") +
+      plainP(run("Generated for structural testing.", false)) +
+      listP(0, run(s1, true) + run(" Describe the first step.", false)) +
+      listP(0, run(s2, true)) +
+      listP(0, run(s3, true)) +
+      listP(1, run("Describe the second step.", false)) +
+      listP(0, run(s4, true)) +
+      listP(1, run("Describe the third step.", false)) +
+      listP(0, run(s5, true)) +
+      listP(1, run("Describe the fourth step.", false)) +
+      listP(2, run("Start describing the steps.", false)) +
+      listP(0, run(s6, true)) +
+      listP(1, run("First step of the policy", true)) +
+      listP(2, run("Start describing the second part.", false));
+    const documentXml =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+      `<w:body>${bodyXml}<w:sectPr/></w:body></w:document>`;
+    const zip = new JSZip();
+    zip.file(
+      "[Content_Types].xml",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+        `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+        `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+        `<Default Extension="xml" ContentType="application/xml"/>` +
+        `<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
+        `<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>` +
+        `</Types>`
+    );
+    zip.file(
+      "_rels/.rels",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+        `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+        `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>` +
+        `</Relationships>`
+    );
+    zip.file(
+      "word/_rels/document.xml.rels",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+        `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+        `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>` +
+        `</Relationships>`
+    );
+    zip.file("word/document.xml", documentXml);
+    zip.file("word/numbering.xml", numberingXml);
+    return zip.generateAsync({ type: "nodebuffer" });
+  };
+
+  const FIXTURE_SECTIONS = [
+    "Purpose",
+    "Scope",
+    "Definitions",
+    "Roles and Responsibilities",
+    "References",
+    "Policy",
+  ];
+  const fixtureBuf = await buildFixtureDocx(FIXTURE_SECTIONS);
+  const fixture = await rubric.extractDocxStructure(fixtureBuf);
+
+  check(
+    "rubric: fixture yields exactly the 6 sections in order",
+    fixture.sections.length === 6 && fixture.sections.every((s, i) => s === FIXTURE_SECTIONS[i])
+  );
+  check(
+    "rubric: fixture levelScheme is decimal/lowerLetter/lowerRoman",
+    fixture.levelScheme[0] === "decimal" &&
+      fixture.levelScheme[1] === "lowerLetter" &&
+      fixture.levelScheme[2] === "lowerRoman" &&
+      Object.keys(fixture.levelScheme).length === 3
+  );
+  check("rubric: fixture has no bullets", fixture.hasBullets === false);
+
+  const self = rubric.scoreStructureMatch(fixture, fixture);
+  check("rubric: self-match totals exactly 1", self.total === 1);
+  check(
+    "rubric: self-match part weights sum to 1",
+    Math.abs(self.parts.reduce((a, p) => a + p.weight, 0) - 1) < 1e-9
+  );
+
+  const shuffledBuf = await buildFixtureDocx([...FIXTURE_SECTIONS].reverse());
+  const shuffled = await rubric.extractDocxStructure(shuffledBuf);
+  const shuffledScore = rubric.scoreStructureMatch(fixture, shuffled);
+  check("rubric: shuffled sections score below 1", shuffledScore.total < 1);
+  check(
+    "rubric: shuffle penalty hits the section part only",
+    shuffledScore.parts[0].score < 1 &&
+      shuffledScore.parts[1].score === 1 &&
+      shuffledScore.parts[2].score === 1
+  );
+
+  /* The real pipeline, end to end: the fixture template goes through sample
+     ingest exactly as an upload would, the derived bucket titles become the
+     adopted outline of a drafted doc (the partition the turn-zero prompt
+     instructs), and the render must score a PERFECT structural match. */
+  const extracted = await extractR22("policy-template.docx", fixtureBuf);
+  check("rubric e2e: fixture template ingests", extracted.ok === true);
+  if (extracted.ok) {
+    const titles = bucketsR22(extracted.text);
+    check(
+      "rubric e2e: bucket titles equal the template's sections",
+      JSON.stringify(titles) === JSON.stringify(FIXTURE_SECTIONS)
+    );
+    const profile = profileR22(extracted.text);
+    check(
+      "rubric e2e: profile is decimal/lowerLetter/lowerRoman, body numbered",
+      profile !== null &&
+        profile.bodyNumbered === true &&
+        JSON.stringify(profile.levels.map((l) => l.fmt)) ===
+          JSON.stringify(["decimal", "lowerLetter", "lowerRoman"])
+    );
+    const doc = {
+      slug: "ai-usage-policy",
+      title: "AI Acceptable Use Policy",
+      stub: false,
+      sections: [
+        { id: "sec-purpose", title: "Why this policy exists", markdown: "This policy governs assistant use." },
+        { id: "sec-scope", title: "Who it covers", markdown: "All staff and contractors." },
+        { id: "sec-defs", title: "Terms", markdown: "- Assistant: a generative tool.\n- Prompt: text sent to it." },
+        { id: "sec-roles", title: "Roles", markdown: "The owner reviews quarterly." },
+        { id: "sec-refs", title: "Sources", markdown: "See the register." },
+        { id: "sec-tools", title: "Approved tools", markdown: "Use only listed tools.\n- Keep accounts separate.\n- Log usage weekly." },
+        { id: "sec-data", title: "Data rules", markdown: "Never paste client data." },
+      ],
+      outline: (titles ?? []).map((title, i) => ({
+        title,
+        sections:
+          i === 5
+            ? ["sec-tools", "sec-data"]
+            : [["sec-purpose", "sec-scope", "sec-defs", "sec-roles", "sec-refs"][i]],
+      })),
+    };
+    const rendered = await renderR22(doc, {
+      draft: false,
+      kind: "usage_policy",
+      numbering: styleR22(extracted.text),
+      profile,
+    });
+    const generated = await rubric.extractDocxStructure(rendered);
+    const result = rubric.scoreStructureMatch(fixture, generated);
+    for (const part of result.parts) {
+      check(`rubric e2e: ${part.name} scores 1 (${part.detail})`, part.score === 1);
+    }
+    check("rubric e2e: TOTAL structure match is 100%", result.total === 1);
+  }
 }
 
 if (failures) {

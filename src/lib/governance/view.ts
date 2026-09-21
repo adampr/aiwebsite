@@ -29,7 +29,7 @@ import {
   parseGuessStore,
 } from "./guesses";
 import { countConfirmMarkers, scanConfirmMarkers } from "./markdown";
-import { detectNumberingStyle } from "./numbering";
+import { detectNumberingProfile, detectNumberingStyle } from "./numbering";
 import { healSampleHeadings } from "./style-sample";
 import { sampleOutlineTopTitles, sampleVerbosity } from "./prompt";
 import { normalizeBrief } from "./research";
@@ -284,6 +284,9 @@ export function toProjectView(row: ProjectRow): ProjectView {
           // Derived per view (linear over <=20k chars), never persisted:
           // rows uploaded before round 15b adopt their style on next load.
           numbering: sampleText ? detectNumberingStyle(sampleText) : null,
+          // Round 22: the per-level scheme, derived like numbering; null
+          // keeps every renderer on the flat style exactly as today.
+          profile: sampleText ? detectNumberingProfile(sampleText) : null,
           // Round 16: boolean only; the debt token itself never leaves the
           // server (it fences the run worker's clear against replacements).
           reformatDebt: row.styleSampleDebt !== null,

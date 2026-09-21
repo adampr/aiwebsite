@@ -11,7 +11,10 @@ import { fileSlug } from "@/lib/governance/config";
 import { fetchOwnedProject, touchActivity } from "@/lib/governance/db";
 import { renderDocx, renderZip } from "@/lib/governance/docx";
 import { govError, NOT_FOUND, rateLimit, requireUser } from "@/lib/governance/http";
-import { detectNumberingStyle } from "@/lib/governance/numbering";
+import {
+  detectNumberingProfile,
+  detectNumberingStyle,
+} from "@/lib/governance/numbering";
 import { healSampleHeadings } from "@/lib/governance/style-sample";
 import type {
   GovernanceDoc,
@@ -54,6 +57,9 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
   // (round 19b: over the same read-edge-healed text the view derives from).
   const sampleText = healSampleHeadings(row.styleSampleText, row.styleSampleName);
   const numbering = sampleText ? detectNumberingStyle(sampleText) : null;
+  // Round 22: the per-level scheme rides beside the flat style, derived
+  // from the same healed text the view derives from.
+  const profile = sampleText ? detectNumberingProfile(sampleText) : null;
   // Round 17: the sample's stored letterhead rides every generated file
   // (empty strings mean "scanned, nothing found" and render nothing).
   const letterhead = {
@@ -71,6 +77,7 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
         docs,
         reviewSummary: row.reviewSummary,
         numbering,
+        profile,
         letterhead,
         openConfirmCount: openConfirmItems(docs).length,
         skippedCount: transcript.filter((t) => t.skipped).length,
@@ -91,6 +98,7 @@ export async function GET(req: Request, ctx: Ctx): Promise<Response> {
       draft,
       kind: row.kind as GovernanceKind,
       numbering,
+      profile,
       letterhead,
     });
     await touchActivity(row.id);

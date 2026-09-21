@@ -604,7 +604,8 @@ export function Workspace({ projectId }: { projectId: string }) {
                 ? sectionDisplayLabel(
                     doc,
                     sid,
-                    viewRef.current?.styleSample?.numbering ?? null
+                    viewRef.current?.styleSample?.numbering ?? null,
+                    viewRef.current?.styleSample?.profile ?? null
                   )
                 : sid,
           });
@@ -2238,7 +2239,8 @@ export function Workspace({ projectId }: { projectId: string }) {
           title: sectionDisplayLabel(
             doc,
             sid,
-            next.styleSample?.numbering ?? null
+            next.styleSample?.numbering ?? null,
+            next.styleSample?.profile ?? null
           ),
         });
     }
@@ -3024,6 +3026,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 }
                 showNote={showNote}
                 numbering={view.styleSample?.numbering ?? null}
+                profile={view.styleSample?.profile ?? null}
                 groupedOkDocs={
                   restyleActive || restyleStopping
                     ? (restyleRunRef.current?.preOutline ?? new Set())

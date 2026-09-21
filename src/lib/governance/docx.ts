@@ -39,6 +39,7 @@ import { parseMarkdown } from "./markdown";
 import {
   normalizeSectionBlocks,
   sectionTitleText,
+  type NumberingProfile,
   type NumberingStyle,
 } from "./numbering";
 import {
@@ -103,7 +104,8 @@ const INNER_HEADING_SPACING = {
 interface OrderedNumCfg {
   format: ListFormat;
   start: number;
-  sub: { format: ListFormat; start: number } | null;
+  sep: "." | ")";
+  sub: { format: ListFormat; start: number; sep: "." | ")" } | null;
 }
 
 function blockToDocx(
@@ -152,10 +154,12 @@ function blockToDocx(
         const reference = orderedRef({
           format: block.format ?? "decimal",
           start: block.start ?? 1,
+          sep: block.sep ?? ".",
           sub: firstSub
             ? {
                 format: firstSub.format ?? "decimal",
                 start: firstSub.start ?? 1,
+                sep: firstSub.sep ?? ".",
               }
             : null,
         });
@@ -180,9 +184,11 @@ function blockToDocx(
             const subRef = orderedRef({
               format: "decimal",
               start: 1,
+              sep: ".",
               sub: {
                 format: it.sub.format ?? "decimal",
                 start: it.sub.start ?? 1,
+                sep: it.sub.sep ?? ".",
               },
             });
             for (const si of it.sub.items)
@@ -365,6 +371,9 @@ export async function renderDocx(
     // The format sample's detected numbering style (round 15b); null =
     // decimal default. Derived by the caller from the stored sample text.
     numbering?: NumberingStyle | null;
+    // The sample's per-level numbering profile (round 22); null keeps the
+    // flat style's rendering byte-identical. Derived like `numbering`.
+    profile?: NumberingProfile | null;
     // The sample's stored letterhead (round 17); empty/null strings mean
     // no adopted frame and the output stays byte-identical to pre-17.
     letterhead?: SampleFrame | null;
@@ -433,7 +442,7 @@ export async function renderDocx(
   // renders the sample's skeleton (bucket H1, nested sections H2, inner
   // headings one level deeper), sharing the SAME plan the doc pane renders
   // from so the two can never disagree. plan null = today's flat document.
-  const plan = planOutline(doc, opts.numbering ?? null);
+  const plan = planOutline(doc, opts.numbering ?? null, opts.profile ?? null);
   const rows: {
     section: (typeof doc.sections)[number] | null;
     label: string;
@@ -445,7 +454,12 @@ export async function renderDocx(
     doc.sections.forEach((section, si) =>
       rows.push({
         section,
-        label: sectionTitleText(si + 1, section.title, opts.numbering ?? null),
+        label: sectionTitleText(
+          si + 1,
+          section.title,
+          opts.numbering ?? null,
+          opts.profile ?? null
+        ),
         nested: false,
         innerBase: null,
         flatIndex: si + 1,
@@ -507,7 +521,9 @@ export async function renderDocx(
       parseMarkdown(section.markdown),
       row.flatIndex,
       opts.numbering ?? null,
-      row.innerBase
+      row.innerBase,
+      opts.profile ?? null,
+      row.nested ? 1 : 0
     ))
       children.push(...blockToDocx(block, orderedRef, row.nested ? 1 : 0));
   }
@@ -537,7 +553,11 @@ export async function renderDocx(
       ? LevelFormat.UPPER_LETTER
       : f === "lowerLetter"
         ? LevelFormat.LOWER_LETTER
-        : LevelFormat.DECIMAL;
+        : f === "lowerRoman"
+          ? LevelFormat.LOWER_ROMAN
+          : f === "upperRoman"
+            ? LevelFormat.UPPER_ROMAN
+            : LevelFormat.DECIMAL;
   const document = new Document({
     numbering: {
       // One config per ordered list encountered above, so every list
@@ -554,7 +574,7 @@ export async function renderDocx(
           {
             level: 0,
             format: lvlFormat(cfg.format),
-            text: "%1.",
+            text: `%1${cfg.sep}`,
             alignment: AlignmentType.START,
             start: cfg.start,
             style: { paragraph: { indent: { left: 720, hanging: 360 } } },
@@ -562,7 +582,7 @@ export async function renderDocx(
           {
             level: 1,
             format: lvlFormat(cfg.sub?.format ?? "decimal"),
-            text: "%2.",
+            text: `%2${cfg.sub?.sep ?? "."}`,
             alignment: AlignmentType.START,
             start: cfg.sub?.start ?? 1,
             style: { paragraph: { indent: { left: 1440, hanging: 360 } } },
@@ -686,6 +706,7 @@ export async function renderZip(opts: {
   openConfirmCount: number;
   skippedCount: number;
   numbering?: NumberingStyle | null;
+  profile?: NumberingProfile | null;
   letterhead?: SampleFrame | null;
 }): Promise<Buffer> {
   const zip = new JSZip();
@@ -696,6 +717,7 @@ export async function renderZip(opts: {
       draft: opts.draft,
       kind: opts.kind,
       numbering: opts.numbering ?? null,
+      profile: opts.profile ?? null,
       letterhead: opts.letterhead ?? null,
     });
     zip.file(names.get(doc.slug)!, buf);

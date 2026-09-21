@@ -17,6 +17,7 @@ import {
   sectionTitleText,
   nestedSectionTitleText,
   nestedBaseLabel,
+  type NumberingProfile,
   type NumberingStyle,
 } from "./numbering";
 
@@ -30,16 +31,17 @@ import {
 export function sectionDisplayLabel(
   doc: GovernanceDoc,
   sectionId: string,
-  style: NumberingStyle | null
+  style: NumberingStyle | null,
+  profile: NumberingProfile | null = null
 ): string {
-  const plan = planOutline(doc, style);
+  const plan = planOutline(doc, style, profile);
   if (plan) {
     const e = plan.find((x) => x.sectionId === sectionId);
     if (e) return e.label;
   }
   const si = doc.sections.findIndex((s) => s.id === sectionId);
   return si >= 0
-    ? sectionTitleText(si + 1, doc.sections[si].title, style)
+    ? sectionTitleText(si + 1, doc.sections[si].title, style, profile)
     : sectionId;
 }
 
@@ -110,7 +112,8 @@ export function hasOutline(doc: GovernanceDoc): boolean {
  */
 export function planOutline(
   doc: GovernanceDoc,
-  style: NumberingStyle | null
+  style: NumberingStyle | null,
+  profile: NumberingProfile | null = null
 ): OutlinePlanEntry[] | null {
   if (!hasOutline(doc)) return null;
   const byId = new Map(doc.sections.map((s) => [s.id, s]));
@@ -128,9 +131,9 @@ export function planOutline(
     num++;
     entries.push({
       sectionId: s.id,
-      label: sectionTitleText(num, s.title, style),
+      label: sectionTitleText(num, s.title, style, profile),
       top: true,
-      innerBase: nestedBaseLabel(num, null, style),
+      innerBase: nestedBaseLabel(num, null, style, profile),
       fused: false,
     });
   }
@@ -146,16 +149,16 @@ export function planOutline(
       filed.add(secs[0].id);
       entries.push({
         sectionId: secs[0].id,
-        label: sectionTitleText(num, bucket.title, style),
+        label: sectionTitleText(num, bucket.title, style, profile),
         top: true,
-        innerBase: nestedBaseLabel(num, null, style),
+        innerBase: nestedBaseLabel(num, null, style, profile),
         fused: true,
       });
       continue;
     }
     entries.push({
       sectionId: null,
-      label: sectionTitleText(num, bucket.title, style),
+      label: sectionTitleText(num, bucket.title, style, profile),
       top: true,
       innerBase: null,
       fused: false,
@@ -164,9 +167,9 @@ export function planOutline(
       filed.add(s.id);
       entries.push({
         sectionId: s.id,
-        label: nestedSectionTitleText(num, j + 1, s.title, style),
+        label: nestedSectionTitleText(num, j + 1, s.title, style, profile),
         top: false,
-        innerBase: nestedBaseLabel(num, j + 1, style),
+        innerBase: nestedBaseLabel(num, j + 1, style, profile),
         fused: false,
       });
     });
@@ -179,9 +182,9 @@ export function planOutline(
     num++;
     entries.push({
       sectionId: s.id,
-      label: sectionTitleText(num, s.title, style),
+      label: sectionTitleText(num, s.title, style, profile),
       top: true,
-      innerBase: nestedBaseLabel(num, null, style),
+      innerBase: nestedBaseLabel(num, null, style, profile),
       fused: false,
     });
   }

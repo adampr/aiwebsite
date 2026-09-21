@@ -641,7 +641,8 @@ export function QuestionPane({
             sectionTitle: sectionDisplayLabel(
               doc,
               sid,
-              view.styleSample?.numbering ?? null
+              view.styleSample?.numbering ?? null,
+              view.styleSample?.profile ?? null
             ),
           },
         ];

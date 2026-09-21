@@ -159,6 +159,108 @@ function numPrRef(
   return { numId, ilvl };
 }
 
+/* ------------------------------------------------------------------ *
+ * Bold-lead heading recognition (round 22). The flagship template writes
+ * its section headings as BOLD numbered ListParagraphs, sometimes with a
+ * non-bold body run glued into the same paragraph (bold "Purpose" + plain
+ * "This policy provides..."), so the pre-22 extractor emitted them as flat
+ * body lines and the whole outline machinery starved. A numbered paragraph
+ * whose leading runs are bold and title-shaped becomes a heading at
+ * ilvl+2, the glued remainder its own body line. Gated to documents with
+ * FEWER than two real style-based headings, so documents that already use
+ * Heading styles are never fought. Same iron rules as everything here:
+ * indexOf walks and bounded windows only, never a tag regex over the XML.
+ * ------------------------------------------------------------------ */
+
+/** Position of the next real run tag ("<w:r" with a boundary character, so
+ * "<w:rPr" never matches), or -1. */
+function findRunStart(chunk: string, from: number): number {
+  let i = from;
+  while (i < chunk.length) {
+    const at = chunk.indexOf("<w:r", i);
+    if (at === -1) return -1;
+    const b = chunk.charAt(at + 4);
+    if (b === ">" || b === " " || b === "/" || b === "\t" || b === "\n")
+      return at;
+    i = at + 4;
+  }
+  return -1;
+}
+
+/** Is this run region bold? Reads "<w:b" (boundary-checked, so w:bCs and
+ * w:bdr never match) inside the run's own rPr. Only the <w:b> tag's OWN
+ * attributes decide (scanned to that tag's ">", however long it runs): a
+ * sibling's w:val, e.g. <w:b/><w:i w:val="0"/>, must never read as the
+ * bold toggle. w:val "0"/"false"/"off"/"none" all mean off (ST_OnOff). */
+function runIsBold(run: string): boolean {
+  const prEnd = run.indexOf("</w:rPr>");
+  if (prEnd === -1) return false;
+  const pr = run.slice(0, prEnd);
+  let i = 0;
+  while (i < pr.length) {
+    const at = pr.indexOf("<w:b", i);
+    if (at === -1) return false;
+    const b = pr.charAt(at + 4);
+    if (b === ">" || b === " " || b === "/" || b === "\t" || b === "\n") {
+      let tagEnd = pr.indexOf(">", at);
+      if (tagEnd === -1) tagEnd = pr.length;
+      const tag = pr.slice(at, tagEnd);
+      const v = tag.indexOf('w:val="');
+      if (v === -1) return true;
+      const close = tag.indexOf('"', v + 7);
+      const val = close === -1 ? "" : tag.slice(v + 7, close);
+      return (
+        val !== "0" && val !== "false" && val !== "off" && val !== "none"
+      );
+    }
+    i = at + 4;
+  }
+  return false;
+}
+
+/** Split a paragraph's runs into the leading BOLD text and the glued rest.
+ * Whitespace-only runs stay neutral (they join whichever side the next
+ * text run lands on). Null when the paragraph does not open with bold. */
+function splitBoldLead(p: string): { lead: string; rest: string } | null {
+  let lead = "";
+  let rest = "";
+  let pending = "";
+  let inLead = true;
+  let pos = 0;
+  while (pos < p.length) {
+    const at = findRunStart(p, pos);
+    if (at === -1) break;
+    let end = p.indexOf("</w:r>", at);
+    if (end === -1) end = p.length;
+    const run = p.slice(at, end);
+    pos = end + 1;
+    const t = stripRuns(run);
+    if (!t) continue;
+    if (!t.trim()) {
+      pending += t;
+      continue;
+    }
+    if (inLead && !runIsBold(run)) inLead = false;
+    if (inLead) {
+      lead += pending + t;
+    } else {
+      rest += pending + t;
+    }
+    pending = "";
+  }
+  return lead.trim() ? { lead, rest } : null;
+}
+
+/** Title-shaped bold lead: short, wordy-title length, no terminal sentence
+ * punctuation ("Purpose", "Roles and Responsibilities"; "Keep data safe."
+ * and "Definitions:" stay body lines). */
+function boldLeadIsTitle(lead: string): boolean {
+  if (!lead || lead.length > 80) return false;
+  if (!/[A-Za-z]/.test(lead)) return false;
+  if (/[.,;:!?]$/.test(lead)) return false;
+  return lead.split(/\s{1,10}/).length <= 10;
+}
+
 /**
  * One OOXML paragraph -> one text line, with the structure the format
  * matcher needs made visible: heading styles (or outline levels, which are
@@ -167,11 +269,14 @@ function numPrRef(
  * model is available (round 15d; Word keeps auto-numbers in numbering.xml).
  * With no model (missing/hostile numbering.xml), output is byte-identical
  * to the pre-15d extractor: bulleted/numbered paragraphs become "- " items.
+ * With `boldHeads` (round 22), a numbered bold-lead title paragraph emits a
+ * heading line at ilvl+2, plus the glued body remainder as its own line.
  */
 function paraToLine(
   p: string,
   model: NumberingModel | null,
-  counters: NumCounters | null
+  counters: NumCounters | null,
+  boldHeads = false
 ): string {
   const text = stripRuns(p).replace(/\s+/g, " ").trim();
   if (!text) return "";
@@ -190,12 +295,14 @@ function paraToLine(
 
   let label: NumberingLabel | null = null;
   let liveNumbering = false;
+  let numIlvl = 0;
   if (model && counters) {
     const direct = numPrRef(p);
     const ref = resolveParagraphNumbering(model, direct, style || null);
     if (ref === "none") label = { kind: "none" };
     else if (ref) {
       liveNumbering = true;
+      numIlvl = ref.ilvl;
       label = numberingLabel(model, counters, ref.numId, ref.ilvl);
     }
   }
@@ -204,6 +311,17 @@ function paraToLine(
     const prefix =
       label?.kind === "number" ? `${label.label} ` : "";
     return `${"#".repeat(headingLevel)} ${prefix}${text}`;
+  }
+  if (boldHeads && label?.kind === "number") {
+    const split = splitBoldLead(p);
+    if (split) {
+      const lead = split.lead.replace(/\s+/g, " ").trim();
+      const rest = split.rest.replace(/\s+/g, " ").trim();
+      if (boldLeadIsTitle(lead)) {
+        const head = `${"#".repeat(Math.min(numIlvl + 2, 6))} ${label.label} ${lead}`;
+        return rest ? `${head}\n${rest}` : head;
+      }
+    }
   }
   if (label) {
     if (label.kind === "number") return `${label.label} ${text}`;
@@ -221,6 +339,32 @@ function paraToLine(
   // propVal's own quirks.
   if (propVal(p, "<w:numPr") !== null) return `- ${text}`;
   return text;
+}
+
+/** Count of style-based SECTION headings (Heading1-6 / outlineLvl), capped
+ * at 2: the bold-lead path only arms when the document has fewer than two,
+ * so it never fights a document that already structures itself with
+ * Heading styles. Title is a document title, never a section heading, so
+ * it does not count (a cover Title plus one stray Heading must not disarm
+ * recognition); the pPr region is CUT at w:pPrChange like numPrRef, so a
+ * stale tracked-change heading style never counts either. Counters are
+ * never touched here (the real pass advances them exactly once). */
+function countStyleHeadings(xml: string): number {
+  let n = 0;
+  for (const p of xml.split(/<w:p[\s>]/)) {
+    const end = p.indexOf("</w:pPr>");
+    let region = p.slice(0, end === -1 ? Math.min(p.length, 2000) : end);
+    const pc = region.indexOf("<w:pPrChange");
+    if (pc !== -1) region = region.slice(0, pc);
+    const style = propVal(region, "<w:pStyle");
+    if (/^[Hh]eading[1-6]$/.test(style ?? "")) {
+      if (++n >= 2) return n;
+      continue;
+    }
+    const outline = propVal(region, "<w:outlineLvl");
+    if (outline !== null && /^[0-5]$/.test(outline) && ++n >= 2) return n;
+  }
+  return n;
 }
 
 /** indexOf walk for "<w:tbl" followed by whitespace or ">" (skips w:tblPr
@@ -249,6 +393,10 @@ export function docxXmlToText(
   model: NumberingModel | null = null
 ): string {
   const counters = model ? createCounters() : null;
+  // Round 22: bold-lead heading recognition needs a numbering model (the
+  // trigger is a NUMBERED paragraph) and a document that does not already
+  // structure itself with heading styles.
+  const boldHeads = model !== null && countStyleHeadings(xml) < 2;
   const out: string[] = [];
   let total = 0;
   const push = (line: string): boolean => {
@@ -267,7 +415,7 @@ export function docxXmlToText(
     // inside <w:pPr>/<w:pStyle> and shred the paragraph.
     const plain = xml.slice(pos, plainEnd);
     for (const p of plain.split(/<w:p[\s>]/)) {
-      const line = paraToLine(p, model, counters);
+      const line = paraToLine(p, model, counters, boldHeads);
       if (line && !push(line)) return out.join("\n");
     }
     if (tblStart === -1) break;

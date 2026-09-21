@@ -13,8 +13,15 @@ export type Inline =
   | { t: "link"; text: string; href: string };
 
 /** Word list-number format for ordered lists (round 19). "decimal" is the
- * default and the only shape older stored blocks had. */
-export type ListFormat = "decimal" | "upperLetter" | "lowerLetter";
+ * default and the only shape older stored blocks had. The roman formats
+ * (round 22) are host-set by the numbering-profile pass only; the parser
+ * never emits them ("i." parses as a lettered marker). */
+export type ListFormat =
+  | "decimal"
+  | "upperLetter"
+  | "lowerLetter"
+  | "lowerRoman"
+  | "upperRoman";
 
 /** One nesting level under a list item (round 19). Subs never nest further:
  * deeper indents fold into this level. */
@@ -22,6 +29,7 @@ export interface SubList {
   ordered: boolean;
   start?: number; // default 1
   format?: ListFormat; // meaningful only when ordered; default "decimal"
+  sep?: "." | ")"; // marker separator; host-set (round 22), default "."
   items: Inline[][];
 }
 
@@ -41,6 +49,7 @@ export type Block =
        * ("3. x" after an intervening paragraph) keeps its count. */
       start?: number;
       format?: ListFormat;
+      sep?: "." | ")"; // marker separator; host-set (round 22), default "."
       items: ListItem[];
     }
   | { t: "table"; header: Inline[][]; rows: Inline[][][] };

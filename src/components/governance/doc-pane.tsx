@@ -23,6 +23,7 @@ import {
 import {
   normalizeSectionBlocks,
   sectionTitleText,
+  type NumberingProfile,
   type NumberingStyle,
 } from "@/lib/governance/numbering";
 import { droppedOutlineTitles, planOutline } from "@/lib/governance/outline";
@@ -290,7 +291,11 @@ function BlockView({ block }: { block: Block }) {
         ? { ...dim, listStyleType: "upper-alpha" }
         : f === "lowerLetter"
           ? { ...dim, listStyleType: "lower-alpha" }
-          : dim;
+          : f === "lowerRoman"
+            ? { ...dim, listStyleType: "lower-roman" }
+            : f === "upperRoman"
+              ? { ...dim, listStyleType: "upper-roman" }
+              : dim;
     const renderSub = (sub: SubList | undefined) => {
       if (!sub) return null;
       const lis = sub.items.map((si, k) => (
@@ -361,16 +366,22 @@ function SectionBody({
   markdown,
   num,
   numbering,
+  profile,
   baseLabel,
+  nested,
   marks,
   reveal,
 }: {
   markdown: string;
   num: number;
   numbering: NumberingStyle | null;
+  // Round 22: the sample's per-level scheme; null = flat style only.
+  profile?: NumberingProfile | null;
   // Round 18b: nested sections hang their inner headings off the compound
   // label ("5.2" -> "5.2.1") instead of their flat ordinal.
   baseLabel?: string | null;
+  // Round 22: nested sections index the profile one level deeper.
+  nested?: boolean;
   marks?: ResolvedMarkerReveal[];
   reveal?: RevealState | null;
 }) {
@@ -384,14 +395,16 @@ function SectionBody({
         ),
         num,
         numbering,
-        baseLabel ?? null
+        baseLabel ?? null,
+        profile ?? null,
+        nested ? 1 : 0
       ),
     // Keyed on the reveal's PRIMITIVES, not object identity: the show
     // creates a fresh RevealState every 60ms tick, and only the section
     // being revealed may re-parse per tick. `marks` arrays come from the
     // parent's memoized per-section map, so idle marked sections hold too.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [markdown, num, numbering, baseLabel, marks, reveal?.item, reveal?.mode, reveal?.chars]
+    [markdown, num, numbering, profile, baseLabel, nested, marks, reveal?.item, reveal?.mode, reveal?.chars]
   );
   return (
     <>
@@ -420,6 +433,7 @@ export function DocPane({
   showStatus,
   showNote,
   numbering,
+  profile,
   groupedOkDocs,
   sampleOutlineTitles,
 }: {
@@ -452,6 +466,9 @@ export function DocPane({
   /** The format sample's detected numbering style (round 15b); null =
    *  decimal default. Applied to section titles and sub-heading labels. */
   numbering: NumberingStyle | null;
+  /** Round 22: the sample's per-level numbering profile; null keeps the
+   *  flat style's rendering exactly as today. */
+  profile?: NumberingProfile | null;
   /** Round 18b: while a reformat run is active, docs NOT in this set render
    *  flat even if an adoption landed mid-run (no regrouping under the hold
    *  banner; the end receipt announces it). null = no run, adoptions render
@@ -481,7 +498,7 @@ export function DocPane({
       } | null;
     };
     const grouped = groupedOkDocs == null || groupedOkDocs.has(doc.slug);
-    const plan = grouped ? planOutline(doc, numbering) : null;
+    const plan = grouped ? planOutline(doc, numbering, profile ?? null) : null;
     if (!plan)
       return doc.sections.map((s, si): Row => ({ s, si, meta: null }));
     const bySec = new Map(doc.sections.map((s, si) => [s.id, { s, si }]));
@@ -507,7 +524,7 @@ export function DocPane({
       pendingBucket = null;
     }
     return rows;
-  }, [doc, numbering, groupedOkDocs]);
+  }, [doc, numbering, profile, groupedOkDocs]);
 
   // Stable per-section mark arrays: a fresh .filter() per render defeats
   // SectionBody's parse memo for every marked section on every reveal tick
@@ -690,7 +707,9 @@ export function DocPane({
                 className={cls}
               >
                 <SecTag className="doc-h text-lg" tabIndex={-1} data-sec-heading>
-                  {meta ? meta.label : sectionTitleText(si + 1, s.title, numbering)}
+                  {meta
+                    ? meta.label
+                    : sectionTitleText(si + 1, s.title, numbering, profile ?? null)}
                   {changed && <span className="doc-chip">Updated</span>}
                   {clearedCount > 0 && (
                     <span className="doc-chip">
@@ -712,7 +731,9 @@ export function DocPane({
                   markdown={s.markdown}
                   num={si + 1}
                   numbering={numbering}
+                  profile={profile ?? null}
                   baseLabel={meta?.base ?? null}
+                  nested={meta?.nested === true}
                   marks={secMarks}
                   reveal={
                     reveal &&

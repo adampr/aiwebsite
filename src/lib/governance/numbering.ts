@@ -6,7 +6,7 @@
 // render time means stored documents with drifted manual numbers clean up
 // without regeneration. Client-safe: no node imports; bounded quantifiers.
 
-import type { Block, Inline } from "./markdown";
+import type { Block, Inline, ListFormat } from "./markdown";
 
 // Unambiguous manual section-number prefixes only: "3. Title", "3) Title",
 // "3.1 Title", "1.2.3. Title", plus (numbering-style adoption, round 15b)
@@ -361,40 +361,134 @@ function subPrefix(n: number, style: NumberingStyle): string {
   return ordinalLabel(n, style);
 }
 
+/* ------------------------------------------------------------------ *
+ * Per-level numbering profile (§5.12 round 22). The flat NumberingStyle
+ * covers level 1 only; a Word template's multilevel definition assigns a
+ * scheme PER level (the flagship: decimal "1." / lowerLetter "a." /
+ * lowerRoman "i.", bare markers, never composite "1.a"). The profile is
+ * DERIVED from the stored sample text at every read edge exactly like the
+ * flat style (never persisted, legacy rows adopt on next load), and a null
+ * profile means byte-identical pre-round-22 rendering everywhere.
+ * ------------------------------------------------------------------ */
+
+export interface ProfileLevel {
+  fmt:
+    | "decimal"
+    | "decimalZero"
+    | "lowerLetter"
+    | "upperLetter"
+    | "lowerRoman"
+    | "upperRoman";
+  sep: "." | ")";
+  /** "1.1"-shaped markers: this level keeps today's dot-joined paths. */
+  composite: boolean;
+}
+
+export interface NumberingProfile {
+  levels: ProfileLevel[];
+  /** The sample numbers its body items and has no (or negligible) bullet
+   * lines: drafts' bullet lists render ordered per the level's scheme. */
+  bodyNumbered: boolean;
+}
+
+/** Ordinal in a profile level's format. Letters past Z and romans past the
+ * table clamp fall back to decimal, mirroring ordinalLabel. */
+function formatOrdinal(n: number, fmt: ProfileLevel["fmt"]): string {
+  switch (fmt) {
+    case "lowerLetter":
+      return n >= 1 && n <= 26 ? String.fromCharCode(96 + n) : String(n);
+    case "upperLetter":
+      return n >= 1 && n <= 26 ? String.fromCharCode(64 + n) : String(n);
+    case "upperRoman":
+      return toRoman(n);
+    case "lowerRoman":
+      return toRoman(n).toLowerCase();
+    case "decimalZero":
+      return `${n}.0`;
+    default:
+      return String(n);
+  }
+}
+
+/** Levels deeper than a THREE-level profile repeat the detected cycle: the
+ * flagship template's own Word definition cycles decimal/letter/roman, so
+ * cycling is faithful there. A two-level profile proves no cycle (depth 2
+ * would wear the SECTION format), so depths past it fall back to bare
+ * decimal instead. */
+export function profileLevelAt(
+  profile: NumberingProfile,
+  depth: number
+): ProfileLevel {
+  if (depth < profile.levels.length) return profile.levels[depth];
+  if (profile.levels.length >= 3)
+    return profile.levels[depth % profile.levels.length];
+  return { fmt: "decimal", sep: ".", composite: false };
+}
+
+/** The bare marker for one firing at `depth`: "3.", "a)", "iv.".
+ * decimalZero is already "3.0"-shaped and takes no separator, matching the
+ * flat decimal-zero style's rendering. */
+export function profileMarker(
+  profile: NumberingProfile,
+  depth: number,
+  n: number
+): string {
+  const lv = profileLevelAt(profile, depth);
+  if (lv.fmt === "decimalZero") return formatOrdinal(n, lv.fmt);
+  return `${formatOrdinal(n, lv.fmt)}${lv.sep}`;
+}
+
 /** Compound base for a NESTED section's inner headings and its own label
  * (§5.12 round 18b skeleton adoption): bucket 5, section 2 -> "5.2", so
  * that section's inner headings run "5.2.1", "5.2.2". sub null = the
- * top-level base, identical to the flat document's. */
+ * top-level base, identical to the flat document's. With a profile the
+ * base ordinal follows the profile's level-0 format (composite paths only;
+ * bare levels never consume this label). */
 export function nestedBaseLabel(
   num: number,
   sub: number | null,
-  style: NumberingStyle | null = null
+  style: NumberingStyle | null = null,
+  profile: NumberingProfile | null = null
 ): string {
-  const base = subPrefix(num, style ?? "decimal");
+  const lv0 = profile ? profileLevelAt(profile, 0) : null;
+  const base = lv0
+    ? lv0.fmt === "decimalZero"
+      ? String(num)
+      : formatOrdinal(num, lv0.fmt)
+    : subPrefix(num, style ?? "decimal");
   return sub === null ? base : `${base}.${sub}`;
 }
 
 /** Title line of a section nested under a skeleton bucket: "5.2 Data
  * handling" ("V.2 ...", etc.). No trailing dot, matching the established
- * inner-heading label shape. */
+ * inner-heading label shape. A profile with a bare level 1 emits the bare
+ * marker instead ("a. Data handling"); composite keeps the dot-joined path. */
 export function nestedSectionTitleText(
   num: number,
   sub: number,
   title: string,
-  style: NumberingStyle | null = null
+  style: NumberingStyle | null = null,
+  profile: NumberingProfile | null = null
 ): string {
-  return `${nestedBaseLabel(num, sub, style)} ${stripLeadingNumber(title.trim())}`;
+  const clean = stripLeadingNumber(title.trim());
+  if (profile && !profileLevelAt(profile, 1).composite)
+    return `${profileMarker(profile, 1, sub)} ${clean}`;
+  return `${nestedBaseLabel(num, sub, style, profile)} ${clean}`;
 }
 
 /** Section title as rendered in both panes: "3. Data handling",
- *  "III. Data handling", "Section 3: Data handling". */
+ *  "III. Data handling", "Section 3: Data handling". A profile overrides
+ *  the flat style (its level 0 is detected from the same heading channel,
+ *  so the two agree wherever both exist). */
 export function sectionTitleText(
   num: number,
   title: string,
-  style: NumberingStyle | null = null
+  style: NumberingStyle | null = null,
+  profile: NumberingProfile | null = null
 ): string {
   const s = style ?? "decimal";
   const clean = stripLeadingNumber(title.trim());
+  if (profile) return `${profileMarker(profile, 0, num)} ${clean}`;
   if (s === "section-word") return `Section ${num}: ${clean}`;
   if (s === "paren") return `${ordinalLabel(num, s)}) ${clean}`;
   if (s === "decimal-zero") return `${ordinalLabel(num, s)} ${clean}`;
@@ -483,6 +577,359 @@ export function detectNumberingStyle(text: string): NumberingStyle | null {
   return pick(headVotes, headLines) ?? pick(bodyLines, bodyLines);
 }
 
+/* ------------------------------------------------------------------ *
+ * Profile detection (round 22). Reads the literal markers the round-15d
+ * ingest writes into the stored sample ("## 1. Purpose" headings, "a. Keep
+ * data safe." body items, "i. ..." under them) and reconstructs the
+ * per-level scheme via ascending chains, like the recover* helpers: a
+ * level fires only on the exact next value of its species, so prose
+ * numbers and initials cannot ride a chain. All quantifiers bounded.
+ * ------------------------------------------------------------------ */
+
+const PROFILE_COMPOSITE = /^(\d{1,3})(?:\.\d{1,3}){1,4}\.?\s{1,10}(?=\S)/;
+const PROFILE_DECZERO = /^(\d{1,3})\.0(?:\s|$)/;
+const PROFILE_DECIMAL = /^(\d{1,3})([.)])\s{1,10}(?=\S)/;
+const PROFILE_ALPHA = /^([A-Za-z]{1,7})([.)])\s{1,10}(?=\S)/;
+
+interface ProfileToken {
+  fmt: ProfileLevel["fmt"];
+  value: number;
+  sep: "." | ")";
+  /** Single i/v/x letters carry their roman reading too; chain state
+   * disambiguates ("i." after "a..h" is a letter; "i., ii." is roman). */
+  romanAlt: number | null;
+  /** "1.1"-shaped markers: dotted part count (0 = not composite). */
+  compositeParts: number;
+}
+
+function romanTokenValue(s: string): number | null {
+  const vals: Record<string, number> = { i: 1, v: 5, x: 10 };
+  let total = 0;
+  for (let k = 0; k < s.length && k < 8; k++) {
+    const c = vals[s[k]];
+    if (!c) return null;
+    const next = k + 1 < s.length ? (vals[s[k + 1]] ?? 0) : 0;
+    total += c < next ? -c : c;
+  }
+  return total >= 1 && total <= 39 ? total : null;
+}
+
+function profileToken(t: string): ProfileToken | null {
+  let m = PROFILE_DECZERO.exec(t);
+  if (m)
+    return {
+      fmt: "decimalZero",
+      value: parseInt(m[1], 10),
+      sep: ".",
+      romanAlt: null,
+      compositeParts: 0,
+    };
+  m = PROFILE_COMPOSITE.exec(t);
+  if (m)
+    return {
+      fmt: "decimal",
+      value: parseInt(m[1], 10),
+      sep: ".",
+      romanAlt: null,
+      compositeParts: m[0].trimEnd().replace(/\.$/, "").split(".").length,
+    };
+  m = PROFILE_DECIMAL.exec(t);
+  if (m)
+    return {
+      fmt: "decimal",
+      value: parseInt(m[1], 10),
+      sep: m[2] as "." | ")",
+      romanAlt: null,
+      compositeParts: 0,
+    };
+  m = PROFILE_ALPHA.exec(t);
+  if (!m) return null;
+  const s = m[1];
+  const sep = m[2] as "." | ")";
+  // "U. S. obligations": an initials chain, never a marker.
+  if (INITIALS_CHAIN_ANY.test(t.slice(m[0].length))) return null;
+  if (s.length === 1) {
+    const lower = s >= "a";
+    return {
+      fmt: lower ? "lowerLetter" : "upperLetter",
+      value: s.toLowerCase().charCodeAt(0) - 96,
+      sep,
+      romanAlt: /^[ivx]$/i.test(s) ? romanTokenValue(s.toLowerCase()) : null,
+      compositeParts: 0,
+    };
+  }
+  // Multi-letter markers are markers only when they are valid romans of one
+  // case ("iii.", "IV."); anything else is prose.
+  if (/^[ivx]{2,7}$/.test(s)) {
+    const v = romanTokenValue(s);
+    return v === null
+      ? null
+      : { fmt: "lowerRoman", value: v, sep, romanAlt: null, compositeParts: 0 };
+  }
+  if (/^[IVX]{2,7}$/.test(s)) {
+    const v = romanTokenValue(s.toLowerCase());
+    return v === null
+      ? null
+      : { fmt: "upperRoman", value: v, sep, romanAlt: null, compositeParts: 0 };
+  }
+  return null;
+}
+
+interface ProfileChain {
+  fmt: ProfileLevel["fmt"];
+  sep: "." | ")";
+  expect: number;
+}
+
+/** Does `tok` fire as the next link of `c`? Same separator always; a lone
+ * i/v/x continues a roman chain via its roman reading, and continues a
+ * letter chain via its letter reading ("i." after "h."). */
+function chainFires(c: ProfileChain, tok: ProfileToken): boolean {
+  if (tok.sep !== c.sep || tok.compositeParts > 0) return false;
+  if (tok.fmt === c.fmt && tok.value === c.expect) return true;
+  if (
+    tok.romanAlt !== null &&
+    tok.romanAlt === c.expect &&
+    ((c.fmt === "lowerRoman" && tok.fmt === "lowerLetter") ||
+      (c.fmt === "upperRoman" && tok.fmt === "upperLetter"))
+  )
+    return true;
+  return false;
+}
+
+/** The chain `tok` STARTS, or null. A lone "i."/"I." starts a ROMAN chain
+ * (letters start at "a"; the letter reading of i is 9, never a start). */
+function chainStart(tok: ProfileToken): ProfileChain | null {
+  if (tok.compositeParts > 0 || tok.fmt === "decimalZero") return null;
+  if (tok.romanAlt === 1)
+    return {
+      fmt: tok.fmt === "lowerLetter" ? "lowerRoman" : "upperRoman",
+      sep: tok.sep,
+      expect: 2,
+    };
+  if (tok.value === 1) return { fmt: tok.fmt, sep: tok.sep, expect: 2 };
+  return null;
+}
+
+const profileKey = (fmt: ProfileLevel["fmt"], sep: "." | ")") =>
+  `${fmt}|${sep}`;
+
+function voteWin(
+  votes: Map<string, number>,
+  floor: number
+): { fmt: ProfileLevel["fmt"]; sep: "." | ")"; count: number } | null {
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [k, v] of votes)
+    if (v > bestCount) {
+      best = k;
+      bestCount = v;
+    }
+  if (!best || bestCount < floor) return null;
+  const [fmt, sep] = best.split("|");
+  return {
+    fmt: fmt as ProfileLevel["fmt"],
+    sep: sep as "." | ")",
+    count: bestCount,
+  };
+}
+
+/**
+ * Detect the sample's per-level numbering profile from its stored text.
+ * Level 0 comes from the markered-heading channel (the same channel
+ * detectNumberingStyle trusts); deeper levels from ascending body chains
+ * that reset at each level-0 heading, plus deeper markered headings fed
+ * through the same machine. With NO markered headings at all, the body
+ * chains supply level 0 too (legacy flat extractions of the same
+ * template), under a stricter 3-line floor. Null = no confident
+ * multi-level signal, and null MUST mean byte-identical current rendering
+ * in every consumer.
+ */
+export function detectNumberingProfile(text: string): NumberingProfile | null {
+  interface Ev {
+    hashes: number;
+    token: ProfileToken | null;
+  }
+  const evs: Ev[] = [];
+  let bodyMarkers = 0;
+  let bodyBullets = 0;
+  let headingLines = 0;
+  let seen = 0;
+  for (const raw of text.split("\n")) {
+    if (++seen > 4000) break;
+    if (/^#{1,6}\s/.test(raw)) headingLines++;
+    const hm = /^(#{1,6})\s{1,10}(.{1,300})$/.exec(raw);
+    const t = (hm ? hm[2] : raw).trim();
+    if (!t) continue;
+    if (!hm) {
+      if (/^[-*]\s/.test(t)) {
+        bodyBullets++;
+        continue;
+      }
+      if (t.length > 200) continue;
+    }
+    const token = profileToken(t);
+    if (!hm && token) bodyMarkers++;
+    if (hm || token) evs.push({ hashes: hm ? hm[1].length : 0, token });
+  }
+
+  // Level 0: the shallowest heading level with >= 2 bare markers. Lone
+  // i/v/x heading markers read as roman only beside a multi-letter roman
+  // peer at the same level ("## I." next to "## II."), else as letters.
+  const byHash = new Map<number, ProfileToken[]>();
+  for (const e of evs) {
+    if (!e.hashes || !e.token || e.token.compositeParts > 0) continue;
+    const arr = byHash.get(e.hashes) ?? [];
+    arr.push(e.token);
+    byHash.set(e.hashes, arr);
+  }
+  let h0 = 0;
+  for (const h of [...byHash.keys()].sort((a, b) => a - b))
+    if (byHash.get(h)!.length >= 2) {
+      h0 = h;
+      break;
+    }
+  let level0: ProfileLevel | null = null;
+  if (h0) {
+    const toks = byHash.get(h0)!;
+    const multiRoman = toks.some(
+      (x) =>
+        (x.fmt === "lowerRoman" || x.fmt === "upperRoman") &&
+        x.romanAlt === null
+    );
+    const votes = new Map<string, number>();
+    for (const x of toks) {
+      let fmt = x.fmt;
+      if (multiRoman && x.romanAlt !== null)
+        fmt = x.fmt === "lowerLetter" ? "lowerRoman" : "upperRoman";
+      const k = profileKey(fmt, x.sep);
+      votes.set(k, (votes.get(k) ?? 0) + 1);
+    }
+    const w = voteWin(votes, 2);
+    if (w) level0 = { fmt: w.fmt, sep: w.sep, composite: false };
+  }
+
+  // Body chains: three relative levels, resetting at level-0 headings.
+  const rel: Map<string, number>[] = [new Map(), new Map(), new Map()];
+  const compVotes = [0, 0, 0, 0]; // absolute level index (0..3)
+  const chains: (ProfileChain | null)[] = [null, null, null];
+  const vote = (d: number, c: ProfileChain) => {
+    const k = profileKey(c.fmt, c.sep);
+    rel[d].set(k, (rel[d].get(k) ?? 0) + 1);
+  };
+  for (const e of evs) {
+    if (e.hashes && h0 && e.hashes <= h0) {
+      chains[0] = chains[1] = chains[2] = null;
+      continue;
+    }
+    const tok = e.token;
+    if (!tok) {
+      // Unmarkered deeper heading: a new sub-scope, deeper chains reset.
+      if (e.hashes) chains[1] = chains[2] = null;
+      continue;
+    }
+    if (tok.compositeParts >= 2) {
+      compVotes[Math.min(tok.compositeParts - 1, 3)]++;
+      continue;
+    }
+    if (tok.fmt === "decimalZero") continue;
+    let fired = false;
+    for (let d = 0; d < 3; d++) {
+      const c = chains[d];
+      if (c && chainFires(c, tok)) {
+        c.expect++;
+        vote(d, c);
+        for (let r = d + 1; r < 3; r++) chains[r] = null;
+        fired = true;
+        break;
+      }
+    }
+    if (fired) continue;
+    const start = chainStart(tok);
+    if (!start) continue;
+    // A restart of an existing level (same species, back to 1) stays that
+    // level; a NEW species one level deeper opens the next chain.
+    for (let d = 0; d < 3; d++) {
+      const c = chains[d];
+      if (c && c.fmt === start.fmt && c.sep === start.sep) {
+        chains[d] = start;
+        vote(d, start);
+        for (let r = d + 1; r < 3; r++) chains[r] = null;
+        break;
+      }
+      if (!c) {
+        chains[d] = start;
+        vote(d, start);
+        break;
+      }
+    }
+  }
+
+  // Assemble: relative chains map to absolute levels 1.. under a heading
+  // level 0, or to absolute 0.. without one (stricter top floor there).
+  const levels: ProfileLevel[] = [];
+  const pickLevel = (
+    votes: Map<string, number>,
+    absLevel: number,
+    floor: number
+  ): ProfileLevel | null => {
+    const w = voteWin(votes, floor);
+    const comp = compVotes[absLevel] ?? 0;
+    if (comp >= 2 && comp > (w?.count ?? 0))
+      return { fmt: "decimal", sep: ".", composite: true };
+    return w ? { fmt: w.fmt, sep: w.sep, composite: false } : null;
+  };
+  if (level0) {
+    levels.push(level0);
+    for (let d = 0; d < 2; d++) {
+      const lv = pickLevel(rel[d], d + 1, 2);
+      if (!lv) break;
+      levels.push(lv);
+    }
+  } else if (headingLines <= 1) {
+    // Body-only fallback: allowed for at most ONE heading line (the doc
+    // title of a legacy flat extraction). A sample whose headings simply
+    // carry no parseable marker (unnumbered, section-word) keeps its flat
+    // rendering instead of being silently restyled. The derived level 0
+    // must also agree with the flat detector's verdict, so the two
+    // channels can never disagree about what a top-level section wears.
+    const top = pickLevel(rel[0], 0, 3);
+    const flat = top && !top.composite ? detectNumberingStyle(text) : null;
+    const flatAgrees =
+      top !== null &&
+      ((flat === "decimal" && top.fmt === "decimal" && top.sep === ".") ||
+        (flat === "paren" && top.fmt === "decimal" && top.sep === ")") ||
+        (flat === "decimal-zero" && top.fmt === "decimalZero") ||
+        (flat === "roman" && top.fmt === "upperRoman") ||
+        (flat === "alpha" && top.fmt === "upperLetter"));
+    if (top && !top.composite && flatAgrees) {
+      levels.push(top);
+      for (let d = 1; d < 3; d++) {
+        const lv = pickLevel(rel[d], d, 2);
+        if (!lv) break;
+        levels.push(lv);
+      }
+    }
+  }
+  // Bare same-species stacking (decimal headings over a decimal body list,
+  // the commonest extraction shape) is a LIST, not a Word multilevel
+  // scheme: three depths would render indistinguishable bare markers. The
+  // levels above the repeat survive when they still make a profile.
+  for (let i = 1; i < levels.length; i++) {
+    const a = levels[i - 1];
+    const b = levels[i];
+    if (!a.composite && !b.composite && a.fmt === b.fmt && a.sep === b.sep) {
+      levels.length = i;
+      break;
+    }
+  }
+  if (levels.length < 2) return null;
+  return {
+    levels,
+    bodyNumbered: bodyMarkers >= 2 && bodyBullets * 4 <= bodyMarkers,
+  };
+}
+
 function stripInlineNumber(inline: Inline[]): Inline[] {
   const first = inline[0];
   if (!first) return inline;
@@ -565,6 +1012,57 @@ function stripAlphaMarker(inline: Inline[]): Inline[] {
   return [{ ...first, text: stripped }, ...inline.slice(1)];
 }
 
+/** ProfileLevel format as a list-block ListFormat; decimal shapes
+ * approximate to decimal (a "1.0"-markered LIST is not a real Word shape). */
+function profileListFormat(lv: ProfileLevel): ListFormat {
+  switch (lv.fmt) {
+    case "lowerLetter":
+    case "upperLetter":
+    case "lowerRoman":
+    case "upperRoman":
+      return lv.fmt;
+    default:
+      return "decimal";
+  }
+}
+
+/** Body-list adoption (round 22): when the sample numbers its body items
+ * and has no bullets, a draft's bullet lists render ordered per the
+ * profile level at their depth (list level = section depth + 1, subs one
+ * deeper). Ordered lists and ordered subs keep their literal shape. */
+function profileListBlock(
+  b: Block & { t: "list" },
+  profile: NumberingProfile,
+  sectionDepth: number
+): Block {
+  const subLv = profileLevelAt(profile, sectionDepth + 2);
+  let subChanged = false;
+  const items = b.items.map((it) => {
+    if (!it.sub || it.sub.ordered) return it;
+    subChanged = true;
+    return {
+      ...it,
+      sub: {
+        ordered: true,
+        start: 1,
+        format: profileListFormat(subLv),
+        sep: subLv.sep,
+        items: it.sub.items,
+      },
+    };
+  });
+  if (b.ordered) return subChanged ? { ...b, items } : b;
+  const lv = profileLevelAt(profile, sectionDepth + 1);
+  return {
+    t: "list",
+    ordered: true,
+    start: 1,
+    format: profileListFormat(lv),
+    sep: lv.sep,
+    items,
+  };
+}
+
 /**
  * Normalize one section's blocks under its host-assigned number:
  * - strip manual number prefixes from headings,
@@ -574,6 +1072,10 @@ function stripAlphaMarker(inline: Inline[]): Inline[] {
  *   section written entirely in "###" renders exactly like one in "#".
  * Levels in the result are relative: 1 = first level under the section
  * title. Renderers map them below the section-title style.
+ * With a profile (round 22), inner-heading labels follow the per-level
+ * scheme at (sectionDepth + heading depth + 1): bare markers for bare
+ * levels ("a. ", "i. "), the compound path for composite ones; and bullet
+ * lists convert per profileListBlock when the profile says bodyNumbered.
  */
 export function normalizeSectionBlocks(
   blocks: Block[],
@@ -581,7 +1083,11 @@ export function normalizeSectionBlocks(
   style: NumberingStyle | null = null,
   // Skeleton adoption (round 18b): a nested section's inner headings hang
   // off its compound label ("5.2" -> "5.2.1") instead of its ordinal.
-  baseLabel: string | null = null
+  baseLabel: string | null = null,
+  profile: NumberingProfile | null = null,
+  // 0 = top-level section, 1 = nested under a skeleton bucket: the depth
+  // the profile's level indexes hang off.
+  sectionDepth: 0 | 1 = 0
 ): Block[] {
   let min = Infinity;
   for (const b of blocks) if (b.t === "heading" && b.level < min) min = b.level;
@@ -591,9 +1097,15 @@ export function normalizeSectionBlocks(
   // decimal styles keep today's "3.1" exactly.
   // `||` not `??`: an empty-string baseLabel must fall back too (defensive;
   // no live caller produces "", but a "" base would mint ".7.1"-style labels).
-  const base = baseLabel || subPrefix(sectionNum, style ?? "decimal");
+  const base =
+    baseLabel ||
+    (profile
+      ? nestedBaseLabel(sectionNum, null, style, profile)
+      : subPrefix(sectionNum, style ?? "decimal"));
   const alphaRun = alphaHeadingRun(blocks);
   return blocks.map((b, bi): Block => {
+    if (b.t === "list" && profile?.bodyNumbered)
+      return profileListBlock(b, profile, sectionDepth);
     if (b.t !== "heading") return b;
     const depth = b.level - min;
     let inline = stripInlineNumber(b.inline);
@@ -602,10 +1114,18 @@ export function normalizeSectionBlocks(
     if (depth === 0) {
       c1++;
       c2 = 0;
-      label = `${base}.${c1} `;
+      const lv = profile ? profileLevelAt(profile, sectionDepth + 1) : null;
+      label =
+        lv && !lv.composite
+          ? `${profileMarker(profile!, sectionDepth + 1, c1)} `
+          : `${base}.${c1} `;
     } else if (depth === 1 && c1 > 0) {
       c2++;
-      label = `${base}.${c1}.${c2} `;
+      const lv = profile ? profileLevelAt(profile, sectionDepth + 2) : null;
+      label =
+        lv && !lv.composite
+          ? `${profileMarker(profile!, sectionDepth + 2, c2)} `
+          : `${base}.${c1}.${c2} `;
     }
     return {
       t: "heading",

@@ -2,7 +2,7 @@
 // Pure types + type guards only: this file is imported by server routes,
 // detached scripts, AND the client workspace bundle. No node imports.
 
-import type { NumberingStyle } from "./numbering";
+import type { NumberingProfile, NumberingStyle } from "./numbering";
 
 export type GovernanceKind =
   | "usage_policy"
@@ -369,6 +369,9 @@ export interface ProjectView {
   styleSample: {
     name: string;
     numbering: NumberingStyle | null;
+    // Round 22: the sample's per-level numbering scheme, derived at view
+    // time like `numbering`, never persisted; null = flat style only.
+    profile: NumberingProfile | null;
     reformatDebt: boolean;
     letterhead: { header: string; footer: string } | null;
     verbosity: { band: "concise" | "standard" | "expansive"; targetWords: number } | null;
