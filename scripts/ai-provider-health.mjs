@@ -11,7 +11,7 @@
 //      (e.g. gpt-5-6-luna 404'd every plan_execute turn on 2026-07-09) —
 //      before a visitor does. A row that routes NO model (brain v1.166 #878:
 //      panel_critic with model null, reason no_cross_lab_candidate) is
-//      reported, never probed — see routedModelOf / NO_CANDIDATE_REASON.
+//      reported, never probed — see routedModelOf / NO_CANDIDATE_REASONS.
 //
 // Usage: node scripts/ai-provider-health.mjs [--env /path/to/.env]
 // Exit code: 0 = all checks passed, 1 = at least one failure (report on
@@ -158,9 +158,14 @@ async function authProbes() {
 
 // Brain v1.166 (#878): /v1/model-routing's panel_critic row reports
 // model null / provider null with reason `no_cross_lab_candidate` when this
-// host's keys leave no cross-lab critic. Any reason naming "no … candidate"
-// means nothing is routed for that task.
-const NO_CANDIDATE_REASON = /(?:^|_)no_(?:[a-z0-9]+_)*candidates?(?:_|$)/i;
+// host's keys leave no cross-lab critic. Exactly the reasons the brain emits
+// for "nothing is routed, on purpose" (its row type is
+// 'contrastive' | 'no_cross_lab_candidate', apps/brain-api/src/routingTruth.ts),
+// matched exactly and case-sensitively: a reason the brain does not emit today
+// is never read as a deliberate degrade — a null model beside it stays a FAIL
+// and a real id beside it is still probed. A future brain reason is added
+// here, with a test, when the pin bump that brings it lands.
+const NO_CANDIDATE_REASONS = new Set(["no_cross_lab_candidate"]);
 
 // The routed model id, or null when the row carries none (null, absent,
 // non-string or blank) — a row with no id has nothing a probe could call.
@@ -263,7 +268,7 @@ async function routingProbes() {
     // #878 panel runs without a critic): there is no model to probe, and the
     // row is not a failure. Checked first, so a stray id beside a
     // no-candidate reason is not probed either.
-    if (NO_CANDIDATE_REASON.test(reason)) {
+    if (NO_CANDIDATE_REASONS.has(reason)) {
       record(
         `routing ${task}`,
         true,

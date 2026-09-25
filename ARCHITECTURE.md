@@ -73,7 +73,7 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
-Last verified against code: 2026-09-25 §9.6 PROVIDER HEALTH SKIPS AN UNROUTED ROW (brain v1.166 #878 follow-up). `/v1/model-routing`'s `panel_critic` row can report `model: null` / `provider: null` / `reason: no_cross_lab_candidate`; `scripts/ai-provider-health.mjs` keyed it `null/null` and probed api.openai.com with `model: null` (a false FAIL). Now a no-candidate reason is a PASS `routing <task>` line and is never probed; a null model with any other reason is never probed and stays a FAIL. Every other probe unchanged. New `npm run test:providerhealth` (runs the real script with `fetch` stubbed; no network). The script's header no longer claims the watchdog runs or mails it (§9.6: it is operator-run).
+Last verified against code: 2026-09-25 §9.6 PROVIDER HEALTH SKIPS AN UNROUTED ROW (brain v1.166 #878 follow-up). `/v1/model-routing`'s `panel_critic` row can report `model: null` / `provider: null` / `reason: no_cross_lab_candidate`; `scripts/ai-provider-health.mjs` keyed it `null/null` and probed api.openai.com with `model: null` (a false FAIL). Now a no-candidate reason is a PASS `routing <task>` line and is never probed; a null model with any other reason is never probed and stays a FAIL. Every other probe unchanged. New `npm run test:providerhealth` (runs the real script with `fetch` stubbed; no network). The script's header no longer claims the watchdog runs or mails it (§9.6: it is operator-run). REFUTE ROUND 1: (F1) the first cut matched any `…no_…_candidate(s)` reason case-insensitively (`/(?:^|_)no_(?:[a-z0-9]+_)*candidates?(?:_|$)/i`), wider than anything the brain emits and untested at its edges — four matcher mutants passed 7/7, and a look-alike reason beside a served id would have gone unprobed. Now an exact, case-sensitive set `NO_CANDIDATE_REASONS = {no_cross_lab_candidate}` (the brain's row type is `'contrastive' | 'no_cross_lab_candidate'`); new arms B1 (null model beside `no_v2_candidate`, `NO_CROSS_LAB_CANDIDATE`, `pin_no_candidate_served`, `no_cross_lab_candidates` = FAIL, never probed) and B2 (real ids beside `no_verdict`, `candidate_fallback`, `pin_no_candidate_served`, `NO_CROSS_LAB_CANDIDATE` = probed) fail on the round-0 regex and on case-insensitive, `/candidate/`, `/no_/` and widened-set mutants, and pass here (9/9). (F2) the §7 brain-contract row for `GET /v1/model-routing` said "concrete model id per pipeline task"; it now records the nullable `panel_critic` row from brain v1.166.
 
 Last verified against code: 2026-09-21 §5.12 NESTED-INDENT FIDELITY ROUND 24 (owner report on the deployed round 23: "nested indentation is still not being followed" for the AUP). ROOT CAUSE: body content depth ignored the INNER heading it sat under - blockToDocx computed list depthOffset and paragraph indent from headingShift alone, and profileListBlock indexed the profile at sectionDepth+1 regardless, so a list under a "###" sub-heading rendered at the sub-heading's own w:ind (both 720*(shift+2)) and the deliverable nested flat; round 23's e2e never caught it because its doc fixture had no inner headings and the rubric's "generated-only deeper levels are not penalized" hid exactly that region. FIX, render-side only (no migration, stored rows heal at next render): normalizeSectionBlocks tracks the inner-heading depth context and converts list markers at the level they SIT at (a lone "### a." heading's bullets now wear "i.", the 3-level cycle wraps under deeper heads), and renderDocx threads the same context into blockToDocx so lists step one ladder past their heading (2160/2880 under a top-level section's sub-heading; 1440/2160 directly under the title, byte-identical), loose paragraphs align at their heading's text column, bullets and ordered subs included; flat/profile-null renders stay byte-identical. MEASUREMENT: the rubric's indentation-ladder part now requires generated depths BEYOND a strictly rising template ladder to keep rising (docx bytes only, flat/mixed templates unaffected); pre-fix the owner-shaped fixtures score 0.87 (mixed profile: species + ladder) and 0.97 (all-decimal: ladder only, the owner's actual case), post-fix 1.000. New pins: r24 docx byte pins, the lone-sub-heading species pin, deep-flat/deep-rise rubric pins, and two full-pipeline e2e fixtures with "###"-over-list sections (mixed and all-decimal) pinned at 100 percent; ONE round-22 pin re-pinned (bullets under "### Deep" now convert at the level they sit at - the old expectation was the bug). Pane residual accepted: the doc pane keeps its flat CSS list indent (docx is the deliverable); marker species stay pane/docx-identical via the shared pass.
 
@@ -12827,7 +12827,7 @@ Rebuild the brain from its own canonical doc; the site needs only this contract:
 | `POST /v1/chat/completions` | Bearer | all three site channels |
 | `GET /v1/tools` | Bearer | enumerate tool names → send back as `disabledTools` |
 | `GET /health` | none | readiness (`{ok:true, service:"brain-api", version}`), PM2/watchdog/deploy checks |
-| `GET /v1/model-routing` | Bearer | (Issue #684 fix, upstream #686, in v1.94+) concrete model id per pipeline task + `plannerEffectiveModel`; consumed by `scripts/ai-provider-health.mjs` (§9.6) to probe routed ids before visitors hit them |
+| `GET /v1/model-routing` | Bearer | (Issue #684 fix, upstream #686, in v1.94+) concrete model id per pipeline task + `plannerEffectiveModel` — except that from brain v1.166 (#878) the `panel_critic` row may carry `model: null` / `provider: null` / `reason: no_cross_lab_candidate` when this host's keys leave no cross-lab critic (§9.6); consumed by `scripts/ai-provider-health.mjs` (§9.6) to probe routed ids before visitors hit them |
 | `POST|GET /twilio/*` + WS `/twilio/ws` | Twilio signature | voice + carrier SMS — Twilio calls these directly through nginx; the site never does |
 
 ### Request envelope (fields this site sends)
@@ -13386,13 +13386,17 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
   `GET /v1/model-routing` and fires a 1-token completion at every unique routed model id —
   catching the "hit a snag" class and key expiry/quota before visitors do.
   `node scripts/ai-provider-health.mjs [--env path]`, exit 0/1.
-  A task row that routes NO model is reported, never probed: a `reason` naming no
-  candidate (`/(?:^|_)no_(?:[a-z0-9]+_)*candidates?(?:_|$)/i` — brain v1.166 #878's
-  `panel_critic` row, `model: null` / `provider: null` / `no_cross_lab_candidate`, when
-  this host's keys leave no cross-lab critic and the panel runs without one) is a PASS
-  line `routing <task>` (any stray id beside it is not probed either); a null, absent,
-  blank or non-string `model` with any other reason is a FAIL line `routing <task>` —
-  `brain routed no model`. Before this, such a row was keyed `null/null` and sent
+  A task row that routes NO model is reported, never probed: the `reason`
+  `no_cross_lab_candidate`, matched exactly and case-sensitively (`NO_CANDIDATE_REASONS`
+  — the only "nothing routed, on purpose" reason the brain emits; its row type is
+  `'contrastive' | 'no_cross_lab_candidate'`: brain v1.166 #878's `panel_critic` row,
+  `model: null` / `provider: null`, when this host's keys leave no cross-lab critic and
+  the panel runs without one) is a PASS line `routing <task>` (any stray id beside it
+  is not probed either); a null, absent, blank or non-string `model` with any other
+  reason — look-alikes such as `no_v2_candidate` or `NO_CROSS_LAB_CANDIDATE` included —
+  is a FAIL line `routing <task>` — `brain routed no model`, and a real id beside any
+  other reason is probed as usual. A new brain reason is added to the set, with a test,
+  in the pin bump that brings it. Before this, such a row was keyed `null/null` and sent
   `model: null` to api.openai.com, a guaranteed false FAIL. Tests (no network — the
   child's `fetch` is stubbed via `--import`): `npm run test:providerhealth`.
 

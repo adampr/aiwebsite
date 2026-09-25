@@ -16,7 +16,10 @@
 // model null / provider null / reason no_cross_lab_candidate. The old loop
 // keyed that "null/null" and sent model:null to api.openai.com — a guaranteed
 // false FAIL. Cases N1-N4 fail on the pre-fix script; C1-C3 are controls that
-// pass on both and prove every other behaviour is kept.
+// pass on both and prove every other behaviour is kept. B1-B2 pin that only the
+// exact reason `no_cross_lab_candidate` counts as "nothing routed" (refute
+// round 1, F1): they fail on any broadened matcher, including the round-0
+// regex; B1 also fails on the pre-fix script.
 //
 // Usage: node scripts/ai-provider-health-tests.mjs [--script <path>]
 //   --script runs the same cases against another copy of the script (e.g. the
@@ -211,6 +214,51 @@ t("N4 absent, blank and non-string model ids (no reason): never probed, each a F
     assert.match(row, /brain routed no model/);
   }
   assert.equal(res.status, 1);
+});
+
+// ── B: the no-candidate match is EXACT (refute round 1, F1) ───────────
+// Only the reason the brain emits for a deliberate "nothing routed" row is a
+// PASS: its row type is 'contrastive' | 'no_cross_lab_candidate'
+// (apps/brain-api/src/routingTruth.ts). Look-alikes are not. These kill a
+// broadened matcher — case-insensitive, /candidate/, /no_/, or the round-0
+// pattern /(?:^|_)no_(?:[a-z0-9]+_)*candidates?(?:_|$)/i — which the N arms
+// (only ever `no_cross_lab_candidate`) let pass.
+
+// Near-misses of the brain's reason, each on a row with no model.
+const LOOKALIKE_NULL = [
+  { task: "lookalike_other_lab", model: null, provider: null, reason: "no_v2_candidate" },
+  { task: "lookalike_upper", model: null, provider: null, reason: "NO_CROSS_LAB_CANDIDATE" },
+  { task: "lookalike_embedded", model: null, provider: null, reason: "pin_no_candidate_served" },
+  { task: "lookalike_plural", model: null, provider: null, reason: "no_cross_lab_candidates" },
+];
+
+t("B1 a null model beside a look-alike of no_cross_lab_candidate: never probed, each a FAIL (exit 1)", () => {
+  const res = runHealth({ routing: { tasks: [...SERVED, ...LOOKALIKE_NULL] } });
+  assert.deepEqual(noBadModel(res), [], `a completion was sent with no model id: ${JSON.stringify(noBadModel(res))}`);
+  for (const r of LOOKALIKE_NULL) {
+    const row = lineFor(res.stdout, `routing ${r.task}`);
+    assert.ok(row?.startsWith("FAIL"), `${r.reason} was read as a deliberate degrade:\n${res.stdout}`);
+    assert.ok(row.includes(`brain routed no model (reason: ${r.reason})`), row);
+  }
+  assert.equal(res.status, 1);
+});
+
+t("B2 a real id beside a reason that is not exactly no_cross_lab_candidate is still probed", () => {
+  const rows = [
+    { task: "gated_head", model: "gpt-5.5-nv", provider: "openai", reason: "no_verdict" },
+    { task: "fallback_head", model: "claude-fallback", provider: "anthropic", reason: "candidate_fallback" },
+    { task: "embedded_head", model: "grok-embedded", provider: "xai", reason: "pin_no_candidate_served" },
+    { task: "upper_head", model: "grok-upper", provider: "xai", reason: "NO_CROSS_LAB_CANDIDATE" },
+  ];
+  const res = runHealth({ routing: { tasks: [...SERVED, ...rows] } });
+  const probed = res.completions.map((q) => q.model);
+  for (const r of rows) {
+    assert.equal(probed.filter((m) => m === r.model).length, 1, `${r.model} (reason ${r.reason}) not probed once: ${JSON.stringify(probed)}`);
+    assert.ok(lineFor(res.stdout, `model ${r.provider}/${r.model}`)?.startsWith("PASS"), `${r.model}:\n${res.stdout}`);
+    assert.equal(lineFor(res.stdout, `routing ${r.task}`), undefined, `${r.reason} got a routing line:\n${res.stdout}`);
+  }
+  assert.deepEqual([...new Set(probed)].sort(), [...SERVED_IDS, ...rows.map((r) => r.model)].sort());
+  assert.equal(res.status, 0, `exit ${res.status}:\n${res.stdout}`);
 });
 
 // ── C: controls (pass on both scripts — every other behaviour kept) ───
