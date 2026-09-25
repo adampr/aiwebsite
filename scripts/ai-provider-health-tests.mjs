@@ -10,16 +10,36 @@
 //
 // The stub answers the way the providers do where it matters: a completion
 // request carrying no string model id is a 400 (OpenAI's answer to
-// model:null), and an id listed in a case's `failModels` is a 404.
+// model:null); an id sent to another vendor's host (claude-* anywhere but
+// api.anthropic.com, grok-* but api.x.ai, gemini-* but the Gemini API, gpt-*
+// but api.openai.com, deepseek-ai/* but DeepInfra) is a 404, as it is there;
+// and an id listed in a case's `failModels` is a 404.
 //
 // Pinned (brain v1.166 #878): /v1/model-routing's panel_critic row can report
 // model null / provider null / reason no_cross_lab_candidate. The old loop
 // keyed that "null/null" and sent model:null to api.openai.com — a guaranteed
 // false FAIL. Cases N1-N4 fail on the pre-fix script; C1-C3 are controls that
-// pass on both and prove every other behaviour is kept. B1-B2 pin that only the
-// exact reason `no_cross_lab_candidate` counts as "nothing routed" (refute
-// round 1, F1): they fail on any broadened matcher, including the round-0
-// regex; B1 also fails on the pre-fix script.
+// pass on both and prove every other behaviour is kept.
+//
+// B1-B4 pin that only the exact reason `no_cross_lab_candidate` counts as
+// "nothing routed" (refute rounds 1-2; B4 is the #684 pinned-id FAIL). What
+// they kill, measured with mutant
+// copies of the matcher: the round-0 regex; case-insensitive, /candidate/ and
+// /no_/ matches; prefix, suffix, substring and trimmed matches of the exact
+// reason (endsWith, /no_cross_lab_candidate$/, startsWith, includes, trim);
+// and a set widened by ANY reason the brain gives a row that serves a model —
+// router_default, env_override, fallback, confidence_escalation,
+// stakes_escalation, router_v2, router_v2_fallback (the brain's
+// ModelSelectionResult, packages/shared/src/modelRegistry.ts) and contrastive.
+// A set widened by a string no fixture carries (a reason the brain does not
+// emit today) is NOT caught: it would misfire only if a later brain emitted
+// that string beside a served model, so a pin bump that adds a served-row
+// reason adds it to BRAIN_SERVED_REASON_ROWS too. B1 also fails on the
+// pre-fix script.
+//
+// D1 pins that the degraded critic's PASS line names the brain's cause
+// (no_pool_provider vs a gate exit such as bar_805); P1 pins that
+// plannerEffectiveModel is probed at its own row's provider (refute round 2).
 //
 // Usage: node scripts/ai-provider-health-tests.mjs [--script <path>]
 //   --script runs the same cases against another copy of the script (e.g. the
@@ -64,6 +84,14 @@ globalThis.fetch = async (input, init = {}) => {
     if (typeof model !== "string" || model === "" || model === "null" || model === "undefined") {
       return reply(400, { error: { message: "model: expected a string" } });
     }
+    const host = new URL(url).host;
+    const vendorHost = /^claude-/.test(model) ? "api.anthropic.com"
+      : /^grok-/.test(model) ? "api.x.ai"
+      : /^gemini-/.test(model) ? "generativelanguage.googleapis.com"
+      : /^gpt-/.test(model) ? "api.openai.com"
+      : /^deepseek-ai\\//.test(model) ? "api.deepinfra.com"
+      : null;
+    if (vendorHost && host !== vendorHost) return reply(404, { error: { message: "model_not_found (wrong vendor)" } });
     if (failModels.has(model)) return reply(404, { error: { message: "model_not_found" } });
   }
   return reply(200, {});
@@ -230,6 +258,11 @@ const LOOKALIKE_NULL = [
   { task: "lookalike_upper", model: null, provider: null, reason: "NO_CROSS_LAB_CANDIDATE" },
   { task: "lookalike_embedded", model: null, provider: null, reason: "pin_no_candidate_served" },
   { task: "lookalike_plural", model: null, provider: null, reason: "no_cross_lab_candidates" },
+  // refute round 2 (R2-1): prefix / suffix / padded look-alikes — kill
+  // endsWith, /no_cross_lab_candidate$/, startsWith, includes and trim.
+  { task: "lookalike_prefixed", model: null, provider: null, reason: "x_no_cross_lab_candidate" },
+  { task: "lookalike_suffixed", model: null, provider: null, reason: "no_cross_lab_candidate_v2" },
+  { task: "lookalike_padded", model: null, provider: null, reason: " no_cross_lab_candidate " },
 ];
 
 t("B1 a null model beside a look-alike of no_cross_lab_candidate: never probed, each a FAIL (exit 1)", () => {
@@ -249,6 +282,8 @@ t("B2 a real id beside a reason that is not exactly no_cross_lab_candidate is st
     { task: "fallback_head", model: "claude-fallback", provider: "anthropic", reason: "candidate_fallback" },
     { task: "embedded_head", model: "grok-embedded", provider: "xai", reason: "pin_no_candidate_served" },
     { task: "upper_head", model: "grok-upper", provider: "xai", reason: "NO_CROSS_LAB_CANDIDATE" },
+    { task: "prefixed_head", model: "gpt-prefixed", provider: "openai", reason: "x_no_cross_lab_candidate" },
+    { task: "padded_head", model: "claude-padded", provider: "anthropic", reason: " no_cross_lab_candidate " },
   ];
   const res = runHealth({ routing: { tasks: [...SERVED, ...rows] } });
   const probed = res.completions.map((q) => q.model);
@@ -258,6 +293,79 @@ t("B2 a real id beside a reason that is not exactly no_cross_lab_candidate is st
     assert.equal(lineFor(res.stdout, `routing ${r.task}`), undefined, `${r.reason} got a routing line:\n${res.stdout}`);
   }
   assert.deepEqual([...new Set(probed)].sort(), [...SERVED_IDS, ...rows.map((r) => r.model)].sort());
+  assert.equal(res.status, 0, `exit ${res.status}:\n${res.stdout}`);
+});
+
+
+// Refute round 2 (R2-1): every reason the brain gives a row that SERVES a
+// model. A matcher widened by any of these would PASS that row unprobed — and
+// env_override is the pinned-task case this script exists for (#684:
+// gpt-5-6-luna, pinned on plan_execute_executor, 404'd every turn).
+const BRAIN_SERVED_REASON_ROWS = [
+  { task: "plan_execute_executor", model: "gpt-5-6-luna", provider: "openai", reason: "env_override" },
+  { task: "plan_execute_planner", model: "gpt-5.6-sol", provider: "openai", reason: "router_v2" },
+  { task: "first_pass", model: "gpt-5-mini", provider: "openai", reason: "router_default" },
+  { task: "panel_casting", model: "gpt-5.4-mini", provider: "openai", reason: "fallback" },
+  { task: "triage", model: "grok-4.5", provider: "xai", reason: "confidence_escalation" },
+  { task: "json_completion", model: "claude-opus-5", provider: "anthropic", reason: "stakes_escalation" },
+  { task: "goal_step", model: "gpt-5.6-terra", provider: "openai", reason: "router_v2_fallback" },
+  { task: "panel_critic", model: "grok-4.6", provider: "xai", reason: "contrastive" },
+];
+
+t("B3 a real id beside every reason the brain gives a served row is probed once, with no routing line (exit 0)", () => {
+  const rows = BRAIN_SERVED_REASON_ROWS;
+  const res = runHealth({ routing: { tasks: rows } });
+  const probed = res.completions.map((q) => q.model);
+  for (const r of rows) {
+    assert.equal(probed.filter((m) => m === r.model).length, 1, `${r.model} (reason ${r.reason}) not probed once: ${JSON.stringify(probed)}`);
+    assert.ok(lineFor(res.stdout, `model ${r.provider}/${r.model}`)?.startsWith("PASS"), `${r.model}:\n${res.stdout}`);
+    assert.equal(lineFor(res.stdout, `routing ${r.task}`), undefined, `${r.reason} got a routing line:\n${res.stdout}`);
+  }
+  assert.deepEqual([...new Set(probed)].sort(), rows.map((r) => r.model).sort());
+  assert.equal(res.status, 0, `exit ${res.status}:\n${res.stdout}`);
+});
+
+t("B4 #684: a pinned (env_override) id the provider rejects is a FAIL (exit 1), never a routing PASS", () => {
+  const res = runHealth({ routing: { tasks: BRAIN_SERVED_REASON_ROWS }, failModels: ["gpt-5-6-luna"] });
+  const row = lineFor(res.stdout, "model openai/gpt-5-6-luna");
+  assert.ok(row?.startsWith("FAIL"), `the rejected pinned id is not a FAIL:\n${res.stdout}`);
+  assert.match(row, /HTTP 404/);
+  assert.equal(lineFor(res.stdout, "routing plan_execute_executor"), undefined, res.stdout);
+  assert.equal(res.status, 1);
+});
+
+// ── D / P: refute round 2 (R2-3, R2-2) ────────────────────────────────
+
+t("D1 the degraded critic's PASS line names the brain's cause: no_pool_provider (no key) vs bar_805 (no eval)", () => {
+  const evalGap = {
+    ...NULL_CRITIC,
+    contrastive: {
+      ...NULL_CRITIC.contrastive,
+      rowPoolProviders: ["openai"],
+      degraded: { reason: "no_cross_lab_candidate", cause: "bar_805", noVerdict: { count: 22, reported: [] } },
+    },
+  };
+  for (const [critic, cause] of [[NULL_CRITIC, "no_pool_provider"], [evalGap, "bar_805"]]) {
+    const res = runHealth({ routing: { tasks: [...SERVED, critic] } });
+    const line = lineFor(res.stdout, "routing panel_critic");
+    assert.ok(line?.startsWith("PASS"), `no PASS line:\n${res.stdout}`);
+    assert.ok(line.includes(`(no_cross_lab_candidate, cause ${cause})`), line);
+    assert.deepEqual(noBadModel(res), []);
+    assert.equal(res.status, 0, `exit ${res.status}:\n${res.stdout}`);
+  }
+});
+
+t("P1 plannerEffectiveModel claude-opus-5 (v1.166, openai+anthropic keyed): probed once at api.anthropic.com, never at api.openai.com (exit 0)", () => {
+  const rows = [
+    { task: "plan_execute_planner", model: "claude-opus-5", provider: "anthropic", reason: "router_v2" },
+    { task: "plan_execute_executor", model: "claude-opus-5", provider: "anthropic", reason: "router_v2" },
+    { task: "panel_casting", model: "gpt-5.4-mini", provider: "openai", reason: "fallback" },
+  ];
+  const res = runHealth({ routing: { tasks: [...rows, NULL_CRITIC], plannerEffectiveModel: "claude-opus-5" } });
+  const opus = res.completions.filter((q) => q.model === "claude-opus-5");
+  assert.deepEqual(opus.map((q) => q.url), ["https://api.anthropic.com/v1/messages"], `claude-opus-5 probes: ${JSON.stringify(opus)}`);
+  assert.equal(lineFor(res.stdout, "model openai/claude-opus-5"), undefined, `planner keyed under openai:\n${res.stdout}`);
+  assert.ok(lineFor(res.stdout, "model anthropic/claude-opus-5")?.startsWith("PASS"), res.stdout);
   assert.equal(res.status, 0, `exit ${res.status}:\n${res.stdout}`);
 });
 

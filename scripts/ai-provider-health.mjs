@@ -13,6 +13,11 @@
 //      panel_critic with model null, reason no_cross_lab_candidate) is
 //      reported, never probed — see routedModelOf / NO_CANDIDATE_REASONS.
 //
+// Known false FAIL (not fixed here): a routed id whose provider is deepinfra
+// or fireworks is probed at api.openai.com with the OpenAI key (this script
+// has no DeepInfra/Fireworks probe), so it FAILs whether or not the model
+// serves. Read `model deepinfra/…` / `model fireworks/…` FAIL lines that way.
+//
 // Usage: node scripts/ai-provider-health.mjs [--env /path/to/.env]
 // Exit code: 0 = all checks passed, 1 = at least one failure (report on
 // stdout). Operator-run: the module-rendered deploy/watchdog.sh no longer
@@ -157,8 +162,12 @@ async function authProbes() {
 // ── Layer 2: routed-model probes ──────────────────────────────────
 
 // Brain v1.166 (#878): /v1/model-routing's panel_critic row reports
-// model null / provider null with reason `no_cross_lab_candidate` when this
-// host's keys leave no cross-lab critic. Exactly the reasons the brain emits
+// model null / provider null with reason `no_cross_lab_candidate` when no
+// cross-lab candidate is keyed, or none in that pool holds a panel_critic
+// PASS — the row's contrastive.degraded.cause says which: `no_pool_provider`,
+// or the gate exit that emptied the pool (e.g. `bar_805`; the brain then also
+// raises an evalChallengerAlarms entry naming the eval to run). Either way the
+// panel runs without a critic. Exactly the reasons the brain emits
 // for "nothing is routed, on purpose" (its row type is
 // 'contrastive' | 'no_cross_lab_candidate', apps/brain-api/src/routingTruth.ts),
 // matched exactly and case-sensitively: a reason the brain does not emit today
@@ -260,6 +269,8 @@ async function routingProbes() {
   }
 
   const unique = new Map();
+  // model id -> the provider its probed task row names (for plannerEffectiveModel).
+  const probedProviderOf = new Map();
   for (const t of routing.tasks || []) {
     const task = String(t?.task ?? "(unnamed task)");
     const reason = typeof t?.reason === "string" ? t.reason : "";
@@ -267,12 +278,15 @@ async function routingProbes() {
     // The brain says nothing serves this task (a deliberate degrade — the
     // #878 panel runs without a critic): there is no model to probe, and the
     // row is not a failure. Checked first, so a stray id beside a
-    // no-candidate reason is not probed either.
+    // no-candidate reason is not probed either. The brain's cause is shown so
+    // a missing key (no_pool_provider) reads apart from a missing eval (bar_805).
     if (NO_CANDIDATE_REASONS.has(reason)) {
+      const cause = t?.contrastive?.degraded?.cause;
       record(
         `routing ${task}`,
         true,
-        `no candidate routed (${reason})${model ? `; ${model} not probed` : ""}`
+        `no candidate routed (${reason}${typeof cause === "string" && cause ? `, cause ${cause}` : ""})` +
+          `${model ? `; ${model} not probed` : ""}`
       );
       continue;
     }
@@ -289,12 +303,17 @@ async function routingProbes() {
       continue;
     }
     unique.set(`${t.provider}/${model}`, t);
+    if (typeof t.provider === "string" && t.provider && !probedProviderOf.has(model)) probedProviderOf.set(model, t.provider);
   }
   // The planner's effective model matters even though the task list shows
-  // the gemini default when no key exists.
+  // the gemini default when no key exists. The brain derives it from the
+  // plan_execute_planner / plan_execute_executor row, so it takes that row's
+  // provider (and dedupes against that row's probe); only an id no probed row
+  // carries falls back to the prefix rule. Before, every non-gemini planner
+  // went to api.openai.com — claude-opus-5 there was a false FAIL (404).
   if (routing.plannerEffectiveModel) {
     const m = routing.plannerEffectiveModel;
-    const p = m.startsWith("gemini-") ? "google" : "openai";
+    const p = probedProviderOf.get(m) ?? (m.startsWith("gemini-") ? "google" : "openai");
     if (p !== "google" || env.GOOGLE_GEMINI_API_KEY) unique.set(`${p}/${m}`, { provider: p, model: m });
   }
 
