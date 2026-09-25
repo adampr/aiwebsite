@@ -9,12 +9,15 @@
 //      1-token completion against each unique id. This catches the case
 //      where the model registry starts routing to an id the key cannot call
 //      (e.g. gpt-5-6-luna 404'd every plan_execute turn on 2026-07-09) —
-//      before a visitor does.
+//      before a visitor does. A row that routes NO model (brain v1.166 #878:
+//      panel_critic with model null, reason no_cross_lab_candidate) is
+//      reported, never probed — see routedModelOf / NO_CANDIDATE_REASON.
 //
 // Usage: node scripts/ai-provider-health.mjs [--env /path/to/.env]
 // Exit code: 0 = all checks passed, 1 = at least one failure (report on
-// stdout). The deploy/watchdog.sh loop runs this at startup and on an
-// interval, and emails the report to the admin (4h throttle per state).
+// stdout). Operator-run: the module-rendered deploy/watchdog.sh no longer
+// calls it (ARCHITECTURE.md §9.6), so nothing schedules or mails it today.
+// Tests (no network, fetch stubbed): npm run test:providerhealth
 //
 // No SDKs on purpose: plain fetch, so it runs anywhere Node 18+ does.
 
@@ -153,6 +156,18 @@ async function authProbes() {
 
 // ── Layer 2: routed-model probes ──────────────────────────────────
 
+// Brain v1.166 (#878): /v1/model-routing's panel_critic row reports
+// model null / provider null with reason `no_cross_lab_candidate` when this
+// host's keys leave no cross-lab critic. Any reason naming "no … candidate"
+// means nothing is routed for that task.
+const NO_CANDIDATE_REASON = /(?:^|_)no_(?:[a-z0-9]+_)*candidates?(?:_|$)/i;
+
+// The routed model id, or null when the row carries none (null, absent,
+// non-string or blank) — a row with no id has nothing a probe could call.
+function routedModelOf(t) {
+  return t && typeof t.model === "string" && t.model.trim() !== "" ? t.model : null;
+}
+
 async function completionProbe(provider, model) {
   if (provider === "anthropic") {
     return expectOk(
@@ -241,7 +256,34 @@ async function routingProbes() {
 
   const unique = new Map();
   for (const t of routing.tasks || []) {
-    unique.set(`${t.provider}/${t.model}`, t);
+    const task = String(t?.task ?? "(unnamed task)");
+    const reason = typeof t?.reason === "string" ? t.reason : "";
+    const model = routedModelOf(t);
+    // The brain says nothing serves this task (a deliberate degrade — the
+    // #878 panel runs without a critic): there is no model to probe, and the
+    // row is not a failure. Checked first, so a stray id beside a
+    // no-candidate reason is not probed either.
+    if (NO_CANDIDATE_REASON.test(reason)) {
+      record(
+        `routing ${task}`,
+        true,
+        `no candidate routed (${reason})${model ? `; ${model} not probed` : ""}`
+      );
+      continue;
+    }
+    // No model and no reason that explains it: still never probed (the old
+    // loop sent model:null to api.openai.com under the key "null/null"), but
+    // a task the brain cannot route at all is exactly what this check exists
+    // to surface, so it stays a failure — now with a truthful message.
+    if (model === null) {
+      record(
+        `routing ${task}`,
+        false,
+        `brain routed no model${reason ? ` (reason: ${reason})` : ""} — nothing to probe`
+      );
+      continue;
+    }
+    unique.set(`${t.provider}/${model}`, t);
   }
   // The planner's effective model matters even though the task list shows
   // the gemini default when no key exists.

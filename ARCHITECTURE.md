@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-25 §9.6 PROVIDER HEALTH SKIPS AN UNROUTED ROW (brain v1.166 #878 follow-up). `/v1/model-routing`'s `panel_critic` row can report `model: null` / `provider: null` / `reason: no_cross_lab_candidate`; `scripts/ai-provider-health.mjs` keyed it `null/null` and probed api.openai.com with `model: null` (a false FAIL). Now a no-candidate reason is a PASS `routing <task>` line and is never probed; a null model with any other reason is never probed and stays a FAIL. Every other probe unchanged. New `npm run test:providerhealth` (runs the real script with `fetch` stubbed; no network). The script's header no longer claims the watchdog runs or mails it (§9.6: it is operator-run).
+
 Last verified against code: 2026-09-21 §5.12 NESTED-INDENT FIDELITY ROUND 24 (owner report on the deployed round 23: "nested indentation is still not being followed" for the AUP). ROOT CAUSE: body content depth ignored the INNER heading it sat under - blockToDocx computed list depthOffset and paragraph indent from headingShift alone, and profileListBlock indexed the profile at sectionDepth+1 regardless, so a list under a "###" sub-heading rendered at the sub-heading's own w:ind (both 720*(shift+2)) and the deliverable nested flat; round 23's e2e never caught it because its doc fixture had no inner headings and the rubric's "generated-only deeper levels are not penalized" hid exactly that region. FIX, render-side only (no migration, stored rows heal at next render): normalizeSectionBlocks tracks the inner-heading depth context and converts list markers at the level they SIT at (a lone "### a." heading's bullets now wear "i.", the 3-level cycle wraps under deeper heads), and renderDocx threads the same context into blockToDocx so lists step one ladder past their heading (2160/2880 under a top-level section's sub-heading; 1440/2160 directly under the title, byte-identical), loose paragraphs align at their heading's text column, bullets and ordered subs included; flat/profile-null renders stay byte-identical. MEASUREMENT: the rubric's indentation-ladder part now requires generated depths BEYOND a strictly rising template ladder to keep rising (docx bytes only, flat/mixed templates unaffected); pre-fix the owner-shaped fixtures score 0.87 (mixed profile: species + ladder) and 0.97 (all-decimal: ladder only, the owner's actual case), post-fix 1.000. New pins: r24 docx byte pins, the lone-sub-heading species pin, deep-flat/deep-rise rubric pins, and two full-pipeline e2e fixtures with "###"-over-list sections (mixed and all-decimal) pinned at 100 percent; ONE round-22 pin re-pinned (bullets under "### Deep" now convert at the level they sit at - the old expectation was the bug). Pane residual accepted: the doc pane keeps its flat CSS list indent (docx is the deliverable); marker species stay pane/docx-identical via the shared pass.
 
 Last verified against code: 2026-09-21 §5.12 EDITING-NOTES WINDOW, GOVERNANCE SIDE
@@ -13384,6 +13386,15 @@ zone and cannot write xl.net): CNAME `ai` → `8dbfd62e-….cfargotunnel.com`, *
   `GET /v1/model-routing` and fires a 1-token completion at every unique routed model id —
   catching the "hit a snag" class and key expiry/quota before visitors do.
   `node scripts/ai-provider-health.mjs [--env path]`, exit 0/1.
+  A task row that routes NO model is reported, never probed: a `reason` naming no
+  candidate (`/(?:^|_)no_(?:[a-z0-9]+_)*candidates?(?:_|$)/i` — brain v1.166 #878's
+  `panel_critic` row, `model: null` / `provider: null` / `no_cross_lab_candidate`, when
+  this host's keys leave no cross-lab critic and the panel runs without one) is a PASS
+  line `routing <task>` (any stray id beside it is not probed either); a null, absent,
+  blank or non-string `model` with any other reason is a FAIL line `routing <task>` —
+  `brain routed no model`. Before this, such a row was keyed `null/null` and sent
+  `model: null` to api.openai.com, a guaranteed false FAIL. Tests (no network — the
+  child's `fetch` is stubbed via `--import`): `npm run test:providerhealth`.
 
 ### 9.7 Scheduled work — systemd timers (`Persistent=true`), not cron
 
