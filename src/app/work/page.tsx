@@ -11,6 +11,7 @@ import {
   splitPlacements,
   type SequencePositions,
 } from "@/lib/work/placements";
+import { composeWorkCounts } from "@/lib/work/counts";
 import { CommunityCard } from "@/components/work-card";
 import staticTitles from "@/lib/work/static-titles.json";
 
@@ -108,6 +109,12 @@ export default async function WorkPage() {
   const bayNumbers = bays.map((b) => b.n);
   const { placed, run } = splitPlacements(team, bayNumbers);
   const positions = sequencePositions(exhibits, bayNumbers);
+  // THE page total (src/lib/work/counts.ts): exhibits from the snapshot +
+  // the team cards this one fetch returned. Registry width/total, the
+  // pager's panel count and the public reconciliation foot line all read
+  // this one value, so they can never disagree with each other or with the
+  // database plus the static lane.
+  const counts = composeWorkCounts(team.length);
   return (
     <div className="work-page mx-auto max-w-5xl space-y-16">
       {/* Manifesto strip */}
@@ -135,11 +142,8 @@ export default async function WorkPage() {
           Both are additive chrome - the static card sections stay
           byte-identical, and with JS off the pager strip never appears and
           every card renders visible. */}
-      <WorkRegistry placed={placed} run={run} />
-      <WorkPager
-        staticCount={staticTitles.exhibits.length}
-        teamCount={team.length}
-      />
+      <WorkRegistry placed={placed} run={run} counts={counts} />
+      <WorkPager counts={counts} />
 
       {/* Group: the engine */}
       <section

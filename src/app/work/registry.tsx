@@ -17,6 +17,7 @@
 
 import staticTitles from "@/lib/work/static-titles.json";
 import type { PublishedCard } from "@/lib/work/db";
+import { workCountsLine, type WorkCounts } from "@/lib/work/counts";
 
 interface RegistryRow {
   id: string;
@@ -26,17 +27,18 @@ interface RegistryRow {
 export function WorkRegistry({
   placed,
   run,
+  counts,
 }: {
   placed: ReadonlyMap<string, readonly PublishedCard[]>;
   run: readonly PublishedCard[];
+  /** The page's ONE total (src/lib/work/counts.ts, composed by WorkPage
+   * from the same fetch `placed` and `run` were split from, so
+   * counts.team always equals the placed lists plus the run). Width and
+   * the reconciliation foot line read it; no local arithmetic. */
+  counts: WorkCounts;
 }) {
   const { bays, exhibits } = staticTitles;
-  let placedCount = 0;
-  placed.forEach((list) => {
-    placedCount += list.length;
-  });
-  const total = exhibits.length + placedCount + run.length;
-  const width = Math.max(2, String(total).length);
+  const width = Math.max(2, String(counts.total).length);
 
   // Number the whole sequence before rendering (continuous across bays,
   // uniform width; placed rows follow their bay's statics, the run
@@ -91,6 +93,15 @@ export function WorkRegistry({
           </ul>
         </div>
       ))}
+      {/* Reconciliation foot line (owner directive 2026-09-28): the shown
+          total, spelled out as team-submitted DB cards + hand-built
+          exhibits, server-rendered and crawlable so a reader comparing the
+          page against the database sees the breakdown, not a discrepancy.
+          The string is workCountsLine() — byte-pinned by test:workcounts.
+          It lives inside nav.work-registry, so the pager island's panel
+          discovery (`section.panel[id]` under the aria-label wrappers)
+          never sees it. */}
+      <p className="mono mt-6 text-xs text-faint">{workCountsLine(counts)}</p>
     </nav>
   );
 }

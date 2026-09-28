@@ -38,6 +38,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type { WorkCounts } from "@/lib/work/counts";
 
 const SIZES = [5, 10, 25, 0] as const; // 0 = All
 const DEFAULT_SIZE = 10;
@@ -67,13 +68,15 @@ function prefersReducedMotion(): boolean {
 }
 
 export function WorkPager({
-  staticCount,
-  teamCount,
+  counts,
 }: {
-  staticCount: number;
-  teamCount: number;
+  /** The page's ONE total (src/lib/work/counts.ts): counts.total is the
+   * number of rendered card panels (exhibits + team), which the mount-time
+   * `panels.length !== total` check compares against the DOM — the
+   * fail-open gate on structure drift. */
+  counts: WorkCounts;
 }) {
-  const total = staticCount + teamCount;
+  const total = counts.total;
   const [size, setSize] = useState<number>(DEFAULT_SIZE);
   const [page, setPage] = useState(0);
   const [active, setActive] = useState(false);
