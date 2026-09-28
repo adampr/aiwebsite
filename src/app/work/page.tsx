@@ -524,7 +524,23 @@ export default async function WorkPage() {
             review run without a person in the chair. Maximum oversight on{" "}
             <a href="#aiwebsite">this site</a>, near-total delegation on that
             one. We run both on purpose, because the question worth answering
-            is where the line falls.
+            is where the line falls. The same formula produces its{" "}
+            <a
+              href="https://itsupportchicago.net/compare"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              head-to-head comparisons
+            </a>{" "}
+            of the top-ranked firms, XL.net among them, and its{" "}
+            <a
+              href="https://itsupportchicago.net/areas"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              neighborhood and suburb pages
+            </a>
+            , which rank providers with an office near each area.
           </p>
           <div className="mt-8 grid gap-6 md:grid-cols-3">
             <div className="border-t border-[var(--xl-line)] pt-4">
@@ -549,7 +565,14 @@ export default async function WorkPage() {
               </h3>
               <p className="mt-3 text-sm">
                 XL.net owns and operates the site and is itself one of the
-                firms it ranks, which the site says on its own about page
+                firms it ranks, which the site says on its own{" "}
+                <a
+                  href="https://itsupportchicago.net/about"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  about page
+                </a>{" "}
                 rather than in a footnote. That paragraph is the one piece of
                 copy no automated agent may write, alter or remove: changing it
                 is a human decision, and the rule is written into the component
