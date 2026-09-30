@@ -536,6 +536,9 @@ export function Workspace({
 
   // ---- guided questions ----
   const [answerText, setAnswerText] = useState("");
+  // Said when Answer is pressed with nothing to weave. The button stays
+  // pressable: a gray Answer read as broken, not as "type first".
+  const [answerInvalid, setAnswerInvalid] = useState(false);
   const [remember, setRemember] = useState(true);
   // Receipt for the previous answer. On mobile the flash happens in the
   // HIDDEN draft column, so without this line a 60-90s weave ends with no
@@ -2027,6 +2030,10 @@ export function Workspace({
                         className="mt-4"
                         onSubmit={(e) => {
                           e.preventDefault();
+                          if (answerText.trim().length < 2) {
+                            setAnswerInvalid(true);
+                            return;
+                          }
                           void answerGap(
                             current as Extract<OpenQuestion, { kind: "gap" }>
                           );
@@ -2035,9 +2042,19 @@ export function Workspace({
                         <textarea
                           className="input min-h-28 w-full"
                           value={answerText}
-                          onChange={(e) => setAnswerText(e.target.value)}
+                          onChange={(e) => {
+                            setAnswerText(e.target.value);
+                            setAnswerInvalid(false);
+                          }}
+                          aria-label={current.text}
+                          aria-invalid={answerInvalid ? true : undefined}
                           placeholder="Answer in plain language. It gets woven into the section, not pasted."
                         />
+                        {answerInvalid && (
+                          <p className="mt-2 text-xs" role="alert">
+                            Type your answer first. A few words is enough.
+                          </p>
+                        )}
                         <label className="mt-3 flex items-start gap-2 text-xs text-faint">
                           <input
                             type="checkbox"
@@ -2054,7 +2071,7 @@ export function Workspace({
                           <button
                             type="submit"
                             className="btn btn--primary"
-                            disabled={answerText.trim().length < 2 || busy}
+                            disabled={busy}
                           >
                             Answer
                           </button>
@@ -2064,6 +2081,7 @@ export function Workspace({
                             onClick={() => {
                               setSkipped((s) => new Set(s).add(current.key));
                               setAnswerText("");
+                              setAnswerInvalid(false);
                             }}
                           >
                             Skip for now
@@ -3576,6 +3594,17 @@ function StatedStaffRow({
   );
 }
 
+/**
+ * A typed count as a whole number, or null. Accepts what people type for a
+ * headcount: surrounding spaces, thousands commas ("1,200"), and a decimal
+ * part (floored, as before). Anything else, including trailing words, is
+ * refused rather than guessed at.
+ */
+function parseWholeCount(raw: string): number | null {
+  const m = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?$/.exec(raw.trim());
+  return m ? Number(m[1].replace(/,/g, "")) : null;
+}
+
 /** The one-at-a-time pricing answer control. Sends quantities, never money. */
 function PricingAnswer({
   q,
@@ -3596,6 +3625,10 @@ function PricingAnswer({
     q.prefill != null ? String(q.prefill) : ""
   );
   const [headcountOnly, setHeadcountOnly] = useState(headcountOnlySet);
+  // Why the last press did nothing. The button used to go gray until the
+  // box held bare digits, so "1,200" or "45 users" left a dead-looking
+  // Answer button with no reason given (2026-09-30).
+  const [invalid, setInvalid] = useState("");
   const isFm = q.field === "fullyManagedUsers";
 
   if (q.input === "choice")
@@ -3643,11 +3676,23 @@ function PricingAnswer({
       className="mt-4"
       onSubmit={(e) => {
         e.preventDefault();
-        const n = Number(value);
-        if (!Number.isFinite(n) || n < minimum) return;
+        const n = parseWholeCount(value);
+        if (n === null) {
+          setInvalid(
+            value.trim() === ""
+              ? "Enter a number first."
+              : "Enter just the number, like 45 or 1,200."
+          );
+          return;
+        }
+        if (n < minimum) {
+          setInvalid(`Enter at least ${minimum}.`);
+          return;
+        }
+        setInvalid("");
         void onAnswer(
           q,
-          Math.floor(n),
+          n,
           isFm ? { statesHeadcountOnly: headcountOnly } : {}
         );
       }}
@@ -3655,11 +3700,19 @@ function PricingAnswer({
       <input
         className="input w-full"
         inputMode="numeric"
-        pattern="[0-9]*"
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          setValue(e.target.value);
+          setInvalid("");
+        }}
         aria-label={q.text}
+        aria-invalid={invalid ? true : undefined}
       />
+      {invalid && (
+        <p className="mt-2 text-xs" role="alert">
+          {invalid}
+        </p>
+      )}
       {isFm && (
         <label className="mt-3 flex items-start gap-2 text-xs text-faint">
           <input
@@ -3674,16 +3727,7 @@ function PricingAnswer({
         </label>
       )}
       <div className="mt-4 flex flex-wrap gap-3">
-        <button
-          type="submit"
-          className="btn btn--primary"
-          disabled={
-            busy ||
-            value.trim() === "" ||
-            Number(value) < minimum ||
-            !Number.isFinite(Number(value))
-          }
-        >
+        <button type="submit" className="btn btn--primary" disabled={busy}>
           Answer
         </button>
         {q.alt && (
