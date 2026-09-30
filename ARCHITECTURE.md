@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17.14 RFP CHECKS: GROUPED ROWS, STALE NOT WIPED, FIX ALL REMAINING (owner: "give an option to fix all the remaining that are not ignored"; one A6 phrase in two paragraphs showed as two identical rows; one Fix it cleared every other finding so Run checks had to be pressed again; "a refute round with automatic corrections before a final Run Checks where a human is involved"). The Checks pane renders ONE row per (ruleId, whitespace-collapsed message) through the new pure `groupFindings` in `src/lib/rfp/check-fixes.ts` ("in N places" when a group has several members; blocking groups first; counts are row counts), and a row's Fix it runs `groupFixPlan` (Tron steps collapse to one: the shared label, or `DOC_LABEL` when members span two labels or any resolved there; the instruction names the message once and every excerpt via the new `fixInstructionFor`, which `fixInstruction` now wraps byte-for-byte). `POST /api/rfp/proposals/[id]/checks` also takes `{op, sigs: string[]}` (1..50 distinct, each <= 1200 chars; all or nothing under the lock; one activity row with `meta.count`); the single-`sig` shape is unchanged. `GateResult` gains additive `atRev` (stamped by BOTH store sites before `applyIgnores`; kept by the checks route's re-derivation). Content writes NO LONGER null `gate_json`/`gate_ran_at` (`src/lib/rfp/db.ts`: `writeProposalSections`, `writeProposalStructureOp`, `writeProposalPricing`, `completeGeneration`); the rev bump plus `atRev` is what makes a stored verdict stale, and page.tsx passes `gateStale` when a stored run's `atRev` is missing or differs from the row's rev (rows stored before `atRev` existed therefore show the stale banner once after this deploy, by design, until the next run stamps them). The workspace keeps a shown result on every content write and marks it stale (`markGateStale`, at the nine former `setGateResult(null)` sites plus a landed draft and another tab's landed sections) with "The draft changed since these checks ran" and "Run the checks again". New "Fix all remaining (N)" round: auto-fix pass, the rules re-run, one more pass over the survivors, the final run shown; at most two fix passes, strictly sequential brain calls, never a removal or a retitle, a C1 section rebuilt at most once per round, B7 and pricing/structural findings left for the person, a Stop, a receipt. No migration, no schema, no env change (`atRev` lives inside the existing `gate_json`).
+
 Last verified against code: 2026-09-30 §5.17.13 RFP RAIL WAITS FOR THE DRAFT + WORKSPACE TOOL CHROME (owner: while the response drafts initially, do not show the Questions / Coverage / Checks / Tron window, it appears once it can be used; and the "Adjust quantities" form and its kind on the sheets must look distinct from the document so the draft on screen is exactly the download). The rail column and the mobile tabstrip are UNMOUNTED while `railHidden` in `src/app/rfp/r/[id]/workspace.tsx` (`structure.length > 0 && !railPeek && (draftedCount === 0 || initialDrafting)`: nothing drafted, or a run that began with nothing drafted still active, unless a pane was explicitly asked for through `showPane`); the document then keeps its exact 7/12 column width centered. Every screen-only element on a sheet (action rows, block bars, status lines, the gaps callout with the cite count, edit boxes, the pricing empty state and the adjust form) wears `.rfpdoc-tool` (dashed `#a9acc9` on `#f3f4f9`, Archivo 13px) with the label "Workspace · not in the download" (`--row` pills carry no label), and one legend line above the document says the white pages are the download. Sheets the download does not contain (undrafted sections; divider 02 and the Investment sheet before pricing exists) wear `.rfpdoc-page--absent` with a "Not in the download until ..." label. The reverse direction is mirrored too: the monthly-minimum sentence the file prints is now authored once in `quote.ts` (`minimumSentence`) and shown on the Investment sheet, the dividers and closing lede take the export's `coverClientName`, and the letter's addressee prints "the client" when there is none. `.rfpdoc-gaps` is gone. No server, API, DB or env change; the emitters are untouched (they never printed a tool).
 
 Last verified against code: 2026-09-30 §5.17.12 RFP READ BUDGET + READ AGAIN (the AISC RFP failed three reads with "could not be read for its structure": the brain finished each in 129-152 s but `readRfp` aborted at a fixed 120 s). The read now gets `RFP_READ_BUDGET_MS` (8 min, intake.ts) over the module's long transport (`callGovernanceBrain` gained `opts.longTransport`; plain fetch caps at undici's 300 s), the worker moved to `src/lib/rfp/read-document.ts`, and new `POST /api/rfp/documents/[id]/read` re-reads the stored text of a `read_failed` (or stale `reading`) document behind one conditional-UPDATE claim; `GET .../status` gains `readStale`; the workspace's `<ReadAgain>` panel follows a read and offers "Read it again"; `/rfp/new` polls past the budget and opens the RFP on failure. New activity action `document.reread`. No migration, no env change.
@@ -9188,9 +9190,13 @@ this round removes the marking on explicit owner ruling — the residual
 control is the authenticated staff-only audience plus the workspace-side
 notice, accepted by the owner. Only a proposal with zero drafted
 sections still 409s (nothing to render). The gate result lands in
-`gate_json` on every run, and EVERY content write (sections, pricing,
-generation landing, structural ops) nulls `gate_json`/`gate_ran_at`, so a stored "passing"
-can never describe a draft that has since changed. `proposal.export` logs
+`gate_json` on every run, stamped with the rev it read (`atRev`, §5.17.8).
+Content writes (sections, pricing, generation landing, structural ops) no
+longer null `gate_json`/`gate_ran_at` (since §5.17.14); they bump `rev`, and
+a stored result whose `atRev` is missing or differs from the row's rev is
+rendered STALE, never as current, so a stored "passing" still cannot
+present itself as describing a draft that has since changed. The export
+never reads the stored verdict: it re-runs the gate every time. `proposal.export` logs
 format, bytes, draft flag, and outstanding counts.
 `resolvedTextSpans` includes the pricing strings the emitters print
 (illustration labels/basis, notes, pass-through label/detail), so the
@@ -10058,7 +10064,9 @@ coverage, B7/D1/A5 on visual blocks, flow order).
 
 #### 5.17.8 Checks pane: Ignore / Fix it (2026-09-30)
 
-Every violation row in the Checks pane carries two actions (owner directive).
+Every row in the Checks pane carries two actions (owner directive). Since
+§5.17.14 a row is a GROUP of findings, not one violation (see "Grouped rows"
+below); what follows about one finding applies to every member of a row.
 
 **Ignore persistently dismisses one finding for this proposal.** The mark
 survives gate re-runs: the rules recompute every violation from scratch, so
@@ -10150,11 +10158,146 @@ ask flow now takes explicit overrides and `askTronDoc(instr)` takes the
 instruction as a parameter, because the fix sets state in the same tick it
 asks (setState race). All existing guards (tronBusy, docRunIdRef staleness,
 stop, the staleness-guarded Use this/Discard accept) are untouched; content
-writes still null `gateResult`, so after an accepted fix the pane invites a
-re-run. Suite: `npm run test:rfpchecks`
+writes mark the shown result STALE rather than wiping it (below), so after
+an accepted fix the other findings stay and the pane invites a re-run.
+Suite: `npm run test:rfpchecks`
 (`scripts/rfp-check-ignores-tests.ts`, pure: sig stability/divergence,
 applyIgnores recompute across severities, dedupe + cap, garbage tolerance,
-locator resolution, per-rule recipe mapping). No new env vars.
+locator resolution, per-rule recipe mapping, grouping, group plans, the
+Fix all step planner, `atRev` survival). No new env vars.
+
+**Grouped rows (§5.17.14).** The phrase scans emit one violation per TEXT
+SPAN (`scanForbiddenPhrases`, validators/rule.ts), so one phrase in two
+paragraphs used to arrive as two identical rows. `groupFindings(violations)`
+(check-fixes.ts, pure, client-safe) groups by `ruleId + "\u0000" +
+whitespace-collapsed message`, in order of first appearance; a group's
+severity is "block" when any member blocks (else the first member's), its
+message and `timedMessage` are the first member's, and members keep their
+own `findingSig` (the persisted format is untouched: one stored dismissal
+per member). The CALLER filters: the visible rows group only undismissed
+findings and the Ignored disclosure only dismissed ones, so a partly
+ignored group shows its remainder in each list. The pane renders one row per
+group, blocking groups first, with a faint "in N places" when a group has
+more than one member; the summary counts, "Ignored (N)" and "with N ignored
+findings" are row counts. Row keys, the busy key (`checksBusySig`), the
+inline error, the ask editor and the pricing/none note all key on the group
+key. Ignore/Restore post every member's sig at once. Fix it runs
+`groupFixPlan(group, {sections, requirements})`: each member's `fixRecipe`,
+then Tron recipes collapse into AT MOST ONE step, on the one label they
+share, or on `DOC_LABEL` when they name two or more labels or any member
+already resolved there (the whole-document sweep finds every occurrence,
+which is the duplicate case). Its instruction is `fixInstructionFor(members,
+extra)`: the message once, then the first 6 distinct excerpts ("The
+offending text, in each place it appears: ...", then "and K more places"),
+up to 6 distinct suggestions, and LAST the optional context (bounded at 800
+chars) and the "change only what is needed" guard. The 2000-char cap trims
+the finding text before them, so it can never remove the guard or what the
+person typed (D1 emits one finding per em dash, so a 60-member group is
+real). `fixInstruction(v, extra)` is now a one-member wrapper and composes
+exactly the bytes it always did. The `ask` prompt survives only when every collapsed member carried the
+same one. Redraft steps stay one per label; pricing/none steps dedupe by
+message. A one-member group's plan IS its recipe, so Fix it on it behaves
+exactly as before; a group with several steps (rare: a Tron fix plus a
+pricing pointer) runs the first actionable step and names the rest beside
+the row ("Also needed: ..."). `isAutoFixable(steps)` is true when a step is
+tron or redraft.
+
+**Batch sigs on the checks route.** `POST .../checks` accepts `{op, sig}`
+(unchanged, byte for byte) OR `{op, sigs: string[]}`: 1..50 distinct
+non-empty strings, each at most 1200 chars, else 400 `invalid_request`.
+Inside the row lock the batch is all or nothing: an ignore requires EVERY
+sig to match a violation on the stored run (else 404 `not_found`, nothing
+written), a restore requires every sig to be ignored; then one
+`appendIgnore` per sig, one `applyIgnores`, one write, and one activity row
+whose meta adds `count` (and sums `sigChars`). The client dedupes a row's
+member sigs first (a C1 block citing an old and a new fact id yields two
+identical sigs), sends the single shape for a one-sig chunk, and posts a
+row of more than 50 in SEQUENTIAL chunks of 50, each its own all-or-nothing
+batch: it stops at the first failure (shown beside the row) and adopts the
+last successful response, since earlier chunks did land. The busy and error
+keys are prefixed per list ("v:" visible, "i:" Ignored) so a partly ignored
+group never shows its state in both.
+
+**Stale, not wiped.** `GateResult` gains the additive `atRev?: number`, the
+proposal rev the run read. BOTH store sites stamp it (`{...runDraftGate(input),
+atRev: proposal.rev}`) BEFORE `applyIgnores`, which spreads the result, so
+the stamp survives the re-apply and every checks-route re-derivation.
+Content writes NO LONGER null `gate_json`/`gate_ran_at` (`src/lib/rfp/db.ts`:
+`writeProposalSections`, `writeProposalStructureOp`, `writeProposalPricing`,
+`completeGeneration`); each bumps `rev`, and the rev bump plus `atRev` is
+what makes a stored verdict stale. page.tsx parses `gate_json` once and
+passes `gateStale = typeof atRev !== "number" || atRev !== proposal.rev`, so
+a reload after an edit shows the same rows with the stale banner. A row
+stored before `atRev` existed cannot prove it is current and reads as
+stale: every such row shows the banner once after this deploy, by design,
+until the next run stamps it. In the workspace
+`gateStale` is state; `markGateStale()` replaces `setGateResult(null)` at
+every content-change site (pricing answer, gap weave, references question
+added, section edit, visuals, the Tron accept `applyProposal`, references
+edited, references answered, the adjust-quantities form) and also fires when
+a drafted section lands (`draftOne`'s poll) or another tab's sections land
+(the mount-time follow poller). The result stays on screen with
+"The draft changed since these checks ran. Some findings shown may already
+be resolved." and a "Run the checks again" button above the rows; the
+workbar's "open items remain" hint adds "(checks are stale)". `runChecks`
+success clears the mark unless a content write landed while it ran (a
+content sequence ref, not `atRev` against `revRef`, which can lag the
+server by an unadopted rev); an ignore/restore leaves it as it is. Rows keep
+Fix it and Ignore enabled: an Ignore on a stale row succeeds against the
+stored (stale) run, whose violations are exactly the ones on screen, and
+the dismissal re-applies to the next run's matching findings as usual.
+
+**Fix all remaining (the auto round).** Shown when a result exists and at
+least one visible row is auto-fixable: "Fix all remaining (N)" (N = rows
+for which `isAutoFixableGroup` holds, `btn btn--primary`) with the sentence "Tron fixes every
+finding it can, the rules run again, and what survives gets one more pass.
+Pricing and structural findings wait for you." The round (`fixAll` in
+workspace.tsx) never leaves the Checks pane and clears no Tron surface. If
+the shown result is stale it first re-runs the checks (no brain call) so it
+fixes what the current draft has. Each pass plans with the pure
+`fixAllSteps(visibleGroups, ctx)`: redrafts first (one per label, C1's
+rebuild), then Tron revisions per section label with the groups'
+instructions packed, whole, into space-joined chunks under the 2000-char cap
+(never cut mid-instruction), skipping a label being redrafted in the same
+pass, then the whole-document sweep last carrying the union of every
+`DOC_LABEL` instruction; pricing and none steps never appear. Rules in
+`AUTO_EXCLUDED_RULES` never enter the round and never count: B7 (an
+unsourced figure), because with blank context Tron would remove a figure
+that may be legitimate; its own row keeps Fix it with the context editor.
+The other `ask` recipes (A5, C3, D4's edge variant) run with blank context,
+whose stated default is the safe direction. Rule C1 compares against the
+proposal's creation time (rules-c.ts), so a rebuilt section citing the
+corrected fact is reported again: the round keeps a round-wide set of
+rebuilt labels and passes it as `fixAllSteps(..., {noRedraft})`, so pass 2
+never redrafts a label twice (its Tron steps are then no longer suppressed),
+and the receipt says "C1 is still reported after a rebuild: <section>".
+Steps run STRICTLY sequentially (the brain semaphore is shared with Twilio
+voice): a section step POSTs `.../section` `{label, instruction}` and
+applies the answer through `applyProposal` as a plain revise (the same
+staleness-guarded accept write as "Use this"); a sweep step POSTs the plan
+turn, then the same revise call per plan target (`directive` carried);
+redraft steps run `draftOne(label, title, true)` under the same runbar
+`generate` shows. The round NEVER removes or retitles: a revise answer with
+`remove: true`, a plan target with op `retitle`/`remove`, or a heading riding
+a revise is reported as a line for the person instead (a proposed heading is
+dropped, the body fix applied); an answer identical to the current text is
+not written. Tron calls from the round never re-send a document attached in
+the Tron pane (`postTron(payload, false)`). After each pass the rules re-run
+(`runChecks`, the refute, which also clears stale); pass 2 fixes what
+survived; the round ends after at most two fix passes, when a pass has
+nothing auto-fixable, or when a pass applied nothing (it would only repeat
+itself). Progress reads "Pass 1 of 2 · fixing 3 of 7 · 4.2 Support model"
+(a sweep's plan step becomes its targets in the count). Stop finishes the
+current step, runs the checks once and reports "Stopped after N fixes". The
+receipt, shown until the next run or round: "Fixed N findings in M sections
+over P passes. K findings remain for you." (N = rows present at the start
+and gone at the end, K = rows left), or "Nothing was fixable automatically.
+K findings remain for you." when no pass had a step; then the remaining
+lines (C1 after a rebuild, B7 findings waiting for the person), then every
+skipped and failed line. For its whole duration `tronBusy` AND `busy` are
+held (set at the start and released only in `finally`, so neither can
+stick): the rows, both Run checks buttons, Ignore/Restore, Fix all itself
+and every draft control (Draft all, Draft this, Redraft) are disabled.
 
 #### 5.17.9 Your knowledge is editable: edit, send, withdraw, delete, promote (2026-09-30)
 
@@ -10775,6 +10918,31 @@ document; state 2 (drafted, gaps, a block, pricing) and the same at 390px
 render every `.rfpdoc-tool` with `border-top-style: dashed`, every label
 exact, the block bar flush right. tsc clean; eslint shows only the five
 pre-existing `react-hooks/refs` findings on the `flashSeq.current` keys.
+
+#### 5.17.14 Checks: grouped rows, stale not wiped, Fix all remaining (2026-09-30)
+
+Four owner asks in one round: fix all the remaining findings that are not
+ignored; one row where a phrase scan found the same phrase in two places;
+keep the other findings on screen after one Fix it; and an automatic
+correction round, refuted by a re-run of the rules, before the final run a
+person reads. The contract lives in §5.17.8 (the "Grouped rows", "Batch
+sigs on the checks route", "Stale, not wiped" and "Fix all remaining"
+paragraphs); this entry records the round. Files: `src/lib/rfp/check-fixes.ts`
+(`groupFindings`, `groupFixPlan`, `fixInstructionFor`, `tronMembersOf`,
+`isAutoFixable`, `isAutoFixableGroup`, `AUTO_EXCLUDED_RULES`,
+`fixAllSteps`), `src/lib/rfp/validators/gate.ts`
+(`GateResult.atRev`), `src/lib/rfp/gate-run.ts` and
+`src/app/api/rfp/proposals/[id]/export/route.ts` (stamp `atRev`),
+`src/app/api/rfp/proposals/[id]/checks/route.ts` (`sigs` batch),
+`src/lib/rfp/db.ts` (content writes keep `gate_json`/`gate_ran_at`; the
+rev bump plus `atRev` marks them stale),
+`src/app/rfp/r/[id]/page.tsx` (`gateStale` prop, true when `atRev` is
+missing or differs from the row's rev) and
+`src/app/rfp/r/[id]/workspace.tsx` (grouped rows, `markGateStale`, the
+round). Tests extend `scripts/rfp-check-ignores-tests.ts`. Rows stored
+before `atRev` existed show the stale banner once after this deploy, by
+design, until the next run stamps them. No migration, no
+schema, no env change.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

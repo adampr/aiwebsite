@@ -75,7 +75,17 @@ import type { GateResult } from "@/lib/rfp/validators/gate";
 // findingSig is the PERSISTED dismissal key the checks route validates, and
 // the fix recipes only read the violation + the drafted labels.
 import { findingSig } from "@/lib/rfp/check-ignores";
-import { fixInstruction, fixRecipe } from "@/lib/rfp/check-fixes";
+import {
+  fixAllSteps,
+  fixInstructionFor,
+  groupFindings,
+  groupFixPlan,
+  AUTO_EXCLUDED_RULES,
+  isAutoFixableGroup,
+  tronMembersOf,
+  type FindingGroup,
+  type FixStep,
+} from "@/lib/rfp/check-fixes";
 // Pure and client-safe by contract (no lookbehinds, type-only imports).
 import {
   draftBlockSummary,
@@ -136,6 +146,21 @@ type Requirement = {
 };
 
 type Pane = "questions" | "coverage" | "checks" | "tron";
+
+/** The checks route's batch bound (its MAX_SIGS): a larger row posts in
+ *  sequential chunks of this size. */
+const CHECKS_BATCH = 50;
+
+/** The Checks pane's rows for a result: undismissed findings grouped by rule
+ *  id and message (check-fixes.ts groupFindings), blocking groups first. */
+function visibleGroupsOf(r: GateResult | null): FindingGroup[] {
+  if (!r) return [];
+  const groups = groupFindings(r.violations.filter((v) => !v.dismissed));
+  return [
+    ...groups.filter((g) => g.severity === "block"),
+    ...groups.filter((g) => g.severity !== "block"),
+  ];
+}
 
 /** One entry in the guided flow. Pricing entries apply instantly; gap
  *  entries take a brain call and say so. */
@@ -386,6 +411,7 @@ export function Workspace({
   pricing: initialPricing,
   pricingInputs: initialInputs,
   gateResult: initialGate,
+  gateStale: initialGateStale,
   busy: initialBusy,
   genError,
   autoDraft,
@@ -415,6 +441,8 @@ export function Workspace({
   pricing: PricingQuote | null;
   pricingInputs: QuoteInputs | null;
   gateResult: GateResult | null;
+  /** The stored run read an older rev than the row's (page.tsx, §5.17.8). */
+  gateStale: boolean;
   busy: boolean;
   genError: string | null;
   autoDraft: boolean;
@@ -491,6 +519,20 @@ export function Workspace({
         : null
   );
   const [gateResult, setGateResult] = useState<GateResult | null>(initialGate);
+  // A content write no longer WIPES the Checks pane (owner, 2026-09-30:
+  // one Fix it cleared every other finding, forcing a re-run). The result
+  // stays on screen marked stale until the next run replaces it. The server
+  // keeps the stored run too (a content write bumps rev and leaves
+  // gate_json), so a reload shows the same rows stale: page.tsx seeds this
+  // from the stored run's atRev against the row's rev.
+  const [gateStale, setGateStale] = useState(initialGateStale);
+  // Bumped on every content change, so a run that was in flight while one
+  // landed does not clear the stale mark it no longer deserves to clear.
+  const contentSeqRef = useRef(0);
+  const markGateStale = useCallback(() => {
+    contentSeqRef.current += 1;
+    setGateStale(true);
+  }, []);
   // `pane` is the ONE source of truth for which rail pane renders; `mobile`
   // only decides draft-vs-rail below lg. Rendering off both used to stack
   // two panes whenever they disagreed (first tap of any mobile rail tab).
@@ -754,9 +796,10 @@ export function Workspace({
   const [checking, setChecking] = useState(false);
 
   // ---- checks pane: ignore / fix it (§5.17.8) ----
-  // The one row whose ignore/restore is in flight (its findingSig); every
-  // row's buttons freeze on it because each write replaces the whole stored
-  // result, so two in flight would race their setGateResult adoptions.
+  // The one row whose ignore/restore is in flight (its group key: a grouped
+  // row posts every member's findingSig at once); every row's buttons freeze
+  // on it because each write replaces the whole stored result, so two in
+  // flight would race their setGateResult adoptions.
   const [checksBusySig, setChecksBusySig] = useState<string | null>(null);
   // A failed ignore/restore renders beside ITS row (errors render in the
   // owning pane, the house rule), never as a page notice.
@@ -765,12 +808,15 @@ export function Workspace({
     message: string;
   } | null>(null);
   // The ONE open inline context editor (fix recipes with an optional ask);
-  // keyed by sig so opening another row's closes this one.
+  // keyed by the row's group key (`sig` below) so opening another row's
+  // closes this one. `members` are the group's Tron-recipe findings, what
+  // the instruction is recomposed from once the context is typed.
   const [fixAsk, setFixAsk] = useState<{
     sig: string;
     label: string;
     prompt: string;
     text: string;
+    members: Violation[];
   } | null>(null);
   // The inline verdict for a pricing/none recipe, keyed to its row.
   const [fixNote, setFixNote] = useState<{
@@ -779,6 +825,28 @@ export function Workspace({
     pricing: boolean;
   } | null>(null);
   const [ignoredOpen, setIgnoredOpen] = useState(false);
+  // ---- Fix all remaining (§5.17.8): the auto round ----
+  // Auto-fix pass, the rules re-run (the refute), one more pass over what
+  // survived, then the final run the person reads. Never parallel, never a
+  // removal or a retitle; pricing and structural findings wait.
+  const [fixAllRun, setFixAllRun] = useState<{
+    pass: 1 | 2;
+    done: number;
+    total: number;
+    current: string;
+    applied: string[];
+    skipped: string[];
+    failures: string[];
+  } | null>(null);
+  const fixAllStopRef = useRef(false);
+  const [fixAllStopping, setFixAllStopping] = useState(false);
+  // Shown after a round until the next runChecks or round.
+  const [fixAllReceipt, setFixAllReceipt] = useState<{
+    summary: string;
+    remaining: string[];
+    skipped: string[];
+    failures: string[];
+  } | null>(null);
 
   const covered = new Set(sections.map((s) => s.label));
   const undrafted = structure.filter((n) => !covered.has(n.label));
@@ -1177,12 +1245,17 @@ export function Workspace({
           continue;
         }
         unreachable = 0;
-        if (st.changed.length) showChanged(st.changed);
+        if (st.changed.length) {
+          showChanged(st.changed);
+          // A landed section is a content change like any other write: a
+          // shown run now describes an older draft.
+          markGateStale();
+        }
         if (!st.inFlight) return { error: st.error, busy: false };
       }
       return { error: "Timed out waiting for the draft.", busy: false };
     },
-    [documentId, pollOnce, showChanged]
+    [documentId, pollOnce, showChanged, markGateStale]
   );
 
   /** The CoWork loop: every undrafted section, one call at a time, and the
@@ -1303,7 +1376,11 @@ export function Workspace({
       for (let i = 0; i < 600 && alive; i++) {
         await new Promise((r) => setTimeout(r, 3000));
         const st = await pollOnce();
-        if (st.changed.length) showChanged(st.changed);
+        if (st.changed.length) {
+          showChanged(st.changed);
+          // Another tab's sections landed here: a shown run is now stale.
+          markGateStale();
+        }
         if (!st.reachable) continue;
         if (st.inFlight) {
           idleStreak = 0;
@@ -1398,7 +1475,7 @@ export function Workspace({
     }
     setPricing(d.quote ?? null);
     adoptRev(d.rev);
-    setGateResult(null);
+    markGateStale();
     setAnsweredCount((n) => n + 1);
     setAnswerText("");
     if (d.quote) showChanged(["__pricing"]);
@@ -1477,7 +1554,7 @@ export function Workspace({
         prev.map((s) => (s.label === target.label ? d.section : s))
       );
       adoptRev(d.rev);
-      setGateResult(null);
+      markGateStale();
       done.push(target.label);
       showChanged([target.label]);
       if (d.note && q.targets.length === 1) setNotice(d.note);
@@ -1523,7 +1600,7 @@ export function Workspace({
     adoptRev(d.rev);
     const added: string[] = Array.isArray(d.added) ? d.added : [];
     if (added.length) {
-      setGateResult(null);
+      markGateStale();
       showChanged(added);
     }
     setRefsMissing([]);
@@ -1535,6 +1612,10 @@ export function Workspace({
     // lives here too.
     if (!proposalId || checksBusySig !== null) return null;
     setChecking(true);
+    const seqAtStart = contentSeqRef.current;
+    // A receipt describes the run it ended on; a fresh run supersedes it
+    // (the round sets its receipt AFTER its own final run).
+    setFixAllReceipt(null);
     const res = await fetch(`/api/rfp/proposals/${proposalId}/gate`, {
       method: "POST",
     }).catch(() => null);
@@ -1550,41 +1631,68 @@ export function Workspace({
     }
     const result: GateResult = await res.json();
     setGateResult(result);
+    // The run read the current draft unless a content write landed while
+    // it ran. Not derived from result.atRev: revRef can lag the server by an
+    // unadopted rev (adoptRev only takes rev + 1), which would misreport a
+    // fresh run as stale.
+    setGateStale(contentSeqRef.current !== seqAtStart);
     return result;
   }
 
-  /** POST one ignore/restore to the checks route. The server re-validates
-   *  the sig against the stored run under a row lock and answers with the
-   *  UPDATED stored GateResult, adopted directly (same shape as runChecks),
-   *  so the row moves between the lists with no extra fetch. */
-  async function postChecksOp(op: "ignore" | "restore", sig: string) {
-    if (!proposalId || checksBusySig) return;
-    setChecksBusySig(sig);
+  /** POST ignore/restore to the checks route for a whole grouped row.
+   *  `busyKey` names the row IN ITS LIST ("v:" visible, "i:" Ignored), so a
+   *  partly ignored group never shows its busy state or error in both.
+   *  Member sigs are deduped first (a C1 block citing an old and a new fact
+   *  id yields two identical sigs) and posted in sequential chunks of 50, the
+   *  route's batch bound, each chunk its own all-or-nothing batch under the
+   *  row lock; a one-sig chunk sends the original single `sig` shape. The
+   *  first failure stops the run and shows beside the row; the last
+   *  successful response (the UPDATED stored GateResult, same shape as
+   *  runChecks) is adopted either way, since earlier chunks did land.
+   *  Staleness is left as it is: an ignore changes no content. */
+  async function postChecksOp(
+    op: "ignore" | "restore",
+    busyKey: string,
+    rowKey: string,
+    sigsIn: string[]
+  ) {
+    const sigs = [...new Set(sigsIn)];
+    if (!proposalId || checksBusySig || sigs.length === 0) return;
+    setChecksBusySig(busyKey);
     setChecksError(null);
-    const res = await fetch(`/api/rfp/proposals/${proposalId}/checks`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ op, sig }),
-    }).catch(() => null);
+    let adopted: GateResult | null = null;
+    let error: string | null = null;
+    for (let i = 0; i < sigs.length; i += CHECKS_BATCH) {
+      const chunk = sigs.slice(i, i + CHECKS_BATCH);
+      const res = await fetch(`/api/rfp/proposals/${proposalId}/checks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          chunk.length === 1 ? { op, sig: chunk[0] } : { op, sigs: chunk }
+        ),
+      }).catch(() => null);
+      if (!res) {
+        error =
+          adopted === null
+            ? "The server could not be reached. Nothing was changed."
+            : "The server could not be reached. Part of this row was changed; run the checks to see the rest.";
+        break;
+      }
+      const d = await res.json().catch(() => null);
+      if (!res.ok) {
+        error = d?.message ?? "That finding could not be changed.";
+        break;
+      }
+      adopted = d as GateResult;
+    }
     setChecksBusySig(null);
-    if (!res) {
-      setChecksError({
-        sig,
-        message: "The server could not be reached. Nothing was changed.",
-      });
+    if (adopted) setGateResult(adopted);
+    if (error) {
+      setChecksError({ sig: busyKey, message: error });
       return;
     }
-    const d = await res.json().catch(() => null);
-    if (!res.ok) {
-      setChecksError({
-        sig,
-        message: d?.message ?? "That finding could not be changed.",
-      });
-      return;
-    }
-    setGateResult(d as GateResult);
-    if (fixAsk?.sig === sig) setFixAsk(null);
-    if (fixNote?.sig === sig) setFixNote(null);
+    if (fixAsk?.sig === rowKey) setFixAsk(null);
+    if (fixNote?.sig === rowKey) setFixNote(null);
   }
 
   /** Fire a Tron revision from a Checks-pane fix: the SAME clears as picking
@@ -1599,36 +1707,76 @@ export function Workspace({
     void askTron({ label, instruction: instr });
   }
 
-  /** The Fix it button: resolve the finding's recipe and act on it. */
-  function fixIt(v: Violation, sig: string) {
-    setChecksError(null);
-    const r = fixRecipe(v, { sections, requirements });
-    if (r.kind === "tron") {
-      if (r.ask) {
-        const prompt = r.ask.prompt;
+  /** Act on one fix step: the Tron run (or its optional-context editor),
+   *  the per-section redraft, or the inline verdict. `key` is the row. */
+  function runFixStep(g: FindingGroup, step: FixStep) {
+    const key = g.key;
+    if (step.kind === "tron") {
+      if (step.ask) {
+        const prompt = step.ask.prompt;
+        const members = tronMembersOf(g, { sections, requirements });
         setFixNote(null);
         // Toggle: pressing Fix it again on the open row closes the editor.
         setFixAsk((cur) =>
-          cur?.sig === sig ? null : { sig, label: r.label, prompt, text: "" }
+          cur?.sig === key
+            ? null
+            : { sig: key, label: step.label, prompt, text: "", members }
         );
         return;
       }
       setFixAsk(null);
-      runFix(r.label, r.instruction);
+      runFix(step.label, step.instruction);
       return;
     }
-    if (r.kind === "redraft") {
+    if (step.kind === "redraft") {
       // The EXISTING per-section redraft path (the section card's Redraft
       // button calls exactly this): generate with force replaces the section
       // wholesale, which is rule C1's own remedy (rebuild, do not patch).
       setFixAsk(null);
-      const node = structure.find((n) => n.label === r.label);
-      const sec = sections.find((s) => s.label === r.label);
-      void generate(r.label, node?.title ?? sec?.title ?? r.label, true);
+      const node = structure.find((n) => n.label === step.label);
+      const sec = sections.find((s) => s.label === step.label);
+      void generate(step.label, node?.title ?? sec?.title ?? step.label, true);
       return;
     }
     setFixAsk(null);
-    setFixNote({ sig, message: r.message, pricing: r.kind === "pricing" });
+    setFixNote({
+      sig: key,
+      message: step.message,
+      pricing: step.kind === "pricing",
+    });
+  }
+
+  /** The Fix it button on a grouped row: the group's plan (groupFixPlan).
+   *  One step is the common case and behaves exactly as a single finding's
+   *  Fix it always did. Several (rare: a Tron fix plus a pricing pointer)
+   *  run the first actionable one and name the rest beside the row. */
+  function fixIt(g: FindingGroup) {
+    setChecksError(null);
+    const steps = groupFixPlan(g, { sections, requirements });
+    if (steps.length === 0) return;
+    if (steps.length === 1) {
+      runFixStep(g, steps[0]);
+      return;
+    }
+    const first =
+      steps.find((st) => st.kind === "tron" || st.kind === "redraft") ??
+      steps[0];
+    runFixStep(g, first);
+    const rest = steps.filter((st) => st !== first);
+    const words = rest.map((st) =>
+      st.kind === "pricing" || st.kind === "none"
+        ? st.message
+        : st.kind === "redraft"
+          ? `Redraft ${tronDisplay(st.label)} as well.`
+          : st.label === DOC_LABEL
+            ? "Ask Tron to fix it across the whole document as well."
+            : `Ask Tron to fix it in ${tronDisplay(st.label)} as well.`
+    );
+    setFixNote({
+      sig: g.key,
+      message: `Also needed: ${words.join(" ")}`,
+      pricing: rest.some((st) => st.kind === "pricing"),
+    });
   }
 
   async function exportAs(format: "docx" | "pdf") {
@@ -1711,7 +1859,7 @@ export function Workspace({
     }
     const d = await res.json().catch(() => null);
     adoptRev(d?.rev);
-    setGateResult(null);
+    markGateStale();
     setSections((prev) =>
       prev.map((s) => (s.label === label ? { ...s, paragraphs } : s))
     );
@@ -1796,7 +1944,7 @@ export function Workspace({
     // Released only once the sections are adopted: freed earlier, a second
     // press could race the adoption with a stale rev.
     setVisualBusy(null);
-    setGateResult(null);
+    markGateStale();
     // No jump: the person pressed Add or Remove right here, and a Remove
     // under the sixth block would otherwise yank the viewport to the head.
     showChanged([label], { jump: false });
@@ -1845,12 +1993,18 @@ export function Workspace({
   /** One Tron POST, JSON or multipart depending on the attached file. The
    *  file is re-sent per call: "align each section with the attached
    *  document" needs the content at revise time, not only at plan time. */
-  const postTron = (payload: {
-    label: string;
-    instruction: string;
-    directive?: string;
-  }): Promise<Response | null> => {
-    if (tronFile) {
+  const postTron = (
+    payload: {
+      label: string;
+      instruction: string;
+      directive?: string;
+    },
+    // The Fix all round passes false: a document attached for some earlier
+    // Tron request has nothing to do with a compliance fix, and re-sending
+    // it on every unattended call would only cost reading time.
+    attach = true
+  ): Promise<Response | null> => {
+    if (tronFile && attach) {
       const form = new FormData();
       form.set("label", payload.label);
       form.set("instruction", payload.instruction);
@@ -2154,7 +2308,7 @@ export function Workspace({
     }
     const d = await res.json().catch(() => null);
     adoptRev(d?.rev);
-    setGateResult(null);
+    markGateStale();
 
     if (op === "remove") {
       setSections((prev) => prev.filter((s) => s.label !== p.label));
@@ -2314,18 +2468,368 @@ export function Workspace({
     }
   }
 
+  /** The round's section names. Reads the sections REF: it runs inside the
+   *  async loop, after writes the render closure never saw. */
+  const liveDisplay = (label: string) => {
+    if (label === DOC_LABEL) return "the whole document";
+    if (label === LETTER_LABEL) return LETTER_TITLE;
+    const sec = sectionsRef.current.find((s) => s.label === label);
+    return sec ? `${sec.label} ${sec.title}`.trim() : label;
+  };
+
+  /** One unattended Tron revision, applied through the SAME accept write a
+   *  person's "Use this" goes through (applyProposal: staleness guard, rev,
+   *  stale checks, the flash). Never a removal, never a retitle: those are
+   *  reported for the person instead of written. */
+  async function reviseAndApply(
+    label: string,
+    instruction: string,
+    directive?: string
+  ): Promise<
+    | { kind: "applied"; label: string; note?: string }
+    | { kind: "skipped"; line: string }
+    | { kind: "failure"; line: string }
+  > {
+    const display = liveDisplay(label);
+    const live = sectionsRef.current.find((s) => s.label === label);
+    if (!live)
+      return { kind: "skipped", line: `${display}: the section is gone.` };
+    const r = await postTron(
+      { label, instruction, ...(directive ? { directive } : {}) },
+      false
+    );
+    if (!r || !r.ok) {
+      const rd = r ? await r.json().catch(() => null) : null;
+      return {
+        kind: "failure",
+        line: `${display}: ${
+          rd?.message ??
+          (r
+            ? "Tron did not return a revision."
+            : "The server could not be reached.")
+        }`,
+      };
+    }
+    const rd = await r.json().catch(() => null);
+    // Checked first: a removal answer can carry no paragraphs at all, and it
+    // is a decision for the person, not a failed call.
+    if (rd?.remove === true)
+      return {
+        kind: "skipped",
+        line: `${display}: Tron proposed removing the section, which this round never does. Ask Tron from its pane if it should go.`,
+      };
+    if (!rd || !Array.isArray(rd.proposed) || rd.proposed.length === 0)
+      return {
+        kind: "failure",
+        line: `${display}: Tron did not return a revision.`,
+      };
+    const current: string[] = Array.isArray(rd.current)
+      ? rd.current
+      : live.paragraphs;
+    const proposed: string[] = rd.proposed;
+    if (
+      proposed.length === current.length &&
+      proposed.every((q, i) => q === current[i])
+    )
+      return {
+        kind: "skipped",
+        line: `${display}: Tron left the text as it was.`,
+      };
+    const a = await applyProposal({ label, op: "revise", proposed, current });
+    if ("error" in a) return { kind: "failure", line: `${display}: ${a.error}` };
+    return {
+      kind: "applied",
+      label: a.label,
+      ...(typeof rd.heading === "string" && rd.heading
+        ? {
+            note: `${display}: fixed. Tron also proposed a new heading, which this round never applies; ask Tron from its pane to retitle it.`,
+          }
+        : {}),
+    };
+  }
+
+  /**
+   * Fix all remaining (§5.17.8, owner 2026-09-30: most findings did not need
+   * a person). Pass 1 applies every auto-fixable step, the rules re-run (the
+   * refute), pass 2 fixes what survived, and the last run is what the person
+   * reads. At most two fix passes; every brain call is sequential (the
+   * semaphore is shared with Twilio voice). The pane is not left, no Tron
+   * surface is cleared, and tronBusy freezes every Tron and row action for
+   * the duration (restored in finally, so it can never stick).
+   */
+  async function fixAll() {
+    if (
+      !proposalId ||
+      fixAllRun !== null ||
+      checking ||
+      tronBusy ||
+      busy ||
+      (run?.active ?? false) ||
+      checksBusySig !== null
+    )
+      return;
+    let current = gateResult;
+    if (!current) return;
+    fixAllStopRef.current = false;
+    setFixAllStopping(false);
+    setFixAllReceipt(null);
+    setFixAsk(null);
+    setFixNote(null);
+    setChecksError(null);
+    const applied: string[] = [];
+    const appliedLabels = new Set<string>();
+    const skipped: string[] = [];
+    const failures: string[] = [];
+    // Labels the round rebuilt, round-wide: C1 compares against the
+    // proposal's creation time (rules-c.ts), so a rebuilt section citing the
+    // corrected fact is reported again, and a second rebuild would only
+    // repeat the first. Pass 2 never redrafts these; the receipt names any
+    // C1 that survives a rebuild.
+    const redrafted = new Set<string>();
+    let passes = 0;
+    let stopped = false;
+    let checksFailed = false;
+    const snapshot = (
+      pass: 1 | 2,
+      done: number,
+      total: number,
+      cur: string
+    ) =>
+      setFixAllRun({
+        pass,
+        done,
+        total,
+        current: cur,
+        applied: [...applied],
+        skipped: [...skipped],
+        failures: [...failures],
+      });
+    snapshot(1, 0, 0, "starting");
+    // Both held for the WHOLE round and released only in finally, so
+    // neither can stick: tronBusy freezes every Tron and row action, busy
+    // every draft control (Draft all, Draft this, Redraft), which a
+    // redraft step between two Tron steps must not race.
+    setTronBusy(true);
+    setBusy(true);
+    let startKeys = new Set(visibleGroupsOf(current).map((g) => g.key));
+    try {
+      // A stale result names findings the draft may no longer have: read
+      // the current draft first (no brain call), then fix from that.
+      if (gateStale) {
+        snapshot(1, 0, 0, "running the checks on the current draft");
+        const fresh = await runChecks();
+        if (!fresh) {
+          checksFailed = true;
+          failures.push("The rules could not re-run.");
+        } else {
+          current = fresh;
+          startKeys = new Set(visibleGroupsOf(current).map((g) => g.key));
+        }
+      }
+      const passList: (1 | 2)[] = checksFailed ? [] : [1, 2];
+      for (const pass of passList) {
+        if (fixAllStopRef.current) {
+          stopped = true;
+          break;
+        }
+        const steps = fixAllSteps(
+          visibleGroupsOf(current),
+          { sections: sectionsRef.current, requirements },
+          { noRedraft: redrafted }
+        );
+        if (steps.length === 0) break;
+        passes = pass;
+        let total = steps.length;
+        let done = 0;
+        let appliedThisPass = 0;
+        const record = (
+          o: Awaited<ReturnType<typeof reviseAndApply>>
+        ) => {
+          if (o.kind === "applied") {
+            applied.push(liveDisplay(o.label));
+            appliedLabels.add(o.label);
+            appliedThisPass++;
+            if (o.note) skipped.push(o.note);
+          } else if (o.kind === "skipped") skipped.push(o.line);
+          else failures.push(o.line);
+        };
+        for (const step of steps) {
+          if (fixAllStopRef.current) {
+            stopped = true;
+            break;
+          }
+          if (step.kind === "redraft") {
+            const display = liveDisplay(step.label);
+            snapshot(pass, done, total, display);
+            const node = structure.find((n) => n.label === step.label);
+            const sec = sectionsRef.current.find(
+              (x) => x.label === step.label
+            );
+            // The same runbar a Redraft press shows (generate()), with the
+            // error kept for the receipt instead of the page notice. `busy`
+            // is already held for the round.
+            redrafted.add(step.label);
+            setRun({
+              active: true,
+              done: 0,
+              total: 1,
+              current: display,
+              currentLabel: step.label,
+              failures: [],
+              initial: false,
+            });
+            const { error: err } = await draftOne(
+              step.label,
+              node?.title ?? sec?.title ?? step.label,
+              true
+            );
+            setRun(null);
+            done++;
+            if (err) failures.push(`${display}: ${err}`);
+            else {
+              applied.push(display);
+              appliedLabels.add(step.label);
+              appliedThisPass++;
+            }
+            continue;
+          }
+          if (step.kind !== "tron") continue;
+          if (step.label !== DOC_LABEL) {
+            snapshot(pass, done, total, liveDisplay(step.label));
+            record(await reviseAndApply(step.label, step.instruction));
+            done++;
+            continue;
+          }
+          // The whole-document sweep: one plan turn, then the same revise
+          // call per revise target. Structural targets are never written.
+          snapshot(pass, done, total, "planning across the whole document");
+          const res = await postTron(
+            { label: DOC_LABEL, instruction: step.instruction },
+            false
+          );
+          const d = res?.ok ? await res.json().catch(() => null) : null;
+          if (!res || !res.ok || !d) {
+            const rd = res && !res.ok ? await res.json().catch(() => null) : null;
+            failures.push(
+              `The whole-document plan: ${
+                rd?.message ??
+                (res
+                  ? "Tron did not return a plan."
+                  : "The server could not be reached.")
+              }`
+            );
+            done++;
+            continue;
+          }
+          const targets: {
+            label: string;
+            op?: "revise" | "retitle" | "remove";
+            directive: string;
+          }[] = Array.isArray(d?.plan?.targets) ? d.plan.targets : [];
+          // The plan step becomes its targets in the count.
+          total += targets.length - 1;
+          if (targets.length === 0) done++;
+          for (const t of targets) {
+            if (fixAllStopRef.current) {
+              stopped = true;
+              break;
+            }
+            if (t.op === "retitle" || t.op === "remove") {
+              skipped.push(
+                `${liveDisplay(t.label)}: Tron proposed ${
+                  t.op === "remove" ? "removing" : "retitling"
+                } the section, which this round never does. Ask Tron from its pane if it should.`
+              );
+              done++;
+              continue;
+            }
+            snapshot(pass, done, total, liveDisplay(t.label));
+            record(
+              await reviseAndApply(
+                t.label,
+                step.instruction,
+                String(t.directive ?? "")
+              )
+            );
+            done++;
+          }
+          if (stopped) break;
+        }
+        // The refute: the rules read what the pass wrote. Stopped or not,
+        // the checks run once so the pane never ends on a stale result.
+        snapshot(pass, total, total, "running the checks again");
+        const next = await runChecks();
+        if (!next) {
+          checksFailed = true;
+          failures.push("The rules could not re-run.");
+          break;
+        }
+        current = next;
+        // A pass that changed nothing would only repeat itself.
+        if (stopped || appliedThisPass === 0) break;
+      }
+      const endGroups = visibleGroupsOf(current);
+      const endKeys = new Set(endGroups.map((g) => g.key));
+      const fixedCount = [...startKeys].filter((k) => !endKeys.has(k)).length;
+      const n = appliedLabels.size;
+      const plural = (k: number, one: string, many: string) =>
+        `${k} ${k === 1 ? one : many}`;
+      const lead = stopped
+        ? `Stopped after ${plural(applied.length, "fix", "fixes")}. `
+        : "";
+      const k = endGroups.length;
+      const remainText = `${plural(k, "finding", "findings")} remain${k === 1 ? "s" : ""} for you.`;
+      const summary = checksFailed
+        ? `${lead}Changed ${plural(n, "section", "sections")}; the rules could not re-run, so run the checks to see what remains.`
+        : passes === 0 && !stopped
+          ? `Nothing was fixable automatically. ${remainText}`
+          : `${lead}Fixed ${plural(fixedCount, "finding", "findings")} in ${plural(n, "section", "sections")} over ${plural(passes, "pass", "passes")}. ${remainText}`;
+      // What remains for the person, and why the round left it.
+      const remaining: string[] = [];
+      const ctxNow = { sections: sectionsRef.current, requirements };
+      const stillC1 = new Set<string>();
+      for (const g of endGroups) {
+        if (g.ruleId !== "C1") continue;
+        for (const st of groupFixPlan(g, ctxNow))
+          if (st.kind === "redraft" && redrafted.has(st.label))
+            stillC1.add(st.label);
+      }
+      for (const label of stillC1)
+        remaining.push(
+          `C1 is still reported after a rebuild: ${liveDisplay(label)}`
+        );
+      const excluded = endGroups.filter((g) =>
+        AUTO_EXCLUDED_RULES.has(g.ruleId)
+      );
+      if (excluded.length)
+        remaining.push(
+          `${plural(excluded.length, "unsourced-figure finding (B7) waits", "unsourced-figure findings (B7) wait")} for you: Tron would remove a figure that may be legitimate. Fix it on the row asks where it comes from.`
+        );
+      setFixAllReceipt({ summary, remaining, skipped, failures });
+    } finally {
+      setTronBusy(false);
+      setBusy(false);
+      setFixAllRun(null);
+      setFixAllStopping(false);
+    }
+  }
+
   // Dismissed findings leave the VISIBLE sets (and with them the summary
   // sentence and counts); the server already recomputed `passed` over the
   // survivors at store time, so a fully-ignored run reads as passing.
-  const blocks =
-    gateResult?.violations.filter(
-      (v) => v.severity === "block" && !v.dismissed
-    ) ?? [];
-  const warns =
-    gateResult?.violations.filter(
-      (v) => v.severity !== "block" && !v.dismissed
-    ) ?? [];
-  const dismissedList = gateResult?.violations.filter((v) => v.dismissed) ?? [];
+  // Rows are GROUPS (one per rule id and message, §5.17.8), blocking groups
+  // first: counts a person reads are row counts, so "2 blocking" never
+  // describes one phrase found in two paragraphs.
+  const visibleGroups = visibleGroupsOf(gateResult);
+  const blockGroups = visibleGroups.filter((g) => g.severity === "block");
+  const warnGroups = visibleGroups.filter((g) => g.severity !== "block");
+  const dismissedGroups = groupFindings(
+    gateResult?.violations.filter((v) => v.dismissed) ?? []
+  );
+  const fixCtx = { sections, requirements };
+  const autoFixableCount = visibleGroups.filter((g) =>
+    isAutoFixableGroup(g, fixCtx)
+  ).length;
 
   /* ---------------------------------------------------------------------- */
 
@@ -2450,7 +2954,9 @@ export function Workspace({
                 checking ||
                 !proposalId ||
                 sections.length === 0 ||
-                checksBusySig !== null
+                checksBusySig !== null ||
+                // The round runs the checks itself between its passes.
+                fixAllRun !== null
               }
               onClick={() => {
                 void runChecks();
@@ -2463,6 +2969,8 @@ export function Workspace({
               sections.length > 0 && (
                 <span className="text-xs text-faint">
                   open items remain before this is final
+                  {/* A stale failing run is not a current verdict. */}
+                  {gateResult && gateStale ? " (checks are stale)" : ""}
                 </span>
               )}
             <button
@@ -2625,7 +3133,7 @@ export function Workspace({
                         const label = refsEditing.label;
                         setSections(r.sections as typeof sections);
                         adoptRev(r.rev);
-                        setGateResult(null);
+                        markGateStale();
                         showChanged([label]);
                         const n = r.kept + r.created;
                         setNotice(
@@ -2757,7 +3265,7 @@ export function Workspace({
                             const gained = r.labels.slice(0, 1);
                             setSections(r.sections as typeof sections);
                             adoptRev(r.rev);
-                            setGateResult(null);
+                            markGateStale();
                             showChanged(gained);
                             setAnsweredCount((n) => n + 1);
                             setAnswerText("");
@@ -2886,7 +3394,11 @@ export function Workspace({
                         <button
                           type="button"
                           className="btn btn--primary"
-                          disabled={checking || checksBusySig !== null}
+                          disabled={
+                            checking ||
+                            checksBusySig !== null ||
+                            fixAllRun !== null
+                          }
                           onClick={() => {
                             void runChecks();
                             showPane("checks");
@@ -2953,33 +3465,132 @@ export function Workspace({
                   </p>
                 ) : (
                   <>
+                    {/* Stale, not wiped (§5.17.8): a content write keeps
+                        the findings on screen so the next one can still be
+                        fixed, and says plainly they describe an older
+                        draft. The next run replaces them. */}
+                    {gateStale && (
+                      <div className="mt-3 text-sm" role="status">
+                        <p>
+                          The draft changed since these checks ran. Some
+                          findings shown may already be resolved.
+                        </p>
+                        <button
+                          type="button"
+                          className="btn btn--text mt-2"
+                          disabled={
+                            checking ||
+                            checksBusySig !== null ||
+                            fixAllRun !== null
+                          }
+                          onClick={() => void runChecks()}
+                        >
+                          {checking ? "Checking" : "Run the checks again"}
+                        </button>
+                      </div>
+                    )}
                     <p className="mt-3 text-sm">
                       {/* A pass earned by dismissals says so: "Passing" with
                           every blocking finding sitting in the Ignored list
                           would read as a clean run. */}
                       {gateResult.passed
                         ? queue.length > 0
-                          ? `The rules pass${dismissedList.length ? ` with ${dismissedList.length} ignored finding${dismissedList.length === 1 ? "" : "s"}` : ""}. ${queue.length} open question${queue.length === 1 ? "" : "s"} remain${queue.length === 1 ? "s" : ""}; the Questions pane walks through them.`
-                          : `Passing${dismissedList.length ? ` with ${dismissedList.length} ignored finding${dismissedList.length === 1 ? "" : "s"}` : ""}. Nothing blocks export.`
-                        : `${blocks.length} blocking finding${blocks.length === 1 ? "" : "s"}${warns.length ? ` and ${warns.length} advisory` : ""}. Fix them before this response is sent.`}
+                          ? `The rules pass${dismissedGroups.length ? ` with ${dismissedGroups.length} ignored finding${dismissedGroups.length === 1 ? "" : "s"}` : ""}. ${queue.length} open question${queue.length === 1 ? "" : "s"} remain${queue.length === 1 ? "s" : ""}; the Questions pane walks through them.`
+                          : `Passing${dismissedGroups.length ? ` with ${dismissedGroups.length} ignored finding${dismissedGroups.length === 1 ? "" : "s"}` : ""}. Nothing blocks export.`
+                        : `${blockGroups.length} blocking finding${blockGroups.length === 1 ? "" : "s"}${warnGroups.length ? ` and ${warnGroups.length} advisory` : ""}. Fix them before this response is sent.`}
                     </p>
+                    {/* Fix all remaining: the unattended round. Shown only
+                        when some visible row has a fix the machine can make
+                        (a Tron revision or a redraft); pricing and
+                        structural rows wait for the person either way. */}
+                    {(autoFixableCount > 0 || fixAllRun !== null) && (
+                      <div className="mt-4">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            className="btn btn--primary"
+                            disabled={
+                              fixAllRun !== null ||
+                              checking ||
+                              tronBusy ||
+                              busy ||
+                              (run?.active ?? false) ||
+                              checksBusySig !== null
+                            }
+                            onClick={() => void fixAll()}
+                          >
+                            {fixAllRun
+                              ? "Fixing"
+                              : `Fix all remaining (${autoFixableCount})`}
+                          </button>
+                          {fixAllRun && (
+                            <button
+                              type="button"
+                              className="btn btn--text"
+                              disabled={fixAllStopping}
+                              onClick={() => {
+                                fixAllStopRef.current = true;
+                                setFixAllStopping(true);
+                              }}
+                            >
+                              {fixAllStopping ? "Stopping after this fix" : "Stop"}
+                            </button>
+                          )}
+                        </div>
+                        <p className="mt-2 text-xs text-faint">
+                          Tron fixes every finding it can, the rules run
+                          again, and what survives gets one more pass.
+                          Pricing and structural findings wait for you.
+                        </p>
+                        {fixAllRun && (
+                          <p className="mt-2 text-sm text-faint" role="status">
+                            Pass {fixAllRun.pass} of 2 ·{" "}
+                            {fixAllRun.done < fixAllRun.total
+                              ? `fixing ${fixAllRun.done + 1} of ${fixAllRun.total} · `
+                              : ""}
+                            <span className="mono">{fixAllRun.current}</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {fixAllReceipt && !fixAllRun && (
+                      <div className="mt-4 text-sm" role="status">
+                        <p>{fixAllReceipt.summary}</p>
+                        {fixAllReceipt.remaining.map((line, i) => (
+                          <p key={`r${i}`} className="mt-1 text-xs">
+                            {line}
+                          </p>
+                        ))}
+                        {fixAllReceipt.skipped.map((line, i) => (
+                          <p key={`s${i}`} className="mt-1 text-xs text-faint">
+                            {line}
+                          </p>
+                        ))}
+                        {fixAllReceipt.failures.map((line, i) => (
+                          <p key={`f${i}`} className="mt-1 text-xs" role="alert">
+                            {line}
+                          </p>
+                        ))}
+                      </div>
+                    )}
                     <div className="mt-4 space-y-3">
-                      {[...blocks, ...warns].map((v, i) => {
-                        const sig = findingSig(v);
+                      {visibleGroups.map((g, i) => {
+                        const key = g.key;
                         // One request at a time, and never while the gate,
-                        // Tron, or a draft run could replace the result
-                        // under the click.
+                        // Tron, a draft run, or the Fix all round could
+                        // replace the result under the click.
                         const rowsFrozen =
                           checking ||
                           tronBusy ||
                           (run?.active ?? false) ||
-                          checksBusySig !== null;
+                          checksBusySig !== null ||
+                          fixAllRun !== null;
                         return (
-                        <div key={`${sig}\u0000${i}`} className="text-sm">
+                        <div key={`${key}\u0000${i}`} className="text-sm">
                           <span
-                            className={`badge${v.severity === "block" ? " badge--warn" : ""}`}
+                            className={`badge${g.severity === "block" ? " badge--warn" : ""}`}
                           >
-                            {v.ruleId}
+                            {g.ruleId}
                           </span>{" "}
                           {/* §5.17. A rule that names a stored instant sends the
                               sentence SPLIT (Violation.timedMessage) instead of a
@@ -2995,49 +3606,62 @@ export function Workspace({
                               The `message` fallback is not dead code: it is what a
                               gate_json row stored before 2026-08-26 renders, and what
                               every rule but C1 renders. */}
-                          {v.timedMessage ? (
+                          {g.timedMessage ? (
                             <>
-                              {v.timedMessage.segments.map((seg, si) => (
+                              {g.timedMessage.segments.map((seg, si) => (
                                 <Fragment key={si}>
                                   {seg.before}
                                   <LocalTime iso={seg.iso} withTime />
                                 </Fragment>
                               ))}
-                              {v.timedMessage.after}
+                              {g.timedMessage.after}
                             </>
                           ) : (
-                            v.message
+                            g.message
                           )}
-                          {/* Ignore persists a dismissal (the row moves to
-                              the Ignored list below, which IS its receipt);
-                              Fix it hands the finding to the machinery that
-                              resolves it, most often a scoped Tron run whose
-                              progress shows in the same rail. */}
+                          {g.members.length > 1 && (
+                            <span className="text-xs text-faint">
+                              {" "}
+                              in {g.members.length} places
+                            </span>
+                          )}
+                          {/* Ignore persists a dismissal for EVERY member
+                              (the row moves to the Ignored list below, which
+                              IS its receipt); Fix it hands the group to the
+                              machinery that resolves it, most often a scoped
+                              Tron run whose progress shows in the same rail. */}
                           <div className="mt-2 flex flex-wrap items-center gap-3">
                             <button
                               type="button"
                               className="btn btn--text"
                               disabled={rowsFrozen}
-                              aria-busy={checksBusySig === sig || undefined}
-                              onClick={() => void postChecksOp("ignore", sig)}
+                              aria-busy={checksBusySig === `v:${key}` || undefined}
+                              onClick={() =>
+                                void postChecksOp(
+                                  "ignore",
+                                  `v:${key}`,
+                                  key,
+                                  g.members.map(findingSig)
+                                )
+                              }
                             >
-                              {checksBusySig === sig ? "Ignoring" : "Ignore"}
+                              {checksBusySig === `v:${key}` ? "Ignoring" : "Ignore"}
                             </button>
                             <button
                               type="button"
                               className="btn btn--text"
                               disabled={rowsFrozen}
-                              onClick={() => fixIt(v, sig)}
+                              onClick={() => fixIt(g)}
                             >
                               Fix it
                             </button>
                           </div>
-                          {checksError?.sig === sig && (
+                          {checksError?.sig === `v:${key}` && (
                             <p className="mt-2 text-sm" role="alert">
                               {checksError.message}
                             </p>
                           )}
-                          {fixAsk?.sig === sig && (
+                          {fixAsk?.sig === key && (
                             <div className="mt-2">
                               <p className="text-xs text-faint">
                                 {fixAsk.prompt}
@@ -3063,7 +3687,7 @@ export function Workspace({
                                     setFixAsk(null);
                                     runFix(
                                       ask.label,
-                                      fixInstruction(v, ask.text)
+                                      fixInstructionFor(ask.members, ask.text)
                                     );
                                   }}
                                 >
@@ -3079,7 +3703,7 @@ export function Workspace({
                               </div>
                             </div>
                           )}
-                          {fixNote?.sig === sig && (
+                          {fixNote?.sig === key && (
                             <p className="mt-2 text-sm" role="status">
                               {fixNote.message}
                               {fixNote.pricing && questionsReady && (
@@ -3108,7 +3732,7 @@ export function Workspace({
                         </div>
                       ))}
                     </div>
-                    {dismissedList.length > 0 && (
+                    {dismissedGroups.length > 0 && (
                       <div className="mt-5">
                         <button
                           type="button"
@@ -3116,17 +3740,23 @@ export function Workspace({
                           aria-expanded={ignoredOpen}
                           onClick={() => setIgnoredOpen((o) => !o)}
                         >
-                          Ignored ({dismissedList.length})
+                          Ignored ({dismissedGroups.length})
                         </button>
                         {ignoredOpen && (
                           <div className="mt-3 space-y-3">
-                            {dismissedList.map((v, i) => {
-                              const sig = findingSig(v);
-                              const d = v.dismissed!;
+                            {dismissedGroups.map((g, i) => {
+                              const key = g.key;
+                              const d = g.members[0].dismissed!;
                               return (
-                                <div key={`${sig}\u0000${i}`} className="text-sm">
-                                  <span className="badge">{v.ruleId}</span>{" "}
-                                  {v.message}
+                                <div key={`${key}\u0000${i}`} className="text-sm">
+                                  <span className="badge">{g.ruleId}</span>{" "}
+                                  {g.message}
+                                  {g.members.length > 1 && (
+                                    <span className="text-xs text-faint">
+                                      {" "}
+                                      in {g.members.length} places
+                                    </span>
+                                  )}
                                   <p className="mt-1 text-xs text-faint">
                                     {/* <LocalTime>, never a runtime
                                         formatter: this pane SSRs from the
@@ -3144,20 +3774,26 @@ export function Workspace({
                                       checking ||
                                       tronBusy ||
                                       (run?.active ?? false) ||
-                                      checksBusySig !== null
+                                      checksBusySig !== null ||
+                                      fixAllRun !== null
                                     }
                                     aria-busy={
-                                      checksBusySig === sig || undefined
+                                      checksBusySig === `i:${key}` || undefined
                                     }
                                     onClick={() =>
-                                      void postChecksOp("restore", sig)
+                                      void postChecksOp(
+                                        "restore",
+                                        `i:${key}`,
+                                        key,
+                                        g.members.map(findingSig)
+                                      )
                                     }
                                   >
-                                    {checksBusySig === sig
+                                    {checksBusySig === `i:${key}`
                                       ? "Restoring"
                                       : "Restore"}
                                   </button>
-                                  {checksError?.sig === sig && (
+                                  {checksError?.sig === `i:${key}` && (
                                     <p className="mt-1 text-sm" role="alert">
                                       {checksError.message}
                                     </p>
@@ -4600,7 +5236,7 @@ export function Workspace({
                           }
                           setPricing(d.quote ?? null);
                           adoptRev(d.rev);
-                          setGateResult(null);
+                          markGateStale();
                           showChanged(["__pricing"]);
                         }}
                       />

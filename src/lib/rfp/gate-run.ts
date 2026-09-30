@@ -110,7 +110,10 @@ export async function runAndStoreGate(
   // the rules run, not taken from the proposal snapshot, so an Ignore landing
   // mid-run still marks the result being stored (readProposalChecksIgnores
   // has the full rationale).
-  const raw = runDraftGate(input);
+  // atRev stamps the draft this run read, BEFORE the re-apply (which
+  // spreads the result, so the stamp survives it and every later checks
+  // route re-derivation): the pane marks a result stale when it differs.
+  const raw = { ...runDraftGate(input), atRev: proposal.rev };
   const result = applyIgnores(
     raw,
     parseCheckIgnores(await readProposalChecksIgnores(proposal.id))

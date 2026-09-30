@@ -20,8 +20,14 @@ import {
   type CheckIgnore,
 } from "../src/lib/rfp/check-ignores";
 import {
+  fixAllSteps,
   fixInstruction,
+  fixInstructionFor,
   fixRecipe,
+  groupFindings,
+  groupFixPlan,
+  isAutoFixable,
+  isAutoFixableGroup,
   isReferenceCardBlockId,
   REFERENCE_CARD_FIX_MESSAGE,
   resolveTargetLabel,
@@ -533,6 +539,289 @@ check(
   fixRecipe(viol({ ruleId: "D1", severity: "block", locator: { blockId: "bv_7__v_0000a010" } }), { sections: [{ label: "7." }], requirements: [] }).kind,
   "tron"
 );
+
+// ---- grouped findings (§5.17.8): one row per rule id and message -----------
+
+// The owner's duplicate: scanForbiddenPhrases emits one violation per text
+// span, so one phrase in two paragraphs arrived as two identical rows.
+const a6Message =
+  'A6 "power automate development" contradicts the negative fact capability.sharepoint-power-platform: we do not build Power Automate flows.';
+const a6One = viol({
+  ruleId: "A6",
+  severity: "block",
+  message: a6Message,
+  locator: { sectionId: "sec_4_2", blockId: "b_4_2_0", field: "body", charOffset: 10 },
+  excerpt: "power automate development",
+});
+const a6Two = viol({
+  ruleId: "A6",
+  severity: "block",
+  message: a6Message,
+  locator: { sectionId: "sec_4_2", blockId: "b_4_2_3", field: "body", charOffset: 44 },
+  excerpt: "Power Automate  development",
+});
+{
+  const groups = groupFindings([a6One, a6Two]);
+  check("the duplicate A6 pair is ONE group", groups.length, 1);
+  check("with both members", groups[0]?.members.length, 2);
+  check("blocking", groups[0]?.severity, "block");
+  check("members keep their own sigs", groups[0]?.members.map(findingSig), [
+    findingSig(a6One),
+    findingSig(a6Two),
+  ]);
+}
+check(
+  "differing messages are two groups",
+  groupFindings([a6One, { ...a6Two, message: "Another finding." }]).length,
+  2
+);
+check(
+  "a whitespace-only message difference collapses",
+  groupFindings([a6One, { ...a6Two, message: a6Message.replace(/ /g, "  \n") }])
+    .length,
+  1
+);
+check(
+  "same message, different rule: two groups",
+  groupFindings([a6One, { ...a6Two, ruleId: "A7" }]).length,
+  2
+);
+check(
+  "any blocking member makes the group block",
+  groupFindings([
+    { ...a6One, severity: "warn" },
+    a6Two,
+  ])[0]?.severity,
+  "block"
+);
+check(
+  "groups come out in order of first appearance",
+  groupFindings([
+    viol({ ruleId: "D1", severity: "warn", message: "x" }),
+    a6One,
+    viol({ ruleId: "D1", severity: "warn", message: "x" }),
+  ]).map((g) => [g.ruleId, g.members.length]),
+  [
+    ["D1", 2],
+    ["A6", 1],
+  ]
+);
+
+// ---- groupFixPlan -----------------------------------------------------------
+
+{
+  const plan = groupFixPlan(groupFindings([a6One, a6Two])[0], ctx);
+  check("two members in one section: ONE step", plan.length, 1);
+  check(
+    "a tron step on that section",
+    plan.map((p) => (p.kind === "tron" ? `tron:${p.label}` : p.kind)),
+    ["tron:4.2"]
+  );
+  const instr = plan[0]?.kind === "tron" ? plan[0].instruction : "";
+  check("the message is said once", instr.split(a6Message).length - 1, 1);
+  check(
+    "both excerpts are in the instruction",
+    instr.includes('"power automate development"; "Power Automate development"'),
+    true
+  );
+  check("no ask on a plain rule", plan[0]?.kind === "tron" && plan[0].ask, undefined);
+}
+{
+  const other = { ...a6Two, locator: { sectionId: "sec_1_2", blockId: "b_1_2_0" } };
+  const plan = groupFixPlan(groupFindings([a6One, other])[0], ctx);
+  check(
+    "members in two sections: ONE whole-document step",
+    plan.map((p) => (p.kind === "tron" ? `tron:${p.label}` : p.kind)),
+    [`tron:${DOC_LABEL}`]
+  );
+}
+{
+  const noLoc = { ...a6Two, locator: {} };
+  const plan = groupFixPlan(groupFindings([a6One, noLoc])[0], ctx);
+  check(
+    "a member already at DOC_LABEL sends the group to the sweep",
+    plan.map((p) => (p.kind === "tron" ? p.label : p.kind)),
+    [DOC_LABEL]
+  );
+}
+{
+  const c1 = viol({
+    ruleId: "C1",
+    severity: "block",
+    message: "Fact corrected after drafting.",
+    locator: { sectionId: "sec_4_2" },
+  });
+  const plan = groupFixPlan(groupFindings([c1, { ...c1 }])[0], ctx);
+  check("C1 block members: one redraft", plan, [
+    { kind: "redraft", label: "4.2", why: "Fact corrected after drafting." },
+  ]);
+  check("a redraft is auto-fixable", isAutoFixable(plan), true);
+}
+{
+  const b4 = viol({ ruleId: "B4", severity: "block", message: "Split unconfirmed." });
+  const plan = groupFixPlan(groupFindings([b4, { ...b4 }])[0], ctx);
+  check(
+    "B4 members: ONE pricing step",
+    plan.map((p) => p.kind),
+    ["pricing"]
+  );
+  check("pricing is not auto-fixable", isAutoFixable(plan), false);
+}
+check(
+  "a none is not auto-fixable",
+  isAutoFixable(groupFixPlan(groupFindings([viol({ ruleId: "C2", severity: "block" })])[0], ctx)),
+  false
+);
+check(
+  "a tron step is auto-fixable",
+  isAutoFixable(groupFixPlan(groupFindings([a6One])[0], ctx)),
+  true
+);
+{
+  const a5 = viol({ ruleId: "A5", severity: "block", message: "Uncited.", locator: { sectionId: "sec_1" } });
+  const plan = groupFixPlan(groupFindings([a5, { ...a5, locator: { sectionId: "sec_1", blockId: "b_1_3" } }])[0], ctx);
+  check(
+    "the same ask on every member survives the collapse",
+    plan[0]?.kind === "tron" ? Boolean(plan[0].ask) : null,
+    true
+  );
+}
+{
+  const single = groupFixPlan(groupFindings([a6One])[0], ctx);
+  const recipe = fixRecipe(a6One, ctx);
+  check("a one-member group's plan IS its recipe", single, [recipe]);
+}
+
+// ---- fixInstructionFor ------------------------------------------------------
+
+for (const v of [
+  a6One,
+  viol({ ruleId: "A8", severity: "warn", message: "CIS scope overstated.", excerpt: "all  CIS\ncontrols", suggestion: "a subset" }),
+  viol({ ruleId: "A1", severity: "block" }),
+])
+  for (const extra of ["", "  context  "])
+    check(
+      `fixInstruction(${v.ruleId}, ${JSON.stringify(extra)}) equals fixInstructionFor([v])`,
+      fixInstruction(v, extra),
+      fixInstructionFor([v], extra)
+    );
+check("fixInstructionFor of nothing is empty", fixInstructionFor([], "x"), "");
+
+// ---- fixAllSteps: one pass of the Fix all round -----------------------------
+
+{
+  const d1 = viol({ ruleId: "D1", severity: "warn", message: "Vague.", locator: { blockId: "b_4_2_1" }, excerpt: "world class" });
+  const c1 = viol({ ruleId: "C1", severity: "block", message: "Stale fact.", locator: { sectionId: "sec_1" } });
+  const b4 = viol({ ruleId: "B4", severity: "block", message: "Split." });
+  const sweep = viol({ ruleId: "B6", severity: "warn", message: '"x" is described as both optional and included.' });
+  const d1on1 = viol({ ruleId: "D2", severity: "warn", message: "Passive.", locator: { blockId: "b_1_0" }, excerpt: "was done" });
+  const steps = fixAllSteps(groupFindings([sweep, a6One, a6Two, d1, c1, b4, d1on1]), ctx);
+  check(
+    "fixAll: redrafts first, then per-section tron, the sweep last; pricing waits; a redrafted section is not also revised",
+    steps.map((st) => (st.kind === "tron" || st.kind === "redraft" ? `${st.kind}:${st.label}` : st.kind)),
+    ["redraft:1", "tron:4.2", `tron:${DOC_LABEL}`]
+  );
+  const merged = steps[1]?.kind === "tron" ? steps[1].instruction : "";
+  check(
+    "fixAll: one section's findings merge into one instruction",
+    merged.includes("A6") && merged.includes("D1"),
+    true
+  );
+  check("fixAll: no ask survives into the round", steps.some((st) => st.kind === "tron" && st.ask), false);
+}
+{
+  const many = Array.from({ length: 6 }, (_, i) =>
+    viol({ ruleId: "D1", severity: "warn", message: `Finding ${i} ${"z".repeat(600)}`, locator: { blockId: "b_4_2_1" } })
+  );
+  const steps = fixAllSteps(groupFindings(many), ctx);
+  check(
+    "fixAll: an oversize merge packs into several whole instructions under the cap",
+    steps.every((st) => st.kind === "tron" && st.label === "4.2" && st.instruction.length <= 2000) && steps.length > 1,
+    true
+  );
+  check(
+    "fixAll: every packed instruction ends with its guard",
+    steps.every((st) => st.kind === "tron" && st.instruction.endsWith("keep everything else as it is.")),
+    true
+  );
+}
+check("fixAll: nothing visible, nothing to do", fixAllSteps([], ctx), []);
+{
+  // Two C1 groups (different messages) on one label: ONE rebuild.
+  const c1a = viol({ ruleId: "C1", severity: "block", message: "Fact A corrected.", locator: { sectionId: "sec_4_2" } });
+  const c1b = viol({ ruleId: "C1", severity: "block", message: "Fact B corrected.", locator: { sectionId: "sec_4_2" } });
+  check(
+    "fixAll: redrafts dedupe across two groups on one label",
+    fixAllSteps(groupFindings([c1a, c1b]), ctx).map((st) => `${st.kind}:${st.kind === "redraft" ? st.label : ""}`),
+    ["redraft:4.2"]
+  );
+  const again = fixAllSteps(groupFindings([c1a, c1b, a6One]), ctx, { noRedraft: new Set(["4.2"]) });
+  check(
+    "fixAll: a label already rebuilt is not redrafted again, and its Tron steps return",
+    again.map((st) => (st.kind === "tron" || st.kind === "redraft" ? `${st.kind}:${st.label}` : st.kind)),
+    ["tron:4.2"]
+  );
+}
+{
+  const s1 = viol({ ruleId: "B6", severity: "warn", message: '"x" is described as both optional and included.' });
+  const s2 = viol({ ruleId: "A1", severity: "block", message: "Banned phrase." });
+  const steps = fixAllSteps(groupFindings([s1, s2]), ctx);
+  check(
+    "fixAll: two DOC_LABEL groups union into ONE sweep step",
+    steps.map((st) => (st.kind === "tron" ? st.label : st.kind)),
+    [DOC_LABEL]
+  );
+  const ins = steps[0]?.kind === "tron" ? steps[0].instruction : "";
+  check("fixAll: the sweep carries both findings", ins.includes("B6") && ins.includes("A1"), true);
+}
+{
+  const b7 = viol({ ruleId: "B7", severity: "block", message: "Unsourced figure.", locator: { blockId: "b_1_2_0" }, excerpt: "$4,200" });
+  check(
+    "fixAll: a B7 member is never an actionable step",
+    fixAllSteps(groupFindings([b7, a6One]), ctx).map((st) => (st.kind === "tron" ? st.label : st.kind)),
+    ["4.2"]
+  );
+  check("fixAll: B7 alone gives the round nothing", fixAllSteps(groupFindings([b7]), ctx), []);
+  check("B7 is excluded from the Fix all count", isAutoFixableGroup(groupFindings([b7])[0], ctx), false);
+  check("B7's own Fix it still has its recipe", groupFixPlan(groupFindings([b7])[0], ctx)[0]?.kind, "tron");
+  check("A5 stays automatic", isAutoFixableGroup(groupFindings([viol({ ruleId: "A5", severity: "block", locator: { sectionId: "sec_1" } })])[0], ctx), true);
+}
+{
+  // D1 emits one finding per em dash: a 60-member group.
+  const many = Array.from({ length: 60 }, (_, i) =>
+    viol({
+      ruleId: "D1",
+      severity: "warn",
+      message: "Em dash in client-facing copy.",
+      locator: { blockId: `b_4_2_${i}` },
+      excerpt: `sentence ${i} ${"w".repeat(80)} with a dash`,
+    })
+  );
+  const ins = fixInstructionFor(many, "the client prefers commas");
+  check("60 members: under the cap", ins.length <= 2000, true);
+  check(
+    "60 members: ends with the guard",
+    ins.endsWith("Change only what is needed to resolve this finding in every place it appears; keep everything else as it is."),
+    true
+  );
+  check("60 members: keeps the user's context", ins.includes("Additional context from the user: the client prefers commas"), true);
+  check("60 members: lists six places and counts the rest", ins.includes("and 54 more places."), true);
+  check("60 members: the seventh excerpt is not listed", ins.includes("sentence 6 "), false);
+  const huge = fixInstructionFor(
+    [viol({ ruleId: "A1", severity: "block", message: "y".repeat(4000) })],
+    "keep this"
+  );
+  check("an oversize message never cuts the context or the guard", huge.endsWith("Additional context from the user: keep this Change only what is needed to resolve this finding; keep everything else as it is."), true);
+  check("and still fills the cap", huge.length, 2000);
+}
+
+// ---- atRev survives the re-apply --------------------------------------------
+
+{
+  const stamped: GateResult = { ...result([a6One]), atRev: 7 };
+  check("applyIgnores preserves atRev", applyIgnores(stamped, [ign(findingSig(a6One))]).atRev, 7);
+  check("applyIgnores adds no atRev to a pre-round row", "atRev" in applyIgnores(result([a6One]), []), false);
+}
 
 if (failures) {
   console.error(`\n${failures} failing`);
