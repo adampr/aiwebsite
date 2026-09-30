@@ -73,7 +73,7 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
-Last verified against code: 2026-09-30 §5.17.8 RFP CHECKS IGNORE / FIX IT (owner directive: every Checks-pane recommendation gets Ignore and Fix it). Ignore persists per-proposal dismissals in `rfp_proposals.checks_ignores_json` (migration `0059_rfp_check_ignores`), keyed by the PERSISTED `findingSig` recipe in `src/lib/rfp/check-ignores.ts`, re-applied by `applyIgnores` at BOTH gate store sites (gate-run.ts `runAndStoreGate` and the export route, before `writeProposalGate`/the draft computation/`x-rfp-gate-passed`) so the pane and the export never disagree; dismissed findings leave the visible counts and `passed` and collect under a "Ignored (N)" disclosure with Restore. New route `POST /api/rfp/proposals/[id]/checks` (`{op: ignore|restore, sig}`; sig must match a stored violation; row-locked read-modify-write via `writeProposalChecksState`, NO rev bump; activity `proposal.check_ignore`/`proposal.check_restore`, shape-only meta). Fix it maps each rule through `src/lib/rfp/check-fixes.ts` (`resolveTargetLabel` in lockstep with resolve-draft's ids; tron on the section else `DOC_LABEL`, optional inline context for A5/B7/C3/D4-edge, C1-block redraft via the existing per-section path, pricing/none pointers) and fires the existing Tron ask flow with explicit overrides (`askTron({label, instruction})`, `askTronDoc(instr)`), instruction fenced server-side as before. `Violation` gains additive `dismissed`. New suite `npm run test:rfpchecks`. No env change.
+Last verified against code: 2026-09-30 §5.17.9 YOUR KNOWLEDGE IS EDITABLE (`/rfp/knowledge/mine`: the owner edits a row in place, sends it for approval or withdraws it, deletes it, and an admin promotes their own row straight into the shared base through the same INSERT-at-a-new-KB-version as the review queue; new `PATCH|POST|DELETE /api/rfp/knowledge/[id]`, pure rules in `src/lib/rfp/knowledge-mine.ts`, `npm run test:rfpmine`; a fact's category is steered onto the corpus list; no schema, env or migration change). Previous entry: §5.17.8 RFP CHECKS IGNORE / FIX IT (owner directive: every Checks-pane recommendation gets Ignore and Fix it). Ignore persists per-proposal dismissals in `rfp_proposals.checks_ignores_json` (migration `0059_rfp_check_ignores`), keyed by the PERSISTED `findingSig` recipe in `src/lib/rfp/check-ignores.ts`, re-applied by `applyIgnores` at BOTH gate store sites (gate-run.ts `runAndStoreGate` and the export route, before `writeProposalGate`/the draft computation/`x-rfp-gate-passed`) so the pane and the export never disagree; dismissed findings leave the visible counts and `passed` and collect under a "Ignored (N)" disclosure with Restore. New route `POST /api/rfp/proposals/[id]/checks` (`{op: ignore|restore, sig}`; sig must match a stored violation; row-locked read-modify-write via `writeProposalChecksState`, NO rev bump; activity `proposal.check_ignore`/`proposal.check_restore`, shape-only meta). Fix it maps each rule through `src/lib/rfp/check-fixes.ts` (`resolveTargetLabel` in lockstep with resolve-draft's ids; tron on the section else `DOC_LABEL`, optional inline context for A5/B7/C3/D4-edge, C1-block redraft via the existing per-section path, pricing/none pointers) and fires the existing Tron ask flow with explicit overrides (`askTron({label, instruction})`, `askTronDoc(instr)`), instruction fenced server-side as before. `Violation` gains additive `dismissed`. New suite `npm run test:rfpchecks`. No env change.
 
 Last verified against code: 2026-09-30 §5.17 RFP RUNBAR ALWAYS STICKY (owner directive: the drafting-status line and the Run checks / Word / PDF buttons must float — never scrollable out of view — pinned at the top of the window). `.rfp-page .rfp-runbar` is now `position: sticky` at every width (top = measured `--rfp-workbar-h` below md, `11.25rem` at md+, `z-index: 30`); the `--rfp-runbar-h` measurement (ResizeObserver + layout effect in `workspace.tsx`) runs unconditionally and the `rfp-runbar--live`/`runbarLive` live-only gating is DELETED, superseding the 2026-08-28 scroll-at-rest ruling. All dependent offsets (rail top/max-height, `.rfp-doc-receipt`, mobile tabstrip, `sec-*` scroll-margins) already read `--rfp-runbar-h` and follow unchanged. CSS + one component; no route, schema, env or migration change.
 
@@ -8944,7 +8944,8 @@ structural proposal — see the whole-document flow below — logging
 `POST .../[id]/gap` (answer one drafted gap; writes), `POST .../[id]/gate`
 (run + store the compliance gate; reads), `GET .../[id]/export?format=docx|pdf`
 (streams, never stores), `POST /api/rfp/knowledge`,
-`POST /api/rfp/knowledge/[id]/review`.
+`POST /api/rfp/knowledge/[id]/review`, and the owner's own-row routes
+`PATCH | POST | DELETE /api/rfp/knowledge/[id]` (§5.17.9).
 `"/api/rfp"` is in `src/proxy.ts` `protectedPrefixes`.
 
 **Everything is a claimed background job.** Reading a real client RFP measured
@@ -10136,6 +10137,89 @@ re-run. Suite: `npm run test:rfpchecks`
 (`scripts/rfp-check-ignores-tests.ts`, pure: sig stability/divergence,
 applyIgnores recompute across severities, dedupe + cap, garbage tolerance,
 locator resolution, per-rule recipe mapping). No new env vars.
+
+#### 5.17.9 Your knowledge is editable: edit, send, withdraw, delete, promote (2026-09-30)
+
+**Owner directive:** on `/rfp/knowledge/mine` "I should be able to change
+anything here, as well as promote it to shared facts." Before this round the
+page listed the caller's rows read-only; the only actions were the add form's
+"Keep it to myself" and "Send for approval".
+
+**What the owner can do to each of their own rows.** Every row that is not
+yet in the shared base (`status` private, submitted or returned) carries an
+actions line: **Edit** (inline form: kind, fact key, category, polarity,
+statement, detail), **Send for approval** / **Send again** (private or
+returned to submitted) or **Withdraw** (submitted back to private),
+**Delete**, and for an admin **Add to the shared base**. An approved row is
+frozen: it shows the minted fact's CURRENT text when that differs (the page
+follows `supersedes` forward through corrections), an admin gets the Shared
+tab's `FactActions` (Correct / Retire) for the live version, and everyone
+gets a link to the shared base. A promoted fact that was later retired shows
+"Retired from the shared base".
+
+**Why editing in place is right HERE and wrong in the corpus.** A proposal's
+id is what the owner's drafts cite (`pending_<id>`, `resolve-draft.ts`), and
+the row is the owner's own text at the owner's own risk, so an in-place
+UPDATE keeps every citation resolvable. A shared fact's id is cited by
+everyone, which is why the corpus corrects by minting (§5.17.2 round 5). The
+line between the two is `status === "approved"`: once `promotedFactId` is
+set the shared fact is the truth and the proposal row is frozen for edit,
+move and delete alike (409 `in_shared_base`); the audit trail from row to
+fact survives because an approved row can never be deleted.
+
+**Routes** (`src/app/api/rfp/knowledge/[id]/route.ts`, all through
+`requireRfpApi` and the owner-scoped `getMyKnowledgeProposal`; someone else's
+id is a 404, never a 403, and an admin is NOT exempt from the owner scope
+here: admins change other people's rows only through the review queue):
+
+- `PATCH { kind?, factKey?, statement?, detail?, polarity?, category? }`.
+  The body is merged over the row's current fields and the RESULT is
+  validated (`normalizeKnowledgePatch`, `src/lib/rfp/knowledge-mine.ts`),
+  so a partial body cannot leave a fact keyless and flipping `kind` to
+  "fact" is refused without a key. Keys are lowercased slugs
+  (`FACT_KEY_RE`, the same shape `addFact` enforces). Flipping a choice to a
+  fact is allowed on purpose (the form warns) because that is the only way a
+  one-off decision ever becomes promotable; a fact flipped to a choice drops
+  its key. Logs `knowledge.edit` with `kindChanged`.
+- `POST { action: "submit" | "withdraw" | "promote", confidence? }`.
+  `knowledgeTransition` decides: submit needs a fact with a key (a choice is
+  never submittable); withdraw needs a submitted row; promote needs an admin
+  (403 otherwise) and a keyed fact, from private, submitted or returned.
+  Submit/withdraw run `setKnowledgeStatus`, whose UPDATE is guarded on the
+  statuses it may leave FROM so a stale click can never write an
+  approved-a-moment-ago row back to private. Promote calls the review
+  queue's own `approveKnowledge`, extended to accept the ADMIN'S OWN row from
+  private/returned (anyone else's row must still have been submitted:
+  nobody's private text goes shared unasked). Promotion is therefore the
+  same INSERT-at-a-new-KB-version as approval and a promoted fact is
+  indistinguishable from an approved one; the form shows the review queue's
+  "already on file under this key" conflict note first. Logs
+  `knowledge.promote` (subject the new fact id, meta the proposal id and
+  origin status), `knowledge.submit`, `knowledge.withdraw`.
+- `DELETE`: hard delete of a private/submitted/returned row
+  (`deleteKnowledgeProposal`, owner-predicated, `status <> 'approved'`).
+  A draft of the owner's that cites `pending_<id>` fails rule A5 on its next
+  check and asks for the claim again, which is the outcome a returned row
+  already has today (`knowledgeProposalsForOwner` never served returned
+  rows); the confirm copy says so. Logs `knowledge.delete`.
+
+**Category steering.** A proposal could carry the add form's old default
+`"general"`, which is not a `FactCategory`, so an approved fact was off-type
+in `rfp_facts`. Now: the add form and the edit form offer the corpus's own
+`FACT_CATEGORIES` for a fact (default `capability`, the value `pendingFact`
+already used for drafting); `POST /api/rfp/knowledge` and `approveKnowledge`
+steer a fact's category through `corpusCategory()`; the PATCH validator
+refuses an explicit off-list category on a fact and steers an untouched
+legacy `"general"`. A choice keeps `"general"`; it never reaches the corpus.
+
+**Activity vocabulary** gains `knowledge.promote`, `knowledge.withdraw`,
+`knowledge.delete` (shape only, as ever: ids, keys, kinds, statuses).
+
+**Tests:** `npm run test:rfpmine` (pure: merged-patch validation, slug keys,
+kind flips, the transition table incl. 403/409 codes, delete freeze,
+category steering). `npm run test:rfp`'s ownership audit accepts
+`getMyKnowledgeProposal` as a scoped accessor. No schema, env or migration
+change.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

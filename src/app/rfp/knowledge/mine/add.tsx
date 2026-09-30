@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  DEFAULT_FACT_CATEGORY,
+  KNOWLEDGE_CATEGORIES,
+} from "@/lib/rfp/knowledge-mine";
 
 export function AddKnowledge() {
   const router = useRouter();
@@ -9,6 +13,7 @@ export function AddKnowledge() {
   const [statement, setStatement] = useState("");
   const [factKey, setFactKey] = useState("");
   const [detail, setDetail] = useState("");
+  const [category, setCategory] = useState<string>(DEFAULT_FACT_CATEGORY);
   const [polarity, setPolarity] = useState<"affirmative" | "negative">(
     "affirmative"
   );
@@ -25,6 +30,9 @@ export function AddKnowledge() {
         kind,
         statement,
         factKey: kind === "fact" ? factKey : null,
+        // A fact's category must be one the corpus knows (§5.17.9); a
+        // choice never reaches the corpus and keeps the route's default.
+        category: kind === "fact" ? category : undefined,
         detail,
         polarity,
         submit,
@@ -79,6 +87,21 @@ export function AddKnowledge() {
               onChange={(e) => setFactKey(e.target.value)}
               placeholder="support.response-time"
             />
+          </div>
+          <div className="field">
+            <label htmlFor="k-cat">Category</label>
+            <select
+              id="k-cat"
+              className="input"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            >
+              {KNOWLEDGE_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="field">
             <label htmlFor="k-pol">Is this something XL.net does?</label>

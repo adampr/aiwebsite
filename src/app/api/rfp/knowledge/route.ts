@@ -3,6 +3,7 @@
 import { logRfpActivity } from "@/lib/rfp/activity";
 import { createKnowledgeProposal } from "@/lib/rfp/db";
 import { requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
+import { corpusCategory } from "@/lib/rfp/knowledge-mine";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -35,7 +36,12 @@ export async function POST(req: Request): Promise<Response> {
   const row = await createKnowledgeProposal(user, {
     kind,
     factKey,
-    category: String(body.category ?? "general"),
+    // A fact's category is steered onto the corpus list (§5.17.9) so the
+    // row that approval mints is on-type; a choice never reaches the corpus.
+    category:
+      kind === "fact"
+        ? corpusCategory(String(body.category ?? ""))
+        : String(body.category ?? "general"),
     statement,
     detail: String(body.detail ?? "").trim() || null,
     polarity: body.polarity === "negative" ? "negative" : "affirmative",

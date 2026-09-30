@@ -135,6 +135,8 @@ function auditOwnershipLookups(): string[] {
       if (entry.isDirectory()) walk(full);
       else if (entry.name === "route.ts" && /\[id\]/.test(full)) {
         const src = fs.readFileSync(full, "utf8");
+        // getMyKnowledgeProposal and the §5.17.9 own-row writers are
+        // owner-predicated in the where clause (src/lib/rfp/db.ts);
         // approveKnowledge/returnKnowledge/correctFact/retireFact/
         // updateQuestion are admin-checked inside src/lib/rfp/db.ts (throw
         // on non-admin), and getFactById serves admin-gated corpus routes
@@ -143,6 +145,7 @@ function auditOwnershipLookups(): string[] {
           !src.includes("getOwnedProposal") &&
           !src.includes("getDocument") &&
           !src.includes("getKnowledgeProposal") &&
+          !src.includes("getMyKnowledgeProposal") &&
           !src.includes("approveKnowledge") &&
           !src.includes("returnKnowledge") &&
           !src.includes("getFactById") &&

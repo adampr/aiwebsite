@@ -60,6 +60,7 @@
     "test:rfpgaps": "tsx scripts/rfp-gaps-tests.ts",
     "test:rfpchecks": "tsx scripts/rfp-check-ignores-tests.ts",
     "test:rfprefs": "tsx scripts/rfp-references-tests.ts",
+    "test:rfpmine": "tsx scripts/rfp-knowledge-mine-tests.ts",
     "test:rfpblocks": "tsx scripts/rfp-draft-blocks-tests.ts",
     "test:rfpvisualgate": "tsx scripts/rfp-visual-gate-tests.ts",
     "rfp:render-fixture": "tsx scripts/rfp-render-fixture.ts",

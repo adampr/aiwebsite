@@ -31,6 +31,7 @@ import {
   rfpRequirements,
 } from "@/lib/db/rfp-schema";
 import type { RfpUser } from "./access";
+import { corpusCategory } from "./knowledge-mine";
 
 export type FactRow = typeof rfpFacts.$inferSelect;
 export type QuestionRow = typeof rfpQuestions.$inferSelect;
@@ -908,7 +909,15 @@ export async function approveKnowledge(
   if (!admin.admin) throw new Error("approveKnowledge: caller is not an admin");
   const prop = await getKnowledgeProposal(admin, id);
   if (!prop) return { ok: false, reason: "not_found" };
-  if (prop.status !== "submitted")
+  // An admin may promote their OWN row straight from private/returned
+  // (§5.17.9, "Add to the shared base" on /rfp/knowledge/mine). Anyone
+  // else's row must have been SENT: nobody's private text goes shared
+  // unasked, and the review queue only ever lists submitted rows.
+  const own = prop.ownerEmail === admin.email.toLowerCase();
+  if (
+    prop.status !== "submitted" &&
+    !(own && (prop.status === "private" || prop.status === "returned"))
+  )
     return { ok: false, reason: "not_awaiting_review" };
   if (prop.kind !== "fact")
     return { ok: false, reason: "a choice is never promotable to a fact" };
@@ -928,7 +937,9 @@ export async function approveKnowledge(
     await tx.insert(rfpFacts).values({
       id: factId,
       key: prop.factKey!,
-      category: prop.category,
+      // Steered onto the corpus list: a proposal can carry the add form's
+      // legacy "general", which is not a FactCategory.
+      category: corpusCategory(prop.category),
       statement: prop.statement,
       polarity: prop.polarity,
       detail: prop.detail,
@@ -972,6 +983,125 @@ export async function returnKnowledge(
       updatedAt: new Date(),
     })
     .where(eq(rfpKnowledgeProposals.id, id))
+    .returning({ id: rfpKnowledgeProposals.id });
+  return res.length > 0;
+}
+
+/* ---- your own knowledge: edit, move, delete (§5.17.9) ------------------ */
+
+/**
+ * One of the CALLER'S OWN proposals, admin or not. The Yours page and its
+ * routes are owner-scoped on purpose: an admin changes other people's rows
+ * only through the review queue (approve / return), never by editing their
+ * text. Someone else's id is a 404, never a 403.
+ */
+export async function getMyKnowledgeProposal(
+  user: RfpUser,
+  id: string
+): Promise<KnowledgeProposalRow | null> {
+  if (!isUuid(id)) return null;
+  const rows = await db
+    .select()
+    .from(rfpKnowledgeProposals)
+    .where(
+      and(
+        eq(rfpKnowledgeProposals.id, id),
+        eq(rfpKnowledgeProposals.ownerEmail, user.email.toLowerCase())
+      )
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Edit the caller's own row IN PLACE. The id, and so every `pending_<id>`
+ * citation in the owner's drafts, survives the edit. Approved rows are
+ * frozen (the where clause excludes them): the minted shared fact is the
+ * truth now and corrections go through correctFact. Returns null when the
+ * row is not the caller's, does not exist, or is approved.
+ */
+export async function updateKnowledgeProposal(
+  user: RfpUser,
+  id: string,
+  fields: {
+    kind: "fact" | "choice";
+    factKey: string | null;
+    category: string;
+    statement: string;
+    detail: string | null;
+    polarity: "affirmative" | "negative";
+  }
+): Promise<KnowledgeProposalRow | null> {
+  if (!isUuid(id)) return null;
+  const [row] = await db
+    .update(rfpKnowledgeProposals)
+    .set({
+      kind: fields.kind,
+      factKey: fields.factKey?.slice(0, 120) ?? null,
+      category: fields.category.slice(0, 60),
+      statement: fields.statement.slice(0, 2000),
+      detail: fields.detail?.slice(0, 2000) ?? null,
+      polarity: fields.polarity,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(rfpKnowledgeProposals.id, id),
+        eq(rfpKnowledgeProposals.ownerEmail, user.email.toLowerCase()),
+        ne(rfpKnowledgeProposals.status, "approved")
+      )
+    )
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * Move the caller's own row between private and submitted. Guarded on the
+ * statuses it may LEAVE from, so a row an admin approved a moment ago is
+ * never written back to private or submitted by a stale click.
+ */
+export async function setKnowledgeStatus(
+  user: RfpUser,
+  id: string,
+  from: string[],
+  to: "private" | "submitted"
+): Promise<boolean> {
+  if (!isUuid(id) || from.length === 0) return false;
+  const res = await db
+    .update(rfpKnowledgeProposals)
+    .set({ status: to, updatedAt: new Date() })
+    .where(
+      and(
+        eq(rfpKnowledgeProposals.id, id),
+        eq(rfpKnowledgeProposals.ownerEmail, user.email.toLowerCase()),
+        inArray(rfpKnowledgeProposals.status, from)
+      )
+    )
+    .returning({ id: rfpKnowledgeProposals.id });
+  return res.length > 0;
+}
+
+/**
+ * Delete the caller's own row. Never an approved one: its shared fact
+ * lives on in rfp_facts and promotedFactId is the audit trail back to it.
+ * A draft of the owner's that cites `pending_<id>` will fail rule A5 on
+ * its next check and ask for the claim to be re-cited, the same outcome a
+ * returned row has today.
+ */
+export async function deleteKnowledgeProposal(
+  user: RfpUser,
+  id: string
+): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  const res = await db
+    .delete(rfpKnowledgeProposals)
+    .where(
+      and(
+        eq(rfpKnowledgeProposals.id, id),
+        eq(rfpKnowledgeProposals.ownerEmail, user.email.toLowerCase()),
+        ne(rfpKnowledgeProposals.status, "approved")
+      )
+    )
     .returning({ id: rfpKnowledgeProposals.id });
   return res.length > 0;
 }
