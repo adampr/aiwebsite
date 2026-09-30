@@ -34,6 +34,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
 import { useRouter } from "next/navigation";
 
@@ -68,6 +69,14 @@ import {
 import { COMPANY_SIGNATURE, type PersonSignature } from "@/lib/rfp/signature";
 import type { PricingQuote } from "@/lib/rfp/content-model";
 import type { GateResult } from "@/lib/rfp/validators/gate";
+// Pure and client-safe by contract (no lookbehinds, type-only imports).
+import {
+  draftBlockSummary,
+  interleave,
+  sanitizeStoredBlocks,
+  tableColumnFractions,
+  type DraftBlock,
+} from "@/lib/rfp/draft-blocks";
 
 type Section = {
   label: string;
@@ -79,7 +88,28 @@ type Section = {
   updatedAt: string;
   /** Server stamp: the references question was answered on this section. */
   referencesAnswered?: boolean;
+  /** Visual blocks as STORED (§5.17): always read through
+   *  sanitizeStoredBlocks before rendering, never trusted as typed. */
+  blocks?: DraftBlock[];
 };
+
+/** The server-built visuals a person can add to a section by hand: the
+ *  choices behind one "Add visual" control (three Adds in the row pushed
+ *  the timestamp onto a third line at the lg pane). */
+type VisualAction = "about" | "service-stats" | "onboarding";
+const VISUAL_ADDS: { action: VisualAction; add: string }[] = [
+  { action: "about", add: "Company snapshot" },
+  { action: "service-stats", add: "Service stats" },
+  { action: "onboarding", add: "Onboarding timeline" },
+];
+
+/** The longest run of non-space characters in a cell: the width a table
+ *  column must hold, since a cell never splits a word. */
+function longestWord(s: string): number {
+  let max = 0;
+  for (const w of s.split(/\s+/)) if (w.length > max) max = w.length;
+  return max;
+}
 
 type Requirement = {
   id: string;
@@ -464,6 +494,23 @@ export function Workspace({
   const [busy, setBusy] = useState(initialBusy);
   const [editing, setEditing] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
+  // ---- visual blocks (add a server-built one, remove any) ----
+  // Lives HERE, never inside the flash-keyed section div: the write ends in
+  // showChanged, which remounts that div. `busy` names the one control that
+  // is working; every visual control is disabled while any is in flight,
+  // because each write is a CAS on the proposal rev.
+  const [visualBusy, setVisualBusy] = useState<string | null>(null);
+  // Shown where the person pressed: under the block for a Remove
+  // (blockId), under the section head for an Add (blockId null).
+  const [visualError, setVisualError] = useState<{
+    label: string;
+    blockId: string | null;
+    message: string;
+  } | null>(null);
+  // The section whose "Add visual" choices are open. Same home as
+  // `editing`, for the same reason: state inside the keyed div dies with
+  // the flash remount (a <details> would snap shut the same way).
+  const [visualMenu, setVisualMenu] = useState<string | null>(null);
   // Whole-document is the DEFAULT scope (owner directive 2026-08-28): most
   // real instructions span sections, and the per-section "Ask Tron" buttons
   // still narrow it to one.
@@ -670,6 +717,22 @@ export function Workspace({
   const draftedCount = sections.filter(
     (s) => s.label !== LETTER_LABEL
   ).length;
+  // Every section's visual blocks, read ONCE per render through the
+  // tolerant reader (stored JSON, never trusted as typed). Reserved records
+  // (the letter) never carry blocks.
+  const blocksByLabel = new Map<string, DraftBlock[]>(
+    sections.map((s) => [
+      s.label,
+      s.label.startsWith("__")
+        ? []
+        : sanitizeStoredBlocks(s.blocks, s.paragraphs.length),
+    ])
+  );
+  // The company snapshot belongs on ONE section (the server refuses a
+  // second with a 409), so its Add is offered only while no section has it.
+  const aboutHeld = [...blocksByLabel.values()].some((bs) =>
+    bs.some((b) => b.origin === "about")
+  );
   // ISO timestamps compare lexicographically. Gap weaves, Tron accepts, and
   // single-section redrafts all change content under the letter without
   // redrafting it; the hint keeps a stale summary from reading as current.
@@ -825,8 +888,13 @@ export function Workspace({
     []
   );
   const showChanged = useCallback(
-    (labels: string[]) => {
+    (labels: string[], opts: { jump?: boolean } = {}) => {
       if (!labels.length) return;
+      // A landed change supersedes a visual failure notice on that section
+      // (the notice would otherwise outlive the block it named).
+      setVisualError((prev) =>
+        prev && labels.includes(prev.label) ? null : prev
+      );
       // MERGE, don't replace: one answer can weave into several sections
       // over 60-90s each, and draft-all lands sections one poll at a time.
       // Replacing made the receipt name only the LAST section of a
@@ -848,7 +916,10 @@ export function Workspace({
       const typing = ["TEXTAREA", "INPUT"].includes(
         document.activeElement?.tagName ?? ""
       );
-      if (typing) return;
+      // jump: false is a change made in place (a visual added or removed
+      // under the section the person is looking at): the receipt and the
+      // chip still land, the viewport stays where the press happened.
+      if (typing || opts.jump === false) return;
       window.setTimeout(() => jumpTo(labels[0]), 60);
     },
     [jumpTo]
@@ -1425,6 +1496,89 @@ export function Workspace({
     );
     setEditing(null);
     setNotice("");
+  }
+
+  /**
+   * Add a server-built visual to a section, or remove one block (PATCH
+   * .../section, op "visuals"). No brain call: the server rebuilds from the
+   * live facts, so nothing but the action (and a block id) is sent. The
+   * response is adopted like every other sections-returning write: rev,
+   * stale gate verdict, then showChanged for the flash and the receipt.
+   */
+  async function changeVisual(
+    label: string,
+    action: VisualAction | "remove",
+    blockId?: string
+  ) {
+    if (!proposalId || visualBusy) return;
+    setVisualMenu(null);
+    setVisualBusy(`${label}\u0000${action}\u0000${blockId ?? ""}`);
+    setVisualError(null);
+    const fail = (message: string) =>
+      setVisualError({ label, blockId: blockId ?? null, message });
+    const res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        label,
+        op: "visuals",
+        action,
+        ...(blockId ? { blockId } : {}),
+      }),
+    }).catch(() => null);
+    if (!res) {
+      // The connection dropped: the write may still have landed. One poll
+      // says so, and a landed change shows as one instead of failing.
+      const st = await pollOnce();
+      setVisualBusy(null);
+      if (st.changed.length) {
+        showChanged(st.changed, { jump: false });
+        return;
+      }
+      fail("The connection dropped. Reload if the visual did not change.");
+      return;
+    }
+    const d = await res.json().catch(() => null);
+    if (!res.ok) {
+      // 404 (the block is already gone) and 409 (the draft moved under
+      // this tab, or the snapshot lives elsewhere): adopt the current
+      // sections first, so the notice sits beside what is actually there
+      // and never tells the person to reload for what the poll just did.
+      if (res.status === 404 || res.status === 409) await pollOnce();
+      setVisualBusy(null);
+      const serverText =
+        typeof d?.message === "string"
+          ? d.message.replace(/\s*Reload\b[^.]*\.?\s*$/, "").trim()
+          : "";
+      fail(
+        res.status === 404
+          ? "That visual was already removed."
+          : serverText ||
+              (action === "remove"
+                ? "That visual was not removed."
+                : "That visual was not added.")
+      );
+      return;
+    }
+    if (Array.isArray(d?.sections)) {
+      setSections(d.sections);
+      adoptRev(d.rev);
+    } else if (d?.section && typeof d.section.label === "string") {
+      const next: Section = d.section;
+      setSections((prev) => prev.map((s) => (s.label === label ? next : s)));
+      adoptRev(d.rev);
+    } else {
+      // The write landed but the response carried no sections. The rev is
+      // deliberately NOT adopted, so the rev-gated poll fetches them.
+      await pollOnce();
+    }
+    // Released only once the sections are adopted: freed earlier, a second
+    // press could race the adoption with a stale rev.
+    setVisualBusy(null);
+    setGateResult(null);
+    // No jump: the person pressed Add or Remove right here, and a Remove
+    // under the sixth block would otherwise yank the viewport to the head.
+    showChanged([label], { jump: false });
   }
 
   /** How a human reads a section reference anywhere in the Tron pane.
@@ -2733,6 +2887,9 @@ export function Workspace({
                             <p key={i}>{p}</p>
                           ))}
                         </div>
+                        <VisualsKeptNote
+                          count={blocksByLabel.get(proposal.label)?.length ?? 0}
+                        />
                       </>
                     )}
                     <div className="mt-4 flex flex-wrap gap-3">
@@ -2849,6 +3006,9 @@ export function Workspace({
                                 <p key={i}>{q}</p>
                               ))}
                             </div>
+                            <VisualsKeptNote
+                              count={blocksByLabel.get(p.label)?.length ?? 0}
+                            />
                           </>
                         )}
                         <div className="mt-4 flex flex-wrap gap-3">
@@ -3308,6 +3468,26 @@ export function Workspace({
                 const sec = sections.find((s) => s.label === node.label);
                 const isEditing = editing === node.label;
                 const changed = highlights.has(node.label);
+                const blocks = blocksByLabel.get(node.label) ?? [];
+                // What "Add visual" can still offer here: one of each
+                // server-built set per section, the snapshot on one section
+                // in the whole document.
+                const visualAdds = VISUAL_ADDS.filter(
+                  (v) =>
+                    !blocks.some((b) => b.origin === v.action) &&
+                    !(v.action === "about" && aboutHeld)
+                );
+                // A Remove that failed says so under its block; anything
+                // whose block is not on screen (an Add, or edit mode hiding
+                // the blocks) says so under the section head instead.
+                const headError =
+                  visualError !== null &&
+                  visualError.label === node.label &&
+                  (isEditing ||
+                    visualError.blockId === null ||
+                    !blocks.some((b) => b.id === visualError.blockId))
+                    ? visualError.message
+                    : null;
                 return (
                   <section
                     className="rfpdoc-page"
@@ -3340,6 +3520,33 @@ export function Workspace({
                               ? "Drafting"
                               : "Draft this"}
                           </button>
+                        ) : visualMenu === node.label && !isEditing ? (
+                          <>
+                            {/* The open "Add visual" choices take the row
+                                over from Edit / Ask Tron / Redraft, so the
+                                row never grows past one line at the lg
+                                pane. Server-built visuals (no brain
+                                call); one of each per section, so a
+                                choice leaves once its block is there. */}
+                            {visualAdds.map((v) => (
+                              <button
+                                key={v.action}
+                                type="button"
+                                disabled={visualBusy !== null}
+                                onClick={() =>
+                                  void changeVisual(node.label, v.action)
+                                }
+                              >
+                                {v.add}
+                              </button>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => setVisualMenu(null)}
+                            >
+                              Cancel
+                            </button>
+                          </>
                         ) : (
                           <>
                             <button
@@ -3357,6 +3564,45 @@ export function Workspace({
                             >
                               Ask Tron
                             </button>
+                            {/* The letter's redraft idiom: `force` is the
+                                explicit consent to replace a hand edit. A
+                                redraft carries the new draft's own
+                                visuals, so hand-added ones go with the
+                                old text (the edit-mode note says so). */}
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                generate(node.label, node.title, true)
+                              }
+                            >
+                              {run?.active && run.currentLabel === node.label
+                                ? "Drafting"
+                                : sec.generatedBy === "human"
+                                  ? "Redraft (replaces your edit)"
+                                  : "Redraft"}
+                            </button>
+                            {/* One control for every server-built visual
+                                still addable here; absent while the
+                                paragraphs are being edited (the blocks
+                                are off screen then) and when nothing is
+                                left to add. Before the timestamp, which
+                                must stay last. */}
+                            {!isEditing && visualAdds.length > 0 && (
+                              <button
+                                type="button"
+                                disabled={visualBusy !== null}
+                                onClick={() => setVisualMenu(node.label)}
+                              >
+                                {visualBusy !== null &&
+                                visualBusy.startsWith(`${node.label}\u0000`) &&
+                                !visualBusy.startsWith(
+                                  `${node.label}\u0000remove\u0000`
+                                )
+                                  ? "Adding"
+                                  : "Add visual"}
+                              </button>
+                            )}
                           </>
                         )}
                         {/* <When>, and LAST in the row, both for the
@@ -3376,6 +3622,12 @@ export function Workspace({
                         )}
                       </div>
                     </div>
+
+                    {headError && (
+                      <p className="rfpdoc-visualerr mt-2" role="alert">
+                        {headError}
+                      </p>
+                    )}
 
                     {run?.active &&
                       run.current === `${node.label} ${node.title}`.trim() &&
@@ -3403,9 +3655,44 @@ export function Workspace({
 
                     {sec && !isEditing && (
                       <div className="mt-4 space-y-3">
-                        {sec.paragraphs.map((p, i) => (
-                          <p key={i}>{p}</p>
-                        ))}
+                        {/* interleave() is THE ordering the gate and both
+                            exporters read. Every string is a text node. */}
+                        {interleave(sec.paragraphs, blocks).map((item) =>
+                          item.type === "p" ? (
+                            <p key={`p-${item.index}`}>{item.text}</p>
+                          ) : (
+                            <div className="rfpdoc-block" key={item.block.id}>
+                              <DocBlock block={item.block} />
+                              {/* Workspace only, never exported. */}
+                              <div className="rfpdoc-actions rfpdoc-blockbar">
+                                {!headError &&
+                                  visualError?.label === node.label &&
+                                  visualError.blockId === item.block.id && (
+                                    <span role="alert">
+                                      {visualError.message}
+                                    </span>
+                                  )}
+                                <button
+                                  type="button"
+                                  disabled={visualBusy !== null}
+                                  aria-label={`Remove: ${draftBlockSummary(item.block).replace(" · ", ", ")}`}
+                                  onClick={() =>
+                                    void changeVisual(
+                                      node.label,
+                                      "remove",
+                                      item.block.id
+                                    )
+                                  }
+                                >
+                                  {visualBusy ===
+                                  `${node.label}\u0000remove\u0000${item.block.id}`
+                                    ? "Removing"
+                                    : "Remove"}
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        )}
                         {sec.gaps.length > 0 && (
                           <div className="rfpdoc-gaps mt-4">
                             <div className="rfpdoc-kicker rfpdoc-kicker--warn">
@@ -3446,6 +3733,22 @@ export function Workspace({
 
                     {sec && isEditing && (
                       <div className="mt-4 space-y-3">
+                        {/* The textarea edits paragraphs only; the visuals
+                            ride through the save untouched. */}
+                        {blocks.length > 0 && (
+                          <div className="rfpdoc-kept">
+                            <p>
+                              {blocks.length === 1
+                                ? "1 visual stays as it is; this box edits the paragraphs only. To remove it, save or cancel, then use Remove under it. Redraft replaces it with the new draft's own."
+                                : `${blocks.length} visuals stay as they are; this box edits the paragraphs only. To remove one, save or cancel, then use Remove under it. Redraft replaces them with the new draft's own.`}
+                            </p>
+                            <ul>
+                              {blocks.map((b) => (
+                                <li key={b.id}>{draftBlockSummary(b)}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                         <textarea
                           className="input min-h-64 w-full"
                           value={editText}
@@ -3708,6 +4011,197 @@ export function Workspace({
         </section>
       </div>
     </>
+  );
+}
+
+/**
+ * One visual block on a section sheet (§5.17, draft-blocks.ts). The same
+ * seven kinds both exporters draw, in the classes globals.css styles under
+ * .rfpdoc. Every string is a React text node: block text is model- or
+ * fact-authored and is never parsed as markup. No headings (futurism.css
+ * uppercases bare h1-h3), no form state, no ids.
+ */
+function DocBlock({ block }: { block: DraftBlock }) {
+  switch (block.kind) {
+    // role="list" on every list styled list-style: none: Safari/VoiceOver
+    // drops the list semantics with the markers.
+    case "stat-tiles":
+      return (
+        <ul className="rfpdoc-tiles" role="list">
+          {block.tiles.map((t, i) => (
+            <li className="rfpdoc-tile" key={i}>
+              <div className="rfpdoc-tile-value">{t.value}</div>
+              <div className="rfpdoc-tile-label">{t.label}</div>
+              {t.note && <div className="rfpdoc-tile-note">{t.note}</div>}
+            </li>
+          ))}
+        </ul>
+      );
+    case "fact-grid":
+      return (
+        <dl className="rfpdoc-factgrid">
+          {block.pairs.map((p, i) => (
+            <div className="rfpdoc-fact" key={i}>
+              <dt className="rfpdoc-fact-label">{p.label}</dt>
+              <dd className="rfpdoc-fact-value">{p.value}</dd>
+            </div>
+          ))}
+        </dl>
+      );
+    case "badge-strip":
+      // --rfpdoc-n: the files render n badges across for n <= 4, and so
+      // does the sheet above the phone breakpoint (globals.css).
+      return (
+        <ul
+          className="rfpdoc-badges"
+          role="list"
+          style={{ "--rfpdoc-n": block.badges.length } as CSSProperties}
+        >
+          {block.badges.map((b, i) => (
+            <li className="rfpdoc-badge" key={i}>
+              <span className="rfpdoc-badge-mark" aria-hidden="true" />
+              <div className="min-w-0">
+                <div className="rfpdoc-badge-label">{b.label}</div>
+                {b.note && <div className="rfpdoc-badge-note">{b.note}</div>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      );
+    case "table": {
+      // The SAME fractions the docx grid and the pdf columns use, so a cell
+      // breaks its lines the same way on screen and in the file.
+      const fractions = tableColumnFractions(block);
+      const last = block.rows.length - 1;
+      // The floor is the width at which every column holds its longest
+      // word (a cell never splits one: overflow-wrap normal in globals.css):
+      // per column the word at ~7.6px a character plus the 28px of cell
+      // padding, over the column's share of the table. Capped at 640 so a
+      // full sheet never scrolls; only a genuinely wide table scrolls, and
+      // then inside its own wrapper. Pure arithmetic on the block, so the
+      // server and the client render the same attribute.
+      const minWidth = Math.min(
+        640,
+        Math.round(
+          Math.max(
+            ...fractions.map((f, c) => {
+              const word = Math.max(
+                longestWord(block.columns[c]?.header ?? ""),
+                ...block.rows.map((r) => longestWord(r[c] ?? ""))
+              );
+              return (word * 7.6 + 28) / Math.max(0.05, f);
+            })
+          )
+        )
+      );
+      return (
+        <figure className="rfpdoc-figure">
+          {block.caption && (
+            <figcaption className="rfpdoc-tablecap">{block.caption}</figcaption>
+          )}
+          {/* Its own scroll container: a table wider than the sheet scrolls
+              here, never the page; the floor above is what makes it wide. */}
+          <div className="rfpdoc-tablewrap">
+            <table style={{ minWidth: `${minWidth}px` }}>
+              <colgroup>
+                {fractions.map((f, i) => (
+                  <col key={i} style={{ width: `${(f * 100).toFixed(2)}%` }} />
+                ))}
+              </colgroup>
+              <thead>
+                <tr>
+                  {block.columns.map((c, i) => (
+                    <th key={i} scope="col" style={{ textAlign: c.align }}>
+                      {c.header}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.rows.map((row, r) => (
+                  <tr
+                    key={r}
+                    className={
+                      block.emphasizeLastRow && r === last
+                        ? "rfpdoc-total"
+                        : undefined
+                    }
+                  >
+                    {row.map((cell, c) => (
+                      <td
+                        key={c}
+                        style={{ textAlign: block.columns[c]?.align ?? "left" }}
+                      >
+                        {cell}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </figure>
+      );
+    }
+    case "callout":
+      return (
+        <div
+          className={
+            block.tone === "emphasis"
+              ? "rfpdoc-callout rfpdoc-callout--emphasis"
+              : "rfpdoc-callout"
+          }
+        >
+          {block.title && (
+            <div className="rfpdoc-callout-title">{block.title}</div>
+          )}
+          <p>{block.body}</p>
+        </div>
+      );
+    case "cards":
+      return (
+        <div className="rfpdoc-cards">
+          {block.cards.map((c, i) => (
+            <div className="rfpdoc-card" key={i}>
+              <div className="rfpdoc-card-title">{c.title}</div>
+              <p>{c.body}</p>
+              {c.footnote && <p className="rfpdoc-card-foot">{c.footnote}</p>}
+            </div>
+          ))}
+        </div>
+      );
+    case "timeline":
+      // Rows of up to four steps, as the files lay them (5 -> 4+1, 6 -> 4+2).
+      return (
+        <ol
+          className="rfpdoc-timeline"
+          role="list"
+          style={
+            { "--rfpdoc-n": Math.min(4, block.steps.length) } as CSSProperties
+          }
+        >
+          {block.steps.map((s, i) => (
+            <li className="rfpdoc-step" key={i}>
+              <div className="rfpdoc-step-label">{s.label}</div>
+              <div className="rfpdoc-step-title">{s.title}</div>
+              <p>{s.body}</p>
+            </li>
+          ))}
+        </ol>
+      );
+  }
+}
+
+/** The Tron pane's note on a proposal for a section that holds visuals:
+ *  a revision rewrites paragraphs only. */
+function VisualsKeptNote({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <p className="mt-3 text-xs text-faint">
+      {count === 1
+        ? "The 1 visual in this section is kept as it is."
+        : `The ${count} visuals in this section are kept as they are.`}
+    </p>
   );
 }
 

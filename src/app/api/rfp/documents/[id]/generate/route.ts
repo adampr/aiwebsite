@@ -45,6 +45,12 @@ import {
   snapGapQuestions,
 } from "@/lib/rfp/gaps";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
+import type { DraftBlock, GroundFact } from "@/lib/rfp/draft-blocks";
+import {
+  landDraftBlocks,
+  toGroundFacts,
+  withBlocks,
+} from "@/lib/rfp/draft-blocks-ops";
 
 const HEARTBEAT_MS = 60 * 1000;
 
@@ -66,6 +72,12 @@ export type DraftSectionRecord = {
    *  dropped by a redraft (which builds a fresh record). Read only by the
    *  references backstop (references-ask.ts). */
   referencesAnswered?: boolean;
+  /** Visual blocks (draft-blocks.ts), each anchored by `after` and carrying
+   *  its own cites. ABSENT when there are none, so a prose-only record is
+   *  byte-identical to one written before visuals existed. Written only by
+   *  this route's landing and the section route's "visuals" op; never read
+   *  from a request body. */
+  blocks?: DraftBlock[];
 };
 
 export async function POST(
@@ -238,6 +250,15 @@ export async function POST(
       // Set on the section path only; the letter never carries gap plumbing.
       let refsAsk: ReferencesAsk | null = null;
       let refsWhy = "";
+      // What the landing needs to place the system-built visuals (section
+      // path only): live SHARED facts, and the structure and asks the two
+      // pickers score. The structure is the claim-time read; a retitle
+      // accepted mid-draft at worst leaves the snapshot to the workspace's
+      // "Add company snapshot" action.
+      let sharedGround: GroundFact[] = [];
+      let placeStructure: { label: string; title: string }[] = [];
+      let placeRequirements: { structureLabel: string; text: string }[] = [];
+      let blockCounts = { about: 0, serviceStats: 0, trimmed: 0, landed: 0 };
       if (isLetter) {
         // The letter drafts from the sections AS THEY ARE NOW, not as they
         // were at claim time: in the draft-all run it is the last step, and
@@ -270,6 +291,8 @@ export async function POST(
             // scans (D1/D2/B7) over the letter body.
             cites: [...new Set(current.flatMap((s) => s.cites))].slice(0, 60),
             gaps: [],
+            // The letter never carries visuals.
+            blocks: [],
           };
       } else {
         const reqs = await listRequirements(doc.id);
@@ -281,6 +304,12 @@ export async function POST(
         // mapped onto the fact shape with needs-adam confidence so the drafter
         // treats it as provisional. Nobody else's private knowledge is visible.
         const { shared, mine } = await knowledgeForUser(user);
+        sharedGround = toGroundFacts(shared);
+        placeStructure = JSON.parse(doc.structureJson || "[]");
+        placeRequirements = reqs.map((r) => ({
+          structureLabel: r.structureLabel ?? "",
+          text: r.text,
+        }));
         const asFacts: FactRow[] = [
           ...shared,
           ...mine.map(
@@ -363,7 +392,32 @@ export async function POST(
         );
         if (drafted) {
           const open = collectOpenQuestions(sections, label);
-          const record: DraftSectionRecord = {
+          // Visuals are decided AGAINST THE LANDING STATE too: the company
+          // snapshot and the service stats each live on one section, so
+          // "does another section hold it" must be asked of the array this
+          // write replaces, and a CAS retry asks again. System blocks are
+          // rebuilt from live facts here (no model call) and take priority
+          // over the drafter's under the per-section cap. A redraft replaces
+          // the section's blocks wholesale, like its paragraphs.
+          const placed = isLetter
+            ? null
+            : landDraftBlocks({
+                label,
+                paragraphCount: drafted.paragraphs.length,
+                modelBlocks: drafted.blocks,
+                structure: placeStructure,
+                requirements: placeRequirements,
+                sections,
+                sharedFacts: sharedGround,
+              });
+          if (placed)
+            blockCounts = {
+              about: placed.about,
+              serviceStats: placed.serviceStats,
+              trimmed: placed.trimmed,
+              landed: placed.blocks.length,
+            };
+          const record: DraftSectionRecord = withBlocks({
             label,
             title,
             paragraphs: drafted.paragraphs,
@@ -412,9 +466,9 @@ export async function POST(
                   }),
                   open
                 ),
-            generatedBy: "llm",
+            generatedBy: "llm" as const,
             updatedAt: new Date().toISOString(),
-          };
+          }, placed?.blocks);
           landedGapCount = record.gaps.length;
           // Identity is LABEL alone, as everywhere else (workspace join,
           // section/gap routes, resolve-draft); matching on title too made
@@ -458,6 +512,15 @@ export async function POST(
           paragraphs: drafted?.paragraphs.length ?? 0,
           cites: drafted?.cites.length ?? 0,
           gaps: landedGapCount ?? drafted?.gaps.length ?? 0,
+          // Visuals, counts only: what landed, how many of those the server
+          // built, and what the grounding did with the model's.
+          blocks: blockCounts.landed,
+          blocksAbout: blockCounts.about,
+          blocksServiceStats: blockCounts.serviceStats,
+          blocksTrimmed: blockCounts.trimmed,
+          visualsReturned: drafted?.visualStats?.returned ?? 0,
+          visualsDegraded: drafted?.visualStats?.degraded ?? 0,
+          visualsDropped: drafted?.visualStats?.dropped ?? 0,
         },
       });
     } catch (err) {

@@ -1140,7 +1140,10 @@ select.input option {
 .rfpdoc td { border-bottom: 1px solid #e3e4ef; padding: 12px 14px; }
 .rfpdoc tbody tr:nth-child(even) td { background: #f9fafd; }
 .rfpdoc td:first-child { font-weight: 600; color: #15163b; }
-.rfpdoc tr.rfpdoc-total td {
+/* tbody in the selector: it must outweigh the zebra rule above, or an
+   even-numbered total row (the Investment "Monthly total") stays tinted
+   where the files print it white. */
+.rfpdoc tbody tr.rfpdoc-total td {
   border-top: 2px solid #15163b;
   border-bottom: none;
   font-weight: 600;
@@ -1280,6 +1283,346 @@ select.input option {
 @media (max-width: 640px) {
   .rfpdoc .btn--text { white-space: normal; letter-spacing: 0.12em; }
 }
+/* ---- Visual blocks on a section sheet (§5.17, draft-blocks.ts): stat
+   tiles, fact grid, badge strip, table, callout, two-up cards, timeline.
+   The exporters draw the same blocks from the same palette (ink #15163b,
+   navy #2f31c5, blue #3d7fd9, muted #5b5d78, hairline #e3e4ef, zebra
+   #f9fafd, tint #eef0fb). Placed AFTER every .rfpdoc rule they lean on or
+   override (.rfpdoc p, .rfpdoc table, .rfpdoc-actions). Small caps on paper
+   are #5b5d78 or navy, never the reference's #8a8ca6 print gray or the
+   3.9:1 blue: both fail AA at these sizes on screen. Breakpoints are
+   CONTAINER queries against the sheet (.rfpdoc-page), so a half-viewport
+   pane at lg and a phone both lay out by the paper's own width. ---- */
+.rfpdoc .rfpdoc-block { margin-block: 22px; min-width: 0; }
+.rfpdoc .rfpdoc-block:first-child { margin-top: 6px; }
+/* The per-block workspace control (never exported): right-aligned under
+   the block, in the section action row's quiet caps. */
+.rfpdoc .rfpdoc-blockbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 4px 16px;
+  margin-top: 8px;
+}
+.rfpdoc .rfpdoc-blockbar [role="alert"],
+.rfpdoc .rfpdoc-visualerr {
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #9a3412;
+}
+/* Stat tiles: tinted field under a navy top rule, big Archivo figure. */
+.rfpdoc .rfpdoc-tiles {
+  display: grid;
+  /* 132px: three or four up on a full sheet, two up on a phone sheet. */
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rfpdoc .rfpdoc-tile {
+  background: #eef0fb;
+  border-top: 2px solid #2f31c5;
+  padding: 16px 18px 18px;
+  min-width: 0;
+}
+.rfpdoc .rfpdoc-tile-value {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-weight: 700;
+  font-size: clamp(24px, 4.8cqw, 32px);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: #2f31c5;
+  overflow-wrap: anywhere;
+}
+.rfpdoc .rfpdoc-tile-label,
+.rfpdoc .rfpdoc-tile-note {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #5b5d78;
+  margin-top: 8px;
+}
+.rfpdoc .rfpdoc-tile-note { margin-top: 4px; letter-spacing: 0.08em; }
+/* Fact grid: two columns of label/value rows over hairlines, the label in
+   muted small caps left, the value in ink right. */
+.rfpdoc .rfpdoc-factgrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 36px;
+  margin: 0;
+}
+.rfpdoc .rfpdoc-fact {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  border-bottom: 1px solid #e3e4ef;
+  padding: 11px 0;
+  min-width: 0;
+}
+.rfpdoc .rfpdoc-fact:nth-child(-n + 2) { border-top: 1px solid #e3e4ef; }
+.rfpdoc .rfpdoc-fact-label {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #5b5d78;
+  flex: 0 1 auto;
+  max-width: 45%;
+}
+.rfpdoc .rfpdoc-fact-value {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #15163b;
+  text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+@container (max-width: 480px) {
+  .rfpdoc .rfpdoc-factgrid { grid-template-columns: minmax(0, 1fr); }
+  /* AFTER the two-column rule above: only the first row opens with a rule
+     once the grid is one column. */
+  .rfpdoc .rfpdoc-fact:nth-child(2) { border-top: 0; }
+}
+/* Badge strip: bordered cells, a small rotated square, label over note.
+   --rfpdoc-n (set inline, the badge count, 1..4) keeps every strip on one
+   row like the files; only a phone-narrow sheet wraps. */
+.rfpdoc .rfpdoc-badges {
+  display: grid;
+  grid-template-columns: repeat(var(--rfpdoc-n, 1), minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rfpdoc .rfpdoc-badge {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #e3e4ef;
+  padding: 13px 16px;
+  min-width: 0;
+}
+.rfpdoc .rfpdoc-badge-mark {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  transform: rotate(45deg);
+  background: #2f31c5;
+}
+.rfpdoc .rfpdoc-badge:nth-child(3n + 2) .rfpdoc-badge-mark { background: #3d7fd9; }
+.rfpdoc .rfpdoc-badge:nth-child(3n) .rfpdoc-badge-mark { background: #15163b; }
+.rfpdoc .rfpdoc-badge-label {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #15163b;
+  overflow-wrap: anywhere;
+}
+.rfpdoc .rfpdoc-badge-note {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #5b5d78;
+  margin-top: 2px;
+}
+@container (max-width: 560px) {
+  /* AFTER every base badge rule above. 128px: three up on the lg pane's
+     sheet, two up on a phone sheet (container queries read the sheet's
+     CONTENT box, ~430px at the lg pane). Tighter cells and a smaller
+     label so the certification names keep to one line where they can. */
+  .rfpdoc .rfpdoc-badges {
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    gap: 10px;
+  }
+  .rfpdoc .rfpdoc-badge { gap: 10px; padding: 12px; }
+  .rfpdoc .rfpdoc-badge-label { font-size: 12.5px; }
+}
+/* Tables reuse the branded .rfpdoc table above; the block adds a small-caps
+   caption, shared column fractions (<colgroup>), and its OWN scroll
+   container so a wide table never scrolls the page. */
+.rfpdoc .rfpdoc-figure { margin: 0; }
+.rfpdoc .rfpdoc-tablecap {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #2f31c5;
+  margin-bottom: 10px;
+}
+.rfpdoc .rfpdoc-tablewrap { overflow-x: auto; max-width: 100%; }
+.rfpdoc .rfpdoc-tablewrap table { table-layout: fixed; }
+/* A cell never splits a word ("authenticatio / n"): the table's min-width
+   (workspace.tsx, per column from its longest word) makes room instead,
+   and a genuinely wide table scrolls inside the wrapper. */
+.rfpdoc .rfpdoc-tablewrap td {
+  vertical-align: top;
+  overflow-wrap: normal;
+  hyphens: manual;
+}
+@container (max-width: 480px) {
+  /* AFTER .rfpdoc th / .rfpdoc td above: tighter cells on a phone sheet. */
+  .rfpdoc .rfpdoc-tablewrap th,
+  .rfpdoc .rfpdoc-tablewrap td { padding: 10px; }
+}
+/* Callout: tinted field, blue bar left; "emphasis" takes the navy bar a
+   step heavier and sets its body in ink. */
+.rfpdoc .rfpdoc-callout {
+  background: #eef0fb;
+  border-left: 3px solid #3d7fd9;
+  padding: 15px 20px 16px;
+}
+.rfpdoc .rfpdoc-callout p { font-size: 14px; line-height: 1.6; color: #31324c; }
+.rfpdoc .rfpdoc-callout-title,
+.rfpdoc .rfpdoc-card-title {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #2f31c5;
+  margin-bottom: 6px;
+}
+.rfpdoc .rfpdoc-callout--emphasis {
+  border-left: 4px solid #2f31c5;
+}
+.rfpdoc .rfpdoc-callout--emphasis p { font-size: 15px; color: #15163b; }
+/* Two-up cards: hairline frames, stacking once the sheet is phone-narrow. */
+.rfpdoc .rfpdoc-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.rfpdoc .rfpdoc-card {
+  border: 1px solid #e3e4ef;
+  padding: 16px 20px 18px;
+  min-width: 0;
+}
+.rfpdoc .rfpdoc-card p { font-size: 14px; line-height: 1.6; color: #31324c; }
+.rfpdoc .rfpdoc-card .rfpdoc-card-foot {
+  font-style: italic;
+  font-size: 12.5px;
+  color: #5b5d78;
+  margin-top: 8px;
+}
+@container (max-width: 480px) {
+  .rfpdoc .rfpdoc-cards { grid-template-columns: minmax(0, 1fr); }
+}
+/* Timeline: a horizontal stepper (dot, rule to the next step, small-caps
+   label, Archivo title, muted body); a vertical one on a narrow sheet.
+   --rfpdoc-n (set inline, min(steps, 4)) lays rows of up to four steps
+   as the files do (5 -> 4+1, 6 -> 4+2). */
+.rfpdoc .rfpdoc-timeline {
+  display: grid;
+  grid-template-columns: repeat(var(--rfpdoc-n, 4), minmax(0, 1fr));
+  gap: 18px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+@container (max-width: 639px) {
+  /* Between the phone stack and a full sheet, four 100px columns would
+     overflow a step title; let the count follow the width. */
+  .rfpdoc .rfpdoc-timeline {
+    grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  }
+}
+.rfpdoc .rfpdoc-step { position: relative; padding-top: 28px; min-width: 0; }
+.rfpdoc .rfpdoc-step::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #2f31c5;
+}
+.rfpdoc .rfpdoc-step::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 20px;
+  right: -7px;
+  height: 1px;
+  background: #c9cbe6;
+}
+.rfpdoc .rfpdoc-step:nth-last-child(2)::before { background: #3d7fd9; }
+.rfpdoc .rfpdoc-step:last-child::before { background: #15163b; }
+/* AFTER the two rules above: a two-step timeline is navy then ink. */
+.rfpdoc .rfpdoc-step:first-child::before { background: #2f31c5; }
+/* No rule runs off the fourth step of a row into nothing. */
+.rfpdoc .rfpdoc-step:nth-child(4n)::after,
+.rfpdoc .rfpdoc-step:last-child::after { content: none; }
+.rfpdoc .rfpdoc-step-label {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #2f31c5;
+}
+.rfpdoc .rfpdoc-step-title {
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #15163b;
+  margin-top: 4px;
+}
+.rfpdoc .rfpdoc-step p {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #5b5d78;
+  margin-top: 6px;
+}
+@container (max-width: 520px) {
+  .rfpdoc .rfpdoc-timeline { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .rfpdoc .rfpdoc-step { padding: 0 0 18px 28px; }
+  .rfpdoc .rfpdoc-step:last-child { padding-bottom: 0; }
+  .rfpdoc .rfpdoc-step::before { top: 1px; }
+  .rfpdoc .rfpdoc-step::after {
+    top: 20px;
+    bottom: 4px;
+    left: 6px;
+    right: auto;
+    width: 1px;
+    height: auto;
+  }
+  /* Stacked, the line runs through every step but the last: the
+     fourth-of-a-row cut above is a horizontal-only rule. */
+  .rfpdoc .rfpdoc-step:nth-child(4n)::after { content: ""; }
+  .rfpdoc .rfpdoc-step:last-child::after { content: none; }
+}
+/* Edit mode's "kept as they are" list, above the textarea. */
+.rfpdoc .rfpdoc-kept {
+  border: 1px solid #e3e4ef;
+  background: #f9fafd;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #5b5d78;
+}
+.rfpdoc .rfpdoc-kept p { font-size: 13px; color: #5b5d78; }
+.rfpdoc .rfpdoc-kept ul { margin: 4px 0 0; padding-left: 18px; list-style: square; }
+.rfpdoc .rfpdoc-kept li { color: #31324c; overflow-wrap: anywhere; }
 /* Below lg the rail does not stick, so the pane switcher must: from deep in
    a long draft, Questions/Checks/Tron were a full-page scroll away. Sits
    directly under the runbar, which is itself sticky. */

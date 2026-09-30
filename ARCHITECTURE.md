@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17.7 RFP VISUAL BLOCKS (owner: "uses visuals and tables like the BOF response, especially the About section"). Drafted sections carry optional `blocks` (stat tiles, fact grid, badge strip, table, callout, two-up cards, timeline) beside their paragraphs, anchored by `after`; `src/lib/rfp/draft-blocks.ts` is the client-safe contract (`interleave`, `sanitizeStoredBlocks`, `parseModelVisuals` grounding every number against the cited facts, `buildAboutBlocks`/`buildServiceStatsBlock`/`buildOnboardingTimeline` from live facts with no model call); the drafter's optional `visuals` output (kill switch `RFP_VISUALS=0`), automatic About placement at landing, the section-route `visuals` op, and one visual spec shared by the screen `DocBlock` and both export emitters (`brandedTable` hoisted from the Investment sheet, pixel-identical). New: `test:rfpblocks`, `test:rfpvisualgate`, `rfp:render-fixture`, ornament PNGs under `public/brand/rfp-ornaments/`.
+
 Last verified against code: 2026-09-30 §5.17.6 RFP MINIMUM-FIRST USER COUNT + REFERENCES BACKSTOP + REAL TITLES (owner review of a live proposal). The fully managed users question now leads with the rate-card monthly minimum and the RFP's own staff sentences (`staffMentions`/`minimumAssumption`/`staffConflictSignals` in `src/lib/rfp/staff-count.ts`, computed server-side in the workspace page, never seeding a price: only an exact grounded count seeds); quotes at or under the minimum read "Up to N fully managed users at the monthly minimum" with `quantityLabel` shared by screen and both exports; a references request the draft does not satisfy lands as one canonical server-minted gap (`src/lib/rfp/references-ask.ts`, `liveReferences()`, D3 etiquette appended on answer, contacts never filed as knowledge) with `POST /api/rfp/proposals/[id]/references-gap` for proposals drafted earlier; document titles are composed from the client name and the RFP's grounded subject line (`src/lib/rfp/doc-title.ts`) and the on-screen cover prints the export's cover. New suites: `test:rfptitle`, `test:rfpquote`, `test:rfprefs`. §5.17.2's "server caps 2 gaps per section" now has one exception (the references gap).
 
 Last verified against code: 2026-09-28 /work COUNTS RECONCILED (owner directive; section 4 `/work` row, the "Registry + console pager" passage). The page's "144 works" is 15 hand-authored static exhibits (no DB rows) + 129 published team cards, and every DB-derived count sees only the 129, so the shown number kept being reported as a bug. New pure module `src/lib/work/counts.ts` (no DB import, no React): `composeWorkCounts(teamCount)` — exhibits from `static-titles.json`'s `exhibits.length`, `total = exhibits + team` — is THE definition of the /work total, and `workCountsLine()` is the ONE public reconciliation sentence, byte-pinned: `144 works · 129 team-submitted, published from the live database · 15 built into the page` (middots only, never an em/en dash), rendered server-side and crawlable (JS-off included) as a foot line of `nav.work-registry` (the existing `mono mt-6 text-xs text-faint` idiom, no new CSS; it lives outside the pager island's `section.panel[id]` discovery, so windowing and panel counting are untouched). WorkPage composes `counts` ONCE beside `splitPlacements()`, from the same guarded `publishedCards()` fetch; `WorkRegistry` now takes `{placed, run, counts}` (numbering width from `counts.total`, its local exhibits+placed+run arithmetic deleted — equal by construction, `splitPlacements()` partitions the team array) and `WorkPager` takes `{counts}` (mechanical rename: `total = counts.total`, still the rendered-panel count its mount-time fail-open `panels.length !== total` check compares against the DOM). New suite `npm run test:workcounts` (`scripts/work-counts-tests.ts`, tsx, no DB) pins today's numbers BY DESIGN (15/129/144, the test:placements pattern), the snapshot shape (15 exhibits, 5 bays), the BYTE-EXACT public line at team=129, its no-dash rule, and source-pins the three call sites (occurrence-counted: one composition, one rendered line). What is edit-visible: the formula, the static lane, the pinned sentence and the wiring; the team count itself is a function-INPUT pin, not a DB pin — the live count moves 129 -> 130 at the next publish with no edit anywhere, and the page follows it through the one formula, which is the point. No route, schema, env or migration change.
@@ -9080,7 +9082,9 @@ staleness sweep joins on `cites`, so a client that could clear either field
 would launder an uncited claim past both validators, which fail OPEN on an
 empty `cites`. This is why editing is per section and text-only rather than
 free markdown: there is no markdown parser here, and re-parsing prose into the
-closed 15-variant block set cannot round-trip.
+closed 15-variant block set cannot round-trip. (Visual blocks, §5.17.7, are
+stored beside the paragraphs as structured data for that reason, never as
+markup inside them.)
 
 **Per-user knowledge is its own table, `rfp_knowledge_proposals`**, NOT
 `visibility` columns on `rfp_facts`. Private facts sharing a key with a shared
@@ -9859,6 +9863,168 @@ matching the reader rule); a generic "mandatory attachment with no coverage"
 backstop (insurance certificates, W-9, resumes: a keyword test per document
 type is far less reliable than for references; a merged checklist question
 is the candidate design); rebuild-on-read for stored quotes.
+
+#### 5.17.7 Visual blocks: the document stops being walls of prose (2026-09-30)
+
+Owner: "the previous [B-O-F] response was a lot more visual. Especially
+consider the About section. Please ensure RFP Response uses visuals and
+tables like the BOF response." The B-O-F reference was hand-built and printed
+by Chromium; every section the builder drafted was paragraphs only, because
+`DraftSectionRecord` held `paragraphs: string[]` and resolve-draft lifted each
+one into a `prose` block, although the content model already defined the
+visual kinds. Plan agent, then four implementers with disjoint files (contract
+module first, then drafter/routes, gate/exports, screen in parallel), then a
+three-critic refuter panel.
+
+**Storage.** `DraftSectionRecord` gains optional `blocks?: DraftBlock[]`
+beside `paragraphs`, the key ABSENT when there are none, so every stored
+prose-only record is byte-identical and there is no migration
+(`sections_json` is text). A block is a content-model body (the exact
+`stat-tiles` / `fact-grid` / `badge-strip` / `table` / `callout` / `cards` /
+`timeline` shapes from `content-model/blocks.ts`) plus an envelope: `id`
+(`v_` + 8 hex, never embedding the label), `after` (the number of paragraphs
+that precede it; `after: 0` opens the section, `after: length` closes it),
+`cites` (non-empty, always), `generatedBy: "llm" | "system"`, optional
+`origin: "about" | "service-stats" | "onboarding"`. The reserved `__letter`
+record never carries blocks. `src/lib/rfp/draft-blocks.ts` is the pure,
+client-safe contract (type-only imports, no lookbehind regexes, both
+test-pinned): `interleave(paragraphs, blocks)` is the ONE ordering source for
+the screen, resolve-draft and both exporters; `sanitizeStoredBlocks` is the
+tolerant read (never throws, enforces `LIMITS`: 6 blocks per section, 2 to 4
+tiles, 2 to 12 pairs, 1 to 4 badges, 2 to 5 columns, 1 to 14 rows, 220-char
+cells, exactly 2 cards, 700-char callout body, currency dropped);
+`reanchorBlocks` clamps `after` on every paragraph-changing write;
+`tableColumnFractions` is the shared column arithmetic. Pull-quotes are cut:
+no testimonial fact exists and a named person's words are never invented.
+
+**Grounding: numbers in visuals are never model inventions.** The drafter
+prompt (`draftSection`) gains a VISUALS stanza, byte-absent when
+`RFP_VISUALS=0` (`.env.example`; with it set the system and user prompts are
+byte-identical to the pre-round prompt, verified with `cmp`), and the output
+JSON an optional `visuals` array: `stats` (tiles naming the ONE fact whose
+own statement carries the number), `table`, `callout`, `cards`, each with
+`after` and cites; at most three; a visual only where it REPLACES prose; the
+no-price rule applies inside. `parseModelVisuals` (draft-blocks.ts) grounds
+every numeric token of a value or cell against the cited facts' text with
+matching percent-ness and qualifier (">99%" needs "more than" in the fact,
+"92" does not ground against "92%"); text is NFKC-normalized first and a
+value is never vacuously grounded: non-ASCII digits, number words ("three-year",
+"twelve months") and glued suffixes ("24k") are numeric tokens that must
+appear in the cited fact, negative-polarity facts are no grounding corpus,
+and `hasCurrency` also refuses currency words and "N per user/seat/month"
+phrasing. It drops anything ungrounded or carrying currency (rule B7
+pre-empted), keeps at most three, and degrades a
+malformed-but-grounded visual to prose within the 12-paragraph cap; it never
+fails a section. `DraftedSection` carries `blocks` plus shape-only
+`visualStats`. The draft timeout is 150 s with visuals on (120 s off) inside
+the same 60 s heartbeat / 4-minute stale horizon.
+
+**Server-built visuals, no model call.** `buildAboutBlocks` (fact grid +
+badge strip, origin `about`), `buildServiceStatsBlock` (origin
+`service-stats`) and `buildOnboardingTimeline` (origin `onboarding`) take
+every value as regex capture text from a live, affirmative fact, citing the
+fact ids they drew from (so C1 flags a corrected fact); a retired, negative
+or reworded fact omits its row. The seed corpus yields: Founded 2009,
+Headquarters, Team 47 full-time employees, Active clients 73, Client
+retention 92%, Average client tenure 4.8 years, Organizations we serve 15 to
+250 employees, Service desk 24/7/365, Insurance (carrier named, the dollar
+figure never; rule B7); badges ISO 27001:2022, SOC 2 Type 2 (Audited
+annually), CMMC Level 1; tiles >99% calls answered live, 99.9% resolved
+remotely, >70% first-contact resolution. Placement at landing
+(`src/lib/rfp/draft-blocks-ops.ts`, generate route): the About set goes on
+the section `pickAboutSection` names (title phrases weigh 3, requirement
+matches 1, threshold 3, first wins; bare "Overview"/"Background" do not count
+because in an RFP they describe the issuer) at `after: 0` if no other section
+holds `about`; service stats on the section `pickServiceStatsSection` names
+(service desk / response time / SLA / user support vocabulary, threshold 2)
+at `after: min(1, paragraphs)`, if none holds them. System blocks come first
+and survive the per-section cap; a model tile block repeating the system
+tiles is dropped. A redraft replaces a section's blocks wholesale (the About
+set is rebuilt when that section is the picked one).
+
+**Write paths.** Plain edit, Tron accept, retitle (section route), the gap
+weave (after the etiquette append) and the references-gap route all preserve
+blocks and reanchor them; blocks are NEVER read from a request body. Remove
+takes them with the record. New section-route op `visuals`:
+`{label, op:"visuals", action:"about"|"service-stats"|"onboarding"|"remove",
+blockId?}`, no brain call, rebuilt from `liveFacts()` server-side, one
+`writeProposalSections` CAS on rev (gate verdict staled), replaces the
+same-origin block on that section in place (a first add anchors `about` at 0,
+the others at `min(1, paragraphs)`), returns `{ok, rev, section, sections}`.
+Errors: 409 `immutable` (sent), 400 `invalid_request` (unknown action, `__`
+label), 404 `not_found` (label, block), 409 `conflict` (`about` held by
+another section, lost CAS), 409 `too_many` (would exceed six), 422
+`no_facts`. Activity `proposal.section_visuals`, shape-only meta;
+`proposal.generate` meta gains block and drop counts.
+
+**Gate.** resolve-draft walks `interleave()`: prose keeps its ids
+(`b_<label>_<i>`, so a legacy record resolves byte-identically, test-pinned),
+visuals lift to content-model blocks `bv_<label>_<blockId>` with their own
+cites, `generatedBy`, `editedByHuman: false`, ordinal = flow index. No rule
+changed: `blockTextSpans` already scans every field of every kind (B7 catches
+"$500" in a tile or cell, D1 an em dash in a label, A5 an unknown cite on
+llm and system blocks, A4 reads card text), C1 joins per block, C2's hash
+covers blocks. D4's headcount regex used to take the first `N staff|employees`
+match in the whole text, so the auto-added About grid's "15 to 250
+employees" would have WARNed on every proposal without a quote yet; it now
+ignores a number that is the high end of a range (lookbehind on `to`).
+
+**Rendering, one spec.** Screen (`workspace.tsx` `DocBlock`, globals.css
+`.rfpdoc-block`, `-tiles/-tile`, `-factgrid/-fact`, `-badges/-badge`,
+`-callout`, `-cards/-card`, `-tablecap/-tablewrap`, `-timeline/-step`, all
+placed after the rules they override, container-query breakpoints against
+the sheet) and both exporters (`export.ts` `VIS` spec in sheet px: pdf x0.75
+pt, docx x15 twips) draw the same blocks from the same palette: tinted
+(#EEF0FB) tiles with a navy top rule and a bold navy value stepped down to
+fit one line, a two-column key/value grid over hairlines with small-caps
+muted labels and right-aligned serif values, hairline-bordered badges with a
+rotated-square mark cycling navy/blue/ink (vector in pdf, tiny PNGs
+`public/brand/rfp-ornaments/badge-*.png` in docx, plus `dot-*.png` and
+`step-rule.png` for the timeline; runtime assets, same ENOENT contract as the
+existing ornaments), a tinted callout with a navy left rule and small-caps
+title, two equal hairline cards (the four small-caps titles: callout, card,
+table caption, timeline step label, are NAVY semibold in all three renderers,
+not the reference's blue, which fails AA on the tint; callout `tone` is
+honored everywhere: neutral = 3px blue rule, emphasis = 4px navy rule and a
+15px ink body), block tables in the Investment table's
+own branded style (the pdf `row` closure was hoisted into
+`brandedTable(cols, aligns)`; the Investment sheet is pixel-identical before
+and after, `compare -metric AE` 0 on every page), and a horizontal stepper
+timeline. pdfkit measures every block, `ensureRoom`s it and draws at explicit
+coordinates (tiles, callout, cards, badges and each timeline row atomic;
+tables and the fact grid paginate row by row with the header repainted, the
+"· CONTINUED" stamp intact); docx renders everything as tables with
+`cantSplit` rows and `tableHeader`. Screen-only affordances: a quiet Remove
+under each block; one "Add visual" control per drafted section (hidden while
+editing) that swaps the action row for "Company snapshot" / "Service stats" /
+"Onboarding timeline" / "Cancel" (each hidden when that section holds the
+origin; company snapshot hidden when any section does; workspace-level state,
+never a `<details>`, which the flash remount would snap shut), calling the
+`visuals` op and adopting `sections`/`rev` like the structural ops (flash,
+Updated chip, receipt); edit mode keeps the textarea paragraph-only and lists
+kept visuals ("N visuals are kept as they are"); Tron revise cards say the
+same; there is no block text editor (remove or redraft). A per-section "Redraft"
+action ("Redraft (replaces your edit)" on a human-edited section) re-runs
+the drafter on one section, which is the path to model tables and tiles on a
+proposal drafted before this round; it replaces that section's blocks with
+the new draft's own, the edit-mode note says so. Existing proposals get the
+About set, service stats and timeline through the visual menu with no redraft
+and no prose touched. Block tables never split a word: the wrapper's
+min-width is computed per column from the longest word (`longest * 7.6 + 28`
+px over the column fraction, capped at 640) and only a genuinely wide table
+scrolls inside its wrapper. A Remove never jumps the viewport
+(`showChanged(labels, {jump:false})`); a dropped connection polls before
+reporting, so a landed write is never called "nothing changed".
+
+**Verification without brain or database.** `npm run rfp:render-fixture --
+<outdir>` (refuses a path inside the repo) resolves the invented-client
+fixture `scripts/fixtures/rfp-visual-fixture.ts` (every kind, a 14-row table
+that overflows a page, a legacy prose-only section, a quote from the seed
+rate card), runs the gate, and writes PDF + DOCX for `pdftoppm` /
+LibreOffice inspection. Suites: `npm run test:rfpblocks` (contract,
+grounding, sanitizer, placement, builders against the seed facts) and
+`npm run test:rfpvisualgate` (legacy byte-identity, schema lift, span
+coverage, B7/D1/A5 on visual blocks, flow order).
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

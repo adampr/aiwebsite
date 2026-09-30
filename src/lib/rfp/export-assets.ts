@@ -6,7 +6,8 @@
 // faces globals.css renders the on-screen sheets with), the brand logo PNGs
 // the sheets place, and pre-rendered ornament PNGs for the devices Word
 // cannot draw natively (the cover's arc-mark corner, the divider ghost
-// numerals). Fonts and ornaments live in public/brand/ and are read from
+// numerals, the visual blocks' badge mark and timeline dot). Fonts and
+// ornaments live in public/brand/ and are read from
 // process.cwd() — prod runs `next start` from the app dir and the deploy
 // ships the whole repo, so public/ is always present.
 //
@@ -44,8 +45,24 @@ export type RfpExportAssets = {
     /** Ghost divider numerals, 134x122.4pt at 300dpi. */
     num01: Buffer;
     num02: Buffer;
+    /** Visual-block marks Word cannot draw (the PDF draws them as vectors):
+     *  the badge strip's rotated square, 14px box at 4x, in the order the
+     *  strip cycles them (navy, blue, ink). */
+    badgeMarks: [Buffer, Buffer, Buffer];
+    /** The timeline's 12px step dot at 4x, same color order. */
+    stepDots: [Buffer, Buffer, Buffer];
+    /** The timeline connector: a hairline stripe that stretches sideways. */
+    stepRule: Buffer;
   };
 };
+
+/** Which mark a badge or a timeline step carries (index into badgeMarks /
+ *  stepDots). Shared so both emitters and the screen agree on the sequence. */
+export const badgeMarkIndex = (i: number): 0 | 1 | 2 => (i % 3) as 0 | 1 | 2;
+/** Timeline: the last step is ink, the one before it blue, the rest navy;
+ *  a two-step timeline is navy then ink (the screen's first-child rule). */
+export const stepDotIndex = (i: number, count: number): 0 | 1 | 2 =>
+  i === count - 1 ? 2 : i === count - 2 && i > 0 ? 1 : 0;
 
 /** Intrinsic aspect ratios the emitters size images with (width / height). */
 export const IMAGE_ASPECT = {
@@ -80,6 +97,17 @@ export function loadRfpExportAssets(): RfpExportAssets {
       arcCorner: read("rfp-ornaments", "arc-corner.png"),
       num01: read("rfp-ornaments", "num-01.png"),
       num02: read("rfp-ornaments", "num-02.png"),
+      badgeMarks: [
+        read("rfp-ornaments", "badge-navy.png"),
+        read("rfp-ornaments", "badge-blue.png"),
+        read("rfp-ornaments", "badge-ink.png"),
+      ],
+      stepDots: [
+        read("rfp-ornaments", "dot-navy.png"),
+        read("rfp-ornaments", "dot-blue.png"),
+        read("rfp-ornaments", "dot-ink.png"),
+      ],
+      stepRule: read("rfp-ornaments", "step-rule.png"),
     },
   };
   return cached;

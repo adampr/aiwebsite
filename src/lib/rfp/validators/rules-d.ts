@@ -180,6 +180,18 @@ export const D3: Rule = {
 };
 
 /**
+ * The prospect's headcount as the proposal states it ("your 40 users"), or null. The high end of
+ * a range is not a headcount: "15 to 250 employees" is XL.net's own client-size sentence (the
+ * About fact grid and most Overview drafts carry it), and reading its 250 as the prospect made
+ * every proposal without a quote warn about a 250-person client. Lookbehind is fine here: the
+ * validators are server-only (the workspace imports only the GateResult type).
+ */
+export function prospectHeadcount(text: string): number | null {
+  const m = /(?<!\d\s*to\s*)\b(\d{2,4})\s*(?:staff|employees|people|users)\b/i.exec(text);
+  return m ? Number(m[1]) : null;
+}
+
+/**
  * D4 - Honest gap framing. WARN.
  *
  * Where XL.net does not fit, the required shape is: relevant strength, then the gap stated plainly,
@@ -225,8 +237,7 @@ export const D4: Rule = {
     // A fit gap at the edge of the stated client-size range should be named, not left to discovery.
     const rangeFact = ctx.knowledge.facts.find((f) => f.key === "company.client-size-range");
     if (rangeFact) {
-      const staffMatch = /\b(\d{2,4})\s*(?:staff|employees|people|users)\b/i.exec(text);
-      const staff = staffMatch ? Number(staffMatch[1]) : null;
+      const staff = prospectHeadcount(text);
       const atEdge = staff !== null && (staff <= 16 || staff >= 220);
       const namesTheEdge = /small end|large end|edge of|upper end|lower end|top of our range/i.test(text);
       if (atEdge && !namesTheEdge) {

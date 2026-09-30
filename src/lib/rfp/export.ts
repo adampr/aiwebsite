@@ -49,10 +49,12 @@ import {
   Paragraph,
   Table,
   TableCell,
+  TableLayoutType,
   TableRow,
   TabStopType,
   TextRun,
   TextWrappingType,
+  VerticalAlign,
   VerticalPositionRelativeFrom,
   WidthType,
 } from "docx";
@@ -60,12 +62,14 @@ import JSZip from "jszip";
 import PDFDocument from "pdfkit";
 import {
   formatMoney,
+  type Block,
   type PricingIllustration,
   type PricingQuote,
   type RateCard,
   type ResolvedProposal,
 } from "./content-model";
 import {
+  badgeMarkIndex,
   dividerHead,
   FURNITURE_CLOSING_HEADLINE,
   FURNITURE_CLOSING_WEB,
@@ -78,7 +82,9 @@ import {
   FURNITURE_TABLE_HEAD,
   loadRfpExportAssets,
   sectionKicker,
+  stepDotIndex,
 } from "./export-assets";
+import { DRAFT_BLOCK_KINDS, tableColumnFractions, type DraftBlockKind } from "./draft-blocks";
 import { COMPANY_SIGNATURE, SIGNATURE_COLORS } from "./signature";
 import { quantityLabel } from "./quote";
 
@@ -93,10 +99,24 @@ const FOOTGRAY = "767892"; // the screen's AA-checked pagefoot gray
 const HAIR = "E3E4EF";
 const ZEBRA = "F9FAFD";
 const GHOST_FILL = "EEF0FB";
+const TINT = "EEF0FB"; // tile / callout wash
 const NAVY_LEDE = "D9DFF7";
 const NAVY_LABEL = "9FB6F0";
 const NAVY_RULE = "6365D4"; // 25% white over the navy field, precomposed
 const h = (c: string) => `#${c.toLowerCase()}`;
+
+/** A visual block as the emitters receive it: the content-model variant of
+ *  one of the kinds a drafted section can store (draft-blocks.ts). */
+export type ExportVisual = Extract<Block, { kind: DraftBlockKind }>;
+
+/** One section's body in reading order: THE ordering resolve-draft took from
+ *  `interleave`, so screen, PDF and Word place every block identically. */
+export type ExportFlowItem =
+  | { type: "p"; text: string }
+  | { type: "block"; block: ExportVisual };
+
+const isVisual = (b: Block): b is ExportVisual =>
+  (DRAFT_BLOCK_KINDS as readonly string[]).includes(b.kind);
 
 export type ExportView = {
   coverTitle: string;
@@ -125,7 +145,16 @@ export type ExportView = {
   };
   /** kicker replicates the workspace's secKicker ("Section 3" / "IV" / a
    *  pre-worded label verbatim), so screen and file agree on the eyebrow. */
-  sections: { label: string; kicker: string; title: string; paragraphs: string[] }[];
+  sections: {
+    label: string;
+    kicker: string;
+    title: string;
+    /** The section's prose alone, in order (what `flow` carries as "p"). */
+    paragraphs: string[];
+    /** Prose and visual blocks together, in document order. Emitters render
+     *  THIS; a prose-only section's flow is its paragraphs and nothing else. */
+    flow: ExportFlowItem[];
+  }[];
   pricing: PricingQuote | null;
   minimumSentence: string | null;
   /** The card's minimum fully managed block, for the quantity cell ("Up to 15"). */
@@ -164,6 +193,13 @@ export function buildExportView(
       paragraphs: s.blocks
         .filter((b) => b.kind === "prose")
         .map((b) => (b.kind === "prose" ? b.text : "")),
+      flow: s.blocks.flatMap((b): ExportFlowItem[] =>
+        b.kind === "prose"
+          ? [{ type: "p", text: b.text }]
+          : isVisual(b)
+            ? [{ type: "block", block: b }]
+            : []
+      ),
     })),
     pricing: quote,
     minimumUsers: rateCard.minimumFullyManagedUsers,
@@ -225,6 +261,151 @@ function illustrationRows(ill: PricingIllustration, minimumUsers: number): strin
     l.unitPrice.cents === 0 ? "" : money(l.unitPrice),
     money(l.lineTotal),
   ]);
+}
+
+/* ======================================================================== */
+/* Visual blocks: one spec, two emitters                                    */
+/* ======================================================================== */
+
+// Every number is CSS px on the ~648px sheet (the same unit .rfpdoc uses),
+// mapped px -> pt at 0.75 by the PDF and px -> twips at 15 by Word, so the
+// two files and the screen share one set of measurements. Colors are the
+// palette constants above. Change a value here and both emitters move.
+const VIS = {
+  /** Gutter between tiles, badges, cards and timeline steps. */
+  gap: 16,
+  /** Extra air above a block that follows a paragraph, and the air below
+   *  every block (the paragraph rhythm is ~19px of clear space). */
+  before: 6,
+  after: 22,
+  tile: {
+    pad: 18,
+    rule: 3, // navy top rule
+    valuePx: 32, // Archivo Bold, navy; steps down to fit one line
+    valueMinPx: 18,
+    valueLh: 1.1,
+    labelGap: 8,
+    labelPx: 10.5, // Archivo Medium caps, muted
+    labelLs: 0.12,
+    labelLh: 1.5,
+    noteGap: 4,
+    notePx: 10, // Archivo Medium caps, muted (the screen's .rfpdoc-tile-note)
+    noteLs: 0.08,
+    noteLh: 1.5,
+  },
+  fact: {
+    colGap: 32,
+    padY: 11,
+    labelShare: 0.42, // of one column, gutter included
+    gutter: 12,
+    labelPx: 9.5, // Archivo Medium caps, muted
+    labelLs: 0.1,
+    labelLh: 1.3,
+    valuePx: 14, // serif, ink, right-aligned
+    valueLh: 1.4,
+  },
+  badge: {
+    // One or two badges stretch across the width, as the screen's grid does.
+    padY: 14,
+    padX: 16,
+    mark: 14, // the rotated 10px square's box
+    markGap: 10,
+    labelPx: 13, // Archivo Bold, ink
+    labelLh: 1.25,
+    noteGap: 3,
+    notePx: 9.5, // Archivo Medium caps, muted
+    noteLs: 0.12,
+    noteLh: 1.4,
+  },
+  callout: {
+    // tone "neutral": 3px blue left rule, 14px body in BODY; tone "emphasis":
+    // 4px navy rule, 15px body in INK (the screen's .rfpdoc-callout--emphasis).
+    rule: 3,
+    ruleEmphasis: 4,
+    padY: 16,
+    padX: 20,
+    titlePx: 10.5, // Archivo SemiBold caps, navy
+    titleLs: 0.16,
+    titleLh: 1.4,
+    titleGap: 6,
+    bodyPx: 14, // serif
+    bodyPxEmphasis: 15,
+    bodyLh: 1.6,
+  },
+  card: {
+    padY: 18,
+    padX: 20,
+    titlePx: 10.5, // Archivo SemiBold caps, navy
+    titleLs: 0.16,
+    titleLh: 1.4,
+    titleGap: 8,
+    bodyPx: 13.5, // serif
+    bodyLh: 1.55,
+    footGap: 8,
+    footPx: 12, // serif italic, muted
+    footLh: 1.4,
+  },
+  table: {
+    captionPx: 10.5, // Archivo SemiBold caps, navy
+    captionLs: 0.16,
+    captionLh: 1.4,
+    captionGap: 8,
+    // Rows are the Investment table's own: 11px caps head on navy, 13.5px
+    // serif body, 12px/14px cell padding, zebra, hairlines.
+  },
+  timeline: {
+    perRowMax: 4, // five or six steps wrap to rows of four (4+1, 4+2), as the screen's 118px grid does on a sheet
+    rowGap: 18,
+    dot: 12,
+    ruleGap: 4,
+    labelGap: 10,
+    labelPx: 10, // Archivo SemiBold caps, navy
+    labelLs: 0.14,
+    labelLh: 1.4,
+    titleGap: 5,
+    titlePx: 14, // Archivo Bold, ink
+    titleLh: 1.25,
+    bodyGap: 5,
+    bodyPx: 12.5, // serif, muted
+    bodyLh: 1.5,
+  },
+} as const;
+
+/** Badge mark / timeline dot colors, in asset order (export-assets). */
+const MARK_COLORS = [NAVY, BLUE, INK] as const;
+
+/** Fact-grid pairs in reading order, two to a row (the screen's 2-col grid). */
+function factRows<T>(pairs: readonly T[]): [T, T | null][] {
+  const rows: [T, T | null][] = [];
+  for (let i = 0; i < pairs.length; i += 2) rows.push([pairs[i], pairs[i + 1] ?? null]);
+  return rows;
+}
+
+/** Timeline steps chunked into rows of at most perRowMax, each step keeping its overall index. */
+function timelineRows<T>(steps: readonly T[]): { step: T; index: number }[][] {
+  const per = Math.max(1, Math.min(steps.length, VIS.timeline.perRowMax));
+  const rows: { step: T; index: number }[][] = [];
+  steps.forEach((step, index) => {
+    if (index % per === 0) rows.push([]);
+    rows[rows.length - 1].push({ step, index });
+  });
+  return rows;
+}
+
+/**
+ * The size every value in a stat-tile row sets at: the design size, stepped
+ * down until the longest value fits one line of its tile (a figure never
+ * breaks mid-number). One size for the whole row, so tiles read as a set.
+ * `widthAt` measures in px with the real Archivo Bold, in BOTH emitters.
+ */
+function tileValuePx(
+  values: string[],
+  innerWidthPx: number,
+  widthAt: (text: string, px: number) => number
+): number {
+  let px: number = VIS.tile.valuePx;
+  while (px > VIS.tile.valueMinPx && values.some((v) => widthAt(v, px) > innerWidthPx)) px -= 1;
+  return px;
 }
 
 /* ======================================================================== */
@@ -707,61 +888,524 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
     );
   };
 
+  // The branded table cell: navy head with white caps, zebra body, hairline
+  // row rules, ink-ruled total rows. The Investment table and every table
+  // block draw with it, so the two cannot drift apart.
+  const tcell = (
+    text: string,
+    opts: {
+      head?: boolean;
+      strong?: boolean;
+      right?: boolean;
+      center?: boolean;
+      zebra?: boolean;
+      total?: boolean;
+      /** Twips. Table blocks pin their columns; the Investment table does not. */
+      width?: number;
+    } = {}
+  ) =>
+    new TableCell({
+      ...(opts.width !== undefined
+        ? { width: { size: opts.width, type: WidthType.DXA } }
+        : {}),
+      shading: opts.head
+        ? { fill: NAVY }
+        : opts.zebra
+          ? { fill: ZEBRA }
+          : undefined,
+      borders: opts.head
+        ? NO_BORDERS
+        : opts.total
+          ? {
+              ...NO_BORDERS,
+              top: { style: BorderStyle.SINGLE, size: 12, color: INK },
+            }
+          : {
+              ...NO_BORDERS,
+              bottom: { style: BorderStyle.SINGLE, size: 6, color: HAIR },
+            },
+      // The screen's 12px/14px cell padding (.rfpdoc td), the pdf's CELL_PY/CELL_PX.
+      margins: { top: 180, bottom: 180, left: 210, right: 210 },
+      children: [
+        new Paragraph({
+          alignment: opts.right
+            ? AlignmentType.RIGHT
+            : opts.center
+              ? AlignmentType.CENTER
+              : AlignmentType.LEFT,
+          children: [
+            opts.head
+              ? new TextRun({
+                  text: text.toUpperCase(),
+                  font: AR_SEMI,
+                  size: px2hp(11),
+                  characterSpacing: ls2tw(0.1, 11),
+                  color: "FFFFFF",
+                })
+              : new TextRun({
+                  text,
+                  font: opts.strong || opts.total ? SERIF_SEMI : SERIF,
+                  size: px2hp(13.5),
+                  color: opts.strong || opts.total ? INK : BODY,
+                }),
+          ],
+        }),
+      ],
+    });
+
+  /* ---- Visual blocks (spec: VIS) ---------------------------------------- */
+  // Everything is a table: Word has no tile, card or callout, but a shaded
+  // or bordered cell IS one, and a row marked cantSplit never breaks across
+  // a page, which is what keeps these blocks atomic the way the PDF's are.
+  const hairB = { style: BorderStyle.SINGLE, size: 6, color: HAIR } as const;
+  const tinyPar = () =>
+    new Paragraph({ children: [], spacing: { line: 20, lineRule: LineRuleType.EXACT } });
+  const vRun = (
+    text: string,
+    font: string,
+    px: number,
+    color: string,
+    extra: { bold?: boolean; italics?: boolean } = {}
+  ) => new TextRun({ text, font, size: px2hp(px), color, ...extra });
+  const vCaps = (text: string, px: number, ls: number, color: string, font: string = AR_MED) =>
+    new TextRun({
+      text: text.toUpperCase(),
+      font,
+      size: px2hp(px),
+      characterSpacing: ls2tw(ls, px),
+      color,
+    });
+  const vPar = (
+    runs: (TextRun | ImageRun)[],
+    o: { px: number; lh: number; after?: number; right?: boolean; keepNext?: boolean }
+  ) =>
+    new Paragraph({
+      alignment: o.right ? AlignmentType.RIGHT : AlignmentType.LEFT,
+      keepNext: o.keepNext,
+      children: runs,
+      spacing: {
+        after: px2tw(o.after ?? 0),
+        line: px2tw(o.px * o.lh),
+        lineRule: LineRuleType.AT_LEAST,
+      },
+    });
+  const vCell = (
+    width: number,
+    content: (Paragraph | Table)[],
+    o: {
+      fill?: string;
+      borders?: Partial<Record<"top" | "bottom" | "left" | "right", { style: (typeof BorderStyle)[keyof typeof BorderStyle]; size: number; color?: string }>>;
+      margins?: { top?: number; bottom?: number; left?: number; right?: number };
+      middle?: boolean;
+    } = {}
+  ) =>
+    new TableCell({
+      width: { size: width, type: WidthType.DXA },
+      shading: o.fill ? { fill: o.fill } : undefined,
+      borders: { ...NO_BORDERS, ...o.borders },
+      margins: { top: 0, bottom: 0, left: 0, right: 0, ...o.margins },
+      verticalAlign: o.middle ? VerticalAlign.CENTER : undefined,
+      children: content.length ? content : [tinyPar()],
+    });
+  const vTable = (columnWidths: number[], rows: TableRow[]) =>
+    new Table({
+      width: { size: columnWidths.reduce((a, x) => a + x, 0), type: WidthType.DXA },
+      layout: TableLayoutType.FIXED,
+      borders: NO_BORDERS,
+      columnWidths,
+      rows,
+    });
+  const atomicRow = (cells: TableCell[]) => new TableRow({ cantSplit: true, children: cells });
+
+  // Archivo Bold widths for the tile step-down, measured with the real face
+  // (a pdfkit document that is never written; built only if a tile exists).
+  let measurer: InstanceType<typeof PDFDocument> | null = null;
+  const archivoBoldWidthPx = (text: string, px: number) => {
+    if (!measurer) {
+      measurer = new PDFDocument({ autoFirstPage: false });
+      measurer.registerFont("Archivo-Bold", assets.fonts.archivoBold);
+    }
+    return measurer.font("Archivo-Bold").fontSize(pt(px)).widthOfString(text) / 0.75;
+  };
+
+  const visualDocx = (b: ExportVisual): (Paragraph | Table)[] => {
+    const gap = px2tw(VIS.gap);
+    switch (b.kind) {
+      case "stat-tiles": {
+        const T = VIS.tile;
+        const n = b.tiles.length;
+        const w = Math.floor((DXA_CONTENT - gap * (n - 1)) / n);
+        const valuePx = tileValuePx(
+          b.tiles.map((t) => t.value),
+          w / 15 - T.pad * 2,
+          archivoBoldWidthPx
+        );
+        const widths: number[] = [];
+        const cells: TableCell[] = [];
+        b.tiles.forEach((t, i) => {
+          if (i > 0) {
+            widths.push(gap);
+            cells.push(vCell(gap, []));
+          }
+          widths.push(w);
+          cells.push(
+            vCell(
+              w,
+              [
+                vPar([vRun(t.value, AR_BOLD, valuePx, NAVY, { bold: true })], {
+                  px: valuePx,
+                  lh: T.valueLh,
+                  after: T.labelGap,
+                }),
+                vPar([vCaps(t.label, T.labelPx, T.labelLs, MUTED)], {
+                  px: T.labelPx,
+                  lh: T.labelLh,
+                  after: t.note ? T.noteGap : 0,
+                }),
+                ...(t.note
+                  ? [vPar([vCaps(t.note, T.notePx, T.noteLs, MUTED)], { px: T.notePx, lh: T.noteLh })]
+                  : []),
+              ],
+              {
+                fill: TINT,
+                borders: { top: { style: BorderStyle.SINGLE, size: T.rule * 6, color: NAVY } },
+                margins: {
+                  top: px2tw(T.pad),
+                  bottom: px2tw(T.pad),
+                  left: px2tw(T.pad),
+                  right: px2tw(T.pad),
+                },
+              }
+            )
+          );
+        });
+        return [vTable(widths, [atomicRow(cells)])];
+      }
+      case "fact-grid": {
+        const F = VIS.fact;
+        const colGap = px2tw(F.colGap);
+        const half = Math.floor((DXA_CONTENT - colGap) / 2);
+        const labelW = Math.round(half * F.labelShare);
+        const valueW = half - labelW;
+        const pair = (p: { label: string; value: string } | null, first: boolean) => {
+          if (!p) return [vCell(labelW, []), vCell(valueW, [])];
+          const borders = { bottom: hairB, ...(first ? { top: hairB } : {}) };
+          return [
+            vCell(
+              labelW,
+              [vPar([vCaps(p.label, F.labelPx, F.labelLs, MUTED)], { px: F.labelPx, lh: F.labelLh })],
+              {
+                borders,
+                // The label sits on the value's first line, not the cell top.
+                margins: { top: px2tw(F.padY + 3), bottom: px2tw(F.padY), right: px2tw(F.gutter) },
+              }
+            ),
+            vCell(
+              valueW,
+              [vPar([vRun(p.value, SERIF, F.valuePx, INK)], { px: F.valuePx, lh: F.valueLh, right: true })],
+              { borders, margins: { top: px2tw(F.padY), bottom: px2tw(F.padY) } }
+            ),
+          ];
+        };
+        return [
+          vTable(
+            [labelW, valueW, colGap, labelW, valueW],
+            factRows(b.pairs).map(([l, r], i) =>
+              atomicRow([...pair(l, i === 0), vCell(colGap, []), ...pair(r, i === 0)])
+            )
+          ),
+        ];
+      }
+      case "badge-strip": {
+        const B = VIS.badge;
+        const n = b.badges.length;
+        const slotW = Math.floor((DXA_CONTENT - gap * (n - 1)) / n);
+        const markW = px2tw(B.padX + B.mark + B.markGap);
+        const textW = slotW - markW;
+        const widths: number[] = [];
+        const cells: TableCell[] = [];
+        b.badges.forEach((badge, i) => {
+          if (i > 0) {
+            widths.push(gap);
+            cells.push(vCell(gap, []));
+          }
+          widths.push(markW, textW);
+          cells.push(
+            // The mark and the text are two cells of one bordered box, so the
+            // mark centers on the label + note pair the way the PDF draws it.
+            vCell(
+              markW,
+              [
+                new Paragraph({
+                  children: [png(assets.images.badgeMarks[badgeMarkIndex(i)], B.mark, B.mark)],
+                  spacing: { line: px2tw(B.mark), lineRule: LineRuleType.AT_LEAST },
+                }),
+              ],
+              {
+                borders: { top: hairB, bottom: hairB, left: hairB },
+                margins: { top: px2tw(B.padY), bottom: px2tw(B.padY), left: px2tw(B.padX) },
+                middle: true,
+              }
+            ),
+            vCell(
+              textW,
+              [
+                vPar([vRun(badge.label, AR_BOLD, B.labelPx, INK, { bold: true })], {
+                  px: B.labelPx,
+                  lh: B.labelLh,
+                  after: badge.note ? B.noteGap : 0,
+                }),
+                ...(badge.note
+                  ? [vPar([vCaps(badge.note, B.notePx, B.noteLs, MUTED)], { px: B.notePx, lh: B.noteLh })]
+                  : []),
+              ],
+              {
+                borders: { top: hairB, bottom: hairB, right: hairB },
+                margins: { top: px2tw(B.padY), bottom: px2tw(B.padY), right: px2tw(B.padX) },
+                middle: true,
+              }
+            )
+          );
+        });
+        return [vTable(widths, [atomicRow(cells)])];
+      }
+      case "callout": {
+        const C = VIS.callout;
+        const emphasis = b.tone === "emphasis";
+        const bodyPx = emphasis ? C.bodyPxEmphasis : C.bodyPx;
+        return [
+          vTable(
+            [DXA_CONTENT],
+            [
+              atomicRow([
+                vCell(
+                  DXA_CONTENT,
+                  [
+                    ...(b.title
+                      ? [
+                          vPar([vCaps(b.title, C.titlePx, C.titleLs, NAVY, AR_SEMI)], {
+                            px: C.titlePx,
+                            lh: C.titleLh,
+                            after: C.titleGap,
+                          }),
+                        ]
+                      : []),
+                    vPar([vRun(b.body, SERIF, bodyPx, emphasis ? INK : BODY)], { px: bodyPx, lh: C.bodyLh }),
+                  ],
+                  {
+                    fill: TINT,
+                    borders: {
+                      left: emphasis
+                        ? { style: BorderStyle.SINGLE, size: C.ruleEmphasis * 6, color: NAVY }
+                        : { style: BorderStyle.SINGLE, size: C.rule * 6, color: BLUE },
+                    },
+                    margins: {
+                      top: px2tw(C.padY),
+                      bottom: px2tw(C.padY),
+                      left: px2tw(C.padX),
+                      right: px2tw(C.padX),
+                    },
+                  }
+                ),
+              ]),
+            ]
+          ),
+        ];
+      }
+      case "cards": {
+        const K = VIS.card;
+        const n = Math.max(1, b.cards.length);
+        const w = Math.floor((DXA_CONTENT - gap * (n - 1)) / n);
+        const widths: number[] = [];
+        const cells: TableCell[] = [];
+        b.cards.forEach((card, i) => {
+          if (i > 0) {
+            widths.push(gap);
+            cells.push(vCell(gap, []));
+          }
+          widths.push(w);
+          cells.push(
+            vCell(
+              w,
+              [
+                vPar([vCaps(card.title, K.titlePx, K.titleLs, NAVY, AR_SEMI)], {
+                  px: K.titlePx,
+                  lh: K.titleLh,
+                  after: K.titleGap,
+                }),
+                vPar([vRun(card.body, SERIF, K.bodyPx, BODY)], {
+                  px: K.bodyPx,
+                  lh: K.bodyLh,
+                  after: card.footnote ? K.footGap : 0,
+                }),
+                ...(card.footnote
+                  ? [
+                      vPar([vRun(card.footnote, SERIF_ITAL, K.footPx, MUTED, { italics: true })], {
+                        px: K.footPx,
+                        lh: K.footLh,
+                      }),
+                    ]
+                  : []),
+              ],
+              {
+                borders: { top: hairB, bottom: hairB, left: hairB, right: hairB },
+                margins: {
+                  top: px2tw(K.padY),
+                  bottom: px2tw(K.padY),
+                  left: px2tw(K.padX),
+                  right: px2tw(K.padX),
+                },
+              }
+            )
+          );
+        });
+        return [vTable(widths, [atomicRow(cells)])];
+      }
+      case "table": {
+        const fr = tableColumnFractions(b);
+        const widths = fr.map((f) => Math.round(f * DXA_CONTENT));
+        // Rounding residue lands on the last column so the grid is the page width.
+        widths[widths.length - 1] += DXA_CONTENT - widths.reduce((a, x) => a + x, 0);
+        const align = (c: number) => ({
+          right: b.columns[c].align === "right",
+          center: b.columns[c].align === "center",
+          width: widths[c],
+        });
+        const last = b.rows.length - 1;
+        return [
+          ...(b.caption
+            ? [
+                vPar([vCaps(b.caption, VIS.table.captionPx, VIS.table.captionLs, NAVY, AR_SEMI)], {
+                  px: VIS.table.captionPx,
+                  lh: VIS.table.captionLh,
+                  after: VIS.table.captionGap,
+                  keepNext: true,
+                }),
+              ]
+            : []),
+          new Table({
+            width: { size: DXA_CONTENT, type: WidthType.DXA },
+            layout: TableLayoutType.FIXED,
+            borders: NO_BORDERS,
+            columnWidths: widths,
+            rows: [
+              // The head row repeats on every page the table reaches.
+              new TableRow({
+                tableHeader: true,
+                cantSplit: true,
+                children: b.columns.map((col, c) => tcell(col.header, { head: true, ...align(c) })),
+              }),
+              ...b.rows.map(
+                (r, i) =>
+                  new TableRow({
+                    cantSplit: true,
+                    children: b.columns.map((_, c) =>
+                      tcell(r[c] ?? "", {
+                        strong: c === 0,
+                        zebra: i % 2 === 1 && !(b.emphasizeLastRow && i === last),
+                        total: b.emphasizeLastRow && i === last,
+                        ...align(c),
+                      })
+                    ),
+                  })
+              ),
+            ],
+          }),
+        ];
+      }
+      case "timeline": {
+        const L = VIS.timeline;
+        const rows = timelineRows(b.steps);
+        const per = rows[0]?.length ?? 1;
+        const colW = Math.floor((DXA_CONTENT - gap * (per - 1)) / per);
+        // Each column but the last carries the gutter as its right margin, so
+        // the connector can run to the column's own edge.
+        const widths = Array.from({ length: per }, (_, c) => (c < per - 1 ? colW + gap : colW));
+        return [
+          vTable(
+            widths,
+            rows.map((row, ri) =>
+              atomicRow(
+                widths.map((w, c) => {
+                  const cell = row[c];
+                  if (!cell) return vCell(w, []);
+                  const { step, index } = cell;
+                  const joins = c < row.length - 1;
+                  return vCell(
+                    w,
+                    [
+                      new Paragraph({
+                        children: [
+                          png(assets.images.stepDots[stepDotIndex(index, b.steps.length)], L.dot, L.dot),
+                          ...(joins
+                            ? [
+                                new TextRun({ text: " ", size: 8 }),
+                                png(assets.images.stepRule, Math.floor(colW / 15) - L.dot - 8, L.dot),
+                              ]
+                            : []),
+                        ],
+                        spacing: {
+                          after: px2tw(L.labelGap),
+                          line: px2tw(L.dot),
+                          lineRule: LineRuleType.AT_LEAST,
+                        },
+                      }),
+                      vPar([vCaps(step.label, L.labelPx, L.labelLs, NAVY, AR_SEMI)], {
+                        px: L.labelPx,
+                        lh: L.labelLh,
+                        after: L.titleGap,
+                      }),
+                      vPar([vRun(step.title, AR_BOLD, L.titlePx, INK, { bold: true })], {
+                        px: L.titlePx,
+                        lh: L.titleLh,
+                        after: L.bodyGap,
+                      }),
+                      vPar([vRun(step.body, SERIF, L.bodyPx, MUTED)], { px: L.bodyPx, lh: L.bodyLh }),
+                    ],
+                    {
+                      margins: {
+                        top: ri > 0 ? px2tw(L.rowGap) : 0,
+                        right: c < per - 1 ? gap : 0,
+                      },
+                    }
+                  );
+                })
+              )
+            )
+          ),
+        ];
+      }
+      default: {
+        const unhandled: never = b;
+        throw new Error(`Unhandled visual block: ${JSON.stringify(unhandled)}`);
+      }
+    }
+  };
+
+  /** One section's body: prose as before, each visual with its own air. */
+  const sectionFlow = (flowItems: ExportFlowItem[]) => {
+    let prev: "head" | "p" | "block" = "head";
+    for (const item of flowItems) {
+      if (item.type === "p") children.push(bodyPar(item.text));
+      else {
+        if (prev === "p") children.push(spacerX(px2tw(VIS.before)));
+        // The spacer also keeps two adjacent tables from fusing into one.
+        children.push(...visualDocx(item.block), spacerX(px2tw(VIS.after)));
+      }
+      prev = item.type;
+    }
+  };
+
   dividerSheet(0);
   for (const sec of view.sections) {
     secHead(sec.kicker, sec.title);
-    for (const p of sec.paragraphs) children.push(bodyPar(p));
+    sectionFlow(sec.flow);
   }
   // Divider 02 announces the Investment part; with no quote there is no
   // part to announce, so both are omitted together (same rule as the PDF).
   if (view.pricing) {
     dividerSheet(1);
     secHead("Pricing", "Investment");
-
-    const tcell = (
-      text: string,
-      opts: { head?: boolean; strong?: boolean; right?: boolean; zebra?: boolean; total?: boolean } = {}
-    ) =>
-      new TableCell({
-        shading: opts.head
-          ? { fill: NAVY }
-          : opts.zebra
-            ? { fill: ZEBRA }
-            : undefined,
-        borders: opts.head
-          ? NO_BORDERS
-          : opts.total
-            ? {
-                ...NO_BORDERS,
-                top: { style: BorderStyle.SINGLE, size: 12, color: INK },
-              }
-            : {
-                ...NO_BORDERS,
-                bottom: { style: BorderStyle.SINGLE, size: 6, color: HAIR },
-              },
-        margins: { top: 135, bottom: 135, left: 160, right: 160 },
-        children: [
-          new Paragraph({
-            alignment: opts.right ? AlignmentType.RIGHT : AlignmentType.LEFT,
-            children: [
-              opts.head
-                ? new TextRun({
-                    text: text.toUpperCase(),
-                    font: AR_SEMI,
-                    size: px2hp(11),
-                    characterSpacing: ls2tw(0.1, 11),
-                    color: "FFFFFF",
-                  })
-                : new TextRun({
-                    text,
-                    font: opts.strong || opts.total ? SERIF_SEMI : SERIF,
-                    size: px2hp(13.5),
-                    color: opts.strong || opts.total ? INK : BODY,
-                  }),
-            ],
-          }),
-        ],
-      });
 
     for (const ill of view.pricing.illustrations) {
       children.push(
@@ -1519,72 +2163,49 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     doc.moveDown(0.55);
   };
 
-  dividerSheet(0);
-  for (const sec of view.sections) {
-    beginSheet(sec.kicker);
-    secHead(sec.kicker, sec.title);
-    for (const p of sec.paragraphs) {
-      ensureRoom(40);
-      flow(p, { px: 15, lh: 1.68 });
-      doc.moveDown(0.65);
-    }
-  }
-  /* ---- Investment ------------------------------------------------------- */
-  // Divider 02 announces the Investment part; with no quote there is no
-  // part to announce, so both are omitted together (same rule as the docx).
-  if (view.pricing) {
-    dividerSheet(1);
-    beginSheet("Investment");
-    secHead("Pricing", "Investment");
 
-    // Table columns: service | qty | unit | monthly (screen column heads).
-    // The quantity column is 66pt, not 50: "Up to 15" (the fully managed
-    // line at the monthly minimum) must set at the full body size, and at
-    // 50pt the step-down guard below shrank that one cell to about 70%.
-    const cols = [CW - 226, 66, 70, 90];
-    const colX = [
-      PAGE.margin,
-      PAGE.margin + cols[0],
-      PAGE.margin + cols[0] + cols[1],
-      PAGE.margin + cols[0] + cols[1] + cols[2],
-    ];
+  /* ---- The branded table -------------------------------------------------
+     Navy head band with white letterspaced caps, zebra body rows,
+     emphasized first column, hairline row rules, ink-ruled total rows. Row
+     backgrounds paint BEFORE the text (height measured first). One factory
+     serves the Investment sheet and every table block: `cols` are point
+     widths, `aligns` per column, `stepDown(i)` names the columns whose text
+     never character-wraps mid-figure (the size steps down until the string
+     fits its column on one line). measure() sets no ink, so a caller may
+     measure, make room, then paint at doc.y. */
+  type RowOpts = { head?: boolean; zebra?: boolean; total?: boolean };
+  type RowMeasure = { rowH: number; cellSizes: number[]; csp: number };
+  const brandedTable = (
+    cols: number[],
+    aligns: ("left" | "right" | "center")[],
+    o: { stepDown: (i: number) => boolean }
+  ) => {
+    const colX = cols.map((_, i) => PAGE.margin + cols.slice(0, i).reduce((a, w) => a + w, 0));
     const CELL_PX = pt(14); // 14px side padding
     const CELL_PY = pt(12); // 12px vertical padding
-
-    // The branded table: navy head band with white letterspaced caps, zebra
-    // body rows, emphasized first column, hairline row rules, ink-ruled
-    // total rows. Row backgrounds paint BEFORE the text (height measured
-    // first).
-    const row = (
-      cells: string[],
-      opts: { head?: boolean; zebra?: boolean; total?: boolean } = {}
-    ) => {
-      ensureRoom(30);
-      const y = doc.y;
+    const cellFont = (i: number, opts: RowOpts) =>
+      opts.head
+        ? "Archivo-SemiBold"
+        : i === 0 || opts.total
+          ? "Serif-SemiBold"
+          : "Serif";
+    const measure = (cells: string[], opts: RowOpts = {}): RowMeasure => {
       const size = opts.head ? pt(11) : pt(13.5);
       const csp = opts.head ? 0.1 * size : 0;
-      const cellFont = (i: number) =>
-        opts.head
-          ? "Archivo-SemiBold"
-          : i === 0 || opts.total
-            ? "Serif-SemiBold"
-            : "Serif";
-      // A number never character-wraps mid-figure: numeric columns step the
-      // size down until the string fits its column on one line.
       const cellSizes = cells.map((c, i) => {
-        if (opts.head || i === 0 || !c) return size;
-        let s = size;
-        doc.font(cellFont(i));
+        if (opts.head || i === 0 || !c || !o.stepDown(i)) return size;
+        let sz = size;
+        doc.font(cellFont(i, opts));
         while (
-          s > 6.5 &&
-          doc.fontSize(s).widthOfString(c) > cols[i] - CELL_PX * 2
+          sz > 6.5 &&
+          doc.fontSize(sz).widthOfString(c) > cols[i] - CELL_PX * 2
         )
-          s -= 0.5;
-        return s;
+          sz -= 0.5;
+        return sz;
       });
       let maxH = 0;
       cells.forEach((c, i) => {
-        doc.font(cellFont(i)).fontSize(cellSizes[i]);
+        doc.font(cellFont(i, opts)).fontSize(cellSizes[i]);
         maxH = Math.max(
           maxH,
           doc.heightOfString(opts.head ? c.toUpperCase() : c || " ", {
@@ -1593,7 +2214,11 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
           })
         );
       });
-      const rowH = maxH + CELL_PY * 2;
+      return { rowH: maxH + CELL_PY * 2, cellSizes, csp };
+    };
+    const paint = (cells: string[], opts: RowOpts, m: RowMeasure) => {
+      const y = doc.y;
+      const { rowH, cellSizes, csp } = m;
       if (opts.head) {
         doc.rect(PAGE.margin, y, CW, rowH).fill(h(NAVY));
       } else if (opts.zebra && !opts.total) {
@@ -1609,14 +2234,14 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       }
       cells.forEach((c, i) => {
         doc
-          .font(cellFont(i))
+          .font(cellFont(i, opts))
           .fontSize(cellSizes[i])
           .fillColor(
             opts.head ? "#ffffff" : i === 0 || opts.total ? h(INK) : h(BODY)
           )
           .text(opts.head ? c.toUpperCase() : c, colX[i] + CELL_PX, y + CELL_PY, {
             width: cols[i] - CELL_PX * 2,
-            align: i === 0 ? "left" : "right",
+            align: aligns[i],
             characterSpacing: csp,
           });
       });
@@ -1624,6 +2249,380 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       doc.x = PAGE.margin;
       doc.y = y + rowH;
       if (!opts.head && !opts.total) hairline(PAGE.margin, doc.y, PAGE.margin + CW);
+    };
+    return { measure, paint };
+  };
+
+  /* ---- Visual blocks (spec: VIS) ----------------------------------------
+     Every block is measured first, given room with ensureRoom, then drawn at
+     explicit coordinates: pdfkit's auto-pagination never runs inside one.
+     Tiles, badges, a callout, cards and a timeline row are atomic; a table
+     paginates row by row with its head row repeated; a fact grid breaks
+     between rows only when it cannot fit a page whole. */
+  type TextSpec = {
+    text: string;
+    font: string;
+    px: number;
+    lh: number;
+    color: string;
+    ls?: number;
+    upper?: boolean;
+    align?: "left" | "right" | "center";
+  };
+  const setSpec = (t: TextSpec) => {
+    const size = pt(t.px);
+    doc.font(t.font).fontSize(size);
+    return {
+      csp: (t.ls ?? 0) * size,
+      gap: Math.max(0, size * t.lh - doc.currentLineHeight()),
+      str: t.upper ? t.text.toUpperCase() : t.text,
+    };
+  };
+  /** Height of the ink box (heightOfString counts a trailing lineGap; dropped). */
+  const textH = (t: TextSpec, width: number) => {
+    const { csp, gap, str } = setSpec(t);
+    return doc.heightOfString(str, { width, characterSpacing: csp, lineGap: gap }) - gap;
+  };
+  const textAt = (t: TextSpec, x: number, y: number, width: number) => {
+    const { csp, gap, str } = setSpec(t);
+    doc.fillColor(t.color).text(str, x, y, {
+      width,
+      characterSpacing: csp,
+      lineGap: gap,
+      align: t.align ?? "left",
+    });
+  };
+  const capsSpec = (
+    text: string,
+    px: number,
+    ls: number,
+    color: string,
+    lh: number,
+    font: string = "Archivo-Medium"
+  ): TextSpec => ({
+    text,
+    font,
+    px,
+    lh,
+    color,
+    ls,
+    upper: true,
+  });
+  const archivoBoldWidthPx = (text: string, px: number) =>
+    doc.font("Archivo-Bold").fontSize(pt(px)).widthOfString(text) / 0.75;
+  const boxStroke = (x: number, y: number, w: number, hgt: number) =>
+    doc.rect(x, y, w, hgt).lineWidth(0.75).strokeColor(h(HAIR)).stroke();
+  /** The badge mark: a rotated square filling a `box`-px square's diagonal. */
+  const badgeMark = (cx: number, cy: number, box: number, color: string) => {
+    const r = pt(box) / 2;
+    doc
+      .moveTo(cx, cy - r)
+      .lineTo(cx + r, cy)
+      .lineTo(cx, cy + r)
+      .lineTo(cx - r, cy)
+      .closePath()
+      .fill(color);
+  };
+  const G = pt(VIS.gap);
+
+  const visualPdf = (b: ExportVisual) => {
+    const x0 = PAGE.margin;
+    switch (b.kind) {
+      case "stat-tiles": {
+        const T = VIS.tile;
+        const n = b.tiles.length;
+        const w = (CW - G * (n - 1)) / n;
+        const inner = w - pt(T.pad) * 2;
+        const valuePx = tileValuePx(b.tiles.map((t) => t.value), inner / 0.75, archivoBoldWidthPx);
+        const specs = b.tiles.map((t) => ({
+          value: { text: t.value, font: "Archivo-Bold", px: valuePx, lh: T.valueLh, color: h(NAVY) } as TextSpec,
+          label: capsSpec(t.label, T.labelPx, T.labelLs, h(MUTED), T.labelLh),
+          note: t.note ? capsSpec(t.note, T.notePx, T.noteLs, h(MUTED), T.noteLh) : null,
+        }));
+        const heights = specs.map(
+          (sp) =>
+            pt(T.pad) * 2 +
+            textH(sp.value, inner) +
+            pt(T.labelGap) +
+            textH(sp.label, inner) +
+            (sp.note ? pt(T.noteGap) + textH(sp.note, inner) : 0)
+        );
+        const blockH = Math.max(...heights);
+        ensureRoom(blockH);
+        const y0 = doc.y;
+        specs.forEach((sp, i) => {
+          const x = x0 + i * (w + G);
+          doc.rect(x, y0, w, blockH).fill(h(TINT));
+          doc.rect(x, y0, w, pt(T.rule)).fill(h(NAVY));
+          let y = y0 + pt(T.pad);
+          textAt(sp.value, x + pt(T.pad), y, inner);
+          y += textH(sp.value, inner) + pt(T.labelGap);
+          textAt(sp.label, x + pt(T.pad), y, inner);
+          if (sp.note) {
+            y += textH(sp.label, inner) + pt(T.noteGap);
+            textAt(sp.note, x + pt(T.pad), y, inner);
+          }
+        });
+        doc.y = y0 + blockH;
+        break;
+      }
+      case "fact-grid": {
+        const F = VIS.fact;
+        const half = (CW - pt(F.colGap)) / 2;
+        const labelW = half * F.labelShare;
+        const valueW = half - labelW;
+        const rows = factRows(b.pairs).map(([l, r]) =>
+          [l, r].map((p) =>
+            p
+              ? {
+                  label: capsSpec(p.label, F.labelPx, F.labelLs, h(MUTED), F.labelLh),
+                  value: { text: p.value, font: "Serif", px: F.valuePx, lh: F.valueLh, color: h(INK), align: "right" } as TextSpec,
+                }
+              : null
+          )
+        );
+        const rowHs = rows.map(
+          (row) =>
+            pt(F.padY) * 2 +
+            Math.max(
+              ...row.map((p) =>
+                p ? Math.max(textH(p.label, labelW - pt(F.gutter)), textH(p.value, valueW)) : 0
+              )
+            )
+        );
+        const total = rowHs.reduce((a, v) => a + v, 0);
+        // Whole when it fits a page; otherwise row by row, never mid-row.
+        if (total <= FOOT_LIMIT - PAGE.margin) ensureRoom(total);
+        rows.forEach((row, ri) => {
+          ensureRoom(rowHs[ri]);
+          const y = doc.y;
+          row.forEach((p, c) => {
+            if (!p) return;
+            const cx = x0 + c * (half + pt(F.colGap));
+            if (ri === 0) hairline(cx, y, cx + half);
+            // The label sits on the value's first line.
+            textAt(p.label, cx, y + pt(F.padY) + pt(3), labelW - pt(F.gutter));
+            textAt(p.value, cx + labelW, y + pt(F.padY), valueW);
+            hairline(cx, y + rowHs[ri], cx + half);
+          });
+          doc.y = y + rowHs[ri];
+        });
+        break;
+      }
+      case "badge-strip": {
+        const B = VIS.badge;
+        const n = b.badges.length;
+        const slotW = (CW - G * (n - 1)) / n;
+        const textX = pt(B.padX + B.mark + B.markGap);
+        const textW = slotW - textX - pt(B.padX);
+        const specs = b.badges.map((badge) => ({
+          label: { text: badge.label, font: "Archivo-Bold", px: B.labelPx, lh: B.labelLh, color: h(INK) } as TextSpec,
+          note: badge.note ? capsSpec(badge.note, B.notePx, B.noteLs, h(MUTED), B.noteLh) : null,
+        }));
+        const heights = specs.map(
+          (sp) => pt(B.padY) * 2 + textH(sp.label, textW) + (sp.note ? pt(B.noteGap) + textH(sp.note, textW) : 0)
+        );
+        const blockH = Math.max(...heights);
+        ensureRoom(blockH);
+        const y0 = doc.y;
+        specs.forEach((sp, i) => {
+          const x = x0 + i * (slotW + G);
+          boxStroke(x, y0, slotW, blockH);
+          badgeMark(x + pt(B.padX) + pt(B.mark) / 2, y0 + blockH / 2, B.mark, h(MARK_COLORS[badgeMarkIndex(i)]));
+          const contentH = heights[i] - pt(B.padY) * 2;
+          let y = y0 + (blockH - contentH) / 2;
+          textAt(sp.label, x + textX, y, textW);
+          if (sp.note) {
+            y += textH(sp.label, textW) + pt(B.noteGap);
+            textAt(sp.note, x + textX, y, textW);
+          }
+        });
+        doc.y = y0 + blockH;
+        break;
+      }
+      case "callout": {
+        const C = VIS.callout;
+        const emphasis = b.tone === "emphasis";
+        const rule = emphasis ? C.ruleEmphasis : C.rule;
+        const innerX = pt(rule) + pt(C.padX);
+        const innerW = CW - innerX - pt(C.padX);
+        const title = b.title ? capsSpec(b.title, C.titlePx, C.titleLs, h(NAVY), C.titleLh, "Archivo-SemiBold") : null;
+        const body: TextSpec = {
+          text: b.body,
+          font: "Serif",
+          px: emphasis ? C.bodyPxEmphasis : C.bodyPx,
+          lh: C.bodyLh,
+          color: h(emphasis ? INK : BODY),
+        };
+        const titleH = title ? textH(title, innerW) + pt(C.titleGap) : 0;
+        const blockH = pt(C.padY) * 2 + titleH + textH(body, innerW);
+        ensureRoom(blockH);
+        const y0 = doc.y;
+        doc.rect(x0, y0, CW, blockH).fill(h(TINT));
+        doc.rect(x0, y0, pt(rule), blockH).fill(h(emphasis ? NAVY : BLUE));
+        if (title) textAt(title, x0 + innerX, y0 + pt(C.padY), innerW);
+        textAt(body, x0 + innerX, y0 + pt(C.padY) + titleH, innerW);
+        doc.y = y0 + blockH;
+        break;
+      }
+      case "cards": {
+        const K = VIS.card;
+        const n = Math.max(1, b.cards.length);
+        const w = (CW - G * (n - 1)) / n;
+        const inner = w - pt(K.padX) * 2;
+        const specs = b.cards.map((card) => ({
+          title: capsSpec(card.title, K.titlePx, K.titleLs, h(NAVY), K.titleLh, "Archivo-SemiBold"),
+          body: { text: card.body, font: "Serif", px: K.bodyPx, lh: K.bodyLh, color: h(BODY) } as TextSpec,
+          foot: card.footnote
+            ? ({ text: card.footnote, font: "Serif-Italic", px: K.footPx, lh: K.footLh, color: h(MUTED) } as TextSpec)
+            : null,
+        }));
+        const heights = specs.map(
+          (sp) =>
+            pt(K.padY) * 2 +
+            textH(sp.title, inner) +
+            pt(K.titleGap) +
+            textH(sp.body, inner) +
+            (sp.foot ? pt(K.footGap) + textH(sp.foot, inner) : 0)
+        );
+        const blockH = Math.max(...heights);
+        ensureRoom(blockH);
+        const y0 = doc.y;
+        specs.forEach((sp, i) => {
+          const x = x0 + i * (w + G);
+          boxStroke(x, y0, w, blockH);
+          let y = y0 + pt(K.padY);
+          textAt(sp.title, x + pt(K.padX), y, inner);
+          y += textH(sp.title, inner) + pt(K.titleGap);
+          textAt(sp.body, x + pt(K.padX), y, inner);
+          if (sp.foot) {
+            y += textH(sp.body, inner) + pt(K.footGap);
+            textAt(sp.foot, x + pt(K.padX), y, inner);
+          }
+        });
+        doc.y = y0 + blockH;
+        break;
+      }
+      case "table": {
+        const fr = tableColumnFractions(b);
+        const cols = fr.map((f) => f * CW);
+        const tbl = brandedTable(cols, b.columns.map((c) => c.align), { stepDown: () => false });
+        const heads = b.columns.map((c) => c.header);
+        const headM = tbl.measure(heads, { head: true });
+        const caption = b.caption
+          ? capsSpec(b.caption, VIS.table.captionPx, VIS.table.captionLs, h(NAVY), VIS.table.captionLh, "Archivo-SemiBold")
+          : null;
+        const captionH = caption ? textH(caption, CW) + pt(VIS.table.captionGap) : 0;
+        const firstM = tbl.measure(b.rows[0] ?? heads, { zebra: false });
+        // Caption, head and first row start together.
+        ensureRoom(captionH + headM.rowH + firstM.rowH);
+        if (caption) {
+          textAt(caption, x0, doc.y, CW);
+          doc.y += captionH;
+        }
+        tbl.paint(heads, { head: true }, headM);
+        const last = b.rows.length - 1;
+        b.rows.forEach((r, i) => {
+          const opts: RowOpts = {
+            zebra: i % 2 === 1,
+            total: b.emphasizeLastRow && i === last,
+          };
+          const m = tbl.measure(r, opts);
+          if (doc.y + m.rowH > FOOT_LIMIT) {
+            // A row never splits; the head row repeats on the new page.
+            doc.addPage();
+            doc.x = PAGE.margin;
+            doc.y = PAGE.margin;
+            tbl.paint(heads, { head: true }, headM);
+          }
+          tbl.paint(r, opts, m);
+        });
+        break;
+      }
+      case "timeline": {
+        const L = VIS.timeline;
+        const rows = timelineRows(b.steps);
+        const per = rows[0]?.length ?? 1;
+        const colW = (CW - G * (per - 1)) / per;
+        rows.forEach((row, ri) => {
+          const specs = row.map(({ step, index }) => ({
+            index,
+            label: capsSpec(step.label, L.labelPx, L.labelLs, h(NAVY), L.labelLh, "Archivo-SemiBold"),
+            title: { text: step.title, font: "Archivo-Bold", px: L.titlePx, lh: L.titleLh, color: h(INK) } as TextSpec,
+            body: { text: step.body, font: "Serif", px: L.bodyPx, lh: L.bodyLh, color: h(MUTED) } as TextSpec,
+          }));
+          const labelH = Math.max(...specs.map((sp) => textH(sp.label, colW)));
+          const titleH = Math.max(...specs.map((sp) => textH(sp.title, colW)));
+          const bodyH = Math.max(...specs.map((sp) => textH(sp.body, colW)));
+          const rowH =
+            (ri > 0 ? pt(L.rowGap) : 0) +
+            pt(L.dot) + pt(L.labelGap) + labelH + pt(L.titleGap) + titleH + pt(L.bodyGap) + bodyH;
+          ensureRoom(rowH);
+          const y0 = doc.y + (ri > 0 ? pt(L.rowGap) : 0);
+          specs.forEach((sp, c) => {
+            const x = x0 + c * (colW + G);
+            const r = pt(L.dot) / 2;
+            doc.circle(x + r, y0 + r, r).fill(h(MARK_COLORS[stepDotIndex(sp.index, b.steps.length)]));
+            if (c < row.length - 1) hairline(x + pt(L.dot) + pt(L.ruleGap), y0 + r, x + colW + G - pt(L.ruleGap));
+            let y = y0 + pt(L.dot) + pt(L.labelGap);
+            textAt(sp.label, x, y, colW);
+            y += labelH + pt(L.titleGap);
+            textAt(sp.title, x, y, colW);
+            y += titleH + pt(L.bodyGap);
+            textAt(sp.body, x, y, colW);
+          });
+          doc.y = doc.y + rowH;
+        });
+        break;
+      }
+      default: {
+        const unhandled: never = b;
+        throw new Error(`Unhandled visual block: ${JSON.stringify(unhandled)}`);
+      }
+    }
+    doc.fillColor("black");
+    doc.x = PAGE.margin;
+  };
+
+  dividerSheet(0);
+  for (const sec of view.sections) {
+    beginSheet(sec.kicker);
+    secHead(sec.kicker, sec.title);
+    let prev: "head" | "p" | "block" = "head";
+    for (const item of sec.flow) {
+      if (item.type === "p") {
+        ensureRoom(40);
+        flow(item.text, { px: 15, lh: 1.68 });
+        doc.moveDown(0.65);
+      } else {
+        if (prev === "p") doc.y += pt(VIS.before);
+        visualPdf(item.block);
+        doc.y += pt(VIS.after);
+      }
+      prev = item.type;
+    }
+  }
+  /* ---- Investment ------------------------------------------------------- */
+  // Divider 02 announces the Investment part; with no quote there is no
+  // part to announce, so both are omitted together (same rule as the docx).
+  if (view.pricing) {
+    dividerSheet(1);
+    beginSheet("Investment");
+    secHead("Pricing", "Investment");
+
+    // Table columns: service | qty | unit | monthly (screen column heads).
+    // The quantity column is 66pt, not 50: "Up to 15" (the fully managed
+    // line at the monthly minimum) must set at the full body size, and at
+    // 50pt the step-down guard below shrank that one cell to about 70%.
+    const table = brandedTable([CW - 226, 66, 70, 90], ["left", "right", "right", "right"], {
+      stepDown: (i) => i > 0,
+    });
+    const row = (
+      cells: string[],
+      opts: { head?: boolean; zebra?: boolean; total?: boolean } = {}
+    ) => {
+      ensureRoom(30);
+      table.paint(cells, opts, table.measure(cells, opts));
     };
 
     for (const ill of view.pricing.illustrations) {

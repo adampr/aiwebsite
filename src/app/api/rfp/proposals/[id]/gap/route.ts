@@ -33,6 +33,7 @@ import {
   isReferencesRefusal,
   withReferenceEtiquette,
 } from "@/lib/rfp/references-ask";
+import { keptBlocks, withBlocks } from "@/lib/rfp/draft-blocks-ops";
 import type { DraftSectionRecord } from "../../../documents/[id]/generate/route";
 
 export const dynamic = "force-dynamic";
@@ -184,7 +185,10 @@ export async function POST(
       })
     : woven.paragraphs;
 
-  const updated: DraftSectionRecord = {
+  // Visuals stay through a weave: the resolve turn sees paragraphs only, so
+  // the stored blocks are kept as they are and re-anchored to the paragraph
+  // count that lands (after the etiquette append).
+  const updated: DraftSectionRecord = withBlocks({
     ...freshSections[at],
     paragraphs,
     gaps: freshSections[at].gaps.filter((g) => g.question !== question),
@@ -196,7 +200,7 @@ export async function POST(
     // it, which re-raises the question (asking again beats losing them).
     ...(referencesQuestion ? { referencesAnswered: true } : {}),
     updatedAt: new Date().toISOString(),
-  };
+  }, keptBlocks(freshSections[at], paragraphs.length));
   freshSections[at] = updated;
 
   const ok = await writeProposalSections(

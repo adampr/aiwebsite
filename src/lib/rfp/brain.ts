@@ -31,6 +31,12 @@ import { stripReservedPrefix } from "./letter";
 import { normalizeGapQuestion } from "./gaps";
 import { referencesAsk } from "./references-ask";
 import type { FactRow } from "./db";
+import type { DraftBlock } from "./draft-blocks";
+import {
+  finishDraftVisuals,
+  toGroundFacts,
+  type VisualStats,
+} from "./draft-blocks-ops";
 
 export { newId };
 
@@ -267,7 +273,17 @@ export type DraftedSection = {
   paragraphs: string[];
   cites: string[];
   gaps: { question: string; why: string }[];
+  /** Validated visuals (draft-blocks.ts). Empty for the letter and whenever
+   *  RFP_VISUALS=0; never taken from anything but the drafter turn. */
+  blocks: DraftBlock[];
+  /** Counts only, for the activity log. */
+  visualStats?: VisualStats;
 };
+
+/** Kill switch: RFP_VISUALS=0 drafts prose only, on today's exact prompt. */
+function visualsEnabled(): boolean {
+  return process.env.RFP_VISUALS !== "0";
+}
 
 /**
  * Turn 2: draft one section against XL.net's facts.
@@ -318,8 +334,11 @@ export async function draftSection(
     }
   }
 
-  const factLines = facts
-    .slice(0, 60)
+  // The facts the model is SHOWN. Visuals are grounded against exactly these,
+  // so a number can only come from a fact that was on the page.
+  const shownFacts = facts.slice(0, 60);
+  const visuals = visualsEnabled();
+  const factLines = shownFacts
     .map(
       (f) =>
         `- id=${f.id} [${f.polarity}] ${f.statement}${
@@ -388,10 +407,52 @@ export async function draftSection(
           "  question asks about.",
         ]
       : []),
+    // Byte-absent unless visuals are on (RFP_VISUALS=0 is the kill switch),
+    // so the switch restores the prose-only prompt exactly. Everything the
+    // model returns here is re-checked by parseModelVisuals: an ungrounded
+    // number drops the visual, it never fails the section. The company
+    // snapshot and certification badges are built by the server from facts,
+    // so the model is not told about them.
+    ...(visuals
+      ? [
+          "",
+          "VISUALS (optional): where a table or a few tiles say it better than",
+          'sentences, add up to three entries to "visuals". Use one only where',
+          "it REPLACES prose, never to repeat it, and keep the paragraphs",
+          "around it short. Most sections need one or none.",
+          "- table: service level targets, a requirement and response or scope",
+          "  coverage matrix, a comparison. 2 to 5 columns, at most 14 rows,",
+          "  short cells.",
+          "- stats: 2 to 4 tiles, only for figures a fact states. Each tile",
+          "  names the ONE fact whose own statement carries that exact number;",
+          '  write ">" only where that fact says "more than" or "above".',
+          "- callout: one short point worth setting apart. cards: exactly two",
+          "  side by side options or halves.",
+          "Every number in a visual must appear in a fact that visual cites; a",
+          "visual with a number no cited fact states is discarded. Rules 3, 4",
+          "and 5 apply inside visuals: no prices, rates, dollar figures or",
+          "contract lengths, no em dashes, and no marketing filler in a title,",
+          'label or cell. "after" is the count of paragraphs that come before',
+          "the visual (0 opens the section).",
+        ]
+      : []),
     "",
     "Reply with JSON only:",
     '{"paragraphs": [string], "cites": [string],',
-    ' "gaps": [{"question": string, "why": string}]}',
+    ...(visuals
+      ? [
+          ' "gaps": [{"question": string, "why": string}],',
+          ' "visuals": [',
+          '   {"kind": "table", "after": number, "cites": [string],',
+          '    "caption": string, "columns": [string], "rows": [[string]]}',
+          '   | {"kind": "stats", "after": number,',
+          '      "tiles": [{"fact": string, "value": string, "label": string}]}',
+          '   | {"kind": "callout", "after": number, "cites": [string],',
+          '      "title": string, "body": string}',
+          '   | {"kind": "cards", "after": number, "cites": [string],',
+          '      "cards": [{"title": string, "body": string}]}]}',
+        ]
+      : [' "gaps": [{"question": string, "why": string}]}']),
   ].join("\n");
 
   const user = [
@@ -421,22 +482,42 @@ export async function draftSection(
       system,
       user,
     }),
-    120_000
+    // A section measured ~94s as prose; up to three visuals lengthen the
+    // output, so the visuals prompt gets more room. The generate route's 60s
+    // heartbeat keeps the claim alive well inside its 4-minute stale horizon.
+    visuals ? 150_000 : 120_000
   );
-  const parsed = parseJson(raw ?? "") as DraftedSection | null;
+  const parsed = parseJson(raw ?? "") as
+    | (Omit<DraftedSection, "blocks" | "visualStats"> & { visuals?: unknown })
+    | null;
   if (!parsed || !Array.isArray(parsed.paragraphs)) return null;
 
   const knownIds = new Set(facts.map((f) => f.id));
+  const proseParagraphs = parsed.paragraphs
+    .filter((p) => typeof p === "string" && p.trim())
+    .slice(0, 12)
+    .map((p) => p.slice(0, 4000));
+  // Drop citations to ids we did not supply: a model naming a fact that does
+  // not exist is a hallucinated source, and rule A5 would block on it later.
+  const cites = (Array.isArray(parsed.cites) ? parsed.cites : [])
+    .filter((c) => typeof c === "string" && knownIds.has(c))
+    .slice(0, 40);
+  // A visual that fails its grounding is dropped or comes back as prose
+  // appended under the same 12-paragraph cap; it can never fail the section.
+  // With the switch off a `visuals` key the model volunteers is ignored.
+  const finished = visuals
+    ? finishDraftVisuals(
+        parsed.visuals,
+        proseParagraphs,
+        toGroundFacts(shownFacts),
+        cites
+      )
+    : null;
   return {
-    paragraphs: parsed.paragraphs
-      .filter((p) => typeof p === "string" && p.trim())
-      .slice(0, 12)
-      .map((p) => p.slice(0, 4000)),
-    // Drop citations to ids we did not supply: a model naming a fact that does
-    // not exist is a hallucinated source, and rule A5 would block on it later.
-    cites: (Array.isArray(parsed.cites) ? parsed.cites : [])
-      .filter((c) => typeof c === "string" && knownIds.has(c))
-      .slice(0, 40),
+    paragraphs: finished ? finished.paragraphs : proseParagraphs,
+    cites,
+    blocks: finished ? finished.blocks : [],
+    ...(finished ? { visualStats: finished.stats } : {}),
     // Two, not ten: the old cap let one 17-section RFP surface 76 questions
     // where the benchmark tool asks four or five for the whole document.
     gaps: (Array.isArray(parsed.gaps) ? parsed.gaps : [])

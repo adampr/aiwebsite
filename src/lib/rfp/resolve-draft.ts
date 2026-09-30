@@ -8,6 +8,9 @@
 //
 //   - each paragraph becomes one ProseBlock carrying the section's cites and
 //     generatedBy, which is exactly what rules A5 and C1 join on
+//   - each stored visual block (draft-blocks.ts) is lifted into the content
+//     model's own variant of the same kind, with ITS cites and generatedBy,
+//     at its place in the one shared ordering (`interleave`)
 //   - the computed PricingQuote is attached verbatim (rules B1-B7)
 //   - contentHash uses rule C2's own field set, so C2 verifies the adapter
 //     rather than being skipped
@@ -34,10 +37,34 @@ import {
 import { runGate, type GateResult } from "./validators/gate";
 import { DEFAULT_LETTER_BODY, splitSections } from "./letter";
 import { signatureFor } from "./signature";
+import { interleave, sanitizeStoredBlocks, type DraftBlock } from "./draft-blocks";
 import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/route";
 
 const blockId = (label: string, i: number) =>
   `b_${label.replace(/[^a-zA-Z0-9]+/g, "_")}_${i}`;
+
+/** A visual's id carries its own stored id, never a position: a paragraph
+ *  edit above it must not move the locator a gate violation points at. */
+const visualBlockId = (label: string, id: string) =>
+  `bv_${label.replace(/[^a-zA-Z0-9]+/g, "_")}_${id}`;
+
+/** The body of a DraftBlock IS the content-model body (draft-blocks.ts), so
+ *  lifting is dropping the storage envelope and adding the BlockBase fields. */
+function liftVisual(
+  block: DraftBlock,
+  label: string,
+  sectionId: string,
+  ordinal: number
+): Block {
+  const { id, after: _after, origin: _origin, ...body } = block;
+  return {
+    ...body,
+    id: visualBlockId(label, id),
+    sectionId,
+    ordinal,
+    editedByHuman: false,
+  };
+}
 
 function factFromRow(row: FactRow): Fact {
   return {
@@ -128,16 +155,28 @@ export function resolveDraft(input: DraftGateInput): {
 
   const sections: Section[] = ordered.map((sec, ordinal) => {
     const sectionId = `sec_${sec.label.replace(/[^a-zA-Z0-9]+/g, "_")}`;
-    const blocks: Block[] = sec.paragraphs.map((text, i) => ({
-      kind: "prose",
-      id: blockId(sec.label, i),
-      sectionId,
-      ordinal: i,
-      cites: sec.cites,
-      generatedBy: sec.generatedBy,
-      editedByHuman: sec.generatedBy === "human",
-      text,
-    }));
+    // The ONE ordering the screen and both emitters share. Prose keeps the
+    // id of its PARAGRAPH index (so a locator on a prose-only section is
+    // what it always was) and every block's ordinal is its place in the
+    // flow; with no visuals the two are the same number.
+    const flow = interleave(
+      sec.paragraphs,
+      sanitizeStoredBlocks(sec.blocks, sec.paragraphs.length)
+    );
+    const blocks: Block[] = flow.map((item, ordinal) =>
+      item.type === "p"
+        ? {
+            kind: "prose",
+            id: blockId(sec.label, item.index),
+            sectionId,
+            ordinal,
+            cites: sec.cites,
+            generatedBy: sec.generatedBy,
+            editedByHuman: sec.generatedBy === "human",
+            text: item.text,
+          }
+        : liftVisual(item.block, sec.label, sectionId, ordinal)
+    );
     return {
       id: sectionId,
       proposalId: proposal.id,

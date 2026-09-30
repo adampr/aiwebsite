@@ -8,6 +8,13 @@
 //            under the DOC_LABEL sentinel it PLANS instead, returning the
 //            sections to change so the client can loop them through here
 //
+// PATCH op "visuals" adds or removes VISUAL BLOCKS on one section (the
+// company snapshot, the service stats, the onboarding timeline; remove one
+// block by id). No brain call: the blocks are rebuilt server-side from live
+// shared facts. Every other PATCH path preserves the stored blocks and
+// re-anchors them to the new paragraph count; `blocks` is never read from a
+// request body, for the same reason cites are not.
+//
 // THE INVARIANT BOTH PATHS PRESERVE: `cites` and `generatedBy` are carried
 // over from the stored section and are never taken from the request body.
 // Rule A5 only requires citations when generatedBy === "llm", and rule C1's
@@ -32,9 +39,17 @@ import {
   getDocument,
   getOwnedProposal,
   knowledgeForUser,
+  liveFacts,
   writeProposalSections,
   writeProposalStructureOp,
 } from "@/lib/rfp/db";
+import {
+  applyVisualsOp,
+  isVisualsAction,
+  keptBlocks,
+  toGroundFacts,
+  withBlocks,
+} from "@/lib/rfp/draft-blocks-ops";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
 import { extractStyleSampleText } from "@/lib/governance/style-sample";
 import { screenInjection } from "@/lib/governance/research";
@@ -123,6 +138,8 @@ export async function PATCH(
     paragraphs?: string[];
     op?: string;
     heading?: string;
+    action?: string;
+    blockId?: string;
   };
   try {
     body = await req.json();
@@ -136,6 +153,64 @@ export async function PATCH(
     .map((p) => p.slice(0, 4000));
 
   const sections: DraftSectionRecord[] = JSON.parse(proposal.sectionsJson || "[]");
+
+  // ---- visuals op: add the company snapshot / service stats / onboarding
+  // timeline to a section, or remove one block. Only label, action and
+  // blockId are read from the body; the blocks themselves are built here
+  // from live SHARED facts (never a private pending note), so a request can
+  // choose WHICH set lands and nothing about what it says. Same CAS-on-rev
+  // write as a text edit, which also stales the stored gate verdict.
+  if (body.op === "visuals") {
+    if (!isVisualsAction(body.action))
+      return rfpError("invalid_request", "No such visual.", 400);
+    const action = body.action;
+    const applied = applyVisualsOp(
+      sections,
+      {
+        label,
+        action,
+        blockId: typeof body.blockId === "string" ? body.blockId : undefined,
+      },
+      // "remove" builds nothing, so it reads no facts.
+      action === "remove" ? [] : toGroundFacts(await liveFacts()),
+      new Date().toISOString()
+    );
+    if (!applied.ok)
+      return rfpError(applied.code, applied.message, applied.status);
+    const ok = await writeProposalSections(
+      proposal.id,
+      proposal.rev,
+      JSON.stringify(applied.sections)
+    );
+    if (!ok)
+      return rfpError(
+        "conflict",
+        "Someone else changed this draft while you were editing. Reload to see their version.",
+        409
+      );
+    await logRfpActivity({
+      actorEmail: user.email,
+      actorAdmin: user.admin,
+      action: "proposal.section_visuals",
+      subjectKind: "proposal",
+      subjectId: proposal.id,
+      // Shape only: which set, and how many blocks moved.
+      meta: {
+        section: label,
+        visual: action,
+        added: applied.added,
+        removed: applied.removed,
+        blocks: applied.section.blocks?.length ?? 0,
+      },
+    });
+    return rfpOk({
+      ok: true,
+      rev: proposal.rev + 1,
+      section: applied.section,
+      sections: applied.sections,
+    });
+  }
+
   const at = sections.findIndex((s) => s.label === label);
   if (at < 0) return rfpError("not_found", "No such section.", 404);
 
@@ -237,15 +312,25 @@ export async function PATCH(
 
     const nextSections = sections.map((s) =>
       s.label === label
-        ? {
-            ...s,
-            label: newLabel,
-            title: newTitle,
-            // Accepted alongside a body revision when present; cites and
-            // generatedBy carry over per the header invariant.
-            ...(Array.isArray(body.paragraphs) ? { paragraphs } : {}),
-            updatedAt: new Date().toISOString(),
-          }
+        ? withBlocks(
+            {
+              ...s,
+              label: newLabel,
+              title: newTitle,
+              // Accepted alongside a body revision when present; cites and
+              // generatedBy carry over per the header invariant.
+              ...(Array.isArray(body.paragraphs) ? { paragraphs } : {}),
+              updatedAt: new Date().toISOString(),
+            },
+            // Visuals stay with the section through a retitle, re-anchored
+            // when a body revision changed the paragraph count.
+            keptBlocks(
+              s,
+              Array.isArray(body.paragraphs)
+                ? paragraphs.length
+                : s.paragraphs.length
+            )
+          )
         : s
     );
     const nextStructure = structure.map((n) =>
@@ -288,7 +373,11 @@ export async function PATCH(
     });
   }
 
-  sections[at] = {
+  // Visuals are kept as stored and re-anchored to the new paragraph count: a
+  // text edit (or an accepted Tron revision, which arrives here) never
+  // removes one and the body cannot supply one.
+  const kept = keptBlocks(sections[at], paragraphs.length);
+  sections[at] = withBlocks({
     ...sections[at],
     paragraphs,
     // cites and generatedBy deliberately NOT taken from the body. See header.
@@ -302,7 +391,7 @@ export async function PATCH(
     generatedBy:
       label === LETTER_LABEL ? "human" : sections[at].generatedBy,
     updatedAt: new Date().toISOString(),
-  };
+  }, kept);
 
   const ok = await writeProposalSections(
     proposal.id,

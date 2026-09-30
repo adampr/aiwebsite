@@ -630,7 +630,7 @@ export async function writeProposalGate(
 
 /**
  * A claim with no LIFE SIGN for this long is dead, not busy. The brain call
- * is capped at 120s, but it sits behind a shared 2-slot semaphore whose
+ * is capped at 120 s (150 s with visuals), but it sits behind a shared 2-slot semaphore whose
  * queue wait is unbounded, so staleness is measured against the newer of
  * genStartedAt and genHeartbeatAt (the worker heartbeats every 60s while it
  * queues and drafts) — wall-clock-since-claim alone would reclaim a healthy
