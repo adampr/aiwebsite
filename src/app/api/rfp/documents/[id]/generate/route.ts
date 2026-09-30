@@ -18,6 +18,7 @@ import {
 } from "@/lib/rfp/brain";
 import { LETTER_LABEL, LETTER_TITLE, splitSections } from "@/lib/rfp/letter";
 import { logRfpActivity } from "@/lib/rfp/activity";
+import { stripIntakeHeaders } from "@/lib/rfp/intake";
 import {
   clearGenClaim,
   completeGeneration,
@@ -377,7 +378,7 @@ export async function POST(
           refsWhy = referencesGapWhy(
             refsAsk,
             held,
-            `${doc.clientName ?? ""} ${doc.title} ${doc.rawText ?? ""}`
+            `${doc.clientName ?? ""} ${doc.title} ${stripIntakeHeaders(doc.rawText ?? "")}`
           );
         }
       }

@@ -15,6 +15,7 @@
 // left alone: a question was added, the section's text did not change.
 
 import { logRfpActivity } from "@/lib/rfp/activity";
+import { stripIntakeHeaders } from "@/lib/rfp/intake";
 import {
   getDocument,
   getOwnedProposal,
@@ -63,7 +64,7 @@ export async function POST(
   // One knowledge-base read, only when something is actually missing; a
   // failed read costs the shortlist, never the question (as at landing).
   let held: ReferenceCandidate[] | null | undefined;
-  const rfpText = `${doc.clientName ?? ""} ${doc.title} ${doc.rawText ?? ""}`;
+  const rfpText = `${doc.clientName ?? ""} ${doc.title} ${stripIntakeHeaders(doc.rawText ?? "")}`;
 
   // CAS on rev against THE SAME ROW the ownership check ran on. A write that
   // loses the race (an answer or an edit landed in between) recomputes on the

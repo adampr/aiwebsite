@@ -27,6 +27,7 @@ import { callGovernanceBrain } from "@/lib/governance/brain";
 import { screenInjection } from "@/lib/governance/research";
 import { groundStatedStaff, type StatedStaff } from "./staff-count";
 import { groundRfpTitle } from "./doc-title";
+import { stripIntakeHeaders } from "./intake";
 import { stripReservedPrefix } from "./letter";
 import { normalizeGapQuestion } from "./gaps";
 import { referencesAsk } from "./references-ask";
@@ -227,9 +228,14 @@ export async function readRfp(
   if (!parsed || !Array.isArray(parsed.requirements)) return null;
 
   // Select-never-author: the model's statedStaff claim survives only if every
-  // grounding check passes against the exact fenced text; otherwise the
-  // workspace asks, exactly as it did before this field existed.
-  const grounded = groundStatedStaff(parsed.statedStaff, inner);
+  // grounding check passes against the fenced text; otherwise the workspace
+  // asks, exactly as it did before this field existed. The intake headers are
+  // stripped from the grounding corpus first: they embed attacker-chosen
+  // filenames ("Acme RFP 350 users.pdf" would ground a count), and removal
+  // only shrinks the corpus, so anything that grounds here also sat verbatim
+  // in what the model saw.
+  const groundable = stripIntakeHeaders(inner);
+  const grounded = groundStatedStaff(parsed.statedStaff, groundable);
 
   return {
     clientName:
@@ -243,7 +249,7 @@ export async function readRfp(
     // stored, shown and copied into later prompts, so one that trips the
     // screen on its own is dropped like any other ungrounded claim.
     rfpTitle: screenedTitle(
-      groundRfpTitle((parsed as { rfpTitle?: unknown }).rfpTitle, inner)
+      groundRfpTitle((parsed as { rfpTitle?: unknown }).rfpTitle, groundable)
     ),
     // Leading underscores are stripped from labels: "__letter" (and any
     // future "__" label) is reserved for host furniture records that share

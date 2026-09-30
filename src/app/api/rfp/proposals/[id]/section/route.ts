@@ -38,6 +38,7 @@ import {
   stripReservedPrefix,
 } from "@/lib/rfp/letter";
 import { logRfpActivity } from "@/lib/rfp/activity";
+import { stripIntakeHeaders } from "@/lib/rfp/intake";
 import {
   getDocument,
   getOwnedProposal,
@@ -225,7 +226,7 @@ export async function PATCH(
           referencesGapWhy(
             ask,
             held,
-            `${doc.clientName ?? ""} ${doc.title} ${doc.rawText ?? ""}`
+            `${doc.clientName ?? ""} ${doc.title} ${stripIntakeHeaders(doc.rawText ?? "")}`
           )
         );
         referencesReopened = reopened !== applied.sections;

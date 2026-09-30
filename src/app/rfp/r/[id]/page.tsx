@@ -27,6 +27,7 @@ import {
   asksAboutReferences,
   unansweredReferencesAsks,
 } from "@/lib/rfp/references-ask";
+import { stripIntakeHeaders } from "@/lib/rfp/intake";
 import { When } from "@/components/when";
 import { Workspace } from "./workspace";
 import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/route";
@@ -88,7 +89,10 @@ export default async function RfpWorkspacePage({
         basis: doc.statedStaffBasis === "users" ? "users" : "staff",
       }
     : null;
-  const mentions = staffMentions(doc.rawText);
+  // Headers composed by the multi-file intake are stripped before any scan:
+  // they embed attacker-chosen filenames and are furniture, not RFP text.
+  const scanText = stripIntakeHeaders(doc.rawText);
+  const mentions = staffMentions(scanText);
   // The sentences shown as evidence: the grounded statedStaff quote first,
   // then the scanned mentions, with one that repeats (or sits inside) a
   // sentence already listed dropped so nothing prints twice.
@@ -115,7 +119,7 @@ export default async function RfpWorkspacePage({
   // only an exact grounded one. A larger population anywhere in the
   // document (the conflict scan) turns it back into the plain question.
   const staffConflict =
-    minimumUsers !== null && staffConflictSignals(doc.rawText, minimumUsers);
+    minimumUsers !== null && staffConflictSignals(scanText, minimumUsers);
   const minimumEvidence =
     minimumUsers === null || staffConflict
       ? null

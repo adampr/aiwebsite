@@ -30,6 +30,7 @@
 // only), never in an error message.
 
 import { logRfpActivity } from "@/lib/rfp/activity";
+import { stripIntakeHeaders } from "@/lib/rfp/intake";
 import {
   getDocument,
   getOwnedProposal,
@@ -109,7 +110,7 @@ export async function GET(
   const doc = await getDocument(user, proposal.documentId);
   if (!doc) return notFound();
 
-  const rfpText = `${doc.clientName ?? ""} ${doc.title} ${doc.rawText ?? ""}`;
+  const rfpText = `${doc.clientName ?? ""} ${doc.title} ${stripIntakeHeaders(doc.rawText ?? "")}`;
   const candidates = rankForRfp(await liveReferencesWithContacts(), rfpText);
   // The one read of third-party contact values is on the record: who, for
   // which proposal, how many rows. Never a value, never an organization.

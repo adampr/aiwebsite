@@ -1,7 +1,10 @@
 "use client";
 
 // The intake control. One region is both the drop target and the textarea, so
-// upload and paste are one affordance rather than two competing ones.
+// upload and paste are one affordance rather than two competing ones. Several
+// files can be attached at once; they render as chips above the textarea, and
+// the textarea itself never disappears, so pasted text and attachments travel
+// together in the same submission.
 //
 // Reading a real RFP takes about a minute and a half against the live brain,
 // so this posts, gets a 202, and then polls the document row. The wait is
@@ -9,8 +12,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  RFP_MAX_FILES,
+  RFP_MAX_TOTAL_BYTES,
+  RFP_UPLOAD_ENVELOPE_BYTES,
+} from "@/lib/rfp/intake";
 
-type Phase = "empty" | "file" | "sending" | "reading" | "failed";
+type Phase = "empty" | "sending" | "reading" | "failed";
 
 /** Step glyph, borrowed from the governance research screen. */
 function Glyph({ state }: { state: "pending" | "active" | "done" }) {
@@ -133,13 +141,17 @@ function ReadingScreen({ elapsed, slow }: { elapsed: number; slow: boolean }) {
 export function NewRfpForm() {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("empty");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
   const [slow, setSlow] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const fileInput = useRef<HTMLInputElement>(null);
+  // Mirror of `files` read by addFiles/removeFile, so two add events landing
+  // between renders (a drop during a picker callback) can never compute the
+  // next list from a stale snapshot and drop the first batch.
+  const filesRef = useRef<File[]>([]);
 
   useEffect(() => {
     if (phase !== "reading") return;
@@ -147,17 +159,103 @@ export function NewRfpForm() {
     return () => window.clearInterval(t);
   }, [phase]);
 
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    const f = e.dataTransfer.files?.[0];
-    if (f) {
-      setFile(f);
-      setPhase("file");
-      if (!title) setTitle(f.name.replace(/\.[^.]+$/, ""));
-    }
-  }, [title]);
+  // Append candidates to the attachment list. Exact duplicates (same name,
+  // size and lastModified) are skipped silently; every file refused at the
+  // caps is named, none silently. The byte budget mirrors the server's
+  // Content-Length precheck: file bytes PLUS the pasted text PLUS a framing
+  // allowance, all from @/lib/rfp/intake so client and server cannot drift.
+  const addFiles = useCallback(
+    (incoming: File[]) => {
+      const wasEmpty = filesRef.current.length === 0;
+      const next = [...filesRef.current];
+      const budget =
+        RFP_MAX_TOTAL_BYTES -
+        RFP_UPLOAD_ENVELOPE_BYTES -
+        new Blob([text]).size;
+      let total = next.reduce((n, f) => n + f.size, 0);
+      const emptyRefused: string[] = [];
+      const capRefused: string[] = [];
+      let added = 0;
+      for (const f of incoming) {
+        const dup = next.some(
+          (g) =>
+            g.name === f.name &&
+            g.size === f.size &&
+            g.lastModified === f.lastModified
+        );
+        if (dup) continue;
+        // A 0-byte file would be refused by the server at submit; say so now.
+        if (f.size === 0) {
+          emptyRefused.push(f.name);
+          continue;
+        }
+        if (next.length >= RFP_MAX_FILES || total + f.size > budget) {
+          capRefused.push(f.name);
+          continue;
+        }
+        next.push(f);
+        total += f.size;
+        added += 1;
+      }
+      if (added > 0) {
+        if (!title && wasEmpty) {
+          setTitle(next[0].name.replace(/\.[^.]+$/, ""));
+        }
+        filesRef.current = next;
+        setFiles(next);
+      }
+      const names = (list: string[]) => {
+        const shown = list.slice(0, 3).map((n) => `"${n}"`);
+        const more = list.length - shown.length;
+        if (more > 0) return `${shown.join(", ")} and ${more} more`;
+        if (shown.length > 1)
+          return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+        return shown[0];
+      };
+      const sentences: string[] = [];
+      if (emptyRefused.length > 0)
+        sentences.push(
+          `${names(emptyRefused)} ${emptyRefused.length === 1 ? "is empty and was" : "are empty and were"} not attached.`
+        );
+      if (capRefused.length > 0)
+        sentences.push(
+          `${names(capRefused)} ${capRefused.length === 1 ? "was" : "were"} not attached. Up to ${RFP_MAX_FILES} files fit, ${Math.round(RFP_MAX_TOTAL_BYTES / 1_000_000)} MB together with the pasted text.`
+        );
+      if (sentences.length > 0) setMessage(sentences.join(" "));
+      else if (added > 0) setMessage("");
+    },
+    [text, title]
+  );
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const dropped = Array.from(e.dataTransfer.files ?? []);
+      if (dropped.length > 0) addFiles(dropped);
+    },
+    [addFiles]
+  );
+
+  function removeFile(index: number) {
+    const next = filesRef.current.filter((_, i) => i !== index);
+    filesRef.current = next;
+    setFiles(next);
+  }
 
   async function submit() {
+    // Text typed AFTER the files were attached can push the body over the
+    // server's Content-Length precheck; refuse here with honest copy instead
+    // of letting the server 413 a selection the form accepted.
+    const bodyBytes =
+      files.reduce((n, f) => n + f.size, 0) +
+      new Blob([text]).size +
+      RFP_UPLOAD_ENVELOPE_BYTES;
+    if (bodyBytes > RFP_MAX_TOTAL_BYTES) {
+      setMessage(
+        `Together the files and the pasted text are over ${Math.round(RFP_MAX_TOTAL_BYTES / 1_000_000)} MB. Remove a file or shorten the text.`
+      );
+      return;
+    }
     setPhase("sending");
     setMessage("");
     // A retry is a FRESH read: without this the clock resumes at the failed
@@ -165,8 +263,8 @@ export function NewRfpForm() {
     setElapsed(0);
     setSlow(false);
     const body = new FormData();
-    if (file) body.set("file", file);
-    else body.set("text", text);
+    for (const f of files) body.append("files", f);
+    body.set("text", text);
     body.set("title", title);
 
     let res: Response;
@@ -181,6 +279,16 @@ export function NewRfpForm() {
     if (!res.ok) {
       setPhase("failed");
       setMessage(data?.message ?? "That could not be read. Nothing was saved.");
+      return;
+    }
+    // A 202 whose body could not be parsed would otherwise strand the
+    // reading screen forever: the poll loop would throw before it starts
+    // and the six-minute fallback would never fire.
+    if (typeof data?.id !== "string") {
+      setPhase("failed");
+      setMessage(
+        "The upload was accepted but the reply could not be read. Check Your RFPs in a minute; it may already be reading."
+      );
       return;
     }
 
@@ -224,7 +332,15 @@ export function NewRfpForm() {
   }
 
   return (
-    <div className="panel panel--raised space-y-6">
+    // The WHOLE panel is the drop target: with chips rendered above the
+    // textarea, a drop released over a chip, the help line or the title field
+    // would otherwise hit the browser default and navigate to the file,
+    // destroying the typed text and the attachment list.
+    <div
+      className="panel panel--raised space-y-6"
+      onDrop={onDrop}
+      onDragOver={(e) => e.preventDefault()}
+    >
       <div className="field">
         <label htmlFor="rfp-title">Name it</label>
         <input
@@ -238,37 +354,41 @@ export function NewRfpForm() {
 
       <div className="field">
         <label htmlFor="rfp-text">The RFP</label>
-        {file ? (
-          <div className="flex flex-wrap items-center gap-4 py-3">
-            <span className="mono text-sm">{file.name}</span>
-            <span className="text-faint text-xs">
-              {Math.round(file.size / 1024)} KB
-            </span>
-            <button
-              type="button"
-              className="btn btn--text"
-              onClick={() => {
-                setFile(null);
-                setPhase("empty");
-              }}
-            >
-              Remove
-            </button>
-          </div>
-        ) : (
-          <textarea
-            id="rfp-text"
-            className="input min-h-64"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onDrop={onDrop}
-            onDragOver={(e) => e.preventDefault()}
-            placeholder="Paste the RFP text here, or drop a PDF or Word file onto this box."
-          />
+        {files.length > 0 && (
+          <ul className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3">
+            {files.map((f, i) => (
+              <li
+                key={`${f.name}\u0000${f.size}\u0000${f.lastModified}`}
+                className="flex items-center gap-2"
+              >
+                <span className="mono text-sm">{f.name}</span>
+                <span className="text-faint text-xs">
+                  {Math.round(f.size / 1024)} KB
+                </span>
+                <button
+                  type="button"
+                  className="btn btn--text"
+                  aria-label={`Remove ${f.name}`}
+                  onClick={() => removeFile(i)}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
+        <textarea
+          id="rfp-text"
+          className="input min-h-64"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Paste the RFP text here, or drop PDF or Word files onto this box."
+        />
         <p className="mt-2 text-xs text-faint">
-          PDF, Word .docx, or pasted text. Read only to draft this response;
-          never stored in Tron&apos;s public memory.
+          PDF, Word .docx, or pasted text (a few lines at least). Several
+          files and text are read together as one RFP, up to about 120,000
+          characters. Read only to draft this response; never stored in
+          Tron&apos;s public memory.
         </p>
       </div>
 
@@ -276,7 +396,10 @@ export function NewRfpForm() {
         <button
           type="button"
           className="btn btn--primary"
-          disabled={phase === "sending" || (!file && text.trim().length < 40)}
+          disabled={
+            phase === "sending" ||
+            (files.length === 0 && text.trim().length < 40)
+          }
           onClick={submit}
         >
           {phase === "sending" ? "Sending" : "Read this RFP"}
@@ -286,26 +409,28 @@ export function NewRfpForm() {
           className="btn btn--text"
           onClick={() => fileInput.current?.click()}
         >
-          Choose a file
+          Choose files
         </button>
         <input
           ref={fileInput}
           type="file"
+          multiple
           accept=".pdf,.docx,.txt,.md"
           className="hidden"
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) {
-              setFile(f);
-              setPhase("file");
-              if (!title) setTitle(f.name.replace(/\.[^.]+$/, ""));
-            }
+            const chosen = Array.from(e.target.files ?? []);
+            if (chosen.length > 0) addFiles(chosen);
+            // Reset so removing a file and choosing it again re-fires change.
+            e.target.value = "";
           }}
         />
       </div>
 
       {message && (
-        <div className="panel panel--lightline-sand">
+        // role=alert: submit failures land here after the role=status reading
+        // screen unmounts, and a screen-reader user would otherwise hear
+        // nothing at all.
+        <div className="panel panel--lightline-sand" role="alert">
           <p>{message}</p>
         </div>
       )}

@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17.11 RFP MULTI-FILE INTAKE (owner: multiple file uploads AND a text area that no longer disappears after attaching a file; everything is analyzed as one document before drafting). `/rfp/new` keeps the textarea always rendered beside a multi-file chip list (whole-panel drop target, every refused file named, client byte budget mirrors the server's Content-Length precheck including text + framing); `POST /api/rfp/documents` takes repeated `files` plus `text` (legacy single `file` still accepted), composes them through the new pure client-safe `src/lib/rfp/intake.ts` (`composeRfpParts`: single part byte-identical to before, several parts get `===== ATTACHED FILE i OF n: <sanitized name> =====` / `===== PASTED TEXT =====` headers, 120k combined cap with `truncated` in the activity meta) into the ONE rawText the unchanged screenInjection -> readRfp path analyzes; `sourceKind: "multi"` provenance for several sources; and `stripIntakeHeaders` removes the header lines from every grounding/detector corpus (statedStaff + rfpTitle grounding, staffMentions/staffConflictSignals, the four references-detector `rfpText` sites) because a filename like "Acme RFP 350 users.pdf" would otherwise ground a staff count deterministically (refuter MAJOR, removal-only fix). `npm run test:rfpintake`. No migration, no env change.
+
 Last verified against code: 2026-09-30 §5.17.10 RFP CLIENT REFERENCES AS CARDS + RETAINED CONTACTS (owner: use the July 2026 senior-living proposal's References section as the template, keep the reference contacts it names, and let the person keep contacts on file when an RFP asks for references). The references question is now answered with a picker (`src/app/rfp/r/[id]/references-picker.tsx`): what is on file, ranked for the RFP, is prefilled from `rfp_references` (`GET /api/rfp/proposals/[id]/references`, the ONE read that selects the contact columns), the person includes/edits/adds entries, and `POST .../references` (no brain call) lands a stored `references` visual block (`src/lib/rfp/references-block.ts`, the frozen one-spec module) plus the template's intro sentence with rule D3's etiquette sentence, stamps `referencesAnswered`, clears the question from every section, and, when "Keep these contacts on file" is checked, writes the contacts back (`saveReferenceContacts`: update the live row by id, or a new `ref_<slug>` row). resolve-draft lifts the block into one branded `table` block per reference (head bar "Reference N", rows Organization / Industry / relevance / Contact name & title / Phone & email; generatedBy human, no cites) and into `proposal.references`, so the gate scans every cell, D3 sees the references, and the Word/PDF emitters draw them with the table code they already had. A redraft carries the block and the stamp. Operator lane `npm run rfp:reference-contact` (stdin JSON, update-only, never prints a value). No migration, no env change. Suites extended: `test:rfprefs`, `test:rfpblocks`, `test:rfpvisualgate`.
 
 Last verified against code: 2026-09-30 §5.17.9 YOUR KNOWLEDGE IS EDITABLE (`/rfp/knowledge/mine`: the owner edits a row in place, sends it for approval or withdraws it, deletes it, and an admin promotes their own row straight into the shared base through the same INSERT-at-a-new-KB-version as the review queue; new `PATCH|POST|DELETE /api/rfp/knowledge/[id]`, pure rules in `src/lib/rfp/knowledge-mine.ts`, `npm run test:rfpmine`; a fact's category is steered onto the corpus list; no schema, env or migration change). Previous entry: §5.17.8 RFP CHECKS IGNORE / FIX IT (owner directive: every Checks-pane recommendation gets Ignore and Fix it). Ignore persists per-proposal dismissals in `rfp_proposals.checks_ignores_json` (migration `0059_rfp_check_ignores`), keyed by the PERSISTED `findingSig` recipe in `src/lib/rfp/check-ignores.ts`, re-applied by `applyIgnores` at BOTH gate store sites (gate-run.ts `runAndStoreGate` and the export route, before `writeProposalGate`/the draft computation/`x-rfp-gate-passed`) so the pane and the export never disagree; dismissed findings leave the visible counts and `passed` and collect under a "Ignored (N)" disclosure with Restore. New route `POST /api/rfp/proposals/[id]/checks` (`{op: ignore|restore, sig}`; sig must match a stored violation; row-locked read-modify-write via `writeProposalChecksState`, NO rev bump; activity `proposal.check_ignore`/`proposal.check_restore`, shape-only meta). Fix it maps each rule through `src/lib/rfp/check-fixes.ts` (`resolveTargetLabel` in lockstep with resolve-draft's ids; tron on the section else `DOC_LABEL`, optional inline context for A5/B7/C3/D4-edge, C1-block redraft via the existing per-section path, pricing/none pointers) and fires the existing Tron ask flow with explicit overrides (`askTron({label, instruction})`, `askTronDoc(instr)`), instruction fenced server-side as before. `Violation` gains additive `dismissed`. New suite `npm run test:rfpchecks`. No env change.
@@ -10426,6 +10428,94 @@ typed entry's card to the on-file row its organization matched at save time
 a reopened question on a section already at three gaps; a person's own
 paragraph that ENDS with the intro sentence loses that sentence on Remove
 (the documented "rewrote it, it stays" rule, accepted).
+
+#### 5.17.11 Multi-file intake: several attachments and the text area together (2026-09-30)
+
+Owner directive: multiple file uploads for an RFP AND a text area (the
+textarea used to disappear once a file was attached); everything attached
+and typed is analyzed as ONE document before drafting.
+
+**Client (`src/app/rfp/new/form.tsx`).** The textarea is ALWAYS rendered;
+attachments are a chip list above it (name, KB, per-file Remove with an
+aria-label naming the file). The hidden input takes `multiple`; drag-drop
+takes every dropped file, and the WHOLE `panel--raised` is the drop target
+(with chips above the textarea, a drop released over a chip or the help
+line would otherwise hit the browser default and navigate to the file,
+destroying the typed draft). Adds skip exact duplicates
+(name+size+lastModified, which also keeps the React chip keys unique) and
+refuse, each refused file NAMED (first three plus "and N more", never a
+silent drop): 0-byte files, files past `RFP_MAX_FILES`, and files past the
+byte budget `RFP_MAX_TOTAL_BYTES - RFP_UPLOAD_ENVELOPE_BYTES - text bytes`
+(the server's cap is a Content-Length precheck, which counts the pasted
+text and the multipart framing, so the client budgets both or a selection
+it accepted would 413 at submit; submit re-checks the same budget because
+text typed after the files were attached moves it). The picker input's
+value is reset after every change so remove-then-rechoose re-fires. Submit
+appends every file under the repeated `files` key plus `text` (always) and
+`title`; enabled when there is a file or 40+ trimmed chars of text. The
+message panel is `role="alert"` (submit failures land there after the
+`role=status` reading screen unmounts). A 202 whose body has no `id` fails
+honestly instead of stranding the reading screen. The reading
+screen/poll/redirect flow is unchanged.
+
+**Server (`POST /api/rfp/documents`, multipart branch).** Collects the
+legacy single `file` field (stale-tab back-compat, prepended) plus every
+`files` entry; refuses >8 files (400), any 0-byte file by sanitized name
+(400; the old code silently fell through to the paste branch), per-file
+and running-sum >8 MB (413), unsniffable or unextractable files by
+sanitized name (400). Parts are files in received order then the paste
+part LAST (any length beside files; alone it still needs 40 trimmed
+chars). `composeRfpParts` (`src/lib/rfp/intake.ts`, pure and CLIENT-SAFE —
+the form imports the caps from it so client and server cannot drift) joins
+them: a SINGLE part stays byte-identical to the pre-multi behavior (no
+header); multiple parts each get a one-line header, `===== ATTACHED FILE
+i OF nFiles: <sanitizeSourceName(name)> =====` or `===== PASTED TEXT
+=====` (only `=` and ASCII words, never angle brackets; numbering counts
+files only), joined with blank lines and sliced at the combined 120k cap,
+with `truncated` reported into the `document.create` activity meta and a
+`[rfp]` warn line (silent whole-part loss is the failure mode; the help
+line also states the ~120,000-char bound). The combined text then flows
+through the UNCHANGED `screenInjection` -> `createDocument` -> background
+`readRfp` path: one rawText, one read, so every attachment and the typed
+text are analyzed together before drafting. Provenance: one file alone is
+unchanged (`pdf|docx|txt`, name, sha, bytes); several sources store
+`sourceKind: "multi"`, sanitized names joined " + " (300 cap), sha256 over
+the concatenated file buffers, summed bytes (columns have no UI reader;
+`RfpSourceKind` in content-model/ingest.ts is an unimported design type).
+Auto title comes from the FIRST file's humanized name, as before. The
+Content-Length precheck copy is "That upload is over 8 MB." because it
+fires for the sum plus framing, not only one file. Activity meta gains
+`files: <count>` (count only, never a filename).
+
+**`stripIntakeHeaders` (intake.ts) — the header lines are furniture, not
+evidence (refuter MAJOR).** The composed headers embed attacker-chosen
+filenames, and every grounding/detector corpus downstream treats rawText
+lines as the client's document: a file named "Acme RFP 350 users.pdf"
+would deterministically ground a stated staff count (G1-G6 pass), could
+become the stored title via the subject path, and steers the references
+keyword detectors. So the header lines are stripped (whole lines,
+prefix-matched because the 120k slice can cut the final header mid-name;
+removal-only, so anything that grounds in the stripped text also sat
+verbatim in what the model saw, and a forged header line pasted inside a
+part's own text is stripped too, which only shrinks the corpus) at every
+evidence site: `readRfp`'s `groundStatedStaff` + `groundRfpTitle` corpus
+(brain.ts), `staffMentions`/`staffConflictSignals` on the workspace page,
+and the `${clientName} ${title} ${rawText}` references-detector corpora in
+the references, references-gap, generate and section routes. The PROMPT
+still carries the headers (the model may use them to tell documents
+apart); only grounding and detection ignore them. `npm run test:rfpintake`
+pins the sanitizer ladder, single-part byte-identity, header format and
+numbering, cap/truncation, and the strip properties (filename digits
+cannot ground, truncated-header tails, lookalike lines survive,
+idempotence). No migration, no env change, no new dependency.
+
+**Accepted/known.** `readRfp` fences the first 60k chars (pre-existing),
+so the effective read bound is below the 120k store cap; the truncation
+receipt covers the store cap only. A multi-source sha256 is over the
+concatenated buffers (order-stable per request, provenance-only). A
+same-named file with different bytes shows two identically-named chips
+(intended: content differs). The title autofill stem can go stale after
+remove-all-then-re-add (pre-existing single-file behavior, kept).
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 
