@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17 RFP RUNBAR ALWAYS STICKY (owner directive: the drafting-status line and the Run checks / Word / PDF buttons must float — never scrollable out of view — pinned at the top of the window). `.rfp-page .rfp-runbar` is now `position: sticky` at every width (top = measured `--rfp-workbar-h` below md, `11.25rem` at md+, `z-index: 30`); the `--rfp-runbar-h` measurement (ResizeObserver + layout effect in `workspace.tsx`) runs unconditionally and the `rfp-runbar--live`/`runbarLive` live-only gating is DELETED, superseding the 2026-08-28 scroll-at-rest ruling. All dependent offsets (rail top/max-height, `.rfp-doc-receipt`, mobile tabstrip, `sec-*` scroll-margins) already read `--rfp-runbar-h` and follow unchanged. CSS + one component; no route, schema, env or migration change.
+
 Last verified against code: 2026-09-30 §5.17.7 RFP VISUAL BLOCKS (owner: "uses visuals and tables like the BOF response, especially the About section"). Drafted sections carry optional `blocks` (stat tiles, fact grid, badge strip, table, callout, two-up cards, timeline) beside their paragraphs, anchored by `after`; `src/lib/rfp/draft-blocks.ts` is the client-safe contract (`interleave`, `sanitizeStoredBlocks`, `parseModelVisuals` grounding every number against the cited facts, `buildAboutBlocks`/`buildServiceStatsBlock`/`buildOnboardingTimeline` from live facts with no model call); the drafter's optional `visuals` output (kill switch `RFP_VISUALS=0`), automatic About placement at landing, the section-route `visuals` op, and one visual spec shared by the screen `DocBlock` and both export emitters (`brandedTable` hoisted from the Investment sheet, pixel-identical). New: `test:rfpblocks`, `test:rfpvisualgate`, `rfp:render-fixture`, ornament PNGs under `public/brand/rfp-ornaments/`.
 
 Last verified against code: 2026-09-30 §5.17.6 RFP MINIMUM-FIRST USER COUNT + REFERENCES BACKSTOP + REAL TITLES (owner review of a live proposal). The fully managed users question now leads with the rate-card monthly minimum and the RFP's own staff sentences (`staffMentions`/`minimumAssumption`/`staffConflictSignals` in `src/lib/rfp/staff-count.ts`, computed server-side in the workspace page, never seeding a price: only an exact grounded count seeds); quotes at or under the minimum read "Up to N fully managed users at the monthly minimum" with `quantityLabel` shared by screen and both exports; a references request the draft does not satisfy lands as one canonical server-minted gap (`src/lib/rfp/references-ask.ts`, `liveReferences()`, D3 etiquette appended on answer, contacts never filed as knowledge) with `POST /api/rfp/proposals/[id]/references-gap` for proposals drafted earlier; document titles are composed from the client name and the RFP's grounded subject line (`src/lib/rfp/doc-title.ts`) and the on-screen cover prints the export's cover. New suites: `test:rfptitle`, `test:rfpquote`, `test:rfprefs`. §5.17.2's "server caps 2 gaps per section" now has one exception (the references gap).
@@ -9020,10 +9022,11 @@ clears via `pickScope`; an abandoned doc run RETURNS at the loop top
 instead of falling through to write its failures onto the cleared pane;
 the progress line counts only revise targets (structural entries land
 instantly); renames and removals evict the old label's receipt chip; the
-runbar pins for run/notice only (never the uncleared `genError` prop) and
+runbar is always pinned (since 2026-09-30; from 2026-08-28 to then it
+pinned for run/notice only, never the uncleared `genError` prop) and
 every notice carries a Dismiss; the rail's pane tabs are sticky inside the
 scrolling rail, pane switches reset its scrollTop, and the runbar
-measurement is a layout effect so the first --live frame cannot paint the
+measurement is a layout effect so the first frame cannot paint the
 bar over the rail. The planner's document text is budgeted
 HEADER-AWARE under a 48k fence: labels appear in FULL, titles are sliced,
 and the measured header spend comes off the pool before it is divided, so
@@ -9392,14 +9395,16 @@ unit prices; intake questions edit text/required only (kind is the
 promotion switch and stays fixed). `<LocalTime>` renders absolute times in
 the viewer's timezone. `select.input` + options paint from theme vars.
 
-**Round 4 additions.** The rail parks BELOW the runbar when one is sticky:
+**Round 4 additions.** The rail parks BELOW the sticky runbar:
 the runbar's height (it varies with notices) is measured by a
-ResizeObserver into `--rfp-runbar-h` on `.rfp-page` (0 while the bar is
-not sticky), and the rail's sticky top, its max-height, and every `sec-*`
-scroll-margin offset by it. SINCE 2026-08-28 the runbar is STATIC at every
-width unless `--live` (`runbarLive`: a run active, follow progress, a
-landed notice, or a generation error) — at rest it scrolls away with the
-page instead of pinning a third bar under the header + workbar stack. **There is exactly ONE
+ResizeObserver into `--rfp-runbar-h` on `.rfp-page`, and the rail's
+sticky top, its max-height, and every `sec-*`
+scroll-margin offset by it. SINCE 2026-09-30 the runbar is ALWAYS sticky
+at every width (owner directive: the drafting status and the Run checks /
+Word / PDF buttons must never scroll out of view). This supersedes the
+2026-08-28 ruling that left it static unless `--live` (a run active,
+follow progress, a landed notice); the `--live` modifier and `runbarLive`
+are gone, and `--rfp-runbar-h` is always the measured height. **There is exactly ONE
 `scroll-margin-top` rule for `.rfp-page [id^="sec-"]`** — the round-4 panel
 caught a second, later, non-var copy of it silently winning the cascade at
 equal specificity, which put every jumped-to heading back under the runbar;
@@ -9433,10 +9438,10 @@ worker (the ingest poll exits on `extracted` alone; requirements can
 legitimately be zero). The rail has ONE pane source of truth (`pane`);
 `mobile` only toggles draft-vs-rail below lg — rendering off both once
 stacked two panes whenever they disagreed. The action bar (`.rfp-runbar`)
-carries the notices and turns sticky exactly while one is live (`--live`;
-see round 4 above), because the flash choreography auto-scrolls the window
-and anything only at the top of the page is off-viewport exactly when a
-notice lands or the stop button is needed;
+carries the notices and is ALWAYS sticky (since 2026-09-30; see round 4
+above), so the drafting status, Stop, Run checks and the Word/PDF exports
+stay reachable however deep the flash choreography or the reader scrolls
+the window;
 `showChanged` never scrolls while the user is typing. Pricing questions are
 skippable (export still enforces completeness), a zero M365 estimate keeps
 the split question open with a "client confirmed" alternative, and a weave

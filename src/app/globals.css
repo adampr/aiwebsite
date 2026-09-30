@@ -751,25 +751,23 @@ details[open] > summary.linklike::before { content: "\25BE\00A0"; }
   }
 }
 /* The workspace action bar (draft-all progress, stop, export, notices)
-   scrolls WITH the page at rest, at EVERY width (owner directive
-   2026-08-28: pinned bars plus per-column scrollbars made the workspace
-   hard to maneuver). It turns sticky only while --live: a run's Stop
-   button and status, or a landed notice, must stay reachable while the
-   flash choreography scrolls the window. Below md its sticky top is the
-   MEASURED workbar height (the section workbar is sticky top:0 there and
-   taller than 4.5rem, which a hardcoded offset slid under). The workspace
-   zeroes --rfp-runbar-h while the bar is not sticky. */
+   is ALWAYS sticky (owner directive 2026-09-30: the drafting status and
+   the Run checks / Word / PDF buttons must never scroll out of view;
+   supersedes the 2026-08-28 scroll-at-rest ruling that pinned it only
+   while --live). It pins under the sticky header + workbar stack, and
+   everything below it (rail, doc receipt, mobile tabstrip, sec-*
+   scroll-margins) offsets by its MEASURED height in --rfp-runbar-h.
+   Below md its sticky top is the MEASURED workbar height (the section
+   workbar is sticky top:0 there and taller than 4.5rem, which a
+   hardcoded offset slid under). */
 .rfp-page .rfp-runbar {
-  position: static;
-  background: var(--xl-bg-1);
-}
-.rfp-page .rfp-runbar--live {
   position: sticky;
   top: var(--rfp-workbar-h, 4.5rem);
   z-index: 30;
+  background: var(--xl-bg-1);
 }
 @media (min-width: 768px) {
-  .rfp-page .rfp-runbar--live { top: 11.25rem; }
+  .rfp-page .rfp-runbar { top: 11.25rem; }
 }
 
 /* Native select popups paint with UA colors; a transparent .input select on

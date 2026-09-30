@@ -653,34 +653,23 @@ export function Workspace({
   // variable the stylesheet offsets by; without this the two sticky
   // elements share one offset and the runbar covers the rail's tabs.
   const runbarRef = useRef<HTMLDivElement | null>(null);
-  // Whether a run is live drives the runbar's MOBILE stickiness (below md
-  // the full panel walled off ~46% of a phone viewport; it now scrolls
-  // away unless the Stop button must stay reachable), so the measurement
-  // re-applies when that flips. --rfp-runbar-h must read 0 while the bar
-  // is not sticky or the tabstrip and scroll margins offset for a bar that
-  // scrolled away. The section workbar IS sticky below md and taller than
-  // the old hardcoded 4.5rem, so its real height is measured too.
-  // Sticky ONLY while something in the bar needs to stay reachable or
-  // readable (a live run's Stop button, a landed notice — dismissable, so
-  // the pin always has an exit): at rest it scrolls away with the page
-  // (owner directive 2026-08-28: the pinned header block plus per-column
-  // scrollbars made the workspace hard to maneuver). genError deliberately
-  // does NOT pin: it is a server prop that never clears, and a proposal
-  // whose last run errored would otherwise load pinned forever.
-  const runbarLive = Boolean(run?.active || followProgress || notice);
-  // Layout effect, not useEffect: on the frame the --live class first
-  // applies, a post-paint measurement leaves --rfp-runbar-h at 0 for one
-  // frame and the freshly sticky bar paints over the rail and receipt.
+  // The runbar is ALWAYS sticky now (owner directive 2026-09-30: the
+  // drafting status and the Run checks / Word / PDF buttons must never
+  // scroll out of view; supersedes the 2026-08-28 scroll-at-rest ruling
+  // that pinned it only while a run or notice was live). Its height still
+  // varies (notices, archived banner, wrapping), so it is measured into
+  // --rfp-runbar-h continuously via the ResizeObserver below. The section
+  // workbar IS sticky below md and taller than the old hardcoded 4.5rem,
+  // so its real height is measured too.
+  // Layout effect, not useEffect: a post-paint first measurement leaves
+  // --rfp-runbar-h at 0 for one frame and the sticky bar paints over the
+  // rail and receipt.
   useIsoLayoutEffect(() => {
     const el = runbarRef.current;
     const page = el?.closest<HTMLElement>(".rfp-page");
     if (!el || !page) return;
     const apply = () => {
-      const sticky = getComputedStyle(el).position === "sticky";
-      page.style.setProperty(
-        "--rfp-runbar-h",
-        sticky ? `${el.offsetHeight + 16}px` : "0px"
-      );
+      page.style.setProperty("--rfp-runbar-h", `${el.offsetHeight + 16}px`);
       const wb = document.querySelector<HTMLElement>(".workbar");
       if (wb)
         page.style.setProperty("--rfp-workbar-h", `${wb.offsetHeight}px`);
@@ -697,7 +686,7 @@ export function Workspace({
       page.style.removeProperty("--rfp-runbar-h");
       page.style.removeProperty("--rfp-workbar-h");
     };
-  }, [runbarLive]);
+  }, []);
 
   // ---- guided questions ----
   const [answerText, setAnswerText] = useState("");
@@ -2118,13 +2107,10 @@ export function Workspace({
   return (
     <>
       {/* Workbar: the one place the document-level actions and notices
-          live. Sticky, because the auto-scroll choreography guarantees the
-          top of the page is off-viewport exactly when a notice lands or the
-          stop button is needed mid-run. */}
-      <div
-        className={`panel mb-6 rfp-runbar${runbarLive ? " rfp-runbar--live" : ""}`}
-        ref={runbarRef}
-      >
+          live. Always sticky (owner directive 2026-09-30): the drafting
+          status and the Run checks / Word / PDF buttons stay pinned at
+          the top of the window however deep the page is scrolled. */}
+      <div className="panel mb-6 rfp-runbar" ref={runbarRef}>
         {archived && (
           <p className="mb-3 text-sm">
             <span className="badge badge--warn">Archived</span>{" "}
