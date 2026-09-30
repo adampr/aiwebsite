@@ -8,8 +8,9 @@
  * Modes (persisted in the committed .lakehouse.json marker):
  *   managed — Lakehouse is this repo's origin-of-record: stage everything,
  *             scan for secrets (quarantine, never abort), commit, push.
- *   mirror  — this repo is Azure-DevOps/gitflow-governed: sync existing
- *             refs to the 'lakehouse' remote only; NEVER create commits.
+ *   mirror  — this repo is Azure-DevOps/gitflow-governed: sync the upstream's
+ *             fetched view (refs/remotes/origin/*) and tags to the 'lakehouse'
+ *             remote, fast-forward only; NEVER create commits, NEVER force.
  *
  * Invariants:
  *   - Pushes ONLY the remote literally named 'lakehouse' — never origin
@@ -627,34 +628,56 @@ async function checkpointMirror(env, _trigger) {
     if (remote.reason === "auth" || remote.reason === "no_token") finish("AUTH", null, 3);
     finish("OFFLINE", remote.detail ?? `ensure-${remote.reason}`, 4);
   }
-  // Forced refspecs are the sanctioned mirror mechanism: the Lakehouse copy is
-  // a pure reflection of this repo, and ADO-side rebases must re-mirror. No
-  // --prune and no delete refspecs — deletions never propagate.
+  // Mirror the UPSTREAM'S FETCHED VIEW (refs/remotes/origin/*), never local
+  // heads, and never forced (2026-09-30 fix): a checkout whose local branches
+  // lag origin must not rewind the Lakehouse copy — under the old forced
+  // '+refs/heads/*' every Stop in a lagging checkout rewound Lakehouse master
+  // until lakehouse-sync fast-forwarded it back. A ref Lakehouse already
+  // holds newer than this checkout's view is rejected non-fast-forward and
+  // left alone; that is the desired outcome, not a failure (lakehouse-sync
+  // owns catch-up, and divergence/rewinds are the developer's call). An
+  // upstream rebase therefore no longer re-mirrors from here by force —
+  // that call is made at the sync tool, not by whichever checkout stops
+  // first. No --prune and no delete refspecs — deletions never propagate.
+  // Enumerated, not a glob: 'refs/remotes/origin/*' would also push the
+  // symbolic origin/HEAD as a literal Lakehouse branch named HEAD, and a
+  // negative '^refs/remotes/origin/HEAD' refspec does not exclude it on
+  // push (measured on git 2.43).
+  const ORIGIN_VIEW = "refs/remotes/origin/";
+  const viewRefspecs = (gitOut(["for-each-ref", "--format=%(refname)", "refs/remotes/origin"]) ?? "")
+    .split("\n")
+    .filter((r) => r.startsWith(ORIGIN_VIEW) && r !== `${ORIGIN_VIEW}HEAD`)
+    .map((r) => `${r}:refs/heads/${r.slice(ORIGIN_VIEW.length)}`);
   const attempt = await pushWithAuthRetry(env, [
-    "+refs/heads/*:refs/heads/*",
-    "+refs/tags/*:refs/tags/*",
+    ...viewRefspecs,
+    "refs/tags/*:refs/tags/*",
   ]);
-  if (attempt.ok) {
-    const changed = attempt.result.stdout
-      .split("\n")
-      .filter((l) => /^[*+ ]\t/.test(l) && !l.includes("[up to date]")).length;
-    finish(changed > 0 ? "PUSHED" : "NOOP", null, 0, {
-      lastPushAt: new Date().toISOString(),
-      lastRunAt: new Date().toISOString(),
-    });
+  if (attempt.ok || attempt.kind === "non_ff") {
+    const lines = attempt.result.stdout.split("\n");
+    const changed = lines.filter(
+      (l) => /^[*+ ]\t/.test(l) && !l.includes("[up to date]")
+    ).length;
+    const rejected = lines
+      .filter((l) => l.startsWith("!"))
+      .map((l) => l.split("\t")[1])
+      .filter(Boolean);
+    finish(
+      changed > 0 ? "PUSHED" : "NOOP",
+      rejected.length ? `left-alone (not fast-forward): ${rejected.join(",")}` : null,
+      0,
+      {
+        lastPushAt: new Date().toISOString(),
+        lastRunAt: new Date().toISOString(),
+        lastError: rejected.length
+          ? `non-ff left alone: ${rejected.join(",")}`.slice(0, 300)
+          : null,
+      }
+    );
   }
   if (attempt.kind === "auth") finish("AUTH", null, 3);
-  const rejected = attempt.result.stdout
-    .split("\n")
-    .filter((l) => l.startsWith("!"))
-    .map((l) => l.split("\t")[1])
-    .filter(Boolean);
-  finish(
-    "OFFLINE",
-    rejected.length ? `refs-rejected: ${rejected.join(",")}` : "push-failed",
-    4,
-    { lastError: attempt.result.stderr.trim().slice(0, 300) }
-  );
+  finish("OFFLINE", "push-failed", 4, {
+    lastError: attempt.result.stderr.trim().slice(0, 300),
+  });
 }
 
 async function runCheckpoint(trigger) {
