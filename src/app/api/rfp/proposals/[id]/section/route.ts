@@ -368,7 +368,7 @@ export async function PATCH(
         "A section with that header already exists.",
         409
       );
-    const newTitle = renamesLabel ? sections[at].title : heading;
+    const newTitle = renamesLabel ? "" : heading;
 
     const nextSections = sections.map((s) =>
       s.label === label
