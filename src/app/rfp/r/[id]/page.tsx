@@ -31,6 +31,7 @@ import { stripIntakeHeaders } from "@/lib/rfp/intake";
 import { When } from "@/components/when";
 import { Workspace } from "./workspace";
 import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/route";
+import type { GateResult } from "@/lib/rfp/validators/gate";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -74,6 +75,21 @@ export default async function RfpWorkspacePage({
   const structure: { label: string; title: string }[] = doc.structureJson
     ? JSON.parse(doc.structureJson)
     : [];
+  // Parsed once: the prop and the stale verdict read the same object. A
+  // stored run stamped with an older rev describes an earlier draft
+  // (§5.17.8). A row stored before atRev existed carries none: content
+  // writes no longer null the stored verdict, so such a row cannot prove it
+  // is current and reads as stale (the banner only says findings MAY be
+  // resolved and offers a re-run, which stamps it).
+  const storedGate: GateResult | null = proposal?.gateJson
+    ? JSON.parse(proposal.gateJson)
+    : null;
+  const gateStale =
+    proposal !== null &&
+    storedGate !== null &&
+    (typeof storedGate.atRev !== "number" ||
+      storedGate.atRev !== proposal.rev);
+
   const sections: DraftSectionRecord[] = proposal
     ? JSON.parse(proposal.sectionsJson || "[]")
     : [];
@@ -185,7 +201,8 @@ export default async function RfpWorkspacePage({
             ? JSON.parse(proposal.pricingInputsJson)
             : null
         }
-        gateResult={proposal?.gateJson ? JSON.parse(proposal.gateJson) : null}
+        gateResult={storedGate}
+        gateStale={gateStale}
         busy={proposal ? genClaimActive(proposal) : false}
         genError={proposal?.genError ?? null}
         autoDraft={sp.draft === "all"}

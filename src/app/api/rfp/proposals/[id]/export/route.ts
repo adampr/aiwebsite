@@ -67,8 +67,9 @@ export async function GET(
   // gate-run.ts does, so the pane and this export can never disagree, and an
   // ignored finding no longer counts as outstanding — intended. The column
   // is re-read after the rules run, mirroring gate-run.ts, so an Ignore
-  // landing mid-run still marks the stored result.
-  const raw = runDraftGate(input);
+  // landing mid-run still marks the stored result. atRev is stamped exactly
+  // as gate-run.ts stamps it, before the re-apply.
+  const raw = { ...runDraftGate(input), atRev: proposal.rev };
   const result = applyIgnores(
     raw,
     parseCheckIgnores(await readProposalChecksIgnores(proposal.id))

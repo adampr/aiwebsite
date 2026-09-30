@@ -28,6 +28,16 @@ export type GateResult = {
   failedRules: string[];
   /** Rules that threw. A validator crashing must not be mistaken for a clean document. */
   errors: { ruleId: string; message: string }[];
+  /**
+   * The proposal rev this run read (§5.17.8). ADDITIVE and stamped only by
+   * the two store sites (gate-run.ts, the export route), never by runGate:
+   * a stored result whose atRev differs from the row's rev describes an
+   * older draft and renders as stale, not as current. A gate_json row stored
+   * before this field existed lacks it and also renders as stale (page.tsx):
+   * content writes no longer null the stored run, so an unstamped row cannot
+   * prove it describes the current draft. The next run stamps it.
+   */
+  atRev?: number;
 };
 
 /**

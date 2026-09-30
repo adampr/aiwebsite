@@ -493,10 +493,10 @@ export async function writeProposalSections(
       sectionsJson,
       rev: expectedRev + 1,
       updatedAt: new Date(),
-      // A content write stales any stored gate verdict; a Checks pane
-      // showing "passing" for a draft that has since changed would lie.
-      gateJson: null,
-      gateRanAt: null,
+      // A content write no longer nulls the stored gate verdict (round 18,
+      // §5.17.8): the result carries the rev it ran at (`atRev`), so the
+      // Checks pane keeps the findings on screen and marks them stale
+      // instead of wiping them; the rev bump below is what makes them stale.
       ...extra,
     })
     .where(
@@ -532,8 +532,7 @@ export async function writeProposalStructureOp(opts: {
         sectionsJson: opts.sectionsJson,
         rev: opts.expectedRev + 1,
         updatedAt: new Date(),
-        gateJson: null,
-        gateRanAt: null,
+        // The stored gate verdict stays; the rev bump marks it stale (§5.17.8).
       })
       .where(
         and(
@@ -612,8 +611,7 @@ export async function writeProposalPricing(
       pricingJson,
       rev: expectedRev + 1,
       updatedAt: new Date(),
-      gateJson: null,
-      gateRanAt: null,
+      // The stored gate verdict stays; the rev bump marks it stale (§5.17.8).
     })
     .where(
       and(eq(rfpProposals.id, proposalId), eq(rfpProposals.rev, expectedRev))
@@ -802,8 +800,7 @@ export async function completeGeneration(
       genHeartbeatAt: null,
       genProgress: null,
       genError: null,
-      gateJson: null,
-      gateRanAt: null,
+      // The stored gate verdict stays; the rev bump marks it stale (§5.17.8).
       updatedAt: new Date(),
       ...extra,
     })
