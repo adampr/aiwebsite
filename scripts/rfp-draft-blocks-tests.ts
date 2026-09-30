@@ -44,6 +44,7 @@ import {
 } from "../src/lib/rfp/draft-blocks-ops";
 import { blockSchema } from "../src/lib/rfp/content-model/schema";
 import { buildReferencesBlock } from "../src/lib/rfp/draft-blocks";
+import { NARROWEST_TILE_INNER_PX, TILE_FIT, tileValuePx, valueFitsTile } from "../src/lib/rfp/tile-fit";
 import { referenceCardTable, referencesBlockStrings } from "../src/lib/rfp/references-block";
 import {
   facts,
@@ -87,16 +88,19 @@ const src = readFileSync(new URL("../src/lib/rfp/draft-blocks.ts", import.meta.u
 const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 no("no lookbehind regex in the module", /\(\?<[=!]/.test(code));
 no("no value import from staff-count", /from\s+["']\.\/staff-count["']/.test(code));
-// The one value import allowed is references-block.ts, which is pure and client-safe by its own
-// contract (and is checked for lookbehinds here too, since it ships in the same bundle).
+// The value imports allowed are references-block.ts and tile-fit.ts, each pure and client-safe by
+// its own contract (and checked for lookbehinds here too, since they ship in the same bundle).
 check(
-  "every import is type-only, except the references-block contract",
-  (code.match(/^import (?!type )[\s\S]*?from\s+["'][^"']+["']/gm) ?? []).filter((s) => !/from\s+["']\.\/references-block["']/.test(s)),
+  "every import is type-only, except the references-block and tile-fit contracts",
+  (code.match(/^import (?!type )[\s\S]*?from\s+["'][^"']+["']/gm) ?? []).filter((s) => !/from\s+["']\.\/(?:references-block|tile-fit)["']/.test(s)),
   []
 );
 const refsSrc = readFileSync(new URL("../src/lib/rfp/references-block.ts", import.meta.url), "utf8");
 no("no lookbehind regex in references-block", /\(\?<[=!]/.test(refsSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")));
 check("references-block imports types only", (refsSrc.match(/^import (?!type )/gm) ?? []).length, 0);
+const fitSrc = readFileSync(new URL("../src/lib/rfp/tile-fit.ts", import.meta.url), "utf8");
+no("no lookbehind regex in tile-fit", /\(\?<[=!]/.test(fitSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")));
+check("tile-fit imports nothing", (fitSrc.match(/^import /gm) ?? []).length, 0);
 
 // ---- groundValue -------------------------------------------------------------
 no('">92%" against "retention is 92%"', groundValue(">92%", "XL.net's client retention rate is 92%."));
@@ -291,6 +295,98 @@ check(
   ["4.8 yrs", "92%"]
 );
 
+// ---- stat tiles: a value is the figure alone (tile-fit.ts valueFitsTile) -----------
+{
+  const deskText = fact("operations.service-desk-hours").statement;
+  // Both wide values are GROUNDED, so what skips them below is the width and nothing else.
+  yes('"More than 99%" grounds against the desk fact', groundValue("More than 99%", deskText));
+  yes('"99.9% remotely" grounds against the desk fact', groundValue("99.9% remotely", deskText));
+  no('"More than 99%" does not fit a four-across tile at the floor', valueFitsTile("More than 99%"));
+  no('"99.9% remotely" does not fit a four-across tile at the floor', valueFitsTile("99.9% remotely"));
+
+  const wide = parseModelVisuals(
+    [
+      {
+        kind: "stats",
+        after: 1,
+        tiles: [
+          { fact: desk, value: "More than 99%", label: "Calls answered live" },
+          { fact: desk, value: "99.9%", label: "Resolved remotely" },
+          { fact: fcr, value: ">70%", label: "First-contact resolution" },
+        ],
+      },
+    ],
+    ctx()
+  );
+  check("a too-wide model tile is skipped like an ungrounded one; the figures stay", [wide.blocks.map((b) => (b.kind === "stat-tiles" ? b.tiles : null)), wide.dropped], [
+    [[{ value: "99.9%", label: "Resolved remotely" }, { value: ">70%", label: "First-contact resolution" }]],
+    [],
+  ]);
+
+  const sunk = parseModelVisuals(
+    [
+      {
+        kind: "stats",
+        tiles: [
+          { fact: desk, value: "More than 99%", label: "Calls answered live" },
+          { fact: desk, value: "99.9% remotely", label: "Issues resolved" },
+          { fact: retention, value: "92%", label: "Client retention" },
+        ],
+      },
+    ],
+    ctx()
+  );
+  check("width that leaves fewer than two tiles drops the block with its own reason", [sunk.blocks.length, sunk.dropped], [0, [{ kind: "stats", reason: "value-too-wide" }]]);
+  const notWidth = parseModelVisuals(
+    [{ kind: "stats", tiles: [{ fact: desk, value: "More than 99%", label: "Calls answered live" }, { fact: retention, value: "97%", label: "Made up" }] }],
+    ctx()
+  );
+  check("one wide tile and one ungrounded is still an ungrounded drop (width alone did not sink it)", notWidth.dropped, [{ kind: "stats", reason: "fewer-than-two-grounded-tiles" }]);
+  const fin = finishDraftVisuals(
+    [{ kind: "stats", tiles: [{ fact: desk, value: "More than 99%", label: "Calls answered live" }, { fact: desk, value: "99.9% remotely", label: "Issues resolved" }] }],
+    ["One.", "Two."],
+    facts,
+    []
+  );
+  check("finish: a block sunk by width is a drop, never prose and never a section failure", [fin.blocks, fin.paragraphs, fin.stats], [[], ["One.", "Two."], { returned: 1, kept: 0, degraded: 0, dropped: 1 }]);
+
+  // The server-built tiles pass the same width check: a fact whose figure grew past a quarter
+  // tile loses that tile rather than writing it.
+  const seeded = buildServiceStatsBlock(facts);
+  yes("every seed service tile fits a four-across tile at the floor", seeded?.kind === "stat-tiles" && seeded.tiles.every((t) => valueFitsTile(t.value)));
+  const grown = facts.map((f) =>
+    f.key === "operations.service-desk-hours"
+      ? { ...f, statement: "More than 99.999999% of calls are answered live by a human. Roughly 99.9% of issues are resolved remotely." }
+      : f
+  );
+  const g = buildServiceStatsBlock(grown);
+  check(
+    "service stats: a too-wide value is never built, the rest still are",
+    g?.kind === "stat-tiles" && g.tiles.map((t) => t.value),
+    ["99.9%", ">70%"]
+  );
+  no('the grown figure (">99.999999%") would have been too wide', valueFitsTile(">99.999999%"));
+  yes('and it is within the character limit, so width is what refuses it', ">99.999999%".length <= LIMITS.tileValue);
+
+  // A STORED value wider than the contract predates it: the read keeps it (the renderers shrink
+  // it onto one line), so an existing draft never loses the block.
+  const legacy = {
+    kind: "stat-tiles",
+    tiles: [
+      { value: "More than 99%", label: "Calls answered live" },
+      { value: "99.9% remotely", label: "Issues resolved" },
+      { value: ">70%", label: "First-contact resolution" },
+      { value: "24/7/365", label: "Live service desk" },
+    ],
+    id: "v_0000e001",
+    after: 1,
+    cites: [desk, fcr],
+    generatedBy: "llm",
+  };
+  check("stored: a legacy too-wide tile value round-trips through sanitizeStoredBlocks", sanitizeStoredBlocks([legacy], 2), [legacy]);
+  check("stored: and survives an edit's keptBlocks", keptBlocks({ label: "3.", paragraphs: ["a", "b"], blocks: [legacy] }, 2), [legacy]);
+}
+
 // ---- tables ------------------------------------------------------------------
 const sla = fid("operations.sla-targets");
 const goodTable = {
@@ -442,6 +538,15 @@ check(
   []
 );
 yes("the fixture has a 14-row table", fixtureBlocks.some((b) => b.kind === "table" && b.rows.length === 14));
+{
+  // The render fixture exercises the one-line fit both ways (tile-fit.ts).
+  const rows = fixtureBlocks.flatMap((b) => (b.kind === "stat-tiles" ? [b.tiles.map((t) => t.value)] : []));
+  yes(
+    "the fixture has a four-across row of admissible values that steps down from the design size",
+    rows.some((r) => r.length === 4 && r.every(valueFitsTile) && tileValuePx(r, NARROWEST_TILE_INNER_PX) < TILE_FIT.designPx)
+  );
+  yes("the fixture has a stored legacy row with a value past the contract", rows.some((r) => r.length === 4 && !r.every(valueFitsTile)));
+}
 check("the fixture has no currency and no em dash anywhere", allStrings(fixtureSections).filter((s) => hasCurrency(s) || s.includes("—")), []);
 {
   // Lifting into the content model is adding BlockBase fields and nothing else. The references
@@ -787,8 +892,10 @@ for (const b of fixtureBlocks) {
 }
 check("summaries", [...fixtureBlocks, stretchTimelineBlock].map(draftBlockSummary), [
   "Callout · No lock-in",
+  "Stat tiles · 4 figures",
   "Table · How each service is delivered",
   "Cards · Reactive onsite visits / Moves, adds and project work",
+  "Stat tiles · 4 figures",
   "Service stats · 3 figures",
   "Table · Suggested service level targets",
   "Company snapshot · 9 facts",

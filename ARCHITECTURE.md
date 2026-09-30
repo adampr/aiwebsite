@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17.15 RFP STAT FIGURES NEVER WRAP (owner: "in drafts, stats should never wrap to 2 lines, either reduce the font for them all in the stat section to fit, or reduce the amount of text"; a live proposal's "98.15%" CSAT tile broke after the 5 on screen). New pure client-safe `src/lib/rfp/tile-fit.ts` is the ONE fit for a stat-tile row: Archivo Bold's advance table (generated from `public/brand/fonts/Archivo-Bold.ttf` by `npm run rfp:tile-metrics`, identical to Google Fonts' Archivo 700), `tileFitEm`/`tileValuePx` (one size for the whole row, the design size down to whatever fits, no render floor) and the draft contract `valueFitsTile` (a NEW value must fit a four-across file tile at 18px, so words that are not the figure go in the label). Screen: `.rfpdoc-tile` is an inline-size container and the value is `white-space: nowrap` at `min(--rfpdoc-tile-design, 100cqi / --rfpdoc-tile-em)`, the design size a registered `@property` so it still tracks the sheet; Word and PDF call the same `tileValuePx` (the local pdfkit measurer is gone), the PDF value is set with `lineBreak: false`, and Word's half-points are floored. `parseStats` and `buildServiceStatsBlock` refuse a too-wide value (block drop reason `value-too-wide`); stored values are never refused. New `npm run test:rfptilefit`. No schema, env, route or migration change.
+
 Last verified against code: 2026-09-30 §5.17.13 RFP RAIL WAITS FOR THE DRAFT + WORKSPACE TOOL CHROME (owner: while the response drafts initially, do not show the Questions / Coverage / Checks / Tron window, it appears once it can be used; and the "Adjust quantities" form and its kind on the sheets must look distinct from the document so the draft on screen is exactly the download). The rail column and the mobile tabstrip are UNMOUNTED while `railHidden` in `src/app/rfp/r/[id]/workspace.tsx` (`structure.length > 0 && !railPeek && (draftedCount === 0 || initialDrafting)`: nothing drafted, or a run that began with nothing drafted still active, unless a pane was explicitly asked for through `showPane`); the document then keeps its exact 7/12 column width centered. Every screen-only element on a sheet (action rows, block bars, status lines, the gaps callout with the cite count, edit boxes, the pricing empty state and the adjust form) wears `.rfpdoc-tool` (dashed `#a9acc9` on `#f3f4f9`, Archivo 13px) with the label "Workspace · not in the download" (`--row` pills carry no label), and one legend line above the document says the white pages are the download. Sheets the download does not contain (undrafted sections; divider 02 and the Investment sheet before pricing exists) wear `.rfpdoc-page--absent` with a "Not in the download until ..." label. The reverse direction is mirrored too: the monthly-minimum sentence the file prints is now authored once in `quote.ts` (`minimumSentence`) and shown on the Investment sheet, the dividers and closing lede take the export's `coverClientName`, and the letter's addressee prints "the client" when there is none. `.rfpdoc-gaps` is gone. No server, API, DB or env change; the emitters are untouched (they never printed a tool).
 
 Last verified against code: 2026-09-30 §5.17.12 RFP READ BUDGET + READ AGAIN (the AISC RFP failed three reads with "could not be read for its structure": the brain finished each in 129-152 s but `readRfp` aborted at a fixed 120 s). The read now gets `RFP_READ_BUDGET_MS` (8 min, intake.ts) over the module's long transport (`callGovernanceBrain` gained `opts.longTransport`; plain fetch caps at undici's 300 s), the worker moved to `src/lib/rfp/read-document.ts`, and new `POST /api/rfp/documents/[id]/read` re-reads the stored text of a `read_failed` (or stale `reading`) document behind one conditional-UPDATE claim; `GET .../status` gains `readStale`; the workspace's `<ReadAgain>` panel follows a read and offers "Read it again"; `/rfp/new` polls past the budget and opens the RFP on failure. New activity action `document.reread`. No migration, no env change.
@@ -10775,6 +10777,98 @@ document; state 2 (drafted, gaps, a block, pricing) and the same at 390px
 render every `.rfpdoc-tool` with `border-top-style: dashed`, every label
 exact, the block bar flush right. tsc clean; eslint shows only the five
 pre-existing `react-hooks/refs` findings on the `flashSeq.current` keys.
+
+#### 5.17.15 Stat figures never wrap: one fit for the screen and both files (2026-09-30)
+
+Owner: "in drafts, stats should never wrap to 2 lines, either reduce the font
+for them all in the stat section to fit, or reduce the amount of text", with
+a live proposal's "98.15%" CSAT tile as the example. The Word and PDF
+emitters already stepped a row down to fit (measuring with pdfkit, floor
+18px), but the screen had no fit at all: `.rfpdoc-tile-value` was
+`clamp(24px, 4.8cqw, 32px)` with `overflow-wrap: anywhere`, and "98.15%" is
+3.662em of Archivo Bold, 117px at 32px, in a four-across tile about 115px
+wide on a full sheet, so it broke after the 5 (narrower sheets broke more
+rows). And nothing bounded a value's WIDTH: `LIMITS.tileValue` is 16
+characters, about 9em, which no four-across file tile holds at 18px either.
+
+**One fit (`src/lib/rfp/tile-fit.ts`, pure, client-safe, no lookbehinds).**
+`TILE_FIT` {designPx 32, floorPx 18, sheetPx 648, gapPx 16, padPx 18,
+maxPerRow 4, slack 0.98}. `valueEm(text)` sums Archivo Bold advances from a
+generated table (printable ASCII, Latin-1, dashes, quotes, ellipsis and a
+few math and currency symbols, in 1/1000 em, keyed by code point; a
+character not in the table is charged the widest advance). The table is
+generated from the vendored `public/brand/fonts/Archivo-Bold.ttf` by
+`npm run rfp:tile-metrics` (`-- --check` fails on drift); Google Fonts'
+Archivo 700, which the screen loads, has identical advances for every
+printable ASCII character, and kerning moves none of the measured figures.
+`tileFitEm(values)` is the widest value's em divided by the slack (never
+below 1); `tileValuePx(values, innerPx)` is floor(min(designPx,
+innerPx / fitEm)), never below 1: ONE size for the whole row (the tiles read
+as a set), and NO render floor, so a stored value too wide for its tile gets
+smaller, never a second line. `fileTileInnerPx(n)` and
+`NARROWEST_TILE_INNER_PX` (114, four across) give the files' tile geometry.
+`valueFitsTile(value)` is the draft contract, computed with the renderers'
+own arithmetic: true when the value sets at 18px or more in the narrowest
+file tile (about 6.2em: "98.15%", "4.8 years", "24/7/365" and "$1,250,000"
+pass; "99.9% uptime" does not).
+
+**Screen.** `DocBlock`'s stat-tiles `<ul>` carries
+`--rfpdoc-tile-em: tileFitEm(values)` inline. In globals.css each
+`.rfpdoc-tile` is `container-type: inline-size`, so `100cqi` inside it is
+the tile's inner width, and `.rfpdoc-tile-value` is `white-space: nowrap`
+at `min(var(--rfpdoc-tile-design), calc(100cqi / var(--rfpdoc-tile-em, 3)))`.
+Grid tiles share one column width, so one em gives one size across the row,
+a wrapped second grid row included. The design size still follows the
+SHEET: `@property --rfpdoc-tile-design` (`<length>`, inherits, initial
+32px) is declared `clamp(24px, 4.8cqw, 32px)` on `.rfpdoc-tiles`, where it
+computes to px against `.rfpdoc-page` (inside a tile, which is its own
+container, `cqw` would mean the tile). Without `@property` support the
+design size falls to about 24px and still never wraps. Measured in headless
+Chromium with the compiled CSS and the live Google Fonts link, sheets 320 to
+820px: 0 of 176 values on two lines (7 of 56 rows broke before), one size
+per row, sizes equal to the formula within 0.03px. Accepted: before the
+webfont arrives (the `display=swap` window, or Google Fonts blocked) a
+fallback face can run a value past its content box into the tile padding;
+it is never clipped and corrects itself when Archivo loads.
+
+**Files.** Both emitters call tile-fit's `tileValuePx` with
+`STAT_TILE_GEOMETRY.innerPx(format, n)` (exported from export.ts: the tile
+widths each emitter actually lays out, docx in whole twips, pdf in pt, less
+the padding); the docx-only pdfkit measurer and both `archivoBoldWidthPx`
+helpers are deleted. `VIS.tile.valuePx` is `TILE_FIT.designPx`;
+`valueMinPx` became `contractFloorPx` (documentation of the contract, not a
+render floor). The PDF value is a `oneLine` `TextSpec`, drawn and measured
+with `lineBreak: false` and no width (pdfkit wraps whenever it is handed a
+width), so even a wrong size could not make a second line. Word's value
+half-points are floored, not rounded: rounding set an odd px up to a third
+of a px larger than the fitted size, more than the 2% slack at small sizes.
+
+**Draft contract: reduce the text.** The drafter's stats instruction adds
+that a value is the figure alone (98.15%, >99%, 4.8 years), short enough to
+fit one line of a quarter-width tile, about 8 characters, with every other
+word in the label (inside the VISUALS stanza, so `RFP_VISUALS=0` prompts are
+unchanged). `parseStats` (the per-tile grounding moved into `groundedTile`)
+skips a grounded tile whose value fails `valueFitsTile`; when that leaves
+fewer than two tiles the block drops with reason `value-too-wide`
+(otherwise `fewer-than-two-grounded-tiles`). `buildServiceStatsBlock`
+applies the same check. `readBody`/`sanitizeStoredBlocks` deliberately do
+NOT: no request body carries blocks, and refusing a stored value would
+silently delete a block a draft already shows. No stored draft needed a
+change: every production tile value (the widest real one is "4.8 years",
+4.343em) passes the contract.
+
+**Tests.** New `npm run test:rfptilefit`: the table equals the TTF; every
+covered code point agrees with pdfkit's `widthOfString` (the PDF emitter's
+measurer) within 0.001em, and kerned real rows are never wider than the
+table; real rows fit one line at the returned size at 2, 3 and 4 across in
+both formats (checked with pdfkit's own line breaker) and that size is the
+largest that fits; contract edges; `STAT_TILE_GEOMETRY` equals `TILE_FIT`.
+`test:rfpblocks` gains the contract cases (a too-wide model tile skipped,
+the `value-too-wide` drop, service stats never too wide, a stored legacy
+too-wide value round-trips), and the fixture gains a grounded four-across
+row that steps down to 25px plus a stored legacy four-across row
+("99.9% remotely") that sets at 14px on one line; `rfp:render-fixture`
+renders both, each value on one line in the PDF.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

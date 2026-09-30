@@ -84,6 +84,8 @@ import {
   tableColumnFractions,
   type DraftBlock,
 } from "@/lib/rfp/draft-blocks";
+// Pure and client-safe by contract (an advance table, no Node imports).
+import { tileFitEm } from "@/lib/rfp/tile-fit";
 // Client references (§5.17.9): the picker answers the references question
 // with structured entries; the card tables are the one spec the exports
 // draw from too. Both client-safe (references-ask.ts is NOT, never import it).
@@ -4812,8 +4814,21 @@ function DocBlock({ block }: { block: DraftBlock }) {
     // role="list" on every list styled list-style: none: Safari/VoiceOver
     // drops the list semantics with the markers.
     case "stat-tiles":
+      // --rfpdoc-tile-em: the em width the row's widest value needs
+      // (tile-fit.ts). globals.css sizes every value in the row to fit it
+      // on one line, one size for the whole row, like the files.
       return (
-        <ul className="rfpdoc-tiles" role="list">
+        <ul
+          className="rfpdoc-tiles"
+          role="list"
+          style={
+            {
+              "--rfpdoc-tile-em": tileFitEm(
+                block.tiles.map((t) => t.value)
+              ).toFixed(3),
+            } as CSSProperties
+          }
+        >
           {block.tiles.map((t, i) => (
             <li className="rfpdoc-tile" key={i}>
               <div className="rfpdoc-tile-value">{t.value}</div>

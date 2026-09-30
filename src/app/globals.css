@@ -1320,7 +1320,18 @@ select.input option {
   text-transform: none;
   color: #9a3412;
 }
-/* Stat tiles: tinted field under a navy top rule, big Archivo figure. */
+/* Stat tiles: tinted field under a navy top rule, big Archivo figure.
+   A figure is never broken over two lines (tile-fit.ts): the whole row sets
+   at ONE size, the design size or smaller, at which its widest value fits
+   one tile. --rfpdoc-tile-em (set inline) is that value's width in em. */
+/* The design size tracks the SHEET. Registered as a <length> so it
+   computes to px on the row, against .rfpdoc-page, and the tiles inherit
+   px: inside a tile, which is its own container, cqw means the tile. */
+@property --rfpdoc-tile-design {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 32px;
+}
 .rfpdoc .rfpdoc-tiles {
   display: grid;
   /* 132px: three or four up on a full sheet, two up on a phone sheet. */
@@ -1329,21 +1340,31 @@ select.input option {
   margin: 0;
   padding: 0;
   list-style: none;
+  --rfpdoc-tile-design: clamp(24px, 4.8cqw, 32px);
 }
+/* Every tile in a grid row is the same width, so the one --rfpdoc-tile-em
+   gives the same size in every tile, a wrapped second row included. */
 .rfpdoc .rfpdoc-tile {
   background: #eef0fb;
   border-top: 2px solid #2f31c5;
   padding: 16px 18px 18px;
   min-width: 0;
+  container-type: inline-size;
 }
+/* 100cqi is the tile's inner width. No floor on purpose: a stored value
+   too wide for its tile gets smaller, never a second line (the draft
+   contract keeps new values wide enough to read). */
 .rfpdoc .rfpdoc-tile-value {
   font-family: Archivo, var(--font-ui), sans-serif;
   font-weight: 700;
-  font-size: clamp(24px, 4.8cqw, 32px);
+  font-size: min(
+    var(--rfpdoc-tile-design),
+    calc(100cqi / var(--rfpdoc-tile-em, 3))
+  );
   line-height: 1.1;
   letter-spacing: -0.01em;
   color: #2f31c5;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 .rfpdoc .rfpdoc-tile-label,
 .rfpdoc .rfpdoc-tile-note {

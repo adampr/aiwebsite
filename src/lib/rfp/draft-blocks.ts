@@ -10,9 +10,10 @@
  * a number out of a visual unless a fact states it.
  *
  * PURE and CLIENT-SAFE. It is imported by the "use client" workspace, so: type-only imports (the
- * one value import is references-block.ts, itself pure and client-safe by contract), no server
- * modules, and NO lookbehind regexes (Safari before 16.4 cannot parse one, and a parse error
- * takes the whole bundle down). Preceding-character checks are done by hand on the index.
+ * two value imports are references-block.ts and tile-fit.ts, each pure and client-safe by
+ * contract), no server modules, and NO lookbehind regexes (Safari before 16.4 cannot parse one,
+ * and a parse error takes the whole bundle down). Preceding-character checks are done by hand on
+ * the index.
  *
  * The body of every block is EXACTLY the content-model body (content-model/blocks.ts), so lifting
  * a DraftBlock into a content-model Block is adding the BlockBase fields and nothing else.
@@ -25,6 +26,7 @@ import {
   type ReferenceEntry,
   type ReferencesBody,
 } from "./references-block";
+import { valueFitsTile } from "./tile-fit";
 
 type Body<K extends Block["kind"]> = Omit<Extract<Block, { kind: K }>, keyof BlockBase>;
 
@@ -340,6 +342,9 @@ function optStr(v: unknown, max: number): string | undefined | null {
 function readBody(raw: Record<string, unknown>): DraftBlockBody | null {
   switch (raw.kind) {
     case "stat-tiles": {
+      // No valueFitsTile here: that is the WRITE contract (parseStats, buildServiceStatsBlock).
+      // A stored value wider than it predates the contract and still sets on one line, smaller;
+      // refusing it would silently delete the block from a draft that already shows it.
       if (!Array.isArray(raw.tiles) || !inRange(raw.tiles.length, LIMITS.tiles)) return null;
       const tiles: Body<"stat-tiles">["tiles"] = [];
       for (const t of raw.tiles) {
@@ -588,27 +593,44 @@ function knownCites(raw: unknown, byId: Map<string, GroundFact>): string[] {
   return out;
 }
 
+/** One model tile through the grounding: its cleaned value and label and the fact it names, or null. */
+function groundedTile(
+  t: unknown,
+  byId: Map<string, GroundFact>
+): { value: string; label: string; factId: string } | null {
+  if (!isObj(t) || typeof t.fact !== "string") return null;
+  const fact = byId.get(t.fact);
+  if (!fact || fact.polarity === "negative") return null;
+  const value = clean(t.value, LIMITS.tileValue);
+  const label = clean(t.label, LIMITS.label);
+  if (!value || !label || !/\d/.test(value)) return null;
+  const text = factText(fact);
+  if (!groundValue(value, text) || !valueWordsGround(value, text)) return null;
+  if (!groundValue(label, text)) return null;
+  return { value, label, factId: fact.id };
+}
+
 function parseStats(item: Record<string, unknown>, byId: Map<string, GroundFact>): Parsed {
   if (!Array.isArray(item.tiles)) return { drop: "malformed" };
   const tiles: { value: string; label: string }[] = [];
   const cites: string[] = [];
+  let tooWide = 0;
   for (const t of item.tiles.slice(0, 12)) {
     if (tiles.length >= LIMITS.tiles[1]) break;
-    if (!isObj(t) || typeof t.fact !== "string") continue;
-    const fact = byId.get(t.fact);
-    if (!fact || fact.polarity === "negative") continue;
-    const value = clean(t.value, LIMITS.tileValue);
-    const label = clean(t.label, LIMITS.label);
-    if (!value || !label || !/\d/.test(value)) continue;
-    const text = factText(fact);
-    if (!groundValue(value, text) || !valueWordsGround(value, text)) continue;
-    if (!groundValue(label, text)) continue;
-    if (tiles.some((x) => x.value === value && x.label === label)) continue;
-    tiles.push({ value, label });
-    if (!cites.includes(fact.id)) cites.push(fact.id);
+    const tile = groundedTile(t, byId);
+    if (!tile || tiles.some((x) => x.value === tile.value && x.label === tile.label)) continue;
+    // A value is the figure alone (tile-fit.ts): one too wide to set on one line of a
+    // four-across tile at the floor size is skipped, grounded or not. Its words go in the label.
+    if (!valueFitsTile(tile.value)) {
+      tooWide++;
+      continue;
+    }
+    tiles.push({ value: tile.value, label: tile.label });
+    if (!cites.includes(tile.factId)) cites.push(tile.factId);
   }
-  if (tiles.length < LIMITS.tiles[0]) return { drop: "fewer-than-two-grounded-tiles" };
-  return { ok: { kind: "stat-tiles", tiles }, cites };
+  if (tiles.length >= LIMITS.tiles[0]) return { ok: { kind: "stat-tiles", tiles }, cites };
+  // Width gets its own reason when it is what sank the block, so the drop log says why.
+  return { drop: tiles.length + tooWide >= LIMITS.tiles[0] ? "value-too-wide" : "fewer-than-two-grounded-tiles" };
 }
 
 function parseTable(
@@ -943,8 +965,9 @@ const SERVICE_TILES: { key: string; label: string; re: RegExp; more?: RegExp }[]
 
 /**
  * Service stat tiles, origin "service-stats". A ">" is written only where the fact itself says
- * "more than" or "above" that number, and every tile is re-checked through groundValue, the same
- * gate a model tile passes. null when fewer than two tiles survive.
+ * "more than" or "above" that number, and every tile is re-checked through groundValue and the
+ * one-line width check (valueFitsTile), the same gates a model tile passes. null when fewer than
+ * two tiles survive.
  */
 export function buildServiceStatsBlock(facts: GroundFact[]): DraftBlock | null {
   const tiles: { value: string; label: string }[] = [];
@@ -955,7 +978,7 @@ export function buildServiceStatsBlock(facts: GroundFact[]): DraftBlock | null {
     const m = spec.re.exec(f.statement);
     if (!m?.[1]) continue;
     const value = `${spec.more?.test(f.statement) ? ">" : ""}${m[1]}`;
-    if (value.length > LIMITS.tileValue || !groundValue(value, f.statement)) continue;
+    if (value.length > LIMITS.tileValue || !groundValue(value, f.statement) || !valueFitsTile(value)) continue;
     tiles.push({ value, label: spec.label });
     if (!cites.includes(f.id)) cites.push(f.id);
   }

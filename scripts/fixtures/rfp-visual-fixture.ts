@@ -10,7 +10,10 @@
  * row-by-row pagination and repeated header are exercised), two blocks at one anchor, a block
  * after the last paragraph, a legacy prose-only record with NO `blocks` key, the letter record,
  * and a closing References section carrying a two-entry `references` block (invented contacts,
- * never a real client's) whose opening paragraph states rule D3's etiquette sentence.
+ * never a real client's) whose opening paragraph states rule D3's etiquette sentence. Two stat
+ * rows exercise the one-line fit (tile-fit.ts): four figures across, whose widest value steps the
+ * row down from the design size, and a LEGACY row stored before the contract, one value wider
+ * than a new tile may be, which both files must still set on one line.
  */
 
 import type { DraftSectionRecord } from "../../src/app/api/rfp/documents/[id]/generate/route";
@@ -176,6 +179,44 @@ const overviewCallout: DraftBlock = {
   generatedBy: "llm",
 };
 
+/**
+ * Four figures across, the narrowest tile either file lays out. Every value is a figure a seed fact
+ * states and passes the draft contract (valueFitsTile); "4.8 years" is the widest, so the whole row
+ * steps down from the design size together and still sets on one line.
+ */
+const overviewTiles: DraftBlock = {
+  kind: "stat-tiles",
+  tiles: [
+    { value: "73", label: "Active client accounts" },
+    { value: "92%", label: "Client retention" },
+    { value: "4.8 years", label: "Average client tenure" },
+    { value: ">80%", label: "Reduction in issues and risk" },
+  ],
+  id: "v_0000a011",
+  after: 1,
+  cites: [id("book.active-clients"), id("book.retention"), id("book.tenure"), id("capability.tap-alignment")],
+  generatedBy: "llm",
+};
+
+/**
+ * A LEGACY record, stored before the one-line contract: "99.9% remotely" carries a word the
+ * contract now sends to the label, so no new tile could hold it. The read keeps it as stored, and
+ * both files shrink the whole row (below the contract's floor) rather than break the figure.
+ */
+const legacyWideTiles: DraftBlock = {
+  kind: "stat-tiles",
+  tiles: [
+    { value: "24/7/365", label: "Live service desk" },
+    { value: ">99%", label: "Calls answered live" },
+    { value: "99.9% remotely", label: "Issues resolved" },
+    { value: ">70%", label: "First-contact resolution" },
+  ],
+  id: "v_0000a012",
+  after: 3,
+  cites: [id("operations.service-desk-hours"), id("book.first-contact-resolution")],
+  generatedBy: "llm",
+};
+
 const transitionCallout: DraftBlock = {
   kind: "callout",
   title: null,
@@ -249,7 +290,7 @@ const draftedSections: FixtureSection[] = [
     ],
     cites: [id("service.flat-fee"), id("company.in-house-staff")],
     generatedBy: "llm",
-    blocks: [overviewCallout],
+    blocks: [overviewCallout, overviewTiles],
   },
   {
     ...base(),
@@ -262,7 +303,8 @@ const draftedSections: FixtureSection[] = [
     ],
     cites: [id("tooling.rmm"), id("tooling.psa"), id("onsite.billing")],
     generatedBy: "llm",
-    blocks: [serviceMatrix, onsiteCards],
+    // The legacy tile row closes the section, after its last paragraph.
+    blocks: [serviceMatrix, onsiteCards, legacyWideTiles],
   },
   {
     ...base(),

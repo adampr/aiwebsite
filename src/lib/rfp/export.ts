@@ -85,6 +85,7 @@ import {
   stepDotIndex,
 } from "./export-assets";
 import { DRAFT_BLOCK_KINDS, tableColumnFractions, type DraftBlockKind } from "./draft-blocks";
+import { TILE_FIT, tileValuePx } from "./tile-fit";
 import { COMPANY_SIGNATURE, SIGNATURE_COLORS } from "./signature";
 import { minimumSentence, quantityLabel } from "./quote";
 
@@ -286,8 +287,13 @@ const VIS = {
   tile: {
     pad: 18,
     rule: 3, // navy top rule
-    valuePx: 32, // Archivo Bold, navy; steps down to fit one line
-    valueMinPx: 18,
+    // Archivo Bold, navy. The whole row steps down from this until its widest
+    // value fits one line (tile-fit.ts tileValuePx); there is no render floor.
+    valuePx: TILE_FIT.designPx,
+    // NOT a render floor: the draft contract's (valueFitsTile), the size a NEW
+    // value must fit a four-across tile at. A stored value wider than that
+    // still sets on one line, smaller.
+    contractFloorPx: TILE_FIT.floorPx,
     valueLh: 1.1,
     labelGap: 8,
     labelPx: 10.5, // Archivo Medium caps, muted
@@ -397,22 +403,6 @@ function timelineRows<T>(steps: readonly T[]): { step: T; index: number }[][] {
   return rows;
 }
 
-/**
- * The size every value in a stat-tile row sets at: the design size, stepped
- * down until the longest value fits one line of its tile (a figure never
- * breaks mid-number). One size for the whole row, so tiles read as a set.
- * `widthAt` measures in px with the real Archivo Bold, in BOTH emitters.
- */
-function tileValuePx(
-  values: string[],
-  innerWidthPx: number,
-  widthAt: (text: string, px: number) => number
-): number {
-  let px: number = VIS.tile.valuePx;
-  while (px > VIS.tile.valueMinPx && values.some((v) => widthAt(v, px) > innerWidthPx)) px -= 1;
-  return px;
-}
-
 /* ======================================================================== */
 /* Word                                                                     */
 /* ======================================================================== */
@@ -442,6 +432,8 @@ const px2hp = (px: number) => Math.round(px * 1.5);
 const px2tw = (px: number) => Math.round(px * 15);
 /** letterspacing in em at a px size → twips of character spacing. */
 const ls2tw = (em: number, px: number) => Math.round(em * px * 15);
+/** One stat tile's cell width in whole twips when a row of `n` spans the sheet. */
+const docxTileTw = (n: number) => Math.floor((DXA_CONTENT - px2tw(VIS.gap) * (n - 1)) / n);
 
 const spacerX = (twips: number) =>
   new Paragraph({
@@ -1029,28 +1021,16 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
     });
   const atomicRow = (cells: TableCell[]) => new TableRow({ cantSplit: true, children: cells });
 
-  // Archivo Bold widths for the tile step-down, measured with the real face
-  // (a pdfkit document that is never written; built only if a tile exists).
-  let measurer: InstanceType<typeof PDFDocument> | null = null;
-  const archivoBoldWidthPx = (text: string, px: number) => {
-    if (!measurer) {
-      measurer = new PDFDocument({ autoFirstPage: false });
-      measurer.registerFont("Archivo-Bold", assets.fonts.archivoBold);
-    }
-    return measurer.font("Archivo-Bold").fontSize(pt(px)).widthOfString(text) / 0.75;
-  };
-
   const visualDocx = (b: ExportVisual): (Paragraph | Table)[] => {
     const gap = px2tw(VIS.gap);
     switch (b.kind) {
       case "stat-tiles": {
         const T = VIS.tile;
         const n = b.tiles.length;
-        const w = Math.floor((DXA_CONTENT - gap * (n - 1)) / n);
+        const w = docxTileTw(n);
         const valuePx = tileValuePx(
           b.tiles.map((t) => t.value),
-          w / 15 - T.pad * 2,
-          archivoBoldWidthPx
+          STAT_TILE_GEOMETRY.innerPx("docx", n)
         );
         const widths: number[] = [];
         const cells: TableCell[] = [];
@@ -1064,7 +1044,10 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
             vCell(
               w,
               [
-                vPar([vRun(t.value, AR_BOLD, valuePx, NAVY, { bold: true })], {
+                // Half-points floored, not rounded (px2hp): an odd px (25 -> 37.5)
+                // would otherwise set a third of a px LARGER than the size the
+                // row was fitted at, and Word wraps a run wider than its cell.
+                vPar([new TextRun({ text: t.value, font: AR_BOLD, size: Math.floor(valuePx * 1.5), color: NAVY, bold: true })], {
                   px: valuePx,
                   lh: T.valueLh,
                   after: T.labelGap,
@@ -1754,6 +1737,23 @@ const FOOT_LIMIT = 687; // rule minus the sheet's 2.25rem padding-top
 
 /** px at the screen's 96dpi → pt. */
 const pt = (px: number) => px * 0.75;
+/** One stat tile's width in pt when a row of `n` spans the sheet. */
+const pdfTileW = (n: number) => (CW - pt(VIS.gap) * (n - 1)) / n;
+
+/**
+ * The stat-tile row geometry both files lay out, in px. Each emitter sizes a
+ * row's values from `innerPx` (a tile less its padding, measured the way that
+ * emitter measures the tile), so this is what tile-fit's arithmetic has to
+ * match: test:rfptilefit pins every field to TILE_FIT and fileTileInnerPx.
+ */
+export const STAT_TILE_GEOMETRY = {
+  sheetPx: { docx: DXA_CONTENT / 15, pdf: CW / 0.75 },
+  gapPx: VIS.gap,
+  padPx: VIS.tile.pad,
+  designPx: VIS.tile.valuePx,
+  innerPx: (format: "docx" | "pdf", n: number): number =>
+    (format === "docx" ? docxTileTw(n) / 15 : pdfTileW(n) / 0.75) - VIS.tile.pad * 2,
+} as const;
 
 export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
   const assets = loadRfpExportAssets();
@@ -2287,6 +2287,9 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     ls?: number;
     upper?: boolean;
     align?: "left" | "right" | "center";
+    /** Set on one line, never wrapped: pdfkit wraps only when handed a width,
+     *  so a oneLine spec is drawn and measured without one (left-aligned). */
+    oneLine?: boolean;
   };
   const setSpec = (t: TextSpec) => {
     const size = pt(t.px);
@@ -2297,15 +2300,18 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       str: t.upper ? t.text.toUpperCase() : t.text,
     };
   };
+  /** pdfkit's wrap options for a spec: a width to wrap at, or none at all. */
+  const wrapAt = (t: TextSpec, width: number) =>
+    t.oneLine ? { lineBreak: false as const } : { width };
   /** Height of the ink box (heightOfString counts a trailing lineGap; dropped). */
   const textH = (t: TextSpec, width: number) => {
     const { csp, gap, str } = setSpec(t);
-    return doc.heightOfString(str, { width, characterSpacing: csp, lineGap: gap }) - gap;
+    return doc.heightOfString(str, { ...wrapAt(t, width), characterSpacing: csp, lineGap: gap }) - gap;
   };
   const textAt = (t: TextSpec, x: number, y: number, width: number) => {
     const { csp, gap, str } = setSpec(t);
     doc.fillColor(t.color).text(str, x, y, {
-      width,
+      ...wrapAt(t, width),
       characterSpacing: csp,
       lineGap: gap,
       align: t.align ?? "left",
@@ -2327,8 +2333,6 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     ls,
     upper: true,
   });
-  const archivoBoldWidthPx = (text: string, px: number) =>
-    doc.font("Archivo-Bold").fontSize(pt(px)).widthOfString(text) / 0.75;
   const boxStroke = (x: number, y: number, w: number, hgt: number) =>
     doc.rect(x, y, w, hgt).lineWidth(0.75).strokeColor(h(HAIR)).stroke();
   /** The badge mark: a rotated square filling a `box`-px square's diagonal. */
@@ -2350,11 +2354,13 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       case "stat-tiles": {
         const T = VIS.tile;
         const n = b.tiles.length;
-        const w = (CW - G * (n - 1)) / n;
+        const w = pdfTileW(n);
         const inner = w - pt(T.pad) * 2;
-        const valuePx = tileValuePx(b.tiles.map((t) => t.value), inner / 0.75, archivoBoldWidthPx);
+        const valuePx = tileValuePx(b.tiles.map((t) => t.value), STAT_TILE_GEOMETRY.innerPx("pdf", n));
+        // oneLine: the size above already fits; if that arithmetic were ever
+        // off, the figure runs a hair past its tile rather than onto a second line.
         const specs = b.tiles.map((t) => ({
-          value: { text: t.value, font: "Archivo-Bold", px: valuePx, lh: T.valueLh, color: h(NAVY) } as TextSpec,
+          value: { text: t.value, font: "Archivo-Bold", px: valuePx, lh: T.valueLh, color: h(NAVY), oneLine: true } as TextSpec,
           label: capsSpec(t.label, T.labelPx, T.labelLs, h(MUTED), T.labelLh),
           note: t.note ? capsSpec(t.note, T.notePx, T.noteLs, h(MUTED), T.noteLh) : null,
         }));
