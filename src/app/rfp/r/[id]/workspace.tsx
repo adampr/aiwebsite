@@ -3207,11 +3207,9 @@ export function Workspace({
                     onChange={(e) => pickScope(e.target.value)}
                   >
                     <option value={DOC_LABEL}>The whole document</option>
-                    {sections.map((sec) => (
-                      <option key={sec.label} value={sec.label}>
-                        {sec.label === LETTER_LABEL
-                          ? LETTER_TITLE
-                          : `${sec.label} ${sec.title}`}
+                    {tronScopeOptions(sections).map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.text}
                       </option>
                     ))}
                   </select>
@@ -4673,6 +4671,28 @@ export function Workspace({
 /** The body of a branded table, as a stored `table` block or a reference
  *  card carries it (references-block.ts ReferenceCardTable is the same shape). */
 type TableBody = Parameters<typeof tableColumnFractions>[0];
+
+/** Numeric so "2. Scope" sorts before "10. Pricing"; a fixed locale so the
+ *  server render and the browser agree on the order (no hydration flip). */
+const SCOPE_ORDER = new Intl.Collator("en", {
+  numeric: true,
+  sensitivity: "base",
+});
+
+/** The Tron pane's Section pulldown, alphabetical by the text a person
+ *  reads (owner directive 2026-09-30), not in drafting order. "The whole
+ *  document" is not in this list: it is the default scope and stays first. */
+function tronScopeOptions(
+  sections: Section[]
+): { value: string; text: string }[] {
+  return sections
+    .map((sec) => ({
+      value: sec.label,
+      text:
+        sec.label === LETTER_LABEL ? LETTER_TITLE : `${sec.label} ${sec.title}`,
+    }))
+    .sort((a, b) => SCOPE_ORDER.compare(a.text, b.text));
+}
 
 /** The count the canonical references question names ("asks for three
  *  client references"), or null. Client-safe: one plain regex over the
