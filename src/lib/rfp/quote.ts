@@ -241,6 +241,18 @@ function managedPhrase(card: RateCard, managed: number, withSplit: boolean): str
     : managedUsers(managed);
 }
 
+/** The one sentence explaining the monthly minimum, printed after the
+ *  illustrations by BOTH the Word/PDF emitters and the workspace's
+ *  Investment sheet whenever any illustration applied the minimum. One
+ *  author so the screen shows exactly what the file prints (the screen used
+ *  to omit it). Client-safe: formatMoney is pure. */
+export function minimumSentence(
+  minimumUsers: number,
+  minimumMonthlyCents: number
+): string {
+  return `Where fewer than ${minimumUsers} users are fully managed, the fully managed line is billed at the monthly minimum of ${formatMoney(usd(minimumMonthlyCents), { cents: "always" })} rather than the per-user product.`;
+}
+
 /** Display text for a line's quantity cell: "Up to 15" for the fully managed line when that is what was billed (the illustration's monthly minimum applied, or the count equals a minimum above one), else String(line.quantity). */
 export function quantityLabel(
   line: PricingLine,

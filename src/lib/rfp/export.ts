@@ -86,7 +86,7 @@ import {
 } from "./export-assets";
 import { DRAFT_BLOCK_KINDS, tableColumnFractions, type DraftBlockKind } from "./draft-blocks";
 import { COMPANY_SIGNATURE, SIGNATURE_COLORS } from "./signature";
-import { quantityLabel } from "./quote";
+import { minimumSentence, quantityLabel } from "./quote";
 
 // The .rfpdoc palette (globals.css). Bare hex for docx; "#"-prefixed for pdfkit.
 const INK = "15163B";
@@ -203,8 +203,13 @@ export function buildExportView(
     })),
     pricing: quote,
     minimumUsers: rateCard.minimumFullyManagedUsers,
+    // Authored in quote.ts so the workspace's Investment sheet prints the
+    // same sentence (screen = file, §5.17.5).
     minimumSentence: anyMinimum
-      ? `Where fewer than ${rateCard.minimumFullyManagedUsers} users are fully managed, the fully managed line is billed at the monthly minimum of ${formatMoney(rateCard.minimumMonthlyFee, { cents: "always" })} rather than the per-user product.`
+      ? minimumSentence(
+          rateCard.minimumFullyManagedUsers,
+          rateCard.minimumMonthlyFee.cents
+        )
       : null,
     closing: {
       headline: FURNITURE_CLOSING_HEADLINE,

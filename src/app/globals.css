@@ -1123,6 +1123,13 @@ select.input option {
   color: #5b5d78; /* ~4.9:1 on white; #8a8ca6 stays for non-interactive metadata */
 }
 .rfpdoc .rfpdoc-actions button:hover { color: #2f31c5; }
+/* A disabled caps button read exactly like a live one (same color,
+   pointer cursor), so "Answer the pricing questions" before any draft
+   looked broken rather than not-yet. */
+.rfpdoc .rfpdoc-actions button:disabled {
+  color: #a9acc9;
+  cursor: not-allowed;
+}
 .rfpdoc table {
   width: 100%;
   border-collapse: collapse;
@@ -1154,13 +1161,8 @@ select.input option {
   color: #15163b;
   background: #ffffff;
 }
-/* The gaps callout on paper: quiet amber, serif body, hairline frame. */
-.rfpdoc .rfpdoc-gaps {
-  border: 1px solid #e3e4ef;
-  border-left: 3px solid #d97706;
-  background: #fbfbfd;
-  padding: 12px 16px;
-}
+/* The gaps heading's amber (the callout itself now sits inside the
+   .rfpdoc-tool panel further down). */
 .rfpdoc .rfpdoc-kicker--warn { color: #b45309; }
 /* The cover sheet's inner frame: the handoff's arc-mark style, concentric
    circles clipped to the top-right corner, content spread over the full
@@ -1651,6 +1653,85 @@ select.input option {
 .rfpdoc .rfpdoc-kept p { font-size: 13px; color: #5b5d78; }
 .rfpdoc .rfpdoc-kept ul { margin: 4px 0 0; padding-left: 18px; list-style: square; }
 .rfpdoc .rfpdoc-kept li { color: #31324c; overflow-wrap: anywhere; }
+/* ---- Tool chrome (owner directive 2026-09-30): everything on the white
+   paper is the download; anything in a dashed gray panel is the workspace
+   and is not in the download. ONE look for every screen-only element on a sheet
+   (action rows, block bars, status lines, the gaps callout, edit boxes,
+   the pricing empty state and adjust form), so a tool cannot be mistaken
+   for document text. Distinct from every paper box by the DASHED border
+   and the cooler gray: paper boxes are solid #e3e4ef on #f9fafd/#eef0fb.
+   Placed AFTER .rfpdoc-actions and .rfpdoc-blockbar so it wins on the
+   elements that carry both. Square corners: design-system radius 0. ---- */
+.rfpdoc .rfpdoc-tool {
+  background: #f3f4f9;
+  border: 1px dashed #a9acc9;
+  padding: 8px 12px;
+  /* UI type, not paper type: the panel is the workspace talking. */
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #31324c;
+}
+/* .rfpdoc p sets the serif 15px paper voice; inside a tool, a p is UI. */
+.rfpdoc .rfpdoc-tool p {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+/* The paper's print gray (#8a8ca6) was a screen concession for paper
+   metadata; on the tool's tinted field it drops under 3:1, so faint text
+   inside a tool takes the muted UI gray (5.9:1 here). */
+.rfpdoc .rfpdoc-tool .rfpdoc-faint { color: #5b5d78; }
+/* The tool p rule above (0,2,1) outranks .rfpdoc-visualerr and .rfpdoc-kept
+   p (0,2,0): restate the error red (7.9:1 on the field) and the kept note's
+   muted gray, or a failed Add visual reads as ordinary panel text. */
+.rfpdoc .rfpdoc-tool .rfpdoc-visualerr { color: #9a3412; }
+.rfpdoc .rfpdoc-tool .rfpdoc-kept p { color: #5b5d78; }
+.rfpdoc .rfpdoc-tool-label {
+  display: block;
+  margin-bottom: 6px;
+  font-family: Archivo, var(--font-ui), sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #5b5d78;
+}
+/* The inline toolbars (section head row, block bar): a pill around the
+   caps buttons, no label (the legend above the document explains once).
+   font-size restated: the base tool rule above outranks .rfpdoc-actions
+   by order on an element carrying both, and the row's caps are 10px. */
+.rfpdoc .rfpdoc-tool--row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  /* 16px both ways: each caps button carries an 8px hit-area bleed above
+     and below (padding/negative margin in .rfpdoc-actions), so a 4px row
+     gap let a wrapped second row cover the lower half of the first. */
+  gap: 16px;
+  padding: 5px 10px;
+  font-size: 10px;
+}
+/* A sheet that is NOT in the download yet: an undrafted section, and the
+   02 divider + Investment sheet while pricing has no answers (the emitters
+   skip both, §5.17.5). It wears the tool field and dashed edge instead of
+   white paper, so "the white pages are the download" stays true on screen
+   while a partial draft is exported. */
+.rfpdoc .rfpdoc-page--absent {
+  background: #f3f4f9;
+  border: 1px dashed #a9acc9;
+}
+.rfpdoc .rfpdoc-page--absent > .rfpdoc-tool-label { margin-bottom: 14px; }
+/* The block bar keeps its place at the right edge under the block: as a
+   pill it shrink-wraps, so it is a block-level flex box sized to its
+   content and pushed right (its parent .rfpdoc-block is not a flex box,
+   so margin-left:auto needs the explicit width). */
+.rfpdoc .rfpdoc-tool--row.rfpdoc-blockbar {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  margin-left: auto;
+}
 /* Below lg the rail does not stick, so the pane switcher must: from deep in
    a long draft, Questions/Checks/Tron were a full-page scroll away. Sits
    directly under the runbar, which is itself sticky. */

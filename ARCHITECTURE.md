@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17.13 RFP RAIL WAITS FOR THE DRAFT + WORKSPACE TOOL CHROME (owner: while the response drafts initially, do not show the Questions / Coverage / Checks / Tron window, it appears once it can be used; and the "Adjust quantities" form and its kind on the sheets must look distinct from the document so the draft on screen is exactly the download). The rail column and the mobile tabstrip are UNMOUNTED while `railHidden` in `src/app/rfp/r/[id]/workspace.tsx` (`structure.length > 0 && !railPeek && (draftedCount === 0 || initialDrafting)`: nothing drafted, or a run that began with nothing drafted still active, unless a pane was explicitly asked for through `showPane`); the document then keeps its exact 7/12 column width centered. Every screen-only element on a sheet (action rows, block bars, status lines, the gaps callout with the cite count, edit boxes, the pricing empty state and the adjust form) wears `.rfpdoc-tool` (dashed `#a9acc9` on `#f3f4f9`, Archivo 13px) with the label "Workspace · not in the download" (`--row` pills carry no label), and one legend line above the document says the white pages are the download. Sheets the download does not contain (undrafted sections; divider 02 and the Investment sheet before pricing exists) wear `.rfpdoc-page--absent` with a "Not in the download until ..." label. The reverse direction is mirrored too: the monthly-minimum sentence the file prints is now authored once in `quote.ts` (`minimumSentence`) and shown on the Investment sheet, the dividers and closing lede take the export's `coverClientName`, and the letter's addressee prints "the client" when there is none. `.rfpdoc-gaps` is gone. No server, API, DB or env change; the emitters are untouched (they never printed a tool).
+
 Last verified against code: 2026-09-30 §5.17.12 RFP READ BUDGET + READ AGAIN (the AISC RFP failed three reads with "could not be read for its structure": the brain finished each in 129-152 s but `readRfp` aborted at a fixed 120 s). The read now gets `RFP_READ_BUDGET_MS` (8 min, intake.ts) over the module's long transport (`callGovernanceBrain` gained `opts.longTransport`; plain fetch caps at undici's 300 s), the worker moved to `src/lib/rfp/read-document.ts`, and new `POST /api/rfp/documents/[id]/read` re-reads the stored text of a `read_failed` (or stale `reading`) document behind one conditional-UPDATE claim; `GET .../status` gains `readStale`; the workspace's `<ReadAgain>` panel follows a read and offers "Read it again"; `/rfp/new` polls past the budget and opens the RFP on failure. New activity action `document.reread`. No migration, no env change.
 
 Last verified against code: 2026-09-30 §5.17.11 RFP MULTI-FILE INTAKE (owner: multiple file uploads AND a text area that no longer disappears after attaching a file; everything is analyzed as one document before drafting). `/rfp/new` keeps the textarea always rendered beside a multi-file chip list (whole-panel drop target, every refused file named, client byte budget mirrors the server's Content-Length precheck including text + framing); `POST /api/rfp/documents` takes repeated `files` plus `text` (legacy single `file` still accepted), composes them through the new pure client-safe `src/lib/rfp/intake.ts` (`composeRfpParts`: single part byte-identical to before, several parts get `===== ATTACHED FILE i OF n: <sanitized name> =====` / `===== PASTED TEXT =====` headers, 120k combined cap with `truncated` in the activity meta) into the ONE rawText the unchanged screenInjection -> readRfp path analyzes; `sourceKind: "multi"` provenance for several sources; and `stripIntakeHeaders` removes the header lines from every grounding/detector corpus (statedStaff + rfpTitle grounding, staffMentions/staffConflictSignals, the four references-detector `rfpText` sites) because a filename like "Acme RFP 350 users.pdf" would otherwise ground a staff count deterministically (refuter MAJOR, removal-only fix). `npm run test:rfpintake`. No migration, no env change.
@@ -9446,7 +9448,9 @@ is `"reading"` at insert, `"extracted"`/`"read_failed"` from the background
 worker (the ingest poll exits on `extracted` alone; requirements can
 legitimately be zero). The rail has ONE pane source of truth (`pane`);
 `mobile` only toggles draft-vs-rail below lg — rendering off both once
-stacked two panes whenever they disagreed. The action bar (`.rfp-runbar`)
+stacked two panes whenever they disagreed. Since 2026-09-30 the rail and
+the mobile tabstrip are not rendered at all until the document exists
+(`railHidden`, §5.17.13). The action bar (`.rfp-runbar`)
 carries the notices and is ALWAYS sticky (since 2026-09-30; see round 4
 above), so the drafting status, Stop, Run checks and the Word/PDF exports
 stay reachable however deep the flash choreography or the reader scrolls
@@ -9712,9 +9716,13 @@ exported signature is unchanged, so the export route's contract
 corner mark on every PDF page, `exportFileName`'s -DRAFT suffix) is
 untouched. Deliberate divergences from the screen: workspace-only
 furniture (edit/Ask-Tron actions, receipts, gap callouts, the adjust
-form, timestamps) never prints; with `pricing` null the 02 divider and
-Investment sheet are omitted rather than announced absent (drafts are
-already marked); PDF overflow pages carry a faint "SECTION N ·
+form, timestamps) is not in the file (since §5.17.13 it wears the dashed
+`.rfpdoc-tool` chrome on screen); undrafted sections are omitted (the
+screen shows their sheet, marked `.rfpdoc-page--absent`, so they can be
+drafted from); with `pricing` null the 02 divider and Investment sheet
+are omitted (the screen marks both absent the same way; the old "drafts
+are already marked" reason lapsed when draft marking was removed on
+2026-08-28); PDF overflow pages carry a faint "SECTION N ·
 CONTINUED" kicker the screen never needs; the empty-clientName guard
 branches of the cover lede, closing lede and divider runner replicate
 the screen's own. Panel record: specialist implementer + adversarial
@@ -10014,7 +10022,9 @@ tables and the fact grid paginate row by row with the header repainted, the
 explains) until a section is drafted and the rail opens on Coverage until
 then; the first landed section flips it on and brings Questions forward
 (owner ruling 2026-09-30: until the pane is usable it must not be
-openable). Screen-only affordances: a quiet Remove
+openable). SUPERSEDED the same day by §5.17.13: the whole rail is now
+unmounted until the document exists, so the disabled tab is reachable only
+on a structure-less RFP, where the rail stays for its Coverage list. Screen-only affordances: a quiet Remove
 under each block; one "Add visual" control per drafted section (hidden while
 editing) that swaps the action row for "Company snapshot" / "Service stats" /
 "Onboarding timeline" / "Cancel" (each hidden when that section holds the
@@ -10581,6 +10591,190 @@ min) so the server always answers before the form gives up, and on
 Read it again lives, instead of telling the user to upload it again. The
 "brief drafting-service outage" copy is gone from both places.
 `npm run test:rfptitle` pins `isAutoTitle`. No migration, no env change.
+
+#### 5.17.13 The rail waits for the draft, and workspace tools stop looking like the document (2026-09-30)
+
+Owner asks, verbatim intent: (1) "While you are drafting initially the RFP
+response, do not show the window on the left with the sections (Questions,
+Coverage, Checks, Tron). It should appear once you are able to use it,
+after the document has been drafted." An earlier round the same day only
+DISABLED the Questions tab (§5.17.7); the rail itself still rendered,
+which is what "I asked before, but it wasn't done" referred to. (2) "On
+the right hand side you should be visually distinct in the adjustment for
+what's quoted section, otherwise it looks like it's part of the document
+itself. Look for other examples like that one as well, so it's clear that
+the draft you see is exactly the draft you will get when you download."
+Mostly a client round: `src/app/rfp/r/[id]/workspace.tsx` and the `.rfpdoc`
+rules in `src/app/globals.css`. No server, API, DB or env change. The
+export changed in ONE way: the monthly-minimum sentence it prints is now
+authored by `minimumSentence()` in `src/lib/rfp/quote.ts` (client-safe) so
+the screen prints the same sentence (see "Screen = file" below);
+`buildExportView` calls it and the emitters are untouched.
+`src/lib/rfp/export.ts` never printed any of the tool elements below, so
+the fidelity claim of §5.17.5 is unchanged in substance and now VISIBLE.
+
+**`railHidden`.** Inside `Workspace`:
+
+```
+draftedCount   = sections excluding __letter (already existed)
+run.initial    = the run began with nothing drafted; NEW field on the run
+                 state, fixed at run start in BOTH setRun sites (draftAll
+                 reads it once before its loop; generate reads it inline),
+                 preserved by the {...r, active:false} spread at the end
+followInitial  = initialBusy && no non-letter section at mount, computed
+                 ONCE (lazy useState, never set): a run followed from
+                 another tab began with nothing drafted (the status route
+                 does not say when its run started, so the mount-time
+                 state is the best available signal, and a section
+                 landing later must not flip it)
+following      = state, initialBusy at mount; cleared where the mount-time
+                 follow loop gives up or sees the other tab's run end. NOT
+                 followProgress, which is null in the other tab's gap
+                 between sections and would let the rail flash in and out
+                 on the first landed section (refuter finding)
+initialDrafting = (run?.active && run.initial) || (following && followInitial)
+railPeek       = state, false; set true inside showPane (every explicit
+                 ask to see a pane: "Answer these", "Edit references",
+                 "Answer the pricing questions", "Run checks"); never reset
+railHidden     = structure.length > 0 && !railPeek && (draftedCount === 0 || initialDrafting)
+```
+
+So the rail is absent while nothing is drafted, and for the WHOLE of a
+run that began with nothing drafted (the first landed section does not
+pop it in mid-run), unless the person asked for a pane. `railPeek`
+overrides BOTH terms: before any draft showPane is unreachable (Run checks
+is disabled at zero sections, the questions guard returns early, the
+letter's Ask Tron needs a letter), so the rule "hidden before the draft"
+is not weakened; and once a pane has been asked for it must not vanish
+under the person when a Tron remove op drops the last drafted section
+(refuter finding: the Tron pane with its receipt disappeared mid-flow, and
+a letter-only proposal's Run checks rendered nowhere). THE EXCEPTION: a
+structure-less RFP (form-fill, or `read_failed`) keeps the rail. Its
+Coverage list is the only place the requirements it did find are shown,
+the no-structure copy points there, and `<ReadAgain>` sits in the document
+column. When `railHidden`: the rail column (`.rfp-rail`, its tabstrip and
+panel) is NOT rendered (unmounted, not hidden; every pane's state lives in
+Workspace state, so an answer typed before is still there when it
+returns, and `railRef` was already null-guarded), the mobile
+`.tabstrip--mobile` is not rendered, the effective mobile view is
+`mobileView = railHidden ? "draft" : mobile` (no effect calls setMobile),
+the two-column grid wrapper's className is `""`, and the document
+`<section>` gains `lg:w-[calc((100%_-_2rem)*7/12)] lg:mx-auto`: the
+exact width of its grid column (7/12 of the row minus the 2rem gap; a bare
+`lg:w-7/12` was ~19px wider and shifted the cqw type scale), centered, so
+the sheets do not change scale when the rail arrives. The runbar is unchanged (it IS the drafting status); its Run
+checks button was deliberately not disabled during the initial run
+(pressing it routes through showPane and reveals the rail). When the rail
+appears after the initial run nothing new is needed: draftAll already ends
+in `setPane("questions")`, and the questionsReady effect brings Questions
+forward on the first landed section for the follow case. The §5.17.7
+"Questions tab disabled" logic stays as it is (harmless; reachable only on
+the structure-less RFP).
+
+**`.rfpdoc-tool`: one tool chrome.** The legend the person reads, and the
+principle: everything on the white paper is the download; anything in a
+dashed gray tool panel is the workspace and is not in the download.
+`.rfpdoc .rfpdoc-tool` = `background #f3f4f9; border 1px dashed #a9acc9; padding 8px
+12px`, square corners, Archivo 13px/1.45 `#31324c`, with `.rfpdoc
+.rfpdoc-tool p { font-family/size/color: inherit }` (the `.rfpdoc p` rule
+sets the serif 15px paper voice) and `.rfpdoc .rfpdoc-tool .rfpdoc-faint {
+color: #5b5d78 }` (the paper's print gray drops under 3:1 on the tinted
+field), plus `.rfpdoc .rfpdoc-tool .rfpdoc-visualerr { color: #9a3412 }`
+and `.rfpdoc .rfpdoc-tool .rfpdoc-kept p { color: #5b5d78 }` restated
+because the tool `p` rule (0,2,1) outranks both (0,2,0) rules (refuter
+finding: a failed Add visual had lost its red). It is distinct from every
+paper box (hairline solid `#e3e4ef`,
+zebra `#f9fafd`, tint `#eef0fb`) by the DASHED border and the cooler gray,
+and it is placed AFTER `.rfpdoc-actions` and `.rfpdoc-blockbar` so it wins
+on elements that carry both. `.rfpdoc-tool-label` (spaced caps 9px Archivo
+600, 0.18em, `#5b5d78`, block, 6px below) ALWAYS reads exactly `Workspace
+· not in the download` (middot). `.rfpdoc-tool--row` is the inline-toolbar
+pill (`inline-flex; wrap; baseline; gap 16px; padding 5px 10px;
+font-size 10px` restated because the base tool rule outranks
+`.rfpdoc-actions` by order; the row gap is 16px, not 4px, because each
+caps button bleeds an 8px hit area above and below and a 4px gap let a
+wrapped second row cover the first's lower half) with no label; `.rfpdoc-tool--row.rfpdoc-blockbar`
+is `display:flex; width:fit-content; max-width:100%; margin-left:auto` so
+the block bar keeps its place at the right edge under its block (its
+parent `.rfpdoc-block` is not a flex box). The legend line renders once,
+directly above `<div className="rfpdoc">` (after the `.rfp-doc-receipt`
+region, only when `structure.length > 0`): `<p className="mb-3 text-xs
+text-faint rfp-doc-legend">The white pages are the download. Anything
+dashed gray, a panel or a whole page, is workspace only and is not in the
+download.</p>` (`.rfp-doc-legend` is a hook only; "not in the download",
+never "never prints": browser print is not a target and does print the
+panels). The elements that wear it, every one of them inside a
+`.rfpdoc-page` sheet:
+
+- A. Cover letter sheet: ONE `.rfpdoc-tool` panel holding the label, the
+  action row (Edit / Ask Tron / Redraft ..., or Draft the cover letter,
+  with `<When>` last as before) and the status lines ("Reading the drafted
+  sections...", "The letter drafts last...", "Sections have changed since
+  this letter was drafted.", their `role="status"` kept).
+- B. Letter edit mode: the textarea + hint + Save/Cancel box, with label.
+- C. Section sheets: the head action row (Draft this / Edit / Ask Tron /
+  Redraft / Add visual / the visual menu / `<When>`) is a `--row` pill
+  beside the title; `headError` (`role="alert"`, `.rfpdoc-visualerr`
+  color restated inside a tool, see above) is wrapped in a panel; "Reading the section..." (`role=
+  "status"`) and "Not drafted yet. Draft this section ..." each sit in a
+  labelled panel.
+- D. Block bars (`.rfpdoc-actions.rfpdoc-blockbar`: Edit references /
+  Remove, and the per-block alert) are `--row` pills, right-aligned.
+- E. Section footer: ONE labelled panel per drafted section with "N facts
+  cited", then, when `sec.gaps.length > 0`, the amber "Needs an answer
+  before this can go out" kicker, the list and the Answer these row.
+  `.rfpdoc-gaps` (the old amber-edged callout) is deleted from the CSS.
+- F. Section edit mode: the box holding `.rfpdoc-kept` (which keeps its
+  own inner frame) + textarea + hint + Save/Cancel, with label.
+- G. Investment sheet: the empty state ("Every figure here is computed
+  from the rate card..." + Answer the pricing questions) and the "Adjust
+  quantities" `<details>` form (`.rfpdoc-adjust` kept as a name only; it
+  has no rule) are labelled panels.
+- Unchanged: the "Updated" doc-chip and the doc-sec--flash wash (transient
+  UI), the cover, divider and closing sheets, the letter body, section
+  paragraphs, DocBlock visuals and the Investment table.
+
+**Absent sheets: `.rfpdoc-page--absent`.** The refuter panel found two
+kinds of WHITE sheet the download does not contain, which made the legend
+false: an undrafted section (resolve-draft keeps drafted sections only,
+and the export is allowed with one section drafted, so a partial download
+silently drops those sheets) and, while `pricing` is null, the 02 divider
+and the Investment sheet (both emitters skip them, §5.17.5). Those sheets
+now wear the tool field instead of paper: `.rfpdoc .rfpdoc-page--absent {
+background #f3f4f9; border 1px dashed #a9acc9 }` with a `.rfpdoc-tool-label`
+as the sheet's first child reading `Not in the download until drafted`
+(section) or `Not in the download until the pricing questions are answered`
+(divider 02 via `DividerSheet`'s new `absent` prop, and the Investment
+`<section>`). Undrafted sections are hereby on §5.17.5's list of deliberate
+screen/file divergences: the screen shows the section's sheet so it can be
+drafted from, the file omits it.
+
+**Screen = file, the reverse direction.** The same review found things the
+FILE prints that the screen did not, all now mirrored: (1) the
+monthly-minimum sentence ("Where fewer than N users are fully managed, the
+fully managed line is billed at the monthly minimum of $X rather than the
+per-user product.") that both emitters print after the illustrations when
+any illustration applied the minimum: now `minimumSentence(minimumUsers,
+minimumMonthlyCents)` in `src/lib/rfp/quote.ts`, called by
+`buildExportView` and rendered on the Investment sheet as a
+`.rfpdoc-caption` between the illustrations and the pass-through lines,
+in the file's order; (2) the divider running heads and the closing lede
+name the export's `cover.clientName` (the proposal title when the RFP
+named no client), so the sheets take `coverClientName`, not the bare
+column; (3) the letter's addressee line prints `the client` when there is
+none, as `resolve-draft` does. Also from the review: "Answer the pricing
+questions" is disabled while `draftedCount === 0` (the Questions pane
+cannot open before a section exists, and a live-looking button that did
+nothing was the only action in that panel).
+
+Every button label, `role` and `aria-*` attribute is byte-identical to
+before; no em dash entered visible copy. Verified at runtime on a
+temporary fixture page (deleted): state 1 (structure, nothing drafted)
+renders no `.rfp-rail` and no `.tabstrip--mobile` and centers the
+document; state 2 (drafted, gaps, a block, pricing) and the same at 390px
+render every `.rfpdoc-tool` with `border-top-style: dashed`, every label
+exact, the block bar flush right. tsc clean; eslint shows only the five
+pre-existing `react-hooks/refs` findings on the `flashSeq.current` keys.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

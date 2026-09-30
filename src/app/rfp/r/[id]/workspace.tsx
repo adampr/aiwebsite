@@ -5,7 +5,8 @@
 // Two columns at lg: the draft on the left, a four-pane rail on the right
 // (Questions / Coverage / Checks / Tron). Below lg both columns stay MOUNTED
 // and are toggled with hidden/block, so a half-typed answer survives a tab
-// switch.
+// switch. The rail itself waits for the document: it is unmounted until a
+// section exists and for the whole of the first draft run (`railHidden`).
 //
 // THE FLOW (ported from the governance builder's interaction pattern): give
 // it the RFP, press one button, and the whole response drafts section by
@@ -46,6 +47,7 @@ const useIsoLayoutEffect =
 import { When } from "@/components/when";
 import { LocalTime } from "@/components/local-time";
 import {
+  minimumSentence,
   parseInputsSource,
   parseQuoteInputs,
   quantityLabel,
@@ -495,7 +497,11 @@ export function Workspace({
   // The Questions pane has nothing to offer before a section is drafted
   // (owner ruling 2026-09-30: until it is usable it must not be openable),
   // so the rail opens on Coverage until then and its tab is disabled; the
-  // first landed section flips it on and brings it forward.
+  // first landed section flips it on and brings it forward. Since the
+  // second 2026-09-30 directive (`railHidden` below) the WHOLE rail is
+  // unmounted until the document exists, which subsumes this: the disabled
+  // tab is now only reachable on a structure-less RFP, where the rail stays
+  // for its Coverage list. Kept as it is; it is harmless there.
   const [pane, setPane] = useState<Pane>(
     initialSections.length > 0 ? "questions" : "coverage"
   );
@@ -503,11 +509,17 @@ export function Workspace({
   // The rail self-scrolls at lg; without a reset, leaving a long Coverage
   // list clamps the next pane to the BOTTOM of its shorter content.
   const railRef = useRef<HTMLDivElement | null>(null);
+  // Someone asked to SEE a pane ("Answer these", "Edit references", "Run
+  // checks" all come through showPane): while the initial run is still
+  // hiding the rail, that request wins and the rail comes forward. Never
+  // reset: it only matters while `initialDrafting` holds.
+  const [railPeek, setRailPeek] = useState(false);
   const showPane = useCallback(
     (k: Pane) => {
       if (k === "questions" && sectionsRef.current.length === 0) return;
       setPane(k);
       setMobile(k);
+      setRailPeek(true);
       if (railRef.current) railRef.current.scrollTop = 0;
     },
     []
@@ -655,12 +667,34 @@ export function Workspace({
      *  "Cover Letter" must not light the letter card's Drafting state. */
     currentLabel: string;
     failures: string[];
+    /** The run began with nothing drafted (the first draft of this
+     *  response). Fixed at run start, never recomputed per section: the
+     *  rail stays hidden for the whole initial run, not just until the
+     *  first section lands. */
+    initial: boolean;
   } | null>(null);
   const stopRef = useRef(false);
   const revRef = useRef(initialRev);
   // Narration for a run driven by ANOTHER tab (the status route's
   // gen.progress); a returning user must see the run, not a dead button.
   const [followProgress, setFollowProgress] = useState<string | null>(null);
+  // Whether a run followed from another tab began with nothing drafted.
+  // The status route does not say when its run started, so the mount-time
+  // state is the best available signal: busy on load with no section yet
+  // means the other tab's run is the initial one. Computed once at mount
+  // (a lazy useState, never re-derived: a section landing later must not
+  // flip it, that is exactly the mid-run case; a ref read during render
+  // would trip react-hooks/refs), and never set.
+  const [followInitial] = useState(
+    () =>
+      initialBusy &&
+      initialSections.filter((s) => s.label !== LETTER_LABEL).length === 0
+  );
+  // True while the mount-time follow loop below is still watching the other
+  // tab's run; cleared where that loop gives up or sees it end. Not `busy`
+  // (pricing and generate toggle that later) and not followProgress (null
+  // in the other tab's gap between sections).
+  const [following, setFollowing] = useState(initialBusy);
 
   // The sticky rail and the section scroll-margins sit BELOW the sticky
   // runbar, whose height varies (notices, wrapping). Measure it into a CSS
@@ -754,6 +788,30 @@ export function Workspace({
   const draftedCount = sections.filter(
     (s) => s.label !== LETTER_LABEL
   ).length;
+  // The rail (Questions / Coverage / Checks / Tron) waits for the document
+  // (owner directive 2026-09-30: while the response drafts initially, do
+  // not show it; it appears once it can be used, after the draft exists).
+  // Hidden while nothing is drafted, and for the whole of a run that began
+  // with nothing drafted, so the first landed section does not pop it in
+  // mid-run; an explicit ask to see a pane (`railPeek`) overrides BOTH
+  // terms: before any draft showPane is unreachable (Run checks is
+  // disabled, questions return early, the letter's Ask Tron needs a
+  // letter), and once a pane has been asked for it must not vanish under
+  // the person when Tron removes the last drafted section. The follow case
+  // keys on `following` (the mount-time loop is still watching), not on
+  // followProgress, which is null in the other tab's gap between sections
+  // and would let the rail flash in and out on the first landed section.
+  // A structure-less RFP (form-fill, or a read that failed) keeps the
+  // rail: its Coverage list is the only place the found requirements show,
+  // and the no-structure copy points there.
+  const initialDrafting =
+    (run?.active === true && run.initial) || (following && followInitial);
+  const railHidden =
+    structure.length > 0 &&
+    !railPeek &&
+    (draftedCount === 0 || initialDrafting);
+  // Below lg, a hidden rail means the document is the only view.
+  const mobileView = railHidden ? "draft" : mobile;
   // Every section's visual blocks, read ONCE per render through the
   // tolerant reader (stored JSON, never trusted as typed). Reserved records
   // (the letter) never carry blocks.
@@ -1153,6 +1211,11 @@ export function Workspace({
     stopRef.current = false;
     setBusy(true);
     setNotice("");
+    // Read once, before the loop: this is the run's identity for the
+    // hidden rail, and per-section state would flip it as sections land.
+    const initial =
+      sectionsRef.current.filter((s) => s.label !== LETTER_LABEL).length ===
+      0;
     const failures: string[] = [];
     let stoppedByBusy = false;
     for (let i = 0; i < targets.length; i++) {
@@ -1179,6 +1242,7 @@ export function Workspace({
         current: display,
         currentLabel: node.label,
         failures,
+        initial,
       });
       const { error: err, busy: wasBusy } = await draftOne(
         node.label,
@@ -1251,6 +1315,7 @@ export function Workspace({
           if (alive) {
             setBusy(false);
             setFollowProgress(null);
+            setFollowing(false);
           }
           return;
         }
@@ -1258,6 +1323,7 @@ export function Workspace({
       if (alive) {
         setBusy(false);
         setFollowProgress(null);
+        setFollowing(false);
         setNotice(
           "Stopped following a draft run happening elsewhere. Reload to catch up."
         );
@@ -1283,6 +1349,9 @@ export function Workspace({
         label === LETTER_LABEL ? LETTER_TITLE : `${label} ${title}`.trim(),
       currentLabel: label,
       failures: [],
+      initial:
+        sectionsRef.current.filter((s) => s.label !== LETTER_LABEL)
+          .length === 0,
     });
     const { error: err } = await draftOne(label, title, force);
     setRun(null);
@@ -2416,14 +2485,17 @@ export function Workspace({
         </div>
       </div>
 
-      {/* Mobile switcher. Both columns stay mounted below. */}
+      {/* Mobile switcher. Gone with the rail while the document does not
+          exist yet: it has nothing to switch to. With the rail, both
+          columns stay mounted below and it toggles which one shows. */}
+      {!railHidden && (
       <nav className="tabstrip tabstrip--mobile mb-4" aria-label="Workspace panes">
         {(["draft", "questions", "coverage", "checks", "tron"] as const).map(
           (k) => (
             <button
               key={k}
               type="button"
-              aria-pressed={k === "draft" ? mobile === "draft" : pane === k && mobile !== "draft"}
+              aria-pressed={k === "draft" ? mobileView === "draft" : pane === k && mobileView !== "draft"}
               disabled={k === "questions" && !questionsReady}
               title={
                 k === "questions" && !questionsReady
@@ -2437,11 +2509,25 @@ export function Workspace({
           )
         )}
       </nav>
+      )}
 
-      <div className="lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-start lg:gap-8">
-        {/* ---- the rail (left at lg, like governance's question pane) ---- */}
+      {/* The two-column grid exists only with the rail. Hidden, the document
+          keeps its grid column's exact width (7/12 of the row minus the
+          2rem gap) and centers, so the sheets' cqw type scale does not jump
+          when the rail arrives. */}
+      <div
+        className={
+          railHidden
+            ? ""
+            : "lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:items-start lg:gap-8"
+        }
+      >
+        {/* ---- the rail (left at lg, like governance's question pane).
+            UNMOUNTED while railHidden: every pane's state lives in this
+            component, so nothing is lost, and railRef is null-guarded. ---- */}
+        {!railHidden && (
         <div
-          className={`${mobile !== "draft" ? "block" : "hidden"} lg:block rfp-rail min-w-0`}
+          className={`${mobileView !== "draft" ? "block" : "hidden"} lg:block rfp-rail min-w-0`}
           ref={railRef}
         >
           <nav className="tabstrip tabstrip--rail" aria-label="Rail">
@@ -3505,6 +3591,7 @@ export function Workspace({
             )}
           </div>
         </div>
+        )}
         {/* ---- the document (right at lg, like governance's doc pane).
             The RAIL precedes it in the DOM (see below-moved markup): at lg
             the visual order is rail-left/doc-right AND the keyboard order
@@ -3513,7 +3600,7 @@ export function Workspace({
         <section
           ref={docPaneRef}
           tabIndex={-1}
-          className={`${mobile === "draft" ? "block" : "hidden"} lg:block min-w-0 rfp-docpane`}
+          className={`${mobileView === "draft" ? "block" : "hidden"} lg:block min-w-0 rfp-docpane${railHidden ? " lg:w-[calc((100%_-_2rem)*7/12)] lg:mx-auto" : ""}`}
           aria-label="The document. Updates as you answer."
         >
           {/* Permanently mounted status region: the sticky receipt renders
@@ -3562,6 +3649,18 @@ export function Workspace({
               </div>
             )}
           </div>
+          {/* The one legend for the tool chrome below (owner directive
+              2026-09-30: the draft you see must be exactly the draft you
+              download, so every workspace-only control on a sheet wears
+              the dashed .rfpdoc-tool panel and this line says what it
+              means, once). */}
+          {structure.length > 0 && (
+            <p className="mb-3 text-xs text-faint rfp-doc-legend">
+              The white pages are the download. Anything dashed gray, a
+              panel or a whole page, is workspace only and is not in the
+              download.
+            </p>
+          )}
           {structure.length === 0 ? (
             docStatus !== "extracted" ? (
               <ReadAgain documentId={documentId} initialStatus={docStatus} />
@@ -3669,7 +3768,15 @@ export function Workspace({
                       )}
                     </span>
                   </div>
-                  <div className="rfpdoc-actions mt-2 flex flex-wrap items-center gap-4">
+                  {/* ONE tool panel for the letter's controls and its
+                      status lines: everything in it is workspace, none of
+                      it is in the download (the export prints the letter
+                      body only). */}
+                  <div className="rfpdoc-tool mt-2">
+                  <span className="rfpdoc-tool-label">
+                    Workspace · not in the download
+                  </span>
+                  <div className="rfpdoc-actions flex flex-wrap items-center gap-4">
                     {letterSec ? (
                       <>
                         <button
@@ -3774,16 +3881,23 @@ export function Workspace({
                       Sections have changed since this letter was drafted.
                     </p>
                   )}
+                  </div>
                   <div className="rfpdoc-letter mt-4">
                     <p suppressHydrationWarning>{dateLabel}</p>
-                    {clientName && (
-                      <p className="rfpdoc-letter-name mt-5">{clientName}</p>
-                    )}
+                    {/* "the client" when the RFP named none: the file prints
+                        that fallback (resolve-draft.ts addressee), and the
+                        screen shows what the file prints. */}
+                    <p className="rfpdoc-letter-name mt-5">
+                      {clientName?.trim() || "the client"}
+                    </p>
                     {/* The addressee line above already names the client;
                         restating it read "Dear The Children's..." */}
                     <p className="mt-6">Dear evaluation team,</p>
                     {editing === LETTER_LABEL && letterSec ? (
-                      <div className="mt-4 space-y-3">
+                      <div className="rfpdoc-tool mt-4 space-y-3">
+                        <span className="rfpdoc-tool-label">
+                          Workspace · not in the download
+                        </span>
                         <textarea
                           className="input min-h-64 w-full"
                           value={editText}
@@ -3895,7 +4009,7 @@ export function Workspace({
                 num="01"
                 title="Response to the Request for Proposal"
                 deck="The sections of this response, as read from the request."
-                clientName={clientName}
+                clientName={coverClientName}
               />
 
               {structure.map((node) => {
@@ -3924,10 +4038,18 @@ export function Workspace({
                     : null;
                 return (
                   <section
-                    className="rfpdoc-page"
+                    // An undrafted section is not in the download (the
+                    // export keeps drafted sections only, resolve-draft):
+                    // its sheet wears the absent field, not white paper.
+                    className={`rfpdoc-page${sec ? "" : " rfpdoc-page--absent"}`}
                     key={node.label}
                     id={`sec-${node.label}`}
                   >
+                  {!sec && (
+                    <span className="rfpdoc-tool-label">
+                      Not in the download until drafted
+                    </span>
+                  )}
                   <div
                     className={
                       changed ? "doc-sec--changed doc-sec--flash" : undefined
@@ -3942,7 +4064,7 @@ export function Workspace({
                           {changed && <span className="doc-chip">Updated</span>}
                         </h3>
                       </div>
-                      <div className="rfpdoc-actions flex flex-wrap items-center gap-4">
+                      <div className="rfpdoc-actions rfpdoc-tool rfpdoc-tool--row flex flex-wrap items-center gap-4">
                         {!sec ? (
                           <button
                             type="button"
@@ -4058,33 +4180,45 @@ export function Workspace({
                     </div>
 
                     {headError && (
-                      <p className="rfpdoc-visualerr mt-2" role="alert">
-                        {headError}
-                      </p>
+                      <div className="rfpdoc-tool mt-2">
+                        <p className="rfpdoc-visualerr" role="alert">
+                          {headError}
+                        </p>
+                      </div>
                     )}
 
                     {run?.active &&
                       run.current === `${node.label} ${node.title}`.trim() &&
                       !sec && (
-                        <p className="rfpdoc-faint mt-4 text-sm" role="status">
-                          Reading the section and the facts behind it. This
-                          takes about a minute.
-                        </p>
+                        <div className="rfpdoc-tool mt-4">
+                          <span className="rfpdoc-tool-label">
+                            Workspace · not in the download
+                          </span>
+                          <p className="rfpdoc-faint text-sm" role="status">
+                            Reading the section and the facts behind it. This
+                            takes about a minute.
+                          </p>
+                        </div>
                       )}
                     {!sec && !run?.active && (
-                      <p className="rfpdoc-faint mt-4 text-sm italic">
-                        Not drafted yet.{" "}
-                        <button
-                          type="button"
-                          className="linklike"
-                          disabled={busy}
-                          onClick={() => generate(node.label, node.title)}
-                        >
-                          Draft this section
-                        </button>{" "}
-                        writes it from the RFP&apos;s own wording and the
-                        fact base.
-                      </p>
+                      <div className="rfpdoc-tool mt-4">
+                        <span className="rfpdoc-tool-label">
+                          Workspace · not in the download
+                        </span>
+                        <p className="rfpdoc-faint text-sm italic">
+                          Not drafted yet.{" "}
+                          <button
+                            type="button"
+                            className="linklike"
+                            disabled={busy}
+                            onClick={() => generate(node.label, node.title)}
+                          >
+                            Draft this section
+                          </button>{" "}
+                          writes it from the RFP&apos;s own wording and the
+                          fact base.
+                        </p>
+                      </div>
                     )}
 
                     {sec && !isEditing && (
@@ -4098,7 +4232,7 @@ export function Workspace({
                             <div className="rfpdoc-block" key={item.block.id}>
                               <DocBlock block={item.block} />
                               {/* Workspace only, never exported. */}
-                              <div className="rfpdoc-actions rfpdoc-blockbar">
+                              <div className="rfpdoc-actions rfpdoc-blockbar rfpdoc-tool rfpdoc-tool--row">
                                 {!headError &&
                                   visualError?.label === node.label &&
                                   visualError.blockId === item.block.id && (
@@ -4151,46 +4285,58 @@ export function Workspace({
                             </div>
                           )
                         )}
-                        {sec.gaps.length > 0 && (
-                          <div className="rfpdoc-gaps mt-4">
-                            <div className="rfpdoc-kicker rfpdoc-kicker--warn">
-                              Needs an answer before this can go out
+                        {/* The section's footer tools, ONE panel: the cite
+                            count and, when the draft left questions open,
+                            the gaps and their Answer these. None of it is
+                            in the download. */}
+                        <div className="rfpdoc-tool mt-4">
+                          <span className="rfpdoc-tool-label">
+                            Workspace · not in the download
+                          </span>
+                          <p className="rfpdoc-faint text-xs">
+                            {sec.cites.length} fact
+                            {sec.cites.length === 1 ? "" : "s"} cited
+                          </p>
+                          {sec.gaps.length > 0 && (
+                            <div className="mt-3">
+                              <div className="rfpdoc-kicker rfpdoc-kicker--warn">
+                                Needs an answer before this can go out
+                              </div>
+                              <ul className="mt-2 space-y-1 text-sm">
+                                {sec.gaps.map((g, i) => (
+                                  <li key={i}>
+                                    {g.question}
+                                    {/* A references why is a multi-line
+                                        staff note (shortlist included):
+                                        the panel shows the question only. */}
+                                    {g.why &&
+                                      !isReferencesQuestion(g.question) && (
+                                        <span className="rfpdoc-faint"> · {g.why}</span>
+                                      )}
+                                  </li>
+                                ))}
+                              </ul>
+                              <div className="rfpdoc-actions mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    showPane("questions");
+                                  }}
+                                >
+                                  Answer these
+                                </button>
+                              </div>
                             </div>
-                            <ul className="mt-2 space-y-1 text-sm">
-                              {sec.gaps.map((g, i) => (
-                                <li key={i}>
-                                  {g.question}
-                                  {/* A references why is a multi-line
-                                      staff note (shortlist included): the
-                                      paper shows the question only. */}
-                                  {g.why &&
-                                    !isReferencesQuestion(g.question) && (
-                                      <span className="rfpdoc-faint"> · {g.why}</span>
-                                    )}
-                                </li>
-                              ))}
-                            </ul>
-                            <div className="rfpdoc-actions mt-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  showPane("questions");
-                                }}
-                              >
-                                Answer these
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        <p className="rfpdoc-faint text-xs">
-                          {sec.cites.length} fact
-                          {sec.cites.length === 1 ? "" : "s"} cited
-                        </p>
+                          )}
+                        </div>
                       </div>
                     )}
 
                     {sec && isEditing && (
-                      <div className="mt-4 space-y-3">
+                      <div className="rfpdoc-tool mt-4 space-y-3">
+                        <span className="rfpdoc-tool-label">
+                          Workspace · not in the download
+                        </span>
                         {/* The textarea edits paragraphs only; the visuals
                             ride through the save untouched. */}
                         {blocks.length > 0 && (
@@ -4242,13 +4388,25 @@ export function Workspace({
                 num="02"
                 title="Investment"
                 deck="Pricing for the services in this proposal, computed from the rate card."
-                clientName={clientName}
+                clientName={coverClientName}
+                absent={!pricing}
               />
 
               {/* ---- Investment: engine output, printed on the paper. The
                   flash-keyed div is INSIDE the page card so the adjust form
-                  below shares the sheet without sharing the remount key. ---- */}
-              <section className="rfpdoc-page" id="sec-__pricing">
+                  below shares the sheet without sharing the remount key.
+                  Without a quote both emitters skip divider 02 and this
+                  sheet (§5.17.5), so both wear the absent field until the
+                  pricing questions are answered. ---- */}
+              <section
+                className={`rfpdoc-page${pricing ? "" : " rfpdoc-page--absent"}`}
+                id="sec-__pricing"
+              >
+                {!pricing && (
+                  <span className="rfpdoc-tool-label">
+                    Not in the download until the pricing questions are answered
+                  </span>
+                )}
                 <div
                   className={
                     highlights.has("__pricing")
@@ -4269,7 +4427,10 @@ export function Workspace({
                   </div>
                 </div>
                 {!pricing ? (
-                  <div className="mt-4">
+                  <div className="rfpdoc-tool mt-4">
+                    <span className="rfpdoc-tool-label">
+                      Workspace · not in the download
+                    </span>
                     <p className="rfpdoc-faint text-sm italic">
                       Every figure here is computed from the rate card, never
                       drafted. It builds as the pricing questions are
@@ -4278,6 +4439,15 @@ export function Workspace({
                     <div className="rfpdoc-actions mt-2">
                       <button
                         type="button"
+                        // The Questions pane opens only once a section is
+                        // drafted (showPane returns early before that), so
+                        // the button says so instead of doing nothing.
+                        disabled={draftedCount === 0}
+                        title={
+                          draftedCount === 0
+                            ? "Draft a section first"
+                            : undefined
+                        }
                         onClick={() => {
                           showPane("questions");
                         }}
@@ -4356,6 +4526,17 @@ export function Workspace({
                         )}
                       </div>
                     ))}
+                    {/* The file prints this sentence after the
+                        illustrations whenever the minimum applied
+                        (buildExportView); the screen shows the same, or the
+                        download would carry a sentence the draft did not. */}
+                    {pricing.illustrations.some((ill) => ill.minimumApplied) &&
+                      minimumUsers !== null &&
+                      minimumMonthlyCents !== null && (
+                        <p className="rfpdoc-caption">
+                          {minimumSentence(minimumUsers, minimumMonthlyCents)}
+                        </p>
+                      )}
                     {pricing.passThroughItems.map((pt) => (
                       <p className="text-sm" key={pt.label}>
                         <strong style={{ color: "#15163b" }}>{pt.label}:</strong>{" "}
@@ -4372,9 +4553,14 @@ export function Workspace({
                 </div>
 
               {/* Outside the flash-keyed div: the wash remounts its key,
-                  and a remount mid-edit wiped this form's state. */}
+                  and a remount mid-edit wiped this form's state. Tool
+                  chrome: the form changes the quote, it is not the quote
+                  (owner 2026-09-30: it read as part of the document). */}
               {pricing && (
-                <div className="rfpdoc-adjust mt-6">
+                <div className="rfpdoc-adjust rfpdoc-tool mt-6">
+                    <span className="rfpdoc-tool-label">
+                      Workspace · not in the download
+                    </span>
                     <details>
                       <summary className="linklike text-sm">
                         Adjust quantities
@@ -4444,7 +4630,10 @@ export function Workspace({
                     <div className="rfpdoc-bar rfpdoc-bar--blue mt-7" />
                     <p className="rfpdoc-navy-lede mt-6">
                       We welcome the opportunity to discuss this proposal
-                      {clientName ? <> with {clientName}</> : null}.
+                      {/* coverClientName, as the file: the export's lede
+                          names the cover's client (the proposal title when
+                          the RFP named none), never the bare column. */}
+                      {coverClientName ? <> with {coverClientName}</> : null}.
                     </p>
                   </div>
                   <div className="rfpdoc-meta rfpdoc-meta--navy">
@@ -4754,17 +4943,26 @@ function DividerSheet({
   title,
   deck,
   clientName,
+  absent = false,
 }: {
   num: string;
   title: string;
   deck: string;
   clientName: string | null;
+  /** The emitters skip this sheet right now (divider 02 with no pricing):
+   *  it wears the tool field, not white paper, and says why. */
+  absent?: boolean;
 }) {
   return (
     <section
-      className="rfpdoc-page rfpdoc-page--sheet"
+      className={`rfpdoc-page rfpdoc-page--sheet${absent ? " rfpdoc-page--absent" : ""}`}
       aria-label={`Part ${Number(num)}: ${title}`}
     >
+      {absent && (
+        <span className="rfpdoc-tool-label">
+          Not in the download until the pricing questions are answered
+        </span>
+      )}
       <div className="rfpdoc-divider">
         <div className="rfpdoc-divider-head">
           XL.net · Proposal{clientName ? ` for ${clientName}` : ""}
