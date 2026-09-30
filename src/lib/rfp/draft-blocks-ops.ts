@@ -62,6 +62,8 @@ export type VisualStats = {
   /** Paragraphs appended in place of visuals that could not be kept as blocks. */
   degraded: number;
   dropped: number;
+  /** Model tiles skipped because the value would not set on one line (tile-fit.ts), kept block or not. */
+  tooWide: number;
 };
 
 /**
@@ -89,6 +91,7 @@ export function finishDraftVisuals(
       kept: v.blocks.length,
       degraded: next.length - paragraphs.length,
       dropped: v.dropped.length,
+      tooWide: v.tooWide,
     },
   };
 }

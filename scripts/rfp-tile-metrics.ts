@@ -4,9 +4,10 @@
  *   npm run rfp:tile-metrics            # rewrite the generated block from the vendored TTF
  *   npm run rfp:tile-metrics -- --check # exit 1 if the block differs from the TTF
  *
- * Reads public/brand/fonts/Archivo-Bold.ttf, the face both exports embed. Covers printable ASCII,
- * Latin-1, and the punctuation and symbols a stat plausibly carries; a code point the face has no
- * glyph for is left out, so tile-fit charges it the widest advance instead.
+ * Reads public/brand/fonts/Archivo-Bold.ttf, the face both exports embed, and tables EVERY code
+ * point it carries a glyph for (not a hand-picked subset: the face has glyphs wider than anything
+ * a subset would hold, U+01C4 at 1382). A character outside the table is one Archivo cannot set,
+ * so tile-fit charges it a fallback face's width and the draft contract refuses it.
  */
 
 import fs from "node:fs";
@@ -20,34 +21,23 @@ const TARGET = path.join(root, "src/lib/rfp/tile-fit.ts");
 const BEGIN = "// BEGIN GENERATED ARCHIVO_BOLD_ADVANCE";
 const END = "// END GENERATED ARCHIVO_BOLD_ADVANCE";
 
-/** Every code point the table covers, in order. */
-export function coveredCodePoints(): number[] {
-  const cps: number[] = [];
-  const range = (a: number, b: number) => {
-    for (let c = a; c <= b; c++) cps.push(c);
-  };
-  range(0x20, 0x7e); // printable ASCII
-  range(0xa0, 0xff); // Latin-1 supplement (NBSP, currency, ±, ×, ½, accented letters)
-  range(0x2010, 0x2027); // dashes, quotes, bullet, ellipsis
-  cps.push(0x2030, 0x2032, 0x2033, 0x20ac, 0x2122, 0x2190, 0x2191, 0x2192, 0x2193);
-  cps.push(0x2212, 0x2248, 0x2260, 0x2264, 0x2265);
-  return cps;
-}
-
 type Face = {
   unitsPerEm: number;
-  hasGlyphForCodePoint(cp: number): boolean;
+  characterSet: number[];
   glyphForCodePoint(cp: number): { advanceWidth: number };
 };
 
-// fontkit (pdfkit's own font reader) ships no type declarations; this is the slice used here.
-const fontkit = createRequire(import.meta.url)("fontkit") as { openSync(file: string): Face };
+// fontkit is pdfkit's own font reader (resolved through pdfkit, so it is the copy the PDF emitter
+// measures with); it ships no type declarations, and this is the slice used here.
+const requireFromPdfkit = createRequire(createRequire(import.meta.url).resolve("pdfkit"));
+const fontkit = requireFromPdfkit("fontkit") as { openSync(file: string): Face };
 
+/** Archivo Bold's advance for every code point it carries, in 1/1000 em, by code point. */
 export function readAdvances(): Map<number, number> {
   const face = fontkit.openSync(FONT);
   const out = new Map<number, number>();
-  for (const cp of coveredCodePoints()) {
-    if (!face.hasGlyphForCodePoint(cp)) continue;
+  for (const cp of [...face.characterSet].sort((a, b) => a - b)) {
+    if (cp < 0x20) continue; // control characters never render
     out.set(cp, Math.round((face.glyphForCodePoint(cp).advanceWidth * 1000) / face.unitsPerEm));
   }
   return out;

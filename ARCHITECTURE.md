@@ -73,7 +73,7 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
-Last verified against code: 2026-09-30 §5.17.15 RFP STAT FIGURES NEVER WRAP (owner: "in drafts, stats should never wrap to 2 lines, either reduce the font for them all in the stat section to fit, or reduce the amount of text"; a live proposal's "98.15%" CSAT tile broke after the 5 on screen). New pure client-safe `src/lib/rfp/tile-fit.ts` is the ONE fit for a stat-tile row: Archivo Bold's advance table (generated from `public/brand/fonts/Archivo-Bold.ttf` by `npm run rfp:tile-metrics`, identical to Google Fonts' Archivo 700), `tileFitEm`/`tileValuePx` (one size for the whole row, the design size down to whatever fits, no render floor) and the draft contract `valueFitsTile` (a NEW value must fit a four-across file tile at 18px, so words that are not the figure go in the label). Screen: `.rfpdoc-tile` is an inline-size container and the value is `white-space: nowrap` at `min(--rfpdoc-tile-design, 100cqi / --rfpdoc-tile-em)`, the design size a registered `@property` so it still tracks the sheet; Word and PDF call the same `tileValuePx` (the local pdfkit measurer is gone), the PDF value is set with `lineBreak: false`, and Word's half-points are floored. `parseStats` and `buildServiceStatsBlock` refuse a too-wide value (block drop reason `value-too-wide`); stored values are never refused. New `npm run test:rfptilefit`. No schema, env, route or migration change.
+Last verified against code: 2026-09-30 §5.17.15 RFP STAT FIGURES NEVER WRAP (owner: "in drafts, stats should never wrap to 2 lines, either reduce the font for them all in the stat section to fit, or reduce the amount of text"; a live proposal's "98.15%" CSAT tile broke after the 5 on screen). New pure client-safe `src/lib/rfp/tile-fit.ts` is the ONE fit for a stat-tile row: Archivo Bold's advance table for every glyph the face carries (generated from `public/brand/fonts/Archivo-Bold.ttf` by `npm run rfp:tile-metrics`), `tileFitEm`/`tileValuePx` (one size for the whole row, the design size down to whatever fits, no render floor) and the draft contract `valueFitsTile` (a NEW value must be all Archivo glyphs and fit a four-across file tile at 18px, so words that are not the figure go in the label). Screen: `.rfpdoc-tile` is an inline-size container and the value is `white-space: nowrap` at `min(--rfpdoc-tile-design, 100cqi / --rfpdoc-tile-em)`, the design size a registered `@property` so it still tracks the sheet, plus a `unicode-range` Archivo face serving the 86 glyphs Google's subsets lack from the same TTF; Word and PDF call the same `tileValuePx` (the local pdfkit measurer is gone), the PDF value is set with `lineBreak: false`, and Word's half-points are floored. `parseStats` and `buildServiceStatsBlock` refuse a too-wide value (block drop reason `value-too-wide`, skipped tiles counted as `visualsTooWide` on `proposal.generate`); stored values are never refused. New `npm run test:rfptilefit`. No schema, env, route or migration change.
 
 Last verified against code: 2026-09-30 §5.17 RETITLE TITLE-CLEAR FIX (owner: renaming the "No Guarantee" header kept showing the old words on the sheet). `src/app/api/rfp/proposals/[id]/section/route.ts` implemented the worded-label retitle branch as `newTitle = sections[at].title` — it PRESERVED the old title while renaming the label, the exact defect this ledger's §5.17.1 refuter catch specified against ("a worded label IS the visible header, so the LABEL renames AND the title CLEARS"; both slots print, kicker + h3, mirrored by the export), shipped that way in eda2dfc5. One-line fix: `newTitle = renamesLabel ? "" : heading`. The doc's contract was already right and is unchanged; prod row 92c8e7ff (AISC) carried the stale pair label "Flexible SLA"/title "No Guarantee" and was repaired by a CAS'd SQL update of `sections_json` + the document's `structure_json` after the deploy. No schema, no migration, no env, no request/response shape change.
 
@@ -10792,85 +10792,120 @@ emitters already stepped a row down to fit (measuring with pdfkit, floor
 wide on a full sheet, so it broke after the 5 (narrower sheets broke more
 rows). And nothing bounded a value's WIDTH: `LIMITS.tileValue` is 16
 characters, about 9em, which no four-across file tile holds at 18px either.
+"The stat section" is read as one stat-tile block (one row of tiles): every
+value in the block shares one size; two stat blocks in one drafted section
+are sized independently.
 
-**One fit (`src/lib/rfp/tile-fit.ts`, pure, client-safe, no lookbehinds).**
-`TILE_FIT` {designPx 32, floorPx 18, sheetPx 648, gapPx 16, padPx 18,
-maxPerRow 4, slack 0.98}. `valueEm(text)` sums Archivo Bold advances from a
-generated table (printable ASCII, Latin-1, dashes, quotes, ellipsis and a
-few math and currency symbols, in 1/1000 em, keyed by code point; a
-character not in the table is charged the widest advance). The table is
-generated from the vendored `public/brand/fonts/Archivo-Bold.ttf` by
-`npm run rfp:tile-metrics` (`-- --check` fails on drift); Google Fonts'
-Archivo 700, which the screen loads, has identical advances for every
-printable ASCII character, and kerning moves none of the measured figures.
-`tileFitEm(values)` is the widest value's em divided by the slack (never
-below 1); `tileValuePx(values, innerPx)` is floor(min(designPx,
+**One fit (`src/lib/rfp/tile-fit.ts`, pure, client-safe, no imports, no
+lookbehinds).** `TILE_FIT` {designPx 32, floorPx 18, sheetPx 648, gapPx 16,
+padPx 18, maxPerRow 4, slack 0.98}. `valueEm(text)` sums Archivo Bold
+advances from a generated table of EVERY glyph the face carries (653 code
+points, in 1/1000 em; a hand-picked subset would miss glyphs wider than
+itself, e.g. U+01C4 at 1.382em), counting every character as stored,
+whitespace included (every writer collapses whitespace before a value is
+stored; CSS collapses only ASCII whitespace, so a no-break space is as wide
+on screen as in the table). A character outside the table is one Archivo
+cannot set (an emoji, a check mark, CJK): it is charged 1.5em, wider than
+Archivo's widest glyph and a colour emoji (about 1.25em). The table is
+generated from the vendored `public/brand/fonts/Archivo-Bold.ttf` through
+pdfkit's own fontkit by `npm run rfp:tile-metrics` (`-- --check` fails on
+drift). `tileFitEm(values)` is the widest value's em divided by the slack
+(never below 1); `tileValuePx(values, innerPx)` is floor(min(designPx,
 innerPx / fitEm)), never below 1: ONE size for the whole row (the tiles read
 as a set), and NO render floor, so a stored value too wide for its tile gets
 smaller, never a second line. `fileTileInnerPx(n)` and
 `NARROWEST_TILE_INNER_PX` (114, four across) give the files' tile geometry.
 `valueFitsTile(value)` is the draft contract, computed with the renderers'
-own arithmetic: true when the value sets at 18px or more in the narrowest
-file tile (about 6.2em: "98.15%", "4.8 years", "24/7/365" and "$1,250,000"
-pass; "99.9% uptime" does not).
+own arithmetic: true when Archivo carries every character and the value sets
+at 18px or more in the narrowest file tile (about 6.2em: "98.15%",
+"4.8 years", "24/7/365", "$1,250,000", "≤15 min" pass; "99.9% uptime",
+"SOC 2 Type 2" and any value with an emoji do not). Kerning is not applied:
+it moves none of the real figures, but Archivo kerns a hyphen or dash next to
+a digit up to 0.04em wider per pair, which pdfkit and the browser apply (Word
+does not); the slack absorbs it in every admitted value except by a hair
+("5-50 hrs" four across runs 0.03px into the PDF tile's padding), and neither
+renderer can make a second line of it.
 
 **Screen.** `DocBlock`'s stat-tiles `<ul>` carries
-`--rfpdoc-tile-em: tileFitEm(values)` inline. In globals.css each
-`.rfpdoc-tile` is `container-type: inline-size`, so `100cqi` inside it is
-the tile's inner width, and `.rfpdoc-tile-value` is `white-space: nowrap`
-at `min(var(--rfpdoc-tile-design), calc(100cqi / var(--rfpdoc-tile-em, 3)))`.
+`--rfpdoc-tile-em: tileFitEm(values).toFixed(3)` inline (identical on server
+and client). In globals.css each `.rfpdoc-tile` is `container-type:
+inline-size`, so `100cqi` inside it is the tile's inner width, and
+`.rfpdoc-tile-value` is `white-space: nowrap` at
+`min(var(--rfpdoc-tile-design), calc(100cqi / var(--rfpdoc-tile-em, 3)))`.
 Grid tiles share one column width, so one em gives one size across the row,
-a wrapped second grid row included. The design size still follows the
-SHEET: `@property --rfpdoc-tile-design` (`<length>`, inherits, initial
-32px) is declared `clamp(24px, 4.8cqw, 32px)` on `.rfpdoc-tiles`, where it
-computes to px against `.rfpdoc-page` (inside a tile, which is its own
-container, `cqw` would mean the tile). Without `@property` support the
-design size falls to about 24px and still never wraps. Measured in headless
-Chromium with the compiled CSS and the live Google Fonts link, sheets 320 to
-820px: 0 of 176 values on two lines (7 of 56 rows broke before), one size
-per row, sizes equal to the formula within 0.03px. Accepted: before the
-webfont arrives (the `display=swap` window, or Google Fonts blocked) a
-fallback face can run a value past its content box into the tile padding;
-it is never clipped and corrects itself when Archivo loads.
+a wrapped 3+1 or 2+2 grid row included. The design size still follows the
+SHEET: `@property --rfpdoc-tile-design` (`<length>`, inherits, initial 32px)
+is declared `clamp(24px, 4.8cqw, 32px)` on `.rfpdoc-tiles`, where it computes
+to px against `.rfpdoc-page` (inside a tile, which is its own container,
+`cqw` would mean the tile). Google Fonts' Archivo 700 has the vendored TTF's
+advances for every printable ASCII character but its subsets do not serve 86
+of the face's glyphs (Greek, superscripts, arrows, math operators); a second
+`@font-face` for `Archivo` 700 serves exactly those code points
+(`unicode-range`) from `/brand/fonts/Archivo-Bold.ttf`, fetched only when a
+page shows one, so the screen sets them in the face the table measures.
+Refuted in headless Chromium against the compiled CSS, the real page nesting
+(rail, rail hidden, changed-section wrapper) and the live Google Fonts files:
+viewports 360 to 1920 at every px, device scale 1.25 to 2, `zoom: 2`, print
+media and mobile emulation, 252,882 value renders, 0 on two lines, one size
+per row, the real rows at least 3.47px inside the content box; the same
+harness on the pre-round CSS found the reported wrap at 219 of 223 sampled
+widths. Accepted residuals, none of which wraps: without `@property`
+(Firefox before 128, Safari before 16.4) the design size falls to 24px;
+before the webfont arrives (or with Google Fonts blocked) a fallback face can
+run a value into the tile padding, never clipped, until Archivo loads; a
+user's browser minimum font size can hold a long value above its fitted size
+and run it past the tile.
 
 **Files.** Both emitters call tile-fit's `tileValuePx` with
 `STAT_TILE_GEOMETRY.innerPx(format, n)` (exported from export.ts: the tile
 widths each emitter actually lays out, docx in whole twips, pdf in pt, less
 the padding); the docx-only pdfkit measurer and both `archivoBoldWidthPx`
-helpers are deleted. `VIS.tile.valuePx` is `TILE_FIT.designPx`;
-`valueMinPx` became `contractFloorPx` (documentation of the contract, not a
-render floor). The PDF value is a `oneLine` `TextSpec`, drawn and measured
-with `lineBreak: false` and no width (pdfkit wraps whenever it is handed a
-width), so even a wrong size could not make a second line. Word's value
-half-points are floored, not rounded: rounding set an odd px up to a third
-of a px larger than the fitted size, more than the 2% slack at small sizes.
+helpers are deleted, and `VIS.tile.valuePx` is `TILE_FIT.designPx` (the old
+`valueMinPx` render floor is gone). The PDF value is a `oneLine` `TextSpec`,
+drawn and measured with `lineBreak: false` and no width (pdfkit wraps whenever
+it is handed a width), so even a wrong size could not make a second line.
+Word's value half-points are floored, not rounded: rounding set an odd px up
+to a third of a px larger than the fitted size, more than the 2% slack at
+small sizes. Refuted by rendering: the fixture and 82 synthetic rows (the
+real rows and hostile 16-character values at 2, 3 and 4 across) each on one
+line in the PDF (`pdftotext -bbox-layout`) and in the docx converted by
+LibreOffice; every page without a stat tile, the Investment sheet included,
+pixel-identical to the pre-round render. Found and NOT changed here (it
+predates the round): the docx sets margins but no page size, so Word opens
+it on A4 while the PDF is US Letter, and every full-width table overhangs
+the A4 text column by 16.7pt.
 
 **Draft contract: reduce the text.** The drafter's stats instruction adds
 that a value is the figure alone (98.15%, >99%, 4.8 years), short enough to
 fit one line of a quarter-width tile, about 8 characters, with every other
 word in the label (inside the VISUALS stanza, so `RFP_VISUALS=0` prompts are
-unchanged). `parseStats` (the per-tile grounding moved into `groundedTile`)
-skips a grounded tile whose value fails `valueFitsTile`; when that leaves
-fewer than two tiles the block drops with reason `value-too-wide`
-(otherwise `fewer-than-two-grounded-tiles`). `buildServiceStatsBlock`
-applies the same check. `readBody`/`sanitizeStoredBlocks` deliberately do
-NOT: no request body carries blocks, and refusing a stored value would
-silently delete a block a draft already shows. No stored draft needed a
-change: every production tile value (the widest real one is "4.8 years",
-4.343em) passes the contract.
+byte-identical to before). `parseStats` (the per-tile grounding moved into
+`groundedTile`) skips a grounded tile whose value fails `valueFitsTile`; when
+that leaves fewer than two tiles the block drops with reason `value-too-wide`
+(otherwise `fewer-than-two-grounded-tiles`); cites stay exactly the kept
+tiles' facts. Every skipped tile, kept block or not, is counted:
+`parseModelVisuals` returns `tooWide`, `VisualStats.tooWide`, and the
+`proposal.generate` activity meta gains `visualsTooWide`.
+`buildServiceStatsBlock` applies the same check. `readBody` and
+`sanitizeStoredBlocks` deliberately do NOT: no request body carries blocks,
+and refusing a stored value would silently delete a block a draft already
+shows. No stored draft needed a change: every live tile value read for this
+round passes the contract (the widest, "4.8 years", is 4.343em).
 
 **Tests.** New `npm run test:rfptilefit`: the table equals the TTF; every
-covered code point agrees with pdfkit's `widthOfString` (the PDF emitter's
-measurer) within 0.001em, and kerned real rows are never wider than the
-table; real rows fit one line at the returned size at 2, 3 and 4 across in
-both formats (checked with pdfkit's own line breaker) and that size is the
-largest that fits; contract edges; `STAT_TILE_GEOMETRY` equals `TILE_FIT`.
-`test:rfpblocks` gains the contract cases (a too-wide model tile skipped,
-the `value-too-wide` drop, service stats never too wide, a stored legacy
-too-wide value round-trips), and the fixture gains a grounded four-across
-row that steps down to 25px plus a stored legacy four-across row
-("99.9% remotely") that sets at 14px on one line; `rfp:render-fixture`
-renders both, each value on one line in the PDF.
+glyph, plus characters Archivo lacks, agrees with pdfkit's `widthOfString`
+(the PDF emitter's measurer) within 0.001em or is over-measured, and kerned
+real rows are never wider than the table; real rows fit one line at the
+returned size at 2, 3 and 4 across in both formats (checked with pdfkit's own
+line breaker) and that size is the largest that fits; contract edges,
+including emoji refused and table symbols admitted; `STAT_TILE_GEOMETRY`
+equals `TILE_FIT`. `test:rfpblocks` gains the contract cases (a too-wide
+model tile skipped and counted, the `value-too-wide` drop, an ungrounded wide
+tile reported as ungrounded, cites exactly the kept tiles', service stats
+never too wide, a stored legacy too-wide value round-trips), and the fixture
+gains a grounded four-across row that steps down to 25px plus a stored legacy
+four-across row ("99.9% remotely") that sets at 14px on one line;
+`rfp:render-fixture` renders both.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

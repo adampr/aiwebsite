@@ -288,12 +288,9 @@ const VIS = {
     pad: 18,
     rule: 3, // navy top rule
     // Archivo Bold, navy. The whole row steps down from this until its widest
-    // value fits one line (tile-fit.ts tileValuePx); there is no render floor.
+    // value fits one line (tile-fit.ts tileValuePx); there is no render floor
+    // (the 18px floor is the draft contract's, valueFitsTile, for NEW values).
     valuePx: TILE_FIT.designPx,
-    // NOT a render floor: the draft contract's (valueFitsTile), the size a NEW
-    // value must fit a four-across tile at. A stored value wider than that
-    // still sets on one line, smaller.
-    contractFloorPx: TILE_FIT.floorPx,
     valueLh: 1.1,
     labelGap: 8,
     labelPx: 10.5, // Archivo Medium caps, muted

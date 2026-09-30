@@ -572,9 +572,9 @@ export function reanchorBlocks(
 
 type Dropped = { kind: string; reason: string };
 type Parsed =
-  | { ok: DraftBlockBody; cites: string[] }
+  | { ok: DraftBlockBody; cites: string[]; tooWide?: number }
   | { degrade: string[]; cites: string[] }
-  | { drop: string };
+  | { drop: string; tooWide?: number };
 
 function collectStrings(v: unknown, out: string[], depth = 0): void {
   if (out.length > 400 || depth > 4) return;
@@ -628,9 +628,10 @@ function parseStats(item: Record<string, unknown>, byId: Map<string, GroundFact>
     tiles.push({ value: tile.value, label: tile.label });
     if (!cites.includes(tile.factId)) cites.push(tile.factId);
   }
-  if (tiles.length >= LIMITS.tiles[0]) return { ok: { kind: "stat-tiles", tiles }, cites };
-  // Width gets its own reason when it is what sank the block, so the drop log says why.
-  return { drop: tiles.length + tooWide >= LIMITS.tiles[0] ? "value-too-wide" : "fewer-than-two-grounded-tiles" };
+  if (tiles.length >= LIMITS.tiles[0]) return { ok: { kind: "stat-tiles", tiles }, cites, tooWide };
+  // Width gets its own reason when it is what sank the block; every skipped tile is counted
+  // (visualStats.tooWide), kept block or not, so the activity log shows the contract working.
+  return { drop: tiles.length + tooWide >= LIMITS.tiles[0] ? "value-too-wide" : "fewer-than-two-grounded-tiles", tooWide };
 }
 
 function parseTable(
@@ -734,11 +735,12 @@ function parseCards(item: Record<string, unknown>, cites: string[], corpus: stri
 export function parseModelVisuals(
   raw: unknown,
   ctx: { facts: GroundFact[]; paragraphCount: number; sectionCites: string[] }
-): { blocks: DraftBlock[]; degraded: string[]; dropped: Dropped[] } {
+): { blocks: DraftBlock[]; degraded: string[]; dropped: Dropped[]; tooWide: number } {
   const blocks: DraftBlock[] = [];
+  let tooWide = 0;
   const degraded: string[] = [];
   const dropped: Dropped[] = [];
-  if (!Array.isArray(raw)) return { blocks, degraded, dropped };
+  if (!Array.isArray(raw)) return { blocks, degraded, dropped, tooWide };
 
   const facts = Array.isArray(ctx?.facts) ? ctx.facts.filter((f) => isObj(f) && typeof f.id === "string") : [];
   const byId = new Map(facts.map((f) => [f.id, f]));
@@ -785,6 +787,7 @@ export function parseModelVisuals(
               ? parseCallout(item, cites, corpus)
               : parseCards(item, cites, corpus);
 
+      if ("tooWide" in parsed) tooWide += parsed.tooWide ?? 0;
       if ("drop" in parsed) {
         dropped.push({ kind, reason: parsed.drop });
       } else if ("ok" in parsed) {
@@ -815,7 +818,7 @@ export function parseModelVisuals(
     }
   }
   if (raw.length > MODEL_SCAN_MAX) dropped.push({ kind: "unknown", reason: "over-limit" });
-  return { blocks, degraded, dropped };
+  return { blocks, degraded, dropped, tooWide };
 }
 
 // ---------------------------------------------------------------------------

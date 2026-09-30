@@ -29,7 +29,7 @@ import {
 } from "../src/lib/rfp/tile-fit";
 import { STAT_TILE_GEOMETRY } from "../src/lib/rfp/export";
 import { LIMITS } from "../src/lib/rfp/draft-blocks";
-import { coveredCodePoints, readAdvances } from "./rfp-tile-metrics";
+import { readAdvances } from "./rfp-tile-metrics";
 
 let failures = 0;
 function check(label: string, actual: unknown, expected: unknown) {
@@ -81,14 +81,15 @@ const pdfkitEm = (s: string) => measurer.widthOfString(s) / 1000;
   const advances = readAdvances();
   const off: string[] = [];
   const under: string[] = [];
-  for (const cp of coveredCodePoints()) {
+  // Every glyph in the face, plus characters it has none for (emoji, a check mark, CJK, a
+  // private-use point), which tile-fit charges its fallback width.
+  const probes = [...advances.keys(), 0x2705, 0x2b50, 0x1f7e2, 0x4e00, 0xe000];
+  for (const cp of probes) {
     const ch = String.fromCodePoint(cp);
-    // valueEm collapses and trims whitespace as the renderers read a value, so a space is
-    // measured between two digits; a lone one would be trimmed to nothing.
-    const table = /\s/.test(ch) ? valueEm(`1${ch}1`) - valueEm("11") : valueEm(ch);
+    const table = valueEm(ch);
     const pdf = pdfkitEm(ch);
     if (!advances.has(cp)) {
-      // No glyph in the face: tile-fit charges the widest advance, never less than what is set.
+      // No glyph in the face: tile-fit charges its fallback width, never less than what is set.
       if (table < pdf) under.push(`${hex(cp)} table ${table} < pdfkit ${pdf}`);
       continue;
     }
@@ -169,6 +170,17 @@ const pdfkitEm = (s: string) => measurer.widthOfString(s) / 1000;
     yes(`valueFitsTile admits the figure "${v}"`, valueFitsTile(v));
   for (const v of ["99.9% uptime", "$1,250,000/yr", "More than 99%", "4.8 years average"])
     no(`valueFitsTile refuses figure-plus-words "${v}"`, valueFitsTile(v));
+  // A character Archivo has no glyph for is never part of a figure (a box in the PDF, a guessed
+  // fallback width elsewhere); a symbol or letter it does carry is measured exactly and admitted.
+  for (const v of ["\u2705 98.15%", "98.15% \u2b50", "\u{1f7e2}92%", ">99%\u2705"])
+    no(`valueFitsTile refuses a character Archivo cannot set: "${v}"`, valueFitsTile(v));
+  for (const v of ["72\u00b0F", "500 \u03bcs", "\u226599%", "\u226415 min", "\u20ac1,200"])
+    yes(`valueFitsTile admits "${v}" (every character is an Archivo glyph)`, valueFitsTile(v));
+  // Whitespace is measured as stored: a no-break space is as wide on screen as in the table.
+  yes("a no-break space counts at its own width", valueEm("\u00a098.15%") > valueEm("98.15%"));
+  // Archivo's widest glyph sits outside any hand-picked subset; the table carries it exactly.
+  check("U+01C4 (Archivo's widest glyph) is measured at its own 1.382em", valueEm("\u01c4"), 1.382);
+  check("a character Archivo lacks is charged 1.5em", valueEm("\u2705"), 1.5);
   check("MAX_VALUE_EM is the narrowest tile at the floor, less the slack", MAX_VALUE_EM, (114 * TILE_FIT.slack) / TILE_FIT.floorPx);
 
   // The boundary: the widest string one character can reach from a base below MAX_VALUE_EM, and

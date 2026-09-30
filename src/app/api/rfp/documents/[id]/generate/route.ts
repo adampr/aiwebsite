@@ -569,6 +569,7 @@ export async function POST(
           visualsReturned: drafted?.visualStats?.returned ?? 0,
           visualsDegraded: drafted?.visualStats?.degraded ?? 0,
           visualsDropped: drafted?.visualStats?.dropped ?? 0,
+          visualsTooWide: drafted?.visualStats?.tooWide ?? 0,
         },
       });
     } catch (err) {

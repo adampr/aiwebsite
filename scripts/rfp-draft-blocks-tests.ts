@@ -348,7 +348,24 @@ check(
     facts,
     []
   );
-  check("finish: a block sunk by width is a drop, never prose and never a section failure", [fin.blocks, fin.paragraphs, fin.stats], [[], ["One.", "Two."], { returned: 1, kept: 0, degraded: 0, dropped: 1 }]);
+  const tenure = fid("book.tenure");
+  yes('"4.8 yrs average" grounds against the tenure fact', groundValue("4.8 yrs average", fact("book.tenure").statement));
+  const own = parseModelVisuals(
+    [{ kind: "stats", tiles: [
+      { fact: tenure, value: "4.8 yrs average", label: "Client tenure" },
+      { fact: retention, value: "92%", label: "Client retention" },
+      { fact: fcr, value: ">70%", label: "First-contact resolution" },
+    ] }],
+    ctx()
+  );
+  check("a tile skipped for width from a KEPT block is still counted", finishDraftVisuals([{ kind: "stats", tiles: [{ fact: tenure, value: "4.8 yrs average", label: "Client tenure" }, { fact: retention, value: "92%", label: "Client retention" }, { fact: fcr, value: ">70%", label: "First-contact resolution" }] }], ["a"], facts, []).stats, { returned: 1, kept: 1, degraded: 0, dropped: 0, tooWide: 1 });
+  check("a width-skipped tile's fact is not cited: cites are exactly the kept tiles' facts", own.blocks.map((b) => b.cites), [[retention, fcr]]);
+  const ungroundedWide = parseModelVisuals(
+    [{ kind: "stats", tiles: [{ fact: retention, value: "99.9% uptime", label: "Uptime" }, { fact: retention, value: "92%", label: "Client retention" }] }],
+    ctx()
+  );
+  check("an ungrounded too-wide tile is an ungrounded drop, not a width drop", ungroundedWide.dropped, [{ kind: "stats", reason: "fewer-than-two-grounded-tiles" }]);
+  check("finish: a block sunk by width is a drop, never prose and never a section failure", [fin.blocks, fin.paragraphs, fin.stats], [[], ["One.", "Two."], { returned: 1, kept: 0, degraded: 0, dropped: 1, tooWide: 2 }]);
 
   // The server-built tiles pass the same width check: a fact whose figure grew past a quarter
   // tile loses that tile rather than writing it.
@@ -957,13 +974,13 @@ check("kinds are the closed set", [...DRAFT_BLOCK_KINDS], ["stat-tiles", "fact-g
     ],
   };
   const fin = finishDraftVisuals([goodStats, { kind: "stats", after: 0, tiles: [{ fact: fid("book.retention"), value: "97%", label: "Made up" }] }], paras, facts, []);
-  check("finish: a grounded visual is kept, an invented one dropped, prose untouched", [fin.blocks.length, fin.blocks[0]?.after, fin.paragraphs, fin.stats], [1, 1, paras, { returned: 2, kept: 1, degraded: 0, dropped: 1 }]);
+  check("finish: a grounded visual is kept, an invented one dropped, prose untouched", [fin.blocks.length, fin.blocks[0]?.after, fin.paragraphs, fin.stats], [1, 1, paras, { returned: 2, kept: 1, degraded: 0, dropped: 1, tooWide: 0 }]);
   const degr = finishDraftVisuals([{ kind: "callout", after: 0, cites: [], title: "", body: "We answer the phone." }], paras, facts, []);
-  check("finish: an uncited callout lands as prose at the end", [degr.blocks, degr.paragraphs, degr.stats], [[], [...paras, "We answer the phone."], { returned: 1, kept: 0, degraded: 1, dropped: 0 }]);
+  check("finish: an uncited callout lands as prose at the end", [degr.blocks, degr.paragraphs, degr.stats], [[], [...paras, "We answer the phone."], { returned: 1, kept: 0, degraded: 1, dropped: 0, tooWide: 0 }]);
   const full = Array.from({ length: PARAGRAPH_CAP }, (_, i) => `P${i}.`);
   const noRoom = finishDraftVisuals([{ kind: "callout", after: 0, cites: [], title: "", body: "We answer the phone." }], full, facts, []);
   check("finish: degraded prose never passes the paragraph cap", [noRoom.paragraphs.length, noRoom.stats.degraded, noRoom.stats.dropped], [PARAGRAPH_CAP, 0, 1]);
-  check("finish: no visuals key is no blocks and no change", finishDraftVisuals(undefined, paras, facts, []), { paragraphs: paras, blocks: [], stats: { returned: 0, kept: 0, degraded: 0, dropped: 0 } });
+  check("finish: no visuals key is no blocks and no change", finishDraftVisuals(undefined, paras, facts, []), { paragraphs: paras, blocks: [], stats: { returned: 0, kept: 0, degraded: 0, dropped: 0, tooWide: 0 } });
   check("finish: garbage never throws", finishDraftVisuals("nope", paras, facts, []).blocks, []);
 
   // Landing a fresh draft.
