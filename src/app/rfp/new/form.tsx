@@ -6,8 +6,8 @@
 // the textarea itself never disappears, so pasted text and attachments travel
 // together in the same submission.
 //
-// Reading a real RFP takes about a minute and a half against the live brain,
-// so this posts, gets a 202, and then polls the document row. The wait is
+// Reading a real RFP takes one to three minutes against the live brain (a
+// long one more), so this posts, gets a 202, and then polls the document row. The wait is
 // narrated honestly rather than hidden behind a spinner that implies seconds.
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -15,8 +15,15 @@ import { useRouter } from "next/navigation";
 import {
   RFP_MAX_FILES,
   RFP_MAX_TOTAL_BYTES,
+  RFP_READ_BUDGET_MS,
   RFP_UPLOAD_ENVELOPE_BYTES,
 } from "@/lib/rfp/intake";
+
+/** Poll a minute past the server's read budget, so the server always
+ *  answers (extracted or read_failed) before this screen gives up. */
+const READ_POLL_MS = 3000;
+const READ_POLL_TICKS = Math.ceil((RFP_READ_BUDGET_MS + 60_000) / READ_POLL_MS);
+const READ_POLL_MINUTES = Math.round((READ_POLL_TICKS * READ_POLL_MS) / 60_000);
 
 type Phase = "empty" | "sending" | "reading" | "failed";
 
@@ -85,7 +92,8 @@ function ReadingScreen({ elapsed, slow }: { elapsed: number; slow: boolean }) {
           <span className="sys-label">Tron is reading</span>
           <h2 className="mt-4">Every ask, in the client&apos;s own words</h2>
           <p className="mt-4 text-sm">
-            A real RFP takes one to three minutes. You can leave; it keeps
+            A real RFP takes one to three minutes, a long one several. You
+            can leave; it keeps
             reading, and the RFP appears under Your RFPs when it is done.
             Stay, and drafting starts by itself.
           </p>
@@ -283,7 +291,7 @@ export function NewRfpForm() {
     }
     // A 202 whose body could not be parsed would otherwise strand the
     // reading screen forever: the poll loop would throw before it starts
-    // and the six-minute fallback would never fire.
+    // and the give-up fallback would never fire.
     if (typeof data?.id !== "string") {
       setPhase("failed");
       setMessage(
@@ -296,8 +304,8 @@ export function NewRfpForm() {
     const slowTimer = setTimeout(() => setSlow(true), 20_000);
     const id = data.id as string;
     // Poll until the background read finishes. Long RFPs genuinely take minutes.
-    for (let i = 0; i < 120; i++) {
-      await new Promise((r) => setTimeout(r, 3000));
+    for (let i = 0; i < READ_POLL_TICKS; i++) {
+      await new Promise((r) => setTimeout(r, READ_POLL_MS));
       const s = await fetch(`/api/rfp/documents/${id}/status`, {
         cache: "no-store",
       })
@@ -305,25 +313,24 @@ export function NewRfpForm() {
         .catch(() => null);
       // "extracted" alone is the exit: a document CAN legitimately extract
       // zero requirements, and waiting on a count here once left the user
-      // staring at "reading" for six minutes after the read had finished.
+      // staring at "reading" for minutes after the read had finished.
       if (s?.status === "extracted") {
         clearTimeout(slowTimer);
         router.push(`/rfp/r/${id}?draft=all`);
         return;
       }
+      // The text is saved, so a failed read is retried from the RFP itself
+      // ("Read it again"), never by uploading it a second time.
       if (s?.status === "read_failed") {
         clearTimeout(slowTimer);
-        setPhase("failed");
-        setMessage(
-          "The RFP was saved but could not be read for its structure. That is usually a brief drafting-service outage. Start it again from New RFP; pasting the same text works."
-        );
+        router.push(`/rfp/r/${id}`);
         return;
       }
     }
     clearTimeout(slowTimer);
     setPhase("failed");
     setMessage(
-      "Still reading after six minutes. The RFP is saved under Your RFPs; open it once its status shows Read, and start drafting from there."
+      `Still reading after ${READ_POLL_MINUTES} minutes. The RFP is saved under Your RFPs; open it and it follows the read to the end.`
     );
   }
 

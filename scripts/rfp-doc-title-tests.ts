@@ -10,9 +10,11 @@
  */
 
 import {
+  UNTITLED_RFP,
   composeDocTitle,
   groundRfpTitle,
   humanizeFilename,
+  isAutoTitle,
 } from "../src/lib/rfp/doc-title";
 
 let failures = 0;
@@ -239,6 +241,28 @@ check(
   ),
   false
 );
+
+// ---- isAutoTitle (a re-read infers whether it may compose the title) ----------
+
+check("paste default is auto", isAutoTitle(UNTITLED_RFP, null), true);
+check(
+  "humanized single file is auto",
+  isAutoTitle("AISC Managed IT Services RFP", "AISC_Managed_IT_Services_RFP.docx"),
+  true
+);
+check(
+  "multi-file: the FIRST name decides",
+  isAutoTitle("AISC Managed IT Services RFP", "AISC_Managed_IT_Services_RFP.docx + pricing.pdf"),
+  true
+);
+check(
+  "a later file's name is not the auto title",
+  isAutoTitle("pricing", "AISC_Managed_IT_Services_RFP.docx + pricing.pdf"),
+  false
+);
+check("a typed title is kept", isAutoTitle("AISC bid 2026", "AISC_Managed_IT_Services_RFP.docx"), false);
+check("a composed title is kept", isAutoTitle("AISC · Managed IT Services", "AISC_Managed_IT_Services_RFP.docx"), false);
+check("no source and not the default", isAutoTitle("Something", null), false);
 
 if (failures) {
   console.error(`\n${failures} failing`);

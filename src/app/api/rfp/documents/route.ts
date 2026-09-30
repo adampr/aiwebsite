@@ -1,20 +1,16 @@
 // POST /api/rfp/documents — create an RFP from an upload or pasted text.
 //
 // Returns 202 immediately and reads the RFP in the background. Reading a real
-// client RFP measured at ~94s against the live brain, and the edge closes a
-// request at 100s, so doing it inline would fail intermittently on exactly the
-// documents that matter most. The client polls the document row for status.
+// client RFP measured at 30-150s against the live brain (it grows with the
+// number of requirements), and the edge closes a request at 100s, so doing it
+// inline would fail on exactly the documents that matter most. The client
+// polls the document row for status.
 
 import { after } from "next/server";
 import crypto from "node:crypto";
 import { extractStyleSampleText } from "@/lib/governance/style-sample";
 import { screenInjection } from "@/lib/governance/research";
-import { readRfp } from "@/lib/rfp/brain";
-import {
-  UNTITLED_RFP,
-  composeDocTitle,
-  humanizeFilename,
-} from "@/lib/rfp/doc-title";
+import { UNTITLED_RFP, humanizeFilename } from "@/lib/rfp/doc-title";
 import { logRfpActivity } from "@/lib/rfp/activity";
 import {
   RFP_MAX_FILES,
@@ -22,11 +18,9 @@ import {
   sanitizeSourceName,
   type RfpIntakePart,
 } from "@/lib/rfp/intake";
-import { createDocument, replaceRequirements } from "@/lib/rfp/db";
+import { createDocument } from "@/lib/rfp/db";
 import { requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
-import { db } from "@/lib/db";
-import { rfpDocuments } from "@/lib/db/rfp-schema";
-import { eq, sql } from "drizzle-orm";
+import { runDocumentRead } from "@/lib/rfp/read-document";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -238,93 +232,15 @@ export async function POST(req: Request): Promise<Response> {
   // Read it in the background. after() is the host's established pattern for
   // this (governance turn-runner); the narrow "never after()" rule applies to
   // the module's inbound-email webhook, where the response has already closed.
-  after(async () => {
-    try {
-      const result = await readRfp(doc.id, screened.clean);
-      if (!result) {
-        await db
-          .update(rfpDocuments)
-          .set({ status: "read_failed", updatedAt: new Date() })
-          .where(eq(rfpDocuments.id, doc.id));
-        return;
-      }
-      await replaceRequirements(
-        doc.id,
-        result.requirements.map((r, i) => ({
-          structureLabel: r.structureLabel,
-          text: r.text,
-          ordinal: i,
-          kind: r.kind,
-          mandatory: r.mandatory,
-        }))
-      );
-      // An AUTO title becomes "<client> · <subject line>". The CASE compares
-      // against the title this request stored, so a title changed by anything
-      // else in the meantime is left alone (no rename route exists today;
-      // the guard is what keeps that true if one is added).
-      const composed = autoTitle
-        ? composeDocTitle({
-            clientName: result.clientName,
-            subject: result.rfpTitle,
-            fallback: doc.title,
-          })
-        : doc.title;
-      // Stated staff and the title land in the SAME update that stamps
-      // "extracted", so a proposal can never be created against an extracted
-      // document whose count has not landed yet, and never copies the
-      // pre-read title (proposal.title is copied once, at creation).
-      await db
-        .update(rfpDocuments)
-        .set({
-          clientName: result.clientName,
-          ...(composed !== doc.title
-            ? {
-                title: sql`CASE WHEN ${rfpDocuments.title} = ${doc.title} THEN ${composed} ELSE ${rfpDocuments.title} END`,
-              }
-            : {}),
-          structureJson: JSON.stringify(result.structure),
-          statedStaffCount: result.statedStaff?.count ?? null,
-          statedStaffQuote: result.statedStaff?.quote ?? null,
-          statedStaffBasis: result.statedStaff?.basis ?? null,
-          status: "extracted",
-          updatedAt: new Date(),
-        })
-        .where(eq(rfpDocuments.id, doc.id));
-      await logRfpActivity({
-        actorEmail: user.email,
-        actorAdmin: user.admin,
-        action: "document.extract",
-        subjectKind: "document",
-        subjectId: doc.id,
-        meta: {
-          requirements: result.requirements.length,
-          structureNodes: result.structure.length,
-          // Shape only, never the client's text: "ok"/"range"/"none", or the
-          // grounding check that discarded the model's claim (for tuning).
-          statedStaff: result.statedStaff
-            ? result.statedStaff.count === null
-              ? "range"
-              : "ok"
-            : (result.statedStaffDiscarded ?? "none"),
-          // Where the stored title came from; never the title itself.
-          title: !autoTitle
-            ? "typed"
-            : result.rfpTitle
-              ? "subject"
-              : result.clientName
-                ? "client"
-                : "fallback",
-        },
-      });
-    } catch (err) {
-      console.error("[rfp] background read failed:", err);
-      await db
-        .update(rfpDocuments)
-        .set({ status: "read_failed", updatedAt: new Date() })
-        .where(eq(rfpDocuments.id, doc.id))
-        .catch(() => {});
-    }
-  });
+  after(() =>
+    runDocumentRead({
+      docId: doc.id,
+      rawText: screened.clean,
+      storedTitle: doc.title,
+      autoTitle,
+      actor: { email: user.email, admin: user.admin },
+    })
+  );
 
   return rfpOk({ id: doc.id, status: "reading" }, 202);
 }

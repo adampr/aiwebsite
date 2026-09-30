@@ -27,6 +27,7 @@ import { rfpActivity } from "@/lib/db/rfp-schema";
 export const RFP_ACTIONS = [
   "document.create",
   "document.extract",
+  "document.reread",
   "document.confirm_structure",
   "document.archive",
   "document.unarchive",

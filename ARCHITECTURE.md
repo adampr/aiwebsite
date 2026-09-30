@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17.12 RFP READ BUDGET + READ AGAIN (the AISC RFP failed three reads with "could not be read for its structure": the brain finished each in 129-152 s but `readRfp` aborted at a fixed 120 s). The read now gets `RFP_READ_BUDGET_MS` (8 min, intake.ts) over the module's long transport (`callGovernanceBrain` gained `opts.longTransport`; plain fetch caps at undici's 300 s), the worker moved to `src/lib/rfp/read-document.ts`, and new `POST /api/rfp/documents/[id]/read` re-reads the stored text of a `read_failed` (or stale `reading`) document behind one conditional-UPDATE claim; `GET .../status` gains `readStale`; the workspace's `<ReadAgain>` panel follows a read and offers "Read it again"; `/rfp/new` polls past the budget and opens the RFP on failure. New activity action `document.reread`. No migration, no env change.
+
 Last verified against code: 2026-09-30 §5.17.11 RFP MULTI-FILE INTAKE (owner: multiple file uploads AND a text area that no longer disappears after attaching a file; everything is analyzed as one document before drafting). `/rfp/new` keeps the textarea always rendered beside a multi-file chip list (whole-panel drop target, every refused file named, client byte budget mirrors the server's Content-Length precheck including text + framing); `POST /api/rfp/documents` takes repeated `files` plus `text` (legacy single `file` still accepted), composes them through the new pure client-safe `src/lib/rfp/intake.ts` (`composeRfpParts`: single part byte-identical to before, several parts get `===== ATTACHED FILE i OF n: <sanitized name> =====` / `===== PASTED TEXT =====` headers, 120k combined cap with `truncated` in the activity meta) into the ONE rawText the unchanged screenInjection -> readRfp path analyzes; `sourceKind: "multi"` provenance for several sources; and `stripIntakeHeaders` removes the header lines from every grounding/detector corpus (statedStaff + rfpTitle grounding, staffMentions/staffConflictSignals, the four references-detector `rfpText` sites) because a filename like "Acme RFP 350 users.pdf" would otherwise ground a staff count deterministically (refuter MAJOR, removal-only fix). `npm run test:rfpintake`. No migration, no env change.
 
 Last verified against code: 2026-09-30 §5.17.10 RFP CLIENT REFERENCES AS CARDS + RETAINED CONTACTS (owner: use the July 2026 senior-living proposal's References section as the template, keep the reference contacts it names, and let the person keep contacts on file when an RFP asks for references). The references question is now answered with a picker (`src/app/rfp/r/[id]/references-picker.tsx`): what is on file, ranked for the RFP, is prefilled from `rfp_references` (`GET /api/rfp/proposals/[id]/references`, the ONE read that selects the contact columns), the person includes/edits/adds entries, and `POST .../references` (no brain call) lands a stored `references` visual block (`src/lib/rfp/references-block.ts`, the frozen one-spec module) plus the template's intro sentence with rule D3's etiquette sentence, stamps `referencesAnswered`, clears the question from every section, and, when "Keep these contacts on file" is checked, writes the contacts back (`saveReferenceContacts`: update the live row by id, or a new `ref_<slug>` row). resolve-draft lifts the block into one branded `table` block per reference (head bar "Reference N", rows Organization / Industry / relevance / Contact name & title / Phone & email; generatedBy human, no cites) and into `proposal.references`, so the gate scans every cell, D3 sees the references, and the Word/PDF emitters draw them with the table code they already had. A redraft carries the block and the stamp. Operator lane `npm run rfp:reference-contact` (stdin JSON, update-only, never prints a value). No migration, no env change. Suites extended: `test:rfprefs`, `test:rfpblocks`, `test:rfpvisualgate`.
@@ -9465,8 +9467,8 @@ structure); parallel gap weaves (answers are one 60-90s sync call at a
 time); drafted/questions status on the `/rfp/list` rows; focus management
 across question advances; IMAGE attachments for Tron (the drafting service
 is text-only, so images are refused honestly rather than silently dropped —
-OCR or a vision turn is the unbuilt part); re-reading a `read_failed`
-document in place (the copy sends the user to start it again). Declared-
+OCR or a vision turn is the unbuilt part). (Re-reading a `read_failed`
+document in place shipped 2026-09-30, §5.17.12.) Declared-
 but-unused surface waiting on those: `RFP_ACTIONS`
 `document.confirm_structure`/`proposal.create`/`proposal.approve`/
 `knowledge.edit`, the `rfp_requirements.coverage_state`/`coverage_note`
@@ -10516,6 +10518,69 @@ concatenated buffers (order-stable per request, provenance-only). A
 same-named file with different bytes shows two identically-named chips
 (intended: content differs). The title autofill stem can go stale after
 remove-all-then-re-add (pre-existing single-file behavior, kept).
+
+#### 5.17.12 The read gets a budget that fits long RFPs, and a failed read is read again in place (2026-09-30)
+
+Incident: the AISC Managed IT Services RFP (a 3.8 MB .docx, ~20.7k chars of
+text) failed three times with "saved but could not be read for its
+structure ... usually a brief drafting-service outage". It was not an
+outage. `readRfp` gave the brain a fixed 120 s; the brain FINISHED all three
+reads (answers of 31-40k chars, 129-152 s, `json_completion`, brain-api
+`chat.turn` log) after the site had already aborted at 120.0 s and stamped
+`read_failed` (row `updated_at - created_at` = 120.0 s each time). The
+read's answer is a JSON restatement of every requirement, so its length and
+time grow with the RFP: earlier RFPs answered ~8k chars in 30-40 s, and a
+20k-char PDF on 2026-08-28 finished at ~118 s, just under the wire.
+
+**Budget.** `RFP_READ_BUDGET_MS` (8 min) and `RFP_READ_STALE_MS` (budget +
+2 min) live in the client-safe `src/lib/rfp/intake.ts` so the server call,
+the status route and the form's poll share one number. `readRfp` calls
+`callGovernanceBrain(envelope, RFP_READ_BUDGET_MS, { longTransport: true })`:
+`callGovernanceBrain` gained an optional `opts.longTransport` passed to the
+module's `callBrain`, REQUIRED past 300 s because plain fetch sits inside
+undici's fixed 300 s headersTimeout and the brain sends no header until the
+whole answer is ready (module `postJsonLong`, 8 MB reply cap, one deadline).
+The read still holds one of governance's two semaphore slots while it runs
+(background work; Twilio voice is not behind that semaphore). A null or
+unparseable answer now logs `[rfp] read produced no usable structure (doc
+<id>, no answer | unparseable answer of N chars, Ns)`: lengths and timing
+only, never client text. Before this the failure was silent in pm2 output.
+
+**One worker.** The background read moved verbatim out of the create route
+into `src/lib/rfp/read-document.ts` `runDocumentRead({docId, rawText,
+storedTitle, autoTitle, actor})` (readRfp, replaceRequirements, the
+composed-title CASE update that stamps `extracted` with stated staff, the
+`document.extract` activity row, `read_failed` on null or throw). Both
+routes run it inside `after()`.
+
+**`POST /api/rfp/documents/[id]/read` (read again).** Scoped by
+`getDocument` (someone else's id is 404). The claim is ONE conditional
+UPDATE to `status "reading"` WHERE the row is `read_failed`, OR `reading`
+with `updated_at` older than `RFP_READ_STALE_MS` (a restart or deploy
+dropped the `after()` task, which otherwise left the row "reading" forever);
+it RETURNS title, raw_text and source_name, so a second click, tab or person
+gets 409 `busy` (or 409 `already_read` for an extracted row) instead of a
+parallel read. It re-reads the STORED, already-screened raw_text (nothing
+is uploaded twice), logs `document.reread` (new `RFP_ACTIONS` entry; meta
+`from` status + char count), and returns 202 like the create route. Whether
+the read may compose the title is inferred by `isAutoTitle(title,
+sourceName)` in doc-title.ts (`Untitled RFP`, or the humanized FIRST name of
+`sourceName` split on " + "); a miss only leaves the title as it is.
+`GET .../status` gains `readStale` (reading past the stale window).
+
+**Client.** The workspace's no-structure panel for any non-extracted status
+is `src/app/rfp/r/[id]/read-again.tsx` `<ReadAgain>`: while reading it polls
+status every 4 s and on `extracted` does a full load of
+`/rfp/r/<id>?draft=all` (the workspace seeds state from server props once;
+the draft=all handoff drafts only when no sections exist, as after a first
+read); on `read_failed` or `readStale` it shows honest copy (the text is
+kept) and a primary "Read it again" button; a 202 or 409 busy returns it to
+following the read. `/rfp/new` polls `ceil((budget + 60 s) / 3 s)` ticks (9
+min) so the server always answers before the form gives up, and on
+`read_failed` it now opens the RFP (`router.push('/rfp/r/<id>')`), where
+Read it again lives, instead of telling the user to upload it again. The
+"brief drafting-service outage" copy is gone from both places.
+`npm run test:rfptitle` pins `isAutoTitle`. No migration, no env change.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

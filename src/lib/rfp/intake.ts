@@ -18,6 +18,21 @@ export const RFP_MAX_CHARS = 120_000; // combined cap, mirrors MAX_CHARS
 export const RFP_UPLOAD_ENVELOPE_BYTES = 16_384;
 
 /**
+ * How long the background read may wait on the brain. The answer is a JSON
+ * restatement of every requirement, so its length (and time) scales with the
+ * RFP: ~8k chars in 30-40 s for a small one, 31-40k chars in 129-152 s for
+ * the AISC RFP that a 120 s budget failed three times on 2026-09-30.
+ */
+export const RFP_READ_BUDGET_MS = 8 * 60_000;
+
+/**
+ * A document still "reading" this long after its last stamp has no live
+ * reader (a restart or deploy dropped the background task), so it may be
+ * read again. Budget plus a margin for the semaphore wait and the writes.
+ */
+export const RFP_READ_STALE_MS = RFP_READ_BUDGET_MS + 2 * 60_000;
+
+/**
  * An attacker-chosen filename headed for operator-voice text (a composed
  * header line or an error message). Only this function's output may appear
  * there: strip to [A-Za-z0-9 ._-], collapse whitespace runs to one space,

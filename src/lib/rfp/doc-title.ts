@@ -157,3 +157,16 @@ export function composeDocTitle(input: {
   if (subject) return cap(subject);
   return cap(oneLine(input.fallback)) || UNTITLED_RFP;
 }
+
+/**
+ * Whether a stored title is still the automatic one. The title is not
+ * flagged on the row, so a re-read infers it: "Untitled RFP" for a paste, or
+ * the humanized name of the first file. A miss only means the title is left
+ * as it is, which is the safe direction.
+ */
+export function isAutoTitle(title: string, sourceName: string | null): boolean {
+  if (title === UNTITLED_RFP) return true;
+  if (!sourceName) return false;
+  const first = sourceName.split(" + ")[0] ?? "";
+  return first !== "" && title === humanizeFilename(first);
+}

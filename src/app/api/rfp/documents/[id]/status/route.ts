@@ -19,6 +19,7 @@ import {
   listRequirements,
 } from "@/lib/rfp/db";
 import { notFound, requireRfpApi, rfpOk } from "@/lib/rfp/http";
+import { RFP_READ_STALE_MS } from "@/lib/rfp/intake";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -67,6 +68,11 @@ export async function GET(
   return rfpOk({
     id: doc.id,
     status: doc.status,
+    // "reading" with no live reader possible (a restart or deploy dropped
+    // the background task): the workspace offers Read it again.
+    readStale:
+      doc.status === "reading" &&
+      Date.now() - doc.updatedAt.getTime() > RFP_READ_STALE_MS,
     clientName: doc.clientName,
     requirements: reqs.length,
     structure: doc.structureJson ? JSON.parse(doc.structureJson) : [],

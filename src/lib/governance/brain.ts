@@ -88,14 +88,22 @@ function release(): void {
 /**
  * One governance JSON completion. Returns the raw answer text (JSON expected
  * but not yet parsed) or null on transport/HTTP failure.
+ *
+ * `longTransport` is required for any timeoutMs past 300 s: plain fetch sits
+ * inside undici's fixed 300 s headersTimeout, and the brain sends no header
+ * until the whole answer is ready.
  */
 export async function callGovernanceBrain(
   envelope: Record<string, unknown>,
-  timeoutMs: number
+  timeoutMs: number,
+  opts: { longTransport?: boolean } = {}
 ): Promise<string | null> {
   await acquire();
   try {
-    const res = await callBrain(siteConfig, envelope, { timeoutMs });
+    const res = await callBrain(siteConfig, envelope, {
+      timeoutMs,
+      longTransport: opts.longTransport === true,
+    });
     if (!res.ok) return null;
     const answer = extractAnswer(await res.json());
     return answer?.trim() ? answer : null;

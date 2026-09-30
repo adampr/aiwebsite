@@ -27,7 +27,7 @@ import { callGovernanceBrain } from "@/lib/governance/brain";
 import { screenInjection } from "@/lib/governance/research";
 import { groundStatedStaff, type StatedStaff } from "./staff-count";
 import { groundRfpTitle } from "./doc-title";
-import { stripIntakeHeaders } from "./intake";
+import { RFP_READ_BUDGET_MS, stripIntakeHeaders } from "./intake";
 import { stripReservedPrefix } from "./letter";
 import { normalizeGapQuestion } from "./gaps";
 import { referencesAsk } from "./references-ask";
@@ -215,6 +215,7 @@ export async function readRfp(
   const inner = fenceInner(clean, 60_000);
   const user = `${UNTRUSTED_OPEN}\n${inner}\n${UNTRUSTED_CLOSE}`;
 
+  const startedAt = Date.now();
   const raw = await callGovernanceBrain(
     envelope({
       sessionId: `rfpread_${documentId}`,
@@ -222,10 +223,19 @@ export async function readRfp(
       system,
       user,
     }),
-    120_000
+    RFP_READ_BUDGET_MS,
+    { longTransport: true }
   );
   const parsed = parseJson(raw ?? "") as ReadRfpResult | null;
-  if (!parsed || !Array.isArray(parsed.requirements)) return null;
+  if (!parsed || !Array.isArray(parsed.requirements)) {
+    // Lengths and timing only, never the client's text.
+    console.warn(
+      `[rfp] read produced no usable structure (doc ${documentId}, ${
+        raw == null ? "no answer" : `unparseable answer of ${raw.length} chars`
+      }, ${Math.round((Date.now() - startedAt) / 1000)}s)`
+    );
+    return null;
+  }
 
   // Select-never-author: the model's statedStaff claim survives only if every
   // grounding check passes against the fenced text; otherwise the workspace

@@ -90,6 +90,7 @@ import {
   type ReferenceEntry,
 } from "@/lib/rfp/references-block";
 import { ReferencesPicker } from "./references-picker";
+import { ReadAgain } from "./read-again";
 
 type Section = {
   label: string;
@@ -3562,28 +3563,18 @@ export function Workspace({
             )}
           </div>
           {structure.length === 0 ? (
-            <div className="panel">
-              {docStatus === "read_failed" ? (
-                <p className="text-faint">
-                  This RFP was saved but could not be read for its structure.
-                  That is usually a brief drafting-service outage, not a
-                  problem with the document. Start it again from New RFP;
-                  pasting the same text works.
-                </p>
-              ) : docStatus !== "extracted" ? (
-                <p className="text-faint" role="status">
-                  Still reading this RFP. Reload in a minute; drafting starts
-                  once the structure is out.
-                </p>
-              ) : (
+            docStatus !== "extracted" ? (
+              <ReadAgain documentId={documentId} initialStatus={docStatus} />
+            ) : (
+              <div className="panel">
                 <p className="text-faint">
                   No section structure was found in this RFP. That usually
                   means it is a form to fill in rather than a document to
                   write, which this workspace cannot draft yet. The
                   requirements it did find are listed under Coverage.
                 </p>
-              )}
-            </div>
+              </div>
+            )
           ) : (
             <div className="rfpdoc">
               {/* Page 1 — the cover, in the handoff's arc-mark style:
