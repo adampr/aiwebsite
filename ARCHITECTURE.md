@@ -73,7 +73,7 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
-Last verified against code: 2026-09-30 §5.17.15 RFP STAT FIGURES NEVER WRAP (owner: "in drafts, stats should never wrap to 2 lines, either reduce the font for them all in the stat section to fit, or reduce the amount of text"; a live proposal's "98.15%" CSAT tile broke after the 5 on screen). New pure client-safe `src/lib/rfp/tile-fit.ts` is the ONE fit for a stat-tile row: Archivo Bold's advance table for every glyph the face carries (generated from `public/brand/fonts/Archivo-Bold.ttf` by `npm run rfp:tile-metrics`), `tileFitEm`/`tileValuePx` (one size for the whole row, the design size down to whatever fits, no render floor) and the draft contract `valueFitsTile` (a NEW value must be all Archivo glyphs and fit a four-across file tile at 18px, so words that are not the figure go in the label). Screen: `.rfpdoc-tile` is an inline-size container and the value is `white-space: nowrap` at `min(--rfpdoc-tile-design, 100cqi / --rfpdoc-tile-em)`, the design size a registered `@property` so it still tracks the sheet, plus a `unicode-range` Archivo face serving the 86 glyphs Google's subsets lack from the same TTF; Word and PDF call the same `tileValuePx` (the local pdfkit measurer is gone), the PDF value is set with `lineBreak: false`, and Word's half-points are floored. `parseStats` and `buildServiceStatsBlock` refuse a too-wide value (block drop reason `value-too-wide`, skipped tiles counted as `visualsTooWide` on `proposal.generate`); stored values are never refused. New `npm run test:rfptilefit`. No schema, env, route or migration change.
+Last verified against code: 2026-09-30 §5.17.15 RFP STAT FIGURES NEVER WRAP (owner: "in drafts, stats should never wrap to 2 lines, either reduce the font for them all in the stat section to fit, or reduce the amount of text"; a live proposal's "98.15%" CSAT tile broke after the 5 on screen). New pure client-safe `src/lib/rfp/tile-fit.ts` is the ONE fit for a stat-tile row: Archivo Bold's advance table for every real glyph the face carries (generated from `public/brand/fonts/Archivo-Bold.ttf` by `npm run rfp:tile-metrics`), `tileFitEm`/`tileValuePx` (one size for the whole row, the design size down to whatever fits, no render floor) and the draft contract `valueFitsTile` (a NEW value must be all Archivo glyphs and fit a four-across file tile at 18px, so words that are not the figure go in the label). Screen: `.rfpdoc-tile` is an inline-size container and the value is `white-space: nowrap` at `min(--rfpdoc-tile-design, 100cqi / --rfpdoc-tile-em)`, the design size a registered `@property` so it still tracks the sheet, plus a `unicode-range` Archivo face serving the 90 glyphs Google's files lack from the same TTF; Word and PDF call the same `tileValuePx` (the local pdfkit measurer is gone), the PDF value is set with `lineBreak: false`, and Word's half-points are floored. `parseStats` and `buildServiceStatsBlock` refuse a too-wide value (block drop reason `value-too-wide`, skipped tiles counted as `visualsTooWide` on `proposal.generate`); stored values are never refused. New `npm run test:rfptilefit`. No schema, env or migration change and no new route (the generate route's activity meta gains one field).
 
 Last verified against code: 2026-09-30 §5.17.14 RFP CHECKS: GROUPED ROWS, STALE NOT WIPED, FIX ALL REMAINING (owner: "give an option to fix all the remaining that are not ignored"; one A6 phrase in two paragraphs showed as two identical rows; one Fix it cleared every other finding so Run checks had to be pressed again; "a refute round with automatic corrections before a final Run Checks where a human is involved"). The Checks pane renders ONE row per (ruleId, whitespace-collapsed message) through the new pure `groupFindings` in `src/lib/rfp/check-fixes.ts` ("in N places" when a group has several members; blocking groups first; counts are row counts), and a row's Fix it runs `groupFixPlan` (Tron steps collapse to one: the shared label, or `DOC_LABEL` when members span two labels or any resolved there; the instruction names the message once and every excerpt via the new `fixInstructionFor`, which `fixInstruction` now wraps byte-for-byte). `POST /api/rfp/proposals/[id]/checks` also takes `{op, sigs: string[]}` (1..50 distinct, each <= 1200 chars; all or nothing under the lock; one activity row with `meta.count`); the single-`sig` shape is unchanged. `GateResult` gains additive `atRev` (stamped by BOTH store sites before `applyIgnores`; kept by the checks route's re-derivation). Content writes NO LONGER null `gate_json`/`gate_ran_at` (`src/lib/rfp/db.ts`: `writeProposalSections`, `writeProposalStructureOp`, `writeProposalPricing`, `completeGeneration`); the rev bump plus `atRev` is what makes a stored verdict stale, and page.tsx passes `gateStale` when a stored run's `atRev` is missing or differs from the row's rev (rows stored before `atRev` existed therefore show the stale banner once after this deploy, by design, until the next run stamps them). The workspace keeps a shown result on every content write and marks it stale (`markGateStale`, at the nine former `setGateResult(null)` sites plus a landed draft and another tab's landed sections) with "The draft changed since these checks ran" and "Run the checks again". New "Fix all remaining (N)" round: auto-fix pass, the rules re-run, one more pass over the survivors, the final run shown; at most two fix passes, strictly sequential brain calls, never a removal or a retitle, a C1 section rebuilt at most once per round, B7 and pricing/structural findings left for the person, a Stop, a receipt. No migration, no schema, no env change (`atRev` lives inside the existing `gate_json`).
 
@@ -10967,8 +10967,9 @@ are sized independently.
 **One fit (`src/lib/rfp/tile-fit.ts`, pure, client-safe, no imports, no
 lookbehinds).** `TILE_FIT` {designPx 32, floorPx 18, sheetPx 648, gapPx 16,
 padPx 18, maxPerRow 4, slack 0.98}. `valueEm(text)` sums Archivo Bold
-advances from a generated table of EVERY glyph the face carries (653 code
-points, in 1/1000 em; a hand-picked subset would miss glyphs wider than
+advances from a generated table of EVERY real glyph the face carries (649
+code points, in 1/1000 em, leaving out U+FFFF, which the cmap maps to the
+missing-glyph box, and three empty private-use placeholders; a hand-picked subset would miss glyphs wider than
 itself, e.g. U+01C4 at 1.382em), counting every character as stored,
 whitespace included (every writer collapses whitespace before a value is
 stored; CSS collapses only ASCII whitespace, so a no-break space is as wide
@@ -10984,14 +10985,16 @@ as a set), and NO render floor, so a stored value too wide for its tile gets
 smaller, never a second line. `fileTileInnerPx(n)` and
 `NARROWEST_TILE_INNER_PX` (114, four across) give the files' tile geometry.
 `valueFitsTile(value)` is the draft contract, computed with the renderers'
-own arithmetic: true when Archivo carries every character and the value sets
+own arithmetic: true when Archivo carries every character (and none is a
+combining mark, which the screen sets wider than its zero advance) and the value sets
 at 18px or more in the narrowest file tile (about 6.2em: "98.15%",
 "4.8 years", "24/7/365", "$1,250,000", "≤15 min" pass; "99.9% uptime",
 "SOC 2 Type 2" and any value with an emoji do not). Kerning is not applied:
 it moves none of the real figures, but Archivo kerns a hyphen or dash next to
 a digit up to 0.04em wider per pair, which pdfkit and the browser apply (Word
-does not); the slack absorbs it in every admitted value except by a hair
-("5-50 hrs" four across runs 0.03px into the PDF tile's padding), and neither
+does not); the slack absorbs it in an ordinary figure ("5-50 hrs" four across
+runs 0.03px into the PDF tile's padding), a run of digit-dash pairs goes
+further ("0-0-0-0-0-0" 4.3px, still inside the 18px padding), and neither
 renderer can make a second line of it.
 
 **Screen.** `DocBlock`'s stat-tiles `<ul>` carries
@@ -11006,9 +11009,11 @@ SHEET: `@property --rfpdoc-tile-design` (`<length>`, inherits, initial 32px)
 is declared `clamp(24px, 4.8cqw, 32px)` on `.rfpdoc-tiles`, where it computes
 to px against `.rfpdoc-page` (inside a tile, which is its own container,
 `cqw` would mean the tile). Google Fonts' Archivo 700 has the vendored TTF's
-advances for every printable ASCII character but its subsets do not serve 86
-of the face's glyphs (Greek, superscripts, arrows, math operators); a second
-`@font-face` for `Archivo` 700 serves exactly those code points
+advances for every printable ASCII character but its files do not carry 90
+of the face's glyphs (Greek, superscripts, arrows, math operators, and 8
+punctuation marks such as U+2030 that its latin subset declares in
+`unicode-range` but does not ship); a second `@font-face` for `Archivo` 700
+serves exactly those code points
 (`unicode-range`) from `/brand/fonts/Archivo-Bold.ttf`, fetched only when a
 page shows one, so the screen sets them in the face the table measures.
 Refuted in headless Chromium against the compiled CSS, the real page nesting

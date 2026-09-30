@@ -19,9 +19,10 @@
  *
  * Kerning is not applied. It moves none of the real figures, but Archivo Bold does kern a hyphen
  * or dash next to a digit up to 0.04em WIDER per pair, and pdfkit and the browser apply it (Word
- * does not). The slack absorbs that in every value the contract admits except by a hair ("5-50
- * hrs" four across runs 0.03px into the PDF tile's padding), and neither renderer can make a
- * second line of it: the screen value is nowrap and the PDF value is set with lineBreak off.
+ * does not). The slack absorbs it in an ordinary figure ("5-50 hrs" four across runs 0.03px into
+ * the PDF tile's padding); a run of digit-dash pairs can go further ("0-0-0-0-0-0" 4.3px, still
+ * inside the 18px padding), and neither renderer can make a second line of it: the screen value
+ * is nowrap and the PDF value is set with lineBreak off.
  * Client-safe: no imports, no lookbehinds.
  */
 
@@ -59,7 +60,7 @@ export const NARROWEST_TILE_INNER_PX = fileTileInnerPx(TILE_FIT.maxPerRow);
 export const MAX_VALUE_EM = (NARROWEST_TILE_INNER_PX * TILE_FIT.slack) / TILE_FIT.floorPx;
 
 // Archivo Bold advance widths in 1/1000 em (unitsPerEm is 1000), keyed by code point, for every
-// glyph in public/brand/fonts/Archivo-Bold.ttf (v2.001, the face both files embed). Google Fonts'
+// real glyph in public/brand/fonts/Archivo-Bold.ttf (v2.001, the face both files embed). Google Fonts'
 // Archivo 700, which the screen loads, has identical advances for every printable ASCII character
 // (measured 2026-09-30); the glyphs its subsets do not serve reach the screen from this same TTF
 // (globals.css, the unicode-range Archivo face). Regenerate with `npm run rfp:tile-metrics`;
@@ -148,8 +149,8 @@ const ADVANCE: Readonly<Record<number, number>> = {
   0x2192: 1000, 0x2193: 500, 0x2194: 1000, 0x2195: 500, 0x21a8: 500, 0x2202: 513, 0x2205: 619, 0x2206: 762,
   0x220f: 823, 0x2211: 713, 0x2212: 641, 0x2215: 132, 0x2219: 339, 0x221a: 549, 0x221e: 713, 0x221f: 979,
   0x2229: 717, 0x222b: 272, 0x2248: 641, 0x2260: 641, 0x2261: 603, 0x2264: 641, 0x2265: 641, 0x2302: 602,
-  0x2310: 641, 0x2320: 602, 0x2321: 603, 0x25ca: 588, 0x27e8: 562, 0x27e9: 562, 0xe0ff: 600, 0xeffd: 600,
-  0xf000: 600, 0xfb01: 591, 0xfb02: 591, 0xfeff: 0, 0xffff: 651,
+  0x2310: 641, 0x2320: 602, 0x2321: 603, 0x25ca: 588, 0x27e8: 562, 0x27e9: 562, 0xfb01: 591, 0xfb02: 591,
+  0xfeff: 0,
 };
 // END GENERATED ARCHIVO_BOLD_ADVANCE
 
@@ -176,6 +177,9 @@ export function valueEm(text: string): number {
 
 /** True when Archivo carries a glyph for every character of `text` (the table measures it exactly). */
 function archivoSets(text: string): boolean {
+  // A combining mark is never a figure's own character, and the screen sets one after a digit
+  // wider than its zero advance (the digit and the mark come from different font subsets).
+  if (/\p{M}/u.test(text)) return false;
   for (const ch of text) if (ADVANCE[ch.codePointAt(0) ?? 0] === undefined) return false;
   return true;
 }

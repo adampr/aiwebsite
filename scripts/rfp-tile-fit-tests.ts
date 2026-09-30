@@ -172,7 +172,7 @@ const pdfkitEm = (s: string) => measurer.widthOfString(s) / 1000;
     no(`valueFitsTile refuses figure-plus-words "${v}"`, valueFitsTile(v));
   // A character Archivo has no glyph for is never part of a figure (a box in the PDF, a guessed
   // fallback width elsewhere); a symbol or letter it does carry is measured exactly and admitted.
-  for (const v of ["\u2705 98.15%", "98.15% \u2b50", "\u{1f7e2}92%", ">99%\u2705"])
+  for (const v of ["\u2705 98.15%", "98.15% \u2b50", "\u{1f7e2}92%", ">99%\u2705", "98.15%\uffff", "98.15%\ue0ff", "98.15%\u0336", "\u030198.15%"])
     no(`valueFitsTile refuses a character Archivo cannot set: "${v}"`, valueFitsTile(v));
   for (const v of ["72\u00b0F", "500 \u03bcs", "\u226599%", "\u226415 min", "\u20ac1,200"])
     yes(`valueFitsTile admits "${v}" (every character is an Archivo glyph)`, valueFitsTile(v));

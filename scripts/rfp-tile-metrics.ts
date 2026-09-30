@@ -24,7 +24,7 @@ const END = "// END GENERATED ARCHIVO_BOLD_ADVANCE";
 type Face = {
   unitsPerEm: number;
   characterSet: number[];
-  glyphForCodePoint(cp: number): { advanceWidth: number };
+  glyphForCodePoint(cp: number): { id: number; advanceWidth: number };
 };
 
 // fontkit is pdfkit's own font reader (resolved through pdfkit, so it is the copy the PDF emitter
@@ -38,7 +38,11 @@ export function readAdvances(): Map<number, number> {
   const out = new Map<number, number>();
   for (const cp of [...face.characterSet].sort((a, b) => a - b)) {
     if (cp < 0x20) continue; // control characters never render
-    out.set(cp, Math.round((face.glyphForCodePoint(cp).advanceWidth * 1000) / face.unitsPerEm));
+    const glyph = face.glyphForCodePoint(cp);
+    // Not glyphs: cmap format 4's closing segment maps U+FFFF to .notdef (the missing-glyph box),
+    // and U+E0FF, U+EFFD, U+F000 are empty private-use placeholders.
+    if (glyph.id === 0 || (cp >= 0xe000 && cp <= 0xf8ff)) continue;
+    out.set(cp, Math.round((glyph.advanceWidth * 1000) / face.unitsPerEm));
   }
   return out;
 }

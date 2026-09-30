@@ -1320,7 +1320,7 @@ select.input option {
   text-transform: none;
   color: #9a3412;
 }
-/* The Archivo Bold glyphs Google Fonts' Archivo 700 subsets do not serve
+/* The Archivo Bold glyphs Google Fonts' Archivo 700 files do not carry
    (Greek, superscripts, arrows, math operators ...), from the TTF the Word
    and PDF files embed. tile-fit.ts measures a stat value against that TTF,
    so a less-than-or-equal sign or a superscript in a value must be set in it
@@ -1332,7 +1332,10 @@ select.input option {
   font-weight: 700;
   font-display: swap;
   src: url("/brand/fonts/Archivo-Bold.ttf") format("truetype");
-  unicode-range: U+02D8-02D9, U+02DB, U+0302, U+0306-0307, U+030A-030C,
+  /* U+2010..2052 sit inside Google latin's declared U+2000-206F but are
+     absent from its file. */
+  unicode-range: U+2010-2011, U+2015, U+2017, U+2021, U+2030, U+203E, U+2052,
+    U+02D8-02D9, U+02DB, U+0302, U+0306-0307, U+030A-030C,
     U+030F, U+0311-0313, U+031B, U+0324, U+0326-0328, U+032E, U+0331,
     U+0335-0338, U+0394, U+03A9, U+03BC, U+03C0, U+2070, U+2074-2079,
     U+207F-2089, U+2099, U+2105, U+2116-2117, U+2126, U+212E, U+2190, U+2192,
