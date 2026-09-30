@@ -12,8 +12,14 @@
 // downloads.
 
 import { logRfpActivity } from "@/lib/rfp/activity";
-import { getDocument, getOwnedProposal, writeProposalGate } from "@/lib/rfp/db";
+import {
+  getDocument,
+  getOwnedProposal,
+  readProposalChecksIgnores,
+  writeProposalGate,
+} from "@/lib/rfp/db";
 import { buildExportView, exportFileName, renderRfpDocx, renderRfpPdf } from "@/lib/rfp/export";
+import { applyIgnores, parseCheckIgnores } from "@/lib/rfp/check-ignores";
 import { buildGateInput } from "@/lib/rfp/gate-run";
 import { buildQuote, parseQuoteInputs } from "@/lib/rfp/quote";
 import { resolveDraft, runDraftGate } from "@/lib/rfp/resolve-draft";
@@ -56,7 +62,17 @@ export async function GET(
       409
     );
 
-  const result = runDraftGate(input);
+  // Persisted Checks-pane dismissals are re-applied before the store AND
+  // before the draft/header computation below (§5.17.8): the same re-apply
+  // gate-run.ts does, so the pane and this export can never disagree, and an
+  // ignored finding no longer counts as outstanding — intended. The column
+  // is re-read after the rules run, mirroring gate-run.ts, so an Ignore
+  // landing mid-run still marks the stored result.
+  const raw = runDraftGate(input);
+  const result = applyIgnores(
+    raw,
+    parseCheckIgnores(await readProposalChecksIgnores(proposal.id))
+  );
   await writeProposalGate(proposal.id, JSON.stringify(result));
 
   const openGaps = input.sections.reduce((n, s) => n + s.gaps.length, 0);

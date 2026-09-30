@@ -43,6 +43,8 @@ export const RFP_ACTIONS = [
   "proposal.references_gap_add",
   "proposal.pricing_set",
   "proposal.gate_run",
+  "proposal.check_ignore",
+  "proposal.check_restore",
   "proposal.export",
   "proposal.approve",
   "knowledge.propose",

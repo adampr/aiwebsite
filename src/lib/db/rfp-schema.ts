@@ -304,6 +304,13 @@ export const rfpProposals = pgTable(
     gateJson: text("gate_json"),
     gateRanAt: timestamp("gate_ran_at", { withTimezone: true }),
     /**
+     * JSON CheckIgnore[] — the Checks pane's persisted dismissals, re-applied
+     * to every stored gate result (gate-run.ts and the export route) so an
+     * ignored finding stays ignored across re-runs. The signature format
+     * lives in src/lib/rfp/check-ignores.ts and is a PERSISTED FORMAT.
+     */
+    checksIgnoresJson: text("checks_ignores_json"),
+    /**
      * JSON QuoteInputs — the human-entered quantities (user counts, tiers).
      * Kept separately from the computed quote so the quote can be rebuilt
      * deterministically, and so what was ENTERED stays distinguishable from

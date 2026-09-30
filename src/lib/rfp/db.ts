@@ -617,6 +617,26 @@ export async function writeProposalPricing(
   return res.length > 0;
 }
 
+/**
+ * The checks-ignores column alone, read FRESH. The gate assembly plus the 26
+ * rules take long enough that an Ignore can land mid-run; a store site that
+ * applied the dismissals from its pre-run proposal snapshot would then write
+ * a gate_json missing the new mark (self-healing on the next store, but the
+ * pane visibly pops the row back out of Ignored). Re-reading just before the
+ * store narrows that window from the whole run to milliseconds.
+ */
+export async function readProposalChecksIgnores(
+  proposalId: string
+): Promise<string | null> {
+  if (!isUuid(proposalId)) return null;
+  const rows = await db
+    .select({ checksIgnoresJson: rfpProposals.checksIgnoresJson })
+    .from(rfpProposals)
+    .where(eq(rfpProposals.id, proposalId))
+    .limit(1);
+  return rows[0]?.checksIgnoresJson ?? null;
+}
+
 /** Store a gate run. Does NOT bump rev: the gate reads, it never edits. */
 export async function writeProposalGate(
   proposalId: string,
@@ -626,6 +646,56 @@ export async function writeProposalGate(
     .update(rfpProposals)
     .set({ gateJson, gateRanAt: new Date(), updatedAt: new Date() })
     .where(eq(rfpProposals.id, proposalId));
+}
+
+/**
+ * Read-modify-write of the two Checks-pane columns (checks_ignores_json +
+ * gate_json) in ONE transaction, under SELECT ... FOR UPDATE on the proposal
+ * row: two racing ignores (or an ignore racing a gate re-run's store) must
+ * compose, not drop each other, and the caller's sig validation must run
+ * against the row AS LOCKED, so `mutate` receives the in-tx values and its
+ * verdict decides the write.
+ *
+ * Deliberately NO rev bump: rev fences section CONTENT (writeProposalSections
+ * et al.), and an ignore changes none — bumping it here would 409 a
+ * concurrent editor's CAS for no content change. `mutate` is synchronous and
+ * pure; returning null aborts with nothing written (the caller records why in
+ * its own closure). Both columns land in one UPDATE.
+ */
+export async function writeProposalChecksState(
+  proposalId: string,
+  mutate: (current: {
+    status: string;
+    gateJson: string | null;
+    checksIgnoresJson: string | null;
+  }) => { ignoresJson: string; gateJson: string } | null
+): Promise<boolean> {
+  if (!isUuid(proposalId)) return false;
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        status: rfpProposals.status,
+        gateJson: rfpProposals.gateJson,
+        checksIgnoresJson: rfpProposals.checksIgnoresJson,
+      })
+      .from(rfpProposals)
+      .where(eq(rfpProposals.id, proposalId))
+      .limit(1)
+      .for("update");
+    const row = rows[0];
+    if (!row) return false;
+    const next = mutate(row);
+    if (!next) return false;
+    await tx
+      .update(rfpProposals)
+      .set({
+        checksIgnoresJson: next.ignoresJson,
+        gateJson: next.gateJson,
+        updatedAt: new Date(),
+      })
+      .where(eq(rfpProposals.id, proposalId));
+    return true;
+  });
 }
 
 /**

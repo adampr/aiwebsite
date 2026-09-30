@@ -67,8 +67,13 @@ import {
   LETTER_TITLE,
 } from "@/lib/rfp/letter";
 import { COMPANY_SIGNATURE, type PersonSignature } from "@/lib/rfp/signature";
-import type { PricingQuote } from "@/lib/rfp/content-model";
+import type { PricingQuote, Violation } from "@/lib/rfp/content-model";
 import type { GateResult } from "@/lib/rfp/validators/gate";
+// Pure and client-safe by contract (no lookbehinds, no server imports):
+// findingSig is the PERSISTED dismissal key the checks route validates, and
+// the fix recipes only read the violation + the drafted labels.
+import { findingSig } from "@/lib/rfp/check-ignores";
+import { fixInstruction, fixRecipe } from "@/lib/rfp/check-fixes";
 // Pure and client-safe by contract (no lookbehinds, type-only imports).
 import {
   draftBlockSummary,
@@ -704,6 +709,33 @@ export function Workspace({
   // ---- export ----
   const [exporting, setExporting] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+
+  // ---- checks pane: ignore / fix it (§5.17.8) ----
+  // The one row whose ignore/restore is in flight (its findingSig); every
+  // row's buttons freeze on it because each write replaces the whole stored
+  // result, so two in flight would race their setGateResult adoptions.
+  const [checksBusySig, setChecksBusySig] = useState<string | null>(null);
+  // A failed ignore/restore renders beside ITS row (errors render in the
+  // owning pane, the house rule), never as a page notice.
+  const [checksError, setChecksError] = useState<{
+    sig: string;
+    message: string;
+  } | null>(null);
+  // The ONE open inline context editor (fix recipes with an optional ask);
+  // keyed by sig so opening another row's closes this one.
+  const [fixAsk, setFixAsk] = useState<{
+    sig: string;
+    label: string;
+    prompt: string;
+    text: string;
+  } | null>(null);
+  // The inline verdict for a pricing/none recipe, keyed to its row.
+  const [fixNote, setFixNote] = useState<{
+    sig: string;
+    message: string;
+    pricing: boolean;
+  } | null>(null);
+  const [ignoredOpen, setIgnoredOpen] = useState(false);
 
   const covered = new Set(sections.map((s) => s.label));
   const undrafted = structure.filter((n) => !covered.has(n.label));
@@ -1386,7 +1418,10 @@ export function Workspace({
   }
 
   async function runChecks(): Promise<GateResult | null> {
-    if (!proposalId) return null;
+    // Never mid ignore/restore: the buttons are disabled on checksBusySig for
+    // the same reason, but the export path can also call this, so the guard
+    // lives here too.
+    if (!proposalId || checksBusySig !== null) return null;
     setChecking(true);
     const res = await fetch(`/api/rfp/proposals/${proposalId}/gate`, {
       method: "POST",
@@ -1404,6 +1439,84 @@ export function Workspace({
     const result: GateResult = await res.json();
     setGateResult(result);
     return result;
+  }
+
+  /** POST one ignore/restore to the checks route. The server re-validates
+   *  the sig against the stored run under a row lock and answers with the
+   *  UPDATED stored GateResult, adopted directly (same shape as runChecks),
+   *  so the row moves between the lists with no extra fetch. */
+  async function postChecksOp(op: "ignore" | "restore", sig: string) {
+    if (!proposalId || checksBusySig) return;
+    setChecksBusySig(sig);
+    setChecksError(null);
+    const res = await fetch(`/api/rfp/proposals/${proposalId}/checks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ op, sig }),
+    }).catch(() => null);
+    setChecksBusySig(null);
+    if (!res) {
+      setChecksError({
+        sig,
+        message: "The server could not be reached. Nothing was changed.",
+      });
+      return;
+    }
+    const d = await res.json().catch(() => null);
+    if (!res.ok) {
+      setChecksError({
+        sig,
+        message: d?.message ?? "That finding could not be changed.",
+      });
+      return;
+    }
+    setGateResult(d as GateResult);
+    if (fixAsk?.sig === sig) setFixAsk(null);
+    if (fixNote?.sig === sig) setFixNote(null);
+  }
+
+  /** Fire a Tron revision from a Checks-pane fix: the SAME clears as picking
+   *  the scope by hand (the standing rule: every route that changes the Tron
+   *  scope runs pickScope), then the ask flow with EXPLICIT args, and the
+   *  instruction mirrored into the pane so what was asked is visible. The
+   *  explicit args matter: setInstruction has not landed when askTron reads
+   *  state, so the payload must not depend on it. */
+  function runFix(label: string, instr: string) {
+    pickScope(label);
+    setInstruction(instr);
+    void askTron({ label, instruction: instr });
+  }
+
+  /** The Fix it button: resolve the finding's recipe and act on it. */
+  function fixIt(v: Violation, sig: string) {
+    setChecksError(null);
+    const r = fixRecipe(v, { sections, requirements });
+    if (r.kind === "tron") {
+      if (r.ask) {
+        const prompt = r.ask.prompt;
+        setFixNote(null);
+        // Toggle: pressing Fix it again on the open row closes the editor.
+        setFixAsk((cur) =>
+          cur?.sig === sig ? null : { sig, label: r.label, prompt, text: "" }
+        );
+        return;
+      }
+      setFixAsk(null);
+      runFix(r.label, r.instruction);
+      return;
+    }
+    if (r.kind === "redraft") {
+      // The EXISTING per-section redraft path (the section card's Redraft
+      // button calls exactly this): generate with force replaces the section
+      // wholesale, which is rule C1's own remedy (rebuild, do not patch).
+      setFixAsk(null);
+      const node = structure.find((n) => n.label === r.label);
+      const sec = sections.find((s) => s.label === r.label);
+      void generate(r.label, node?.title ?? sec?.title ?? r.label, true);
+      return;
+    }
+    setFixAsk(null);
+    setFixNote({ sig, message: r.message, pricing: r.kind === "pricing" });
   }
 
   async function exportAs(format: "docx" | "pdf") {
@@ -1643,10 +1756,17 @@ export function Workspace({
     }).catch(() => null);
   };
 
-  async function askTron() {
-    if (!proposalId || !scope || instruction.trim().length < 3) return;
+  /** Overrides exist for the Checks pane's Fix it (runFix): it pickScopes
+   *  and setInstructions in the same tick, so neither state has landed when
+   *  this reads it — the payload label/instruction must arrive explicitly or
+   *  the run would use the PREVIOUS scope and instruction. With no overrides
+   *  the pane's own button behavior is unchanged. */
+  async function askTron(overrides?: { label?: string; instruction?: string }) {
+    const target = overrides?.label ?? scope;
+    const instr = overrides?.instruction ?? instruction;
+    if (!proposalId || !target || instr.trim().length < 3) return;
     setTronBusy(true);
-    setBusyKind(scope === DOC_LABEL ? "doc" : "section");
+    setBusyKind(target === DOC_LABEL ? "doc" : "section");
     setNotice("");
     setTronError("");
     setTronApplied(null);
@@ -1657,11 +1777,11 @@ export function Workspace({
     // reason.
     setProposal(null);
     clearDocFlow();
-    if (scope === DOC_LABEL) {
-      await askTronDoc();
+    if (target === DOC_LABEL) {
+      await askTronDoc(instr);
       return;
     }
-    const res = await postTron({ label: scope, instruction });
+    const res = await postTron({ label: target, instruction: instr });
     setTronBusy(false);
     setBusyKind(null);
     if (!res) {
@@ -1679,7 +1799,7 @@ export function Workspace({
     // The proposal renders right HERE in the Tron pane; accepting it is
     // what flashes the section.
     setProposal({
-      label: scope,
+      label: target,
       proposed: d.proposed,
       current: d.current,
       note: d.note,
@@ -1693,7 +1813,10 @@ export function Workspace({
    *  one at a time (never parallel: the brain semaphore has 2 slots shared
    *  with Twilio voice), same client-driven pattern as draftAll. Nothing is
    *  written; every proposal still waits for its own accept. */
-  async function askTronDoc() {
+  // The instruction arrives as a PARAMETER, never read from state: askTron
+  // passes what it validated, and the Checks-pane fix flow sets the state in
+  // the same tick it asks (the setState race the explicit arg avoids).
+  async function askTronDoc(instr: string) {
     tronStopRef.current = false;
     // Captured AFTER askTron's clearDocFlow bump. Once the ref moves again
     // (scope change, another clear), this run is abandoned: no more POSTs,
@@ -1702,7 +1825,7 @@ export function Workspace({
     // cannot start while the button is disabled on tronBusy.
     const runId = docRunIdRef.current;
     const stale = () => docRunIdRef.current !== runId;
-    const res = await postTron({ label: DOC_LABEL, instruction });
+    const res = await postTron({ label: DOC_LABEL, instruction: instr });
     if (stale()) {
       setTronBusy(false);
       setBusyKind(null);
@@ -1797,7 +1920,7 @@ export function Workspace({
       attempted++;
       const r = await postTron({
         label: t.label,
-        instruction,
+        instruction: instr,
         directive: t.directive,
       });
       if (stale()) {
@@ -2079,10 +2202,18 @@ export function Workspace({
     }
   }
 
+  // Dismissed findings leave the VISIBLE sets (and with them the summary
+  // sentence and counts); the server already recomputed `passed` over the
+  // survivors at store time, so a fully-ignored run reads as passing.
   const blocks =
-    gateResult?.violations.filter((v) => v.severity === "block") ?? [];
+    gateResult?.violations.filter(
+      (v) => v.severity === "block" && !v.dismissed
+    ) ?? [];
   const warns =
-    gateResult?.violations.filter((v) => v.severity !== "block") ?? [];
+    gateResult?.violations.filter(
+      (v) => v.severity !== "block" && !v.dismissed
+    ) ?? [];
+  const dismissedList = gateResult?.violations.filter((v) => v.dismissed) ?? [];
 
   /* ---------------------------------------------------------------------- */
 
@@ -2199,7 +2330,16 @@ export function Workspace({
             <button
               type="button"
               className="btn btn--text"
-              disabled={checking || !proposalId || sections.length === 0}
+              disabled={
+                // Frozen during an ignore/restore POST too: a gate run that
+                // reads the row mid-op can store a result computed from the
+                // pre-op dismissals, visibly popping the row back out of the
+                // Ignored list until the next run (§5.17.8 TOCTOU).
+                checking ||
+                !proposalId ||
+                sections.length === 0 ||
+                checksBusySig !== null
+              }
               onClick={() => {
                 void runChecks();
                 showPane("checks");
@@ -2533,7 +2673,7 @@ export function Workspace({
                         <button
                           type="button"
                           className="btn btn--primary"
-                          disabled={checking}
+                          disabled={checking || checksBusySig !== null}
                           onClick={() => {
                             void runChecks();
                             showPane("checks");
@@ -2601,15 +2741,28 @@ export function Workspace({
                 ) : (
                   <>
                     <p className="mt-3 text-sm">
+                      {/* A pass earned by dismissals says so: "Passing" with
+                          every blocking finding sitting in the Ignored list
+                          would read as a clean run. */}
                       {gateResult.passed
                         ? queue.length > 0
-                          ? `The rules pass. ${queue.length} open question${queue.length === 1 ? "" : "s"} remain${queue.length === 1 ? "s" : ""}; the Questions pane walks through them.`
-                          : "Passing. Nothing blocks export."
+                          ? `The rules pass${dismissedList.length ? ` with ${dismissedList.length} ignored finding${dismissedList.length === 1 ? "" : "s"}` : ""}. ${queue.length} open question${queue.length === 1 ? "" : "s"} remain${queue.length === 1 ? "s" : ""}; the Questions pane walks through them.`
+                          : `Passing${dismissedList.length ? ` with ${dismissedList.length} ignored finding${dismissedList.length === 1 ? "" : "s"}` : ""}. Nothing blocks export.`
                         : `${blocks.length} blocking finding${blocks.length === 1 ? "" : "s"}${warns.length ? ` and ${warns.length} advisory` : ""}. Fix them before this response is sent.`}
                     </p>
                     <div className="mt-4 space-y-3">
-                      {[...blocks, ...warns].map((v, i) => (
-                        <div key={i} className="text-sm">
+                      {[...blocks, ...warns].map((v, i) => {
+                        const sig = findingSig(v);
+                        // One request at a time, and never while the gate,
+                        // Tron, or a draft run could replace the result
+                        // under the click.
+                        const rowsFrozen =
+                          checking ||
+                          tronBusy ||
+                          (run?.active ?? false) ||
+                          checksBusySig !== null;
+                        return (
+                        <div key={`${sig}\u0000${i}`} className="text-sm">
                           <span
                             className={`badge${v.severity === "block" ? " badge--warn" : ""}`}
                           >
@@ -2642,8 +2795,97 @@ export function Workspace({
                           ) : (
                             v.message
                           )}
+                          {/* Ignore persists a dismissal (the row moves to
+                              the Ignored list below, which IS its receipt);
+                              Fix it hands the finding to the machinery that
+                              resolves it, most often a scoped Tron run whose
+                              progress shows in the same rail. */}
+                          <div className="mt-2 flex flex-wrap items-center gap-3">
+                            <button
+                              type="button"
+                              className="btn btn--text"
+                              disabled={rowsFrozen}
+                              aria-busy={checksBusySig === sig || undefined}
+                              onClick={() => void postChecksOp("ignore", sig)}
+                            >
+                              {checksBusySig === sig ? "Ignoring" : "Ignore"}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn--text"
+                              disabled={rowsFrozen}
+                              onClick={() => fixIt(v, sig)}
+                            >
+                              Fix it
+                            </button>
+                          </div>
+                          {checksError?.sig === sig && (
+                            <p className="mt-2 text-sm" role="alert">
+                              {checksError.message}
+                            </p>
+                          )}
+                          {fixAsk?.sig === sig && (
+                            <div className="mt-2">
+                              <p className="text-xs text-faint">
+                                {fixAsk.prompt}
+                              </p>
+                              <textarea
+                                className="input mt-1 w-full"
+                                value={fixAsk.text}
+                                onChange={(e) =>
+                                  setFixAsk((cur) =>
+                                    cur ? { ...cur, text: e.target.value } : cur
+                                  )
+                                }
+                                aria-label="Optional context for the fix"
+                              />
+                              <div className="mt-2 flex flex-wrap gap-3">
+                                <button
+                                  type="button"
+                                  className="btn btn--primary"
+                                  disabled={rowsFrozen}
+                                  onClick={() => {
+                                    const ask = fixAsk;
+                                    if (!ask) return;
+                                    setFixAsk(null);
+                                    runFix(
+                                      ask.label,
+                                      fixInstruction(v, ask.text)
+                                    );
+                                  }}
+                                >
+                                  Fix it
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn--text"
+                                  onClick={() => setFixAsk(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          {fixNote?.sig === sig && (
+                            <p className="mt-2 text-sm" role="status">
+                              {fixNote.message}
+                              {fixNote.pricing && questionsReady && (
+                                <>
+                                  {" "}
+                                  <button
+                                    type="button"
+                                    className="linklike"
+                                    onClick={() => showPane("questions")}
+                                  >
+                                    Open the Questions pane
+                                  </button>
+                                </>
+                              )}
+                            </p>
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                       {gateResult.errors.map((e, i) => (
                         <div key={`e${i}`} className="text-sm">
                           <span className="badge badge--warn">
@@ -2653,6 +2895,67 @@ export function Workspace({
                         </div>
                       ))}
                     </div>
+                    {dismissedList.length > 0 && (
+                      <div className="mt-5">
+                        <button
+                          type="button"
+                          className="btn btn--text"
+                          aria-expanded={ignoredOpen}
+                          onClick={() => setIgnoredOpen((o) => !o)}
+                        >
+                          Ignored ({dismissedList.length})
+                        </button>
+                        {ignoredOpen && (
+                          <div className="mt-3 space-y-3">
+                            {dismissedList.map((v, i) => {
+                              const sig = findingSig(v);
+                              const d = v.dismissed!;
+                              return (
+                                <div key={`${sig}\u0000${i}`} className="text-sm">
+                                  <span className="badge">{v.ruleId}</span>{" "}
+                                  {v.message}
+                                  <p className="mt-1 text-xs text-faint">
+                                    {/* <LocalTime>, never a runtime
+                                        formatter: this pane SSRs from the
+                                        stored gate_json (the trap the
+                                        timedMessage comment above records),
+                                        and dismissed.at arrives through the
+                                        same prop. */}
+                                    Ignored by {d.by.split("@")[0]} ·{" "}
+                                    <LocalTime iso={d.at} withTime />
+                                  </p>
+                                  <button
+                                    type="button"
+                                    className="btn btn--text mt-1"
+                                    disabled={
+                                      checking ||
+                                      tronBusy ||
+                                      (run?.active ?? false) ||
+                                      checksBusySig !== null
+                                    }
+                                    aria-busy={
+                                      checksBusySig === sig || undefined
+                                    }
+                                    onClick={() =>
+                                      void postChecksOp("restore", sig)
+                                    }
+                                  >
+                                    {checksBusySig === sig
+                                      ? "Restoring"
+                                      : "Restore"}
+                                  </button>
+                                  {checksError?.sig === sig && (
+                                    <p className="mt-1 text-sm" role="alert">
+                                      {checksError.message}
+                                    </p>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
                 {gapQuestionCount > 0 && gateResult && (
@@ -2744,7 +3047,9 @@ export function Workspace({
                     type="button"
                     className="btn btn--primary"
                     disabled={tronBusy || !scope || instruction.trim().length < 3}
-                    onClick={askTron}
+                    // Wrapped: passing the click event where the overrides
+                    // parameter goes would read event.label as the scope.
+                    onClick={() => void askTron()}
                   >
                     {tronBusy ? "Thinking" : "Propose a change"}
                   </button>

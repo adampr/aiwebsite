@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17.8 RFP CHECKS IGNORE / FIX IT (owner directive: every Checks-pane recommendation gets Ignore and Fix it). Ignore persists per-proposal dismissals in `rfp_proposals.checks_ignores_json` (migration `0059_rfp_check_ignores`), keyed by the PERSISTED `findingSig` recipe in `src/lib/rfp/check-ignores.ts`, re-applied by `applyIgnores` at BOTH gate store sites (gate-run.ts `runAndStoreGate` and the export route, before `writeProposalGate`/the draft computation/`x-rfp-gate-passed`) so the pane and the export never disagree; dismissed findings leave the visible counts and `passed` and collect under a "Ignored (N)" disclosure with Restore. New route `POST /api/rfp/proposals/[id]/checks` (`{op: ignore|restore, sig}`; sig must match a stored violation; row-locked read-modify-write via `writeProposalChecksState`, NO rev bump; activity `proposal.check_ignore`/`proposal.check_restore`, shape-only meta). Fix it maps each rule through `src/lib/rfp/check-fixes.ts` (`resolveTargetLabel` in lockstep with resolve-draft's ids; tron on the section else `DOC_LABEL`, optional inline context for A5/B7/C3/D4-edge, C1-block redraft via the existing per-section path, pricing/none pointers) and fires the existing Tron ask flow with explicit overrides (`askTron({label, instruction})`, `askTronDoc(instr)`), instruction fenced server-side as before. `Violation` gains additive `dismissed`. New suite `npm run test:rfpchecks`. No env change.
+
 Last verified against code: 2026-09-30 §5.17 RFP RUNBAR ALWAYS STICKY (owner directive: the drafting-status line and the Run checks / Word / PDF buttons must float — never scrollable out of view — pinned at the top of the window). `.rfp-page .rfp-runbar` is now `position: sticky` at every width (top = measured `--rfp-workbar-h` below md, `11.25rem` at md+, `z-index: 30`); the `--rfp-runbar-h` measurement (ResizeObserver + layout effect in `workspace.tsx`) runs unconditionally and the `rfp-runbar--live`/`runbarLive` live-only gating is DELETED, superseding the 2026-08-28 scroll-at-rest ruling. All dependent offsets (rail top/max-height, `.rfp-doc-receipt`, mobile tabstrip, `sec-*` scroll-margins) already read `--rfp-runbar-h` and follow unchanged. CSS + one component; no route, schema, env or migration change.
 
 Last verified against code: 2026-09-30 §5.17.7 RFP VISUAL BLOCKS (owner: "uses visuals and tables like the BOF response, especially the About section"). Drafted sections carry optional `blocks` (stat tiles, fact grid, badge strip, table, callout, two-up cards, timeline) beside their paragraphs, anchored by `after`; `src/lib/rfp/draft-blocks.ts` is the client-safe contract (`interleave`, `sanitizeStoredBlocks`, `parseModelVisuals` grounding every number against the cited facts, `buildAboutBlocks`/`buildServiceStatsBlock`/`buildOnboardingTimeline` from live facts with no model call); the drafter's optional `visuals` output (kill switch `RFP_VISUALS=0`), automatic About placement at landing, the section-route `visuals` op, and one visual spec shared by the screen `DocBlock` and both export emitters (`brandedTable` hoisted from the Investment sheet, pixel-identical). New: `test:rfpblocks`, `test:rfpvisualgate`, `rfp:render-fixture`, ornament PNGs under `public/brand/rfp-ornaments/`.
@@ -10034,6 +10036,106 @@ LibreOffice inspection. Suites: `npm run test:rfpblocks` (contract,
 grounding, sanitizer, placement, builders against the seed facts) and
 `npm run test:rfpvisualgate` (legacy byte-identity, schema lift, span
 coverage, B7/D1/A5 on visual blocks, flow order).
+
+#### 5.17.8 Checks pane: Ignore / Fix it (2026-09-30)
+
+Every violation row in the Checks pane carries two actions (owner directive).
+
+**Ignore persistently dismisses one finding for this proposal.** The mark
+survives gate re-runs: the rules recompute every violation from scratch, so
+`src/lib/rfp/check-ignores.ts` (PURE, shared server+client — the gaps.ts
+contract: no server imports, no lookbehinds) re-matches each stored
+dismissal by `findingSig(v)`, a **PERSISTED FORMAT**: the `\u0000`-join of
+ruleId, the full locator (sectionId/blockId/field/pricingLineId/
+requirementId/charOffset), and a whitespace-collapsed 300-char slice of
+`excerpt ?? message`. An edit that moves or changes the offending text
+changes the sig, so a changed finding correctly resurfaces; the identical
+finding re-matches. Dismissals live in
+`rfp_proposals.checks_ignores_json` (JSON `CheckIgnore[]`
+`{sig, ruleId, note, by, at}`, capped at 200 with oldest-first eviction;
+migration `0059_rfp_check_ignores`, nullable text, null on pre-round rows).
+`applyIgnores(result, ignores)` stamps matching violations with
+`dismissed: {by, at}` (the ADDITIVE `Violation` field, set only here — same
+non-migration contract as `timedMessage`), strips stale marks from
+violations no longer ignored, and recomputes `passed` AND `failedRules` over
+the survivors (block always fails, unoverridden warn fails, info never
+blocks, a validator error always fails; a fully-dismissed rule drops from
+`failedRules` so the stored object never says `passed: true` while naming
+failed rules). `findingSig` is TOTAL over shape-corrupt input (missing
+locator/message degrade to a nonsense sig, never a throw): it runs on every
+violation of a stored row, in the workspace render and inside the checks
+transaction.
+
+**The application happens at BOTH store sites** — `runAndStoreGate`
+(gate-run.ts) and the export route, right after `runDraftGate` and before
+`writeProposalGate` / the `draft` computation / the `x-rfp-gate-passed`
+header — so the pane and the export can never disagree, an ignored finding
+stops counting as outstanding, and the workspace's SSR-seeded `initialGate`
+(parsed from stored `gate_json`) carries the marks with no page.tsx change.
+Both sites re-read the ignores column FRESH (`readProposalChecksIgnores`)
+AFTER the rules run rather than from their pre-run proposal snapshot, and
+the client freezes Run checks while an ignore/restore POST is in flight
+(button `disabled` plus a guard in `runChecks`): the gate's own store is
+unlocked, so an Ignore landing mid-run would otherwise be stored without its
+mark until the next store (self-healing, but the row visibly pops back out
+of the Ignored list).
+In the pane, dismissed findings leave the visible lists and counts (a pass
+earned by dismissals says so: "Passing with N ignored findings") and
+collect under a collapsed "Ignored (N)" disclosure (ruleId badge, message,
+"Ignored by \<email local part\> · `<LocalTime withTime>`" — `<LocalTime>`
+because the pane SSRs from stored `gate_json`, the §5.17 timestamp trap —
+and a Restore button).
+
+**`POST /api/rfp/proposals/[id]/checks`** `{op: "ignore"|"restore", sig}`
+(force-dynamic, `requireRfpApi` + `getOwnedProposal`, 409 `immutable` on a
+sent proposal, sig capped at 1200 chars). An ignore's sig MUST equal the
+`findingSig` of a violation on the LAST STORED run (409 `run_checks_first`
+when none is stored; 404 when unmatched), which stops forged or blind
+dismissal writes; `note` is the matched message sliced to 200, `by` the
+session email. Both ops recompute `gate_json = applyIgnores(stored, next)`
+and persist both columns in ONE transaction:
+`writeProposalChecksState(proposalId, mutate)` locks the row with
+`SELECT ... FOR UPDATE` and hands the route the in-tx values (including
+`status`, so a proposal marked sent between the ownership read and the lock
+still refuses), so two racing ignores compose and the sig is re-validated
+under the lock. **`rev` is NOT
+bumped**: rev fences section content, and an ignore changes none — bumping
+it would 409 a concurrent editor's CAS. Activity: `proposal.check_ignore` /
+`proposal.check_restore` (closed union), meta SHAPE ONLY
+`{ruleId, severity, sigChars, ignored}` — violation messages can quote the
+client's RFP. The response is the updated `GateResult`, adopted by the
+client via `setGateResult` directly.
+
+**Fix it hands the finding to the machinery that resolves it.**
+`src/lib/rfp/check-fixes.ts` (client-safe) maps a violation to a
+`FixRecipe`: `resolveTargetLabel` walks the locator back to a stored section
+label (`sectionIdForLabel` mirrors resolve-draft.ts's `sec_` sanitizer —
+LOCKSTEP; blockIds parse against `b_`/`bv_` prefixes with longest-sanitized-
+label disambiguation, "1" vs "1.2"; requirementIds map through
+`structureLabel`). Most rules yield `{kind:"tron"}` on that label (else the
+`DOC_LABEL` whole-document plan flow, right for document-wide phrase scans);
+A5/B7/C3 and D4's edge-of-range variant first open an inline, always-
+optional context editor (ONE at a time, keyed by sig); C1 block yields
+`{kind:"redraft"}` (the rule's own text: rebuild, do not patch — the
+workspace calls the existing per-section `generate(label, title, force)`
+path); B1/B2's floor/B3/B4/B5/B6's pass-through yield `{kind:"pricing"}`
+(inline pointer at the questionnaire, plus "Open the Questions pane"); C2/C4
+and C1's kb advisory yield `{kind:"none"}` messages. `fixInstruction`
+composes ruleId + message + excerpt + suggestion + optional user context
+(whitespace-collapsed, 2000-char cap) and rides the EXISTING `instruction`
+field of `POST .../section`, which brain.ts fences — no new injection
+surface. The workspace's `runFix` runs `pickScope(label)` (the standing
+rule: every route that changes Tron scope runs the same clears), mirrors the
+instruction into the pane, and calls `askTron({label, instruction})` — the
+ask flow now takes explicit overrides and `askTronDoc(instr)` takes the
+instruction as a parameter, because the fix sets state in the same tick it
+asks (setState race). All existing guards (tronBusy, docRunIdRef staleness,
+stop, the staleness-guarded Use this/Discard accept) are untouched; content
+writes still null `gateResult`, so after an accepted fix the pane invites a
+re-run. Suite: `npm run test:rfpchecks`
+(`scripts/rfp-check-ignores-tests.ts`, pure: sig stability/divergence,
+applyIgnores recompute across severities, dedupe + cap, garbage tolerance,
+locator resolution, per-rule recipe mapping). No new env vars.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

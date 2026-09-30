@@ -58,6 +58,7 @@
     "test:rfptitle": "tsx scripts/rfp-doc-title-tests.ts",
     "test:rfpletter": "tsx scripts/rfp-letter-tests.ts",
     "test:rfpgaps": "tsx scripts/rfp-gaps-tests.ts",
+    "test:rfpchecks": "tsx scripts/rfp-check-ignores-tests.ts",
     "test:rfprefs": "tsx scripts/rfp-references-tests.ts",
     "test:rfpblocks": "tsx scripts/rfp-draft-blocks-tests.ts",
     "test:rfpvisualgate": "tsx scripts/rfp-visual-gate-tests.ts",

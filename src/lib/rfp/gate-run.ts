@@ -15,11 +15,13 @@ import {
   currentRateCard,
   knowledgeProposalsForOwner,
   listRequirements,
+  readProposalChecksIgnores,
   writeProposalGate,
   type DocumentRow,
   type ProposalRow,
 } from "./db";
 import type { RfpUser } from "./access";
+import { applyIgnores, parseCheckIgnores } from "./check-ignores";
 import { parseQuoteInputs, toRateCard, EMPTY_QUOTE_INPUTS } from "./quote";
 import { resolveDraft, runDraftGate, type DraftGateInput } from "./resolve-draft";
 import type { GateResult } from "./validators/gate";
@@ -101,7 +103,18 @@ export async function runAndStoreGate(
 ): Promise<GateResult | { error: "no_rate_card" }> {
   const input = await buildGateInput(user, doc, proposal);
   if ("error" in input) return input;
-  const result = runDraftGate(input);
+  // Persisted dismissals are re-applied to EVERY stored result, here and in
+  // the export route (§5.17.8): the rules recompute from scratch, so the
+  // marks (and the recomputed `passed`) exist only through this re-apply,
+  // and the two store sites must never disagree. The column is re-read AFTER
+  // the rules run, not taken from the proposal snapshot, so an Ignore landing
+  // mid-run still marks the result being stored (readProposalChecksIgnores
+  // has the full rationale).
+  const raw = runDraftGate(input);
+  const result = applyIgnores(
+    raw,
+    parseCheckIgnores(await readProposalChecksIgnores(proposal.id))
+  );
   await writeProposalGate(proposal.id, JSON.stringify(result));
   return result;
 }

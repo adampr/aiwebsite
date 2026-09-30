@@ -112,6 +112,16 @@ export type Violation = {
   suggestion?: string;
   overriddenBy: string | null;
   overrideReason: string | null;
+  /**
+   * A persisted per-proposal dismissal (the Checks pane's Ignore). ADDITIVE
+   * field, set only by check-ignores.ts applyIgnores() at store time — a rule
+   * never emits it, and a `gate_json` row stored before this feature simply
+   * lacks it (same non-migration contract as `timedMessage` above). A
+   * dismissed violation still ships in the stored result so the pane can list
+   * it under "Ignored (N)" and restore it; only the pass verdict and the
+   * visible counts stop seeing it.
+   */
+  dismissed?: { by: string; at: string } | null;
 };
 
 export type GateRun = {
