@@ -28,9 +28,14 @@
 
 import {
   planDocumentRevision,
+  reviewDocumentConsolidation,
   reviseSection,
   brainHealthy,
 } from "@/lib/rfp/brain";
+import {
+  findDuplicateClusters,
+  formatDuplicateFindings,
+} from "@/lib/rfp/consolidate";
 import {
   DOC_LABEL,
   LETTER_LABEL,
@@ -497,6 +502,13 @@ export async function POST(
   // this route. It is client-supplied text either way; it is fenced in the
   // prompt, so tampering with it buys nothing `instruction` could not.
   let directive = "";
+  // JSON-only: "consolidate" swaps the DOC_LABEL plan turn for the
+  // whole-document consolidation review (§5.17.16). The multipart branch
+  // never reads it: consolidation carries no attachment.
+  let mode = "";
+  // Set by the client's auto-run after a clean initial draft-all, so the
+  // activity log distinguishes it from a button press. Otherwise unused.
+  let auto = false;
   let attachment: { name: string; text: string } | undefined;
   let attachInjectionHits = 0;
   const ctype = req.headers.get("content-type") ?? "";
@@ -530,7 +542,13 @@ export async function POST(
       attachInjectionHits = extracted.injectionHits;
     }
   } else {
-    let body: { label?: string; instruction?: string; directive?: string };
+    let body: {
+      label?: string;
+      instruction?: string;
+      directive?: string;
+      mode?: string;
+      auto?: boolean;
+    };
     try {
       body = await req.json();
     } catch {
@@ -539,8 +557,20 @@ export async function POST(
     label = String(body.label ?? "");
     instruction = String(body.instruction ?? "").trim();
     directive = String(body.directive ?? "").trim().slice(0, 600);
+    mode = String(body.mode ?? "");
+    auto = body.auto === true;
   }
-  if (instruction.length < 3)
+  // Consolidation sends no instruction (the review reads the document, the
+  // requirements and the scan; any provided text is ignored), so the length
+  // guard applies to every OTHER request exactly as before. The multipart
+  // branch keeps its own early check above.
+  if (mode === "consolidate" && label !== DOC_LABEL)
+    return rfpError(
+      "invalid_request",
+      "Consolidation reviews the whole document.",
+      400
+    );
+  if (mode !== "consolidate" && instruction.length < 3)
     return rfpError("invalid_request", "Say what you want changed.", 400);
 
   const sections: DraftSectionRecord[] = JSON.parse(proposal.sectionsJson || "[]");
@@ -551,6 +581,94 @@ export async function POST(
   // branch must sit BEFORE the section lookup: DOC_LABEL is a sentinel, not
   // a stored label, and the find would 404 it.
   if (label === DOC_LABEL) {
+    // Whole-document consolidation review (§5.17.16): one turn reads the
+    // drafted document, the RFP's extracted requirements and a deterministic
+    // duplicate-passage scan, and returns plan targets the client loops
+    // through the same apply path as a plan. Returns before the plan code so
+    // the plain plan path below stays byte-identical in behavior.
+    if (mode === "consolidate") {
+      // Consolidation compares sections against each other, so one drafted
+      // section has nothing to be consolidated with. Checked BEFORE the
+      // brain health probe: an empty document should not pay for one.
+      const drafted = sections.filter((s) => s.label !== LETTER_LABEL);
+      if (drafted.length < 2)
+        return rfpError(
+          "not_ready",
+          "Draft at least two sections first; consolidation compares sections against each other.",
+          409
+        );
+      if (!(await brainHealthy()))
+        return rfpError(
+          "unavailable",
+          "Tron is not responding. Nothing has been changed.",
+          503
+        );
+      const reqs = await listRequirements(proposal.documentId);
+      const shaped = sections.map((s) => ({
+        label: s.label,
+        title: s.title,
+        paragraphs: s.paragraphs,
+      }));
+      const clusters = findDuplicateClusters(shaped);
+      // Display titles for the findings lines: label + title joined (the
+      // letter is excluded from clusters by contract, but its title still
+      // answers a lookup honestly).
+      const titleByLabel = new Map(
+        sections.map((s) => [
+          s.label,
+          s.label === LETTER_LABEL
+            ? s.title
+            : `${s.label} ${s.title}`.trim(),
+        ])
+      );
+      const findings = formatDuplicateFindings(
+        clusters,
+        (l) => titleByLabel.get(l) ?? l
+      );
+      const { shared } = await knowledgeForUser(user);
+      const review = await reviewDocumentConsolidation(
+        proposal.id,
+        shaped,
+        reqs.map((r) => ({
+          structureLabel: r.structureLabel,
+          text: r.text,
+          kind: r.kind,
+          mandatory: r.mandatory,
+        })),
+        findings,
+        shared
+      );
+      if (!review)
+        return rfpError(
+          "unavailable",
+          "Tron did not return a review. Nothing has been changed.",
+          502
+        );
+
+      await logRfpActivity({
+        actorEmail: user.email,
+        actorAdmin: user.admin,
+        action: "proposal.consolidate_plan",
+        subjectKind: "proposal",
+        subjectId: proposal.id,
+        // Shape only, same discipline as tron_plan: the clusters and the
+        // requirements quote the client's RFP and the drafted prose.
+        meta: {
+          targets: review.targets.length,
+          retitles: review.targets.filter((t) => t.op === "retitle").length,
+          removes: review.targets.filter((t) => t.op === "remove").length,
+          duplicateClusters: clusters.length,
+          requirements: reqs.length,
+          auto,
+        },
+      });
+
+      return rfpOk({
+        plan: { targets: review.targets, note: review.note },
+        duplicateClusters: clusters.length,
+      });
+    }
+
     if (sections.length === 0)
       return rfpError(
         "not_ready",

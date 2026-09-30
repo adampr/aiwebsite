@@ -65,6 +65,7 @@
     "test:rfpvisualgate": "tsx scripts/rfp-visual-gate-tests.ts",
     "test:rfpintake": "tsx scripts/rfp-intake-tests.ts",
     "test:rfptilefit": "tsx scripts/rfp-tile-fit-tests.ts",
+    "test:rfpconsolidate": "tsx scripts/rfp-consolidate-tests.ts",
     "rfp:render-fixture": "tsx scripts/rfp-render-fixture.ts",
     "rfp:tile-metrics": "tsx scripts/rfp-tile-metrics.ts",
     "rfp:reference-contact": "node scripts/rfp-reference-contact.mjs",

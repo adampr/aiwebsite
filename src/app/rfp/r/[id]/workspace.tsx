@@ -86,6 +86,10 @@ import {
   type FindingGroup,
   type FixStep,
 } from "@/lib/rfp/check-fixes";
+// Pure and client-safe by contract (no lookbehinds, no server imports):
+// the canned instruction every consolidation revise call carries
+// (§5.17.16); the review turn itself runs server-side.
+import { CONSOLIDATE_INSTRUCTION } from "@/lib/rfp/consolidate";
 // Pure and client-safe by contract (no lookbehinds, type-only imports).
 import {
   draftBlockSummary,
@@ -849,6 +853,34 @@ export function Workspace({
     skipped: string[];
     failures: string[];
   } | null>(null);
+  // ---- Review and consolidate (§5.17.16): the whole-document round ----
+  // One review turn reads the WHOLE drafted response, its revise targets
+  // run through the same unattended apply path Fix all uses, and the
+  // review runs once more over what changed (two passes at most). Its own
+  // state, never docProposals/docRun/proposal: those belong to the
+  // attended Tron flow and a shared surface would let a stale Use this
+  // land mid-round.
+  const [consolRun, setConsolRun] = useState<{
+    pass: 1 | 2;
+    phase: "review" | "fix";
+    done: number;
+    total: number;
+    current: string;
+  } | null>(null);
+  // Shown after a round until dismissed or the next round starts.
+  const [consolReceipt, setConsolReceipt] = useState<{
+    summary: string;
+    lines: string[];
+  } | null>(null);
+  const consolStopRef = useRef(false);
+  const [consolStopping, setConsolStopping] = useState(false);
+  // draftAll's clean finish raises this flag instead of calling the round
+  // directly: its useCallback closure goes stale across a 25-minute run,
+  // and a deferred timer would race React's commit and passive-effect
+  // tasks (the stale guard would then drop the auto-run silently). The
+  // handoff effect beside consolidateAll consumes the flag once the
+  // guard's inputs are observed clear in committed state.
+  const [consolAutoPending, setConsolAutoPending] = useState(false);
 
   const covered = new Set(sections.map((s) => s.label));
   const undrafted = structure.filter((n) => !covered.has(n.label));
@@ -1342,11 +1374,34 @@ export function Workspace({
       );
     else if (failures.length)
       setNotice(
-        `${failures.length} section${failures.length === 1 ? "" : "s"} did not draft. Use “Draft this” on them to retry.`
+        `${failures.length} section${failures.length === 1 ? "" : "s"} did not draft. Use “Draft this” on them to retry.${
+          initial &&
+          sectionsRef.current.filter((s) => s.label !== LETTER_LABEL)
+            .length >= 2
+            ? " The whole-response review did not run; press Review and consolidate once the sections are in."
+            : ""
+        }`
       );
     else setRun(null);
     // The drafted document now knows its open questions; put them in front.
     setPane("questions");
+    // §5.17.16 auto-trigger: an initial run that finished clean (not
+    // stopped, not stopped-by-busy, zero failures) hands off to the
+    // whole-document consolidation review, once at least two real
+    // sections exist to compare. A pending FLAG, not a timer: no spec
+    // orders an expired 0ms timer against React's commit and passive
+    // effect tasks, so a timer could run against a closure that still
+    // read busy === true and silently drop the round. The handoff effect
+    // below consolidateAll fires only once the guard's inputs are
+    // observed clear in committed state.
+    if (
+      initial &&
+      !stoppedByBusy &&
+      failures.length === 0 &&
+      !stopRef.current &&
+      sectionsRef.current.filter((s) => s.label !== LETTER_LABEL).length >= 2
+    )
+      setConsolAutoPending(true);
   }, [structure, sections, draftOne]);
 
   // Auto-start after ingest handoff (?draft=all), once, then drop the param
@@ -2000,6 +2055,13 @@ export function Workspace({
       label: string;
       instruction: string;
       directive?: string;
+      /** §5.17.16: the whole-document consolidation review. JSON branch
+       *  only; callers pass attach = false (a stale Tron attachment has
+       *  nothing to do with consolidation). */
+      mode?: "consolidate";
+      /** True on the auto-run after an initial draft, so the activity log
+       *  distinguishes it from the button. */
+      auto?: boolean;
     },
     // The Fix all round passes false: a document attached for some earlier
     // Tron request has nothing to do with a compliance fix, and re-sending
@@ -2816,6 +2878,219 @@ export function Workspace({
     }
   }
 
+  /**
+   * Review and consolidate (§5.17.16, owner 2026-09-30: the finished AISC
+   * response carried the same passage in several sections and was cleaned
+   * by hand elsewhere). One review turn reads the WHOLE drafted response
+   * against the RFP's requirements plus a mechanical duplicate scan; its
+   * revise targets run through the same unattended apply path Fix all
+   * uses (reviseAndApply), then the review runs AGAIN over what changed.
+   * Two passes at most; every brain call is sequential (the semaphore is
+   * shared with Twilio voice). Structural targets (retitle, remove) are
+   * never applied here; they become receipt lines pointing at Tron's
+   * pane. Runs auto (after a clean initial draft-all) or from the button.
+   * tronBusy AND busy are held for the whole round and released only in
+   * finally, so neither can stick and no competing surface moves; the
+   * round never touches docProposals/docRun/proposal.
+   */
+  async function consolidateAll(auto: boolean) {
+    if (
+      !proposalId ||
+      consolRun !== null ||
+      fixAllRun !== null ||
+      checking ||
+      tronBusy ||
+      busy ||
+      (run?.active ?? false) ||
+      checksBusySig !== null ||
+      sectionsRef.current.filter((s) => s.label !== LETTER_LABEL).length < 2
+    )
+      return;
+    consolStopRef.current = false;
+    setConsolStopping(false);
+    setConsolReceipt(null);
+    setNotice("");
+    // Names, not labels: displays via liveDisplay, deduped so a section
+    // revised in both passes is one name and one count.
+    const appliedDisplays: string[] = [];
+    const appliedLabels = new Set<string>();
+    // Every applied revision, for the Stopped count.
+    let appliedTotal = 0;
+    const skipped: string[] = [];
+    const failures: string[] = [];
+    let summary: string | null = null;
+    let stopped = false;
+    // True when a review turn failed AFTER revisions landed: the summary
+    // must then say the re-check did not happen.
+    let reviewFailed = false;
+    setTronBusy(true);
+    setBusy(true);
+    try {
+      for (const pass of [1, 2] as const) {
+        // Stop is honored before every POST, the review turn included.
+        if (consolStopRef.current) {
+          stopped = true;
+          break;
+        }
+        setConsolRun({
+          pass,
+          phase: "review",
+          done: 0,
+          total: 0,
+          current: "reading the whole response",
+        });
+        const res = await postTron(
+          {
+            label: DOC_LABEL,
+            instruction: "",
+            mode: "consolidate",
+            ...(auto ? { auto: true } : {}),
+          },
+          false
+        );
+        if (!res || !res.ok) {
+          const rd = res ? await res.json().catch(() => null) : null;
+          const msg: string =
+            rd?.message ??
+            (res
+              ? "Tron did not return a review."
+              : "The server could not be reached.");
+          // The server's "Nothing has been changed." is true for the one
+          // request that failed, but beside pass-1 revisions it reads as a
+          // round-wide lie (the round-12 receipt family). Once anything is
+          // applied, say what actually stands instead.
+          if (appliedTotal > 0) {
+            reviewFailed = true;
+            failures.push(
+              `The second review could not run: ${msg
+                .replace(/\s*Nothing has been changed\.\s*$/, "")
+                .trim()} The sections consolidated above are kept.`
+            );
+          } else {
+            failures.push(`The consolidation review: ${msg}`);
+          }
+          break;
+        }
+        const d = await res.json().catch(() => null);
+        const targets: {
+          label: string;
+          op?: "revise" | "retitle" | "remove";
+          directive?: string;
+        }[] = Array.isArray(d?.plan?.targets) ? d.plan.targets : [];
+        const note = typeof d?.plan?.note === "string" ? d.plan.note : "";
+        if (targets.length === 0) {
+          // Zero targets is the review's ANSWER: the response reads clean.
+          if (pass === 1) {
+            summary =
+              "The whole-response review found nothing to consolidate.";
+            if (note) skipped.push(note);
+          } else {
+            const n = appliedLabels.size;
+            summary = `Consolidated ${n} section${n === 1 ? "" : "s"}; the second review found nothing further.`;
+          }
+          break;
+        }
+        const total = targets.filter(
+          (t) => t.op !== "retitle" && t.op !== "remove"
+        ).length;
+        let done = 0;
+        let appliedThisPass = 0;
+        for (const t of targets) {
+          if (consolStopRef.current) {
+            stopped = true;
+            break;
+          }
+          // Structural targets are never applied unattended; the person
+          // decides them from Tron's pane (§5.17.8 precedent).
+          if (t.op === "retitle" || t.op === "remove") {
+            skipped.push(
+              `${liveDisplay(t.label)}: the review proposed ${
+                t.op === "remove" ? "removing" : "retitling"
+              } this section, which this step never does on its own. Ask Tron from its pane if it should.`
+            );
+            continue;
+          }
+          setConsolRun({
+            pass,
+            phase: "fix",
+            done,
+            total,
+            current: liveDisplay(t.label),
+          });
+          const o = await reviseAndApply(
+            t.label,
+            CONSOLIDATE_INSTRUCTION,
+            String(t.directive ?? "")
+          );
+          if (o.kind === "applied") {
+            appliedTotal++;
+            appliedThisPass++;
+            if (!appliedLabels.has(o.label)) {
+              appliedLabels.add(o.label);
+              appliedDisplays.push(liveDisplay(o.label));
+            }
+            if (o.note) skipped.push(o.note);
+          } else if (o.kind === "skipped") skipped.push(o.line);
+          else failures.push(o.line);
+          done++;
+        }
+        if (stopped) break;
+        // A pass that changed no text would only repeat itself; the
+        // re-review reads only what a pass wrote.
+        if (appliedThisPass === 0) break;
+        if (pass === 2) {
+          const k = appliedLabels.size;
+          summary = `Consolidated ${k} section${k === 1 ? "" : "s"} over 2 passes. The last pass changed text the review has not re-read; run Review and consolidate again to confirm.`;
+        }
+      }
+      if (summary === null) {
+        const n = appliedLabels.size;
+        summary = stopped
+          ? `Stopped after ${appliedTotal} change${appliedTotal === 1 ? "" : "s"}. Run Review and consolidate again to finish.`
+          : n === 0
+            ? "No sections changed."
+            : reviewFailed
+              ? `Consolidated ${n} section${n === 1 ? "" : "s"}; the re-check did not run. Run Review and consolidate again to confirm.`
+              : `Consolidated ${n} section${n === 1 ? "" : "s"}.`;
+      }
+      const lines: string[] = [];
+      if (appliedDisplays.length) {
+        const named = appliedDisplays.slice(0, 8);
+        const more = appliedDisplays.length - named.length;
+        lines.push(
+          `Consolidated: ${named.join(", ")}${more > 0 ? ` and ${more} more` : ""}`
+        );
+      }
+      lines.push(...skipped, ...failures);
+      setConsolReceipt({ summary, lines });
+    } finally {
+      setTronBusy(false);
+      setBusy(false);
+      setConsolRun(null);
+      setConsolStopping(false);
+    }
+  }
+  // The draft-all handoff. Dep-less on purpose: it re-evaluates after every
+  // commit, sees only COMMITTED state (a timer could observe neither the
+  // busy release nor a fresh closure), and consumes the flag exactly once
+  // the entry guard's inputs read clear. consolidateAll re-checks the same
+  // guard on entry, so a race with a click can never double-start.
+  useEffect(() => {
+    if (!consolAutoPending) return;
+    if (
+      busy ||
+      tronBusy ||
+      checking ||
+      (run?.active ?? false) ||
+      fixAllRun !== null ||
+      checksBusySig !== null ||
+      consolRun !== null
+    )
+      return;
+    setConsolAutoPending(false);
+    void consolidateAll(true);
+  });
+
   // Dismissed findings leave the VISIBLE sets (and with them the summary
   // sentence and counts); the server already recomputed `passed` over the
   // survivors at store time, so a fully-ignored run reads as passing.
@@ -2883,9 +3158,47 @@ export function Workspace({
           </p>
         )}
         {genError && !notice && <p className="mb-3 text-sm">{genError}</p>}
+        {/* The consolidation receipt (§5.17.16): what the round changed,
+            what it left for the person, and why. In the runbar, not a
+            pane: the round is started from here and on a phone every
+            pane is hidden. Cleared by Dismiss or by the next round. */}
+        {consolReceipt && !consolRun && (
+          <div className="mb-3 text-sm" role="status">
+            <p>
+              {consolReceipt.summary}{" "}
+              <button
+                type="button"
+                className="linklike"
+                onClick={() => setConsolReceipt(null)}
+              >
+                Dismiss
+              </button>
+            </p>
+            {consolReceipt.lines.map((line, i) => (
+              <p key={i} className="mt-1 text-xs text-faint">
+                {line}
+              </p>
+            ))}
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            {run ? (
+            {consolRun ? (
+              <p className="text-sm" role="status" aria-live="polite">
+                {consolRun.phase === "review" ? (
+                  <>
+                    Reviewing the whole response (pass {consolRun.pass} of 2)
+                  </>
+                ) : (
+                  <>
+                    Consolidating{" "}
+                    <span className="mono">{consolRun.current}</span> (
+                    {consolRun.done + 1} of {consolRun.total}, pass{" "}
+                    {consolRun.pass} of 2)
+                  </>
+                )}
+              </p>
+            ) : run ? (
               <p className="text-sm" role="status" aria-live="polite">
                 {run.active ? (
                   <>
@@ -2945,6 +3258,40 @@ export function Workspace({
                     : "Draft the cover letter"}
               </button>
             ) : null}
+            {/* Review and consolidate (§5.17.16): the on-demand round.
+                Needs two real sections to compare; the auto-run after an
+                initial draft-all goes through the same function. */}
+            {draftedCount >= 2 && (
+              <button
+                type="button"
+                className="btn btn--primary"
+                disabled={
+                  consolRun !== null ||
+                  fixAllRun !== null ||
+                  checking ||
+                  tronBusy ||
+                  busy ||
+                  (run?.active ?? false) ||
+                  checksBusySig !== null
+                }
+                onClick={() => void consolidateAll(false)}
+              >
+                Review and consolidate
+              </button>
+            )}
+            {consolRun && (
+              <button
+                type="button"
+                className="btn btn--text"
+                disabled={consolStopping}
+                onClick={() => {
+                  consolStopRef.current = true;
+                  setConsolStopping(true);
+                }}
+              >
+                {consolStopping ? "Stopping after this section" : "Stop"}
+              </button>
+            )}
             <button
               type="button"
               className="btn btn--text"
@@ -2958,7 +3305,11 @@ export function Workspace({
                 sections.length === 0 ||
                 checksBusySig !== null ||
                 // The round runs the checks itself between its passes.
-                fixAllRun !== null
+                fixAllRun !== null ||
+                // A verdict stored mid-consolidation describes text the
+                // round is about to rewrite (atRev would mark it stale,
+                // but a knowingly-doomed run is still a wasted read).
+                consolRun !== null
               }
               onClick={() => {
                 void runChecks();
@@ -3062,6 +3413,17 @@ export function Workspace({
           <div className="panel mt-4">
             {pane === "questions" && (
               <>
+                {/* Why every Answer control is gray for the next while: the
+                    consolidation round holds `busy` so a woven answer cannot
+                    land mid-rewrite and trip the staleness guard. Without
+                    this line the pane invites answering with dead buttons
+                    (the e30d4623 rule: never gate a control silently). */}
+                {consolRun !== null && (
+                  <p className="text-xs text-faint mb-4" role="status">
+                    Tron is consolidating the response; answering opens up
+                    when it finishes.
+                  </p>
+                )}
                 {/* Provenance, not a question: never in the queue, never in
                     the open count, never blocks the done state. Renders in
                     both the current-question and done branches (a pre-export
@@ -3399,7 +3761,8 @@ export function Workspace({
                           disabled={
                             checking ||
                             checksBusySig !== null ||
-                            fixAllRun !== null
+                            fixAllRun !== null ||
+                            consolRun !== null
                           }
                           onClick={() => {
                             void runChecks();
@@ -3483,7 +3846,8 @@ export function Workspace({
                           disabled={
                             checking ||
                             checksBusySig !== null ||
-                            fixAllRun !== null
+                            fixAllRun !== null ||
+                            consolRun !== null
                           }
                           onClick={() => void runChecks()}
                         >

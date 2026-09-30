@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17.16 RFP WHOLE-DOCUMENT CONSOLIDATION REVIEW (owner: the AISC response carried heavy duplication and had to be cleaned by hand; after drafting all sections there must be an automatic step that reviews the document as a whole, consolidates, and re-checks it against the RFP's requirements and the way the RFP says the response should look). New brain turn `reviewDocumentConsolidation` (fenced requirements + deterministic duplicate scan + whole doc, 90s, same select-never-author filter as the plan turn), new pure client-safe `src/lib/rfp/consolidate.ts` (CONSOLIDATE_INSTRUCTION, findDuplicateClusters inverted-index shingle scan, formatDuplicateFindings, requirementLines), `mode:"consolidate"` on the section POST (DOC_LABEL only, JSON only, instruction guard skipped for this mode, 409 under 2 non-letter sections), new activity action `proposal.consolidate_plan` (shape-only meta incl. `auto`), and the client `consolidateAll` 2-pass apply/re-review round (auto after a clean initial draft-all; "Review and consolidate" button; structural targets never auto-applied; tronBusy+busy held; Stop + honest receipt). `npm run test:rfpconsolidate`. No schema, env or migration change; no new route.
+
 Last verified against code: 2026-09-30 §5.17.15 RFP STAT FIGURES NEVER WRAP (owner: "in drafts, stats should never wrap to 2 lines, either reduce the font for them all in the stat section to fit, or reduce the amount of text"; a live proposal's "98.15%" CSAT tile broke after the 5 on screen). New pure client-safe `src/lib/rfp/tile-fit.ts` is the ONE fit for a stat-tile row: Archivo Bold's advance table for every real glyph the face carries (generated from `public/brand/fonts/Archivo-Bold.ttf` by `npm run rfp:tile-metrics`), `tileFitEm`/`tileValuePx` (one size for the whole row, the design size down to whatever fits, no render floor) and the draft contract `valueFitsTile` (a NEW value must be all Archivo glyphs and fit a four-across file tile at 18px, so words that are not the figure go in the label). Screen: `.rfpdoc-tile` is an inline-size container and the value is `white-space: nowrap` at `min(--rfpdoc-tile-design, 100cqi / --rfpdoc-tile-em)`, the design size a registered `@property` so it still tracks the sheet, plus a `unicode-range` Archivo face serving the 90 glyphs Google's files lack from the same TTF; Word and PDF call the same `tileValuePx` (the local pdfkit measurer is gone), the PDF value is set with `lineBreak: false`, and Word's half-points are floored. `parseStats` and `buildServiceStatsBlock` refuse a too-wide value (block drop reason `value-too-wide`, skipped tiles counted as `visualsTooWide` on `proposal.generate`); stored values are never refused. New `npm run test:rfptilefit`. No schema, env or migration change and no new route (the generate route's activity meta gains one field).
 
 Last verified against code: 2026-09-30 §5.17.14 RFP CHECKS: GROUPED ROWS, STALE NOT WIPED, FIX ALL REMAINING (owner: "give an option to fix all the remaining that are not ignored"; one A6 phrase in two paragraphs showed as two identical rows; one Fix it cleared every other finding so Run checks had to be pressed again; "a refute round with automatic corrections before a final Run Checks where a human is involved"). The Checks pane renders ONE row per (ruleId, whitespace-collapsed message) through the new pure `groupFindings` in `src/lib/rfp/check-fixes.ts` ("in N places" when a group has several members; blocking groups first; counts are row counts), and a row's Fix it runs `groupFixPlan` (Tron steps collapse to one: the shared label, or `DOC_LABEL` when members span two labels or any resolved there; the instruction names the message once and every excerpt via the new `fixInstructionFor`, which `fixInstruction` now wraps byte-for-byte). `POST /api/rfp/proposals/[id]/checks` also takes `{op, sigs: string[]}` (1..50 distinct, each <= 1200 chars; all or nothing under the lock; one activity row with `meta.count`); the single-`sig` shape is unchanged. `GateResult` gains additive `atRev` (stamped by BOTH store sites before `applyIgnores`; kept by the checks route's re-derivation). Content writes NO LONGER null `gate_json`/`gate_ran_at` (`src/lib/rfp/db.ts`: `writeProposalSections`, `writeProposalStructureOp`, `writeProposalPricing`, `completeGeneration`); the rev bump plus `atRev` is what makes a stored verdict stale, and page.tsx passes `gateStale` when a stored run's `atRev` is missing or differs from the row's rev (rows stored before `atRev` existed therefore show the stale banner once after this deploy, by design, until the next run stamps them). The workspace keeps a shown result on every content write and marks it stale (`markGateStale`, at the nine former `setGateResult(null)` sites plus a landed draft and another tab's landed sections) with "The draft changed since these checks ran" and "Run the checks again". New "Fix all remaining (N)" round: auto-fix pass, the rules re-run, one more pass over the survivors, the final run shown; at most two fix passes, strictly sequential brain calls, never a removal or a retitle, a C1 section rebuilt at most once per round, B7 and pricing/structural findings left for the person, a Stop, a receipt. No migration, no schema, no env change (`atRev` lives inside the existing `gate_json`).
@@ -11079,6 +11081,124 @@ never too wide, a stored legacy too-wide value round-trips), and the fixture
 gains a grounded four-across row that steps down to 25px plus a stored legacy
 four-across row ("99.9% remotely") that sets at 14px on one line;
 `rfp:render-fixture` renders both.
+
+#### 5.17.16 Whole-document consolidation review (2026-09-30)
+
+Owner ask: the AISC response carried heavy duplication that had to be cleaned
+by hand outside the workspace. Sections are drafted one at a time, each
+seeing only its own requirements, so nothing ever read the finished document
+as a whole. Now an automatic step does: after a full first draft the client
+reviews the response AS A WHOLE, consolidates duplicated content, and
+re-checks the result against the RFP's requirements; the same step runs on
+demand from a "Review and consolidate" button.
+
+**What the review reads.** One brain turn,
+`reviewDocumentConsolidation(proposalId, sections, requirements,
+duplicateFindings, facts)` in `src/lib/rfp/brain.ts`, reads three inputs,
+every one fenced (all derive from the client's untrusted RFP): (1) the RFP's
+extracted requirements (`listRequirements(proposal.documentId)` rendered by
+`requirementLines()` — mandatory first, text sliced to 200 chars per line,
+whole block capped at 9000 chars without cutting mid-line, a
+`- (and N more requirements)` tail when cut — fenced at 9,500); (2) a
+deterministic duplicate-passage scan pre-formatted by
+`formatDuplicateFindings()` (one line per cluster naming the sections and a
+160-char excerpt, whole-line capped at 2400; omitted when the scan found
+nothing), fenced at 2,600; (3) the whole drafted document via
+`budgetedDocumentText()`, fenced at 48,000; plus the plan turn's 40-fact
+`FACTS YOU MAY RELY ON` slice. The reviewer selects sections and writes ONE
+directive each, rewrites nothing; duplication guidance (each point made once,
+in the section whose requirements ask for it; when two sections repeat each
+other, target BOTH — one trims, one keeps and absorbs anything unique);
+conformance guidance (each section answers its own requirements the way the
+RFP framed them); the plan turn's closed op set (revise default; retitle with
+heading; remove only for a wholly redundant section, naming which section
+covers it; the letter only ever takes revise); the verbatim label-echo rule;
+the standing prohibitions; zero targets + note when the response reads clean;
+the same JSON reply shape as `planDocumentRevision`. Envelope: sessionId
+`rfpconsol_<proposalId>`, promptId `newId("rfpconsol")`, timeout 90_000 — the
+route is synchronous and the edge closes at 100s; never raise the timeout
+without moving to 202 + poll. Output filtered by the same select-never-author
+pass as the plan turn.
+
+**`src/lib/rfp/consolidate.ts` (new, pure, CLIENT-SAFE — imported by
+workspace.tsx: no lookbehinds, no fs, imports only letter.ts).** Exports
+`CONSOLIDATE_INSTRUCTION` (the canned instruction every consolidation revise
+call carries), `findDuplicateClusters(sections)` (deterministic
+cross-section near-duplicate scan: letter excluded; NFKC/lowercase/
+letters-digits-spaces normalization; paragraphs under 12 words skipped; word
+8-gram shingle sets; a pair is duplicate at containment
+|A∩B|/min(|A|,|B|) >= 0.5 AND the sections differ; candidates from an
+inverted shingle index, never blind O(n²); union-found into at most 12
+clusters, largest first, each reporting distinct labels in document order,
+members, and the first member's 160-char ORIGINAL-text excerpt),
+`formatDuplicateFindings(clusters, displayTitle)` and
+`requirementLines(reqs, budget = 9000)`. In `brain.ts` (not this module),
+`budgetedDocumentText` and `filterPlanTargets` are the plan turn's own
+arithmetic and filtering factored out of `planDocumentRevision` unchanged
+(PLAN_FENCE_MAX 48_000 at module scope; the plan turn's behavior is
+byte-identical).
+
+**Route.** The section POST's JSON branch takes optional
+`mode: "consolidate"` + `auto` (multipart never reads them). `label` must be
+DOC_LABEL (400 otherwise); the instruction >= 3 guard is skipped for this
+mode only (the review takes no instruction). Inside the DOC_LABEL branch,
+before `brainHealthy`: fewer than 2 non-letter drafted sections → 409
+not_ready ("Draft at least two sections first; consolidation compares
+sections against each other."). Null review → 502. Activity: new closed-union
+action `proposal.consolidate_plan`, meta shape-only
+`{ targets, retitles, removes, duplicateClusters, requirements, auto }`
+(`auto: true` marks the auto-run). Response
+`rfpOk({ plan: { targets, note }, duplicateClusters })`. The plain plan path
+and every other branch are unchanged.
+
+**Client round (workspace.tsx `consolidateAll(auto)`).** Client-driven and
+sequential like draft-all and Fix all (the brain semaphore has 2 slots shared
+with Twilio voice). Entry guard returns silently on: no proposalId, a round
+already running, Fix all running, `checking`, `tronBusy`, `busy`, a draft run
+active, `checksBusySig`, or fewer than 2 non-letter drafted sections. Holds
+`tronBusy` AND `busy` for the whole round, released only in `finally`; owns
+`consolRun`/`consolReceipt`/`consolStopRef`/`consolStopping` and never
+touches `docProposals`/`docRun`/`proposal`. Up to 2 passes: review (POST with
+mode consolidate, attach=false), then zero targets end CLEAN ("The
+whole-response review found nothing to consolidate." on pass 1 with the plan
+note as a receipt line; "Consolidated N sections; the second review found
+nothing further." on pass 2); otherwise each target sequentially — structural
+targets (retitle/remove) are NEVER applied unattended and become receipt
+lines pointing at Tron's pane; revise targets go through
+`reviseAndApply(label, CONSOLIDATE_INSTRUCTION, directive)` (applyProposal
+underneath: staleness guard, rev CAS, the flash). A pass that applied 0
+revisions breaks; a pass 2 that applied > 0 says the last pass changed text
+the review has not re-read. Stop is checked before every POST; a stopped
+round's receipt starts "Stopped after N changes. " — applied revisions are
+already written and the receipt says so.
+
+**Triggers.** AUTO: at the end of a draft-all run that was `initial` (began
+with zero non-letter sections), was not stopped, not stopped-by-busy, had
+zero failures, and left >= 2 non-letter sections — draftAll raises a
+`consolAutoPending` flag and a dep-less effect beside `consolidateAll`
+consumes it once the entry guard's inputs read clear in COMMITTED state (a
+deferred timer raced React's commit and passive-effect tasks and could
+silently drop the round against a stale closure; refuter MAJOR). While the
+round runs, the Questions pane says why every Answer control is gray, and
+all three Run-checks buttons (runbar, Questions pane, Checks stale banner)
+freeze (a verdict stored mid-round describes text the round is rewriting;
+the export path's own checks run on a failing draft is pre-existing and
+stays live). A review turn that fails AFTER pass-1 revisions
+landed must not surface the server's "Nothing has been changed." sentence;
+the receipt says the consolidated sections are kept and the re-check did
+not run. MANUAL:
+"Review and consolidate" beside "Draft all" in the always-sticky runbar
+(round 16), visible at >= 2 non-letter drafted sections. Narration: review →
+"Reviewing the whole response (pass P of 2)"; fix → "Consolidating <section>
+(D+1 of T, pass P of 2)", names via liveDisplay (reserved labels never
+surface). Receipt: role="status" below the notice line — summary, one
+"Consolidated: <names>" line (8 names then "and K more"), skipped and
+failure lines verbatim, hairline-chip Dismiss.
+
+`npm run test:rfpconsolidate` (`scripts/rfp-consolidate-tests.ts`, pure) pins
+the scan (0.5 boundary, letter exclusion, <12-word skip, cluster merge, cap,
+determinism, an 80×12 scale run) and both formatters' budgets. No schema, env
+or migration change; no new route.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 
