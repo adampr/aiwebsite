@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { collectOpenQuestions, snapGapQuestions } from "../src/lib/rfp/gaps";
 import {
   asksAboutReferences,
+  composeReferencesParagraphs,
   isReferencesGapQuestion,
   isReferencesRefusal,
   rankReferenceCandidates,
@@ -24,10 +25,30 @@ import {
   referencesGapWhy,
   sectionMentionsReferences,
   sectionPresentsReferences,
+  statesEtiquette,
+  stripReferencesIntro,
   unansweredReferencesAsks,
   withReferenceEtiquette,
   withReferencesGap,
 } from "../src/lib/rfp/references-ask";
+import {
+  applyReferencesAnswer,
+  carryReferencesBlock,
+  closeReferencesQuestions,
+  referencesOtherText,
+  reopenReferencesQuestion,
+} from "../src/lib/rfp/references-answer";
+import { LIMITS, PARAGRAPH_CAP, sanitizeStoredBlocks, type DraftBlock } from "../src/lib/rfp/draft-blocks";
+import type { DraftSectionRecord } from "../src/app/api/rfp/documents/[id]/generate/route";
+import {
+  readReferenceEntries,
+  readReferenceEntry,
+  REFERENCES_INTRO_SENTENCE,
+  REFERENCE_CARD_LABELS,
+  referenceCardTable,
+  referencesBlockStrings,
+  type ReferenceEntry,
+} from "../src/lib/rfp/references-block";
 import {
   isCanonicalReferencesQuestion,
   referencesCountWord,
@@ -246,20 +267,29 @@ check(
   rankReferenceCandidates(held, "Wellness, NFP is a not-for-profit behavioral health care provider.").map((c) => c.organization),
   ["Birch Clinic", "Acme Freight", "Cedar School"]
 );
+// The closing line of every why: it points at the picker (§5.17.10), where
+// contacts on file are prefilled and kept back on `keep`.
+const WHY_TAIL =
+  "Pick the references to list and check each contact; details on file are filled in for you, and new or corrected contacts are kept on file when you say so.";
 check(
   "why states the ask, the holdings and the shortlist",
   referencesGapWhy(ask!, held, "a nonprofit clinic"),
-  'The RFP asks: "Provide two references for similar work."\nThe knowledge base holds 3 client references, none with contact details on file and none cleared to use without asking the client first.\nClosest by segment: Birch Clinic (nonprofit healthcare, client since June 2010); Acme Freight (export and logistics, client since 2014); Cedar School (education).\nNothing about references is written until this is answered. Type each organization, contact name, title, phone and email here; details on file are not filled in for you.'
+  `The RFP asks: "Provide two references for similar work."\nThe knowledge base holds 3 client references, none with contact details on file and none cleared to use without asking the client first.\nClosest by segment: Birch Clinic (nonprofit healthcare, client since June 2010); Acme Freight (export and logistics, client since 2014); Cedar School (education).\n${WHY_TAIL}`
 );
 check(
   "an empty knowledge base says so",
   referencesGapWhy(ask!, [], ""),
-  'The RFP asks: "Provide two references for similar work."\nThe knowledge base holds no client references.\nNothing about references is written until this is answered. Type each organization, contact name, title, phone and email here; details on file are not filled in for you.'
+  `The RFP asks: "Provide two references for similar work."\nThe knowledge base holds no client references.\n${WHY_TAIL}`
 );
 check(
   "a failed read still yields a why",
   referencesGapWhy(ask!, null, ""),
-  'The RFP asks: "Provide two references for similar work."\nNothing about references is written until this is answered. Type each organization, contact name, title, phone and email here; details on file are not filled in for you.'
+  `The RFP asks: "Provide two references for similar work."\n${WHY_TAIL}`
+);
+check(
+  "the why no longer says details are not filled in",
+  referencesGapWhy(ask!, held, "").includes("not filled in"),
+  false
 );
 {
   const many = Array.from({ length: 40 }, (_, i) => ({
@@ -413,7 +443,7 @@ check("a title about staff references is nothing", referencesAsk([], "Employee R
 check(
   "why reads sensibly when the match is the title",
   referencesGapWhy({ count: null, requirement: "6. References", fromTitle: true }, null, ""),
-  'The RFP has a section titled "6. References".\nNothing about references is written until this is answered. Type each organization, contact name, title, phone and email here; details on file are not filled in for you.'
+  `The RFP has a section titled "6. References".\n${WHY_TAIL}`
 );
 
 // ---- refuter round: presenting needs POSITIVE evidence -------------------------
@@ -559,6 +589,271 @@ check(
   withReferenceEtiquette(["We decline at this stage."], "6\nReferences", { answered: true, refusal: true }),
   ["We decline at this stage.", REFERENCE_ETIQUETTE_SENTENCE]
 );
+
+// ---- the references block (references-block.ts, §5.17.10) ---------------------
+// Invented organizations and people throughout; a real reference never
+// appears in a test.
+
+const FULL = {
+  referenceId: "ref_harbor_light_dental",
+  organization: "  Harbor   Light Dental ",
+  relevance: "Healthcare,  multi-site",
+  contactName: " Priya  Anand ",
+  contactTitle: "Practice   Manager",
+  phone: " 312-555-0142 ",
+  email: "panand@example.org ",
+};
+const FULL_READ: ReferenceEntry = {
+  referenceId: "ref_harbor_light_dental",
+  organization: "Harbor Light Dental",
+  relevance: "Healthcare, multi-site",
+  contactName: "Priya Anand",
+  contactTitle: "Practice Manager",
+  phone: "312-555-0142",
+  email: "panand@example.org",
+};
+check("a full entry reads, trimmed and squashed", readReferenceEntry(FULL), FULL_READ);
+check(
+  "a new organization has a null id and may leave title and phone empty",
+  readReferenceEntry({ organization: "Cobalt Ridge Credit Union", contactName: "Theo Marsh", email: "tmarsh@example.net" }),
+  {
+    referenceId: null,
+    organization: "Cobalt Ridge Credit Union",
+    relevance: "",
+    contactName: "Theo Marsh",
+    contactTitle: "",
+    phone: "",
+    email: "tmarsh@example.net",
+  }
+);
+check("missing organization", readReferenceEntry({ ...FULL, organization: "  " }), null);
+check("missing contact name", readReferenceEntry({ ...FULL, contactName: undefined }), null);
+check("neither phone nor email", readReferenceEntry({ ...FULL, phone: "", email: " " }), null);
+check("phone alone is enough", readReferenceEntry({ ...FULL, email: "" })?.email, "");
+check("malformed email", readReferenceEntry({ ...FULL, email: "panand-at-example.org" }), null);
+check("bad referenceId chars", readReferenceEntry({ ...FULL, referenceId: "ref_harbor light; drop" }), null);
+check("a non-string referenceId", readReferenceEntry({ ...FULL, referenceId: 7 }), null);
+check("over-length organization", readReferenceEntry({ ...FULL, organization: "x".repeat(121) }), null);
+check("over-length contact title", readReferenceEntry({ ...FULL, contactTitle: "x".repeat(81) }), null);
+check("over-length phone", readReferenceEntry({ ...FULL, phone: "1".repeat(41) }), null);
+check("not an object", readReferenceEntry("Harbor Light Dental"), null);
+check("zero entries", readReferenceEntries([]), null);
+check("eleven entries", readReferenceEntries(Array.from({ length: 11 }, () => FULL)), null);
+check("ten entries", readReferenceEntries(Array.from({ length: 10 }, () => FULL))?.length, 10);
+check("one bad entry fails the array", readReferenceEntries([FULL, { ...FULL, contactName: "" }]), null);
+check("not an array", readReferenceEntries({ references: [FULL] }), null);
+
+{
+  const t = referenceCardTable(FULL_READ, 2);
+  check("card head", t.columns.map((c) => c.header), ["Reference 2", ""]);
+  check("card shape", [t.kind, t.caption, t.emphasizeLastRow], ["table", null, false]);
+  check(
+    "the four labelled rows in template order",
+    t.rows,
+    [
+      [REFERENCE_CARD_LABELS[0], "Harbor Light Dental"],
+      [REFERENCE_CARD_LABELS[1], "Healthcare, multi-site"],
+      [REFERENCE_CARD_LABELS[2], "Priya Anand, Practice Manager"],
+      [REFERENCE_CARD_LABELS[3], "312-555-0142 · panand@example.org"],
+    ]
+  );
+  check("labels are the template's", [...REFERENCE_CARD_LABELS], [
+    "Organization",
+    "Industry / relevance",
+    "Contact name & title",
+    "Phone & email",
+  ]);
+  const nameOnly = referenceCardTable({ ...FULL_READ, contactTitle: "", email: "", relevance: "" }, 1);
+  check("name only, phone only, default relevance", nameOnly.rows.map((r) => r[1]), [
+    "Harbor Light Dental",
+    "Comparable client",
+    "Priya Anand",
+    "312-555-0142",
+  ]);
+  const emailOnly = referenceCardTable({ ...FULL_READ, phone: "" }, 3);
+  check("email only", emailOnly.rows[3], [REFERENCE_CARD_LABELS[3], "panand@example.org"]);
+  check("numbered from the caller's n", emailOnly.columns[0].header, "Reference 3");
+}
+{
+  const strings = referencesBlockStrings([FULL_READ, { ...FULL_READ, organization: "Cobalt Ridge Credit Union", phone: "" }]);
+  check("block strings: two cards, head cells and every row cell", strings.length, 2 * (2 + 8));
+  for (const cell of [
+    "Reference 1",
+    "Reference 2",
+    "Harbor Light Dental",
+    "Cobalt Ridge Credit Union",
+    "Priya Anand, Practice Manager",
+    "312-555-0142 · panand@example.org",
+    "panand@example.org",
+    ...REFERENCE_CARD_LABELS,
+  ])
+    check(`block strings cover: ${cell}`, strings.includes(cell), true);
+  check("block strings carry no em dash", strings.some((s) => s.includes("—")), false);
+}
+
+// ---- statesEtiquette (the answer route composes the intro with it) -------------
+
+check("etiquette: the sentence itself", statesEtiquette(REFERENCE_ETIQUETTE_SENTENCE), true);
+check("etiquette: D3's phrase in other words", statesEtiquette("References are contacted as a final step before contract."), true);
+check(
+  "etiquette: respect for clients' time, near the noun",
+  statesEtiquette("Out of respect for our clients' time, reference calls come last."),
+  true
+);
+check("etiquette: respect alone, no reference", statesEtiquette("Out of respect for our clients' time we keep meetings short."), false);
+check("etiquette: absent", statesEtiquette("Our references are Harbor Light Dental and Cobalt Ridge Credit Union."), false);
+check("etiquette: empty", statesEtiquette(""), false);
+
+// ---- refuter round on §5.17.10 ------------------------------------------------
+
+// A typed dash never reaches a card: rule D1 BLOCKs on an em dash.
+check(
+  "em dash, en dash and horizontal bar in an entry become plain hyphens",
+  readReferenceEntry({ ...FULL, contactTitle: "Director \u2014 IT", relevance: "K\u201312 education", organization: "Harbor \u2015 Light" }),
+  { ...FULL_READ, contactTitle: "Director - IT", relevance: "K-12 education", organization: "Harbor - Light" }
+);
+check(
+  "a dash-cleaned entry is stable on a second read",
+  readReferenceEntry(readReferenceEntry({ ...FULL, contactTitle: "Director \u2014 IT" })),
+  { ...FULL_READ, contactTitle: "Director - IT" }
+);
+
+// The composer: ONE intro, the etiquette exactly once, never a 13th paragraph.
+const INTRO_FULL = `${REFERENCES_INTRO_SENTENCE} ${REFERENCE_ETIQUETTE_SENTENCE}`;
+check("composer: an empty section gets the intro with the etiquette", composeReferencesParagraphs([], ""), [INTRO_FULL]);
+check("composer: appended as a new last paragraph", composeReferencesParagraphs(["a", "b"], "title"), ["a", "b", INTRO_FULL]);
+check(
+  "composer: the etiquette stated elsewhere is not repeated",
+  composeReferencesParagraphs(["a"], `Letter\n${REFERENCE_ETIQUETTE_SENTENCE}`),
+  ["a", REFERENCES_INTRO_SENTENCE]
+);
+check(
+  "composer: the etiquette stated in the section's own text is not repeated",
+  composeReferencesParagraphs(["References are called as a final step before contract."], ""),
+  ["References are called as a final step before contract.", REFERENCES_INTRO_SENTENCE]
+);
+{
+  const once = composeReferencesParagraphs(["a"], "");
+  check("composer: a second pass adds nothing (no second intro)", composeReferencesParagraphs(once, ""), once);
+  check("composer: a second pass returns the same array", composeReferencesParagraphs(once, "") === once, true);
+  check(
+    "composer: an intro whose etiquette was lost gets the sentence back ON THAT paragraph",
+    composeReferencesParagraphs([REFERENCES_INTRO_SENTENCE, "b"], ""),
+    [INTRO_FULL, "b"]
+  );
+  const twelve = Array.from({ length: PARAGRAPH_CAP }, (_, i) => `p${i}.`);
+  const folded = composeReferencesParagraphs(twelve, "");
+  check("composer: at the paragraph cap the intro is folded onto the last paragraph", [folded.length, folded[PARAGRAPH_CAP - 1]], [PARAGRAPH_CAP, `p${PARAGRAPH_CAP - 1}. ${INTRO_FULL}`]);
+  check("composer: a folded intro is recognised on the next pass", composeReferencesParagraphs(folded, ""), folded);
+  check("strip: the composed paragraph is removed", stripReferencesIntro(["a", INTRO_FULL]), ["a"]);
+  check("strip: the bare intro is removed", stripReferencesIntro([REFERENCES_INTRO_SENTENCE]), []);
+  check("strip: a folded intro is cut off its paragraph, etiquette included", stripReferencesIntro(folded), twelve);
+  check("strip: a folded bare intro is cut off too", stripReferencesIntro([`Last. ${REFERENCES_INTRO_SENTENCE}`]), ["Last."]);
+  const own = ["Our clients speak for us.", "b"];
+  check("strip: nothing to strip returns the same array", stripReferencesIntro(own) === own, true);
+  check("strip is the inverse of compose", stripReferencesIntro(composeReferencesParagraphs(own, "")), own);
+}
+
+// F5: an answer closes EVERY references question, and none reopens.
+const MODEL_Q = "Which two clients can serve as references?";
+const OTHER_Q = "What is the after-hours escalation path?";
+check(
+  "answered elsewhere: a model-worded references gap is dropped, other gaps stay",
+  withReferencesGap(
+    [{ question: MODEL_Q, why: "m" }, { question: OTHER_Q, why: "o" }],
+    { ask: { count: 2, requirement: "Provide two references." }, paragraphs: ["a"], otherSections: [], openQuestions: [], why: "w", answeredElsewhere: true }
+  ).map((g) => g.question),
+  [OTHER_Q]
+);
+{
+  const gaps = [{ question: OTHER_Q, why: "o" }];
+  check(
+    "answered elsewhere: nothing to drop returns the same array",
+    withReferencesGap(gaps, { ask: { count: 2, requirement: "r" }, paragraphs: [], otherSections: [], openQuestions: [], why: "w", answeredElsewhere: true }) === gaps,
+    true
+  );
+}
+
+const rec = (over: Partial<DraftSectionRecord> & { label: string }): DraftSectionRecord => ({
+  title: "Section",
+  paragraphs: [],
+  cites: [],
+  gaps: [],
+  generatedBy: "llm",
+  updatedAt: "then",
+  ...over,
+});
+const E1: ReferenceEntry = FULL_READ;
+const E2: ReferenceEntry = { ...FULL_READ, referenceId: null, organization: "Cobalt Ridge Credit Union", contactName: "Theo Marsh", email: "tmarsh@example.org" };
+const callout = (id: string, after: number): DraftBlock => ({ kind: "callout", title: null, body: id, tone: "neutral", id, after, cites: ["f"], generatedBy: "llm" });
+{
+  const closed = closeReferencesQuestions(rec({ label: "2.", gaps: [{ question: REFERENCES_GAP_QUESTION(3), why: "" }, { question: MODEL_Q, why: "" }, { question: OTHER_Q, why: "" }] }));
+  check("close: the canonical question at another count and a model-worded one both close", closed.gaps.map((g) => g.question), [OTHER_Q]);
+  const untouched = rec({ label: "3.", gaps: [{ question: OTHER_Q, why: "" }] });
+  check("close: a record with no references question is the same object", closeReferencesQuestions(untouched) === untouched, true);
+
+  const target = rec({
+    label: "7.",
+    title: "References",
+    paragraphs: ["We serve comparable organizations."],
+    cites: ["fact_1"],
+    gaps: [{ question: REFERENCES_GAP_QUESTION(2), why: "w" }, { question: MODEL_Q, why: "m" }, { question: OTHER_Q, why: "o" }],
+    blocks: [callout("v_000000a1", 0)],
+  });
+  const first = applyReferencesAnswer(target, "Proposal", [E1, E2], { now: "now" });
+  const block = first.section.blocks?.[1];
+  check("answer: paragraphs gain the composed intro", first.section.paragraphs, ["We serve comparable organizations.", INTRO_FULL]);
+  check("answer: every references question closes on the target", first.section.gaps.map((g) => g.question), [OTHER_Q]);
+  check("answer: the block is last, anchored after the last paragraph", [first.section.blocks?.length, block?.kind, block?.after, block?.origin, first.trimmed], [2, "references", 2, "references", false]);
+  check("answer: stamp, clock, and an llm section with prose stays llm with its cites", [first.section.referencesAnswered, first.section.updatedAt, first.section.generatedBy, first.section.cites], [true, "now", "llm", ["fact_1"]]);
+  check("answer: what lands reads back untouched", sanitizeStoredBlocks(JSON.parse(JSON.stringify(first.section.blocks)), 2), first.section.blocks);
+
+  const empty = applyReferencesAnswer(rec({ label: "7." }), "", [E1]).section;
+  check("answer: a section the drafter left EMPTY becomes human (rule A5)", [empty.generatedBy, empty.paragraphs, empty.cites], ["human", [INTRO_FULL], []]);
+
+  const full = rec({ label: "7.", paragraphs: ["a"], blocks: Array.from({ length: LIMITS.blocksPerSection }, (_, i) => callout(`v_0000000${i}`, 0)) });
+  const squeezed = applyReferencesAnswer(full, "", [E1]);
+  check("answer: at the block cap the last other block gives way", [squeezed.trimmed, squeezed.section.blocks?.length, squeezed.section.blocks?.[LIMITS.blocksPerSection - 1].kind], [true, LIMITS.blocksPerSection, "references"]);
+
+  // Edit after answering: replace in place, no second intro.
+  const moved: DraftSectionRecord = { ...first.section, blocks: [{ ...block!, after: 1 }, first.section.blocks![0]] };
+  const edited = applyReferencesAnswer(moved, "Proposal", [E2], { replace: true, now: "later" });
+  const eb = edited.section.blocks ?? [];
+  check("replace: no second intro", edited.section.paragraphs, first.section.paragraphs);
+  check("replace: the card set takes the old block's slot and anchor", eb.map((b) => [b.kind, b.after]), [["references", 1], ["callout", 0]]);
+  check("replace: the entries are the new ones, the stamp stays", [eb[0].kind === "references" ? eb[0].references : null, edited.section.referencesAnswered, edited.trimmed], [[E2], true, false]);
+  check("replace: exactly one references block", eb.filter((b) => b.origin === "references").length, 1);
+  const reintro = applyReferencesAnswer({ ...first.section, paragraphs: ["Rewritten by hand."] }, "Proposal", [E1], { replace: true });
+  check("replace: a deleted intro is put back and the block still closes the section", [reintro.section.paragraphs.length, reintro.section.blocks?.find((b) => b.origin === "references")?.after], [2, 2]);
+
+  check(
+    "otherText: the target's paragraphs are left out, everything else is in",
+    referencesOtherText("Proposal T", [rec({ label: "1.", title: "One", paragraphs: ["p1"] }), rec({ label: "2.", title: "Two", paragraphs: ["p2"] })], 1),
+    "Proposal T\n1.\nOne\np1\n2.\nTwo"
+  );
+
+  // The redraft carry.
+  const carried = carryReferencesBlock({ paragraphs: ["Fresh prose."], blocks: Array.from({ length: LIMITS.blocksPerSection }, (_, i) => callout(`v_0000001${i}`, 1)), carried: { ...block!, after: 0 }, otherText: "Proposal" });
+  check("carry: the fresh paragraphs get the intro and the etiquette back", carried.paragraphs, ["Fresh prose.", INTRO_FULL]);
+  check("carry: others are cut to the cap minus one and the carried block is LAST, after the last paragraph",
+    [carried.blocks.length, carried.blocks[carried.blocks.length - 1].origin, carried.blocks[carried.blocks.length - 1].after, carried.human],
+    [LIMITS.blocksPerSection, "references", 2, false]);
+  const carriedFull = carryReferencesBlock({ paragraphs: Array.from({ length: PARAGRAPH_CAP }, (_, i) => `p${i}.`), blocks: undefined, carried: block!, otherText: "" });
+  check("carry: a twelve-paragraph redraft folds the intro, the block anchors at twelve", [carriedFull.paragraphs.length, carriedFull.blocks[0].after, statesEtiquette(carriedFull.paragraphs.join("\n"))], [PARAGRAPH_CAP, PARAGRAPH_CAP, true]);
+  check("carry: an empty redraft is human", carryReferencesBlock({ paragraphs: [], blocks: [], carried: block!, otherText: "" }).human, true);
+
+  // Removing the block reopens the question when the RFP still asks.
+  const ask2 = referencesAsk(["Provide two client references of comparable size."], "References");
+  const bare = [rec({ label: "1.", paragraphs: ["Overview."] }), rec({ label: "7.", title: "References", generatedBy: "human" })];
+  const reopened = reopenReferencesQuestion(bare, 1, ask2, "why text");
+  check("reopen: the canonical question returns with its why", reopened[1].gaps, [{ question: REFERENCES_GAP_QUESTION(2), why: "why text" }]);
+  check("reopen: no ask, nothing changes", reopenReferencesQuestion(bare, 1, null, "w") === bare, true);
+  check("reopen: not twice", reopenReferencesQuestion(reopened, 1, ask2, "w") === reopened, true);
+  const elsewhere = [rec({ label: "1.", referencesAnswered: true }), bare[1]];
+  check("reopen: another section carries the answer, nothing changes", reopenReferencesQuestion(elsewhere, 1, ask2, "w") === elsewhere, true);
+  const openElsewhere = [rec({ label: "1.", gaps: [{ question: REFERENCES_GAP_QUESTION(3), why: "x" }] }), bare[1]];
+  check("reopen: a references question open elsewhere is reused byte for byte", reopenReferencesQuestion(openElsewhere, 1, ask2, "w")[1].gaps[0].question, REFERENCES_GAP_QUESTION(3));
+}
 
 if (failures) {
   console.error(`\n${failures} failing`);

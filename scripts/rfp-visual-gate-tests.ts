@@ -44,6 +44,18 @@ import {
   type DraftBlock,
 } from "../src/lib/rfp/draft-blocks";
 import {
+  REFERENCES_INTRO_SENTENCE,
+  referenceCardTable,
+  referencesBlockStrings,
+} from "../src/lib/rfp/references-block";
+import { REFERENCE_ETIQUETTE_SENTENCE } from "../src/lib/rfp/references-ask";
+import {
+  applyReferencesAnswer,
+  carryReferencesBlock,
+  referencesOtherText,
+} from "../src/lib/rfp/references-answer";
+import {
+  referencesBlock,
   sections as fixtureSections,
   stretchTimelineBlock,
   type FixtureSection,
@@ -153,11 +165,29 @@ check("fixture: every v1 kind and the timeline are present", isDeepStrictEqual(
   [...new Set(storedBlocks.map((x) => x.block.kind))].sort(),
   [...DRAFT_BLOCK_KINDS].sort()
 ));
+/** How many content-model blocks one stored visual lifts into: one, or a table per reference. */
+const liftCount = (b: DraftBlock): number => (b.kind === "references" ? b.references.length : 1);
 {
   const lifted = resolved.sections.flatMap((s) => s.blocks.filter((b) => b.kind !== "prose"));
-  check("lift: one content-model block per stored visual", lifted.length === storedBlocks.length, [lifted.length, storedBlocks.length]);
+  const wantCount = storedBlocks.reduce((n, x) => n + liftCount(x.block), 0);
+  check("lift: one content-model block per stored visual (a table per reference)", lifted.length === wantCount, [lifted.length, wantCount]);
   for (const { label, block } of storedBlocks) {
     const id = `bv_${label.replace(/[^a-zA-Z0-9]+/g, "_")}_${block.id}`;
+    if (block.kind === "references") {
+      // No content-model kind of its own: N tables, ids _1.._N, human-authored, uncited.
+      const cards = block.references.map((_, i) => lifted.find((b) => b.id === `${id}_${i + 1}`));
+      check(`lift: references ${block.id} -> ${cards.length} table blocks, every one passing blockSchema`,
+        cards.length === block.references.length && cards.every((c) => !!c && c.kind === "table" && blockSchema.safeParse(c).success),
+        cards.map((c) => c && [c.id, c.kind]));
+      check(`lift: ${id}_n bodies are referenceCardTable(entry, n); generatedBy human, cites [], editedByHuman true`,
+        cards.every((c, i) => {
+          if (!c) return false;
+          const { id: _gid, sectionId: _sid, ordinal: _ord, cites, generatedBy, editedByHuman, ...body } = c;
+          return isDeepStrictEqual(body, referenceCardTable(block.references[i], i + 1)) && generatedBy === "human" && isDeepStrictEqual(cites, []) && editedByHuman === true;
+        }),
+        cards);
+      continue;
+    }
     const got = lifted.find((b) => b.id === id);
     const parsed = got ? blockSchema.safeParse(got) : null;
     check(`lift: ${block.kind} ${block.id} -> ${id} passes blockSchema`, !!parsed && parsed.success, parsed && !parsed.success ? parsed.error.issues : undefined);
@@ -168,15 +198,22 @@ check("fixture: every v1 kind and the timeline are present", isDeepStrictEqual(
       isDeepStrictEqual(gotBody, body) && editedByHuman === false, { gotBody, body });
   }
   // Ordinal = flow index, and the flow is interleave's, section by section.
+  // A references block expands into its tables in place, so ordinals after it
+  // are consecutive over the EXPANDED flow; a section without one is unchanged.
   for (const sec of input.sections) {
     if (sec.label === "__letter") continue;
     const flow = interleave(sec.paragraphs, sanitizeStoredBlocks(sec.blocks, sec.paragraphs.length));
     const rs = resolved.sections.find((s) => s.structureLabel === sec.label)!;
-    const want = flow.map((f, i) =>
-      f.type === "p"
-        ? { kind: "prose", id: `b_${sec.label.replace(/[^a-zA-Z0-9]+/g, "_")}_${f.index}`, ordinal: i }
-        : { kind: f.block.kind, id: `bv_${sec.label.replace(/[^a-zA-Z0-9]+/g, "_")}_${f.block.id}`, ordinal: i }
-    );
+    const sl = sec.label.replace(/[^a-zA-Z0-9]+/g, "_");
+    const want = flow
+      .flatMap((f) =>
+        f.type === "p"
+          ? [{ kind: "prose", id: `b_${sl}_${f.index}` }]
+          : f.block.kind === "references"
+            ? f.block.references.map((_, n) => ({ kind: "table", id: `bv_${sl}_${f.block.id}_${n + 1}` }))
+            : [{ kind: f.block.kind, id: `bv_${sl}_${f.block.id}` }]
+      )
+      .map((x, i) => ({ ...x, ordinal: i }));
     check(`order: section ${sec.label} resolves in interleave order with ordinal = flow index`,
       isDeepStrictEqual(rs.blocks.map((b) => ({ kind: b.kind, id: b.id, ordinal: b.ordinal })), want),
       rs.blocks.map((b) => [b.kind, b.id, b.ordinal]));
@@ -188,6 +225,122 @@ check("fixture: every v1 kind and the timeline are present", isDeepStrictEqual(
   const six = resolved.sections.find((s) => s.structureLabel === "6.")!;
   check("order: a block at `after: paragraphs.length` closes section 6",
     six.blocks[six.blocks.length - 1]?.id === `bv_6__${stretchTimelineBlock.id}`, six.blocks.map((b) => b.id));
+  const seven = resolved.sections.find((s) => s.structureLabel === "7.")!;
+  check("order: the references section is its paragraph, then Reference 1 and Reference 2 at ordinals 1 and 2",
+    isDeepStrictEqual(seven.blocks.map((b) => [b.id, b.ordinal]), [["b_7__0", 0], [`bv_7__${referencesBlock.id}_1`, 1], [`bv_7__${referencesBlock.id}_2`, 2]]),
+    seven.blocks.map((b) => [b.id, b.ordinal]));
+}
+
+/* ---- 2b. References: the cards, proposal.references and the gate ---------- */
+{
+  const seven = resolved.sections.find((s) => s.structureLabel === "7.")!;
+  const cards = seven.blocks.filter((b) => b.kind === "table");
+  check("references: exactly two table blocks for the two-entry block, ids ending _1 and _2",
+    cards.length === 2 && cards[0].id.endsWith("_1") && cards[1].id.endsWith("_2"), cards.map((c) => c.id));
+  check("references: the cards are human-authored and cite nothing",
+    cards.every((c) => c.generatedBy === "human" && c.cites.length === 0 && c.editedByHuman === true));
+  check("references: the head row reads Reference N beside a blank cell, the four template rows follow",
+    cards.every((c, i) => c.kind === "table" && isDeepStrictEqual(c.columns.map((x) => x.header), [`Reference ${i + 1}`, ""]) && c.rows.length === 4 && c.caption === null),
+    cards);
+  const spans = resolvedTextSpans(resolved);
+  const cellText = cards.flatMap((c) => (c.kind === "table" ? c.rows.flat() : []));
+  const missing = cellText.filter((t) => !spans.some((s) => s.blockId?.startsWith(`bv_7__${referencesBlock.id}_`) && s.text === t));
+  check("references: every card cell is in resolvedTextSpans under its table's id", missing.length === 0, missing);
+  check("references: proposal.references carries one Reference per lifted entry, in order",
+    resolved.references.length === 2 &&
+      resolved.references[0].id === "ref_typed_1" &&
+      resolved.references[1].id === "ref_fixture_harbor" &&
+      resolved.references[0].organization === "Northwind Clinic" &&
+      resolved.references[1].contactPhone === null &&
+      resolved.references[1].contactEmail === "p.natarajan@example.org" &&
+      resolved.references[0].segment === "Healthcare, multi-site",
+    resolved.references);
+  const gate = runDraftGate(input);
+  const onCards = gate.violations.filter((v) => v.locator.blockId?.startsWith(`bv_7__${referencesBlock.id}_`));
+  check("references: no A5 (or any) violation lands on the cards", onCards.length === 0, onCards.map((v) => [v.ruleId, v.message]));
+  check("references: D3 sees the references and is satisfied by the section's etiquette sentence",
+    !gate.violations.some((v) => v.ruleId === "D3"), gate.violations.filter((v) => v.ruleId === "D3").map((v) => v.message));
+  // Without the etiquette sentence D3 BLOCKs on proposal.references alone,
+  // which is the reason the adapter populates it.
+  const bare = withTimeline(fixtureSections).map((s) =>
+    s.label === "7." ? { ...s, paragraphs: ["Two comparable clients follow."] } : s
+  );
+  const bareGate = runDraftGate(buildFixtureGateInput(bare));
+  check("references: with the etiquette sentence removed, D3 is a BLOCK",
+    bareGate.violations.some((v) => v.ruleId === "D3" && v.severity === "block"),
+    bareGate.violations.filter((v) => v.ruleId === "D3").map((v) => v.message));
+  // The section carrying the block resolves the same with the key absent as
+  // with `blocks: []` (the legacy contract holds for it too), and a fixture
+  // without any references block has NO proposal.references.
+  const without = resolveDraft(buildFixtureGateInput(withTimeline(fixtureSections).filter((s) => s.label !== "7."))).resolved;
+  check("references: a proposal with no references block has an empty proposal.references", without.references.length === 0);
+}
+
+/* ---- 2c. References: the route's own composition through the gate -------- */
+// The fixture's section 7 is built by applyReferencesAnswer (the function the
+// references route calls) from a section the drafter left EMPTY: generatedBy
+// "llm", no cites, no paragraphs. These checks answer it again here, so the
+// gate verdict is pinned on the composition and not on a hand-written record.
+{
+  const others = withTimeline(fixtureSections).filter((s) => s.label !== "7.");
+  const emptyLlm: FixtureSection = { label: "7.", title: "References", paragraphs: [], cites: [], gaps: [], generatedBy: "llm", updatedAt: "2026-09-30T15:00:00.000Z" };
+  const entries = referencesBlock.kind === "references" ? referencesBlock.references : [];
+  const otherText = referencesOtherText("Fixture proposal", others, -1, emptyLlm);
+  const answered = applyReferencesAnswer(emptyLlm, otherText, entries).section;
+  check("answer: an empty llm section lands human, with the intro and the etiquette",
+    answered.generatedBy === "human" && answered.paragraphs.length === 1 && answered.paragraphs[0].startsWith(REFERENCES_INTRO_SENTENCE) && answered.paragraphs[0].endsWith(REFERENCE_ETIQUETTE_SENTENCE),
+    [answered.generatedBy, answered.paragraphs]);
+  const gate = runDraftGate(buildFixtureGateInput([...others, answered]));
+  const on7 = gate.violations.filter((v) => v.locator.sectionId === "sec_7_" || v.locator.blockId?.includes("_7__"));
+  check("answer: an llm, no-cites, empty section answered through the route's composition has no A5 violation",
+    !on7.some((v) => v.ruleId === "A5"), on7.filter((v) => v.ruleId === "A5").map((v) => v.message));
+  check("answer: and no D3 violation anywhere",
+    !gate.violations.some((v) => v.ruleId === "D3"), gate.violations.filter((v) => v.ruleId === "D3").map((v) => v.message));
+  check("answer: nothing at all lands on the answered section", on7.length === 0, on7.map((v) => [v.ruleId, v.message]));
+  // The control: the same landing left "llm" with no cites is exactly the A5
+  // BLOCK the human stamp exists to prevent.
+  const asLlm = runDraftGate(buildFixtureGateInput([...others, { ...answered, generatedBy: "llm" }]));
+  check("answer: left as llm, the system-written intro is an A5 BLOCK (the control)",
+    asLlm.violations.some((v) => v.ruleId === "A5" && v.severity === "block" && v.locator.blockId === "b_7__0"),
+    asLlm.violations.filter((v) => v.ruleId === "A5").map((v) => v.locator));
+  check("answer: the fixture's own section 7 is this same composition",
+    isDeepStrictEqual(
+      { ...fixtureSections.find((s) => s.label === "7.")!, blocks: undefined, updatedAt: "" },
+      { ...answered, blocks: undefined, updatedAt: "" }
+    ));
+
+  // A redraft carries the block: fresh prose with no etiquette in it must not
+  // BLOCK on D3, and an empty redraft must not BLOCK on A5.
+  const stored = answered.blocks!.find((b) => b.origin === "references")!;
+  const factId = others.find((s) => s.label === "6.")!.cites[0];
+  const carry = carryReferencesBlock({ paragraphs: ["The clients below are comparable in size and sector."], blocks: undefined, carried: stored, otherText });
+  const redrafted: FixtureSection = { ...emptyLlm, paragraphs: carry.paragraphs, cites: [factId], generatedBy: carry.human ? "human" : "llm", referencesAnswered: true, blocks: carry.blocks };
+  const redraftGate = runDraftGate(buildFixtureGateInput([...others, redrafted]));
+  check("redraft carry: D3 does not BLOCK after a redraft",
+    !redraftGate.violations.some((v) => v.ruleId === "D3"), redraftGate.violations.filter((v) => v.ruleId === "D3").map((v) => v.message));
+  const lifted = resolveDraft(buildFixtureGateInput([...others, redrafted])).resolved.sections.find((x) => x.structureLabel === "7.")!;
+  check("redraft carry: the cards close the section, after the intro",
+    isDeepStrictEqual(lifted.blocks.map((b) => b.kind), ["prose", "prose", "table", "table"]), lifted.blocks.map((b) => b.kind));
+  const emptyCarry = carryReferencesBlock({ paragraphs: [], blocks: undefined, carried: stored, otherText });
+  const emptyRedraft: FixtureSection = { ...emptyLlm, paragraphs: emptyCarry.paragraphs, generatedBy: emptyCarry.human ? "human" : "llm", referencesAnswered: true, blocks: emptyCarry.blocks };
+  const emptyGate = runDraftGate(buildFixtureGateInput([...others, emptyRedraft]));
+  check("redraft carry: an empty redraft lands human, with no A5 and no D3",
+    emptyRedraft.generatedBy === "human" && !emptyGate.violations.some((v) => (v.ruleId === "A5" && v.locator.blockId?.includes("_7__")) || v.ruleId === "D3"),
+    emptyGate.violations.filter((v) => v.ruleId === "A5" || v.ruleId === "D3").map((v) => [v.ruleId, v.locator]));
+
+  // Names that read as money to the currency screen still reach the page.
+  const money = applyReferencesAnswer(emptyLlm, otherText, [
+    { ...entries[0], organization: "Dollar Bank", contactName: "Jordan Pence" },
+    { ...entries[1], organization: "Bucks County Free Library", relevance: "Architecture, CAD workloads" },
+  ]).section;
+  const moneyResolved = resolveDraft(buildFixtureGateInput([...others, JSON.parse(JSON.stringify(money))])).resolved;
+  const moneyCards = moneyResolved.sections.find((x) => x.structureLabel === "7.")!.blocks.filter((b) => b.kind === "table");
+  check("currency-looking names: both cards survive the stored round-trip and resolve",
+    moneyCards.length === 2 && moneyResolved.references.map((r) => r.organization).join("|") === "Dollar Bank|Bucks County Free Library",
+    [moneyCards.length, moneyResolved.references.map((r) => r.organization)]);
+  const moneyGate = runDraftGate(buildFixtureGateInput([...others, JSON.parse(JSON.stringify(money))]));
+  const moneyOnCards = moneyGate.violations.filter((v) => v.locator.blockId?.includes("_7__"));
+  check("currency-looking names: the gate raises nothing on the cards", moneyOnCards.length === 0, moneyOnCards.map((v) => [v.ruleId, v.severity]));
 }
 
 /* ---- 3. Scan surface: every visible string of every block --------------- */
@@ -195,8 +348,11 @@ check("fixture: every v1 kind and the timeline are present", isDeepStrictEqual(
   const spans = resolvedTextSpans(resolved);
   for (const { label, block } of storedBlocks) {
     const id = `bv_${label.replace(/[^a-zA-Z0-9]+/g, "_")}_${block.id}`;
-    const mine = spans.filter((s) => s.blockId === id).map((s) => s.text);
-    const strings = visibleStrings(block);
+    // A references block's strings are spread over its `${id}_n` tables.
+    const mine = spans
+      .filter((s) => (block.kind === "references" ? s.blockId?.startsWith(`${id}_`) : s.blockId === id))
+      .map((s) => s.text);
+    const strings = visibleStrings(block).filter((t) => t !== "");
     const missing = strings.filter((t) => !mine.includes(t));
     check(`spans: ${block.kind} ${block.id} puts all ${strings.length} strings in the scan surface`, missing.length === 0, missing);
   }
@@ -214,6 +370,7 @@ function visibleStrings(b: DraftBlock): string[] {
     case "callout": return [...(b.title ? [b.title] : []), b.body];
     case "cards": return b.cards.flatMap((c) => [c.title, c.body, ...(c.footnote ? [c.footnote] : [])]);
     case "timeline": return b.steps.flatMap((s) => [s.label, s.title, s.body]);
+    case "references": return referencesBlockStrings(b.references);
   }
 }
 
@@ -322,7 +479,14 @@ const view = buildExportView(resolved, input.rateCard);
     if (sec.label === "__letter") continue;
     const flow = interleave(sec.paragraphs, sanitizeStoredBlocks(sec.blocks, sec.paragraphs.length));
     const vs = view.sections.find((s) => s.label === sec.label)!;
-    const want = flow.map((f) => (f.type === "p" ? ["p", f.text] : ["block", f.block.kind, f.block.id]));
+    // The export view sees the lifted flow, where a references block is its tables.
+    const want = flow.flatMap((f) =>
+      f.type === "p"
+        ? [["p", f.text]]
+        : f.block.kind === "references"
+          ? f.block.references.map((_, n) => ["block", "table", `${f.block.id}_${n + 1}`])
+          : [["block", f.block.kind, f.block.id]]
+    );
     const got = vs.flow.map((f: ExportFlowItem) =>
       f.type === "p" ? ["p", f.text] : ["block", f.block.kind, f.block.id.replace(/^bv_[^_]*__/, "")]
     );
@@ -342,13 +506,14 @@ async function files() {
   const unesc = (s: string) => s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'");
   const text = unesc(xml.replace(/<[^>]+>/g, "\u0001"));
   for (const { block } of storedBlocks) {
-    const strings = visibleStrings(block);
+    const strings = visibleStrings(block).filter((t) => t !== "");
     const missing = strings.filter((t) => !text.includes(t) && !text.includes(t.toUpperCase()));
     check(`docx: ${block.kind} ${block.id} carries all ${strings.length} strings`, missing.length === 0, missing);
   }
   check("docx: every atomic block row is marked cantSplit", (xml.match(/<w:cantSplit\/>/g) ?? []).length >= 20, (xml.match(/<w:cantSplit\/>/g) ?? []).length);
-  check("docx: table blocks repeat their head row (tblHeader) beside the Investment table's",
-    (xml.match(/<w:tblHeader\/>/g) ?? []).length === 3, (xml.match(/<w:tblHeader\/>/g) ?? []).length);
+  // Two fixture tables, two reference cards, the Investment table.
+  check("docx: table blocks and the reference cards repeat their head row (tblHeader) beside the Investment table's",
+    (xml.match(/<w:tblHeader\/>/g) ?? []).length === 5, (xml.match(/<w:tblHeader\/>/g) ?? []).length);
   const media = Object.keys(zip.files).filter((f) => f.startsWith("word/media/"));
   check("docx: badge marks and step dots are embedded as media", media.length >= 5 + 3 + 3 + 1, media.length);
   // The plain-TTF font swap survives the visual tables (export-assets parity).

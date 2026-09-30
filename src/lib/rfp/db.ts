@@ -31,6 +31,10 @@ import {
   rfpRequirements,
 } from "@/lib/db/rfp-schema";
 import type { RfpUser } from "./access";
+import type {
+  ReferenceCandidateWire,
+  ReferenceEntry,
+} from "./references-block";
 import { corpusCategory } from "./knowledge-mine";
 
 export type FactRow = typeof rfpFacts.$inferSelect;
@@ -1447,4 +1451,218 @@ export async function liveReferences(): Promise<LiveReference[]> {
     .from(rfpReferences)
     .where(isNull(rfpReferences.retiredAt))
     .orderBy(asc(rfpReferences.organization));
+}
+
+/**
+ * Live client references WITH their contact columns, for the references
+ * picker (GET /api/rfp/proposals/[id]/references, §5.17.10).
+ *
+ * This is the ONE place the contact_* values are selected. The picker
+ * prefills them for a staff member behind the /rfp gate who is about to put
+ * them into a proposal; every other read of this table goes through
+ * liveReferences(), which only tests their presence. Nothing here reaches a
+ * prompt, a log or an activity row: the route returns the rows with
+ * `Cache-Control: no-store` and nothing else.
+ */
+export async function liveReferencesWithContacts(): Promise<
+  ReferenceCandidateWire[]
+> {
+  return db
+    .select({
+      id: rfpReferences.id,
+      organization: rfpReferences.organization,
+      segment: rfpReferences.segment,
+      relationshipSince: rfpReferences.relationshipSince,
+      usableWithoutAsking: rfpReferences.usableWithoutAsking,
+      contactName: rfpReferences.contactName,
+      contactTitle: rfpReferences.contactTitle,
+      contactPhone: rfpReferences.contactPhone,
+      contactEmail: rfpReferences.contactEmail,
+    })
+    .from(rfpReferences)
+    .where(isNull(rfpReferences.retiredAt))
+    .orderBy(asc(rfpReferences.organization));
+}
+
+/**
+ * The LIVE rows among `ids`, id and organization only (no contact column):
+ * what the references route checks a submitted `referenceId` against. An id
+ * that is unknown or retired is simply absent from the result. The route
+ * overwrites the entry's organization with the row's, so a request can never
+ * attach contacts to a row under another name.
+ */
+export async function liveReferenceOrganizations(
+  ids: string[]
+): Promise<{ id: string; organization: string }[]> {
+  const wanted = [...new Set(ids)].slice(0, 50);
+  if (wanted.length === 0) return [];
+  return db
+    .select({
+      id: rfpReferences.id,
+      organization: rfpReferences.organization,
+    })
+    .from(rfpReferences)
+    .where(
+      and(inArray(rfpReferences.id, wanted), isNull(rfpReferences.retiredAt))
+    );
+}
+
+const REFERENCE_ID_MAX = 40;
+const REFERENCE_NEW_SEGMENT = "comparable client";
+const REFERENCE_NEW_NOTES = "Added from a proposal answer.";
+
+/** "ref_" + the organization as [a-z0-9]+ runs joined by "_", at most 40 chars in all. */
+function referenceIdFor(organization: string): string {
+  const slug = organization
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, REFERENCE_ID_MAX - "ref_".length)
+    .replace(/_+$/g, "");
+  return `ref_${slug || "organization"}`;
+}
+
+/**
+ * Write the contacts of an answered references question back to
+ * rfp_references (POST .../references with `keep: true`, §5.17.10).
+ *
+ * Only NON-EMPTY fields are written. An empty field in the answer never
+ * nulls a stored column: leaving the phone out of one proposal is not an
+ * instruction to forget the phone on file (the operator lane,
+ * scripts/rfp-reference-contact.mjs, is where a column is cleared).
+ *
+ * - An entry with a `referenceId` UPDATES that LIVE row. No live row with
+ *   that id: nothing is written and the entry counts as `failed`. (The route
+ *   has already turned an unknown or retired id into null, so this is a row
+ *   retired in between.)
+ * - An entry with no id first looks for a LIVE row whose organization matches
+ *   (trimmed, case-insensitive) and updates THAT row, counted as kept, so
+ *   typing a name that is already on file never makes a duplicate.
+ * - Otherwise it INSERTS a new organization: `ref_<slug>` with `_2`, `_3` on
+ *   collision with ANY existing id, retired rows included (the id namespace
+ *   is one). An insert that loses an id race to a concurrent answer is
+ *   retried once with the next suffix. The new row carries no date, person
+ *   or client name: the activity row the route writes is the provenance.
+ *
+ * Each entry is written on its own and a failure in one never loses the
+ * others. Contact values are never returned or logged: the result is ids and
+ * counts, `kept + created + failed === entries.length`.
+ */
+export async function saveReferenceContacts(
+  _user: RfpUser,
+  entries: ReferenceEntry[]
+): Promise<{ kept: number; created: number; failed: number; ids: string[] }> {
+  let kept = 0;
+  let created = 0;
+  let failed = 0;
+  const ids: string[] = [];
+  const orNull = (s: string) => (s.trim() === "" ? null : s.trim());
+  for (const e of entries) {
+    try {
+      const contacts = {
+        contactName: orNull(e.contactName),
+        contactTitle: orNull(e.contactTitle),
+        contactPhone: orNull(e.phone),
+        contactEmail: orNull(e.email),
+      };
+      // What an UPDATE may set: the fields the person actually filled.
+      const filled = Object.fromEntries(
+        Object.entries(contacts).filter(([, v]) => v !== null)
+      ) as Partial<Record<keyof typeof contacts, string>>;
+      if (Object.keys(filled).length === 0) {
+        failed += 1;
+        continue;
+      }
+      if (e.referenceId) {
+        const updated = await db
+          .update(rfpReferences)
+          .set(filled)
+          .where(
+            and(
+              eq(rfpReferences.id, e.referenceId),
+              isNull(rfpReferences.retiredAt)
+            )
+          )
+          .returning({ id: rfpReferences.id });
+        if (updated.length > 0) {
+          kept += 1;
+          ids.push(updated[0].id);
+        } else failed += 1;
+        continue;
+      }
+      const organization = e.organization.trim();
+      const same = await db
+        .select({ id: rfpReferences.id })
+        .from(rfpReferences)
+        .where(
+          and(
+            sql`lower(btrim(${rfpReferences.organization})) = lower(btrim(${organization}))`,
+            isNull(rfpReferences.retiredAt)
+          )
+        )
+        .orderBy(asc(rfpReferences.id))
+        .limit(1);
+      if (same.length > 0) {
+        const updated = await db
+          .update(rfpReferences)
+          .set(filled)
+          .where(
+            and(
+              eq(rfpReferences.id, same[0].id),
+              isNull(rfpReferences.retiredAt)
+            )
+          )
+          .returning({ id: rfpReferences.id });
+        if (updated.length > 0) {
+          kept += 1;
+          ids.push(updated[0].id);
+        } else failed += 1;
+        continue;
+      }
+      const base = referenceIdFor(organization);
+      let insertedId: string | null = null;
+      // Two tries: the second only when the first lost its id to a
+      // concurrent insert (the taken set is re-read, so it picks the next
+      // free suffix).
+      for (let attempt = 0; attempt < 2 && insertedId === null; attempt++) {
+        const taken = new Set(
+          (
+            await db
+              .select({ id: rfpReferences.id })
+              .from(rfpReferences)
+              .where(sql`${rfpReferences.id} like ${`${base}%`}`)
+          ).map((r) => r.id)
+        );
+        let id = base;
+        for (let n = 2; taken.has(id); n++) id = `${base}_${n}`;
+        const inserted = await db
+          .insert(rfpReferences)
+          .values({
+            id,
+            organization,
+            website: null,
+            segment: e.relevance.trim() || REFERENCE_NEW_SEGMENT,
+            ...contacts,
+            relationshipSince: null,
+            usableWithoutAsking: false,
+            notes: REFERENCE_NEW_NOTES,
+          })
+          .onConflictDoNothing({ target: rfpReferences.id })
+          .returning({ id: rfpReferences.id });
+        if (inserted.length > 0) insertedId = inserted[0].id;
+      }
+      if (insertedId !== null) {
+        created += 1;
+        ids.push(insertedId);
+      } else failed += 1;
+    } catch (err) {
+      failed += 1;
+      // The class name only: the error text may quote the row.
+      console.error(
+        "[rfp] reference contact write failed:",
+        err instanceof Error ? err.constructor.name : "error"
+      );
+    }
+  }
+  return { kept, created, failed, ids };
 }

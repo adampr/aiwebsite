@@ -9,15 +9,22 @@
  * (`interleave`) the screen, resolve-draft and both exporters share, and the grounding that keeps
  * a number out of a visual unless a fact states it.
  *
- * PURE and CLIENT-SAFE. It is imported by the "use client" workspace, so: type-only imports, no
- * server modules, and NO lookbehind regexes (Safari before 16.4 cannot parse one, and a parse
- * error takes the whole bundle down). Preceding-character checks are done by hand on the index.
+ * PURE and CLIENT-SAFE. It is imported by the "use client" workspace, so: type-only imports (the
+ * one value import is references-block.ts, itself pure and client-safe by contract), no server
+ * modules, and NO lookbehind regexes (Safari before 16.4 cannot parse one, and a parse error
+ * takes the whole bundle down). Preceding-character checks are done by hand on the index.
  *
  * The body of every block is EXACTLY the content-model body (content-model/blocks.ts), so lifting
  * a DraftBlock into a content-model Block is adding the BlockBase fields and nothing else.
  */
 
 import type { Block, BlockBase } from "./content-model/blocks";
+import {
+  readReferenceEntries,
+  referencesBlockStrings,
+  type ReferenceEntry,
+  type ReferencesBody,
+} from "./references-block";
 
 type Body<K extends Block["kind"]> = Omit<Extract<Block, { kind: K }>, keyof BlockBase>;
 
@@ -29,6 +36,7 @@ export const DRAFT_BLOCK_KINDS = [
   "callout",
   "cards",
   "timeline",
+  "references",
 ] as const;
 export type DraftBlockKind = (typeof DRAFT_BLOCK_KINDS)[number];
 
@@ -39,18 +47,23 @@ export type DraftBlockBody =
   | Body<"table">
   | Body<"callout">
   | Body<"cards">
-  | Body<"timeline">;
+  | Body<"timeline">
+  // Client references (references-block.ts): stored as entries, drawn as one
+  // branded table per reference. Not a content-model kind of its own: the
+  // lift (resolve-draft.ts) turns it into `table` blocks.
+  | ReferencesBody;
 
 export type DraftBlock = DraftBlockBody & {
   /** "v_" + 8 hex. Never embeds the section label: labels rename. */
   id: string;
   /** How many paragraphs precede the block, 0..paragraphs.length. */
   after: number;
-  /** Fact ids. Non-empty, always. */
+  /** Fact ids. Non-empty, always, except on a `references` block: the
+   *  person's contacts are not facts, so it cites nothing. */
   cites: string[];
   /** Set by the server path that built the block, never taken from a request body. */
   generatedBy: "llm" | "system";
-  origin?: "about" | "service-stats" | "onboarding";
+  origin?: "about" | "service-stats" | "onboarding" | "references";
 };
 
 export const LIMITS = {
@@ -424,6 +437,13 @@ function readBody(raw: Record<string, unknown>): DraftBlockBody | null {
       }
       return { kind: "timeline", steps };
     }
+    case "references": {
+      // The contract module owns the entry shape and its limits; an entry it
+      // cannot read (no organization, no contact, no way to reach them) drops
+      // the whole block, since a card with a hole is not a reference.
+      const references = readReferenceEntries(raw.references);
+      return references ? { kind: "references", references } : null;
+    }
     default:
       return null;
   }
@@ -446,14 +466,19 @@ function bodyStrings(b: DraftBlockBody): string[] {
       return b.cards.flatMap((c) => [c.title, c.body, c.footnote ?? ""]);
     case "timeline":
       return b.steps.flatMap((s) => [s.label, s.title, s.body]);
+    case "references":
+      return referencesBlockStrings(b.references);
   }
 }
 
 /**
  * Tolerant read of `blocks` as stored in sections_json. Never throws. Anything malformed, over a
- * limit, carrying currency, without cites, or repeating an id is dropped; a valid block comes back
+ * limit, carrying currency (every kind but `references`, see below), without cites, or repeating an id is dropped; a valid block comes back
  * deep-equal to what was stored (with `after` clamped to the paragraphs that exist now, and every
  * string through normText, which changes nothing `clean` or the About extractors wrote).
+ *
+ * The one kind allowed an empty `cites` is `references` (its origin is the person, not a fact);
+ * every other kind keeps the non-empty requirement the C1 join depends on.
  */
 export function sanitizeStoredBlocks(raw: unknown, paragraphCount: number): DraftBlock[] {
   if (!Array.isArray(raw)) return [];
@@ -465,8 +490,8 @@ export function sanitizeStoredBlocks(raw: unknown, paragraphCount: number): Draf
       if (!isObj(item)) continue;
       if (typeof item.id !== "string" || !BLOCK_ID.test(item.id) || seen.has(item.id)) continue;
       if (item.generatedBy !== "llm" && item.generatedBy !== "system") continue;
-      if (!Array.isArray(item.cites) || item.cites.length === 0 || item.cites.length > CITES_MAX)
-        continue;
+      if (!Array.isArray(item.cites) || item.cites.length > CITES_MAX) continue;
+      if (item.cites.length === 0 && item.kind !== "references") continue;
       if (!item.cites.every((c) => typeof c === "string" && c !== "" && c.length <= 200)) continue;
       if (typeof item.after !== "number" || !Number.isFinite(item.after)) continue;
       const origin = item.origin;
@@ -474,12 +499,20 @@ export function sanitizeStoredBlocks(raw: unknown, paragraphCount: number): Draf
         origin !== undefined &&
         origin !== "about" &&
         origin !== "service-stats" &&
-        origin !== "onboarding"
+        origin !== "onboarding" &&
+        origin !== "references"
       )
         continue;
       const body = readBody(item);
       if (!body) continue;
-      if (bodyStrings(body).some(hasCurrency)) continue;
+      // The currency screen (rule B7's storage half) is for text a MODEL wrote. A `references`
+      // block is never model-authored: the references route builds it from what a person typed
+      // or picked, and parseModelVisuals refuses the kind by name. Its strings are proper nouns
+      // ("Dollar Bank", "Bucks County Free Library", a contact named Pence, "USD 259", a
+      // relevance of "Architecture, CAD workloads"), which the screen reads as money; dropping
+      // the block on that would make an accepted answer vanish on every read while its intro
+      // paragraph stayed. So this kind is exempt here, and the gate still scans every card cell.
+      if (body.kind !== "references" && bodyStrings(body).some(hasCurrency)) continue;
       seen.add(item.id);
       out.push({
         ...body,
@@ -705,6 +738,8 @@ export function parseModelVisuals(
       }
       kind = typeof item.kind === "string" ? item.kind.slice(0, 40) : "unknown";
       if (kind === "stat-tiles") kind = "stats";
+      // A closed allowlist, not DRAFT_BLOCK_KINDS: the system kinds (fact-grid, badge-strip,
+      // timeline) and `references` (a person's contacts) are never accepted from the model.
       if (kind !== "stats" && kind !== "table" && kind !== "callout" && kind !== "cards") {
         dropped.push({ kind, reason: "unknown-kind" });
         continue;
@@ -971,6 +1006,24 @@ export function buildOnboardingTimeline(facts: GroundFact[]): DraftBlock | null 
   };
 }
 
+/**
+ * The client references block (references-block.ts), origin "references", for the server route
+ * that lands the answer to the references question. No cites: the entries are the person's, not
+ * a fact's. `after` is the anchor the caller chose (the route closes the section with it). The
+ * entries are stored as given; the caller has already read them through readReferenceEntries.
+ */
+export function buildReferencesBlock(entries: ReferenceEntry[], after: number): DraftBlock {
+  return {
+    kind: "references",
+    references: entries,
+    id: newBlockId(),
+    after,
+    cites: [],
+    generatedBy: "system",
+    origin: "references",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Which section is "About us"
 // ---------------------------------------------------------------------------
@@ -1031,6 +1084,12 @@ export function pickAboutSection(
 export function tableColumnFractions(b: Body<"table">): number[] {
   const n = b.columns.length;
   if (n === 0) return [];
+  // The reference card (references-block.ts referenceCardTable): two columns, no caption, a
+  // BLANK second header. Every card is pinned to the template's one-third label column, so a
+  // set of cards lines up whatever each one's values are, on screen, in Word and in the PDF.
+  // Nothing else has this shape: a stored table (readBody) and a model table (parseModelVisuals)
+  // both refuse an empty header, and a card is never stored as a table, only derived.
+  if (n === 2 && b.caption === null && b.columns[1].header === "") return [0.3333, 0.6667];
   const weights = b.columns.map((col, c) => {
     const lens = b.rows.map((r) => (r[c] ?? "").length);
     const max = lens.length ? Math.max(...lens) : 0;
@@ -1070,5 +1129,9 @@ export function draftBlockSummary(b: DraftBlock): string {
       return `Cards · ${clip(b.cards.map((c) => c.title).join(" / "), 70)}`;
     case "timeline":
       return `Timeline · ${b.steps.length} steps`;
+    case "references": {
+      const n = b.references.length;
+      return `Client references · ${n} ${n === 1 ? "reference" : "references"}`;
+    }
   }
 }

@@ -77,6 +77,22 @@ export function resolveTargetLabel(
   return null;
 }
 
+/**
+ * A lifted reference card's block id (resolve-draft.ts liftVisual, §5.17.10):
+ * `bv_<sanitized label>_<stored block id>_<n>`, the stored id being "v_" + 8
+ * hex and n the card's 1-based number. An ordinary visual has no `_<n>` tail
+ * and a prose block starts `b_`, so nothing else matches.
+ */
+const REFERENCE_CARD_BLOCK_ID = /^bv_.*_v_[0-9a-f]{8}_\d+$/;
+
+export function isReferenceCardBlockId(blockId: string | undefined): boolean {
+  return typeof blockId === "string" && REFERENCE_CARD_BLOCK_ID.test(blockId);
+}
+
+/** What a finding located on a reference card tells the person to do. */
+export const REFERENCE_CARD_FIX_MESSAGE =
+  "Edit the references on this section: use Edit references on the cards.";
+
 /** What the Fix it button does for one finding. `label` may be the
  *  DOC_LABEL sentinel (the whole-document Tron plan flow). `ask` opens an
  *  optional inline context input before the Tron run fires. */
@@ -150,6 +166,14 @@ export function fixRecipe(
     requirements: { id: string; structureLabel: string }[];
   }
 ): FixRecipe {
+  // A finding on a reference card is never sent to the brain. The card's
+  // cells are a third party's name, title, phone and email: composing the
+  // excerpt into a revise instruction would put them in a prompt, and Tron
+  // rewrites paragraphs, not cards, so the fix would not land anyway. The
+  // person edits the entry where it lives. First, before any rule's recipe.
+  if (isReferenceCardBlockId(v.locator.blockId))
+    return { kind: "none", message: REFERENCE_CARD_FIX_MESSAGE };
+
   const resolved = resolveTargetLabel(v, ctx.sections, ctx.requirements);
   const tron = (ask?: { prompt: string }): FixRecipe => ({
     kind: "tron",

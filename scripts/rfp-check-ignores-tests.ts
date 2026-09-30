@@ -22,6 +22,8 @@ import {
 import {
   fixInstruction,
   fixRecipe,
+  isReferenceCardBlockId,
+  REFERENCE_CARD_FIX_MESSAGE,
   resolveTargetLabel,
   sectionIdForLabel,
 } from "../src/lib/rfp/check-fixes";
@@ -497,6 +499,39 @@ check(
     ""
   ).length,
   2000
+);
+
+// ---- a finding on a reference card never goes to the brain (§5.17.10) ----------
+check("card id: a lifted reference card", isReferenceCardBlockId("bv_7__v_0000a010_2"), true);
+check("card id: a worded label", isReferenceCardBlockId("bv_Client_References_v_1f2e3d4c_10"), true);
+check("card id: an ordinary visual has no card number", isReferenceCardBlockId("bv_7__v_0000a010"), false);
+check("card id: a prose block", isReferenceCardBlockId("b_7__1"), false);
+check("card id: not hex", isReferenceCardBlockId("bv_7__v_0000zzzz_1"), false);
+check("card id: absent", isReferenceCardBlockId(undefined), false);
+for (const ruleId of ["D1", "A5", "B7", "D2", "Z9"]) {
+  const recipe = fixRecipe(
+    viol({
+      ruleId,
+      severity: "block",
+      locator: { blockId: "bv_7__v_0000a010_1", sectionId: "sec_7_" },
+      excerpt: "Alex Rivera, COO 312-555-0142 a.rivera@example.org",
+    }),
+    { sections: [{ label: "7." }], requirements: [] }
+  );
+  check(`card finding ${ruleId}: no Tron run, the edit pointer instead`, recipe, {
+    kind: "none",
+    message: REFERENCE_CARD_FIX_MESSAGE,
+  });
+}
+check(
+  "the pointer's wording",
+  REFERENCE_CARD_FIX_MESSAGE,
+  "Edit the references on this section: use Edit references on the cards."
+);
+check(
+  "an ordinary visual's finding still gets its Tron recipe",
+  fixRecipe(viol({ ruleId: "D1", severity: "block", locator: { blockId: "bv_7__v_0000a010" } }), { sections: [{ label: "7." }], requirements: [] }).kind,
+  "tron"
 );
 
 if (failures) {

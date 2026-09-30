@@ -427,6 +427,9 @@ const SERIF_ITAL = "Source Serif 4 Italic";
 // Page geometry: US Letter, margins ~0.875in (the sheet's 8cqw padding at
 // print scale). All in twips (pt * 20).
 const DXA_CONTENT = 12240 - 2 * 1260;
+/** A table block of at most this many rows stays on one page in both files
+ *  (a reference card is four). Longer tables break between rows. */
+const SHORT_TABLE_ROWS = 6;
 
 /** px at the screen's 96dpi → docx half-points. */
 const px2hp = (px: number) => Math.round(px * 1.5);
@@ -902,6 +905,9 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
       total?: boolean;
       /** Twips. Table blocks pin their columns; the Investment table does not. */
       width?: number;
+      /** Keep this cell's paragraph on the page of the next one. Set on every
+       *  row but the last of a short table, so Word never splits it. */
+      keepNext?: boolean;
     } = {}
   ) =>
     new TableCell({
@@ -928,6 +934,7 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
       margins: { top: 180, bottom: 180, left: 210, right: 210 },
       children: [
         new Paragraph({
+          ...(opts.keepNext ? { keepNext: true } : {}),
           alignment: opts.right
             ? AlignmentType.RIGHT
             : opts.center
@@ -1272,6 +1279,10 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
           width: widths[c],
         });
         const last = b.rows.length - 1;
+        // A short table (a reference card is four rows) stays whole: every
+        // row's paragraphs keep with the next row, the last row's do not.
+        // A long table still breaks between rows under its repeated head.
+        const whole = b.rows.length > 0 && b.rows.length <= SHORT_TABLE_ROWS;
         return [
           ...(b.caption
             ? [
@@ -1293,7 +1304,9 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
               new TableRow({
                 tableHeader: true,
                 cantSplit: true,
-                children: b.columns.map((col, c) => tcell(col.header, { head: true, ...align(c) })),
+                children: b.columns.map((col, c) =>
+                  tcell(col.header, { head: true, keepNext: whole, ...align(c) })
+                ),
               }),
               ...b.rows.map(
                 (r, i) =>
@@ -1304,6 +1317,7 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
                         strong: c === 0,
                         zebra: i % 2 === 1 && !(b.emphasizeLastRow && i === last),
                         total: b.emphasizeLastRow && i === last,
+                        keepNext: whole && i < last,
                         ...align(c),
                       })
                     ),
@@ -2514,19 +2528,34 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
           : null;
         const captionH = caption ? textH(caption, CW) + pt(VIS.table.captionGap) : 0;
         const firstM = tbl.measure(b.rows[0] ?? heads, { zebra: false });
-        // Caption, head and first row start together.
-        ensureRoom(captionH + headM.rowH + firstM.rowH);
+        const last = b.rows.length - 1;
+        const rowOpts = (i: number): RowOpts => ({
+          zebra: i % 2 === 1,
+          total: b.emphasizeLastRow && i === last,
+        });
+        // A short table (a reference card is four rows) never splits: every
+        // row is measured up front and the whole table moves to the next
+        // page when it does not fit here. One taller than a page falls back
+        // to the row loop below, like a long table.
+        const wholeH =
+          b.rows.length > 0 && b.rows.length <= SHORT_TABLE_ROWS
+            ? captionH +
+              headM.rowH +
+              b.rows.reduce((sum, r, i) => sum + tbl.measure(r, rowOpts(i)).rowH, 0)
+            : null;
+        // Otherwise caption, head and first row start together.
+        ensureRoom(
+          wholeH !== null && wholeH <= FOOT_LIMIT - PAGE.margin
+            ? wholeH
+            : captionH + headM.rowH + firstM.rowH
+        );
         if (caption) {
           textAt(caption, x0, doc.y, CW);
           doc.y += captionH;
         }
         tbl.paint(heads, { head: true }, headM);
-        const last = b.rows.length - 1;
         b.rows.forEach((r, i) => {
-          const opts: RowOpts = {
-            zebra: i % 2 === 1,
-            total: b.emphasizeLastRow && i === last,
-          };
+          const opts = rowOpts(i);
           const m = tbl.measure(r, opts);
           if (doc.y + m.rowH > FOOT_LIMIT) {
             // A row never splits; the head row repeats on the new page.

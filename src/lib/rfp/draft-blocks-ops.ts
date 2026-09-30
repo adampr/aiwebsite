@@ -27,6 +27,7 @@ import {
   type DraftBlock,
   type GroundFact,
 } from "./draft-blocks";
+import { stripReferencesIntro } from "./references-ask";
 
 type FactLike = {
   id: string;
@@ -240,14 +241,26 @@ export function isVisualsAction(v: unknown): v is VisualsAction {
   return typeof v === "string" && (VISUALS_ACTIONS as readonly string[]).includes(v);
 }
 
+// `references` is named for completeness of the record type only: it is not a VISUALS_ACTIONS
+// member (the references route builds it from the person's answer, never from the facts), so the
+// no_facts message below can never be about it.
 const ORIGIN_NAME: Record<NonNullable<DraftBlock["origin"]>, string> = {
   about: "company snapshot",
   "service-stats": "service stats",
   onboarding: "onboarding timeline",
+  references: "client references",
 };
 
 export type VisualsOpResult<S> =
-  | { ok: true; sections: S[]; section: S; added: number; removed: number }
+  | {
+      ok: true;
+      sections: S[];
+      section: S;
+      added: number;
+      removed: number;
+      /** Present (and true) only when "remove" deleted the section's client references. */
+      removedReferences?: true;
+    }
   | { ok: false; status: 400 | 404 | 409 | 422; code: string; message: string };
 
 /**
@@ -257,6 +270,13 @@ export type VisualsOpResult<S> =
  * this section holds of the same origin, keeping its position, so a second call is a refresh and
  * never a duplicate. The company snapshot lives on one section only. "remove" deletes one block
  * by id. Nothing else on the record moves: paragraphs, cites, generatedBy and gaps are untouched.
+ *
+ * The one exception is removing the client references (origin "references", §5.17.10). That block
+ * is a person's ANSWER, so taking it away also takes back what the answer wrote: the
+ * `referencesAnswered` stamp is cleared (a redraft or the backstop may ask again) and the intro
+ * paragraph the references route composed is stripped (stripReferencesIntro; a paragraph a person
+ * rewrote stays). The result says so with `removedReferences`, and the section route then puts
+ * the question back when the RFP still asks. Every other removal is exactly what it was.
  */
 export function applyVisualsOp<S extends StoredSection>(
   sections: S[],
@@ -281,11 +301,15 @@ export function applyVisualsOp<S extends StoredSection>(
   let next: DraftBlock[];
   let added = 0;
   let removed = 0;
+  let removedReferences = false;
 
   if (action === "remove") {
     const blockId = typeof op.blockId === "string" ? op.blockId : "";
     next = current.filter((b) => b.id !== blockId);
     removed = current.length - next.length;
+    removedReferences =
+      current.some((b) => b.id === blockId && b.origin === "references") &&
+      !next.some((b) => b.origin === "references");
     if (!blockId || removed === 0)
       return {
         ok: false,
@@ -344,7 +368,31 @@ export function applyVisualsOp<S extends StoredSection>(
   }
 
   // S is the caller's record type, which already carries the optional `blocks` and `updatedAt`.
-  const updated = withBlocks({ ...section, updatedAt: now }, reanchorBlocks(next, count)) as unknown as S;
+  let base: S & { updatedAt: string } = { ...section, updatedAt: now };
+  let nextCount = count;
+  if (removedReferences) {
+    const rest = { ...base } as typeof base & { referencesAnswered?: boolean };
+    delete rest.referencesAnswered;
+    const before = Array.isArray(section.paragraphs) ? (section.paragraphs as string[]) : [];
+    const paragraphs = stripReferencesIntro(before);
+    nextCount = paragraphs.length;
+    // A whole paragraph dropped ABOVE a block moves that block up one, or a
+    // clamp alone would leave it anchored past the paragraph it followed.
+    if (paragraphs.length < before.length) {
+      const dropped = before.findIndex((p, i) => paragraphs[i] !== p);
+      if (dropped >= 0)
+        next = next.map((b) => (b.after > dropped ? { ...b, after: b.after - 1 } : b));
+    }
+    base = { ...rest, paragraphs } as typeof base;
+  }
+  const updated = withBlocks(base, reanchorBlocks(next, nextCount)) as unknown as S;
   const nextSections = sections.map((s, i) => (i === at ? updated : s));
-  return { ok: true, sections: nextSections, section: updated, added, removed };
+  return {
+    ok: true,
+    sections: nextSections,
+    section: updated,
+    added,
+    removed,
+    ...(removedReferences ? { removedReferences: true as const } : {}),
+  };
 }

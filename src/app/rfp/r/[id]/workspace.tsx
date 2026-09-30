@@ -82,6 +82,14 @@ import {
   tableColumnFractions,
   type DraftBlock,
 } from "@/lib/rfp/draft-blocks";
+// Client references (§5.17.9): the picker answers the references question
+// with structured entries; the card tables are the one spec the exports
+// draw from too. Both client-safe (references-ask.ts is NOT, never import it).
+import {
+  referenceCardTables,
+  type ReferenceEntry,
+} from "@/lib/rfp/references-block";
+import { ReferencesPicker } from "./references-picker";
 
 type Section = {
   label: string;
@@ -864,6 +872,40 @@ export function Workspace({
   const currentIsReferences =
     current?.kind === "gap" &&
     current.targets.some((t) => isReferencesQuestion(t.raw));
+  // The references question answers through the structured picker
+  // (references-picker.tsx). "Answer in words instead" flips THIS question
+  // to the textarea; keyed on the question so the next one starts on the
+  // picker again without an effect.
+  const [refsWordsKey, setRefsWordsKey] = useState<string | null>(null);
+  const refsWords = current !== null && refsWordsKey === current.key;
+  // Edit after answering (§5.17.10): "Edit references" under a stored
+  // references block opens the picker in the Questions pane, seeded with the
+  // block's entries; saving replaces that section's card set in place. Shown
+  // only while the section still holds a references block (a Remove, or
+  // another tab's write, closes it without an effect).
+  // Pinned to the block's id, not the label: a Remove followed by a fresh
+  // answer puts a NEW block (new id) on the same label, and the stale editor
+  // must not take the pane over seeded with the removed entries.
+  const [refsEdit, setRefsEdit] = useState<{
+    label: string;
+    blockId: string;
+    entries: ReferenceEntry[];
+  } | null>(null);
+  const refsEditing =
+    refsEdit !== null &&
+    proposalId !== null &&
+    (blocksByLabel.get(refsEdit.label) ?? []).some(
+      (b) => b.kind === "references" && b.id === refsEdit.blockId
+    )
+      ? refsEdit
+      : null;
+  // How many references the open question names, for the picker's
+  // "The RFP asks for M." line. Read from the canonical wording only
+  // (references-ask.ts REFERENCES_GAP_QUESTION); a model-worded question
+  // gives null and the line is not shown.
+  const refsAsked = currentIsReferences
+    ? referencesAskedCount(current?.text ?? "")
+    : null;
   // A draft that predates the references backstop: the RFP asks, the draft
   // lists none, and no question is open. Server-computed at load; cleared
   // once the question is added, and quiet as soon as any section carries the
@@ -2473,7 +2515,44 @@ export function Workspace({
                     )}
                   </div>
                 )}
-                {sections.length === 0 ? (
+                {refsEditing && proposalId ? (
+                  // Edit mode replaces the current question (or the
+                  // "nothing waiting" state) until saved or cancelled; the
+                  // queue is untouched underneath.
+                  <>
+                    <span className="sys-label">References</span>
+                    <p className="mt-3">
+                      Edit the references on{" "}
+                      <span className="mono">{refsEditing.label}</span>
+                    </p>
+                    <ReferencesPicker
+                      key={`edit:${refsEditing.label}`}
+                      mode="edit"
+                      proposalId={proposalId}
+                      question={`Edit the references on ${refsEditing.label}`}
+                      targets={[{ label: refsEditing.label, raw: "" }]}
+                      initial={refsEditing.entries}
+                      asked={null}
+                      disabled={busy || visualBusy !== null}
+                      onAnswered={(r) => {
+                        const label = refsEditing.label;
+                        setSections(r.sections as typeof sections);
+                        adoptRev(r.rev);
+                        setGateResult(null);
+                        showChanged([label]);
+                        const n = r.kept + r.created;
+                        setNotice(
+                          r.note ??
+                            (n > 0
+                              ? `Contacts saved to the shared reference file for ${n} reference${n === 1 ? "" : "s"}.`
+                              : "")
+                        );
+                        setRefsEdit(null);
+                      }}
+                      onCancel={() => setRefsEdit(null)}
+                    />
+                  </>
+                ) : sections.length === 0 ? (
                   <>
                     <span className="sys-label">Questions</span>
                     <p className="mt-3 text-sm text-faint">
@@ -2572,6 +2651,52 @@ export function Workspace({
                           Skip for now
                         </button>
                       </>
+                    ) : currentIsReferences && !refsWords && proposalId ? (
+                      // The references question as a form (§5.17.9): the
+                      // response is the whole sections array, adopted like
+                      // addReferencesQuestion's. Skip stays here, with the
+                      // queue it belongs to.
+                      <>
+                        <ReferencesPicker
+                          key={current.key}
+                          proposalId={proposalId}
+                          question={current.text}
+                          targets={current.targets}
+                          asked={refsAsked}
+                          disabled={busy}
+                          onAnswered={(r) => {
+                            // Only the first target gains the cards; the
+                            // question merely closes on the others.
+                            const gained = r.labels.slice(0, 1);
+                            setSections(r.sections as typeof sections);
+                            adoptRev(r.rev);
+                            setGateResult(null);
+                            showChanged(gained);
+                            setAnsweredCount((n) => n + 1);
+                            setAnswerText("");
+                            setLastWoven(gained[0] ?? null);
+                            const n = r.kept + r.created;
+                            setNotice(
+                              r.note ??
+                                (n > 0
+                                  ? `Contacts saved to the shared reference file for ${n} reference${n === 1 ? "" : "s"}.`
+                                  : "")
+                            );
+                          }}
+                          onWords={() => setRefsWordsKey(current.key)}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn--text mt-3"
+                          onClick={() => {
+                            setSkipped((s) => new Set(s).add(current.key));
+                            setAnswerText("");
+                            setAnswerInvalid(false);
+                          }}
+                        >
+                          Skip for now
+                        </button>
+                      </>
                     ) : (
                       <form
                         className="mt-4"
@@ -2608,7 +2733,8 @@ export function Workspace({
                         )}
                         {currentIsReferences ? (
                           <p className="mt-3 text-xs text-faint">
-                            Reference contacts are not kept for future RFPs.
+                            Answered in words, the contacts are woven into the
+                            text and not kept on file.
                           </p>
                         ) : (
                           <label className="mt-3 flex items-start gap-2 text-xs text-faint">
@@ -3989,6 +4115,30 @@ export function Workspace({
                                       {visualError.message}
                                     </span>
                                   )}
+                                {item.block.kind === "references" &&
+                                  proposalId && (
+                                    // Opens the picker in the Questions
+                                    // pane, seeded with this block's cards.
+                                    // Off wherever Remove is, and while a
+                                    // draft run holds the workspace.
+                                    <button
+                                      type="button"
+                                      disabled={visualBusy !== null || busy}
+                                      aria-label={`Edit references on ${node.label}`}
+                                      onClick={() => {
+                                        if (item.block.kind !== "references")
+                                          return;
+                                        setRefsEdit({
+                                          label: node.label,
+                                          blockId: item.block.id,
+                                          entries: item.block.references,
+                                        });
+                                        showPane("questions");
+                                      }}
+                                    >
+                                      Edit references
+                                    </button>
+                                  )}
                                 <button
                                   type="button"
                                   disabled={visualBusy !== null}
@@ -4338,6 +4488,145 @@ export function Workspace({
  * fact-authored and is never parsed as markup. No headings (futurism.css
  * uppercases bare h1-h3), no form state, no ids.
  */
+/** The body of a branded table, as a stored `table` block or a reference
+ *  card carries it (references-block.ts ReferenceCardTable is the same shape). */
+type TableBody = Parameters<typeof tableColumnFractions>[0];
+
+/** The count the canonical references question names ("asks for three
+ *  client references"), or null. Client-safe: one plain regex over the
+ *  number words, no lookbehind. */
+function referencesAskedCount(question: string): number | null {
+  const m =
+    /\basks for (one|two|three|four|five|six|seven|eight|nine|ten) client references?\b/i.exec(
+      question
+    );
+  if (!m) return null;
+  const n = [
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+  ].indexOf(m[1].toLowerCase());
+  return n >= 0 ? n + 1 : null;
+}
+
+/**
+ * A branded table on the sheet. Called by DocBlock's `table` case and once
+ * per card by its `references` case, so both draw byte-identical content.
+ */
+function renderTable(block: TableBody, asCard = false) {
+  // A reference card (references-block.ts referenceCardTable): "Reference N"
+  // over a blank second head cell, no caption. Its head is ONE spanning
+  // header and each label cell is a row header, so a screen reader names
+  // the card and reads "Organization: ..." instead of an empty column head.
+  const card =
+    asCard &&
+    block.caption === null &&
+    block.columns.length === 2 &&
+    block.columns[1].header === "";
+  // The SAME fractions the docx grid and the pdf columns use, so a cell
+  // breaks its lines the same way on screen and in the file.
+  const fractions = tableColumnFractions(block);
+  const last = block.rows.length - 1;
+  // The floor is the width at which every column holds its longest
+  // word (a cell never splits one: overflow-wrap normal in globals.css):
+  // per column the word at ~7.6px a character plus the 28px of cell
+  // padding, over the column's share of the table. Capped at 640 so a
+  // full sheet never scrolls; only a genuinely wide table scrolls, and
+  // then inside its own wrapper. Pure arithmetic on the block, so the
+  // server and the client render the same attribute.
+  const minWidth = Math.min(
+    640,
+    Math.round(
+      Math.max(
+        ...fractions.map((f, c) => {
+          const word = Math.max(
+            longestWord(block.columns[c]?.header ?? ""),
+            ...block.rows.map((r) => longestWord(r[c] ?? ""))
+          );
+          return (word * 7.6 + 28) / Math.max(0.05, f);
+        })
+      )
+    )
+  );
+  return (
+    <figure className="rfpdoc-figure">
+      {block.caption && (
+        <figcaption className="rfpdoc-tablecap">{block.caption}</figcaption>
+      )}
+      {/* Its own scroll container: a table wider than the sheet scrolls
+          here, never the page; the floor above is what makes it wide. */}
+      <div className="rfpdoc-tablewrap">
+        {/* A card has no floor: its long email wraps inside the cell
+            (globals.css .rfpdoc-refs) and the card never scrolls sideways. */}
+        <table style={card ? undefined : { minWidth: `${minWidth}px` }}>
+          <colgroup>
+            {fractions.map((f, i) => (
+              <col key={i} style={{ width: `${(f * 100).toFixed(2)}%` }} />
+            ))}
+          </colgroup>
+          <thead>
+            <tr>
+              {card ? (
+                <th
+                  colSpan={2}
+                  scope="colgroup"
+                  style={{ textAlign: block.columns[0].align }}
+                >
+                  {block.columns[0].header}
+                </th>
+              ) : (
+                block.columns.map((c, i) => (
+                  <th key={i} scope="col" style={{ textAlign: c.align }}>
+                    {c.header}
+                  </th>
+                ))
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {block.rows.map((row, r) => (
+              <tr
+                key={r}
+                className={
+                  block.emphasizeLastRow && r === last
+                    ? "rfpdoc-total"
+                    : undefined
+                }
+              >
+                {row.map((cell, c) =>
+                  card && c === 0 ? (
+                    <th
+                      key={c}
+                      scope="row"
+                      style={{ textAlign: block.columns[c]?.align ?? "left" }}
+                    >
+                      {cell}
+                    </th>
+                  ) : (
+                    <td
+                      key={c}
+                      style={{ textAlign: block.columns[c]?.align ?? "left" }}
+                    >
+                      {cell}
+                    </td>
+                  )
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </figure>
+  );
+}
+
 function DocBlock({ block }: { block: DraftBlock }) {
   switch (block.kind) {
     // role="list" on every list styled list-style: none: Safari/VoiceOver
@@ -4385,79 +4674,19 @@ function DocBlock({ block }: { block: DraftBlock }) {
           ))}
         </ul>
       );
-    case "table": {
-      // The SAME fractions the docx grid and the pdf columns use, so a cell
-      // breaks its lines the same way on screen and in the file.
-      const fractions = tableColumnFractions(block);
-      const last = block.rows.length - 1;
-      // The floor is the width at which every column holds its longest
-      // word (a cell never splits one: overflow-wrap normal in globals.css):
-      // per column the word at ~7.6px a character plus the 28px of cell
-      // padding, over the column's share of the table. Capped at 640 so a
-      // full sheet never scrolls; only a genuinely wide table scrolls, and
-      // then inside its own wrapper. Pure arithmetic on the block, so the
-      // server and the client render the same attribute.
-      const minWidth = Math.min(
-        640,
-        Math.round(
-          Math.max(
-            ...fractions.map((f, c) => {
-              const word = Math.max(
-                longestWord(block.columns[c]?.header ?? ""),
-                ...block.rows.map((r) => longestWord(r[c] ?? ""))
-              );
-              return (word * 7.6 + 28) / Math.max(0.05, f);
-            })
-          )
-        )
-      );
+    case "table":
+      return renderTable(block);
+    case "references": {
+      // One branded table per reference (references-block.ts), through the
+      // SAME markup as a stored table so the screen matches the Word and
+      // PDF cards, which the lift turns into `table` blocks.
+      const cards = referenceCardTables(block.references);
       return (
-        <figure className="rfpdoc-figure">
-          {block.caption && (
-            <figcaption className="rfpdoc-tablecap">{block.caption}</figcaption>
-          )}
-          {/* Its own scroll container: a table wider than the sheet scrolls
-              here, never the page; the floor above is what makes it wide. */}
-          <div className="rfpdoc-tablewrap">
-            <table style={{ minWidth: `${minWidth}px` }}>
-              <colgroup>
-                {fractions.map((f, i) => (
-                  <col key={i} style={{ width: `${(f * 100).toFixed(2)}%` }} />
-                ))}
-              </colgroup>
-              <thead>
-                <tr>
-                  {block.columns.map((c, i) => (
-                    <th key={i} scope="col" style={{ textAlign: c.align }}>
-                      {c.header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {block.rows.map((row, r) => (
-                  <tr
-                    key={r}
-                    className={
-                      block.emphasizeLastRow && r === last
-                        ? "rfpdoc-total"
-                        : undefined
-                    }
-                  >
-                    {row.map((cell, c) => (
-                      <td
-                        key={c}
-                        style={{ textAlign: block.columns[c]?.align ?? "left" }}
-                      >
-                        {cell}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </figure>
+        <div className="rfpdoc-refs">
+          {block.references.map((_, i) => (
+            <Fragment key={i}>{renderTable(cards[i], true)}</Fragment>
+          ))}
+        </div>
       );
     }
     case "callout":

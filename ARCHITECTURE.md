@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17.10 RFP CLIENT REFERENCES AS CARDS + RETAINED CONTACTS (owner: use the July 2026 senior-living proposal's References section as the template, keep the reference contacts it names, and let the person keep contacts on file when an RFP asks for references). The references question is now answered with a picker (`src/app/rfp/r/[id]/references-picker.tsx`): what is on file, ranked for the RFP, is prefilled from `rfp_references` (`GET /api/rfp/proposals/[id]/references`, the ONE read that selects the contact columns), the person includes/edits/adds entries, and `POST .../references` (no brain call) lands a stored `references` visual block (`src/lib/rfp/references-block.ts`, the frozen one-spec module) plus the template's intro sentence with rule D3's etiquette sentence, stamps `referencesAnswered`, clears the question from every section, and, when "Keep these contacts on file" is checked, writes the contacts back (`saveReferenceContacts`: update the live row by id, or a new `ref_<slug>` row). resolve-draft lifts the block into one branded `table` block per reference (head bar "Reference N", rows Organization / Industry / relevance / Contact name & title / Phone & email; generatedBy human, no cites) and into `proposal.references`, so the gate scans every cell, D3 sees the references, and the Word/PDF emitters draw them with the table code they already had. A redraft carries the block and the stamp. Operator lane `npm run rfp:reference-contact` (stdin JSON, update-only, never prints a value). No migration, no env change. Suites extended: `test:rfprefs`, `test:rfpblocks`, `test:rfpvisualgate`.
+
 Last verified against code: 2026-09-30 §5.17.9 YOUR KNOWLEDGE IS EDITABLE (`/rfp/knowledge/mine`: the owner edits a row in place, sends it for approval or withdraws it, deletes it, and an admin promotes their own row straight into the shared base through the same INSERT-at-a-new-KB-version as the review queue; new `PATCH|POST|DELETE /api/rfp/knowledge/[id]`, pure rules in `src/lib/rfp/knowledge-mine.ts`, `npm run test:rfpmine`; a fact's category is steered onto the corpus list; no schema, env or migration change). Previous entry: §5.17.8 RFP CHECKS IGNORE / FIX IT (owner directive: every Checks-pane recommendation gets Ignore and Fix it). Ignore persists per-proposal dismissals in `rfp_proposals.checks_ignores_json` (migration `0059_rfp_check_ignores`), keyed by the PERSISTED `findingSig` recipe in `src/lib/rfp/check-ignores.ts`, re-applied by `applyIgnores` at BOTH gate store sites (gate-run.ts `runAndStoreGate` and the export route, before `writeProposalGate`/the draft computation/`x-rfp-gate-passed`) so the pane and the export never disagree; dismissed findings leave the visible counts and `passed` and collect under a "Ignored (N)" disclosure with Restore. New route `POST /api/rfp/proposals/[id]/checks` (`{op: ignore|restore, sig}`; sig must match a stored violation; row-locked read-modify-write via `writeProposalChecksState`, NO rev bump; activity `proposal.check_ignore`/`proposal.check_restore`, shape-only meta). Fix it maps each rule through `src/lib/rfp/check-fixes.ts` (`resolveTargetLabel` in lockstep with resolve-draft's ids; tron on the section else `DOC_LABEL`, optional inline context for A5/B7/C3/D4-edge, C1-block redraft via the existing per-section path, pricing/none pointers) and fires the existing Tron ask flow with explicit overrides (`askTron({label, instruction})`, `askTronDoc(instr)`), instruction fenced server-side as before. `Violation` gains additive `dismissed`. New suite `npm run test:rfpchecks`. No env change.
 
 Last verified against code: 2026-09-30 §5.17 RFP RUNBAR ALWAYS STICKY (owner directive: the drafting-status line and the Run checks / Word / PDF buttons must float — never scrollable out of view — pinned at the top of the window). `.rfp-page .rfp-runbar` is now `position: sticky` at every width (top = measured `--rfp-workbar-h` below md, `11.25rem` at md+, `z-index: 30`); the `--rfp-runbar-h` measurement (ResizeObserver + layout effect in `workspace.tsx`) runs unconditionally and the `rfp-runbar--live`/`runbarLive` live-only gating is DELETED, superseding the 2026-08-28 scroll-at-rest ruling. All dependent offsets (rail top/max-height, `.rfp-doc-receipt`, mobile tabstrip, `sec-*` scroll-margins) already read `--rfp-runbar-h` and follow unchanged. CSS + one component; no route, schema, env or migration change.
@@ -9821,8 +9823,10 @@ deferrals do not count. The gap's `why` is built from `liveReferences()`
 (`db.ts`: id, organization, segment, relationshipSince, usableWithoutAsking,
 hasContact; retired rows excluded; contact values never selected): how many
 the RFP asked for, what the knowledge base holds, a segment-ranked shortlist,
-and that the person must type each contact. Organization names live in
-`why` only, which no prompt, export, log or activity row ever reads.
+and (since §5.17.10) that details on file are filled in by the picker and
+new or corrected contacts are kept when the person says so. Organization
+names live in `why` only, which no prompt, export, log or activity row ever
+reads.
 `draftSection` gains a CLIENT REFERENCES prompt block, byte-absent unless
 the section asks: never invent a reference or write "available on request".
 
@@ -10220,6 +10224,208 @@ kind flips, the transition table incl. 403/409 codes, delete freeze,
 category steering). `npm run test:rfp`'s ownership audit accepts
 `getMyKnowledgeProposal` as a scoped accessor. No schema, env or migration
 change.
+
+#### 5.17.10 Client references as cards, and contacts kept on file (2026-09-30)
+
+Owner: "locate how we visually displayed references before, use it as a
+template to update your reference section, retain the contact information
+from that RFP, and allow it to be retained when asking the user for reference
+contact information." The template is a July 2026 senior-living proposal
+(Word): a References section that opens with one sentence ("The
+following comparable client references are provided." plus the
+call-references-last etiquette) and then prints ONE two-column table per
+reference under a full-width navy "Reference N" bar, four label/value rows:
+Organization, Industry / relevance, Contact name & title, Phone & email.
+Before this round the references question (§5.17.6) was answered in free
+text that the brain wove into prose, the answer box said "Reference contacts
+are not kept for future RFPs", `liveReferences()` never selected a contact
+column, and the only two real contacts anywhere were inside that Word file.
+Three implementers on disjoint files against a frozen contract module built
+first, three refuters (correctness, PII/security, template fidelity),
+targeted fixes, re-refutation.
+
+**One spec, `src/lib/rfp/references-block.ts` (pure, client-safe, no
+lookbehind).** `ReferenceEntry {referenceId|null, organization, relevance,
+contactName, contactTitle, phone, email}`; `readReferenceEntry` (NFKC,
+format characters out, whitespace squashed, length caps in
+`REFERENCE_LIMITS`; organization and contact name required, phone or email
+required, an email must look like one, `referenceId` matches
+`^[a-z0-9_\-]{1,80}$`) and `readReferenceEntries` (1 to 10);
+`referenceCardTable(entry, n)`: a branded-table body with head cells
+`["Reference N", ""]` (the blank second head cell is what makes the bar run
+the full width, as in the template), no caption, rows
+`referenceCardRows()` in template order, contact "Name, Title" and reach
+"phone · email" (middot, never a dash; whichever is on file when only one
+is), an empty relevance printing "Comparable client"; `referencesBlockStrings`
+(the currency screen and the gate tests); `REFERENCES_INTRO_SENTENCE`; and
+the wire types of the two routes. Nothing else may define the card.
+
+**Storage: a `references` DraftBlock (`draft-blocks.ts`).** Kind
+`"references"` joins `DRAFT_BLOCK_KINDS` with body `ReferencesBody`; origin
+`"references"`; `generatedBy: "system"` (the server built it from the
+person's structured answer, never from a request body); `cites: []`, the
+ONE kind the sanitizer accepts without cites (references are not facts).
+`readBody` drops the whole block when any entry is unreadable; the currency
+screen that drops every other kind does NOT apply to it (real organization
+names and surnames trip its word list: "Dollar Bank", "Bucks County",
+"Pence"; an accepted answer must never vanish on read);
+`draftBlockSummary` reads "Client references · N references";
+`parseModelVisuals` never accepts the kind from the model. It survives
+weaves, visuals ops and edits like any stored block (`keptBlocks`), and the
+Remove action removes it by id. It is NOT a content-model kind: resolve-draft
+lifts it (`liftVisual` now returns `Block[]`, the section loop is a flatMap
+with counted ordinals; a section without a references block resolves
+byte-identically, test-pinned) into N content-model `table` blocks from
+`referenceCardTable`, ids `bv_<label>_<blockId>_<n>`, `generatedBy: "human"`,
+`cites: []`, `editedByHuman: true`, and populates `proposal.references`
+(`Reference` rows with `ref_typed_<n>` ids for typed entries). So rule A5
+demands nothing (cites are only required of llm blocks), the gate scans every
+cell, rule D3 sees the references and BLOCKs unless the document states the
+etiquette (which the answer route guarantees), and `buildExportView` feeds
+both emitters plain `table` blocks: the Word and PDF renderers gained no
+code. On screen `DocBlock` renders `referenceCardTables(block.references)`
+through the same `renderTable` the table kind uses, inside `.rfpdoc-refs`
+(a grid with an 18px gap, so two cards never fuse); for a card the head is
+one `<th colSpan=2 scope="colgroup">`, each label a `<th scope="row">`
+styled as the strong first column, no min-width floor, and cells wrap
+anywhere so a long email never scrolls a phone sheet.
+`tableColumnFractions` returns the template's fixed `[0.3333, 0.6667]` for
+the card shape (two columns, no caption, blank second header, a shape
+neither a stored nor a model table can take), so every card's label column
+is the same third on screen, in Word and in PDF. Both emitters keep a table
+of at most `SHORT_TABLE_ROWS` (6) rows whole: the PDF measures every row and
+makes room for head plus rows together, Word chains keep-with-next through
+every row but the last; longer tables break by row as before. A gate
+finding on a lifted card never becomes a Tron instruction
+(`check-fixes.ts` `isReferenceCardBlockId`: the recipe is "Edit the
+references on this section"), so a card cell never reaches a prompt.
+
+**`GET /api/rfp/proposals/[id]/references`** (`requireRfpApi` +
+`getOwnedProposal`, 404 otherwise; `rfpOk` is already `no-store, private`):
+`liveReferencesWithContacts()` (db.ts: live rows with the four contact
+columns; THE one read that selects them, for a staff member behind the /rfp
+gate who is about to print them) ranked by `rankReferenceCandidates` against
+the RFP's client name, title and raw text. `{candidates}`.
+
+**`POST /api/rfp/proposals/[id]/references`** body `{label, question,
+references, keep}`: 400 `invalid_request` (not JSON; label/question not
+strings; `readReferenceEntries` null: "Each reference needs an organization,
+a contact name and a phone or email."; keep not boolean; the open question is
+not a references question by `isReferencesGapQuestion || asksAboutReferences`),
+404 `not_found` (not owned; no such section; question not open on it, exact
+text like the gap route), 409 `immutable` (sent) / `conflict` (three CAS
+losses on `writeProposalSections`), 503 `unavailable` (the id-integrity read
+failed; nothing written). No brain call. The record is built by ONE pure
+function, `applyReferencesAnswer` (`src/lib/rfp/references-answer.ts`,
+server-only, which the fixture and the gate tests call too):
+`composeReferencesParagraphs` (references-ask.ts) adds the closing paragraph
+`REFERENCES_INTRO_SENTENCE` followed by `REFERENCE_ETIQUETTE_SENTENCE`
+unless the etiquette already holds over every other record's text plus this
+section's own; a paragraph that already carries the intro is reused, never
+doubled; at `PARAGRAPH_CAP` the intro folds onto the last paragraph instead
+of becoming a 13th that the next edit would truncate. A section the drafter
+left empty becomes `generatedBy: "human"` (an llm record with no cites would
+otherwise A5-BLOCK on the system-written intro). The kept blocks lose any
+earlier references block and, when they already number
+`LIMITS.blocksPerSection`, the last non-references block (said in `note`);
+`buildReferencesBlock(entries, paragraphs.length)` closes the section;
+`referencesAnswered: true`; EVERY references question (canonical or
+model-worded, `closeReferencesQuestions`) leaves every section's gaps.
+Integrity before the block is built: the same `referenceId` twice is 400; an
+unknown or retired id becomes null; a known id has its organization
+overwritten from the row (`liveReferenceOrganizations`), so a request cannot
+attach one organization's contact to another's row. Then, only when `keep`
+and only after the document write succeeded,
+`saveReferenceContacts(user, entries)`: an entry with a `referenceId` sets
+the non-empty contact fields on the LIVE row of that id (an empty field
+never nulls a stored value); an entry without one first looks for a live row
+with the same organization (case and spacing folded) and updates it, else
+inserts `ref_<slug(organization)>` (`_2`, `_3` on collision with any id,
+retired included; one retry on a lost id race), segment = relevance or
+"comparable client", `usable_without_asking false`, notes "Added from a
+proposal answer." Per-row failures are isolated and counted; the response
+`note` says "Contacts for N of M references could not be kept on file." when
+some were not, and the document write is never undone. Activity
+`proposal.references_answer` `{section, count, keep, kept, created,
+remaining, replace?}`, `reference.contacts_save` `{ids}` when something was
+written, and `reference.contacts_read` `{count}` on every GET (ids and
+counts only; contact values never reach a log, an activity row, a prompt, a
+`why`, or a response beyond the document). Response `{sections, rev, kept,
+created, note?}`; the client adopts the whole array like the references-gap
+route's.
+
+**Editing and removing an answer.** `replace: true` on the same POST edits
+an answer already given: the section named by `label` must hold a references
+block (404 "There are no references on this section to edit."), `question`
+is ignored, the new card set takes the old block's slot and anchor, the
+intro is not added twice, the stamp stays. The workspace offers it as "Edit
+references" in the block bar of a references block, which opens the picker
+in edit mode seeded from the stored entries. Removing the block (the visuals
+`remove` op, `PATCH .../section`) clears `referencesAnswered`, strips the
+intro (`stripReferencesIntro`, also out of a paragraph it was folded into)
+and reopens the canonical question when the section's requirements still ask
+and nothing else answers (`reopenReferencesQuestion`), so a document can
+never keep "The following comparable client references are provided." with
+nothing under it. After an answer, `withReferencesGap` drops any
+model-worded references gap a later draft mints, so the question cannot
+reopen beside an answered one.
+
+**The picker (`references-picker.tsx`)** replaces the textarea whenever the
+current question is the references question (canonical shape or a
+server-flagged model wording): loads the candidates, one row per on-file
+organization (segment, "client since", an "on file" tag when a contact
+exists, "Ask the client first" unless `usable_without_asking`); Include expands the prefilled fields (relevance from segment; the
+organization of an on-file row is locked so `referenceId` keeps naming what
+it points at); "Add another organization" adds a typed entry
+(`referenceId: null`); entries number "Reference N" in selection order with
+Remove, one list in printed order; "Save these contacts to the shared
+reference file · every RFP staff member sees them, and edits here replace
+what is on file" (default on) is `keep`; a line reminds that the contacts are
+printed and each client must have agreed;
+client-side `readReferenceEntry` marks each refused entry (`aria-invalid`,
+per-entry alert); "Add references" posts; the parent then adopts sections and
+rev, stales the gate verdict, flashes the section that gained the cards,
+counts the answer, and notes how many contacts were saved. "Answer in words instead"
+falls back to the previous free-text weave through `POST .../gap` (whose
+note now reads "Answered in words, the contacts are woven into the text and
+not kept on file."); the parent's "Skip for now" stays under the picker.
+`WHY_TAIL` on the question now says details on file are filled in and new or
+corrected contacts are kept when the person says so; the canonical question
+text itself is unchanged (PERSISTED FORMAT).
+
+**A redraft keeps the answer.** The generate route reads the previous record
+of the same label through `keptBlocks` and `carryReferencesBlock` puts its
+`references` block LAST on the fresh record (anchored to close the new
+paragraphs, the other blocks cut to the cap minus one), runs the same
+composer so the intro and the etiquette come along (rule D3 cannot BLOCK
+after a redraft), stamps `referencesAnswered: true`, and tells the backstop
+the question is answered, so a redraft neither loses the person's references
+nor asks again. Nothing is carried when the previous record had none (the
+record is byte-identical to before).
+
+**Operator lane, `npm run rfp:reference-contact`**
+(`scripts/rfp-reference-contact.mjs`, plain ESM on the `postgres` package,
+so it runs on the VM with no dev dependency): a JSON array of `{id,
+contactName?, contactTitle?, contactPhone?, contactEmail?}` on stdin
+(omitted = unchanged, null = cleared), `DATABASE_URL` from the environment or
+parsed in place from `./.env`, UPDATE-only on live rows, prints only
+`updated <id>: <fields>` / `no live row: <id>`, exit 1 on invalid input or a
+missing row; a malformed URL or a database error prints only the error
+code, never the URL; the contract's length caps and email shape apply. This
+is the lane for contacts that exist only in an earlier proposal file: the
+seed (`src/lib/rfp/seed/references.ts`) stays "(withheld)"
+and no fixture or test carries a real name, phone or email.
+
+**Declined on the record.** A content-model `references` kind (three
+emitters to write for a shape the branded table already draws); enforcing the
+RFP's count on the answer (the person decides how many to list); an actor
+column on `rfp_references` (provenance is the activity row); surfacing
+`usableWithoutAsking` as a hard stop (shown, not enforced); re-linking a
+typed entry's card to the on-file row its organization matched at save time
+(the row is updated, the card keeps the typed spelling and no id); refusing
+a reopened question on a section already at three gaps; a person's own
+paragraph that ENDS with the intro sentence loses that sentence on Remove
+(the documented "rewrote it, it stays" rule, accepted).
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

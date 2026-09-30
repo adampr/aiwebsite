@@ -18,7 +18,9 @@
 // regexes and the whole ask scanner, so client components import the tiny
 // references-question.ts instead (the tests pin the two together).
 
+import { PARAGRAPH_CAP } from "./draft-blocks";
 import { normalizeGapQuestion } from "./gaps";
+import { REFERENCES_INTRO_SENTENCE } from "./references-block";
 
 export type ReferencesAsk = {
   /** How many the RFP asked for, 1..10, or null when it named no number. */
@@ -412,11 +414,14 @@ export function rankReferenceCandidates<C extends ReferenceCandidate>(
 const WHY_MAX = 900;
 const WHY_CANDIDATES = 5;
 const WHY_TAIL =
-  "Nothing about references is written until this is answered. Type each organization, contact name, title, phone and email here; details on file are not filled in for you.";
+  "Pick the references to list and check each contact; details on file are filled in for you, and new or corrected contacts are kept on file when you say so.";
 
 /**
  * The line under the question: what the RFP asked, and what the knowledge
  * base holds, so the person decides on shown detail instead of a bare ask.
+ * The closing line points at the picker (references-block.ts, §5.17.10):
+ * contacts on file are prefilled there, and the answer route writes new or
+ * corrected ones back only on the person's `keep`.
  *
  * Organization names appear here and ONLY here. `why` is staff-only display
  * text: it is never sent to a model (prompts carry `question` alone) and
@@ -480,9 +485,11 @@ export function referencesGapWhy(
  * so two sections asking for references stay ONE question with one answer.
  *
  * `answeredElsewhere`: another section's record carries
- * `referencesAnswered` (the gap route stamps it when the canonical question
- * is answered). That is the person's answer, whatever the woven prose looks
- * like, so the question is not raised again.
+ * `referencesAnswered` (the gap route and the references route stamp it when
+ * the question is answered), or this section's own references block is being
+ * carried over a redraft. That is the person's answer, whatever the prose
+ * looks like, so the question is not raised again, and a model-worded gap
+ * asking which client references to list is dropped with it.
  */
 export function withReferencesGap(
   gaps: { question: string; why: string }[],
@@ -498,7 +505,15 @@ export function withReferencesGap(
   }
 ): { question: string; why: string }[] {
   if (!opts.ask) return gaps;
-  if (opts.answeredElsewhere) return gaps;
+  // Answered by a person (on another section, or as the references block a
+  // redraft carries): the canonical question is not raised, and a
+  // model-worded references question the drafter returned must not reopen
+  // it either.
+  if (opts.answeredElsewhere) {
+    // The SAME array when nothing was dropped: callers compare by identity.
+    const kept = gaps.filter((g) => !asksAboutReferences(g.question));
+    return kept.length === gaps.length ? gaps : kept;
+  }
   if (sectionPresentsReferences(opts.paragraphs)) return gaps;
   if (opts.otherSections.some((p) => sectionPresentsReferences(p))) return gaps;
   const question =
@@ -558,8 +573,10 @@ export function unansweredReferencesAsks(
 export const REFERENCE_ETIQUETTE_SENTENCE =
   "Out of respect for our clients' time, we ask that references be called as a final step before contract rather than earlier in the evaluation.";
 
-/** Mirror of D3's etiquette test over whole-document text. */
-function statesEtiquette(documentText: string): boolean {
+/** Mirror of D3's etiquette test over whole-document text. Exported for the
+ *  references answer route, which composes the section's intro paragraph
+ *  with the etiquette sentence unless the landing text already states it. */
+export function statesEtiquette(documentText: string): boolean {
   return (
     /final step before contract/i.test(documentText) ||
     (/respect for (our )?clients?[’']? time/i.test(documentText) &&
@@ -621,4 +638,79 @@ export function withReferenceEtiquette(
   if (!/\breferences?\b/i.test(own)) return paragraphs;
   if (d3Satisfied(all)) return paragraphs;
   return [...paragraphs, REFERENCE_ETIQUETTE_SENTENCE];
+}
+
+/* ---- the references block's intro paragraph (§5.17.10) ------------------- */
+
+/**
+ * The paragraphs a section holds once it carries a references block: the
+ * template's intro sentence, with rule D3's etiquette sentence unless the
+ * proposal already states the etiquette. THE ONE composer: the references
+ * route (first answer and edit) and the generate route's redraft carry both
+ * call it, so the two can never disagree about what closes the section.
+ *
+ * `otherText` is everything ELSE rule D3 scans at landing time, built the way
+ * the gap route builds it: the proposal title, every other record's label,
+ * title and paragraphs, and this record's own label and title.
+ *
+ * - The intro is already there (a paragraph that starts with it, or one it
+ *   was folded onto): nothing is added, so an edit never lands a second
+ *   intro. Only when the etiquette is stated NOWHERE is its sentence appended
+ *   to that paragraph.
+ * - Otherwise the intro is appended as a new last paragraph, or, when the
+ *   section already holds PARAGRAPH_CAP paragraphs, folded onto the end of
+ *   the last one: the section route keeps 12 paragraphs, so a 13th would be
+ *   cut by the next edit and take the etiquette sentence (and D3) with it.
+ */
+export function composeReferencesParagraphs(
+  paragraphs: string[],
+  otherText: string
+): string[] {
+  const stated = statesEtiquette(`${otherText}\n${paragraphs.join("\n")}`);
+  const at = paragraphs.findIndex((p) => p.includes(REFERENCES_INTRO_SENTENCE));
+  if (at >= 0) {
+    if (stated) return paragraphs;
+    return paragraphs.map((p, i) =>
+      i === at ? `${p.trimEnd()} ${REFERENCE_ETIQUETTE_SENTENCE}` : p
+    );
+  }
+  const intro =
+    REFERENCES_INTRO_SENTENCE + (stated ? "" : ` ${REFERENCE_ETIQUETTE_SENTENCE}`);
+  if (paragraphs.length >= PARAGRAPH_CAP && paragraphs.length > 0) {
+    const last = paragraphs.length - 1;
+    return paragraphs.map((p, i) =>
+      i === last ? `${p.trimEnd()} ${intro}` : p
+    );
+  }
+  return [...paragraphs, intro];
+}
+
+/**
+ * The inverse, for when the references block is removed: a paragraph that is
+ * exactly the composed intro (with or without the etiquette sentence) is
+ * dropped, and an intro folded onto the end of a paragraph is cut off it,
+ * the etiquette sentence directly after it included. A paragraph a person
+ * rewrote is theirs and stays; the same array comes back when nothing matched.
+ */
+export function stripReferencesIntro(paragraphs: string[]): string[] {
+  const withEtiquette = `${REFERENCES_INTRO_SENTENCE} ${REFERENCE_ETIQUETTE_SENTENCE}`;
+  let changed = false;
+  const out: string[] = [];
+  for (const p of paragraphs) {
+    const t = p.trim();
+    if (t === REFERENCES_INTRO_SENTENCE || t === withEtiquette) {
+      changed = true;
+      continue;
+    }
+    const tail = [withEtiquette, REFERENCES_INTRO_SENTENCE].find((x) =>
+      t.endsWith(` ${x}`)
+    );
+    if (tail) {
+      changed = true;
+      out.push(t.slice(0, t.length - tail.length).trimEnd());
+      continue;
+    }
+    out.push(p);
+  }
+  return changed ? out : paragraphs;
 }

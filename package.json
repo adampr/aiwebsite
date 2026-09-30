@@ -64,6 +64,7 @@
     "test:rfpblocks": "tsx scripts/rfp-draft-blocks-tests.ts",
     "test:rfpvisualgate": "tsx scripts/rfp-visual-gate-tests.ts",
     "rfp:render-fixture": "tsx scripts/rfp-render-fixture.ts",
+    "rfp:reference-contact": "node scripts/rfp-reference-contact.mjs",
     "test:deploysafe": "bash scripts/deploy-safe-tests.sh",
     "test:resendheaders": "node scripts/check-resend-headers.mjs --self-test && node scripts/check-resend-headers.mjs",
     "test:alertbody": "bash scripts/alert-body-tests.sh",

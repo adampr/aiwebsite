@@ -8,7 +8,9 @@
  *
  * What it deliberately contains: a 14-row table (long enough to cross a page, so the pdf emitter's
  * row-by-row pagination and repeated header are exercised), two blocks at one anchor, a block
- * after the last paragraph, a legacy prose-only record with NO `blocks` key, and the letter record.
+ * after the last paragraph, a legacy prose-only record with NO `blocks` key, the letter record,
+ * and a closing References section carrying a two-entry `references` block (invented contacts,
+ * never a real client's) whose opening paragraph states rule D3's etiquette sentence.
  */
 
 import type { DraftSectionRecord } from "../../src/app/api/rfp/documents/[id]/generate/route";
@@ -19,6 +21,10 @@ import {
   type DraftBlock,
   type GroundFact,
 } from "../../src/lib/rfp/draft-blocks";
+import {
+  applyReferencesAnswer,
+  referencesOtherText,
+} from "../../src/lib/rfp/references-answer";
 import { ALL_FACTS } from "../../src/lib/rfp/seed/facts";
 
 /** DraftSectionRecord as it will be once the route type gains the optional key. */
@@ -58,6 +64,7 @@ export const structure: { label: string; title: string }[] = [
   { label: "4.", title: "Vendor Qualifications" },
   { label: "5.", title: "Contract and Pricing" },
   { label: "6.", title: "Transition Plan" },
+  { label: "7.", title: "References" },
 ];
 
 export const requirements: { structureLabel: string; text: string }[] = [
@@ -70,6 +77,7 @@ export const requirements: { structureLabel: string; text: string }[] = [
   { structureLabel: "4.", text: "List certifications and insurance coverage held by the vendor." },
   { structureLabel: "5.", text: "Describe the contract term and termination provisions." },
   { structureLabel: "6.", text: "Describe your onboarding approach and timeline." },
+  { structureLabel: "7.", text: "Provide two client references of comparable size." },
 ];
 
 const serviceMatrix: DraftBlock = {
@@ -179,6 +187,41 @@ const transitionCallout: DraftBlock = {
   generatedBy: "llm",
 };
 
+/**
+ * Two invented references (organizations, people and contact details are made up; the phone
+ * numbers sit in the 555-01xx fiction range and the emails on example.org). Stored exactly as the
+ * references route lands the answer: no cites, generatedBy "system", origin "references", closing
+ * the section.
+ */
+export const referencesBlock: DraftBlock = {
+  kind: "references",
+  references: [
+    {
+      referenceId: null,
+      organization: "Northwind Clinic",
+      relevance: "Healthcare, multi-site",
+      contactName: "Alex Rivera",
+      contactTitle: "COO",
+      phone: "312-555-0142",
+      email: "a.rivera@example.org",
+    },
+    {
+      referenceId: "ref_fixture_harbor",
+      organization: "Harborlight Credit Union",
+      relevance: "Financial services, regulated",
+      contactName: "Priya Natarajan",
+      contactTitle: "VP Operations",
+      phone: "",
+      email: "p.natarajan@example.org",
+    },
+  ],
+  id: "v_0000a010",
+  after: 1,
+  cites: [],
+  generatedBy: "system",
+  origin: "references",
+};
+
 const base = (): Pick<DraftSectionRecord, "gaps" | "updatedAt"> => ({ gaps: [], updatedAt: FIXTURE_UPDATED_AT });
 
 export const letter: FixtureSection = {
@@ -194,7 +237,7 @@ export const letter: FixtureSection = {
   generatedBy: "llm",
 };
 
-export const sections: FixtureSection[] = [
+const draftedSections: FixtureSection[] = [
   letter,
   {
     ...base(),
@@ -269,6 +312,39 @@ export const sections: FixtureSection[] = [
     cites: [id("onboarding.sequence"), id("onboarding.onboarding-day")],
     generatedBy: "llm",
     blocks: [transitionCallout],
+  },
+];
+
+/**
+ * The References section EXACTLY as the references route lands the answer: the drafter left the
+ * section empty (generatedBy "llm", no cites, no paragraphs) and applyReferencesAnswer, the
+ * function the route calls, composed the intro with rule D3's etiquette sentence, appended the
+ * block and made the record human-authored (its only prose is the system-written intro, so rule
+ * A5 has nothing to demand cites of). Nothing here is hand-stamped; only the block id is pinned,
+ * since the builder mints a random one.
+ */
+const referencesDrafted: FixtureSection = {
+  ...base(),
+  label: "7.",
+  title: "References",
+  paragraphs: [],
+  cites: [],
+  generatedBy: "llm",
+};
+const referencesAnswered = applyReferencesAnswer(
+  referencesDrafted,
+  referencesOtherText(`${FIXTURE_CLIENT} RFP`, draftedSections, -1, referencesDrafted),
+  referencesBlock.kind === "references" ? referencesBlock.references : [],
+  { now: FIXTURE_UPDATED_AT }
+).section;
+
+export const sections: FixtureSection[] = [
+  ...draftedSections,
+  {
+    ...referencesAnswered,
+    blocks: (referencesAnswered.blocks ?? []).map((b) =>
+      b.origin === "references" ? { ...b, id: referencesBlock.id } : b
+    ),
   },
 ];
 

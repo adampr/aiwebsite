@@ -47,6 +47,11 @@ import {
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
 import type { DraftBlock, GroundFact } from "@/lib/rfp/draft-blocks";
 import {
+  carryReferencesBlock,
+  referencesOtherText,
+} from "@/lib/rfp/references-answer";
+import {
+  keptBlocks,
   landDraftBlocks,
   toGroundFacts,
   withBlocks,
@@ -68,9 +73,10 @@ export type DraftSectionRecord = {
   generatedBy: "llm" | "human";
   updatedAt: string;
   /** Stamped by the gap route when the canonical references question is
-   *  answered on this section; survives every spread-based edit, and is
-   *  dropped by a redraft (which builds a fresh record). Read only by the
-   *  references backstop (references-ask.ts). */
+   *  answered on this section; survives every spread-based edit. A redraft
+   *  builds a fresh record and drops it, unless the previous record carried
+   *  a `references` block: that block is carried over and the stamp with
+   *  it. Read only by the references backstop (references-ask.ts). */
   referencesAnswered?: boolean;
   /** Visual blocks (draft-blocks.ts), each anchored by `after` and carrying
    *  its own cites. ABSENT when there are none, so a prose-only record is
@@ -417,10 +423,41 @@ export async function POST(
               trimmed: placed.trimmed,
               landed: placed.blocks.length,
             };
+          // The one block a redraft keeps: the person's references (origin
+          // "references", built by the references route from their answer,
+          // never by the drafter). The drafter's visuals can be rebuilt and
+          // the answer cannot, so the others are cut to the cap minus one
+          // and the carried block goes LAST, anchored after the last
+          // paragraph: it closes the new text. The fresh paragraphs go
+          // through the SAME composer the references route uses
+          // (references-answer.ts carryReferencesBlock), so the intro and
+          // rule D3's etiquette sentence are back after a redraft and D3
+          // cannot BLOCK on the carried references. Nothing changes when
+          // the previous record carried none.
+          const prevAt = sections.findIndex((s) => s.label === label);
+          const carriedBlock: DraftBlock | undefined =
+            isLetter || prevAt < 0
+              ? undefined
+              : (keptBlocks(sections[prevAt], drafted.paragraphs.length) ?? []).find(
+                  (b) => b.origin === "references"
+                );
+          const carry = carriedBlock
+            ? carryReferencesBlock({
+                paragraphs: drafted.paragraphs,
+                blocks: placed?.blocks,
+                carried: carriedBlock,
+                otherText: referencesOtherText(fresh.title, sections, prevAt, {
+                  label,
+                  title,
+                }),
+              })
+            : null;
+          const landedParagraphs = carry ? carry.paragraphs : drafted.paragraphs;
+          const landedBlocks = carry ? carry.blocks : placed?.blocks;
           const record: DraftSectionRecord = withBlocks({
             label,
             title,
-            paragraphs: drafted.paragraphs,
+            paragraphs: landedParagraphs,
             cites: drafted.cites,
             // Snap AGAINST THE LANDING STATE, not the claim snapshot: a
             // question answered while this draft ran must not be re-minted
@@ -440,8 +477,10 @@ export async function POST(
             // snap leaves it alone or folds it like any other. It is the
             // one gap the server adds itself, on top of draftSection's cap
             // of two, so a section lands at most three. A redraft of a
-            // section whose references were answered and woven drops them
-            // and re-mints the question; asking again beats losing them.
+            // section whose references were answered as PROSE drops them
+            // and re-mints the question (asking again beats losing them);
+            // one answered as a references block keeps the block, and the
+            // question stays answered.
             gaps: isLetter
               ? drafted.gaps
               : snapGapQuestions(
@@ -456,19 +495,27 @@ export async function POST(
                     openQuestions: open,
                     why: refsWhy,
                     // Another section's references question was answered
-                    // by a person: never raise it again from here.
-                    answeredElsewhere: sections.some(
-                      (s) =>
-                        s.label !== label &&
-                        !s.label.startsWith("__") &&
-                        s.referencesAnswered === true
-                    ),
+                    // by a person, or this section's answer is the block
+                    // being carried over: never raise it again from here.
+                    answeredElsewhere:
+                      carry !== null ||
+                      sections.some(
+                        (s) =>
+                          s.label !== label &&
+                          !s.label.startsWith("__") &&
+                          s.referencesAnswered === true
+                      ),
                   }),
                   open
                 ),
-            generatedBy: "llm" as const,
+            // A draft that came back with NO paragraphs while a references
+            // block is carried: the record's only prose is the
+            // system-written intro, which no fact backs, so it is "human"
+            // (rule A5 would otherwise BLOCK on a sentence no model wrote).
+            generatedBy: carry?.human ? ("human" as const) : ("llm" as const),
             updatedAt: new Date().toISOString(),
-          }, placed?.blocks);
+            ...(carry ? { referencesAnswered: true } : {}),
+          }, landedBlocks);
           landedGapCount = record.gaps.length;
           // Identity is LABEL alone, as everywhere else (workspace join,
           // section/gap routes, resolve-draft); matching on title too made

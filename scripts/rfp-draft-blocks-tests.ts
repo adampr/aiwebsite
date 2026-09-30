@@ -43,8 +43,11 @@ import {
   withBlocks,
 } from "../src/lib/rfp/draft-blocks-ops";
 import { blockSchema } from "../src/lib/rfp/content-model/schema";
+import { buildReferencesBlock } from "../src/lib/rfp/draft-blocks";
+import { referenceCardTable, referencesBlockStrings } from "../src/lib/rfp/references-block";
 import {
   facts,
+  referencesBlock,
   requirements as fixtureRequirements,
   sections as fixtureSections,
   stretchTimelineBlock,
@@ -84,7 +87,16 @@ const src = readFileSync(new URL("../src/lib/rfp/draft-blocks.ts", import.meta.u
 const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 no("no lookbehind regex in the module", /\(\?<[=!]/.test(code));
 no("no value import from staff-count", /from\s+["']\.\/staff-count["']/.test(code));
-check("every import is type-only", (code.match(/^import (?!type )/gm) ?? []).length, 0);
+// The one value import allowed is references-block.ts, which is pure and client-safe by its own
+// contract (and is checked for lookbehinds here too, since it ships in the same bundle).
+check(
+  "every import is type-only, except the references-block contract",
+  (code.match(/^import (?!type )[\s\S]*?from\s+["'][^"']+["']/gm) ?? []).filter((s) => !/from\s+["']\.\/references-block["']/.test(s)),
+  []
+);
+const refsSrc = readFileSync(new URL("../src/lib/rfp/references-block.ts", import.meta.url), "utf8");
+no("no lookbehind regex in references-block", /\(\?<[=!]/.test(refsSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")));
+check("references-block imports types only", (refsSrc.match(/^import (?!type )/gm) ?? []).length, 0);
 
 // ---- groundValue -------------------------------------------------------------
 no('">92%" against "retention is 92%"', groundValue(">92%", "XL.net's client retention rate is 92%."));
@@ -432,9 +444,11 @@ check(
 yes("the fixture has a 14-row table", fixtureBlocks.some((b) => b.kind === "table" && b.rows.length === 14));
 check("the fixture has no currency and no em dash anywhere", allStrings(fixtureSections).filter((s) => hasCurrency(s) || s.includes("—")), []);
 {
-  // Lifting into the content model is adding BlockBase fields and nothing else.
+  // Lifting into the content model is adding BlockBase fields and nothing else. The references
+  // block is the exception (it lifts into tables; the visual gate tests pin that lift).
   const bad: string[] = [];
   for (const b of [...fixtureBlocks, stretchTimelineBlock]) {
+    if (b.kind === "references") continue;
     const { after: _after, origin: _origin, ...body } = b;
     const lifted = { ...body, sectionId: "sec_x", ordinal: 0, editedByHuman: false };
     if (!blockSchema.safeParse(lifted).success) bad.push(b.id);
@@ -492,6 +506,76 @@ check("stored: optional tile note survives", sanitizeStoredBlocks([{ kind: "stat
   cites: ["f"],
   generatedBy: "llm",
 });
+
+// ---- the references block: the one kind stored without cites ---------------------
+{
+  const stored = JSON.parse(JSON.stringify(referencesBlock));
+  check("references: a two-entry block round-trips deep-equal with cites []", sanitizeStoredBlocks([stored], 1), [referencesBlock]);
+  check("references: the fixture block cites nothing, is system-built, origin references", [referencesBlock.cites, referencesBlock.generatedBy, referencesBlock.origin], [[], "system", "references"]);
+  const entries = referencesBlock.kind === "references" ? referencesBlock.references : [];
+  const withEntry = (patch: Partial<(typeof entries)[number]>, at = 1) =>
+    sanitizeStoredBlocks([{ ...stored, references: entries.map((e, i) => (i === at ? { ...e, ...patch } : e)) }], 1);
+  check("references: an entry without an organization drops the whole block", withEntry({ organization: "" }), []);
+  check("references: an entry without a contact name drops the whole block", withEntry({ contactName: "  " }), []);
+  check("references: an entry with neither phone nor email drops the whole block", withEntry({ phone: "", email: "" }), []);
+  check("references: an entry with a phone and no email is kept", withEntry({ phone: "312-555-0199", email: "" }).length, 1);
+  check("references: a malformed email drops the whole block", withEntry({ email: "not-an-email" }), []);
+  check("references: no entries at all is not a block", sanitizeStoredBlocks([{ ...stored, references: [] }], 1), []);
+  check("references: a non-array `references` is not a block", sanitizeStoredBlocks([{ ...stored, references: { 0: entries[0] } }], 1), []);
+  check("references: an empty cites array is accepted ONLY for this kind", sanitizeStoredBlocks([{ ...stored, kind: "callout", title: null, body: "x", tone: "neutral" }], 1), []);
+  check("references: a non-empty cites array is still accepted", sanitizeStoredBlocks([{ ...stored, cites: ["f"] }], 1).map((b) => b.cites), [["f"]]);
+  check("references: a non-array cites is still refused", sanitizeStoredBlocks([{ ...stored, cites: "none" }], 1), []);
+  check("references: generatedBy human is refused like every kind", sanitizeStoredBlocks([{ ...stored, generatedBy: "human" }], 1), []);
+  check("references: `after` clamps like every kind", sanitizeStoredBlocks([{ ...stored, after: 9 }], 0)[0]?.after, 0);
+  // The currency screen is for MODEL text. A references block is person-supplied, and real
+  // organization names and surnames read as money to it; the block must survive every read.
+  for (const [what, patch] of [
+    ["an organization named like a county", { organization: "Bucks County Free Library" }],
+    ["an organization named like a currency", { organization: "Dollar Bank" }],
+    ["a contact surnamed like a coin", { contactName: "Jordan Pence" }],
+    ["a school district's number", { organization: "School District USD 259" }],
+    ["a relevance naming CAD", { relevance: "Architecture, CAD workloads" }],
+    ["a currency sign in a name", { organization: "$5 Pizza" }],
+  ] as const) {
+    const kept = withEntry(patch);
+    check(`references: ${what} SURVIVES the round-trip`, kept.length === 1 && kept[0].kind === "references" ? kept[0].references[1] : null, { ...entries[1], ...patch });
+    yes(`references: ${what} does trip hasCurrency (so the exemption is what keeps it)`, referencesBlockStrings([{ ...entries[1], ...patch }]).some(hasCurrency));
+  }
+  check("references: every other kind still drops on currency", sanitizeStoredBlocks([{ kind: "callout", title: null, body: "Dollar Bank", tone: "neutral", id: "v_00000002", after: 0, cites: ["f"], generatedBy: "llm" }], 1), []);
+  check("references: the card strings are what the screen reads", referencesBlockStrings(entries).filter(hasCurrency), []);
+  yes("references: the card strings carry every entry field the card shows", ["Reference 1", "Reference 2", "Northwind Clinic", "Alex Rivera, COO", "312-555-0142 · a.rivera@example.org", "p.natarajan@example.org"].every((s) => referencesBlockStrings(entries).includes(s)));
+  check("references: summary text", [draftBlockSummary(referencesBlock), draftBlockSummary({ ...referencesBlock, references: entries.slice(0, 1) } as DraftBlock)], ["Client references · 2 references", "Client references · 1 reference"]);
+  const built = buildReferencesBlock(entries, 3);
+  check("references: buildReferencesBlock envelope", [built.kind, built.after, built.cites, built.generatedBy, built.origin, /^v_[0-9a-f]{8}$/.test(built.id)], ["references", 3, [], "system", "references", true]);
+  check("references: what buildReferencesBlock stores reads back untouched", sanitizeStoredBlocks(JSON.parse(JSON.stringify([built])), 3), [built]);
+  // The model never authors one: the kind is refused by name, whatever the payload.
+  const fromModel = parseModelVisuals([{ kind: "references", after: 0, cites: [fid("book.retention")], references: entries }], ctx());
+  check("references: parseModelVisuals refuses the kind", [fromModel.blocks.length, fromModel.degraded.length, fromModel.dropped], [0, 0, [{ kind: "references", reason: "unknown-kind" }]]);
+  // Write paths carry it like any stored block, and the visuals op never builds one.
+  check("references: keptBlocks re-anchors it to the new paragraph count", keptBlocks({ label: "7.", paragraphs: ["a"], blocks: [stored] }, 0)?.map((b) => [b.kind, b.after]), [["references", 0]]);
+  no("references: not a VISUALS_ACTIONS member", isVisualsAction("references"));
+  const removed = applyVisualsOp([{ label: "7.", title: "R", paragraphs: ["a"], cites: [], generatedBy: "human" as const, updatedAt: "then", blocks: [referencesBlock] }], { label: "7.", action: "remove", blockId: referencesBlock.id }, [], "now");
+  check("references: the remove action deletes it by id like any block", removed.ok && [removed.removed, "blocks" in removed.section], [1, false]);
+  // Removing the references takes the ANSWER back: stamp cleared, composed intro stripped.
+  {
+    const INTRO = "The following comparable client references are provided.";
+    const ETIQ = "Out of respect for our clients' time, we ask that references be called as a final step before contract rather than earlier in the evaluation.";
+    const other: DraftBlock = { kind: "callout", title: null, body: "kept", tone: "neutral", id: "v_00000003", after: 2, cites: ["f"], generatedBy: "llm" };
+    const rec = { label: "7.", title: "R", paragraphs: ["a", `${INTRO} ${ETIQ}`], cites: [], generatedBy: "human" as const, gaps: [], updatedAt: "then", referencesAnswered: true, blocks: [other, { ...referencesBlock, after: 2 }] };
+    const out = applyVisualsOp([rec], { label: "7.", action: "remove", blockId: referencesBlock.id }, [], "now");
+    check("references remove: flagged, stamp cleared, intro stripped, the other block re-anchored",
+      out.ok && [out.removedReferences, "referencesAnswered" in out.section, out.section.paragraphs, out.section.blocks?.map((b) => [b.id, b.after])],
+      [true, false, ["a"], [["v_00000003", 1]]]);
+    const folded = applyVisualsOp([{ ...rec, paragraphs: ["a", `Last words. ${INTRO}`] }], { label: "7.", action: "remove", blockId: referencesBlock.id }, [], "now");
+    check("references remove: an intro folded onto a paragraph is cut off it", folded.ok && folded.section.paragraphs, ["a", "Last words."]);
+    const rewritten = applyVisualsOp([{ ...rec, paragraphs: ["a", "Our own words about these clients."] }], { label: "7.", action: "remove", blockId: referencesBlock.id }, [], "now");
+    check("references remove: a paragraph the person rewrote stays", rewritten.ok && rewritten.section.paragraphs, ["a", "Our own words about these clients."]);
+    const plain = applyVisualsOp([rec], { label: "7.", action: "remove", blockId: "v_00000003" }, [], "now");
+    check("references remove: removing ANOTHER block leaves the stamp, the paragraphs and the result shape alone",
+      plain.ok && ["removedReferences" in plain, plain.section.referencesAnswered, plain.section.paragraphs, plain.section.blocks?.length],
+      [false, true, rec.paragraphs, 1]);
+  }
+}
 
 // ---- interleave / reanchor -----------------------------------------------------
 const blk = (id: string, after: number): DraftBlock => ({ kind: "callout", title: null, body: id, tone: "neutral", id, after, cites: ["f"], generatedBy: "llm" });
@@ -692,6 +776,13 @@ for (const b of fixtureBlocks) {
     emphasizeLastRow: false,
   });
   check("five columns: sums to 1, none starved", [Math.abs(five.reduce((a, x) => a + x, 0) - 1) < 1e-9, Math.min(...five) >= 0.1], [true, true]);
+  // The reference card: two columns, no caption, a blank second header. Pinned to the template's
+  // one-third label column whatever the cells hold, so every card lines up on every surface.
+  for (const entry of referencesBlock.kind === "references" ? referencesBlock.references : [])
+    check(`reference card fractions are fixed (${entry.organization})`, tableColumnFractions(referenceCardTable({ ...entry, relevance: "x".repeat(110) }, 1)), [0.3333, 0.6667]);
+  check("a captioned two-column table with a blank second header is NOT pinned", tableColumnFractions({ kind: "table", caption: "c", columns: [{ header: "aaaaaa", align: "left" }, { header: "", align: "left" }], rows: [], emphasizeLastRow: false }), [0.5, 0.5]);
+  check("a stored table cannot take the card shape: an empty header is refused", sanitizeStoredBlocks([{ kind: "table", caption: null, columns: [{ header: "Reference 1", align: "left" }, { header: "", align: "left" }], rows: [["a", "b"]], emphasizeLastRow: false, id: "v_00000004", after: 0, cites: ["f"], generatedBy: "llm" }], 1), []);
+  check("a model table cannot take the card shape either", parseModelVisuals([{ kind: "table", after: 0, cites: [fid("book.retention")], caption: null, columns: ["Reference 1", ""], rows: [["a", "b"]] }], ctx()).blocks.length, 0);
   check("equal columns split evenly", tableColumnFractions({ kind: "table", caption: null, columns: [{ header: "aaaaaa", align: "left" }, { header: "bbbbbb", align: "left" }], rows: [], emphasizeLastRow: false }), [0.5, 0.5]);
 }
 check("summaries", [...fixtureBlocks, stretchTimelineBlock].map(draftBlockSummary), [
@@ -703,11 +794,12 @@ check("summaries", [...fixtureBlocks, stretchTimelineBlock].map(draftBlockSummar
   "Company snapshot · 9 facts",
   "Certifications · ISO 27001:2022, SOC 2 Type 2, CMMC Level 1",
   "Callout · XL.net becomes accountable for support as soon as it holds valid cred…",
+  "Client references · 2 references",
   "Timeline · 4 steps",
 ]);
 check("an uncaptioned table is summarized by its shape", draftBlockSummary({ kind: "table", caption: null, columns: [{ header: "a", align: "left" }, { header: "b", align: "left" }], rows: [["1", "2"]], emphasizeLastRow: false, id: "v_00000001", after: 0, cites: ["f"], generatedBy: "llm" }), "Table · 2 columns, 1 row");
 check("no summary carries an em dash", [...fixtureBlocks, stretchTimelineBlock].map(draftBlockSummary).filter((s) => s.includes("—")), []);
-check("kinds are the closed set", [...DRAFT_BLOCK_KINDS], ["stat-tiles", "fact-grid", "badge-strip", "table", "callout", "cards", "timeline"]);
+check("kinds are the closed set", [...DRAFT_BLOCK_KINDS], ["stat-tiles", "fact-grid", "badge-strip", "table", "callout", "cards", "timeline", "references"]);
 
 // ---------------------------------------------------------------------------
 // Server placement and write-path helpers (draft-blocks-ops.ts)

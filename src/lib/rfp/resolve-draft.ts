@@ -38,6 +38,8 @@ import { runGate, type GateResult } from "./validators/gate";
 import { DEFAULT_LETTER_BODY, splitSections } from "./letter";
 import { signatureFor } from "./signature";
 import { interleave, sanitizeStoredBlocks, type DraftBlock } from "./draft-blocks";
+import { referenceCardTable, type ReferenceEntry } from "./references-block";
+import type { Reference } from "./content-model/knowledge";
 import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/route";
 
 const blockId = (label: string, i: number) =>
@@ -49,20 +51,60 @@ const visualBlockId = (label: string, id: string) =>
   `bv_${label.replace(/[^a-zA-Z0-9]+/g, "_")}_${id}`;
 
 /** The body of a DraftBlock IS the content-model body (draft-blocks.ts), so
- *  lifting is dropping the storage envelope and adding the BlockBase fields. */
+ *  lifting is dropping the storage envelope and adding the BlockBase fields.
+ *
+ *  The exception is `references`, which has no content-model kind of its
+ *  own: it lifts into ONE `table` per entry (references-block.ts is the one
+ *  card spec), ids `<visual id>_1.._N`, consecutive ordinals from `ordinal`.
+ *  Those tables are generatedBy "human" with no cites: the person supplied
+ *  the contacts, and rule A5 demands cites of "llm" blocks only. */
 function liftVisual(
   block: DraftBlock,
   label: string,
   sectionId: string,
   ordinal: number
-): Block {
+): Block[] {
   const { id, after: _after, origin: _origin, ...body } = block;
+  if (body.kind === "references")
+    return body.references.map((entry, i) => ({
+      ...referenceCardTable(entry, i + 1),
+      id: `${visualBlockId(label, id)}_${i + 1}`,
+      sectionId,
+      ordinal: ordinal + i,
+      cites: [],
+      generatedBy: "human",
+      editedByHuman: true,
+    }));
+  return [
+    {
+      ...body,
+      id: visualBlockId(label, id),
+      sectionId,
+      ordinal,
+      editedByHuman: false,
+    },
+  ];
+}
+
+/** A lifted entry as `proposal.references` carries it, so rule D3 sees the
+ *  references whatever the prose says. A typed-in organization (no
+ *  rfp_references row) gets a positional id; `segment` is the card's
+ *  relevance column, with the card's own fallback wording. */
+function referenceFromEntry(entry: ReferenceEntry, n: number): Reference {
   return {
-    ...body,
-    id: visualBlockId(label, id),
-    sectionId,
-    ordinal,
-    editedByHuman: false,
+    id: entry.referenceId ?? `ref_typed_${n}`,
+    organization: entry.organization,
+    website: null,
+    segment: entry.relevance || "comparable client",
+    contactName: entry.contactName,
+    contactTitle: entry.contactTitle,
+    contactPhone: entry.phone || null,
+    contactEmail: entry.email || null,
+    relationshipSince: null,
+    usableWithoutAsking: false,
+    notes: null,
+    retiredAt: null,
+    replacedBy: null,
   };
 }
 
@@ -153,30 +195,44 @@ export function resolveDraft(input: DraftGateInput): {
   for (const sec of drafted)
     if (!ordered.includes(sec)) ordered.push(sec);
 
+  const references: Reference[] = [];
   const sections: Section[] = ordered.map((sec, ordinal) => {
     const sectionId = `sec_${sec.label.replace(/[^a-zA-Z0-9]+/g, "_")}`;
     // The ONE ordering the screen and both emitters share. Prose keeps the
     // id of its PARAGRAPH index (so a locator on a prose-only section is
     // what it always was) and every block's ordinal is its place in the
-    // flow; with no visuals the two are the same number.
+    // flow; with no visuals the two are the same number. A references
+    // block is the one flow item that lifts into several blocks, so the
+    // ordinal is counted, not taken from the flow index: everything after
+    // it in the same section shifts by N-1, nothing before it moves.
     const flow = interleave(
       sec.paragraphs,
       sanitizeStoredBlocks(sec.blocks, sec.paragraphs.length)
     );
-    const blocks: Block[] = flow.map((item, ordinal) =>
-      item.type === "p"
-        ? {
+    let next = 0;
+    const blocks: Block[] = flow.flatMap((item): Block[] => {
+      if (item.type === "p")
+        return [
+          {
             kind: "prose",
             id: blockId(sec.label, item.index),
             sectionId,
-            ordinal,
+            ordinal: next++,
             cites: sec.cites,
             generatedBy: sec.generatedBy,
             editedByHuman: sec.generatedBy === "human",
             text: item.text,
-          }
-        : liftVisual(item.block, sec.label, sectionId, ordinal)
-    );
+          },
+        ];
+      const lifted = liftVisual(item.block, sec.label, sectionId, next);
+      next += lifted.length;
+      // Numbered across the whole document, so two typed-in entries on two
+      // sections never share a positional id.
+      if (item.block.kind === "references")
+        for (const entry of item.block.references)
+          references.push(referenceFromEntry(entry, references.length + 1));
+      return lifted;
+    });
     return {
       id: sectionId,
       proposalId: proposal.id,
@@ -253,7 +309,9 @@ export function resolveDraft(input: DraftGateInput): {
     },
     sections: toResolvedSections(sections),
     pricing: input.quote,
-    references: [],
+    // The lifted references blocks' entries, in document order, so rule D3
+    // (and C2's hash, which covers this field) see what the cards show.
+    references,
     findings: [],
   };
 

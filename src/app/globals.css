@@ -1485,6 +1485,30 @@ select.input option {
   .rfpdoc .rfpdoc-tablewrap th,
   .rfpdoc .rfpdoc-tablewrap td { padding: 10px; }
 }
+/* References (references-block.ts): one branded table per reference, each
+   drawn by the table branch above, stacked with the template's gap. */
+.rfpdoc .rfpdoc-refs { display: grid; gap: 18px; }
+/* A card's label cell is a row header (<th scope="row">), drawn exactly as
+   the first-column td it replaces: body face, ink semibold, white or zebra
+   field, hairline rule. tbody in the selector so it outweighs the navy caps
+   of .rfpdoc th; padding is left to .rfpdoc th and the phone rule above. */
+.rfpdoc .rfpdoc-refs tbody th {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  background: #ffffff;
+  color: #15163b;
+  border-bottom: 1px solid #e3e4ef;
+  vertical-align: top;
+}
+.rfpdoc .rfpdoc-refs tbody tr:nth-child(even) th { background: #f9fafd; }
+/* A card has no min-width floor (workspace.tsx): a long email wraps inside
+   its cell instead of scrolling the card sideways on a phone. AFTER the
+   .rfpdoc-tablewrap td rule above, which it must override. */
+.rfpdoc .rfpdoc-refs td,
+.rfpdoc .rfpdoc-refs tbody th { overflow-wrap: anywhere; }
 /* Callout: tinted field, blue bar left; "emphasis" takes the navy bar a
    step heavier and sets its body in ink. */
 .rfpdoc .rfpdoc-callout {

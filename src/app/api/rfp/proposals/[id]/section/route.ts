@@ -13,7 +13,10 @@
 // block by id). No brain call: the blocks are rebuilt server-side from live
 // shared facts. Every other PATCH path preserves the stored blocks and
 // re-anchors them to the new paragraph count; `blocks` is never read from a
-// request body, for the same reason cites are not.
+// request body, for the same reason cites are not. Removing the client
+// references block (§5.17.10) also clears the section's `referencesAnswered`
+// stamp, strips the composed intro paragraph and reopens the references
+// question when the RFP still asks.
 //
 // THE INVARIANT BOTH PATHS PRESERVE: `cites` and `generatedBy` are carried
 // over from the stored section and are never taken from the request body.
@@ -39,7 +42,9 @@ import {
   getDocument,
   getOwnedProposal,
   knowledgeForUser,
+  listRequirements,
   liveFacts,
+  liveReferences,
   writeProposalSections,
   writeProposalStructureOp,
 } from "@/lib/rfp/db";
@@ -51,6 +56,8 @@ import {
   withBlocks,
 } from "@/lib/rfp/draft-blocks-ops";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
+import { referencesAsk, referencesGapWhy } from "@/lib/rfp/references-ask";
+import { reopenReferencesQuestion } from "@/lib/rfp/references-answer";
 import { extractStyleSampleText } from "@/lib/governance/style-sample";
 import { screenInjection } from "@/lib/governance/research";
 import type { DraftSectionRecord } from "../../../documents/[id]/generate/route";
@@ -177,10 +184,59 @@ export async function PATCH(
     );
     if (!applied.ok)
       return rfpError(applied.code, applied.message, applied.status);
+    // Removing the client references takes the person's ANSWER away
+    // (§5.17.10): the op already cleared the stamp and stripped the intro
+    // paragraph; here the question goes back on the section when its
+    // requirements still ask for references, with the same `why` the
+    // references-gap route builds. No ask detected (or the document or the
+    // requirements cannot be read): the stamp and the intro are still gone,
+    // and the references-gap repair can raise the question later. Every
+    // other visuals op skips this block entirely.
+    let landedSections = applied.sections;
+    let landedSection = applied.section;
+    let referencesReopened = false;
+    if (applied.removedReferences) {
+      const at = applied.sections.findIndex((s) => s.label === label);
+      const doc = await getDocument(user, proposal.documentId).catch(() => null);
+      const requirements = doc
+        ? await listRequirements(doc.id).catch(() => null)
+        : null;
+      const ask =
+        doc && requirements && at >= 0
+          ? referencesAsk(
+              requirements
+                .filter((r) => r.structureLabel === label)
+                .map((r) => r.text),
+              applied.sections[at].title || label
+            )
+          : null;
+      if (doc && ask) {
+        const held = await liveReferences().catch((err) => {
+          console.error(
+            "[rfp] references read failed:",
+            err instanceof Error ? err.constructor.name : "error"
+          );
+          return null;
+        });
+        const reopened = reopenReferencesQuestion(
+          applied.sections,
+          at,
+          ask,
+          referencesGapWhy(
+            ask,
+            held,
+            `${doc.clientName ?? ""} ${doc.title} ${doc.rawText ?? ""}`
+          )
+        );
+        referencesReopened = reopened !== applied.sections;
+        landedSections = reopened;
+        landedSection = reopened[at];
+      }
+    }
     const ok = await writeProposalSections(
       proposal.id,
       proposal.rev,
-      JSON.stringify(applied.sections)
+      JSON.stringify(landedSections)
     );
     if (!ok)
       return rfpError(
@@ -200,14 +256,17 @@ export async function PATCH(
         visual: action,
         added: applied.added,
         removed: applied.removed,
-        blocks: applied.section.blocks?.length ?? 0,
+        blocks: landedSection.blocks?.length ?? 0,
+        ...(applied.removedReferences
+          ? { removedReferences: true, referencesReopened }
+          : {}),
       },
     });
     return rfpOk({
       ok: true,
       rev: proposal.rev + 1,
-      section: applied.section,
-      sections: applied.sections,
+      section: landedSection,
+      sections: landedSections,
     });
   }
 
