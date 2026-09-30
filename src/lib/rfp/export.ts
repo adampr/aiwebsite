@@ -80,6 +80,7 @@ import {
   sectionKicker,
 } from "./export-assets";
 import { COMPANY_SIGNATURE, SIGNATURE_COLORS } from "./signature";
+import { quantityLabel } from "./quote";
 
 // The .rfpdoc palette (globals.css). Bare hex for docx; "#"-prefixed for pdfkit.
 const INK = "15163B";
@@ -127,6 +128,8 @@ export type ExportView = {
   sections: { label: string; kicker: string; title: string; paragraphs: string[] }[];
   pricing: PricingQuote | null;
   minimumSentence: string | null;
+  /** The card's minimum fully managed block, for the quantity cell ("Up to 15"). */
+  minimumUsers: number;
   /** The navy closing sheet's copy, mirrored from the workspace sheet. */
   closing: { headline: string; lede: string };
 };
@@ -163,6 +166,7 @@ export function buildExportView(
         .map((b) => (b.kind === "prose" ? b.text : "")),
     })),
     pricing: quote,
+    minimumUsers: rateCard.minimumFullyManagedUsers,
     minimumSentence: anyMinimum
       ? `Where fewer than ${rateCard.minimumFullyManagedUsers} users are fully managed, the fully managed line is billed at the monthly minimum of ${formatMoney(rateCard.minimumMonthlyFee, { cents: "always" })} rather than the per-user product.`
       : null,
@@ -211,10 +215,13 @@ function coverLedeParts(clientName: string): {
       };
 }
 
-function illustrationRows(ill: PricingIllustration): string[][] {
+function illustrationRows(ill: PricingIllustration, minimumUsers: number): string[][] {
   return ill.lines.map((l) => [
     l.label,
-    String(l.quantity),
+    // Screen parity: the workspace table prints the same helper, so a line
+    // at the monthly minimum reads "Up to 15" in both, never a count that
+    // does not multiply to the flat fee.
+    quantityLabel(l, ill, minimumUsers),
     l.unitPrice.cents === 0 ? "" : money(l.unitPrice),
     money(l.lineTotal),
   ]);
@@ -788,7 +795,7 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
                 tcell(FURNITURE_TABLE_HEAD[3], { head: true, right: true }),
               ],
             }),
-            ...illustrationRows(ill).map(
+            ...illustrationRows(ill, view.minimumUsers).map(
               (r, i) =>
                 new TableRow({
                   children: [
@@ -1531,7 +1538,10 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     secHead("Pricing", "Investment");
 
     // Table columns: service | qty | unit | monthly (screen column heads).
-    const cols = [CW - 210, 50, 70, 90];
+    // The quantity column is 66pt, not 50: "Up to 15" (the fully managed
+    // line at the monthly minimum) must set at the full body size, and at
+    // 50pt the step-down guard below shrank that one cell to about 70%.
+    const cols = [CW - 226, 66, 70, 90];
     const colX = [
       PAGE.margin,
       PAGE.margin + cols[0],
@@ -1625,7 +1635,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       doc.moveDown(0.5);
 
       row([...FURNITURE_TABLE_HEAD], { head: true });
-      illustrationRows(ill).forEach((r, i) => row(r, { zebra: i % 2 === 1 }));
+      illustrationRows(ill, view.minimumUsers).forEach((r, i) => row(r, { zebra: i % 2 === 1 }));
       row(["Monthly total", "", "", money(ill.monthlyTotal)], { total: true });
       row(["Annual total", "", "", money(ill.annualTotal)], { total: true });
       if (ill.minimumApplied) {

@@ -73,6 +73,8 @@
 > BASELINE on that transport). Module notes and the signed mail delta:
 > packages/aicompany/MIGRATIONS.md v1.125.0 and BlogWarningsHistory.md §8.
 
+Last verified against code: 2026-09-30 §5.17.6 RFP MINIMUM-FIRST USER COUNT + REFERENCES BACKSTOP + REAL TITLES (owner review of a live proposal). The fully managed users question now leads with the rate-card monthly minimum and the RFP's own staff sentences (`staffMentions`/`minimumAssumption`/`staffConflictSignals` in `src/lib/rfp/staff-count.ts`, computed server-side in the workspace page, never seeding a price: only an exact grounded count seeds); quotes at or under the minimum read "Up to N fully managed users at the monthly minimum" with `quantityLabel` shared by screen and both exports; a references request the draft does not satisfy lands as one canonical server-minted gap (`src/lib/rfp/references-ask.ts`, `liveReferences()`, D3 etiquette appended on answer, contacts never filed as knowledge) with `POST /api/rfp/proposals/[id]/references-gap` for proposals drafted earlier; document titles are composed from the client name and the RFP's grounded subject line (`src/lib/rfp/doc-title.ts`) and the on-screen cover prints the export's cover. New suites: `test:rfptitle`, `test:rfpquote`, `test:rfprefs`. §5.17.2's "server caps 2 gaps per section" now has one exception (the references gap).
+
 Last verified against code: 2026-09-28 /work COUNTS RECONCILED (owner directive; section 4 `/work` row, the "Registry + console pager" passage). The page's "144 works" is 15 hand-authored static exhibits (no DB rows) + 129 published team cards, and every DB-derived count sees only the 129, so the shown number kept being reported as a bug. New pure module `src/lib/work/counts.ts` (no DB import, no React): `composeWorkCounts(teamCount)` — exhibits from `static-titles.json`'s `exhibits.length`, `total = exhibits + team` — is THE definition of the /work total, and `workCountsLine()` is the ONE public reconciliation sentence, byte-pinned: `144 works · 129 team-submitted, published from the live database · 15 built into the page` (middots only, never an em/en dash), rendered server-side and crawlable (JS-off included) as a foot line of `nav.work-registry` (the existing `mono mt-6 text-xs text-faint` idiom, no new CSS; it lives outside the pager island's `section.panel[id]` discovery, so windowing and panel counting are untouched). WorkPage composes `counts` ONCE beside `splitPlacements()`, from the same guarded `publishedCards()` fetch; `WorkRegistry` now takes `{placed, run, counts}` (numbering width from `counts.total`, its local exhibits+placed+run arithmetic deleted — equal by construction, `splitPlacements()` partitions the team array) and `WorkPager` takes `{counts}` (mechanical rename: `total = counts.total`, still the rendered-panel count its mount-time fail-open `panels.length !== total` check compares against the DOM). New suite `npm run test:workcounts` (`scripts/work-counts-tests.ts`, tsx, no DB) pins today's numbers BY DESIGN (15/129/144, the test:placements pattern), the snapshot shape (15 exhibits, 5 bays), the BYTE-EXACT public line at team=129, its no-dash rule, and source-pins the three call sites (occurrence-counted: one composition, one rendered line). What is edit-visible: the formula, the static lane, the pinned sentence and the wiring; the team count itself is a function-INPUT pin, not a DB pin — the live count moves 129 -> 130 at the next publish with no edit anywhere, and the page follows it through the one formula, which is the point. No route, schema, env or migration change.
 
 Last verified against code: 2026-09-25 §9.6 PROVIDER HEALTH SKIPS AN UNROUTED ROW (brain v1.166 #878 follow-up). `/v1/model-routing`'s `panel_critic` row can report `model: null` / `provider: null` / `reason: no_cross_lab_candidate`; `scripts/ai-provider-health.mjs` keyed it `null/null` and probed api.openai.com with `model: null` (a false FAIL). Now a no-candidate reason is a PASS `routing <task>` line and is never probed; a null model with any other reason is never probed and stays a FAIL. Every other probe unchanged. New `npm run test:providerhealth` (runs the real script with `fetch` stubbed; no network). The script's header no longer claims the watchdog runs or mails it (§9.6: it is operator-run). REFUTE ROUND 1: (F1) the first cut matched any `…no_…_candidate(s)` reason case-insensitively (`/(?:^|_)no_(?:[a-z0-9]+_)*candidates?(?:_|$)/i`), wider than anything the brain emits and untested at its edges — four matcher mutants passed 7/7, and a look-alike reason beside a served id would have gone unprobed. Now an exact, case-sensitive set `NO_CANDIDATE_REASONS = {no_cross_lab_candidate}` (the brain's row type is `'contrastive' | 'no_cross_lab_candidate'`); new arms B1 (null model beside `no_v2_candidate`, `NO_CROSS_LAB_CANDIDATE`, `pin_no_candidate_served`, `no_cross_lab_candidates` = FAIL, never probed) and B2 (real ids beside `no_verdict`, `candidate_fallback`, `pin_no_candidate_served`, `NO_CROSS_LAB_CANDIDATE` = probed) fail on the round-0 regex and on case-insensitive, `/candidate/`, `/no_/` and widened-set mutants, and pass here (9/9). (F2) the §7 brain-contract row for `GET /v1/model-routing` said "concrete model id per pipeline task"; it now records the nullable `panel_critic` row from brain v1.166. REFUTE ROUND 2: (R2-1) B1/B2 still passed matchers widened to reasons the brain really gives served rows (`fallback`, `env_override` — a pinned task, the #684 case, would have been a PASS and never probed) and suffix matches (`endsWith`, `/no_cross_lab_candidate$/`), while the header claimed they failed on "any broadened matcher". New arms B3 (a real id beside each of `router_default`, `env_override`, `fallback`, `confidence_escalation`, `stakes_escalation`, `router_v2`, `router_v2_fallback` — ModelSelectionResult — and `contrastive` is probed once, no `routing` line) and B4 (the #684 row, `plan_execute_executor gpt-5-6-luna env_override`, rejected 404 = FAIL, exit 1); B1/B2 gain `x_no_cross_lab_candidate`, `no_cross_lab_candidate_v2` and a padded look-alike. Fourteen matcher mutants plus the round-0 four all go red (0 survivors); the header now lists what the arms cover and what they cannot. (R2-2) `plannerEffectiveModel` took its provider from a prefix rule that sent every non-Gemini id to api.openai.com — on v1.166 with OpenAI + Anthropic keyed the planner is `claude-opus-5`, a false FAIL and exit 1 on the very host shape that yields the null critic (pre-existing, not a regression of this change). It now takes the provider of the probed task row with the same id (prefix rule only when none does); arm P1 fails on round 1 and on origin/master. The fetch stub now 404s an id sent to another vendor's host, as the providers do. The DeepInfra/Fireworks false FAIL (probed at api.openai.com) stays unfixed and is now recorded in §9.6 and the script header. (R2-3) The script comment, the §7 row and §9.6 said the critic is null only "when this host's keys leave no cross-lab critic"; the brain also returns it when a keyed cross-lab pool holds no `panel_critic` PASS (`contrastive.degraded.cause` `bar_805`). All reworded, and the PASS line now names the cause (arm D1). 13/13 pass here.
@@ -9706,6 +9708,157 @@ guards, the money wrap guard); its hostile-input sweep (XML metachars,
 RTL, emoji, combining marks, 25 sections, empty-everything fixtures,
 mid-table page breaks) reproduced zero crashes in either format, and
 DOCX part XML, rels and content types validate on every fixture.
+
+#### 5.17.6 Minimum-first user count, references backstop, real titles (2026-09-30)
+
+Owner review of a live proposal (a small nonprofit whose RFP says "a small
+team of fewer than 10 employees", uploaded as `Final_..._Support.docx`,
+asking for two references). Four complaints, one round: work panel of four
+specialists (extraction/title, pricing, workspace, requirements coverage),
+refuter panel of three (detection/grounding, pricing/gate/dataflow, UX), two
+fix passes, one final re-refute.
+
+**Staff evidence (deterministic, no model, no new column).**
+`src/lib/rfp/staff-count.ts` gains `staffMentions(docText, max=5)`: verbatim
+sentences (format chars stripped, <= 300 chars) in which a digit count, a
+range, or a bound ("fewer than 10", "up to 12") sits against a population
+noun. NFKC-normalized; years, prices, percents, dates, label numbers, vendor
+sentences and number words never qualify; the mention with the largest count
+always survives the `max` cut. `parseStaffBound(quote)` reads an inclusive
+upper bound (digits only). `staffConflictSignals(docText, minimumUsers)` is
+true when the document shows a larger population anywhere (a count above the
+minimum on a listed or common unlisted people noun, a year-shaped or
+> 10,000 count, a scale number word beside a population noun, "team of N").
+`minimumAssumption(statedStaff, mentions, minimumUsers, docText?)` returns
+the evidence quote when the document says the client fits inside the monthly
+minimum: a grounded count or range at or under it (the range branch also
+yields to a conflicting mention), or, with `statedStaff` null, an
+upper bound at or under it stated in a whole-organization frame ("we
+have/employ", "a small team of", "Staff:") with no conflict. Subset,
+capacity, vendor, growth, negation and question shapes return null.
+
+**`minimumAssumption` never prices.** The first build seeded the card
+minimum at proposal creation from it; both refuters reproduced a 40 to 200
+person client priced at the minimum from sentences like "up to 10 users per
+location", so the seed was removed. The generate route seeds ONLY an exact
+grounded `stated_staff_count`, as §5.17.3 says. The assumption's one job is
+to make the one-tap answer primary on the question.
+
+**Where it is computed.** `src/app/rfp/r/[id]/page.tsx`, server-side, from
+`rfp_documents.raw_text` on every render (old documents included, no
+backfill). The scanner uses lookbehind regexes and must not reach the client
+bundle: `workspace.tsx` imports only TYPES from staff-count. Props:
+`staffEvidence: string[]` (deduped quotes, the stated quote first),
+`staffRange`, `minimumEvidence: {quote} | null` (null without a rate card or
+when `staffConflictSignals` fires), `minimumUsers`, `minimumMonthlyCents`
+(from `currentRateCard()`; nulls restore the plain question). 15 and the fee
+are never literals in the client.
+
+**The fully managed users question.** It leads with the minimum ("XL.net's
+monthly minimum covers up to N fully managed users for $X a month..."), then
+"What the RFP says about staff" with every evidence quote as an escaped text
+node (or "No staff count was found in the RFP."), at every size including
+the range variant. One-tap "Use up to N users ($X a month)" answers
+`value = minimumUsers` and always sends `statesHeadcountOnly: false`. It is
+primary when `minimumEvidence` is non-null or the RFP has no staff evidence
+(no prefill then), secondary when evidence exists but is unsettled, omitted
+when a stated count or a range's low end exceeds the minimum. The assumption
+branch is tested before the range branch. `parseWholeCount` accepts
+"up to N"; the fully managed field refuses 0. The "Pricing basis"
+provenance row now renders for every applied count once a draft exists
+(source only picks the attribution wording), reads "Up to N fully managed
+users at the $X monthly minimum. Count on file: n, ..." at or under the
+minimum, and collapses its evidence in a `<details>`. It is still not a
+question: never in the queue or any open count.
+
+**Quote wording (`src/lib/rfp/quote.ts`).** When the monthly minimum was
+applied (or the count equals the minimum), the basis reads "Up to N fully
+managed users at the monthly minimum" (N from the card; no currency, so
+B7's sanctioned set is unchanged). With a Microsoft 365-only tier the real
+count stays and carries "(billed as up to N at the monthly minimum)".
+Counts above the minimum are byte-identical to before.
+`quantityLabel(line, ill, minimumUsers)` is the ONE display helper for the
+quantity cell ("Up to N" on the floored managed line), shared by the screen
+Investment table and both export emitters (`ExportView.minimumUsers`); the
+stored `quantity`/`unitPrice`/`lineTotal` are untouched, so B5 recomputes
+clean on old and new quotes. The PDF quantity column is 66pt (was 50) so
+"Up to 15" sets at full size. Stored `pricing_json` is rebuilt only by the
+pricing PUT: a pre-round proposal keeps its old basis sentence until its
+next pricing save (no rebuild-on-read, which would re-price a stored quote
+against the current card). `npm run test:rfpquote`.
+
+**References are never silently dropped.** Root cause: client references are
+not facts (they live in `rfp_references`, which holds no contact details),
+and the drafting prompt prefers omission over a gap, so a mandatory "Provide
+two references" landed with no text and no question. New pure, SERVER-ONLY
+module `src/lib/rfp/references-ask.ts` (lookbehinds):
+`referencesAsk(requirements, title?)` detects a client-references request
+(count 1 to 10 from digits or number words, bound to the references noun;
+negations and non-client senses such as page/section/employee references are
+vetoed; a section titled "References" counts, `fromTitle`).
+`REFERENCES_GAP_QUESTION(count)` is ONE canonical wording per count and a
+PERSISTED FORMAT (gap questions merge by normalized exact text, §5.17.2):
+never reword it. At landing, before the snap, the generate route appends
+that gap when the section asks, neither it nor any other section PRESENTS
+references, and no section carries `referencesAnswered`; an already-open
+references question is reused byte for byte. It is the only server-minted
+gap, so a references section may land three gaps (two model plus one).
+"Presents" needs positive evidence (a presenting shape followed by a list,
+or the noun beside an email or phone); "available on request", verb uses and
+deferrals do not count. The gap's `why` is built from `liveReferences()`
+(`db.ts`: id, organization, segment, relationshipSince, usableWithoutAsking,
+hasContact; retired rows excluded; contact values never selected): how many
+the RFP asked for, what the knowledge base holds, a segment-ranked shortlist,
+and that the person must type each contact. Organization names live in
+`why` only, which no prompt, export, log or activity row ever reads.
+`draftSection` gains a CLIENT REFERENCES prompt block, byte-absent unless
+the section asks: never invent a reference or write "available on request".
+
+**Answering it (gap route).** For the canonical question the route stamps
+`referencesAnswered: true` on the section record (a redraft builds a fresh
+record and drops it), appends rule D3's etiquette sentence verbatim unless
+the landing-state text already states it (exactly once, never in the
+letter), and forces `remember` off, also for any model-worded references
+question (`asksAboutReferences`): third-party contact details are never
+filed as knowledge. The response carries `rememberedSkipped: "references"`.
+The client twin `src/lib/rfp/references-question.ts`
+(`isCanonicalReferencesQuestion`, `referencesCountWord`, test-pinned against
+the server strings) lets the Questions pane swap the remember box for
+"Reference contacts are not kept for future RFPs."
+
+**Proposals drafted before the backstop.** `page.tsx` computes
+`unansweredReferencesAsks(requirements, sections)` and passes `refsMissing`;
+the Questions pane then shows "The RFP asks for two client references and
+this draft lists none." with "Add the references question", which calls
+`POST /api/rfp/proposals/[id]/references-gap` (no body; `requireRfpApi` +
+`getOwnedProposal`; sent = 409 `immutable`; recomputes the asks, appends the
+canonical gap per asking section keeping every existing gap, CAS-on-rev via
+`writeProposalSections` so the gate verdict is staled; idempotent; returns
+`{sections, added, rev}`; activity `proposal.references_gap_add`, shape
+only). The prompt is not a question and is in no count, but the done state
+does not say "nothing is waiting" while it shows. `npm run test:rfprefs`.
+
+**Titles.** The stored `rfp_documents.title` was the raw filename stem.
+`src/lib/rfp/doc-title.ts` (pure): `humanizeFilename` (known extensions
+only, separators to spaces, copy markers dropped), `groundRfpTitle` (the
+reader's optional `rfpTitle`, the solicitation's own subject line selected
+verbatim: must sit inside a single line of the exact fenced text, <= 160
+chars; the injection screen runs at the `brain.ts` call site),
+`composeDocTitle` ("client · subject", else "client · humanized filename",
+else the fallback; middot, never a dash). `POST /api/rfp/documents` keeps a
+typed title untouched; an auto title is replaced in the SAME update that
+stamps "extracted", guarded by a CASE on the stored auto value.
+`document.extract` meta gains `title: typed|subject|client|fallback`. No
+backfill. The on-screen cover no longer prints the document title at all: it
+prints the export's cover (the constant "Response to Request for Proposal"
+and `doc.clientName || proposal.title`), which is why the download looked
+right while the drafting view showed a filename. `npm run test:rfptitle`.
+
+**Declined on the record.** Number words in staff evidence (digits only,
+matching the reader rule); a generic "mandatory attachment with no coverage"
+backstop (insurance certificates, W-9, resumes: a keyword test per document
+type is far less reliable than for references; a merged checklist question
+is the candidate design); rebuild-on-read for stored quotes.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

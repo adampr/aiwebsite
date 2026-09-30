@@ -26,8 +26,10 @@ import { siteConfig } from "site.config";
 import { callGovernanceBrain } from "@/lib/governance/brain";
 import { screenInjection } from "@/lib/governance/research";
 import { groundStatedStaff, type StatedStaff } from "./staff-count";
+import { groundRfpTitle } from "./doc-title";
 import { stripReservedPrefix } from "./letter";
 import { normalizeGapQuestion } from "./gaps";
+import { referencesAsk } from "./references-ask";
 import type { FactRow } from "./db";
 
 export { newId };
@@ -121,6 +123,9 @@ export type ReadRfpResult = {
   statedStaff: StatedStaff | null;
   /** Grounding check that discarded the model's statedStaff claim, if any. */
   statedStaffDiscarded?: string;
+  /** The solicitation's own subject line, grounded verbatim, or null. See
+   *  doc-title.ts. */
+  rfpTitle: string | null;
   structure: { label: string; title: string }[];
   requirements: {
     structureLabel: string;
@@ -129,6 +134,11 @@ export type ReadRfpResult = {
     mandatory: boolean;
   }[];
 };
+
+/** A grounded title that trips the injection screen is no title. */
+function screenedTitle(title: string | null): string | null {
+  return title && screenInjection(title).hits.length === 0 ? title : null;
+}
 
 /**
  * Turn 1: read the client's RFP.
@@ -173,8 +183,18 @@ export async function readRfp(
     "- If totals conflict, or only per-location numbers exist with no stated",
     "  total, or the number appears only in words, use statedStaff: null.",
     "",
+    "If the document carries its own title or subject line for this",
+    "solicitation, report it as rfpTitle. SELECT, never author:",
+    "- rfpTitle is that ONE line copied verbatim from the document, at most",
+    "  160 characters. Never reword it, shorten it, or change its case.",
+    "- Prefer the line that names what is being procured over a generic",
+    '  heading such as "Request for Proposals".',
+    "- Never use the client's name alone, a date, a file name, or a section",
+    "  heading. If no such line exists, use rfpTitle: null.",
+    "",
     "Reply with JSON only:",
     '{"clientName": string|null,',
+    ' "rfpTitle": string|null,',
     ' "statedStaff": {"count": number|null, "quote": string,',
     '   "basis": "staff"|"users"}|null,',
     ' "structure": [{"label": string, "title": string}],',
@@ -210,6 +230,15 @@ export async function readRfp(
       typeof parsed.clientName === "string" ? parsed.clientName.slice(0, 200) : null,
     statedStaff: grounded.staff,
     statedStaffDiscarded: grounded.discarded,
+    // Same rule for the subject line: it becomes part of the stored document
+    // title only if it is in the fenced text verbatim; otherwise the title
+    // falls back to the client name or the humanized filename.
+    // groundRfpTitle is pure; the injection screen lives here. A title is
+    // stored, shown and copied into later prompts, so one that trips the
+    // screen on its own is dropped like any other ungrounded claim.
+    rfpTitle: screenedTitle(
+      groundRfpTitle((parsed as { rfpTitle?: unknown }).rfpTitle, inner)
+    ),
     // Leading underscores are stripped from labels: "__letter" (and any
     // future "__" label) is reserved for host furniture records that share
     // sectionsJson, and a client document must not be able to mint one.
@@ -322,6 +351,22 @@ export async function draftSection(
     "   person mid-flow, and most sections need ZERO. Never more than two.",
     "   Never ask about the CLIENT's environment (their headcount, systems,",
     "   or preferences), that is discovery, not a gap.",
+    // Byte-absent unless this section's asks include client references.
+    // This only prevents fabrication: the control is the generate route's
+    // deterministic backstop (references-ask.ts), which raises the question
+    // itself, so the drafter must not spend a gap on it either.
+    ...(referencesAsk(requirements, section.title || section.label)
+      ? [
+          "",
+          "CLIENT REFERENCES: this section is asked for references. XL.net",
+          "staff supply them through a question the system raises by itself.",
+          "Unless a listed fact names a reference, never name a client as a",
+          "reference, never invent a reference or its contact details, never",
+          "write that references are available on request or will follow, and",
+          "do not record a gap about references. Leave references out of",
+          "your paragraphs entirely and answer every other ask as usual.",
+        ]
+      : []),
     // Byte-absent when nothing is open, so a fresh draft-all's first
     // section keeps today's known-good prompt exactly.
     ...(openLines.length

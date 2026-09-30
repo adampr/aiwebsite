@@ -27,6 +27,7 @@ import {
   rfpQuestions,
   rfpRateCardItems,
   rfpRateCards,
+  rfpReferences,
   rfpRequirements,
 } from "@/lib/db/rfp-schema";
 import type { RfpUser } from "./access";
@@ -1210,4 +1211,40 @@ export async function recentActivity(
     .from(rfpActivity)
     .orderBy(desc(rfpActivity.at))
     .limit(Math.min(limit, 500));
+}
+
+/* ---- client references -------------------------------------------------- */
+
+export type LiveReference = {
+  id: string;
+  organization: string;
+  segment: string;
+  relationshipSince: string | null;
+  usableWithoutAsking: boolean;
+  /** Whether a phone or an email is on file. The contact_* VALUES are
+   *  third-party PII and are never selected: the presence test runs in SQL. */
+  hasContact: boolean;
+};
+
+/**
+ * Live client references (retired rows excluded), for the references
+ * question's `why` (references-ask.ts). Company knowledge, not a per-user
+ * row, so there is no owner scope; every caller sits behind the /rfp gate.
+ */
+export async function liveReferences(): Promise<LiveReference[]> {
+  return db
+    .select({
+      id: rfpReferences.id,
+      organization: rfpReferences.organization,
+      segment: rfpReferences.segment,
+      relationshipSince: rfpReferences.relationshipSince,
+      usableWithoutAsking: rfpReferences.usableWithoutAsking,
+      hasContact: sql<boolean>`(
+        nullif(btrim(${rfpReferences.contactPhone}), '') is not null
+        or nullif(btrim(${rfpReferences.contactEmail}), '') is not null
+      )`,
+    })
+    .from(rfpReferences)
+    .where(isNull(rfpReferences.retiredAt))
+    .orderBy(asc(rfpReferences.organization));
 }

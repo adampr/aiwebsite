@@ -47,11 +47,18 @@ import { LocalTime } from "@/components/local-time";
 import {
   parseInputsSource,
   parseQuoteInputs,
+  quantityLabel,
   type FmuSource,
   type QuoteInputs,
 } from "@/lib/rfp/quote";
-import { parseStaffRange, type StatedStaff } from "@/lib/rfp/staff-count";
+// TYPES ONLY from staff-count: its scanner (lookbehind regexes, whole
+// document passes) runs in page.tsx and must never enter the client bundle.
+import type { StatedStaff } from "@/lib/rfp/staff-count";
 import { normalizeGapQuestion } from "@/lib/rfp/gaps";
+import {
+  isCanonicalReferencesQuestion,
+  referencesCountWord,
+} from "@/lib/rfp/references-question";
 import {
   DEFAULT_LETTER_BODY,
   DOC_LABEL,
@@ -70,6 +77,8 @@ type Section = {
   gaps: { question: string; why: string }[];
   generatedBy: "llm" | "human";
   updatedAt: string;
+  /** Server stamp: the references question was answered on this section. */
+  referencesAnswered?: boolean;
 };
 
 type Requirement = {
@@ -94,10 +103,12 @@ type OpenQuestion =
       input: "number" | "choice" | "yesno";
       choices?: { value: string; label: string }[];
       prefill?: number | null;
-      /** Grounded RFP sentence shown as context (escaped text, never markup). */
-      context?: string;
       /** Requires at least this value in the number input. */
       min?: number;
+      /** One-tap answer at the rate card's monthly minimum. `primary` when
+       *  the RFP's own wording (or its silence) makes the minimum the
+       *  expected answer; the number box then serves the larger count. */
+      quick?: { label: string; value: number; primary: boolean };
       /** Alternative one-click answer (e.g. "the split is confirmed"). */
       alt?: { label: string; value: number; extra: Partial<QuoteInputs> };
     }
@@ -125,33 +136,96 @@ const EMPTY_INPUTS: QuoteInputs = {
   includeOnboarding: null,
 };
 
+/** The cover title the export prints (resolve-draft.ts `cover.title`). The
+ *  sheet must show what downloads (owner ruling, round 11), and the stored
+ *  document title is often an upload's filename. */
+const COVER_TITLE = "Response to Request for Proposal";
+
+/**
+ * Everything the user-count question and its provenance row say about staff:
+ * the RFP's own headcount sentences, the rate card's monthly minimum, and
+ * whether the document places the client inside that minimum. Every field is
+ * computed by page.tsx on the server; built once in Workspace so the
+ * question and the row can never disagree.
+ */
+type StaffContext = {
+  /** The RFP's staff sentences, deduped, the grounded quote first.
+   *  Attacker-controlled: rendered as plain text nodes only. */
+  evidence: string[];
+  /** The stated RANGE, from the parse that grounded it; null otherwise. */
+  range: { lo: number; hi: number } | null;
+  /** The monthly minimum in force; null when no rate card exists. */
+  floor: { users: number; cents: number } | null;
+  /** Non-null = the RFP says the client fits inside the minimum. It only
+   *  makes the one-tap minimum the PRIMARY answer; it never seeds a count. */
+  assumption: { quote: string } | null;
+  /** A larger population shows somewhere in the document. */
+  conflict: boolean;
+};
+
 function pricingQuestions(
   inputs: QuoteInputs,
-  statedStaff: StatedStaff | null
+  statedStaff: StatedStaff | null,
+  staff: StaffContext
 ): OpenQuestion[] {
   const qs: OpenQuestion[] = [];
   if (inputs.fullyManagedUsers === null) {
+    const { floor } = staff;
     // An RFP that stated a single staff count never reaches here: the count
     // was seeded at proposal creation (owner ruling 2026-08-02: stated staff
     // IS the user count until staff says otherwise). A stated RANGE still
     // asks, one prefilled tap, because picking an endpoint silently would be
     // authoring a number the client anchors on. The prefill comes from the
-    // SAME parse that grounded the range, never from "any big number in the
-    // sentence" (a founding year or street address must not win).
-    const range =
-      statedStaff && statedStaff.count === null
-        ? parseStaffRange(statedStaff.quote)
-        : null;
-    if (range)
+    // SAME parse that grounded the range (page.tsx runs it), never from "any
+    // big number in the sentence" (a founding year or street address must
+    // not win).
+    const { range } = staff;
+    // The one-tap minimum answer. OMITTED when the stated evidence clearly
+    // exceeds the minimum (an exact count, or a range whose low end, above
+    // it): a button that underquotes a document-stated size is a trap, not a
+    // shortcut. PRIMARY when the RFP points to the minimum, or says nothing
+    // about staff at all (the minimum is then the starting assumption);
+    // secondary whenever the RFP does speak to staff without settling it, so
+    // the person reads the sentences and decides.
+    const evidenceLow = range ? range.lo : (statedStaff?.count ?? null);
+    const hasEvidence = staff.evidence.length > 0;
+    const quick =
+      floor && !(evidenceLow !== null && evidenceLow > floor.users)
+        ? {
+            label: `Use up to ${floor.users} users (${fmtCents(floor.cents)} a month)`,
+            value: floor.users,
+            primary:
+              staff.assumption !== null || (!hasEvidence && !staff.conflict),
+          }
+        : undefined;
+    if (floor && staff.assumption)
+      // The RFP's own wording places the client inside the minimum ("fewer
+      // than 10 employees", a range of 10 to 12). Nothing is seeded from
+      // wording like that: the question is asked, with the one-tap minimum
+      // as its primary answer. This branch WINS over the range branch below
+      // (a "12" prefilled under a primary "Use up to 15" is two answers),
+      // and carries no prefill: the primary button is the answer offered.
+      qs.push({
+        kind: "pricing",
+        key: "p:fullyManagedUsers",
+        field: "fullyManagedUsers",
+        text: `The RFP points to the monthly minimum. Quote up to ${floor.users} fully managed users?`,
+        why: "",
+        input: "number",
+        quick,
+      });
+    else if (range)
       qs.push({
         kind: "pricing",
         key: "p:fullyManagedUsers",
         field: "fullyManagedUsers",
         text: "The RFP states a range for staff count. Which number should this quote use?",
-        why: "The stated range is shown below. The larger number is prefilled. You can change the count later in the rate card.",
+        why: quick?.primary
+          ? "You can change the count later in the rate card."
+          : "The larger number is prefilled. You can change the count later in the rate card.",
         input: "number",
-        prefill: range.hi,
-        context: statedStaff!.quote,
+        prefill: quick?.primary ? undefined : range.hi,
+        quick,
       });
     else
       qs.push({
@@ -159,11 +233,19 @@ function pricingQuestions(
         key: "p:fullyManagedUsers",
         field: "fullyManagedUsers",
         text: "How many people need full IT support (fully managed users)?",
-        why: "The quantity the monthly service and the monthly minimum are computed from.",
+        why: !floor
+          ? "The quantity the monthly service and the monthly minimum are computed from."
+          : staff.conflict
+            ? "The RFP's wording suggests a team larger than the minimum. Enter the count."
+            : !hasEvidence
+              ? "With no count in the RFP, the minimum is the starting assumption."
+              : "Decide from the RFP's own wording above.",
         input: "number",
         // Defense for a proposal that predates extraction: the grounded
-        // count is at least offered, never silently applied.
-        prefill: statedStaff?.count ?? undefined,
+        // count is at least offered, never silently applied. No prefill
+        // under a primary one-tap: that button is the answer offered.
+        prefill: quick?.primary ? undefined : (statedStaff?.count ?? undefined),
+        quick,
       });
   }
   // A zero estimate stays OPEN (matches the quote engine's needsSplit): the
@@ -264,8 +346,16 @@ export function Workspace({
   docStatus,
   archived,
   clientName,
-  docTitle,
+  coverClientName,
   statedStaff,
+  staffEvidence,
+  staffRange,
+  minimumEvidence,
+  staffConflict,
+  refsMissing: initialRefsMissing,
+  referencesQuestions,
+  minimumUsers,
+  minimumMonthlyCents,
   preparedBy,
   ownerEmail,
   signature,
@@ -285,8 +375,29 @@ export function Workspace({
   docStatus: string;
   archived: boolean;
   clientName: string | null;
-  docTitle: string;
+  /** Who the export's cover names: the client, else the proposal title. */
+  coverClientName: string | null;
   statedStaff: StatedStaff | null;
+  /** Verbatim RFP headcount sentences, deduped server-side, the grounded
+   *  quote first. Attacker-controlled: text nodes only. */
+  staffEvidence: string[];
+  /** The stated staff RANGE (statedStaff.count === null), parsed server-side. */
+  staffRange: { lo: number; hi: number } | null;
+  /** Non-null = the RFP places the client inside the monthly minimum, so the
+   *  one-tap minimum is the primary answer. Server-computed; never a seed. */
+  minimumEvidence: { quote: string } | null;
+  /** The document shows a larger population somewhere (server conflict
+   *  scan): the minimum one-tap is then never the primary answer, even
+   *  when no countable staff sentence was found. */
+  staffConflict: boolean;
+  /** Sections whose requirements ask for client references while the draft
+   *  neither lists any nor has the question open (server-computed at load). */
+  refsMissing: { label: string; count: number | null }[];
+  /** Model-worded references questions open at load, exact stored text. */
+  referencesQuestions: string[];
+  /** The rate card's monthly minimum; both null when no card is in force. */
+  minimumUsers: number | null;
+  minimumMonthlyCents: number | null;
   preparedBy: string;
   ownerEmail: string;
   signature: PersonSignature;
@@ -624,8 +735,21 @@ export function Workspace({
       }
     }
   }
+  // Props only, so the question and the provenance row read one verdict.
+  // No rate card: no floor, no assumption, the plain ask.
+  const staffFloor =
+    minimumUsers !== null && minimumMonthlyCents !== null
+      ? { users: minimumUsers, cents: minimumMonthlyCents }
+      : null;
+  const staffCtx: StaffContext = {
+    evidence: staffEvidence,
+    range: staffRange,
+    floor: staffFloor,
+    assumption: staffFloor ? minimumEvidence : null,
+    conflict: staffConflict,
+  };
   const queue: OpenQuestion[] = [
-    ...pricingQuestions(inputs, statedStaff),
+    ...pricingQuestions(inputs, statedStaff, staffCtx),
     ...gapEntries.values(),
   ];
   // ONE vocabulary for "question" everywhere on screen: the deduped count.
@@ -636,6 +760,35 @@ export function Workspace({
   const open = queue.filter((q) => !skipped.has(q.key));
   const current = open[0] ?? null;
   const [answeredCount, setAnsweredCount] = useState(0);
+
+  // ---- references (§5.17.2) ----
+  // THE references question: the server's canonical text (recognized by its
+  // shape, references-question.ts) or a model-worded one the server flagged
+  // at load. Its answer carries a third party's name, phone and email, so
+  // the remember box is not offered; the gap route refuses to file it
+  // whatever is sent.
+  const isReferencesQuestion = (question: string) =>
+    isCanonicalReferencesQuestion(question) ||
+    referencesQuestions.includes(question);
+  const currentIsReferences =
+    current?.kind === "gap" &&
+    current.targets.some((t) => isReferencesQuestion(t.raw));
+  // A draft that predates the references backstop: the RFP asks, the draft
+  // lists none, and no question is open. Server-computed at load; cleared
+  // once the question is added, and quiet as soon as any section carries the
+  // question (a redraft's backstop adds it without this list knowing). NOT a
+  // question: never in the queue, never in the open count.
+  const [refsMissing, setRefsMissing] = useState(initialRefsMissing);
+  const [refsBusy, setRefsBusy] = useState(false);
+  const [refsError, setRefsError] = useState("");
+  const refsPrompt =
+    refsMissing.length > 0 &&
+    proposalId !== null &&
+    sections.length > 0 &&
+    !sections.some((s) => s.referencesAnswered) &&
+    !sections.some((s) => s.gaps.some((g) => isReferencesQuestion(g.question)))
+      ? refsMissing[0]
+      : null;
 
   /**
    * Flash + rail a set of section panels, then scroll the first into view.
@@ -1057,7 +1210,12 @@ export function Workspace({
     const done: string[] = [];
     // remember=true only files the knowledge row once; repeating it per
     // section (or per retry) would create duplicate proposals.
-    let rememberThis = remember && !rememberedRef.current.has(q.key);
+    // A references answer is never remembered (third-party contact
+    // details); the server enforces it, this keeps the request honest.
+    let rememberThis =
+      remember &&
+      !q.targets.some((t) => isReferencesQuestion(t.raw)) &&
+      !rememberedRef.current.has(q.key);
     for (let i = 0; i < q.targets.length; i++) {
       const target = q.targets[i];
       setWeaveProgress(
@@ -1112,6 +1270,10 @@ export function Workspace({
       done.push(target.label);
       showChanged([target.label]);
       if (d.note && q.targets.length === 1) setNotice(d.note);
+      // The box was checked on a references question this client did not
+      // recognize (older model wording): say what the server did.
+      else if (d.rememberedSkipped === "references")
+        setNotice("Reference contacts are not kept for future RFPs.");
     }
     setWeaving(null);
     setWeaveProgress(null);
@@ -1120,6 +1282,40 @@ export function Workspace({
       setAnswerText("");
       setLastWoven(done.join(", "));
     }
+  }
+
+  /**
+   * Add the references question to a draft that dropped the RFP's ask
+   * (POST .../references-gap: no brain call, idempotent). The response
+   * carries the whole sections array; it is adopted like any other
+   * sections-returning write (rev, stale gate verdict).
+   */
+  async function addReferencesQuestion() {
+    if (!proposalId || refsBusy) return;
+    setRefsBusy(true);
+    setRefsError("");
+    const res = await fetch(
+      `/api/rfp/proposals/${proposalId}/references-gap`,
+      { method: "POST" }
+    ).catch(() => null);
+    setRefsBusy(false);
+    if (!res) {
+      setRefsError("The server could not be reached. Nothing was added.");
+      return;
+    }
+    const d = await res.json().catch(() => null);
+    if (!res.ok || !d || !Array.isArray(d.sections)) {
+      setRefsError(d?.message ?? "The question could not be added.");
+      return;
+    }
+    setSections(d.sections);
+    adoptRev(d.rev);
+    const added: string[] = Array.isArray(d.added) ? d.added : [];
+    if (added.length) {
+      setGateResult(null);
+      showChanged(added);
+    }
+    setRefsMissing([]);
   }
 
   async function runChecks(): Promise<GateResult | null> {
@@ -1925,19 +2121,52 @@ export function Workspace({
                     the open count, never blocks the done state. Renders in
                     both the current-question and done branches (a pre-export
                     review must still see where the count came from), never
-                    in the draft-first empty state. */}
-                {fmuSource === "rfp" &&
-                  statedStaff &&
-                  inputs.fullyManagedUsers !== null &&
-                  sections.length > 0 && (
+                    in the draft-first empty state. THE RULE: a count is
+                    applied and a draft exists. Source does not gate it (a
+                    staff-entered count needs the RFP's sentences beside it
+                    as much as a seeded one); it only changes the
+                    attribution the row prints. The sentences sit behind a
+                    disclosure so the row stays short above the questions.
+                    It is also the in-pane receipt for an answered count,
+                    whose wash lands in the draft column a phone hides. */}
+                {inputs.fullyManagedUsers !== null && sections.length > 0 && (
                     <StatedStaffRow
                       count={inputs.fullyManagedUsers}
+                      source={fmuSource}
                       statedStaff={statedStaff}
+                      staff={staffCtx}
                       headcountOnly={inputs.statesHeadcountOnly}
                       busy={busy}
                       onAnswer={answerPricing}
                     />
                   )}
+                {/* Above the queue AND in the done state, inside the pane a
+                    phone shows. Not a question: never counted as open. */}
+                {refsPrompt && (
+                  <div className="mb-5">
+                    <span className="sys-label">References</span>
+                    <p className="mt-3 text-sm">
+                      The RFP asks for{" "}
+                      {referencesCountWord(refsPrompt.count)
+                        ? `${referencesCountWord(refsPrompt.count)} client reference${refsPrompt.count === 1 ? "" : "s"}`
+                        : "client references"}{" "}
+                      and this draft lists none.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn--primary mt-3"
+                      disabled={refsBusy}
+                      onClick={() => void addReferencesQuestion()}
+                    >
+                      {refsBusy ? "Adding" : "Add the references question"}
+                    </button>
+                    {refsError && (
+                      <p className="mt-2 text-xs" role="alert">
+                        {refsError}
+                      </p>
+                    )}
+                  </div>
+                )}
                 {sections.length === 0 ? (
                   <>
                     <span className="sys-label">Questions</span>
@@ -1983,14 +2212,26 @@ export function Workspace({
                           .join(" · ")}
                       </p>
                     )}
+                    {current.kind === "pricing" &&
+                      current.field === "fullyManagedUsers" && (
+                        // The user count LEADS with what is already known
+                        // (owner, 2026-09-30): the monthly minimum, then
+                        // every sentence the RFP spends on staff, so the
+                        // answer is a decision on shown evidence and never
+                        // a bare ask. Shown at every size.
+                        <>
+                          {staffCtx.floor && (
+                            <MinimumNote floor={staffCtx.floor} />
+                          )}
+                          <StaffEvidence quotes={staffCtx.evidence} />
+                        </>
+                      )}
                     <p className="mt-3">{current.text}</p>
                     {current.why && (
-                      <p className="mt-2 text-xs text-faint">{current.why}</p>
-                    )}
-                    {current.kind === "pricing" && current.context && (
-                      // Grounded RFP sentence, plain escaped text only.
-                      <p className="mt-2 text-xs text-faint">
-                        The RFP says: “{current.context}”
+                      // pre-line: the references why arrives as separate
+                      // lines (the ask, the holdings, the shortlist).
+                      <p className="mt-2 whitespace-pre-line text-xs text-faint">
+                        {current.why}
                       </p>
                     )}
 
@@ -2048,25 +2289,35 @@ export function Workspace({
                           }}
                           aria-label={current.text}
                           aria-invalid={answerInvalid ? true : undefined}
-                          placeholder="Answer in plain language. It gets woven into the section, not pasted."
+                          placeholder={
+                            currentIsReferences
+                              ? "List each reference: organization, contact name, title, phone, email."
+                              : "Answer in plain language. It gets woven into the section, not pasted."
+                          }
                         />
                         {answerInvalid && (
                           <p className="mt-2 text-xs" role="alert">
                             Type your answer first. A few words is enough.
                           </p>
                         )}
-                        <label className="mt-3 flex items-start gap-2 text-xs text-faint">
-                          <input
-                            type="checkbox"
-                            checked={remember}
-                            onChange={(e) => setRemember(e.target.checked)}
-                          />
-                          <span>
-                            Keep this answer for my future RFPs (only my
-                            drafts see it; share it with everyone from
-                            Knowledge, where an admin approves it)
-                          </span>
-                        </label>
+                        {currentIsReferences ? (
+                          <p className="mt-3 text-xs text-faint">
+                            Reference contacts are not kept for future RFPs.
+                          </p>
+                        ) : (
+                          <label className="mt-3 flex items-start gap-2 text-xs text-faint">
+                            <input
+                              type="checkbox"
+                              checked={remember}
+                              onChange={(e) => setRemember(e.target.checked)}
+                            />
+                            <span>
+                              Keep this answer for my future RFPs (only my
+                              drafts see it; share it with everyone from
+                              Knowledge, where an admin approves it)
+                            </span>
+                          </label>
+                        )}
                         <div className="mt-4 flex flex-wrap gap-3">
                           <button
                             type="submit"
@@ -2095,7 +2346,11 @@ export function Workspace({
                     <span className="sys-label">Questions</span>
                     <p className="mt-3 text-sm">
                       {queue.length === 0
-                        ? "Nothing is waiting on you. Run the checks, then export."
+                        ? refsPrompt
+                          ? // The references prompt above is waiting: never
+                            // claim nothing is.
+                            "No questions are open. The references request above still needs a decision."
+                          : "Nothing is waiting on you. Run the checks, then export."
                         : `Every remaining question is skipped (${queue.length}). They stay listed on their sections until answered.`}
                     </p>
                     {skipped.size > 0 && (
@@ -2745,13 +3000,16 @@ export function Workspace({
                     <div className="rfpdoc-kicker rfpdoc-kicker--cover">
                       Managed IT Services Proposal
                     </div>
-                    <h3 className="rfpdoc-title mt-5">{docTitle}</h3>
+                    {/* The export's cover title and client, not the stored
+                        document title: that is often an upload's filename,
+                        and the file never printed it. */}
+                    <h3 className="rfpdoc-title mt-5">{COVER_TITLE}</h3>
                     <div className="rfpdoc-bar mt-7" />
                     <p className="rfpdoc-lede mt-6">
                       Prepared
-                      {clientName ? (
+                      {coverClientName ? (
                         <>
-                          {" "}for <strong>{clientName}</strong>
+                          {" "}for <strong>{coverClientName}</strong>
                         </>
                       ) : null}{" "}
                       in response to the Request for Proposal.
@@ -3157,9 +3415,13 @@ export function Workspace({
                               {sec.gaps.map((g, i) => (
                                 <li key={i}>
                                   {g.question}
-                                  {g.why && (
-                                    <span className="rfpdoc-faint"> · {g.why}</span>
-                                  )}
+                                  {/* A references why is a multi-line
+                                      staff note (shortlist included): the
+                                      paper shows the question only. */}
+                                  {g.why &&
+                                    !isReferencesQuestion(g.question) && (
+                                      <span className="rfpdoc-faint"> · {g.why}</span>
+                                    )}
                                 </li>
                               ))}
                             </ul>
@@ -3289,7 +3551,11 @@ export function Workspace({
                                 <tr key={l.id}>
                                   <td>{l.label}</td>
                                   <td style={{ textAlign: "right" }}>
-                                    {l.quantity}
+                                    {/* "Up to 15" on a minimum-billed fully
+                                        managed line, as the export prints. */}
+                                    {minimumUsers !== null
+                                      ? quantityLabel(l, ill, minimumUsers)
+                                      : l.quantity}
                                   </td>
                                   <td style={{ textAlign: "right" }}>
                                     {l.unitPrice.cents === 0
@@ -3512,22 +3778,57 @@ function fmtCents(cents: number): string {
   return `${sign}$${dollars.toLocaleString("en-US")}.${rest}`;
 }
 
+/** The monthly-minimum assumption, stated before the user count is asked. */
+function MinimumNote({ floor }: { floor: { users: number; cents: number } }) {
+  return (
+    <p className="mt-3 text-sm">
+      XL.net&apos;s monthly minimum covers up to {floor.users} fully managed
+      users for {fmtCents(floor.cents)} a month. A client with {floor.users} or
+      fewer people is always quoted up to {floor.users} users at that minimum.
+    </p>
+  );
+}
+
 /**
- * Provenance for an RFP-sourced user count. NOT a question: never in the
+ * What the RFP says about staff. The quotes are the only attacker-controlled
+ * strings on screen; each renders as a plain escaped text node, nothing else.
+ */
+function StaffEvidence({ quotes }: { quotes: string[] }) {
+  return (
+    <div className="mt-3 text-xs text-faint">
+      <p>What the RFP says about staff:</p>
+      {quotes.length === 0 ? (
+        <p className="mt-1">No staff count was found in the RFP.</p>
+      ) : (
+        quotes.map((quote, i) => (
+          <p className="mt-1" key={i}>
+            “{quote}”
+          </p>
+        ))
+      )}
+    </div>
+  );
+}
+
+/**
+ * Provenance for the applied user count. NOT a question: never in the
  * queue, never in the open count, never a blocker for the done state — the
- * count is already applied, this row only says where it came from and keeps
- * the correction one step away. The quote is the only attacker-controlled
- * string on screen; it renders as a plain escaped text node, nothing else.
+ * count is already applied, this row only says where it came from, shows the
+ * RFP's own staff sentences, and keeps the correction one step away.
  */
 function StatedStaffRow({
   count,
+  source,
   statedStaff,
+  staff,
   headcountOnly,
   busy,
   onAnswer,
 }: {
   count: number;
-  statedStaff: StatedStaff;
+  source: FmuSource;
+  statedStaff: StatedStaff | null;
+  staff: StaffContext;
   headcountOnly: boolean;
   busy: boolean;
   onAnswer: (
@@ -3537,6 +3838,13 @@ function StatedStaffRow({
   ) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
+  const { floor, range } = staff;
+  const atMinimum = floor !== null && count <= floor.users;
+  // Attribution follows the SERVER's provenance verdict. "rfp" is only ever
+  // the exact grounded count seeded at proposal creation; anything else
+  // (including legacy null) is a person's entry.
+  const exact =
+    source === "rfp" && statedStaff !== null && statedStaff.count === count;
   const q: Extract<OpenQuestion, { kind: "pricing" }> = {
     kind: "pricing",
     key: "p:fullyManagedUsers",
@@ -3545,27 +3853,70 @@ function StatedStaffRow({
     why: "",
     input: "number",
     prefill: count,
+    // Already at the minimum: nothing for the one-tap to change. Above it
+    // with the RFP itself stating the size (this exact count, or a range
+    // that starts above the minimum): never offered, because one tap would
+    // underquote a document-stated size.
+    quick:
+      floor && !atMinimum && !exact && !(range && range.lo > floor.users)
+        ? {
+            label: `Use up to ${floor.users} users (${fmtCents(floor.cents)} a month)`,
+            value: floor.users,
+            primary: false,
+          }
+        : undefined,
   };
+  const origin = exact
+    ? statedStaff.basis === "users"
+      ? "the RFP states a supported user count"
+      : "taken from the RFP"
+    : source === "rfp"
+      ? "taken from the RFP"
+      : "entered by staff";
   return (
     <div className="mb-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <span className="sys-label">Pricing basis</span>
       </div>
       <p className="mt-3 text-sm">
-        Fully managed users: {count}.{" "}
-        {statedStaff.basis === "users"
-          ? "The RFP states a supported user count."
-          : "Taken from the RFP."}
+        {atMinimum ? (
+          // The count on file stays visible: "up to" is the quoted band,
+          // not the number a person or the RFP gave.
+          <>
+            Up to {floor.users} fully managed users at the{" "}
+            {fmtCents(floor.cents)} monthly minimum. Count on file: {count},{" "}
+            {origin}.
+          </>
+        ) : (
+          <>
+            Fully managed users: {count}.{" "}
+            {origin.charAt(0).toUpperCase() + origin.slice(1)}.
+          </>
+        )}
       </p>
-      <p className="mt-2 text-xs text-faint">
-        The RFP says: “{statedStaff.quote}”
-      </p>
+      {/* Collapsed HERE only: the row renders for every applied count and
+          the full list would push the questions below the fold. The
+          question card shows the same sentences open. */}
+      <details className="mt-2 text-xs text-faint">
+        <summary className="cursor-pointer">
+          What the RFP says about staff ({staff.evidence.length})
+        </summary>
+        {staff.evidence.length === 0 ? (
+          <p className="mt-1">No staff count was found in the RFP.</p>
+        ) : (
+          staff.evidence.map((quote, i) => (
+            <p className="mt-1" key={i}>
+              “{quote}”
+            </p>
+          ))
+        )}
+      </details>
       {headcountOnly ? (
         <p className="mt-2 text-xs text-faint">
           You marked this as total staff. The split question below must be
           resolved before export.
         </p>
-      ) : statedStaff.basis === "staff" ? (
+      ) : exact && statedStaff.basis === "staff" ? (
         <p className="mt-2 text-xs text-faint">
           Stated staff is assumed to equal fully managed users. Change the
           number if the supported population differs.
@@ -3597,11 +3948,15 @@ function StatedStaffRow({
 /**
  * A typed count as a whole number, or null. Accepts what people type for a
  * headcount: surrounding spaces, thousands commas ("1,200"), and a decimal
- * part (floored, as before). Anything else, including trailing words, is
- * refused rather than guessed at.
+ * part (floored, as before). Also "up to 15" / "upto 15" / "up  to15", the way the
+ * minimum is spoken (the owner typed exactly that and was refused,
+ * 2026-09-30). Anything else, including trailing words, is refused rather
+ * than guessed at.
  */
 function parseWholeCount(raw: string): number | null {
-  const m = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?$/.exec(raw.trim());
+  const m = /^(?:up\s*to\s*)?(\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?$/i.exec(
+    raw.trim()
+  );
   return m ? Number(m[1].replace(/,/g, "")) : null;
 }
 
@@ -3670,7 +4025,15 @@ function PricingAnswer({
       </div>
     );
 
-  const minimum = q.min ?? 0;
+  // Zero fully managed users is not a quote; every other count field keeps
+  // accepting 0, which means "leave it out".
+  const minimum = q.min ?? (isFm ? 1 : 0);
+  const extra = isFm ? { statesHeadcountOnly: headcountOnly } : {};
+  // The one-tap minimum is a supported-user count by definition ("up to N
+  // fully managed users"), so it never carries the total-staff box, whatever
+  // that box holds: a stale tick would turn one tap into a two-view quote
+  // with an open split question.
+  const quickExtra = isFm ? { statesHeadcountOnly: false } : {};
   return (
     <form
       className="mt-4"
@@ -3690,13 +4053,25 @@ function PricingAnswer({
           return;
         }
         setInvalid("");
-        void onAnswer(
-          q,
-          n,
-          isFm ? { statesHeadcountOnly: headcountOnly } : {}
-        );
+        void onAnswer(q, n, extra);
       }}
     >
+      {q.quick?.primary && (
+        // The expected answer first; the box below is for the larger count.
+        <>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={busy}
+            onClick={() => void onAnswer(q, q.quick!.value, quickExtra)}
+          >
+            {q.quick.label}
+          </button>
+          <p className="mt-4 mb-2 text-xs text-faint">
+            More than {q.quick.value} people? Enter the count.
+          </p>
+        </>
+      )}
       <input
         className="input w-full"
         inputMode="numeric"
@@ -3727,9 +4102,25 @@ function PricingAnswer({
         </label>
       )}
       <div className="mt-4 flex flex-wrap gap-3">
-        <button type="submit" className="btn btn--primary" disabled={busy}>
+        {/* One primary per control: when the one-tap minimum leads, the
+            typed count is the secondary path. Never disabled on validity. */}
+        <button
+          type="submit"
+          className={q.quick?.primary ? "btn btn--text" : "btn btn--primary"}
+          disabled={busy}
+        >
           Answer
         </button>
+        {q.quick && !q.quick.primary && (
+          <button
+            type="button"
+            className="btn btn--text"
+            disabled={busy}
+            onClick={() => void onAnswer(q, q.quick!.value, quickExtra)}
+          >
+            {q.quick.label}
+          </button>
+        )}
         {q.alt && (
           <button
             type="button"

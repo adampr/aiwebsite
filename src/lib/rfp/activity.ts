@@ -39,6 +39,7 @@ export const RFP_ACTIONS = [
   "proposal.tron_revise",
   "proposal.tron_plan",
   "proposal.gap_resolve",
+  "proposal.references_gap_add",
   "proposal.pricing_set",
   "proposal.gate_run",
   "proposal.export",

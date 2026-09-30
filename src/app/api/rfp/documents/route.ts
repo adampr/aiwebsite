@@ -10,12 +10,17 @@ import crypto from "node:crypto";
 import { extractStyleSampleText } from "@/lib/governance/style-sample";
 import { screenInjection } from "@/lib/governance/research";
 import { readRfp } from "@/lib/rfp/brain";
+import {
+  UNTITLED_RFP,
+  composeDocTitle,
+  humanizeFilename,
+} from "@/lib/rfp/doc-title";
 import { logRfpActivity } from "@/lib/rfp/activity";
 import { createDocument, replaceRequirements } from "@/lib/rfp/db";
 import { requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
 import { db } from "@/lib/db";
 import { rfpDocuments } from "@/lib/db/rfp-schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -47,7 +52,10 @@ export async function POST(req: Request): Promise<Response> {
   let sourceName: string | null = null;
   let sourceSha: string | null = null;
   let sourceBytes: number | null = null;
-  let title = "Untitled RFP";
+  // A title the user typed is theirs and is never replaced. With none typed
+  // the title is AUTO: a humanized filename (or "Untitled RFP" for a paste)
+  // now, and "<client> · <the RFP's own subject line>" once it has been read.
+  let typedTitle = "";
 
   if (ctype.includes("multipart/form-data")) {
     // Content-Length is checked BEFORE formData(), which buffers the whole body.
@@ -63,7 +71,7 @@ export async function POST(req: Request): Promise<Response> {
     }
     const file = form.get("file");
     const pasted = String(form.get("text") ?? "");
-    title = String(form.get("title") ?? "").trim() || title;
+    typedTitle = String(form.get("title") ?? "").trim();
 
     if (file instanceof File && file.size > 0) {
       if (file.size > MAX_BYTES)
@@ -92,7 +100,6 @@ export async function POST(req: Request): Promise<Response> {
       sourceName = file.name.slice(0, 300);
       sourceSha = crypto.createHash("sha256").update(buf).digest("hex");
       sourceBytes = buf.length;
-      if (title === "Untitled RFP") title = file.name.replace(/\.[^.]+$/, "");
     } else if (pasted.trim().length >= 40) {
       rawText = pasted.slice(0, MAX_CHARS);
     } else {
@@ -116,8 +123,12 @@ export async function POST(req: Request): Promise<Response> {
         400
       );
     rawText = body.text.slice(0, MAX_CHARS);
-    title = (body.title ?? "").trim() || title;
+    typedTitle = String(body.title ?? "").trim();
   }
+
+  const autoTitle = !typedTitle;
+  const title =
+    typedTitle || (sourceName ? humanizeFilename(sourceName) : UNTITLED_RFP);
 
   // Untrusted third-party text headed for a prompt. Dropped lines are a review
   // signal on the row, never a silent edit and never a hard block.
@@ -170,13 +181,30 @@ export async function POST(req: Request): Promise<Response> {
           mandatory: r.mandatory,
         }))
       );
-      // Stated staff lands in the SAME update that stamps "extracted", so a
-      // proposal can never be created against an extracted document whose
-      // count has not landed yet.
+      // An AUTO title becomes "<client> · <subject line>". The CASE compares
+      // against the title this request stored, so a title changed by anything
+      // else in the meantime is left alone (no rename route exists today;
+      // the guard is what keeps that true if one is added).
+      const composed = autoTitle
+        ? composeDocTitle({
+            clientName: result.clientName,
+            subject: result.rfpTitle,
+            fallback: doc.title,
+          })
+        : doc.title;
+      // Stated staff and the title land in the SAME update that stamps
+      // "extracted", so a proposal can never be created against an extracted
+      // document whose count has not landed yet, and never copies the
+      // pre-read title (proposal.title is copied once, at creation).
       await db
         .update(rfpDocuments)
         .set({
           clientName: result.clientName,
+          ...(composed !== doc.title
+            ? {
+                title: sql`CASE WHEN ${rfpDocuments.title} = ${doc.title} THEN ${composed} ELSE ${rfpDocuments.title} END`,
+              }
+            : {}),
           structureJson: JSON.stringify(result.structure),
           statedStaffCount: result.statedStaff?.count ?? null,
           statedStaffQuote: result.statedStaff?.quote ?? null,
@@ -201,6 +229,14 @@ export async function POST(req: Request): Promise<Response> {
               ? "range"
               : "ok"
             : (result.statedStaffDiscarded ?? "none"),
+          // Where the stored title came from; never the title itself.
+          title: !autoTitle
+            ? "typed"
+            : result.rfpTitle
+              ? "subject"
+              : result.clientName
+                ? "client"
+                : "fallback",
         },
       });
     } catch (err) {

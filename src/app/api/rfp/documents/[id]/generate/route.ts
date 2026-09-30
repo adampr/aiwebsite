@@ -29,9 +29,16 @@ import {
   heartbeatGeneration,
   knowledgeForUser,
   listRequirements,
+  liveReferences,
   writeProposalSections,
   type FactRow,
 } from "@/lib/rfp/db";
+import {
+  referencesAsk,
+  referencesGapWhy,
+  withReferencesGap,
+  type ReferencesAsk,
+} from "@/lib/rfp/references-ask";
 import {
   capOpenQuestionsForPrompt,
   collectOpenQuestions,
@@ -54,6 +61,11 @@ export type DraftSectionRecord = {
   gaps: { question: string; why: string }[];
   generatedBy: "llm" | "human";
   updatedAt: string;
+  /** Stamped by the gap route when the canonical references question is
+   *  answered on this section; survives every spread-based edit, and is
+   *  dropped by a redraft (which builds a fresh record). Read only by the
+   *  references backstop (references-ask.ts). */
+  referencesAnswered?: boolean;
 };
 
 export async function POST(
@@ -134,6 +146,12 @@ export async function POST(
     // fullyManagedUsersSource is read by the workspace for provenance and
     // deliberately does NOT survive parseQuoteInputs, so a client PUT can
     // never mint it (the pricing route re-derives it instead).
+    //
+    // ONLY an exact grounded count seeds. An RFP that merely bounds its size
+    // ("fewer than 10 employees") is loose evidence: it never prices anything
+    // by itself. The workspace asks, showing the staff mentions, and
+    // minimumAssumption() only decides whether the one-tap "up to N users at
+    // the monthly minimum" answer is the primary button on that question.
     const seed = doc.statedStaffCount
       ? JSON.stringify({
           fullyManagedUsers: doc.statedStaffCount,
@@ -217,6 +235,9 @@ export async function POST(
     let landed = false;
     try {
       let drafted: DraftedSection | null = null;
+      // Set on the section path only; the letter never carries gap plumbing.
+      let refsAsk: ReferencesAsk | null = null;
+      let refsWhy = "";
       if (isLetter) {
         // The letter drafts from the sections AS THEY ARE NOW, not as they
         // were at claim time: in the draft-all run it is the last step, and
@@ -303,6 +324,27 @@ export async function POST(
           asFacts,
           capOpenQuestionsForPrompt(openQuestions, ownOpenGaps)
         );
+
+        // The references backstop (references-ask.ts): the drafter never
+        // sees rfp_references, so an RFP's ask for references used to be
+        // dropped without a trace. Detect it here, deterministically, and
+        // build the question's `why` from what the knowledge base holds.
+        // One read, only for a section that carries the ask; a failed read
+        // costs the shortlist, never the question.
+        // The section TITLE is part of the ask: "6. References" often
+        // carries it alone.
+        refsAsk = drafted ? referencesAsk(forSection, title || label) : null;
+        if (refsAsk) {
+          const held = await liveReferences().catch((err) => {
+            console.error("[rfp] references read failed:", err);
+            return null;
+          });
+          refsWhy = referencesGapWhy(
+            refsAsk,
+            held,
+            `${doc.clientName ?? ""} ${doc.title} ${doc.rawText ?? ""}`
+          );
+        }
       }
 
       // Land the result, but only while the claim is still THIS attempt's.
@@ -310,7 +352,8 @@ export async function POST(
       // swaps the attempt id (drop the result, the reclaiming run owns it).
       // The activity log reports the LANDED gap count (post-snap), which
       // can be lower than what the model returned when the snap folds two
-      // normalize-equal gaps into one.
+      // normalize-equal gaps into one, or one higher when the references
+      // backstop adds its question.
       let landedGapCount: number | null = null;
       for (let tries = 0; tries < 3; tries++) {
         const fresh = await getProposalForDocument(doc.id);
@@ -319,6 +362,7 @@ export async function POST(
           fresh.sectionsJson || JSON.stringify(existing)
         );
         if (drafted) {
+          const open = collectOpenQuestions(sections, label);
           const record: DraftSectionRecord = {
             label,
             title,
@@ -335,11 +379,38 @@ export async function POST(
             // a paraphrase of a capped-out question still deserves the
             // merge. The letter never carries gap plumbing: its
             // drafted.gaps is the literal [] built above.
+            //
+            // The references backstop runs BEFORE the snap and against the
+            // same landing state: its question is canonical text (or the
+            // exact text of a references question already open), so the
+            // snap leaves it alone or folds it like any other. It is the
+            // one gap the server adds itself, on top of draftSection's cap
+            // of two, so a section lands at most three. A redraft of a
+            // section whose references were answered and woven drops them
+            // and re-mints the question; asking again beats losing them.
             gaps: isLetter
               ? drafted.gaps
               : snapGapQuestions(
-                  drafted.gaps,
-                  collectOpenQuestions(sections, label)
+                  withReferencesGap(drafted.gaps, {
+                    ask: refsAsk,
+                    paragraphs: drafted.paragraphs,
+                    otherSections: sections
+                      .filter(
+                        (s) => s.label !== label && !s.label.startsWith("__")
+                      )
+                      .map((s) => s.paragraphs),
+                    openQuestions: open,
+                    why: refsWhy,
+                    // Another section's references question was answered
+                    // by a person: never raise it again from here.
+                    answeredElsewhere: sections.some(
+                      (s) =>
+                        s.label !== label &&
+                        !s.label.startsWith("__") &&
+                        s.referencesAnswered === true
+                    ),
+                  }),
+                  open
                 ),
             generatedBy: "llm",
             updatedAt: new Date().toISOString(),

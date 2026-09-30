@@ -27,6 +27,12 @@ import {
   writeProposalSections,
 } from "@/lib/rfp/db";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
+import {
+  asksAboutReferences,
+  isReferencesGapQuestion,
+  isReferencesRefusal,
+  withReferenceEtiquette,
+} from "@/lib/rfp/references-ask";
 import type { DraftSectionRecord } from "../../../documents/[id]/generate/route";
 
 export const dynamic = "force-dynamic";
@@ -89,6 +95,19 @@ export async function POST(
       404
     );
 
+  // THE references question: the server's own canonical text at any count
+  // (references-ask.ts), matched exactly after normalization. A question
+  // that merely contains the noun ("Do technicians supply references from
+  // past employers?") is an ordinary gap: it is remembered like any other
+  // and gets no etiquette sentence.
+  const referencesQuestion = isReferencesGapQuestion(question);
+  // Wider, for the remember box ONLY: an older model-worded question asking
+  // which client references to list ("Which two clients can serve as
+  // references?") draws the same third-party contact details as the
+  // canonical one, so its answer is never filed as knowledge either.
+  const referencesContacts =
+    referencesQuestion || asksAboutReferences(question);
+
   if (!(await brainHealthy()))
     return rfpError(
       "unavailable",
@@ -136,12 +155,46 @@ export async function POST(
       409
     );
 
+  // A references answer puts references into the text, and rule D3 BLOCKS
+  // any proposal that names them without the call-etiquette sentence. The
+  // sentence is appended here, deterministically, against the LANDING state
+  // (so one answer woven into several sections states it once), rather than
+  // asked of the model, which may paraphrase it past D3's test.
+  //
+  // `otherText` is everything else D3's documentText scans that this route
+  // can see: every other record's label, title and paragraphs (the letter
+  // record included, so the sentence is never added when the letter already
+  // states it, and never added INTO the letter: the letter carries no gaps,
+  // so this route cannot target it), this section's own label and title,
+  // and the proposal title the cover prints. For the references question
+  // the append does not depend on the woven paragraphs containing the word;
+  // a refusal skips it only when D3 would not block without it.
+  const otherText = [
+    fresh.title,
+    ...freshSections.map((s, i) =>
+      i === at
+        ? `${s.label}\n${s.title}`
+        : `${s.label}\n${s.title}\n${s.paragraphs.join("\n")}`
+    ),
+  ].join("\n");
+  const paragraphs = referencesQuestion
+    ? withReferenceEtiquette(woven.paragraphs, otherText, {
+        answered: true,
+        refusal: isReferencesRefusal(answer),
+      })
+    : woven.paragraphs;
+
   const updated: DraftSectionRecord = {
     ...freshSections[at],
-    paragraphs: woven.paragraphs,
+    paragraphs,
     gaps: freshSections[at].gaps.filter((g) => g.question !== question),
     cites: freshSections[at].cites,
     generatedBy: freshSections[at].generatedBy,
+    // The person answered the references question. The generate route's
+    // backstop reads this stamp as "answered", whatever the woven prose
+    // looks like; a redraft of this section builds a fresh record without
+    // it, which re-raises the question (asking again beats losing them).
+    ...(referencesQuestion ? { referencesAnswered: true } : {}),
     updatedAt: new Date().toISOString(),
   };
   freshSections[at] = updated;
@@ -158,8 +211,18 @@ export async function POST(
       409
     );
 
+  // A references answer is never filed as knowledge, whatever the box says
+  // (it defaults to checked): it carries a third party's name, phone and
+  // email, and a knowledge row is fed to every later draft as a citable
+  // fact. Reference contacts belong on rfp_references, which the schema
+  // keeps out of prompts on purpose.
+  // Keyed on the canonical question AND any model-worded question asking
+  // which client references to list; the response says so when the box was
+  // ignored.
   let remembered = false;
-  if (body.remember === true) {
+  const rememberedSkipped =
+    body.remember === true && referencesContacts ? "references" : null;
+  if (body.remember === true && !referencesContacts) {
     try {
       await createKnowledgeProposal(user, {
         kind: "fact",
@@ -195,6 +258,7 @@ export async function POST(
     section: updated,
     note: woven.note,
     remembered,
+    ...(rememberedSkipped ? { rememberedSkipped } : {}),
     rev: fresh.rev + 1,
   });
 }

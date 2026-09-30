@@ -201,6 +201,68 @@ function baseManagedMonthly(card: RateCard, fullyManagedUsers: number): Money {
   return computeMonthlyTotal(lines);
 }
 
+/**
+ * True when a fully managed count is billed as the rate card's minimum block:
+ * below the minimum when the flat floor really applies (the same two tests
+ * as applyMinimum: under the count AND under the fee, so a card whose
+ * per-user product already reaches the fee bills the plain product), and AT
+ * the minimum, where the line is that block of users anyway. A minimum of
+ * one user is no block at all.
+ */
+function atMinimum(card: RateCard, managed: number): boolean {
+  const min = card.minimumFullyManagedUsers;
+  if (managed <= 0 || min <= 1) return false;
+  if (managed === min) return true;
+  if (managed > min) return false;
+  const unit = item(card, FULLY_MANAGED_USER_CODE).unitPrice;
+  return unit.cents * managed < card.minimumMonthlyFee.cents;
+}
+
+const managedUsers = (n: number): string =>
+  `${n} fully managed user${n === 1 ? "" : "s"}`;
+
+/**
+ * The fully managed clause of a basis sentence. Owner ruling 2026-09-30: at
+ * or under the minimum the answer is always "up to N users at the monthly
+ * minimum" (N from the card, never typed), not a count that does not
+ * multiply to the line. The typed count is dropped in that reading: the
+ * engine cannot tell an RFP-stated number from a staff entry, so "N stated"
+ * would be a claim it cannot back. With a Microsoft 365-only tier the real
+ * count STAYS, because that sentence has to add up to the population it
+ * splits; the minimum rides in a parenthesis instead. No dollar figure
+ * here: rule B7 sanctions figures from lines, totals and notes only.
+ */
+function managedPhrase(card: RateCard, managed: number, withSplit: boolean): string {
+  const min = card.minimumFullyManagedUsers;
+  if (!atMinimum(card, managed)) return managedUsers(managed);
+  if (!withSplit) return `Up to ${min} fully managed users at the monthly minimum`;
+  return managed < min
+    ? `${managedUsers(managed)} (billed as up to ${min} at the monthly minimum)`
+    : managedUsers(managed);
+}
+
+/** Display text for a line's quantity cell: "Up to 15" for the fully managed line when that is what was billed (the illustration's monthly minimum applied, or the count equals a minimum above one), else String(line.quantity). */
+export function quantityLabel(
+  line: PricingLine,
+  ill: PricingIllustration,
+  minimumUsers: number
+): string {
+  // Pure and display-only: the stored quantity stays the real count, which
+  // is what rule B5's recompute and the onboarding note read. Works on
+  // quotes stored before this helper existed (it reads nothing new).
+  //
+  // True to what was billed: `minimumApplied` is the engine's own record
+  // that the flat floor replaced the per-user product. A count under the
+  // minimum whose product was billed as-is (a card whose floor is lower
+  // than count x unit) prints the count, and so does a stored quote whose
+  // count exceeds a minimum that has since changed.
+  if (line.rateCardItemCode !== FULLY_MANAGED_USER_CODE) return String(line.quantity);
+  const billedAsBlock =
+    (ill.minimumApplied && line.quantity <= minimumUsers) ||
+    (minimumUsers > 1 && line.quantity === minimumUsers);
+  return billedAsBlock ? `Up to ${minimumUsers}` : String(line.quantity);
+}
+
 export type BuiltQuote = {
   quote: PricingQuote;
   /** True when the quote is renderable (has at least one illustration). */
@@ -284,7 +346,7 @@ export function buildQuote(
           primaryM365 > 0
             ? "Fully managed with a Microsoft 365-only tier"
             : "All supported users fully managed",
-        basis: `${primaryManaged} fully managed users${primaryM365 > 0 ? ` and ${primaryM365} users on Microsoft 365 support only` : ""}${secure > 0 ? `, ${secure} computers under XL Secure+` : ""}${dattoTier ? `, Datto SaaS Protection for ${dattoUsers} users` : ""}.`,
+        basis: `${managedPhrase(card, primaryManaged, primaryM365 > 0)}${primaryM365 > 0 ? ` and ${primaryM365} users on Microsoft 365 support only` : ""}${secure > 0 ? `, ${secure} computers under XL Secure+` : ""}${dattoTier ? `, Datto SaaS Protection for ${dattoUsers} users` : ""}.`,
         lines: monthlyLines(card, "l1", {
           fullyManagedUsers: primaryManaged,
           m365OnlyUsers: primaryM365,
@@ -302,7 +364,7 @@ export function buildQuote(
         buildIllustration({
           id: "ill_split",
           label: "Estimated split, to be confirmed in discovery",
-          basis: `${fullyManaged} fully managed users and ${m365Known} users on Microsoft 365 support only, out of the ${users} people the RFP states. The real split is a discovery task.`,
+          basis: `${managedPhrase(card, fullyManaged, true)} and ${m365Known} users on Microsoft 365 support only, out of the ${users} people the RFP states. The real split is a discovery task.`,
           lines: monthlyLines(card, "l2", {
             fullyManagedUsers: fullyManaged,
             m365OnlyUsers: m365Known,
