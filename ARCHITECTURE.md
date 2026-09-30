@@ -9994,7 +9994,11 @@ timeline. pdfkit measures every block, `ensureRoom`s it and draws at explicit
 coordinates (tiles, callout, cards, badges and each timeline row atomic;
 tables and the fact grid paginate row by row with the header repainted, the
 "· CONTINUED" stamp intact); docx renders everything as tables with
-`cantSplit` rows and `tableHeader`. Screen-only affordances: a quiet Remove
+`cantSplit` rows and `tableHeader`. The rail's Questions tab is DISABLED (greyed, not openable, `title`
+explains) until a section is drafted and the rail opens on Coverage until
+then; the first landed section flips it on and brings Questions forward
+(owner ruling 2026-09-30: until the pane is usable it must not be
+openable). Screen-only affordances: a quiet Remove
 under each block; one "Add visual" control per drafted section (hidden while
 editing) that swaps the action row for "Company snapshot" / "Service stats" /
 "Onboarding timeline" / "Cancel" (each hidden when that section holds the

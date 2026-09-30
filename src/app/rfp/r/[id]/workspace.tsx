@@ -478,13 +478,20 @@ export function Workspace({
   // `pane` is the ONE source of truth for which rail pane renders; `mobile`
   // only decides draft-vs-rail below lg. Rendering off both used to stack
   // two panes whenever they disagreed (first tap of any mobile rail tab).
-  const [pane, setPane] = useState<Pane>("questions");
+  // The Questions pane has nothing to offer before a section is drafted
+  // (owner ruling 2026-09-30: until it is usable it must not be openable),
+  // so the rail opens on Coverage until then and its tab is disabled; the
+  // first landed section flips it on and brings it forward.
+  const [pane, setPane] = useState<Pane>(
+    initialSections.length > 0 ? "questions" : "coverage"
+  );
   const [mobile, setMobile] = useState<"draft" | Pane>("draft");
   // The rail self-scrolls at lg; without a reset, leaving a long Coverage
   // list clamps the next pane to the BOTTOM of its shorter content.
   const railRef = useRef<HTMLDivElement | null>(null);
   const showPane = useCallback(
     (k: Pane) => {
+      if (k === "questions" && sectionsRef.current.length === 0) return;
       setPane(k);
       setMobile(k);
       if (railRef.current) railRef.current.scrollTop = 0;
@@ -2090,6 +2097,13 @@ export function Workspace({
 
   /* ---------------------------------------------------------------------- */
 
+  const questionsReady = sections.length > 0;
+  const questionsReadyRef = useRef(questionsReady);
+  useEffect(() => {
+    if (questionsReady && !questionsReadyRef.current) setPane("questions");
+    questionsReadyRef.current = questionsReady;
+  }, [questionsReady]);
+
   const paneButton = (k: Pane) =>
     k === "questions"
       ? queue.length > 0
@@ -2241,6 +2255,12 @@ export function Workspace({
               key={k}
               type="button"
               aria-pressed={k === "draft" ? mobile === "draft" : pane === k && mobile !== "draft"}
+              disabled={k === "questions" && !questionsReady}
+              title={
+                k === "questions" && !questionsReady
+                  ? "Available once the response is drafted"
+                  : undefined
+              }
               onClick={() => (k === "draft" ? setMobile("draft") : showPane(k))}
             >
               {k === "draft" ? "Draft" : paneButton(k)}
@@ -2261,6 +2281,12 @@ export function Workspace({
                 key={k}
                 type="button"
                 aria-pressed={pane === k}
+                disabled={k === "questions" && !questionsReady}
+                title={
+                  k === "questions" && !questionsReady
+                    ? "Available once the response is drafted"
+                    : undefined
+                }
                 onClick={() => showPane(k)}
               >
                 {paneButton(k)}

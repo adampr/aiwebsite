@@ -193,6 +193,12 @@
   color: var(--xl-light);
   box-shadow: inset 0 -1px 0 var(--xl-light);
 }
+/* A pane that has nothing to show yet (the RFP workspace's Questions tab
+   before a section is drafted) is offered, greyed, not openable. */
+.tabstrip button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 /* Breakpoint variants live HERE, not as lg:hidden utilities on the element:
    .tabstrip's own display:flex is unlayered CSS and beats Tailwind's layered
    display utilities regardless of order, so a lg:hidden on a tabstrip
