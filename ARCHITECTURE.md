@@ -1,5 +1,8 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-02. Brain SDK release pin advances `packages/brain` from `b6965eec39b583b171e695c5a8d39d487f0474ca` to `9abcfa7fcee41578fd7d2dc30fb85725cdfcee0e` (version remains 1.168.0). This records the SDK source release for future normal deployments; this parent commit changes only the gitlink(s) and this release note. The SDK adds the explicit `article_v1` validate/repair API and production evaluation scheduling; the composite remains disabled because its quality evidence did not qualify. This host does not opt into that API or change its Brain request envelope, application source, deployment configuration, provider settings or dependencies. Default routing preservation is covered by the upstream #837 proof. Scheduler installation is an upstream operator action, not an effect of this pin. Follow the existing host deployment safeguards; the SDK source rollout and health checks are recorded separately from a full parent-app deployment.
+
+
 > **Purpose of this document:** a complete, self-contained specification of this system,
 > detailed enough to rebuild it from a clean room without reading the existing code.
 > When code and this document disagree, the code wins — then fix this document.
