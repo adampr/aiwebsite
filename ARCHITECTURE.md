@@ -15489,3 +15489,8 @@ never describe unbuilt behavior as existing.
 ### Brain qualified-model release 5b56dbef7f62
 
 The SDK integration pin advances to `5b56dbef7f62e112b844ca2ced7f92c3be6a2691` for all Brain gitlinks in this host. The release carries provider discovery, cumulative task-quality evidence and guarded admission. Model eligibility remains task-specific and depends on this host’s configured providers and local integration checks. This parent change updates only SDK pins and this integration note; application envelopes, dependencies, schemas and service configuration are unchanged. A GitHub pin is a reproducible dependency reference; live deployment and host admission are verified separately.
+
+
+### Brain admission reliability release 342260f143ed
+
+The SDK integration pin advances to `342260f143ed3123c2702c352151a750b90ae4a2` for all Brain gitlinks in this host. The release adds durable daily host admission retries, registry writer locking, and condition-bound quality cooldowns. It also adds an opt-in 20-minute author evaluation profile with separate measurement identity; profile results cannot grant eligibility under the existing production deadline. Existing qualified model evidence and task scopes remain unchanged from the preceding release. Model eligibility remains task-specific and depends on this host’s configured providers and local integration checks. This parent change updates only SDK pins and this integration note; application envelopes, dependencies, schemas and service configuration are unchanged. A GitHub pin is a reproducible dependency reference; live deployment and host admission are verified separately.
