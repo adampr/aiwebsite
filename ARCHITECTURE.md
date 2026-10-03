@@ -15484,3 +15484,8 @@ Protocol: personas review in parallel; findings are classified blocking /
 should-fix / note; blocking and should-fix are applied or explicitly waived with
 rationale. When a claim is aspirational, mark it "planned / not yet implemented" —
 never describe unbuilt behavior as existing.
+
+
+### Brain qualified-model release 5b56dbef7f62
+
+The SDK integration pin advances to `5b56dbef7f62e112b844ca2ced7f92c3be6a2691` for all Brain gitlinks in this host. The release carries provider discovery, cumulative task-quality evidence and guarded admission. Model eligibility remains task-specific and depends on this host’s configured providers and local integration checks. This parent change updates only SDK pins and this integration note; application envelopes, dependencies, schemas and service configuration are unchanged. A GitHub pin is a reproducible dependency reference; live deployment and host admission are verified separately.
