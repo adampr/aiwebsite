@@ -141,6 +141,22 @@ export const FURNITURE_DIVIDERS = [
   },
 ];
 
+/** The part dividers for a document's intake form (§5.17.17): a brief was
+ *  read from no request, so part 01 says so. Anything but "brief" gets
+ *  FURNITURE_DIVIDERS unchanged. */
+export function furnitureDividers(intakeForm: string): typeof FURNITURE_DIVIDERS {
+  if (intakeForm !== "brief") return FURNITURE_DIVIDERS;
+  return FURNITURE_DIVIDERS.map((d) =>
+    d.num === "01"
+      ? {
+          ...d,
+          title: "The Proposal",
+          deck: "The sections of this proposal, in XL.net's standard order.",
+        }
+      : d
+  );
+}
+
 /** Divider running header: "XL.net · Proposal for {client}". */
 export function dividerHead(clientName: string): string {
   return clientName ? `XL.net · Proposal for ${clientName}` : "XL.net · Proposal";

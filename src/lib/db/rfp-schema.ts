@@ -226,6 +226,16 @@ export const rfpDocuments = pgTable(
     statedStaffQuote: text("stated_staff_quote"),
     // "staff" | "users"
     statedStaffBasis: text("stated_staff_basis"),
+    /**
+     * "rfp" | "brief" (§5.17.17). "brief" when the read found no section
+     * structure and put XL.net's standard outline (src/lib/rfp/outline.ts) in
+     * its place; the drafter then sees the whole text as the author's brief.
+     */
+    intakeForm: text("intake_form").notNull().default("rfp"),
+    /** Who the proposal is addressed to, grounded verbatim by the read
+     *  (src/lib/rfp/brief.ts groundContact). NULL when none grounded. */
+    contactName: text("contact_name"),
+    contactTitle: text("contact_title"),
     structureConfirmedAt: timestamp("structure_confirmed_at", {
       withTimezone: true,
     }),

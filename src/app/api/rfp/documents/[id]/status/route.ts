@@ -36,6 +36,7 @@ export async function GET(
   if (!doc) return notFound();
 
   const reqs = await listRequirements(doc.id);
+  const structure: unknown = doc.structureJson ? JSON.parse(doc.structureJson) : [];
   const proposal = await getProposalForDocument(doc.id);
 
   const url = new URL(req.url);
@@ -75,7 +76,10 @@ export async function GET(
       Date.now() - doc.updatedAt.getTime() > RFP_READ_STALE_MS,
     clientName: doc.clientName,
     requirements: reqs.length,
-    structure: doc.structureJson ? JSON.parse(doc.structureJson) : [],
+    structure,
+    // Lets the workspace tell an extracted-but-empty read (offer Read it
+    // again, §5.17.17) from a read with sections to draft.
+    structureNodes: Array.isArray(structure) ? structure.length : 0,
     injectionFlagged: doc.injectionFlagged,
     proposal: proposalView,
   });

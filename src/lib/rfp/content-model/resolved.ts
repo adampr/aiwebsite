@@ -33,6 +33,10 @@ export type ResolvedCover = {
   title: string;
   subtitle: string | null;
   dateLabel: string;
+  /** The whole cover lede, present only for a proposal drafted from a brief
+   *  (§5.17.17). Absent, emitters print the "Prepared for <client> in
+   *  response to the Request for Proposal." form. */
+  lede?: string;
 };
 
 export type ResolvedSignature = {
@@ -81,6 +85,10 @@ export type ResolvedProposal = {
   facts: Record<string, Fact>;
   density: DensityMode;
   kbVersion: number;
+  /** Present only for a proposal drafted from a brief (§5.17.17), so the
+   *  furniture that names "the request" can say otherwise. Outside the
+   *  content hash, like density. */
+  intakeForm?: "brief";
   /** Hash of this content model. Two artifacts of the same proposal must share it (rule C2). */
   contentHash: string;
 };
@@ -104,6 +112,9 @@ export function resolvedTextSpans(
   );
   if (resolved.cover.subtitle) {
     spans.push({ location: "cover", field: "subtitle", text: resolved.cover.subtitle });
+  }
+  if (resolved.cover.lede) {
+    spans.push({ location: "cover", field: "lede", text: resolved.cover.lede });
   }
 
   resolved.letter.addressee.forEach((line, i) =>

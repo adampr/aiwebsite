@@ -58,6 +58,17 @@ export const DEFAULT_LETTER_BODY = [
   "We welcome the opportunity to discuss this proposal with you.",
 ];
 
+/** The undrafted letter body for a document's intake form (§5.17.17): a
+ *  brief answers no client document, so its default says so. Anything but
+ *  "brief" gets DEFAULT_LETTER_BODY unchanged. */
+export function defaultLetterBody(intakeForm: string): string[] {
+  if (intakeForm !== "brief") return DEFAULT_LETTER_BODY;
+  return [
+    "Thank you for the opportunity to present this proposal. The pages that follow set out our services and how they fit your environment, section by section, together with our pricing.",
+    "We welcome the opportunity to discuss this proposal with you.",
+  ];
+}
+
 export function splitSections(all: DraftSectionRecord[]): {
   letter: DraftSectionRecord | null;
   sections: DraftSectionRecord[];

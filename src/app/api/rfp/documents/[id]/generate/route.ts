@@ -245,6 +245,12 @@ export async function POST(
   if (!claimed)
     return rfpError("busy", "That draft changed. Reload and try again.", 409);
 
+  // A document read in brief mode (§5.17.17) hands the drafter and the letter
+  // the whole text as the author's brief; a structured RFP passes nothing,
+  // so its prompts stay byte-identical.
+  const briefText =
+    doc.intakeForm === "brief" ? stripIntakeHeaders(doc.rawText ?? "") : null;
+
   after(async () => {
     // Life sign while queued behind the semaphore and while drafting; fenced
     // on the attempt id, so a reclaimed attempt's timer updates nothing.
@@ -283,7 +289,10 @@ export async function POST(
                 label: s.label,
                 title: s.title,
                 paragraphs: s.paragraphs,
-              }))
+              })),
+              briefText !== null
+                ? { brief: briefText, contactName: doc.contactName }
+                : undefined
             )
           : null;
         if (letter)
@@ -358,7 +367,8 @@ export async function POST(
           { label, title },
           forSection,
           asFacts,
-          capOpenQuestionsForPrompt(openQuestions, ownOpenGaps)
+          capOpenQuestionsForPrompt(openQuestions, ownOpenGaps),
+          briefText !== null ? { text: briefText } : undefined
         );
 
         // The references backstop (references-ask.ts): the drafter never

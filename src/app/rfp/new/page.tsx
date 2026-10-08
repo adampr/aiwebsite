@@ -23,7 +23,8 @@ export default async function NewRfpPage() {
           Drop the client&apos;s RFP in, with any appendices, or paste the
           text. Everything is read together for its structure and its
           questions, keeping the client&apos;s own section labels exactly as
-          they wrote them.
+          they wrote them. A brief of what the proposal should cover works
+          too.
         </p>
       </div>
       <NewRfpForm />

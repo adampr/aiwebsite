@@ -63,7 +63,7 @@ import {
   referencesCountWord,
 } from "@/lib/rfp/references-question";
 import {
-  DEFAULT_LETTER_BODY,
+  defaultLetterBody,
   DOC_LABEL,
   LETTER_LABEL,
   LETTER_TITLE,
@@ -217,6 +217,9 @@ const EMPTY_INPUTS: QuoteInputs = {
  *  sheet must show what downloads (owner ruling, round 11), and the stored
  *  document title is often an upload's filename. */
 const COVER_TITLE = "Response to Request for Proposal";
+/** A brief's cover title (§5.17.17), the same string resolve-draft.ts prints. */
+const briefCoverTitle = (client: string | null): string =>
+  client ? `Proposal for ${client}` : "Proposal";
 
 /**
  * Everything the user-count question and its provenance row say about staff:
@@ -422,6 +425,9 @@ export function Workspace({
   genError,
   autoDraft,
   docStatus,
+  intakeForm,
+  contactName,
+  contactTitle,
   archived,
   clientName,
   coverClientName,
@@ -453,6 +459,13 @@ export function Workspace({
   genError: string | null;
   autoDraft: boolean;
   docStatus: string;
+  /** "brief" = the intake had no section structure of its own and drafts
+   *  into the standard outline (§5.17.17); "rfp" otherwise. */
+  intakeForm: string;
+  /** Who the letter is addressed to, grounded in the intake text by the
+   *  read; null = the evaluation team, as before. */
+  contactName: string | null;
+  contactTitle: string | null;
   archived: boolean;
   clientName: string | null;
   /** Who the export's cover names: the client, else the proposal title. */
@@ -548,8 +561,8 @@ export function Workspace({
   // first landed section flips it on and brings it forward. Since the
   // second 2026-09-30 directive (`railHidden` below) the WHOLE rail is
   // unmounted until the document exists, which subsumes this: the disabled
-  // tab is now only reachable on a structure-less RFP, where the rail stays
-  // for its Coverage list. Kept as it is; it is harmless there.
+  // tab is now only reachable on a structure-less document, where the rail
+  // stays for its Coverage list. Kept as it is; it is harmless there.
   const [pane, setPane] = useState<Pane>(
     initialSections.length > 0 ? "questions" : "coverage"
   );
@@ -887,6 +900,13 @@ export function Workspace({
   // The letter record shares the sections array under its reserved label;
   // every count a person reads must exclude it or "18 of 17" appears.
   const letterSec = sections.find((s) => s.label === LETTER_LABEL) ?? null;
+  const contactNameTrim = contactName?.trim() || null;
+  const contactTitleTrim = contactTitle?.trim() || null;
+  const letterContact = contactNameTrim
+    ? contactTitleTrim
+      ? `${contactNameTrim}, ${contactTitleTrim}`
+      : contactNameTrim
+    : null;
   const draftedCount = sections.filter(
     (s) => s.label !== LETTER_LABEL
   ).length;
@@ -903,9 +923,10 @@ export function Workspace({
   // keys on `following` (the mount-time loop is still watching), not on
   // followProgress, which is null in the other tab's gap between sections
   // and would let the rail flash in and out on the first landed section.
-  // A structure-less RFP (form-fill, or a read that failed) keeps the
-  // rail: its Coverage list is the only place the found requirements show,
-  // and the no-structure copy points there.
+  // A structure-less document (an extracted read with no structure, a
+  // failed read, or one still reading) keeps the rail: its Coverage list is
+  // the only place the found requirements show, and <ReadAgain> offers the
+  // re-read.
   const initialDrafting =
     (run?.active === true && run.initial) || (following && followInitial);
   const railHidden =
@@ -3784,7 +3805,9 @@ export function Workspace({
                   {draftedCount} of {structure.length} sections drafted
                 </span>
                 <p className="mt-3 text-sm text-faint">
-                  Every ask the client made, in their words and their order.
+                  {intakeForm === "brief"
+                    ? "Every point the brief asks for, as read from it."
+                    : "Every ask the client made, in their words and their order."}
                 </p>
                 {/* No inner scrollbox: the rail itself scrolls at lg, and
                     stacking a second scrollbar inside it was part of the
@@ -4662,18 +4685,11 @@ export function Workspace({
             </p>
           )}
           {structure.length === 0 ? (
-            docStatus !== "extracted" ? (
-              <ReadAgain documentId={documentId} initialStatus={docStatus} />
-            ) : (
-              <div className="panel">
-                <p className="text-faint">
-                  No section structure was found in this RFP. That usually
-                  means it is a form to fill in rather than a document to
-                  write, which this workspace cannot draft yet. The
-                  requirements it did find are listed under Coverage.
-                </p>
-              </div>
-            )
+            <ReadAgain
+              documentId={documentId}
+              initialStatus={docStatus}
+              requirementCount={requirements.length}
+            />
           ) : (
             <div className="rfpdoc">
               {/* Page 1 — the cover, in the handoff's arc-mark style:
@@ -4696,17 +4712,27 @@ export function Workspace({
                     {/* The export's cover title and client, not the stored
                         document title: that is often an upload's filename,
                         and the file never printed it. */}
-                    <h3 className="rfpdoc-title mt-5">{COVER_TITLE}</h3>
+                    <h3 className="rfpdoc-title mt-5">
+                      {intakeForm === "brief"
+                        ? briefCoverTitle(coverClientName)
+                        : COVER_TITLE}
+                    </h3>
                     <div className="rfpdoc-bar mt-7" />
-                    <p className="rfpdoc-lede mt-6">
-                      Prepared
-                      {coverClientName ? (
-                        <>
-                          {" "}for <strong>{coverClientName}</strong>
-                        </>
-                      ) : null}{" "}
-                      in response to the Request for Proposal.
-                    </p>
+                    {intakeForm === "brief" ? (
+                      <p className="rfpdoc-lede mt-6">
+                        Prepared by XL.net for your review.
+                      </p>
+                    ) : (
+                      <p className="rfpdoc-lede mt-6">
+                        Prepared
+                        {coverClientName ? (
+                          <>
+                            {" "}for <strong>{coverClientName}</strong>
+                          </>
+                        ) : null}{" "}
+                        in response to the Request for Proposal.
+                      </p>
+                    )}
                   </div>
                   <div className="rfpdoc-meta">
                     <div>
@@ -4887,12 +4913,32 @@ export function Workspace({
                     {/* "the client" when the RFP named none: the file prints
                         that fallback (resolve-draft.ts addressee), and the
                         screen shows what the file prints. */}
-                    <p className="rfpdoc-letter-name mt-5">
-                      {clientName?.trim() || "the client"}
-                    </p>
+                    {/* A grounded contact goes above the client, alone when
+                        no client is named, as the file prints it
+                        (resolve-draft.ts addressee). */}
+                    {letterContact && (
+                      <p className="rfpdoc-letter-name mt-5">
+                        {letterContact}
+                      </p>
+                    )}
+                    {(!letterContact || clientName?.trim()) && (
+                      <p
+                        className={
+                          letterContact
+                            ? "rfpdoc-letter-name"
+                            : "rfpdoc-letter-name mt-5"
+                        }
+                      >
+                        {clientName?.trim() || "the client"}
+                      </p>
+                    )}
                     {/* The addressee line above already names the client;
                         restating it read "Dear The Children's..." */}
-                    <p className="mt-6">Dear evaluation team,</p>
+                    <p className="mt-6">
+                      {contactNameTrim
+                        ? `Dear ${contactNameTrim},`
+                        : "Dear evaluation team,"}
+                    </p>
                     {editing === LETTER_LABEL && letterSec ? (
                       <div className="rfpdoc-tool mt-4 space-y-3">
                         <span className="rfpdoc-tool-label">
@@ -4928,7 +4974,7 @@ export function Workspace({
                       // preview must too or screen and file diverge.
                       (letterSec?.paragraphs.length
                         ? letterSec.paragraphs
-                        : DEFAULT_LETTER_BODY
+                        : defaultLetterBody(intakeForm)
                       ).map((p, i) => (
                         <p className="mt-4" key={i}>
                           {p}
@@ -5004,11 +5050,21 @@ export function Workspace({
                   numeral, bar, title, deck, three-square colophon). Claim-free
                   furniture: numerals are render-order, never RFP labels; no
                   sec-* id (a real RFP could label a section "01" and the jump
-                  would collide); no flash key (nothing can update it). */}
+                  would collide); no flash key (nothing can update it).
+                  Strings mirror export-assets.ts furnitureDividers, which
+                  reads node:fs and cannot be imported here. */}
               <DividerSheet
                 num="01"
-                title="Response to the Request for Proposal"
-                deck="The sections of this response, as read from the request."
+                title={
+                  intakeForm === "brief"
+                    ? "The Proposal"
+                    : "Response to the Request for Proposal"
+                }
+                deck={
+                  intakeForm === "brief"
+                    ? "The sections of this proposal, in XL.net's standard order."
+                    : "The sections of this response, as read from the request."
+                }
                 clientName={coverClientName}
               />
 

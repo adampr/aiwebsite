@@ -35,7 +35,7 @@ import {
   type Section,
 } from "./content-model";
 import { runGate, type GateResult } from "./validators/gate";
-import { DEFAULT_LETTER_BODY, splitSections } from "./letter";
+import { defaultLetterBody, splitSections } from "./letter";
 import { signatureFor } from "./signature";
 import { interleave, sanitizeStoredBlocks, type DraftBlock } from "./draft-blocks";
 import { referenceCardTable, type ReferenceEntry } from "./references-block";
@@ -246,6 +246,13 @@ export function resolveDraft(input: DraftGateInput): {
   });
 
   const clientName = doc.clientName?.trim() || "the client";
+  // A brief answers no Request for Proposal (§5.17.17): its cover and its
+  // undrafted letter say so. Form "rfp" is byte-identical.
+  const fromBrief = doc.intakeForm === "brief";
+  // The grounded addressee (§5.17.17), when the read found one: it heads the
+  // address block and is the one the letter greets.
+  const contactName = doc.contactName?.trim() || null;
+  const contactTitle = doc.contactTitle?.trim() || null;
   const dateLabel = new Date().toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
@@ -270,19 +277,33 @@ export function resolveDraft(input: DraftGateInput): {
     cover: {
       style: "arc-mark" as const,
       clientName: doc.clientName?.trim() || proposal.title,
-      title: "Response to Request for Proposal",
+      // Client, else the proposal title: the workspace's coverClientName
+      // fallback, so screen and file print the same title.
+      title: fromBrief
+        ? (() => {
+            const who = doc.clientName?.trim() || proposal.title.trim();
+            return who ? `Proposal for ${who}` : "Proposal";
+          })()
+        : "Response to Request for Proposal",
       subtitle: doc.clientName ? proposal.title : null,
       dateLabel,
+      ...(fromBrief ? { lede: "Prepared by XL.net for your review." } : {}),
     },
     letter: {
       dateLabel,
-      addressee: [clientName],
+      // A contact with no client name stands alone: no "the client" line.
+      addressee: contactName
+        ? [
+            contactTitle ? `${contactName}, ${contactTitle}` : contactName,
+            ...(doc.clientName?.trim() ? [clientName] : []),
+          ]
+        : [clientName],
       // The addressee line above already names the client; restating it
       // read "Dear The Children's..." (same fix as the workspace page).
-      salutation: "Dear evaluation team,",
+      salutation: contactName ? `Dear ${contactName},` : "Dear evaluation team,",
       body: letterRecord?.paragraphs.length
         ? letterRecord.paragraphs
-        : DEFAULT_LETTER_BODY,
+        : defaultLetterBody(doc.intakeForm),
       // "Regards," is the closing of the standard XL.net signature block
       // (owner's email signature, 2026-08-02); the signature module carries
       // the per-person lines under it.
@@ -329,6 +350,7 @@ export function resolveDraft(input: DraftGateInput): {
     ),
     density: "default",
     kbVersion: input.kbVersion,
+    ...(fromBrief ? { intakeForm: "brief" as const } : {}),
     // Rule C2's own field set, so C2 re-derives and verifies it.
     contentHash: contentHash(core),
   };

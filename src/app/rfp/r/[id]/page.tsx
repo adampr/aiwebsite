@@ -207,6 +207,9 @@ export default async function RfpWorkspacePage({
         genError={proposal?.genError ?? null}
         autoDraft={sp.draft === "all"}
         docStatus={doc.status}
+        intakeForm={doc.intakeForm}
+        contactName={doc.contactName}
+        contactTitle={doc.contactTitle}
         archived={Boolean(doc.archivedAt)}
         clientName={doc.clientName}
         // The cover names who the EXPORT names (resolve-draft.ts `cover`):

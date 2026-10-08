@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-08 §5.17.17 RFP A BRIEF DRAFTS A FULL RESPONSE (incident 2026-10-08 17:32 CDT: an 816-character staff brief read as 10 requirements with `structure: []`, stamped `extracted`, and nothing drafted or could be read again; owner: even plain text must produce a full response document). New pure client-safe `src/lib/rfp/outline.ts` (`STANDARD_OUTLINE`: ten nodes labeled "1" to "10" with worded titles, rendered "Section N" over the title like a numbered RFP; `outlineLabelFor` matching by title only, with fallbacks "3" Scope of Services and "9" Questions and Clarifications; `OUTLINE_TITLES_FOR_PROMPT` generated from the outline) and `src/lib/rfp/brief.ts` (`applyBriefMode(parsed, { pasteOnly })`: requirements with an empty structure, or with no requirement matching any structure label, get the standard outline, the Questions node only when a requirement maps to it; pasted text is `intakeForm "brief"`, and a pasted read of at most `TINY_STRUCTURE_MAX` (2) nodes with more asks outside them than inside is a brief with a list in it; a structure-less upload stays "rfp" with no brief framing; no requirements stays unchanged; `groundContact`: verbatim single-line, length-capped, injection-screened addressee whose title must ground on the name's line). `readRfp` gains one paragraph (only text with no headings and no numbering at all; it lists the ten outline titles for each requirement's `structureLabel`) and a `contact` field, every existing line byte-identical; `readRfp(documentId, rawText, sourceKind)` and `DocumentReadInput` gain `sourceKind`. A brief's section prompt shows up to 120 facts (60, byte-identical, for an RFP). `draftSection` gains optional `brief` and `draftCoverLetter` optional `opts {brief, contactName}`, both byte-absent for form "rfp", the brief fenced as untrusted and unable to mint facts or prices; the generate route is the ONLY caller of either and passes the brief for a brief document, while the section route's `reviseSection`, plan and consolidate turns and the gap route's `resolveGap` do not see the brief. Migration `0060_rfp_brief_intake`: `rfp_documents.intake_form text NOT NULL DEFAULT 'rfp'`, `contact_name text`, `contact_title text`, written by `runDocumentRead` with the `extracted` stamp (`document.extract` meta gains shape-only `form`, `contact`). The letter addresses "<name>, <title>" over the client (the contact line alone when no client is named) with "Dear <name>," when a contact is grounded (resolve-draft.ts, mirrored by the workspace letter page); a brief's cover reads "Proposal for <client>" over "Prepared by XL.net for your review.", its undrafted letter body comes from `defaultLetterBody(intakeForm)`, part divider 01 from `furnitureDividers(intakeForm)` ("The Proposal"; `ExportView.dividers`), `ResolvedProposal` gains optional `intakeForm` outside the content hash, and the Coverage lede reads "Every point the brief asks for, as read from it.". Read again reaches an extracted-but-empty document: `claimReread` in db.ts adds that third claim branch (and returns `sourceKind`), `GET .../status` gains `structureNodes`, `<ReadAgain>` accepts `initialStatus="extracted"`, and the new `npm run rfp:reread -- <id>` CLI re-reads inline (actor "cli" on both its activity rows). `/rfp/new` copy says a brief works. New `npm run test:rfpoutline` (outline, brief mode, contact grounding, resolve-draft cover and addressee). No env change; no new route.
+
 Last verified against code: 2026-10-04. Brain SDK source pin advances `packages/brain` from `9abcfa7fcee41578fd7d2dc30fb85725cdfcee0e` to `1bd2e9e6fc40dc8f7a2eea5bd1416f0dea3b259a` (2026-10-03; xldev #901; version remains 1.168.0). The upstream SDK adds exact-provider model discovery, integration checks and task-specific quality admission. Newly discovered models stay withheld from production tasks until the corresponding qualification passes. Evaluation and publication scheduling are central operator actions; a parent pin does not install an evaluation timer or establish a live model admission. This parent change contains only the SDK gitlink(s) and this integration note; host request envelopes, application source, environment, dependencies and schemas remain unchanged. Preserve host-owned runtime data and secrets during rollout. Upstream routing evidence and host health checks are recorded separately; this pin alone does not certify deployment.
 
 Prior release (2026-10-02): Brain SDK release pin advances `packages/brain` from `b6965eec39b583b171e695c5a8d39d487f0474ca` to `9abcfa7fcee41578fd7d2dc30fb85725cdfcee0e` (version remains 1.168.0). This records the SDK source release for future normal deployments; this parent commit changes only the gitlink(s) and this release note. The SDK adds the explicit `article_v1` validate/repair API and production evaluation scheduling; the composite remains disabled because its quality evidence did not qualify. This host does not opt into that API or change its Brain request envelope, application source, deployment configuration, provider settings or dependencies. Default routing preservation is covered by the upstream #837 proof. Scheduler installation is an upstream operator action, not an effect of this pin. Follow the existing host deployment safeguards; the SDK source rollout and health checks are recorded separately from a full parent-app deployment.
@@ -9643,7 +9645,8 @@ client section could share. Unit suite: `npm run test:rfpletter`
 `splitSections`, and the signature resolver.
 
 **Gate coverage.** `ResolvedLetter` gains `body: string[]` (drafted
-paragraphs, or `DEFAULT_LETTER_BODY` when none — also the fallback when a
+paragraphs, or `defaultLetterBody(intakeForm)` when none (§5.17.17;
+`DEFAULT_LETTER_BODY` for form "rfp"), also the fallback when a
 hand edit clears the body to `[]`, in the workspace and both emitters
 alike) and `resolvedTextSpans()` scans it (`letter`/`body[i]`), so D1/D2
 style scans and B7's currency sweep cover the letter like any section
@@ -10731,13 +10734,16 @@ the read may compose the title is inferred by `isAutoTitle(title,
 sourceName)` in doc-title.ts (`Untitled RFP`, or the humanized FIRST name of
 `sourceName` split on " + "); a miss only leaves the title as it is.
 `GET .../status` gains `readStale` (reading past the stale window).
+(§5.17.17 moves the claim into `claimReread` in db.ts with a third branch,
+an `extracted` row with no structure, and adds `structureNodes` to status.)
 
 **Client.** The workspace's no-structure panel for any non-extracted status
-is `src/app/rfp/r/[id]/read-again.tsx` `<ReadAgain>`: while reading it polls
-status every 4 s and on `extracted` does a full load of
-`/rfp/r/<id>?draft=all` (the workspace seeds state from server props once;
-the draft=all handoff drafts only when no sections exist, as after a first
-read); on `read_failed` or `readStale` it shows honest copy (the text is
+(since §5.17.17, for every status) is `src/app/rfp/r/[id]/read-again.tsx` `<ReadAgain>`: while reading it polls
+status every 4 s and on `extracted` with `structureNodes > 0` does a full
+load of `/rfp/r/<id>?draft=all` (the workspace seeds state from server
+props once; the draft=all handoff drafts only when no sections exist, as
+after a first read), and on `extracted` with 0 structure nodes a plain load
+of `/rfp/r/<id>` (§5.17.17); on `read_failed` or `readStale` it shows honest copy (the text is
 kept) and a primary "Read it again" button; a 202 or 409 busy returns it to
 following the read. `/rfp/new` polls `ceil((budget + 60 s) / 3 s)` ticks (9
 min) so the server always answers before the form gives up, and on
@@ -10803,10 +10809,10 @@ is not weakened; and once a pane has been asked for it must not vanish
 under the person when a Tron remove op drops the last drafted section
 (refuter finding: the Tron pane with its receipt disappeared mid-flow, and
 a letter-only proposal's Run checks rendered nowhere). THE EXCEPTION: a
-structure-less RFP (form-fill, or `read_failed`) keeps the rail. Its
-Coverage list is the only place the requirements it did find are shown,
-the no-structure copy points there, and `<ReadAgain>` sits in the document
-column. When `railHidden`: the rail column (`.rfp-rail`, its tabstrip and
+structure-less document (an extracted read with no structure, `read_failed`,
+or one still reading) keeps the rail. Its Coverage list is the only place
+the requirements it did find are shown, and `<ReadAgain>` in the document
+column offers a re-read (§5.17.17). When `railHidden`: the rail column (`.rfp-rail`, its tabstrip and
 panel) is NOT rendered (unmounted, not hidden; every pane's state lives in
 Workspace state, so an answer typed before is still there when it
 returns, and `railRef` was already null-guarded), the mobile
@@ -11204,6 +11210,297 @@ failure lines verbatim, hairline-chip Dismiss.
 the scan (0.5 boundary, letter exclusion, <12-word skip, cluster merge, cap,
 determinism, an 80×12 scale run) and both formatters' budgets. No schema, env
 or migration change; no new route.
+
+#### 5.17.17 A brief drafts a full response: standard outline, brief-aware drafter, read again for an empty read (2026-10-08)
+
+Incident (2026-10-08, 17:32 CDT, prod row `8925c3ef`): staff pasted an
+816-character BRIEF, not an RFP, into `/rfp/new` for Paragon Biosciences:
+notes on who to address, the user count, what to highlight and leave out,
+the client's environment, and two questions the proposal must raise.
+`readRfp` returned 10 good requirements (8 statements, 2 questions, every
+`structureLabel` ""), a grounded stated staff count, and `structure: []`.
+`runDocumentRead` stamped `extracted` with `structure_json = "[]"`, and the
+workspace showed its "No section structure was found ... a form to fill in"
+panel. Nothing drafted, and nothing could: everything downstream is keyed on
+the structure. `draftAll` iterates `structure`; the generate route 404s a
+label not in it and filters requirements by `r.structureLabel === label`,
+which "" never matches; and `POST .../read` refused the row with 409
+`already_read` because it was `extracted`, so it could not even be read
+again. Owner directive: even plain text must produce a full response
+document; fix this RFP now, then the core issue.
+
+**Root cause.** The read had only one shape for "drafted from": the
+client's own section structure. A text with no headings of its own (a brief,
+notes, an email) produced requirements with nowhere to hang them, and the
+read-again claim (§5.17.12) treated every `extracted` row as finished.
+
+**D1. The standard outline.** New pure, zero-import, client-safe
+`src/lib/rfp/outline.ts`: `STANDARD_OUTLINE`, ten nodes whose labels are the
+numeric strings "1" to "10" and whose titles are Executive Summary; Your
+Environment and What You Need; Scope of Services; Security and Included
+Tools; Cloud and On-Site Infrastructure; Projects and Transition; Service
+Delivery and Support; Agreement Terms; Questions and Clarifications; About
+XL.net. Numeric labels render the way a numbered RFP does: the workspace
+`secKicker` shows "Section 1" over the heading "Executive Summary", and the
+export and the letter prompt's `SECTION <label> <title>` lines follow the
+same rule (`labelDisplaysWorded` in letter.ts is false for them). The
+outline is applied per document, so its labels never meet a client's labels,
+and no label starts `__`. `outlineLabelFor(raw, kind)` matches a raw label
+case-insensitively on label OR title (whitespace-collapsed); a miss maps a
+`question` to `OUTLINE_QUESTIONS_LABEL` ("9", Questions and Clarifications)
+and anything else to `OUTLINE_DEFAULT_LABEL` ("3", Scope of Services).
+`OUTLINE_TITLES_FOR_PROMPT` is generated from `STANDARD_OUTLINE` (the
+titles joined), so the read prompt's list cannot drift from the outline.
+(`isStandardOutline`, in the first draft of this round, was removed: nothing
+in src used it.)
+
+**D2. The read learns briefs; the HOST decides outline mode and brief
+mode.** `readRfp` (brain.ts) keeps every existing prompt line byte-identical
+and adds one paragraph: the text may be a formal solicitation OR a brief
+(staff notes on what the proposal must cover). The trigger is narrow: only
+text with NO headings and NO numbering of its own; a document numbered or
+lettered into questions or requirements is not a brief and is read by the
+existing rules (rule C4 keeps its labels). For a brief the reader returns
+`structure []`, lists EVERY point, instruction and
+question as a requirement (statements as `statement`, questions to raise as
+`question`) and sets each requirement's `structureLabel` to the
+best-fitting of the ten outline titles it is given; the next sentence ("Also
+return clientName ...") asks for the client name and stated staff as before
+and the person to address as `contact: {name, title}` copied verbatim
+(SELECT, never author; null when none). The paragraph also says "A brief
+may still contain a short numbered list of points or questions to raise;
+that list alone does not make it a document with sections." The JSON shape
+gains `contact`;
+`ReadRfpResult` gains `intakeForm: "rfp" | "brief"` and `contact`;
+`readRfp(documentId, rawText, sourceKind)` takes the source kind as its
+third parameter, and `DocumentReadInput` gains `sourceKind`.
+
+Host logic lives in the new pure `src/lib/rfp/brief.ts`. `applyBriefMode(
+parsed, { pasteOnly })`, run AFTER the existing filters and caps, with
+`pasteOnly = doc.sourceKind === "paste"`. Outline mode applies when there
+are requirements AND either the structure is empty OR no requirement's
+`structureLabel` matches any structure label (otherwise the generate route's
+per-section filter would hand every section an empty ask list). It maps
+every requirement through `outlineLabelFor` and replaces the structure with
+a copy of `STANDARD_OUTLINE`, leaving out the Questions node ("9") when no
+requirement maps to it (an empty questions section invites invented client
+questions; Paragon's two questions keep it). `pasteOnly` then decides the
+form: pasted text is `"brief"`; an UPLOAD with no usable structure still
+gets the outline, so it drafts, but stays `"rfp"` (it is the client's own
+document: no brief block, no staff-instructions framing, and the cover
+keeps "Response to Request for Proposal"). Paste guard: for PASTED text,
+a read whose structure has at most `TINY_STRUCTURE_MAX` (2) nodes AND more
+requirements outside those nodes than inside them is a brief with a list in
+it (the Paragon brief's own "1) ... 2) ..." questions can come back as two
+nodes holding only those two items, with the eight other points outside),
+so the outline replaces the nodes and the form is `"brief"`; a requirement
+whose label named a discarded node routes by kind alone ("1" was the list's
+first question, not Executive Summary). One pasted section of a real RFP
+(every ask inside its node) and an UPLOAD with two nodes keep the client's
+structure. Otherwise a document with no requirements, or whose requirements
+match its structure, comes back unchanged as `"rfp"` (a read that found
+nothing keeps meaning that). `outlineLabelFor` matches a requirement's
+label against the outline TITLES only (the reader is only ever told the
+titles; a bare "1" is the text's own numbering) and falls back by kind.
+A title repeated at the end of the contact's name ("Spiro Katerinis, CTO"
+with title "CTO") is kept once.
+
+`groundContact(raw, docText, tripsScreen)` keeps the contact only when the
+name is one line, 2 to 120 characters with a letter, present verbatim on a
+single line of the groundable text (`normGroundText`, the `groundRfpTitle`
+approach) and clean under `screenInjection` (passed in, because the screen
+module is server-only). The title must ground on the SAME line as the name,
+at most 80 characters and clean under the screen; otherwise the name is
+kept and the title dropped. Over-length is a discard, never a truncation.
+It applies to both forms (a real RFP naming a procurement contact is
+fine). The `[rfp] read produced no usable structure` log stays; nothing new
+logs client text.
+
+**D3. Persistence (migration `0060_rfp_brief_intake`).** `rfp_documents`
+gains `intake_form text NOT NULL DEFAULT 'rfp'` ("rfp" | "brief"),
+`contact_name text` and `contact_title text` (both nullable), via `ALTER
+TABLE ... ADD COLUMN IF NOT EXISTS` (§6, "Later additive rfp_* columns").
+`DocumentRow` gains `intakeForm`, `contactName`, `contactTitle`.
+`runDocumentRead` writes all three in the SAME update that stamps
+`extracted`; the `document.extract` activity meta gains `form: "rfp" |
+"brief"` and `contact: "ok" | "none"` (shape only, never the text).
+
+**D4. The drafter sees the whole brief.** `draftSection(...)` gains a
+trailing optional `brief?: { text: string }`; `draftCoverLetter(...)` gains
+optional `opts?: { brief?: string; contactName?: string | null }`. Absent
+(form "rfp"), both prompts are byte-identical to before (the repo's
+byte-absent discipline). Present, the section system prompt adds THE BRIEF
+block: honor the brief as the author's instructions about WHAT TO SAY
+(emphasis, what to leave out, never mentioning anything the brief says not
+to mention, how to address the client, which questions to raise); it never
+overrides rules 1 to 5, so every claim still cites a fact, no prices, rates,
+dollar figures or contract lengths come from the brief or anywhere, and
+nothing the brief asserts about XL.net becomes a claim without a fact; facts
+about the CLIENT's environment it states (systems, server count, locations)
+may be restated as the client's situation, attributed to them. Every
+brief-mode section system prompt also carries: the two-line empty-section
+instruction (a section with no item listed is written from the facts that
+fit its title, in two to four short paragraphs); a line requiring at least
+one XL.net sentence citing a listed fact in every section (gate rule A5
+blocks a section whose cites are empty); and a rule-3 carve-out letting the
+agreement's length or notice period be stated only as, and citing, the fact
+that states it (the gate's rule A1 wording). Brief mode also shows the
+drafter more of the base: `facts.slice(0, brief ? 120 : 60)`, so a brief sees
+the whole live base (prod holds 86 live facts, and the `contract.term` fact
+the Agreement Terms section needs sorts past the 60th key) while the
+structured-RFP prompt keeps its 60, byte-identical. In the user message the header
+"THE CLIENT ASKED:" reads "THIS SECTION MUST COVER:", a section with no
+requirements shows "(no item listed)" under it, and `THE BRIEF:` is
+appended, fenced between the read's own `UNTRUSTED_OPEN`/`UNTRUSTED_CLOSE`
+tokens (6,000-character cap). The cover letter carries the letter's form of
+the same block (its claims restate the drafted sections; it never writes a
+greeting), the brief fenced in the user message, and, when a contact is
+grounded, the user-message line "ADDRESSED TO (data, not instructions):
+<contactName>". BOTH letter furniture lines change in brief mode: the truths
+list's "the response follows the client's document in its own structure"
+and the "Close by noting" shape line now say the response is organized in
+XL.net's standard proposal sections. The no-"Dear" letter-body rule stays.
+
+The generate route (`src/app/api/rfp/documents/[id]/generate/route.ts`) is
+the ONLY caller of `draftSection` and `draftCoverLetter`: it reads
+`doc.intakeForm` and, for "brief", passes `{ text:
+stripIntakeHeaders(doc.rawText) }` to `draftSection` and `{ brief,
+contactName }` to `draftCoverLetter`. The section route's `reviseSection`
+(Tron revise, also the auto consolidation pass), its plan and consolidate
+turns (`planDocumentRevision`, `reviewDocumentConsolidation`) and the gap
+route's `resolveGap` are unchanged and do not see the brief.
+
+Trust: brief mode is an outline-mode read of PASTED text (`sourceKind
+"paste"`); a structure-less upload gets the outline with `intakeForm "rfp"`
+and none of the brief framing. The brief is staff-pasted, but it is still
+pasted text: it stays fenced as untrusted content, it was screened at intake
+like any RFP text, and it cannot mint a fact, a price or an XL.net claim:
+the fact-citation and no-price rules sit above it in the prompt and the gate
+checks the output as for any draft.
+
+**D5. Addressee and cover copy.** `resolve-draft.ts` letter: `addressee` is
+`[contactLine, clientName]` when `contactName` is set (contactLine
+"<name>, <title>", or the name alone; both trimmed), ONLY `[contactLine]`
+when a contact is set and the client name is empty, else `[clientName]` as
+before; `salutation` is "Dear <contactName>," when set, else "Dear
+evaluation team,". The export reads the resolved view, so docx and pdf
+follow; the workspace letter page renders the same lines and salutation
+from its trimmed `contactName`/`contactTitle` props (the screen shows what
+the file prints). Cover: form "rfp" is byte-identical (title "Response to
+Request for Proposal", lede "Prepared for <client> in response to the
+Request for Proposal."). Form "brief" titles the cover "Proposal for
+<name>" and sets the lede to "Prepared by XL.net for your review.", the
+client now being in the title. Title parity: resolve-draft names
+`doc.clientName?.trim() || proposal.title` ("Proposal" only when both are
+empty), and the workspace's `coverClientName` (the client, else the
+proposal title, else the document title, which is the title the proposal is
+created with) names the same. Before the letter drafts, its default body
+comes from `defaultLetterBody(intakeForm)` in letter.ts: `DEFAULT_LETTER_BODY`
+for form "rfp", a proposal-worded pair for "brief", read by the export and
+the workspace letter page alike. `ResolvedProposal` gains optional
+`intakeForm?: "brief"` (set only for a brief), kept out of the content hash
+like `density`. Part divider 01 comes from `furnitureDividers(intakeForm)` in
+export-assets.ts, which returns the `{num, title, deck}` entries; `ExportView`
+gains `dividers` and both emitters read `view.dividers[which]`. In brief mode it reads
+"The Proposal" over "The sections of this proposal, in XL.net's standard
+order." (form "rfp" keeps "Response to the Request for Proposal" over "The
+sections of this response, as read from the request."); export-assets.ts
+reads `node:fs`, so the workspace mirrors those two strings rather than
+importing it (the test suite pins that the workspace and export-assets each
+carry the brief title and deck exactly once and that they equal
+`furnitureDividers("brief")`). The PDF's Title metadata is the cover title
+alone when it starts with "Proposal for ". The Coverage pane's lede reads "Every point the brief asks
+for, as read from it." in brief mode ("Every ask the client made, in their
+words and their order." otherwise). The cover kicker "Managed IT Services
+Proposal" is unchanged, and the screen never prints the brief beyond the
+requirements Coverage already lists.
+
+**D6. Read again reaches an extracted-but-empty document.** New
+`claimReread(docId)` in `src/lib/rfp/db.ts` holds the read route's claim
+UPDATE (returning `{title, rawText, sourceName, sourceKind}` or null), extended with a
+third OR branch: `status = 'extracted' AND (structure_json IS NULL OR
+structure_json = '[]')`. `POST /api/rfp/documents/[id]/read` calls it; its
+409 copy is otherwise unchanged (an extracted row WITH structure still gets
+`already_read`). `GET .../status` gains `structureNodes: number` (the parsed
+`structure_json` length) so a client can tell extracted-empty from
+extracted. New CLI `npm run rfp:reread -- <documentId>`
+(`scripts/rfp-reread.ts`; env loaded as `scripts/rfp-seed.ts` does): calls
+`claimReread`, logs `document.reread` with actor "cli" (admin true, meta
+`{from, chars, via: "cli"}`), runs `runDocumentRead` INLINE (no `after()`;
+the worker's `document.extract` row is also actor "cli"),
+and prints `extracted <N requirements> <M structure nodes>
+form=<rfp|brief>` or `read_failed`. It exits 1 on `read_failed`, on a
+refused claim (naming what refused it: "no document", "already extracted
+with a section structure", "being read now (not yet stale)", or "status
+<s>"), and
+also when the re-read extracts with no structure (after printing the
+extracted line). It never prints client text. This is the lane that re-read
+the incident row in place.
+
+**D7. Client.** `page.tsx` passes `intakeForm`, `contactName` and
+`contactTitle` from the document row to `<Workspace>`. The no-structure panel
+is now `<ReadAgain>` for EVERY status, including `extracted`, with
+`requirementCount`; the old "form to fill in" copy is gone. For
+`initialStatus="extracted"` ReadAgain does not poll (the status route
+already says extracted; following it would reload the page forever) and
+offers the same primary "Read it again" button. With requirements it says
+"This document was read but no sections could be drafted from it (the read
+found N requirement(s) and no section structure). Read it again: text with
+no headings of its own is drafted into XL.net's standard proposal
+sections."; with none it says "This document was read, but the read found no
+requirements and no section structure, so there is nothing to draft from.
+The text is kept, so it can be read again." The button's POST then follows
+the read as for a failed one; on `extracted` with `structureNodes > 0` it
+does the existing full load of `/rfp/r/<id>?draft=all` (draft-all starts as
+after a first read), and on `extracted` with no structure again it loads
+`/rfp/r/<id>` without the param, which shows this panel with the fresh
+count. `read_failed` and `readStale` copy is unchanged. The workspace's
+divider 01, Coverage lede, cover and letter page follow D5. `/rfp/new` says
+a brief works too: the page lede adds "A brief of what the proposal should
+cover works too.", the text area placeholder reads "Paste the RFP text here,
+or a brief of what the proposal should cover, or drop PDF or Word files onto
+this box.", and the helper line adds "A brief with no headings is drafted
+into XL.net's standard proposal sections."
+
+**D8. Tests.** `npm run test:rfpoutline` (`scripts/rfp-outline-tests.ts`,
+pure, no DB, no brain): `STANDARD_OUTLINE` labels unique, none starting
+`__`, none a reserved letter/doc label; `outlineLabelFor` exact, case,
+whitespace and title matches plus the question and statement fallbacks;
+`applyBriefMode` (empty structure with unlabeled requirements maps to the
+outline with questions under "9"; pasted is "brief", uploaded "rfp"; a
+pasted two-node structure becomes the outline as "brief" while an uploaded
+one is kept; empty structure with 0 requirements and a matching non-empty
+structure both come back unchanged as "rfp"); `groundContact`
+(verbatim kept, paraphrase dropped, injection-tripping name dropped,
+over-length dropped). It also pins `resolve-draft.ts`: the rfp cover title
+and no lede change; the brief title with and without a client; the brief
+lede and default letter body; the plain and addressed addressee and
+salutation; and that the brief default body never says "Request for
+Proposal". It also asserts that the workspace and export-assets.ts each
+carry the brief divider title and deck exactly once and that both equal
+`furnitureDividers("brief")`.
+
+**Open.** `reviseSection` (Tron revise, also the auto consolidation pass)
+and `resolveGap` do not see the brief, so a revise can reintroduce
+something the brief excludes; the plan and consolidate turns do not see it
+either. A brief's exclusion ("do not mention X") is a prompt-only control:
+the drafter sees the whole live base, nothing deterministic enforces the
+exclusion, and staff must read the section it would land in. A structure-
+less UPLOAD drafts into the outline as form "rfp", so its letter prompt,
+cover and part divider still speak of the client's document and its own
+structure. The incident brief asks for CO-MANAGED users at a per-user price;
+the stated 40 users seed the quote as fully managed and no co-managed tier
+exists in the rate card (Adam's call). `clientName` stays ungrounded and drives the brief cover title.
+There is no staff override to mark a document as a brief or clear it. The
+brief's "$160/user" is NOT read into pricing: pricing stays rate-card driven
+and the drafter is told never to repeat a figure (Adam's call whether a
+brief may seed the quote). A grounded procurement contact on a real RFP
+(form "rfp") changes the salutation from "Dear evaluation team," to "Dear
+<name>," (by contract; Adam to confirm). The CLI runs outside the app's
+brain semaphore, so it can add one concurrent read. An em dash inside a
+grounded contact name has no edit path (the same exposure as `clientName`).
+A genuinely two-section PASTED RFP loses its two labels to the outline under
+the paste guard (it still drafts).
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 
@@ -13895,6 +14192,13 @@ Deviations from this file's other tables, all deliberate and all explained in
 `src/lib/db/rfp-schema.ts`: `text` PKs with no default (semantic ids), JSON in
 `text` not `jsonb` (host convention), `rfp_` prefix (matches `governance_*` /
 `work_*`, and retires `references` as a PostgreSQL reserved word).
+
+Later additive `rfp_*` columns: `rfp_proposals.checks_ignores_json` (migration
+`0059_rfp_check_ignores`, nullable text, §5.17.8); `rfp_documents.intake_form
+text NOT NULL DEFAULT 'rfp'` ("rfp" | "brief"), `rfp_documents.contact_name
+text` and `rfp_documents.contact_title text` (migration
+`0060_rfp_brief_intake`, `ADD COLUMN IF NOT EXISTS`, existing rows read as
+"rfp" with no contact, §5.17.17).
 
 **Round 5 (2026-08-04): "Recheck database" on the directory hub card (owner
 ask).** The step-02 card gains an admin-only manual lever that re-runs the

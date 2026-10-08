@@ -389,13 +389,14 @@ export function NewRfpForm() {
           className="input min-h-64"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Paste the RFP text here, or drop PDF or Word files onto this box."
+          placeholder="Paste the RFP text here, or a brief of what the proposal should cover, or drop PDF or Word files onto this box."
         />
         <p className="mt-2 text-xs text-faint">
           PDF, Word .docx, or pasted text (a few lines at least). Several
           files and text are read together as one RFP, up to about 120,000
-          characters. Read only to draft this response; never stored in
-          Tron&apos;s public memory.
+          characters. A brief with no headings is drafted into XL.net&apos;s
+          standard proposal sections. Read only to draft this response; never
+          stored in Tron&apos;s public memory.
         </p>
       </div>
 

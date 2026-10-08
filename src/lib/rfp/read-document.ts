@@ -1,5 +1,6 @@
 // The background read of one RFP document: readRfp, then requirements, the
-// composed title, stated staff and status "extracted" (or "read_failed").
+// composed title, stated staff, intake form and addressee, and status
+// "extracted" (or "read_failed").
 //
 // Shared by POST /api/rfp/documents (first read) and
 // POST /api/rfp/documents/[id]/read (read again), so a re-read is the same
@@ -21,13 +22,15 @@ export type DocumentReadInput = {
   storedTitle: string;
   /** True when no title was typed, so the read may compose one. */
   autoTitle: boolean;
+  /** rfp_documents.source_kind: only "paste" can be read as a brief. */
+  sourceKind: string;
   actor: { email: string; admin: boolean };
 };
 
 export async function runDocumentRead(input: DocumentReadInput): Promise<void> {
-  const { docId, rawText, storedTitle, autoTitle, actor } = input;
+  const { docId, rawText, storedTitle, autoTitle, sourceKind, actor } = input;
   try {
-    const result = await readRfp(docId, rawText);
+    const result = await readRfp(docId, rawText, sourceKind);
     if (!result) {
       await db
         .update(rfpDocuments)
@@ -72,6 +75,9 @@ export async function runDocumentRead(input: DocumentReadInput): Promise<void> {
         statedStaffCount: result.statedStaff?.count ?? null,
         statedStaffQuote: result.statedStaff?.quote ?? null,
         statedStaffBasis: result.statedStaff?.basis ?? null,
+        intakeForm: result.intakeForm,
+        contactName: result.contact?.name ?? null,
+        contactTitle: result.contact?.title ?? null,
         status: "extracted",
         updatedAt: new Date(),
       })
@@ -100,6 +106,10 @@ export async function runDocumentRead(input: DocumentReadInput): Promise<void> {
             : result.clientName
               ? "client"
               : "fallback",
+        // Brief mode (§5.17.17) and whether an addressee grounded; shape
+        // only, never the name.
+        form: result.intakeForm,
+        contact: result.contact ? "ok" : "none",
       },
     });
   } catch (err) {

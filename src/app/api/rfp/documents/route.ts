@@ -238,6 +238,7 @@ export async function POST(req: Request): Promise<Response> {
       rawText: screened.clean,
       storedTitle: doc.title,
       autoTitle,
+      sourceKind,
       actor: { email: user.email, admin: user.admin },
     })
   );

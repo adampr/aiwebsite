@@ -74,7 +74,7 @@ import {
   FURNITURE_CLOSING_HEADLINE,
   FURNITURE_CLOSING_WEB,
   FURNITURE_COVER_KICKER,
-  FURNITURE_DIVIDERS,
+  furnitureDividers,
   FURNITURE_FOOT_LEFT,
   FURNITURE_FOOT_RIGHT,
   FURNITURE_MINIMUM_CAPTION,
@@ -122,6 +122,10 @@ const isVisual = (b: Block): b is ExportVisual =>
 export type ExportView = {
   coverTitle: string;
   clientName: string;
+  /** The resolved cover lede, when it is not the RFP form (§5.17.17). */
+  coverLede?: string;
+  /** The two part dividers, worded for the document's intake form. */
+  dividers: ReturnType<typeof furnitureDividers>;
   proposalTitle: string;
   dateLabel: string;
   preparedBy: string;
@@ -175,6 +179,8 @@ export function buildExportView(
   return {
     coverTitle: resolved.cover.title,
     clientName,
+    ...(resolved.cover.lede ? { coverLede: resolved.cover.lede } : {}),
+    dividers: furnitureDividers(resolved.intakeForm ?? "rfp"),
     proposalTitle: resolved.proposal.title,
     dateLabel: resolved.cover.dateLabel,
     preparedBy: resolved.letter.signature.name,
@@ -238,12 +244,16 @@ export function signaturePhoneLine(sig: ExportView["letter"]["signature"]): stri
 
 /** The cover lede, split so emitters can set the client semibold. The
  *  workspace guards the fragment: no client, no " for X" (and no double
- *  space). */
-function coverLedeParts(clientName: string): {
+ *  space). A resolved lede (a brief's) is printed whole. */
+function coverLedeParts(
+  clientName: string,
+  lede?: string
+): {
   before: string;
   strong: string;
   after: string;
 } {
+  if (lede) return { before: lede, strong: "", after: "" };
   return clientName
     ? {
         before: "Prepared for ",
@@ -624,7 +634,7 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
     barTable(NAVY),
     new Paragraph({
       children: (() => {
-        const lede = coverLedeParts(view.clientName);
+        const lede = coverLedeParts(view.clientName, view.coverLede);
         return [
           new TextRun({ text: lede.before, font: SERIF, size: px2hp(18), color: MUTED }),
           ...(lede.strong
@@ -799,7 +809,7 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
 
   /* ---- Part dividers + sections + investment --------------------------- */
   const dividerSheet = (which: 0 | 1) => {
-    const d = FURNITURE_DIVIDERS[which];
+    const d = view.dividers[which]!;
     children.push(
       kickerPar(dividerHead(view.clientName), {
         px: 11,
@@ -1762,7 +1772,13 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       left: PAGE.margin,
       right: PAGE.margin,
     },
-    info: { Title: `${view.clientName}: ${view.coverTitle}`, Author: "XL.net" },
+    // A brief's cover title already names the client ("Proposal for X").
+    info: {
+      Title: view.coverTitle.startsWith("Proposal for ")
+        ? view.coverTitle
+        : `${view.clientName}: ${view.coverTitle}`,
+      Author: "XL.net",
+    },
     bufferPages: true,
   });
   const chunks: Buffer[] = [];
@@ -1957,7 +1973,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       lineGap: Math.max(0, pt(50) * 1.1 - doc.currentLineHeight()),
     });
     doc.font("Serif").fontSize(pt(18));
-    const lede = coverLedeParts(view.clientName);
+    const lede = coverLedeParts(view.clientName, view.coverLede);
     const ledeText = lede.before + lede.strong + lede.after;
     const ledeH = doc.heightOfString(ledeText, {
       width: ledeW,
@@ -2105,7 +2121,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
 
   /* ---- Divider sheets --------------------------------------------------- */
   const dividerSheet = (which: 0 | 1) => {
-    const d = FURNITURE_DIVIDERS[which];
+    const d = view.dividers[which]!;
     beginSheet(null);
     const x = PAGE.margin;
     caps(dividerHead(view.clientName), x, PAGE.margin, {

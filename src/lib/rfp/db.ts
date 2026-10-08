@@ -12,7 +12,9 @@ import {
   inArray,
   isNotNull,
   isNull,
+  lt,
   ne,
+  or,
   sql,
 } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -36,6 +38,7 @@ import type {
   ReferenceEntry,
 } from "./references-block";
 import { corpusCategory } from "./knowledge-mine";
+import { RFP_READ_STALE_MS } from "./intake";
 
 export type FactRow = typeof rfpFacts.$inferSelect;
 export type QuestionRow = typeof rfpQuestions.$inferSelect;
@@ -358,6 +361,55 @@ export async function createDocument(
     })
     .returning();
   return row!;
+}
+
+/**
+ * Claim a document for reading again, as ONE conditional UPDATE to
+ * "reading", so a second click, tab or person gets null instead of starting
+ * a parallel read. Claimable: a failed read, a "reading" row older than any
+ * live reader could be, and an "extracted" row with no section structure
+ * (a read that found nothing to draft, §5.17.17). Null when the row is in
+ * none of those states or does not exist; the caller reports which.
+ */
+export async function claimReread(
+  docId: string
+): Promise<{
+  title: string;
+  rawText: string;
+  sourceName: string | null;
+  sourceKind: string;
+} | null> {
+  if (!isUuid(docId)) return null;
+  const staleBefore = new Date(Date.now() - RFP_READ_STALE_MS);
+  const claimed = await db
+    .update(rfpDocuments)
+    .set({ status: "reading", updatedAt: new Date() })
+    .where(
+      and(
+        eq(rfpDocuments.id, docId),
+        or(
+          eq(rfpDocuments.status, "read_failed"),
+          and(
+            eq(rfpDocuments.status, "reading"),
+            lt(rfpDocuments.updatedAt, staleBefore)
+          ),
+          and(
+            eq(rfpDocuments.status, "extracted"),
+            or(
+              isNull(rfpDocuments.structureJson),
+              eq(rfpDocuments.structureJson, "[]")
+            )
+          )
+        )
+      )
+    )
+    .returning({
+      title: rfpDocuments.title,
+      rawText: rfpDocuments.rawText,
+      sourceName: rfpDocuments.sourceName,
+      sourceKind: rfpDocuments.sourceKind,
+    });
+  return claimed[0] ?? null;
 }
 
 export async function listRequirements(
