@@ -78,13 +78,14 @@
     "test:intakeretire": "tsx scripts/intake-retire-tests.ts",
     "test:samplextract": "tsx scripts/style-sample-extract-tests.ts",
     "test:resendsdk": "tsx scripts/resend-sdk-contract-tests.ts",
-    "test:stripesdk": "tsx scripts/stripe-sdk-contract-tests.ts"
+    "test:stripesdk": "tsx scripts/stripe-sdk-contract-tests.ts",
+    "test:dotenv": "tsx scripts/dotenv-contract-tests.ts"
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",
     "@breezystack/lamejs": "^1.2.7",
     "docx": "^9.7.1",
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.7",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
     "jszip": "^3.10.1",
