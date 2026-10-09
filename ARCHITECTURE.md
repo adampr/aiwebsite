@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-09 §5.17.13 RFP QUESTIONS TAB NOT RENDERED UNTIL A SECTION EXISTS + VISIBLE CONSOLIDATION FREEZE (owner, verbatim: "The questions tab should either not be visible or be much more visibly obvious while it cant be edited - its confusing."). In `src/app/rfp/r/[id]/workspace.tsx` both tabstrips (mobile and rail) now filter "questions" out of their `as const` lists while `!questionsReady` (`sections.length > 0`), instead of rendering it disabled with a hover-only `title`; the dead `disabled`/`title` props are gone, `aria-pressed` is unchanged, and the first landed section adds the tab while the existing `questionsReady` effect brings it forward. The state is reachable where the rail renders with nothing drafted: a structure-less document (`reading`, `read_failed`, or an extracted read with zero structure nodes), or a rail held open by `railPeek` after the last drafted section is removed — in that second state `pane` can still be "questions" (draftAll's tail, the cross-tab poll adopting a removal), and the pane's no-sections branch renders with no tab pressed while every other tab stays openable. `pane` still starts on Coverage with no sections, and `showPane`'s questions guard plus the pane's "Draft the response first" branch stay as defense in depth. The consolidation freeze line in the Questions pane ("Tron is consolidating the response; answering opens up when it finishes.", `role="status"`) moves from `text-xs text-faint` fine print to a body-size paragraph in a `--xl-line-bright` bordered box; wording and the `busy`/`tronBusy` gating are unchanged. `globals.css` keeps `.tabstrip button:disabled` (comment updated: no tab currently renders disabled). No server, API, DB, env or export change.
+
 Last verified against code: 2026-10-08 §5.17.17 RFP A BRIEF DRAFTS A FULL RESPONSE (incident 2026-10-08 17:32 CDT: an 816-character staff brief read as 10 requirements with `structure: []`, stamped `extracted`, and nothing drafted or could be read again; owner: even plain text must produce a full response document). New pure client-safe `src/lib/rfp/outline.ts` (`STANDARD_OUTLINE`: ten nodes labeled "1" to "10" with worded titles, rendered "Section N" over the title like a numbered RFP; `outlineLabelFor` matching by title only, with fallbacks "3" Scope of Services and "9" Questions and Clarifications; `OUTLINE_TITLES_FOR_PROMPT` generated from the outline) and `src/lib/rfp/brief.ts` (`applyBriefMode(parsed, { pasteOnly })`: requirements with an empty structure, or with no requirement matching any structure label, get the standard outline, the Questions node only when a requirement maps to it; pasted text is `intakeForm "brief"`, and a pasted read of at most `TINY_STRUCTURE_MAX` (2) nodes with more asks outside them than inside is a brief with a list in it; a structure-less upload stays "rfp" with no brief framing; no requirements stays unchanged; `groundContact`: verbatim single-line, length-capped, injection-screened addressee whose title must ground on the name's line). `readRfp` gains one paragraph (only text with no headings and no numbering at all; it lists the ten outline titles for each requirement's `structureLabel`) and a `contact` field, every existing line byte-identical; `readRfp(documentId, rawText, sourceKind)` and `DocumentReadInput` gain `sourceKind`. A brief's section prompt shows up to 120 facts (60, byte-identical, for an RFP). `draftSection` gains optional `brief` and `draftCoverLetter` optional `opts {brief, contactName}`, both byte-absent for form "rfp", the brief fenced as untrusted and unable to mint facts or prices; the generate route is the ONLY caller of either and passes the brief for a brief document, while the section route's `reviseSection`, plan and consolidate turns and the gap route's `resolveGap` do not see the brief. Migration `0060_rfp_brief_intake`: `rfp_documents.intake_form text NOT NULL DEFAULT 'rfp'`, `contact_name text`, `contact_title text`, written by `runDocumentRead` with the `extracted` stamp (`document.extract` meta gains shape-only `form`, `contact`). The letter addresses "<name>, <title>" over the client (the contact line alone when no client is named) with "Dear <name>," when a contact is grounded (resolve-draft.ts, mirrored by the workspace letter page); a brief's cover reads "Proposal for <client>" over "Prepared by XL.net for your review.", its undrafted letter body comes from `defaultLetterBody(intakeForm)`, part divider 01 from `furnitureDividers(intakeForm)` ("The Proposal"; `ExportView.dividers`), `ResolvedProposal` gains optional `intakeForm` outside the content hash, and the Coverage lede reads "Every point the brief asks for, as read from it.". Read again reaches an extracted-but-empty document: `claimReread` in db.ts adds that third claim branch (and returns `sourceKind`), `GET .../status` gains `structureNodes`, `<ReadAgain>` accepts `initialStatus="extracted"`, and the new `npm run rfp:reread -- <id>` CLI re-reads inline (actor "cli" on both its activity rows). `/rfp/new` copy says a brief works. New `npm run test:rfpoutline` (outline, brief mode, contact grounding, resolve-draft cover and addressee). No env change; no new route.
 
 Last verified against code: 2026-10-04. Brain SDK source pin advances `packages/brain` from `9abcfa7fcee41578fd7d2dc30fb85725cdfcee0e` to `1bd2e9e6fc40dc8f7a2eea5bd1416f0dea3b259a` (2026-10-03; xldev #901; version remains 1.168.0). The upstream SDK adds exact-provider model discovery, integration checks and task-specific quality admission. Newly discovered models stay withheld from production tasks until the corresponding qualification passes. Evaluation and publication scheduling are central operator actions; a parent pin does not install an evaluation timer or establish a live model admission. This parent change contains only the SDK gitlink(s) and this integration note; host request envelopes, application source, environment, dependencies and schemas remain unchanged. Preserve host-owned runtime data and secrets during rollout. Upstream routing evidence and host health checks are recorded separately; this pin alone does not certify deployment.
@@ -9469,7 +9471,23 @@ legitimately be zero). The rail has ONE pane source of truth (`pane`);
 `mobile` only toggles draft-vs-rail below lg — rendering off both once
 stacked two panes whenever they disagreed. Since 2026-09-30 the rail and
 the mobile tabstrip are not rendered at all until the document exists
-(`railHidden`, §5.17.13). The action bar (`.rfp-runbar`)
+(`railHidden`, §5.17.13). Where the rail does render with nothing
+drafted (a structure-less document: `reading`, `read_failed`, or an
+extracted read with zero structure nodes, where the rail stays for
+Coverage and `<ReadAgain>`; or a rail held open by `railPeek` after the
+last drafted section is removed, where `pane` can still be "questions"
+and the pane's no-sections branch renders with no tab pressed while
+every other tab stays openable), the Questions tab is NOT RENDERED in either
+tabstrip until a section exists (owner directive 2026-10-09: the greyed,
+unopenable tab was confusing); both tab lists filter it out on
+`questionsReady` (`sections.length > 0`), no rendered tab is ever
+disabled, and the first landed section adds the tab and brings it
+forward. `showPane`'s questions guard and the pane's own "Draft the
+response first" branch stay as defense in depth. While a consolidation
+round holds `busy`, the Questions pane shows its freeze notice ("Tron is
+consolidating the response; answering opens up when it finishes.",
+`role="status"`) as a body-size paragraph in a `--xl-line-bright`
+bordered box, never faint fine print. The action bar (`.rfp-runbar`)
 carries the notices and is ALWAYS sticky (since 2026-09-30; see round 4
 above), so the drafting status, Stop, Run checks and the Word/PDF exports
 stay reachable however deep the flash choreography or the reader scrolls
@@ -10044,7 +10062,10 @@ then; the first landed section flips it on and brings Questions forward
 (owner ruling 2026-09-30: until the pane is usable it must not be
 openable). SUPERSEDED the same day by §5.17.13: the whole rail is now
 unmounted until the document exists, so the disabled tab is reachable only
-on a structure-less RFP, where the rail stays for its Coverage list. Screen-only affordances: a quiet Remove
+on a structure-less RFP, where the rail stays for its Coverage list.
+SUPERSEDED again 2026-10-09 (owner directive): the tab is no longer
+disabled anywhere; it is not rendered until a section exists (see
+"Workspace mechanics"). Screen-only affordances: a quiet Remove
 under each block; one "Add visual" control per drafted section (hidden while
 editing) that swaps the action row for "Company snapshot" / "Service stats" /
 "Onboarding timeline" / "Cancel" (each hidden when that section holds the
@@ -10828,8 +10849,9 @@ checks button was deliberately not disabled during the initial run
 appears after the initial run nothing new is needed: draftAll already ends
 in `setPane("questions")`, and the questionsReady effect brings Questions
 forward on the first landed section for the follow case. The §5.17.7
-"Questions tab disabled" logic stays as it is (harmless; reachable only on
-the structure-less RFP).
+"Questions tab disabled" logic was kept here (reachable only on the
+structure-less RFP) until 2026-10-09, when the owner ruled the greyed tab
+confusing: it is now not rendered at all until a section exists.
 
 **`.rfpdoc-tool`: one tool chrome.** The legend the person reads, and the
 principle: everything on the white paper is the download; anything in a
@@ -11190,7 +11212,9 @@ zero failures, and left >= 2 non-letter sections — draftAll raises a
 consumes it once the entry guard's inputs read clear in COMMITTED state (a
 deferred timer raced React's commit and passive-effect tasks and could
 silently drop the round against a stale closure; refuter MAJOR). While the
-round runs, the Questions pane says why every Answer control is gray, and
+round runs, the Questions pane says why every Answer control is gray (a
+`role="status"` body-size notice in a bright-hairline box since
+2026-10-09, not fine print), and
 all three Run-checks buttons (runbar, Questions pane, Checks stale banner)
 freeze (a verdict stored mid-round describes text the round is rewriting;
 the export path's own checks run on a failing draft is pre-existing and

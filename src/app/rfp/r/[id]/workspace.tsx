@@ -557,12 +557,20 @@ export function Workspace({
   // two panes whenever they disagreed (first tap of any mobile rail tab).
   // The Questions pane has nothing to offer before a section is drafted
   // (owner ruling 2026-09-30: until it is usable it must not be openable),
-  // so the rail opens on Coverage until then and its tab is disabled; the
-  // first landed section flips it on and brings it forward. Since the
-  // second 2026-09-30 directive (`railHidden` below) the WHOLE rail is
-  // unmounted until the document exists, which subsumes this: the disabled
-  // tab is now only reachable on a structure-less document, where the rail
-  // stays for its Coverage list. Kept as it is; it is harmless there.
+  // so the rail opens on Coverage until then and the Questions tab is NOT
+  // RENDERED in either tabstrip (owner directive 2026-10-09: a greyed tab
+  // that cannot be opened was confusing; not visible beats disabled). The
+  // first landed section adds the tab and the `questionsReady` effect
+  // brings it forward. `railHidden` (second 2026-09-30 directive) already
+  // unmounts the whole rail until the document exists, so the omission
+  // shows on a structure-less document (reading, read_failed, or a read
+  // with zero structure nodes), where the rail stays for Coverage and
+  // <ReadAgain>, and on a rail held open by `railPeek` after the last
+  // drafted section is removed. In that second state `pane` can still be
+  // "questions" (draftAll's tail, the cross-tab poll adopting a removal):
+  // the pane's no-sections branch renders with no tab pressed, every other
+  // tab stays openable. showPane's questions guard and that branch stay as
+  // defense in depth, not as the gate.
   const [pane, setPane] = useState<Pane>(
     initialSections.length > 0 ? "questions" : "coverage"
   );
@@ -3372,24 +3380,20 @@ export function Workspace({
           columns stay mounted below and it toggles which one shows. */}
       {!railHidden && (
       <nav className="tabstrip tabstrip--mobile mb-4" aria-label="Workspace panes">
-        {(["draft", "questions", "coverage", "checks", "tron"] as const).map(
-          (k) => (
+        {/* Questions is omitted, not disabled, until a section exists
+            (owner directive 2026-10-09); a tab that renders always opens. */}
+        {(["draft", "questions", "coverage", "checks", "tron"] as const)
+          .filter((k) => k !== "questions" || questionsReady)
+          .map((k) => (
             <button
               key={k}
               type="button"
               aria-pressed={k === "draft" ? mobileView === "draft" : pane === k && mobileView !== "draft"}
-              disabled={k === "questions" && !questionsReady}
-              title={
-                k === "questions" && !questionsReady
-                  ? "Available once the response is drafted"
-                  : undefined
-              }
               onClick={() => (k === "draft" ? setMobile("draft") : showPane(k))}
             >
               {k === "draft" ? "Draft" : paneButton(k)}
             </button>
-          )
-        )}
+          ))}
       </nav>
       )}
 
@@ -3413,22 +3417,20 @@ export function Workspace({
           ref={railRef}
         >
           <nav className="tabstrip tabstrip--rail" aria-label="Rail">
-            {(["questions", "coverage", "checks", "tron"] as const).map((k) => (
-              <button
-                key={k}
-                type="button"
-                aria-pressed={pane === k}
-                disabled={k === "questions" && !questionsReady}
-                title={
-                  k === "questions" && !questionsReady
-                    ? "Available once the response is drafted"
-                    : undefined
-                }
-                onClick={() => showPane(k)}
-              >
-                {paneButton(k)}
-              </button>
-            ))}
+            {/* Same omission as the mobile strip (owner directive
+                2026-10-09). */}
+            {(["questions", "coverage", "checks", "tron"] as const)
+              .filter((k) => k !== "questions" || questionsReady)
+              .map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={pane === k}
+                  onClick={() => showPane(k)}
+                >
+                  {paneButton(k)}
+                </button>
+              ))}
           </nav>
 
           <div className="panel mt-4">
@@ -3438,9 +3440,17 @@ export function Workspace({
                     consolidation round holds `busy` so a woven answer cannot
                     land mid-rewrite and trip the staleness guard. Without
                     this line the pane invites answering with dead buttons
-                    (the e30d4623 rule: never gate a control silently). */}
+                    (the e30d4623 rule: never gate a control silently).
+                    Body size in a bright-hairline box, never faint fine
+                    print (owner directive 2026-10-09: a frozen pane must be
+                    obvious). The box is the style-sample "queued" notice's
+                    pattern; --xl-line-bright clears 3:1 on every panel bg. */}
                 {consolRun !== null && (
-                  <p className="text-xs text-faint mb-4" role="status">
+                  <p
+                    className="mb-4 border p-4 text-sm"
+                    style={{ borderColor: "var(--xl-line-bright)" }}
+                    role="status"
+                  >
                     Tron is consolidating the response; answering opens up
                     when it finishes.
                   </p>
