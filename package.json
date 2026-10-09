@@ -87,7 +87,7 @@
     "jszip": "^3.10.1",
     "maxmind": "^5.0.6",
     "mmdb-lib": "^3.0.2",
-    "next": "16.2.11",
+    "next": "16.4.0",
     "pdfjs-dist": "^6.1.200",
     "pdfkit": "^0.19.1",
     "postgres": "^3.4.9",
@@ -104,7 +104,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9.39.5",
-    "eslint-config-next": "^16.2.9",
+    "eslint-config-next": "^16.4.0",
     "tailwindcss": "^4",
     "tsx": "^4",
     "typescript": "^5"
