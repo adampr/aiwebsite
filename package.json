@@ -76,7 +76,8 @@
     "test:alertbody": "bash scripts/alert-body-tests.sh",
     "test:providerhealth": "node scripts/ai-provider-health-tests.mjs",
     "test:intakeretire": "tsx scripts/intake-retire-tests.ts",
-    "test:samplextract": "tsx scripts/style-sample-extract-tests.ts"
+    "test:samplextract": "tsx scripts/style-sample-extract-tests.ts",
+    "test:resendsdk": "tsx scripts/resend-sdk-contract-tests.ts"
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",
@@ -94,7 +95,7 @@
     "postgres": "^3.4.9",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "resend": "^6.17.1",
+    "resend": "^6.32.1",
     "sharp": "^0.35.5",
     "stripe": "^22.3.1"
   },
