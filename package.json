@@ -95,7 +95,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "resend": "^6.17.1",
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.5",
     "stripe": "^22.3.1"
   },
   "devDependencies": {
@@ -111,7 +111,7 @@
     "typescript": "^5"
   },
   "overrides": {
-    "sharp": "^0.35.3",
+    "sharp": "^0.35.5",
     "postcss": "^8.5.10"
   }
 }
