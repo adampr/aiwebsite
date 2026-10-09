@@ -1869,7 +1869,7 @@ aiwebsite/
 └── tsconfig.json               strict, bundler resolution, alias @/* → ./src/*, excludes packages/brain
 ```
 
-**Stack versions:** Node **22** (VM; brain requires ≥20) · Next.js **16.4.0** · React **19.2.4**
+**Stack versions:** Node **22** (VM; brain requires ≥20) · Next.js **16.4.0** · React **19.3.0**
 · TypeScript 5 · Tailwind **v4** · drizzle-orm 0.45 + `postgres` 3.4 driver · resend 6.17
 · maxmind 5 + mmdb-lib (IP→org for /admin/companies).
 `src/proxy.ts` is the module's tracking/CSRF middleware wrapper (§5.6) under the Next 16
