@@ -77,7 +77,8 @@
     "test:providerhealth": "node scripts/ai-provider-health-tests.mjs",
     "test:intakeretire": "tsx scripts/intake-retire-tests.ts",
     "test:samplextract": "tsx scripts/style-sample-extract-tests.ts",
-    "test:resendsdk": "tsx scripts/resend-sdk-contract-tests.ts"
+    "test:resendsdk": "tsx scripts/resend-sdk-contract-tests.ts",
+    "test:stripesdk": "tsx scripts/stripe-sdk-contract-tests.ts"
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",
@@ -97,7 +98,7 @@
     "react-dom": "19.3.0",
     "resend": "^6.32.1",
     "sharp": "^0.35.5",
-    "stripe": "^22.3.1"
+    "stripe": "^23.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
