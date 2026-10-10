@@ -15,8 +15,9 @@ const nextConfig: NextConfig = {
   // pdf.js resolves its worker via a dynamic import relative to pdf.mjs
   // ("./pdf.worker.mjs"); bundling it into .next/server/chunks breaks that
   // resolution and every PDF extraction throws. Run it from node_modules.
-  // pdfkit reads its standard-font .afm metrics from its own package dir via
-  // fs at runtime; bundling relocates the code away from those files and the
+  // pdfkit (>=0.20) loads its standard fonts through its package-internal
+  // `#standard-fonts/*` import map (before 0.20 it read .afm files via fs);
+  // bundling breaks that resolution (upstream foliojs/pdfkit#1801) and the
   // first doc.font() call throws. Run both from node_modules.
   serverExternalPackages: ["pdfjs-dist", "pdfkit"],
   // @aicompany/core's admin blog API (packages/aicompany/src/admin/api/blog.ts,
