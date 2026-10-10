@@ -111,7 +111,7 @@
     "eslint-config-next": "^16.4.0",
     "tailwindcss": "^4",
     "tsx": "^4",
-    "typescript": "^5"
+    "typescript": "^6.0.3"
   },
   "overrides": {
     "sharp": "^0.35.5",
