@@ -1392,7 +1392,7 @@ reading-ordered output; the parser gains ordered `start` capture (split
 lists keep their count), adjacent lettered runs as real letter lists, ONE
 sub level, and a context-guarded `dropOrphanNumberLines` pre-parse pass
 ordered BEFORE promotion; docx renders per-list two-level numbering with
-`w:startOverride` (docx 9.7.1 copies levels[0].start, level 0 only,
+`w:startOverride` (docx 9.9.0 copies levels[0].start, level 0 only,
 positional) and upper/lowerLetter formats; the pane renders `<ol start>` +
 inline `listStyleType`; `ORPHAN_DOT` strips heal stored ".7.1 Policy"
 headings, see §5.12; previously round 18d: turn zero also
@@ -5025,7 +5025,7 @@ heading stranded at a page bottom), and every ordered list mints its OWN concret
 numbering instance (`gov-num-<i>`) — a single shared
 instance makes Word continue one counter across the whole document, which shipped as
 the "numbers randomly throughout" bug. Round 19 list model v2: each instance is a
-TWO-level config whose level-0 `start` is the run's literal first number (docx 9.7.1
+TWO-level config whose level-0 `start` is the run's literal first number (docx 9.9.0
 copies `levels[0].start` — positional, level 0 must stay first — into a
 `w:startOverride`, so a paragraph-split "3. 4." run renders 3, 4 instead of
 restarting at 1: "loses the count" fixed, stored drafts self-heal), with
@@ -9727,7 +9727,7 @@ TTFs of the faces the screen loads from Google Fonts — Archivo
 Medium/SemiBold/Bold and Source Serif 4 Regular/SemiBold/Italic, OFL
 license texts beside them. The PDF embeds them through pdfkit (pdffonts
 shows six subset CID faces; no Helvetica/Times on any code path). The
-DOCX embeds them through docx 9.7.1 plus an `embedPlainFonts()`
+DOCX embeds them through docx 9.9.0 plus an `embedPlainFonts()`
 post-Packer step (jszip, already docx's own dependency) that swaps the
 ECMA-obfuscated `.odttf` parts for plain TTFs, strips `fontKey`, and
 registers `application/x-font-ttf` — LibreOffice ignores spec-correct

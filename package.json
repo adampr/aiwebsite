@@ -84,7 +84,7 @@
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",
     "@breezystack/lamejs": "^1.2.7",
-    "docx": "^9.7.1",
+    "docx": "^9.9.0",
     "dotenv": "^18.0.7",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
