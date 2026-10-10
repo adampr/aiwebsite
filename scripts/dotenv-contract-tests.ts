@@ -6,14 +6,15 @@
  * 17 scripts under scripts/ and drizzle.config.ts start with
  * `import "dotenv/config"` and rely on it to (1) fill process.env from the env
  * file and (2) NOT override a variable the caller already exported (pm2 / the
- * shell win). It also reports (not asserts) where dotenv's own log line goes:
- * v17 prints it on stdout, v18's dotenv/config is quiet. This runs
+ * shell win). It also reports (not asserts) where dotenv's own log line goes;
+ * measured 2026-10-09: neither 17.4.2 nor 18.0.7 printed one on stdout or
+ * stderr from dotenv/config in this setup. This runs
  * `dotenv/config` exactly that way in a child
  * node process against a throw-away fixture file named via
  * DOTENV_CONFIG_PATH (the documented dotenv/config option; no real env file
  * is read, copied or created). Pure, no network. Added by the 2026-10-09
- * dependency-upgrade train (dotenv 17.4.2 -> 18.0.7: v18 quiets dotenv/config
- * by default and moves its log line to stderr).
+ * dependency-upgrade train (dotenv 17.4.2 -> 18.0.7; per the v18 changelog
+ * the log line moved to stderr and dotenv/config is quiet by default).
  */
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import fs from "node:fs";
