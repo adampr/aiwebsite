@@ -28,6 +28,7 @@
 
 import { sql } from "drizzle-orm";
 import {
+  customType,
   pgTable,
   text,
   integer,
@@ -41,6 +42,14 @@ import {
   serial,
 } from "drizzle-orm/pg-core";
 import { users } from "./schema";
+
+// drizzle-orm has no built-in pg bytea (schema.ts precedent; a local copy, as
+// roadmap-schema.ts does, keeps schema.ts out of this diff).
+const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
+  dataType() {
+    return "bytea";
+  },
+});
 
 /** Knowledge-base versions. The seq is what every fact's introducedInKb points at. */
 export const rfpKbVersions = pgTable(
@@ -198,7 +207,8 @@ export const rfpDocuments = pgTable(
     ownerEmail: text("owner_email").notNull(),
     title: text("title").notNull(),
     clientName: text("client_name"),
-    // "pdf" | "docx" | "md" | "txt" | "paste"
+    // "pdf" | "docx" | "md" | "txt" | "paste" | "multi", and since §5.17.18
+    // a single image: "png" | "jpeg" | "gif" | "webp"
     sourceKind: text("source_kind").notNull(),
     sourceName: text("source_name"),
     sourceSha256: text("source_sha256"),
@@ -254,6 +264,43 @@ export const rfpDocuments = pgTable(
     index("rfp_documents_owner_idx").on(t.ownerEmail, t.createdAt),
     index("rfp_documents_status_idx").on(t.status, t.updatedAt),
   ]
+);
+
+/**
+ * The intake's parts while a scanned PDF or an image waits for vision
+ * transcription (§5.17.18). Rows exist ONLY for such a document and only
+ * until its transcription succeeds: the read worker composes raw_text from
+ * them in ordinal order and deletes them in the same transaction. A failed
+ * transcription keeps them, so "Read it again" can retry.
+ *
+ * `bytes` holds the original file ONLY for a part still pending
+ * transcription (text NULL); readable parts carry their extracted text and
+ * NULL bytes, and a part is set to text + NULL bytes the moment its
+ * transcription lands. This is the one place /rfp keeps file bytes, and only
+ * for minutes: never logged, never in activity, gone with the document
+ * (CASCADE).
+ */
+export const rfpIntakeParts = pgTable(
+  "rfp_intake_parts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => rfpDocuments.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+    // "file" | "paste"
+    kind: text("kind").notNull(),
+    // The RAW filename, as composeRfpParts expects (it sanitizes).
+    name: text("name"),
+    // "application/pdf" | "image/png" | ...; NULL for paste and text parts.
+    media: text("media"),
+    text: text("text"),
+    bytes: bytea("bytes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("rfp_intake_parts_doc_idx").on(t.documentId)]
 );
 
 /** One atomic ask from the client's RFP. Coverage is judged per row. */

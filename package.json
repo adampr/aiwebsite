@@ -67,6 +67,7 @@
     "test:rfptilefit": "tsx scripts/rfp-tile-fit-tests.ts",
     "test:rfpconsolidate": "tsx scripts/rfp-consolidate-tests.ts",
     "test:rfpoutline": "tsx scripts/rfp-outline-tests.ts",
+    "test:rfpvision": "tsx scripts/rfp-vision-tests.ts",
     "rfp:render-fixture": "tsx scripts/rfp-render-fixture.ts",
     "rfp:reread": "tsx scripts/rfp-reread.ts",
     "rfp:tile-metrics": "tsx scripts/rfp-tile-metrics.ts",
@@ -83,6 +84,7 @@
   },
   "dependencies": {
     "@aicompany/core": "file:packages/aicompany",
+    "@anthropic-ai/sdk": "^0.133.0",
     "@breezystack/lamejs": "^1.2.7",
     "docx": "^9.9.0",
     "dotenv": "^18.0.7",

@@ -33,6 +33,26 @@ export const RFP_READ_BUDGET_MS = 8 * 60_000;
 export const RFP_READ_STALE_MS = RFP_READ_BUDGET_MS + 2 * 60_000;
 
 /**
+ * Vision transcription of scanned PDFs and images (§5.17.18). One file may
+ * take this long; the whole set this long. The transcription phase stamps
+ * updated_at when it finishes, so each phase (transcribe, then read) is
+ * individually under RFP_READ_STALE_MS only while the total stays at or under
+ * RFP_READ_BUDGET_MS. scripts/rfp-vision-tests.ts pins that inequality.
+ * Here, not in the server-only vision module, because the /rfp/new form sizes
+ * its poll window from it.
+ */
+export const RFP_VISION_FILE_BUDGET_MS = 4 * 60_000;
+export const RFP_VISION_TOTAL_BUDGET_MS = 8 * 60_000;
+
+/**
+ * The file types the intake takes, for the form's accept attribute. Mirrors
+ * the route's magic-byte sniff: PDF, Word .docx, text, and the four image
+ * formats the vision API reads (PNG, JPEG, GIF, WebP).
+ */
+export const RFP_INTAKE_ACCEPT =
+  ".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.gif,.webp";
+
+/**
  * An attacker-chosen filename headed for operator-voice text (a composed
  * header line or an error message). Only this function's output may appear
  * there: strip to [A-Za-z0-9 ._-], collapse whitespace runs to one space,

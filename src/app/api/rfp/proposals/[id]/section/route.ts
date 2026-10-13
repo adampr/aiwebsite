@@ -66,6 +66,19 @@ import { referencesAsk, referencesGapWhy } from "@/lib/rfp/references-ask";
 import { reopenReferencesQuestion } from "@/lib/rfp/references-answer";
 import { extractStyleSampleText } from "@/lib/governance/style-sample";
 import { screenInjection } from "@/lib/governance/research";
+import {
+  RFP_VISION_INLINE_BUDGET_MS,
+  VISION_IMAGE_MEDIA,
+  extractVisionTextCached,
+  isPdfMagic,
+  isUnsupportedImage,
+  pdfNeedsVision,
+  sniffVisionImage,
+  visionConfigured,
+  visionImageProblem,
+  visionImageRefusal,
+  type VisionFailure,
+} from "@/lib/rfp/vision-extract";
 import type { DraftSectionRecord } from "../../../documents/[id]/generate/route";
 
 export const dynamic = "force-dynamic";
@@ -77,12 +90,27 @@ const MAX_ATTACH_CHARS = 20_000;
 const TEXT_EXTENSIONS = /\.(txt|md|csv|log|json)$/i;
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|bmp|heic|svg)$/i;
 
+/** Operator-voice copy for a failed inline transcription (category only). */
+function transcribeFailMessage(subject: "scan" | "image", reason: VisionFailure): string {
+  return reason === "timeout"
+    ? `That ${subject} could not be transcribed in time. Paste its text instead, or attach the ${subject} on the RFP intake (/rfp/new), where reading has several minutes.`
+    : `That ${subject} could not be transcribed. Paste its text instead.`;
+}
+
 /**
  * Turn an attached file into fenced text for the revision turn.
- * PDF and .docx go through the same extractor as RFP ingest; plain-text
- * formats (txt, md, csv, log, json) are decoded directly. Images are
- * refused HONESTLY: the drafting service reads text only, and pretending
- * otherwise would silently drop the content.
+ * Magic bytes decide before names, everywhere:
+ *   1. PDF magic: the PDF path whatever the name says (text layer, and a
+ *      scan with no usable layer transcribed by vision INLINE);
+ *   2. PNG, JPEG, GIF or WebP magic: transcribed by vision INLINE;
+ *   3. a plain-text name (txt, md, csv, log, json): decoded directly;
+ *   4. a .docx or .pdf name: the same extractor as RFP ingest;
+ *   5. any other image (BMP, TIFF, HEIC, SVG, by bytes or name): refused
+ *      HONESTLY, naming the formats that work;
+ *   6. anything else: the generic refusal.
+ * Inline transcription runs under RFP_VISION_INLINE_BUDGET_MS through the
+ * attachment cache (§5.17.18); the transcription is untrusted text exactly
+ * like an extraction.
  */
 async function extractAttachment(
   file: File
@@ -93,37 +121,93 @@ async function extractAttachment(
   if (file.size > MAX_ATTACH_BYTES)
     return { ok: false, message: "That file is over 8 MB." };
   const name = file.name.slice(0, 200);
-  if (IMAGE_EXTENSIONS.test(name))
-    return {
-      ok: false,
-      message:
-        "Images cannot be read yet; the drafting service is text-only. Export the content as PDF, Word, or text and attach that.",
-    };
   const buf = Buffer.from(await file.arrayBuffer());
+  if (isPdfMagic(buf)) {
+    // The extractor picks its parser by suffix; the bytes say PDF.
+    const pdfName = /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+    const extracted = await extractStyleSampleText(pdfName, buf, MAX_ATTACH_CHARS);
+    // A scan (no text layer, or one under the floor) falls back to vision,
+    // inline. Not configured: exactly today's ladder.
+    if (visionConfigured() && pdfNeedsVision(extracted)) {
+      const res = await extractVisionTextCached({
+        name,
+        buf,
+        mediaType: "application/pdf",
+        budgetMs: RFP_VISION_INLINE_BUDGET_MS,
+        maxChars: MAX_ATTACH_CHARS,
+      });
+      if (!res.ok) return { ok: false, message: transcribeFailMessage("scan", res.reason) };
+      return {
+        ok: true,
+        name,
+        text: res.text,
+        injectionHits: screenInjection(res.text).hits.length,
+      };
+    }
+    return extractedAttachment(name, extracted);
+  }
+  const image = sniffVisionImage(buf);
+  if (image) {
+    const problem = visionImageProblem(image, buf);
+    if (problem) return { ok: false, message: visionImageRefusal("That image", problem) };
+    if (!visionConfigured())
+      return {
+        ok: false,
+        message:
+          "Reading images is not set up on this server. Export the content as PDF, Word, or text and attach that.",
+      };
+    const res = await extractVisionTextCached({
+      name,
+      buf,
+      mediaType: VISION_IMAGE_MEDIA[image],
+      budgetMs: RFP_VISION_INLINE_BUDGET_MS,
+      maxChars: MAX_ATTACH_CHARS,
+    });
+    if (!res.ok) return { ok: false, message: transcribeFailMessage("image", res.reason) };
+    return {
+      ok: true,
+      name,
+      text: res.text,
+      injectionHits: screenInjection(res.text).hits.length,
+    };
+  }
   if (TEXT_EXTENSIONS.test(name)) {
     const text = buf.toString("utf8").slice(0, MAX_ATTACH_CHARS).trim();
     if (!text)
       return { ok: false, message: "That file has no readable text." };
     return { ok: true, name, text, injectionHits: screenInjection(text).hits.length };
   }
-  if (/\.(pdf|docx)$/i.test(name)) {
-    const extracted = await extractStyleSampleText(name, buf, MAX_ATTACH_CHARS);
-    if (!extracted.ok)
-      return {
-        ok: false,
-        message:
-          "Could not read that file. Scanned PDFs with no text layer are the usual cause.",
-      };
-    return {
-      ok: true,
+  if (/\.(pdf|docx)$/i.test(name))
+    return extractedAttachment(
       name,
-      text: extracted.text,
-      injectionHits: screenInjection(extracted.text).hits.length,
-    };
-  }
+      await extractStyleSampleText(name, buf, MAX_ATTACH_CHARS)
+    );
+  if (IMAGE_EXTENSIONS.test(name) || isUnsupportedImage(name, buf))
+    return { ok: false, message: visionImageRefusal("That image", "unsupported") };
   return {
     ok: false,
     message: "Attach a PDF, Word .docx, or a text file (.txt, .md, .csv, .log, .json).",
+  };
+}
+
+/** A text-layer extraction (PDF or .docx) as an attachment result. */
+function extractedAttachment(
+  name: string,
+  extracted: Awaited<ReturnType<typeof extractStyleSampleText>>
+):
+  | { ok: true; name: string; text: string; injectionHits: number }
+  | { ok: false; message: string } {
+  if (!extracted.ok)
+    return {
+      ok: false,
+      message:
+        "Could not read that file. Scanned PDFs with no text layer are the usual cause.",
+    };
+  return {
+    ok: true,
+    name,
+    text: extracted.text,
+    injectionHits: screenInjection(extracted.text).hits.length,
   };
 }
 

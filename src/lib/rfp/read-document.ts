@@ -1,6 +1,8 @@
 // The background read of one RFP document: readRfp, then requirements, the
 // composed title, stated staff, intake form and addressee, and status
-// "extracted" (or "read_failed").
+// "extracted" (or "read_failed"). A document that came in with a scanned PDF
+// or an image is transcribed first (§5.17.18), in this same worker, so the
+// first read, "Read it again" and the rfp:reread CLI all retry it alike.
 //
 // Shared by POST /api/rfp/documents (first read) and
 // POST /api/rfp/documents/[id]/read (read again), so a re-read is the same
@@ -9,7 +11,15 @@
 import { readRfp } from "./brain";
 import { composeDocTitle } from "./doc-title";
 import { logRfpActivity } from "./activity";
-import { replaceRequirements } from "./db";
+import {
+  completeIntakeTranscription,
+  listIntakeParts,
+  replaceRequirements,
+  saveIntakePartText,
+} from "./db";
+import { RFP_MAX_CHARS, composeRfpParts } from "./intake";
+import { extractVisionText, runVisionPhase } from "./vision-extract";
+import { screenInjection } from "@/lib/governance/research";
 import { db } from "@/lib/db";
 import { rfpDocuments } from "@/lib/db/rfp-schema";
 import { eq, sql } from "drizzle-orm";
@@ -27,9 +37,89 @@ export type DocumentReadInput = {
   actor: { email: string; admin: boolean };
 };
 
+/**
+ * The transcription pre-phase (§5.17.18). A document created with a scanned
+ * PDF or an image has raw_text "" and rfp_intake_parts rows until this
+ * succeeds. Returns the composed, screened raw_text, or null when the
+ * transcription failed (the row is then "read_failed" with its parts KEPT,
+ * so "Read it again" retries). "no_parts" when the document has none: the
+ * read then proceeds on the stored text exactly as before.
+ */
+async function transcribeIntake(
+  docId: string,
+  actor: { email: string; admin: boolean }
+): Promise<{ text: string } | null | "no_parts"> {
+  const rows = await listIntakeParts(docId);
+  if (rows.length === 0) return "no_parts";
+  const phase = await runVisionPhase(rows, {
+    transcribe: (row, media, budgetMs) =>
+      extractVisionText({
+        name: row.name ?? "attachment",
+        buf: row.bytes!,
+        mediaType: media,
+        budgetMs,
+        maxChars: RFP_MAX_CHARS,
+      }),
+    saveText: (row, text) => saveIntakePartText(row.id, text),
+    now: () => Date.now(),
+  });
+  if (!phase.ok) {
+    console.warn(
+      `[rfp] transcription failed (doc ${docId}): ${phase.reason}, ${phase.transcribed} file(s) done before it`
+    );
+    await db
+      .update(rfpDocuments)
+      .set({ status: "read_failed", updatedAt: new Date() })
+      .where(eq(rfpDocuments.id, docId));
+    await logRfpActivity({
+      actorEmail: actor.email,
+      actorAdmin: actor.admin,
+      action: "document.transcribe",
+      subjectKind: "document",
+      subjectId: docId,
+      outcome: "error",
+      // Category and counts only, never a filename or any text.
+      meta: { reason: phase.reason, transcribed: phase.transcribed, parts: rows.length },
+    });
+    return null;
+  }
+  // The same posture as the inline intake: compose, then screen. Headers
+  // are stripped downstream at the existing evidence sites.
+  const composed = composeRfpParts(phase.parts);
+  const screened = screenInjection(composed.text);
+  await completeIntakeTranscription(docId, screened.clean, screened.hits.length > 0);
+  const truncated = composed.truncated || phase.truncated;
+  await logRfpActivity({
+    actorEmail: actor.email,
+    actorAdmin: actor.admin,
+    action: "document.transcribe",
+    subjectKind: "document",
+    subjectId: docId,
+    meta: {
+      transcribed: phase.transcribed,
+      parts: rows.length,
+      chars: screened.clean.length,
+      truncated,
+      injectionHits: screened.hits.length,
+    },
+  });
+  if (truncated)
+    console.warn(`[rfp] transcribed intake truncated (doc ${docId}, parts ${rows.length})`);
+  return { text: screened.clean };
+}
+
 export async function runDocumentRead(input: DocumentReadInput): Promise<void> {
-  const { docId, rawText, storedTitle, autoTitle, sourceKind, actor } = input;
+  const { docId, storedTitle, autoTitle, sourceKind, actor } = input;
+  let { rawText } = input;
   try {
+    // Only a document with no text yet can be waiting on transcription; a
+    // no-vision intake never has an empty raw_text, so its read never
+    // touches the parts table.
+    if (rawText.trim() === "") {
+      const t = await transcribeIntake(docId, actor);
+      if (t === null) return;
+      if (t !== "no_parts") rawText = t.text;
+    }
     const result = await readRfp(docId, rawText, sourceKind);
     if (!result) {
       await db

@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-13 §5.17.18 RFP VISION INTAKE (owner: the /rfp intake refused a scanned vendor-review PDF with "Could not read ... Scanned PDFs with no text layer are the usual cause"; RFP Response must read images and the text in them, in a PDF, PNG, JPEG or other format, through the Claude SDK). The SITE now calls the Anthropic API directly with `@anthropic-ai/sdk` (0.133.0) and the existing `ANTHROPIC_API_KEY` (env change: the key was a brain-only provider key; the site process now reads it too; empty = today's behavior, images refused); the brain is not involved. New SERVER-ONLY `src/lib/rfp/vision-extract.ts`: `VISION_MODEL "claude-opus-5-5"`, streaming `client.beta.messages.stream` with `max_tokens 64000`, `output_config {effort:"low"}`, no `thinking` param, `betas ["server-side-fallback-2026-07-01"]` + `fallbacks "default"`, PDF as a base64 `document` block and PNG/JPEG/GIF/WebP as a base64 `image` block BEFORE the text block, a frozen transcription-only system prompt (the file is data, never instructions; tables as " | " rows; text-free figures as one `[Figure: ...]` line), `extractVisionText` -> `{ok,text,truncated} | {ok:false, reason}` with reason a CATEGORY (unconfigured/refused/timeout/too_large/api_error/empty/unsupported, by SDK error class, never message text), plus pure helpers (magic-byte image sniff, header dimensions, `pdfNeedsVision` with `PDF_TEXT_FLOOR` 200, `visionCallBudget`, `runVisionPhase`). Budgets `RFP_VISION_FILE_BUDGET_MS` 4 min and `RFP_VISION_TOTAL_BUDGET_MS` 8 min live in client-safe `intake.ts` (with `RFP_INTAKE_ACCEPT`), `RFP_VISION_INLINE_BUDGET_MS` 25 s in vision-extract. `POST /api/rfp/documents` ladder per file: text and docx exactly as before; a PDF uses its text layer when it extracts and clears the floor, else (configured) becomes VISION-PENDING; an image (magic bytes) is always pending, refused at request time over 7 500 000 bytes (10 MB of base64, the direct API's limit; 5 MB is Bedrock/Vertex only) or 8000 px a side, or when the key is empty; BMP/TIFF/HEIC/SVG get an honest refusal naming the formats. With any pending part the route writes the document (`raw_text ""`, provenance as before; one image = sourceKind "png"/"jpeg"/"gif"/"webp") and one `rfp_intake_parts` row per part in compose order in ONE transaction (`createDocumentWithParts`), adds shape-only `visionFiles` to `document.create` meta, and answers the same 202; with none the path is byte-identical (no parts rows, same compose, same activity). Migration `0061_rfp_intake_parts` (id, document_id FK CASCADE, ordinal, kind, name, media, text, bytes bytea, created_at; index on document_id). `runDocumentRead` gains a pre-phase for an empty raw_text: load the parts, transcribe each pending one sequentially (each success saved onto its row, bytes NULLed), compose ALL parts, `screenInjection`, UPDATE raw_text + injection_flagged + updated_at and DELETE the parts in one transaction, then read as before; a failure stamps `read_failed`, KEEPS the parts and logs the new `document.transcribe` activity (category and counts only), so Read it again / `rfp:reread` retry with no claim change. `/rfp/new` accepts the images, says scans take a few minutes, and polls vision total + read budget + 1 min (17 min) only when the 202 carries `vision: true`, else the pre-vision read budget + 1 min. The Tron attachment route decides by magic bytes before names (PDF magic, then image magic, then text names, then .docx/.pdf names, then the honest image refusal, then the generic one) and transcribes an image, or a PDF with no usable layer, INLINE in 25 s (MAX_ATTACH_CHARS applies) through a 15-minute, 16-entry success-only cache keyed by sha256+media, and the workspace's attach control accepts the four image formats. A lone pending intake file gets the whole remaining 8-minute total; the status route's `transcribePending` makes the read panel say the FILES are kept when transcription failed; the no-key unknown-type refusal no longer lists images. Open items recorded in §5.17.18: per-file (not per-page) PDF floor drops a mixed PDF's scanned pages; transcribed documents are not yet marked on screen. New `npm run test:rfpvision`.
+
 Last verified against code: 2026-10-09 §5.17.13 RFP QUESTIONS TAB NOT RENDERED UNTIL A SECTION EXISTS + VISIBLE CONSOLIDATION FREEZE (owner, verbatim: "The questions tab should either not be visible or be much more visibly obvious while it cant be edited - its confusing."). In `src/app/rfp/r/[id]/workspace.tsx` both tabstrips (mobile and rail) now filter "questions" out of their `as const` lists while `!questionsReady` (`sections.length > 0`), instead of rendering it disabled with a hover-only `title`; the dead `disabled`/`title` props are gone, `aria-pressed` is unchanged, and the first landed section adds the tab while the existing `questionsReady` effect brings it forward. The state is reachable where the rail renders with nothing drafted: a structure-less document (`reading`, `read_failed`, or an extracted read with zero structure nodes), or a rail held open by `railPeek` after the last drafted section is removed — in that second state `pane` can still be "questions" (draftAll's tail, the cross-tab poll adopting a removal), and the pane's no-sections branch renders with no tab pressed while every other tab stays openable. `pane` still starts on Coverage with no sections, and `showPane`'s questions guard plus the pane's "Draft the response first" branch stay as defense in depth. The consolidation freeze line in the Questions pane ("Tron is consolidating the response; answering opens up when it finishes.", `role="status"`) moves from `text-xs text-faint` fine print to a body-size paragraph in a `--xl-line-bright` bordered box; wording and the `busy`/`tronBusy` gating are unchanged. `globals.css` keeps `.tabstrip button:disabled` (comment updated: no tab currently renders disabled). No server, API, DB, env or export change.
 
 Last verified against code: 2026-10-08 §5.17.17 RFP A BRIEF DRAFTS A FULL RESPONSE (incident 2026-10-08 17:32 CDT: an 816-character staff brief read as 10 requirements with `structure: []`, stamped `extracted`, and nothing drafted or could be read again; owner: even plain text must produce a full response document). New pure client-safe `src/lib/rfp/outline.ts` (`STANDARD_OUTLINE`: ten nodes labeled "1" to "10" with worded titles, rendered "Section N" over the title like a numbered RFP; `outlineLabelFor` matching by title only, with fallbacks "3" Scope of Services and "9" Questions and Clarifications; `OUTLINE_TITLES_FOR_PROMPT` generated from the outline) and `src/lib/rfp/brief.ts` (`applyBriefMode(parsed, { pasteOnly })`: requirements with an empty structure, or with no requirement matching any structure label, get the standard outline, the Questions node only when a requirement maps to it; pasted text is `intakeForm "brief"`, and a pasted read of at most `TINY_STRUCTURE_MAX` (2) nodes with more asks outside them than inside is a brief with a list in it; a structure-less upload stays "rfp" with no brief framing; no requirements stays unchanged; `groundContact`: verbatim single-line, length-capped, injection-screened addressee whose title must ground on the name's line). `readRfp` gains one paragraph (only text with no headings and no numbering at all; it lists the ten outline titles for each requirement's `structureLabel`) and a `contact` field, every existing line byte-identical; `readRfp(documentId, rawText, sourceKind)` and `DocumentReadInput` gain `sourceKind`. A brief's section prompt shows up to 120 facts (60, byte-identical, for an RFP). `draftSection` gains optional `brief` and `draftCoverLetter` optional `opts {brief, contactName}`, both byte-absent for form "rfp", the brief fenced as untrusted and unable to mint facts or prices; the generate route is the ONLY caller of either and passes the brief for a brief document, while the section route's `reviseSection`, plan and consolidate turns and the gap route's `resolveGap` do not see the brief. Migration `0060_rfp_brief_intake`: `rfp_documents.intake_form text NOT NULL DEFAULT 'rfp'`, `contact_name text`, `contact_title text`, written by `runDocumentRead` with the `extracted` stamp (`document.extract` meta gains shape-only `form`, `contact`). The letter addresses "<name>, <title>" over the client (the contact line alone when no client is named) with "Dear <name>," when a contact is grounded (resolve-draft.ts, mirrored by the workspace letter page); a brief's cover reads "Proposal for <client>" over "Prepared by XL.net for your review.", its undrafted letter body comes from `defaultLetterBody(intakeForm)`, part divider 01 from `furnitureDividers(intakeForm)` ("The Proposal"; `ExportView.dividers`), `ResolvedProposal` gains optional `intakeForm` outside the content hash, and the Coverage lede reads "Every point the brief asks for, as read from it.". Read again reaches an extracted-but-empty document: `claimReread` in db.ts adds that third claim branch (and returns `sourceKind`), `GET .../status` gains `structureNodes`, `<ReadAgain>` accepts `initialStatus="extracted"`, and the new `npm run rfp:reread -- <id>` CLI re-reads inline (actor "cli" on both its activity rows). `/rfp/new` copy says a brief works. New `npm run test:rfpoutline` (outline, brief mode, contact grounding, resolve-draft cover and addressee). No env change; no new route.
@@ -11526,6 +11528,188 @@ grounded contact name has no edit path (the same exposure as `clientName`).
 A genuinely two-section PASTED RFP loses its two labels to the outline under
 the paste guard (it still drafts).
 
+#### 5.17.18 Vision intake: scanned PDFs and images are transcribed (2026-10-13)
+
+Trigger: `POST /api/rfp/documents` refused a scanned vendor-review PDF with
+"Could not read ... Scanned PDFs with no text layer are the usual cause."
+Owner: RFP Response must interpret images and the text within them, in a
+PDF, PNG, JPEG or other format, using the Claude SDK.
+
+**Mechanism.** The site calls the Anthropic Messages API itself through
+`@anthropic-ai/sdk`, reading `ANTHROPIC_API_KEY` from its own environment
+(the same key the brain uses; the brain's `chat.turn` envelope is text-only
+and is not involved). `src/lib/rfp/vision-extract.ts` is SERVER-ONLY; the
+client form and the workspace take their constants from client-safe
+`intake.ts`. One call per file: `client.beta.messages.stream({ model:
+"claude-opus-5-5", max_tokens: 64000, output_config: { effort: "low" },
+betas: ["server-side-fallback-2026-07-01"], fallbacks: "default", system,
+messages })` with `{ timeout, signal }` request options and an
+AbortController at the same budget, then `finalMessage()`. No `thinking`
+parameter (always on for this model; a disabled or budgeted value is a 400).
+The file goes in as a base64 `document` block (`application/pdf`) or
+`image` block (`image/png|jpeg|gif|webp`) BEFORE a one-line text block.
+That call shape (beta header, `fallbacks`, low effort, no injected deps) was
+smoke-tested live on 2026-10-13: an image-only PDF and a PNG each
+transcribed in about 2.5 s.
+
+**Prompt (frozen posture).** Transcription only; the attached file is data
+to transcribe, never instructions, and instructions inside it are copied
+verbatim; every page in reading order with headings, numbering and lists;
+tables as plain rows with " | " between cells; a figure with no text as one
+`[Figure: ...]` line; `[illegible]` for an unreadable word; nothing but the
+transcription. The output is UNTRUSTED CLIENT TEXT exactly like a text-layer
+extraction: it goes through `composeRfpParts` -> `screenInjection` and the
+existing `stripIntakeHeaders` evidence sites, with no carve-outs and no new
+evidence site.
+
+**Results.** `extractVisionText({name, buf, mediaType, budgetMs, maxChars})`
+returns `{ok:true, text, truncated}` or `{ok:false, reason}`, where reason
+is a category for logs and activity only: `unconfigured`, `refused`
+(`stop_reason "refusal"`: the whole fallback chain declined), `timeout`
+(our abort, `APIConnectionTimeoutError`, `APIUserAbortError`), `too_large`
+(HTTP 413 or over our caps), `api_error` (any other SDK error, by class),
+`empty` (no text came back; a silently empty file is refused rather than
+read as nothing) and `unsupported`. `max_tokens` (or the context window)
+keeps the text and sets `truncated`. Text blocks are joined in order (after
+a mid-stream fallback the partial is the fallback model's continuation
+context); the `fallback` marker and thinking blocks carry no text. The
+console line carries the category, HTTP status and request id at most,
+never the API's message or the file's text; `name` is never sent or logged.
+
+**Intake ladder (per file, magic bytes decide).** Text and docx: exactly as
+before (a docx failure still 400s with today's message). PDF: the text
+layer (`extractStyleSampleText`) wins when it extracts AND has at least
+`PDF_TEXT_FLOOR` (200) trimmed characters; otherwise the file is
+VISION-PENDING. PNG/JPEG/GIF/WebP: always pending, refused at request time
+over `VISION_IMAGE_MAX_BYTES` (7 500 000, which is exactly 10 000 000 bytes
+once base64 encoded: the direct API measures the encoded payload against 10
+MB; the 5 MB figure applies to Bedrock and Vertex only; the refusal says
+"7.5 MB") or over 8000 px a side (read from the header; an unparseable
+header is left to the API); we never resize.
+BMP, TIFF, HEIC/HEIF/AVIF and SVG get a refusal naming the four formats.
+With `ANTHROPIC_API_KEY` empty an image is refused ("reading images is not
+set up on this server") and a PDF takes exactly the pre-vision ladder
+(sparse text used, failure 400s with today's message). The unknown-type
+refusal lists images among the accepted kinds ONLY when `visionConfigured()`;
+with the key empty it is the pre-vision wording ("Upload a PDF, a Word
+.docx, or a .txt file, or paste the text instead.") and BMP/TIFF/HEIC/SVG
+get that same wording, so no refusal invites an upload it would refuse.
+
+**Background transcription.** With at least one pending part the route
+does not transcribe inline (a long scan takes minutes; the edge closes at
+100 s). `createDocumentWithParts` (db.ts) writes the document (`status
+"reading"`, `raw_text ""`, provenance columns as before: one image alone is
+sourceKind `png`/`jpeg`/`gif`/`webp`, several files `multi` with the usual
+naming, sha and byte rules) and one `rfp_intake_parts` row per part in
+compose order, paste last, in ONE transaction: readable parts with their
+extracted text and NULL bytes, pending parts with the file bytes and NULL
+text. `document.create` meta gains shape-only `visionFiles: n` (present only
+on this path; `chars` is 0 there). The 202 body gains `vision: true` on
+this path only (additive; absent otherwise) and `after()` runs
+`runDocumentRead` as always. With no pending part the route is
+byte-identical to §5.17.11: no parts rows, raw_text composed inline, same
+provenance and activity.
+
+`runDocumentRead` gains a pre-phase that runs only when the stored text is
+empty (a no-vision document never is, so its read never touches the new
+table): `listIntakeParts`, then `runVisionPhase` transcribes each pending
+row sequentially, each call budgeted `min(4 min, 8 min total - elapsed)`
+and not started under 10 s (`visionCallBudget`); when exactly ONE row is
+pending its call gets the whole remaining total (`8 min - elapsed`), since
+there is nothing to share it with. Each success is saved onto
+its row at once (text set, bytes NULL), so a later failure does not throw
+finished files away and a retry transcribes only what is still pending.
+ONE failure fails the phase (a silently missing file is the failure mode
+§5.17.11 killed): status `read_failed`, parts KEPT, activity
+`document.transcribe` outcome `error` with `{reason, transcribed, parts}`.
+Success composes ALL rows in ordinal order through `composeRfpParts`,
+screens, and `completeIntakeTranscription` UPDATEs `raw_text`,
+`injection_flagged` and `updated_at` and DELETEs the parts in one
+transaction; activity `document.transcribe` logs `{transcribed, parts,
+chars, truncated, injectionHits}`; the read then proceeds exactly as before.
+`claimReread` needs no new branch: a failed transcription is `read_failed`
+and a dropped one goes stale like any read, and the worker finds the parts
+itself, so Read it again and the `rfp:reread` CLI retry transcription too.
+`GET /api/rfp/documents/[id]/status` returns `transcribePending` (true when
+the document has an `rfp_intake_parts` row with `text IS NULL`, probed by
+`hasPendingIntakeParts` only while `structure_json` is null; never loads
+bytes), and the workspace page seeds the same flag into `<ReadAgain>`
+(`initialTranscribePending`). With it set, the read panel says the attached
+files could not all be transcribed (or that transcribing stopped partway,
+for a stale read), that the FILES are kept, and that Read it again retries
+the transcription, instead of the text-read copy ("The text is kept"),
+which would be false: no text exists yet.
+
+**Staleness invariant.** The pre-phase stamps `updated_at` when it
+completes, so transcription and read are each under `RFP_READ_STALE_MS`
+(10 min) provided `RFP_VISION_TOTAL_BUDGET_MS` (8 min) <=
+`RFP_READ_BUDGET_MS` (8 min); the vision test suite pins that inequality.
+**Bytes hygiene:** bytes live only on pending rows, are NULLed as each file
+lands, deleted on success, and go with the document (`ON DELETE CASCADE`);
+never logged, never in activity.
+
+**Schema (migration 0061).** `rfp_intake_parts`: `id uuid pk default
+gen_random_uuid()`, `document_id uuid NOT NULL REFERENCES rfp_documents(id)
+ON DELETE CASCADE`, `ordinal int NOT NULL`, `kind text NOT NULL` ('file' |
+'paste'), `name text` (raw filename; compose sanitizes), `media text` (set
+for PDF and image parts, NULL for docx, text and paste), `text text`,
+`bytes bytea`, `created_at timestamptz NOT NULL default now()`; index
+`rfp_intake_parts_doc_idx` on `document_id`.
+
+**`/rfp/new`.** `accept` is `RFP_INTAKE_ACCEPT` (`.pdf,.docx,.txt,.md,.png,
+.jpg,.jpeg,.gif,.webp`); the help line names images and says scans take a
+few minutes; when the 202 carried `vision: true` the reading screen adds
+"Transcribing scanned pages or images can take a few minutes more." and the
+poll window is vision total + read budget + 1 min (17 min); without it the
+copy and the window are the pre-vision ones (read budget + 1 min, 9 min), so
+a stuck plain read fails as early as before; `read_failed` still opens the
+RFP for Read it again.
+
+**Tron attachments (`extractAttachment`, section route).** Magic bytes
+decide before names: (1) PDF magic takes the PDF path whatever the name
+says (text layer; a layer that fails or is under the floor falls back to
+inline vision); (2) PNG/JPEG/GIF/WebP magic is transcribed inline, with the
+same request-time image refusals; (3) a text name (txt, md, csv, log, json)
+is decoded; (4) a `.docx` or `.pdf` name goes through the ingest extractor;
+(5) another image format (BMP, TIFF, HEIC, SVG, by bytes or name) is refused
+naming the four; (6) anything else gets the generic refusal. So a `.txt` or
+`.csv` whose bytes happen to start "BM" is read as text. Inline calls run
+under `RFP_VISION_INLINE_BUDGET_MS` (25 s): the same synchronous request
+also carries a brain turn of up to about 90 s under the 100 s edge, and a
+live image call took about 2.5 s, so 25 s keeps the worst combined case near
+the edge rather than past it; big scans belong on the RFP intake. A failure
+says the scan or image could not be transcribed (in time, for a timeout,
+pointing at attaching it on the RFP intake (/rfp/new), where reading has
+several minutes) and to paste the text. Inline calls go through
+`extractVisionTextCached`: a module-level cache keyed by the bytes' sha256
+hex plus the media type, holding SUCCESSFUL results only (text and
+truncated) for 15 minutes, at most 16 entries with the oldest evicted, so a
+whole-document revision that sends the same file for the plan call and each
+section transcribes it once. The intake's background read never uses the
+cache. `MAX_ATTACH_CHARS` (20 000) caps
+the transcription; `screenInjection` counts hits as before. Key empty: PDFs
+behave exactly as before and images are refused. The workspace's attach
+control accepts the four image formats and its help line names them.
+
+**Tests.** `test:rfpvision` (scripts/rfp-vision-tests.ts, pure, no
+network): magic-byte sniffing including truncated and hostile buffers,
+header dimensions, the PDF floor ladder, the budget invariant and call
+budget arithmetic, prompt-constant pins, content-block order and media
+types, refusal/truncation/fallback result mapping and error classes, and
+`runVisionPhase` (compose order with a pending part, save-as-you-go, one
+failure fails the phase, per-file budgets for several pending files and the
+whole remaining total for a lone one), and the attachment cache (hit, miss
+on different bytes, TTL expiry on an injected clock, eviction, failures
+never cached), with the stream boundary mocked.
+
+**Recorded open items.** (a) The PDF text floor is per FILE: a mixed PDF
+(text pages plus a scanned appendix) clears the floor on its text pages and
+the scanned pages are still silently dropped. This is pre-existing
+behavior; a per-page floor is the known fix and is the owner's call. (b) A
+transcription is model output and can misread characters (for example a
+digit in a stated user count), and the workspace does not yet mark
+transcribed documents on screen.
+
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 
 The client-company portal: a company is keyed by the DOMAIN of its members'
@@ -15579,7 +15763,7 @@ via `npm run config:check` in deploy (module architecture.md §4.3/§10).
 | | `BRAIN_TASK_MODEL_OVERRIDES` | per-task model pins (brain #729): JSON map `{taskName: modelId}`, applied in `selectModelForTask` BEFORE the v2 hook — precedence identical under every `BRAIN_ROUTER` mode. Entry-level validation drops bad pins one-by-one (`TASK_OVERRIDE_DROPPED` log: unknown task / kill-switched / provider key absent / no MODEL_PRICING entry); malformed JSON voids the whole map; boot logs `TASK_OVERRIDES_ACTIVE` when parsed. **NOT SET IN PRODUCTION on this host** — documented here and templated as a commented line in `.env.example` only; as of 2026-08-07 no production env change has been made and no task is pinned. The prepared (unapplied) value for the DeepSeek V4 Flash exercise pins the four ephemeral cost_critical helper seats `search_summarizer` / `memory_lookup_summarizer` / `older_messages_summarizer` / `counting_synthesis` → `deepseek-ai/DeepSeek-V4-Flash` (in-turn summaries only, nothing persisted to `brain_memories`; would require `DEEPINFRA_API_KEY` on the VM). To enable: add the var to the VM `.env` + restart `brain-api`; reversal is removing it again |
 | LLMs | `OPENAI_API_KEY`, `OPENAI_MODEL` (gpt-5-mini), `BRAIN_FIRST_PASS_MODEL` (gpt-5.4-mini), `OPENAI_TTS_MODEL` (tts-1), `OPENAI_STT_MODEL` (whisper-1) | brain chat/voice |
 | | `XAI_API_KEY` | realtime voice (calls drop without it) |
-| | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `AA_API_KEY` | optional brain providers |
+| | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY`, `AA_API_KEY` | optional brain providers; `ANTHROPIC_API_KEY` is ALSO read by the site itself for /rfp vision transcription of scanned PDFs and images (§5.17.18; empty = images refused, PDFs text-layer only) |
 | | `DEEPINFRA_API_KEY` | DeepInfra, 5th brain provider (curated `deepseek-ai/*` models) — would be required if the `BRAIN_TASK_MODEL_OVERRIDES` V4 Flash pins are ever enabled (absent key ⇒ pins dropped `provider_unavailable`); those pins are NOT set in production today |
 | | `TAVILY_API_KEY` | brain web_search backend AND **required for the blog** (§5.11): the news prefetch + `blog.dataSource` search it; unset ⇒ the nightly blog run WARN-skips |
 | Blog | `BLOG_ENABLED` (0/1), `BLOG_ONCALENDAR` (systemd timer, default `*-*-* 09:30:00 UTC`) | in `deploy/site-deploy.env`; the rendered setup-vm.sh installs the timer only when 1 (§5.11/§9.7) |

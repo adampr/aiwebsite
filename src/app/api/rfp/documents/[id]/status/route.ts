@@ -16,6 +16,7 @@ import {
   genClaimActive,
   getDocument,
   getProposalForDocument,
+  hasPendingIntakeParts,
   listRequirements,
 } from "@/lib/rfp/db";
 import { notFound, requireRfpApi, rfpOk } from "@/lib/rfp/http";
@@ -81,6 +82,12 @@ export async function GET(
     // again, §5.17.17) from a read with sections to draft.
     structureNodes: Array.isArray(structure) ? structure.length : 0,
     injectionFlagged: doc.injectionFlagged,
+    // A part still waiting for transcription (§5.17.18): a failed or stopped
+    // read has no text yet, only the attached files, and "Read it again"
+    // retries the transcription. The workspace words its panel by this.
+    // Probed only while there is no structure (the only time it is shown).
+    transcribePending:
+      doc.structureJson === null ? await hasPendingIntakeParts(doc.id) : false,
     proposal: proposalView,
   });
 }

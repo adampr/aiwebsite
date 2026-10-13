@@ -13,17 +13,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  RFP_INTAKE_ACCEPT,
   RFP_MAX_FILES,
   RFP_MAX_TOTAL_BYTES,
   RFP_READ_BUDGET_MS,
   RFP_UPLOAD_ENVELOPE_BYTES,
+  RFP_VISION_TOTAL_BUDGET_MS,
 } from "@/lib/rfp/intake";
 
 /** Poll a minute past the server's read budget, so the server always
- *  answers (extracted or read_failed) before this screen gives up. */
+ *  answers (extracted or read_failed) before this screen gives up. An
+ *  intake the server says needs transcription (`vision: true` on the 202,
+ *  §5.17.18) gets the transcription budget on top; any other keeps the
+ *  plain window, so a stuck plain read fails as early as it always did. */
 const READ_POLL_MS = 3000;
-const READ_POLL_TICKS = Math.ceil((RFP_READ_BUDGET_MS + 60_000) / READ_POLL_MS);
-const READ_POLL_MINUTES = Math.round((READ_POLL_TICKS * READ_POLL_MS) / 60_000);
+function pollTicks(vision: boolean): number {
+  return Math.ceil(
+    ((vision ? RFP_VISION_TOTAL_BUDGET_MS : 0) + RFP_READ_BUDGET_MS + 60_000) /
+      READ_POLL_MS
+  );
+}
 
 type Phase = "empty" | "sending" | "reading" | "failed";
 
@@ -69,7 +78,15 @@ function Glyph({ state }: { state: "pending" | "active" | "done" }) {
  * the phases of that one call in the order it performs them, and only the
  * final state comes from the server.
  */
-function ReadingScreen({ elapsed, slow }: { elapsed: number; slow: boolean }) {
+function ReadingScreen({
+  elapsed,
+  slow,
+  vision,
+}: {
+  elapsed: number;
+  slow: boolean;
+  vision: boolean;
+}) {
   const steps = [
     { label: "RFP saved", at: 0 },
     { label: "Reading it end to end", at: 1 },
@@ -92,10 +109,12 @@ function ReadingScreen({ elapsed, slow }: { elapsed: number; slow: boolean }) {
           <span className="sys-label">Tron is reading</span>
           <h2 className="mt-4">Every ask, in the client&apos;s own words</h2>
           <p className="mt-4 text-sm">
-            A real RFP takes one to three minutes, a long one several. You
-            can leave; it keeps
-            reading, and the RFP appears under Your RFPs when it is done.
-            Stay, and drafting starts by itself.
+            A real RFP takes one to three minutes, a long one several.
+            {vision
+              ? " Transcribing scanned pages or images can take a few minutes more."
+              : ""}{" "}
+            You can leave; it keeps reading, and the RFP appears under Your
+            RFPs when it is done. Stay, and drafting starts by itself.
           </p>
           <ul className="mt-6 space-y-3">
             {steps.map((step, i) => {
@@ -155,6 +174,7 @@ export function NewRfpForm() {
   const [message, setMessage] = useState("");
   const [slow, setSlow] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [vision, setVision] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   // Mirror of `files` read by addFiles/removeFile, so two add events landing
   // between renders (a drop during a picker callback) can never compute the
@@ -270,6 +290,7 @@ export function NewRfpForm() {
     // attempt's 6:00 and every step renders as already done.
     setElapsed(0);
     setSlow(false);
+    setVision(false);
     const body = new FormData();
     for (const f of files) body.append("files", f);
     body.set("text", text);
@@ -300,11 +321,14 @@ export function NewRfpForm() {
       return;
     }
 
+    const sawVision = data.vision === true;
+    const ticks = pollTicks(sawVision);
+    setVision(sawVision);
     setPhase("reading");
     const slowTimer = setTimeout(() => setSlow(true), 20_000);
     const id = data.id as string;
     // Poll until the background read finishes. Long RFPs genuinely take minutes.
-    for (let i = 0; i < READ_POLL_TICKS; i++) {
+    for (let i = 0; i < ticks; i++) {
       await new Promise((r) => setTimeout(r, READ_POLL_MS));
       const s = await fetch(`/api/rfp/documents/${id}/status`, {
         cache: "no-store",
@@ -330,12 +354,12 @@ export function NewRfpForm() {
     clearTimeout(slowTimer);
     setPhase("failed");
     setMessage(
-      `Still reading after ${READ_POLL_MINUTES} minutes. The RFP is saved under Your RFPs; open it and it follows the read to the end.`
+      `Still reading after ${Math.round((ticks * READ_POLL_MS) / 60_000)} minutes. The RFP is saved under Your RFPs; open it and it follows the read to the end.`
     );
   }
 
   if (phase === "reading") {
-    return <ReadingScreen elapsed={elapsed} slow={slow} />;
+    return <ReadingScreen elapsed={elapsed} slow={slow} vision={vision} />;
   }
 
   return (
@@ -389,12 +413,14 @@ export function NewRfpForm() {
           className="input min-h-64"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Paste the RFP text here, or a brief of what the proposal should cover, or drop PDF or Word files onto this box."
+          placeholder="Paste the RFP text here, or a brief of what the proposal should cover, or drop PDF, Word or image files onto this box."
         />
         <p className="mt-2 text-xs text-faint">
-          PDF, Word .docx, or pasted text (a few lines at least). Several
-          files and text are read together as one RFP, up to about 120,000
-          characters. A brief with no headings is drafted into XL.net&apos;s
+          PDF, Word .docx, images (PNG, JPEG, GIF, WebP), or pasted text (a
+          few lines at least). Scanned PDFs and images are transcribed first,
+          which can take a few minutes. Several files and text are read
+          together as one RFP, up to about 120,000 characters. A brief with
+          no headings is drafted into XL.net&apos;s
           standard proposal sections. Read only to draft this response; never
           stored in Tron&apos;s public memory.
         </p>
@@ -423,7 +449,7 @@ export function NewRfpForm() {
           ref={fileInput}
           type="file"
           multiple
-          accept=".pdf,.docx,.txt,.md"
+          accept={RFP_INTAKE_ACCEPT}
           className="hidden"
           onChange={(e) => {
             const chosen = Array.from(e.target.files ?? []);

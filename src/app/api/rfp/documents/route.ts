@@ -5,6 +5,12 @@
 // number of requirements), and the edge closes a request at 100s, so doing it
 // inline would fail on exactly the documents that matter most. The client
 // polls the document row for status.
+//
+// Scanned PDFs (no text layer, or one under PDF_TEXT_FLOOR) and images are
+// transcribed by vision (§5.17.18), never inline: a long scan takes minutes.
+// Such an intake stores its parts in rfp_intake_parts and the same
+// background worker transcribes them before it reads. An intake with no
+// part needing vision takes exactly the path it always did.
 
 import { after } from "next/server";
 import crypto from "node:crypto";
@@ -18,9 +24,20 @@ import {
   sanitizeSourceName,
   type RfpIntakePart,
 } from "@/lib/rfp/intake";
-import { createDocument } from "@/lib/rfp/db";
+import { createDocument, createDocumentWithParts } from "@/lib/rfp/db";
 import { requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
 import { runDocumentRead } from "@/lib/rfp/read-document";
+import {
+  VISION_IMAGE_FORMATS_COPY,
+  VISION_IMAGE_MEDIA,
+  isUnsupportedImage,
+  pdfNeedsVision,
+  sniffVisionImage,
+  visionConfigured,
+  visionImageProblem,
+  visionImageRefusal,
+  type VisionImageKind,
+} from "@/lib/rfp/vision-extract";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -29,17 +46,35 @@ export const revalidate = 0;
 const MAX_BYTES = 8_000_000;
 const MAX_CHARS = 120_000;
 
+type Sniffed = "pdf" | "docx" | "text" | VisionImageKind;
+
 /** Magic bytes, because a filename suffix is a claim not a fact. */
-function sniff(name: string, buf: Buffer): "pdf" | "docx" | "text" | null {
+function sniff(name: string, buf: Buffer): Sniffed | null {
   if (buf.length >= 4) {
     if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46)
       return "pdf";
     // .docx is a zip
     if (buf[0] === 0x50 && buf[1] === 0x4b) return "docx";
   }
+  // PNG, JPEG, GIF, WebP: the four formats the vision API reads (§5.17.18).
+  const image = sniffVisionImage(buf);
+  if (image) return image;
   if (/\.(md|txt)$/i.test(name)) return "text";
   return null;
 }
+
+function isImageKind(kind: Sniffed): kind is VisionImageKind {
+  return kind === "png" || kind === "jpeg" || kind === "gif" || kind === "webp";
+}
+
+/** One rfp_intake_parts row, for an intake with a part that needs vision. */
+type IntakePartInsert = {
+  kind: "file" | "paste";
+  name: string | null;
+  media: string | null;
+  text: string | null;
+  bytes: Buffer | null;
+};
 
 export async function POST(req: Request): Promise<Response> {
   const gate = await requireRfpApi("POST /api/rfp/documents");
@@ -60,6 +95,8 @@ export async function POST(req: Request): Promise<Response> {
   let firstFileName: string | null = null;
   let filesCount = 0;
   let truncated = false;
+  // Set only when a part needs vision transcription (§5.17.18).
+  let pendingParts: IntakePartInsert[] | null = null;
 
   if (ctype.includes("multipart/form-data")) {
     // Content-Length is checked BEFORE formData(), which buffers the whole body.
@@ -88,7 +125,11 @@ export async function POST(req: Request): Promise<Response> {
 
     const parts: RfpIntakePart[] = [];
     const bufs: Buffer[] = [];
-    const kinds: ("pdf" | "docx" | "text")[] = [];
+    const kinds: Sniffed[] = [];
+    // Every part in compose order, kept for the vision path only: when any
+    // part needs transcription these become the rfp_intake_parts rows.
+    const partRows: IntakePartInsert[] = [];
+    const canTranscribe = visionConfigured();
     let totalBytes = 0;
     for (const file of files) {
       // A 0-byte attachment must never be silently dropped: the sender meant
@@ -109,14 +150,75 @@ export async function POST(req: Request): Promise<Response> {
         return rfpError("too_large", "Together the files are over 8 MB.", 413);
 
       const kind = sniff(file.name, buf);
-      if (!kind)
+      if (!kind) {
+        // BMP, TIFF, HEIC, SVG: an image the API cannot read. Say which
+        // formats it can, rather than the generic list (only when this
+        // server reads images at all; otherwise the pre-vision copy).
+        if (canTranscribe && isUnsupportedImage(file.name, buf))
+          return rfpError(
+            "invalid_request",
+            visionImageRefusal(`"${sanitizeSourceName(file.name)}"`, "unsupported"),
+            400
+          );
+        // Images are offered only when this server can read them: with no
+        // key an image upload is refused, so inviting one would be a lie.
         return rfpError(
           "invalid_request",
-          `"${sanitizeSourceName(file.name)}": Upload a PDF, a Word .docx, or a .txt file, or paste the text instead.`,
+          canTranscribe
+            ? `"${sanitizeSourceName(file.name)}": Upload a PDF, a Word .docx, a .txt file, or an image (${VISION_IMAGE_FORMATS_COPY}), or paste the text instead.`
+            : `"${sanitizeSourceName(file.name)}": Upload a PDF, a Word .docx, or a .txt file, or paste the text instead.`,
           400
         );
+      }
+
+      // An image is always transcribed. Everything that would make the API
+      // refuse it is checked here, at request time, not minutes later.
+      if (isImageKind(kind)) {
+        const problem = visionImageProblem(kind, buf);
+        if (problem)
+          return rfpError(
+            problem === "too_large" ? "too_large" : "invalid_request",
+            visionImageRefusal(`"${sanitizeSourceName(file.name)}"`, problem),
+            problem === "too_large" ? 413 : 400
+          );
+        if (!canTranscribe)
+          return rfpError(
+            "invalid_request",
+            `"${sanitizeSourceName(file.name)}" is an image, and reading images is not set up on this server. Paste the text instead and it works the same way.`,
+            400
+          );
+        bufs.push(buf);
+        kinds.push(kind);
+        // `parts` keeps counting every part (the provenance rules read its
+        // length); a pending part's empty text is never composed here.
+        parts.push({ kind: "file", name: file.name, text: "" });
+        partRows.push({
+          kind: "file",
+          name: file.name,
+          media: VISION_IMAGE_MEDIA[kind],
+          text: null,
+          bytes: buf,
+        });
+        continue;
+      }
 
       const extracted = await extractStyleSampleText(file.name, buf, MAX_CHARS);
+      // A PDF whose text layer failed or is too sparse to be the document
+      // (a scan) is transcribed instead. With transcription not configured
+      // the ladder is exactly today's: sparse text is used, a failure 400s.
+      if (kind === "pdf" && canTranscribe && pdfNeedsVision(extracted)) {
+        bufs.push(buf);
+        kinds.push(kind);
+        parts.push({ kind: "file", name: file.name, text: "" });
+        partRows.push({
+          kind: "file",
+          name: file.name,
+          media: "application/pdf",
+          text: null,
+          bytes: buf,
+        });
+        continue;
+      }
       if (!extracted.ok)
         return rfpError(
           "invalid_request",
@@ -126,7 +228,15 @@ export async function POST(req: Request): Promise<Response> {
       bufs.push(buf);
       kinds.push(kind);
       parts.push({ kind: "file", name: file.name, text: extracted.text });
+      partRows.push({
+        kind: "file",
+        name: file.name,
+        media: kind === "pdf" ? "application/pdf" : null,
+        text: extracted.text,
+        bytes: null,
+      });
     }
+    const pendingCount = partRows.filter((p) => p.bytes !== null).length;
 
     // Pasted text rides along at any length beside files; alone it must still
     // clear today's 40-character floor. The paste part is always LAST.
@@ -140,13 +250,20 @@ export async function POST(req: Request): Promise<Response> {
       parts.push({ kind: "paste", text: pasted });
     } else if (pasted.trim().length > 0) {
       parts.push({ kind: "paste", text: pasted });
+      partRows.push({ kind: "paste", name: null, media: null, text: pasted, bytes: null });
     }
 
-    // Single part stays byte-identical to the pre-multi behavior; only a
-    // multi-part intake gets the ===== headers.
-    const composed = composeRfpParts(parts);
-    rawText = composed.text;
-    truncated = composed.truncated;
+    if (pendingCount === 0) {
+      // Single part stays byte-identical to the pre-multi behavior; only a
+      // multi-part intake gets the ===== headers.
+      const composed = composeRfpParts(parts);
+      rawText = composed.text;
+      truncated = composed.truncated;
+    } else {
+      // raw_text stays "" until the worker has transcribed the pending
+      // parts; it then composes ALL parts in this same order.
+      pendingParts = partRows;
+    }
     filesCount = files.length;
     firstFileName = files[0]?.name ?? null;
 
@@ -196,7 +313,7 @@ export async function POST(req: Request): Promise<Response> {
   // signal on the row, never a silent edit and never a hard block.
   const screened = screenInjection(rawText);
 
-  const doc = await createDocument(user, {
+  const docInput = {
     title,
     clientName: null,
     sourceKind,
@@ -205,7 +322,16 @@ export async function POST(req: Request): Promise<Response> {
     sourceBytes,
     rawText: screened.clean,
     injectionFlagged: screened.hits.length > 0,
-  });
+  };
+  // With a part pending transcription, the row and its parts are written in
+  // one transaction; the screen then runs in the worker, over the composed
+  // text, once the transcriptions exist.
+  const doc = pendingParts
+    ? await createDocumentWithParts(user, docInput, pendingParts)
+    : await createDocument(user, docInput);
+  const visionFiles = pendingParts
+    ? pendingParts.filter((p) => p.bytes !== null).length
+    : 0;
 
   await logRfpActivity({
     actorEmail: user.email,
@@ -222,6 +348,10 @@ export async function POST(req: Request): Promise<Response> {
       // failure mode; this puts it on the operator record at least.
       truncated,
       injectionHits: screened.hits.length,
+      // Shape only, and only on the vision path, so a no-vision intake logs
+      // exactly what it always did. chars is 0 there: the text arrives with
+      // the transcription, logged as document.transcribe.
+      ...(visionFiles > 0 ? { visionFiles } : {}),
     },
   });
   if (truncated)
@@ -243,5 +373,11 @@ export async function POST(req: Request): Promise<Response> {
     })
   );
 
-  return rfpOk({ id: doc.id, status: "reading" }, 202);
+  // `vision: true` only on the vision path (additive): the /rfp/new form
+  // then polls the longer transcription-plus-read window; without it the
+  // pre-vision window applies, so a stuck plain read fails as early as it did.
+  return rfpOk(
+    { id: doc.id, status: "reading", ...(visionFiles > 0 ? { vision: true } : {}) },
+    202
+  );
 }

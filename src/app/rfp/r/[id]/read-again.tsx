@@ -4,7 +4,10 @@
 // still running, or finished without a section structure (§5.17.17). A
 // failed, orphaned or empty read gets "Read it again", which re-reads the
 // stored text: nothing is uploaded twice. While a read runs, the panel
-// follows it and opens the finished RFP by itself.
+// follows it and opens the finished RFP by itself. A read that failed or
+// stopped while TRANSCRIBING attached scans or images (§5.17.18) has no text
+// yet, only the files, and its copy says so: "Read it again" retries the
+// transcription.
 
 import { useEffect, useState } from "react";
 
@@ -13,15 +16,21 @@ const POLL_MS = 4000;
 export function ReadAgain({
   documentId,
   initialStatus,
+  initialTranscribePending,
   requirementCount,
 }: {
   documentId: string;
   initialStatus: string;
+  /** Seeded by the page; the status poll keeps it current. */
+  initialTranscribePending: boolean;
   /** What the finished read found; shown only for an empty "extracted". */
   requirementCount: number;
 }) {
   const [status, setStatus] = useState(initialStatus);
   const [stale, setStale] = useState(false);
+  const [transcribePending, setTranscribePending] = useState(
+    initialTranscribePending
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -37,6 +46,8 @@ export function ReadAgain({
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null);
       if (stopped || !s) return;
+      if (typeof s.transcribePending === "boolean")
+        setTranscribePending(s.transcribePending);
       if (s.status === "extracted") {
         // A full load, not a refresh: the workspace seeds its state from the
         // server props once, and ?draft=all starts drafting exactly as a
@@ -92,7 +103,13 @@ export function ReadAgain({
 
   return (
     <div className="panel">
-      {status === "read_failed" ? (
+      {status === "read_failed" && transcribePending ? (
+        <p className="text-faint">
+          This RFP was saved, but the attached files could not all be
+          transcribed, so it has not been read yet. The files are kept, so
+          Read it again retries the transcription without uploading them.
+        </p>
+      ) : status === "read_failed" ? (
         <p className="text-faint">
           This RFP was saved, but reading it for its structure did not finish.
           The text is kept, so it can be read again without uploading it.
@@ -110,6 +127,12 @@ export function ReadAgain({
           {requirementCount === 1 ? "" : "s"}{" "}
           and no section structure). Read it again: text with no headings of
           its own is drafted into {"XL.net's"} standard proposal sections.
+        </p>
+      ) : status === "reading" && stale && transcribePending ? (
+        <p className="text-faint">
+          Transcribing the attached files stopped partway, most likely
+          because the service restarted. The files are kept, so Read it
+          again retries the transcription without uploading them.
         </p>
       ) : status === "reading" && stale ? (
         <p className="text-faint">

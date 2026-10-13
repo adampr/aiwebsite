@@ -11,6 +11,7 @@ import {
   genClaimActive,
   getDocument,
   getProposalForDocument,
+  hasPendingIntakeParts,
   listRequirements,
 } from "@/lib/rfp/db";
 import { ownerDisplayName } from "@/lib/rfp/gate-run";
@@ -75,6 +76,10 @@ export default async function RfpWorkspacePage({
   const structure: { label: string; title: string }[] = doc.structureJson
     ? JSON.parse(doc.structureJson)
     : [];
+  // Seeds the read panel's copy (§5.17.18): a read that failed or stopped
+  // while transcribing has no text yet, only the attached files.
+  const transcribePending =
+    structure.length === 0 ? await hasPendingIntakeParts(doc.id) : false;
   // Parsed once: the prop and the stale verdict read the same object. A
   // stored run stamped with an older rev describes an earlier draft
   // (§5.17.8). A row stored before atRev existed carries none: content
@@ -207,6 +212,7 @@ export default async function RfpWorkspacePage({
         genError={proposal?.genError ?? null}
         autoDraft={sp.draft === "all"}
         docStatus={doc.status}
+        transcribePending={transcribePending}
         intakeForm={doc.intakeForm}
         contactName={doc.contactName}
         contactTitle={doc.contactTitle}

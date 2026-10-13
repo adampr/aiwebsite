@@ -23,6 +23,7 @@ import {
   rfpActivity,
   rfpDocuments,
   rfpFacts,
+  rfpIntakeParts,
   rfpKbVersions,
   rfpKnowledgeProposals,
   rfpProposals,
@@ -39,6 +40,7 @@ import type {
 } from "./references-block";
 import { corpusCategory } from "./knowledge-mine";
 import { RFP_READ_STALE_MS } from "./intake";
+import type { IntakePartRow } from "./vision-extract";
 
 export type FactRow = typeof rfpFacts.$inferSelect;
 export type QuestionRow = typeof rfpQuestions.$inferSelect;
@@ -327,40 +329,143 @@ export function isUuid(v: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 
+type CreateDocumentInput = {
+  title: string;
+  clientName: string | null;
+  sourceKind: string;
+  sourceName: string | null;
+  sourceSha256: string | null;
+  sourceBytes: number | null;
+  rawText: string;
+  injectionFlagged: boolean;
+};
+
 export async function createDocument(
   user: RfpUser,
-  input: {
-    title: string;
-    clientName: string | null;
-    sourceKind: string;
-    sourceName: string | null;
-    sourceSha256: string | null;
-    sourceBytes: number | null;
-    rawText: string;
-    injectionFlagged: boolean;
-  }
+  input: CreateDocumentInput
 ): Promise<DocumentRow> {
   const [row] = await db
     .insert(rfpDocuments)
-    .values({
-      ownerUserId: await ownerUserIdFor(user.email),
-      ownerEmail: user.email.toLowerCase(),
-      title: input.title.slice(0, 300),
-      clientName: input.clientName?.slice(0, 200) ?? null,
-      sourceKind: input.sourceKind,
-      sourceName: input.sourceName?.slice(0, 300) ?? null,
-      sourceSha256: input.sourceSha256,
-      sourceBytes: input.sourceBytes,
-      rawText: input.rawText,
-      injectionFlagged: input.injectionFlagged,
-      // "reading" until the background readRfp finishes; the after() worker
-      // stamps "extracted" (or "read_failed"). Inserting "extracted" here
-      // used to make the ingest poll's status check meaningless, which is
-      // why it once needed a fragile requirements>0 side-channel.
-      status: "reading",
-    })
+    .values(await documentValues(user, input))
     .returning();
   return row!;
+}
+
+/**
+ * The vision intake (§5.17.18): the document row (raw_text "" until the
+ * worker transcribes) and one rfp_intake_parts row per part, in ONE
+ * transaction, so a document can never exist "reading" with its parts
+ * missing.
+ */
+export async function createDocumentWithParts(
+  user: RfpUser,
+  input: CreateDocumentInput,
+  parts: {
+    kind: "file" | "paste";
+    name: string | null;
+    media: string | null;
+    text: string | null;
+    bytes: Buffer | null;
+  }[]
+): Promise<DocumentRow> {
+  const values = await documentValues(user, input);
+  return db.transaction(async (tx) => {
+    const [row] = await tx.insert(rfpDocuments).values(values).returning();
+    if (parts.length > 0)
+      await tx.insert(rfpIntakeParts).values(
+        parts.map((p, ordinal) => ({
+          documentId: row!.id,
+          ordinal,
+          kind: p.kind,
+          name: p.name,
+          media: p.media,
+          text: p.text,
+          bytes: p.bytes,
+        }))
+      );
+    return row!;
+  });
+}
+
+/** Every intake part of a document, in compose order. Empty for any
+ *  document that never needed vision or has finished transcribing. */
+export async function listIntakeParts(documentId: string): Promise<IntakePartRow[]> {
+  if (!isUuid(documentId)) return [];
+  return db
+    .select({
+      id: rfpIntakeParts.id,
+      ordinal: rfpIntakeParts.ordinal,
+      kind: rfpIntakeParts.kind,
+      name: rfpIntakeParts.name,
+      media: rfpIntakeParts.media,
+      text: rfpIntakeParts.text,
+      bytes: rfpIntakeParts.bytes,
+    })
+    .from(rfpIntakeParts)
+    .where(eq(rfpIntakeParts.documentId, documentId))
+    .orderBy(asc(rfpIntakeParts.ordinal));
+}
+
+/** True when the document still has a part waiting for transcription
+ *  (text NULL): its read failed or stopped in the transcription phase, so
+ *  no text exists yet and "Read it again" retries the transcription. One
+ *  indexed row probe; never loads the bytes. */
+export async function hasPendingIntakeParts(documentId: string): Promise<boolean> {
+  if (!isUuid(documentId)) return false;
+  const rows = await db
+    .select({ id: rfpIntakeParts.id })
+    .from(rfpIntakeParts)
+    .where(and(eq(rfpIntakeParts.documentId, documentId), isNull(rfpIntakeParts.text)))
+    .limit(1);
+  return rows.length > 0;
+}
+
+/** One part's transcription landed: keep the text, drop the bytes. */
+export async function saveIntakePartText(partId: string, text: string): Promise<void> {
+  await db
+    .update(rfpIntakeParts)
+    .set({ text, bytes: null })
+    .where(eq(rfpIntakeParts.id, partId));
+}
+
+/**
+ * Transcription succeeded: the composed, screened text becomes raw_text
+ * (stamping updated_at, which restarts the staleness clock for the read
+ * phase) and the parts are deleted, in one transaction.
+ */
+export async function completeIntakeTranscription(
+  documentId: string,
+  rawText: string,
+  injectionFlagged: boolean
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(rfpDocuments)
+      .set({ rawText, injectionFlagged, updatedAt: new Date() })
+      .where(eq(rfpDocuments.id, documentId));
+    await tx.delete(rfpIntakeParts).where(eq(rfpIntakeParts.documentId, documentId));
+  });
+}
+
+/** The one insert shape both create paths share. */
+async function documentValues(user: RfpUser, input: CreateDocumentInput) {
+  return {
+    ownerUserId: await ownerUserIdFor(user.email),
+    ownerEmail: user.email.toLowerCase(),
+    title: input.title.slice(0, 300),
+    clientName: input.clientName?.slice(0, 200) ?? null,
+    sourceKind: input.sourceKind,
+    sourceName: input.sourceName?.slice(0, 300) ?? null,
+    sourceSha256: input.sourceSha256,
+    sourceBytes: input.sourceBytes,
+    rawText: input.rawText,
+    injectionFlagged: input.injectionFlagged,
+    // "reading" until the background readRfp finishes; the after() worker
+    // stamps "extracted" (or "read_failed"). Inserting "extracted" here
+    // used to make the ingest poll's status check meaningless, which is
+    // why it once needed a fragile requirements>0 side-channel.
+    status: "reading",
+  };
 }
 
 /**
@@ -370,6 +475,11 @@ export async function createDocument(
  * live reader could be, and an "extracted" row with no section structure
  * (a read that found nothing to draft, §5.17.17). Null when the row is in
  * none of those states or does not exist; the caller reports which.
+ *
+ * A document whose vision transcription failed (§5.17.18) is "read_failed"
+ * with raw_text "" and its rfp_intake_parts rows kept; the claim needs no
+ * branch of its own, because runDocumentRead sees the empty text, loads the
+ * parts itself and transcribes again before reading.
  */
 export async function claimReread(
   docId: string

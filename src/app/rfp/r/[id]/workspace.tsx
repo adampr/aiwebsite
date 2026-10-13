@@ -425,6 +425,7 @@ export function Workspace({
   genError,
   autoDraft,
   docStatus,
+  transcribePending,
   intakeForm,
   contactName,
   contactTitle,
@@ -459,6 +460,9 @@ export function Workspace({
   genError: string | null;
   autoDraft: boolean;
   docStatus: string;
+  /** The read failed or stopped in the transcription phase (§5.17.18): the
+   *  attached files are kept but no text exists yet. */
+  transcribePending: boolean;
   /** "brief" = the intake had no section structure of its own and drafts
    *  into the standard outline (§5.17.17); "rfp" otherwise. */
   intakeForm: string;
@@ -4260,7 +4264,7 @@ export function Workspace({
                     <input
                       type="file"
                       className="sr-only"
-                      accept=".pdf,.docx,.txt,.md,.csv,.log,.json"
+                      accept=".pdf,.docx,.txt,.md,.csv,.log,.json,.png,.jpg,.jpeg,.gif,.webp"
                       onChange={(e) =>
                         setTronFile(e.target.files?.[0] ?? null)
                       }
@@ -4282,11 +4286,12 @@ export function Workspace({
                 <p className="mt-2 text-xs text-faint">
                   Tron can reword, tighten, reorder, rename section headers,
                   remove whole sections, and work from an attached PDF,
-                  Word, or text file as you direct. The whole document is
-                  the default scope: Tron plans the change first, then
-                  proposes a revision for each affected section. It will not
-                  add a price, a contract length, or a claim the knowledge
-                  base does not support. Images cannot be read yet.
+                  Word, text file or image (PNG, JPEG, GIF, WebP) as you
+                  direct; scans and images are transcribed first. The whole
+                  document is the default scope: Tron plans the change first,
+                  then proposes a revision for each affected section. It will
+                  not add a price, a contract length, or a claim the
+                  knowledge base does not support.
                 </p>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
@@ -4698,6 +4703,7 @@ export function Workspace({
             <ReadAgain
               documentId={documentId}
               initialStatus={docStatus}
+              initialTranscribePending={transcribePending}
               requirementCount={requirements.length}
             />
           ) : (
