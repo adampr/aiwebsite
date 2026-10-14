@@ -2627,19 +2627,25 @@ ok("migration 0058 creates the two OAuth binding tables and nothing else, chaine
   assert.ok(!/[—–]/.test(mig), "no em or en dashes");
   const statements = mig.match(/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/gim) ?? [];
   assert.equal(statements.length, 3, "two tables and one index");
-  // Journaled as the tail, above 0057, with an honest snapshot chain: a file
+  // Journaled directly above 0057, with an honest snapshot chain: a file
   // numbered below a committed migration is skipped silently on a database
   // that already ran the higher one, and the site then REFUSES TO BOOT
   // because both tables are required whenever google or microsoft is on.
+  // (Pinned by position relative to 0057, not as the journal tail: the tail
+  // pin broke the moment 0059 landed, which is exactly the brittleness this
+  // comment warns about.)
   const journal = JSON.parse(readFileSync("drizzle/migrations/meta/_journal.json", "utf8"));
-  const tail = journal.entries[journal.entries.length - 1];
-  assert.equal(tail.tag, "0058_oauth_identities");
-  assert.equal(tail.idx, 58);
-  assert.equal(tail.version, "7");
-  assert.equal(tail.breakpoints, true);
-  const prev = journal.entries[journal.entries.length - 2];
+  const at = journal.entries.findIndex(
+    (e: { tag: string }) => e.tag === "0058_oauth_identities"
+  );
+  assert.ok(at > 0, "0058 is journaled");
+  const entry = journal.entries[at];
+  assert.equal(entry.idx, 58);
+  assert.equal(entry.version, "7");
+  assert.equal(entry.breakpoints, true);
+  const prev = journal.entries[at - 1];
   assert.equal(prev.tag, "0057_work_quality");
-  assert.ok(tail.when > prev.when, "0058 is newer than 0057 in the ledger order");
+  assert.ok(entry.when > prev.when, "0058 is newer than 0057 in the ledger order");
   const snap = JSON.parse(readFileSync("drizzle/migrations/meta/0058_snapshot.json", "utf8"));
   const snap57 = JSON.parse(readFileSync("drizzle/migrations/meta/0057_snapshot.json", "utf8"));
   assert.equal(snap.prevId, snap57.id, "0058 chains off 0057");

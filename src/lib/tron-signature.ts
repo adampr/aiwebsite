@@ -1,8 +1,10 @@
 // Host mirror of the module's outbound email signature block,
-// signatureBlock() in packages/aicompany/src/channels/email-inbound.ts
-// (module §5.3; disclosure line per §1, memory line per §18). The module
-// does not export it and the submodule is never modified, so the host
-// rebuilds it from the SAME siteConfig fields. KEEP IN SYNC with the module
+// signatureBlock() in packages/aicompany/src/channels/signature.ts (it
+// moved there from email-inbound.ts in the module's v1.140.0 refactor,
+// output byte-identical for a host with a displayable SMS number, which
+// this host is; module §5.3; disclosure line per §1, memory line per §18).
+// The submodule is never modified, so the host rebuilds the block from the
+// SAME siteConfig fields. KEEP IN SYNC with the module
 // function on every @aicompany/core upgrade; scripts/work-tests.ts pins
 // both this mirror's exact output AND a hash of the module function's
 // source, so drift on either side fails the suite.

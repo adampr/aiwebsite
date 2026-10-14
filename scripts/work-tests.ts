@@ -2779,8 +2779,12 @@ async function main() {
   //    on an @aicompany/core upgrade, this hash fails and the mirror must be
   //    re-synced (then re-pin the hash).
   {
+    // v1.140.0 moved the function from email-inbound.ts to signature.ts
+    // (and exported it), output byte-identical for a host with a
+    // displayable SMS number; the runtime-parity check above is the proof
+    // this host's mirror still matches.
     const modSrc = readFileSync(
-      "packages/aicompany/src/channels/email-inbound.ts",
+      "packages/aicompany/src/channels/signature.ts",
       "utf8"
     );
     const start = modSrc.indexOf("function signatureBlock");
@@ -2788,7 +2792,7 @@ async function main() {
     assert.ok(start > 0, "module signatureBlock found");
     assert.equal(
       mkHash("sha256").update(modSrc.slice(start, end)).digest("hex"),
-      "22f72dfc25ff33a3fcadb582a7424b911193fc9a941377a5e0ccb5879fecdcf4",
+      "7ca86328dd4535987331018c52d18d435656b9d044a2b6050338a027da3c34ce",
       "module signatureBlock changed: re-sync src/lib/tron-signature.ts, then re-pin this hash"
     );
   }
