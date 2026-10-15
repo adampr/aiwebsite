@@ -75,12 +75,16 @@ export function finishDraftVisuals(
   rawVisuals: unknown,
   paragraphs: string[],
   facts: GroundFact[],
-  sectionCites: string[]
+  sectionCites: string[],
+  // Round 32: a brief document's text, which a timeline step KICKER may also ground against
+  // (parseModelVisuals kickerCorpus). Absent for a structured RFP: behaviour unchanged.
+  opts?: { kickerCorpus?: string }
 ): { paragraphs: string[]; blocks: DraftBlock[]; stats: VisualStats } {
   const v = parseModelVisuals(rawVisuals, {
     facts,
     paragraphCount: paragraphs.length,
     sectionCites,
+    ...(opts?.kickerCorpus ? { kickerCorpus: opts.kickerCorpus } : {}),
   });
   const next = [...paragraphs, ...v.degraded].slice(0, PARAGRAPH_CAP);
   return {

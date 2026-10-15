@@ -47,6 +47,7 @@ const useIsoLayoutEffect =
 import { When } from "@/components/when";
 import { LocalTime } from "@/components/local-time";
 import {
+  letterPricingParagraph,
   minimumSentence,
   parseInputsSource,
   parseQuoteInputs,
@@ -69,6 +70,17 @@ import {
   LETTER_TITLE,
 } from "@/lib/rfp/letter";
 import { COMPANY_SIGNATURE, type PersonSignature } from "@/lib/rfp/signature";
+import {
+  closingHeadline,
+  coverLede,
+  coverLedeParts,
+  coverTitle,
+  letterAddresseeLines,
+  pageFootLeft,
+  pricingParagraphIndex,
+  recipientAddressLines,
+  submittedByLine,
+} from "@/lib/rfp/furniture";
 import type { PricingQuote, Violation } from "@/lib/rfp/content-model";
 import type { GateResult } from "@/lib/rfp/validators/gate";
 // Pure and client-safe by contract (no lookbehinds, no server imports):
@@ -124,6 +136,9 @@ type Section = {
   /** Visual blocks as STORED (§5.17): always read through
    *  sanitizeStoredBlocks before rendering, never trusted as typed. */
   blocks?: DraftBlock[];
+  /** The letter record only: its one-line argument, printed as the closing
+   *  sheet's big line through furniture.ts closingHeadline (§5.17.20). */
+  thesis?: string;
 };
 
 /** The server-built visuals a person can add to a section by hand: the
@@ -213,14 +228,6 @@ const EMPTY_INPUTS: QuoteInputs = {
   vulnScanSessionsPerYear: null,
   includeOnboarding: null,
 };
-
-/** The cover title the export prints (resolve-draft.ts `cover.title`). The
- *  sheet must show what downloads (owner ruling, round 11), and the stored
- *  document title is often an upload's filename. */
-const COVER_TITLE = "Response to Request for Proposal";
-/** A brief's cover title (§5.17.17), the same string resolve-draft.ts prints. */
-const briefCoverTitle = (client: string | null): string =>
-  client ? `Proposal for ${client}` : "Proposal";
 
 /**
  * Everything the user-count question and its provenance row say about staff:
@@ -430,6 +437,8 @@ export function Workspace({
   intakeForm,
   contactName,
   contactTitle,
+  clientAddress,
+  proposalHeadline,
   archived,
   clientName,
   coverClientName,
@@ -471,6 +480,11 @@ export function Workspace({
    *  read; null = the evaluation team, as before. */
   contactName: string | null;
   contactTitle: string | null;
+  /** The addressee's stored postal block ("\n"-joined, grounded and
+   *  sanitized at the read, §5.17.20); null = none. */
+  clientAddress: string | null;
+  /** A brief's stored narrative cover headline (§5.17.20); null = none. */
+  proposalHeadline: string | null;
   archived: boolean;
   clientName: string | null;
   /** Who the export's cover names: the client, else the proposal title. */
@@ -915,11 +929,33 @@ export function Workspace({
   const letterSec = sections.find((s) => s.label === LETTER_LABEL) ?? null;
   const contactNameTrim = contactName?.trim() || null;
   const contactTitleTrim = contactTitle?.trim() || null;
-  const letterContact = contactNameTrim
-    ? contactTitleTrim
-      ? `${contactNameTrim}, ${contactTitleTrim}`
-      : contactNameTrim
-    : null;
+  // The letterhead's recipient lines (furniture.ts letterAddresseeLines,
+  // the same lines resolve-draft hands both files): line 0 bold (the
+  // contact's name, else the client), a title and the client beneath a name
+  // regular (§5.17.20).
+  const letterAddressee = letterAddresseeLines({
+    contactName: contactNameTrim,
+    contactTitle: contactTitleTrim,
+    clientName,
+  });
+  // Round-32 furniture (§5.17.20): the strings resolve-draft hands both
+  // emitters, built from the same stored fields by the same furniture.ts
+  // and quote.ts rules, so the sheet shows what downloads.
+  const coverTitleText = coverTitle({
+    intakeForm,
+    who: coverClientName,
+    proposalHeadline: intakeForm === "brief" ? proposalHeadline : null,
+  });
+  const coverLedeSplit = coverLedeParts(
+    coverClientName ?? "",
+    coverLede({ intakeForm, who: coverClientName, contactName, contactTitle })
+  );
+  const letterAddress = recipientAddressLines(clientAddress, [
+    contactName,
+    contactTitle,
+    clientName,
+  ]);
+  const letterPricing = letterPricingParagraph(pricing, minimumUsers);
   const draftedCount = sections.filter(
     (s) => s.label !== LETTER_LABEL
   ).length;
@@ -4889,34 +4925,27 @@ export function Workspace({
                     {/* The export's cover title and client, not the stored
                         document title: that is often an upload's filename,
                         and the file never printed it. */}
-                    <h3 className="rfpdoc-title mt-5">
-                      {intakeForm === "brief"
-                        ? briefCoverTitle(coverClientName)
-                        : COVER_TITLE}
-                    </h3>
+                    <h3 className="rfpdoc-title mt-5">{coverTitleText}</h3>
                     <div className="rfpdoc-bar mt-7" />
-                    {intakeForm === "brief" ? (
-                      <p className="rfpdoc-lede mt-6">
-                        Prepared by XL.net for your review.
-                      </p>
-                    ) : (
-                      <p className="rfpdoc-lede mt-6">
-                        Prepared
-                        {coverClientName ? (
-                          <>
-                            {" "}for <strong>{coverClientName}</strong>
-                          </>
-                        ) : null}{" "}
-                        in response to the Request for Proposal.
-                      </p>
-                    )}
+                    {/* furniture.ts coverLedeParts, the split both files
+                        set: the client semibold, an Attention clause when
+                        a contact is stored (§5.17.20). */}
+                    <p className="rfpdoc-lede mt-6">
+                      {coverLedeSplit.before}
+                      {coverLedeSplit.strong && (
+                        <strong>{coverLedeSplit.strong}</strong>
+                      )}
+                      {coverLedeSplit.after}
+                    </p>
                   </div>
                   <div className="rfpdoc-meta">
                     <div>
                       <div className="rfpdoc-metalabel">Submitted by</div>
                       XL.net Inc.
                       <br />
-                      {preparedBy}
+                      {/* With the role the letter's signature prints, as
+                          both files set it (furniture.ts submittedByLine). */}
+                      {submittedByLine(preparedBy, signature.title)}
                     </div>
                     <div>
                       <div className="rfpdoc-metalabel">Contact</div>
@@ -4936,7 +4965,7 @@ export function Workspace({
                     </div>
                   </div>
                 </div>
-                <PageFoot />
+                <PageFoot who={coverClientName} />
               </header>
 
               {/* Page 2 — the cover letter. Its body DRAFTS, under the
@@ -5093,22 +5122,20 @@ export function Workspace({
                     {/* A grounded contact goes above the client, alone when
                         no client is named, as the file prints it
                         (resolve-draft.ts addressee). */}
-                    {letterContact && (
-                      <p className="rfpdoc-letter-name mt-5">
-                        {letterContact}
-                      </p>
+                    {letterAddressee.map((line, i) =>
+                      i === 0 ? (
+                        <p className="rfpdoc-letter-name mt-5" key={i}>
+                          {line}
+                        </p>
+                      ) : (
+                        <p key={i}>{line}</p>
+                      )
                     )}
-                    {(!letterContact || clientName?.trim()) && (
-                      <p
-                        className={
-                          letterContact
-                            ? "rfpdoc-letter-name"
-                            : "rfpdoc-letter-name mt-5"
-                        }
-                      >
-                        {clientName?.trim() || "the client"}
-                      </p>
-                    )}
+                    {/* The stored postal lines, regular face, as both files
+                        set them (resolve-draft letter.address, §5.17.20). */}
+                    {letterAddress.map((line, i) => (
+                      <p key={i}>{line}</p>
+                    ))}
                     {/* The addressee line above already names the client;
                         restating it read "Dear The Children's..." */}
                     <p className="mt-6">
@@ -5149,14 +5176,40 @@ export function Workspace({
                       // .length, not ??: a cleared edit stores [] and the
                       // EXPORT falls back to the default body, so the
                       // preview must too or screen and file diverge.
-                      (letterSec?.paragraphs.length
-                        ? letterSec.paragraphs
-                        : defaultLetterBody(intakeForm)
-                      ).map((p, i) => (
-                        <p className="mt-4" key={i}>
-                          {p}
-                        </p>
-                      ))
+                      // The SYSTEM pricing paragraph (quote.ts
+                      // letterPricingParagraph, §5.17.20) is composed from
+                      // the stored quote the Investment sheet prints, set
+                      // like a drafted paragraph, never stored and never in
+                      // the Edit box, absent until pricing is ready. It sits
+                      // where both files put it (furniture.ts
+                      // pricingParagraphIndex): before the last drafted
+                      // paragraph when there are two or more.
+                      (() => {
+                        const body = letterSec?.paragraphs.length
+                          ? letterSec.paragraphs
+                          : defaultLetterBody(intakeForm);
+                        const at = pricingParagraphIndex(body.length);
+                        return (
+                          <>
+                            {body.map((p, i) => (
+                              <Fragment key={i}>
+                                {letterPricing && i === at && (
+                                  <p className="mt-4">{letterPricing}</p>
+                                )}
+                                <p className="mt-4">{p}</p>
+                              </Fragment>
+                            ))}
+                            {letterPricing && at >= body.length && (
+                              <p className="mt-4">{letterPricing}</p>
+                            )}
+                          </>
+                        );
+                      })()
+                    )}
+                    {/* While the letter is in its Edit box the pricing
+                        paragraph shows under it: it is not editable text. */}
+                    {editing === LETTER_LABEL && letterSec && letterPricing && (
+                      <p className="mt-4">{letterPricing}</p>
                     )}
                     <p className="mt-6 rfpdoc-sig-person">Regards,</p>
                     <div className="rfpdoc-sig mt-5">
@@ -5220,7 +5273,7 @@ export function Workspace({
                     </div>
                   </div>
                 </div>
-                <PageFoot />
+                <PageFoot who={coverClientName} />
               </section>
 
               {/* Part divider — the reference's numbered break page (ghost
@@ -5609,7 +5662,7 @@ export function Workspace({
                       </div>
                     )}
                   </div>
-                  <PageFoot />
+                  <PageFoot who={coverClientName} />
                   </section>
                 );
               })}
@@ -5840,7 +5893,7 @@ export function Workspace({
                     </details>
                 </div>
               )}
-              <PageFoot />
+              <PageFoot who={coverClientName} />
               </section>
 
               {/* Last page — the closing sheet: solid navy, white wordmark,
@@ -5856,9 +5909,10 @@ export function Workspace({
                     alt="XL.net"
                   />
                   <div>
+                    {/* The letter's stored thesis, else the flat-fee line
+                        (furniture.ts closingHeadline, §5.17.20). */}
                     <div className="rfpdoc-headline">
-                      Because our fee is flat, our incentive is to prevent
-                      issues, not to bill for them.
+                      {closingHeadline(letterSec?.thesis)}
                     </div>
                     <div className="rfpdoc-bar rfpdoc-bar--blue mt-7" />
                     <p className="rfpdoc-navy-lede mt-6">
@@ -5884,7 +5938,7 @@ export function Workspace({
                     </div>
                   </div>
                 </div>
-                <PageFoot />
+                <PageFoot who={coverClientName} />
               </footer>
             </div>
           )}
@@ -6153,8 +6207,12 @@ function DocBlock({ block }: { block: DraftBlock }) {
         </div>
       );
     case "cards":
+      // --rfpdoc-n: two or three across, as both files lay them (§5.17.20).
       return (
-        <div className="rfpdoc-cards">
+        <div
+          className="rfpdoc-cards"
+          style={{ "--rfpdoc-n": block.cards.length } as CSSProperties}
+        >
           {block.cards.map((c, i) => (
             <div className="rfpdoc-card" key={i}>
               <div className="rfpdoc-card-title">{c.title}</div>
@@ -6340,17 +6398,19 @@ function DividerSheet({
           <span />
         </div>
       </div>
-      <PageFoot />
+      <PageFoot who={clientName} />
     </section>
   );
 }
 
-/** The handoff's per-sheet footer: hairline rule, running title, mark. */
-function PageFoot() {
+/** The handoff's per-sheet footer: hairline rule, running title, mark. The
+ *  left slot is furniture.ts pageFootLeft, "for <who>" after the base, as
+ *  both files stamp it (§5.17.20). */
+function PageFoot({ who }: { who: string | null }) {
   return (
     <div className="rfpdoc-pagefoot">
       <div>
-        <span>XL.net · Managed IT Services Proposal</span>
+        <span>{pageFootLeft(who)}</span>
         <span>Confidential</span>
       </div>
     </div>

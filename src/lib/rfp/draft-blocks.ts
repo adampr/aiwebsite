@@ -2,7 +2,7 @@
  * Visual blocks on a drafted proposal section (ARCHITECTURE.md §5.17).
  *
  * A DraftSectionRecord is paragraphs plus, optionally, `blocks`: stat tiles, a fact grid, a badge
- * strip, a table, a callout, two-up cards, a timeline. Each block is anchored by `after` (how many
+ * strip, a table, a callout, two- or three-up cards, a timeline. Each block is anchored by `after` (how many
  * paragraphs precede it) and carries its own cites, so the C1 staleness join works per block.
  *
  * This module is the whole contract: the stored shape, the tolerant read, the ONE ordering
@@ -77,10 +77,15 @@ export const LIMITS = {
   tableCols: [2, 5],
   tableRows: [1, 14],
   cell: 220,
-  cards: [2, 2],
+  // Two-up or three-up (round 32: Phone / Email / Portal).
+  cards: [2, 3],
   calloutBody: 700,
   label: 60,
   tileValue: 16,
+  // A model `ledger` (stored as a fact-grid): label/value rows.
+  ledger: [2, 12],
+  // A model timeline step's kicker: a date or date range, or "Step N".
+  timelineKicker: 24,
 } as const;
 
 /** The drafter's paragraph cap (brain.ts slices every draft to this); degraded prose fits inside it. */
@@ -767,6 +772,109 @@ function parseCards(item: Record<string, unknown>, cites: string[], corpus: stri
 }
 
 /**
+ * A model `ledger`: label/value rows, stored as the content-model fact-grid (the body the About
+ * snapshot already uses, so every surface draws it). `rows` is the model's key; `pairs`, the
+ * stored shape a model may echo back from a revise prompt, is read the same way. Same discipline
+ * as cards: in range, within limits and citing something known is a block whose every number
+ * grounds; over a limit or citing nothing known degrades to "label: value" prose; anything else
+ * drops.
+ */
+function parseLedger(item: Record<string, unknown>, cites: string[], corpus: string): Parsed {
+  const raw = Array.isArray(item.rows) ? item.rows : item.pairs;
+  if (!Array.isArray(raw)) return { drop: "malformed" };
+  const pairs: { label: string; value: string }[] = [];
+  let withinLimits = true;
+  for (const r of raw.slice(0, 40)) {
+    if (!isObj(r)) return { drop: "malformed" };
+    const label = clean(r.label, TITLE_MAX);
+    const value = clean(r.value, DEGRADED_MAX);
+    if (!label || !value) return { drop: "malformed" };
+    if (label.length > LIMITS.label || value.length > FACT_VALUE_MAX) withinLimits = false;
+    pairs.push({ label, value });
+  }
+  if (pairs.length === 0) return { drop: "malformed" };
+  if (withinLimits && raw.length === pairs.length && inRange(pairs.length, LIMITS.ledger) && cites.length > 0) {
+    if (!pairs.every((p) => groundValue(`${p.label} ${p.value}`, corpus))) return { drop: "ungrounded" };
+    return { ok: { kind: "fact-grid", pairs }, cites };
+  }
+  return { degrade: pairs.map((p) => `${p.label}: ${p.value}`), cites };
+}
+
+/** "Step 3" written as the kicker of the third step: ordinal furniture, not a claim. */
+function isOwnStepNumber(kicker: string, position: number): boolean {
+  const m = /^step (\d{1,2})$/i.exec(kicker);
+  return m !== null && Number(m[1]) === position;
+}
+
+/**
+ * A kicker that IS a date or date range ("Dec 11, 2026", "Dec 11 - Jan 10", "By Nov 30, 2026"):
+ * the only kicker shape allowed to ground against a brief's own text (kickerCorpus). Anything
+ * else carrying a number ("Setup fee 1,200") must cite a fact, or a brief's rates would reach a
+ * visual through this slot.
+ */
+const DATE_KICKER =
+  /^(?:by |from |until )?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? \d{1,2}(?:, \d{4})?(?: ?(?:-|–|to) ?(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? )?\d{1,2}(?:, \d{4})?)?$/i;
+
+/**
+ * A model timeline: 2..6 steps {kicker?, title, body}, stored as the content-model timeline body,
+ * whose per-step `label` IS the kicker slot. Every number in a kicker, title or body grounds
+ * against the visual's cites, like a table cell. A kicker is used only when EVERY step carries a
+ * real one (a date or date range); otherwise every step reads "Step N", the label the system's
+ * onboarding timeline uses, so one timeline never mixes the two. A kicker that is just its own
+ * "Step N" is that furniture, not a figure, and is not grounded.
+ */
+function parseTimeline(
+  item: Record<string, unknown>,
+  cites: string[],
+  corpus: string,
+  kickerCorpus: string | null = null
+): Parsed {
+  if (!Array.isArray(item.steps)) return { drop: "malformed" };
+  const steps: { kicker: string; title: string; body: string }[] = [];
+  let withinLimits = true;
+  for (const s of item.steps.slice(0, 12)) {
+    if (!isObj(s)) return { drop: "malformed" };
+    const title = clean(s.title, TITLE_MAX);
+    const body = clean(s.body, DEGRADED_MAX);
+    const kicker = s.kicker == null || s.kicker === "" ? "" : clean(s.kicker, TITLE_MAX);
+    if (!title || !body || kicker === null) return { drop: "malformed" };
+    if (title.length > LIMITS.label || body.length > STEP_BODY_MAX || kicker.length > LIMITS.timelineKicker)
+      withinLimits = false;
+    steps.push({ kicker: isOwnStepNumber(kicker, steps.length + 1) ? "" : kicker, title, body });
+  }
+  if (steps.length === 0) return { drop: "malformed" };
+  if (
+    withinLimits &&
+    item.steps.length === steps.length &&
+    inRange(steps.length, TIMELINE_STEPS) &&
+    cites.length > 0
+  ) {
+    // A brief document's kickers may also ground against the brief (kickerCorpus): "Dec 11, 2026"
+    // as the brief dates the onboarding day. ONLY a date-shaped kicker earns that wider corpus;
+    // any other number in a kicker ("Setup fee 1,200") still needs a cited fact, or a brief's
+    // own rates would ride into a visual through this slot. Titles and bodies always ground
+    // against the cites only.
+    const kickerGround = (k: string) =>
+      kickerCorpus && DATE_KICKER.test(k) ? `${corpus} \n ${kickerCorpus}` : corpus;
+    const grounded = (s: (typeof steps)[number]) =>
+      groundValue(s.kicker, kickerGround(s.kicker)) && groundValue(`${s.title} ${s.body}`, corpus);
+    if (!steps.every(grounded)) return { drop: "ungrounded" };
+    const dated = steps.every((s) => s.kicker !== "");
+    return {
+      ok: {
+        kind: "timeline",
+        steps: steps.map((s, i) => ({ label: dated ? s.kicker : `Step ${i + 1}`, title: s.title, body: s.body })),
+      },
+      cites,
+    };
+  }
+  return {
+    degrade: steps.map((s) => `${s.kicker ? `${s.kicker} · ` : ""}${s.title}: ${s.body}`),
+    cites,
+  };
+}
+
+/**
  * Validate the drafter's `visuals` array. Never throws and never fails a section: a visual that is
  * shape-valid and grounded becomes a block; one that is malformed (or cites nothing known) but
  * whose text is grounded becomes prose for the caller to append; everything else is dropped with a
@@ -779,7 +887,14 @@ function parseCards(item: Record<string, unknown>, cites: string[], corpus: stri
  */
 export function parseModelVisuals(
   raw: unknown,
-  ctx: { facts: GroundFact[]; paragraphCount: number; sectionCites: string[] }
+  ctx: {
+    facts: GroundFact[];
+    paragraphCount: number;
+    sectionCites: string[];
+    /** A brief document's text (round 32): a timeline STEP KICKER's numbers may ground against it
+     *  as well as the cited facts. Titles, bodies and every other kind ignore it. */
+    kickerCorpus?: string;
+  }
 ): { blocks: DraftBlock[]; degraded: string[]; dropped: Dropped[]; tooWide: number } {
   const blocks: DraftBlock[] = [];
   let tooWide = 0;
@@ -791,12 +906,19 @@ export function parseModelVisuals(
   const byId = new Map(facts.map((f) => [f.id, f]));
   const paragraphCount = Number.isFinite(ctx?.paragraphCount) ? Math.max(0, Math.floor(ctx.paragraphCount)) : 0;
   const sectionCites = Array.isArray(ctx?.sectionCites) ? ctx.sectionCites : [];
+  // A `pricing.*` fact grounds NO model visual (round 32, every kind): its numbers are money with
+  // the sign left off, so "Fully managed user: 247 monthly" citing the rate fact would pass the
+  // currency veto and ground. It stays citable (as a [negative] fact does); it just grounds nothing.
   const textOf = (ids: string[]) =>
     ids
       .map((id) => byId.get(id))
-      .filter((f): f is GroundFact => !!f)
+      .filter((f): f is GroundFact => !!f && !isPricingFact(f))
       .map(factText)
       .join(" \n ");
+  // Stat tiles name their own fact: the same exclusion, as a map without the pricing facts.
+  const tileById = new Map([...byId].filter(([, f]) => !isPricingFact(f)));
+  const kickerCorpus =
+    typeof ctx?.kickerCorpus === "string" && ctx.kickerCorpus.trim() ? ctx.kickerCorpus : null;
   // The table salvage (parseTable): the section's own cites that resolve, pricing facts out, and
   // the corpus of the affirmative ones (none left: no salvage). Built once; used only by a table
   // that cited nothing known.
@@ -817,9 +939,18 @@ export function parseModelVisuals(
       }
       kind = typeof item.kind === "string" ? item.kind.slice(0, 40) : "unknown";
       if (kind === "stat-tiles") kind = "stats";
-      // A closed allowlist, not DRAFT_BLOCK_KINDS: the system kinds (fact-grid, badge-strip,
-      // timeline) and `references` (a person's contacts) are never accepted from the model.
-      if (kind !== "stats" && kind !== "table" && kind !== "callout" && kind !== "cards") {
+      // A closed allowlist, not DRAFT_BLOCK_KINDS. Round 32 admits `timeline` and `ledger` (the
+      // model's name for a label/value fact-grid), each grounded against its own cites. Still never
+      // accepted from the model: `fact-grid` and `badge-strip` by those names (the company
+      // snapshot is built by the server from facts) and `references` (a person's contacts).
+      if (
+        kind !== "stats" &&
+        kind !== "table" &&
+        kind !== "callout" &&
+        kind !== "cards" &&
+        kind !== "timeline" &&
+        kind !== "ledger"
+      ) {
         dropped.push({ kind, reason: "unknown-kind" });
         continue;
       }
@@ -835,12 +966,16 @@ export function parseModelVisuals(
       const corpus = textOf(cites.filter((id) => byId.get(id)?.polarity !== "negative"));
       const parsed: Parsed =
         kind === "stats"
-          ? parseStats(item, byId)
+          ? parseStats(item, tileById)
           : kind === "table"
             ? parseTable(item, cites, corpus, cites.length === 0 ? salvage : null)
             : kind === "callout"
               ? parseCallout(item, cites, corpus)
-              : parseCards(item, cites, corpus);
+              : kind === "cards"
+                ? parseCards(item, cites, corpus)
+                : kind === "timeline"
+                  ? parseTimeline(item, cites, corpus, kickerCorpus)
+                  : parseLedger(item, cites, corpus);
 
       if ("tooWide" in parsed) tooWide += parsed.tooWide ?? 0;
       if ("drop" in parsed) {

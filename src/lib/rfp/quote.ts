@@ -275,6 +275,138 @@ export function quantityLabel(
   return billedAsBlock ? `Up to ${minimumUsers}` : String(line.quantity);
 }
 
+/* ------------------------------------------------------------------------ */
+/* The cover letter's system pricing paragraph (§5.17.20)                   */
+/* ------------------------------------------------------------------------ */
+
+// The engine's own note templates below (buildQuote), read back for their
+// COMPUTED one-time figures. Same file, same author: test:rfpquote pins that
+// every note buildQuote can write parses here, so a template edit that broke
+// the read would fail the suite, not silently drop a fee from the letter.
+const MONEY_RE = String.raw`\$(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{2}))?`;
+const ONBOARDING_ONE_RE = new RegExp(`^Onboarding is a one-time fee of ${MONEY_RE},`);
+const ONBOARDING_EACH_RE = new RegExp(`${MONEY_RE} under "([^"]*)"`, "g");
+const DATTO_SETUP_RE = new RegExp(`^Datto SaaS Protection carries a one-time setup fee of ${MONEY_RE}\\.`);
+const VULN_SCAN_RE = /^Vulnerability scanning and review: /;
+
+const centsOf = (dollars: string, cents: string | undefined): number =>
+  Number(dollars.replace(/,/g, "")) * 100 + (cents ? Number(cents) : 0);
+
+/** The letter is prose: a whole-dollar figure prints without ".00" ("$247",
+ *  "$14,820"), cents only when there are some ("$3.20"). Exactly the same
+ *  amounts the Investment sheet prints with cents:"always" (round 11), so
+ *  rule B1 reads the same money either way. */
+const fmt = (cents: number): string => formatMoney(usd(cents), { cents: "auto" });
+
+const lowerFirst = (s: string): string =>
+  /^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s;
+
+/** "A, B and C"; "A; B; and C" when any item has a comma of its own (a
+ *  label like "Datto SaaS Protection, one-year retention"), so a reader can
+ *  still count the items. */
+const andList = (xs: string[]): string => {
+  if (xs.length <= 1) return xs[0] ?? "";
+  const head = xs.slice(0, -1);
+  const last = xs[xs.length - 1];
+  return xs.some((x) => x.includes(","))
+    ? `${head.join("; ")}; and ${last}`
+    : `${head.join(", ")} and ${last}`;
+};
+
+/** "60 fully managed users at $247 per user per month", or the block
+ *  reading at the minimum ("up to 15 fully managed users at the monthly
+ *  minimum"), decided by quantityLabel exactly as the Investment table's
+ *  quantity cell is. */
+function managedLead(
+  line: PricingLine,
+  ill: PricingIllustration,
+  minimumUsers: number | null
+): string {
+  const label = minimumUsers !== null ? quantityLabel(line, ill, minimumUsers) : String(line.quantity);
+  if (label.startsWith("Up to "))
+    return `up to ${label.slice(6)} fully managed users at the monthly minimum`;
+  return `${managedUsers(line.quantity)} at ${fmt(line.unitPrice.cents)} per user per month`;
+}
+
+/**
+ * The ONE paragraph of pricing the cover letter carries, composed by the
+ * system from the stored quote, never by the model (rule 3: the letter turn
+ * never writes a price, rate or term). Every figure in it is a figure the
+ * Investment sheet prints from the same PricingQuote: a line's unit price,
+ * an illustration's monthly total, a line total at the minimum, and the
+ * one-time fees the engine's own notes state, whole dollars without ".00"
+ * (prose; the Investment table keeps cents:"always"). It
+ * names an included (zero-priced) line as included, and states NO contract
+ * term: the quote carries none, and a term is never inferred.
+ *
+ * Null when there is nothing to state (no quote, no illustration): the
+ * letter then reads exactly as before. Pure and client-safe; the workspace
+ * calls it with the same stored quote and minimum it renders the Investment
+ * sheet from, resolve-draft with the quote and rate card the export uses.
+ */
+export function letterPricingParagraph(
+  quote: PricingQuote | null,
+  minimumUsers: number | null
+): string | null {
+  if (!quote || quote.illustrations.length === 0) return null;
+  const parts: string[] = [];
+  const isManaged = (l: PricingLine) => l.rateCardItemCode === FULLY_MANAGED_USER_CODE;
+
+  if (quote.illustrations.length === 1) {
+    const ill = quote.illustrations[0];
+    const managed = ill.lines.find(isManaged) ?? null;
+    const paid = ill.lines.filter((l) => !isManaged(l) && l.lineTotal.cents > 0);
+    const included = ill.lines.filter((l) => !isManaged(l) && l.lineTotal.cents === 0 && l.quantity > 0);
+    const total = fmt(ill.monthlyTotal.cents);
+    if (managed) {
+      parts.push(`The pricing is straightforward: ${managedLead(managed, ill, minimumUsers)}, ${total} per month in total.`);
+      if (paid.length)
+        parts.push(`That total also covers ${andList(paid.map((l) => l.label))}, each itemized on the Investment page.`);
+    } else {
+      parts.push(
+        paid.length
+          ? `The pricing is straightforward: ${total} per month in total, covering ${andList(paid.map((l) => l.label))}, each itemized on the Investment page.`
+          : `The pricing is straightforward: ${total} per month in total.`
+      );
+    }
+    for (const l of included) parts.push(`${l.label} is included in the monthly fee.`);
+  } else {
+    // Rule B4's two views: the letter states both and anchors on neither.
+    const views = quote.illustrations.map(
+      (ill) => `${lowerFirst(ill.label)}, ${fmt(ill.monthlyTotal.cents)} per month`
+    );
+    parts.push(
+      `The Investment page prices this ${quote.illustrations.length === 2 ? "two" : "several"} ways, because the real split of users is a discovery task: ${views.join("; or ")}.`
+    );
+    const unit = quote.illustrations.flatMap((ill) => ill.lines.filter(isManaged))[0]?.unitPrice
+      .cents;
+    if (unit) parts.push(`Each fully managed user is ${fmt(unit)} per user per month in XL.net fees.`);
+  }
+
+  for (const note of quote.notes) {
+    const one = ONBOARDING_ONE_RE.exec(note);
+    if (one) {
+      parts.push(`Onboarding is a one-time fee of ${fmt(centsOf(one[1], one[2]))}.`);
+      continue;
+    }
+    if (note.startsWith("Onboarding is a one-time fee equal to")) {
+      const each = [...note.matchAll(ONBOARDING_EACH_RE)].map(
+        (m) => `${fmt(centsOf(m[1], m[2]))} under "${m[3]}"`
+      );
+      if (each.length) parts.push(`Onboarding is a one-time fee: ${andList(each)}.`);
+      continue;
+    }
+    const datto = DATTO_SETUP_RE.exec(note);
+    if (datto) {
+      parts.push(`Datto SaaS Protection setup is a one-time fee of ${fmt(centsOf(datto[1], datto[2]))}.`);
+      continue;
+    }
+    if (VULN_SCAN_RE.test(note))
+      parts.push("Vulnerability scanning and review is billed per session, as the Investment page sets out.");
+  }
+  return parts.join(" ");
+}
+
 export type BuiltQuote = {
   quote: PricingQuote;
   /** True when the quote is renderable (has at least one illustration). */

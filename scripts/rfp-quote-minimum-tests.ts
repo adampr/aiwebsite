@@ -9,6 +9,9 @@
  * the real ones so rule B5's recompute is untouched. Pinned in both
  * directions: the new wording at or under the minimum, and byte-identical
  * old wording above it.
+ *
+ * Round 32 (§5.17.20): the cover letter's system pricing paragraph
+ * (letterPricingParagraph) is pinned here too, beside the engine it reads.
  */
 
 import {
@@ -21,6 +24,7 @@ import {
 import { RATE_CARD } from "../src/lib/rfp/seed/rate-card";
 import {
   buildQuote,
+  letterPricingParagraph,
   quantityLabel,
   EMPTY_QUOTE_INPUTS,
   type QuoteInputs,
@@ -279,6 +283,133 @@ for (const n of [1, 8, 10, 14, 15]) {
     `${n}: no pro-rated figure and no em dash anywhere`,
     all.some((s) => s.includes("—") || proRated.some((p) => s.includes(p))),
     false
+  );
+}
+
+// ---- the cover letter's system pricing paragraph (§5.17.20) -------------------
+// Composed ONLY from the stored quote, every figure one the Investment sheet
+// prints, no term sentence (the quote carries none). The paragraph is prose:
+// whole dollars print without ".00" (the Investment table keeps cents), and a
+// list whose items carry commas joins with semicolons (F6, round 32 fixes).
+
+const para = (q: ReturnType<typeof build>["quote"] | null, min: number | null = RATE_CARD.minimumFullyManagedUsers) =>
+  letterPricingParagraph(q, min);
+
+check("paragraph: no quote, no paragraph", para(null), null);
+check(
+  "paragraph: no illustration, no paragraph",
+  para({ ...build({ fullyManagedUsers: 60 }).quote, illustrations: [] }),
+  null
+);
+check(
+  "paragraph: the reference's 60 users with onboarding",
+  para(build({ fullyManagedUsers: 60 }).quote),
+  "The pricing is straightforward: 60 fully managed users at $247 per user per month, $14,820 per month in total. Onboarding is a one-time fee of $14,820."
+);
+check(
+  "paragraph: under the minimum reads as the block, never a pro-rated figure",
+  para(build({ fullyManagedUsers: 10 }).quote),
+  "The pricing is straightforward: up to 15 fully managed users at the monthly minimum, $3,705 per month in total. Onboarding is a one-time fee of $3,705."
+);
+check(
+  "paragraph: AT the minimum reads as the block too (the quantity cell's rule)",
+  para(build({ fullyManagedUsers: 15, includeOnboarding: false }).quote),
+  "The pricing is straightforward: up to 15 fully managed users at the monthly minimum, $3,705 per month in total."
+);
+check(
+  "paragraph: no rate card in force prints the count (the workspace with minimumUsers null)",
+  para(build({ fullyManagedUsers: 15, includeOnboarding: false }).quote, null),
+  "The pricing is straightforward: 15 fully managed users at $247 per user per month, $3,705 per month in total."
+);
+check(
+  "paragraph: other paid lines are named (semicolons: a label carries a comma), one-time fees from the engine's notes, scanning by reference",
+  para(
+    build({
+      fullyManagedUsers: 40,
+      securePlusComputers: 40,
+      dattoRetention: "1yr",
+      vulnScanSessionsPerYear: 2,
+    }).quote
+  ),
+  "The pricing is straightforward: 40 fully managed users at $247 per user per month, $11,008 per month in total. That total also covers XL Secure+; and Datto SaaS Protection, 1-year retention, each itemized on the Investment page. Onboarding is a one-time fee of $9,880. Datto SaaS Protection setup is a one-time fee of $1,200. Vulnerability scanning and review is billed per session, as the Investment page sets out."
+);
+check(
+  "paragraph: rule B4's two views are both stated, neither anchored",
+  para(build({ fullyManagedUsers: 20, statesHeadcountOnly: true, m365OnlyUsers: 5 }).quote),
+  'The Investment page prices this two ways, because the real split of users is a discovery task: all supported users fully managed, $4,940 per month; or estimated split, to be confirmed in discovery, $3,955 per month. Each fully managed user is $247 per user per month in XL.net fees. Onboarding is a one-time fee: $4,940 under "All supported users fully managed"; and $3,705 under "Estimated split, to be confirmed in discovery".'
+);
+{
+  // An included (zero-priced) line is named as included; nothing else is invented.
+  const q = build({ fullyManagedUsers: 60, includeOnboarding: false }).quote;
+  const ill = q.illustrations[0];
+  const withIncluded = {
+    ...q,
+    illustrations: [
+      {
+        ...ill,
+        lines: [
+          ...ill.lines,
+          { ...ill.lines[0], id: "l_inc", rateCardItemCode: "email-anti-spam", label: "Barracuda email anti-spam", unitPrice: { cents: 0, currency: "USD" as const }, lineTotal: { cents: 0, currency: "USD" as const } },
+        ],
+      },
+    ],
+  };
+  check(
+    "paragraph: an included line is stated as included",
+    para(withIncluded),
+    "The pricing is straightforward: 60 fully managed users at $247 per user per month, $14,820 per month in total. Barracuda email anti-spam is included in the monthly fee."
+  );
+}
+{
+  // Cents print only when a figure has some ("auto"), never ".00".
+  const q = build({ fullyManagedUsers: 60, includeOnboarding: false }).quote;
+  const ill = q.illustrations[0];
+  const odd = {
+    ...q,
+    illustrations: [
+      {
+        ...ill,
+        lines: ill.lines.map((l) => ({ ...l, unitPrice: { cents: 24750, currency: "USD" as const } })),
+        monthlyTotal: { cents: 1485000, currency: "USD" as const },
+      },
+    ],
+  };
+  check(
+    "paragraph: a figure with cents keeps them, a whole one drops .00",
+    para(odd),
+    "The pricing is straightforward: 60 fully managed users at $247.50 per user per month, $14,850 per month in total."
+  );
+  check("paragraph: no figure anywhere ends in .00", /\.00\b/.test(para(build({ fullyManagedUsers: 40, securePlusComputers: 40, dattoRetention: "1yr" }).quote) ?? ""), false);
+  // No item with a comma: the plain "A and B" list stays.
+  const plain = build({ fullyManagedUsers: 40, securePlusComputers: 40, includeOnboarding: false }).quote;
+  check("paragraph: comma-free items keep the plain list", /covers XL Secure\+ each itemized|covers XL Secure\+, each itemized/.test(para(plain) ?? ""), true);
+}
+// Every one-time figure any engine note states reaches the paragraph (so a
+// template edit in buildQuote cannot silently drop a fee), and no paragraph
+// ever carries a term, an em dash, or a pro-rated figure.
+for (const over of [
+  { fullyManagedUsers: 1 },
+  { fullyManagedUsers: 14, securePlusComputers: 3 },
+  { fullyManagedUsers: 60, dattoRetention: "both" as const, dattoUsers: 60 },
+  { fullyManagedUsers: 200, dattoRetention: "infinite" as const, dattoUsers: 120, vulnScanSessionsPerYear: 4 },
+  { fullyManagedUsers: 30, statesHeadcountOnly: true, m365OnlyUsers: 18 },
+  { fullyManagedUsers: 12, statesHeadcountOnly: true, m365OnlyUsers: 4 },
+]) {
+  const q = build(over).quote;
+  const text = para(q) ?? "";
+  const oneTime = q.notes
+    .filter((n) => /one-time/.test(n))
+    .flatMap((n) => [...n.matchAll(/\$(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{2}))?/g)])
+    .map((m) => formatMoney({ cents: Number(m[1].replace(/,/g, "")) * 100 + Number(m[2] ?? 0), currency: "USD" }, { cents: "auto" }));
+  check(`paragraph ${JSON.stringify(over)}: every one-time fee is stated`, oneTime.filter((f) => !text.includes(f)), []);
+  const unit = managedLine(q.illustrations[0])?.unitPrice.cents ?? 0;
+  const proRated = q.illustrations
+    .filter((i) => i.minimumApplied)
+    .map((i) => formatMoney({ cents: managedLine(i).quantity * unit, currency: "USD" }, { cents: "auto" }));
+  check(
+    `paragraph ${JSON.stringify(over)}: no term, no em dash, no pro-rated figure`,
+    [/\b(?:term|days'|notice|contract)\b/i.test(text), text.includes("\u2014"), proRated.some((p) => text.includes(p))],
+    [false, false, false]
   );
 }
 

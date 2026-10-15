@@ -37,6 +37,14 @@ import {
 import { runGate, type GateResult } from "./validators/gate";
 import { defaultLetterBody, splitSections } from "./letter";
 import { signatureFor } from "./signature";
+import {
+  coverLede,
+  coverTitle,
+  letterAddresseeLines,
+  letterThesis,
+  recipientAddressLines,
+} from "./furniture";
+import { letterPricingParagraph } from "./quote";
 import { interleave, sanitizeStoredBlocks, type DraftBlock } from "./draft-blocks";
 import { referenceCardTable, type ReferenceEntry } from "./references-block";
 import type { Reference } from "./content-model/knowledge";
@@ -258,6 +266,28 @@ export function resolveDraft(input: DraftGateInput): {
     month: "long",
     day: "numeric",
   });
+  // Who the cover names: the client, else the proposal title (the
+  // workspace's coverClientName fallback, so screen and file agree).
+  const coverWho = doc.clientName?.trim() || proposal.title;
+  // Round-32 furniture (§5.17.20), every piece from a STORED field and each
+  // ABSENT when its field is, so a document without them resolves (and
+  // hashes) exactly as before.
+  const coverLedeText = coverLede({
+    intakeForm: doc.intakeForm,
+    who: coverWho.trim() || null,
+    contactName,
+    contactTitle,
+  });
+  const address = recipientAddressLines(doc.clientAddress, [
+    contactName,
+    contactTitle,
+    doc.clientName,
+  ]);
+  const pricingParagraph = letterPricingParagraph(
+    input.quote,
+    input.rateCard.minimumFullyManagedUsers
+  );
+  const thesis = letterThesis(letterRecord?.thesis);
 
   const core = {
     proposal: {
@@ -276,34 +306,37 @@ export function resolveDraft(input: DraftGateInput): {
     },
     cover: {
       style: "arc-mark" as const,
-      clientName: doc.clientName?.trim() || proposal.title,
+      clientName: coverWho,
       // Client, else the proposal title: the workspace's coverClientName
-      // fallback, so screen and file print the same title.
-      title: fromBrief
-        ? (() => {
-            const who = doc.clientName?.trim() || proposal.title.trim();
-            return who ? `Proposal for ${who}` : "Proposal";
-          })()
-        : "Response to Request for Proposal",
+      // fallback, so screen and file print the same title. A brief prints
+      // its stored narrative headline when the read produced one.
+      title: coverTitle({
+        intakeForm: doc.intakeForm,
+        who: coverWho.trim() || null,
+        proposalHeadline: fromBrief ? doc.proposalHeadline : null,
+      }),
       subtitle: doc.clientName ? proposal.title : null,
       dateLabel,
-      ...(fromBrief ? { lede: "Prepared by XL.net for your review." } : {}),
+      ...(coverLedeText !== undefined ? { lede: coverLedeText } : {}),
     },
     letter: {
       dateLabel,
       // A contact with no client name stands alone: no "the client" line.
-      addressee: contactName
-        ? [
-            contactTitle ? `${contactName}, ${contactTitle}` : contactName,
-            ...(doc.clientName?.trim() ? [clientName] : []),
-          ]
-        : [clientName],
+      // Round 32 (§5.17.20): the name, then the title on its own line, then
+      // the client; every surface sets line 0 bold and the rest regular.
+      addressee: letterAddresseeLines({
+        contactName,
+        contactTitle,
+        clientName: doc.clientName,
+      }),
       // The addressee line above already names the client; restating it
       // read "Dear The Children's..." (same fix as the workspace page).
       salutation: contactName ? `Dear ${contactName},` : "Dear evaluation team,",
       body: letterRecord?.paragraphs.length
         ? letterRecord.paragraphs
         : defaultLetterBody(doc.intakeForm),
+      ...(address.length ? { address } : {}),
+      ...(pricingParagraph ? { pricingParagraph } : {}),
       // "Regards," is the closing of the standard XL.net signature block
       // (owner's email signature, 2026-08-02); the signature module carries
       // the per-person lines under it.
@@ -325,7 +358,9 @@ export function resolveDraft(input: DraftGateInput): {
     },
     backCover: {
       headline: "XL.net",
-      subhead: null,
+      // The letter's one-line argument, printed as the closing sheet's big
+      // line (§5.17.20); null keeps the fixed flat-fee line.
+      subhead: thesis,
       contacts: [{ label: "Email", value: proposal.ownerEmail }],
     },
     sections: toResolvedSections(sections),

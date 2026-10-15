@@ -503,8 +503,194 @@ const cardPair = [
 ];
 const k1 = parseModelVisuals([{ kind: "cards", after: 0, cites: [onsite], cards: cardPair }], ctx());
 check("two cards land", k1.blocks.map((b) => (b.kind === "cards" ? b.cards : null)), [cardPair]);
-const k2 = parseModelVisuals([{ kind: "cards", cites: [onsite], cards: [...cardPair, cardPair[0]] }], ctx());
-check('three cards are not two-up: degraded as "title: body"', [k2.blocks.length, k2.degraded[0]], [0, "Reactive onsite: Included in the flat fee, with no hourly charge."]);
+// Round 32: three-up lands; four is still not a card row.
+const cardTrio = [...cardPair, { title: "Moves and changes", body: "Quoted in advance through a fixed-fee Statement of Work." }];
+const k2 = parseModelVisuals([{ kind: "cards", cites: [onsite], cards: cardTrio }], ctx());
+check("three cards land (three-up)", k2.blocks.map((b) => (b.kind === "cards" ? b.cards : null)), [cardTrio]);
+const k3 = parseModelVisuals([{ kind: "cards", cites: [onsite], cards: [...cardTrio, cardPair[0]] }], ctx());
+check('four cards are not a card row: degraded as "title: body"', [k3.blocks.length, k3.degraded[0], k3.degraded.length], [0, "Reactive onsite: Included in the flat fee, with no hourly charge.", 4]);
+
+// ---- round 32: model timeline and ledger, LIMITS, the allowlist ---------------------
+check("LIMITS: cards two- or three-up", LIMITS.cards, [2, 3]);
+check("LIMITS: ledger bounds", LIMITS.ledger, [2, 12]);
+check("LIMITS: timeline kicker", LIMITS.timelineKicker, 24);
+{
+  const esc = fid("operations.escalation-tiers");
+  const ladder = [
+    { title: "Client Success", body: "First-line triage in roughly 15 minutes." },
+    { title: "Service Desk Engineer", body: "Takes the issue in roughly 1 hour." },
+    { title: "Escalation Engineer", body: "Engages in roughly 2 hours." },
+    { title: "Service Delivery Manager", body: "Owns anything still open." },
+  ];
+  const tl = (steps: unknown, extra: Record<string, unknown> = {}, c = ctx()) =>
+    parseModelVisuals([{ kind: "timeline", after: 1, cites: [esc], steps, ...extra }], c);
+  const stepsOf = (r: ReturnType<typeof parseModelVisuals>) =>
+    r.blocks.map((b) => (b.kind === "timeline" ? b.steps.map((s) => [s.label, s.title, s.body]) : null));
+
+  const t1 = tl(ladder);
+  check("timeline: no kickers -> Step N labels, the content-model body", stepsOf(t1), [ladder.map((s, i) => [`Step ${i + 1}`, s.title, s.body])]);
+  check("timeline: lands as an llm block citing the visual's cites", t1.blocks.map((b) => [b.kind, b.generatedBy, b.cites, b.after, b.origin ?? null]), [["timeline", "llm", [esc], 1, null]]);
+  check("timeline: the content-model schema accepts it", (() => { const { after: _a, origin: _o, ...body } = t1.blocks[0]; return blockSchema.safeParse({ ...body, sectionId: "sec_x", ordinal: 0, editedByHuman: false }).success; })(), true);
+  check("timeline: a stored model timeline round-trips", sanitizeStoredBlocks(t1.blocks, 3), t1.blocks);
+
+  const t2 = tl(ladder.map((s, i) => ({ ...s, kicker: `Step ${i + 1}` })));
+  check('timeline: a kicker that is its own "Step N" is furniture, not a figure', stepsOf(t2), stepsOf(t1));
+  const t2b = tl(ladder.map((s, i) => ({ ...s, kicker: `Step ${i + 2}` })));
+  check('timeline: a "Step N" kicker at the wrong position is a figure and must ground', [t2b.blocks.length, t2b.dropped[0]?.reason], [0, "ungrounded"]);
+
+  const f30 = fid("onboarding.first-30-days");
+  const f90 = fid("onboarding.days-31-90");
+  const dated = [
+    { kicker: "First 30 days", title: "Documentation", body: "Documentation reaches roughly 95%." },
+    { kicker: "Day 31 to 90", title: "Gaps close", body: "Reactive issues are cut in half." },
+  ];
+  const t3 = parseModelVisuals([{ kind: "timeline", cites: [f30, f90], steps: dated }], ctx());
+  check("timeline: grounded kickers become the step labels", stepsOf(t3), [dated.map((s) => [s.kicker, s.title, s.body])]);
+  const t4 = parseModelVisuals([{ kind: "timeline", cites: [f30, f90], steps: [{ ...dated[0], kicker: "Dec 11, 2026" }, dated[1]] }], ctx());
+  check("timeline: a kicker date no cited fact states drops the block", [t4.blocks.length, t4.degraded.length, t4.dropped[0]?.reason], [0, 0, "ungrounded"]);
+  const t4b = parseModelVisuals([{ kind: "timeline", cites: [f30, f90], steps: [dated[0], { ...dated[1], body: "Reactive issues fall by 60%." }] }], ctx());
+  check("timeline: a body figure no cited fact states drops the block", t4b.dropped[0]?.reason, "ungrounded");
+  const t5 = parseModelVisuals([{ kind: "timeline", cites: [f30, f90], steps: [dated[0], { title: dated[1].title, body: dated[1].body }] }], ctx());
+  check("timeline: kickers on some steps only -> every step reads Step N", stepsOf(t5), [[["Step 1", "Documentation", dated[0].body], ["Step 2", "Gaps close", dated[1].body]]]);
+
+  const t6 = tl([{ ...ladder[0], kicker: "First line, within the first quarter hour" }, ladder[1]]);
+  check("timeline: a kicker over 24 characters degrades to grounded prose", [t6.blocks.length, t6.degraded], [0, [
+    "First line, within the first quarter hour · Client Success: First-line triage in roughly 15 minutes.",
+    "Service Desk Engineer: Takes the issue in roughly 1 hour.",
+  ]]);
+  const t7 = tl([ladder[0]]);
+  check("timeline: one step is under range: degraded", [t7.blocks.length, t7.degraded], [0, ["Client Success: First-line triage in roughly 15 minutes."]]);
+  const t8 = tl([...ladder, ...ladder.slice(0, 3)], {}, ctx(0));
+  check("timeline: seven steps is over range: degraded", [t8.blocks.length, t8.degraded.length], [0, 7]);
+  const t9 = tl([ladder[0], { title: "Billing", body: "Each escalation costs $50." }]);
+  check("timeline: currency drops the whole block", [t9.blocks.length, t9.degraded.length, t9.dropped[0]?.reason], [0, 0, "currency"]);
+  const t10 = tl([ladder[0], { title: "Service Desk Engineer" }]);
+  check("timeline: a step without a body is malformed", [t10.blocks.length, t10.degraded.length, t10.dropped[0]?.reason], [0, 0, "malformed"]);
+  const t11 = parseModelVisuals([{ kind: "timeline", cites: ["nope"], steps: ladder.slice(0, 2) }], ctx(3, [esc]));
+  check("timeline: no known cite degrades to prose grounded on the section's cites", [t11.blocks.length, t11.degraded.length], [0, 2]);
+  const t12 = tl([{ ...ladder[0], title: "Client Success \u2014 first line" }, ladder[1]]);
+  check("timeline: em dashes replaced like every model string", stepsOf(t12)[0]?.[0]?.[1], "Client Success, first line");
+  const t13 = tl("steps");
+  check("timeline: steps not an array is malformed", t13.dropped[0]?.reason, "malformed");
+}
+{
+  const ledger = (rows: unknown, key = "rows", cites = [term], c = ctx()) =>
+    parseModelVisuals([{ kind: "ledger", after: 0, cites, [key]: rows }], c);
+  const pairsOf = (r: ReturnType<typeof parseModelVisuals>) => r.blocks.map((b) => (b.kind === "fact-grid" ? b.pairs : null));
+  const rows = [
+    { label: "Term", value: "A revolving 90-day agreement" },
+    { label: "Notice", value: "90 days' written notice, at any point" },
+  ];
+  const l1 = ledger(rows);
+  check("ledger: lands as a fact-grid with the rows as pairs", pairsOf(l1), [rows]);
+  check("ledger: an llm block with no origin (never the About snapshot)", l1.blocks.map((b) => [b.kind, b.generatedBy, b.origin ?? null, b.cites]), [["fact-grid", "llm", null, [term]]]);
+  check("ledger: a stored model ledger round-trips", sanitizeStoredBlocks(l1.blocks, 3), l1.blocks);
+  check("ledger: the stored `pairs` key is read the same way", pairsOf(ledger(rows, "pairs")), [rows]);
+  const l2 = ledger([rows[0], { label: "Notice", value: "60 days' written notice" }]);
+  check("ledger: a value no cited fact states drops it", [l2.blocks.length, l2.degraded.length, l2.dropped[0]?.reason], [0, 0, "ungrounded"]);
+  const l3 = ledger([rows[0]]);
+  check("ledger: one row is under range: degraded", [l3.blocks.length, l3.degraded], [0, ["Term: A revolving 90-day agreement"]]);
+  const l4 = ledger(Array.from({ length: 13 }, () => rows[0]), "rows", [term], ctx(0));
+  check("ledger: thirteen rows is over LIMITS.ledger and too many for prose: dropped", [l4.blocks.length, l4.degraded.length, l4.dropped[0]?.reason], [0, 0, "no-room-for-prose"]);
+  const l4b = ledger(Array.from({ length: 12 }, () => rows[0]));
+  check("ledger: twelve rows is in range", pairsOf(l4b)[0]?.length, 12);
+  const l5 = ledger([rows[0], { label: "Notice", value: `90 days' written notice, ${"at any point, ".repeat(14)}` }]);
+  check("ledger: a value over the fact-grid limit degrades", [l5.blocks.length, l5.degraded.length], [0, 2]);
+  const l6 = ledger([rows[0], { label: "Monthly fee", value: "15 per user per month" }]);
+  check("ledger: a rate is currency: dropped", [l6.blocks.length, l6.degraded.length, l6.dropped[0]?.reason], [0, 0, "currency"]);
+  const l7 = ledger([rows[0], { label: "Notice", value: 90 }]);
+  check("ledger: a non-string value is malformed", l7.dropped[0]?.reason, "malformed");
+  const l8 = ledger(rows, "rows", ["nope"], ctx(3, [term]));
+  check("ledger: no known cite degrades to grounded prose", [l8.blocks.length, l8.degraded], [0, ["Term: A revolving 90-day agreement", "Notice: 90 days' written notice, at any point"]]);
+}
+// ---- round-32 fixes: brief-dated timeline kickers (F3), no pricing grounding (S2) ----
+{
+  const f30 = fid("onboarding.first-30-days");
+  const f90 = fid("onboarding.days-31-90");
+  const brief = "Curioso's current contract ends January 11, 2027. Hold the onboarding day on December 11, 2026.";
+  const dated = [
+    { kicker: "DEC 11, 2026", title: "Documentation", body: "Documentation reaches roughly 95%." },
+    { kicker: "First 30 days", title: "Gaps close", body: "Reactive issues are cut in half." },
+  ];
+  const withBrief = (steps: unknown, kickerCorpus: string | null = brief) =>
+    parseModelVisuals([{ kind: "timeline", cites: [f30, f90], steps }], { ...ctx(), ...(kickerCorpus !== null ? { kickerCorpus } : {}) });
+  const labels = (r: ReturnType<typeof parseModelVisuals>) => r.blocks.map((b) => (b.kind === "timeline" ? b.steps.map((st) => st.label) : null));
+  check("F3: a brief-dated kicker grounds against the brief", labels(withBrief(dated)), [["DEC 11, 2026", "First 30 days"]]);
+  check("F3: the same kicker without the brief is refused (structured RFP)", withBrief(dated, null).dropped.map((d) => d.reason), ["ungrounded"]);
+  check(
+    "F3: the same date in a step BODY is still refused with the brief",
+    withBrief([dated[0], { ...dated[1], body: "Onboarding day is December 11, 2026." }]).dropped.map((d) => d.reason),
+    ["ungrounded"]
+  );
+  check(
+    "F3: the same date in a step TITLE is still refused with the brief",
+    withBrief([{ ...dated[0], title: "Dec 11 onboarding" }, dated[1]]).dropped.map((d) => d.reason),
+    ["ungrounded"]
+  );
+  check("F3: a kicker date the brief does not state is refused", withBrief([{ ...dated[0], kicker: "DEC 12, 2026" }, dated[1]]).dropped.map((d) => d.reason), ["ungrounded"]);
+  check("F3: the currency veto is unchanged for a brief kicker", withBrief([{ ...dated[0], kicker: "$1,200 at signing" }, dated[1]], brief + " $1,200 at signing").dropped.map((d) => d.reason), ["currency"]);
+  // Only a DATE-shaped kicker earns the brief corpus: a brief's own rates and fees must not
+  // reach a visual through the kicker slot (re-refuter finding, round 32).
+  check(
+    "F3: a non-date kicker number stated only by the brief is refused",
+    withBrief([{ ...dated[0], kicker: "Setup fee 1,200" }, dated[1]], brief + " Setup fee 1,200 per the old vendor.").dropped.map((d) => d.reason),
+    ["ungrounded"]
+  );
+  check(
+    "F3: a per-seat figure stated only by the brief is refused in a kicker",
+    withBrief([{ ...dated[0], kicker: "247 a seat" }, dated[1]], brief + " Quote them 247 a seat.").dropped.map((d) => d.reason),
+    ["ungrounded"]
+  );
+  check(
+    "F3: a By-prefixed date range kicker still grounds from the brief",
+    labels(withBrief([{ ...dated[0], kicker: "By Dec 11, 2026" }, dated[1]])),
+    [["By Dec 11, 2026", "First 30 days"]]
+  );
+  check("F3: a blank kickerCorpus is no corpus", withBrief(dated, "   ").dropped.map((d) => d.reason), ["ungrounded"]);
+  check(
+    "F3: kickerCorpus never grounds another kind",
+    parseModelVisuals([{ kind: "callout", cites: [f30], title: "Onboarding day", body: "Set for December 11, 2026." }], { ...ctx(), kickerCorpus: brief }).dropped.map((d) => d.reason),
+    ["ungrounded"]
+  );
+
+  // S2: a pricing.* fact grounds no model visual of any kind, cited or not.
+  const rate = fid("pricing.fully-managed-rate");
+  const datto = fid("pricing.datto-saas-protection");
+  const minimum = fid("pricing.minimum-users");
+  const probe = parseModelVisuals(
+    [
+      { kind: "ledger", after: 0, cites: [datto, rate], rows: [{ label: "Datto setup", value: "1,200 one time" }, { label: "Fully managed user", value: "247 monthly" }] },
+      { kind: "timeline", after: 0, cites: [datto], steps: [{ kicker: "Step 1", title: "Setup at 1,200", body: "Setup is billed at signing." }, { kicker: "Step 2", title: "Retention", body: "Then 3.20 monthly for each user." }] },
+      { kind: "table", after: 0, cites: [rate], caption: "Fees", columns: ["Item", "Monthly"], rows: [["Fully managed user", "247"]] },
+    ],
+    ctx(2)
+  );
+  check("S2: ledger / timeline / table grounded only by pricing facts are refused", [probe.blocks.length, probe.dropped.map((d) => `${d.kind}:${d.reason}`)], [0, ["ledger:ungrounded", "timeline:ungrounded", "table:ungrounded"]]);
+  check(
+    "S2: the 15-user minimum no longer grounds a visual (accepted loss)",
+    parseModelVisuals([{ kind: "callout", cites: [minimum], title: "A floor, not a surprise", body: "The minimum is 15 fully managed users." }], ctx()).dropped.map((d) => d.reason),
+    ["ungrounded"]
+  );
+  check(
+    "S2: a stat tile naming a pricing fact is not a tile",
+    parseModelVisuals([{ kind: "stats", tiles: [{ fact: minimum, value: "15", label: "Minimum users" }, { fact: minimum, value: "15", label: "Users at the floor" }] }], ctx()).blocks.length,
+    0
+  );
+  check(
+    "S2: degraded prose from a visual is not grounded by a pricing fact either",
+    parseModelVisuals([{ kind: "ledger", cites: ["nope"], rows: [{ label: "Fully managed user", value: "247 monthly" }] }], ctx(3, [rate])).degraded,
+    []
+  );
+  check(
+    "S2: a pricing cite beside a fact that grounds the numbers still lands (citable, grounds nothing)",
+    parseModelVisuals([{ kind: "callout", cites: [rate, f30], title: "The first month", body: "Documentation reaches roughly 95%." }], ctx()).blocks.map((b) => b.cites),
+    [[rate, f30]]
+  );
+}
+for (const kind of ["fact-grid", "badge-strip"]) {
+  const r = parseModelVisuals([{ kind, cites: [term], pairs: [{ label: "Term", value: "90-day" }, { label: "a", value: "b" }], badges: [{ label: "x" }] }], ctx());
+  check(`allowlist: the model may not name ${kind}`, [r.blocks.length, r.dropped], [0, [{ kind, reason: "unknown-kind" }]]);
+}
 
 const four = parseModelVisuals(
   Array.from({ length: 5 }, () => ({ kind: "callout", cites: [term], body: "We have to keep earning it." })),
@@ -601,7 +787,7 @@ for (const [name, raw] of [
   ["one tile", [{ kind: "stat-tiles", tiles: [{ value: "1", label: "x" }], id: "v_00000001", after: 0, cites: ["f"], generatedBy: "llm" }]],
   ["five tiles", [{ kind: "stat-tiles", tiles: Array.from({ length: 5 }, () => ({ value: "1", label: "x" })), id: "v_00000001", after: 0, cites: ["f"], generatedBy: "llm" }]],
   ["tile value over the limit", [{ kind: "stat-tiles", tiles: [{ value: "1".repeat(LIMITS.tileValue + 1), label: "x" }, { value: "1", label: "x" }], id: "v_00000001", after: 0, cites: ["f"], generatedBy: "llm" }]],
-  ["three cards", [{ kind: "cards", cards: [cardPair[0], cardPair[0], cardPair[0]], id: "v_00000001", after: 0, cites: ["f"], generatedBy: "llm" }]],
+  ["four cards", [{ kind: "cards", cards: [cardPair[0], cardPair[0], cardPair[0], cardPair[0]], id: "v_00000001", after: 0, cites: ["f"], generatedBy: "llm" }]],
   ["ragged table", [{ kind: "table", caption: null, columns: [{ header: "a", align: "left" }, { header: "b", align: "left" }], rows: [["1"]], emphasizeLastRow: false, id: "v_00000001", after: 0, cites: ["f"], generatedBy: "llm" }]],
   ["15-row table", [{ kind: "table", caption: null, columns: [{ header: "a", align: "left" }, { header: "b", align: "left" }], rows: Array.from({ length: 15 }, () => ["1", "2"]), emphasizeLastRow: false, id: "v_00000001", after: 0, cites: ["f"], generatedBy: "llm" }]],
   ["table align junk", [{ kind: "table", caption: null, columns: [{ header: "a", align: "justify" }, { header: "b", align: "left" }], rows: [["1", "2"]], emphasizeLastRow: false, id: "v_00000001", after: 0, cites: ["f"], generatedBy: "llm" }]],

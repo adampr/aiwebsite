@@ -71,11 +71,9 @@ import {
 import {
   badgeMarkIndex,
   dividerHead,
-  FURNITURE_CLOSING_HEADLINE,
   FURNITURE_CLOSING_WEB,
   FURNITURE_COVER_KICKER,
   furnitureDividers,
-  FURNITURE_FOOT_LEFT,
   FURNITURE_FOOT_RIGHT,
   FURNITURE_MINIMUM_CAPTION,
   FURNITURE_SUBMITTED_BY,
@@ -88,6 +86,13 @@ import { DRAFT_BLOCK_KINDS, tableColumnFractions, type DraftBlockKind } from "./
 import { TILE_FIT, tileValuePx } from "./tile-fit";
 import { COMPANY_SIGNATURE, SIGNATURE_COLORS } from "./signature";
 import { minimumSentence, quantityLabel } from "./quote";
+import {
+  closingHeadline,
+  coverLedeParts,
+  letterParagraphsWithPricing,
+  pageFootLeft,
+  submittedByLine,
+} from "./furniture";
 
 // The .rfpdoc palette (globals.css). Bare hex for docx; "#"-prefixed for pdfkit.
 const INK = "15163B";
@@ -136,8 +141,12 @@ export type ExportView = {
    *  the standard XL.net signature block (per-person lines from resolved). */
   letter: {
     addressee: string[];
+    /** Postal lines under the addressee, regular face (§5.17.20); [] = none. */
+    address: string[];
     salutation: string;
     body: string[];
+    /** The system pricing paragraph after the body (§5.17.20); null = none. */
+    pricingParagraph: string | null;
     closing: string;
     signature: {
       name: string;
@@ -188,8 +197,10 @@ export function buildExportView(
     contactPhone: resolved.letter.signature.phone,
     letter: {
       addressee: resolved.letter.addressee,
+      address: resolved.letter.address ?? [],
       salutation: resolved.letter.salutation,
       body: resolved.letter.body,
+      pricingParagraph: resolved.letter.pricingParagraph ?? null,
       closing: resolved.letter.closing,
       signature: resolved.letter.signature,
     },
@@ -219,7 +230,9 @@ export function buildExportView(
         )
       : null,
     closing: {
-      headline: FURNITURE_CLOSING_HEADLINE,
+      // The letter's thesis when stored (resolve-draft backCover.subhead),
+      // else the fixed flat-fee line: one rule, furniture.ts, for all three.
+      headline: closingHeadline(resolved.backCover.subhead),
       // The workspace guards the fragment: no client, no " with X".
       lede: clientName
         ? `We welcome the opportunity to discuss this proposal with ${clientName}.`
@@ -240,31 +253,6 @@ const hex = (c: string) => c.replace("#", "").toUpperCase();
 export function signaturePhoneLine(sig: ExportView["letter"]["signature"]): string | null {
   if (!sig.phone) return null;
   return sig.fax ? `${sig.phone} ph | fax ${sig.fax}` : `${sig.phone} ph`;
-}
-
-/** The cover lede, split so emitters can set the client semibold. The
- *  workspace guards the fragment: no client, no " for X" (and no double
- *  space). A resolved lede (a brief's) is printed whole. */
-function coverLedeParts(
-  clientName: string,
-  lede?: string
-): {
-  before: string;
-  strong: string;
-  after: string;
-} {
-  if (lede) return { before: lede, strong: "", after: "" };
-  return clientName
-    ? {
-        before: "Prepared for ",
-        strong: clientName,
-        after: " in response to the Request for Proposal.",
-      }
-    : {
-        before: "Prepared in response to the Request for Proposal.",
-        strong: "",
-        after: "",
-      };
 }
 
 function illustrationRows(ill: PricingIllustration, minimumUsers: number): string[][] {
@@ -666,7 +654,11 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
     spacerX(4200),
     metaGrid(
       [
-        { label: "Submitted by", lines: [FURNITURE_SUBMITTED_BY, view.preparedBy] },
+        // The signer with the role the letter's signature prints (§5.17.20).
+        {
+          label: "Submitted by",
+          lines: [FURNITURE_SUBMITTED_BY, submittedByLine(view.preparedBy, view.letter.signature.title)],
+        },
         {
           label: "Contact",
           lines: [view.contactEmail, ...(view.contactPhone ? [view.contactPhone] : [])],
@@ -761,11 +753,23 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
     }),
     spacerX(390),
     letterPar([serifRun(view.dateLabel)]),
-    ...view.letter.addressee.map((line) =>
-      letterPar([serifRun(line, { font: SERIF_SEMI, color: INK })], { before: 220 })
+    // The recipient block sets tight, as the screen and the PDF set it: air
+    // above its first line only (each line used to carry 11pt of its own,
+    // a gap neither other surface had; §5.17.20). Only the first line (the
+    // contact's name, else the client) is semibold; a title and the client
+    // beneath a name are regular, as the reference letter sets them.
+    ...view.letter.addressee.map((line, i) =>
+      letterPar([i === 0 ? serifRun(line, { font: SERIF_SEMI, color: INK }) : serifRun(line)], {
+        before: i === 0 ? 220 : 0,
+      })
     ),
+    ...view.letter.address.map((line) => letterPar([serifRun(line)])),
     letterPar([serifRun(view.letter.salutation)], { before: 260, after: 200 }),
-    ...view.letter.body.map((p) => letterPar([serifRun(p)], { after: 180 })),
+    // The drafted paragraphs with the system pricing paragraph placed by
+    // furniture.ts (before the last drafted one), set exactly alike.
+    ...letterParagraphsWithPricing(view.letter.body, view.letter.pricingParagraph).map((p) =>
+      letterPar([serifRun(p)], { after: 180 })
+    ),
     letterPar([serifRun(view.letter.closing, { color: hex(SIGNATURE_COLORS.person) })], {
       before: 260,
       after: 200,
@@ -1089,13 +1093,17 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
         const half = Math.floor((DXA_CONTENT - colGap) / 2);
         const labelW = Math.round(half * F.labelShare);
         const valueW = half - labelW;
-        const pair = (p: { label: string; value: string } | null, first: boolean) => {
+        // A fact grid (a ledger the drafter authored included, §5.17.20) is at
+        // most six rows and always fits a page, so the PDF keeps it whole;
+        // Word does too: every row but the last keeps with the next.
+        const rowCount = factRows(b.pairs).length;
+        const pair = (p: { label: string; value: string } | null, first: boolean, keepNext: boolean) => {
           if (!p) return [vCell(labelW, []), vCell(valueW, [])];
           const borders = { bottom: hairB, ...(first ? { top: hairB } : {}) };
           return [
             vCell(
               labelW,
-              [vPar([vCaps(p.label, F.labelPx, F.labelLs, MUTED)], { px: F.labelPx, lh: F.labelLh })],
+              [vPar([vCaps(p.label, F.labelPx, F.labelLs, MUTED)], { px: F.labelPx, lh: F.labelLh, keepNext })],
               {
                 borders,
                 // The label sits on the value's first line, not the cell top.
@@ -1104,7 +1112,7 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
             ),
             vCell(
               valueW,
-              [vPar([vRun(p.value, SERIF, F.valuePx, INK)], { px: F.valuePx, lh: F.valueLh, right: true })],
+              [vPar([vRun(p.value, SERIF, F.valuePx, INK)], { px: F.valuePx, lh: F.valueLh, right: true, keepNext })],
               { borders, margins: { top: px2tw(F.padY), bottom: px2tw(F.padY) } }
             ),
           ];
@@ -1112,9 +1120,10 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
         return [
           vTable(
             [labelW, valueW, colGap, labelW, valueW],
-            factRows(b.pairs).map(([l, r], i) =>
-              atomicRow([...pair(l, i === 0), vCell(colGap, []), ...pair(r, i === 0)])
-            )
+            factRows(b.pairs).map(([l, r], i) => {
+              const keep = i < rowCount - 1;
+              return atomicRow([...pair(l, i === 0, keep), vCell(colGap, []), ...pair(r, i === 0, keep)]);
+            })
           ),
         ];
       }
@@ -1653,7 +1662,9 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
                   top: { style: BorderStyle.SINGLE, size: 6, color: HAIR, space: 4 },
                 },
                 children: [
-                  footRun(FURNITURE_FOOT_LEFT),
+                  // "for <who>" after the base (furniture.ts pageFootLeft,
+                  // one rule for all three surfaces).
+                  footRun(pageFootLeft(view.clientName)),
                   new TextRun({ children: ["\t"] }),
                   footRun(FURNITURE_FOOT_RIGHT),
                 ],
@@ -1949,7 +1960,11 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       iw,
       fy + fh - pad,
       [
-        { label: "Submitted by", lines: [FURNITURE_SUBMITTED_BY, view.preparedBy] },
+        // The signer with the role the letter's signature prints (§5.17.20).
+        {
+          label: "Submitted by",
+          lines: [FURNITURE_SUBMITTED_BY, submittedByLine(view.preparedBy, view.letter.signature.title)],
+        },
         {
           label: "Contact",
           lines: [view.contactEmail, ...(view.contactPhone ? [view.contactPhone] : [])],
@@ -2041,82 +2056,114 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     const LW = Math.min(pt(640), CW);
     flow(view.dateLabel, { px: 14, lh: 1.55, width: LW });
     doc.moveDown(0.9);
-    for (const line of view.letter.addressee)
-      flow(line, { px: 14, lh: 1.55, font: "Serif-SemiBold", color: h(INK), width: LW });
+    // Line 0 semibold (the name, else the client), the rest regular.
+    view.letter.addressee.forEach((line, i) =>
+      flow(line, i === 0
+        ? { px: 14, lh: 1.55, font: "Serif-SemiBold", color: h(INK), width: LW }
+        : { px: 14, lh: 1.55, width: LW })
+    );
+    for (const line of view.letter.address) flow(line, { px: 14, lh: 1.55, width: LW });
     doc.moveDown(1.1);
     flow(view.letter.salutation, { px: 14, lh: 1.55, width: LW });
     doc.moveDown(0.8);
-    for (const p of view.letter.body) {
+    // The drafted paragraphs with the system pricing paragraph placed by
+    // furniture.ts (before the last drafted one), set the same way.
+    const letterParas = letterParagraphsWithPricing(view.letter.body, view.letter.pricingParagraph);
+    for (const p of letterParas) {
       ensureRoom(40);
       flow(p, { px: 14, lh: 1.55, width: LW });
       doc.moveDown(0.8);
     }
-    // The signature block never splits across a page break.
-    ensureRoom(180);
-    flow(view.letter.closing, { px: 14, lh: 1.6, color: SIGNATURE_COLORS.person, width: LW });
-    doc.moveDown(1.1);
+    // The signature block never splits across a page break, and asks for
+    // exactly its own height: every line below is listed once, measured
+    // with the font, size and gap it is drawn with, then drawn. (A fixed
+    // 180pt reserve was more than the block and pushed it, alone, onto a
+    // second letter page; §5.17.20.)
     const sig = view.letter.signature;
-    // The source signature does NOT bold the name.
-    flow(sig.name + (sig.linkedinUrl ? " " : ""), {
-      px: 14,
-      lh: 1.6,
-      color: SIGNATURE_COLORS.person,
-      width: LW,
-      continued: Boolean(sig.linkedinUrl),
-    });
-    if (sig.linkedinUrl)
-      flow("{LinkedIn}", {
-        px: 14,
-        lh: 1.6,
-        color: SIGNATURE_COLORS.link,
-        width: LW,
-        link: sig.linkedinUrl,
-        underline: true,
-      });
-    if (sig.title)
-      flow(sig.title, { px: 14, lh: 1.6, color: SIGNATURE_COLORS.person, width: LW });
-    flow(signaturePhoneLine(sig) ?? sig.email, {
-      px: 14,
-      lh: 1.6,
-      color: SIGNATURE_COLORS.contact,
-      width: LW,
-    });
-    doc.moveDown(0.7);
-    flow(COMPANY_SIGNATURE.name, {
-      px: 14,
-      lh: 1.6,
-      font: "Serif-SemiBold",
-      color: SIGNATURE_COLORS.link,
-      width: LW,
-      link: COMPANY_SIGNATURE.url,
-      underline: true,
-    });
-    flow(COMPANY_SIGNATURE.tagline.orange, {
-      px: 14,
-      lh: 1.6,
-      font: "Serif-SemiBold",
-      color: SIGNATURE_COLORS.taglineOrange,
-      width: LW,
-      continued: true,
-    });
-    flow(COMPANY_SIGNATURE.tagline.navy, {
-      px: 14,
-      lh: 1.6,
-      font: "Serif-SemiBold",
-      color: SIGNATURE_COLORS.taglineNavy,
-      width: LW,
-    });
-    doc.moveDown(0.4);
-    for (const a of COMPANY_SIGNATURE.articles)
-      flow(a.title, {
-        px: 14,
-        lh: 1.6,
-        font: "Serif-SemiBold",
-        color: SIGNATURE_COLORS.taglineNavy,
-        width: LW,
-        link: a.url,
-        underline: true,
-      });
+    type SigFlow = { text: string; opts: NonNullable<Parameters<typeof flow>[1]> };
+    type SigStep = SigFlow | { down: number };
+    const sigSteps: SigStep[] = [
+      { text: view.letter.closing, opts: { px: 14, lh: 1.6, color: SIGNATURE_COLORS.person, width: LW } },
+      { down: 1.1 },
+      // The source signature does NOT bold the name.
+      {
+        text: sig.name + (sig.linkedinUrl ? " " : ""),
+        opts: { px: 14, lh: 1.6, color: SIGNATURE_COLORS.person, width: LW, continued: Boolean(sig.linkedinUrl) },
+      },
+      ...(sig.linkedinUrl
+        ? [
+            {
+              text: "{LinkedIn}",
+              opts: { px: 14, lh: 1.6, color: SIGNATURE_COLORS.link, width: LW, link: sig.linkedinUrl, underline: true },
+            },
+          ]
+        : []),
+      ...(sig.title
+        ? [{ text: sig.title, opts: { px: 14, lh: 1.6, color: SIGNATURE_COLORS.person, width: LW } }]
+        : []),
+      { text: signaturePhoneLine(sig) ?? sig.email, opts: { px: 14, lh: 1.6, color: SIGNATURE_COLORS.contact, width: LW } },
+      { down: 0.7 },
+      {
+        text: COMPANY_SIGNATURE.name,
+        opts: {
+          px: 14,
+          lh: 1.6,
+          font: "Serif-SemiBold",
+          color: SIGNATURE_COLORS.link,
+          width: LW,
+          link: COMPANY_SIGNATURE.url,
+          underline: true,
+        },
+      },
+      {
+        text: COMPANY_SIGNATURE.tagline.orange,
+        opts: { px: 14, lh: 1.6, font: "Serif-SemiBold", color: SIGNATURE_COLORS.taglineOrange, width: LW, continued: true },
+      },
+      {
+        text: COMPANY_SIGNATURE.tagline.navy,
+        opts: { px: 14, lh: 1.6, font: "Serif-SemiBold", color: SIGNATURE_COLORS.taglineNavy, width: LW },
+      },
+      { down: 0.4 },
+      ...COMPANY_SIGNATURE.articles.map((a) => ({
+        text: a.title,
+        opts: {
+          px: 14,
+          lh: 1.6,
+          font: "Serif-SemiBold",
+          color: SIGNATURE_COLORS.taglineNavy,
+          width: LW,
+          link: a.url,
+          underline: true,
+        },
+      })),
+    ];
+    // Measured as drawn: a continued run is measured with the text that
+    // finishes its line; moveDown(n) is n current line heights (pdfkit). The
+    // gap pdfkit leaves BELOW the block's last line is not part of the block
+    // (nothing is set under it on this sheet), so it is not asked for.
+    let sigH = 0;
+    let run = "";
+    let lastGap = 0;
+    for (const st of sigSteps) {
+      if ("down" in st) {
+        sigH += doc.currentLineHeight(true) * st.down;
+        lastGap = 0;
+        continue;
+      }
+      const size = pt(st.opts.px ?? 15);
+      doc.font(st.opts.font ?? "Serif").fontSize(size);
+      run += st.text;
+      if (st.opts.continued) continue;
+      const gap = Math.max(0, size * (st.opts.lh ?? 1.68) - doc.currentLineHeight());
+      sigH += doc.heightOfString(run, { width: st.opts.width ?? CW, lineGap: gap });
+      lastGap = gap;
+      run = "";
+    }
+    ensureRoom(sigH - lastGap);
+    for (const st of sigSteps) {
+      if ("down" in st) doc.moveDown(st.down);
+      else flow(st.text, st.opts);
+    }
   }
 
   /* ---- Divider sheets --------------------------------------------------- */
@@ -2604,14 +2651,27 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
             title: { text: step.title, font: "Archivo-Bold", px: L.titlePx, lh: L.titleLh, color: h(INK) } as TextSpec,
             body: { text: step.body, font: "Serif", px: L.bodyPx, lh: L.bodyLh, color: h(MUTED) } as TextSpec,
           }));
-          const labelH = Math.max(...specs.map((sp) => textH(sp.label, colW)));
-          const titleH = Math.max(...specs.map((sp) => textH(sp.title, colW)));
-          const bodyH = Math.max(...specs.map((sp) => textH(sp.body, colW)));
+          // Each step stacks its own label, title and body, as the screen's
+          // grid item and Word's cell do: a two-line title pushes down only
+          // its own body (aligning every body under the tallest title left
+          // the PDF alone with a gap; §5.17.20). The row is the tallest step.
+          const stepH = specs.map((sp) => ({
+            label: textH(sp.label, colW),
+            title: textH(sp.title, colW),
+            body: textH(sp.body, colW),
+          }));
           const rowH =
             (ri > 0 ? pt(L.rowGap) : 0) +
-            pt(L.dot) + pt(L.labelGap) + labelH + pt(L.titleGap) + titleH + pt(L.bodyGap) + bodyH;
+            pt(L.dot) +
+            pt(L.labelGap) +
+            Math.max(...stepH.map((s) => s.label + pt(L.titleGap) + s.title + pt(L.bodyGap) + s.body));
           ensureRoom(rowH);
-          const y0 = doc.y + (ri > 0 ? pt(L.rowGap) : 0);
+          // Captured BEFORE drawing: textAt moves doc.y to the end of the
+          // text it set, so advancing from doc.y afterwards added the row's
+          // height twice (a gap the size of the timeline under it, unseen
+          // while the only timeline closed its section; §5.17.20).
+          const rowTop = doc.y;
+          const y0 = rowTop + (ri > 0 ? pt(L.rowGap) : 0);
           specs.forEach((sp, c) => {
             const x = x0 + c * (colW + G);
             const r = pt(L.dot) / 2;
@@ -2619,12 +2679,12 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
             if (c < row.length - 1) hairline(x + pt(L.dot) + pt(L.ruleGap), y0 + r, x + colW + G - pt(L.ruleGap));
             let y = y0 + pt(L.dot) + pt(L.labelGap);
             textAt(sp.label, x, y, colW);
-            y += labelH + pt(L.titleGap);
+            y += stepH[c].label + pt(L.titleGap);
             textAt(sp.title, x, y, colW);
-            y += titleH + pt(L.bodyGap);
+            y += stepH[c].title + pt(L.bodyGap);
             textAt(sp.body, x, y, colW);
           });
-          doc.y = doc.y + rowH;
+          doc.y = rowTop + rowH;
         });
         break;
       }
@@ -2798,7 +2858,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       doc.switchToPage(i);
       // The handoff's per-sheet footer: hairline, running title, mark.
       hairline(PAGE.margin, FOOT_RULE_Y, PAGE.margin + CW);
-      caps(FURNITURE_FOOT_LEFT, PAGE.margin, FOOT_TEXT_Y, {
+      caps(pageFootLeft(view.clientName), PAGE.margin, FOOT_TEXT_Y, {
         px: 9,
         ls: 0.14,
         color: h(FOOTGRAY),

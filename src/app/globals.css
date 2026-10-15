@@ -1291,7 +1291,7 @@ select.input option {
   .rfpdoc .btn--text { white-space: normal; letter-spacing: 0.12em; }
 }
 /* ---- Visual blocks on a section sheet (§5.17, draft-blocks.ts): stat
-   tiles, fact grid, badge strip, table, callout, two-up cards, timeline.
+   tiles, fact grid, badge strip, table, callout, two- or three-up cards, timeline.
    The exporters draw the same blocks from the same palette (ink #15163b,
    navy #2f31c5, blue #3d7fd9, muted #5b5d78, hairline #e3e4ef, zebra
    #f9fafd, tint #eef0fb). Placed AFTER every .rfpdoc rule they lean on or
@@ -1580,10 +1580,12 @@ select.input option {
   border-left: 4px solid #2f31c5;
 }
 .rfpdoc .rfpdoc-callout--emphasis p { font-size: 15px; color: #15163b; }
-/* Two-up cards: hairline frames, stacking once the sheet is phone-narrow. */
+/* Two- or three-up cards: hairline frames, stacking once the sheet is
+   phone-narrow. --rfpdoc-n (set inline, the card count) lays them across
+   as both files do (§5.17.20). */
 .rfpdoc .rfpdoc-cards {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--rfpdoc-n, 2), minmax(0, 1fr));
   gap: 16px;
 }
 .rfpdoc .rfpdoc-card {

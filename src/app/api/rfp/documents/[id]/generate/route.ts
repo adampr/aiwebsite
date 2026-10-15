@@ -22,6 +22,7 @@ import { stripIntakeHeaders } from "@/lib/rfp/intake";
 import {
   clearGenClaim,
   completeGeneration,
+  completeGenerationRetitled,
   createProposal,
   currentKbVersion,
   genClaimActive,
@@ -46,6 +47,7 @@ import {
   snapGapQuestions,
 } from "@/lib/rfp/gaps";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
+import { mayAdoptNarrativeTitle, outlineDefaultTitle } from "@/lib/rfp/outline";
 import {
   liftMarkdownTables,
   type DraftBlock,
@@ -89,6 +91,13 @@ export type DraftSectionRecord = {
    *  this route's landing and the section route's "visuals" op; never read
    *  from a request body. */
   blocks?: DraftBlock[];
+  /** The letter record only (round 32): the letter turn's one-line argument,
+   *  screenLetterThesis'd (at most 90 characters, no numeral, no currency, no
+   *  em dash), printed large on the closing sheet. ABSENT when the turn
+   *  returned none or it was refused, so a record written before it, or
+   *  without it, reads byte-identically; the closing sheet then keeps its
+   *  standing copy. Written only by this route's letter landing. */
+  thesis?: string;
 };
 
 export async function POST(
@@ -282,6 +291,13 @@ export async function POST(
       // Tables found but left as pipe text by a lift control (the activity
       // log is the only place this is signaled).
       let liftRefused = 0;
+      // The letter turn's thesis (round 32), already screened in brain.ts.
+      let letterThesis: string | undefined;
+      // A narrative title the landing adopts (round 32), or null: brief mode
+      // only, an untouched standard outline title only, never About XL.net
+      // or the letter (outline.ts mayAdoptNarrativeTitle).
+      let adoptTitle: string | null = null;
+      let retitled = false;
       if (isLetter) {
         // The letter drafts from the sections AS THEY ARE NOW, not as they
         // were at claim time: in the draft-all run it is the last step, and
@@ -305,6 +321,7 @@ export async function POST(
                 : undefined
             )
           : null;
+        letterThesis = letter?.thesis;
         if (letter)
           drafted = {
             paragraphs: letter.paragraphs,
@@ -380,6 +397,16 @@ export async function POST(
           capOpenQuestionsForPrompt(openQuestions, ownOpenGaps),
           briefText !== null ? { text: briefText } : undefined
         );
+        adoptTitle =
+          drafted?.title &&
+          mayAdoptNarrativeTitle({
+            intakeForm: doc.intakeForm,
+            label,
+            currentTitle: title,
+            proposed: drafted.title,
+          })
+            ? drafted.title
+            : null;
 
         // The references backstop (references-ask.ts): the drafter never
         // sees rfp_references, so an RFP's ask for references used to be
@@ -560,14 +587,38 @@ export async function POST(
             generatedBy: carry?.human ? ("human" as const) : ("llm" as const),
             updatedAt: new Date().toISOString(),
             ...(carry ? { referencesAnswered: true } : {}),
+            ...(isLetter && letterThesis ? { thesis: letterThesis } : {}),
           }, landedBlocks);
           landedGapCount = record.gaps.length;
           // Identity is LABEL alone, as everywhere else (workspace join,
           // section/gap routes, resolve-draft); matching on title too made
           // a retitled node land a duplicate label.
           const at = sections.findIndex((s) => s.label === label);
-          if (at >= 0) sections[at] = record;
-          else sections.push(record);
+          const slot = at >= 0 ? at : sections.length;
+          sections[slot] = record;
+          if (adoptTitle) {
+            // Round 32: the record and the document's structure node take
+            // the narrative title in ONE transaction, and only while the
+            // node still carries its standard title at landing; otherwise
+            // the plain record (the title it was asked with) lands instead.
+            const plainJson = JSON.stringify(sections);
+            sections[slot] = { ...record, title: adoptTitle };
+            const res = await completeGenerationRetitled({
+              proposalId,
+              expectedRev: fresh.rev,
+              attemptId,
+              retitledJson: JSON.stringify(sections),
+              plainJson,
+              documentId: doc.id,
+              label,
+              from: outlineDefaultTitle(label) ?? title,
+              to: adoptTitle,
+            });
+            landed = res.landed;
+            retitled = res.retitled;
+            if (landed) break;
+            continue;
+          }
         }
         landed = await completeGeneration(
           proposalId,
@@ -616,6 +667,9 @@ export async function POST(
           visualsTooWide: drafted?.visualStats?.tooWide ?? 0,
           liftedTables,
           liftRefused,
+          // Round 32, present only when it happened: the section took the
+          // drafter's narrative title (never the title itself here).
+          ...(retitled ? { retitled: true } : {}),
         },
       });
     } catch (err) {

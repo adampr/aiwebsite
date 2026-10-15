@@ -977,6 +977,91 @@ export async function completeGeneration(
   return res.length > 0;
 }
 
+/**
+ * completeGeneration for a section whose drafter proposed a narrative title
+ * the generate route may adopt (round 32, brief mode, outline.ts
+ * mayAdoptNarrativeTitle). ONE transaction, in writeProposalStructureOp's
+ * lock order (proposal first, then document), so the two can never
+ * deadlock:
+ *   1. the same attempt-fenced CAS as completeGeneration, landing
+ *      `retitledJson` (the record carries the new title);
+ *   2. the document row is locked and its structure re-read: only while the
+ *      node for `label` STILL carries `from` (the untouched standard title)
+ *      is its title set to `to`;
+ *   3. otherwise (a person retitled or removed the node while this draft
+ *      ran) the proposal row, still locked by step 1, gets `plainJson`
+ *      instead: the draft lands under the title it was asked with, and no
+ *      title moves.
+ * sections_json and structure_json therefore change together or not at all.
+ */
+export async function completeGenerationRetitled(opts: {
+  proposalId: string;
+  expectedRev: number;
+  attemptId: string;
+  retitledJson: string;
+  plainJson: string;
+  documentId: string;
+  label: string;
+  from: string;
+  to: string;
+}): Promise<{ landed: boolean; retitled: boolean }> {
+  return db.transaction(async (tx) => {
+    const res = await tx
+      .update(rfpProposals)
+      .set({
+        sectionsJson: opts.retitledJson,
+        rev: opts.expectedRev + 1,
+        genStartedAt: null,
+        genAttemptId: null,
+        genHeartbeatAt: null,
+        genProgress: null,
+        genError: null,
+        // The stored gate verdict stays; the rev bump marks it stale (§5.17.8).
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(rfpProposals.id, opts.proposalId),
+          eq(rfpProposals.rev, opts.expectedRev),
+          eq(rfpProposals.genAttemptId, opts.attemptId)
+        )
+      )
+      .returning({ id: rfpProposals.id });
+    if (res.length === 0) return { landed: false, retitled: false };
+
+    const rows = await tx
+      .select({ structureJson: rfpDocuments.structureJson })
+      .from(rfpDocuments)
+      .where(eq(rfpDocuments.id, opts.documentId))
+      .for("update");
+    let structure: { label: string; title: string }[] | null = null;
+    try {
+      const parsed: unknown = JSON.parse(rows[0]?.structureJson || "[]");
+      if (Array.isArray(parsed)) structure = parsed as { label: string; title: string }[];
+    } catch {
+      structure = null;
+    }
+    const node = structure?.find((n) => n && n.label === opts.label);
+    if (structure && node && node.title === opts.from) {
+      await tx
+        .update(rfpDocuments)
+        .set({
+          structureJson: JSON.stringify(
+            structure.map((n) => (n === node ? { ...n, title: opts.to } : n))
+          ),
+          updatedAt: new Date(),
+        })
+        .where(eq(rfpDocuments.id, opts.documentId));
+      return { landed: true, retitled: true };
+    }
+    await tx
+      .update(rfpProposals)
+      .set({ sectionsJson: opts.plainJson })
+      .where(eq(rfpProposals.id, opts.proposalId));
+    return { landed: true, retitled: false };
+  });
+}
+
 /* ---- knowledge proposals ------------------------------------------------ */
 
 /** The caller's own proposed knowledge, any status. */

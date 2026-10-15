@@ -59,12 +59,25 @@ export type ResolvedLetter = {
   salutation: string;
   /** Body paragraphs: the drafted letter, or the short default when none. */
   body: string[];
+  /** Postal lines under the addressee (stored client_address, §5.17.20),
+   *  printed in the regular face. ABSENT when none are stored, so a letter
+   *  without them hashes exactly as before. */
+  address?: string[];
+  /** The SYSTEM pricing paragraph (quote.ts letterPricingParagraph), printed
+   *  after the body and before the closing. Composed from the stored quote
+   *  on every resolve, never stored, never Tron-editable: its own span field
+   *  keeps a finding on it out of the letter's Fix-it route. ABSENT when
+   *  pricing is not ready. */
+  pricingParagraph?: string;
   closing: string;
   signature: ResolvedSignature;
 };
 
 export type ResolvedBackCover = {
   headline: string;
+  /** The /rfp host puts the cover letter's stored `thesis` here (§5.17.20):
+   *  the navy closing sheet prints it as its big line. Null = the fixed
+   *  flat-fee line (furniture.ts CLOSING_HEADLINE). */
   subhead: string | null;
   contacts: { label: string; value: string }[];
 };
@@ -126,6 +139,15 @@ export function resolvedTextSpans(
   resolved.letter.body.forEach((p, i) =>
     spans.push({ location: "letter", field: `body[${i}]`, text: p }),
   );
+  // Round-32 furniture (§5.17.20): scanned like the rest of the letter, under
+  // field names the letter's Fix-it route does not claim (check-fixes.ts
+  // LETTER_SPAN_FIELD), because neither is text Tron can rewrite.
+  (resolved.letter.address ?? []).forEach((line, i) =>
+    spans.push({ location: "letter", field: `address[${i}]`, text: line }),
+  );
+  if (resolved.letter.pricingParagraph) {
+    spans.push({ location: "letter", field: "pricingParagraph", text: resolved.letter.pricingParagraph });
+  }
   spans.push(
     { location: "letter", field: "salutation", text: resolved.letter.salutation },
     { location: "letter", field: "closing", text: resolved.letter.closing },

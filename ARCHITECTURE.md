@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-15 §5.17.20 ROUND 32: COWORK-GRADE DESIGN PARITY (owner put a Claude-CoWork 19-page Curioso proposal beside /rfp output: cover, cover letter, header naming, visuals). Migration `0062_rfp_client_address_headline` adds nullable `rfp_documents.client_address` (<= 5 verbatim-grounded, sanitized postal lines joined "\n", brain.ts `groundAddressLines`) and `proposal_headline` (brief docs only, <= 56 chars, currency- and unstated-digit-vetoed, `screenProposalHeadline`), both written at the read landing (Read it again and `rfp:reread` reach only a claimable document; the new `npm run rfp:reground -- <documentId>` regrounds both on an already-read one). Brief docs adopt the drafter's narrative section `title` only over an untouched standard outline title (outline.ts `mayAdoptNarrativeTitle`, never "10" About XL.net or the letter; record and structure in one transaction, `db.ts completeGenerationRetitled`; activity meta `retitled: true`). The letter turn is rewritten toward the reference shape (client context first, rule 3 verbatim) and returns an optional `thesis` stored on the letter record (no migration). Model visuals gain `timeline` (2..6 steps, kicker <= 24 into the step label) and `ledger` (2..12 rows, stored as the existing fact-grid); cards widen to 2..3. Rendering, ONE spec for the screen sheet, Word and PDF, authored once in the new pure client-safe `src/lib/rfp/furniture.ts`: a brief's cover prints its stored headline, the cover lede gains ", Attention: <name>, <title>" when a contact is stored (client still semibold), the letterhead prints the stored postal lines under the addressee, a SYSTEM pricing paragraph (quote.ts `letterPricingParagraph`, from the stored quote only, no term) sits before the last drafted paragraph (after the body when there is only one; `ResolvedLetter.address` / `.pricingParagraph`, both optional and scanned by the gate), and the navy closing prints the letter's thesis (`backCover.subhead`) over the flat-fee fallback. The submitted-by columns and the "Confidential" pagefoot already existed on all three surfaces; Confidential is recorded as standing business copy, not a draft mark. Parity fixes: three-up cards on screen (`--rfpdoc-n`, globals.css), Word fact-grid keepNext, Word addressee spacing, and two PDF timeline defects (double-advanced row height; bodies aligned under the tallest title). Out of scope by record: thematic numbered parts (round-8 ruling, rule C4), 6-up cards. New `npm run test:rfpcoverletter`; `rfp:render-fixture` also renders the round-32 brief. No env change; no new route.
+
 Last verified against code: 2026-10-15 §5.17.19 ROUND 31: ROUND 30'S FOUR OPEN ITEMS CLOSED (§5.17.19, §5.17.16, §5.17.8). (1) The gap weave sees visuals and its write is lifted: `resolveGap(proposalId, sectionTitle, currentParagraphs, blocks, gapQuestion, answer, facts)` shows the section's stored visuals in CURRENT TEXT exactly as reviseSection does (shared `currentTextLines` / `visualsShownLines` / `TABLE_AUTHORING_LINES` / `notEchoedVisual` in brain.ts, one copy each), may author a markdown table (gated on RFP_VISUALS alone: a gap can never target the letter, and the route now refuses the letter label with its 404 defensively; one gap-turn-only line follows the shared table lines: a figure only the answer states, with no listed fact behind it, goes in prose), and the gap route runs `liftMarkdownTables` at its landing write with the shared facts it already loads (no new query); `proposal.gap_resolve` meta gains `liftedTables` / `liftRefused` (each only when > 0). (2) A refused lift is no longer silent: new gate rule D6 "Tabular text in prose" (WARN, validators/rules-d.ts) flags every resolved span holding a markdown table by THE detector the lift uses (new `hasMarkdownTable`, draft-blocks.ts), the letter included; its Fix it recipe (check-fixes.ts) is a Tron revise asking for a real markdown table with every figure copied exactly from the facts, or for prose when the finding is in the cover letter, and for prose when the table cannot meet the rules (a price, a figure no fact states, so Fix all converges), auto-fixable in Fix all; the section PATCH's 200 body gains `liftRefused` (both paragraph paths), so does the gap route's, and the workspace's attended paths (saveEdit, answerGap, acceptProposal, acceptDocProposal, acceptAllDocProposals) put one sentence on the runbar notice line (an accept with no refusal clears only a stale copy of that sentence, never other text); unattended loops stay silent, D6 is their control. (3) The Tron pane previews a proposed markdown table as a table (new parse-only `previewMarkdownTables`, same detector, nothing stored) with one honesty line; a letter proposal previews as plain paragraphs (the letter is never lifted). (4) Two tables in ONE section now cluster in the consolidation scan, by the row-key + content-agreement test only (the shingle test stays strictly cross-section; paragraph pairs stay cross-section), findings line "appears twice in <title> (id v_a, id v_b)". No schema, env or migration change; no new route.
 
 Last verified against code: 2026-10-15 §5.17.19 RFP TABULAR CONTENT IS ALWAYS A VISUAL + §5.17.16 CONSOLIDATION SEES TABLES (owner, Curioso proposal eda03a5e, rev 64: the section 7 SLA table landed as four prose paragraphs because parseModelVisuals degraded a table that cited nothing; section 4 stored a raw markdown pipe table as a paragraph after a consolidation revise; sections 2, 3 and 4 each held a near-identical "Central services" table while the review reported duplicateClusters:0, because every whole-document turn read paragraphs only). `liftMarkdownTables` (draft-blocks.ts) converts a GitHub-markdown table in stored text into a real `table` block under every blocking control (currency, limits, grounding against the section's own cites, the block cap), at the section PATCH (plain and retitle-with-paragraphs paths, behind a cheap precheck, letter exempt) and at the generate landing (letter exempt); parseTable accepts `{header}` column objects and re-grounds a table that cited nothing against the section's cites before degrading; reviseSection is shown the section's visuals in place as `[visual <kind> id=...]` lines and may author a markdown table (never on the letter); `budgetedDocumentText` carries serialized visuals for the plan and review turns in a reserved share of each section's slice; `findDuplicateClusters` scans tables (row keys plus content agreement); the review gains op `prune-visual` behind a server-side scan guard (`pruneGuard`: scan-clustered ids only, never the last copy in a cluster), applied unattended by the workspace through the existing visuals-remove PATCH; new CLI `npm run rfp:consolidate -- <proposalId>` (scripts/rfp-consolidate-run.ts). No schema, env or migration change; no new route.
@@ -9703,6 +9705,11 @@ the block is set the way the screen's `.rfpdoc-sig` sets it (serif runs
 in the signature palette) rather than Tahoma approximated by Helvetica
 (§5.17.5).
 
+Round 32 (§5.17.20): the letterhead adds the stored postal lines under the
+addressee and a SYSTEM pricing paragraph (quote.ts `letterPricingParagraph`,
+from the stored quote, never the model, no term) placed before the last
+drafted paragraph (after the body when there is only one); the letter turn may return a `thesis` the navy closing prints.
+
 #### 5.17.5 Export fidelity: the downloads ARE the workspace document (2026-08-27)
 
 Owner directive: the downloaded Word and PDF must look exactly like the
@@ -9779,6 +9786,13 @@ guards, the money wrap guard); its hostile-input sweep (XML metachars,
 RTL, emoji, combining marks, 25 sections, empty-everything fixtures,
 mid-table page breaks) reproduced zero crashes in either format, and
 DOCX part XML, rels and content types validate on every fixture.
+
+Round 32 (§5.17.20): cover, letterhead and closing furniture is now authored
+once in `src/lib/rfp/furniture.ts` (client-safe), which the workspace,
+resolve-draft and both emitters share; the "Confidential" pagefoot is
+recorded there as standing business copy, not a draft mark. Parity fixes the
+same round: three-up cards on screen, Word fact-grid keepNext, Word addressee
+spacing, two PDF timeline defects.
 
 #### 5.17.6 Minimum-first user count, references backstop, real titles (2026-09-30)
 
@@ -10103,6 +10117,11 @@ LibreOffice inspection. Suites: `npm run test:rfpblocks` (contract,
 grounding, sanitizer, placement, builders against the seed facts) and
 `npm run test:rfpvisualgate` (legacy byte-identity, schema lift, span
 coverage, B7/D1/A5 on visual blocks, flow order).
+
+Round 32 (§5.17.20): the model may also author `timeline` (2..6 steps, a
+kicker of at most 24 characters into the step label, every number grounded)
+and `ledger` (2..12 label/value rows, stored as the existing `fact-grid`), and
+`cards` widens to two or three. No content-model kind was added.
 
 #### 5.17.8 Checks pane: Ignore / Fix it (2026-09-30)
 
@@ -11745,6 +11764,12 @@ grounded contact name has no edit path (the same exposure as `clientName`).
 A genuinely two-section PASTED RFP loses its two labels to the outline under
 the paste guard (it still drafts).
 
+Round 32 (§5.17.20): a brief's cover prints its stored `proposal_headline`
+(migration 0062) when the read produced one, and its cover lede becomes
+"Prepared for <client>, Attention: <name>, <title>." when a contact is stored
+(else exactly the form above); drafted sections may take a narrative title
+only over an untouched standard outline title (never "10" or the letter).
+
 #### 5.17.18 Vision intake: scanned PDFs and images are transcribed (2026-10-13)
 
 Trigger: `POST /api/rfp/documents` refused a scanned vendor-review PDF with
@@ -12126,6 +12151,345 @@ not scanned (adjacent prose legitimately elaborates, and a paragraph beside
 its own table is the normal lead-in). Honest limit: a D6 Ignore is
 span-scoped (its `findingSig` keys the span, not the table), so ignoring D6
 on a paragraph also hides any table written into that same paragraph later.
+
+#### 5.17.20 CoWork-grade design parity: narrative cover, letterhead, system pricing paragraph, thesis closing, a wider visual vocabulary (2026-10-15)
+
+The owner put a 19-page proposal written in Claude CoWork (Curioso, a design
+studio, from a brief) beside /rfp output and asked for comparable design
+elements, cover letter, header naming and visuals. A frozen contract split
+the round between two implementers: A (server, brain, data) and B
+(presentation: one spec for the screen sheet, Word and PDF). The existing hard
+controls did not move: the drafter and letter model never write a price,
+rate or contract length (rule 3); every figure in a visual grounds against
+cited facts; client text stays fenced; rule C4 keeps a real RFP's structure;
+no em dashes; no DRAFT marks in a file.
+
+**Stored fields (A).** Migration `0062_rfp_client_address_headline`
+(`ADD COLUMN IF NOT EXISTS`, the 0044-onward header style) adds two nullable
+columns beside 0060's contact pair, written by `runDocumentRead` in the same
+update that stamps `extracted`. Read it again and `rfp:reread` run that same
+landing, but only on a CLAIMABLE document (a failed read, a stale "reading"
+row, an "extracted" row with no structure), so they do NOT refresh these
+fields on a document already read with a structure. The lane for those is
+`npm run rfp:reground -- <documentId>` (`scripts/rfp-reground.ts`): it
+re-reads the STORED raw_text through the same reader turn (`readRfp`, the same
+grounding and screens) and writes ONLY `client_address` and
+`proposal_headline`, both of them, to NULL when the read refuses one; never
+status, structure, requirements, titles, the intake form or the contact;
+`claimReread` is untouched. The headline is stored only when the STORED
+intake form is brief and this read also took it as a brief. The write is
+guarded on `status = 'extracted'` and the `updated_at` read before the brain
+call (a row rewritten meanwhile is refused, nothing written). Actor "cli",
+one shape-only activity row `document.reground` (`addressLines` count,
+`headline` ok/none, both forms); prints counts only. Exit 2 usage, 1 refused
+or brain failure, 0 written:
+
+- `client_address`: `readRfp` returns `clientAddress`, which brain.ts
+  `groundAddressLines` SELECTS, never authors: a line is kept only when its
+  whitespace-collapsed form is a substring of the whitespace-collapsed fenced
+  text the reader saw (intake headers stripped), then sanitized like a
+  heading (fence and angle runs stripped, at most 80 characters, no em dash);
+  at most 5 lines, joined with "\n". A hostile brief can at worst get an
+  address line PRINTED as address text, never interpreted. A line with a
+  currency hit (`hasCurrency`: a sign, a currency word, a number "per
+  month") is refused even when verbatim: a postal line never carries money,
+  and one that did would raise a B7 finding on `address[i]` that no Fix-it
+  can clear. A line with stacked combining marks (two or more `\p{Mn}` in a
+  row after NFC, furniture.ts `hasStackedMarks`; the zalgo probe) is refused;
+  the same check guards the headline, the section title and the thesis.
+- `proposal_headline`: `screenProposalHeadline`, one narrative cover headline
+  of at most 56 characters, refused on a currency hit, an em dash or any
+  number the source does not state; stored for `intake_form = 'brief'` only.
+  A number grounds only as a WHOLE number (`containsNumber`, hand-checked
+  digit boundaries): "99" never grounds against "99.9", nor "9" against
+  "99.9", nor "99.9" against "99" (the title screen gets the same from
+  `groundValue`'s maximal tokens; both directions pinned).
+  A real RFP keeps `doc-title.ts` for its stored row title and today's cover.
+
+**Narrative section titles, brief mode only (A).** `draftSection` may return a
+`title` (`screenSectionTitle`, its numbers grounded by brain.ts
+`sectionTitleCorpus`: the affirmative facts the section cites, NEVER a
+`pricing.*` fact, so "Fully Managed IT at 247 a Month" is refused even with
+the rate fact cited); the generate route adopts it only when
+outline.ts `mayAdoptNarrativeTitle` holds: a brief document, the section's
+current title EXACTLY its `STANDARD_OUTLINE` default (a human retitle or an
+already-adopted title is never clobbered), a non-empty cleaned title, and
+never section "10" (About XL.net) or the letter. The record and the
+document's structure node take the title in one transaction
+(`db.ts completeGenerationRetitled`, which lands the plain record instead if
+the node no longer carries its default at landing); the generate activity row
+gains `retitled: true` only when it happened. The brief-only prompt asks for
+the concrete thing the section covers or commits to (the system, place,
+deadline or promise) in the brief's own words, says a title that would fit
+any client is the standard title again, and to keep the standard title when
+it is already exact; its one example ("Where Your Project Files Live" rather
+than "File Storage") is not an outline title.
+
+Honest limits, on the record: (1) a mid-draft narrative title can shift the
+service-stats picker (`pickServiceStatsSection` scores label + title) for the
+rest of that run, so the service tiles can land on another section or none;
+they return on a redraft, which re-scores the adopted titles. (2) Restoring
+the EXACT standard title by hand deliberately reopens narrative retitling:
+the guard keys on "still the standard title", not on history, so the next
+draft of that section may propose a narrative title again.
+
+**Letter turn (A).** `draftCoverLetter` is rewritten toward the reference
+shape: open on the client's own context from the fenced brief or RFP, then
+why XL.net grounded in facts, then timing when the source states dates,
+closing in one or two plain sentences that welcome the conversation, without
+describing how the response is organized or mentioning pricing (the system
+pricing paragraph does that); 4 to 6 paragraphs; rule 3 verbatim. It also
+returns an optional `thesis`, the proposal's one-line argument, screened by
+`screenLetterThesis` (at most 90 characters, no numeral, no currency, no em
+dash, injection-screened, AND everything the closing sheet refuses to print:
+furniture.ts `thesisRefused`, one predicate for both sides (an en dash, an
+angle bracket, stacked marks), so a thesis that stores always renders;
+brain.ts imports furniture.ts, never the reverse) and stored as the additive
+`thesis` field on the
+reserved letter record (no migration; absent reads byte-identically).
+Salutation is unchanged: "Dear <full name>," for a grounded contact, never
+a guessed honorific.
+
+**Visual vocabulary (A parses, B renders).** `parseModelVisuals` admits two
+more kinds, with the same degrade/drop discipline and currency veto, every
+existing kind byte-identical:
+
+- `timeline`: 2..6 steps `{kicker?, title, body}`, `LIMITS.timelineKicker`
+  24; every number in a kicker, title or body grounds against the visual's
+  cites. On a BRIEF document only, a step KICKER's numbers may also ground
+  against the brief itself (`parseModelVisuals` ctx `kickerCorpus`, the
+  stripped brief text the generate route already passes, threaded through
+  `finishDraftVisuals`): "DEC 11, 2026" as the brief dates the onboarding
+  day. Titles and bodies never ground against the brief, no other kind does,
+  and the currency veto is unchanged. The brief prompt gains one line: "A
+  step label may carry a date exactly as the brief states it." It lands as the EXISTING content-model timeline, the kicker in the
+  step's `label` slot: used only when every step carries one (a date or date
+  range), otherwise every step reads "Step N" (a kicker equal to its own
+  "Step N" is furniture, not a figure).
+- `ledger`: 2..12 `{label, value}` rows (`LIMITS.ledger`), the model's name
+  for label/value facts, definition lists and agreement terms; it lands as
+  the EXISTING content-model `fact-grid` (the About snapshot's body).
+- `cards` widens from [2, 2] to [2, 3] (three-up).
+
+A `pricing.*` fact grounds NO model visual of any kind (table, callout,
+cards, ledger, timeline, stat tile, and the prose a degraded visual returns):
+its numbers are money with the sign left off, so a ledger "Fully managed
+user: 247 monthly" or a step "Setup at 1,200" citing the rate or Datto fact
+would pass the currency veto and ground. A pricing fact stays citable (as a
+negative fact does); it grounds nothing. Accepted loss: "15-user minimum"
+no longer grounds a visual from the minimum fact. (The markdown lift and the
+table salvage already excluded pricing facts.)
+
+No content-model kind was added. The renderers dispatch on the body alone,
+so a model-authored timeline, ledger or card set renders exactly as a
+system-built one (pinned: the round-32 fixture's visuals reach the emitters
+with bodies identical to the same blocks stamped `generatedBy: "system"`).
+
+**One furniture author (B).** New pure, client-safe `src/lib/rfp/furniture.ts`
+(no node:fs, no lookbehind) is imported by resolve-draft (so the gate scans
+what prints), both emitters (through `ExportView`) and workspace.tsx (from the
+same stored fields page.tsx now passes as `clientAddress` and
+`proposalHeadline`, plus the letter record's `thesis` from client state), so
+the sheet shows what downloads. Its guards only DROP a value that is not
+furniture-shaped; they never rewrite one.
+
+- **Cover title** `coverTitle({intakeForm, who, proposalHeadline})`: a brief
+  prints its stored headline, else "Proposal for <who>" (or "Proposal"); a
+  real RFP always prints "Response to Request for Proposal". The cover kicker
+  "Managed IT Services Proposal" has been printed on every cover, both forms,
+  since round 8; unchanged.
+- **Cover lede** `coverLede(...)` composes the whole lede when a contact is
+  stored: "Prepared for <who>, Attention: <name>, <title>, in response to the
+  Request for Proposal." (RFP; "Prepared in response to the Request for
+  Proposal, Attention: ..." with no client) or "Prepared for <who>, Attention:
+  <name>, <title>." (brief with a client). With no contact it is exactly
+  today's: no `cover.lede` key on an RFP (the emitters compose the old form)
+  and "Prepared by XL.net for your review." on a brief.
+  `coverLedeParts(clientName, lede)` (moved here from export.ts) splits any
+  lede that opens "Prepared for <client>" so the client stays semibold on all
+  three surfaces.
+- **Submitted by / Contact / Date** columns above the cover foot: already on
+  all three surfaces since 2026-08-27 (XL.net Inc. over the letter's signer;
+  the signer's email and phone; the date label). The signer line now carries
+  the role the letter's signature prints, as the reference cover does
+  ("Adam Radulovic, CEO"; furniture.ts `submittedByLine(name, title)`, the
+  name alone when the signer has no directory title).
+- **Letterhead**: the date line (unchanged), then the addressee lines
+  (furniture.ts `letterAddresseeLines`, resolved as `ResolvedLetter.addressee`)
+  set as the reference sets them: ONLY line 0 semibold. With a contact: the
+  name, the title beneath it on its own line, then the client, all but the
+  name regular (the old single "Name, Title" semibold line is gone, so a
+  document with a stored contact hashes differently). With no contact: the
+  client alone (or "the client"), semibold, byte-identical. Then the stored
+  postal lines in the regular face:
+  `recipientAddressLines(client_address, [contact, title, client])` collapses
+  whitespace, drops empties and any line that repeats a name the block
+  already prints, caps at 5. Resolved as the new OPTIONAL
+  `ResolvedLetter.address` (absent when none), scanned as span field
+  `address[i]`. Word now sets the recipient block tight (air above its first
+  line only): it used to put 11pt above EVERY addressee line, which neither
+  the screen nor the PDF did.
+- **System pricing paragraph**: `letterPricingParagraph(quote: PricingQuote |
+  null, minimumUsers: number | null): string | null` in quote.ts, pure and
+  client-safe. Inputs are only the STORED quote (the one the Investment sheet
+  prints; `pricing_json` exists only when the quote is ready) and the rate
+  card's minimum (resolve-draft: `rateCard.minimumFullyManagedUsers`; the
+  workspace: its `minimumUsers` prop). One illustration: "The pricing is
+  straightforward: <N fully managed users at $U per user per month, or up to
+  M fully managed users at the monthly minimum, decided by `quantityLabel` as
+  the quantity cell is>, $T per month in total." then "That total also covers
+  <other paid line labels>, each itemized on the Investment page." (a list
+  joins "A, B and C", or "A; B; and C" when any item carries a comma of its
+  own, such as "Datto SaaS Protection, 1-year retention") and
+  "<label> is included in the monthly fee." for a zero-priced line (how an
+  included anti-spam line would read; the seed card has none, so nothing is
+  invented). Two illustrations (rule B4): both views and their monthly
+  totals, anchoring on neither, plus the per-user rate. One-time fees come
+  from the engine's own notes, read by anchored regexes against buildQuote's
+  templates in the same file (onboarding, one fee or one per view; Datto
+  setup); scanning is mentioned without a figure. Every figure prints through
+  `formatMoney` in its auto mode (the paragraph is prose: "$247", "$14,820",
+  cents only when there are some; the Investment table keeps cents always)
+  and is in rule B7's sanctioned set (line
+  unit price, line total, monthly total, note figures). It states NO contract
+  term: the quote carries none and a term is never inferred. Resolved as the
+  OPTIONAL `ResolvedLetter.pricingParagraph` (absent when pricing is not
+  ready), scanned under its own span field `pricingParagraph`, NOT `body[N]`,
+  so check-fixes `LETTER_SPAN_FIELD` never routes a finding on it to a Tron
+  letter revise: it is furniture, recomposed every render, never stored in
+  sections_json, never in the letter's Edit box. It is set exactly like a
+  drafted paragraph and placed by furniture.ts `pricingParagraphIndex` /
+  `letterParagraphsWithPricing`, one rule on all three surfaces: with two or
+  more drafted paragraphs it goes BEFORE the last one (the reference letter
+  runs context, why-us, pricing, then timing and the close, so a standalone
+  closing line such as "We look forward to discussing this with you." stays
+  last); with fewer it follows the body. While the letter sits in its Edit
+  box on screen, the paragraph shows under the box (it is not editable
+  text).
+- **Closing thesis**: resolve-draft puts `letterThesis(letterRecord.thesis)`
+  (a non-empty string of at most 120 characters that `thesisRefused` passes:
+  no digit, `$`, en or em dash, angle bracket or stacked marks; anything else
+  ignored) into `backCover.subhead`;
+  `closingHeadline(subhead)` is the navy sheet's big line in
+  `ExportView.closing.headline` and on the screen sheet, else the standing
+  "Because our fee is flat, our incentive is to prevent issues, not to bill
+  for them." (`CLOSING_HEADLINE`; export-assets `FURNITURE_CLOSING_HEADLINE`
+  re-exports it). The lede and contact columns below it are unchanged.
+- **Confidential footer**: the pagefoot's right slot has read "Confidential"
+  on every sheet of all three surfaces since 2026-08-27. It is standing
+  business copy, kept deliberately, and is NOT a draft mark: the 2026-08-28
+  ruling (§5.17.5) bans DRAFT / WORKING DRAFT marks, not a confidentiality
+  legend. The LEFT slot is furniture.ts `pageFootLeft(who)`: "XL.net ·
+  Managed IT Services Proposal · Proposal for <who>" (the reference's running
+  footer), `who` being the cover's name (the client, else the proposal
+  title, the one the section dividers print), the base alone when none or
+  when the whole would pass `FOOT_LEFT_MAX` (80 characters: the PDF's
+  letterspaced caps set about 86 beside "Confidential", and a long client
+  name such as the fixture's "Larkmoor Valley Housing Cooperative" overprinted
+  it; never cut); one rule on the screen sheet (`PageFoot who`), Word's
+  footer and every PDF page's stamp.
+
+**Render parity fixes found while verifying (B).**
+
+- Three-up cards on screen: `.rfpdoc-cards` was a fixed two-column grid, so
+  three cards wrapped 2+1 while both files set them across. It now reads
+  `repeat(var(--rfpdoc-n, 2), ...)` with `--rfpdoc-n` set inline to the card
+  count; the phone container rule still stacks them. Both emitters were
+  already n-generic (PDF: one atomic block, ensureRoom on the tallest card;
+  Word: one `cantSplit` row).
+- Word fact grid: every row but the last keeps with the next, so a ledger or
+  the About snapshot never splits across a page in Word (a grid is at most 6
+  rows and the PDF already kept it whole).
+- PDF timeline: (1) the row advanced `doc.y` from where the last `textAt`
+  left it rather than from the row's top, adding the row's height twice: a
+  gap the size of the timeline under any timeline that was not the last thing
+  on its sheet (invisible while the only timeline, the system onboarding one,
+  closed its section); (2) every body was aligned under the TALLEST title of
+  its row, while the screen grid and Word's cells stack each step on its own.
+  Both fixed: the row top is captured before drawing, each step stacks its own
+  label, title and body, and the row is the tallest step.
+
+**Byte identity.** With `client_address`, `proposal_headline` and `thesis`
+absent, no stored contact and no quote, the resolved cover, letter and back
+cover carry exactly the pre-round keys and the content hash is unchanged
+(canonicalize drops undefined; pinned in test:rfpcoverletter). Deliberate
+output changes for existing documents, all contract-mandated or parity
+fixes: a priced document gains the pricing paragraph; an RFP with a stored
+contact gains the Attention clause; Word's addressee spacing and fact-grid
+keepNext; the PDF timeline rhythm.
+
+**Out of scope, on the record.** Restructuring the document into thematic
+numbered PARTS with decks and "n.m" section kickers: the 2026-08-02 round-8
+owner ruling rejected prefix-grouping dividers for client-structured
+documents and rule C4 pins client structure; doing it for brief documents is
+a bigger model change that needs Adam's explicit go. Six-up incident cards
+(pagination risk). Reading the CoWork PDF's copy into prompts verbatim (the
+prompts carry two fact-free reference-shaped callout title examples only).
+Also kept as house design rather than cloned from the reference: the ledger
+renders in the house two-column fact grid (the reference sets one full-width
+column); card titles keep the house small-caps navy; the closing columns stay
+Contact / Email / Web; and the owner's standard XL.net signature block (with
+its two Forbes articles) is unchanged.
+
+**Open.** Placement is RESOLVED this round: the pricing paragraph was first
+landed after the last drafted paragraph, which put it after a standalone
+closing line; the coordinator accepted moving it before the last drafted
+paragraph (two or more paragraphs; after the body otherwise), pinned in
+test:rfpcoverletter and visible in the fixture render. The letter length is
+RESOLVED too: the PDF letter used to reserve a fixed `ensureRoom(180)` before
+the signature, more than the block, which pushed the whole signature block
+alone onto a second page; it now asks for the block's MEASURED height (every
+signature line listed once, measured with the font, size and gap it is drawn
+with, then drawn; the gap pdfkit leaves under the block's last line is not
+asked for). A letter long enough to need two pages still breaks before the
+signature, never inside it. Still OPEN, Adam's call: the full round-32
+fixture letter (six recipient lines once the addressee's title took its own
+line, four drafted paragraphs, the pricing paragraph, a one-line close) is
+6.8pt longer than the page with the measured block, so its signature still
+moves to a second PDF page; the screen and PDF spacing already match each
+other, so fitting it means a shorter letter or a shorter standard signature
+block, not a renderer change. Pinned: the signature block is never split;
+the same letter with a two-line postal block (where the old fixed 180pt
+reserve broke the page) is ONE page; the fixture's total page count (10).
+
+**Tests and harness.** test:rfpquote pins the paragraph (the reference's 60
+users, under and AT the minimum, no rate card, paid add-ons with Datto and
+scanning, the two B4 views, an included line) and, across six quote shapes,
+that every one-time figure any engine note states reaches the paragraph and
+that no paragraph carries a term word, an em dash or a pro-rated figure. New
+test:rfpcoverletter (`scripts/rfp-cover-letter-render-tests.ts`): the
+furniture helpers, absence byte-identity, the full gate over the round-32
+fixture (zero blocking) and three pricing scenarios with zero B-series, zero
+D1 and zero findings on the new furniture, model-versus-system body parity,
+and that the Word XML and the PDF text both carry the headline, the
+Attention lede, the postal lines, the pricing paragraph (after the next-to-last
+drafted paragraph and before the last, so before "Regards,"), the thesis on the last page and "Confidential" on every
+PDF page. rfp:render-fixture now renders a second document beside the visual
+fixture: `buildR32GateInput` in `scripts/rfp-render-fixture.ts`, an invented
+design studio drafted from a brief (narrative headline, Attention, postal
+lines, system pricing paragraph, thesis closing, a model "Step N" escalation
+timeline, an editorial callout, three-up cards, a ledger, an onboarding
+timeline with worded kickers), the refuters' and later rounds' side-by-side
+harness against the CoWork reference. No env change; no new route.
+
+**Fix round (two refuters, same day).** Security: pricing facts ground no
+title and no model visual; postal lines refuse money; whole-number grounding
+for headlines; one thesis predicate for store and render; stacked marks
+refused. Fidelity: `rfp:reground`; the measured PDF signature; brief-dated
+timeline kickers; the concrete-thing title instruction; the plain close;
+whole-dollar prose money with semicolon lists; the two-line addressee, the
+signer's role on the cover and the client in the running footer. Each probe
+case is a test: test:rfpoutline (address money and zalgo, headline and title
+whole numbers both ways, the S1 title probe through `sectionTitleCorpus`,
+source pins for `rfp:reground`), test:rfpblocks (the S2 ledger, timeline and
+table probes, stat tiles and degraded prose, brief-dated kickers grounding
+only in a kicker), test:rfpletter (thesis store/render alignment, the prompt
+pins for the new title, close and brief-kicker lines, absence of the old
+title example and the old close), test:rfpquote (whole dollars, cents kept
+when present, semicolon lists), test:rfpcoverletter (addressee lines,
+submitted-by role, running footer on every PDF page and in Word, the
+signature block never split, a letter that fits by the measured block on one
+PDF page, the fixture's page count).
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

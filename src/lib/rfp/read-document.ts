@@ -1,5 +1,6 @@
 // The background read of one RFP document: readRfp, then requirements, the
-// composed title, stated staff, intake form and addressee, and status
+// composed title, stated staff, intake form, addressee (with the grounded
+// address lines) and the brief's cover headline, and status
 // "extracted" (or "read_failed"). A document that came in with a scanned PDF
 // or an image is transcribed first (§5.17.18), in this same worker, so the
 // first read, "Read it again" and the rfp:reread CLI all retry it alike.
@@ -168,6 +169,11 @@ export async function runDocumentRead(input: DocumentReadInput): Promise<void> {
         intakeForm: result.intakeForm,
         contactName: result.contact?.name ?? null,
         contactTitle: result.contact?.title ?? null,
+        // Round 32 (migration 0062): grounded recipient lines and the
+        // brief's cover headline. A re-read overwrites both, so a value the
+        // new read refuses goes back to NULL rather than surviving stale.
+        clientAddress: result.clientAddress ?? null,
+        proposalHeadline: result.proposalHeadline ?? null,
         status: "extracted",
         updatedAt: new Date(),
       })
@@ -200,6 +206,10 @@ export async function runDocumentRead(input: DocumentReadInput): Promise<void> {
         // only, never the name.
         form: result.intakeForm,
         contact: result.contact ? "ok" : "none",
+        // Shape only: how many address lines grounded, whether a headline
+        // was kept. Never the text.
+        addressLines: result.clientAddress ? result.clientAddress.split("\n").length : 0,
+        headline: result.proposalHeadline ? "ok" : "none",
       },
     });
   } catch (err) {

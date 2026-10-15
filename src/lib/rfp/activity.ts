@@ -28,6 +28,8 @@ export const RFP_ACTIONS = [
   "document.create",
   "document.extract",
   "document.reread",
+  // rfp:reground (round 32): the address lines and cover headline only.
+  "document.reground",
   "document.transcribe",
   "document.confirm_structure",
   "document.archive",

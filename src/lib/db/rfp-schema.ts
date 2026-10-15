@@ -246,6 +246,14 @@ export const rfpDocuments = pgTable(
      *  (src/lib/rfp/brief.ts groundContact). NULL when none grounded. */
     contactName: text("contact_name"),
     contactTitle: text("contact_title"),
+    /** The addressee's postal block (round 32): up to 5 lines joined with
+     *  "\n", EACH line verbatim-grounded against the read's fenced text and
+     *  sanitized (brain.ts groundAddressLines). NULL when none grounded. */
+    clientAddress: text("client_address"),
+    /** A short narrative cover headline (round 32), brief-mode documents
+     *  only, sanitized and currency/digit-vetoed (brain.ts
+     *  screenProposalHeadline). NULL for real RFPs and whenever refused. */
+    proposalHeadline: text("proposal_headline"),
     structureConfirmedAt: timestamp("structure_confirmed_at", {
       withTimezone: true,
     }),

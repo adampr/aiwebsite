@@ -25,10 +25,15 @@ import { siteConfig } from "site.config";
 // completions and defeat the limit governance set at 2.
 import { callGovernanceBrain } from "@/lib/governance/brain";
 import { screenInjection } from "@/lib/governance/research";
-import { groundStatedStaff, type StatedStaff } from "./staff-count";
+import {
+  groundStatedStaff,
+  normGroundText,
+  stripFormatChars,
+  type StatedStaff,
+} from "./staff-count";
 import { groundRfpTitle } from "./doc-title";
 import { applyBriefMode, groundContact, type BriefContact, type IntakeForm } from "./brief";
-import { OUTLINE_TITLES_FOR_PROMPT } from "./outline";
+import { OUTLINE_TITLES_FOR_PROMPT, narrativeTitleOpen } from "./outline";
 import { RFP_READ_BUDGET_MS, stripIntakeHeaders } from "./intake";
 import {
   consolidationScan,
@@ -42,9 +47,16 @@ import {
 import { LETTER_LABEL, stripReservedPrefix } from "./letter";
 import { normalizeGapQuestion } from "./gaps";
 import { referencesAsk } from "./references-ask";
+// Client-safe furniture predicates shared with the renderers, so what the
+// store side accepts is exactly what the sheets print (never the reverse
+// import: furniture.ts stays import-free).
+import { hasStackedMarks, thesisRefused } from "./furniture";
 import type { FactRow } from "./db";
 import {
+  groundValue,
+  hasCurrency,
   interleave,
+  pickAboutSection,
   serializeBlockForPrompt,
   type DraftBlock,
 } from "./draft-blocks";
@@ -161,11 +173,231 @@ export type ReadRfpResult = {
   intakeForm: IntakeForm;
   /** Who the proposal is addressed to, grounded verbatim, or null. */
   contact: BriefContact | null;
+  /** The addressee's postal lines joined with "\n" (at most
+   *  ADDRESS_LINES_MAX), each verbatim-grounded and sanitized by
+   *  groundAddressLines, or null. Every intake form. */
+  clientAddress: string | null;
+  /** A narrative cover headline (screenProposalHeadline), brief-mode
+   *  documents only; null for a real RFP and whenever refused. */
+  proposalHeadline: string | null;
 };
 
 /** A grounded title that trips the injection screen is no title. */
 function screenedTitle(title: string | null): string | null {
   return title && screenInjection(title).hits.length === 0 ? title : null;
+}
+
+const tripsInjectionScreen = (s: string): boolean => screenInjection(s).hits.length > 0;
+
+/* ---- Round 32 furniture text (§5.17.17) ----------------------------------
+ * Model text headed for operator-voice slots: the letter's recipient block,
+ * the cover headline, a section heading, the closing thesis. Each is
+ * sanitized and vetted here, and a value that fails stores NULL (or stays
+ * absent), never a trimmed or repaired guess. */
+
+export const ADDRESS_LINES_MAX = 5;
+export const ADDRESS_LINE_MAX = 80;
+export const PROPOSAL_HEADLINE_MAX = 56;
+export const SECTION_TITLE_MAX = 60;
+export const LETTER_THESIS_MAX = 90;
+
+/** Rule D1: an em dash (or the horizontal bar) refuses the value. */
+const EM_DASH = /[\u2014\u2015]/;
+/** A numeral that is not an ASCII digit: never grounded, never kept. */
+const FOREIGN_NUMERAL = /(?![0-9])\p{N}/u;
+
+const collapseWs = (s: string): string => stripFormatChars(s).replace(/\s+/g, " ").trim();
+
+/** cleanHeading's sanitation without its cut: one line, no fence-token
+ *  runs, no reserved "__" prefix, whitespace collapsed AFTER the strip. The
+ *  callers refuse an over-long value instead of trimming it. */
+function furnitureText(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return stripReservedPrefix(collapseWs(raw.replace(/<{3,}|>{3,}/g, " "))).trim();
+}
+
+/** `needle` inside `hay` with no letter or digit glued to either end. */
+function containsAsWords(hay: string, needle: string): boolean {
+  if (!needle) return false;
+  let at = hay.indexOf(needle);
+  while (at >= 0) {
+    const before = hay.slice(0, at);
+    const after = hay.slice(at + needle.length);
+    if (!/[\p{L}\p{N}]$/u.test(before) && !/^[\p{L}\p{N}]/u.test(after)) return true;
+    at = hay.indexOf(needle, at + 1);
+  }
+  return false;
+}
+
+/**
+ * The reader's `clientAddress` claim (SELECT, never author). A line is kept
+ * only when its whitespace-collapsed form is a substring (whole words) of
+ * the whitespace-collapsed grounding text, which is the exact fenced text
+ * the reader saw with the intake headers stripped: the reader cannot invent
+ * an address. Each line is sanitized like a heading (one line, no
+ * fence-token runs, at most ADDRESS_LINE_MAX characters, no em dash, no
+ * currency hit, no stacked combining marks) and screened for injection; a line naming the client, the addressee or their
+ * title is dropped (those print on their own lines). At most
+ * ADDRESS_LINES_MAX lines, joined with "\n"; null when none survives.
+ */
+export function groundAddressLines(
+  raw: unknown,
+  docText: string,
+  opts: { exclude?: (string | null | undefined)[]; tripsScreen?: (s: string) => boolean } = {}
+): string | null {
+  const items: unknown[] = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string"
+      ? raw.split(/\r?\n/)
+      : [];
+  const hay = collapseWs(docText);
+  const excluded = new Set(
+    (opts.exclude ?? [])
+      .filter((s): s is string => typeof s === "string")
+      .map((s) => collapseWs(s).toLowerCase())
+      .filter(Boolean)
+  );
+  const out: string[] = [];
+  for (const item of items.slice(0, ADDRESS_LINES_MAX + 3)) {
+    if (out.length >= ADDRESS_LINES_MAX) break;
+    if (typeof item !== "string" || /[\r\n]/.test(item.trim())) continue;
+    const line = collapseWs(item.replace(/<{3,}|>{3,}/g, " "));
+    if (line.length < 2 || line.length > ADDRESS_LINE_MAX) continue;
+    if (!/[\p{L}\p{N}]/u.test(line) || EM_DASH.test(line)) continue;
+    // A postal line never carries money (and one that did would raise an
+    // unfixable B7 finding on address[i]); stacked marks are never furniture.
+    if (hasCurrency(line) || hasStackedMarks(line)) continue;
+    if (!containsAsWords(hay, line)) continue;
+    if (excluded.has(line.toLowerCase()) || out.includes(line)) continue;
+    if (opts.tripsScreen?.(line)) continue;
+    out.push(line);
+  }
+  return out.length ? out.join("\n") : null;
+}
+
+/**
+ * `num` (a maximal digit run, "99" or "99.9") inside `hay` as a WHOLE
+ * number: no letter or digit glued to either end, and no decimal or
+ * thousands mark joining it to more digits ("99" never grounds against
+ * "99.9", nor "9" against "99.9", nor "99.9" against "199.95"). Hand-checked
+ * neighbours, never a lookbehind.
+ */
+function containsNumber(hay: string, num: string): boolean {
+  if (!num) return false;
+  const isDigit = (c: string | undefined) => c !== undefined && c >= "0" && c <= "9";
+  let at = hay.indexOf(num);
+  while (at >= 0) {
+    const end = at + num.length;
+    const before = hay.slice(0, at);
+    const after = hay.slice(end);
+    const gluedBefore =
+      /[\p{L}\p{N}]$/u.test(before) || (/[.,]$/.test(before) && isDigit(hay[at - 2]));
+    const gluedAfter =
+      /^[\p{L}\p{N}]/u.test(after) || (/^[.,]/.test(after) && isDigit(hay[end + 1]));
+    if (!gluedBefore && !gluedAfter) return true;
+    at = hay.indexOf(num, at + 1);
+  }
+  return false;
+}
+
+/** Every digit run of `text` is a number the grounding text states, as a
+ *  whole number (thousands separators folded on both sides, containsNumber's
+ *  digit boundaries). */
+function digitsStated(text: string, docText: string): boolean {
+  const runs = normGroundText(text).match(/\d+(?:\.\d+)?/g) ?? [];
+  if (runs.length === 0) return true;
+  const hay = normGroundText(docText);
+  return runs.every((n) => containsNumber(hay, n));
+}
+
+/**
+ * The reader's `proposalHeadline` (round 32): one short narrative headline
+ * for the cover of a BRIEF; a real RFP keeps its composed title, so this is
+ * null unless intakeForm is "brief". Sanitized like a heading (furnitureText),
+ * then refused (null, never cut) when longer than PROPOSAL_HEADLINE_MAX, on
+ * an em dash, a currency hit, stacked combining marks, a non-ASCII numeral,
+ * any digit run the grounding text does not state as a whole number
+ * (containsNumber), or an injection-screen hit.
+ */
+export function screenProposalHeadline(
+  raw: unknown,
+  docText: string,
+  intakeForm: IntakeForm,
+  tripsScreen: (s: string) => boolean = () => false
+): string | null {
+  if (intakeForm !== "brief") return null;
+  const h = furnitureText(raw);
+  if (h.length < 3 || h.length > PROPOSAL_HEADLINE_MAX) return null;
+  if (!/\p{L}/u.test(h) || EM_DASH.test(h) || hasCurrency(h) || hasStackedMarks(h)) return null;
+  if (FOREIGN_NUMERAL.test(h) || !digitsStated(h, docText)) return null;
+  return tripsScreen(h) ? null : h;
+}
+
+/**
+ * The drafter's optional section `title` (round 32, brief mode only).
+ * Sanitized like a heading (furnitureText), then refused (null, never cut)
+ * when longer than SECTION_TITLE_MAX, on an em dash, a currency hit, stacked combining marks,
+ * a non-ASCII numeral, a number (digits or a number word) the corpus (sectionTitleCorpus: the
+ * affirmative, non-pricing facts the section cites) does not
+ * state, a title that would make the company snapshot's picker take this
+ * section for About XL.net, or an injection-screen hit.
+ */
+export function screenSectionTitle(
+  raw: unknown,
+  citedFactsText: string,
+  tripsScreen: (s: string) => boolean = () => false
+): string | null {
+  const t = furnitureText(raw);
+  if (t.length < 2 || t.length > SECTION_TITLE_MAX) return null;
+  if (!/\p{L}/u.test(t) || EM_DASH.test(t) || hasCurrency(t) || hasStackedMarks(t)) return null;
+  if (FOREIGN_NUMERAL.test(t) || !groundValue(t, citedFactsText)) return null;
+  if (pickAboutSection([{ label: "", title: t }], []) !== null) return null;
+  return tripsScreen(t) ? null : t;
+}
+
+/**
+ * The text a narrative section title's numbers must be stated by: the
+ * affirmative facts the section cites, never a `pricing.*` fact. A pricing
+ * fact's numbers are money with the sign left off ("247" would ground
+ * "Fully Managed IT at 247 a Month"), and rule 3 keeps prices out of every
+ * heading, so its numbers ground nothing here (draft-blocks isPricingFact,
+ * the same exclusion every model visual gets).
+ */
+export function sectionTitleCorpus(
+  facts: Pick<FactRow, "id" | "key" | "statement" | "detail" | "polarity">[],
+  cites: string[]
+): string {
+  return facts
+    .filter(
+      (f) =>
+        cites.includes(f.id) &&
+        f.polarity !== "negative" &&
+        !(typeof f.key === "string" && f.key.startsWith("pricing."))
+    )
+    .map((f) => `${f.statement} ${f.detail ?? ""}`)
+    .join(" \n ");
+}
+
+/**
+ * The letter turn's optional `thesis` (round 32): the proposal's one-line
+ * argument, printed large on the closing sheet. Sanitized like a heading,
+ * then refused (null, never cut) when longer than LETTER_THESIS_MAX, on ANY
+ * numeral, a currency hit, an em dash, anything the closing sheet refuses
+ * (furniture.ts thesisRefused: an en dash, an angle bracket, stacked marks),
+ * or an injection-screen hit.
+ */
+export function screenLetterThesis(
+  raw: unknown,
+  tripsScreen: (s: string) => boolean = () => false
+): string | null {
+  const t = furnitureText(raw);
+  if (t.length < 8 || t.length > LETTER_THESIS_MAX) return null;
+  if (!/\p{L}/u.test(t) || /\p{N}/u.test(t) || EM_DASH.test(t) || hasCurrency(t)) return null;
+  // Exactly what the closing sheet refuses to print (furniture.ts
+  // letterThesis): an en dash, an angle bracket, stacked marks. A thesis
+  // that stores always renders.
+  if (thesisRefused(t)) return null;
+  return tripsScreen(t) ? null : t;
 }
 
 /**
@@ -240,10 +472,28 @@ export async function readRfp(
     "proposal should be addressed to as contact: {name, title} copied verbatim",
     "(SELECT, never author; null when none).",
     "",
+    "If the text states the client's postal address (or that of the person",
+    "the proposal is addressed to), report it as clientAddress. SELECT, never",
+    "author:",
+    "- at most 5 short lines, each copied verbatim from the text: street,",
+    "  suite or floor, city with state and postal code, and a phone line when",
+    "  one is given with the address.",
+    "- Never the person's name, their title or the organization's name (they",
+    "  are reported above), never XL.net's own address, never a line you",
+    "  assembled from pieces. If no address is stated, use clientAddress: null.",
+    "",
+    "Also return proposalHeadline: one short headline for the proposal's",
+    "cover, at most 56 characters, in plain words, naming the service and",
+    "this client's kind of organization or situation as the text describes",
+    "it. No prices, no figures the text does not state, no em dashes, no",
+    "slogans. Use null when the text says too little about the client.",
+    "",
     "Reply with JSON only:",
     '{"clientName": string|null,',
     ' "rfpTitle": string|null,',
     ' "contact": {"name": string, "title": string|null}|null,',
+    ' "clientAddress": [string]|null,',
+    ' "proposalHeadline": string|null,',
     ' "statedStaff": {"count": number|null, "quote": string,',
     '   "basis": "staff"|"users"}|null,',
     ' "structure": [{"label": string, "title": string}],',
@@ -313,9 +563,18 @@ export async function readRfp(
       })),
   }, { pasteOnly: sourceKind === "paste" });
 
+  const clientName =
+    typeof parsed.clientName === "string" ? parsed.clientName.slice(0, 200) : null;
+  // Same select-never-author rule for the addressee: it reaches the letter
+  // furniture and the drafter only if it is in the fenced text verbatim.
+  const contact = groundContact(
+    (parsed as { contact?: unknown }).contact,
+    groundable,
+    tripsInjectionScreen
+  );
+
   return {
-    clientName:
-      typeof parsed.clientName === "string" ? parsed.clientName.slice(0, 200) : null,
+    clientName,
     statedStaff: grounded.staff,
     statedStaffDiscarded: grounded.discarded,
     // Same rule for the subject line: it becomes part of the stored document
@@ -327,12 +586,23 @@ export async function readRfp(
     rfpTitle: screenedTitle(
       groundRfpTitle((parsed as { rfpTitle?: unknown }).rfpTitle, groundable)
     ),
-    // Same select-never-author rule for the addressee: it reaches the letter
-    // furniture and the drafter only if it is in the fenced text verbatim.
-    contact: groundContact(
-      (parsed as { contact?: unknown }).contact,
+    contact,
+    // Round 32: the letter's recipient lines, each verbatim in the same
+    // grounding text, and the brief's cover headline. Both are refused to
+    // null rather than repaired; null renders exactly as before.
+    clientAddress: groundAddressLines(
+      (parsed as { clientAddress?: unknown }).clientAddress,
       groundable,
-      (s) => screenInjection(s).hits.length > 0
+      {
+        exclude: [clientName, contact?.name, contact?.title],
+        tripsScreen: tripsInjectionScreen,
+      }
+    ),
+    proposalHeadline: screenProposalHeadline(
+      (parsed as { proposalHeadline?: unknown }).proposalHeadline,
+      groundable,
+      read.intakeForm,
+      tripsInjectionScreen
     ),
     structure: read.structure,
     requirements: read.requirements,
@@ -349,6 +619,11 @@ export type DraftedSection = {
   blocks: DraftBlock[];
   /** Counts only, for the activity log. */
   visualStats?: VisualStats;
+  /** A narrative section title (round 32), screenSectionTitle'd. Present only
+   *  when the prompt asked for one: a brief-mode outline section other than
+   *  About XL.net whose title is still the standard one. The generate route
+   *  decides whether it is adopted (outline.ts mayAdoptNarrativeTitle). */
+  title?: string;
 };
 
 /** Kill switch: RFP_VISUALS=0 drafts prose only, on today's exact prompt. */
@@ -401,6 +676,20 @@ const BRIEF_LETTER_BLOCK = [
 const BRIEF_EMPTY_SECTION_LINE = [
   "If no item is listed for this section, write it from the facts that fit",
   "its title, in two to four short paragraphs.",
+];
+
+/** Round 32, brief mode only, and only while the section still carries its
+ *  standard outline title (outline.ts narrativeTitleOpen). Byte-absent
+ *  otherwise. */
+const BRIEF_TITLE_LINES = [
+  "SECTION TITLE (optional): the title above is XL.net's standard one. Also",
+  'return "title": name the concrete thing this section covers or commits',
+  "to (the system, place, deadline or promise), in the brief's own words",
+  "where it gives them. A title that would fit any client is the standard",
+  "title again. Keep the standard title when it is already exact. Under 60",
+  "characters, plain words, no figures the facts do not state, no prices",
+  'and no em dashes. The shape: "Where Your Project Files Live" rather than',
+  '"File Storage". Omit it to keep the standard title.',
 ];
 
 /**
@@ -462,6 +751,16 @@ export async function draftSection(
   // shows the whole base; the structured-RFP prompt keeps its 60.
   const shownFacts = facts.slice(0, brief ? 120 : 60);
   const visuals = visualsEnabled();
+  // Round 32: a narrative title is asked for only here; every other prompt
+  // (structured RFPs, About XL.net, a section a person or an earlier draft
+  // already retitled) stays byte-identical.
+  const askTitle =
+    !!brief &&
+    narrativeTitleOpen({
+      intakeForm: "brief",
+      label: section.label,
+      currentTitle: section.title,
+    });
   const factLines = shownFacts
     .map(
       (f) =>
@@ -495,6 +794,7 @@ export async function draftSection(
     "   Never ask about the CLIENT's environment (their headcount, systems,",
     "   or preferences), that is discovery, not a gap.",
     ...(brief ? ["", ...BRIEF_DRAFT_BLOCK, ...BRIEF_EMPTY_SECTION_LINE] : []),
+    ...(askTitle ? ["", ...BRIEF_TITLE_LINES] : []),
     // Byte-absent unless this section's asks include client references.
     // This only prevents fabrication: the control is the generate route's
     // deterministic backstop (references-ask.ts), which raises the question
@@ -548,14 +848,28 @@ export async function draftSection(
           "- table: service level targets, a requirement and response or scope",
           "  coverage matrix, a comparison. 2 to 5 columns, at most 14 rows,",
           "  short cells.",
+          "- ledger: 2 to 12 label and value rows, for a definition list,",
+          "  label and value facts, or agreement terms. Prefer it to a",
+          "  two-column table. A label is a few words; a value is a phrase.",
+          "- timeline: 2 to 6 steps in order, for a sequence with dates or",
+          "  steps (an onboarding plan, an escalation path). Each step has a",
+          '  short title, a one or two sentence body and an optional "kicker"',
+          "  of at most 24 characters: a date or date range a cited fact",
+          '  states, or "Step 1", "Step 2" and so on.',
+          ...(brief ? ["  A step label may carry a date exactly as the brief states it."] : []),
           "- stats: 2 to 4 tiles, only for figures a fact states. Each tile",
           "  names the ONE fact whose own statement carries that exact number;",
           '  write ">" only where that fact says "more than" or "above".',
           "  A value is the figure alone (98.15%, >99%, 4.8 years), short enough",
           "  to fit one line of a quarter-width tile, about 8 characters; every",
           "  word that is not the figure goes in the label.",
-          "- callout: one short point worth setting apart. cards: exactly two",
-          "  side by side options or halves.",
+          "- callout: one short point worth setting apart, under a short",
+          "  editorial title with a point of view, the way",
+          '  "Updates on your schedule, not the vendor\'s" or "One call reaches',
+          '  an engineer" read. Those two show the tone only; a title must be',
+          "  true to the facts its callout cites.",
+          "- cards: two or three side by side options, channels or halves.",
+          "One visual per point, never decoration.",
           "Every number in a visual must appear in a fact that visual cites; a",
           "visual with a number no cited fact states is discarded. Rules 3, 4",
           "and 5 apply inside visuals: no prices, rates, dollar figures or",
@@ -567,12 +881,17 @@ export async function draftSection(
     "",
     "Reply with JSON only:",
     '{"paragraphs": [string], "cites": [string],',
+    ...(askTitle ? [' "title": string|null,'] : []),
     ...(visuals
       ? [
           ' "gaps": [{"question": string, "why": string}],',
           ' "visuals": [',
           '   {"kind": "table", "after": number, "cites": [string],',
           '    "caption": string, "columns": [string], "rows": [[string]]}',
+          '   | {"kind": "ledger", "after": number, "cites": [string],',
+          '      "rows": [{"label": string, "value": string}]}',
+          '   | {"kind": "timeline", "after": number, "cites": [string],',
+          '      "steps": [{"kicker": string, "title": string, "body": string}]}',
           '   | {"kind": "stats", "after": number,',
           '      "tiles": [{"fact": string, "value": string, "label": string}]}',
           '   | {"kind": "callout", "after": number, "cites": [string],',
@@ -640,7 +959,20 @@ export async function draftSection(
         parsed.visuals,
         proseParagraphs,
         toGroundFacts(shownFacts),
-        cites
+        cites,
+        // A brief's dated timeline kickers ("Dec 11, 2026") may ground
+        // against the brief itself (round 32); titles and bodies never do.
+        brief ? { kickerCorpus: brief.text } : undefined
+      )
+    : null;
+  // Round 32: only when asked (a key the model volunteers otherwise is
+  // ignored). Its numbers must be stated by the affirmative, non-pricing
+  // facts the section cites, the same corpus discipline as a visual.
+  const title = askTitle
+    ? screenSectionTitle(
+        (parsed as { title?: unknown }).title,
+        sectionTitleCorpus(shownFacts, cites),
+        tripsInjectionScreen
       )
     : null;
   return {
@@ -648,6 +980,7 @@ export async function draftSection(
     cites,
     blocks: finished ? finished.blocks : [],
     ...(finished ? { visualStats: finished.stats } : {}),
+    ...(title ? { title } : {}),
     // Two, not ten: the old cap let one 17-section RFP surface 76 questions
     // where the benchmark tool asks four or five for the whole document.
     gaps: (Array.isArray(parsed.gaps) ? parsed.gaps : [])
@@ -674,6 +1007,13 @@ export async function draftSection(
  * the sections it summarizes — so the model never invents a fact id here.
  * Salutation, closing, and the signature block are host furniture; the model
  * writes body paragraphs only.
+ *
+ * Round 32: the shape follows the reference letter (the client's own world
+ * first, then why XL.net, then timing when dates are stated; four to six
+ * paragraphs), rules 1 to 5 unchanged, so the model still never writes a
+ * price, rate or term: pricing reaches the letter only as the system-composed
+ * paragraph the renderer inserts from the quote. The turn also returns an
+ * optional `thesis` (screenLetterThesis), stored on the letter record.
  */
 export async function draftCoverLetter(
   proposalId: string,
@@ -683,7 +1023,7 @@ export async function draftCoverLetter(
   // Present only for a document read in brief mode (§5.17.17). Absent, the
   // prompt is byte-identical to the structured-RFP prompt.
   opts?: { brief?: string; contactName?: string | null }
-): Promise<{ paragraphs: string[] } | null> {
+): Promise<{ paragraphs: string[]; thesis?: string } | null> {
   const brief = opts?.brief;
   // Per-section budget scales with count so the FENCE cap never silently
   // drops the tail sections: at 2000 chars each, a 17-section response
@@ -734,28 +1074,47 @@ export async function draftCoverLetter(
     "5. Summarize in fresh sentences. Never copy a sentence from a section",
     "   word for word.",
     "",
-    "SHAPE: four or five substantial paragraphs.",
-    "- Open by thanking them and showing you understood what they are asking",
-    "  for, in terms of what their own section headings emphasize.",
-    "- The middle paragraphs summarize how the response answers it: the",
-    "  service and support model, the transition/onboarding approach, and",
-    "  what makes XL.net's way of working different, all drawn from the",
-    "  sections.",
+    "SHAPE: four to six paragraphs, warm and plain, written to the client.",
+    "- The first paragraph opens with the CLIENT's own world, not with",
+    "  XL.net. Briefly thank them, then name their situation in their own",
     ...(brief
       ? [
-          "- Close by noting the response is organized in XL.net's standard",
-          "  proposal sections and that pricing is set out inside, and welcome",
-          "  the conversation.",
+          "  terms as the brief states it: the tools and systems they run, what",
+          "  has to keep working, the constraint or deadline they face, and what",
+          "  it costs them when it fails. Only what the brief says, attributed",
+          "  to them.",
         ]
       : [
-          "- Close by noting the response follows their document's own structure",
-          "  and that pricing is set out inside, and welcome the conversation.",
+          "  terms as their document asks it: the systems, services and outcomes",
+          "  their own section headings and the drafted sections name, and any",
+          "  constraint or deadline the sections restate. Only what the",
+          "  sections say, attributed to them.",
         ]),
+    "- Then why XL.net: how the response answers it, the service and",
+    "  support model, the transition/onboarding approach, and what makes",
+    "  XL.net's way of working different, each as the sections state it",
+    "  (any certification or figure exactly as a section gives it).",
+    ...(brief
+      ? ["- When the sections or the brief state dates (a deadline, a contract"]
+      : ["- When the sections state dates (a deadline, a contract"]),
+    "  end, an onboarding window), one short paragraph on timing that places",
+    "  what the sections say XL.net will do against those dates. With no",
+    "  dates, leave timing out.",
+    "- Every sentence says something specific to this client or this",
+    "  response; no slogans, no throat-clearing.",
+    "- Close in one or two plain sentences that welcome the conversation;",
+    "  do not describe how the response is organized or mention pricing.",
     "Write body paragraphs ONLY: no date line, no address block, no",
     '"Dear ...", no "Regards", no signature. Those are added around your text.',
     ...(brief ? ["", ...BRIEF_LETTER_BLOCK] : []),
     "",
-    'Reply with JSON only: {"paragraphs": [string]}',
+    'THESIS: also return "thesis", the proposal\'s whole argument in one plain',
+    "sentence of at most 90 characters, true to what the sections say. It is",
+    "printed large on the closing page, so it speaks to the client's",
+    "interest, not to XL.net's size. No digits, no prices, no em dashes. Use",
+    "null when no single sentence fits.",
+    "",
+    'Reply with JSON only: {"paragraphs": [string], "thesis": string|null}',
   ].join("\n");
 
   const user = [
@@ -785,14 +1144,20 @@ export async function draftCoverLetter(
     }),
     120_000
   );
-  const parsed = parseJson(raw ?? "") as { paragraphs: string[] } | null;
+  const parsed = parseJson(raw ?? "") as
+    | { paragraphs: string[]; thesis?: unknown }
+    | null;
   if (!parsed || !Array.isArray(parsed.paragraphs)) return null;
 
   const paragraphs = parsed.paragraphs
     .filter((p) => typeof p === "string" && p.trim())
     .slice(0, 7)
     .map((p) => p.slice(0, 4000));
-  return paragraphs.length ? { paragraphs } : null;
+  // Round 32: the closing sheet's big line. Refused to absent, never cut.
+  const thesis = screenLetterThesis(parsed.thesis, tripsInjectionScreen);
+  return paragraphs.length
+    ? { paragraphs, ...(thesis ? { thesis } : {}) }
+    : null;
 }
 
 /**

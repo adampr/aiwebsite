@@ -17,6 +17,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { CLOSING_HEADLINE } from "./furniture";
 
 const BRAND = () => path.join(process.cwd(), "public", "brand");
 
@@ -123,8 +124,11 @@ export const FURNITURE_COVER_KICKER = "Managed IT Services Proposal";
 /** First meta-grid column: the company line above the preparer. */
 export const FURNITURE_SUBMITTED_BY = "XL.net Inc.";
 
-/** Running footer on every sheet, left and right. */
-export const FURNITURE_FOOT_LEFT = "XL.net · Managed IT Services Proposal";
+/** Running footer on every sheet, left and right. "Confidential" is standing
+ *  business copy on every sheet of all three surfaces, NOT a draft mark (the
+ *  2026-08-28 ruling bans DRAFT marks; §5.17.20 records the difference). */
+// Every surface prints furniture.ts pageFootLeft for the left slot, which
+// extends the base with "for <who>" (§5.17.20).
 export const FURNITURE_FOOT_RIGHT = "Confidential";
 
 /** The two part-divider sheets, in screen order. */
@@ -162,9 +166,10 @@ export function dividerHead(clientName: string): string {
   return clientName ? `XL.net · Proposal for ${clientName}` : "XL.net · Proposal";
 }
 
-/** The navy closing sheet's headline (workspace closing sheet). */
-export const FURNITURE_CLOSING_HEADLINE =
-  "Because our fee is flat, our incentive is to prevent issues, not to bill for them.";
+/** The navy closing sheet's fallback headline (workspace closing sheet): the
+ *  letter's thesis replaces it when stored (furniture.ts closingHeadline,
+ *  §5.17.20). Single-sourced in the client-safe furniture module. */
+export const FURNITURE_CLOSING_HEADLINE = CLOSING_HEADLINE;
 
 /** Closing meta labels; the third value is constant. */
 export const FURNITURE_CLOSING_WEB = "xl.net";

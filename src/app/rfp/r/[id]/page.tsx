@@ -216,6 +216,10 @@ export default async function RfpWorkspacePage({
         intakeForm={doc.intakeForm}
         contactName={doc.contactName}
         contactTitle={doc.contactTitle}
+        // Round-32 stored furniture (§5.17.20): the letterhead's postal
+        // lines and a brief's narrative cover headline, as the files print.
+        clientAddress={doc.clientAddress}
+        proposalHeadline={doc.proposalHeadline}
         archived={Boolean(doc.archivedAt)}
         clientName={doc.clientName}
         // The cover names who the EXPORT names (resolve-draft.ts `cover`):
