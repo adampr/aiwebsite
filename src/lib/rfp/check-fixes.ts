@@ -12,7 +12,7 @@
 // aside) and no server imports. letter.ts qualifies (workspace already
 // imports DOC_LABEL from it, and it carries no lookbehind).
 
-import { DOC_LABEL } from "./letter";
+import { DOC_LABEL, LETTER_LABEL } from "./letter";
 import type { Violation } from "./content-model/gate";
 
 /**
@@ -93,6 +93,87 @@ export function isReferenceCardBlockId(blockId: string | undefined): boolean {
 export const REFERENCE_CARD_FIX_MESSAGE =
   "Edit the references on this section: use Edit references on the cards.";
 
+/**
+ * The cover letter's span fields as resolvedTextSpans names them (location
+ * "letter"). A locator carries no location, so the field name is the tell:
+ * only furniture spans (cover, letter, pricing, back cover) lack both a
+ * sectionId and a blockId, and no other furniture span uses these names.
+ */
+const LETTER_SPAN_FIELD =
+  /^(?:body|addressee)\[\d+\]$|^(?:salutation|closing|signature\.name|signature\.title)$/;
+
+/** True when a violation's locator points into the cover letter. */
+export function isLetterSpanLocator(loc: Violation["locator"]): boolean {
+  return (
+    !loc.sectionId &&
+    !loc.blockId &&
+    !loc.requirementId &&
+    typeof loc.field === "string" &&
+    LETTER_SPAN_FIELD.test(loc.field)
+  );
+}
+
+/**
+ * Rule D6's two directions (§5.17.19). In a section, the pipe text becomes
+ * a markdown table the accept-time lift converts into a real table block
+ * (it lifts only when every figure is grounded, hence "exactly as the facts
+ * state it" and no price; a table that cannot meet that is rewritten as
+ * prose instead, so Fix all converges). In the letter, which never carries a visual and is never
+ * lifted, the same text is rewritten as prose. A group spanning both gets
+ * both, each scoped to where it applies.
+ */
+export const D6_TABLE_DIRECTION =
+  "Rewrite the pipe-formatted text as a proper GitHub-markdown table in its own paragraph (a header row, a |---| separator row, then one data row per line), copying every figure exactly as the facts state it; it becomes a real table in the document. Keep the surrounding prose. If the table cannot meet those rules, a price in it or a figure no fact states, rewrite that content as plain prose sentences instead.";
+export const D6_LETTER_DIRECTION =
+  "In the cover letter, rewrite the pipe-formatted text as plain prose sentences, with no pipes and no table: the letter never carries tables or visuals. Keep every figure exactly as written.";
+/** D6 on a visual's own text (a stored multi-line cell): Tron cannot edit
+ *  a visual, so the person does. */
+export const D6_VISUAL_FIX_MESSAGE =
+  "This text sits inside a visual, which Tron cannot edit. Remove the visual or ask Tron to restate its content as a new table.";
+const D6_TABLE_DIRECTION_OUTSIDE_LETTER =
+  "Outside the cover letter: " + D6_TABLE_DIRECTION;
+
+function d6Directions(inSection: boolean, inLetter: boolean): string[] {
+  if (inSection && inLetter)
+    return [D6_TABLE_DIRECTION_OUTSIDE_LETTER, D6_LETTER_DIRECTION];
+  if (inLetter) return [D6_LETTER_DIRECTION];
+  return inSection ? [D6_TABLE_DIRECTION] : [];
+}
+
+/** Where a finding's text lives, the letter included: resolveTargetLabel's
+ *  answer, else LETTER_LABEL for a locator in the letter's spans. */
+function targetLabelOf(
+  v: Violation,
+  ctx: {
+    sections: { label: string }[];
+    requirements: { id: string; structureLabel: string }[];
+  }
+): string | null {
+  return (
+    resolveTargetLabel(v, ctx.sections, ctx.requirements) ??
+    (isLetterSpanLocator(v.locator) ? LETTER_LABEL : null)
+  );
+}
+
+/** The rule-specific directions a Tron step for these members carries
+ *  (D6 only; every other rule gets none, so its bytes never change). */
+function directionsFor(
+  members: Violation[],
+  ctx: {
+    sections: { label: string }[];
+    requirements: { id: string; structureLabel: string }[];
+  }
+): string[] {
+  let inSection = false;
+  let inLetter = false;
+  for (const m of members) {
+    if (m.ruleId !== "D6") continue;
+    if (targetLabelOf(m, ctx) === LETTER_LABEL) inLetter = true;
+    else inSection = true;
+  }
+  return d6Directions(inSection, inLetter);
+}
+
 /** What the Fix it button does for one finding. `label` may be the
  *  DOC_LABEL sentinel (the whole-document Tron plan flow). `ask` opens an
  *  optional inline context input before the Tron run fires. */
@@ -146,7 +227,11 @@ function distinctTexts(values: (string | undefined)[]): string[] {
  * did (the one-excerpt and one-suggestion wordings are the old ones), which
  * keeps every existing recipe and its pinned tests unchanged.
  */
-export function fixInstructionFor(members: Violation[], extra: string): string {
+export function fixInstructionFor(
+  members: Violation[],
+  extra: string,
+  directions: string[] = []
+): string {
   const first = members[0];
   if (!first) return "";
   const parts = [`Fix compliance finding ${first.ruleId}: ${first.message}`];
@@ -176,7 +261,10 @@ export function fixInstructionFor(members: Violation[], extra: string): string {
   // pathological message or excerpt list can never drop the guard or what
   // the person typed. The context has its own bound so it cannot starve
   // the finding itself.
-  const tail: string[] = [];
+  // A rule's own direction (D6's table-or-prose instruction) is a short
+  // constant and rides the uncut tail too, ahead of the person's context;
+  // with none (every other rule) the bytes are exactly the old ones.
+  const tail: string[] = [...directions];
   const trimmed = extra.trim().slice(0, MAX_CONTEXT_CHARS);
   if (trimmed) tail.push(`Additional context from the user: ${trimmed}`);
   tail.push(
@@ -349,6 +437,34 @@ export function fixRecipe(
         : tron();
     case "D5":
       return tron();
+    case "D6": {
+      // Tabular text in prose (§5.17.19). A Tron revise, auto-fixable in
+      // Fix all (not B7's figure-deletion class: nothing is removed). The
+      // LETTER branch: the letter's spans carry no section locator, so the
+      // label is resolved through its fields, and there the direction is
+      // prose, never a table (the letter is never lifted). An undrafted
+      // letter has no record to revise; the whole-document sweep stands in.
+      // On a visual's own string (`bv_` id): every write path cleans a
+      // block string to one line, so only a stored row from outside them
+      // gets here, and Tron revises paragraphs, never a visual. A person
+      // edits it; Fix all never spends a turn on it.
+      if (v.locator.blockId?.startsWith("bv_"))
+        return { kind: "none", message: D6_VISUAL_FIX_MESSAGE };
+      const label = targetLabelOf(v, ctx);
+      if (label === LETTER_LABEL)
+        return {
+          kind: "tron",
+          label: ctx.sections.some((s) => s.label === LETTER_LABEL)
+            ? LETTER_LABEL
+            : DOC_LABEL,
+          instruction: fixInstructionFor([v], "", d6Directions(false, true)),
+        };
+      return {
+        kind: "tron",
+        label: label ?? DOC_LABEL,
+        instruction: fixInstructionFor([v], "", d6Directions(true, false)),
+      };
+    }
     default:
       // A rule added after this map still gets a working button: Tron on the
       // resolved section, else the whole-document sweep.
@@ -478,7 +594,11 @@ export function groupFixPlan(g: FindingGroup, ctx: FixCtx): FixStep[] {
     return {
       kind: "tron",
       label,
-      instruction: fixInstructionFor(tronMembers, ""),
+      instruction: fixInstructionFor(
+        tronMembers,
+        "",
+        directionsFor(tronMembers, ctx)
+      ),
       ...(sameAsk ? { ask: { prompt: first } } : {}),
     };
   });

@@ -3,7 +3,8 @@
  */
 
 import { TARGET_BLOCK_HEIGHT_PX, USABLE_CONTENT_HEIGHT_PX } from "@/lib/rfp/content-model";
-import { documentText, textSpans, violation, type Rule } from "./rule";
+import { hasMarkdownTable } from "@/lib/rfp/draft-blocks";
+import { documentText, excerptAround, textSpans, violation, type Rule } from "./rule";
 
 /**
  * D1 - Em dashes. BLOCK.
@@ -292,4 +293,82 @@ export const D5: Rule = {
   },
 };
 
-export const D_RULES: Rule[] = [D1, D2, D3, D4, D5];
+/**
+ * Where the first markdown table in `text` starts, as a char offset, found by asking THE detector
+ * (hasMarkdownTable) about line prefixes rather than re-implementing it: a table needs its header,
+ * separator and first data line on three consecutive lines, so the shortest prefix that holds a
+ * table ends on the first table's first data line, and that table starts two lines above it. The
+ * prefix answer is monotone (a longer prefix keeps every table a shorter one had), so a binary
+ * search keeps a hostile thousand-line span at a handful of detector calls. The caller has already
+ * established that the whole text holds a table.
+ */
+function firstTableOffset(text: string): number {
+  const lines = text.split("\n");
+  let lo = Math.min(3, lines.length);
+  let hi = lines.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (hasMarkdownTable(lines.slice(0, mid).join("\n"))) hi = mid;
+    else lo = mid + 1;
+  }
+  const start = Math.max(0, lo - 3);
+  let offset = 0;
+  for (let i = 0; i < start; i++) offset += lines[i].length + 1;
+  return offset;
+}
+
+/**
+ * D6 - Tabular text in prose. WARN.
+ *
+ * A GitHub-markdown table (pipe rows under a `|---|` separator) inside a paragraph is meant to
+ * become a real table block (§5.17.19, the lift at every write). When a lift control refuses it
+ * (a figure the facts do not state, currency, a ragged row, the caps) or the text is the cover
+ * letter (never lifted: the letter carries no visuals), it stays as typed and prints as raw pipe
+ * text in both files and on screen. This rule is how that becomes visible. Detection is THE one
+ * detector the lift and the preview use (draft-blocks.ts hasMarkdownTable), so what this flags,
+ * what the lift finds and what the preview draws cannot disagree. Every resolved span is scanned
+ * (paragraphs, the letter, every block string). A block cell or caption is cleaned to one line by
+ * every write path (draft-blocks `clean`), so a drafted or lifted visual never matches; a stored
+ * string from outside those paths that does hold one is flagged truthfully (it prints raw), and
+ * its recipe is a person's edit (check-fixes.ts). One finding per span, located at the first table's
+ * header line. The suggestion is the one thing that differs for the letter: a table is never the
+ * answer there.
+ */
+export const D6: Rule = {
+  id: "D6",
+  title: "Tabular text in prose",
+  severity: "warn",
+  check: (ctx) => {
+    const violations = [];
+
+    for (const span of textSpans(ctx)) {
+      if (typeof span.text !== "string" || !hasMarkdownTable(span.text)) continue;
+      const index = firstTableOffset(span.text);
+      const lineEnd = span.text.indexOf("\n", index);
+      const lineLength = (lineEnd === -1 ? span.text.length : lineEnd) - index;
+      violations.push(
+        violation({
+          ruleId: "D6",
+          severity: "warn",
+          message:
+            "A pipe-formatted table sits in the text. It prints as raw text with pipes and dashes, in the document and on screen, not as a table.",
+          locator: {
+            ...(span.sectionId ? { sectionId: span.sectionId } : {}),
+            ...(span.blockId ? { blockId: span.blockId } : {}),
+            field: span.field,
+            charOffset: index,
+          },
+          excerpt: excerptAround(span.text, index, Math.min(lineLength, 80)),
+          suggestion:
+            span.location === "letter"
+              ? "Rewrite it as prose: the cover letter never carries a table."
+              : "Ask Tron to present it as a real table (every figure must match the facts exactly), or rewrite it as prose.",
+        }),
+      );
+    }
+
+    return violations;
+  },
+};
+
+export const D_RULES: Rule[] = [D1, D2, D3, D4, D5, D6];

@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-15 §5.17.19 ROUND 31: ROUND 30'S FOUR OPEN ITEMS CLOSED (§5.17.19, §5.17.16, §5.17.8). (1) The gap weave sees visuals and its write is lifted: `resolveGap(proposalId, sectionTitle, currentParagraphs, blocks, gapQuestion, answer, facts)` shows the section's stored visuals in CURRENT TEXT exactly as reviseSection does (shared `currentTextLines` / `visualsShownLines` / `TABLE_AUTHORING_LINES` / `notEchoedVisual` in brain.ts, one copy each), may author a markdown table (gated on RFP_VISUALS alone: a gap can never target the letter, and the route now refuses the letter label with its 404 defensively; one gap-turn-only line follows the shared table lines: a figure only the answer states, with no listed fact behind it, goes in prose), and the gap route runs `liftMarkdownTables` at its landing write with the shared facts it already loads (no new query); `proposal.gap_resolve` meta gains `liftedTables` / `liftRefused` (each only when > 0). (2) A refused lift is no longer silent: new gate rule D6 "Tabular text in prose" (WARN, validators/rules-d.ts) flags every resolved span holding a markdown table by THE detector the lift uses (new `hasMarkdownTable`, draft-blocks.ts), the letter included; its Fix it recipe (check-fixes.ts) is a Tron revise asking for a real markdown table with every figure copied exactly from the facts, or for prose when the finding is in the cover letter, and for prose when the table cannot meet the rules (a price, a figure no fact states, so Fix all converges), auto-fixable in Fix all; the section PATCH's 200 body gains `liftRefused` (both paragraph paths), so does the gap route's, and the workspace's attended paths (saveEdit, answerGap, acceptProposal, acceptDocProposal, acceptAllDocProposals) put one sentence on the runbar notice line (an accept with no refusal clears only a stale copy of that sentence, never other text); unattended loops stay silent, D6 is their control. (3) The Tron pane previews a proposed markdown table as a table (new parse-only `previewMarkdownTables`, same detector, nothing stored) with one honesty line; a letter proposal previews as plain paragraphs (the letter is never lifted). (4) Two tables in ONE section now cluster in the consolidation scan, by the row-key + content-agreement test only (the shingle test stays strictly cross-section; paragraph pairs stay cross-section), findings line "appears twice in <title> (id v_a, id v_b)". No schema, env or migration change; no new route.
+
 Last verified against code: 2026-10-15 §5.17.19 RFP TABULAR CONTENT IS ALWAYS A VISUAL + §5.17.16 CONSOLIDATION SEES TABLES (owner, Curioso proposal eda03a5e, rev 64: the section 7 SLA table landed as four prose paragraphs because parseModelVisuals degraded a table that cited nothing; section 4 stored a raw markdown pipe table as a paragraph after a consolidation revise; sections 2, 3 and 4 each held a near-identical "Central services" table while the review reported duplicateClusters:0, because every whole-document turn read paragraphs only). `liftMarkdownTables` (draft-blocks.ts) converts a GitHub-markdown table in stored text into a real `table` block under every blocking control (currency, limits, grounding against the section's own cites, the block cap), at the section PATCH (plain and retitle-with-paragraphs paths, behind a cheap precheck, letter exempt) and at the generate landing (letter exempt); parseTable accepts `{header}` column objects and re-grounds a table that cited nothing against the section's cites before degrading; reviseSection is shown the section's visuals in place as `[visual <kind> id=...]` lines and may author a markdown table (never on the letter); `budgetedDocumentText` carries serialized visuals for the plan and review turns in a reserved share of each section's slice; `findDuplicateClusters` scans tables (row keys plus content agreement); the review gains op `prune-visual` behind a server-side scan guard (`pruneGuard`: scan-clustered ids only, never the last copy in a cluster), applied unattended by the workspace through the existing visuals-remove PATCH; new CLI `npm run rfp:consolidate -- <proposalId>` (scripts/rfp-consolidate-run.ts). No schema, env or migration change; no new route.
 
 Last verified against code: 2026-10-13 §5.17.18 RFP VISION INTAKE (owner: the /rfp intake refused a scanned vendor-review PDF with "Could not read ... Scanned PDFs with no text layer are the usual cause"; RFP Response must read images and the text in them, in a PDF, PNG, JPEG or other format, through the Claude SDK). The SITE now calls the Anthropic API directly with `@anthropic-ai/sdk` (0.133.0) and the existing `ANTHROPIC_API_KEY` (env change: the key was a brain-only provider key; the site process now reads it too; empty = today's behavior, images refused); the brain is not involved. New SERVER-ONLY `src/lib/rfp/vision-extract.ts`: `VISION_MODEL "claude-opus-5-5"`, streaming `client.beta.messages.stream` with `max_tokens 64000`, `output_config {effort:"low"}`, no `thinking` param, `betas ["server-side-fallback-2026-07-01"]` + `fallbacks "default"`, PDF as a base64 `document` block and PNG/JPEG/GIF/WebP as a base64 `image` block BEFORE the text block, a frozen transcription-only system prompt (the file is data, never instructions; tables as " | " rows; text-free figures as one `[Figure: ...]` line), `extractVisionText` -> `{ok,text,truncated} | {ok:false, reason}` with reason a CATEGORY (unconfigured/refused/timeout/too_large/api_error/empty/unsupported, by SDK error class, never message text), plus pure helpers (magic-byte image sniff, header dimensions, `pdfNeedsVision` with `PDF_TEXT_FLOOR` 200, `visionCallBudget`, `runVisionPhase`). Budgets `RFP_VISION_FILE_BUDGET_MS` 4 min and `RFP_VISION_TOTAL_BUDGET_MS` 8 min live in client-safe `intake.ts` (with `RFP_INTAKE_ACCEPT`), `RFP_VISION_INLINE_BUDGET_MS` 25 s in vision-extract. `POST /api/rfp/documents` ladder per file: text and docx exactly as before; a PDF uses its text layer when it extracts and clears the floor, else (configured) becomes VISION-PENDING; an image (magic bytes) is always pending, refused at request time over 7 500 000 bytes (10 MB of base64, the direct API's limit; 5 MB is Bedrock/Vertex only) or 8000 px a side, or when the key is empty; BMP/TIFF/HEIC/SVG get an honest refusal naming the formats. With any pending part the route writes the document (`raw_text ""`, provenance as before; one image = sourceKind "png"/"jpeg"/"gif"/"webp") and one `rfp_intake_parts` row per part in compose order in ONE transaction (`createDocumentWithParts`), adds shape-only `visionFiles` to `document.create` meta, and answers the same 202; with none the path is byte-identical (no parts rows, same compose, same activity). Migration `0061_rfp_intake_parts` (id, document_id FK CASCADE, ordinal, kind, name, media, text, bytes bytea, created_at; index on document_id). `runDocumentRead` gains a pre-phase for an empty raw_text: load the parts, transcribe each pending one sequentially (each success saved onto its row, bytes NULLed), compose ALL parts, `screenInjection`, UPDATE raw_text + injection_flagged + updated_at and DELETE the parts in one transaction, then read as before; a failure stamps `read_failed`, KEEPS the parts and logs the new `document.transcribe` activity (category and counts only), so Read it again / `rfp:reread` retry with no claim change. `/rfp/new` accepts the images, says scans take a few minutes, and polls vision total + read budget + 1 min (17 min) only when the 202 carries `vision: true`, else the pre-vision read budget + 1 min. The Tron attachment route decides by magic bytes before names (PDF magic, then image magic, then text names, then .docx/.pdf names, then the honest image refusal, then the generic one) and transcribes an image, or a PDF with no usable layer, INLINE in 25 s (MAX_ATTACH_CHARS applies) through a 15-minute, 16-entry success-only cache keyed by sha256+media, and the workspace's attach control accepts the four image formats. A lone pending intake file gets the whole remaining 8-minute total; the status route's `transcribePending` makes the read panel say the FILES are kept when transcription failed; the no-key unknown-type refusal no longer lists images. Open items recorded in §5.17.18: per-file (not per-page) PDF floor drops a mixed PDF's scanned pages; transcribed documents are not yet marked on screen. New `npm run test:rfpvision`.
@@ -10339,6 +10341,64 @@ held (set at the start and released only in `finally`, so neither can
 stick): the rows, both Run checks buttons, Ignore/Restore, Fix all itself
 and every draft control (Draft all, Draft this, Redraft) are disabled.
 
+**Rule D6: tabular text in prose (WARN, 2026-10-15, round 31).** This
+repo's record of the rule (the DOMAIN-RULES document the validators cite is
+not in this repo; no meta-test pins the rule list, and D6 registers through
+`D_RULES` / `ALL_RULES`). `validators/rules-d.ts` D6 "Tabular text in
+prose" scans every resolved text span (`resolvedTextSpans`: paragraphs,
+the cover letter, every block string) and emits ONE violation per span for
+which `hasMarkdownTable(span.text)` is true. That is the shared detector of
+§5.17.19, the same one the lift and the Tron preview use, never a second
+pattern, so the rule flags exactly the tables the lift finds. Why it
+exists: a markdown table the lift refused (a figure no fact states,
+currency, a ragged row, a cap) or one in the letter (never lifted) prints
+as raw pipe text in both files and on screen, and before this rule only the
+activity log said so. Message: "A pipe-formatted table sits in the text. It
+prints as raw text with pipes and dashes, in the document and on screen,
+not as a table." Locator: the span's `sectionId` / `blockId` / `field` plus
+`charOffset` of the first table's header line (found by asking the
+detector about line prefixes, a binary search, so a hostile
+thousand-line span costs a handful of calls); excerpt via `excerptAround`
+at that offset. Suggestion: "Ask Tron to present it as a real table (every
+figure must match the facts exactly), or rewrite it as prose."; on a letter
+span: "Rewrite it as prose: the cover letter never carries a table." A
+block cell or caption is cleaned to one line by every write path (`clean`),
+so a drafted or lifted visual never matches; a stored multi-line string
+from outside those paths is flagged truthfully (it prints raw). The rule
+never throws on a hostile span (a non-string text is skipped). A new
+ruleId is additive to the persisted `findingSig` format.
+Recipe (check-fixes.ts `fixRecipe` case "D6"): a Tron revise on the
+resolved section whose instruction adds `D6_TABLE_DIRECTION` (rewrite the
+pipe text as a proper GitHub-markdown table in its own paragraph, every
+figure copied exactly as the facts state it, the accept-time lift converts
+it, surrounding prose kept, and, as its final sentence, "If the table cannot
+meet those rules, a price in it or a figure no fact states, rewrite that
+content as plain prose sentences instead.", so Fix all converges on a table
+the lift can never accept rather than rewriting it as a table again). THE LETTER BRANCH: the letter's spans carry no
+section locator, so `isLetterSpanLocator` recognizes the letter's fields
+(`body[i]`, `addressee[i]`, salutation, closing, signature) and the target
+label resolves to `LETTER_LABEL`; there the instruction adds
+`D6_LETTER_DIRECTION` instead (rewrite as plain prose, no pipes and no
+table: the letter never carries visuals), on the letter record (or the
+whole-document sweep when no letter record is drafted). On a visual's own
+string (a `bv_` block id) the recipe is `{kind: "none"}`
+(`D6_VISUAL_FIX_MESSAGE`): Tron cannot edit a visual. The direction rides
+`fixInstructionFor(members, extra, directions)`'s new optional third
+argument inside the never-cut tail, ahead of the person's context; with no
+directions (every other rule) the instruction is byte-identical. D6 joins
+the grouped-row mechanics with no special casing (one row per ruleId +
+message, "in N places"; the letter and section findings share a message,
+so they are one row); a group spanning both collapses to the
+whole-document sweep as any multi-label group does, and its instruction
+carries both directions, each scoped ("Outside the cover letter: ..." and
+"In the cover letter, ..."). D6 is auto-fixable: Fix all includes it (a
+revise, not B7's figure-deletion class, so it is not in
+`AUTO_EXCLUDED_RULES`). Suite: `npm run test:rfpvisualgate` (the rule
+through the gate on the fixture: locator and excerpt, the letter, offsets,
+stray pipes with no separator not firing, the rule/detector/preview
+agreement, block cells, hostile spans, and the recipe's letter and section
+instructions, group plan and Fix all step).
+
 #### 5.17.9 Your knowledge is editable: edit, send, withdraw, delete, promote (2026-09-30)
 
 **Owner directive:** on `/rfp/knowledge/mine` "I should be able to change
@@ -11271,7 +11331,8 @@ sees visuals:
   three Curioso tables score 0.016 to 0.10 containment against the 0.5
   threshold, because an extra column or a different row order breaks the
   shingles), so a table-to-table ROW-KEY rule sits beside it: two tables in
-  different sections also cluster when they share at least 3 row keys, those
+  different sections (or, since round 31, the same section: next bullet)
+  also cluster when they share at least 3 row keys, those
   cover at least half of the smaller table's keys, AND the rows agree on
   content: in at least half of the shared keys, the two rows' other cells
   share at least one normalized word (function words such as "and", "the",
@@ -11282,6 +11343,33 @@ sees visuals:
   ticketing"); the header row is never a key. Paragraph matching is
   unchanged. `formatDuplicateFindings` names a table member as a table with
   its literal id so the review can target it.
+- Same-section tables (round 31, 2026-10-15). Two TABLE entries may now
+  cluster inside ONE section, by the row-key rule ONLY (shared keys AND
+  content agreement): one section holding the same table twice is
+  duplication a reader sees at once. The shingle test stays strictly
+  cross-section, tables included, because it checks no content agreement:
+  three tables in one section over the same long service names with
+  disjoint value cells ("Included", "Response target", "Owner") share
+  enough 8-grams in their keys alone to pass it (pinned by the consolidate
+  suite). A verbatim same-section copy still clusters (every key shared,
+  every row agreeing); a copy of a table with fewer than 3 rows does not,
+  since the row-key rule needs 3 shared keys. Every pair with a paragraph in it (paragraph and
+  paragraph, paragraph and table) still needs two different sections:
+  adjacent prose legitimately elaborates, and a paragraph beside its own
+  table is the normal lead-in, not a copy. A cluster whose members are all
+  tables in one section reads `- The same table appears twice in <title>
+  (id v_a, id v_b): "<excerpt>"` ("N times" for more than two): the title
+  once, every id present. Mixed and cross-section clusters read as before.
+  `pruneGuard` and the survivor rule are unchanged and already right here:
+  a review naming both copies of a same-section pair prunes the first and
+  keeps the second (pinned by the consolidate suite). The review turn's
+  prune-visual lines (byte-absent unless a visual is clustered) also say to
+  select the op when one section shows the same table twice, pruning one
+  copy there and keeping the other. No blocks passed: the scan is
+  byte-identical, as always. Honest limit (pre-existing survivor
+  semantics): a MIXED cluster spanning sections counts its text member, so
+  a review that prunes every table copy in it can end with the prose as the
+  only surviving copy of that content.
 - `budgetedDocumentText` appends a section's `blocksText` after its
   paragraphs inside the SAME per-section slice and the same fence (visuals
   are drafted content, the same standing as paragraphs). Constants
@@ -11878,25 +11966,51 @@ paragraph j at j + 0.5, stable, so a block that stood after the markdown
 paragraph stays after the lifted table. Nothing lifted returns the inputs
 untouched (===). The result also carries `refused`: tables found but left as
 text by a control (B7, limits, grounding, either cap). A refused lift stays
-as visible pipe text and is signaled ONLY in the activity log
-(`liftRefused`); open item: no gate rule flags it yet.
+as visible pipe text; since round 31 it is surfaced three ways: the
+activity log (`liftRefused`), gate rule D6 (§5.17.8, above), and a notice
+on the attended paths (below).
+
+**The one detector (round 31).** draft-blocks.ts exports two readers of the
+lift's private `findMarkdownTables`, and no other module may detect a
+markdown table any other way: `hasMarkdownTable(text): boolean` (the same
+detector over `text.split("\n")`; cheap, a refused table is still a table
+here) and `previewMarkdownTables(paragraph)` (below). So what rule D6 flags,
+what the lift finds and what the preview draws cannot disagree; the visual
+gate suite pins the three against each other on the same samples, a ragged
+table included.
 
 **Where it runs.**
 - Section PATCH, plain path and the retitle-with-paragraphs path
-  (`liftTablesForWrite` in the route): only when `mayHoldMarkdownTable` (a
-  line with a pipe directly followed by a separator-shaped line) says a
-  table is possible, so an ordinary edit stays at zero extra queries and a
+  (`liftTablesForWrite` in the route): only when `mayHoldMarkdownTable`
+  says a paragraph holds a table (since round 31 that precheck IS
+  `hasMarkdownTable`, the shared detector, never a second pattern), so an
+  ordinary edit stays at zero extra queries and a
   byte-identical write; then live SHARED facts (`liveFacts()`, the same rows
   as `knowledgeForUser(user).shared`, never a private note), the stored
   blocks via `keptBlocks`, and the section's stored cites. cites and
   generatedBy are carried over as always; CAS-on-rev unchanged. Activity
-  meta gains `liftedTables` and `liftRefused`, each when > 0. The precheck's
-  separator test matches the lift's (`:?-+:?`). When a table lifted, the response also
+  meta gains `liftedTables` and `liftRefused`, each when > 0. The precheck
+  and the lift therefore find exactly the same tables. When a table lifted, the response also
   carries the stored `section` and the workspace adopts it (saveEdit and
   applyProposal): otherwise the screen would keep the markdown the client
   sent, the rev-gated poll would never resend the record, a second save
   would lift the same table again, and Tron's staleness guard would refuse
-  every later proposal on that section.
+  every later proposal on that section. Since round 31, when the lift ran
+  and refused a table, the 200 body also carries `liftRefused: <n>` (both
+  paragraph paths; a refused-only lift changes no bytes, so it comes with no
+  `section` field). No other response change.
+- Gap weave (round 31): the gap route (`POST .../gap`) runs the same lift at
+  its landing write, after the etiquette append and before `withBlocks`:
+  `liftMarkdownTables(paragraphs, keptBlocks(fresh section,
+  paragraphs.length), toGroundFacts(shared), the section's stored cites)`,
+  where `shared` is the knowledge the route already loaded (no added
+  query). The route can never target the letter (the letter record carries
+  no gaps, and an unknown label 404s), so there is nothing to exempt; it
+  also refuses the letter label up front with the same 404, a one-line
+  defensive skip. CAS, etiquette, `referencesAnswered` and knowledge filing
+  are unchanged; `proposal.gap_resolve` meta gains `liftedTables` and
+  `liftRefused`, each only when > 0, and the 200 body gains
+  `liftRefused: <n>` only when > 0 (answerGap reads it, below).
 - Generate landing: after `landDraftBlocks`, against the same shared facts
   and the drafted cites, BEFORE the references carry (so a carried
   references block still closes the section and counts against the cap).
@@ -11929,14 +12043,89 @@ table as its OWN paragraph when the request asks for a table or name and
 value pairs read better as one (2 to 5 columns, at most 14 rows, every
 number and claim supported by the listed facts, every figure copied exactly
 as the facts state it or the table stays as text); the lift turns it into a
-block at the write. The gap weave (`resolveGap`) is unchanged and
-still reads paragraphs only.
+block at the write.
 
-**Preview honesty.** The Tron pane's diff preview is unchanged this round:
-a proposed markdown table shows as markdown text in the preview and becomes
-a real table only when accepted (the write lifts it). A table that fails a
-control stays as the markdown text that was accepted, visible as pipe text,
-and only the activity log (`liftRefused`) says so.
+**The gap weave sees visuals too (round 31).** `resolveGap(proposalId,
+sectionTitle, currentParagraphs, blocks, gapQuestion, answer, facts)` takes
+the section's stored visuals right after the paragraphs (the gap route
+passes `sectionBlocksForPrompt(section)`, sanitized by `keptBlocks`) and
+builds CURRENT TEXT exactly as reviseSection does. The two turns share ONE
+copy of each piece in brain.ts, so they cannot drift: `currentTextLines`
+(interleave, `[n]` over paragraphs only, each visual as its serialized
+lines with fence-token runs stripped), `visualsShownLines` (the "real
+tables and figures ... never copy ... never return a [visual ...] line"
+lines, byte-absent with no visual), `TABLE_AUTHORING_LINES` (the markdown
+table lines, including "Copy every figure in a table exactly as the facts
+state it") and `notEchoedVisual` (the post-parse drop of a returned
+paragraph matching the exact serialized tag, before the slice). In
+resolveGap the table lines are gated on `RFP_VISUALS` alone: a gap can
+never target the letter, an invariant of the data asserted in a comment,
+not checked at runtime. After the shared table lines, and gated the same
+way, resolveGap appends ONE line of its own (the shared constant is not
+forked; reviseSection's prompt is byte-identical): "A figure that only the
+answer states, and no listed fact backs, belongs in prose, not in a table."
+The answer is human text no fact backs yet, and the lift refuses a table
+figure no fact states. Every other resolveGap rule is byte-identical, and
+with no visuals passed its prompt is the old one plus only the table lines
+and that one line.
+
+**Preview honesty (round 31).** The Tron pane renders each proposed
+paragraph through `previewMarkdownTables(paragraph)` (draft-blocks.ts):
+null when the paragraph holds no table (the exact `<p>` rendered before),
+else `{ items }`, the paragraph split where the lift would split it (prose
+runs in order, each table as trimmed, emphasis-unwrapped header and row
+cells). It is PARSE-ONLY: no grounding, no currency veto, no caps, no
+cites, and it never feeds a store path; those controls stay enforced only
+at the lift. A ragged table the lift would refuse still previews as a
+table. Both preview sites (the single-section proposal and the
+whole-document proposals) use one component, `ProposedParagraphs` in
+workspace.tsx: prose items as `<p>`, a table as a compact `text-sm` table
+with 1px `var(--xl-line-bright)` hairline cell borders (the chip ladder's
+visible hairline; never an underline look) and a bold header row, then ONCE
+per paragraph one `text-xs text-faint` honesty line: "Becomes a table in the
+document when used, if it passes the checks then: no prices in a table, and
+every figure stated by a fact. A table that cannot pass stays as typed
+text." A proposal for the cover letter (the proposal's label is
+`LETTER_LABEL`, at either site) passes `plain`: every paragraph renders as
+the plain `<p>` it always was, no table preview and no caption, because the
+letter is never lifted. The "text it replaces" disclosure keeps plain `<p>`
+(it shows stored text).
+
+**Refused lifts on the attended paths (round 31).** When a person's own
+write comes back with `liftRefused > 0`, the workspace puts one sentence on
+the runbar notice line (the existing dismissable notice surface; saveEdit
+never opens the editing-notes window, which holds only section chips):
+"A table in the text could not become a visual: a table carries no prices,
+and every figure must match the facts exactly. It stays as typed text, and
+the checks flag it." The attended paths are saveEdit, answerGap (the gap
+route's `liftRefused`; once any target of a multi-section answer reports
+one, the sentence wins over the weave's own note for the rest of the run,
+and an error that stops the run still replaces it), acceptProposal,
+acceptDocProposal and acceptAllDocProposals. An accept whose result carries
+no refusal clears the notice only when it is exactly that sentence (a stale
+refusal from an earlier accept), never any other text; within one Use all
+batch, a clean later entry does not clear an earlier entry's refusal. The unattended loops (consolidateAll, fixAll and
+the reviseAndApply calls inside them) deliberately add no receipt line: rule
+D6 is their control, and the next checks run names every table left as
+text.
+
+**Open items after round 31.** None of round 30's list remains: the gap
+weave sees visuals and its writes are lifted; a refused lift is surfaced
+(D6 plus the attended notices); the preview renders proposed tables with
+the honesty line; two copies of a table inside one section cluster
+(§5.17.16). Accepted trade-offs that stay, by design: Yes/No tables rarely
+cluster by rows (their value cells carry almost no content words: "no" is a
+function word to the content-agreement test, so two such tables agree only
+through their "Yes" rows; the shingle rule still catches a long verbatim
+copy in ANOTHER section, while a same-section one needs the row-key rule's
+3 shared keys); the inverse risk is also accepted: two all-"Yes" tables
+over the same row keys but with different meanings can cluster, and a
+prune of one still passes through the review turn's judgment; and
+within-section PARAGRAPH duplication is still
+not scanned (adjacent prose legitimately elaborates, and a paragraph beside
+its own table is the normal lead-in). Honest limit: a D6 Ignore is
+span-scoped (its `findingSig` keys the span, not the table), so ignoring D6
+on a paragraph also hides any table written into that same paragraph later.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

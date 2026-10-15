@@ -94,6 +94,7 @@ import { CONSOLIDATE_INSTRUCTION } from "@/lib/rfp/consolidate";
 import {
   draftBlockSummary,
   interleave,
+  previewMarkdownTables,
   sanitizeStoredBlocks,
   tableColumnFractions,
   type DraftBlock,
@@ -1594,6 +1595,10 @@ export function Workspace({
       remember &&
       !q.targets.some((t) => isReferencesQuestion(t.raw)) &&
       !rememberedRef.current.has(q.key);
+    // A refused table lift on any target (§5.17.19): once seen, its notice
+    // wins over the weave's own note for the rest of the run (an error that
+    // stops the run still replaces it).
+    let liftRefusedSeen = false;
     for (let i = 0; i < q.targets.length; i++) {
       const target = q.targets[i];
       setWeaveProgress(
@@ -1647,7 +1652,10 @@ export function Workspace({
       markGateStale();
       done.push(target.label);
       showChanged([target.label]);
-      if (d.note && q.targets.length === 1) setNotice(d.note);
+      if (typeof d?.liftRefused === "number" && d.liftRefused > 0)
+        liftRefusedSeen = true;
+      if (liftRefusedSeen) setNotice(LIFT_REFUSED_NOTICE);
+      else if (d.note && q.targets.length === 1) setNotice(d.note);
       // The box was checked on a references question this client did not
       // recognize (older model wording): say what the server did.
       else if (d.rememberedSkipped === "references")
@@ -1965,7 +1973,11 @@ export function Workspace({
       )
     );
     setEditing(null);
-    setNotice("");
+    setNotice(
+      typeof d?.liftRefused === "number" && d.liftRefused > 0
+        ? LIFT_REFUSED_NOTICE
+        : ""
+    );
   }
 
   /**
@@ -2368,7 +2380,7 @@ export function Workspace({
     heading?: string;
     proposed: string[];
     current: string[];
-  }): Promise<{ error: string } | { label: string }> {
+  }): Promise<{ error: string } | { label: string; liftRefused?: number }> {
     if (!proposalId) return { error: "The proposal is gone. Reload the page." };
     const op = p.op ?? "revise";
     const touchesBody = op === "remove" || op === "revise";
@@ -2506,7 +2518,23 @@ export function Workspace({
       if (scope === p.label) setScope(newLabel);
     }
     showChanged([newLabel]);
-    return { label: newLabel };
+    // A refused table lift (§5.17.19): the count rides the result so the
+    // ATTENDED accepts can say so; the unattended loops ignore it.
+    const liftRefused =
+      typeof d?.liftRefused === "number" && d.liftRefused > 0
+        ? (d.liftRefused as number)
+        : 0;
+    return liftRefused > 0
+      ? { label: newLabel, liftRefused }
+      : { label: newLabel };
+  }
+
+  /** The attended accepts' refused-lift notice (§5.17.19): set it when the
+   *  result reports a refusal; otherwise clear it only when it is the line
+   *  shown now (a stale refusal from an earlier accept), never another text. */
+  function noteLiftRefused(liftRefused: number | undefined) {
+    if (liftRefused) setNotice(LIFT_REFUSED_NOTICE);
+    else setNotice((n) => (n === LIFT_REFUSED_NOTICE ? "" : n));
   }
 
   async function acceptProposal() {
@@ -2529,6 +2557,7 @@ export function Workspace({
       setTronApplied(r.label);
       setTronRemoved(null);
     }
+    noteLiftRefused(r.liftRefused);
     setProposal(null);
     setInstruction("");
     setTronFile(null);
@@ -2549,6 +2578,7 @@ export function Workspace({
     if (entry.op === "remove")
       setDocRemoved((prev) => [...prev, display]);
     else setDocApplied((prev) => [...prev, r.label]);
+    noteLiftRefused(r.liftRefused);
     setDocProposals((prev) => prev.filter((p) => p.label !== label));
     // The stopped line says nothing has been written; an accept just did.
     setDocStopped(false);
@@ -2564,6 +2594,9 @@ export function Workspace({
   async function acceptAllDocProposals() {
     if (docAccepting) return;
     setDocAccepting(true);
+    // Once one entry of the batch reports a refused lift, a later clean entry
+    // must not clear that notice.
+    let batchRefused = false;
     try {
       for (const entry of [...docProposals]) {
         const display = tronDisplay(entry.label);
@@ -2575,6 +2608,10 @@ export function Workspace({
         if (entry.op === "remove")
           setDocRemoved((prev) => [...prev, display]);
         else setDocApplied((prev) => [...prev, r.label]);
+        // One notice for the batch: the same string set again is the same
+        // single line, and it holds even if a later entry stops the run.
+        if (r.liftRefused) batchRefused = true;
+        if (r.liftRefused || !batchRefused) noteLiftRefused(r.liftRefused);
         setDocProposals((prev) => prev.filter((p) => p.label !== entry.label));
         setDocStopped(false);
       }
@@ -4573,9 +4610,10 @@ export function Workspace({
                           </p>
                         )}
                         <div className="mt-3 space-y-3 text-sm">
-                          {proposal.proposed.map((p, i) => (
-                            <p key={i}>{p}</p>
-                          ))}
+                          <ProposedParagraphs
+                            paragraphs={proposal.proposed}
+                            plain={proposal.label === LETTER_LABEL}
+                          />
                         </div>
                         <VisualsKeptNote
                           count={blocksByLabel.get(proposal.label)?.length ?? 0}
@@ -4692,9 +4730,10 @@ export function Workspace({
                               </p>
                             )}
                             <div className="mt-3 space-y-3 text-sm">
-                              {p.proposed.map((q, i) => (
-                                <p key={i}>{q}</p>
-                              ))}
+                              <ProposedParagraphs
+                                paragraphs={p.proposed}
+                                plain={p.label === LETTER_LABEL}
+                              />
                             </div>
                             <VisualsKeptNote
                               count={blocksByLabel.get(p.label)?.length ?? 0}
@@ -6145,6 +6184,97 @@ function DocBlock({ block }: { block: DraftBlock }) {
         </ol>
       );
   }
+}
+
+/** The attended paths' notice when a write reports a refused table lift
+ *  (liftRefused > 0, §5.17.19). Unattended loops never show it: rule D6 is
+ *  their control. */
+const LIFT_REFUSED_NOTICE =
+  "A table in the text could not become a visual: a table carries no prices, and every figure must match the facts exactly. It stays as typed text, and the checks flag it.";
+
+/**
+ * A proposal's paragraphs in the Tron pane (§5.17.19), both preview sites.
+ * A paragraph holding a pipe-formatted markdown table previews it as a
+ * table, by the SAME detector the accept-time lift uses
+ * (previewMarkdownTables, parse-only: no grounding, nothing stored), plus
+ * one honesty line, because the lift may still refuse it. Every other
+ * paragraph renders exactly as the plain <p> it always was. `plain` (the
+ * letter, which is never lifted) renders every paragraph as that plain <p>,
+ * with no table preview and no caption.
+ */
+function ProposedParagraphs({
+  paragraphs,
+  plain = false,
+}: {
+  paragraphs: string[];
+  plain?: boolean;
+}) {
+  if (plain)
+    return (
+      <>
+        {paragraphs.map((text, i) => (
+          <p key={i}>{text}</p>
+        ))}
+      </>
+    );
+  const cell = {
+    border: "1px solid var(--xl-line-bright)",
+    padding: "0.25rem 0.5rem",
+  };
+  return (
+    <>
+      {paragraphs.map((text, i) => {
+        const preview = previewMarkdownTables(text);
+        if (!preview) return <p key={i}>{text}</p>;
+        return (
+          <Fragment key={i}>
+            {preview.items.map((item, j) =>
+              item.kind === "prose" ? (
+                <p key={j}>{item.text}</p>
+              ) : (
+                <div key={j} className="overflow-x-auto">
+                  <table
+                    className="text-sm"
+                    style={{ borderCollapse: "collapse" }}
+                  >
+                    <thead>
+                      <tr>
+                        {item.columns.map((c, k) => (
+                          <th
+                            key={k}
+                            scope="col"
+                            style={{ ...cell, fontWeight: 600, textAlign: "left" }}
+                          >
+                            {c}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {item.rows.map((row, r) => (
+                        <tr key={r}>
+                          {row.map((v, k) => (
+                            <td key={k} style={cell}>
+                              {v}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            )}
+            <p className="text-xs text-faint">
+              {
+                "Becomes a table in the document when used, if it passes the checks then: no prices in a table, and every figure stated by a fact. A table that cannot pass stays as typed text."
+              }
+            </p>
+          </Fragment>
+        );
+      })}
+    </>
+  );
 }
 
 /** The Tron pane's note on a proposal for a section that holds visuals:

@@ -60,7 +60,11 @@ import {
   toGroundFacts,
   withBlocks,
 } from "@/lib/rfp/draft-blocks-ops";
-import { liftMarkdownTables, type DraftBlock } from "@/lib/rfp/draft-blocks";
+import {
+  hasMarkdownTable,
+  liftMarkdownTables,
+  type DraftBlock,
+} from "@/lib/rfp/draft-blocks";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
 import { referencesAsk, referencesGapWhy } from "@/lib/rfp/references-ask";
 import { reopenReferencesQuestion } from "@/lib/rfp/references-answer";
@@ -99,18 +103,13 @@ function transcribeFailMessage(subject: "scan" | "image", reason: VisionFailure)
 
 /**
  * Cheap precheck before a PATCH pays for the facts read the table lift needs
- * (§5.17.19): some paragraph holds a line with a pipe directly followed by a
- * separator-shaped line ("---|---", "| :--- | ---: |"). Every table
- * liftMarkdownTables would convert passes this (its separator has at least
- * two cells, so at least one pipe after a dash run); most edits fail it, so
- * the common PATCH stays at zero extra queries and byte-identical writes.
+ * (§5.17.19): some paragraph holds a markdown table by THE detector the lift
+ * itself uses (hasMarkdownTable), never a second pattern, so the lift runs
+ * for exactly the tables it would find. Most edits hold none, so the common
+ * PATCH stays at zero extra queries and byte-identical writes.
  */
 function mayHoldMarkdownTable(paragraphs: string[]): boolean {
-  return paragraphs.some(
-    (p) =>
-      p.includes("|") &&
-      /\|[^\n]*\n[ \t]*\|?[ \t]*:?-+:?[ \t]*\|/.test(p)
-  );
+  return paragraphs.some((p) => hasMarkdownTable(p));
 }
 
 /**
@@ -575,6 +574,10 @@ export async function PATCH(
       ...(retitleLift.lifted > 0
         ? { section: nextSections.find((s) => s.label === newLabel) }
         : {}),
+      // A table found but left as pipe text by a control, counted so an
+      // attended path can say so (§5.17.19). A refused-only lift changes no
+      // bytes, so it carries no `section`, only this count.
+      ...(retitleLift.refused > 0 ? { liftRefused: retitleLift.refused } : {}),
     });
   }
 
@@ -637,6 +640,8 @@ export async function PATCH(
     // Only when a table was lifted: the client adopts the stored record
     // instead of the paragraphs it sent (see the retitle branch).
     ...(lift.lifted > 0 ? { section: sections[at] } : {}),
+    // See the retitle branch: the refused count, only when > 0.
+    ...(lift.refused > 0 ? { liftRefused: lift.refused } : {}),
   });
 }
 

@@ -1108,6 +1108,61 @@ export function liftMarkdownTables(
   };
 }
 
+/**
+ * True when the text holds at least one GitHub-markdown table by THE detector the lift uses
+ * (findMarkdownTables: a header of two or more cells, a same-width separator of delimiter cells,
+ * at least one data line). The one entry point for every other reader of "is this a table": rule
+ * D6 and any precheck call this, never a second pattern, so what the checks flag, what the lift
+ * finds and what the preview draws cannot disagree. Says nothing about whether the lift would
+ * CONVERT it (grounding, currency, limits): a refused table is still a table here.
+ */
+export function hasMarkdownTable(text: string): boolean {
+  if (typeof text !== "string" || !text.includes("|")) return false;
+  return findMarkdownTables(text.split("\n")).length > 0;
+}
+
+/** One item of a previewed paragraph, in the order written. */
+export type MarkdownPreviewItem =
+  | { kind: "prose"; text: string }
+  | { kind: "table"; columns: string[]; rows: string[][] };
+
+/**
+ * A rendering aid for a PROPOSED paragraph (the Tron pane's preview, §5.17.19): null when the
+ * paragraph holds no markdown table (the caller renders its plain paragraph, the fast path).
+ * Otherwise the paragraph split exactly where the lift would split it, by the same detector: prose
+ * runs between tables kept in order (trimmed, empty runs dropped, as the lift drops them), each
+ * table as its header cells and row cells, trimmed and with whole-cell emphasis unwrapped by the
+ * lift's own helpers.
+ *
+ * PARSE-ONLY. It previews what the author wrote and NEVER stores: no grounding, no currency veto,
+ * no limits or caps, no cites, no NFKC clean, no block id. A ragged table (which the lift refuses)
+ * is still previewed as a table with its rows as written; saying that the document may keep it as
+ * text is the caller's caption. Nothing it returns may reach a write path: the lift at the write
+ * (liftMarkdownTables) is the only door from pipe text to a stored table block.
+ */
+export function previewMarkdownTables(paragraph: string): { items: MarkdownPreviewItem[] } | null {
+  if (typeof paragraph !== "string" || !paragraph.includes("|")) return null;
+  const lines = paragraph.split("\n");
+  const tables = findMarkdownTables(lines);
+  if (tables.length === 0) return null;
+  const items: MarkdownPreviewItem[] = [];
+  const prose = (text: string) => {
+    if (text !== "") items.push({ kind: "prose", text });
+  };
+  let from = 0;
+  for (const t of tables) {
+    prose(lines.slice(from, t.start).join("\n").trim());
+    items.push({
+      kind: "table",
+      columns: t.header.map(unwrapEmphasis),
+      rows: t.rows.map((r) => r.map(unwrapEmphasis)),
+    });
+    from = t.end;
+  }
+  prose(lines.slice(from).join("\n").trim());
+  return { items };
+}
+
 // ---------------------------------------------------------------------------
 // Server-built visuals: every value is text lifted out of a live fact
 // ---------------------------------------------------------------------------

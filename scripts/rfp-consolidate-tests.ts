@@ -5,7 +5,8 @@
  *
  * Pure, no server, no DB. Pins the deterministic duplicate scan the
  * consolidation review turn feeds on (normalization, the 0.5 containment
- * threshold on word 8-gram shingles, cross-section-only pairing, the letter
+ * threshold on word 8-gram shingles, cross-section pairing (two tables may
+ * also pair within one section, round 31), the letter
  * and short-paragraph exclusions, cluster ordering and the cap of 12) and
  * the two prompt-line builders' whole-line budget behavior.
  */
@@ -715,7 +716,18 @@ const curiosoTitle = (l: string) => {
   const sameSection = findDuplicateClusters([
     { label: "A", title: "TA", paragraphs: [], blocks: [tv("v_000000f1", agreeing), tv("v_000000f2", agreeing.map(([k, v]) => [k, `${v} again`] as [string, string]))] },
   ]);
-  check("row keys: two tables in ONE section are not reported", sameSection.length, 0);
+  // Round 31 (§5.17.16): the row-key rule dropped its different-section
+  // requirement, so two agreeing tables in ONE section now cluster.
+  check("row keys: two agreeing tables in ONE section cluster (round 31)", sameSection.map((c) => [c.labels, c.members.map((m) => [m.label, m.paragraph, m.blockId])]), [[["A"], [["A", -1, "v_000000f1"], ["A", -1, "v_000000f2"]]]]);
+  const sameSectionKeysOnly = findDuplicateClusters([
+    { label: "A", title: "TA", paragraphs: [], blocks: [t("v_000000f3", ["Email security", "Credential vaults", "Ticketing and PSA", "Endpoint alerting"], "p", false), t("v_000000f4", ["PSA and ticketing", "Email security", "Credential vaults", "Backup"], "q", false)] },
+  ]);
+  check("row keys: in ONE section, shared keys whose values share no word still do not cluster", sameSectionKeysOnly.length, 0);
+  check(
+    "content agreement holds within one section too: 'Included' vs 'Response target' do NOT cluster",
+    findDuplicateClusters([{ label: "A", title: "TA", paragraphs: [], blocks: [included, response] }]).length,
+    0
+  );
   // Both share the header "Area | Detail" and two row keys: were the header a
   // key, that would be 3 of 3.
   check("row keys: the header row is not a key", findDuplicateClusters([
@@ -822,6 +834,137 @@ const curiosoTitle = (l: string) => {
     check("prune: of two copies, one goes and the other stays", [admit("2", "v_5b457542", on("2")), admit("3", "v_6ab85e3c", on("3"))], ["v_5b457542", null]);
   }
   check("prune: an empty guard admits nothing", pruneAdmitter(pruneGuard([]))("2", "v_5b457542", on("2")), null);
+}
+
+// ---- round 31: duplicate tables WITHIN one section (§5.17.16) ---------------------
+{
+  // Two of the REAL Curioso tables put in one section: the scan used to skip
+  // the pair because the sections matched.
+  const [t2, t3, t4] = scanSections.map((s) => s.blocks[0]);
+  const one = (blocks: typeof t2[], paragraphs: string[] = [fillerA]) => ({ label: "3", title: "Scope of Services", paragraphs, blocks });
+  const title = (l: string) => (l === "3" ? "3 Scope of Services" : `T${l}`);
+  const pair = consolidationScan([one([t2, t3]), sec("B", [fillerB])]);
+  check(
+    "same section: two copies of a table cluster, both members on the one label",
+    pair.clusters.map((c) => [c.labels, c.members.map((m) => [m.label, m.paragraph, m.blockId])]),
+    [[["3"], [["3", -1, "v_5b457542"], ["3", -1, "v_6ab85e3c"]]]]
+  );
+  check(
+    "same section: the findings line names the title once and every id",
+    formatDuplicateFindings(pair.clusters, title),
+    `- The same table appears twice in 3 Scope of Services (id v_5b457542, id v_6ab85e3c): "${pair.clusters[0]?.excerpt}"`
+  );
+  const three = findDuplicateClusters([one([t2, t3, t4])]);
+  check(
+    "same section: three copies read '3 times', title once, all ids",
+    formatDuplicateFindings(three, title),
+    `- The same table appears 3 times in 3 Scope of Services (id v_5b457542, id v_6ab85e3c, id v_0db1dd37): "${three[0]?.excerpt}"`
+  );
+  check("same section: clusterBlockIds carries both", [...clusterBlockIds(pair.clusters)].sort(), ["v_5b457542", "v_6ab85e3c"]);
+  // The survivor rule needs no change: of two copies on one section, one prune
+  // is admitted and the second refused, so the section keeps a table.
+  const admit = pruneAdmitter(pair.guard);
+  const ids = [t2.id, t3.id];
+  check("same section: the guard counts both members", pair.guard.members, [2]);
+  check("same section: one prune admitted, the second refused", [admit("3", t2.id, ids), admit("3", t3.id, ids)], ["v_5b457542", null]);
+  const rev = pruneAdmitter(pair.guard);
+  check("same section: either copy may be the one pruned", [rev("3", t3.id, ids), rev("3", t2.id, ids)], ["v_6ab85e3c", null]);
+
+  // A verbatim copy (same serialized words, new id) also clusters inside one
+  // section: by the row-key + content-agreement test (every key shared, every
+  // row agreeing), the only test a same-section pair is put to.
+  const copy = { ...t2, id: "v_000000fa", text: t2.text.replace("v_5b457542", "v_000000fa") };
+  check(
+    "same section: a verbatim second copy clusters (row keys + content agreement)",
+    findDuplicateClusters([one([t2, copy])]).map((c) => c.members.map((m) => m.blockId)),
+    [["v_5b457542", "v_000000fa"]]
+  );
+
+  // Fixer regression (r31 refuter probe 2b): the shingle test checks no
+  // content agreement, so it stays strictly cross-section. Three tables in ONE
+  // section sharing only LONG row keys (enough shared 8-grams to pass the
+  // shingle containment) with disjoint value cells must NOT cluster.
+  const longKeys = [
+    "Remote monitoring and management of every server and workstation in scope across every office location the client operates today and tomorrow",
+    "Patch management for operating systems and third party applications on all endpoints including laptops desktops and servers at every client site",
+    "Backup and disaster recovery for all servers with offsite replication and quarterly restore testing documented for the client auditors",
+    "Email security filtering with phishing simulation and user awareness training delivered every quarter to every staff member at the client",
+  ];
+  const keyed = (id: string, header: string, values: string[]) => ({
+    id,
+    kind: "table",
+    text: [`[visual table id=${id}]`, header, ...longKeys.map((k, i) => `${k} | ${values[i]}`)].join("\n"),
+  });
+  const kA = keyed("v_000000a1", "Service | Included", ["Yes", "Yes", "Yes", "Yes"]);
+  const kB = keyed("v_000000b2", "Service | Response target", ["15 minutes", "4 hours", "1 hour", "30 minutes"]);
+  const kC = keyed("v_000000c3", "Service | Owner", ["NOC team", "Patch desk", "Backup desk", "Security desk"]);
+  check(
+    "same section: three tables sharing only long row keys, disjoint values, do NOT cluster",
+    findDuplicateClusters([{ label: "3", title: "Scope", paragraphs: [], blocks: [kA, kB, kC] }]),
+    []
+  );
+  // The same long-key tables across sections: the shingle test (cross-section
+  // only, unchanged by round 31) still pairs them, exactly as before the round.
+  // That is a PRE-EXISTING keys-only match across sections, pinned here so a
+  // change to it is deliberate, not endorsed as correct.
+  check(
+    "cross section: the long-key pair still clusters by shingles (pre-existing, unchanged)",
+    findDuplicateClusters([
+      { label: "3", title: "Scope", paragraphs: [], blocks: [kA] },
+      { label: "4", title: "SLA", paragraphs: [], blocks: [kB] },
+    ]).map((c) => c.members.map((m) => m.blockId)),
+    [["v_000000a1", "v_000000b2"]]
+  );
+  // A verbatim copy of a long-key table in the same section still clusters.
+  const kA2 = keyed("v_000000a2", "Service | Included", ["Yes", "Yes", "Yes", "Yes"]);
+  check(
+    "same section: a verbatim copy of the long-key table still clusters",
+    findDuplicateClusters([{ label: "3", title: "Scope", paragraphs: [], blocks: [kA, kB, kA2] }]).map((c) => c.members.map((m) => m.blockId)),
+    [["v_000000a1", "v_000000a2"]]
+  );
+
+  // Paragraph pairs keep the cross-section requirement: a paragraph beside its
+  // own table (the lead-in), or two copies of a paragraph, in one section
+  // never cluster; only the two tables do.
+  const prose = t2.text.split("\n").slice(1).join(" ");
+  const leadIn = findDuplicateClusters([one([t2, t3], [prose, prose])]);
+  check(
+    "same section: the section's own prose (even verbatim) stays out; the two tables cluster alone",
+    leadIn.map((c) => c.members.map((m) => [m.paragraph, m.blockId ?? null])),
+    [[[-1, "v_5b457542"], [-1, "v_6ab85e3c"]]]
+  );
+  check("same section: one table beside its own prose is not reported", findDuplicateClusters([one([t2], [prose])]).length, 0);
+  check("same section: two copies of a paragraph are still not reported", findDuplicateClusters([one([], [dup, dup]), sec("B", [fillerB])]).length, 0);
+
+  // Prose in ANOTHER section joins as before (cross-section), and the line
+  // keeps the mixed wording, naming each table with its section.
+  const mixed = findDuplicateClusters([one([t2, t3]), { label: "B", title: "TB", paragraphs: [prose] }]);
+  check(
+    "same-section tables plus prose elsewhere: one mixed cluster",
+    mixed.map((c) => c.members.map((m) => [m.label, m.paragraph, m.blockId ?? null])),
+    [[["3", -1, "v_5b457542"], ["3", -1, "v_6ab85e3c"], ["B", 0, null]]]
+  );
+  check(
+    "same-section tables plus prose elsewhere: the mixed wording is unchanged",
+    formatDuplicateFindings(mixed, title),
+    `- The same content appears as text in TB and as the table (id v_5b457542) in 3 Scope of Services, the table (id v_6ab85e3c) in 3 Scope of Services: "${mixed[0]?.excerpt}"`
+  );
+  // Two tables in one section plus a copy in another: cross-section wording.
+  const cross = findDuplicateClusters([one([t2, t3]), { label: "4", title: "Security and Included Tools", paragraphs: [], blocks: [t4] }]);
+  check(
+    "same-section pair plus a copy elsewhere: the cross-section table wording, every id",
+    formatDuplicateFindings(cross, (l) => (l === "4" ? "4 Security and Included Tools" : title(l))),
+    `- The same table appears in 3 Scope of Services (id v_5b457542), 3 Scope of Services (id v_6ab85e3c), 4 Security and Included Tools (id v_0db1dd37): "${cross[0]?.excerpt}"`
+  );
+
+  // Cross-section behavior is byte-identical: the Curioso scan (one table per
+  // section) and a text-only scan read exactly as before this round.
+  check(
+    "regression: the Curioso three-section findings line is unchanged",
+    formatDuplicateFindings(findDuplicateClusters(scanSections), curiosoTitle),
+    '- The same table appears in 2 Your Environment and What You Need (id v_5b457542), 3 Scope of Services (id v_6ab85e3c), 4 Security and Included Tools (id v_0db1dd37): "Central services in the fully managed service / Service | Platform or scope / Service desk | 24/7/365 live, staffed shifts, no on-call rotation / Email security"'
+  );
+  check("regression: paragraphs only still finds nothing", findDuplicateClusters(paragraphOnly), []);
 }
 
 // ---- verdict -------------------------------------------------------------------

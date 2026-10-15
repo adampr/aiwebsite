@@ -133,7 +133,8 @@ function tableRows(text: string): Map<string, Set<string>> {
 }
 
 /**
- * Deterministic near-duplicate scan ACROSS sections.
+ * Deterministic near-duplicate scan ACROSS sections (and, for two tables
+ * only, within one).
  *
  * The letter is skipped (it summarizes sections by design), so are
  * paragraphs under 12 words after normalizing (headers, stubs). Two
@@ -152,6 +153,15 @@ function tableRows(text: string): Map<string, Set<string>> {
  * row keys (see the table pass below). Other kinds stay out (the system
  * kinds are one per document by origin; references hold contacts). With no
  * blocks passed, the result is exactly the paragraph-only scan.
+ *
+ * The same-section exception (§5.17.16): two TABLE entries may match inside
+ * one section, by the row-key + content-agreement table test ONLY, because
+ * one section holding the same table twice is duplication a reader sees at
+ * once. The shingle test stays strictly cross-section: it checks no content
+ * agreement, so same-section tables sharing only long row keys would match
+ * on the keys alone. Every pair with a paragraph in it still needs two
+ * sections: adjacent prose legitimately elaborates, and a paragraph beside
+ * its own table is the normal lead-in, not a copy.
  */
 export function findDuplicateClusters(
   sections: {
@@ -204,7 +214,8 @@ export function findDuplicateClusters(
       else index.set(sh, [e.id]);
     }
 
-  // Union-find over entries; only cross-section duplicate pairs are unioned.
+  // Union-find over entries. The shingle pass unions cross-section pairs
+  // only; the table pass below is the one place a same-section pair unions.
   const parent = entries.map((_, i) => i);
   const find = (i: number): number => {
     while (parent[i] !== i) {
@@ -230,6 +241,8 @@ export function findDuplicateClusters(
       }
     for (const [j, count] of shared) {
       const other = entries[j];
+      // Strictly cross-section, tables included: this test checks no content
+      // agreement (the same-section exception lives in the table pass only).
       if (other.sectionIndex === e.sectionIndex) continue;
       const denom = Math.min(e.shingles.size, other.shingles.size);
       if (denom > 0 && count / denom >= DUP_THRESHOLD) union(e.id, j);
@@ -244,14 +257,15 @@ export function findDuplicateClusters(
   // in at least half of the shared keys the two rows' other cells share a
   // word ("Barracuda", "Kaseya"). Keys alone are not content: a "Service |
   // Included" table and a "Service | Response target" table list the same
-  // services and say different things. Only table entries carry `rows`, so
-  // with no blocks passed this pass does nothing.
+  // services and say different things. Two tables in ONE section are tested
+  // here too (the same-section exception), and ONLY here: this is the test
+  // that checks content agreement. Only table entries carry
+  // `rows`, so with no blocks passed this pass does nothing.
   const tables = entries.filter((e) => e.rows !== undefined);
   for (let a = 0; a < tables.length; a++)
     for (let b = a + 1; b < tables.length; b++) {
       const x = tables[a];
       const y = tables[b];
-      if (x.sectionIndex === y.sectionIndex) continue;
       let common = 0;
       let agree = 0;
       for (const [k, xs] of x.rows!) {
@@ -316,7 +330,8 @@ export function findDuplicateClusters(
 
 /** One findings line. A cluster with table members names each table by its
  *  id, so the review turn sees a TABLE (which it can prune by that id), not
- *  prose; a text-only cluster reads exactly as it always has. */
+ *  prose; a text-only cluster reads exactly as it always has. A cluster of
+ *  tables in one section reads "appears twice in <title> (id v_a, id v_b)". */
 function findingsLine(
   c: DuplicateCluster,
   displayTitle: (label: string) => string
@@ -330,6 +345,14 @@ function findingsLine(
   for (const m of c.members)
     if (m.blockId === undefined && !textLabels.includes(m.label))
       textLabels.push(m.label);
+  // Tables only, all in ONE section (the same-section exception): the title
+  // once, every id after it. Any other shape reads as it always has.
+  if (textLabels.length === 0 && tables.every((m) => m.label === tables[0].label))
+    return `- The same table appears ${
+      tables.length === 2 ? "twice" : `${tables.length} times`
+    } in ${displayTitle(tables[0].label)} (${tables
+      .map((m) => `id ${m.blockId}`)
+      .join(", ")}): "${c.excerpt}"`;
   if (textLabels.length === 0)
     return `- The same table appears in ${tables
       .map((m) => `${displayTitle(m.label)} (id ${m.blockId})`)

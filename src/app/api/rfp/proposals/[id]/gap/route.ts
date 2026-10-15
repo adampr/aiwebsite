@@ -18,7 +18,11 @@
 // asking. It is private until an admin approves it into the shared base.
 
 import { logRfpActivity } from "@/lib/rfp/activity";
-import { resolveGap, brainHealthy } from "@/lib/rfp/brain";
+import {
+  resolveGap,
+  brainHealthy,
+  sectionBlocksForPrompt,
+} from "@/lib/rfp/brain";
 import {
   createKnowledgeProposal,
   getOwnedProposal,
@@ -33,7 +37,13 @@ import {
   isReferencesRefusal,
   withReferenceEtiquette,
 } from "@/lib/rfp/references-ask";
-import { keptBlocks, withBlocks } from "@/lib/rfp/draft-blocks-ops";
+import {
+  keptBlocks,
+  toGroundFacts,
+  withBlocks,
+} from "@/lib/rfp/draft-blocks-ops";
+import { liftMarkdownTables } from "@/lib/rfp/draft-blocks";
+import { LETTER_LABEL } from "@/lib/rfp/letter";
 import type { DraftSectionRecord } from "../../../documents/[id]/generate/route";
 
 export const dynamic = "force-dynamic";
@@ -86,7 +96,10 @@ export async function POST(
   const sections: DraftSectionRecord[] = JSON.parse(
     proposal.sectionsJson || "[]"
   );
-  const section = sections.find((s) => s.label === label);
+  // The letter never carries gaps, so it is never a target here (a defensive
+  // skip: the weave below lifts tables, and the letter is never lifted).
+  const section =
+    label === LETTER_LABEL ? undefined : sections.find((s) => s.label === label);
   if (!section) return rfpError("not_found", "No such section.", 404);
   const gapAt = section.gaps.findIndex((g) => g.question === question);
   if (gapAt < 0)
@@ -121,6 +134,9 @@ export async function POST(
     proposal.id,
     `${section.label} ${section.title}`,
     section.paragraphs,
+    // The section's stored visuals, sanitized (keptBlocks), so the weave sees
+    // them in place and never restates one as prose (§5.17.19).
+    sectionBlocksForPrompt(section),
     question,
     answer,
     shared
@@ -185,12 +201,25 @@ export async function POST(
       })
     : woven.paragraphs;
 
-  // Visuals stay through a weave: the resolve turn sees paragraphs only, so
-  // the stored blocks are kept as they are and re-anchored to the paragraph
-  // count that lands (after the etiquette append).
+  // Visuals stay through a weave: the resolve turn can see them but never
+  // edit them, so the stored blocks are kept as they are and re-anchored to
+  // the paragraph count that lands (after the etiquette append). A markdown
+  // table in the woven text becomes a real table block here (§5.17.19), by
+  // the same lift and the same blocking controls as the edit PATCH: live
+  // SHARED facts (already loaded above, no extra query) and the section's
+  // STORED cites. This route can never target the letter (it carries no
+  // gaps), so the PATCH's letter exemption has nothing to exempt here. A
+  // lift that converts nothing hands its inputs back (===), so the write is
+  // exactly today's.
+  const lift = liftMarkdownTables(
+    paragraphs,
+    keptBlocks(freshSections[at], paragraphs.length),
+    toGroundFacts(shared),
+    Array.isArray(freshSections[at].cites) ? freshSections[at].cites : []
+  );
   const updated: DraftSectionRecord = withBlocks({
     ...freshSections[at],
-    paragraphs,
+    paragraphs: lift.paragraphs,
     gaps: freshSections[at].gaps.filter((g) => g.question !== question),
     cites: freshSections[at].cites,
     generatedBy: freshSections[at].generatedBy,
@@ -200,7 +229,7 @@ export async function POST(
     // it, which re-raises the question (asking again beats losing them).
     ...(referencesQuestion ? { referencesAnswered: true } : {}),
     updatedAt: new Date().toISOString(),
-  }, keptBlocks(freshSections[at], paragraphs.length));
+  }, lift.blocks);
   freshSections[at] = updated;
 
   const ok = await writeProposalSections(
@@ -255,6 +284,9 @@ export async function POST(
       answerChars: answer.length,
       remaining: freshSections.reduce((n, s) => n + s.gaps.length, 0),
       remembered,
+      // Counts only, each only when > 0 (meta stays shape-only).
+      ...(lift.lifted > 0 ? { liftedTables: lift.lifted } : {}),
+      ...(lift.refused > 0 ? { liftRefused: lift.refused } : {}),
     },
   });
 
@@ -263,6 +295,9 @@ export async function POST(
     note: woven.note,
     remembered,
     ...(rememberedSkipped ? { rememberedSkipped } : {}),
+    // A markdown table the lift refused stays typed text: the count lets the
+    // workspace say so (§5.17.19); absent when nothing was refused.
+    ...(lift.refused > 0 ? { liftRefused: lift.refused } : {}),
     rev: fresh.rev + 1,
   });
 }

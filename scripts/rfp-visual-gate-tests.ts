@@ -27,7 +27,17 @@ import {
   type Block,
 } from "../src/lib/rfp/content-model";
 import { runGate } from "../src/lib/rfp/validators/gate";
-import { prospectHeadcount } from "../src/lib/rfp/validators/rules-d";
+import { D6, prospectHeadcount } from "../src/lib/rfp/validators/rules-d";
+import {
+  D6_LETTER_DIRECTION,
+  D6_TABLE_DIRECTION,
+  fixAllSteps,
+  fixRecipe,
+  groupFindings,
+  groupFixPlan,
+  isAutoFixableGroup,
+} from "../src/lib/rfp/check-fixes";
+import { DOC_LABEL, LETTER_LABEL } from "../src/lib/rfp/letter";
 import { resolveDraft, runDraftGate } from "../src/lib/rfp/resolve-draft";
 import {
   buildExportView,
@@ -39,7 +49,10 @@ import { loadRfpExportAssets } from "../src/lib/rfp/export-assets";
 import {
   DRAFT_BLOCK_KINDS,
   buildAboutBlocks,
+  hasMarkdownTable,
   interleave,
+  parseModelVisuals,
+  previewMarkdownTables,
   sanitizeStoredBlocks,
   type DraftBlock,
 } from "../src/lib/rfp/draft-blocks";
@@ -470,6 +483,156 @@ function visibleStrings(b: DraftBlock): string[] {
   check("D4: a stated 230 users at the range's edge warns, naming 230",
     g2.violations.some((v) => v.ruleId === "D4" && /about 230,/.test(v.message)),
     g2.violations.filter((v) => v.ruleId === "D4").map((v) => v.message));
+}
+
+/* ---- 4c. D6: tabular text in prose (§5.17.19, round 31) ------------------ */
+// The one detector: D6 fires exactly where hasMarkdownTable (and so the lift
+// and the preview) sees a table. The letter is flagged too (it prints), and
+// its recipe asks for prose; a block cell cannot hold a table at all.
+{
+  const TABLE = "| Service | Tool |\n|---|---|\n| Email security | Proofpoint |\n| Backup | Datto |";
+  const LEAD = "Each tool below is included.\n";
+  const withTables = withTimeline(fixtureSections).map((s) =>
+    s.label === "5."
+      ? { ...s, paragraphs: [s.paragraphs[0], LEAD + TABLE] }
+      : s.label === "__letter"
+        ? { ...s, paragraphs: [s.paragraphs[0], s.paragraphs[1], "The services:\n" + TABLE] }
+        : s
+  );
+  const tInput = buildFixtureGateInput(withTables);
+  const tGate = runDraftGate(tInput);
+  const d6 = tGate.violations.filter((v) => v.ruleId === "D6");
+  check("D6: registered in the gate, one finding per span holding a table (the section paragraph and the letter body)",
+    d6.length === 2, d6.map((v) => v.locator));
+  const inSection = d6.find((v) => v.locator.sectionId === "sec_5_");
+  check("D6: the section finding is a WARN located on b_5__1 / text at the table's header line",
+    !!inSection && inSection.severity === "warn" && inSection.locator.blockId === "b_5__1" &&
+      inSection.locator.field === "text" && inSection.locator.charOffset === LEAD.length,
+    inSection);
+  check("D6: the excerpt carries the header line and the message names raw text in the document and on screen",
+    !!inSection && (inSection.excerpt ?? "").includes("| Service | Tool |") &&
+      /prints as raw text/.test(inSection.message) && /in the document and on screen/.test(inSection.message) &&
+      /real table/.test(inSection.suggestion ?? "") && !/\u2014/.test(inSection.message + (inSection.suggestion ?? "")),
+    inSection);
+  const inLetter = d6.find((v) => v.locator.field === "body[2]");
+  check("D6: the letter body is flagged too, with no section locator and the prose suggestion",
+    !!inLetter && inLetter.locator.sectionId === undefined && inLetter.locator.blockId === undefined &&
+      inLetter.locator.charOffset === "The services:\n".length && /prose/.test(inLetter.suggestion ?? "") &&
+      !/real table/.test(inLetter.suggestion ?? ""),
+    inLetter);
+  check("D6: the clean fixture raises no D6 at all", !runDraftGate(input).violations.some((v) => v.ruleId === "D6"));
+
+  // Offsets: a near-miss before the real table (header/separator widths
+  // differ) is skipped; a table opening the span is at offset 0.
+  const nearMiss = "Tiers: A | B\nnot | a | separator\n";
+  const offsets = [nearMiss + TABLE, TABLE, "Intro.\n" + TABLE + "\nOutro.\n" + TABLE].map((text) => {
+    const v = withTimeline(fixtureSections).map((s) => (s.label === "5." ? { ...s, paragraphs: [text] } : s));
+    return runDraftGate(buildFixtureGateInput(v)).violations.filter((x) => x.ruleId === "D6").map((x) => x.locator.charOffset);
+  });
+  check("D6: charOffset is the FIRST table's header line (near-miss skipped, offset 0, two tables one finding)",
+    isDeepStrictEqual(offsets, [[nearMiss.length], [0], ["Intro.\n".length]]), offsets);
+
+  // Prose with stray pipes but no separator line is not a table, by any reader.
+  const stray = "Choose Basic | Plus | Pro for the tier.\nEach | tier | includes | support.";
+  const strayGate = runDraftGate(buildFixtureGateInput(
+    withTimeline(fixtureSections).map((s) => (s.label === "5." ? { ...s, paragraphs: [stray] } : s))
+  ));
+  check("D6: stray pipes with no separator line do NOT fire", !strayGate.violations.some((v) => v.ruleId === "D6"));
+
+  // One detector: D6 fires iff hasMarkdownTable iff the preview draws a table.
+  const samples = [TABLE, LEAD + TABLE, stray, nearMiss + TABLE, "| a | b |\n|---|---|", "| a | b |\n|:-:|--|\n| 1 | 2 | 3 |", "plain prose", ""];
+  const disagree = samples.filter((text) => {
+    const v = withTimeline(fixtureSections).map((s) => (s.label === "5." ? { ...s, paragraphs: [text || "x"] } : s));
+    const fires = runDraftGate(buildFixtureGateInput(v)).violations.some((x) => x.ruleId === "D6");
+    return fires !== hasMarkdownTable(text || "x") || hasMarkdownTable(text) !== (previewMarkdownTables(text) !== null);
+  });
+  check("D6: the rule, hasMarkdownTable and previewMarkdownTables agree on every sample (ragged included)", disagree.length === 0, disagree);
+
+  // A block cell cannot hold a table when written: the write paths clean
+  // every cell to one line (the model's table, and the lift's own output).
+  const factIdForCell = knowledge.facts.find((f) => f.key === "company.identity")!.id;
+  const modelTable = parseModelVisuals(
+    [{ kind: "table", after: 0, cites: [factIdForCell], columns: ["Service", "Tool"], rows: [["Email security", TABLE]] }],
+    { facts: knowledge.facts as never, sectionCites: [factIdForCell], paragraphCount: 1 }
+  );
+  const madeCells = modelTable.blocks.flatMap((b) => (b.kind === "table" ? b.rows.flat() : []));
+  check("D6: a model-written table cell is cleaned to one line, so it can never fire",
+    madeCells.length === 2 && madeCells.every((c) => !c.includes("\n") && !hasMarkdownTable(c)),
+    modelTable);
+  // A STORED multi-line cell from outside those paths is flagged truthfully
+  // (it prints raw), on the visual; its recipe is a person's edit, never Tron.
+  const cellTable = withTimeline(fixtureSections).map((s) =>
+    s.label === "2."
+      ? { ...s, blocks: s.blocks!.map((b) => (b.kind === "table" ? { ...b, rows: b.rows.map((r, i) => (i === 0 ? [...r.slice(0, -1), TABLE] : r)) } : b)) }
+      : s
+  );
+  const cellD6 = runDraftGate(buildFixtureGateInput(cellTable)).violations.filter((v) => v.ruleId === "D6");
+  const cellRecipe = cellD6[0] ? fixRecipe(cellD6[0], { sections: cellTable.map((s) => ({ label: s.label })), requirements: [] }) : null;
+  check("D6: a stored multi-line cell is flagged on the visual and its recipe is a person's edit (Fix all skips it)",
+    cellD6.length === 1 && cellD6[0].locator.blockId === "bv_2__v_0000a001" && cellRecipe?.kind === "none" &&
+      !isAutoFixableGroup(groupFindings(cellD6)[0], { sections: cellTable.map((s) => ({ label: s.label })), requirements: [] }),
+    [cellD6.map((v) => v.locator), cellRecipe]);
+
+  // Hostile spans: thousands of pipe lines, a non-string text. Never a throw.
+  const hostile = structuredClone(resolved);
+  const p0 = hostile.sections[0].blocks.find((b) => b.kind === "prose")!;
+  if (p0.kind === "prose") p0.text = "| x |\n".repeat(20000) + "| a | b |\n|---|---|\n| 1 | 2 |";
+  const p1 = hostile.sections[1].blocks.find((b) => b.kind === "prose")!;
+  if (p1.kind === "prose") (p1 as { text: unknown }).text = null;
+  const hctx = { proposal: hostile, knowledge, rateCard: input.rateCard, requirements, coverage, factsById,
+    statesHeadcountOnly: false, supportedUserSplitConfirmed: true };
+  let hostileOut: unknown = null;
+  const t0 = Date.now();
+  try {
+    hostileOut = D6.check(hctx).map((v) => v.locator.charOffset);
+  } catch (e) {
+    hostileOut = e instanceof Error ? e.message : String(e);
+  }
+  check("D6: hostile spans (20,000 pipe lines, a null text) never throw and locate the table quickly",
+    isDeepStrictEqual(hostileOut, ["| x |\n".length * 20000]) && Date.now() - t0 < 3000, [hostileOut, Date.now() - t0]);
+  check("D6: runGate reports no validator error on the hostile proposal",
+    runGate(hctx, { only: ["D6"] }).errors.length === 0);
+
+  // The recipe: a Tron revise; the letter gets prose, a section a table.
+  const tResolved = resolveDraft(tInput);
+  const fixCtx = { sections: tInput.sections.map((s) => ({ label: s.label })), requirements: tResolved.requirements };
+  const secRecipe = fixRecipe(inSection!, fixCtx);
+  check("D6 recipe: a section finding is a Tron revise on that section asking for a markdown table, figures exact",
+    secRecipe.kind === "tron" && secRecipe.label === "5." && secRecipe.instruction.includes(D6_TABLE_DIRECTION) &&
+      !secRecipe.instruction.includes(D6_LETTER_DIRECTION) && /exactly as the facts state it/.test(secRecipe.instruction) &&
+      secRecipe.instruction.endsWith("Change only what is needed to resolve this finding; keep everything else as it is.") &&
+      !("ask" in secRecipe),
+    secRecipe);
+  // Fixer: Fix all must converge on a table the lift can never accept (a price,
+  // an unstated figure), so the direction ends with the prose fallback.
+  check("D6 direction: ends with the prose fallback for a table that cannot meet the rules",
+    D6_TABLE_DIRECTION.endsWith(" If the table cannot meet those rules, a price in it or a figure no fact states, rewrite that content as plain prose sentences instead.") &&
+      !D6_TABLE_DIRECTION.includes("—") && secRecipe.kind === "tron" && secRecipe.instruction.includes("rewrite that content as plain prose sentences instead"),
+    D6_TABLE_DIRECTION);
+  const letRecipe = fixRecipe(inLetter!, fixCtx);
+  check("D6 recipe: a letter finding resolves to the letter label and asks for prose, never a table",
+    letRecipe.kind === "tron" && letRecipe.label === LETTER_LABEL && letRecipe.instruction.includes(D6_LETTER_DIRECTION) &&
+      !letRecipe.instruction.includes(D6_TABLE_DIRECTION),
+    letRecipe);
+  const noLetter = fixRecipe(inLetter!, { ...fixCtx, sections: fixCtx.sections.filter((s) => s.label !== LETTER_LABEL) });
+  check("D6 recipe: with no letter record to revise, the whole-document sweep carries the prose direction",
+    noLetter.kind === "tron" && noLetter.label === DOC_LABEL && noLetter.instruction.includes(D6_LETTER_DIRECTION),
+    noLetter);
+  const groups = groupFindings(d6);
+  check("D6 grouping: the section and letter findings are one row (one rule, one message)",
+    groups.length === 1 && groups[0].members.length === 2, groups.map((g) => g.members.length));
+  const plan = groupFixPlan(groups[0], fixCtx);
+  check("D6 group plan: one sweep step carrying both directions, each scoped",
+    plan.length === 1 && plan[0].kind === "tron" && plan[0].label === DOC_LABEL &&
+      plan[0].instruction.includes("Outside the cover letter: " + D6_TABLE_DIRECTION) &&
+      plan[0].instruction.includes(D6_LETTER_DIRECTION),
+    plan);
+  const onlySection = groupFixPlan(groupFindings([inSection!])[0], fixCtx);
+  check("D6 group plan: a one-member group's plan IS its recipe",
+    isDeepStrictEqual(onlySection, [secRecipe]), onlySection);
+  check("D6 Fix all: auto-fixable, and the round plans its step",
+    isAutoFixableGroup(groups[0], fixCtx) &&
+      fixAllSteps(groups, fixCtx).some((s) => s.kind === "tron" && s.instruction.includes(D6_LETTER_DIRECTION)));
 }
 
 /* ---- 5. Export view: the flow is interleave's ----------------------------- */

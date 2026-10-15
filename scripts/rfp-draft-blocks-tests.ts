@@ -21,11 +21,13 @@ import {
   draftBlockSummary,
   groundValue,
   hasCurrency,
+  hasMarkdownTable,
   interleave,
   liftMarkdownTables,
   newBlockId,
   parseModelVisuals,
   pickAboutSection,
+  previewMarkdownTables,
   reanchorBlocks,
   sanitizeStoredBlocks,
   serializeBlockForPrompt,
@@ -1594,6 +1596,149 @@ const notPricing = (ids: string[]) => ids.filter((id) => !facts.find((f) => f.id
   const ws = serializeBlockForPrompt(wide);
   const fullLines = ["[visual table id=v_000000d1]", "a | b | c | d | e", ...wide.rows.map((r) => r.join(" | "))];
   check("serialize: bounded at 2000 chars by whole lines, never a cut line", [ws.length <= 2000, ws.split("\n").every((l, i) => l === fullLines[i]), ws.split("\n").length < fullLines.length], [true, true, true]);
+}
+
+// ---- round 31 B1: hasMarkdownTable / previewMarkdownTables, THE one detector ------
+{
+  const email = fid("tooling.email-security");
+  const slaId = fid("operations.sla-targets");
+  // How many tables the LIFT's detector finds in one paragraph: with no cites the corpus is
+  // empty, so every found table is counted refused and nothing else is.
+  const liftFinds = (p: string) => liftMarkdownTables([p], undefined, facts, []).refused;
+  const cases: [string, string, boolean][] = [
+    ["a plain table", "| Service | Tool |\n|---|---|\n| Email | Barracuda |", true],
+    ["outer pipes left off", "Service | Tool\n--- | ---\nEmail | Barracuda", true],
+    ["aligned separators", "| Priority | Response |\n| :--- | ---: |\n| P1 Critical | 15 minutes |", true],
+    ["a one-dash separator", "| a | b |\n|-|:-:|\n| c | d |", true],
+    ["prose before and after", "Before.\n| a | b |\n|---|---|\n| c | d |\nAfter.", true],
+    ["a ragged table (the lift refuses it, but it IS a table)", "| a | b |\n|---|---|\n| c |\n| d | e | f |", true],
+    ["a currency table (refused at the lift, still a table)", "| Item | Cost |\n|---|---|\n| Seat | $15 |", true],
+    ["six columns (over the limit, still a table)", "| a | b | c | d | e | f |\n|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 |", true],
+    ["CRLF line ends", "| a | b |\r\n|---|---|\r\n| c | d |", true],
+    ["Unicode spaces padding the separator", "| a | b |\n| --- | --- |\n| c | d |", true],
+    ["two tables in one paragraph", "| a | b |\n|---|---|\n| c | d |\nBetween.\n| e | f |\n|---|---|\n| g | h |", true],
+    ["a separator with a different cell count", "| a | b |\n|---|---|---|\n| c | d |", false],
+    ["a separator that is not dashes", "| a | b |\n| == | == |\n| c | d |", false],
+    ["a separator cell with no dash", "| a | b |\n| : | --- |\n| c | d |", false],
+    ["no data line", "| a | b |\n|---|---|", false],
+    ["a data line with no pipe", "| a | b |\n|---|---|\nplain words", false],
+    ["one column", "| a |\n|---|\n| b |", false],
+    ["an escaped pipe is not a cell break", "a \\| b\n---\nc \\| d", false],
+    ["pipes inside a sentence", "Pick Barracuda | Proofpoint | Mimecast for email.", false],
+    ["two sentence lines with pipes, no separator", "Pick Barracuda | Proofpoint\nconfirm with us | the team.", false],
+    ["no pipe at all", "Nothing to see.", false],
+    ["empty", "", false],
+  ];
+  for (const [what, p, want] of cases) {
+    check(`hasMarkdownTable: ${what}`, hasMarkdownTable(p), want);
+    check(`hasMarkdownTable agrees with the lift's detector: ${what}`, hasMarkdownTable(p), liftFinds(p) > 0);
+    check(`preview agrees with the detector: ${what}`, previewMarkdownTables(p) !== null, want);
+    const tablesPreviewed = previewMarkdownTables(p)?.items.filter((x) => x.kind === "table").length ?? 0;
+    check(`preview shows exactly the tables the lift finds: ${what}`, tablesPreviewed, liftFinds(p));
+  }
+  let threw = false;
+  try {
+    check("hasMarkdownTable: non-strings are false", [null, undefined, 3, {}].map((v) => hasMarkdownTable(v as never)), [false, false, false, false]);
+    check("preview: non-strings are null", [null, undefined, 3, {}].map((v) => previewMarkdownTables(v as never)), [null, null, null, null]);
+  } catch {
+    threw = true;
+  }
+  no("hasMarkdownTable / preview: hostile inputs never throw", threw);
+
+  // Prose runs in order, split where the lift splits; emphasis and escaped pipes as the lift reads them.
+  const md = "| **Priority** | `Response` |\n|---|---|\n| *P1 Critical* | 15 minutes |\n| P2 \\| High | __1 hour__ |";
+  const mixed = `Before the table.\n${md}\nAfter the table.`;
+  check("preview: prose, table, prose, in order, cells trimmed and unwrapped", previewMarkdownTables(mixed), {
+    items: [
+      { kind: "prose", text: "Before the table." },
+      { kind: "table", columns: ["Priority", "Response"], rows: [["P1 Critical", "15 minutes"], ["P2 | High", "1 hour"]] },
+      { kind: "prose", text: "After the table." },
+    ],
+  });
+  const lifted = liftMarkdownTables(["Zero.", mixed], undefined, facts, [slaId]);
+  check("preview's prose runs are exactly the paragraphs the lift leaves", previewMarkdownTables(mixed)!.items.filter((x) => x.kind === "prose").map((x) => (x.kind === "prose" ? x.text : "")), lifted.paragraphs.slice(1));
+  const liftedTable = lifted.blocks?.[0];
+  const previewTable = previewMarkdownTables(mixed)!.items.find((x) => x.kind === "table");
+  check(
+    "preview's table reads the same header and cells the lift stores (a clean table)",
+    previewTable && previewTable.kind === "table" ? [previewTable.columns, previewTable.rows] : null,
+    liftedTable?.kind === "table" ? [liftedTable.columns.map((c) => c.header), liftedTable.rows] : null
+  );
+  check("preview: a table-only paragraph is one table item, no empty prose", previewMarkdownTables(md)?.items.map((x) => x.kind), ["table"]);
+  check(
+    "preview: two tables keep the prose between them",
+    previewMarkdownTables("| a | b |\n|---|---|\n| c | d |\nBetween.\n| e | f |\n|---|---|\n| g | h |")?.items.map((x) => (x.kind === "prose" ? x.text : x.columns.join("+"))),
+    ["a+b", "Between.", "e+f"]
+  );
+
+  // PARSE-ONLY: every case the lift refuses is still previewed as written, and nothing store-shaped comes back.
+  const ragged = "| Service | Tool |\n|---|---|\n| Email | Barracuda |\n| Backup |";
+  check("preview: a ragged table is previewed as a table, rows as written", previewMarkdownTables(ragged), {
+    items: [{ kind: "table", columns: ["Service", "Tool"], rows: [["Email", "Barracuda"], ["Backup"]] }],
+  });
+  const raggedLift = liftMarkdownTables([ragged], undefined, facts, [email]);
+  check("...and the lift refuses that same table (not liftable)", [raggedLift.lifted, raggedLift.refused], [0, 1]);
+  const money = "| Item | Cost |\n|---|---|\n| Seat | $15 a month |";
+  check("preview: no currency veto (the lift's B7 stays at the lift)", previewMarkdownTables(money)?.items, [{ kind: "table", columns: ["Item", "Cost"], rows: [["Seat", "$15 a month"]] }]);
+  check("...and the lift refuses it", liftMarkdownTables([money], undefined, facts, [email]).lifted, 0);
+  const ungrounded = "| Service | Tool |\n|---|---|\n| Email | 99 tickets a day |";
+  check("preview: no grounding (an unstated figure previews as written)", previewMarkdownTables(ungrounded)?.items[0], { kind: "table", columns: ["Service", "Tool"], rows: [["Email", "99 tickets a day"]] });
+  const long = `| Service | Tool |\n|---|---|\n${Array.from({ length: 20 }, (_, i) => `| Row ${i} | ${"x".repeat(LIMITS.cell + 10)} |`).join("\n")}`;
+  const longPreview = previewMarkdownTables(long)?.items[0];
+  check("preview: no caps (20 rows, cells over LIMITS.cell, all kept)", longPreview?.kind === "table" ? [longPreview.rows.length, longPreview.rows[0][1].length] : null, [20, LIMITS.cell + 10]);
+  const emDash = String.fromCharCode(0x2014);
+  const dashCell = previewMarkdownTables(`| Service | Tool |\n|---|---|\n| Email ${emDash} spam | Barracuda |`)?.items[0];
+  check("preview: no clean (an em dash shows as typed; the lift replaces it on store)", dashCell?.kind === "table" ? dashCell.rows[0][0] : null, `Email ${emDash} spam`);
+  check(
+    "preview: items carry only kind/text or kind/columns/rows (no id, cites, after, generatedBy)",
+    [...(previewMarkdownTables(mixed)?.items ?? []), ...(previewMarkdownTables(ragged)?.items ?? [])].map((x) => Object.keys(x).sort().join(",")),
+    ["kind,text", "columns,kind,rows", "kind,text", "columns,kind,rows"]
+  );
+  check("preview: null for prose with no table (the fast path)", [previewMarkdownTables("Plain."), previewMarkdownTables("Pick A | B | C.")], [null, null]);
+  const input = mixed;
+  previewMarkdownTables(input);
+  check("preview: the input is untouched", input, `Before the table.\n${md}\nAfter the table.`);
+}
+
+// ---- round 31 source pins: one detector, the gap turn shares reviseSection's text ----
+{
+  // draft-blocks: the separator test exists once (the detector), so no second detector can hide here.
+  check("one detector: MD_SEPARATOR_CELL is defined once and read once", (code.match(/MD_SEPARATOR_CELL/g) ?? []).length, 2);
+  for (const fn of ["hasMarkdownTable", "previewMarkdownTables"]) {
+    const at = code.indexOf(`export function ${fn}(`);
+    const body = code.slice(at, code.indexOf("\n}\n", at));
+    yes(`one detector: ${fn} calls findMarkdownTables`, at >= 0 && body.includes("findMarkdownTables("));
+    no(`parse-only: ${fn} never grounds, vetoes, cleans or mints an id`, /groundValue|hasCurrency|\bclean\(|newBlockId|markdownTableBody/.test(body));
+  }
+  const brainSrc = readFileSync(new URL("../src/lib/rfp/brain.ts", import.meta.url), "utf8");
+  const fnBody = (name: string) => {
+    const at = brainSrc.indexOf(`export async function ${name}(`);
+    return at < 0 ? "" : brainSrc.slice(at, brainSrc.indexOf("\n}\n", at));
+  };
+  const gap = fnBody("resolveGap");
+  const revise = fnBody("reviseSection");
+  for (const piece of ["currentTextLines(", "visualsShownLines(", "TABLE_AUTHORING_LINES", "notEchoedVisual"]) {
+    yes(`resolveGap uses the shared ${piece}`, gap.includes(piece));
+    yes(`reviseSection uses the shared ${piece}`, revise.includes(piece));
+  }
+  check("the table-authoring text exists once in brain.ts (not forked)", brainSrc.split('"exactly as the facts state it, or the table stays as plain text."').length - 1, 1);
+  check("the visuals-shown text exists once in brain.ts (not forked)", brainSrc.split('"know what they already say. This turn cannot edit or remove them."').length - 1, 1);
+  yes("resolveGap: blocks param right after currentParagraphs", /currentParagraphs: string\[\],[\s\S]{0,200}?blocks: DraftBlock\[\],\s*gapQuestion: string/.test(gap));
+  yes("resolveGap: the table lines are gated on visualsEnabled()", gap.includes("visualsEnabled() ? TABLE_AUTHORING_LINES : []"));
+  yes("resolveGap: the echoed-visual strip runs before the slice", /\.filter\(notEchoedVisual\)\s*\.slice\(0, 12\)/.test(gap));
+  // Fixer: the gap turn appends one line of its own after the shared table
+  // lines (an answer-only figure goes in prose); reviseSection never carries it.
+  yes("resolveGap: the answer-only-figure line follows the shared table lines", /TABLE_AUTHORING_LINES : \[\]\),[\s\S]{0,400}?"A figure that only the answer states, and no listed fact backs,",\s*"belongs in prose, not in a table\.",/.test(gap));
+  no("reviseSection: never carries the gap-only line", revise.includes("only the answer states"));
+  const gapRoute = readFileSync(new URL("../src/app/api/rfp/proposals/[id]/gap/route.ts", import.meta.url), "utf8");
+  yes("gap route: the 200 body carries liftRefused when > 0", /\{ liftRefused: lift\.refused \} : \{\}\),\n\s*rev: fresh\.rev \+ 1/.test(gapRoute));
+  yes("gap route: the letter label is refused before any weave", /label === LETTER_LABEL \? undefined/.test(gapRoute));
+  yes("gap route: blocks into the turn", gapRoute.includes("sectionBlocksForPrompt(section)"));
+  yes("gap route: the lift at the write, on the facts already loaded", /liftMarkdownTables\(\s*paragraphs,\s*keptBlocks\(freshSections\[at\], paragraphs\.length\),\s*toGroundFacts\(shared\)/.test(gapRoute));
+  check("gap route: one knowledge read (no added query)", (gapRoute.match(/knowledgeForUser\(/g) ?? []).length, 1);
+  const sectionRoute = readFileSync(new URL("../src/app/api/rfp/proposals/[id]/section/route.ts", import.meta.url), "utf8");
+  yes("section route: the PATCH precheck is the shared detector", /function mayHoldMarkdownTable[\s\S]{0,120}hasMarkdownTable\(p\)/.test(sectionRoute));
+  check("section route: both PATCH bodies carry liftRefused when > 0", (sectionRoute.match(/\? \{ liftRefused: (retitleLift|lift)\.refused \} : \{\}\),\n\s*\}\);/g) ?? []).length, 2);
 }
 
 console.log(failures === 0 ? "\nall draft-block tests passed" : `\n${failures} FAILED`);
