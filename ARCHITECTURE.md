@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-15 §5.17.19 RFP TABULAR CONTENT IS ALWAYS A VISUAL + §5.17.16 CONSOLIDATION SEES TABLES (owner, Curioso proposal eda03a5e, rev 64: the section 7 SLA table landed as four prose paragraphs because parseModelVisuals degraded a table that cited nothing; section 4 stored a raw markdown pipe table as a paragraph after a consolidation revise; sections 2, 3 and 4 each held a near-identical "Central services" table while the review reported duplicateClusters:0, because every whole-document turn read paragraphs only). `liftMarkdownTables` (draft-blocks.ts) converts a GitHub-markdown table in stored text into a real `table` block under every blocking control (currency, limits, grounding against the section's own cites, the block cap), at the section PATCH (plain and retitle-with-paragraphs paths, behind a cheap precheck, letter exempt) and at the generate landing (letter exempt); parseTable accepts `{header}` column objects and re-grounds a table that cited nothing against the section's cites before degrading; reviseSection is shown the section's visuals in place as `[visual <kind> id=...]` lines and may author a markdown table (never on the letter); `budgetedDocumentText` carries serialized visuals for the plan and review turns in a reserved share of each section's slice; `findDuplicateClusters` scans tables (row keys plus content agreement); the review gains op `prune-visual` behind a server-side scan guard (`pruneGuard`: scan-clustered ids only, never the last copy in a cluster), applied unattended by the workspace through the existing visuals-remove PATCH; new CLI `npm run rfp:consolidate -- <proposalId>` (scripts/rfp-consolidate-run.ts). No schema, env or migration change; no new route.
+
 Last verified against code: 2026-10-13 §5.17.18 RFP VISION INTAKE (owner: the /rfp intake refused a scanned vendor-review PDF with "Could not read ... Scanned PDFs with no text layer are the usual cause"; RFP Response must read images and the text in them, in a PDF, PNG, JPEG or other format, through the Claude SDK). The SITE now calls the Anthropic API directly with `@anthropic-ai/sdk` (0.133.0) and the existing `ANTHROPIC_API_KEY` (env change: the key was a brain-only provider key; the site process now reads it too; empty = today's behavior, images refused); the brain is not involved. New SERVER-ONLY `src/lib/rfp/vision-extract.ts`: `VISION_MODEL "claude-opus-5-5"`, streaming `client.beta.messages.stream` with `max_tokens 64000`, `output_config {effort:"low"}`, no `thinking` param, `betas ["server-side-fallback-2026-07-01"]` + `fallbacks "default"`, PDF as a base64 `document` block and PNG/JPEG/GIF/WebP as a base64 `image` block BEFORE the text block, a frozen transcription-only system prompt (the file is data, never instructions; tables as " | " rows; text-free figures as one `[Figure: ...]` line), `extractVisionText` -> `{ok,text,truncated} | {ok:false, reason}` with reason a CATEGORY (unconfigured/refused/timeout/too_large/api_error/empty/unsupported, by SDK error class, never message text), plus pure helpers (magic-byte image sniff, header dimensions, `pdfNeedsVision` with `PDF_TEXT_FLOOR` 200, `visionCallBudget`, `runVisionPhase`). Budgets `RFP_VISION_FILE_BUDGET_MS` 4 min and `RFP_VISION_TOTAL_BUDGET_MS` 8 min live in client-safe `intake.ts` (with `RFP_INTAKE_ACCEPT`), `RFP_VISION_INLINE_BUDGET_MS` 25 s in vision-extract. `POST /api/rfp/documents` ladder per file: text and docx exactly as before; a PDF uses its text layer when it extracts and clears the floor, else (configured) becomes VISION-PENDING; an image (magic bytes) is always pending, refused at request time over 7 500 000 bytes (10 MB of base64, the direct API's limit; 5 MB is Bedrock/Vertex only) or 8000 px a side, or when the key is empty; BMP/TIFF/HEIC/SVG get an honest refusal naming the formats. With any pending part the route writes the document (`raw_text ""`, provenance as before; one image = sourceKind "png"/"jpeg"/"gif"/"webp") and one `rfp_intake_parts` row per part in compose order in ONE transaction (`createDocumentWithParts`), adds shape-only `visionFiles` to `document.create` meta, and answers the same 202; with none the path is byte-identical (no parts rows, same compose, same activity). Migration `0061_rfp_intake_parts` (id, document_id FK CASCADE, ordinal, kind, name, media, text, bytes bytea, created_at; index on document_id). `runDocumentRead` gains a pre-phase for an empty raw_text: load the parts, transcribe each pending one sequentially (each success saved onto its row, bytes NULLed), compose ALL parts, `screenInjection`, UPDATE raw_text + injection_flagged + updated_at and DELETE the parts in one transaction, then read as before; a failure stamps `read_failed`, KEEPS the parts and logs the new `document.transcribe` activity (category and counts only), so Read it again / `rfp:reread` retry with no claim change. `/rfp/new` accepts the images, says scans take a few minutes, and polls vision total + read budget + 1 min (17 min) only when the 202 carries `vision: true`, else the pre-vision read budget + 1 min. The Tron attachment route decides by magic bytes before names (PDF magic, then image magic, then text names, then .docx/.pdf names, then the honest image refusal, then the generic one) and transcribes an image, or a PDF with no usable layer, INLINE in 25 s (MAX_ATTACH_CHARS applies) through a 15-minute, 16-entry success-only cache keyed by sha256+media, and the workspace's attach control accepts the four image formats. A lone pending intake file gets the whole remaining 8-minute total; the status route's `transcribePending` makes the read panel say the FILES are kept when transcription failed; the no-key unknown-type refusal no longer lists images. Open items recorded in §5.17.18: per-file (not per-page) PDF floor drops a mixed PDF's scanned pages; transcribed documents are not yet marked on screen. New `npm run test:rfpvision`.
 
 Last verified against code: 2026-10-09 §5.17.13 RFP QUESTIONS TAB NOT RENDERED UNTIL A SECTION EXISTS + VISIBLE CONSOLIDATION FREEZE (owner, verbatim: "The questions tab should either not be visible or be much more visibly obvious while it cant be edited - its confusing."). In `src/app/rfp/r/[id]/workspace.tsx` both tabstrips (mobile and rail) now filter "questions" out of their `as const` lists while `!questionsReady` (`sections.length > 0`), instead of rendering it disabled with a hover-only `title`; the dead `disabled`/`title` props are gone, `aria-pressed` is unchanged, and the first landed section adds the tab while the existing `questionsReady` effect brings it forward. The state is reachable where the rail renders with nothing drafted: a structure-less document (`reading`, `read_failed`, or an extracted read with zero structure nodes), or a rail held open by `railPeek` after the last drafted section is removed — in that second state `pane` can still be "questions" (draftAll's tail, the cross-tab poll adopting a removal), and the pane's no-sections branch renders with no tab pressed while every other tab stays openable. `pane` still starts on Coverage with no sections, and `showPane`'s questions guard plus the pane's "Draft the response first" branch stay as defense in depth. The consolidation freeze line in the Questions pane ("Tron is consolidating the response; answering opens up when it finishes.", `role="status"`) moves from `text-xs text-faint` fine print to a body-size paragraph in a `--xl-line-bright` bordered box; wording and the `busy`/`tronBusy` gating are unchanged. `globals.css` keeps `.tabstrip button:disabled` (comment updated: no tab currently renders disabled). No server, API, DB, env or export change.
@@ -11233,9 +11235,135 @@ surface). Receipt: role="status" below the notice line — summary, one
 "Consolidated: <names>" line (8 names then "and K more"), skipped and
 failure lines verbatim, hairline-chip Dismiss.
 
+**Tables in the review (2026-10-15).** Owner incident (Curioso, rev 64):
+sections 2, 3 and 4 each held a near-identical "Central services" table block
+and the review reported `duplicateClusters: 0`, because the scan and
+`budgetedDocumentText` read paragraphs only. Now every whole-document turn
+sees visuals:
+
+- `serializeBlockForPrompt(block)` (draft-blocks.ts) renders a block as
+  deterministic text whose first line is `[visual <kind> id=<block.id>]`
+  (references give organization names only, never a contact), capped at
+  2,000 chars. A table's layout is fixed by POSITION: its caption rides on
+  the tag line after the tag, line 2 is always the header row, every later
+  line one row, cells joined by " | " (so a caption containing " | " can
+  never be read back as the header).
+- `prepareConsolidationReview(sections)` (brain.ts, exported) is the ONE
+  shaping, shared by the route and the CLI: per section, the sanitized and
+  re-anchored blocks (`sectionBlocksForPrompt`: `keptBlocks`, none ever on
+  the letter) serialized into (i) the scan's `blocks: {id, kind, text}[]`
+  and (ii) `blocksText` for the review's document text, plus `blockIds`;
+  then consolidate.ts `consolidationScan` (pure, pinned by the tests):
+  `findDuplicateClusters`, `formatDuplicateFindings` (display title =
+  label and title joined) and `guard = pruneGuard(clusters)` (blockId ->
+  its cluster, plus each cluster's member count; its keys are exactly
+  `clusterBlockIds(clusters)`). A section with no visuals shapes exactly as
+  before.
+- `findDuplicateClusters` enters `table` blocks only (system kinds are
+  singletons by origin; references hold contacts) as members with
+  `paragraph: -1` and `blockId`; with no blocks passed the result is the
+  paragraph-only scan byte for byte. A table's entry text is its serialized
+  form, so callers MUST pass `serializeBlockForPrompt` output verbatim as
+  the `ScanBlock` text (`type ScanBlock = { id; kind; text }`, exported by
+  consolidate.ts): the scan reads the rows back out of it by position (line
+  2 the header, never a key; every later line a row).
+  The 8-word shingle rule alone cannot cluster real duplicated tables (the
+  three Curioso tables score 0.016 to 0.10 containment against the 0.5
+  threshold, because an extra column or a different row order breaks the
+  shingles), so a table-to-table ROW-KEY rule sits beside it: two tables in
+  different sections also cluster when they share at least 3 row keys, those
+  cover at least half of the smaller table's keys, AND the rows agree on
+  content: in at least half of the shared keys, the two rows' other cells
+  share at least one normalized word (function words such as "and", "the",
+  "per" do not count). Keys alone are not content: a "Service | Included"
+  table and a "Service | Response target" table list the same services and
+  say different things, and do not cluster. A row key is the first cell's
+  words, normalized and sorted ("Ticketing and PSA" matches "PSA and
+  ticketing"); the header row is never a key. Paragraph matching is
+  unchanged. `formatDuplicateFindings` names a table member as a table with
+  its literal id so the review can target it.
+- `budgetedDocumentText` appends a section's `blocksText` after its
+  paragraphs inside the SAME per-section slice and the same fence (visuals
+  are drafted content, the same standing as paragraphs). Constants
+  unchanged. Long prose cannot starve the visuals: when a section has
+  `blocksText`, up to min(600, floor(perSection / 3)) chars of its slice are
+  reserved for them (never more than they need; the paragraphs get the
+  rest), and the section still spends at most `perSection`, so the pool
+  arithmetic is unchanged. A section without visuals reads byte-identically. Both
+  whole-document turns get one added prompt paragraph, byte-absent unless
+  some section carries a visual: the plan turn may direct a markdown table
+  but never target a visual; the review turn reads a repeated table as
+  duplication. The plan route shapes its sections with
+  `documentSectionForPrompt`.
+
+**prune-visual (consolidation only).** `reviewDocumentConsolidation` now
+takes the prune `guard` and returns `ConsolidationTarget = PlanTarget |
+{ label, op: "prune-visual", blockId, directive }`; `PlanOp` and
+`planDocumentRevision` are unchanged. The op's prompt lines and the widened
+reply shape (`"blockId": string|null`) are byte-absent unless the scan put at
+least one visual in a cluster. `filterPlanTargets` (now exported, with an
+overload taking the guard) keeps a prune-visual target ONLY when the label
+matches a passed section and consolidate.ts `pruneAdmitter(guard)` admits
+it: the blockId matches `/^v_[0-9a-f]{8}$/`, the id is a guard key (THE SCAN
+GUARD: the model can only prune a block the deterministic scan itself found
+duplicated, so a hostile or invented id removes nothing), the block sits on
+that section, and at least one other member of its cluster (a table or a
+paragraph) survives the prunes already admitted in the SAME answer, first
+named first pruned: a review naming all three Curioso copies prunes the
+first two and keeps the third, so the clustered content always keeps one
+copy. In a MIXED cluster that copy may be the text member, so every table
+copy can go while the paragraph keeps the content.
+Otherwise it downgrades to `revise` with the directive kept (the
+empty-heading retitle precedent). Never on a reserved `__` label. One target
+per label, as before:
+a section pruned in pass 1 can be revised in pass 2. The plan turn never
+passes the set, so there an echoed "prune-visual" is an unknown op and
+becomes `revise` exactly as before. Route meta gains `pruneVisuals` and
+`clusterBlocks` (the number of guard keys); response targets pass `blockId`
+through. The client's `consolidateAll` applies a prune-visual target
+UNATTENDED (justified only by the server guard) through the existing
+visuals-remove PATCH (`op: "visuals", action: "remove", blockId, label`) in
+its own helper (`pruneVisualAndApply`; `changeVisual`'s busy flag, menu and
+inline error belong to a person's own press): counted as applied, receipt
+line "<section>: removed a duplicated visual.", a 404 (already gone) is a
+skipped line. retitle/remove stay never-auto.
+
+**Revise sees visuals.** The per-section POST passes the section's
+sanitized blocks to `reviseSection(..., currentParagraphs, blocks,
+instruction, ...)`; CURRENT TEXT is `interleave(paragraphs, blocks)` with
+the `[n]` numbering over paragraphs only and each block as its serialized
+lines in position (fence-token runs stripped). `proposal.tron_revise` meta
+gains `visualsShown`. See §5.17.19 for the prompt lines and the lift that
+turns an authored markdown table into a block.
+
+**CLI.** `npm run rfp:consolidate -- <proposalId>`
+(`scripts/rfp-consolidate-run.ts`) runs the same round inline at the VM,
+mirroring `rfp:reread` (dotenv, `db` from src/lib/db, actor `cli`, labels and
+counts printed, never client or drafted text or an env value). Refuses (exit
+1) a missing or sent proposal, fewer than two drafted sections, or an
+unhealthy brain. Up to 2 passes: the review shaped by
+`prepareConsolidationReview`; revise targets through `reviseSection` and a
+CAS-on-rev write with the plain PATCH's semantics (caps, cites and
+generatedBy carried, the letter's "human" stamp, `keptBlocks`, the table
+lift, letter never lifted; the rev read before the turn is the CAS, so a
+change made meanwhile refuses the write); prune-visual targets through
+`applyVisualsOp(..., "remove")` and a CAS write (a references block is never
+removed here); retitle/remove printed as "needs a person". Logs the route's
+rows (`proposal.consolidate_plan`, `proposal.tron_revise`,
+`proposal.section_edit`, `proposal.section_visuals`) with `via: "cli"`.
+Shared facts only (no user, no private knowledge). Prints one closing
+count line: tables lifted, and tables left as text because a lift control
+refused them (`liftRefused` in its `proposal.section_edit` rows). Exit 0 when it applied
+changes or the review found it clean; 1 on a refusal, a failed review, or
+when every attempted change failed; 2 on usage.
+
 `npm run test:rfpconsolidate` (`scripts/rfp-consolidate-tests.ts`, pure) pins
 the scan (0.5 boundary, letter exclusion, <12-word skip, cluster merge, cap,
-determinism, an 80×12 scale run) and both formatters' budgets. No schema, env
+determinism, an 80×12 scale run), both formatters' budgets, the table rules
+(row keys, content agreement, positional layout) and the prune guard
+(`consolidationScan`, `pruneAdmitter`: hostile id, wrong section, unclustered
+id, reserved label, the survivor rule). The label-matching layer of
+`filterPlanTargets` stays in brain.ts, which the pure suite cannot import. No schema, env
 or migration change; no new route.
 
 #### 5.17.17 A brief drafts a full response: standard outline, brief-aware drafter, read again for an empty read (2026-10-08)
@@ -11710,6 +11838,105 @@ behavior; a per-page floor is the known fix and is the owner's call. (b) A
 transcription is model output and can misread characters (for example a
 digit in a stated user count), and the workspace does not yet mark
 transcribed documents on screen.
+
+#### 5.17.19 Tabular content is always a visual (2026-10-15)
+
+Owner incident (Curioso, rev 64): the section 7 SLA table landed as four
+prose paragraphs ("P1 Critical · 15 minutes · 4 hours", activity
+`visualsDegraded: 4, blocks: 0`), and section 4 stored a raw markdown pipe
+table as a paragraph after a consolidation revise. Rule: content that is a
+table is stored and rendered as a `table` block, never as prose.
+
+**The lift.** `liftMarkdownTables(paragraphs, existingBlocks, facts,
+sectionCites) -> { paragraphs, blocks, lifted }` (draft-blocks.ts, pure,
+client-safe, no lookbehinds). It finds a GitHub-markdown table inside a
+paragraph (a header line with a pipe and at least 2 cells, directly followed
+by a separator line of GFM delimiter cells `:?-+:?` (one dash is enough) of
+the same count, then at least one data line); prose before or after it in
+the same paragraph stays as its own paragraphs. Inline emphasis wrapping a
+WHOLE header or cell (`**x**`, `__x__`, `` `x` ``, `*x*`) is removed first;
+a partial wrapper stays as written. Every control BLOCKS, and a table failing one stays in the text
+untouched, never half-lifted: no currency in any cell or header (rule B7);
+headers and cells through `clean` and the limits; 2 to 5 columns, 1 to 14
+rows, no ragged or empty row; every string grounded (`groundValue`) against
+the affirmative facts among the section's STORED cites, `pricing.*` facts
+excluded (their bare numbers are money with the sign left off: "247" grounds
+against "$247 per user per month"; none left: no lift); the block cap (`blocksPerSection`) counts the blocks already there; a
+lift that would push the section past the 12-paragraph cap (a table between
+two prose runs splits one paragraph into two) is refused, because the PATCH
+keeps only the first 12 paragraphs of whatever it is sent and a later edit
+would silently drop one. A lifted table is
+`{ kind: "table", caption: null, columns (align left), rows,
+emphasizeLastRow: false, generatedBy: "llm" }` with a fresh id, anchored
+where it stood. It cites only the non-pricing section cites whose own text
+grounds at least one of its numeric tokens (an SLA table cites the SLA fact,
+not every fact the section cites), so an edit to an unrelated fact never
+marks it stale (rule C1); a table with no number cites every non-pricing
+section cite. Every block keeps its place in the flow: an existing block
+anchored before old paragraph a sorts at a, a table lifted from inside old
+paragraph j at j + 0.5, stable, so a block that stood after the markdown
+paragraph stays after the lifted table. Nothing lifted returns the inputs
+untouched (===). The result also carries `refused`: tables found but left as
+text by a control (B7, limits, grounding, either cap). A refused lift stays
+as visible pipe text and is signaled ONLY in the activity log
+(`liftRefused`); open item: no gate rule flags it yet.
+
+**Where it runs.**
+- Section PATCH, plain path and the retitle-with-paragraphs path
+  (`liftTablesForWrite` in the route): only when `mayHoldMarkdownTable` (a
+  line with a pipe directly followed by a separator-shaped line) says a
+  table is possible, so an ordinary edit stays at zero extra queries and a
+  byte-identical write; then live SHARED facts (`liveFacts()`, the same rows
+  as `knowledgeForUser(user).shared`, never a private note), the stored
+  blocks via `keptBlocks`, and the section's stored cites. cites and
+  generatedBy are carried over as always; CAS-on-rev unchanged. Activity
+  meta gains `liftedTables` and `liftRefused`, each when > 0. The precheck's
+  separator test matches the lift's (`:?-+:?`). When a table lifted, the response also
+  carries the stored `section` and the workspace adopts it (saveEdit and
+  applyProposal): otherwise the screen would keep the markdown the client
+  sent, the rev-gated poll would never resend the record, a second save
+  would lift the same table again, and Tron's staleness guard would refuse
+  every later proposal on that section.
+- Generate landing: after `landDraftBlocks`, against the same shared facts
+  and the drafted cites, BEFORE the references carry (so a carried
+  references block still closes the section and counts against the cap).
+  `proposal.generate` meta gains `liftedTables` and `liftRefused` (always).
+- The CLI (`rfp:consolidate`) applies it at its revise write, as the PATCH.
+- The LETTER is exempt everywhere: it never carries blocks (resolve-draft
+  routes it into furniture), so it is never lifted, never pruned, and its
+  revise turn keeps `allowStructural` false.
+
+**parseTable salvage.** The drafter's table may give `columns` as strings or
+as `{ header }` objects (models echo the stored shape). A table whose own
+cites resolve to nothing is re-grounded against the section's cites
+(affirmative facts, `pricing.*` excluded) and kept when every string
+grounds, citing only those that ground its numbers (as the lift); only when
+that fails does the old degrade-to-prose path run. Grounding never
+loosens for numbers: only the corpus changes, `groundValue` always runs.
+
+**Revise sees visuals and may author a table.** `reviseSection` shows the
+section's visuals in place (`[visual <kind> id=...]` lines inside CURRENT
+TEXT, same standing as the paragraphs, `[n]` numbering over paragraphs only)
+with prompt lines, byte-absent when the section has no visual, saying they
+are real rendered figures this turn cannot edit, never to be copied into
+paragraphs or echoed; a defensive post-parse drops any returned paragraph
+that starts with the exact serialized tag (`[visual <kind> id=v_<8 hex>]`;
+a person's paragraph that merely opens with "[visual " stays). A second set
+of lines, byte-absent under `RFP_VISUALS=0` (the drafter's kill switch) and
+for the letter (`allowStructural` false: the letter is never lifted, so its
+prompt stays byte-identical), tells the model to write a GitHub-markdown
+table as its OWN paragraph when the request asks for a table or name and
+value pairs read better as one (2 to 5 columns, at most 14 rows, every
+number and claim supported by the listed facts, every figure copied exactly
+as the facts state it or the table stays as text); the lift turns it into a
+block at the write. The gap weave (`resolveGap`) is unchanged and
+still reads paragraphs only.
+
+**Preview honesty.** The Tron pane's diff preview is unchanged this round:
+a proposed markdown table shows as markdown text in the preview and becomes
+a real table only when accepted (the write lifts it). A table that fails a
+control stays as the markdown text that was accepted, visible as pipe text,
+and only the activity log (`liftRefused`) says so.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

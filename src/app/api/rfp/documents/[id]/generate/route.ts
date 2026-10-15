@@ -46,7 +46,11 @@ import {
   snapGapQuestions,
 } from "@/lib/rfp/gaps";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
-import type { DraftBlock, GroundFact } from "@/lib/rfp/draft-blocks";
+import {
+  liftMarkdownTables,
+  type DraftBlock,
+  type GroundFact,
+} from "@/lib/rfp/draft-blocks";
 import {
   carryReferencesBlock,
   referencesOtherText,
@@ -272,6 +276,12 @@ export async function POST(
       let placeStructure: { label: string; title: string }[] = [];
       let placeRequirements: { structureLabel: string; text: string }[] = [];
       let blockCounts = { about: 0, serviceStats: 0, trimmed: 0, landed: 0 };
+      // Markdown tables in the drafted prose lifted into table blocks at the
+      // landing (§5.17.19); the letter is never lifted.
+      let liftedTables = 0;
+      // Tables found but left as pipe text by a lift control (the activity
+      // log is the only place this is signaled).
+      let liftRefused = 0;
       if (isLetter) {
         // The letter drafts from the sections AS THEY ARE NOW, not as they
         // were at claim time: in the draft-all run it is the last step, and
@@ -434,6 +444,30 @@ export async function POST(
               trimmed: placed.trimmed,
               landed: placed.blocks.length,
             };
+          // Tabular content is always a visual (§5.17.19): a GitHub-markdown
+          // table the drafter wrote into a paragraph becomes a table block,
+          // grounded against the same live SHARED facts the system blocks
+          // use and the section's drafted cites, under every blocking control
+          // in liftMarkdownTables (currency, limits, grounding, the block
+          // cap). It runs BEFORE the references carry below, so the carried
+          // block still closes the section and the cap still counts it. The
+          // letter is exempt: it never carries blocks. Nothing lifted hands
+          // the inputs back untouched.
+          const lift = isLetter
+            ? {
+                paragraphs: drafted.paragraphs,
+                blocks: placed?.blocks,
+                lifted: 0,
+                refused: 0,
+              }
+            : liftMarkdownTables(
+                drafted.paragraphs,
+                placed?.blocks,
+                sharedGround,
+                drafted.cites
+              );
+          liftedTables = lift.lifted;
+          liftRefused = lift.refused;
           // The one block a redraft keeps: the person's references (origin
           // "references", built by the references route from their answer,
           // never by the drafter). The drafter's visuals can be rebuilt and
@@ -449,13 +483,13 @@ export async function POST(
           const carriedBlock: DraftBlock | undefined =
             isLetter || prevAt < 0
               ? undefined
-              : (keptBlocks(sections[prevAt], drafted.paragraphs.length) ?? []).find(
+              : (keptBlocks(sections[prevAt], lift.paragraphs.length) ?? []).find(
                   (b) => b.origin === "references"
                 );
           const carry = carriedBlock
             ? carryReferencesBlock({
-                paragraphs: drafted.paragraphs,
-                blocks: placed?.blocks,
+                paragraphs: lift.paragraphs,
+                blocks: lift.blocks,
                 carried: carriedBlock,
                 otherText: referencesOtherText(fresh.title, sections, prevAt, {
                   label,
@@ -463,8 +497,8 @@ export async function POST(
                 }),
               })
             : null;
-          const landedParagraphs = carry ? carry.paragraphs : drafted.paragraphs;
-          const landedBlocks = carry ? carry.blocks : placed?.blocks;
+          const landedParagraphs = carry ? carry.paragraphs : lift.paragraphs;
+          const landedBlocks = carry ? carry.blocks : lift.blocks;
           const record: DraftSectionRecord = withBlocks({
             label,
             title,
@@ -580,6 +614,8 @@ export async function POST(
           visualsDegraded: drafted?.visualStats?.degraded ?? 0,
           visualsDropped: drafted?.visualStats?.dropped ?? 0,
           visualsTooWide: drafted?.visualStats?.tooWide ?? 0,
+          liftedTables,
+          liftRefused,
         },
       });
     } catch (err) {

@@ -1950,8 +1950,19 @@ export function Workspace({
     const d = await res.json().catch(() => null);
     adoptRev(d?.rev);
     markGateStale();
+    // A markdown table in the text was lifted into a table block on the
+    // server (§5.17.19): the response then carries the stored record, which
+    // replaces what was sent, or the two would diverge for good.
+    const stored: Section | null =
+      d?.section &&
+      d.section.label === label &&
+      Array.isArray(d.section.paragraphs)
+        ? d.section
+        : null;
     setSections((prev) =>
-      prev.map((s) => (s.label === label ? { ...s, paragraphs } : s))
+      prev.map((s) =>
+        s.label === label ? (stored ?? { ...s, paragraphs }) : s
+      )
     );
     setEditing(null);
     setNotice("");
@@ -2444,15 +2455,23 @@ export function Workspace({
     const newLabel =
       typeof d?.label === "string" && d.label ? (d.label as string) : p.label;
     const newTitle = typeof d?.title === "string" ? (d.title as string) : null;
+    // Present only when the server lifted a markdown table out of the
+    // accepted text (§5.17.19): the stored record, adopted whole.
+    const stored: Section | null =
+      d?.section &&
+      d.section.label === newLabel &&
+      Array.isArray(d.section.paragraphs)
+        ? d.section
+        : null;
     setSections((prev) =>
       prev.map((s) =>
         s.label === p.label
-          ? {
+          ? (stored ?? {
               ...s,
               label: newLabel,
               ...(newTitle !== null ? { title: newTitle } : {}),
               ...(op === "revise" ? { paragraphs: p.proposed } : {}),
-            }
+            })
           : s
       )
     );
@@ -2642,6 +2661,81 @@ export function Workspace({
             note: `${display}: fixed. Tron also proposed a new heading, which this round never applies; ask Tron from its pane to retitle it.`,
           }
         : {}),
+    };
+  }
+
+  /**
+   * One unattended visual removal for the consolidation round (§5.17.16
+   * prune-visual), through the SAME PATCH op "visuals" / action "remove" a
+   * person's Remove button sends. Applied without asking ONLY because of
+   * the server's scan guard: the consolidate route passes a prune-visual
+   * target through only when its blockId is a block the deterministic
+   * duplicate scan itself put in a cluster AND that block sits on the named
+   * section; anything else arrives here as a plain revise. changeVisual is
+   * not reused: its busy flag, menu and inline error belong to the
+   * person's own press. A 404 (the block is already gone) is a skipped
+   * line, never a failure.
+   */
+  async function pruneVisualAndApply(
+    label: string,
+    blockId: string
+  ): Promise<
+    | { kind: "applied"; label: string; line: string }
+    | { kind: "skipped"; line: string }
+    | { kind: "failure"; line: string }
+  > {
+    const display = liveDisplay(label);
+    if (!proposalId)
+      return { kind: "failure", line: `${display}: the proposal is gone.` };
+    const res = await fetch(`/api/rfp/proposals/${proposalId}/section`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ label, op: "visuals", action: "remove", blockId }),
+    }).catch(() => null);
+    if (!res) {
+      // The connection dropped: the write may still have landed. One poll
+      // adopts whatever is there, so the screen shows the truth.
+      await pollOnce();
+      return {
+        kind: "failure",
+        line: `${display}: the connection dropped while removing a duplicated visual. Check the section.`,
+      };
+    }
+    const d = await res.json().catch(() => null);
+    if (!res.ok) {
+      if (res.status === 404 || res.status === 409) await pollOnce();
+      if (res.status === 404)
+        return {
+          kind: "skipped",
+          line: `${display}: the duplicated visual was already gone.`,
+        };
+      const serverText =
+        typeof d?.message === "string"
+          ? d.message.replace(/\s*Reload\b[^.]*\.?\s*$/, "").trim()
+          : "";
+      return {
+        kind: "failure",
+        line: `${display}: ${serverText || "the duplicated visual was not removed."}`,
+      };
+    }
+    if (Array.isArray(d?.sections)) {
+      setSections(d.sections);
+      adoptRev(d.rev);
+    } else if (d?.section && typeof d.section.label === "string") {
+      const next: Section = d.section;
+      setSections((prev) => prev.map((s) => (s.label === label ? next : s)));
+      adoptRev(d.rev);
+    } else {
+      // Landed with no sections in the response: the rev is NOT adopted,
+      // so this poll fetches them.
+      await pollOnce();
+    }
+    markGateStale();
+    showChanged([label], { jump: false });
+    return {
+      kind: "applied",
+      label,
+      line: `${display}: removed a duplicated visual.`,
     };
   }
 
@@ -2951,6 +3045,8 @@ export function Workspace({
     let appliedTotal = 0;
     const skipped: string[] = [];
     const failures: string[] = [];
+    // One receipt line per duplicated visual removed (prune-visual).
+    const pruned: string[] = [];
     let summary: string | null = null;
     let stopped = false;
     // True when a review turn failed AFTER revisions landed: the summary
@@ -3007,8 +3103,10 @@ export function Workspace({
         const d = await res.json().catch(() => null);
         const targets: {
           label: string;
-          op?: "revise" | "retitle" | "remove";
+          op?: "revise" | "retitle" | "remove" | "prune-visual";
           directive?: string;
+          /** Present exactly when op is "prune-visual". */
+          blockId?: string;
         }[] = Array.isArray(d?.plan?.targets) ? d.plan.targets : [];
         const note = typeof d?.plan?.note === "string" ? d.plan.note : "";
         if (targets.length === 0) {
@@ -3050,6 +3148,30 @@ export function Workspace({
             total,
             current: liveDisplay(t.label),
           });
+          // prune-visual is applied unattended: the server's scan guard only
+          // lets through a block the duplicate scan itself clustered, on the
+          // section that holds it (see pruneVisualAndApply).
+          if (t.op === "prune-visual") {
+            const blockId = typeof t.blockId === "string" ? t.blockId : "";
+            const o = blockId
+              ? await pruneVisualAndApply(t.label, blockId)
+              : {
+                  kind: "skipped" as const,
+                  line: `${liveDisplay(t.label)}: the review named no visual to remove.`,
+                };
+            if (o.kind === "applied") {
+              appliedTotal++;
+              appliedThisPass++;
+              if (!appliedLabels.has(o.label)) {
+                appliedLabels.add(o.label);
+                appliedDisplays.push(liveDisplay(o.label));
+              }
+              pruned.push(o.line);
+            } else if (o.kind === "skipped") skipped.push(o.line);
+            else failures.push(o.line);
+            done++;
+            continue;
+          }
           const o = await reviseAndApply(
             t.label,
             CONSOLIDATE_INSTRUCTION,
@@ -3094,7 +3216,7 @@ export function Workspace({
           `Consolidated: ${named.join(", ")}${more > 0 ? ` and ${more} more` : ""}`
         );
       }
-      lines.push(...skipped, ...failures);
+      lines.push(...pruned, ...skipped, ...failures);
       setConsolReceipt({ summary, lines });
     } finally {
       setTronBusy(false);

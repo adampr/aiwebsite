@@ -22,11 +22,13 @@ import {
   groundValue,
   hasCurrency,
   interleave,
+  liftMarkdownTables,
   newBlockId,
   parseModelVisuals,
   pickAboutSection,
   reanchorBlocks,
   sanitizeStoredBlocks,
+  serializeBlockForPrompt,
   tableColumnFractions,
   type DraftBlock,
   type GroundFact,
@@ -436,7 +438,9 @@ check("grounded table lands with the content-model body", t1.blocks.map(({ id: _
 ]);
 const t2 = parseModelVisuals([{ ...goodTable, rows: [["P1 Critical", "10 minutes", "4 hours"]] }], ctx());
 check("a cell number the cited facts lack drops the table", [t2.blocks.length, t2.degraded.length, t2.dropped], [0, 0, [{ kind: "table", reason: "ungrounded" }]]);
-const t3 = parseModelVisuals([{ ...goodTable, cites: ["fact_unknown"] }], ctx(3, [sla]));
+// No known cites and no section cites to salvage from (with section cites that ground it, the
+// table is now kept: see "parseTable salvage" below).
+const t3 = parseModelVisuals([{ ...goodTable, cites: ["fact_unknown"] }], ctx(3, []));
 check("no known cites degrades to prose, rows joined with a middot", [t3.blocks.length, t3.degraded], [
   0,
   ["P1 Critical · 15 minutes · 4 hours", "P2 High · 1 hour · 8 business hours"],
@@ -452,7 +456,8 @@ const t7 = parseModelVisuals([{ ...goodTable, rows: manyRows.slice(0, 14) }], ct
 check("14 rows is inside the limit", t7.blocks[0]?.kind === "table" && t7.blocks[0].rows.length, 14);
 const t8 = parseModelVisuals([{ ...goodTable, rows: [["P1 Critical", "x".repeat(LIMITS.cell + 1), "4 hours"]] }], ctx());
 check("a cell over LIMITS.cell is refused, never cut", [t8.blocks.length, t8.degraded.length], [0, 0]);
-const t9 = parseModelVisuals([{ ...goodTable, cites: [] }], ctx(PARAGRAPH_CAP, [sla]));
+// Section cites that do not ground the cells, so the salvage fails and the degrade path runs.
+const t9 = parseModelVisuals([{ ...goodTable, cites: [] }], ctx(PARAGRAPH_CAP, [fid("tooling.email-security")]));
 check("degraded prose never exceeds the paragraph cap", [t9.degraded.length, t9.dropped[0]?.reason], [0, "no-room-for-prose"]);
 
 // ---- callout, cards, currency, em dash, after, limits --------------------------
@@ -1063,6 +1068,532 @@ check("kinds are the closed set", [...DRAFT_BLOCK_KINDS], ["stat-tiles", "fact-g
   yes("op: one more still fits under the cap", applyVisualsOp(fullSection, { label: "4.", action: "service-stats" }, facts, NOW).ok);
   const everything = applyVisualsOp(doc, { label: "4.", action: "about" }, facts, NOW);
   check("op: what it stores reads back untouched", everything.ok && sanitizeStoredBlocks(JSON.parse(JSON.stringify(everything.section.blocks)), 2), everything.ok && everything.section.blocks);
+}
+
+// ---------------------------------------------------------------------------
+// Tables are never prose (§5.17.19): the Curioso proposal, replayed. The section
+// records below are the REAL prod sections (proposal eda03a5e, rev 64), verbatim.
+// ---------------------------------------------------------------------------
+
+/** Section 4 "Security and Included Tools": paragraphs[1] is the markdown table a consolidation revise wrote. */
+const curiosoSec4 = {
+  label: "4",
+  title: "Security and Included Tools",
+  cites: [
+    "fact_pricing_fully_managed_rate_v1",
+    "fact_pricing_fully_managed_label_v1",
+    "fact_tooling_email_security_v1",
+    "fact_tooling_backup_dr_v1",
+    "pending_1f340634-a176-4d4c-9672-df1dbdd10601",
+    "fact_tooling_m365_backup_v1",
+    "fact_pricing_datto_saas_protection_v1",
+    "fact_compliance_iso_27001_v1",
+    "fact_compliance_soc_2_v1",
+    "fact_compliance_cis_controls_v2",
+    "fact_compliance_zero_trust_v1",
+    "fact_compliance_incident_response_v1",
+    "fact_operations_named_roles_v1",
+  ],
+  blocks: [
+    {
+      id: "v_0db1dd37",
+      kind: "table",
+      rows: [
+        ["Email security and anti-spam", "Barracuda", "Part of the central services"],
+        ["Multi-factor authentication", "Duo or Okta", "Chosen by client need, across Microsoft 365, Google Workspace, and remote access"],
+        ["Security awareness and phishing simulation", "KnowBe4 and BullPhish", "Included in the base fee, no per-user add-on"],
+        ["Credential vaults", "Keeper and Bitwarden", "Encrypted, least-privilege role-based access"],
+        ["Infrastructure backup and disaster recovery", "Veeam and Veeam Cloud Connect", "Set up during onboarding, checked daily"],
+        ["Remote monitoring and management", "Kaseya", "XL.net's RMM and IT management platform"],
+        ["Ticketing and PSA", "Autotask", "XL.net's PSA and ticketing platform"],
+        ["Process and documentation", "SweetProcess", "Documentation follows the Documentation Commandments"],
+        ["Microsoft 365 backup", "Datto SaaS Protection", "Covers Exchange Online, OneDrive, SharePoint, and Teams. No per-restore fee. Priced separately from the managed fee"],
+      ],
+      after: 1,
+      cites: [
+        "fact_tooling_email_security_v1",
+        "fact_tooling_mfa_v1",
+        "fact_tooling_security_awareness_v1",
+        "fact_tooling_credential_vaults_v1",
+        "fact_tooling_backup_dr_v1",
+        "fact_tooling_rmm_v1",
+        "fact_tooling_psa_v1",
+        "fact_tooling_process_governance_v1",
+        "fact_tooling_m365_backup_v1",
+        "fact_pricing_datto_saas_protection_v1",
+      ],
+      caption: "Central services and the tools behind them",
+      columns: [
+        { align: "left", header: "Service" },
+        { align: "left", header: "Tool" },
+        { align: "left", header: "Detail" },
+      ],
+      generatedBy: "llm",
+      emphasizeLastRow: false,
+    },
+  ],
+  paragraphs: [
+    "The central services and the tools behind them are listed in the table below, with each tool shown once.",
+    "| Service | Tool |\n|---|---|\n| Email security and anti-spam | Barracuda |\n| Local backup | Veeam |\n| Offsite backup copy to XL.net's data center in West Chicago | Veeam Cloud Connect |\n| Endpoint alerting | SentinelOne |\n| Security alerting | RocketCyber |\n| Data protection and AI governance | Microsoft Purview and DLP, deployed and managed |",
+    "Backups are set up during onboarding and checked daily. XL.net manually tests recovery of all backed-up servers and records the result quarterly, and the client decides retention.",
+    "XL.net holds ISO 27001:2022 and SOC 2 Type 2, audited annually. Client environments are audited each month against a subset of CIS Controls v8. XL.net is also moving clients off VPN toward Zero Trust access.",
+    "Incident response follows the ISO 27001 phases: prepare, detect and analyze, contain, eradicate, recover, and post-incident review. The assigned XLTO informs the client in the event of a breach. A written Incident Response Plan and a sample incident report can be attached to this proposal.",
+  ],
+};
+
+/** Section 7 "Service Delivery and Support": the SLA table the drafter proposed, stored DEGRADED as four paragraphs. */
+const curiosoSec7 = {
+  label: "7",
+  title: "Service Delivery and Support",
+  cites: [
+    "fact_operations_service_desk_hours_v1",
+    "fact_company_in_house_staff_v1",
+    "fact_book_first_contact_resolution_v1",
+    "fact_operations_service_desk_location_v2",
+    "fact_operations_escalation_tiers_v1",
+    "fact_contract_sla_client_defined_v1",
+    "fact_operations_named_roles_v1",
+    "fact_operations_sla_targets_v1",
+    "fact_tooling_psa_v1",
+    "pending_136114a3-46f6-4557-8506-5a6693f217ff",
+    "fact_tooling_rmm_v1",
+    "fact_tooling_email_security_v1",
+    "fact_service_flat_fee_v1",
+    "fact_pricing_fully_managed_label_v1",
+    "fact_onsite_billing_v2",
+    "fact_onsite_emergency_target_v1",
+    "fact_does_xl_net_measure_and_report_v8",
+  ],
+  degradedRows: [
+    "P1 Critical · 15 minutes · 4 hours",
+    "P2 High · 1 hour · 8 business hours",
+    "P3 Medium · 4 business hours · 2 business days",
+    "P4 Low or Request · 8 business hours · 5 business days",
+  ],
+};
+
+/**
+ * The section-7 cites whose own text states a number the SLA table carries (P1/P3, 15, 2 hours...):
+ * what a salvaged SLA table cites. The other twelve known cites (staff count, hours, tools, the
+ * pricing label) ground none of its numbers and stay off it.
+ */
+const SLA_GROUNDING_CITES = [
+  "fact_operations_escalation_tiers_v1",
+  "fact_contract_sla_client_defined_v1",
+  "fact_operations_sla_targets_v1",
+  "fact_onsite_emergency_target_v1",
+];
+
+/** Section 2's "Central services" table (v_5b457542), for the serialization snapshot. */
+const curiosoSec2Table = {
+  id: "v_5b457542",
+  kind: "table",
+  rows: [
+    ["Service desk", "24/7/365 live, staffed shifts, no on-call rotation"],
+    ["Email security and anti-spam", "Barracuda"],
+    ["Security awareness and phishing simulation", "KnowBe4 and BullPhish, no per-user add-on"],
+    ["Multi-factor authentication", "Duo or Okta, depending on need"],
+    ["RMM and IT management", "Kaseya"],
+    ["PSA and ticketing", "Autotask"],
+    ["Credential vaults", "Keeper and Bitwarden"],
+    ["Process and documentation", "SweetProcess"],
+  ],
+  after: 2,
+  cites: [
+    "fact_pricing_fully_managed_label_v1",
+    "fact_operations_service_desk_hours_v1",
+    "fact_tooling_email_security_v1",
+    "fact_tooling_security_awareness_v1",
+    "fact_tooling_mfa_v1",
+    "fact_tooling_rmm_v1",
+    "fact_tooling_psa_v1",
+    "fact_tooling_credential_vaults_v1",
+    "fact_tooling_process_governance_v1",
+  ],
+  caption: "Central services in the fully managed service",
+  columns: [
+    { align: "left", header: "Service" },
+    { align: "left", header: "Platform or scope" },
+  ],
+  generatedBy: "llm",
+  emphasizeLastRow: false,
+};
+
+const known = (ids: string[]) => ids.filter((id) => facts.some((f) => f.id === id));
+const notPricing = (ids: string[]) => ids.filter((id) => !facts.find((f) => f.id === id)?.key.startsWith("pricing."));
+
+// ---- source hygiene for the new code: still no lookbehind, consolidate stays import-free of draft-blocks
+{
+  const consolidateSrc = readFileSync(new URL("../src/lib/rfp/consolidate.ts", import.meta.url), "utf8");
+  const cCode = consolidateSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  no("no lookbehind regex in consolidate", /\(\?<[=!]/.test(cCode));
+  no("consolidate does not import draft-blocks", /from\s+["']\.\/draft-blocks["']/.test(cCode));
+  check("the real section-4 cites resolve against the seed facts", known(curiosoSec4.cites).length > 0, true);
+}
+
+// ---- A2 liftMarkdownTables: the Curioso section-4 paragraph -------------------
+{
+  const stored = sanitizeStoredBlocks(JSON.parse(JSON.stringify(curiosoSec4.blocks)), curiosoSec4.paragraphs.length);
+  check("curioso: the stored v_0db1dd37 table reads back", stored.map((b) => b.id), ["v_0db1dd37"]);
+  const r = liftMarkdownTables(curiosoSec4.paragraphs, stored, facts, curiosoSec4.cites);
+  check("curioso: one table lifted", r.lifted, 1);
+  check("curioso: the markdown paragraph is gone, the prose sentence and the rest are kept", r.paragraphs, [
+    curiosoSec4.paragraphs[0],
+    curiosoSec4.paragraphs[2],
+    curiosoSec4.paragraphs[3],
+    curiosoSec4.paragraphs[4],
+  ]);
+  const lifted = r.blocks?.find((b) => b.id !== "v_0db1dd37");
+  check("curioso: existing block first, both anchored after the prose sentence", r.blocks?.map((b) => [b.id === "v_0db1dd37" ? "existing" : "lifted", b.after]), [
+    ["existing", 1],
+    ["lifted", 1],
+  ]);
+  check(
+    "curioso: the lifted table is a 2-column, 6-row table, headers and cells as written",
+    lifted && lifted.kind === "table" ? [lifted.caption, lifted.columns, lifted.rows, lifted.emphasizeLastRow, lifted.generatedBy] : null,
+    [
+      null,
+      [
+        { header: "Service", align: "left" },
+        { header: "Tool", align: "left" },
+      ],
+      [
+        ["Email security and anti-spam", "Barracuda"],
+        ["Local backup", "Veeam"],
+        ["Offsite backup copy to XL.net's data center in West Chicago", "Veeam Cloud Connect"],
+        ["Endpoint alerting", "SentinelOne"],
+        ["Security alerting", "RocketCyber"],
+        ["Data protection and AI governance", "Microsoft Purview and DLP, deployed and managed"],
+      ],
+      false,
+      "llm",
+    ]
+  );
+  // No number in it, so nothing narrows: every known non-pricing section cite.
+  check("curioso: the lifted table cites the section's known non-pricing cites (pending, unknown and pricing ids out)", lifted?.cites, notPricing(known(curiosoSec4.cites)));
+  yes("curioso: the section did cite pricing facts (the exclusion is exercised)", known(curiosoSec4.cites).length > notPricing(known(curiosoSec4.cites)).length);
+  check("curioso: nothing refused", r.refused, 0);
+  yes("curioso: lifted id shape", /^v_[0-9a-f]{8}$/.test(lifted?.id ?? ""));
+  check("curioso: what the lift returns reads back untouched", sanitizeStoredBlocks(JSON.parse(JSON.stringify(r.blocks)), r.paragraphs.length), r.blocks);
+  check("curioso: the existing block is otherwise unchanged", r.blocks?.[0], stored[0]);
+  // Running it again finds nothing: identity, so the caller skips the write.
+  const again = liftMarkdownTables(r.paragraphs, r.blocks, facts, curiosoSec4.cites);
+  check("curioso: a second pass lifts nothing and returns its inputs (===)", [again.lifted, again.paragraphs === r.paragraphs, again.blocks === r.blocks], [0, true, true]);
+}
+
+// ---- A2: prose around a table, anchors, the identity contract ------------------
+{
+  const email = fid("tooling.email-security");
+  const slaId = fid("operations.sla-targets");
+  const md = "| Priority | Response |\n|---|---|\n| P1 Critical | 15 minutes |\n| P2 High | 1 hour |";
+  const exist: DraftBlock = { kind: "callout", title: null, body: "kept", tone: "neutral", id: "v_000000aa", after: 2, cites: [email], generatedBy: "llm" };
+  const r = liftMarkdownTables(["Zero.", `Before the table.\n${md}\nAfter the table.`, "Two."], [exist], facts, [slaId]);
+  check("prose before and after a table become their own paragraphs", r.paragraphs, ["Zero.", "Before the table.", "After the table.", "Two."]);
+  check(
+    "the table sits between them; an existing block keeps the paragraph it stood before (blocks in flow order)",
+    r.blocks?.map((b) => [b.id === "v_000000aa" ? "existing" : "lifted", b.after]),
+    [
+      ["lifted", 2],
+      ["existing", 3],
+    ]
+  );
+  check("grounded figures lift (15 minutes, 1 hour against the SLA fact)", r.lifted, 1);
+  const none = liftMarkdownTables(["Zero.", md], undefined, facts, [slaId]);
+  check("no existing blocks: the key comes back as a list", [none.paragraphs, none.blocks?.length, none.blocks?.[0].after], [["Zero."], 1, 1]);
+  const lead = liftMarkdownTables([md], undefined, facts, [slaId]);
+  check("a table-only section: no paragraphs, the table anchored at 0", [lead.paragraphs, lead.blocks?.[0].after], [[], 0]);
+  const outerless = liftMarkdownTables(["Priority | Response\n--- | :---:\nP1 Critical | 15 minutes"], undefined, facts, [slaId]);
+  check("outer pipes are optional; aligned separators count", outerless.blocks?.[0]?.kind === "table" && outerless.blocks[0].rows, [["P1 Critical", "15 minutes"]]);
+  const escaped = liftMarkdownTables(["| Service | Tool |\n|---|---|\n| Email \\| spam | Barracuda |"], undefined, facts, [email]);
+  check("an escaped pipe stays inside its cell", escaped.blocks?.[0]?.kind === "table" && escaped.blocks[0].rows, [["Email | spam", "Barracuda"]]);
+  const twoTables = liftMarkdownTables(
+    [`| Service | Tool |\n|---|---|\n| Email | Barracuda |\nBetween.\n| Item | Cost |\n|---|---|\n| Seat | $15 |`],
+    undefined,
+    facts,
+    [email]
+  );
+  check(
+    "never half-lifted: a table that fails stays in the text exactly, its neighbour still lifts",
+    [twoTables.lifted, twoTables.paragraphs],
+    [1, ["Between.\n| Item | Cost |\n|---|---|\n| Seat | $15 |"]]
+  );
+  const paras = ["Plain prose.", "No | table | here, just | pipes in a sentence."];
+  const ex: DraftBlock[] = [exist];
+  const noMd = liftMarkdownTables(paras, ex, facts, [email]);
+  check("no markdown table: inputs returned by reference", [noMd.lifted, noMd.paragraphs === paras, noMd.blocks === ex], [0, true, true]);
+  const noPipe = ["Nothing."];
+  const undef = liftMarkdownTables(noPipe, undefined, facts, [email]);
+  check("no pipe at all: inputs returned by reference, blocks stays undefined", [undef.paragraphs === noPipe, undef.blocks], [true, undefined]);
+}
+
+// ---- A2: every control blocks, and a refusal returns the inputs untouched ------
+{
+  const email = fid("tooling.email-security");
+  const slaId = fid("operations.sla-targets");
+  const base = (rows: string) => `| Service | Tool |\n|---|---|\n${rows}`;
+  const six: DraftBlock[] = Array.from({ length: LIMITS.blocksPerSection }, (_, i) => ({ kind: "callout" as const, title: null, body: "x", tone: "neutral" as const, id: `v_0000010${i}`, after: 0, cites: [email], generatedBy: "llm" as const }));
+  const cases: [string, string[], DraftBlock[] | undefined, string[]][] = [
+    ["a currency cell (rule B7)", [base("| Email | $5 a seat |")], undefined, [email]],
+    ["a currency word in a header", ["| Service | Dollars |\n|---|---|\n| Email | Barracuda |"], undefined, [email]],
+    ["a rate with the sign left off", [base("| Email | 15 per user per month |")], undefined, [email]],
+    ["six columns", ["| a | b | c | d | e | f |\n|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 |"], undefined, [email]],
+    ["fifteen rows", [base(Array.from({ length: 15 }, () => "| Email | Barracuda |").join("\n"))], undefined, [email]],
+    ["a ragged row (short)", [base("| Email | Barracuda |\n| Backup |")], undefined, [email]],
+    ["a ragged row (long)", [base("| Email | Barracuda | extra |")], undefined, [email]],
+    ["an empty row", [base("| Email | Barracuda |\n|  |  |")], undefined, [email]],
+    ["an empty header", ["| Service |  |\n|---|---|\n| Email | Barracuda |"], undefined, [email]],
+    ["a cell over LIMITS.cell", [base(`| Email | ${"x".repeat(LIMITS.cell + 1)} |`)], undefined, [email]],
+    ["ungrounded digits", [base("| Email | 99 tickets a day |")], undefined, [email]],
+    ["a figure only another fact states", ["| Priority | Response |\n|---|---|\n| P1 Critical | 15 minutes |"], undefined, [email]],
+    ["empty section cites", [base("| Email | Barracuda |")], undefined, []],
+    ["section cites that resolve to no fact", [base("| Email | Barracuda |")], undefined, ["fact_unknown", "pending_1f340634-a176-4d4c-9672-df1dbdd10601"]],
+    ["blocks already at the cap", [base("| Email | Barracuda |")], six, [email]],
+    ["a separator with a different cell count", ["| Service | Tool |\n|---|---|---|\n| Email | Barracuda |"], undefined, [email]],
+    ["a separator line that is not dashes", ["| Service | Tool |\n| == | == |\n| Email | Barracuda |"], undefined, [email]],
+    ["a separator cell with no dash", ["| Service | Tool |\n| : | --- |\n| Email | Barracuda |"], undefined, [email]],
+    ["no data line", ["| Service | Tool |\n|---|---|"], undefined, [email]],
+    ["pipes inside a sentence, no separator", ["Pick Barracuda | Proofpoint | Mimecast for email, then\nconfirm with us | the team."], undefined, [email]],
+  ];
+  for (const [what, paragraphs, blocks, cites] of cases) {
+    let r: ReturnType<typeof liftMarkdownTables> | string;
+    try {
+      r = liftMarkdownTables(paragraphs, blocks, facts, cites);
+    } catch (e) {
+      r = `threw ${String(e)}`;
+    }
+    check(
+      `lift refused: ${what} (inputs returned by reference)`,
+      typeof r === "string" ? r : [r.lifted, r.paragraphs === paragraphs, r.blocks === blocks],
+      [0, true, true]
+    );
+  }
+  // `refused` counts a table that was FOUND and left as text; text that is no table counts nothing.
+  const refusedOf = (paragraphs: string[], blocks: DraftBlock[] | undefined, cites: string[]) => liftMarkdownTables(paragraphs, blocks, facts, cites).refused;
+  check(
+    "refused: one per found table that a control kept as text",
+    [
+      refusedOf([base("| Email | $5 a seat |")], undefined, [email]),
+      refusedOf([base("| Email | 99 tickets a day |")], undefined, [email]),
+      refusedOf([base("| Email | Barracuda |")], undefined, []),
+      refusedOf([base("| Email | Barracuda |")], six, [email]),
+      refusedOf([base("| Email | $5 a seat |"), base("| Backup | 99 copies |")], undefined, [email]),
+    ],
+    [1, 1, 1, 1, 2]
+  );
+  check(
+    "refused: no table found counts nothing",
+    [
+      refusedOf(["Pick Barracuda | Proofpoint | Mimecast for email."], undefined, [email]),
+      refusedOf(["| Service | Tool |\n| == | == |\n| Email | Barracuda |"], undefined, [email]),
+      refusedOf(["Nothing."], undefined, [email]),
+    ],
+    [0, 0, 0]
+  );
+  // A negative fact's numbers never ground a cell.
+  const neg: GroundFact = { id: "f_neg2", key: "contract.three-year", statement: "XL.net does not offer a 3-year term.", detail: null, polarity: "negative" };
+  const negP = ["| Term | Offered |\n|---|---|\n| 3-year | No |"];
+  check("lift refused: a negative fact's figure", liftMarkdownTables(negP, undefined, [...facts, neg], ["f_neg2"]).lifted, 0);
+  // The paragraph cap: a split that would leave more than PARAGRAPH_CAP paragraphs is refused.
+  const full = Array.from({ length: PARAGRAPH_CAP }, (_, i) => `P${i}.`);
+  full[3] = `Before.\n${base("| Email | Barracuda |")}\nAfter.`;
+  const capped = liftMarkdownTables(full, undefined, facts, [email]);
+  check("lift refused: a split past PARAGRAPH_CAP", [capped.lifted, capped.paragraphs === full, capped.refused], [0, true, 1]);
+  const shrinking = [...full];
+  shrinking[3] = base("| Email | Barracuda |");
+  check("a table-only paragraph at the cap still lifts (the count shrinks)", liftMarkdownTables(shrinking, undefined, facts, [email]).paragraphs.length, PARAGRAPH_CAP - 1);
+  // Room for one more under the cap lifts exactly one of two tables.
+  const five = six.slice(0, LIMITS.blocksPerSection - 1);
+  const two = liftMarkdownTables([base("| Email | Barracuda |"), base("| Backup | Veeam |")], five, facts, [email]);
+  check("the block cap counts existing blocks: one lifts, the other stays as text (and is counted refused)", [two.lifted, two.blocks?.length, two.paragraphs, two.refused], [1, LIMITS.blocksPerSection, [base("| Backup | Veeam |")], 1]);
+  // An em dash in a cell is replaced like every model string (rule D1).
+  const dash = liftMarkdownTables([base("| Email — spam | Barracuda |")], undefined, facts, [email]);
+  check("an em dash in a cell is replaced", dash.blocks?.[0]?.kind === "table" && dash.blocks[0].rows[0][0], "Email, spam");
+  // Hostile inputs never throw.
+  let threwLift = false;
+  try {
+    liftMarkdownTables([null, 3, "| a | b |\n|---|---|\n| c | d |"] as never, "x" as never, null as never, null as never);
+    liftMarkdownTables(null as never, undefined, facts, [email]);
+  } catch {
+    threwLift = true;
+  }
+  no("lift: hostile inputs never throw", threwLift);
+  void slaId;
+}
+
+// ---- A2 fixes: anchor order, GFM separators, emphasis, pricing, narrow cites ----
+{
+  const email = fid("tooling.email-security");
+  const slaId = fid("operations.sla-targets");
+  const md = "| Priority | Response |\n|---|---|\n| P1 Critical | 15 minutes |";
+  const exist: DraftBlock = { kind: "callout", title: null, body: "kept", tone: "neutral", id: "v_000000ab", after: 1, cites: [email], generatedBy: "llm" };
+  // The refuter's probe: a table inside paragraph 0 and a block that stood after paragraph 0.
+  const probe = liftMarkdownTables([`Intro.\n${md}`, "Next."], [exist], facts, [slaId]);
+  check(
+    "anchor order: Intro, the lifted table, the existing block, Next (the flow as written)",
+    interleave(probe.paragraphs, probe.blocks).map((x) => (x.type === "p" ? x.text : x.block.id === "v_000000ab" ? "existing" : "lifted")),
+    ["Intro.", "lifted", "existing", "Next."]
+  );
+  const before = liftMarkdownTables([`Intro.\n${md}`, "Next."], [{ ...exist, after: 0 }], facts, [slaId]);
+  check(
+    "anchor order: a block that stood BEFORE the paragraph stays before its prose and table",
+    interleave(before.paragraphs, before.blocks).map((x) => (x.type === "p" ? x.text : x.block.id === "v_000000ab" ? "existing" : "lifted")),
+    ["existing", "Intro.", "lifted", "Next."]
+  );
+  const tableOnly = liftMarkdownTables(["Zero.", md, "Two."], [{ ...exist, after: 1 }, { ...exist, id: "v_000000ac", after: 2 }], facts, [slaId]);
+  check(
+    "anchor order: blocks either side of a table-only paragraph keep their sides at one anchor",
+    interleave(tableOnly.paragraphs, tableOnly.blocks).map((x) => (x.type === "p" ? x.text : x.block.id === "v_000000ab" ? "e1" : x.block.id === "v_000000ac" ? "e2" : "lifted")),
+    ["Zero.", "e1", "lifted", "e2", "Two."]
+  );
+
+  const oneDash = liftMarkdownTables(["| Priority | Response |\n|-|:-:|\n| P1 Critical | 15 minutes |"], undefined, facts, [slaId]);
+  check("GFM: one-dash and aligned one-dash separator cells lift", oneDash.blocks?.[0]?.kind === "table" && oneDash.blocks[0].rows, [["P1 Critical", "15 minutes"]]);
+  const mismatch = liftMarkdownTables(["| Priority | Response |\n|-|\n| P1 Critical | 15 minutes |"], undefined, facts, [slaId]);
+  check("GFM: a one-dash separator still needs the header's cell count", mismatch.lifted, 0);
+
+  const emph = liftMarkdownTables(["| **Service** | `Tool` |\n|---|---|\n| *Email security* | __Barracuda__ |\n| **Email** and **spam** | Barracuda |"], undefined, facts, [email]);
+  check(
+    "emphasis: whole-cell **x**, `x`, *x*, __x__ unwrapped; a partial wrapper stays as written",
+    emph.blocks?.[0]?.kind === "table" ? [emph.blocks[0].columns.map((c) => c.header), emph.blocks[0].rows] : null,
+    [["Service", "Tool"], [["Email security", "Barracuda"], ["**Email** and **spam**", "Barracuda"]]]
+  );
+
+  // Pricing facts: the refuter's probe. Bare figures a pricing fact states never lift.
+  const pricingIds = facts.filter((f) => f.key.startsWith("pricing.")).map((f) => f.id);
+  const fee = ["| Item | Monthly fee per user |\n|---|---|\n| Fully managed | 247 |\n| Microsoft 365 backup | 3.20 |"];
+  check("pricing: grounded only by pricing facts, nothing lifts", [liftMarkdownTables(fee, undefined, facts, pricingIds).lifted, liftMarkdownTables(fee, undefined, facts, pricingIds).refused], [0, 1]);
+  check("pricing: pricing cites beside a non-pricing one still never ground the figures", liftMarkdownTables(fee, undefined, facts, [...pricingIds, email]).lifted, 0);
+  const free = liftMarkdownTables(["| Service | Tool |\n|---|---|\n| Email | Barracuda |"], undefined, facts, [...pricingIds, email]);
+  check("pricing: a lift never cites a pricing fact", free.blocks?.[0]?.cites, [email]);
+  const feeVisual = { kind: "table", after: 0, cites: [], columns: ["Item", "Monthly fee per user"], rows: [["Fully managed", "247"], ["Microsoft 365 backup", "3.20"]] };
+  check("pricing: the parseTable salvage never keeps it as a block", parseModelVisuals([feeVisual], ctx(1, [...pricingIds, email])).blocks.length, 0);
+  check("pricing: nor with only pricing section cites", parseModelVisuals([feeVisual], ctx(1, pricingIds)).blocks.length, 0);
+
+  // Narrow cites: a table cites the facts that ground its numbers, not every section cite.
+  const narrowed = liftMarkdownTables([md], undefined, facts, [email, slaId, fid("tooling.rmm")]);
+  check("narrow: the SLA table cites only the SLA fact", narrowed.blocks?.[0]?.cites, [slaId]);
+  const wide = liftMarkdownTables(["| Service | Tool |\n|---|---|\n| Email | Barracuda |"], undefined, facts, [email, slaId]);
+  check("narrow: a table with no number keeps every non-pricing section cite", wide.blocks?.[0]?.cites, [email, slaId]);
+  const slaVisual = { kind: "table", after: 0, cites: [], columns: ["Priority", "Response"], rows: [["P1 Critical", "15 minutes"]] };
+  check("narrow: a salvaged SLA table cites only the SLA fact", parseModelVisuals([slaVisual], ctx(1, [email, slaId, fid("tooling.rmm")])).blocks.map((b) => b.cites), [[slaId]]);
+}
+
+// ---- A3 parseTable: {header} columns, the salvage ------------------------------
+{
+  const asObjects = parseModelVisuals([{ ...goodTable, columns: goodTable.columns.map((header) => ({ header, align: "left" })) }], ctx());
+  check("columns echoed back as { header } objects are accepted, same block", asObjects.blocks.map(({ id: _id, ...b }) => b), t1.blocks.map(({ id: _id, ...b }) => b));
+  const badObj = parseModelVisuals([{ ...goodTable, columns: [{ title: "Priority" }, "Response", "Target resolution"] }], ctx());
+  check("any other object column cleans to null: no block", badObj.blocks.length, 0);
+
+  // The Curioso SLA table: three columns, four rows, cites empty (what the drafter sent).
+  const slaVisual = {
+    kind: "table",
+    after: 3,
+    cites: [],
+    caption: "Suggested service level targets",
+    columns: ["Priority", "Response", "Target resolution"],
+    rows: curiosoSec7.degradedRows.map((l) => l.split(" · ")),
+  };
+  const salvaged = parseModelVisuals([slaVisual], ctx(4, curiosoSec7.cites));
+  check("salvage: the Curioso SLA table with empty cites is KEPT as a table", [salvaged.blocks.length, salvaged.degraded, salvaged.dropped], [1, [], []]);
+  check(
+    "salvage: its rows are the four priorities, and it cites the section facts that ground its numbers",
+    salvaged.blocks[0]?.kind === "table" ? [salvaged.blocks[0].rows, salvaged.blocks[0].cites, salvaged.blocks[0].after] : null,
+    [
+      [
+        ["P1 Critical", "15 minutes", "4 hours"],
+        ["P2 High", "1 hour", "8 business hours"],
+        ["P3 Medium", "4 business hours", "2 business days"],
+        ["P4 Low or Request", "8 business hours", "5 business days"],
+      ],
+      SLA_GROUNDING_CITES,
+      3,
+    ]
+  );
+  yes("salvage: the narrowed cites include the SLA fact and no pricing fact", SLA_GROUNDING_CITES.includes(sla) && notPricing(SLA_GROUNDING_CITES).length === SLA_GROUNDING_CITES.length);
+  const unknownCites = parseModelVisuals([{ ...slaVisual, cites: ["fact_made_up"] }], ctx(4, curiosoSec7.cites));
+  check("salvage: unknown cites are the same as none", unknownCites.blocks.length, 1);
+  const wrongNumber = parseModelVisuals([{ ...slaVisual, rows: [["P1 Critical", "10 minutes", "4 hours"]] }], ctx(4, curiosoSec7.cites));
+  check("salvage: a figure the section's facts do not state is never kept (grounding does not loosen)", [wrongNumber.blocks.length, wrongNumber.degraded.length], [0, 0]);
+  const ungroundedSalvage = parseModelVisuals([slaVisual], ctx(4, [fid("tooling.email-security")]));
+  check("salvage: section cites that do not ground it fall through to the degrade path", [ungroundedSalvage.blocks.length, ungroundedSalvage.degraded.length, ungroundedSalvage.dropped], [0, 0, [{ kind: "table", reason: "ungrounded" }]]);
+  const noSectionCites = parseModelVisuals([slaVisual], ctx(4, []));
+  check("salvage: no section cites degrades exactly as before", [noSectionCites.blocks.length, noSectionCites.degraded], [0, curiosoSec7.degradedRows]);
+  const ownCites = parseModelVisuals([goodTable], ctx(3, curiosoSec7.cites));
+  check("salvage never runs for a table with known cites of its own: cites stay its own", ownCites.blocks.map((b) => b.cites), [[sla]]);
+  const ownUngrounded = parseModelVisuals([{ ...goodTable, cites: [fid("tooling.email-security")] }], ctx(3, [sla]));
+  check("a table whose OWN cites do not ground it is dropped, never rescued by the section's", [ownUngrounded.blocks.length, ownUngrounded.dropped], [0, [{ kind: "table", reason: "ungrounded" }]]);
+  const neg: GroundFact = { id: "f_neg3", key: "contract.three-year", statement: "XL.net does not offer a three-year term.", detail: null, polarity: "negative" };
+  const negSalvage = parseModelVisuals([{ kind: "table", after: 0, cites: [], columns: ["Term", "Offered"], rows: [["three-year", "No"]] }], { facts: [...facts, neg], paragraphCount: 1, sectionCites: ["f_neg3"] });
+  check("salvage: a negative section fact's numbers never ground a cell", negSalvage.blocks.length, 0);
+  const malformedNoCites = parseModelVisuals([{ ...slaVisual, rows: [["P1 Critical", "15 minutes"], ["P2 High", "1 hour", "8 business hours"]] }], ctx(4, curiosoSec7.cites));
+  check("salvage: a ragged table is never salvaged into a block", malformedNoCites.blocks.length, 0);
+  const currencyNoCites = parseModelVisuals([{ ...slaVisual, rows: [["P1 Critical", "15 minutes", "$400"]] }], ctx(4, curiosoSec7.cites));
+  check("salvage: currency still drops the whole visual first", [currencyNoCites.blocks.length, currencyNoCites.dropped[0]?.reason], [0, "currency"]);
+  const callout = parseModelVisuals([{ kind: "callout", cites: [], body: "We answer the phone." }], ctx(2, curiosoSec7.cites));
+  check("callouts are untouched by the salvage: no cites still degrades", [callout.blocks.length, callout.degraded], [0, ["We answer the phone."]]);
+}
+
+// ---- A1 serializeBlockForPrompt -------------------------------------------------
+{
+  const table = sanitizeStoredBlocks([JSON.parse(JSON.stringify(curiosoSec2Table))], 2)[0];
+  check(
+    "serialize: table snapshot (caption, header row, rows, cells joined by ' | ')",
+    serializeBlockForPrompt(table),
+    [
+      "[visual table id=v_5b457542] Central services in the fully managed service",
+      "Service | Platform or scope",
+      "Service desk | 24/7/365 live, staffed shifts, no on-call rotation",
+      "Email security and anti-spam | Barracuda",
+      "Security awareness and phishing simulation | KnowBe4 and BullPhish, no per-user add-on",
+      "Multi-factor authentication | Duo or Okta, depending on need",
+      "RMM and IT management | Kaseya",
+      "PSA and ticketing | Autotask",
+      "Credential vaults | Keeper and Bitwarden",
+      "Process and documentation | SweetProcess",
+    ].join("\n")
+  );
+  const tiles = { ...buildServiceStatsBlock(facts)!, id: "v_0000beef" };
+  check(
+    "serialize: stat-tiles snapshot",
+    serializeBlockForPrompt(tiles),
+    "[visual stat-tiles id=v_0000beef]\n>99% Calls answered live\n99.9% Issues resolved remotely\n>70% First-contact resolution"
+  );
+  check("serialize: deterministic", serializeBlockForPrompt(table), serializeBlockForPrompt(JSON.parse(JSON.stringify(table))));
+  const refs = serializeBlockForPrompt(referencesBlock);
+  const entries = referencesBlock.kind === "references" ? referencesBlock.references : [];
+  check("serialize: references are organization names only", refs, [`[visual references id=${referencesBlock.id}]`, ...entries.map((e) => e.organization)].join("\n"));
+  check(
+    "serialize: no reference contact string ever leaks (name, title, phone, email, relevance)",
+    entries.flatMap((e) => [e.contactName, e.contactTitle, e.phone, e.email, e.relevance]).filter((s) => s && refs.includes(s)),
+    []
+  );
+  for (const b of [...fixtureBlocks, stretchTimelineBlock]) {
+    const s = serializeBlockForPrompt(b);
+    const first = s.split("\n")[0];
+    const tag = `[visual ${b.kind} id=${b.id}]`;
+    yes(
+      `serialize: first line is the visual tag, a table's caption after it (${b.kind} ${b.id})`,
+      b.kind === "table" && b.caption ? first === `${tag} ${b.caption}` : first === tag
+    );
+    yes(`serialize: at most 2000 chars (${b.id})`, s.length <= 2000);
+  }
+  const callout: DraftBlock = { kind: "callout", title: "No lock-in", body: "A revolving\n90-day term.", tone: "neutral", id: "v_000000c1", after: 0, cites: ["f"], generatedBy: "llm" };
+  check("serialize: callout is title and body on one line", serializeBlockForPrompt(callout), "[visual callout id=v_000000c1]\nNo lock-in: A revolving 90-day term.");
+  const wide: DraftBlock = {
+    kind: "table",
+    caption: null,
+    columns: ["a", "b", "c", "d", "e"].map((header) => ({ header, align: "left" as const })),
+    rows: Array.from({ length: 14 }, (_, i) => Array.from({ length: 5 }, () => `${i}`.padEnd(LIMITS.cell, "x"))),
+    emphasizeLastRow: false,
+    id: "v_000000d1",
+    after: 0,
+    cites: ["f"],
+    generatedBy: "llm",
+  };
+  const ws = serializeBlockForPrompt(wide);
+  const fullLines = ["[visual table id=v_000000d1]", "a | b | c | d | e", ...wide.rows.map((r) => r.join(" | "))];
+  check("serialize: bounded at 2000 chars by whole lines, never a cut line", [ws.length <= 2000, ws.split("\n").every((l, i) => l === fullLines[i]), ws.split("\n").length < fullLines.length], [true, true, true]);
 }
 
 console.log(failures === 0 ? "\nall draft-block tests passed" : `\n${failures} FAILED`);

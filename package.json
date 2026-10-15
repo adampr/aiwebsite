@@ -70,6 +70,7 @@
     "test:rfpvision": "tsx scripts/rfp-vision-tests.ts",
     "rfp:render-fixture": "tsx scripts/rfp-render-fixture.ts",
     "rfp:reread": "tsx scripts/rfp-reread.ts",
+    "rfp:consolidate": "tsx scripts/rfp-consolidate-run.ts",
     "rfp:tile-metrics": "tsx scripts/rfp-tile-metrics.ts",
     "rfp:reference-contact": "node scripts/rfp-reference-contact.mjs",
     "test:deploysafe": "bash scripts/deploy-safe-tests.sh",

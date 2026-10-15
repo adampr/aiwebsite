@@ -24,11 +24,20 @@ export const CONSOLIDATE_INSTRUCTION =
 
 export type DupParagraph = {
   label: string;
-  /** Index of the paragraph within its section's stored paragraphs array. */
+  /** Index of the paragraph within its section's stored paragraphs array;
+   *  -1 for a table member (blockId set). */
   paragraph: number;
-  /** First 160 chars of the ORIGINAL (un-normalized) paragraph text. */
+  /** First 160 chars of the ORIGINAL (un-normalized) paragraph text, or of
+   *  the table's serialized text without its `[visual …]` tag. */
   excerpt: string;
+  /** Set only on a table member: the block's id, so the review turn can name it. */
+  blockId?: string;
 };
+
+/** A section's visual block as the caller serialized it (draft-blocks.ts
+ *  serializeBlockForPrompt). Passed pre-serialized so this module never
+ *  imports draft-blocks: both stay client-safe and the graph stays acyclic. */
+export type ScanBlock = { id: string; kind: string; text: string };
 
 export type DuplicateCluster = {
   /** Distinct section labels, in document order. */
@@ -47,6 +56,9 @@ const EXCERPT_CHARS = 160;
 const FINDINGS_MAX_CHARS = 2400;
 const REQ_TEXT_CHARS = 200;
 const REQ_DEFAULT_BUDGET = 9000;
+const ROW_KEYS_MIN_SHARED = 3;
+/** draft-blocks.ts's stored block id shape, restated (no import, see ScanBlock). */
+const BLOCK_ID = /^v_[0-9a-f]{8}$/;
 
 /** NFKC, lowercase, letters/digits/spaces only, single-spaced. */
 function normalizeParagraph(text: string): string {
@@ -71,9 +83,54 @@ type Entry = {
   sectionIndex: number;
   label: string;
   paragraph: number;
+  blockId?: string;
+  /** Table members only: see tableRows. */
+  rows?: Map<string, Set<string>>;
   original: string;
   shingles: Set<string>;
 };
+
+/**
+ * A serialized block's text without its leading `[visual <kind> id=…]` tag,
+ * newlines flattened to " / " so an excerpt stays on its findings line. The
+ * tag is the block's identity, not its content: two copies of one table
+ * carry different ids and must still read as the same words.
+ */
+function blockContent(text: string): string {
+  const s = text.startsWith("[visual ") && text.indexOf("]") > 0
+    ? text.slice(text.indexOf("]") + 1)
+    : text;
+  return s.trim().replace(/\s*\n\s*/g, " / ");
+}
+
+/** Function words two value cells can share without saying the same thing. */
+const ROW_VALUE_STOP = new Set([
+  "a", "an", "and", "or", "the", "of", "to", "in", "on", "for", "with",
+  "by", "at", "as", "from", "per", "is", "are", "be", "no", "not",
+]);
+
+/**
+ * A serialized table's rows: row key -> the words of the row's other cells.
+ * The key is the first cell's words, normalized, distinct and sorted
+ * ("Ticketing and PSA" and "PSA and ticketing" are one key); the value words
+ * are normalized, function words out. Positional, by serializeBlockForPrompt's
+ * fixed layout: line 1 is the tag (a caption rides on it), line 2 the header
+ * (never a key), every later line one row.
+ */
+function tableRows(text: string): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const row of text.split("\n").slice(2)) {
+    const cells = row.split(" | ");
+    const words = normalizeParagraph(cells[0]).split(" ").filter(Boolean);
+    if (!words.length) continue;
+    const key = [...new Set(words)].sort().join(" ");
+    const values = out.get(key) ?? new Set<string>();
+    for (const w of normalizeParagraph(cells.slice(1).join(" ")).split(" "))
+      if (w && !ROW_VALUE_STOP.has(w)) values.add(w);
+    out.set(key, values);
+  }
+  return out;
+}
 
 /**
  * Deterministic near-duplicate scan ACROSS sections.
@@ -87,9 +144,22 @@ type Entry = {
  * are union-found into clusters; at most 12 come back, largest first (member
  * count, then total shingle count, then document order), everything ordered
  * deterministically.
+ *
+ * A section's `table` blocks (pre-serialized, see ScanBlock) enter the scan
+ * too, after its paragraphs, as members with `paragraph: -1` and `blockId`:
+ * a table repeated across sections is the same duplication as a repeated
+ * paragraph, and a table can match prose; two tables also match on their
+ * row keys (see the table pass below). Other kinds stay out (the system
+ * kinds are one per document by origin; references hold contacts). With no
+ * blocks passed, the result is exactly the paragraph-only scan.
  */
 export function findDuplicateClusters(
-  sections: { label: string; title: string; paragraphs: string[] }[]
+  sections: {
+    label: string;
+    title: string;
+    paragraphs: string[];
+    blocks?: ScanBlock[];
+  }[]
 ): DuplicateCluster[] {
   const entries: Entry[] = [];
   sections.forEach((s, sectionIndex) => {
@@ -106,6 +176,23 @@ export function findDuplicateClusters(
         shingles: shingleSet(words),
       });
     });
+    for (const b of Array.isArray(s.blocks) ? s.blocks : []) {
+      // The id is printed into a prompt line: only the stored id shape passes.
+      if (!b || b.kind !== "table" || typeof b.text !== "string" || !BLOCK_ID.test(String(b.id))) continue;
+      const content = blockContent(b.text);
+      const words = normalizeParagraph(content).split(" ").filter(Boolean);
+      if (words.length < MIN_WORDS) continue;
+      entries.push({
+        id: entries.length,
+        sectionIndex,
+        label: s.label,
+        paragraph: -1,
+        blockId: b.id,
+        rows: tableRows(b.text),
+        original: content,
+        shingles: shingleSet(words),
+      });
+    }
   });
 
   // Inverted index: shingle -> entry ids (ascending by construction).
@@ -149,6 +236,43 @@ export function findDuplicateClusters(
     }
   }
 
+  // Table against table: the same rows under different notes columns or in
+  // a different order share almost no 8-gram (the three Curioso "Central
+  // services" tables measured 0.02 to 0.10), so two tables in different
+  // sections are also duplicates when their row keys reach the same 0.5
+  // containment with at least 3 keys shared, AND the rows agree on content:
+  // in at least half of the shared keys the two rows' other cells share a
+  // word ("Barracuda", "Kaseya"). Keys alone are not content: a "Service |
+  // Included" table and a "Service | Response target" table list the same
+  // services and say different things. Only table entries carry `rows`, so
+  // with no blocks passed this pass does nothing.
+  const tables = entries.filter((e) => e.rows !== undefined);
+  for (let a = 0; a < tables.length; a++)
+    for (let b = a + 1; b < tables.length; b++) {
+      const x = tables[a];
+      const y = tables[b];
+      if (x.sectionIndex === y.sectionIndex) continue;
+      let common = 0;
+      let agree = 0;
+      for (const [k, xs] of x.rows!) {
+        const ys = y.rows!.get(k);
+        if (!ys) continue;
+        common++;
+        for (const w of xs)
+          if (ys.has(w)) {
+            agree++;
+            break;
+          }
+      }
+      const denom = Math.min(x.rows!.size, y.rows!.size);
+      if (
+        common >= ROW_KEYS_MIN_SHARED &&
+        common / denom >= DUP_THRESHOLD &&
+        agree * 2 >= common
+      )
+        union(x.id, y.id);
+    }
+
   const byRoot = new Map<number, Entry[]>();
   for (const e of entries) {
     const root = find(e.id);
@@ -183,10 +307,38 @@ export function findDuplicateClusters(
         label: m.label,
         paragraph: m.paragraph,
         excerpt: m.original.slice(0, EXCERPT_CHARS),
+        ...(m.blockId !== undefined ? { blockId: m.blockId } : {}),
       })),
       excerpt: c.members[0].original.slice(0, EXCERPT_CHARS),
     };
   });
+}
+
+/** One findings line. A cluster with table members names each table by its
+ *  id, so the review turn sees a TABLE (which it can prune by that id), not
+ *  prose; a text-only cluster reads exactly as it always has. */
+function findingsLine(
+  c: DuplicateCluster,
+  displayTitle: (label: string) => string
+): string {
+  const tables = c.members.filter((m) => m.blockId !== undefined);
+  if (tables.length === 0)
+    return `- The same passage appears in ${c.labels
+      .map((l) => displayTitle(l))
+      .join(", ")}: "${c.excerpt}"`;
+  const textLabels: string[] = [];
+  for (const m of c.members)
+    if (m.blockId === undefined && !textLabels.includes(m.label))
+      textLabels.push(m.label);
+  if (textLabels.length === 0)
+    return `- The same table appears in ${tables
+      .map((m) => `${displayTitle(m.label)} (id ${m.blockId})`)
+      .join(", ")}: "${c.excerpt}"`;
+  return `- The same content appears as text in ${textLabels
+    .map((l) => displayTitle(l))
+    .join(", ")} and as ${tables
+    .map((m) => `the table (id ${m.blockId}) in ${displayTitle(m.label)}`)
+    .join(", ")}: "${c.excerpt}"`;
 }
 
 /**
@@ -201,15 +353,102 @@ export function formatDuplicateFindings(
   const kept: string[] = [];
   let total = 0;
   for (const c of clusters) {
-    const line = `- The same passage appears in ${c.labels
-      .map((l) => displayTitle(l))
-      .join(", ")}: "${c.excerpt}"`;
+    const line = findingsLine(c, displayTitle);
     const spend = line.length + (kept.length ? 1 : 0);
     if (total + spend > FINDINGS_MAX_CHARS) break;
     kept.push(line);
     total += spend;
   }
   return kept.join("\n");
+}
+
+/**
+ * Every table id in any cluster: the scan guard for a "prune-visual" target.
+ * The review turn may only remove a block the deterministic scan itself found
+ * duplicated, whatever id the model names.
+ */
+export function clusterBlockIds(clusters: DuplicateCluster[]): Set<string> {
+  const out = new Set<string>();
+  for (const c of clusters)
+    for (const m of c.members) if (m.blockId !== undefined) out.add(m.blockId);
+  return out;
+}
+
+/**
+ * The scan guard a "prune-visual" target answers to (§5.17.16), built from
+ * the same clusters the findings were formatted from.
+ */
+export type PruneGuard = {
+  /** blockId -> index of the cluster holding it. The keys are the ONLY ids
+   *  a prune may name (clusterBlockIds). */
+  clusterOf: Map<string, number>;
+  /** Members per cluster (paragraphs and tables), by cluster index. */
+  members: number[];
+};
+
+export function pruneGuard(clusters: DuplicateCluster[]): PruneGuard {
+  const clusterOf = new Map<string, number>();
+  clusters.forEach((c, i) => {
+    for (const m of c.members)
+      if (m.blockId !== undefined) clusterOf.set(m.blockId, i);
+  });
+  return { clusterOf, members: clusters.map((c) => c.members.length) };
+}
+
+/**
+ * Admits the prune-visual targets of ONE review answer, in answer order. A
+ * prune is admitted only when the label is not reserved ("__"), the id has
+ * the stored block id shape, the scan put that id in a cluster (THE SCAN
+ * GUARD: a hostile or invented id removes nothing), the block sits on that
+ * section, and at least one other member of its cluster survives the prunes
+ * already admitted in this answer: first named, first pruned, so a review
+ * that names every copy keeps the last one. Returns the admitted id,
+ * or null (the caller downgrades the target to "revise").
+ */
+export function pruneAdmitter(
+  guard: PruneGuard
+): (label: string, blockId: unknown, blocksOnSection: readonly string[] | undefined) => string | null {
+  const pruned = new Map<number, number>();
+  return (label, blockId, blocksOnSection) => {
+    const id = typeof blockId === "string" ? blockId.trim() : "";
+    if (label.startsWith("__") || !BLOCK_ID.test(id)) return null;
+    const cluster = guard.clusterOf.get(id);
+    if (cluster === undefined) return null;
+    if (!Array.isArray(blocksOnSection) || !blocksOnSection.includes(id)) return null;
+    const after = (pruned.get(cluster) ?? 0) + 1;
+    if (after >= (guard.members[cluster] ?? 0)) return null;
+    pruned.set(cluster, after);
+    return id;
+  };
+}
+
+/**
+ * The consolidation review's deterministic half, from sections whose
+ * visuals the caller already serialized (brain.ts prepareConsolidationReview
+ * for the route and the rfp:consolidate CLI): the duplicate clusters, their
+ * findings lines (display title = label and title joined; the letter, never
+ * in a cluster, by its title) and the prune guard.
+ */
+export function consolidationScan(
+  sections: {
+    label: string;
+    title: string;
+    paragraphs: string[];
+    blocks?: ScanBlock[];
+  }[]
+): { clusters: DuplicateCluster[]; findings: string; guard: PruneGuard } {
+  const clusters = findDuplicateClusters(sections);
+  const titleByLabel = new Map(
+    sections.map((s) => [
+      s.label,
+      s.label === LETTER_LABEL ? s.title : `${s.label} ${s.title}`.trim(),
+    ])
+  );
+  const findings = formatDuplicateFindings(
+    clusters,
+    (l) => titleByLabel.get(l) ?? l
+  );
+  return { clusters, findings, guard: pruneGuard(clusters) };
 }
 
 /**

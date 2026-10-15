@@ -27,15 +27,14 @@
 // empty, which is why this is enforced here rather than trusted to a form.
 
 import {
+  documentSectionForPrompt,
   planDocumentRevision,
+  prepareConsolidationReview,
   reviewDocumentConsolidation,
   reviseSection,
+  sectionBlocksForPrompt,
   brainHealthy,
 } from "@/lib/rfp/brain";
-import {
-  findDuplicateClusters,
-  formatDuplicateFindings,
-} from "@/lib/rfp/consolidate";
 import {
   DOC_LABEL,
   LETTER_LABEL,
@@ -61,6 +60,7 @@ import {
   toGroundFacts,
   withBlocks,
 } from "@/lib/rfp/draft-blocks-ops";
+import { liftMarkdownTables, type DraftBlock } from "@/lib/rfp/draft-blocks";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
 import { referencesAsk, referencesGapWhy } from "@/lib/rfp/references-ask";
 import { reopenReferencesQuestion } from "@/lib/rfp/references-answer";
@@ -95,6 +95,46 @@ function transcribeFailMessage(subject: "scan" | "image", reason: VisionFailure)
   return reason === "timeout"
     ? `That ${subject} could not be transcribed in time. Paste its text instead, or attach the ${subject} on the RFP intake (/rfp/new), where reading has several minutes.`
     : `That ${subject} could not be transcribed. Paste its text instead.`;
+}
+
+/**
+ * Cheap precheck before a PATCH pays for the facts read the table lift needs
+ * (§5.17.19): some paragraph holds a line with a pipe directly followed by a
+ * separator-shaped line ("---|---", "| :--- | ---: |"). Every table
+ * liftMarkdownTables would convert passes this (its separator has at least
+ * two cells, so at least one pipe after a dash run); most edits fail it, so
+ * the common PATCH stays at zero extra queries and byte-identical writes.
+ */
+function mayHoldMarkdownTable(paragraphs: string[]): boolean {
+  return paragraphs.some(
+    (p) =>
+      p.includes("|") &&
+      /\|[^\n]*\n[ \t]*\|?[ \t]*:?-+:?[ \t]*\|/.test(p)
+  );
+}
+
+/**
+ * The PATCH half of §5.17.19: a GitHub-markdown table in accepted or edited
+ * text becomes a real table block. Runs only when the precheck says a table
+ * is even possible, against live SHARED facts (never a private note) and the
+ * section's STORED cites; every blocking control (currency, limits,
+ * grounding, the block cap) lives in liftMarkdownTables, which hands the
+ * inputs back untouched when it lifts nothing. Callers skip the letter.
+ */
+async function liftTablesForWrite(
+  paragraphs: string[],
+  blocks: DraftBlock[] | undefined,
+  cites: string[]
+): Promise<{
+  paragraphs: string[];
+  blocks: DraftBlock[] | undefined;
+  lifted: number;
+  refused: number;
+}> {
+  if (!mayHoldMarkdownTable(paragraphs))
+    return { paragraphs, blocks, lifted: 0, refused: 0 };
+  const facts = toGroundFacts(await liveFacts());
+  return liftMarkdownTables(paragraphs, blocks, facts, Array.isArray(cites) ? cites : []);
 }
 
 /**
@@ -459,6 +499,19 @@ export async function PATCH(
       );
     const newTitle = renamesLabel ? "" : heading;
 
+    // Visuals stay with the section through a retitle, re-anchored when a
+    // body revision changed the paragraph count. A body revision riding
+    // along is lifted exactly like the plain path below (§5.17.19): a
+    // markdown table in it becomes a real table block. The letter never
+    // reaches this branch (refused above).
+    const withBody = Array.isArray(body.paragraphs);
+    const retitleKept = keptBlocks(
+      sections[at],
+      withBody ? paragraphs.length : sections[at].paragraphs.length
+    );
+    const retitleLift = withBody
+      ? await liftTablesForWrite(paragraphs, retitleKept, sections[at].cites)
+      : { paragraphs, blocks: retitleKept, lifted: 0, refused: 0 };
     const nextSections = sections.map((s) =>
       s.label === label
         ? withBlocks(
@@ -468,17 +521,10 @@ export async function PATCH(
               title: newTitle,
               // Accepted alongside a body revision when present; cites and
               // generatedBy carry over per the header invariant.
-              ...(Array.isArray(body.paragraphs) ? { paragraphs } : {}),
+              ...(withBody ? { paragraphs: retitleLift.paragraphs } : {}),
               updatedAt: new Date().toISOString(),
             },
-            // Visuals stay with the section through a retitle, re-anchored
-            // when a body revision changed the paragraph count.
-            keptBlocks(
-              s,
-              Array.isArray(body.paragraphs)
-                ? paragraphs.length
-                : s.paragraphs.length
-            )
+            retitleLift.blocks
           )
         : s
     );
@@ -512,6 +558,10 @@ export async function PATCH(
         section: label,
         renamedLabel: renamesLabel,
         headingChars: heading.length,
+        ...(retitleLift.lifted > 0 ? { liftedTables: retitleLift.lifted } : {}),
+        // A table found but left as pipe text by a control: the activity
+        // log is the only place this is signaled (§5.17.19).
+        ...(retitleLift.refused > 0 ? { liftRefused: retitleLift.refused } : {}),
       },
     });
     return rfpOk({
@@ -519,6 +569,12 @@ export async function PATCH(
       rev: proposal.rev + 1,
       label: newLabel,
       title: newTitle,
+      // Only when a table was lifted: the stored record no longer matches
+      // the paragraphs the client sent, so it adopts this instead (an
+      // unadopted divergence would trip Tron's staleness guard forever).
+      ...(retitleLift.lifted > 0
+        ? { section: nextSections.find((s) => s.label === newLabel) }
+        : {}),
     });
   }
 
@@ -526,9 +582,16 @@ export async function PATCH(
   // text edit (or an accepted Tron revision, which arrives here) never
   // removes one and the body cannot supply one.
   const kept = keptBlocks(sections[at], paragraphs.length);
+  // A markdown table in the text becomes a real table block (§5.17.19).
+  // The letter is EXEMPT: it never carries blocks (resolve-draft routes it
+  // into furniture), so it is never lifted and keeps exactly today's write.
+  const lift =
+    label === LETTER_LABEL
+      ? { paragraphs, blocks: kept, lifted: 0, refused: 0 }
+      : await liftTablesForWrite(paragraphs, kept, sections[at].cites);
   sections[at] = withBlocks({
     ...sections[at],
-    paragraphs,
+    paragraphs: lift.paragraphs,
     // cites and generatedBy deliberately NOT taken from the body. See header.
     cites: sections[at].cites,
     // THE ONE carve-out from the header invariant, and it is label-scoped,
@@ -540,7 +603,7 @@ export async function PATCH(
     generatedBy:
       label === LETTER_LABEL ? "human" : sections[at].generatedBy,
     updatedAt: new Date().toISOString(),
-  }, kept);
+  }, lift.blocks);
 
   const ok = await writeProposalSections(
     proposal.id,
@@ -560,10 +623,21 @@ export async function PATCH(
     action: "proposal.section_edit",
     subjectKind: "proposal",
     subjectId: proposal.id,
-    meta: { section: label, paragraphs: paragraphs.length },
+    meta: {
+      section: label,
+      paragraphs: lift.paragraphs.length,
+      ...(lift.lifted > 0 ? { liftedTables: lift.lifted } : {}),
+      ...(lift.refused > 0 ? { liftRefused: lift.refused } : {}),
+    },
   });
 
-  return rfpOk({ ok: true, rev: proposal.rev + 1 });
+  return rfpOk({
+    ok: true,
+    rev: proposal.rev + 1,
+    // Only when a table was lifted: the client adopts the stored record
+    // instead of the paragraphs it sent (see the retitle branch).
+    ...(lift.lifted > 0 ? { section: sections[at] } : {}),
+  });
 }
 
 /** POST — ask Tron for a revision. Returns a proposal; writes nothing. */
@@ -688,27 +762,13 @@ export async function POST(
           503
         );
       const reqs = await listRequirements(proposal.documentId);
-      const shaped = sections.map((s) => ({
-        label: s.label,
-        title: s.title,
-        paragraphs: s.paragraphs,
-      }));
-      const clusters = findDuplicateClusters(shaped);
-      // Display titles for the findings lines: label + title joined (the
-      // letter is excluded from clusters by contract, but its title still
-      // answers a lookup honestly).
-      const titleByLabel = new Map(
-        sections.map((s) => [
-          s.label,
-          s.label === LETTER_LABEL
-            ? s.title
-            : `${s.label} ${s.title}`.trim(),
-        ])
-      );
-      const findings = formatDuplicateFindings(
-        clusters,
-        (l) => titleByLabel.get(l) ?? l
-      );
+      // One shaping for this route and the rfp:consolidate CLI: sanitized
+      // visuals serialized (serializeBlockForPrompt) into the duplicate scan
+      // (tables only) and the review's document text, the formatted
+      // findings, and the scan-guard set. A document with no visuals shapes
+      // exactly as before.
+      const { shaped, clusters, findings, guard } =
+        prepareConsolidationReview(sections);
       const { shared } = await knowledgeForUser(user);
       const review = await reviewDocumentConsolidation(
         proposal.id,
@@ -720,7 +780,13 @@ export async function POST(
           mandatory: r.mandatory,
         })),
         findings,
-        shared
+        shared,
+        // THE SCAN GUARD: a prune-visual target survives only for a block
+        // id the deterministic scan itself put in a cluster, on the section
+        // that holds it, never the last copy in its cluster; the client
+        // applies prune-visual unattended because of this filter, so it must
+        // never be widened here.
+        guard
       );
       if (!review)
         return rfpError(
@@ -741,12 +807,19 @@ export async function POST(
           targets: review.targets.length,
           retitles: review.targets.filter((t) => t.op === "retitle").length,
           removes: review.targets.filter((t) => t.op === "remove").length,
+          pruneVisuals: review.targets.filter((t) => t.op === "prune-visual")
+            .length,
           duplicateClusters: clusters.length,
+          // How many visuals the scan put in a cluster (the guard set).
+          clusterBlocks: guard.clusterOf.size,
           requirements: reqs.length,
           auto,
         },
       });
 
+      // Targets pass through as filtered, a prune-visual one carrying its
+      // blockId: { label, op, directive, heading? } | { label, op:
+      // "prune-visual", blockId, directive }.
       return rfpOk({
         plan: { targets: review.targets, note: review.note },
         duplicateClusters: clusters.length,
@@ -768,11 +841,9 @@ export async function POST(
     const { shared } = await knowledgeForUser(user);
     const plan = await planDocumentRevision(
       proposal.id,
-      sections.map((s) => ({
-        label: s.label,
-        title: s.title,
-        paragraphs: s.paragraphs,
-      })),
+      // Visuals ride as serialized text so the plan knows what they say; it
+      // can direct a markdown table but never target a visual itself.
+      sections.map(documentSectionForPrompt),
       instruction,
       shared,
       attachment
@@ -816,6 +887,10 @@ export async function POST(
     );
 
   const { shared } = await knowledgeForUser(user);
+  // The section's sanitized visuals, shown in place (never any for the
+  // letter): the revise turn must know what a table already says so it
+  // neither repeats it in prose nor writes a second copy.
+  const shownBlocks = sectionBlocksForPrompt(section);
   const result = await reviseSection(
     proposal.id,
     // The letter's reserved label is an internal key, not a name Tron
@@ -824,6 +899,7 @@ export async function POST(
       ? section.title
       : `${section.label} ${section.title}`,
     section.paragraphs,
+    shownBlocks,
     instruction,
     shared,
     attachment,
@@ -859,6 +935,7 @@ export async function POST(
       // Shape only: whether Tron proposed a structural change too.
       proposedHeading: result.heading !== null,
       proposedRemove: result.remove,
+      visualsShown: shownBlocks.length,
     },
   });
 

@@ -284,20 +284,53 @@ export function groundValue(value: string, factText: string): boolean {
   const want = numTokens(norm);
   if (want.length === 0) return true;
   const have = numTokens(normGround(factText));
-  return want.every((w) =>
-    have.some(
-      (h) =>
-        h.num === w.num &&
-        h.prefix === w.prefix &&
-        h.suffix === w.suffix &&
-        h.pct === w.pct &&
-        (w.qualifier === null || w.qualifier === h.qualifier)
-    )
+  return want.every((w) => tokenGrounded(w, have));
+}
+
+/** One value token against a fact's tokens: groundValue's per-number rule. */
+function tokenGrounded(w: NumToken, have: NumToken[]): boolean {
+  return have.some(
+    (h) =>
+      h.num === w.num &&
+      h.prefix === w.prefix &&
+      h.suffix === w.suffix &&
+      h.pct === w.pct &&
+      (w.qualifier === null || w.qualifier === h.qualifier)
   );
 }
 
 function factText(f: GroundFact): string {
   return `${f.statement} ${f.detail ?? ""}`;
+}
+
+/**
+ * A `pricing.*` fact never grounds or backs a table built from text (the markdown lift, the
+ * parseTable salvage): its numbers are money with the sign left off ("247" grounds against "$247
+ * per user per month"), and rule B7 keeps money out of every block.
+ */
+function isPricingFact(f: GroundFact | undefined): boolean {
+  return !!f && typeof f.key === "string" && f.key.startsWith("pricing.");
+}
+
+/**
+ * The cites a table built from text carries: only the candidates whose own text grounds at least
+ * one of the table's numeric tokens, so an edit to an unrelated cited fact never marks it stale
+ * (rule C1). A table with no number grounded nothing in particular and keeps every candidate, as
+ * does one no single fact grounds on its own.
+ */
+function groundingCites(strings: string[], ids: string[], byId: Map<string, GroundFact>): string[] {
+  const want = strings.flatMap((s) => {
+    const n = normGround(s);
+    return FOREIGN_NUMERAL.test(n) ? [] : numTokens(n);
+  });
+  if (want.length === 0) return ids;
+  const out = ids.filter((id) => {
+    const f = byId.get(id);
+    if (!f || f.polarity === "negative") return false;
+    const have = numTokens(normGround(factText(f)));
+    return want.some((w) => tokenGrounded(w, have));
+  });
+  return out.length > 0 ? out : ids;
 }
 
 const UNIT_ALIASES: Record<string, string> = {
@@ -634,13 +667,24 @@ function parseStats(item: Record<string, unknown>, byId: Map<string, GroundFact>
   return { drop: tiles.length + tooWide >= LIMITS.tiles[0] ? "value-too-wide" : "fewer-than-two-grounded-tiles", tooWide };
 }
 
+/**
+ * A model table. `salvage` is the section's own cites (and their affirmative corpus), tried only
+ * when the visual cited nothing known: models routinely leave `cites` empty on a table whose every
+ * figure the section's facts state, and degrading that to " · " prose is what turned an SLA table
+ * into four paragraphs. The salvage changes WHICH facts ground the cells, never whether they are
+ * grounded; when it fails too, the table degrades exactly as before. A salvaged table cites only
+ * the facts that ground its numbers (`narrow`, groundingCites).
+ */
 function parseTable(
   item: Record<string, unknown>,
   cites: string[],
-  corpus: string
+  corpus: string,
+  salvage: { cites: string[]; corpus: string; narrow: (strings: string[]) => string[] } | null = null
 ): Parsed {
   if (!Array.isArray(item.columns) || !Array.isArray(item.rows)) return { drop: "malformed" };
-  const headers = item.columns.slice(0, 12).map((c) => clean(c, LIMITS.label));
+  // A column is a string, or the stored shape `{ header }` a model echoes back; anything else
+  // cleans to null and fails the shape.
+  const headers = item.columns.slice(0, 12).map((c) => clean(isObj(c) ? c.header : c, LIMITS.label));
   const rows: string[][] = [];
   let cellsOk = true;
   for (const r of item.rows.slice(0, 40)) {
@@ -659,20 +703,20 @@ function parseTable(
     inRange(rows.length, LIMITS.tableRows) &&
     headers.every((h) => !!h) &&
     rows.every((r) => r.length === headers.length && r.some((c) => c !== ""));
+  const all = [caption ?? "", ...(headers as string[]), ...rows.flat()];
+  const body = (): Body<"table"> => ({
+    kind: "table",
+    caption: caption ? caption : null,
+    columns: (headers as string[]).map((header) => ({ header, align: "left" as const })),
+    rows,
+    emphasizeLastRow: false,
+  });
   if (shapeOk && cites.length > 0) {
-    const all = [caption ?? "", ...(headers as string[]), ...rows.flat()];
     if (!all.every((s) => groundValue(s, corpus))) return { drop: "ungrounded" };
-    return {
-      ok: {
-        kind: "table",
-        caption: caption ? caption : null,
-        columns: (headers as string[]).map((header) => ({ header, align: "left" as const })),
-        rows,
-        emphasizeLastRow: false,
-      },
-      cites,
-    };
+    return { ok: body(), cites };
   }
+  if (shapeOk && salvage && salvage.cites.length > 0 && all.every((s) => groundValue(s, salvage.corpus)))
+    return { ok: body(), cites: salvage.narrow(all) };
   if (!cellsOk) return { drop: "malformed" };
   const lines = rows.map((r) => r.filter((c) => c !== "").join(" · ")).filter((l) => l !== "");
   return { degrade: lines, cites };
@@ -726,7 +770,8 @@ function parseCards(item: Record<string, unknown>, cites: string[], corpus: stri
  * Validate the drafter's `visuals` array. Never throws and never fails a section: a visual that is
  * shape-valid and grounded becomes a block; one that is malformed (or cites nothing known) but
  * whose text is grounded becomes prose for the caller to append; everything else is dropped with a
- * reason worth logging.
+ * reason worth logging. A shape-valid table that cites nothing known is first re-grounded against
+ * the section's own cites (parseTable's salvage) and kept as a block citing them when that holds.
  *
  * Degraded prose is checked against the facts the section itself cites plus the visual's own
  * (every supplied fact when neither resolves), and only as many paragraphs as fit under
@@ -752,6 +797,16 @@ export function parseModelVisuals(
       .filter((f): f is GroundFact => !!f)
       .map(factText)
       .join(" \n ");
+  // The table salvage (parseTable): the section's own cites that resolve, pricing facts out, and
+  // the corpus of the affirmative ones (none left: no salvage). Built once; used only by a table
+  // that cited nothing known.
+  const salvageCites = knownCites(sectionCites, byId).filter((id) => !isPricingFact(byId.get(id)));
+  const salvageCorpusIds = salvageCites.filter((id) => byId.get(id)?.polarity !== "negative");
+  const salvage = {
+    cites: salvageCorpusIds.length > 0 ? salvageCites : [],
+    corpus: textOf(salvageCorpusIds),
+    narrow: (strings: string[]) => groundingCites(strings, salvageCites, byId),
+  };
 
   for (const item of raw.slice(0, MODEL_SCAN_MAX)) {
     let kind = "unknown";
@@ -782,7 +837,7 @@ export function parseModelVisuals(
         kind === "stats"
           ? parseStats(item, byId)
           : kind === "table"
-            ? parseTable(item, cites, corpus)
+            ? parseTable(item, cites, corpus, cites.length === 0 ? salvage : null)
             : kind === "callout"
               ? parseCallout(item, cites, corpus)
               : parseCards(item, cites, corpus);
@@ -819,6 +874,238 @@ export function parseModelVisuals(
   }
   if (raw.length > MODEL_SCAN_MAX) dropped.push({ kind: "unknown", reason: "over-limit" });
   return { blocks, degraded, dropped, tooWide };
+}
+
+// ---------------------------------------------------------------------------
+// Markdown tables written as prose
+// ---------------------------------------------------------------------------
+
+/** A GFM delimiter cell: one or more dashes, either side optionally a colon. */
+const MD_SEPARATOR_CELL = /^:?-+:?$/;
+const MD_EMPHASIS = ["**", "__", "`", "*"] as const;
+
+/**
+ * One markdown table row as cells: the outer pipes are optional, a `\|` is a literal pipe inside a
+ * cell (checked by hand on the preceding character, never a lookbehind), every cell trimmed.
+ */
+function splitPipeRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+  const cells: string[] = [];
+  let cur = "";
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && s[i + 1] === "|") {
+      cur += "|";
+      i++;
+    } else if (s[i] === "|") {
+      cells.push(cur.trim());
+      cur = "";
+    } else cur += s[i];
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+/**
+ * A cell without the inline emphasis that wraps ALL of it (`**x**`, `__x__`, `` `x` ``, `*x*`):
+ * the markup is presentation the block draws itself. A wrapper that does not span the whole cell
+ * (`**a** and **b**`) is left as written.
+ */
+function unwrapEmphasis(cell: string): string {
+  let s = cell.trim();
+  for (let pass = 0; pass < 3; pass++) {
+    const w = MD_EMPHASIS.find((m) => {
+      if (s.length <= 2 * m.length || !s.startsWith(m) || !s.endsWith(m)) return false;
+      const inner = s.slice(m.length, -m.length);
+      return inner.trim() !== "" && !inner.includes(m);
+    });
+    if (!w) break;
+    s = s.slice(w.length, -w.length).trim();
+  }
+  return s;
+}
+
+/**
+ * The GitHub-markdown tables in one paragraph's lines: a header line of two or more cells, a
+ * separator line of exactly as many delimiter cells (`-`, `---`, `:--:`) right under it, then
+ * every following line that carries a pipe. `rows` keeps each data line's own cells, ragged or
+ * not; the conversion refuses a ragged table rather than padding it.
+ */
+function findMarkdownTables(lines: string[]): { start: number; end: number; header: string[]; rows: string[][] }[] {
+  const out: { start: number; end: number; header: string[]; rows: string[][] }[] = [];
+  let i = 0;
+  while (i + 2 < lines.length) {
+    const header = lines[i].includes("|") ? splitPipeRow(lines[i]) : [];
+    const sep = header.length >= 2 ? splitPipeRow(lines[i + 1]) : [];
+    if (header.length < 2 || sep.length !== header.length || !sep.every((c) => MD_SEPARATOR_CELL.test(c))) {
+      i++;
+      continue;
+    }
+    let end = i + 2;
+    while (end < lines.length && lines[end].includes("|")) end++;
+    if (end === i + 2) {
+      i++;
+      continue;
+    }
+    out.push({ start: i, end, header, rows: lines.slice(i + 2, end).map(splitPipeRow) });
+    i = end;
+  }
+  return out;
+}
+
+/** One found table through every control, or null (it then stays in the text exactly as written). */
+function markdownTableBody(rawHeader: string[], rawCells: string[][], corpus: string): Body<"table"> | null {
+  const header = rawHeader.map(unwrapEmphasis);
+  const rawRows = rawCells.map((r) => r.map(unwrapEmphasis));
+  // Rule B7 first, on the raw text and again on the cleaned text (NFKC can surface a sign).
+  if ([...header, ...rawRows.flat()].some(hasCurrency)) return null;
+  if (!inRange(header.length, LIMITS.tableCols) || !inRange(rawRows.length, LIMITS.tableRows)) return null;
+  const headers = header.map((h) => clean(h, LIMITS.label));
+  // An empty header is refused: the stored read (readBody) would drop the block on its next read.
+  if (headers.some((h) => !h)) return null;
+  const rows: string[][] = [];
+  for (const r of rawRows) {
+    if (r.length !== headers.length) return null;
+    const row = r.map((c) => clean(c, LIMITS.cell));
+    if (row.some((c) => c === null)) return null;
+    if (!row.some((c) => c !== "")) return null;
+    rows.push(row as string[]);
+  }
+  const all = [...(headers as string[]), ...rows.flat()];
+  if (all.some(hasCurrency)) return null;
+  if (!all.every((s) => groundValue(s, corpus))) return null;
+  return {
+    kind: "table",
+    caption: null,
+    columns: (headers as string[]).map((header) => ({ header, align: "left" as const })),
+    rows,
+    emphasizeLastRow: false,
+  };
+}
+
+/**
+ * Tabular content is always a visual (ARCHITECTURE.md §5.17.19). A GitHub-markdown table written
+ * inside a paragraph (a consolidation revise, a person's paste) becomes a real `table` block,
+ * anchored where it stood, and the prose around it stays as its own paragraphs.
+ *
+ * Every control blocks, and a table that fails one stays in the text exactly as written, never
+ * half-lifted: no currency anywhere (rule B7), headers and cells (whole-cell emphasis markup
+ * removed) through `clean` and the limits, 2 to 5 columns, 1 to 14 rows, no ragged row, no empty
+ * row, and every string grounded against the affirmative facts among the section's own cites,
+ * `pricing.*` facts excluded (none left means nothing lifts). The block cites only those of the
+ * candidates that ground one of its numbers (all of them for a table with no number). The block
+ * cap counts the blocks already there, and a lift that would push the paragraph count past
+ * PARAGRAPH_CAP (a table between two prose runs) is refused, because the edit route keeps only the
+ * first PARAGRAPH_CAP paragraphs of whatever it is sent. `refused` counts the tables found but
+ * left as text by any of those controls; the caller can only report it.
+ *
+ * Every block keeps its place in the flow: an existing block anchored before old paragraph a sorts
+ * at a, a table lifted from inside old paragraph j at j + 0.5 (stable), and existing anchors follow
+ * the paragraphs, not the count. When nothing lifts, the INPUT arrays come back as they were (===),
+ * so a caller can skip the write.
+ */
+export function liftMarkdownTables(
+  paragraphs: string[],
+  existingBlocks: DraftBlock[] | undefined,
+  facts: GroundFact[],
+  sectionCites: string[]
+): { paragraphs: string[]; blocks: DraftBlock[] | undefined; lifted: number; refused: number } {
+  const unchanged = (refused: number) => ({ paragraphs, blocks: existingBlocks, lifted: 0, refused });
+  if (!Array.isArray(paragraphs) || !paragraphs.some((p) => typeof p === "string" && p.includes("|"))) return unchanged(0);
+  const linesOf = (p: unknown) => (typeof p === "string" && p.includes("|") ? p.split("\n") : null);
+  const countFound = () =>
+    paragraphs.reduce((n, p) => {
+      const lines = linesOf(p);
+      return n + (lines ? findMarkdownTables(lines).length : 0);
+    }, 0);
+  const existing = Array.isArray(existingBlocks) ? existingBlocks : [];
+  let room = LIMITS.blocksPerSection - existing.length;
+  if (room <= 0) return unchanged(countFound());
+
+  const live = Array.isArray(facts) ? facts.filter((f) => isObj(f) && typeof f.id === "string") : [];
+  const byId = new Map(live.map((f) => [f.id, f]));
+  const cites = knownCites(sectionCites, byId).filter((id) => !isPricingFact(byId.get(id)));
+  const corpusFacts = cites.map((id) => byId.get(id)!).filter((f) => f.polarity !== "negative");
+  if (corpusFacts.length === 0) return unchanged(countFound());
+  const corpus = corpusFacts.map(factText).join(" \n ");
+
+  const nextParagraphs: string[] = [];
+  // Each block with its place in the OLD flow (see the doc comment), sorted once at the end.
+  const placed: { key: number; block: DraftBlock }[] = [];
+  const lifted: DraftBlock[] = [];
+  let refused = 0;
+  // startOf[k] = where old paragraph k now begins; startOf[length] = the new count.
+  const startOf: number[] = [];
+  let spare = Math.max(PARAGRAPH_CAP, paragraphs.length) - paragraphs.length;
+
+  paragraphs.forEach((p, j) => {
+    startOf.push(nextParagraphs.length);
+    const lines = linesOf(p);
+    const tables = lines ? findMarkdownTables(lines) : [];
+    // Segments of this paragraph: prose runs and lifted tables, in order.
+    const parts: ({ prose: string } | { table: Body<"table"> })[] = [];
+    let from = 0;
+    let taken = 0;
+    for (const t of tables) {
+      const body = taken < room ? markdownTableBody(t.header, t.rows, corpus) : null;
+      if (!body) {
+        refused++;
+        continue;
+      }
+      parts.push({ prose: lines!.slice(from, t.start).join("\n").trim() });
+      parts.push({ table: body });
+      from = t.end;
+      taken++;
+    }
+    if (taken === 0) {
+      nextParagraphs.push(p);
+      return;
+    }
+    parts.push({ prose: lines!.slice(from).join("\n").trim() });
+    const prose = parts.filter((x) => "prose" in x && x.prose !== "").length;
+    if (prose - 1 > spare) {
+      refused += taken;
+      nextParagraphs.push(p);
+      return;
+    }
+    spare -= prose - 1;
+    room -= taken;
+    for (const part of parts) {
+      if ("table" in part) {
+        let id = newBlockId();
+        while (existing.some((b) => b.id === id) || lifted.some((b) => b.id === id)) id = newBlockId();
+        const strings = [...part.table.columns.map((c) => c.header), ...part.table.rows.flat()];
+        const block: DraftBlock = {
+          ...part.table,
+          id,
+          after: nextParagraphs.length,
+          cites: groundingCites(strings, cites, byId),
+          generatedBy: "llm",
+        };
+        lifted.push(block);
+        placed.push({ key: j + 0.5, block });
+      } else if (part.prose !== "") nextParagraphs.push(part.prose);
+    }
+  });
+  if (lifted.length === 0) return unchanged(refused);
+  startOf.push(nextParagraphs.length);
+
+  for (const b of existing) {
+    const a = clampAfter(b.after, paragraphs.length);
+    placed.push({ key: a, block: { ...b, after: startOf[a] } });
+  }
+  // Array.prototype.sort is stable: existing blocks sharing an anchor keep their stored order.
+  placed.sort((x, y) => x.key - y.key);
+  return {
+    paragraphs: nextParagraphs,
+    blocks: reanchorBlocks(
+      placed.map((x) => x.block),
+      nextParagraphs.length
+    ),
+    lifted: lifted.length,
+    refused,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1160,4 +1447,61 @@ export function draftBlockSummary(b: DraftBlock): string {
       return `Client references · ${n} ${n === 1 ? "reference" : "references"}`;
     }
   }
+}
+
+const PROMPT_BLOCK_MAX = 2000;
+
+/**
+ * A block as model-readable text, for the revise and whole-document turns and the duplicate scan
+ * (consolidate.ts reads it pre-serialized). The first line is `[visual <kind> id=<id>]`, then one
+ * line per content element. A table's caption rides on that first line after the tag, so its
+ * layout is fixed by position: line 2 is ALWAYS the header row and every later line a row, cells
+ * joined by " | " (the duplicate scan reads rows back this way; a caption holding " | " cannot pass
+ * for a header). Whole lines up to 2,000 chars, never a cut line (only a first line longer than
+ * that alone is sliced). A `references` block gives its organizations only: the contacts are a
+ * person's, and never enter a prompt.
+ */
+export function serializeBlockForPrompt(block: DraftBlock): string {
+  const lines: string[] = [`[visual ${block.kind} id=${block.id}]`];
+  switch (block.kind) {
+    case "table":
+      if (block.caption) lines[0] += ` ${block.caption}`;
+      lines.push(block.columns.map((c) => c.header).join(" | "));
+      for (const r of block.rows) lines.push(r.join(" | "));
+      break;
+    case "stat-tiles":
+      for (const t of block.tiles) lines.push(`${t.value} ${t.label}`);
+      break;
+    case "fact-grid":
+      for (const p of block.pairs) lines.push(`${p.label}: ${p.value}`);
+      break;
+    case "badge-strip":
+      for (const x of block.badges) lines.push(x.label);
+      break;
+    case "callout":
+      lines.push(block.title ? `${block.title}: ${block.body}` : block.body);
+      break;
+    case "cards":
+      for (const c of block.cards) lines.push(`${c.title}: ${c.body}`);
+      break;
+    case "timeline":
+      for (const s of block.steps) lines.push(s.title);
+      break;
+    case "references":
+      for (const r of block.references) lines.push(r.organization);
+      break;
+  }
+  const kept: string[] = [];
+  let total = 0;
+  for (const raw of lines) {
+    const line = raw.replace(/\s*\n\s*/g, " ");
+    const spend = line.length + (kept.length ? 1 : 0);
+    if (total + spend > PROMPT_BLOCK_MAX) {
+      if (kept.length === 0) kept.push(line.slice(0, PROMPT_BLOCK_MAX));
+      break;
+    }
+    kept.push(line);
+    total += spend;
+  }
+  return kept.join("\n");
 }
