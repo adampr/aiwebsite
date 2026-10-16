@@ -640,6 +640,24 @@ async function brainPins(): Promise<void> {
       ],
       [true, true, false, true, true]
     );
+    // The brain #928 parse-fragility class, seen LIVE on this turn
+    // 2026-10-16: a first JSON object, a "Wait, I must reply with the exact
+    // schema only. Corrected output:" line, then the corrected object. The
+    // first-{-to-last-} slice cannot parse that; the salvage must take the
+    // LAST balanced object. The fake reply mirrors the captured answer,
+    // braces inside a string included.
+    const cpSalvage = await turn(
+      "cpSalvage",
+      () => brain.composeProposalParts("p1", "Curio", "Curio", bsecs, briefOpts),
+      [
+        JSON.stringify({ parts: goodParts.map((g) => ({ ...g, title_note: null })), note: "a { stray" }),
+        "",
+        "Wait, I must reply with the exact schema only. Corrected output:",
+        "",
+        JSON.stringify({ parts: goodParts }),
+      ].join("\n")
+    );
+    check("parts-only: a self-corrected double-object reply salvages the LAST object", cpSalvage, pl1?.parts);
     // F6: only the parts-only turn reads each part's visual text, fenced.
     const cp3 = await turn("cp3", () => brain.composeProposalParts("p1", "Curio", "Curio", timelineSecs, briefOpts), partsReply([{ n: 3, title: "Your First Months With Us", dek: "Your current provider fully offboarded by Jan 11, 2027." }]));
     const cpUser = captured.cp3?.user ?? "";

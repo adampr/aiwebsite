@@ -170,8 +170,55 @@ function parseJson(raw: string): unknown {
   try {
     return JSON.parse(trimmed.slice(start, end + 1));
   } catch {
-    return null;
+    return salvageLastJsonObject(trimmed);
   }
+}
+
+/**
+ * The first-{-to-last-} slice fails when a model answers with TWO objects
+ * ("...}\n\nWait, I must reply with the exact schema only. Corrected
+ * output:\n\n{...") — the brain #928 parse-fragility class, seen live on
+ * the rfpparts turn 2026-10-16. Walk the balanced top-level {...} spans
+ * (string- and escape-aware) and return the LAST one that parses: when a
+ * model corrects itself, the correction comes last. Only ever called after
+ * the plain parse failed, so it strictly adds successful parses, and every
+ * caller screens the parsed content downstream regardless.
+ */
+function salvageLastJsonObject(text: string): unknown {
+  let last: unknown = null;
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      if (depth > 0) inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}" && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try {
+          last = JSON.parse(text.slice(start, i + 1));
+        } catch {
+          // An unbalanced-in-practice span (a brace inside un-JSON text):
+          // keep scanning, an earlier salvage may stand.
+        }
+        start = -1;
+      }
+    }
+  }
+  return last;
 }
 
 export type ReadRfpResult = {

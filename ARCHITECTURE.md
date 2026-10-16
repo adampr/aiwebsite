@@ -12667,7 +12667,12 @@ hand-written row cannot print what the write screens refuse. A gate finding
 located on a part span (`part[n].title` / `part[n].dek`) gets the Checks
 pane's no-action recipe (check-fixes.ts `PART_FIX_MESSAGE`: regenerate the
 cover letter or run `rfp:parts`), never a Tron sweep: Tron cannot edit
-`parts_json`. Writers:
+`parts_json`. brain.ts `parseJson` (every turn in that module) now salvages
+the LAST balanced top-level JSON object when the plain first-{-to-last-}
+slice fails to parse: the brain #928 class, seen live on the rfpparts turn
+2026-10-16 (the model answered, added "Corrected output:" and answered
+again, and the compose returned null); the salvage only runs after the
+plain parse fails, and every caller's screens still apply. Writers:
 - The letter turn (`draftCoverLetter`) returns optional `parts` for a brief
   only (it already reads every drafted section fenced and lands last). Each
   title and dek passes the round-32 sanitation: cleanHeading'd title,
