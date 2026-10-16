@@ -46,6 +46,10 @@ export type RfpExportAssets = {
     /** Ghost divider numerals, 134x122.4pt at 300dpi. */
     num01: Buffer;
     num02: Buffer;
+    /** Parts 03 and 04 of a brief document (§5.17.21), rendered to the same
+     *  geometry as 01/02 (Archivo Bold, navy outline over the ghost fill). */
+    num03: Buffer;
+    num04: Buffer;
     /** Visual-block marks Word cannot draw (the PDF draws them as vectors):
      *  the badge strip's rotated square, 14px box at 4x, in the order the
      *  strip cycles them (navy, blue, ink). */
@@ -98,6 +102,8 @@ export function loadRfpExportAssets(): RfpExportAssets {
       arcCorner: read("rfp-ornaments", "arc-corner.png"),
       num01: read("rfp-ornaments", "num-01.png"),
       num02: read("rfp-ornaments", "num-02.png"),
+      num03: read("rfp-ornaments", "num-03.png"),
+      num04: read("rfp-ornaments", "num-04.png"),
       badgeMarks: [
         read("rfp-ornaments", "badge-navy.png"),
         read("rfp-ornaments", "badge-blue.png"),
@@ -182,14 +188,11 @@ export const FURNITURE_MINIMUM_CAPTION =
 export const FURNITURE_TABLE_HEAD = ["Service", "Qty", "Unit", "Monthly"] as const;
 
 /**
- * The workspace's section-kicker rule, replicated verbatim (workspace.tsx
- * secKicker): bare labels get a "Section " prefix, roman numerals are tested
- * as numerals first, already-worded labels pass through.
+ * The section-kicker rule, re-exported from the client-safe furniture.ts so
+ * the workspace's secKicker and both emitters run ONE function (it was a
+ * pinned replica of the workspace's copy before round 33, §5.17.21). Bare
+ * labels get a "Section " prefix, roman numerals are tested as numerals
+ * first, already-worded labels pass through. A brief document's sheets print
+ * the part-relative kicker instead (furniture.ts sheetKicker).
  */
-export function sectionKicker(label: string): string {
-  const t = label.trim();
-  if (!t) return "Section";
-  if (/^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/i.test(t))
-    return `Section ${t}`;
-  return /[a-z]{3,}/i.test(t) ? t : `Section ${t}`;
-}
+export { sectionKicker } from "./furniture";

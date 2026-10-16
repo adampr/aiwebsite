@@ -40,11 +40,13 @@ import { signatureFor } from "./signature";
 import {
   coverLede,
   coverTitle,
+  documentParts,
   letterAddresseeLines,
   letterThesis,
+  orderDrafted,
   recipientAddressLines,
 } from "./furniture";
-import { letterPricingParagraph } from "./quote";
+import { letterPricingParagraph, partPricingDek } from "./quote";
 import { interleave, sanitizeStoredBlocks, type DraftBlock } from "./draft-blocks";
 import { referenceCardTable, type ReferenceEntry } from "./references-block";
 import type { Reference } from "./content-model/knowledge";
@@ -195,13 +197,9 @@ export function resolveDraft(input: DraftGateInput): {
 
   // Sections in the CLIENT's order (rule C4). A drafted section whose label
   // is no longer in the structure still renders, after the structured ones.
-  const ordered: DraftSectionRecord[] = [];
-  for (const node of input.structure) {
-    const sec = drafted.find((s) => s.label === node.label);
-    if (sec) ordered.push(sec);
-  }
-  for (const sec of drafted)
-    if (!ordered.includes(sec)) ordered.push(sec);
+  // furniture.ts orderDrafted is that rule, shared with the part resolution
+  // below and the workspace, so all of them count the same sheets.
+  const ordered = orderDrafted(input.structure, drafted);
 
   const references: Reference[] = [];
   const sections: Section[] = ordered.map((sec, ordinal) => {
@@ -376,6 +374,21 @@ export function resolveDraft(input: DraftGateInput): {
   for (const row of input.myKnowledge)
     factsById[`pending_${row.id}`] = pendingFact(row);
 
+  // A brief's thematic parts (§5.17.21): ONE resolution (furniture.ts
+  // documentParts over outline.ts resolveParts) that the gate, both emitters
+  // (through buildExportView) and the workspace all read. Null on a real
+  // RFP, which then resolves exactly as before (no `parts` key at all).
+  const docParts = documentParts({
+    intakeForm: doc.intakeForm,
+    structure: input.structure,
+    drafted,
+    partsJson: proposal.partsJson,
+    pricingPresent: input.quote !== null,
+    // The pricing part's dek is system-composed from the same quote and
+    // minimum the letter's pricing paragraph reads (quote.ts).
+    pricingDek: partPricingDek(input.quote, input.rateCard.minimumFullyManagedUsers),
+  });
+
   const resolved: ResolvedProposal = {
     ...core,
     facts: Object.fromEntries(
@@ -386,6 +399,20 @@ export function resolveDraft(input: DraftGateInput): {
     density: "default",
     kbVersion: input.kbVersion,
     ...(fromBrief ? { intakeForm: "brief" as const } : {}),
+    ...(docParts
+      ? {
+          parts: docParts.parts.map((p) => ({
+            n: p.n,
+            title: p.title,
+            dek: p.dek,
+            labels: [...p.labels],
+            kickers: p.labels.map((l) => docParts.kicker(l)),
+            holdsPricing: p.holdsPricing,
+            position: p.position,
+            pricingKicker: p.pricingKicker,
+          })),
+        }
+      : {}),
     // Rule C2's own field set, so C2 re-derives and verifies it.
     contentHash: contentHash(core),
   };

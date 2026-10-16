@@ -102,6 +102,26 @@ export type ResolvedProposal = {
    *  furniture that names "the request" can say otherwise. Outside the
    *  content hash, like density. */
   intakeForm?: "brief";
+  /** A brief's thematic parts (§5.17.21), resolved ONCE by furniture.ts
+   *  documentParts: each part's divider copy, its member labels in sheet
+   *  order and each member's part-relative kicker (`kickers[i]` is
+   *  `labels[i]`'s). ABSENT on a real RFP, which keeps the legacy two-divider
+   *  layout byte-identical. Presentation only: outside the content hash,
+   *  like intakeForm and density. */
+  parts?: {
+    n: 1 | 2 | 3 | 4;
+    title: string;
+    dek: string | null;
+    labels: string[];
+    kickers: string[];
+    holdsPricing: boolean;
+    /** The number the part prints (its place among the rendered parts);
+     *  `n` is the canonical part, the parts_json key. */
+    position: number;
+    /** The Investment sheet's kicker ("Section p.1") in the part that
+     *  holds pricing, else null. */
+    pricingKicker: string | null;
+  }[];
   /** Hash of this content model. Two artifacts of the same proposal must share it (rule C2). */
   contentHash: string;
 };
@@ -177,6 +197,14 @@ export function resolvedTextSpans(
       spans.push({ location: "pricing", field: `notes[${i}]`, text: note }),
     );
   }
+
+  // A brief's part dividers (§5.17.21): their titles and deks may be
+  // model-authored (stored parts_json, sanitized where it landed), and every
+  // surface prints them, so they scan like the rest of the furniture.
+  (resolved.parts ?? []).forEach((part) => {
+    spans.push({ location: "parts", field: `part[${part.n}].title`, text: part.title });
+    if (part.dek) spans.push({ location: "parts", field: `part[${part.n}].dek`, text: part.dek });
+  });
 
   spans.push({ location: "back-cover", field: "headline", text: resolved.backCover.headline });
   if (resolved.backCover.subhead) {

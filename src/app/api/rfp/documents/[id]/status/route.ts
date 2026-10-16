@@ -64,6 +64,11 @@ export async function GET(
       proposalView.pricingInputs = proposal.pricingInputsJson
         ? JSON.parse(proposal.pricingInputsJson)
         : null;
+      // Raw, like the page prop: the letter landing composes part titles
+      // and deks (§5.17.21), and a poll that adopts the letter's sections
+      // without them would leave the on-screen dividers on the defaults
+      // until a reload while both files already print the composed ones.
+      proposalView.partsJson = proposal.partsJson ?? null;
     }
   }
 

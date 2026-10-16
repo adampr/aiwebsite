@@ -1,7 +1,10 @@
-// Cover, letterhead and closing furniture: ONE author for the workspace
-// sheets, resolve-draft (and so the gate) and both emitters (§5.17.5,
-// §5.17.20). Pure and client-safe: no node:fs, no lookbehind, no imports
-// beyond types, so workspace.tsx renders exactly the strings the files print.
+// Cover, letterhead, closing and part furniture: ONE author for the
+// workspace sheets, resolve-draft (and so the gate) and both emitters
+// (§5.17.5, §5.17.20, §5.17.21). Pure and client-safe: no node:fs, no
+// lookbehind, and the only runtime import is outline.ts (itself import-free),
+// so workspace.tsx renders exactly the strings the files print.
+
+import { partCorpusOf, partDigitsStated, resolveParts, type PartGroundSection } from "./outline";
 //
 // Every input is a STORED field (rfp_documents.contact_name / contact_title /
 // client_address / proposal_headline, the letter record's `thesis`), already
@@ -249,4 +252,116 @@ export function letterThesis(raw: unknown): string | null {
 /** The navy closing sheet's big line: the thesis, else the flat-fee line. */
 export function closingHeadline(thesis: string | null | undefined): string {
   return letterThesis(thesis) ?? CLOSING_HEADLINE;
+}
+
+/* ---- Section kickers and thematic parts (§5.17.21) ---------------------- */
+
+/**
+ * THE section-kicker rule on every sheet of a document without parts (a real
+ * RFP): bare labels get a "Section " prefix, roman numerals are tested as
+ * numerals first ("III" and "VII" contain 3+ letters and would otherwise
+ * render bare beside "Section II"), already-worded labels pass through.
+ * The workspace's secKicker and export-assets' sectionKicker are both THIS
+ * function now (they were a pinned replica pair before round 33).
+ */
+export function sectionKicker(label: string): string {
+  const t = label.trim();
+  if (!t) return "Section";
+  if (/^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/i.test(t))
+    return `Section ${t}`;
+  return /[a-z]{3,}/i.test(t) ? t : `Section ${t}`;
+}
+
+/** One resolved thematic part: the divider's copy and its member labels in
+ *  sheet order (outline.ts resolveParts, drafted sections only). `n` is the
+ *  canonical part, `position` the number it prints (§5.17.21). */
+export type DocPart = {
+  n: 1 | 2 | 3 | 4;
+  title: string;
+  dek: string | null;
+  labels: string[];
+  holdsPricing: boolean;
+  position: number;
+  pricingKicker: string | null;
+};
+
+/** A brief document's parts plus the part-relative kicker ("Section 1.4"). */
+export type DocParts = { parts: DocPart[]; kicker: (label: string) => string };
+
+/**
+ * The drafted sections in the order every surface prints them: the
+ * structure's order (rule C4), then any drafted section whose label the
+ * structure no longer names, in stored order. resolve-draft orders its
+ * sections with this, and the part resolution below takes the same list, so
+ * the screen, the gate and both files agree on what part 1's fourth sheet is.
+ */
+export function orderDrafted<T extends { label: string }>(
+  structure: readonly { label: string }[],
+  drafted: readonly T[]
+): T[] {
+  const ordered: T[] = [];
+  for (const node of structure) {
+    const sec = drafted.find((s) => s.label === node.label);
+    if (sec) ordered.push(sec);
+  }
+  for (const sec of drafted) if (!ordered.includes(sec)) ordered.push(sec);
+  return ordered;
+}
+
+/**
+ * THE part resolution all four surfaces consume (resolve-draft, so the
+ * gate and both emitters through the resolved view, and the workspace doc
+ * pane): outline.ts resolveParts over the drafted sections in print order,
+ * the stored parts_json overrides, and whether a quote exists. Null = the
+ * legacy layout (a real RFP: two dividers, label kickers, byte-identical).
+ * `drafted` must already exclude the letter record.
+ *
+ * Two dek rules apply here, at render, where the drafted text is at hand:
+ * - a STORED dek whose digit runs are not all stated whole in its part's
+ *   CURRENT drafted text (outline.ts partCorpusOf, the corpus the write
+ *   screens grounded it on) reads null: a redraft that dropped the date it
+ *   named must not leave the date on the divider;
+ * - the part that holds pricing prints `pricingDek` (quote.ts
+ *   partPricingDek, composed by the system from the stored quote) IN PLACE
+ *   of any stored dek; the stored dek is the fallback only when that is
+ *   null (no quote).
+ */
+export function documentParts(o: {
+  intakeForm: string;
+  structure: readonly { label: string; title: string }[];
+  drafted: readonly PartGroundSection[];
+  partsJson: string | null | undefined;
+  pricingPresent: boolean;
+  pricingDek?: string | null;
+}): DocParts | null {
+  const ordered = orderDrafted(o.structure, o.drafted);
+  const resolved = resolveParts({
+    briefMode: o.intakeForm === "brief",
+    structure: ordered.map((s) => ({ label: s.label, title: s.title })),
+    partsJson: o.partsJson ?? null,
+    pricingPresent: o.pricingPresent,
+  });
+  if (!resolved) return null;
+  const pricingDek = typeof o.pricingDek === "string" && o.pricingDek !== "" ? o.pricingDek : null;
+  return {
+    kicker: resolved.kicker,
+    parts: resolved.parts.map((p) => {
+      let dek = p.dek;
+      if (dek !== null && !partDigitsStated(dek, partCorpusOf(ordered, p.n))) dek = null;
+      if (p.holdsPricing && pricingDek !== null) dek = pricingDek;
+      return { ...p, dek };
+    }),
+  };
+}
+
+/** A section sheet's kicker: the part-relative one when the document has
+ *  parts ("Section 1.4"), else sectionKicker (a real RFP, unchanged). The
+ *  label itself never changes; only the displayed kicker does. */
+export function sheetKicker(label: string, parts: Pick<DocParts, "kicker"> | null): string {
+  return parts ? parts.kicker(label) : sectionKicker(label);
+}
+
+/** A part divider's ghost numeral: "01".."04". */
+export function partNumeral(n: number): string {
+  return String(n).padStart(2, "0");
 }

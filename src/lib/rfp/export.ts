@@ -9,7 +9,8 @@
 // FIDELITY (owner directive 2026-08-27): the downloaded file must read as
 // the SAME designed document the workspace shows on screen — same page
 // sequence (cover → cover letter → divider 01 → one sheet per section →
-// divider 02 → investment → navy closing), same ornaments (arc-mark corner
+// divider 02 → investment → navy closing; a brief instead runs its thematic
+// parts, divider 0p → [investment] → its sections, §5.17.21), same ornaments (arc-mark corner
 // circles, ghost outline numerals, accent bars, three-square colophon),
 // same palette, same faces. The on-screen sheet spec is .rfpdoc in
 // globals.css; sizes there are CSS px against a ~648px content box, and both
@@ -91,6 +92,7 @@ import {
   coverLedeParts,
   letterParagraphsWithPricing,
   pageFootLeft,
+  partNumeral,
   submittedByLine,
 } from "./furniture";
 
@@ -129,8 +131,27 @@ export type ExportView = {
   clientName: string;
   /** The resolved cover lede, when it is not the RFP form (§5.17.17). */
   coverLede?: string;
-  /** The two part dividers, worded for the document's intake form. */
+  /** The two part dividers, worded for the document's intake form: what a
+   *  document WITHOUT parts (a real RFP) prints. */
   dividers: ReturnType<typeof furnitureDividers>;
+  /** A brief's thematic parts (§5.17.21) in sheet order, each with its
+   *  divider copy (title, the dek only when stored) and its member labels;
+   *  the Investment sheet opens the part that holds pricing. Null = the
+   *  legacy layout, byte-identical (a real RFP). Read from the resolved
+   *  proposal, never re-derived here. */
+  parts:
+    | {
+        n: 1 | 2 | 3 | 4;
+        title: string;
+        dek: string | null;
+        labels: string[];
+        holdsPricing: boolean;
+        /** The number the part prints (numeral, ornament, kicker prefix). */
+        position: number;
+        /** The Investment sheet's kicker in the pricing part, else null. */
+        pricingKicker: string | null;
+      }[]
+    | null;
   proposalTitle: string;
   dateLabel: string;
   preparedBy: string;
@@ -157,8 +178,10 @@ export type ExportView = {
       linkedinUrl: string;
     };
   };
-  /** kicker replicates the workspace's secKicker ("Section 3" / "IV" / a
-   *  pre-worded label verbatim), so screen and file agree on the eyebrow. */
+  /** kicker is the workspace's own: sectionKicker ("Section 3" / "IV" / a
+   *  pre-worded label verbatim) on a real RFP, the part-relative kicker the
+   *  resolved parts carry ("Section 1.4") on a brief, so screen and file
+   *  agree on the eyebrow. */
   sections: {
     label: string;
     kicker: string;
@@ -185,11 +208,30 @@ export function buildExportView(
   const quote = resolved.pricing;
   const anyMinimum = quote?.illustrations.some((i) => i.minimumApplied) ?? false;
   const clientName = resolved.cover.clientName;
+  // The part-relative kickers resolve-draft took from the ONE part
+  // resolution (furniture.ts documentParts); a brief's sheet prints these.
+  const partKicker = new Map<string, string>();
+  for (const part of resolved.parts ?? [])
+    part.labels.forEach((label, i) => {
+      const k = part.kickers[i];
+      if (k !== undefined && !partKicker.has(label)) partKicker.set(label, k);
+    });
   return {
     coverTitle: resolved.cover.title,
     clientName,
     ...(resolved.cover.lede ? { coverLede: resolved.cover.lede } : {}),
     dividers: furnitureDividers(resolved.intakeForm ?? "rfp"),
+    parts: resolved.parts
+      ? resolved.parts.map((p) => ({
+          n: p.n,
+          title: p.title,
+          dek: p.dek,
+          labels: [...p.labels],
+          holdsPricing: p.holdsPricing,
+          position: p.position,
+          pricingKicker: p.pricingKicker,
+        }))
+      : null,
     proposalTitle: resolved.proposal.title,
     dateLabel: resolved.cover.dateLabel,
     preparedBy: resolved.letter.signature.name,
@@ -206,7 +248,7 @@ export function buildExportView(
     },
     sections: resolved.sections.map((s) => ({
       label: s.structureLabel,
-      kicker: sectionKicker(s.structureLabel),
+      kicker: partKicker.get(s.structureLabel) ?? sectionKicker(s.structureLabel),
       title: s.title,
       paragraphs: s.blocks
         .filter((b) => b.kind === "prose")
@@ -812,8 +854,79 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
   );
 
   /* ---- Part dividers + sections + investment --------------------------- */
-  const dividerSheet = (which: 0 | 1) => {
-    const d = view.dividers[which]!;
+  // One divider chrome for both layouts: a real RFP's two fixed dividers and
+  // a brief's thematic parts (§5.17.21), whose dek prints only when stored.
+  const dividerSheet = (
+    d: { num: string; title: string; deck: string | null },
+    numeral: Buffer,
+    /** A brief's part divider (§5.17.21), never a real RFP's: the title at
+     *  full content width, and title + dek inside PART_BODY_TW so the
+     *  colophon sits at the same height on every part divider. */
+    part = false
+  ) => {
+    const titlePar = new Paragraph({
+      children: [
+        new TextRun({
+          text: d.title,
+          font: AR_BOLD,
+          bold: true,
+          size: px2hp(42),
+          color: INK,
+        }),
+      ],
+      ...(part ? {} : { indent: { right: 1400 } }),
+      spacing: {
+        before: 420,
+        line: px2tw(42 * 1.15),
+        lineRule: LineRuleType.AT_LEAST,
+        after: 300,
+      },
+    });
+    const deckPar = (deck: string) =>
+      new Paragraph({
+        children: [new TextRun({ text: deck, font: SERIF, size: px2hp(16), color: MUTED })],
+        indent: { right: 3000 },
+        spacing: { line: px2tw(16 * 1.6), lineRule: LineRuleType.AT_LEAST },
+      });
+    // Word lays a divider out in flow, so a title or dek that wraps one line
+    // more pushes everything under it down. A part divider holds both in
+    // one borderless cell of a FIXED minimum height (room for three title
+    // lines and three dek lines; a longer one grows the cell rather than
+    // clip it), followed by a spacer that brings the colophon back to where
+    // the legacy divider puts it with a one-line title and a two-line dek.
+    // The real-RFP divider keeps its flow layout byte for byte.
+    const PART_BODY_TW = 420 + 3 * px2tw(42 * 1.15) + 300 + 3 * px2tw(16 * 1.6);
+    const LEGACY_BODY_TW = 420 + px2tw(42 * 1.15) + 300 + 2 * px2tw(16 * 1.6) + 3100;
+    const body = part
+      ? [
+          new Table({
+            width: { size: DXA_CONTENT, type: WidthType.DXA },
+            columnWidths: [DXA_CONTENT],
+            layout: TableLayoutType.FIXED,
+            borders: NO_BORDERS,
+            rows: [
+              new TableRow({
+                height: { value: PART_BODY_TW, rule: HeightRule.ATLEAST },
+                children: [
+                  new TableCell({
+                    margins: { top: 0, bottom: 0, left: 0, right: 0 },
+                    verticalAlign: VerticalAlign.TOP,
+                    children: [titlePar, ...(d.deck !== null ? [deckPar(d.deck)] : [])],
+                  }),
+                ],
+              }),
+            ],
+          }),
+          spacerX(LEGACY_BODY_TW - PART_BODY_TW),
+        ]
+      : [
+          titlePar,
+          ...(d.deck !== null
+            ? [deckPar(d.deck), spacerX(3100)]
+            : // No dek: the two lines it would take go to the spacer, so the
+              // colophon sits where it does on every other divider.
+              [spacerX(3100 + 2 * px2tw(16 * 1.6))]),
+        ];
     children.push(
       kickerPar(dividerHead(view.clientName), {
         px: 11,
@@ -826,35 +939,12 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
       // The ghost numeral: pre-rendered outline PNG (Word has no text-stroke).
       new Paragraph({
         children: [
-          png(which === 0 ? assets.images.num01 : assets.images.num02, 179, 163),
+          png(numeral, 179, 163),
         ],
         spacing: { line: px2tw(166), lineRule: LineRuleType.AT_LEAST, after: 420 },
       }),
       barTable(BLUE),
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: d.title,
-            font: AR_BOLD,
-            bold: true,
-            size: px2hp(42),
-            color: INK,
-          }),
-        ],
-        indent: { right: 1400 },
-        spacing: {
-          before: 420,
-          line: px2tw(42 * 1.15),
-          lineRule: LineRuleType.AT_LEAST,
-          after: 300,
-        },
-      }),
-      new Paragraph({
-        children: [new TextRun({ text: d.deck, font: SERIF, size: px2hp(16), color: MUTED })],
-        indent: { right: 3000 },
-        spacing: { line: px2tw(16 * 1.6), lineRule: LineRuleType.AT_LEAST },
-      }),
-      spacerX(3100),
+      ...body,
       // The three-square colophon: navy, blue, hairline gray.
       new Table({
         width: { size: 810, type: WidthType.DXA },
@@ -1414,18 +1504,13 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
     }
   };
 
-  dividerSheet(0);
-  for (const sec of view.sections) {
-    secHead(sec.kicker, sec.title);
-    sectionFlow(sec.flow);
-  }
-  // Divider 02 announces the Investment part; with no quote there is no
-  // part to announce, so both are omitted together (same rule as the PDF).
-  if (view.pricing) {
-    dividerSheet(1);
-    secHead("Pricing", "Investment");
+  // The Investment sheet: the engine's quote, printed, never calculated.
+  // Its kicker is "Pricing" on a real RFP; in a brief's pricing part it is
+  // that part's first numbered sheet ("Section 4.1", §5.17.21).
+  const investmentSheet = (pricing: PricingQuote, kicker = "Pricing") => {
+    secHead(kicker, "Investment");
 
-    for (const ill of view.pricing.illustrations) {
+    for (const ill of pricing.illustrations) {
       children.push(
         new Paragraph({
           children: [
@@ -1520,7 +1605,7 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
           spacing: { before: 120, after: 120 },
         })
       );
-    for (const pt of view.pricing.passThroughItems)
+    for (const pt of pricing.passThroughItems)
       children.push(
         new Paragraph({
           children: [
@@ -1535,7 +1620,7 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
           spacing: { after: 120 },
         })
       );
-    for (const note of view.pricing.notes)
+    for (const note of pricing.notes)
       children.push(
         new Paragraph({
           children: [
@@ -1550,6 +1635,52 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
           spacing: { after: 120 },
         })
       );
+  };
+
+  if (view.parts) {
+    // A brief's thematic parts (§5.17.21): each part's divider, then its
+    // drafted sections in outline order; the Investment sheet opens the
+    // part that holds pricing, before that part's own section.
+    // The numeral and its ornament are the part's DISPLAY position, so an
+    // omitted part leaves no gap in the count.
+    const numerals = [assets.images.num01, assets.images.num02, assets.images.num03, assets.images.num04];
+    const placed = new Set<(typeof view.sections)[number]>();
+    for (const part of view.parts) {
+      dividerSheet(
+        { num: partNumeral(part.position), title: part.title, deck: part.dek },
+        numerals[Math.min(Math.max(part.position, 1), 4) - 1]!,
+        true
+      );
+      if (part.holdsPricing && view.pricing)
+        investmentSheet(view.pricing, part.pricingKicker ?? "Pricing");
+      // In the part's own label order, the order its kickers count in.
+      for (const label of part.labels) {
+        const sec = view.sections.find((s) => s.label === label && !placed.has(s));
+        if (!sec) continue;
+        placed.add(sec);
+        secHead(sec.kicker, sec.title);
+        sectionFlow(sec.flow);
+      }
+    }
+    // Defensive: the resolution places every label, so nothing lands here;
+    // were one missed it still prints rather than vanishing.
+    for (const sec of view.sections) {
+      if (placed.has(sec)) continue;
+      secHead(sec.kicker, sec.title);
+      sectionFlow(sec.flow);
+    }
+  } else {
+    dividerSheet(view.dividers[0]!, assets.images.num01);
+    for (const sec of view.sections) {
+      secHead(sec.kicker, sec.title);
+      sectionFlow(sec.flow);
+    }
+    // Divider 02 announces the Investment part; with no quote there is no
+    // part to announce, so both are omitted together (same rule as the PDF).
+    if (view.pricing) {
+      dividerSheet(view.dividers[1]!, assets.images.num02);
+      investmentSheet(view.pricing);
+    }
   }
 
   /* ---- The navy closing sheet ------------------------------------------ */
@@ -2167,8 +2298,11 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
   }
 
   /* ---- Divider sheets --------------------------------------------------- */
-  const dividerSheet = (which: 0 | 1) => {
-    const d = view.dividers[which]!;
+  // One chrome for a real RFP's two fixed dividers and a brief's thematic
+  // parts (§5.17.21); a part's dek prints only when stored, and without one
+  // the body block simply centers without it. `part` (a brief's part
+  // divider only, never a real RFP's) sets the title at full content width.
+  const dividerSheet = (d: { num: string; title: string; deck: string | null }, part = false) => {
     beginSheet(null);
     const x = PAGE.margin;
     caps(dividerHead(view.clientName), x, PAGE.margin, {
@@ -2187,7 +2321,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     // The centered body: ghost numeral, bar, title, deck.
     doc.font("Archivo-Bold").fontSize(pt(150));
     const numH = doc.currentLineHeight();
-    const titleW = CW * 0.86;
+    const titleW = part ? CW : CW * 0.86;
     doc.fontSize(pt(42));
     const titleH = doc.heightOfString(d.title, {
       width: titleW,
@@ -2195,11 +2329,15 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     });
     const deckW = Math.min(pt(560), CW);
     doc.font("Serif").fontSize(pt(16));
-    const deckH = doc.heightOfString(d.deck, {
-      width: deckW,
-      lineGap: Math.max(0, pt(16) * 1.6 - doc.currentLineHeight()),
-    });
-    const blockH = numH + pt(28) + pt(4) + pt(28) + titleH + pt(20) + deckH;
+    const deckH =
+      d.deck === null
+        ? 0
+        : doc.heightOfString(d.deck, {
+            width: deckW,
+            lineGap: Math.max(0, pt(16) * 1.6 - doc.currentLineHeight()),
+          });
+    const blockH =
+      numH + pt(28) + pt(4) + pt(28) + titleH + (d.deck === null ? 0 : pt(20) + deckH);
     const regionTop = PAGE.margin + pt(20);
     let y = regionTop + Math.max(0, (sqY - pt(20) - regionTop - blockH) / 2);
 
@@ -2220,6 +2358,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       width: titleW,
       lineGap: Math.max(0, pt(42) * 1.15 - doc.currentLineHeight()),
     });
+    if (d.deck === null) return;
     y += titleH + pt(20);
     doc.font("Serif").fontSize(pt(16)).fillColor(h(MUTED));
     doc.text(d.deck, x, y, {
@@ -2697,8 +2836,9 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     doc.x = PAGE.margin;
   };
 
-  dividerSheet(0);
-  for (const sec of view.sections) {
+  /** One section sheet; its overflow pages carry "<kicker> · continued"
+   *  ("SECTION 1.4 · CONTINUED" on a brief, §5.17.21). */
+  const sectionSheet = (sec: ExportView["sections"][number]) => {
     beginSheet(sec.kicker);
     secHead(sec.kicker, sec.title);
     let prev: "head" | "p" | "block" = "head";
@@ -2714,14 +2854,15 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       }
       prev = item.type;
     }
-  }
+  };
+
   /* ---- Investment ------------------------------------------------------- */
-  // Divider 02 announces the Investment part; with no quote there is no
-  // part to announce, so both are omitted together (same rule as the docx).
-  if (view.pricing) {
-    dividerSheet(1);
-    beginSheet("Investment");
-    secHead("Pricing", "Investment");
+  // A real RFP: kicker "Pricing", overflow "INVESTMENT · CONTINUED". In a
+  // brief's pricing part the sheet is the part's first numbered sheet:
+  // kicker "Section 4.1", overflow "SECTION 4.1 · CONTINUED" (§5.17.21).
+  const investmentSheet = (pricing: PricingQuote, kicker: string | null = null) => {
+    beginSheet(kicker ?? "Investment");
+    secHead(kicker ?? "Pricing", "Investment");
 
     // Table columns: service | qty | unit | monthly (screen column heads).
     // The quantity column is 66pt, not 50: "Up to 15" (the fully managed
@@ -2738,7 +2879,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       table.paint(cells, opts, table.measure(cells, opts));
     };
 
-    for (const ill of view.pricing.illustrations) {
+    for (const ill of pricing.illustrations) {
       ensureRoom(120);
       doc.x = PAGE.margin;
       doc.font("Archivo-Bold").fontSize(pt(15)).fillColor(h(INK)).text(ill.label, { width: CW });
@@ -2768,7 +2909,7 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       flow(view.minimumSentence, { px: 13, lh: 1.5, font: "Serif-Italic", color: h(MUTED) });
       doc.moveDown(0.6);
     }
-    for (const ptI of view.pricing.passThroughItems) {
+    for (const ptI of pricing.passThroughItems) {
       ensureRoom(28);
       flow(`${ptI.label}: `, {
         px: 14,
@@ -2780,10 +2921,40 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
       flow(ptI.detail, { px: 14, lh: 1.5, color: h(MUTED) });
       doc.moveDown(0.4);
     }
-    for (const note of view.pricing.notes) {
+    for (const note of pricing.notes) {
       ensureRoom(28);
       flow(note, { px: 13, lh: 1.5, font: "Serif-Italic", color: h(MUTED) });
       doc.moveDown(0.4);
+    }
+  };
+
+  if (view.parts) {
+    // A brief's thematic parts (§5.17.21), the same sequence as the docx:
+    // divider, the Investment sheet when the part holds pricing, then the
+    // part's drafted sections in outline order.
+    const placed = new Set<ExportView["sections"][number]>();
+    for (const part of view.parts) {
+      // The numeral is the part's DISPLAY position (an omitted part leaves
+      // no gap in the count); the title runs the full content width.
+      dividerSheet({ num: partNumeral(part.position), title: part.title, deck: part.dek }, true);
+      if (part.holdsPricing && view.pricing) investmentSheet(view.pricing, part.pricingKicker);
+      for (const label of part.labels) {
+        const sec = view.sections.find((s) => s.label === label && !placed.has(s));
+        if (!sec) continue;
+        placed.add(sec);
+        sectionSheet(sec);
+      }
+    }
+    // Defensive, as in the docx: a missed label still prints.
+    for (const sec of view.sections) if (!placed.has(sec)) sectionSheet(sec);
+  } else {
+    dividerSheet(view.dividers[0]!);
+    for (const sec of view.sections) sectionSheet(sec);
+    // Divider 02 announces the Investment part; with no quote there is no
+    // part to announce, so both are omitted together (same rule as the docx).
+    if (view.pricing) {
+      dividerSheet(view.dividers[1]!);
+      investmentSheet(view.pricing);
     }
   }
 

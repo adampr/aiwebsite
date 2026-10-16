@@ -102,6 +102,21 @@ export const REFERENCE_CARD_FIX_MESSAGE =
 const LETTER_SPAN_FIELD =
   /^(?:body|addressee)\[\d+\]$|^(?:salutation|closing|signature\.name|signature\.title)$/;
 
+/** A brief's part divider spans (§5.17.21): resolvedTextSpans names them
+ *  "part[n].title" / "part[n].dek". */
+const PART_SPAN_FIELD = /^part\[\d\]\.(title|dek)$/;
+
+/** What a finding on a part divider's title or dek tells the person to do.
+ *  The text lives in rfp_proposals.parts_json, which Tron cannot edit (it
+ *  revises sections and the letter), so no Tron sweep is ever sent for it. */
+export const PART_FIX_MESSAGE =
+  "This is a part divider's title or dek, which Tron cannot edit. Regenerate the cover letter to compose it again, or run npm run rfp:parts for this proposal.";
+
+/** True when a violation's locator points at a part divider's text. */
+export function isPartSpanLocator(loc: Violation["locator"]): boolean {
+  return typeof loc.field === "string" && PART_SPAN_FIELD.test(loc.field);
+}
+
 /** True when a violation's locator points into the cover letter. */
 export function isLetterSpanLocator(loc: Violation["locator"]): boolean {
   return (
@@ -334,6 +349,10 @@ export function fixRecipe(
   // person edits the entry where it lives. First, before any rule's recipe.
   if (isReferenceCardBlockId(v.locator.blockId))
     return { kind: "none", message: REFERENCE_CARD_FIX_MESSAGE };
+  // A part divider's title or dek (§5.17.21): stored parts_json, never
+  // Tron-editable, so never a Tron sweep either (the whole-document plan
+  // flow would rewrite sections around a phrase it cannot reach).
+  if (isPartSpanLocator(v.locator)) return { kind: "none", message: PART_FIX_MESSAGE };
 
   const resolved = resolveTargetLabel(v, ctx.sections, ctx.requirements);
   const tron = (ask?: { prompt: string }): FixRecipe => ({

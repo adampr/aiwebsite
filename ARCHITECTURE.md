@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-16 §5.17.21 ROUND 33: THEMATIC PARTS FOR BRIEF DOCUMENTS (owner, explicitly "make it its own round", overriding the round-8 deferral for brief-mode documents only; reference: the CoWork Curioso proposal's four part dividers with a dek sentence and "SECTION 1.1" / "SECTION 1.1 · CONTINUED" kickers). A brief (intake form "brief", the standard outline) now renders as FOUR thematic parts on the screen sheets, Word and PDF: part 1 sections 1, 2, 3, 7, 10; part 2 sections 4, 5; part 3 sections 6, 9; part 4 section 8 with the Investment sheet opening it (outline.ts `OUTLINE_PARTS`, static, never model-chosen). Only part TITLES and DEKS may be model-authored: migration `0063_rfp_proposal_parts` adds nullable `rfp_proposals.parts_json` (exactly four `{n,title,dek}` entries, title <= 40, dek <= 160, each through brain.ts's round-32 sanitation with digits grounded in that part's OWN drafted text, visuals included; a refused value stores null, never cut), landed by the letter turn in its CAS write (activity meta `partsTitles`/`partsDeks`, counts only) and by the new `npm run rfp:parts -- <proposalId>` (parts only, never the letter; CAS on rev; shape-only activity `proposal.parts`). ONE resolution for every surface: outline.ts `resolveParts`, called through furniture.ts `documentParts` by resolve-draft (new optional `ResolvedProposal.parts`, outside the content hash, scanned by the gate) and by the workspace doc pane (new `partsJson` prop from page.tsx); `ExportView.parts` carries it to both emitters. Sheets print part-relative kickers ("Section 1.4", PDF overflow "SECTION 1.4 · CONTINUED"); labels never change, and the rail, tabs, jump targets, Coverage and Checks are untouched. The kicker rule is now ONE function (furniture.ts `sectionKicker`; export-assets re-exports it, the workspace's secKicker IS it). An empty part has no divider; a part's dek prints only when stored. New ornaments `num-03.png`/`num-04.png`. REAL RFPs are byte-identical (proven against 66a5e8e6 in fresh processes under a frozen clock: docx and PDF bytes, resolved JSON and view all equal; pinned in test:rfpcoverletter). New render fixture documents `r33-parts` and `r33-parts-omit-3`. Fix round: part 3's default title is "Onboarding and Transition"; dividers print the part's DISPLAY position (omit part 3: "03", "Section 3.x"); the pricing part's Investment sheet is its "Section p.1" and its sections count from 2; the pricing part's dek is system-composed (quote.ts `partPricingDek`); part titles run full width and Word part dividers hold title + dek in a fixed-minimum-height cell; stored values are re-screened at read, A-rule phrases and dash lookalikes refused at write, stale deks dropped at render, part findings get a no-Tron recipe. No env change; no new route.
+
 Last verified against code: 2026-10-15 §5.17.20 ROUND 32: COWORK-GRADE DESIGN PARITY (owner put a Claude-CoWork 19-page Curioso proposal beside /rfp output: cover, cover letter, header naming, visuals). Migration `0062_rfp_client_address_headline` adds nullable `rfp_documents.client_address` (<= 5 verbatim-grounded, sanitized postal lines joined "\n", brain.ts `groundAddressLines`) and `proposal_headline` (brief docs only, <= 56 chars, currency- and unstated-digit-vetoed, `screenProposalHeadline`), both written at the read landing (Read it again and `rfp:reread` reach only a claimable document; the new `npm run rfp:reground -- <documentId>` regrounds both on an already-read one). Brief docs adopt the drafter's narrative section `title` only over an untouched standard outline title (outline.ts `mayAdoptNarrativeTitle`, never "10" About XL.net or the letter; record and structure in one transaction, `db.ts completeGenerationRetitled`; activity meta `retitled: true`). The letter turn is rewritten toward the reference shape (client context first, rule 3 verbatim) and returns an optional `thesis` stored on the letter record (no migration). Model visuals gain `timeline` (2..6 steps, kicker <= 24 into the step label) and `ledger` (2..12 rows, stored as the existing fact-grid); cards widen to 2..3. Rendering, ONE spec for the screen sheet, Word and PDF, authored once in the new pure client-safe `src/lib/rfp/furniture.ts`: a brief's cover prints its stored headline, the cover lede gains ", Attention: <name>, <title>" when a contact is stored (client still semibold), the letterhead prints the stored postal lines under the addressee, a SYSTEM pricing paragraph (quote.ts `letterPricingParagraph`, from the stored quote only, no term) sits before the last drafted paragraph (after the body when there is only one; `ResolvedLetter.address` / `.pricingParagraph`, both optional and scanned by the gate), and the navy closing prints the letter's thesis (`backCover.subhead`) over the flat-fee fallback. The submitted-by columns and the "Confidential" pagefoot already existed on all three surfaces; Confidential is recorded as standing business copy, not a draft mark. Parity fixes: three-up cards on screen (`--rfpdoc-n`, globals.css), Word fact-grid keepNext, Word addressee spacing, and two PDF timeline defects (double-advanced row height; bodies aligned under the tallest title). Out of scope by record: thematic numbered parts (round-8 ruling, rule C4), 6-up cards. New `npm run test:rfpcoverletter`; `rfp:render-fixture` also renders the round-32 brief. No env change; no new route.
 
 Last verified against code: 2026-10-15 §5.17.19 ROUND 31: ROUND 30'S FOUR OPEN ITEMS CLOSED (§5.17.19, §5.17.16, §5.17.8). (1) The gap weave sees visuals and its write is lifted: `resolveGap(proposalId, sectionTitle, currentParagraphs, blocks, gapQuestion, answer, facts)` shows the section's stored visuals in CURRENT TEXT exactly as reviseSection does (shared `currentTextLines` / `visualsShownLines` / `TABLE_AUTHORING_LINES` / `notEchoedVisual` in brain.ts, one copy each), may author a markdown table (gated on RFP_VISUALS alone: a gap can never target the letter, and the route now refuses the letter label with its 404 defensively; one gap-turn-only line follows the shared table lines: a figure only the answer states, with no listed fact behind it, goes in prose), and the gap route runs `liftMarkdownTables` at its landing write with the shared facts it already loads (no new query); `proposal.gap_resolve` meta gains `liftedTables` / `liftRefused` (each only when > 0). (2) A refused lift is no longer silent: new gate rule D6 "Tabular text in prose" (WARN, validators/rules-d.ts) flags every resolved span holding a markdown table by THE detector the lift uses (new `hasMarkdownTable`, draft-blocks.ts), the letter included; its Fix it recipe (check-fixes.ts) is a Tron revise asking for a real markdown table with every figure copied exactly from the facts, or for prose when the finding is in the cover letter, and for prose when the table cannot meet the rules (a price, a figure no fact states, so Fix all converges), auto-fixable in Fix all; the section PATCH's 200 body gains `liftRefused` (both paragraph paths), so does the gap route's, and the workspace's attended paths (saveEdit, answerGap, acceptProposal, acceptDocProposal, acceptAllDocProposals) put one sentence on the runbar notice line (an accept with no refusal clears only a stale copy of that sentence, never other text); unattended loops stay silent, D6 is their control. (3) The Tron pane previews a proposed markdown table as a table (new parse-only `previewMarkdownTables`, same detector, nothing stored) with one honesty line; a letter proposal previews as plain paragraphs (the letter is never lifted). (4) Two tables in ONE section now cluster in the consolidation scan, by the row-key + content-agreement test only (the shingle test stays strictly cross-section; paragraph pairs stay cross-section), findings line "appears twice in <title> (id v_a, id v_b)". No schema, env or migration change; no new route.
@@ -9410,6 +9412,11 @@ the `aria-label` is "Part N: {title}". A prefix-derived grouping
 heuristic (one divider per "A."/"B." label group) was proposed and
 REJECTED by the counterview panel for v1: part titles cannot be authored
 by the host and "Part A" is a third style belonging to neither reference.
+That ruling is scoped to CLIENT-STRUCTURED documents (real RFPs, rule C4)
+and still stands there: a real RFP keeps exactly these two dividers. Since
+round 33 a BRIEF document (the standard outline, whose structure XL.net
+owns) renders four thematic parts instead, from a static host map
+(§5.17.21); extending parts to real RFPs is a future owner decision.
 Also in this pass: `.rfpdoc` became a `container-type: inline-size`
 wrapper so `.rfpdoc-page` gets sheet-proportional padding
 `clamp(1.25rem, 8cqw, 5.25rem)` (a size container cannot resolve cqw
@@ -12422,7 +12429,9 @@ keepNext; the PDF timeline rhythm.
 numbered PARTS with decks and "n.m" section kickers: the 2026-08-02 round-8
 owner ruling rejected prefix-grouping dividers for client-structured
 documents and rule C4 pins client structure; doing it for brief documents is
-a bigger model change that needs Adam's explicit go. Six-up incident cards
+a bigger model change that needs Adam's explicit go. (Adam gave it on
+2026-10-16: round 33, §5.17.21, does it for BRIEF documents only; real RFPs
+are unchanged.) Six-up incident cards
 (pagination risk). Reading the CoWork PDF's copy into prompts verbatim (the
 prompts carry two fact-free reference-shaped callout title examples only).
 Also kept as house design rather than cloned from the reference: the ledger
@@ -12490,6 +12499,270 @@ when present, semicolon lists), test:rfpcoverletter (addressee lines,
 submitted-by role, running footer on every PDF page and in Word, the
 signature block never split, a letter that fits by the measured block on one
 PDF page, the fixture's page count).
+
+#### 5.17.21 Thematic parts for brief documents (round 33, 2026-10-16)
+
+The owner ordered this as its own round ("make it its own round"),
+overriding the round-8 deferral (§5.17.20 "Out of scope") for BRIEF-mode
+documents only. Reference: the CoWork Curioso proposal, whose four part
+dividers carry a ghost numeral, the blue bar, a title and a one-sentence
+dek, and whose section sheets read "SECTION 1.1" with overflow pages
+"SECTION 1.1 · CONTINUED".
+
+**Scope.** A brief (intake form "brief", drafted into the standard outline,
+§5.17.17) renders as four thematic parts on the three surfaces that show the
+DOCUMENT: the workspace doc pane's sheets, the Word file and the PDF. A real
+RFP keeps the legacy layout byte-identical (cover, letter, "01 Response to
+the Request for Proposal", its sections with label kickers, "02
+Investment", Investment, closing): rule C4 and the round-8 ruling (§5.17.1
+"Round 8 additions") stand there, and extending parts to real RFPs is a
+future owner decision. Section LABELS never change: they are the join keys
+of requirements, activity rows, Checks locators and Tron targeting. Only the
+displayed sheet kicker becomes part-relative. The workspace rail, the
+tabstrips, the jump targets (`sec-<label>` ids stay on section sheets),
+Coverage and Checks keep their label display exactly as before.
+
+**The map (static, outline.ts `OUTLINE_PARTS`; never model-chosen).**
+
+| Part | Default title | Sections |
+|---|---|---|
+| 1 | How We Support You | 1, 2, 3, 7, 10 |
+| 2 | Security and Infrastructure | 4, 5 |
+| 3 | Onboarding and Transition | 6, 9 |
+| 4 | Pricing and Agreement Terms | 8, plus the Investment furniture |
+
+Part 3's default is not "Projects and Transition": that is section 6's
+standard title, and section 6 is usually the part's only sheet. Inside a
+part, sections print in MAP order. A label outside "1".."10" on a
+brief (defensive; should not exist) prints last in part 1, so nothing is
+silently dropped; reserved `__` labels (the letter) belong to no part.
+
+**The one resolution.** outline.ts `resolveParts({briefMode, structure,
+partsJson, pricingPresent})` returns null (the legacy layout) for anything
+but a brief, else `{parts: [{n, title, dek, labels, holdsPricing, position,
+pricingKicker}], kicker}` (`position` and `pricingKicker` are additive: `n`
+stays the canonical part and the `parts_json` key, `position` is the
+part's 1-based place among the parts that render, and `pricingKicker` is
+"Section p.1" on the part that holds pricing, else null).
+`structure` is the RENDERED sections: furniture.ts `documentParts` builds it
+from the drafted sections in print order (furniture.ts `orderDrafted`, the
+rule resolve-draft orders its sections with: structure order, then any
+drafted section the structure no longer names) and the stored
+`parts_json`, so the empty-part rule follows the drafted-only rule.
+Consumers, all through that call and never re-deriving the map:
+- resolve-draft puts the result on `ResolvedProposal.parts` (optional; each
+  part also carries `kickers[i]` for `labels[i]`), ABSENT on a real RFP, and
+  outside the content hash like `intakeForm` (rule C2's field set is
+  unchanged). `resolvedTextSpans` scans each part's title and dek (location
+  "parts"), so D1/B7 and the style rules cover them.
+- `buildExportView` copies it to `ExportView.parts` (null on a real RFP) and
+  takes each section's kicker from it; `dividers` keeps the legacy copy for
+  documents without parts.
+- Both emitters: when `view.parts` is set, each part prints its divider, then
+  the Investment sheet when the part holds pricing, then its sections in the
+  part's label order; else the legacy sequence, the same calls as before.
+- workspace.tsx calls `documentParts` with the same inputs (stored sections
+  less the letter, `structure`, the `partsJson` prop page.tsx passes from
+  the proposal row, whether a quote exists), so the sheet's dividers and
+  kickers are the file's. Because the pane also shows UNDRAFTED sections, it
+  calls `documentParts` a second time over the whole structure (pricing
+  present) only to find each node's part: a part the download omits shows
+  its divider as an absent sheet ("Not in the download until one of its
+  sections is drafted"; part 4: "... until its section is drafted or the
+  pricing questions are answered"), and an undrafted section sheet keeps its
+  label kicker (it is in no file). The Investment sheet always shows on
+  screen, opening part 4.
+
+**Empty parts and pricing.** A part with no rendered section has no
+divider. Part 4 is the exception while a quote exists: it renders with no
+sections and holds the Investment sheet. With no quote, part 4 appears only
+when section 8 is drafted (`holdsPricing` false). Section 9 (Questions) is
+usually dropped at read time, so part 3 often holds only section 6. Stored
+titles and deks for an unrendered part never bring it back, and a part that
+renders with NO section (pricing alone) ignores its stored title and dek:
+they were composed from a section that is no longer drafted.
+
+**The pricing part's dek is the system's.** When a quote exists, the part
+that holds pricing prints quote.ts `partPricingDek(quote, minimumUsers)`
+IN PLACE of any stored dek: one sentence in the `letterPricingParagraph`
+family (same inputs, the figures the Investment sheet prints, whole dollars
+in prose with cents only when real, never a contract term), e.g. "60 fully
+managed users at $247 per user per month, $14,820 per month in total,
+itemized on the Investment page."; "Up to 15 fully managed users at the
+monthly minimum, ..."; for rule B4's two views "Priced two ways, $A or $B
+per month, until the real split of users is confirmed." The stored dek is
+the fallback only when it is null (no quote). furniture.ts `documentParts`
+applies it (new optional `pricingDek` input: resolve-draft passes it with
+the quote and the rate card's minimum, the workspace with the quote and
+minimum it renders the Investment sheet from), so the screen, Word and PDF
+print one string, and rule B7 (which scans part spans) sanctions every
+figure in it.
+
+**A stale stored dek reads null at render.** `documentParts` re-checks each
+STORED dek's digit runs against its part's CURRENT drafted text (outline.ts
+`partCorpusOf` and `partDigitsStated`, the same corpus and whole-number rule
+the write screens used, client-safe, no lookbehind): a redraft that dropped
+the date a dek names leaves the divider without the dek, never with the
+stale date.
+
+**Kickers.** ONE kicker spec. The legacy rule (bare labels get "Section ",
+roman numerals tested first, worded labels verbatim) is furniture.ts
+`sectionKicker`; export-assets re-exports it and the workspace's
+`secKicker` IS it (the pinned replica pair is retired). A brief's sheet
+prints `sheetKicker(label, parts)`: "Section p.m", where p is the part and m
+the section's 1-based position among the part's rendered sections (section
+7 drafted after 1, 2 and 3 is "Section 1.4"). p is the part's DISPLAY
+position, so with part 3 omitted the pricing part prints "Section 3.x".
+In the part that holds pricing the Investment sheet is the part's FIRST
+numbered sheet: it prints "Section p.1" in the kicker slot (both emitters
+and the workspace's pricing sheet; a real RFP's Investment sheet keeps
+"Pricing"), its PDF overflow pages read "SECTION p.1 · CONTINUED" (a real
+RFP's still "INVESTMENT · CONTINUED"), and the part's sections count from
+2 (section 8 is "Section 4.2"). `resolveParts`' kicker returns "" for a
+label no part renders; no sheet asks for one. The PDF's overflow marker is
+the sheet kicker plus " · continued" in caps, so a brief reads "SECTION 1.4
+· CONTINUED" and a real RFP "SECTION 8 · CONTINUED" as before. Word paginates itself and prints no overflow marker (unchanged).
+
+**Dividers.** The existing chrome, unchanged for both layouts: the faint
+running header "XL.net · Proposal for <client>", the ghost numeral, the blue
+bar, the Archivo title, the serif deck in the muted ink and the three-square
+colophon. A part prints the numeral of its DISPLAY position (storage keeps
+the canonical n; an omitted part 3 leaves part 4 printing "03", in the
+PDF's stroked text, Word's numeral PNG and the screen alike), its title
+(stored override, else the default above) and its dek (the pricing dek
+above, else the stored one, else none). A part divider sets its title at
+the FULL content width (a `part` flag on both emitters' shared divider and
+`fullWidthTitle` on the workspace's DividerSheet, used only for part
+dividers; a real RFP's two dividers keep the 86% measure byte for byte), so
+"Pricing and Agreement Terms" is one line. Where the colophon sits: the PDF
+draws it at a fixed y on every divider (the body block centers above it);
+Word lays a divider out in flow, so a part divider holds its title and dek
+in one borderless cell of a FIXED MINIMUM height (room for three title
+lines and three dek lines; a longer one grows the cell rather than clip),
+followed by a spacer that puts the colophon where the legacy divider puts
+it with a one-line title and a two-line dek, so a part divider's colophon
+sits at the same height whatever its title and dek wrap to (with or
+without a dek); the real-RFP divider keeps its flow layout; the screen
+spreads head, body and colophon over the sheet (flex space-between). No divider carries a
+`sec-*` id (the round-8 hijack rule) or a flash key. Word draws numerals
+from PNGs; `public/brand/rfp-ornaments/num-03.png` and `num-04.png` were
+rendered to the geometry of 01/02 (Archivo Bold 464px at 300dpi, a 3.5px
+navy outline centered on the glyph edge over the #eef0fb fill, same canvas
+and origin), the PDF draws the text with a real stroke as before. Titles
+may carry an en dash (same policy as round-32 headlines); both faces print
+it.
+
+**Stored overrides (A).** Migration `0063_rfp_proposal_parts` adds nullable
+`rfp_proposals.parts_json`: `{"parts":[{"n":1,"title":string|null,"dek":
+string|null}, ...]}`, exactly four entries in order (outline.ts
+`serializePartsJson`), titles at most 40 characters, deks at most 160.
+Every reader goes through `parsePartsJson`, which reads null, bad JSON, a
+wrong shape, a repeated n or any bad value as that slot's static default, so
+the layout never depends on the column. A stored value is RE-SCREENED at
+read (inline in outline.ts, which stays import-free): a control, format or
+line-separator character (bidi overrides, zero-width characters, U+2028),
+stacked combining marks after NFC, a currency sign, a non-ASCII numeral, an
+em dash or a lookalike, an angle bracket or edge whitespace reads null, so a
+hand-written row cannot print what the write screens refuse. A gate finding
+located on a part span (`part[n].title` / `part[n].dek`) gets the Checks
+pane's no-action recipe (check-fixes.ts `PART_FIX_MESSAGE`: regenerate the
+cover letter or run `rfp:parts`), never a Tron sweep: Tron cannot edit
+`parts_json`. Writers:
+- The letter turn (`draftCoverLetter`) returns optional `parts` for a brief
+  only (it already reads every drafted section fenced and lands last). Each
+  title and dek passes the round-32 sanitation: cleanHeading'd title,
+  one-line dek, currency refused, em dash, angle runs and stacked marks
+  refused, and every digit must appear whole in that part's OWN drafted
+  text, visuals included (a dek's "December 11, 2026" grounds when one of the
+  part's sections states it), and also refused: an em dash LOOKALIKE (figure
+  dash, two- and three-em dash, small em dash), any forbidden phrase of the
+  business-term rules A1 to A8 ("month to month", "all US based", "our own
+  SOC", ...: brain.ts runs `A_RULES` over the value as a one-span proposal
+  with the seed knowledge base's negative facts and refuses on a phrase hit;
+  the rules' document-level checks stay the gate's), and a title that
+  case-folds equal to the title of the part's ONLY section. A failing value
+  stores null, never trimmed. The parts ask (shared by both turns) asks for a
+  dek addressed to the client that lists the concrete things the part's
+  sections cover, with a fact-free shape example ("your service desk, your
+  design applications, and the people who own your account"), forbids
+  opening with "This part", "This section" or "Here we", and says never to
+  repeat a section title and to use the client's own word for itself
+  (studio, firm, practice) when the sections do.
+  Part 4 takes a model title and dek only when section 8 is drafted; a
+  pricing-only part 4 keeps the default title. It lands in the letter
+  record's CAS write; the generate row's activity meta gains `partsTitles`
+  and `partsDeks` (how many the screens kept, counts only). A hand-edited
+  letter blocks a letter redraft as before, so `parts_json` then stays as
+  stored.
+- `npm run rfp:parts -- <proposalId>` (`scripts/rfp-parts.ts`) composes ONLY
+  the parts against the stored drafted sections through the parts-only
+  brain turn (`composeProposalParts`, the letter turn's own parts ask and
+  screens; its user message is the letter turn's evidence PLUS each part's
+  visual text fenced, "THE PARTS' VISUALS", so a dek can name a date only a
+  timeline states; the letter turn's own user message is unchanged) and writes only `parts_json` (`db.ts writeProposalParts`, CAS on
+  rev, rev bumped, so an open workspace sees the usual reload conflict and a
+  stored gate verdict reads stale). It never writes the letter, a section, a
+  title or the structure. It refuses a real RFP, a superseded proposal, one
+  with a draft in flight, and one with fewer than two drafted non-letter
+  sections; it prints counts only, never document text or env values;
+  activity row `proposal.parts` is shape-only. Exit 2 usage, 1 refusal or
+  failure, 0 written.
+
+**Byte identity, proven.** For a real RFP nothing changes: no `parts` key
+on the resolved proposal (so its JSON and hash are unchanged),
+`ExportView.parts` null, the emitters' legacy branch makes the same calls in
+the same order, and kickers come from the same function. Round 33 proved it
+by rendering the visual fixture (with and without a quote) from a
+`git archive` of 66a5e8e6 and from the round's tree, each in a fresh
+process under a frozen clock and seeded randomness: the docx bytes, the PDF
+bytes, the resolved JSON and the view (less the new `parts` key) were equal.
+test:rfpcoverletter keeps it pinned without a second tree: under a frozen
+clock it pins the fixture's Word XML (document, footers, styles, numbering,
+with the ids docx numbers from process-wide counters blanked, since a
+process that rendered other documents first shifts them) and the PDF's page
+count (14) and page texts. Because that XML pin blanks `r:embed`, it also
+pins the fixture's docx images in DOCUMENT order (each `r:embed` resolved
+through the rels to its media bytes, hashed) and its media set, both
+computed from 66a5e8e6's emitters, so a swapped divider numeral fails.
+
+**Tests and harness.** test:rfpcoverletter adds: one kicker function
+(export-assets' is furniture's; a workspace source pin that `secKicker` is
+it and no copy of the rule remains), the 21 legacy kicker cases, the r33
+parts (titles, deks, members, pricing in part 4), the files' part-relative
+kickers equal to what the workspace computes through `documentParts` (the
+paired variant of the kicker test), the omitted part 3 with the neighbours'
+numbering intact and an unstored dek read null, static titles with no
+`parts_json`, no part 4 without a quote and section 8, part spans in the
+gate surface, a real RFP with no parts anywhere, the PDF sheet sequence (each
+divider before its sections, Investment between divider 04 and Section 4.1,
+every dek on its divider, a "SECTION 1.3 · CONTINUED" page, no bare label
+kicker, no legacy brief divider), the omit document's missing divider and
+dek-less part 2, and the Word divider order. Part resolution itself is
+test:rfpoutline's; the letter turn's parts output and screens are
+test:rfpletter's. rfp:render-fixture renders two more documents,
+`r33-parts` (all four parts with stored titles and deks, a section long
+enough to overflow, Investment opening part 4) and `r33-parts-omit-3`
+(section 6 removed: no part 3; part 2 with no dek), built by
+`buildR33GateInput` in `scripts/rfp-render-fixture.ts`; both pass the gate
+with no finding. The round-32 fixture is a brief too: it now renders part 1
+and part 4, still 10 PDF pages.
+
+**Open.** Round 33's fix round set part-divider titles at full content
+width through a part-only flag, so real-RFP dividers (still at the 86%
+measure) are unchanged and the earlier reason for leaving it open no longer
+holds; whether real-RFP dividers should widen too is the owner's call. On
+screen an ABSENT part divider (nothing drafted) shows the number it would
+take, which can equal the next in-file part's number until a section is
+drafted. The status route's rev-moved payload carries `partsJson`, and the
+poll adopts it, so a letter landing's composed titles and deks reach the
+open workspace without a reload; a workspace open while `rfp:parts` runs
+still shows them only after its reload conflict. Square brackets are
+refused in part titles and deks at write AND read (the D3 placeholder
+shape, which would BLOCK with a recipe nothing can run), and the write
+screen's A-rule check matches findings by field alone, so span rules
+without a charOffset screen too. A B7 finding on a part dek carries no field locator (B7 locates
+by block only), so it would get the whole-document Tron recipe; the system
+pricing dek is the only dek that carries money and B7 sanctions it.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

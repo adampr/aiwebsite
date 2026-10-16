@@ -220,6 +220,9 @@ export default async function RfpWorkspacePage({
         // lines and a brief's narrative cover headline, as the files print.
         clientAddress={doc.clientAddress}
         proposalHeadline={doc.proposalHeadline}
+        // Round 33 (§5.17.21): a brief's stored part titles and deks, read
+        // by the same resolution resolve-draft hands both files.
+        partsJson={proposal?.partsJson ?? null}
         archived={Boolean(doc.archivedAt)}
         clientName={doc.clientName}
         // The cover names who the EXPORT names (resolve-draft.ts `cover`):

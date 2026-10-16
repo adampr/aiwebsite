@@ -3,6 +3,10 @@
  *
  *   npm run test:rfpoutline
  *
+ * Round 33 adds the thematic part map, resolveParts (the one helper every
+ * brief-doc surface consumes), the part title/dek screens, migration 0063
+ * and the rfp:parts CLI (source pins).
+ *
  * Pure, no server, no brain. Pins XL.net's standard outline, the host's
  * brief-mode decision after a read (applyBriefMode), the addressee grounding
  * (select, never author), and the letter furniture a grounded addressee
@@ -15,16 +19,30 @@ import { fileURLToPath } from "node:url";
 import {
   OUTLINE_ABOUT_LABEL,
   OUTLINE_DEFAULT_LABEL,
+  OUTLINE_PARTS,
   OUTLINE_QUESTIONS_LABEL,
   OUTLINE_TITLES_FOR_PROMPT,
+  PART_DEK_MAX,
+  PART_TITLE_MAX,
   STANDARD_OUTLINE,
   mayAdoptNarrativeTitle,
   narrativeTitleOpen,
   outlineDefaultTitle,
   outlineLabelFor,
+  outlinePartOf,
+  parsePartsJson,
+  partDigitsStated,
+  partForLabel,
+  resolveParts,
+  serializePartsJson,
 } from "../src/lib/rfp/outline";
 import {
   groundAddressLines,
+  partCorpus,
+  partsWithSections,
+  screenLetterParts,
+  screenPartDek,
+  screenPartTitle,
   screenProposalHeadline,
   screenSectionTitle,
   sectionTitleCorpus,
@@ -53,6 +71,7 @@ import { buildExportView } from "../src/lib/rfp/export";
 import { screenInjection } from "../src/lib/governance/research";
 import { resolveDraft } from "../src/lib/rfp/resolve-draft";
 import { buildFixtureGateInput } from "./rfp-render-fixture";
+import { fixRecipe, PART_FIX_MESSAGE } from "../src/lib/rfp/check-fixes";
 
 let failures = 0;
 function check(label: string, actual: unknown, expected: unknown) {
@@ -729,6 +748,414 @@ check(
     [true, true, true, true, true]
   );
   check("db: the CAS is attempt-fenced like completeGeneration", body.includes("eq(rfpProposals.genAttemptId, opts.attemptId)"), true);
+}
+
+// ---- round 33: the canonical part map (§5.17.21) -------------------------------------
+{
+  const all = OUTLINE_PARTS.flatMap((p) => [...p.labels]);
+  check("parts: every outline label mapped exactly once", [all.length, new Set(all).size, [...all].sort().join(","), STANDARD_OUTLINE.map((n) => n.label).sort().join(",")], [10, 10, STANDARD_OUTLINE.map((n) => n.label).sort().join(","), STANDARD_OUTLINE.map((n) => n.label).sort().join(",")]);
+  check(
+    "parts: the frozen map",
+    OUTLINE_PARTS.map((p) => [p.n, p.title, p.labels.join(","), p.holdsPricing]),
+    [
+      [1, "How We Support You", "1,2,3,7,10", false],
+      [2, "Security and Infrastructure", "4,5", false],
+      [3, "Onboarding and Transition", "6,9", false],
+      [4, "Pricing and Agreement Terms", "8", true],
+    ]
+  );
+  check("parts: no default part title repeats a member section's standard title", OUTLINE_PARTS.every((p) => p.labels.every((l) => outlineDefaultTitle(l)?.toLowerCase() !== p.title.toLowerCase())), true);
+  check("parts: each member's map labels are in outline order", OUTLINE_PARTS.every((p) => p.labels.every((l, i) => i === 0 || STANDARD_OUTLINE.findIndex((n) => n.label === p.labels[i - 1]) < STANDARD_OUTLINE.findIndex((n) => n.label === l))), true);
+  check("parts: default titles fit the override cap and carry no em dash", OUTLINE_PARTS.every((p) => p.title.length <= PART_TITLE_MAX && !/[\u2014\u2015]/.test(p.title)), true);
+  check("parts: outlinePartOf / partForLabel", [outlinePartOf("7"), outlinePartOf("8"), outlinePartOf("11"), partForLabel("11"), partForLabel("Extra"), partForLabel(LETTER_LABEL), partForLabel("9")], [1, 4, null, 1, 1, null, 3]);
+  check("parts: caps", [PART_TITLE_MAX, PART_DEK_MAX], [40, 160]);
+}
+
+// ---- round 33: resolveParts (the one helper every surface consumes) --------------------
+{
+  const outline = (labels: string[]) => labels.map((l) => ({ label: l, title: outlineDefaultTitle(l) ?? `T${l}` }));
+  const shape = (r: ReturnType<typeof resolveParts>) => r && r.parts.map((p) => [p.n, p.title, p.dek, p.labels.join(","), p.holdsPricing]);
+  const full = outline(STANDARD_OUTLINE.map((n) => n.label));
+
+  check("resolve: a real RFP is the legacy layout (null), whatever is stored", resolveParts({ briefMode: false, structure: full, partsJson: '{"parts":[{"n":1,"title":"X Y Z","dek":null}]}', pricingPresent: true }), null);
+
+  const r = resolveParts({ briefMode: true, structure: full, partsJson: null, pricingPresent: true });
+  check(
+    "resolve: all ten drafted + pricing: four parts, static titles, no deks",
+    shape(r),
+    [
+      [1, "How We Support You", null, "1,2,3,7,10", false],
+      [2, "Security and Infrastructure", null, "4,5", false],
+      [3, "Onboarding and Transition", null, "6,9", false],
+      [4, "Pricing and Agreement Terms", null, "8", true],
+    ]
+  );
+  check(
+    "resolve: kickers are part-relative in outline order; the Investment sheet is part 4's first (8 is 4.2)",
+    ["1", "2", "3", "7", "10", "4", "5", "6", "9", "8"].map((l) => r?.kicker(l)),
+    ["Section 1.1", "Section 1.2", "Section 1.3", "Section 1.4", "Section 1.5", "Section 2.1", "Section 2.2", "Section 3.1", "Section 3.2", "Section 4.2"]
+  );
+  check("resolve: positions and pricing kickers (all four parts)", r?.parts.map((p) => [p.n, p.position, p.pricingKicker]), [[1, 1, null], [2, 2, null], [3, 3, null], [4, 4, "Section 4.1"]]);
+  // F3: the pricing part's numbering in its three shapes.
+  {
+    const both = resolveParts({ briefMode: true, structure: outline(["1", "8"]), partsJson: null, pricingPresent: true });
+    const only = resolveParts({ briefMode: true, structure: outline(["1"]), partsJson: null, pricingPresent: true });
+    const eight = resolveParts({ briefMode: true, structure: outline(["1", "8"]), partsJson: null, pricingPresent: false });
+    check(
+      "resolve: pricing + section 8: Investment is Section 2.1, section 8 is 2.2",
+      [both?.parts[1]?.pricingKicker, both?.kicker("8"), both?.parts[1]?.position],
+      ["Section 2.1", "Section 2.2", 2]
+    );
+    check("resolve: pricing only: Investment is Section 2.1, no section sheet", [only?.parts[1]?.pricingKicker, only?.parts[1]?.labels], ["Section 2.1", []]);
+    check("resolve: section 8 only (no quote): 8 is Section 2.1, no Investment kicker", [eight?.kicker("8"), eight?.parts[1]?.pricingKicker, eight?.parts[1]?.holdsPricing], ["Section 2.1", null, false]);
+  }
+  check("resolve: a label no part renders kickers empty", [r?.kicker(LETTER_LABEL), r?.kicker("42"), r?.kicker("")], ["", "", ""]);
+
+  // Gaps: 2 and 3 undrafted, 9 dropped at read, part 2 entirely absent.
+  const g = resolveParts({ briefMode: true, structure: outline(["1", "7", "10", "6", "8"]), partsJson: null, pricingPresent: true });
+  check("resolve: an empty part is omitted", shape(g)?.map((p) => p[0]), [1, 3, 4]);
+  check("resolve: an omitted part leaves no gap: positions count the rendered parts", g?.parts.map((p) => [p.n, p.position, p.pricingKicker]), [[1, 1, null], [3, 2, null], [4, 3, "Section 3.1"]]);
+  check("resolve: kicker numbering closes the gaps (prefix = position)", ["1", "7", "10", "6", "8"].map((l) => g?.kicker(l)), ["Section 1.1", "Section 1.2", "Section 1.3", "Section 2.1", "Section 3.2"]);
+  check("resolve: an undrafted label has no kicker", [g?.kicker("2"), g?.kicker("9")], ["", ""]);
+
+  // Render order follows the MAP, not the order the structure lists.
+  const shuffled = resolveParts({ briefMode: true, structure: outline(["10", "7", "1"]), partsJson: null, pricingPresent: false });
+  check("resolve: outline order inside a part, whatever order structure gives", [shuffled?.parts[0].labels, shuffled?.kicker("10")], [["1", "7", "10"], "Section 1.3"]);
+
+  // Pricing furniture alone keeps part 4 (section 8 undrafted).
+  const p4 = resolveParts({ briefMode: true, structure: outline(["1", "4"]), partsJson: null, pricingPresent: true });
+  check("resolve: pricing alone keeps part 4, labels [] and holdsPricing true", shape(p4)?.[2], [4, "Pricing and Agreement Terms", null, "", true]);
+  check(
+    "resolve: a pricing-only part 4 IGNORES its stored title and dek (composed from a section no longer drafted)",
+    shape(resolveParts({ briefMode: true, structure: outline(["1", "4"]), partsJson: serializePartsJson([{ n: 4, title: "Old Part Four", dek: "A stale dek from before." }]), pricingPresent: true }))?.[2],
+    [4, "Pricing and Agreement Terms", null, "", true]
+  );
+  check(
+    "resolve: with section 8 drafted the stored part-4 title and dek apply",
+    shape(resolveParts({ briefMode: true, structure: outline(["8"]), partsJson: serializePartsJson([{ n: 4, title: "Old Part Four", dek: "A stale dek from before." }]), pricingPresent: true })),
+    [[4, "Old Part Four", "A stale dek from before.", "8", true]]
+  );
+  check("resolve: part 4 with neither section 8 nor pricing is omitted", shape(resolveParts({ briefMode: true, structure: outline(["1", "4"]), partsJson: null, pricingPresent: false }))?.map((p) => p[0]), [1, 2]);
+  check("resolve: section 8 without pricing: part 4 present, holdsPricing false", shape(resolveParts({ briefMode: true, structure: outline(["8"]), partsJson: null, pricingPresent: false })), [[4, "Pricing and Agreement Terms", null, "8", false]]);
+
+  // Defensive: a label outside "1".."10" renders LAST in part 1, never dropped.
+  const odd = resolveParts({ briefMode: true, structure: [...outline(["2", "4"]), { label: "Extra", title: "Extra" }, ...outline(["1"]), { label: "11", title: "Eleven" }], partsJson: null, pricingPresent: false });
+  check("resolve: unknown labels end part 1 in the given order", [odd?.parts[0].labels, odd?.kicker("Extra"), odd?.kicker("11")], [["1", "2", "Extra", "11"], "Section 1.3", "Section 1.4"]);
+  check("resolve: an unknown label alone still makes part 1", shape(resolveParts({ briefMode: true, structure: [{ label: "Z", title: "Z" }], partsJson: null, pricingPresent: false })), [[1, "How We Support You", null, "Z", false]]);
+  check("resolve: reserved and repeated labels are skipped", resolveParts({ briefMode: true, structure: [...outline(["1"]), { label: LETTER_LABEL, title: "Cover Letter" }, ...outline(["1"])], partsJson: null, pricingPresent: false })?.parts.map((p) => p.labels), [["1"]]);
+  check("resolve: nothing drafted, no pricing: no parts", resolveParts({ briefMode: true, structure: [], partsJson: null, pricingPresent: false })?.parts, []);
+
+  // Overrides.
+  const stored = JSON.stringify({ parts: [
+    { n: 1, title: "Your Studio and How We Support It", dek: "Google Workspace, your design applications and the service desk." },
+    { n: 2, title: null, dek: "Identity, endpoint protection and backups." },
+    { n: 3, title: "Onboarding and Transition", dek: null },
+    { n: 4, title: null, dek: null },
+  ] });
+  const o = resolveParts({ briefMode: true, structure: full, partsJson: stored, pricingPresent: true });
+  check(
+    "resolve: stored overrides win; null keeps the default title and no dek",
+    shape(o)?.map((p) => [p[1], p[2]]),
+    [
+      ["Your Studio and How We Support It", "Google Workspace, your design applications and the service desk."],
+      ["Security and Infrastructure", "Identity, endpoint protection and backups."],
+      ["Onboarding and Transition", null],
+      ["Pricing and Agreement Terms", null],
+    ]
+  );
+  check("resolve: an override for an omitted part never resurrects it", shape(resolveParts({ briefMode: true, structure: outline(["1"]), partsJson: stored, pricingPresent: false }))?.map((p) => p[0]), [1]);
+
+  // Tolerant reads: garbage reads as the defaults, never throws.
+  const defaults = OUTLINE_PARTS.map((p) => ({ n: p.n, title: null, dek: null }));
+  for (const [name, raw] of [
+    ["null", null],
+    ["empty", ""],
+    ["bad JSON", "{parts:"],
+    ["array", "[]"],
+    ["no parts key", "{}"],
+    ["parts not an array", '{"parts":{"n":1}}'],
+    ["number", "42"],
+    ["JSON null", "null"],
+  ] as const)
+    check(`parts_json tolerant read: ${name}`, parsePartsJson(raw), defaults);
+  check(
+    "parts_json tolerant read: bad slots read null, good ones stay, first n wins, out-of-range n ignored",
+    parsePartsJson(JSON.stringify({ parts: [
+      { n: 1, title: "Kept Title", dek: 7 },
+      { n: 1, title: "Second Wins Never", dek: "x".repeat(20) },
+      { n: 2, title: "x".repeat(41), dek: "y".repeat(161) },
+      { n: 3, title: " Padded", dek: "A dek \u2014 with an em dash." },
+      { n: 4, title: "Line\nbreak", dek: "Angle <b>bold</b> dek here." },
+      { n: 5, title: "Five", dek: "Five" },
+      { n: "2", title: "String n", dek: null },
+      null,
+      "junk",
+    ] })),
+    [
+      { n: 1, title: "Kept Title", dek: null },
+      { n: 2, title: null, dek: null },
+      { n: 3, title: null, dek: null },
+      { n: 4, title: null, dek: null },
+    ]
+  );
+  check("parts_json: exactly-at-cap values are kept", parsePartsJson(JSON.stringify({ parts: [{ n: 2, title: "t".repeat(40), dek: "d".repeat(160) }] }))[1], { n: 2, title: "t".repeat(40), dek: "d".repeat(160) });
+  // S2: a hand-written parts_json row (outside every write path) is
+  // re-screened at read: each hostile value falls back to its default.
+  const hostileRow = JSON.stringify({ parts: [
+    { n: 1, title: "Su\u0301\u0301\u0301pport", dek: "Only $5,000 a month for the whole studio." },
+    { n: 2, title: "\u202eevil title", dek: "Zero\u200bwidth dek text for the studio here." },
+    { n: 3, title: "\uff12\uff10\uff12\uff16 plan", dek: "Line one\u2028line two of the dek here." },
+    { n: 4, title: "[Client] plan \u2e3a now", dek: "Supporting [Company Name] with a small \ufe58 dash dek." },
+  ] });
+  check("parts_json read re-screen: zalgo, RLO, $, zero-width, fullwidth digits, U+2028, dash lookalikes, [brackets] all read null", parsePartsJson(hostileRow), defaults);
+  check(
+    "parts_json read re-screen: each class alone",
+    [
+      "Only $5,000 a month",
+      "Su\u0301\u0301\u0301pport",
+      "\u202eevil",
+      "Sup\u200bport",
+      "Line\u2028Two",
+      "Line\u0085Two",
+      "\uff12\uff10\uff12\uff16 plan",
+      "Plan \u2e3a now",
+      "Plan \ufe58 now",
+      "Plan \u2012 now",
+      "\ufeffTitle",
+      "Plain Title",
+      "Caf\u00e9 Support",
+      "Plan \u2013 now",
+    ].map((t) => parsePartsJson(JSON.stringify({ parts: [{ n: 1, title: t, dek: null }] }))[0]!.title !== null),
+    [false, false, false, false, false, false, false, false, false, false, false, true, true, true]
+  );
+  check("resolve: a hostile row renders the static defaults in every part", shape(resolveParts({ briefMode: true, structure: full, partsJson: hostileRow, pricingPresent: true })), shape(r));
+  check("resolve: a bad parts_json renders the defaults", shape(resolveParts({ briefMode: true, structure: full, partsJson: "not json", pricingPresent: true })), shape(r));
+
+  // The stored shape: always four entries in order, refused values null.
+  check(
+    "serializePartsJson: four entries, n order, missing and bad values null",
+    JSON.parse(serializePartsJson([{ n: 3, title: "Onboarding and Transition", dek: "A dek." }, { n: 1, title: "x".repeat(41), dek: null }])),
+    { parts: [
+      { n: 1, title: null, dek: null },
+      { n: 2, title: null, dek: null },
+      { n: 3, title: "Onboarding and Transition", dek: "A dek." },
+      { n: 4, title: null, dek: null },
+    ] }
+  );
+  check("serializePartsJson round-trips through parsePartsJson", parsePartsJson(serializePartsJson(parsePartsJson(stored))), parsePartsJson(stored));
+  check("outline.ts stays import-free and lookbehind-free", [/^\s*import\s/m.test(read("src/lib/rfp/outline.ts")), /\(\?<[=!]/.test(read("src/lib/rfp/outline.ts"))], [false, false]);
+}
+
+// ---- round 33: part title and dek sanitation (brain.ts) -----------------------------
+{
+  const secs = [
+    { label: "1", title: "Executive Summary", paragraphs: ["Curio runs Google Workspace and Revit across 2 studios."] },
+    { label: "7", title: "Service Delivery and Support", paragraphs: ["The service desk answers live, 24/7/365."] },
+    { label: "6", title: "Projects and Transition", paragraphs: ["Onboarding day is December 11, 2026, and offboarding ends January 11, 2027."], blocks: [] },
+    { label: "4", title: "Security and Included Tools", paragraphs: ["Endpoint protection covers every laptop."] },
+  ];
+  const c3 = partCorpus(secs, 3);
+  const c1 = partCorpus(secs, 1);
+  check("corpus: a part's own sections only", [c3.includes("December 11, 2026"), c3.includes("Workspace"), c1.includes("24/7/365"), partCorpus(secs, 4)], [true, false, true, ""]);
+  check("dek: a date the part's sections state is kept", screenPartDek("A planning meeting, onboarding on December 11, 2026, and offboarding by January 11, 2027.", c3), "A planning meeting, onboarding on December 11, 2026, and offboarding by January 11, 2027.");
+  check("dek: a date ANOTHER part states refuses (grounding is per part)", screenPartDek("Your 2 studios onboard on a plan we agree together.", c3), null);
+  check("dek: an ungrounded digit refuses, never repaired", screenPartDek("Onboarding on December 12, 2026, with the whole team.", c3), null);
+  check("dek: 2026 alone grounds; 202 never does", [screenPartDek("Everything in place before the end of 2026, as planned.", c3) !== null, screenPartDek("Everything in place within 202 days of signing.", c3)], [true, null]);
+  check("dek: currency refuses", [screenPartDek("A flat monthly fee of $247 per user, with no surprises.", c1), screenPartDek("No surprise dollars on any bill, ever, for the studio.", c1)], [null, null]);
+  check("dek: zalgo (stacked marks) refuses", screenPartDek("The servi\u0301\u0301\u0301ce desk answers live for both studios.", c1), null);
+  check("dek: em dash refuses", screenPartDek("The service desk \u2014 live, every hour of the day.", c1), null);
+  check("dek: angle brackets refuse (never stripped to pass)", [screenPartDek("The service desk <<<answers>>> live, every hour.", c1), screenPartDek("The service desk answers <b>live</b>, every hour.", c1)], [null, null]);
+  check("dek: a control character refuses", screenPartDek("The service desk answers\u0007 live, every hour.", c1), null);
+  check("dek: one line, whitespace collapsed", screenPartDek("  Google Workspace,\n  your design   applications and the desk. ", c1), "Google Workspace, your design applications and the desk.");
+  check("dek: over 160 refuses, exactly 160 kept", [screenPartDek("a".repeat(161), c1), screenPartDek("a".repeat(160), c1)?.length], [null, 160]);
+  check("dek: too short or not a string", [screenPartDek("Short.", c1), screenPartDek(null, c1), screenPartDek(42, c1), screenPartDek(["x"], c1)], [null, null, null, null]);
+  check("dek: a non-ASCII numeral refuses", screenPartDek("Onboarding on December \u0661\u0661, with the whole team.", c3), null);
+  check("dek: an injection-screen hit refuses", screenPartDek("The service desk answers live, every hour.", c1, () => true), null);
+  check("title: a plain title is kept, & allowed", screenPartTitle("Your Studio & How We Support It", c1), "Your Studio & How We Support It");
+  check("title: a grounded figure is kept", screenPartTitle("Support for 2 Studios, 24/7/365", c1), "Support for 2 Studios, 24/7/365");
+  check("title: an ungrounded figure refuses", screenPartTitle("Support for 3 Studios", c1), null);
+  check("title: over 40 refuses, never cut; exactly 40 kept", [screenPartTitle("t".repeat(41), c1), screenPartTitle("t".repeat(40), c1)?.length], [null, 40]);
+  check("title: currency / em dash / zalgo refuse", [screenPartTitle("Pricing in USD", c1), screenPartTitle("Support \u2014 Always", c1), screenPartTitle("Su\u0301\u0301\u0301pport", c1)], [null, null, null]);
+  // Square brackets are the D3 placeholder shape ("[Client]"): a value that
+  // stored would BLOCK the gate with the no-Tron part recipe, a dead end.
+  check(
+    "title/dek: square brackets (the D3 placeholder shape) refuse at write",
+    [screenPartTitle("[Client] Support Plan", c1), screenPartDek("How we support [Company Name] from the first ticket onward.", c1)],
+    [null, null]
+  );
+  check("title: too short", screenPartTitle("Go", c1), null);
+  // S6: the em dash's lookalikes refuse at write too.
+  check(
+    "dek/title: figure dash, two-em dash, three-em dash and small em dash refuse; an en dash stays",
+    [
+      screenPartDek("Support \u2012 always on for the studio.", c1),
+      screenPartDek("Support \u2e3a always on for the studio.", c1),
+      screenPartDek("Support \u2e3b always on for the studio.", c1),
+      screenPartDek("Support \ufe58 always on for the studio.", c1),
+      screenPartTitle("Support \u2e3a Always", c1),
+      screenPartDek("Support \u2013 always on for the studio.", c1),
+    ],
+    [null, null, null, null, null, "Support \u2013 always on for the studio."]
+  );
+  // S1: the business-term rules' forbidden phrases refuse at write.
+  check(
+    "dek/title: an A-rule forbidden phrase refuses (A1, A2, A3, A4, A6, A7, A8)",
+    [
+      screenPartDek("Month to month terms, all US based, with our own SOC watching.", c1),
+      screenPartDek("Month to month terms with nothing locked in for the studio.", c1),
+      screenPartDek("A zero-gap cutover for the studio and its people.", c1),
+      screenPartDek("All US based engineers on the service desk for you.", c1),
+      screenPartDek("We guarantee arrival on site whenever the studio calls.", c1),
+      screenPartDek("Our dark web monitoring watches the studio's accounts.", c1),
+      screenPartDek("Our in-house SOC watches the studio around the clock.", c1),
+      screenPartTitle("Audited Against CIS 20", c1),
+      screenPartTitle("Month-to-Month Support", c1),
+    ],
+    [null, null, null, null, null, null, null, null, null]
+  );
+  check(
+    "dek: words that only sit near a forbidden phrase stay (the rules' document-level checks are the gate's)",
+    [screenPartDek("Agreement terms and the onsite visits the studio can count on.", c1) !== null, screenPartTitle("Pricing and Agreement Terms", c1)],
+    [true, "Pricing and Agreement Terms"]
+  );
+  // S3: malformed stored blocks never throw the grounding.
+  {
+    const bad = (blocks: unknown[]) => [{ label: "1", title: "T", paragraphs: ["p"], blocks: blocks as never[] }];
+    const outs: string[] = [];
+    for (const blocks of [[{ kind: "references" }], [{ kind: "references", references: [null, 7, { organization: "Acme Clinic" }] }], [null], ["x"], [42], [[]]])
+      try {
+        outs.push(String(partCorpus(bad(blocks), 1).length));
+        screenLetterParts([{ n: 1, title: "Support for the Studio", dek: null }], bad(blocks));
+      } catch (e) {
+        outs.push(`THROWS ${(e as Error).message}`);
+      }
+    check("corpus: malformed blocks (references without an array, null entries, non-objects) never throw", outs.every((o) => !o.startsWith("THROWS")), true);
+    check("corpus: a references block keeps its organizations only, a null entry skipped", partCorpus(bad([{ kind: "references", references: [null, { organization: "Acme Clinic", phone: "312-555-0186" }] }]), 1).includes("Acme Clinic") && !partCorpus(bad([{ kind: "references", references: [{ organization: "Acme Clinic", phone: "312-555-0186" }] }]), 1).includes("555"), true);
+  }
+  // The render's digit check (outline.ts, client-safe) agrees with the write.
+  check(
+    "partDigitsStated: whole numbers only, thousands folded",
+    [partDigitsStated("Onboarding on December 11, 2026.", c3), partDigitsStated("Within 202 days.", c3), partDigitsStated("Within 1 week.", c3), partDigitsStated("No digits at all.", ""), partDigitsStated("1,200 laptops", "We manage 1200 laptops."), partDigitsStated("99", "a 99.9 uptime")],
+    [true, false, false, true, true, false]
+  );
+
+  const blocked = { label: "6", title: "Projects and Transition", paragraphs: ["Onboarding follows the plan below."], blocks: [{ kind: "timeline", id: "v_0a1b2c3d", after: 1, cites: ["f9"], generatedBy: "llm", steps: [{ label: "Dec 11, 2026", title: "Onboarding day", body: "Every laptop enrolled." }] }] as never[] };
+  const cb = partCorpus([blocked], 3);
+  check("corpus: a visual's content grounds (a dated timeline step), its id never does", [screenPartDek("Onboarding day on Dec 11, 2026, with every laptop enrolled.", cb) !== null, cb.includes("v_0a1b2c3d"), cb.includes("f9")], [true, false, false]);
+
+  const reply = [
+    { n: 1, title: "  Your Studio and How We Support It ", dek: "Google Workspace and Revit across 2 studios, with a live desk." },
+    { n: 1, title: "Second entry never wins", dek: null },
+    { n: 2, title: "Security for 9 Offices", dek: "Endpoint protection covers every laptop in the studio." },
+    { n: 3, title: "Onboarding and Transition", dek: "Onboarding day is December 11, 2026." },
+    { n: 4, title: "Pricing and Terms", dek: "Pricing set out plainly for the studio." },
+    { n: 9, title: "Nine", dek: "Nine" },
+  ];
+  check(
+    "screenLetterParts: four entries; per-part grounding; absent part 4 stays null; first n wins",
+    screenLetterParts(reply, secs),
+    [
+      { n: 1, title: "Your Studio and How We Support It", dek: "Google Workspace and Revit across 2 studios, with a live desk." },
+      { n: 2, title: null, dek: "Endpoint protection covers every laptop in the studio." },
+      { n: 3, title: "Onboarding and Transition", dek: "Onboarding day is December 11, 2026." },
+      { n: 4, title: null, dek: null },
+    ]
+  );
+  // F1: a part with ONE section never takes that section's own title.
+  check(
+    "screenLetterParts: a title equal (case-folded) to the part's only section title refuses; with two sections it may stay",
+    [
+      screenLetterParts([{ n: 3, title: "projects and  TRANSITION", dek: null }], secs)[2]!.title,
+      screenLetterParts([{ n: 3, title: "Onboarding and Transition", dek: null }], secs)[2]!.title,
+      screenLetterParts([{ n: 1, title: "Executive Summary", dek: null }], secs)[0]!.title,
+    ],
+    [null, "Onboarding and Transition", "Executive Summary"]
+  );
+  // S1: a finding on a part's title or dek gets no Tron sweep.
+  {
+    const partFinding = (field: string, ruleId = "A1") =>
+      ({ ruleId, severity: "block", message: "Forbidden contract-term language.", locator: { field, charOffset: 0 }, excerpt: "Month to month", overriddenBy: null, overrideReason: null }) as never;
+    const ctx = { sections: [{ label: "1" }], requirements: [] };
+    check(
+      "check-fixes: part[n].title / part[n].dek findings are kind none, pointing at the letter regenerate or rfp:parts",
+      [fixRecipe(partFinding("part[4].dek"), ctx), fixRecipe(partFinding("part[1].title", "D1"), ctx).kind],
+      [{ kind: "none", message: PART_FIX_MESSAGE }, "none"]
+    );
+    check("check-fixes: the part message names both ways out", [PART_FIX_MESSAGE.includes("Regenerate the cover letter"), PART_FIX_MESSAGE.includes("rfp:parts")], [true, true]);
+    check("check-fixes: a section span still gets its Tron sweep", fixRecipe(partFinding("paragraphs[0]"), ctx).kind, "tron");
+  }
+  check("screenLetterParts: not an array reads four nulls", screenLetterParts({ n: 1 }, secs), OUTLINE_PARTS.map((p) => ({ n: p.n, title: null, dek: null })));
+  check("partsWithSections: map order, letter ignored", partsWithSections([...secs, { label: LETTER_LABEL, title: "Cover Letter", paragraphs: ["x"] }]), [1, 2, 3]);
+  check("the screens' output reads back through parsePartsJson unchanged", parsePartsJson(serializePartsJson(screenLetterParts(reply, secs))), screenLetterParts(reply, secs));
+}
+
+// ---- round 33: storage, landing and the rfp:parts CLI (source pins) ---------------------
+{
+  const sql = read("drizzle/migrations/0063_rfp_proposal_parts.sql");
+  check(
+    "migration 0063: one IF NOT EXISTS column, nothing else",
+    sql.split("\n").filter((l) => l.trim() && !l.startsWith("--")),
+    ['ALTER TABLE "rfp_proposals" ADD COLUMN IF NOT EXISTS "parts_json" text;']
+  );
+  const journal = JSON.parse(read("drizzle/migrations/meta/_journal.json")) as { entries: { idx: number; tag: string; when: number }[] };
+  const e62 = journal.entries.find((e) => e.tag === "0062_rfp_client_address_headline");
+  const e63 = journal.entries.find((e) => e.tag === "0063_rfp_proposal_parts");
+  check("journal: 0063 is idx 63 and its `when` is above 0062's", [e63?.idx, !!e62 && !!e63 && e63.when > e62.when], [63, true]);
+  const s62 = JSON.parse(read("drizzle/migrations/meta/0062_snapshot.json"));
+  const s63 = JSON.parse(read("drizzle/migrations/meta/0063_snapshot.json"));
+  const bare = (s: { id?: string; prevId?: string; tables: Record<string, { columns: Record<string, unknown> }> }) => {
+    const c = JSON.parse(JSON.stringify(s));
+    delete c.id;
+    delete c.prevId;
+    delete c.tables["public.rfp_proposals"].columns.parts_json;
+    return JSON.stringify(c);
+  };
+  check("snapshot 0063: prevId is 0062's id and it adds parts_json only", [s63.prevId === s62.id, bare(s63) === bare(s62), s63.tables["public.rfp_proposals"].columns.parts_json], [true, true, { name: "parts_json", type: "text", primaryKey: false, notNull: false }]);
+  check("schema: parts_json declared nullable", read("src/lib/db/rfp-schema.ts").includes('partsJson: text("parts_json"),'), true);
+
+  const route = read("src/app/api/rfp/documents/[id]/generate/route.ts");
+  check("route: parts compose only for a brief, from the letter turn's screened parts", /letterPartsJson =\s*doc\.intakeForm === "brief" && letter\?\.parts\s*\?\s*serializePartsJson\(letter\.parts\)\s*:\s*null;/.test(route), true);
+  check("route: parts_json lands in the letter's own completeGeneration CAS write", /completeGeneration\(\s*proposalId,\s*fresh\.rev,\s*attemptId,\s*JSON\.stringify\(sections\),\s*drafted\s*\?\s*isLetter && letterPartsJson !== null\s*\?\s*\{ partsJson: letterPartsJson \}/.test(route), true);
+  check("route: blocks ride to the letter for grounding on a brief only", route.includes("...(briefText !== null && s.blocks ? { blocks: s.blocks } : {}),"), true);
+  check("route: the activity meta carries counts, never text", route.includes("? { partsTitles: partsCounts.titles, partsDeks: partsCounts.deks }"), true);
+
+  const dbSrc = read("src/lib/rfp/db.ts");
+  const cg = dbSrc.slice(dbSrc.indexOf("export async function completeGeneration("));
+  check("db: completeGeneration's extra admits partsJson (no other caller passes it)", cg.slice(0, cg.indexOf("{\n  const res")).includes("partsJson: string"), true);
+  const wp = dbSrc.slice(dbSrc.indexOf("export async function writeProposalParts("));
+  const wpBody = wp.slice(0, wp.indexOf("\n}\n"));
+  check(
+    "db: writeProposalParts writes parts_json + rev bump only, CAS on rev",
+    [wpBody.includes(".set({ partsJson, rev: expectedRev + 1, updatedAt: new Date() })"), wpBody.includes("eq(rfpProposals.rev, expectedRev)"), /sectionsJson|gateJson|title:/.test(wpBody)],
+    [true, true, false]
+  );
+
+  const cli = read("scripts/rfp-parts.ts");
+  const code = cli.slice(cli.indexOf("async function main"));
+  check(
+    "cli: usage exit 2, refusals exit 1, ok exit 0",
+    [code.includes('console.error("usage: npm run rfp:parts -- <proposalId>");\n    return 2;'), (code.match(/return 1;/g) ?? []).length >= 7, code.includes("return 0;")],
+    [true, true, true]
+  );
+  check(
+    "cli: brief only, >= 2 drafted non-letter sections, no draft in flight",
+    [code.includes('doc.intakeForm !== "brief"'), cli.includes("const MIN_SECTIONS = 2;"), code.includes("splitSections(records)"), code.includes("sections.length < MIN_SECTIONS"), code.includes("genClaimActive(proposal)")],
+    [true, true, true, true, true]
+  );
+  check(
+    "cli: composes parts ONLY and stores under CAS on rev; never writes the letter or a section",
+    [code.includes("await composeProposalParts("), code.includes("writeProposalParts(proposal.id, proposal.rev, serializePartsJson(parts))"), /draftCoverLetter|writeProposalSections|completeGeneration|\.update\(/.test(code)],
+    [true, true, false]
+  );
+  check("cli: shape-only activity row proposal.parts", [code.includes('action: "proposal.parts"'), code.includes("meta: { parts: asked, titles, deks, sections: sections.length, via: \"cli\" }")], [true, true]);
+  check(
+    "cli: fixed-message catch, never err.message; prints counts only, never text or env",
+    [cli.includes('err instanceof Error ? err.constructor.name : "unknown error"'), /err\.message|\.message\b/.test(code), /console\.(log|error)\([^)]*\b(title|dek|paragraphs|rawText|process\.env)\b/.test(code), /parts\b[^;]*\.title\b[^;]*console/.test(code)],
+    [true, false, false, false]
+  );
+  check("cli: package script", JSON.parse(read("package.json")).scripts["rfp:parts"], "tsx scripts/rfp-parts.ts");
+  check("activity: proposal.parts is in the closed vocabulary", read("src/lib/rfp/activity.ts").includes('"proposal.parts",'), true);
+  check("no em dash in the round-33 sources", ["scripts/rfp-parts.ts", "drizzle/migrations/0063_rfp_proposal_parts.sql", "src/lib/rfp/outline.ts"].map((f) => /[\u2014\u2015]/.test(read(f))), [false, false, false]);
 }
 
 if (failures) {

@@ -37,6 +37,8 @@ export const RFP_ACTIONS = [
   "document.delete",
   "proposal.create",
   "proposal.generate",
+  // rfp:parts (round 33): a brief document's part titles and deks only.
+  "proposal.parts",
   "proposal.section_edit",
   "proposal.section_retitle",
   "proposal.section_remove",

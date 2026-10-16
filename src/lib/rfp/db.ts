@@ -950,7 +950,10 @@ export async function completeGeneration(
   expectedRev: number,
   attemptId: string,
   sectionsJson: string,
-  extra: Partial<{ genError: string | null }> = {}
+  // partsJson (round 33, §5.17.21): the letter landing's composed part
+  // titles and deks for a BRIEF document, landed in this same CAS write.
+  // Absent leaves the column as stored; no other caller passes it.
+  extra: Partial<{ genError: string | null; partsJson: string }> = {}
 ): Promise<boolean> {
   const res = await db
     .update(rfpProposals)
@@ -973,6 +976,28 @@ export async function completeGeneration(
         eq(rfpProposals.genAttemptId, attemptId)
       )
     )
+    .returning({ id: rfpProposals.id });
+  return res.length > 0;
+}
+
+/**
+ * `npm run rfp:parts` (round 33, §5.17.21): store a brief document's
+ * composed part titles and deks, and nothing else. CAS on rev: the caller
+ * refuses a live generation claim before composing (genClaimActive), and a
+ * claim taken after its read bumps rev, so this write then fails. Bumps rev
+ * like any write that changes what the document displays, which marks a
+ * stored gate verdict stale (§5.17.8) and makes an in-flight draft's landing
+ * retry against the fresh row.
+ */
+export async function writeProposalParts(
+  proposalId: string,
+  expectedRev: number,
+  partsJson: string
+): Promise<boolean> {
+  const res = await db
+    .update(rfpProposals)
+    .set({ partsJson, rev: expectedRev + 1, updatedAt: new Date() })
+    .where(and(eq(rfpProposals.id, proposalId), eq(rfpProposals.rev, expectedRev)))
     .returning({ id: rfpProposals.id });
   return res.length > 0;
 }

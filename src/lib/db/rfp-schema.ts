@@ -376,6 +376,17 @@ export const rfpProposals = pgTable(
      */
     checksIgnoresJson: text("checks_ignores_json"),
     /**
+     * JSON {"parts":[{"n":1..4,"title":string|null,"dek":string|null} x4]}
+     * (round 33, §5.17.21): model-composed part titles and deks for a
+     * BRIEF-mode document's four thematic parts, each already through
+     * brain.ts's sanitation (a refused value stores null, never cut).
+     * Written by the generate route's letter landing (same CAS write) and
+     * by `npm run rfp:parts`; never for a real RFP. NULL, garbage or a null
+     * slot renders the static default (outline.ts parsePartsJson /
+     * resolveParts): the layout never depends on this column.
+     */
+    partsJson: text("parts_json"),
+    /**
      * JSON QuoteInputs — the human-entered quantities (user counts, tiers).
      * Kept separately from the computed quote so the quote can be rebuilt
      * deterministically, and so what was ENTERED stays distinguishable from

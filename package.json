@@ -72,6 +72,7 @@
     "rfp:render-fixture": "tsx scripts/rfp-render-fixture.ts",
     "rfp:reread": "tsx scripts/rfp-reread.ts",
     "rfp:reground": "tsx scripts/rfp-reground.ts",
+    "rfp:parts": "tsx scripts/rfp-parts.ts",
     "rfp:consolidate": "tsx scripts/rfp-consolidate-run.ts",
     "rfp:tile-metrics": "tsx scripts/rfp-tile-metrics.ts",
     "rfp:reference-contact": "node scripts/rfp-reference-contact.mjs",

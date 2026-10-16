@@ -47,7 +47,11 @@ import {
   snapGapQuestions,
 } from "@/lib/rfp/gaps";
 import { notFound, requireRfpApi, rfpError, rfpOk } from "@/lib/rfp/http";
-import { mayAdoptNarrativeTitle, outlineDefaultTitle } from "@/lib/rfp/outline";
+import {
+  mayAdoptNarrativeTitle,
+  outlineDefaultTitle,
+  serializePartsJson,
+} from "@/lib/rfp/outline";
 import {
   liftMarkdownTables,
   type DraftBlock,
@@ -293,6 +297,11 @@ export async function POST(
       let liftRefused = 0;
       // The letter turn's thesis (round 32), already screened in brain.ts.
       let letterThesis: string | undefined;
+      // The letter turn's part titles and deks (round 33, §5.17.21), already
+      // screened in brain.ts: brief documents only, landed into parts_json
+      // in the letter record's own CAS write. Null leaves the column as is.
+      let letterPartsJson: string | null = null;
+      let partsCounts: { titles: number; deks: number } | null = null;
       // A narrative title the landing adopts (round 32), or null: brief mode
       // only, an untouched standard outline title only, never About XL.net
       // or the letter (outline.ts mayAdoptNarrativeTitle).
@@ -315,6 +324,9 @@ export async function POST(
                 label: s.label,
                 title: s.title,
                 paragraphs: s.paragraphs,
+                // Grounding for the part titles and deks only (round 33);
+                // never sent to the model. A structured RFP passes none.
+                ...(briefText !== null && s.blocks ? { blocks: s.blocks } : {}),
               })),
               briefText !== null
                 ? { brief: briefText, contactName: doc.contactName }
@@ -322,6 +334,15 @@ export async function POST(
             )
           : null;
         letterThesis = letter?.thesis;
+        letterPartsJson =
+          doc.intakeForm === "brief" && letter?.parts
+            ? serializePartsJson(letter.parts)
+            : null;
+        if (letterPartsJson !== null && letter?.parts)
+          partsCounts = {
+            titles: letter.parts.filter((p) => p.title !== null).length,
+            deks: letter.parts.filter((p) => p.dek !== null).length,
+          };
         if (letter)
           drafted = {
             paragraphs: letter.paragraphs,
@@ -626,7 +647,9 @@ export async function POST(
           attemptId,
           JSON.stringify(sections),
           drafted
-            ? {}
+            ? isLetter && letterPartsJson !== null
+              ? { partsJson: letterPartsJson }
+              : {}
             : { genError: "The drafting service returned nothing." }
         );
         if (landed) break;
@@ -670,6 +693,11 @@ export async function POST(
           // Round 32, present only when it happened: the section took the
           // drafter's narrative title (never the title itself here).
           ...(retitled ? { retitled: true } : {}),
+          // Round 33, letter of a brief only: how many part titles and deks
+          // the turn composed and the screens kept (counts, never the text).
+          ...(isLetter && landed && partsCounts
+            ? { partsTitles: partsCounts.titles, partsDeks: partsCounts.deks }
+            : {}),
         },
       });
     } catch (err) {

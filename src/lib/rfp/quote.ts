@@ -407,6 +407,49 @@ export function letterPricingParagraph(
   return parts.join(" ");
 }
 
+/**
+ * The pricing part's dek on a brief (§5.17.21): ONE short sentence under the
+ * part-4 divider title, composed by the system from the stored quote, never
+ * by the model, in letterPricingParagraph's family (same inputs, the same
+ * figures the Investment sheet prints, whole dollars in prose with cents
+ * only when there are some, and NO contract term: the quote carries none).
+ *   one illustration with a managed line:
+ *     "60 fully managed users at $247 per user per month, $14,820 per month
+ *      in total, itemized on the Investment page."
+ *     (at the minimum: "Up to 15 fully managed users at the monthly
+ *      minimum, $X per month in total, itemized on the Investment page.")
+ *   one illustration without one:
+ *     "$X per month in total, every line itemized on the Investment page."
+ *   two or more (rule B4's views, anchored on neither):
+ *     "Priced two ways, $A or $B per month, until the real split of users
+ *      is confirmed."
+ * Null when there is nothing to state (no quote, no illustration): the part
+ * then falls back to its stored dek. Pure and client-safe; resolve-draft and
+ * the workspace call it with the quote and minimum they hand
+ * letterPricingParagraph.
+ */
+export function partPricingDek(
+  quote: PricingQuote | null,
+  minimumUsers: number | null
+): string | null {
+  if (!quote || quote.illustrations.length === 0) return null;
+  const isManaged = (l: PricingLine) => l.rateCardItemCode === FULLY_MANAGED_USER_CODE;
+  if (quote.illustrations.length === 1) {
+    const ill = quote.illustrations[0];
+    const managed = ill.lines.find(isManaged) ?? null;
+    const total = fmt(ill.monthlyTotal.cents);
+    if (managed) {
+      const lead = managedLead(managed, ill, minimumUsers);
+      return `${lead.charAt(0).toUpperCase()}${lead.slice(1)}, ${total} per month in total, itemized on the Investment page.`;
+    }
+    return `${total} per month in total, every line itemized on the Investment page.`;
+  }
+  const totals = quote.illustrations.map((ill) => fmt(ill.monthlyTotal.cents));
+  const list =
+    totals.length === 2 ? `${totals[0]} or ${totals[1]}` : `${totals.slice(0, -1).join(", ")} or ${totals[totals.length - 1]}`;
+  return `Priced ${totals.length === 2 ? "two" : "several"} ways, ${list} per month, until the real split of users is confirmed.`;
+}
+
 export type BuiltQuote = {
   quote: PricingQuote;
   /** True when the quote is renderable (has at least one illustration). */

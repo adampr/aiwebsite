@@ -50,6 +50,7 @@ import {
   letterPricingParagraph,
   minimumSentence,
   parseInputsSource,
+  partPricingDek,
   parseQuoteInputs,
   quantityLabel,
   type FmuSource,
@@ -75,10 +76,14 @@ import {
   coverLede,
   coverLedeParts,
   coverTitle,
+  documentParts,
   letterAddresseeLines,
   pageFootLeft,
+  partNumeral,
   pricingParagraphIndex,
   recipientAddressLines,
+  sectionKicker,
+  sheetKicker,
   submittedByLine,
 } from "@/lib/rfp/furniture";
 import type { PricingQuote, Violation } from "@/lib/rfp/content-model";
@@ -439,6 +444,7 @@ export function Workspace({
   contactTitle,
   clientAddress,
   proposalHeadline,
+  partsJson,
   archived,
   clientName,
   coverClientName,
@@ -485,6 +491,9 @@ export function Workspace({
   clientAddress: string | null;
   /** A brief's stored narrative cover headline (§5.17.20); null = none. */
   proposalHeadline: string | null;
+  /** The proposal's stored part titles/deks (rfp_proposals.parts_json,
+   *  §5.17.21), raw; null = the static part titles, no deks. */
+  partsJson: string | null;
   archived: boolean;
   clientName: string | null;
   /** Who the export's cover names: the client, else the proposal title. */
@@ -536,6 +545,10 @@ export function Workspace({
   );
   const [proposalId, setProposalId] = useState(initialProposalId);
   const [pricing, setPricing] = useState<PricingQuote | null>(initialPricing);
+  // Live copy of rfp_proposals.parts_json (§5.17.21): seeded from the page
+  // prop, adopted by the poll so the dividers pick up the letter landing's
+  // composed titles and deks without a reload.
+  const [partsJsonLive, setPartsJsonLive] = useState<string | null>(partsJson);
   const [inputs, setInputs] = useState<QuoteInputs>(
     initialInputs ??
       // Pre-proposal display seed only: the server writes the real seed at
@@ -959,6 +972,85 @@ export function Workspace({
   const draftedCount = sections.filter(
     (s) => s.label !== LETTER_LABEL
   ).length;
+  // A brief's thematic parts (§5.17.21), through the SAME resolution
+  // resolve-draft hands both files (furniture.ts documentParts): the
+  // drafted sections (the letter is no section, as splitSections has it)
+  // decide which dividers the download prints and every part-relative
+  // kicker. Null on a real RFP, whose sheets stay exactly as they were.
+  const docParts = documentParts({
+    intakeForm,
+    structure,
+    drafted: sections.filter((s) => s.label !== LETTER_LABEL),
+    partsJson: partsJsonLive,
+    pricingPresent: pricing !== null,
+    // The pricing part's dek, system-composed from the quote the
+    // Investment sheet prints (quote.ts partPricingDek), as in both files.
+    pricingDek: partPricingDek(pricing, minimumUsers),
+  });
+  // The screen also shows UNDRAFTED sections (absent sheets) and so needs
+  // every structure node's part: the same helper over the whole structure,
+  // with the pricing part always present (its sheet always shows here).
+  const partHomes = docParts
+    ? documentParts({
+        intakeForm,
+        structure,
+        drafted: structure,
+        partsJson: partsJsonLive,
+        pricingPresent: true,
+      })
+    : null;
+  // The doc pane's sheets between the letter and the closing, in order.
+  // Real RFP: divider 01, every structure node, divider 02, Investment
+  // (exactly the pre-parts sequence). Brief: per part, its divider (absent
+  // when the download omits it), the Investment sheet first in the part
+  // that holds pricing, then its sections in outline order. A drafted
+  // sheet's kicker is the file's ("Section 1.4"); an undrafted one is in
+  // no file and keeps its label kicker. A divider prints the part's DISPLAY
+  // position (the file's when the part is in the download, else the place
+  // it would take), and the Investment sheet the file's "Section p.1" when
+  // the download holds it ("Pricing" otherwise, as on a real RFP).
+  type DocSheet =
+    | { kind: "legacy-divider"; which: 1 | 2 }
+    | { kind: "part-divider"; n: number; num: number; title: string; dek: string | null; absent: boolean }
+    | { kind: "section"; node: { label: string; title: string }; kicker: string }
+    | { kind: "pricing"; kicker: string };
+  const docSheets: DocSheet[] = [];
+  if (docParts && partHomes) {
+    const homed = new Set<string>();
+    for (const home of partHomes.parts) {
+      const inFile = docParts.parts.find((p) => p.n === home.n);
+      docSheets.push({
+        kind: "part-divider",
+        n: home.n,
+        num: (inFile ?? home).position,
+        title: (inFile ?? home).title,
+        dek: (inFile ?? home).dek,
+        absent: !inFile,
+      });
+      if (home.holdsPricing)
+        docSheets.push({ kind: "pricing", kicker: inFile?.pricingKicker ?? "Pricing" });
+      for (const label of home.labels) {
+        const node = structure.find((n) => n.label === label);
+        if (!node || homed.has(label)) continue;
+        homed.add(label);
+        const drafted = sections.some((s) => s.label === label);
+        docSheets.push({
+          kind: "section",
+          node,
+          kicker: drafted ? sheetKicker(label, docParts) : sectionKicker(label),
+        });
+      }
+    }
+    // Defensive: the resolution homes every label; one it missed still shows.
+    for (const node of structure)
+      if (!homed.has(node.label))
+        docSheets.push({ kind: "section", node, kicker: sectionKicker(node.label) });
+  } else {
+    docSheets.push({ kind: "legacy-divider", which: 1 });
+    for (const node of structure)
+      docSheets.push({ kind: "section", node, kicker: sectionKicker(node.label) });
+    docSheets.push({ kind: "legacy-divider", which: 2 }, { kind: "pricing", kicker: "Pricing" });
+  }
   // The rail (Questions / Coverage / Checks / Tron) waits for the document
   // (owner directive 2026-09-30: while the response drafts initially, do
   // not show it; it appears once it can be used, after the draft exists).
@@ -1021,14 +1113,10 @@ export function Workspace({
   // structure labels are usually bare ("8", "3.1", "IV") but sometimes
   // arrive already worded, so only prefix when it reads as a bare label.
   // Roman numerals are tested as numerals first: "III" and "VII" contain
-  // 3+ letters and would otherwise render bare beside "Section II".
-  const secKicker = (label: string) => {
-    const t = label.trim();
-    if (!t) return "Section";
-    if (/^M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/i.test(t))
-      return `Section ${t}`;
-    return /[a-z]{3,}/i.test(t) ? t : `Section ${t}`;
-  };
+  // 3+ letters and would otherwise render bare beside "Section II". The
+  // rule is furniture.ts sectionKicker, the SAME function both emitters run
+  // (round 33 retired the pinned replica pair).
+  const secKicker = sectionKicker;
 
   // Gap questions dedupe by normalized text: seventeen sections asking the
   // same certification question is ONE question with seventeen targets, not
@@ -1270,6 +1358,8 @@ export function Workspace({
       // so Coverage rows heal on reload instead.)
       if (Array.isArray(s.structure)) setStructure(s.structure);
       if (p.pricing !== undefined) setPricing(p.pricing);
+      if (p.partsJson !== undefined)
+        setPartsJsonLive(typeof p.partsJson === "string" ? p.partsJson : null);
       if (p.pricingInputs) {
         // Adopt provenance with the inputs: a second tab that edited the
         // count must retire this tab's "From the RFP" reading on poll, not
@@ -5276,29 +5366,294 @@ export function Workspace({
                 <PageFoot who={coverClientName} />
               </section>
 
-              {/* Part divider — the reference's numbered break page (ghost
-                  numeral, bar, title, deck, three-square colophon). Claim-free
-                  furniture: numerals are render-order, never RFP labels; no
-                  sec-* id (a real RFP could label a section "01" and the jump
-                  would collide); no flash key (nothing can update it).
-                  Strings mirror export-assets.ts furnitureDividers, which
-                  reads node:fs and cannot be imported here. */}
-              <DividerSheet
-                num="01"
-                title={
-                  intakeForm === "brief"
-                    ? "The Proposal"
-                    : "Response to the Request for Proposal"
-                }
-                deck={
-                  intakeForm === "brief"
-                    ? "The sections of this proposal, in XL.net's standard order."
-                    : "The sections of this response, as read from the request."
-                }
-                clientName={coverClientName}
-              />
+              {/* The sheets between the letter and the closing, in the order
+                  docSheets lays out (§5.17.21): a real RFP's divider 01,
+                  sections, divider 02 and Investment exactly as before; a
+                  brief's thematic parts. */}
+              {docSheets.map((sheet) => {
+                if (sheet.kind === "legacy-divider")
+                  return sheet.which === 1 ? (
+                    <Fragment key="divider-01">
+                    {/* Part divider — the reference's numbered break page (ghost
+                        numeral, bar, title, deck, three-square colophon). Claim-free
+                        furniture: numerals are render-order, never RFP labels; no
+                        sec-* id (a real RFP could label a section "01" and the jump
+                        would collide); no flash key (nothing can update it).
+                        Strings mirror export-assets.ts furnitureDividers, which
+                        reads node:fs and cannot be imported here. */}
+                    <DividerSheet
+                      num="01"
+                      title={
+                        intakeForm === "brief"
+                          ? "The Proposal"
+                          : "Response to the Request for Proposal"
+                      }
+                      deck={
+                        intakeForm === "brief"
+                          ? "The sections of this proposal, in XL.net's standard order."
+                          : "The sections of this response, as read from the request."
+                      }
+                      clientName={coverClientName}
+                    />
+                    </Fragment>
+                  ) : (
+                    <Fragment key="divider-02">
+                    {/* The reference gives pricing its own numbered break ("04
+                        Pricing & Terms" there; second break here). The deck restates
+                        the engine property the empty state below already asserts. */}
+                    <DividerSheet
+                      num="02"
+                      title="Investment"
+                      deck="Pricing for the services in this proposal, computed from the rate card."
+                      clientName={coverClientName}
+                      absent={!pricing}
+                    />
+                    </Fragment>
+                  );
+                if (sheet.kind === "part-divider")
+                  // A brief's thematic part (§5.17.21): the same divider
+                  // chrome, numeral 0p, the part title and its dek only when
+                  // stored. No sec-* id (the round-8 hijack rule): the rail's
+                  // jump targets stay the sections'.
+                  return (
+                    <DividerSheet
+                      key={`part-${sheet.n}`}
+                      num={partNumeral(sheet.num)}
+                      title={sheet.title}
+                      fullWidthTitle
+                      deck={sheet.dek}
+                      clientName={coverClientName}
+                      absent={sheet.absent}
+                      absentNote={
+                        sheet.n === 4
+                          ? "Not in the download until its section is drafted or the pricing questions are answered"
+                          : "Not in the download until one of its sections is drafted"
+                      }
+                    />
+                  );
+                if (sheet.kind === "pricing")
+                  return (
+                    <Fragment key="sec-__pricing">
+                    {/* ---- Investment: engine output, printed on the paper. The
+                        flash-keyed div is INSIDE the page card so the adjust form
+                        below shares the sheet without sharing the remount key.
+                        Without a quote both emitters skip divider 02 and this
+                        sheet (§5.17.5), so both wear the absent field until the
+                        pricing questions are answered. ---- */}
+                    <section
+                      className={`rfpdoc-page${pricing ? "" : " rfpdoc-page--absent"}`}
+                      id="sec-__pricing"
+                    >
+                      {!pricing && (
+                        <span className="rfpdoc-tool-label">
+                          Not in the download until the pricing questions are answered
+                        </span>
+                      )}
+                      <div
+                        className={
+                          highlights.has("__pricing")
+                            ? "doc-sec--changed doc-sec--flash"
+                            : undefined
+                        }
+                        key={`c-${flashSeq.current.get("__pricing") ?? 0}`}
+                      >
+                      <div className="rfpdoc-sechead">
+                        <div className="min-w-0">
+                          <div className="rfpdoc-kicker">{sheet.kicker}</div>
+                          <h3 className="rfpdoc-h mt-1">
+                            Investment
+                            {highlights.has("__pricing") && (
+                              <span className="doc-chip">Updated</span>
+                            )}
+                          </h3>
+                        </div>
+                      </div>
+                      {!pricing ? (
+                        <div className="rfpdoc-tool mt-4">
+                          <span className="rfpdoc-tool-label">
+                            Workspace · not in the download
+                          </span>
+                          <p className="rfpdoc-faint text-sm italic">
+                            Every figure here is computed from the rate card, never
+                            drafted. It builds as the pricing questions are
+                            answered.
+                          </p>
+                          <div className="rfpdoc-actions mt-2">
+                            <button
+                              type="button"
+                              // The Questions pane opens only once a section is
+                              // drafted (showPane returns early before that), so
+                              // the button says so instead of doing nothing.
+                              disabled={draftedCount === 0}
+                              title={
+                                draftedCount === 0
+                                  ? "Draft a section first"
+                                  : undefined
+                              }
+                              onClick={() => {
+                                showPane("questions");
+                              }}
+                            >
+                              Answer the pricing questions
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-4 space-y-6">
+                          {pricing.illustrations.map((ill) => (
+                            <div key={ill.id}>
+                              <h4
+                                className="rfpdoc-h"
+                                style={{ fontSize: "15px" }}
+                              >
+                                {ill.label}
+                              </h4>
+                              <p className="rfpdoc-muted mt-1 text-sm">{ill.basis}</p>
+                              <div className="mt-3 overflow-x-auto">
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th>Service</th>
+                                      <th style={{ textAlign: "right" }}>Qty</th>
+                                      <th style={{ textAlign: "right" }}>Unit</th>
+                                      <th style={{ textAlign: "right" }}>Monthly</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {ill.lines.map((l) => (
+                                      <tr key={l.id}>
+                                        <td>{l.label}</td>
+                                        <td style={{ textAlign: "right" }}>
+                                          {/* "Up to 15" on a minimum-billed fully
+                                              managed line, as the export prints. */}
+                                          {minimumUsers !== null
+                                            ? quantityLabel(l, ill, minimumUsers)
+                                            : l.quantity}
+                                        </td>
+                                        <td style={{ textAlign: "right" }}>
+                                          {l.unitPrice.cents === 0
+                                            ? ""
+                                            : fmtCents(l.unitPrice.cents)}
+                                        </td>
+                                        <td style={{ textAlign: "right" }}>
+                                          {fmtCents(l.lineTotal.cents)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                    <tr className="rfpdoc-total">
+                                      <td>Monthly total</td>
+                                      <td />
+                                      <td />
+                                      <td style={{ textAlign: "right" }}>
+                                        {fmtCents(ill.monthlyTotal.cents)}
+                                      </td>
+                                    </tr>
+                                    <tr className="rfpdoc-total">
+                                      <td>Annual total</td>
+                                      <td />
+                                      <td />
+                                      <td style={{ textAlign: "right" }}>
+                                        {fmtCents(ill.annualTotal.cents)}
+                                      </td>
+                                    </tr>
+                                  </tbody>
+                                </table>
+                              </div>
+                              {ill.minimumApplied && (
+                                <p className="rfpdoc-caption mt-2">
+                                  The monthly minimum applies to the fully managed
+                                  line, so it is billed at the flat minimum rather
+                                  than the per-user product.
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                          {/* The file prints this sentence after the
+                              illustrations whenever the minimum applied
+                              (buildExportView); the screen shows the same, or the
+                              download would carry a sentence the draft did not. */}
+                          {pricing.illustrations.some((ill) => ill.minimumApplied) &&
+                            minimumUsers !== null &&
+                            minimumMonthlyCents !== null && (
+                              <p className="rfpdoc-caption">
+                                {minimumSentence(minimumUsers, minimumMonthlyCents)}
+                              </p>
+                            )}
+                          {pricing.passThroughItems.map((pt) => (
+                            <p className="text-sm" key={pt.label}>
+                              <strong style={{ color: "#15163b" }}>{pt.label}:</strong>{" "}
+                              <span className="rfpdoc-muted">{pt.detail}</span>
+                            </p>
+                          ))}
+                          {pricing.notes.map((n, i) => (
+                            <p className="rfpdoc-caption" key={i}>
+                              {n}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      </div>
 
-              {structure.map((node) => {
+                    {/* Outside the flash-keyed div: the wash remounts its key,
+                        and a remount mid-edit wiped this form's state. Tool
+                        chrome: the form changes the quote, it is not the quote
+                        (owner 2026-09-30: it read as part of the document). */}
+                    {pricing && (
+                      <div className="rfpdoc-adjust rfpdoc-tool mt-6">
+                          <span className="rfpdoc-tool-label">
+                            Workspace · not in the download
+                          </span>
+                          <details>
+                            <summary className="linklike text-sm">
+                              Adjust quantities
+                              {fmuSource === "rfp"
+                                ? " · user count from the RFP"
+                                : ""}
+                            </summary>
+                            <PricingForm
+                              inputs={inputs}
+                              busy={busy}
+                              fmuSource={fmuSource}
+                              onSave={async (next) => {
+                                if (!proposalId) return;
+                                setBusy(true);
+                                const res = await fetch(
+                                  `/api/rfp/proposals/${proposalId}/pricing`,
+                                  {
+                                    method: "PUT",
+                                    headers: { "content-type": "application/json" },
+                                    body: JSON.stringify(next),
+                                  }
+                                ).catch(() => null);
+                                setBusy(false);
+                                if (!res || !res.ok) {
+                                  const d = res ? await res.json().catch(() => null) : null;
+                                  setNotice(d?.message ?? "Not saved.");
+                                  return;
+                                }
+                                const d = await res.json();
+                                // Server verdict on inputs + provenance, same as
+                                // answerPricing.
+                                if (d.inputs) {
+                                  setInputs(parseQuoteInputs(d.inputs));
+                                  setFmuSource(parseInputsSource(d.inputs));
+                                } else {
+                                  setInputs(next);
+                                }
+                                setPricing(d.quote ?? null);
+                                adoptRev(d.rev);
+                                markGateStale();
+                                showChanged(["__pricing"]);
+                              }}
+                            />
+                          </details>
+                      </div>
+                    )}
+                    <PageFoot who={coverClientName} />
+                    </section>
+                    </Fragment>
+                  );
+                const node = sheet.node;
                 const sec = sections.find((s) => s.label === node.label);
                 const isEditing = editing === node.label;
                 const changed = highlights.has(node.label);
@@ -5344,7 +5699,7 @@ export function Workspace({
                   >
                     <div className="rfpdoc-sechead">
                       <div className="min-w-0">
-                        <div className="rfpdoc-kicker">{secKicker(node.label)}</div>
+                        <div className="rfpdoc-kicker">{sheet.kicker}</div>
                         <h3 className="rfpdoc-h mt-1">
                           {node.title}
                           {changed && <span className="doc-chip">Updated</span>}
@@ -5666,235 +6021,6 @@ export function Workspace({
                   </section>
                 );
               })}
-
-              {/* The reference gives pricing its own numbered break ("04
-                  Pricing & Terms" there; second break here). The deck restates
-                  the engine property the empty state below already asserts. */}
-              <DividerSheet
-                num="02"
-                title="Investment"
-                deck="Pricing for the services in this proposal, computed from the rate card."
-                clientName={coverClientName}
-                absent={!pricing}
-              />
-
-              {/* ---- Investment: engine output, printed on the paper. The
-                  flash-keyed div is INSIDE the page card so the adjust form
-                  below shares the sheet without sharing the remount key.
-                  Without a quote both emitters skip divider 02 and this
-                  sheet (§5.17.5), so both wear the absent field until the
-                  pricing questions are answered. ---- */}
-              <section
-                className={`rfpdoc-page${pricing ? "" : " rfpdoc-page--absent"}`}
-                id="sec-__pricing"
-              >
-                {!pricing && (
-                  <span className="rfpdoc-tool-label">
-                    Not in the download until the pricing questions are answered
-                  </span>
-                )}
-                <div
-                  className={
-                    highlights.has("__pricing")
-                      ? "doc-sec--changed doc-sec--flash"
-                      : undefined
-                  }
-                  key={`c-${flashSeq.current.get("__pricing") ?? 0}`}
-                >
-                <div className="rfpdoc-sechead">
-                  <div className="min-w-0">
-                    <div className="rfpdoc-kicker">Pricing</div>
-                    <h3 className="rfpdoc-h mt-1">
-                      Investment
-                      {highlights.has("__pricing") && (
-                        <span className="doc-chip">Updated</span>
-                      )}
-                    </h3>
-                  </div>
-                </div>
-                {!pricing ? (
-                  <div className="rfpdoc-tool mt-4">
-                    <span className="rfpdoc-tool-label">
-                      Workspace · not in the download
-                    </span>
-                    <p className="rfpdoc-faint text-sm italic">
-                      Every figure here is computed from the rate card, never
-                      drafted. It builds as the pricing questions are
-                      answered.
-                    </p>
-                    <div className="rfpdoc-actions mt-2">
-                      <button
-                        type="button"
-                        // The Questions pane opens only once a section is
-                        // drafted (showPane returns early before that), so
-                        // the button says so instead of doing nothing.
-                        disabled={draftedCount === 0}
-                        title={
-                          draftedCount === 0
-                            ? "Draft a section first"
-                            : undefined
-                        }
-                        onClick={() => {
-                          showPane("questions");
-                        }}
-                      >
-                        Answer the pricing questions
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-6">
-                    {pricing.illustrations.map((ill) => (
-                      <div key={ill.id}>
-                        <h4
-                          className="rfpdoc-h"
-                          style={{ fontSize: "15px" }}
-                        >
-                          {ill.label}
-                        </h4>
-                        <p className="rfpdoc-muted mt-1 text-sm">{ill.basis}</p>
-                        <div className="mt-3 overflow-x-auto">
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>Service</th>
-                                <th style={{ textAlign: "right" }}>Qty</th>
-                                <th style={{ textAlign: "right" }}>Unit</th>
-                                <th style={{ textAlign: "right" }}>Monthly</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {ill.lines.map((l) => (
-                                <tr key={l.id}>
-                                  <td>{l.label}</td>
-                                  <td style={{ textAlign: "right" }}>
-                                    {/* "Up to 15" on a minimum-billed fully
-                                        managed line, as the export prints. */}
-                                    {minimumUsers !== null
-                                      ? quantityLabel(l, ill, minimumUsers)
-                                      : l.quantity}
-                                  </td>
-                                  <td style={{ textAlign: "right" }}>
-                                    {l.unitPrice.cents === 0
-                                      ? ""
-                                      : fmtCents(l.unitPrice.cents)}
-                                  </td>
-                                  <td style={{ textAlign: "right" }}>
-                                    {fmtCents(l.lineTotal.cents)}
-                                  </td>
-                                </tr>
-                              ))}
-                              <tr className="rfpdoc-total">
-                                <td>Monthly total</td>
-                                <td />
-                                <td />
-                                <td style={{ textAlign: "right" }}>
-                                  {fmtCents(ill.monthlyTotal.cents)}
-                                </td>
-                              </tr>
-                              <tr className="rfpdoc-total">
-                                <td>Annual total</td>
-                                <td />
-                                <td />
-                                <td style={{ textAlign: "right" }}>
-                                  {fmtCents(ill.annualTotal.cents)}
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                        {ill.minimumApplied && (
-                          <p className="rfpdoc-caption mt-2">
-                            The monthly minimum applies to the fully managed
-                            line, so it is billed at the flat minimum rather
-                            than the per-user product.
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                    {/* The file prints this sentence after the
-                        illustrations whenever the minimum applied
-                        (buildExportView); the screen shows the same, or the
-                        download would carry a sentence the draft did not. */}
-                    {pricing.illustrations.some((ill) => ill.minimumApplied) &&
-                      minimumUsers !== null &&
-                      minimumMonthlyCents !== null && (
-                        <p className="rfpdoc-caption">
-                          {minimumSentence(minimumUsers, minimumMonthlyCents)}
-                        </p>
-                      )}
-                    {pricing.passThroughItems.map((pt) => (
-                      <p className="text-sm" key={pt.label}>
-                        <strong style={{ color: "#15163b" }}>{pt.label}:</strong>{" "}
-                        <span className="rfpdoc-muted">{pt.detail}</span>
-                      </p>
-                    ))}
-                    {pricing.notes.map((n, i) => (
-                      <p className="rfpdoc-caption" key={i}>
-                        {n}
-                      </p>
-                    ))}
-                  </div>
-                )}
-                </div>
-
-              {/* Outside the flash-keyed div: the wash remounts its key,
-                  and a remount mid-edit wiped this form's state. Tool
-                  chrome: the form changes the quote, it is not the quote
-                  (owner 2026-09-30: it read as part of the document). */}
-              {pricing && (
-                <div className="rfpdoc-adjust rfpdoc-tool mt-6">
-                    <span className="rfpdoc-tool-label">
-                      Workspace · not in the download
-                    </span>
-                    <details>
-                      <summary className="linklike text-sm">
-                        Adjust quantities
-                        {fmuSource === "rfp"
-                          ? " · user count from the RFP"
-                          : ""}
-                      </summary>
-                      <PricingForm
-                        inputs={inputs}
-                        busy={busy}
-                        fmuSource={fmuSource}
-                        onSave={async (next) => {
-                          if (!proposalId) return;
-                          setBusy(true);
-                          const res = await fetch(
-                            `/api/rfp/proposals/${proposalId}/pricing`,
-                            {
-                              method: "PUT",
-                              headers: { "content-type": "application/json" },
-                              body: JSON.stringify(next),
-                            }
-                          ).catch(() => null);
-                          setBusy(false);
-                          if (!res || !res.ok) {
-                            const d = res ? await res.json().catch(() => null) : null;
-                            setNotice(d?.message ?? "Not saved.");
-                            return;
-                          }
-                          const d = await res.json();
-                          // Server verdict on inputs + provenance, same as
-                          // answerPricing.
-                          if (d.inputs) {
-                            setInputs(parseQuoteInputs(d.inputs));
-                            setFmuSource(parseInputsSource(d.inputs));
-                          } else {
-                            setInputs(next);
-                          }
-                          setPricing(d.quote ?? null);
-                          adoptRev(d.rev);
-                          markGateStale();
-                          showChanged(["__pricing"]);
-                        }}
-                      />
-                    </details>
-                </div>
-              )}
-              <PageFoot who={coverClientName} />
-              </section>
 
               {/* Last page — the closing sheet: solid navy, white wordmark,
                   the flat-fee line, and the contact grid. */}
@@ -6361,25 +6487,31 @@ function DividerSheet({
   deck,
   clientName,
   absent = false,
+  absentNote = "Not in the download until the pricing questions are answered",
+  fullWidthTitle = false,
 }: {
   num: string;
   title: string;
-  deck: string;
+  /** A brief's part divider (§5.17.21): the title runs the full content
+   *  width, as both files set it; a real RFP's divider keeps the 86%
+   *  measure. */
+  fullWidthTitle?: boolean;
+  /** Null = no deck line (a brief part with no stored dek, §5.17.21). */
+  deck: string | null;
   clientName: string | null;
-  /** The emitters skip this sheet right now (divider 02 with no pricing):
-   *  it wears the tool field, not white paper, and says why. */
+  /** The emitters skip this sheet right now (divider 02 with no pricing, a
+   *  brief part with nothing drafted): it wears the tool field, not white
+   *  paper, and says why. */
   absent?: boolean;
+  /** Why it is absent; the default is divider 02's reason. */
+  absentNote?: string;
 }) {
   return (
     <section
       className={`rfpdoc-page rfpdoc-page--sheet${absent ? " rfpdoc-page--absent" : ""}`}
       aria-label={`Part ${Number(num)}: ${title}`}
     >
-      {absent && (
-        <span className="rfpdoc-tool-label">
-          Not in the download until the pricing questions are answered
-        </span>
-      )}
+      {absent && <span className="rfpdoc-tool-label">{absentNote}</span>}
       <div className="rfpdoc-divider">
         <div className="rfpdoc-divider-head">
           XL.net · Proposal{clientName ? ` for ${clientName}` : ""}
@@ -6389,8 +6521,13 @@ function DividerSheet({
             {num}
           </div>
           <div className="rfpdoc-bar rfpdoc-bar--blue" />
-          <h3 className="rfpdoc-divider-title">{title}</h3>
-          <p className="rfpdoc-divider-deck">{deck}</p>
+          <h3
+            className="rfpdoc-divider-title"
+            style={fullWidthTitle ? { maxWidth: "none" } : undefined}
+          >
+            {title}
+          </h3>
+          {deck !== null && <p className="rfpdoc-divider-deck">{deck}</p>}
         </div>
         <div className="rfpdoc-divider-marks" aria-hidden="true">
           <span />
