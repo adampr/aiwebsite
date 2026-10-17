@@ -389,6 +389,34 @@ export function isMatrixRowLocator(loc: Violation["locator"]): boolean {
   return typeof loc.field === "string" && MATRIX_ROW_FIELD.test(loc.field);
 }
 
+/**
+ * What rule D10 (a mandatory document request with nothing mapped,
+ * §5.17.23) tells the person. The answer is a decision in the Attachments
+ * pane, never prose: Tron cannot attach a document, and a redraft does not
+ * pick one, so no Tron sweep or redraft is ever planned for it (Fix all
+ * leaves it to the person).
+ */
+export const ATTACHMENT_GAP_FIX_MESSAGE =
+  "Open the Attachments pane and map this request to the attachment that answers it, or mark it Not included if the document will not be sent. Tron cannot attach a document, so nothing in the draft fixes this.";
+
+/**
+ * What rule D11 (a citation token reached the page unresolved, §5.17.23)
+ * tells the person: a fault in the renderer, never the draft's wording, so
+ * no revise or redraft is planned (the resolver strips every token form it
+ * cannot read; a hit means a lane skipped it).
+ */
+export const ATT_TOKEN_LEFT_FIX_MESSAGE =
+  "This is a fault in how the response is put together, not in the wording, so nothing in the draft fixes it. Report it before sending the response.";
+
+/**
+ * What rule D12 (an attachment citation pointed at nothing and was left out
+ * of the page, §5.17.23) tells the person. The decision is theirs: pick the
+ * document the sentence meant, or reword the sentence. No Tron step is
+ * planned: Tron cannot see which document was meant.
+ */
+export const ATT_CITATION_STRIPPED_FIX_MESSAGE =
+  "Read the sentence where the citation stood. If it meant a document, attach that document in the Attachments pane and redraft the section so it cites it; otherwise edit the sentence so it reads well without it.";
+
 /** Rules whose findings are plain prose defects a targeted Tron revision
  *  fixes, with no extra context worth asking for. */
 const PLAIN_TRON_RULES = new Set([
@@ -587,6 +615,12 @@ export function fixRecipe(
     case "D8":
     case "D9":
       return { kind: "none", message: MATRIX_FIX_MESSAGE };
+    case "D10":
+      return { kind: "none", message: ATTACHMENT_GAP_FIX_MESSAGE };
+    case "D11":
+      return { kind: "none", message: ATT_TOKEN_LEFT_FIX_MESSAGE };
+    case "D12":
+      return { kind: "none", message: ATT_CITATION_STRIPPED_FIX_MESSAGE };
     case "D6": {
       // Tabular text in prose (§5.17.19). A Tron revise, auto-fixable in
       // Fix all (not B7's figure-deletion class: nothing is removed). The

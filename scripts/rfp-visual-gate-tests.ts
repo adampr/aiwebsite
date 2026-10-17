@@ -27,9 +27,11 @@ import {
   type Block,
 } from "../src/lib/rfp/content-model";
 import { RULE_IDS, runGate } from "../src/lib/rfp/validators/gate";
-import { D6, D7, D8, D9, prospectHeadcount } from "../src/lib/rfp/validators/rules-d";
+import { D6, D7, D8, D9, D10, D11, D12, prospectHeadcount } from "../src/lib/rfp/validators/rules-d";
+import { attachmentGapMessage, attachmentGaps, attachmentMapping } from "../src/lib/rfp/validators/attachments";
 import { compressRefs, matrixRowGaps, withMatrixCoverage } from "../src/lib/rfp/validators/matrix";
 import {
+  ATTACHMENT_GAP_FIX_MESSAGE,
   D6_LETTER_DIRECTION,
   D6_TABLE_DIRECTION,
   MATRIX_FIX_MESSAGE,
@@ -829,6 +831,196 @@ function visibleStrings(b: DraftBlock): string[] {
       if (t.kind === "stat-tiles") t.tiles[0].value = "$500";
       return c;
     })() }, { only: ["B7"] }).violations.every((v) => isDeepStrictEqual(v.locator, { blockId: "bv_3__v_0000a003" })));
+}
+
+/** Round 35 fix: a deep-equality check printing the actual value on failure. */
+const eqc = (name: string, actual: unknown, expected: unknown) => check(name, isDeepStrictEqual(actual, expected), actual);
+
+/* ---- 4e. Supporting-document requests: D10 (round 35, §5.17.23) ------------ */
+// A MANDATORY requirement of kind "attachment" with no document mapped and
+// no explicit "Not included" warns, located on the requirement, naming its
+// words; a mapping to a current pick or a 0 silences it; a stale n does not;
+// non-mandatory requests never warn; a document with no attachment requests
+// is untouched; the recipe is the honest none.
+{
+  const attReq = (i: number, text: string, mandatory = true, kind = "attachment" as const) => ({
+    id: `00000000-0000-4000-a000-${String(i).padStart(12, "0")}`, rfpId: requirements[0]?.rfpId ?? "doc",
+    structureLabel: "6.", text, ordinal: 900 + i, kind, mandatory,
+  });
+  const SOC = attReq(1, "Provide your most recent SOC 2 Type 2 report.");
+  const IR = attReq(2, "Provide your incident-response and notification procedure.");
+  const MSA = attReq(3, "Provide your proposed contract terms.");
+  const OPT = attReq(4, "Optionally, a sample site-visit report.", false);
+  const STALE = attReq(5, "Provide your offboarding procedure.");
+  const aReqs = [...requirements, SOC, IR, MSA, OPT, STALE];
+  const picks = [
+    { docId: "11111111-1111-4111-8111-111111111111", n: 1, title: "XL.net SOC 2 Type 2 Report", confidential: true, redactedSample: false },
+    { docId: "22222222-2222-4222-8222-222222222222", n: 2, title: "XLTO Client Security Incident Response Procedure", confidential: false, redactedSample: false },
+  ];
+  const actx = (attachments: unknown, reqs: unknown[] = aReqs) => ({
+    proposal: resolved, knowledge, rateCard: input.rateCard, requirements: reqs as typeof requirements, coverage, factsById,
+    statesHeadcountOnly: false, supportedUserSplitConfirmed: true, attachments: attachments as never,
+  });
+  const d10 = (c: ReturnType<typeof actx>) => runGate(c, { only: ["D10"] });
+
+  check("D10: registered right after D9, warn, titled Supporting documents",
+    RULE_IDS.indexOf("D10") === RULE_IDS.indexOf("D9") + 1 && D10.severity === "warn" && D10.title === "Supporting documents", RULE_IDS);
+
+  // Nothing picked, nothing mapped: every MANDATORY request warns, the optional one does not.
+  const none = d10(actx(undefined));
+  check("D10: no picks and no mapping, each mandatory request is ONE warn on its requirement, in order; the optional one is silent",
+    isDeepStrictEqual(none.violations.map((v) => [v.ruleId, v.severity, v.locator]),
+      [SOC, IR, MSA, STALE].map((r) => ["D10", "warn", { requirementId: r.id }])) && none.errors.length === 0,
+    none.violations.map((v) => v.locator));
+  check("D10: the message names the section and the request's words and points at the Attachments pane",
+    none.violations[0]?.message ===
+      'The client requires a supporting document that nothing answers yet (section 6.): "Provide your most recent SOC 2 Type 2 report.". Map it to an attachment in the Attachments pane, or mark it Not included.',
+    none.violations[0]?.message);
+
+  // Mapped silences, 0 silences, a stale n does not, unmapped still warns.
+  const mapped = d10(actx({ picks, map: { [SOC.id]: 1, [MSA.id]: 0, [STALE.id]: 5 } }));
+  check("D10: mapped to a pick silences, an explicit 0 (Not included) silences, a number no pick carries still warns, an unmapped one warns",
+    isDeepStrictEqual(mapped.violations.map((v) => v.locator.requirementId), [IR.id, STALE.id]), mapped.violations.map((v) => v.locator));
+  check("D10: a pick alone does not answer a request (picks exist, the request is unmapped)",
+    d10(actx({ picks, map: {} })).violations.length === 4);
+  check("D10: every request decided, no finding",
+    d10(actx({ picks, map: { [SOC.id]: 1, [IR.id]: 2, [MSA.id]: 0, [STALE.id]: 0 } })).violations.length === 0);
+  check("D10: an upper-case requirement id finds its lower-cased stored key (the stored reader lowercases uuids)",
+    d10(actx({ picks, map: { [SOC.id]: 1 } }, [...requirements, { ...SOC, id: SOC.id.toUpperCase() }])).violations.length === 0);
+  check("D10: non-mandatory requests never warn, mapped or not",
+    d10(actx(undefined, [...requirements, OPT])).violations.length === 0);
+  check("D10: a mandatory requirement of another kind is not a document request",
+    d10(actx(undefined, [...requirements, { ...SOC, kind: "factual" }])).violations.length === 0);
+
+  // Round 35 fix X1: the object form clears D10 when it names a current pick
+  // OR a section; {ns: []} with no section, or only stale numbers, does not.
+  const objMapped = d10(actx({ picks, map: {
+    [SOC.id]: { ns: [1, 2] }, [IR.id]: { ns: [], section: "6." }, [MSA.id]: { ns: [9] }, [STALE.id]: { ns: [] },
+  } }));
+  check("D10 (X1): several picks clear it, a section alone clears it; only stale numbers, or nothing, still warn",
+    isDeepStrictEqual(objMapped.violations.map((v) => v.locator.requirementId), [MSA.id, STALE.id]), objMapped.violations.map((v) => v.locator));
+  eqc("D10 (X1): attachmentMapping reads every shape (bare n, object, section, 0, stale, junk)",
+    [
+      attachmentMapping(SOC.id, { picks, map: { [SOC.id]: 2 } }),
+      attachmentMapping(SOC.id, { picks, map: { [SOC.id]: { ns: [2, 1, 9, "x"], section: " 6. " } } }),
+      attachmentMapping(SOC.id, { picks, map: { [SOC.id]: { ns: [], section: "4" } } }),
+      attachmentMapping(SOC.id, { picks, map: { [SOC.id]: 0 } }),
+      attachmentMapping(SOC.id, { picks, map: { [SOC.id]: { ns: [9] } } }),
+      attachmentMapping(SOC.id, { picks, map: { [SOC.id]: [1] } }),
+    ],
+    [
+      { state: "mapped", ns: [2], section: null },
+      { state: "mapped", ns: [1, 2], section: "6." },
+      { state: "mapped", ns: [], section: "4" },
+      { state: "excluded" },
+      { state: "unmapped" },
+      { state: "unmapped" },
+    ]);
+
+  // The pane's reader is the gate's reader.
+  const state = { picks, map: { [SOC.id]: 1, [MSA.id]: 0 } };
+  check("D10: the pane's attachmentGaps and the gate agree, and the inline sentence is the finding's message",
+    isDeepStrictEqual(attachmentGaps(aReqs, state).map((r) => r.id), d10(actx(state)).violations.map((v) => v.locator.requirementId)) &&
+      d10(actx(state)).violations[0]?.message === attachmentGapMessage(IR));
+
+  // Hostile shapes never throw; no em dash reaches a message.
+  const hostile = [
+    actx("garbage"), actx({ picks: "x", map: [] }), actx({ picks: [null, 1, { n: "1" }, { n: 1.5 }], map: { [SOC.id]: "1" } }),
+    actx(null, [null, 7, { ...SOC, text: 42 }, { ...IR, id: 9 }, ...aReqs]),
+    actx(undefined, [{ ...SOC, text: "Provide the SOC 2 report \u2014 the latest one, ".repeat(6) }]),
+  ];
+  const hostileRuns = hostile.map(d10);
+  check("D10: hostile stored state and requirements never throw (no validator error)",
+    hostileRuns.every((r) => r.errors.length === 0), hostileRuns.map((r) => r.errors));
+  check("D10: a string map value is not a mapping; no em dash and a capped request in every message",
+    hostileRuns[2]!.violations.some((v) => v.locator.requirementId === SOC.id) &&
+      hostileRuns.every((r) => r.violations.every((v) => !v.message.includes("\u2014"))) &&
+      hostileRuns[4]!.violations[0]!.message.length < 260,
+    hostileRuns[4]!.violations.map((v) => v.message));
+
+  // Recipes: the honest none, never a Tron run or a redraft; Fix all leaves it.
+  const fixCtx = { sections: input.sections.map((s) => ({ label: s.label })), requirements: aReqs };
+  const v0 = none.violations[0]!;
+  check("D10 recipe: none, pointing at the Attachments pane",
+    isDeepStrictEqual(fixRecipe(v0, fixCtx), { kind: "none", message: ATTACHMENT_GAP_FIX_MESSAGE }) &&
+      /Attachments pane/.test(ATTACHMENT_GAP_FIX_MESSAGE) && !ATTACHMENT_GAP_FIX_MESSAGE.includes("\u2014"),
+    fixRecipe(v0, fixCtx));
+  const groups = groupFindings(none.violations);
+  check("D10 grouping: one row per request (each message names its own words), none auto-fixable, no Fix all step",
+    groups.length === 4 && groups.every((g) => !isAutoFixableGroup(g, fixCtx)) &&
+      fixAllSteps(groups, fixCtx).length === 0 &&
+      groups.every((g) => isDeepStrictEqual(groupFixPlan(g, fixCtx), [{ kind: "none", message: ATTACHMENT_GAP_FIX_MESSAGE }])),
+    groups.map((g) => g.message));
+
+  // Regression: the fixture has no document requests, so D10 adds nothing
+  // and every other rule is byte-identical with or without it.
+  const all = runDraftGate(input);
+  const withoutD10 = runGate({ proposal: resolved, knowledge, rateCard: input.rateCard, requirements, coverage, factsById,
+    statesHeadcountOnly: false, supportedUserSplitConfirmed: true }, { only: RULE_IDS.filter((id) => id !== "D10") });
+  check("regression: no document requests, no picks: D10 silent and every other rule byte-identical",
+    !all.violations.some((v) => v.ruleId === "D10") && canonicalJson(all.violations) === canonicalJson(withoutD10.violations) &&
+      all.errors.length === 0,
+    all.violations.filter((v) => v.ruleId === "D10"));
+
+  // Integration: runDraftGate hands the proposal's attachments to the rule.
+  const rowReq = (r: typeof SOC) => ({ ...input.requirements[0]!, id: r.id, structureLabel: r.structureLabel, text: r.text,
+    ordinal: r.ordinal, kind: "attachment", mandatory: r.mandatory, clientRef: null });
+  const wired = runDraftGate({ ...input, requirements: [...input.requirements, rowReq(SOC), rowReq(IR)],
+    attachments: { picks, map: { [SOC.id]: 1 } } });
+  check("integration: runDraftGate passes the attachments to D10 (SOC mapped silent, IR unmapped warns)",
+    isDeepStrictEqual(wired.violations.filter((v) => v.ruleId === "D10").map((v) => v.locator.requirementId), [IR.id]),
+    wired.violations.filter((v) => v.ruleId === "D10").map((v) => v.locator));
+}
+
+/* ---- 4f. Citation tokens: D11 and D12 (round 35 fix T1/T3, §5.17.23) ---- */
+// D11 BLOCKS any resolved span holding "{{att" (after the resolver none can);
+// D12 WARNS once per section (or the letter) where the resolver stripped a
+// citation, from the counts resolve-draft stores on the resolved view.
+{
+  eqc("D11/D12: registered right after D10, block and warn",
+    [RULE_IDS.indexOf("D11") === RULE_IDS.indexOf("D10") + 1, RULE_IDS.indexOf("D12") === RULE_IDS.indexOf("D11") + 1, D11.severity, D12.severity], [true, true, "block", "warn"]);
+  const sec0 = resolved.sections[0]!;
+  const prose0 = sec0.blocks.find((b) => b.kind === "prose")!;
+  const forged = {
+    ...resolved,
+    sections: resolved.sections.map((s, i) =>
+      i === 0 ? { ...s, blocks: s.blocks.map((b) => (b.id === prose0.id && b.kind === "prose" ? { ...b, text: `${b.text} See {{ att:2 }}.` } : b)) } : s
+    ),
+  };
+  const ctxOf = (proposal: typeof resolved) => ({ proposal, knowledge, rateCard: input.rateCard, requirements, coverage, factsById, statesHeadcountOnly: false, supportedUserSplitConfirmed: true });
+  const left = runGate(ctxOf(forged), { only: ["D11"] });
+  eqc("D11: a span holding a raw token BLOCKS, located on its block and field with the offset; the message says it is not the wording",
+    [left.violations.map((v) => [v.ruleId, v.severity, v.locator.sectionId, v.locator.blockId, v.locator.field]), left.violations[0]?.message.includes("not in the wording"), left.passed],
+    [[["D11", "block", sec0.id, prose0.id, "text"]], true, false]);
+  eqc("D11: silent on the fixture (no token anywhere)", runGate(ctxOf(resolved), { only: ["D11"] }).violations.length, 0);
+  const strips = { ...resolved, citationStrips: [{ sectionId: sec0.id, label: sec0.structureLabel, count: 2 }, { sectionId: null, label: "__letter", count: 1 }] };
+  const d12 = runGate(ctxOf(strips), { only: ["D12"] });
+  eqc("D12: one warn per section and one for the letter, each naming where and how many",
+    d12.violations.map((v, i) => [v.ruleId, v.severity, v.locator, v.message.startsWith(
+      i === 0 ? `Section ${sec0.structureLabel}: 2 attachment citations pointed at nothing, so they were left out of the page.` : "The cover letter: an attachment citation pointed at nothing, so it was left out of the page."
+    )]),
+    [
+      ["D12", "warn", { sectionId: sec0.id }, true],
+      ["D12", "warn", { field: "body" }, true],
+    ]);
+  eqc("D12: absent counts, zero counts and junk never warn or throw",
+    [ctxOf(resolved), ctxOf({ ...resolved, citationStrips: [{ sectionId: "x", label: "1", count: 0 }] }), ctxOf({ ...resolved, citationStrips: "x" as never })].map((c) => {
+      const r = runGate(c, { only: ["D12"] });
+      return [r.violations.length, r.errors.length];
+    }),
+    [[0, 0], [0, 0], [0, 0]]);
+  // End to end: an invented citation in prose strips, the resolved view
+  // counts it on its section, D12 warns there and D11 stays silent.
+  const at = input.sections.findIndex((s) => !s.label.startsWith("__") && s.paragraphs.length > 0);
+  const withStrip = {
+    ...input,
+    sections: input.sections.map((s, i) => (i === at ? { ...s, paragraphs: s.paragraphs.map((p, j) => (j === 0 ? `${p} See {{att:4}}.` : p)) } : s)),
+  };
+  const e2e = runDraftGate(withStrip);
+  const strippedSec = resolveDraft(withStrip).resolved;
+  eqc("D12 e2e: no picks, an invented citation strips, the count lands on that section, D12 warns there, D11 is silent",
+    [strippedSec.citationStrips?.map((c) => [c.label, c.count]), e2e.violations.filter((v) => v.ruleId === "D12").map((v) => v.locator.sectionId), e2e.violations.some((v) => v.ruleId === "D11")],
+    [[[input.sections[at]!.label, 1]], [strippedSec.citationStrips?.[0]?.sectionId], false]);
 }
 
 /* ---- 5. Export view: the flow is interleave's ----------------------------- */

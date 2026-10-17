@@ -20,6 +20,18 @@ const nextConfig: NextConfig = {
   // bundling breaks that resolution (upstream foliojs/pdfkit#1801) and the
   // first doc.font() call throws. Run both from node_modules.
   serverExternalPackages: ["pdfjs-dist", "pdfkit"],
+  // src/proxy.ts runs on every route, and Next 16.3 then buffers each
+  // request body through a clone capped at 10 MB by default
+  // (experimental.proxyClientMaxBodySize, next/dist/server/next-server.js
+  // getCloneableBody): a larger body reaches the route TRUNCATED, so the
+  // /rfp supporting-documents upload (POST /api/rfp/library, 32 MB per file,
+  // src/lib/rfp/attachments.ts LIBRARY_MAX_BYTES, §5.17.23) failed to parse
+  // above 10 MB. 34 MB covers the file cap plus the multipart framing; the
+  // route's own Content-Length check still refuses anything larger, and
+  // nginx's server-level client_max_body_size (110m) sits above both.
+  experimental: {
+    proxyClientMaxBodySize: "34mb",
+  },
   // @aicompany/core's admin blog API (packages/aicompany/src/admin/api/blog.ts,
   // submodule — not editable here) spawns node_modules/.bin/tsx via
   // path.join(process.cwd(), ...), which makes Turbopack's file tracing walk

@@ -14,6 +14,16 @@ import {
   rowRefOf,
   type LocatedMatrixRow,
 } from "./matrix";
+import {
+  ATT_CITATION_STRIPPED_RULE,
+  ATT_TOKEN_LEFT,
+  ATT_TOKEN_LEFT_MESSAGE,
+  ATT_TOKEN_LEFT_RULE,
+  attachmentGapMessage,
+  attachmentGaps,
+  ATTACHMENT_GAP_RULE,
+  attCitationStrippedMessage,
+} from "./attachments";
 import { documentText, excerptAround, textSpans, violation, type Rule } from "./rule";
 
 /**
@@ -589,4 +599,98 @@ export const D9: Rule = {
   },
 };
 
-export const D_RULES: Rule[] = [D1, D2, D3, D4, D5, D6, D7, D8, D9];
+/**
+ * D10 - Supporting documents. WARN.
+ *
+ * A MANDATORY requirement of kind "attachment" (the client asking for a document: a SOC 2 report,
+ * an incident-response procedure, the proposed contract) with no document mapped to it in the
+ * Attachments pane and no explicit "Not included" (§5.17.23, the §5.17.6 merged checklist made
+ * real). The Supporting Documents sheet answers each request with the attachment that carries it;
+ * an unmapped one is a line of the client's checklist nobody has answered. Mapping it to a pick, or
+ * marking it "Not included" (a person decided, and the sheet says so honestly), silences it. A map
+ * entry naming a number no pick carries is unmapped (attachments.ts). Non-mandatory requests are
+ * never findings. One finding per request, located on the requirement; the message names its words
+ * (validators/attachments.ts attachmentGapMessage, the same sentence the pane prints beside the
+ * selector). Coverage is untouched: the section answering the request is still drafted, and a C3
+ * block on top of this warning would double-report one decision.
+ */
+export const D10: Rule = {
+  id: ATTACHMENT_GAP_RULE,
+  title: "Supporting documents",
+  severity: "warn",
+  check: (ctx) =>
+    attachmentGaps(Array.isArray(ctx.requirements) ? ctx.requirements : [], ctx.attachments).map((r) =>
+      violation({
+        ruleId: ATTACHMENT_GAP_RULE,
+        severity: "warn",
+        message: attachmentGapMessage(r),
+        locator: { requirementId: r.id },
+      })
+    ),
+};
+
+/**
+ * D11 - Citation token left on the page. BLOCK.
+ *
+ * Belt over suspenders (round 35 fix T1, §5.17.23): the model cites an attachment only as the
+ * literal token {{att:N}}, and resolve-draft runs EVERY string of every section (prose, answers,
+ * every lifted block's strings, section titles) and the letter body through furniture.ts
+ * resolveAttTokens, which turns a picked N into "Attachment N" and strips anything else, near
+ * misses included. So no resolved span can hold "{{att"; this rule proves it on every run. A hit
+ * means a lane that skipped the resolver, which is a code fault: no recipe can repair it from the
+ * draft, and the file would print raw braces, so it blocks.
+ */
+export const D11: Rule = {
+  id: ATT_TOKEN_LEFT_RULE,
+  title: "Citation token left on the page",
+  severity: "block",
+  check: (ctx) =>
+    textSpans(ctx).flatMap((span) => {
+      const m = ATT_TOKEN_LEFT.exec(span.text);
+      if (!m) return [];
+      return [
+        violation({
+          ruleId: ATT_TOKEN_LEFT_RULE,
+          severity: "block",
+          message: ATT_TOKEN_LEFT_MESSAGE,
+          locator: {
+            ...(span.sectionId ? { sectionId: span.sectionId } : {}),
+            ...(span.blockId ? { blockId: span.blockId } : {}),
+            field: span.field,
+            charOffset: m.index,
+          },
+          excerpt: excerptAround(span.text, m.index, m[0].length),
+        }),
+      ];
+    }),
+};
+
+/**
+ * D12 - Attachment citation pointed at nothing. WARN.
+ *
+ * Round 35 fix T3 (§5.17.23): the resolver strips a citation whose number no pick carries (an
+ * invented number, a document since removed: the attachments write rewrites a removed pick's
+ * citations to {{att:0}}), and tidies only the few characters around it. The page never shows a
+ * dangling token, but the sentence it sat in may now read oddly ("is ." cannot happen; "as
+ * described" with nothing described can), so a person reads it. One finding per section (or the
+ * cover letter) naming how many were left out, from the per-section counts resolve-draft stores on
+ * the resolved view (`citationStrips`).
+ */
+export const D12: Rule = {
+  id: ATT_CITATION_STRIPPED_RULE,
+  title: "Attachment citation pointed at nothing",
+  severity: "warn",
+  check: (ctx) =>
+    (Array.isArray(ctx.proposal.citationStrips) ? ctx.proposal.citationStrips : [])
+      .filter((s) => s && Number.isInteger(s.count) && s.count > 0)
+      .map((s) =>
+        violation({
+          ruleId: ATT_CITATION_STRIPPED_RULE,
+          severity: "warn",
+          message: attCitationStrippedMessage({ label: s.label, letter: s.sectionId === null }, s.count),
+          locator: s.sectionId ? { sectionId: s.sectionId } : { field: "body" },
+        })
+      ),
+};
+
+export const D_RULES: Rule[] = [D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12];

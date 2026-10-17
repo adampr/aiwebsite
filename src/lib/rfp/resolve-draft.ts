@@ -36,7 +36,7 @@ import {
 } from "./content-model";
 import { runGate, type GateResult } from "./validators/gate";
 import { withMatrixCoverage } from "./validators/matrix";
-import { defaultLetterBody, splitSections } from "./letter";
+import { defaultLetterBody, LETTER_LABEL, splitSections } from "./letter";
 import { signatureFor } from "./signature";
 import {
   coverLede,
@@ -54,7 +54,13 @@ import {
   matrixSummaryTiles,
   orderDrafted,
   recipientAddressLines,
+  resolveAttTokens,
+  resolveBlockAtt,
+  roadmapAttached,
+  type AttTally,
   sheetKicker,
+  supportingDocumentsOf,
+  type ProposalAttachmentsView,
 } from "./furniture";
 import { letterPricingParagraph, partPricingDek, rateNoteFor } from "./quote";
 import { interleave, sanitizeStoredBlocks, type DraftBlock } from "./draft-blocks";
@@ -193,6 +199,11 @@ export type DraftGateInput = {
   ownerName: string;
   statesHeadcountOnly: boolean;
   supportedUserSplitConfirmed: boolean;
+  /** The proposal's attachment picks joined with their library flags
+   *  (§5.17.23; gate-run.ts loads them, so the gate and the export read the
+   *  same). Absent or null = nothing picked: every {{att:N}} token strips
+   *  and no Supporting Documents sheet resolves, exactly as before. */
+  attachments?: ProposalAttachmentsView | null;
 };
 
 export function resolveDraft(input: DraftGateInput): {
@@ -203,6 +214,16 @@ export function resolveDraft(input: DraftGateInput): {
   knowledge: KnowledgeSnapshot;
 } {
   const { doc, proposal } = input;
+  // The attachment picks (§5.17.23). THIS module is the one choke point the
+  // gate and both files take their strings through: every {{att:N}} in
+  // EVERY string of a section (its title, prose, a matrix row's subject and
+  // explanation, every string of every lifted block: cards, callouts,
+  // tables, timelines, ledgers, stat tiles, an echo's titles, answers and
+  // willSee, references) and the letter body resolves to "Attachment N" or
+  // strips HERE, so a stripped token never reaches a rule or a page. Each
+  // section's (and the letter's) strips are counted for rule D12.
+  const picks = input.attachments?.picks ?? [];
+  const citationStrips: NonNullable<ResolvedProposal["citationStrips"]> = [];
 
   // The letter record shares sectionsJson under its reserved label; it is
   // routed into the letter furniture below, never into the section list,
@@ -220,6 +241,8 @@ export function resolveDraft(input: DraftGateInput): {
   const references: Reference[] = [];
   const sections: Section[] = ordered.map((sec, ordinal) => {
     const sectionId = `sec_${sec.label.replace(/[^a-zA-Z0-9]+/g, "_")}`;
+    const tally: AttTally = { stripped: 0 };
+    const att = (t: string) => resolveAttTokens(t, picks, tally);
     // The ONE ordering the screen and both emitters share. Prose keeps the
     // id of its PARAGRAPH index (so a locator on a prose-only section is
     // what it always was) and every block's ordinal is its place in the
@@ -243,15 +266,16 @@ export function resolveDraft(input: DraftGateInput): {
             cites: sec.cites,
             generatedBy: sec.generatedBy,
             editedByHuman: sec.generatedBy === "human",
-            text: item.text,
+            text: att(item.text),
           },
         ];
-      const lifted = liftVisual(item.block, sec.label, sectionId, next);
+      const stored = resolveBlockAtt(item.block, picks, tally);
+      const lifted = liftVisual(stored, sec.label, sectionId, next);
       next += lifted.length;
       // Numbered across the whole document, so two typed-in entries on two
       // sections never share a positional id.
-      if (item.block.kind === "references")
-        for (const entry of item.block.references)
+      if (stored.kind === "references")
+        for (const entry of stored.references)
           references.push(referenceFromEntry(entry, references.length + 1));
       return lifted;
     });
@@ -266,6 +290,8 @@ export function resolveDraft(input: DraftGateInput): {
       label: sec.label,
       requirements: input.requirements,
       rateNote: (codes) => rateNoteFor(codes, input.rateCard),
+      picks,
+      tally,
     });
     if (matrix)
       blocks.push({
@@ -278,11 +304,13 @@ export function resolveDraft(input: DraftGateInput): {
         editedByHuman: false,
         rows: matrix.rows,
       });
+    const title = att(sec.title);
+    if (tally.stripped) citationStrips.push({ sectionId, label: sec.label, count: tally.stripped });
     return {
       id: sectionId,
       proposalId: proposal.id,
       structureLabel: sec.label,
-      title: sec.title,
+      title,
       ordinal,
       parentId: null,
       blocks,
@@ -357,11 +385,26 @@ export function resolveDraft(input: DraftGateInput): {
   // roadmap's "every item" are honest against them, never the rows alone.
   const clientRefs = allQuestionnaireRefs(input.requirements);
   const summary = matrixSummaryOf(matrixSections, clientRefs);
+  // The Supporting Documents sheet (§5.17.23): null when nothing is picked,
+  // and then the roadmap below is exactly the round-34 sentence.
+  const supporting = supportingDocumentsOf({
+    attachments: input.attachments,
+    requirements: input.requirements,
+    // "In this response - Section 4.2" names the section as its sheet does.
+    kicker: (label) => sheetKicker(label, docParts),
+  });
+  // The letter body through the same resolver, its strips counted apart.
+  const letterTally: AttTally = { stripped: 0 };
+  const letterBody = letterRecord?.paragraphs.length
+    ? letterRecord.paragraphs.map((p) => resolveAttTokens(p, picks, letterTally))
+    : null;
+  if (letterTally.stripped) citationStrips.push({ sectionId: null, label: LETTER_LABEL, count: letterTally.stripped });
   const roadmap = letterRoadmapSentence({
     matrixKickers: matrixSections.map((m) => sheetKicker(m.label, docParts)),
     partsCount: docParts?.parts.length ?? 0,
     pricing: input.quote !== null,
     complete: matrixComplete(matrixSections, clientRefs),
+    attached: roadmapAttached(supporting),
   });
 
   const core = {
@@ -407,9 +450,7 @@ export function resolveDraft(input: DraftGateInput): {
       // The addressee line above already names the client; restating it
       // read "Dear The Children's..." (same fix as the workspace page).
       salutation: contactName ? `Dear ${contactName},` : "Dear evaluation team,",
-      body: letterRecord?.paragraphs.length
-        ? letterRecord.paragraphs
-        : defaultLetterBody(doc.intakeForm),
+      body: letterBody ?? defaultLetterBody(doc.intakeForm),
       ...(address.length ? { address } : {}),
       ...(pricingParagraph ? { pricingParagraph } : {}),
       ...(roadmap ? { roadmap } : {}),
@@ -487,6 +528,8 @@ export function resolveDraft(input: DraftGateInput): {
           },
         }
       : {}),
+    ...(supporting ? { supportingDocuments: supporting } : {}),
+    ...(citationStrips.length ? { citationStrips } : {}),
     // Rule C2's own field set, so C2 re-derives and verifies it.
     contentHash: contentHash(core),
   };
@@ -554,5 +597,7 @@ export function runDraftGate(input: DraftGateInput): GateResult {
     factsById,
     statesHeadcountOnly: input.statesHeadcountOnly,
     supportedUserSplitConfirmed: input.supportedUserSplitConfirmed,
+    // Rule D10 (§5.17.23) reads the same picks and map the sheet prints.
+    attachments: input.attachments ?? null,
   });
 }

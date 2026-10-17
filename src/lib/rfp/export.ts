@@ -108,9 +108,14 @@ import {
   MATRIX_SUMMARY_TITLE,
   matrixSummaryIntro,
   matrixKicker,
+  packageEntryNames,
   pageFootLeft,
   partNumeral,
   submittedByLine,
+  SUPPORTING_KICKER,
+  SUPPORTING_TITLE,
+  supportingTables,
+  type SupportingDocuments,
 } from "./furniture";
 
 // The .rfpdoc palette (globals.css). Bare hex for docx; "#"-prefixed for pdfkit.
@@ -209,6 +214,9 @@ export type ExportView = {
   /** The questionnaire summary (§5.17.22) opening the sheet of the section
    *  whose label it names; null = none (every document before round 34). */
   matrixSummary: NonNullable<ResolvedProposal["matrixSummary"]> | null;
+  /** The Supporting Documents sheet (§5.17.23) after the last content
+   *  sheet and before the closing; null = none (nothing picked). */
+  supportingDocuments: SupportingDocuments | null;
   sections: {
     label: string;
     /** A questionnaire section's kicker carries its ID range (furniture.ts
@@ -277,6 +285,7 @@ export function buildExportView(
       signature: resolved.letter.signature,
     },
     matrixSummary: resolved.matrixSummary ?? null,
+    supportingDocuments: resolved.supportingDocuments ?? null,
     sections: resolved.sections.map((s) => ({
       label: s.structureLabel,
       kicker: matrixKicker(
@@ -1827,6 +1836,30 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
         );
   };
 
+  /** The Supporting Documents sheet (§5.17.23): its own system sheet in
+   *  the house chrome, the reference's p40 register. The intro, the
+   *  "You requested | Where it is" register (when the request names a
+   *  document), the numbered list, then the footnote lines in the summary
+   *  sheet's italic note voice. Both tables are furniture.ts supportingTables,
+   *  the bodies the screen and the PDF draw too. */
+  const supportingSheetDocx = (sd: SupportingDocuments) => {
+    const t = supportingTables(sd);
+    secHead(SUPPORTING_KICKER, SUPPORTING_TITLE);
+    children.push(bodyPar(sd.intro));
+    if (t.register)
+      children.push(spacerX(px2tw(VIS.before)), ...visualDocx({ ...FURNITURE_BASE, ...t.register }), spacerX(px2tw(VIS.after)));
+    children.push(...visualDocx({ ...FURNITURE_BASE, ...t.list }));
+    for (const line of [sd.confidentialLine, sd.redactedLine])
+      if (line)
+        children.push(
+          spacerX(px2tw(VIS.summary.noGap)),
+          vPar([vRun(line, SERIF_ITAL, VIS.summary.noPx, MUTED, { italics: true })], {
+            px: VIS.summary.noPx,
+            lh: VIS.summary.noLh,
+          })
+        );
+  };
+
   /** One section's body: prose as before, each visual with its own air. */
   const sectionFlow = (flowItems: ExportFlowItem[]) => {
     let prev: "head" | "p" | "block" = "head";
@@ -2023,6 +2056,9 @@ export async function renderRfpDocx(view: ExportView): Promise<Buffer> {
       investmentSheet(view.pricing);
     }
   }
+
+  // After the last content sheet, before the closing (§5.17.23).
+  if (view.supportingDocuments) supportingSheetDocx(view.supportingDocuments);
 
   /* ---- The navy closing sheet ------------------------------------------ */
   children.push(
@@ -3383,6 +3419,33 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     doc.x = PAGE.margin;
   };
 
+  /** The Supporting Documents sheet (§5.17.23), the docx's sequence: the
+   *  house head, the intro, the register, the numbered list, the notes. */
+  const supportingSheetPdf = (sd: SupportingDocuments) => {
+    const t = supportingTables(sd);
+    beginSheet(SUPPORTING_KICKER);
+    secHead(SUPPORTING_KICKER, SUPPORTING_TITLE);
+    ensureRoom(40);
+    flow(sd.intro, { px: 15, lh: 1.68 });
+    doc.moveDown(0.65);
+    if (t.register) {
+      doc.y += pt(VIS.before);
+      visualPdf({ ...FURNITURE_BASE, ...t.register });
+      doc.y += pt(VIS.after);
+    }
+    visualPdf({ ...FURNITURE_BASE, ...t.list });
+    for (const line of [sd.confidentialLine, sd.redactedLine]) {
+      if (!line) continue;
+      const note: TextSpec = { text: line, font: "Serif-Italic", px: VIS.summary.noPx, lh: VIS.summary.noLh, color: h(MUTED) };
+      doc.y += pt(VIS.summary.noGap);
+      ensureRoom(textH(note, CW));
+      const noteY = doc.y;
+      textAt(note, PAGE.margin, noteY, CW);
+      doc.y = noteY + textH(note, CW);
+    }
+    doc.x = PAGE.margin;
+  };
+
   /** One section sheet; its overflow pages carry "<kicker> · continued"
    *  ("SECTION 1.4 · CONTINUED" on a brief, §5.17.21). */
   const sectionSheet = (sec: ExportView["sections"][number]) => {
@@ -3507,6 +3570,9 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
     }
   }
 
+  // After the last content sheet, before the closing (§5.17.23).
+  if (view.supportingDocuments) supportingSheetPdf(view.supportingDocuments);
+
   /* ---- The navy closing sheet ------------------------------------------ */
   beginSheet(null);
   {
@@ -3607,11 +3673,46 @@ export async function renderRfpPdf(view: ExportView): Promise<Buffer> {
   return done;
 }
 
-export function exportFileName(view: ExportView, format: "docx" | "pdf"): string {
+export function exportFileName(view: ExportView, format: "docx" | "pdf" | "zip"): string {
   const base = (view.clientName || view.proposalTitle || "rfp-response")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
-  return `${base || "rfp-response"}-response.${format}`;
+  // The package keeps the same slug ASCII-safe for the header; the folder
+  // and entries inside carry the readable names (packageEntryNames).
+  return format === "zip"
+    ? `${base || "rfp-response"}-response-package.zip`
+    : `${base || "rfp-response"}-response.${format}`;
+}
+
+/** One picked attachment as the package carries it: bytes pulled by id at
+ *  export time (a retired library row still exports, its bytes live in the
+ *  row), the title denormalized at pick time, the media from the magic. */
+export type PackageAttachment = { n: number; title: string; media: string; bytes: Uint8Array };
+
+/**
+ * The submission package (format=zip, §5.17.23), the reference package's
+ * shape: one folder "<client> - XL.net Proposal and Supporting Documents"
+ * holding "00 - XL.net <client> Proposal.pdf" and ".docx" (the SAME buffers
+ * the plain formats return: the caller renders them with renderRfpPdf and
+ * renderRfpDocx and hands them in, so the pair cannot differ from a plain
+ * download of the same state), then "Attachment N - <title>.<ext>" in pick
+ * order (N order = zip order). Entry names are furniture.ts
+ * packageEntryNames, which the read-back test pins. Nothing is logged.
+ */
+export async function buildSubmissionZip(o: {
+  clientName: string | null | undefined;
+  pdf: Buffer;
+  docx: Buffer;
+  attachments: readonly PackageAttachment[];
+}): Promise<Buffer> {
+  const ordered = [...o.attachments].sort((a, b) => a.n - b.n);
+  const names = packageEntryNames({ clientName: o.clientName, attachments: ordered });
+  const zip = new JSZip();
+  const dir = zip.folder(names.folder)!;
+  dir.file(names.pdf, o.pdf, { binary: true });
+  dir.file(names.docx, o.docx, { binary: true });
+  ordered.forEach((a, i) => dir.file(names.attachments[i]!, a.bytes, { binary: true }));
+  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }) as Promise<Buffer>;
 }

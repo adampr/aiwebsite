@@ -20,11 +20,15 @@
  * 84b250ce value once the round-32 hunks are reverted too), and the parts
  * come back screened per part, end to end, as does the parts-only turn
  * rfp:parts sends.
+ *
+ * Round 35 adds the attachments block (drafter, questionnaire, every chunk,
+ * revise): byte-absent without picks against 138fc285's captured hashes,
+ * the only change with them, and {{att:N}} surviving every screen.
  */
 
 import crypto from "node:crypto";
 import http from "node:http";
-import { screenLetterThesis, screenQuestionnaireAnswers } from "../src/lib/rfp/brain";
+import { screenLetterThesis, screenPartDek, screenPartTitle, screenProposalHeadline, screenQuestionnaireAnswers } from "../src/lib/rfp/brain";
 import { rateNoteCodes, rateNoteFor } from "../src/lib/rfp/quote";
 import { RATE_CARD } from "../src/lib/rfp/seed/rate-card";
 import { letterThesis } from "../src/lib/rfp/furniture";
@@ -213,6 +217,17 @@ const HEAD = {
 const HEAD_R32 = {
   "letter.rfp": { system: "5cf964584543aea821a0d1b33be953799d6aec1a2be739ee633644c11d2df5eb" },
   "letter.brief": { system: "8c5f18a48cda29f2b9db74afcba46c87e007d2bf03edba7b93b921e29fd0bcfa" },
+} as const;
+
+/** 138fc285 (round 34 as shipped): the revise turn's prompts and the
+ *  structured drafter's, captured through this same loopback harness from a
+ *  `git archive` of that commit (round 35 adds the attachments block,
+ *  byte-absent without picks). */
+const R34_CAPTURE = {
+  section: { system: "8122fae53f54d08a97ab940b0ca070952f8d0d2c8572557e3ab1e14e3deeb432", user: "9fb483ce79da9b402c167b0418e17f4d845144971e311a715395c2cda689ebc0" },
+  letter: { system: "2aabfe672532e1e1fa44802e98fbe7bbe6bc69716699a68c7b998b973e6dd84c", user: "11d397a57cc2f9a32aaa014b238b0233e4277f8e2b41260a7f82e0f99acdc11f" },
+  /** The structured drafter, visuals on, the same capture (draft.rfp.vis1). */
+  draftVis1: { system: "c2b850c992b0d68e314222eb5b715018fc0e92eb2793bf24d3c6db56cfcf7670" },
 } as const;
 
 type Hunk = { now: string[]; was: string[] };
@@ -1068,6 +1083,117 @@ async function brainPins(): Promise<void> {
     check("read r34: clientRef kept on the same line, refused when invented or elsewhere, sanitized, null when absent", rq?.requirements.map((r) => r.clientRef), ["OC-01", null, null, "OC-02", null]);
     const rqb = await turn("rqb", () => brain.readRfp("d1", "OC-01 They run Revit.", "paste"), JSON.stringify({ clientName: null, structure: [], requirements: [{ structureLabel: "Scope of Services", text: "They run Revit.", kind: "statement", mandatory: true, clientRef: "OC-01" }] }));
     check("read r34: a brief never carries refs", [rqb?.intakeForm, rqb?.requirements.map((r) => r.clientRef)], ["brief", [null]]);
+
+    // ---- round 35: the attachments a section may cite (§5.17.23) ---------------------
+    {
+      const ATTS = [
+        { n: 1, title: "XL.net SOC 2 Type 2 Report (Nov 2024 - Apr 2025) - CONFIDENTIAL" },
+        { n: 2, title: "XL.net ISO 27001-2022 Certificate" },
+      ];
+      // Round 35 fix L2 (the fidelity register) + T1 (answers and paragraphs only).
+      const ATT_RULE =
+        'Cite an attachment only where the reader would open that document to check the answer: most answers cite none, and an answer cites at most one. Write the literal token {{att:N}}, with its number from this list, exactly where the words go ("Our offboarding procedure is {{att:5}}." or "(see {{att:3}})"), and use the token only in answer explanations and paragraph text. Never write the word Attachment before the token, never invent a number, and never repeat a number from an attachment\'s title: those numbers are not facts.';
+      check("ask lines (fix L2): the rule line is the exported one, one line, no em dash", [brain.ATTACHMENTS_RULE_LINE === ATT_RULE, ATT_RULE.includes("\n"), /[\u2014\u2015]/.test(ATT_RULE)], [true, false, false]);
+      const ATT_HUNK: Hunk = {
+        now: [
+          "",
+          "ATTACHMENTS YOU MAY CITE: this proposal ships these supporting documents.",
+          "Attachment 1: XL.net SOC 2 Type 2 Report (Nov 2024 - Apr 2025) - CONFIDENTIAL",
+          "Attachment 2: XL.net ISO 27001-2022 Certificate",
+          ATT_RULE,
+        ],
+        was: [],
+      };
+      const c35 = (k: string) => captured[k] ?? { system: "", user: "" };
+      const rev35 = (k: string, hunks: Hunk[]) => {
+        const r = revert(c35(k).system, hunks);
+        return r === null ? "hunk not found exactly once" : sha(r);
+      };
+      process.env.RFP_VISUALS = "1";
+      await turn("a.rfp", () => brain.draftSection("p1", { label: "4.2", title: "Help desk" }, ["Describe your help desk."], facts, [], undefined, { attachments: ATTS }));
+      await turn("a.empty", () => brain.draftSection("p1", { label: "4.2", title: "Help desk" }, ["Describe your help desk."], facts, [], undefined, { attachments: [] }));
+      await turn("a.brief", () => brain.draftSection("p1", { label: "7", title: "Service Delivery and Support" }, ["Cover support."], facts, [], { text: "Brief: client Acme runs Revit." }, { attachments: ATTS }));
+      await turn("a.q", () => brain.draftSection("p1", { label: "1", title: "Ownership" }, ["Who owns what."], qFacts, [], undefined, { echoSource: ECHO_SRC, questionnaire: qAsk, attachments: ATTS }));
+      process.env.RFP_VISUALS = "0";
+      await turn("a.vis0", () => brain.draftSection("p1", { label: "4.2", title: "Help desk" }, ["Describe your help desk."], facts, [], undefined, { attachments: ATTS }));
+      process.env.RFP_VISUALS = "1";
+      check("pin r35: the structured drafter without picks is 138fc285's prompt byte for byte", sha(captured["draft.rfp.vis1"]?.system ?? "missing"), R34_CAPTURE.draftVis1.system);
+      check("pin r35: drafter with picks: only the attachments block changed (reverted = the round-34 prompt)", rev35("a.rfp", [ATT_HUNK]), R34_CAPTURE.draftVis1.system);
+      check("pin r35: brief drafter with picks: only the attachments block changed", rev35("a.brief", [ATT_HUNK]), sha(captured["draft.brief.vis1"]?.system ?? "missing"));
+      check("pin r35: RFP_VISUALS=0 with picks: only the attachments block changed", rev35("a.vis0", [ATT_HUNK]), HEAD["draft.rfp.vis0"].system);
+      check("pin r35: questionnaire with picks: only the attachments block changed (reverted = the round-34 questionnaire prompt)", rev35("a.q", [ATT_HUNK]), sha(r34("q.rfp").system));
+      check("pin r35: an empty pick list is byte-absent", sha(c35("a.empty").system), R34_CAPTURE.draftVis1.system);
+      check("pin r35: the picks never enter the user message", [sha(c35("a.rfp").user), sha(c35("a.vis0").user), c35("a.q").user === r34("q.rfp").user], [HEAD["draft.rfp.vis1"].user, HEAD["draft.rfp.vis0"].user, true]);
+      check(
+        "pin r35: the block sits right before the reply shape, after the questionnaire lines",
+        [c35("a.rfp").system.includes([...ATT_HUNK.now, "", "Reply with JSON only:"].join("\n")), c35("a.q").system.indexOf("ATTACHMENTS YOU MAY CITE") > c35("a.q").system.indexOf("QUESTIONNAIRE:")],
+        [true, true]
+      );
+
+      // A long questionnaire asked in chunks: every chunk carries the block.
+      const big = { items: Array.from({ length: 45 }, (_, i) => ({ ref: `Q-${i + 1}`, text: `Item ${i + 1}.` })), rateCodes: [] };
+      await turnSeq("a.m4", () => brain.draftQuestionnaireChunked("p1", { label: "1", title: "Questionnaire" }, ["x"], facts, [], undefined, { questionnaire: big, attachments: ATTS }), [JSON.stringify({ paragraphs: ["P."], cites: ["f1"], gaps: [] }), "{}"]);
+      check("pin r35: every questionnaire chunk carries the same block", [captured["a.m4#0"]?.system.includes(ATT_HUNK.now.join("\n")), captured["a.m4#1"]?.system.includes(ATT_HUNK.now.join("\n"))], [true, true]);
+
+      // The revise turn: byte-identical to round 34 without picks; only the block with.
+      await turn("rv.none", () => brain.reviseSection("p1", "4.2 Help desk", ["XL.net runs a live service desk."], [], "Tighten it.", facts));
+      await turn("rv.empty", () => brain.reviseSection("p1", "4.2 Help desk", ["XL.net runs a live service desk."], [], "Tighten it.", facts, undefined, undefined, true, []));
+      await turn("rv.att", () => brain.reviseSection("p1", "4.2 Help desk", ["XL.net runs a live service desk."], [], "Tighten it.", facts, undefined, undefined, true, ATTS));
+      await turn("rv.letter", () => brain.reviseSection("p1", "Cover Letter", ["We help."], [], "Warmer.", facts, undefined, undefined, false));
+      await turn("rv.letteratt", () => brain.reviseSection("p1", "Cover Letter", ["We help."], [], "Warmer.", facts, undefined, undefined, false, ATTS));
+      check(
+        "pin r35: revise without picks is the round-34 prompt byte for byte (section and letter)",
+        [sha(c35("rv.none").system), sha(c35("rv.none").user), sha(c35("rv.letter").system), sha(c35("rv.letter").user)],
+        [R34_CAPTURE.section.system, R34_CAPTURE.section.user, R34_CAPTURE.letter.system, R34_CAPTURE.letter.user]
+      );
+      check("pin r35: revise with an empty list is byte-absent", [c35("rv.empty").system === c35("rv.none").system, c35("rv.empty").user === c35("rv.none").user], [true, true]);
+      check(
+        "pin r35: revise with picks: only the attachments block changed, user message untouched (section and letter)",
+        [rev35("rv.att", [ATT_HUNK]), c35("rv.att").user === c35("rv.none").user, rev35("rv.letteratt", [ATT_HUNK]), c35("rv.letteratt").user === c35("rv.letter").user],
+        [R34_CAPTURE.section.system, true, R34_CAPTURE.letter.system, true]
+      );
+      check(
+        "ask lines: a title is one line with fence runs and braces removed, cut at 120; a bad n or an empty title is skipped; none is []",
+        [
+          brain.attachmentsAskLines([{ n: 1, title: "A <<<x>>> {{att:9}}\nB" }, { n: 0, title: "Zero" }, { n: 3, title: "   " }, { n: 4.5, title: "Frac" }, { n: 100, title: "Big" }, { n: 5, title: "y".repeat(130) }]),
+          brain.attachmentsAskLines(undefined),
+          brain.attachmentsAskLines([]),
+          brain.attachmentsAskLines("x" as never),
+        ],
+        [["", "ATTACHMENTS YOU MAY CITE: this proposal ships these supporting documents.", "Attachment 1: A x att:9 B", `Attachment 5: ${"y".repeat(120)}`, ATT_RULE], [], [], []]
+      );
+      // The revise system carries one older em dash in its opening lines,
+      // untouched here; the reverts above prove the block is the only change,
+      // so the block itself and the drafter prompts are what is read.
+      check("no em dash in the round-35 block or any round-35 drafter prompt", [ATT_HUNK.now.some((l) => /[\u2014\u2015]/.test(l)), ["a.rfp", "a.q", "a.brief"].some((k) => /[\u2014\u2015]/.test(c35(k).system + c35(k).user))], [false, false]);
+
+      // The token survives the questionnaire screens end to end, byte for byte.
+      const tokReply = JSON.stringify({
+        paragraphs: ["P."],
+        cites: ["f1"],
+        gaps: [],
+        answers: [
+          { ref: "OC-01", verdict: "yes", subject: "Live desk, see {{att:2}}", explanation: "XL.net runs a live service desk 24/7/365. The procedure is {{att:1}}.", cites: ["f1"] },
+          { ref: "OC-02", verdict: "partial", subject: "Named access", explanation: "Confirmed during onboarding, see {{att:7}}.", cites: ["f1"] },
+          { ref: "OC-03", verdict: "partial", subject: "Revocation", explanation: "See Attachment 8 for the steps.", cites: ["f1"] },
+        ],
+      });
+      const qt = await turn("a.qtok", () => brain.draftSection("p1", { label: "1", title: "Ownership" }, ["Who owns what."], qFacts, [], undefined, { questionnaire: qAsk, attachments: ATTS }), tokReply);
+      check(
+        "token e2e: {{att:N}} survives subject and explanation verbatim; an unpicked N is KEPT for the render-side strip; a typed 'Attachment 8' still grounds its digit and drops",
+        [qt?.answers?.map((a) => [a.ref, a.subject, a.explanation]), qt?.refsMissing],
+        [[["OC-01", "Live desk, see {{att:2}}", "XL.net runs a live service desk 24/7/365. The procedure is {{att:1}}."], ["OC-02", "Named access", "Confirmed during onboarding, see {{att:7}}."]], 1]
+      );
+      const et = await turn("a.etok", () => brain.draftSection("p1", { label: "4.2", title: "Help desk" }, ["Describe your help desk."], facts, [], undefined, { echoSource: ECHO_SRC, attachments: ATTS }),
+        JSON.stringify({ paragraphs: ["XL.net runs a live service desk, see {{att:1}}."], cites: ["f1"], gaps: [], visuals: [{ kind: "client-echo", after: 1, cites: ["f1"], entries: [{ said: SAID, answer: "XL.net runs a live service desk 24/7/365, in {{att:1}}.", willSee: "The certificate {{att:2}}." }] }] }));
+      check(
+        "token e2e: a paragraph, an echo answer and willSee keep the token byte for byte",
+        [et?.paragraphs[0], et?.blocks.map((b) => (b.kind === "client-echo" ? [b.entries[0]?.answer, b.entries[0]?.willSee] : null))],
+        ["XL.net runs a live service desk, see {{att:1}}.", [["XL.net runs a live service desk 24/7/365, in {{att:1}}.", "The certificate {{att:2}}."]]]
+      );
+      const rt = await turn("a.rtok", () => brain.reviseSection("p1", "4.2 Help desk", ["P."], [], "Cite the certificate.", facts, undefined, undefined, true, ATTS), JSON.stringify({ paragraphs: ["XL.net holds the certificate in {{att:2}}."], note: "", heading: null, remove: false }));
+      check("token e2e: a revised paragraph keeps the token", rt?.paragraphs, ["XL.net holds the certificate in {{att:2}}."]);
+    }
   } finally {
     server.close();
     for (const [k, v] of [["BRAIN_BASE_URL", savedEnv.base], ["BRAIN_STUB", savedEnv.stub], ["RFP_VISUALS", savedEnv.vis]] as const)
@@ -1076,6 +1202,23 @@ async function brainPins(): Promise<void> {
   }
 }
 
+
+// ---- round 35 fix T1: the furniture screens refuse curly braces -------------------
+check(
+  "braces (fix T1): the thesis, the brief headline, a part title and a part dek refuse a curly brace (so none can spell a citation token); the same text without passes",
+  [
+    screenLetterThesis("Support that keeps {your} studio working"),
+    screenLetterThesis("Support that keeps your studio working"),
+    screenProposalHeadline("Support {att} for Acme", "Acme", "brief"),
+    screenProposalHeadline("Support for Acme", "Acme", "brief"),
+    screenPartTitle("How we {work}", "How we work"),
+    screenPartTitle("How we work", "How we work"),
+    screenPartDek("The first ninety days, step {by} step", "The first ninety days, step by step"),
+    screenPartDek("The first ninety days, step by step", "The first ninety days, step by step"),
+  ],
+  [null, "Support that keeps your studio working", null, "Support for Acme", null, "How we work", null, "The first ninety days, step by step"]
+);
+check("braces (fix T1): the closing sheet refuses a stored thesis with a brace too (one predicate)", [letterThesis("Support that keeps {your} studio working"), letterThesis("Support that keeps your studio working")], [null, "Support that keeps your studio working"]);
 
 // ---- round 34: rate codes and the system rate note (pure) ------------------------
 check("rateNoteCodes: priced codes only (onboarding and Microsoft 365 licensing carry no figure), the base-plan per-user rates excluded", rateNoteCodes(RATE_CARD), ["xl-secure-plus", "datto-setup", "datto-retention-1yr", "datto-retention-infinite", "datto-archive-license", "sharepoint-storage-overage", "vulnerability-scan"]);

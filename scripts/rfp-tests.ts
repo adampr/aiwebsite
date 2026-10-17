@@ -140,7 +140,10 @@ function auditOwnershipLookups(): string[] {
         // approveKnowledge/returnKnowledge/correctFact/retireFact/
         // updateQuestion are admin-checked inside src/lib/rfp/db.ts (throw
         // on non-admin), and getFactById serves admin-gated corpus routes
-        // (facts are shared, not owned), so they count as scoped.
+        // (facts are shared, not owned), so they count as scoped. The
+        // library (§5.17.23) is likewise a shared staff collection, not an
+        // owned row: getLibraryDocumentFile / retireLibraryDocument serve
+        // the staff-gated library [id] route, so they count as scoped too.
         if (
           !src.includes("getOwnedProposal") &&
           !src.includes("getDocument") &&
@@ -149,7 +152,8 @@ function auditOwnershipLookups(): string[] {
           !src.includes("approveKnowledge") &&
           !src.includes("returnKnowledge") &&
           !src.includes("getFactById") &&
-          !src.includes("updateQuestion")
+          !src.includes("updateQuestion") &&
+          !src.includes("getLibraryDocumentFile")
         )
           bad.push(full);
       }

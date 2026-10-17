@@ -34,6 +34,7 @@ import {
   integer,
   bigint,
   boolean,
+  date,
   timestamp,
   index,
   unique,
@@ -401,6 +402,23 @@ export const rfpProposals = pgTable(
      */
     partsJson: text("parts_json"),
     /**
+     * JSON {"picks":[{"docId","n","title","confidentialConfirmed"?:{"by","at"}}],
+     * "map"?:{"<requirementId>": n|0|{"ns":[n...],"section"?:label}},
+     * "pickedAt"?:ISO} (round 35, §5.17.23): the library
+     * documents this proposal ships as numbered attachments, in pick order
+     * (n is 1-based, dense, renumbered on every write), each title
+     * denormalized at pick time so the zip name and every "Attachment N"
+     * reference stay stable if the library row retires later. `map` is the
+     * Attachments pane's per-requirement mapping (0 = explicitly not
+     * included; the object form several picks and/or the answering
+     * section); pickedAt the last picks-changing write. Written only by
+     * POST /api/rfp/proposals/[id]/attachments (CAS on rev, which also
+     * renumbers the citations stored in sections_json in the same UPDATE);
+     * every reader goes through attachments.ts
+     * readProposalAttachments, which reads null and garbage as no picks.
+     */
+    attachmentsJson: text("attachments_json"),
+    /**
      * JSON QuoteInputs — the human-entered quantities (user counts, tiers).
      * Kept separately from the computed quote so the quote can be rebuilt
      * deterministically, and so what was ENTERED stays distinguishable from
@@ -442,6 +460,47 @@ export const rfpProposals = pgTable(
       .where(sql`status <> 'superseded'`),
     index("rfp_proposals_status_idx").on(t.status, t.updatedAt),
   ]
+);
+
+/**
+ * The supporting-documents library (round 35, §5.17.23): staff-uploaded
+ * business documents (a SOC 2 report, a certificate, a procedure, a
+ * template) a proposal ships as numbered attachments. `bytes` is the file
+ * itself, validated magic-first at insert (attachments.ts sniffLibraryFile:
+ * PDF or Word .docx only) and `media` is derived from that magic, never
+ * from a filename. No filename is kept: the zip entry is composed from the
+ * title. The brain never sees a byte of it, only "Attachment N: <title>".
+ *
+ * Retired, never deleted: a proposal that already picked a document keeps
+ * exporting it (its bytes live here). `confidential` documents reach an
+ * export only after a per-proposal confirmation recorded with the pick.
+ * Bytes never appear in a log, an activity row or an error message; every
+ * list select names its columns and leaves `bytes` out.
+ */
+export const rfpLibraryDocuments = pgTable(
+  "rfp_library_documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** At most 120 characters, one line (attachments.ts screenLibraryTitle). */
+    title: text("title").notNull(),
+    // "certification" | "report" | "procedure" | "template" | "sample" | "agreement"
+    kind: text("kind").notNull(),
+    bytes: bytea("bytes").notNull(),
+    // "application/pdf" | the Word .docx media type, from the magic bytes.
+    media: text("media").notNull(),
+    confidential: boolean("confidential").notNull().default(false),
+    /** A real sample with the client's details removed (the sheet notes it). */
+    redactedSample: boolean("redacted_sample").notNull().default(false),
+    /** The document's own as-of date ("report period end"), when it has one. */
+    asOf: date("as_of"),
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** The uploading staff member's email, or "cli" for the seeding lane. */
+    createdBy: text("created_by").notNull(),
+  },
+  (t) => [index("rfp_library_documents_retired_idx").on(t.retiredAt, t.createdAt)]
 );
 
 /**

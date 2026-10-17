@@ -1,4 +1,14 @@
-// GET /api/rfp/proposals/[id]/export?format=docx|pdf — emit the response.
+// GET /api/rfp/proposals/[id]/export?format=docx|pdf|zip — emit the response.
+//
+// format=zip (§5.17.23) is the submission package: the PDF and the Word
+// file built by the SAME renderers the plain formats run, on the same
+// resolved view, plus each picked attachment's bytes pulled by id at export
+// time, in pick order (furniture.ts packageEntryNames). It needs at least
+// one pick, and every confidential pick's per-proposal confirmation; a
+// refusal names the TITLE only. The attachments together may hold at most
+// 120 MB (PACKAGE_ATTACHMENTS_MAX_BYTES): over it the package is refused
+// with 413 before a byte is read or a file renders. Bytes never reach a log
+// or the activity row (counts only).
 //
 // The CURRENT STATE always downloads (owner directive), and the FILE is
 // never marked: no DRAFT anywhere in it, by owner ruling 2026-08-28 (the
@@ -13,12 +23,26 @@
 
 import { logRfpActivity } from "@/lib/rfp/activity";
 import {
+  PACKAGE_ATTACHMENTS_MAX_BYTES,
+  PACKAGE_ATTACHMENTS_MAX_COPY,
+} from "@/lib/rfp/attachments";
+import {
   getDocument,
+  getLibraryDocumentFile,
+  libraryDocumentsByIds,
   getOwnedProposal,
+  readProposalAttachments,
   readProposalChecksIgnores,
   writeProposalGate,
 } from "@/lib/rfp/db";
-import { buildExportView, exportFileName, renderRfpDocx, renderRfpPdf } from "@/lib/rfp/export";
+import {
+  buildExportView,
+  buildSubmissionZip,
+  exportFileName,
+  renderRfpDocx,
+  renderRfpPdf,
+  type PackageAttachment,
+} from "@/lib/rfp/export";
 import { applyIgnores, parseCheckIgnores } from "@/lib/rfp/check-ignores";
 import { buildGateInput } from "@/lib/rfp/gate-run";
 import { buildQuote, parseQuoteInputs } from "@/lib/rfp/quote";
@@ -44,8 +68,37 @@ export async function GET(
 
   const url = new URL(req.url);
   const format = url.searchParams.get("format");
-  if (format !== "docx" && format !== "pdf")
-    return rfpError("invalid_request", "format must be docx or pdf.", 400);
+  if (format !== "docx" && format !== "pdf" && format !== "zip")
+    return rfpError("invalid_request", "format must be docx, pdf or zip.", 400);
+
+  // The picks as stored (attachments.ts readProposalAttachments, tolerant).
+  const attachmentState = readProposalAttachments(proposal.attachmentsJson);
+  if (format === "zip" && attachmentState.picks.length === 0)
+    return rfpError(
+      "not_ready",
+      "No supporting documents are picked for this proposal. Pick them in the Attachments pane first.",
+      409
+    );
+  // The package's size guard (U3), from octet_length alone: no byte is
+  // read, and nothing renders, for a package that cannot be built.
+  if (format === "zip") {
+    let total = 0;
+    try {
+      total = (await libraryDocumentsByIds(attachmentState.picks.map((p) => p.docId))).reduce(
+        (sum, d) => sum + d.sizeBytes,
+        0
+      );
+    } catch (err) {
+      console.error("[rfp] package size check failed:", err instanceof Error ? err.constructor.name : "error");
+      return rfpError("unavailable", "The attachments could not be checked. Try again.", 503);
+    }
+    if (total > PACKAGE_ATTACHMENTS_MAX_BYTES)
+      return rfpError(
+        "too_large",
+        `The attachments together are over ${PACKAGE_ATTACHMENTS_MAX_COPY}, too large for one package. Remove one in the Attachments pane, or download the response and send the largest documents separately.`,
+        413
+      );
+  }
 
   const input = await buildGateInput(user, doc, proposal);
   if ("error" in input)
@@ -96,8 +149,38 @@ export async function GET(
   const { resolved } = resolveDraft(input);
   const view = buildExportView(resolved, input.rateCard);
 
-  const buffer =
-    format === "docx" ? await renderRfpDocx(view) : await renderRfpPdf(view);
+  // The package's files are read BEFORE anything renders, so a missing or
+  // unconfirmed document refuses without building either file.
+  const packaged: PackageAttachment[] = [];
+  let confidentialCount = 0;
+  if (format === "zip") {
+    for (const pick of attachmentState.picks) {
+      const file = await getLibraryDocumentFile(pick.docId);
+      if (!file)
+        return rfpError(
+          "not_ready",
+          `The attachment "${pick.title}" is no longer in the library. Remove it in the Attachments pane.`,
+          409
+        );
+      if (file.confidential) {
+        if (!pick.confidentialConfirmed)
+          return rfpError(
+            "not_ready",
+            `"${pick.title}" is confidential. Confirm it for this proposal in the Attachments pane first.`,
+            409
+          );
+        confidentialCount++;
+      }
+      packaged.push({ n: pick.n, title: pick.title, media: file.media, bytes: file.bytes });
+    }
+  }
+
+  let buffer: Buffer;
+  if (format === "zip") {
+    // The SAME builders the plain formats use, on the same view.
+    const [pdf, docx] = [await renderRfpPdf(view), await renderRfpDocx(view)];
+    buffer = await buildSubmissionZip({ clientName: doc.clientName, pdf, docx, attachments: packaged });
+  } else buffer = format === "docx" ? await renderRfpDocx(view) : await renderRfpPdf(view);
   const filename = exportFileName(view, format);
 
   await logRfpActivity({
@@ -114,6 +197,9 @@ export async function GET(
       openGaps,
       pricingMissing: pricingMissing.length,
       failedRules: result.failedRules.join(","),
+      // Counts only, never a title or a byte (§5.17.23).
+      attachments: attachmentState.picks.length,
+      ...(format === "zip" ? { confidentialAttachments: confidentialCount } : {}),
     },
   });
 
@@ -123,7 +209,9 @@ export async function GET(
       "content-type":
         format === "docx"
           ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          : "application/pdf",
+          : format === "zip"
+            ? "application/zip"
+            : "application/pdf",
       "content-disposition": `attachment; filename="${filename}"`,
       "cache-control": "no-store, private",
       "x-rfp-draft": draft ? "1" : "0",

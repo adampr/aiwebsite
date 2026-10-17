@@ -12,8 +12,10 @@ import {
   getDocument,
   getProposalForDocument,
   hasPendingIntakeParts,
+  libraryDocumentsByIds,
   listRequirements,
 } from "@/lib/rfp/db";
+import { readProposalAttachments } from "@/lib/rfp/attachments";
 import { ownerDisplayName } from "@/lib/rfp/gate-run";
 import { signatureFor } from "@/lib/rfp/signature";
 import { rateNoteCodes, rateNoteFor, toRateCard } from "@/lib/rfp/quote";
@@ -99,6 +101,33 @@ export default async function RfpWorkspacePage({
   const sections: DraftSectionRecord[] = proposal
     ? JSON.parse(proposal.sectionsJson || "[]")
     : [];
+
+  // Round 35 (§5.17.23): the proposal's attachment picks and mapping, each
+  // pick joined with its library flags (kind, confidential, redacted sample;
+  // a retired row still answers, its bytes still export). Titles and flags
+  // only: no library byte or content reaches the client.
+  const stored = readProposalAttachments(proposal?.attachmentsJson ?? null);
+  const pickedDocs = new Map(
+    (await libraryDocumentsByIds(stored.picks.map((p) => p.docId))).map((d) => [
+      d.id.toLowerCase(),
+      d,
+    ])
+  );
+  const attachments = {
+    picks: stored.picks.map((p) => {
+      const d = pickedDocs.get(p.docId);
+      return {
+        ...p,
+        kind: d?.kind ?? "",
+        confidential: d?.confidential ?? false,
+        redactedSample: d?.redactedSample ?? false,
+        // The pane badges a pick whose library row has since retired.
+        retired: d?.retired ?? false,
+      };
+    }),
+    map: stored.map,
+    ...(stored.pickedAt ? { pickedAt: stored.pickedAt } : {}),
+  };
 
   // ---- staff evidence, computed HERE (ARCHITECTURE.md §5.17.3) ----
   // The scanner in staff-count.ts (lookbehind regexes, whole-document
@@ -237,6 +266,9 @@ export default async function RfpWorkspacePage({
         // Round 33 (§5.17.21): a brief's stored part titles and deks, read
         // by the same resolution resolve-draft hands both files.
         partsJson={proposal?.partsJson ?? null}
+        // Round 35 (§5.17.23): picks (with library flags) and the
+        // per-requirement mapping the Attachments pane edits.
+        attachments={attachments}
         // Round 34 (§5.17.22): the grounded subject line the real-RFP cover
         // lede names, and the system rate notes the matrix rows carry.
         rfpTitle={doc.rfpTitle ?? null}

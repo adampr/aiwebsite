@@ -22,6 +22,7 @@ import type {
   Severity,
   Violation,
 } from "@/lib/rfp/content-model";
+import type { AttachmentStateLike } from "./attachments";
 
 /** Everything a validator is allowed to see. Notably: no rendered output, and no database. */
 export type ValidationContext = {
@@ -44,6 +45,13 @@ export type ValidationContext = {
    * never reaches for rendered output itself.
    */
   measurements?: BlockMeasurement[];
+  /**
+   * The proposal's attachment picks and per-requirement mapping (rfp_proposals.attachments_json,
+   * §5.17.23), for rule D10. Read loosely through validators/attachments.ts; absent = no picks and
+   * no mapping, so a context built before round 35 judges every mandatory document request as
+   * unanswered, exactly as an untouched proposal is.
+   */
+  attachments?: AttachmentStateLike;
 };
 
 export type Rule = {

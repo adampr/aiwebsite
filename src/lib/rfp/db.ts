@@ -26,6 +26,7 @@ import {
   rfpIntakeParts,
   rfpKbVersions,
   rfpKnowledgeProposals,
+  rfpLibraryDocuments,
   rfpProposals,
   rfpQuestions,
   rfpRateCardItems,
@@ -41,6 +42,7 @@ import type {
 import { corpusCategory } from "./knowledge-mine";
 import { RFP_READ_STALE_MS } from "./intake";
 import type { IntakePartRow } from "./vision-extract";
+import type { LibraryDocMeta, LibraryKind, LibraryMedia } from "./attachments";
 
 export type FactRow = typeof rfpFacts.$inferSelect;
 export type QuestionRow = typeof rfpQuestions.$inferSelect;
@@ -1001,6 +1003,150 @@ export async function writeProposalParts(
   const res = await db
     .update(rfpProposals)
     .set({ partsJson, rev: expectedRev + 1, updatedAt: new Date() })
+    .where(and(eq(rfpProposals.id, proposalId), eq(rfpProposals.rev, expectedRev)))
+    .returning({ id: rfpProposals.id });
+  return res.length > 0;
+}
+
+/* ---- Round 35: the supporting-documents library (§5.17.23) ----------------
+ * Every select below names its columns and leaves `bytes` out, except
+ * getLibraryDocumentFile (the download and the zip export). A driver error
+ * can echo query parameters, which for an insert are the file's bytes, so
+ * the callers log an error's constructor name only. */
+
+export { readProposalAttachments } from "./attachments";
+
+/** A library row without its bytes; `sizeBytes` is octet_length(bytes),
+ *  which Postgres answers from the TOAST header without reading the file. */
+export type LibraryDocumentRow = LibraryDocMeta & {
+  createdAt: Date;
+  createdBy: string;
+  retiredAt: Date | null;
+  sizeBytes: number;
+};
+
+const libraryColumns = {
+  id: rfpLibraryDocuments.id,
+  title: rfpLibraryDocuments.title,
+  kind: rfpLibraryDocuments.kind,
+  media: rfpLibraryDocuments.media,
+  confidential: rfpLibraryDocuments.confidential,
+  redactedSample: rfpLibraryDocuments.redactedSample,
+  asOf: rfpLibraryDocuments.asOf,
+  retiredAt: rfpLibraryDocuments.retiredAt,
+  createdAt: rfpLibraryDocuments.createdAt,
+  createdBy: rfpLibraryDocuments.createdBy,
+  sizeBytes: sql<number>`octet_length(${rfpLibraryDocuments.bytes})::int`,
+};
+type LibrarySelect = Omit<LibraryDocumentRow, "retired">;
+const toLibraryRow = (r: LibrarySelect): LibraryDocumentRow => ({
+  ...r,
+  sizeBytes: Number(r.sizeBytes),
+  retired: r.retiredAt !== null,
+});
+
+/** The library, oldest first. Retired rows only when asked (the manager
+ *  shows them struck; the picker never offers them). */
+export async function listLibraryDocuments(
+  opts: { includeRetired?: boolean } = {}
+): Promise<LibraryDocumentRow[]> {
+  const rows = await db
+    .select(libraryColumns)
+    .from(rfpLibraryDocuments)
+    .where(opts.includeRetired ? undefined : isNull(rfpLibraryDocuments.retiredAt))
+    .orderBy(asc(rfpLibraryDocuments.createdAt), asc(rfpLibraryDocuments.id));
+  return rows.map(toLibraryRow);
+}
+
+/** Library rows by id, retired or not, without bytes (pick validation, the
+ *  pane's details, the export's metadata). Unknown ids are simply absent. */
+export async function libraryDocumentsByIds(ids: string[]): Promise<LibraryDocumentRow[]> {
+  const wanted = ids.filter(isUuid);
+  if (wanted.length === 0) return [];
+  const rows = await db
+    .select(libraryColumns)
+    .from(rfpLibraryDocuments)
+    .where(inArray(rfpLibraryDocuments.id, wanted));
+  return rows.map(toLibraryRow);
+}
+
+/** One library file WITH its bytes: the download route and the zip export
+ *  only. A retired row is returned too (a proposal that picked it still
+ *  ships it). Never log what this returns. */
+export async function getLibraryDocumentFile(
+  id: string
+): Promise<(LibraryDocumentRow & { bytes: Buffer }) | null> {
+  if (!isUuid(id)) return null;
+  const rows = await db
+    .select({ ...libraryColumns, bytes: rfpLibraryDocuments.bytes })
+    .from(rfpLibraryDocuments)
+    .where(eq(rfpLibraryDocuments.id, id))
+    .limit(1);
+  const r = rows[0];
+  if (!r) return null;
+  const { bytes, ...rest } = r;
+  return { ...toLibraryRow(rest), bytes: Buffer.from(bytes) };
+}
+
+/** Insert one already-validated library file (attachments.ts sniffLibraryFile
+ *  + screenLibraryTitle + isLibraryKind + screenAsOf, run by the route and
+ *  the CLI alike). Returns the row without its bytes. */
+export async function insertLibraryDocument(input: {
+  title: string;
+  kind: LibraryKind;
+  bytes: Buffer;
+  media: LibraryMedia;
+  confidential: boolean;
+  redactedSample: boolean;
+  asOf: string | null;
+  createdBy: string;
+}): Promise<LibraryDocumentRow> {
+  const [row] = await db
+    .insert(rfpLibraryDocuments)
+    .values({
+      title: input.title,
+      kind: input.kind,
+      bytes: input.bytes,
+      media: input.media,
+      confidential: input.confidential,
+      redactedSample: input.redactedSample,
+      asOf: input.asOf,
+      createdBy: input.createdBy.toLowerCase(),
+    })
+    .returning(libraryColumns);
+  return toLibraryRow(row!);
+}
+
+/** Retire a live row (never a delete). Null when the id is unknown or the
+ *  row was already retired. */
+export async function retireLibraryDocument(id: string): Promise<LibraryDocumentRow | null> {
+  if (!isUuid(id)) return null;
+  const rows = await db
+    .update(rfpLibraryDocuments)
+    .set({ retiredAt: new Date() })
+    .where(and(eq(rfpLibraryDocuments.id, id), isNull(rfpLibraryDocuments.retiredAt)))
+    .returning(libraryColumns);
+  return rows[0] ? toLibraryRow(rows[0]) : null;
+}
+
+/**
+ * Fenced write of attachments_json (picks and mapping), the same CAS as
+ * writeProposalParts: it bumps rev like any write that changes what the
+ * document displays (the Supporting Documents sheet, every "Attachment N"),
+ * which marks a stored gate verdict stale (§5.17.8). `sectionsJson`, when
+ * given, lands in the SAME fenced UPDATE: the citation remap of a picks
+ * write (attachments.ts remapSectionsAttTokens, round 35 fix T2), so the
+ * stored citations and the numbering they point into can never disagree.
+ */
+export async function writeProposalAttachments(
+  proposalId: string,
+  expectedRev: number,
+  attachmentsJson: string | null,
+  sectionsJson?: string
+): Promise<boolean> {
+  const res = await db
+    .update(rfpProposals)
+    .set({ attachmentsJson, ...(sectionsJson !== undefined ? { sectionsJson } : {}), rev: expectedRev + 1, updatedAt: new Date() })
     .where(and(eq(rfpProposals.id, proposalId), eq(rfpProposals.rev, expectedRev)))
     .returning({ id: rfpProposals.id });
   return res.length > 0;

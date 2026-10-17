@@ -141,7 +141,7 @@ function storedPartText(raw: unknown, max: number): string | null {
   if (/\p{Sc}/u.test(raw) || /(?![0-9])\p{N}/u.test(raw)) return null;
   // Square brackets are the D3 placeholder shape ("[Client]"); like angle
   // brackets they are never divider furniture.
-  if (PART_DASHES.test(raw) || /[<>[\]]/.test(raw)) return null;
+  if (PART_DASHES.test(raw) || /[<>[\]{}]/.test(raw)) return null;
   return raw;
 }
 

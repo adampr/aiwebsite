@@ -147,6 +147,30 @@ export type ResolvedProposal = {
     missingLine: string | null;
     costIndex: { ref: string; rateNote: string }[];
   };
+  /** The Supporting Documents system sheet (§5.17.23), placed after the
+   *  last content sheet and before the closing on every surface: the intro,
+   *  the register (one row per requirement of kind "attachment", "You
+   *  requested | Where it is", the cell "Attachment N - <title>" or "Not
+   *  included"), the numbered list of picks, the confidentiality footnote
+   *  (only when a confidential document is picked) and the redacted-sample
+   *  note. Composed by resolve-draft through furniture.ts
+   *  supportingDocumentsOf; titles are staff-entered, the requested lines
+   *  the client's own words, everything else system copy. ABSENT when
+   *  nothing is picked, so every earlier document resolves exactly as
+   *  before. Outside the content hash, like matrixSummary. */
+  supportingDocuments?: {
+    intro: string;
+    register: { requested: string; whereItIs: string }[];
+    list: { n: number; title: string }[];
+    confidentialLine: string | null;
+    redactedLine: string | null;
+  };
+  /** Round 35 fix T3 (§5.17.23): per section (sectionId null = the cover
+   *  letter) how many attachment citations the resolver stripped because
+   *  they named no pick; rule D12 warns on each. ABSENT when none was, so
+   *  every other document resolves exactly as before. Outside the content
+   *  hash, like supportingDocuments. */
+  citationStrips?: { sectionId: string | null; label: string; count: number }[];
   /** Hash of this content model. Two artifacts of the same proposal must share it (rule C2). */
   contentHash: string;
 };
@@ -252,6 +276,25 @@ export function resolvedTextSpans(
       spans.push({ location: "matrix-summary", field: `costIndex[${i}].ref`, text: c.ref });
       spans.push({ location: "matrix-summary", field: `costIndex[${i}].rateNote`, text: c.rateNote });
     });
+  }
+
+  // The Supporting Documents sheet (§5.17.23): system furniture under its
+  // own location (no sectionId, no blockId), so no section Fix-it route
+  // claims a finding on it, scanned like the summary sheet.
+  if (resolved.supportingDocuments) {
+    const sd = resolved.supportingDocuments;
+    spans.push({ location: "supporting-documents", field: "intro", text: sd.intro });
+    sd.register.forEach((r, i) => {
+      spans.push({ location: "supporting-documents", field: `register[${i}].requested`, text: r.requested });
+      spans.push({ location: "supporting-documents", field: `register[${i}].whereItIs`, text: r.whereItIs });
+    });
+    sd.list.forEach((p, i) =>
+      spans.push({ location: "supporting-documents", field: `list[${i}].title`, text: p.title }),
+    );
+    if (sd.confidentialLine)
+      spans.push({ location: "supporting-documents", field: "confidentialLine", text: sd.confidentialLine });
+    if (sd.redactedLine)
+      spans.push({ location: "supporting-documents", field: "redactedLine", text: sd.redactedLine });
   }
 
   spans.push({ location: "back-cover", field: "headline", text: resolved.backCover.headline });

@@ -57,6 +57,12 @@ export const RFP_ACTIONS = [
   "proposal.check_restore",
   "proposal.export",
   "proposal.approve",
+  // Round 35 (§5.17.23): a proposal's attachment picks or requirement
+  // mapping (counts only), and the supporting-documents library (title and
+  // kind only, never a byte).
+  "proposal.attachments",
+  "library.add",
+  "library.retire",
   "knowledge.propose",
   "knowledge.submit",
   "knowledge.approve",
@@ -82,7 +88,7 @@ export async function logRfpActivity(input: {
   actorEmail: string;
   actorAdmin?: boolean;
   action: RfpAction;
-  subjectKind?: "document" | "proposal" | "fact" | "knowledge" | "section";
+  subjectKind?: "document" | "proposal" | "fact" | "knowledge" | "section" | "library";
   subjectId?: string | null;
   outcome?: "ok" | "denied" | "error";
   /** Shape only. Never text the user wrote or the model produced. */

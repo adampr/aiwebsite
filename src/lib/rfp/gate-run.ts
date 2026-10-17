@@ -14,7 +14,9 @@ import {
   currentKbVersion,
   currentRateCard,
   knowledgeProposalsForOwner,
+  libraryDocumentsByIds,
   listRequirements,
+  readProposalAttachments,
   readProposalChecksIgnores,
   writeProposalGate,
   type DocumentRow,
@@ -24,6 +26,7 @@ import type { RfpUser } from "./access";
 import { applyIgnores, parseCheckIgnores } from "./check-ignores";
 import { parseQuoteInputs, toRateCard, EMPTY_QUOTE_INPUTS } from "./quote";
 import { resolveDraft, runDraftGate, type DraftGateInput } from "./resolve-draft";
+import { attachmentsViewOf } from "./furniture";
 import type { GateResult } from "./validators/gate";
 import type { DraftSectionRecord } from "@/app/api/rfp/documents/[id]/generate/route";
 import type { PricingQuote } from "./content-model";
@@ -62,6 +65,17 @@ export async function buildGateInput(
     ownerDisplayName(proposal.ownerEmail),
   ]);
 
+  // The attachment picks (§5.17.23) joined with their library flags (no
+  // bytes): the gate and the export read the same view, so the Supporting
+  // Documents sheet, every "Attachment N" and rule D10 agree.
+  const attachmentState = readProposalAttachments(proposal.attachmentsJson);
+  const attachments = attachmentsViewOf(
+    attachmentState,
+    attachmentState.picks.length
+      ? await libraryDocumentsByIds(attachmentState.picks.map((p) => p.docId))
+      : []
+  );
+
   const sections: DraftSectionRecord[] = JSON.parse(
     proposal.sectionsJson || "[]"
   );
@@ -89,6 +103,7 @@ export async function buildGateInput(
     ownerName,
     statesHeadcountOnly: inputs.statesHeadcountOnly,
     supportedUserSplitConfirmed: inputs.supportedUserSplitConfirmed,
+    attachments,
   };
 }
 

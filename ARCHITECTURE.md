@@ -1,5 +1,7 @@
 # ARCHITECTURE — ai.xl.net (XL.net AI site + Tron Netter)
 
+Last verified against code: 2026-10-17 §5.17.23 ROUND 35: SUPPORTING DOCUMENTS, THE ATTACHMENTS LIBRARY AND THE SUBMISSION PACKAGE (owner: "gogo" on the attachments round). Migration `0065_rfp_library_documents` adds table `rfp_library_documents` (staff-uploaded files, magic-first PDF/.docx, 32 MB cap, media from magic, confidential and redacted_sample flags, retired never deleted) and `rfp_proposals.attachments_json` (picks `{docId,n,title,confidentialConfirmed?}` dense in pick order, plus the per-requirement `map` n|0). Routes `/api/rfp/library` (list, upload), `/api/rfp/library/[id]` (download, retire), `/api/rfp/proposals/[id]/attachments` (set picks with per-proposal confidential confirmation, map), CLI `npm run rfp:library-add` (the prod seeding lane; to be seeded from the Alive package post-deploy). The brain sees "Attachment N: <title>" lines only and cites as `{{att:N}}`; furniture.ts `resolveAttTokens` resolves or strips at resolve-draft (gate and both files) and the workspace doc pane, so the gate scans resolved text. New system sheet "Supporting Documents" (`ResolvedProposal.supportingDocuments`, the Alive p40 register You requested | Where it is, the numbered list, the confidential footnote and redacted-sample note) after the last content sheet, before the closing, one spec on all three surfaces; the letter roadmap gains ", with the supporting documents you requested attached". Export `format=zip` (export.ts `buildSubmissionZip`): folder + "00 - XL.net <client> Proposal.pdf/.docx" from the same renderers + "Attachment N - <title>.<ext>" in pick order; activity gains attachment counts. Rule D10 (warn) for an unmapped mandatory requested document. No new env. Fix round: EVERY string of every section (titles, prose, answers, every lifted block string) and the letter body resolves (`resolveBlockAtt`); D11 (block) proves no resolved span holds "{{att"; D12 (warn) names each section where a citation was stripped (`ResolvedProposal.citationStrips`); the attachments `set` write renumbers every stored citation in the same fenced UPDATE ({{att:0}} for a removed pick) and stamps `pickedAt` on additions only; the map value is `n | 0 | {ns, section?}`; the resolver pads, absorbs "Attachment ", refuses hugged braces and tidies only at the strip site; `next.config.ts` raises `experimental.proxyClientMaxBodySize` to 34mb so a 32 MB upload is not truncated at the proxy; the package refuses over 120 MB of attachments (413); the CLI refuses a live duplicate title without `--force`; the Attachments pane notes sections drafted before the picks and offers "Redraft the questionnaire sections".
+
 Last verified against code: 2026-10-16 §5.17.22 ROUND 34: QUESTIONNAIRE RESPONSE MATRIX, CLIENT ECHO, SLA TABLE, REAL-RFP COVER LEDE (owner: "analyze what [Alive Telecom and Meiji] have and do differently and update /rfp so it can get a similar result"). Migration `0064_rfp_client_ref_rfp_title` adds nullable `rfp_requirements.client_ref` (the client's item ID, kept only when it grounds as a token before the requirement's words on one source line, outline.ts `groundClientRef`/`sanitizeClientRef`) and `rfp_documents.rfp_title` (the grounded subject line). A section with >= 3 distinct client refs is a questionnaire section (outline.ts `isQuestionnaireSection`, derived, never stored); its drafter returns `answers` (screened, stored additively on the section record), and resolve-draft lifts them through furniture.ts `matrixFromAnswers` into ONE host-built `response-matrix` block (`bm_<label>`, rows in requirement ordinal order, rate notes SYSTEM-composed by quote.ts `rateNoteFor`) closing the section's flow; the sheet kicker reads "Section 1 · OC-01 to OC-06" (`matrixKicker`); a system summary sheet precedes the first matrix section's sheet with the added-cost index, the summary tiles and the no line (`ResolvedProposal.matrixSummary`, spans under `matrix-summary`). Pills Yes navy / Partial outlined / No ink, Word repeating header + cantSplit rows, PDF row split with "<title> (continued)" and the head row again. New model kind `client-echo` (verbatim `said` grounded as a substring of the fenced source, `saidBy` only when it attributes the quote, numbered circle + "What you told us" + italic quote + answer + "What you will see" callout; Word circles are `public/brand/rfp-ornaments/echo-1..6.png`); the pull-quote ban stands. Gate: D7 (warn, a row per ref), D8 (warn, order), D9 (block, verdict enum); B7 sanctions rate-card figures on `rows[i].rateNote`/`costIndex[i].rateNote` only. Q3: `buildSlaTable`, an origin-"sla" table, visuals op "sla" and the workspace's "SLA table" Add. Q4: a stored rfpTitle reads "Prepared for <client> in response to your <rfpTitle>."; the letter's system roadmap sentence (`letterRoadmapSentence`) prints before the pricing paragraph only when a matrix exists, so every earlier document stays byte-identical (round-33 pins pass). OUT (Adam's call or content): the attachments library and submission zip (the designed next round), the mixed parts layout, the discovery-led intake, onsite/workstation/storage/scan rate rows, the insurance amount, a co-managed fact. Fixtures `r34-questionnaire` and `r34-echo` render at 0 findings. Fix round: echo quotes match on word boundaries ("happy" cut out of "unhappy" drops) and an injection-screened source line becomes a never-matching mark so no quote spans it; `saidBy` must sit on the quote's own line or in a "Name:", "(Name)" or dash attribution beside it; echo entries gain an optional bold `title` sub-head (<= 60, the matrix subject's screen) on all three surfaces, and the prompt allows at most one echo per section, never on boilerplate requirement lists; a real-RFP section's drafter sees a fenced "THE CLIENT'S OWN WORDS FOR THIS SECTION" block (its requirement anchors' source lines plus one line each, <= 2000 chars; byte-absent for briefs, visuals off, questionnaires and no match); the questionnaire prompt carries one line per distinct ref and a questionnaire over 40 refs is drafted in sequential chunks merged first-wins before the one CAS landing (brain.ts `draftQuestionnaireChunked`); a "yes" needs an affirmative non-pricing fact among its OWN cites; `groundClientRef` also accepts wrapped columns, IDs on their own line and curly quotes, and binds a flattened line's item to its nearest ID; the summary is its OWN "How to Read This Response" sheet before the first matrix section, its total counts every client ref (missing included), with an N/A tile when any row is n/a and a no line naming subjects ("No exit dependency (OC-08)"); the roadmap says "every item" only when every ref has a row; the cover lede tidies the rfpTitle (em dash and lookalikes to " · ") and refuses a generic one; a finding on an echo quote is never a Tron instruction; the base-plan codes are not nameable rate notes; `rfp:reground` also writes `rfp_title`; Coverage shows "<label> · <ref>" and "No row".
 
 Last verified against code: 2026-10-16 §5.17.21 ROUND 33: THEMATIC PARTS FOR BRIEF DOCUMENTS (owner, explicitly "make it its own round", overriding the round-8 deferral for brief-mode documents only; reference: the CoWork Curioso proposal's four part dividers with a dek sentence and "SECTION 1.1" / "SECTION 1.1 · CONTINUED" kickers). A brief (intake form "brief", the standard outline) now renders as FOUR thematic parts on the screen sheets, Word and PDF: part 1 sections 1, 2, 3, 7, 10; part 2 sections 4, 5; part 3 sections 6, 9; part 4 section 8 with the Investment sheet opening it (outline.ts `OUTLINE_PARTS`, static, never model-chosen). Only part TITLES and DEKS may be model-authored: migration `0063_rfp_proposal_parts` adds nullable `rfp_proposals.parts_json` (exactly four `{n,title,dek}` entries, title <= 40, dek <= 160, each through brain.ts's round-32 sanitation with digits grounded in that part's OWN drafted text, visuals included; a refused value stores null, never cut), landed by the letter turn in its CAS write (activity meta `partsTitles`/`partsDeks`, counts only) and by the new `npm run rfp:parts -- <proposalId>` (parts only, never the letter; CAS on rev; shape-only activity `proposal.parts`). ONE resolution for every surface: outline.ts `resolveParts`, called through furniture.ts `documentParts` by resolve-draft (new optional `ResolvedProposal.parts`, outside the content hash, scanned by the gate) and by the workspace doc pane (new `partsJson` prop from page.tsx); `ExportView.parts` carries it to both emitters. Sheets print part-relative kickers ("Section 1.4", PDF overflow "SECTION 1.4 · CONTINUED"); labels never change, and the rail, tabs, jump targets, Coverage and Checks are untouched. The kicker rule is now ONE function (furniture.ts `sectionKicker`; export-assets re-exports it, the workspace's secKicker IS it). An empty part has no divider; a part's dek prints only when stored. New ornaments `num-03.png`/`num-04.png`. REAL RFPs are byte-identical (proven against 66a5e8e6 in fresh processes under a frozen clock: docx and PDF bytes, resolved JSON and view all equal; pinned in test:rfpcoverletter). New render fixture documents `r33-parts` and `r33-parts-omit-3`. Fix round: part 3's default title is "Onboarding and Transition"; dividers print the part's DISPLAY position (omit part 3: "03", "Section 3.x"); the pricing part's Investment sheet is its "Section p.1" and its sections count from 2; the pricing part's dek is system-composed (quote.ts `partPricingDek`); part titles run full width and Word part dividers hold title + dek in a fixed-minimum-height cell; stored values are re-screened at read, A-rule phrases and dash lookalikes refused at write, stale deks dropped at render, part findings get a no-Tron recipe. No env change; no new route.
@@ -13135,6 +13137,407 @@ C3 (block) and D7 (warn); that pairing is contract-intended (C3 says it is
 unanswered, D7 names the matrix gap and the redraft). Quote equivalence is
 NFKC's, accepted: a superscript folds ("10²" matches "102"). Kicker
 ranges are whole-section ("OC-01 to OC-06"), not per page.
+
+#### 5.17.23 Supporting documents: the attachments library and the submission package (round 35, 2026-10-17)
+
+The owner said "gogo" on the attachments round with the coordinator's stated
+defaults. Reference: the Alive Telecom package, a zip folder "Alive Telecom -
+XL.net Proposal and Supporting Documents" holding "00 - ...Proposal...pdf"
+and "Attachment 1 - XL.net SOC 2 Type 2 Report (...) - CONFIDENTIAL.pdf"
+through "Attachment 7 - XL.net Managed Services Agreement (template).docx";
+its letter (p2) says the questionnaire is answered "with the supporting
+documents you requested attached"; its matrix explanations cite "Attachment
+3"; its p40 "Supporting Documents" sheet maps the questionnaire's requested
+list in a two-column YOU REQUESTED | WHERE IT IS table, with an italic
+footnote that Attachment 1 "is provided in confidence for Alive's
+evaluation only". The round-34 OUT list (§5.17.22) was the design base.
+
+**The hard controls.** The brain never sees a byte of a library file: it
+sees "Attachment N: <title>" lines only, and may cite an attachment ONLY as
+the literal token `{{att:N}}`. The host resolves the token at ONE render
+choke point per surface; a token naming an N that is not picked strips
+silently there (never printed, never an error the model can read), so the
+gate scans the resolved text. Stated precisely (fix round): no printed
+string of a section (its title, every paragraph, every answer, every string
+of every lifted block) or of the letter body can hold a token, because
+resolve-draft and the doc pane run each one through the resolver, which
+turns a picked N into "Attachment N" and strips every other form it finds,
+near misses and unreadable remnants included; rule D11 proves it on every
+run. The furniture the model may author without the resolver (part titles
+and deks, the brief headline, the letter thesis) refuses a curly brace at
+its screen, so none can carry one. A `confidential` document reaches an export
+only after an explicit per-proposal confirmation recorded with the pick. No
+library byte reaches a prompt, a log line, an activity row or an error
+message: titles and counts only. One spec for the screen, Word and the PDF.
+No em dashes. A document with no picks renders byte-identical to round 34.
+
+**Migration `0065_rfp_library_documents`** (conventions as 0064, journal
+entry after 0064's, IF NOT EXISTS hand-added) adds:
+- table `rfp_library_documents`: `id` uuid, `title` text (at most 120, one
+  line, attachments.ts `screenLibraryTitle`), `kind` text (certification |
+  report | procedure | template | sample | agreement), `bytes` bytea (the
+  file itself), `media` text (from the magic bytes, never a filename),
+  `confidential` bool default false, `redacted_sample` bool default false,
+  `as_of` date null, `retired_at` timestamptz null (retired, never deleted:
+  a proposal that picked a document keeps exporting it), `created_at`,
+  `created_by` (the uploader's email, or "cli"). No filename is stored.
+- column `rfp_proposals.attachments_json` (text null):
+  `{"picks":[{"docId","n","title","confidentialConfirmed"?:{"by","at"}}],
+  "map"?:{"<requirementId>": n | 0 | {"ns":[n...],"section"?:"<label>"}},
+  "pickedAt"?:"<ISO>"}`. `n` is 1-based pick order, dense, renumbered on
+  every write; the title is denormalized at pick time so the zip entry and
+  every "Attachment N" stay stable if the library row retires; `map` is the
+  Attachments pane's per-requirement mapping (fix X1, frozen): a pick's n,
+  0 (explicitly "Not included"), or `{ns, section?}` for a request answered
+  by several picks and/or by a section of this response (a structure
+  label); canonical form `normalizeMapValue` (ns ascending, each once; a
+  lone pick with no section stored as the bare n, so the legacy n | 0
+  values read forever; nothing left reads as unmapped). `pickedAt` (fix F3)
+  is stamped only by a `set` write that ADDS a pick: a reorder or a removal
+  renumbers every stored citation in the same write, so only an addition
+  can leave an earlier draft uncited and earn the pane's redraft note.
+  Every reader
+  goes through attachments.ts `readProposalAttachments` (tolerant: null and
+  garbage read as no picks; uuid ids lowercased; at most 30 picks; a map
+  value normalized through the renumbering; pickedAt kept only as an ISO
+  time); writes through `serializeProposalAttachments` (NULL when nothing is
+  picked or mapped).
+
+**src/lib/rfp/attachments.ts** (pure): `sniffLibraryFile` /
+`validateLibraryUpload` (magic-first, the round-29 ladder: a PDF starts
+`%PDF-`, a Word .docx is a zip whose central directory holds
+`[Content_Types].xml` and a `word/` part; anything else refused with
+`LIBRARY_TYPE_REFUSAL`; at most 32 MB), `screenLibraryTitle` (also refuses
+an invisible format character, `\p{Cf}`: a bidi override, a zero-width
+character, a soft hyphen), `titleFromFilename` (the library form's
+suggestion: extension and a package prefix "Attachment N - " or "00 - "
+dropped), `screenAsOf`, `ATT_TOKEN_SOURCE` (the strict token the screens
+exempt), `withoutAttTokens`, `ATT_TOKEN_LOOSE_SOURCE` (the renderer's
+tolerant form, pinned equal to furniture.ts's), `remapSectionsAttTokens`
+(fix T2), `normalizeMapValue` / `mapValueNs` (fix X1), `planSetPicks` /
+`planSetMap` (the route's pure planners; `planSetPicks` also returns
+`changed` and the `renumber` map old n -> new n, 0 for a removed pick),
+`unconfirmedConfidential`, `attachmentLabels`, `PACKAGE_ATTACHMENTS_MAX_BYTES`
+(120 MB). db.ts adds
+`listLibraryDocuments`, `libraryDocumentsByIds` (no bytes),
+`getLibraryDocumentFile` (WITH bytes: the download and the zip export only),
+`insertLibraryDocument`, `retireLibraryDocument` and
+`writeProposalAttachments` (CAS on rev, bumping rev like any write that
+changes what the document displays, so a stored gate verdict reads stale;
+an optional `sectionsJson` lands in the SAME fenced UPDATE, fix T2).
+
+**Routes** (all staff-gated with `requireRfpApi`, like all of /rfp):
+- `GET /api/rfp/library` the library without bytes (live rows; `?retired=1`
+  every row). `POST /api/rfp/library` one multipart upload (`file`, `title`,
+  `kind`, `confidential`, `redactedSample`, `asOf`), validated magic-first,
+  201; activity `library.add` (title, kind, flags only). Fix U1: src/proxy.ts
+  runs on every route, and Next 16.3 buffers each request body through a
+  clone capped at 10 MB by default, handing the route a TRUNCATED body
+  above it; `next.config.ts` sets `experimental.proxyClientMaxBodySize:
+  "34mb"` (the 32 MB file cap plus multipart framing), the route's own
+  Content-Length check still refuses anything larger, and nginx's
+  server-level 110m sits above both.
+- `GET /api/rfp/library/[id]` streams the file (magic-derived media type,
+  `Content-Disposition: attachment` named from the TITLE, `no-store,
+  private`, nosniff; retired rows download too). `POST {op:"retire"}`
+  retires (409 when already retired); activity `library.retire`.
+- `GET /api/rfp/proposals/[id]/attachments` the picks, the map and each
+  picked document's library row (no bytes). `POST {op:"set", picks:[docId...],
+  confirm?:[docId...]}` replaces the whole ordered pick list: a new pick
+  must be a live row, a confidential one needs `confirm` (recorded as
+  `{by: the session email, at: now}`), else 409 `confidential_unconfirmed`
+  naming the TITLE; renumbered densely, mappings follow their documents.
+  When the pick list changes (fix T2, F3) the same fenced UPDATE stamps
+  `pickedAt` and rewrites every `{{att:N}}` stored in the proposal's
+  sections (paragraphs, answers, every block string, titles, the letter):
+  old n -> new n, a removed pick's (and any n no pick carried) -> `{{att:0}}`,
+  which strips at render, so a citation follows its document through a
+  reorder and never starts citing a document added later; the response's
+  `retargeted` counts the rewritten citations and the workspace then
+  re-reads the sections (the rev-gated poll) instead of adopting the rev.
+  `POST {op:"map", map:{reqId: n | 0 | {ns, section?} | null}}` merges the
+  mapping (every n a current pick, `section` one of this RFP's structure
+  labels, else 400). Both under CAS on rev (re-planned up to three times,
+  then 409); a sent proposal is immutable; activity `proposal.attachments`
+  (counts only; `set` adds `retargeted`).
+
+**The prod seeding lane: `npm run rfp:library-add -- <file> --title <t>
+--kind <k> [--confidential] [--redacted-sample] [--as-of YYYY-MM-DD]
+[--force]`** (scripts/rfp-library-add.ts): one file from disk through
+exactly the upload route's validation; a LIVE row with exactly the same
+screened title refuses with fixed copy unless `--force` (so a re-run
+seeding never doubles a document); prints the new id and title only; a
+fixed message on any failure past argument parsing (a driver error can echo
+the insert's parameters, one of which is the file); exit 2 usage, 1
+refused, 0 added. The coordinator's seeding copies the files to the VM
+staging dir and REMOVES them after the insert. Seeding record: to be seeded
+by the coordinator's post-deploy run from the Alive package (seven
+documents: the SOC 2 Type 2 report, confidential; the ISO 27001:2022
+certificate; the client security incident response procedure; the
+corrective action request template; the offboard client procedure; the
+sample site visit summary, redacted sample; the MSA template, .docx). Not
+seeded yet; this line changes when it is.
+
+**Brain side.** When picks exist, the questionnaire ask and the drafter /
+revise asks carry an "ATTACHMENTS YOU MAY CITE" block of "Attachment N:
+<title>" lines plus one rule line (brain.ts `ATTACHMENTS_RULE_LINE`, fix
+L2, the fidelity register): cite an attachment only where the reader would
+open that document to check the answer; most answers cite none, an answer
+cites at most one; write the literal token `{{att:N}}` where the words go
+("Our offboarding procedure is {{att:5}}." / "(see {{att:3}})"), and only in
+answer explanations and paragraph text; never write the word Attachment
+before the token, never invent a number, never repeat a number from an
+attachment's title (those are not facts). The screens leave the token intact
+(exempt from number grounding as a reference, not a claim) and do not know
+the picks: a token citing an N that is not picked is left for the
+render-side strip.
+
+**The token resolver: furniture.ts `resolveAttTokens(text, picks,
+tally?)`**, pure and client-safe. A picked N becomes "Attachment N"; any
+other (invented, unpicked, `{{att:0}}`, no picks at all) is stripped. It
+accepts the strict token plus case and inner-space near misses ("{{ ATT : 2
+}}", leading zeros), and strips what it cannot read ("{{att:2}", "{{att:-2}}",
+a non-ASCII digit), so nothing prints braces. Fix R1: a letter or digit
+touching a resolved token, or a second token glued on, gets one space
+("15{{att:2}}0" -> "15 Attachment 2 0"); a token hugged by extra braces
+("{{{att:2}}}") is refused and strips; an "Attachment " or "Attachments "
+written right before the token is absorbed, so "Attachment {{att:2}}" prints
+"Attachment 2" once (and strips with it when unpicked); the tidy after a
+strip looks ONLY at the few characters either side of the strip site: an
+emptied parenthetical goes with its opener ("(", "(see ", "(in ", "(per ")
+and the space before it; a conjunction left dangling goes ("See Attachment
+1 and ." -> "See Attachment 1."); the two sides meet with one space, none
+before punctuation or a line break, a line's own indentation kept. An
+unrelated "( )", an indented line or a spaced comma elsewhere in the string
+stays byte for byte. Text without a token is returned unchanged, the same
+string. `tally` counts the strips. `resolveBlockAtt(block, picks, tally?)`
+(fix T1) runs every string leaf of a block through it (cards, callouts,
+tables, timelines, ledgers, stat tiles, an echo's titles, answers and
+willSee, references), returning the same object when nothing changes. The
+choke points, one per surface:
+- the gate and both files: resolve-draft, where every string enters the
+  resolved model: each section's title, each prose block's text, every
+  stored block through `resolveBlockAtt` BEFORE the visual lifts (so the
+  references entries rule D3 reads are resolved too), each matrix row's
+  `subject` and `explanation` (furniture.ts `matrixFromAnswers` takes
+  `picks` and the tally and resolves inside the lift), and the letter body.
+  Each section's strip count (and the letter's) lands on the resolved view
+  as `ResolvedProposal.citationStrips` (`{sectionId | null, label,
+  count}[]`, ABSENT when none, outside the content hash). The emitters and
+  the gate never see a token.
+- the screen: workspace.tsx's doc pane renders through the SAME helpers on
+  its live `attachments` state (the matrix lift with `picks`, each prose
+  paragraph, the letter body and each section heading through
+  `resolveAttTokens`, each visual through `resolveBlockAtt`). The Edit box
+  keeps the stored text, token and all.
+`DraftGateInput.attachments` (`ProposalAttachmentsView`: picks `{n, title,
+confidential, redactedSample}` plus the map) is loaded once by gate-run.ts
+`buildGateInput` (readProposalAttachments + libraryDocumentsByIds, joined by
+furniture.ts `attachmentsViewOf`; a map-only state survives for the checks),
+so the Checks pane, the export and rule D10 read the same view; runDraftGate
+hands it to the gate context as `attachments`.
+
+**The Supporting Documents sheet** (furniture.ts `supportingDocumentsOf`,
+`ResolvedProposal.supportingDocuments`, outside the content hash like
+`matrixSummary`; ABSENT when nothing is picked). Its own system sheet,
+house chrome, kicker "Attachments", title "Supporting Documents", placed
+after the last content sheet (after the Investment sheet on a real RFP, the
+last part's last sheet on a brief) and before the navy closing, on all
+three surfaces:
+- the intro: "Mapped to the supporting documents your request asks for. The
+  attachments are provided separately with this response." when the
+  request names a document, else "The attachments listed below are provided
+  separately with this response.";
+- the register (the p40 table, branded-table chrome, no caption), "You
+  requested | Where it is": one row per requirement of kind "attachment" in
+  the client's order (ordinal), the left cell the client's own words on one
+  line (an em dash or spaced en dash tidied to " · ", the cover lede's
+  rule); the right cell (fix X1) prints, in order, every mapped pick as
+  "Attachment N - <title>" (ascending, "; " between), then "In this response
+  - Section <label>" when the mapping names the section that answers it
+  (the label as that section's sheet kicker prints it, "Section 1.4" on a
+  brief); with neither, "Not included" (for an explicit 0 AND for an
+  unmapped one: the file says honestly that nothing is attached for it; the
+  checks warn on a mandatory unmapped one, rule D10). Omitted when the
+  request names no document;
+- the numbered list, caption "Documents attached to this response", one
+  column "Document", each row "Attachment N - <title>" (the names the
+  register and the zip entries use);
+- the confidentiality footnote, system copy naming numbers only, only when a
+  confidential document is picked: "Attachment 1 is provided in confidence,
+  for your evaluation only." ("Attachments 1 and 3 are ..." when several);
+- the redacted-sample note when a picked document is flagged: "Attachment 4
+  is a sample from another engagement, with that client's details removed."
+Both tables are built ONCE by furniture.ts `supportingTables` and drawn by
+each surface's existing branded-table renderer (the summary sheet's
+cost-index precedent); the two lines use the summary sheet's italic note
+voice. Spans scan under location `supporting-documents` (fields `intro`,
+`register[i].requested`, `register[i].whereItIs`, `list[i].title`,
+`confidentialLine`, `redactedLine`), no section or block id, so no Fix-it
+route claims a finding on it.
+
+**The letter roadmap** (furniture.ts `letterRoadmapSentence`, new
+`attached` input from `roadmapAttached`): with picks, the round-34 sentence
+ends ", with the supporting documents you requested attached" (", with our
+supporting documents attached" when the request names no document); when
+the sentence also carries the pricing clause (fix L1) the attachments take
+their own second sentence instead: "The supporting documents you requested
+are attached and listed on the Supporting Documents page." ("Our supporting
+documents are ..." when the request names none); with picks but no
+questionnaire it is "The supporting documents you requested are attached,
+listed on the Supporting Documents page at the end of this response."
+Without picks it is exactly the round-34 sentence (or absent).
+
+**The submission package: `GET /api/rfp/proposals/[id]/export?format=zip`.**
+It needs at least one pick (409 otherwise), at most 120 MB of attachments
+together (fix U3: `PACKAGE_ATTACHMENTS_MAX_BYTES`, summed from
+`octet_length` before any byte is read or either file renders; over it a
+413 with honest copy: remove one, or send the largest separately) and, for
+every confidential
+pick, its recorded confirmation (409 naming the TITLE); a picked row that no
+longer exists is a 409 naming the title. Each pick's bytes are pulled by id
+at export time (`getLibraryDocumentFile`; a retired row still exports). The
+PDF and the Word file are rendered by the SAME `renderRfpPdf` /
+`renderRfpDocx` on the same view the plain formats use, then export.ts
+`buildSubmissionZip` writes, in order: the folder "<client> - XL.net
+Proposal and Supporting Documents/", "00 - XL.net <client> Proposal.pdf",
+"00 - XL.net <client> Proposal.docx", then "Attachment N - <title>.<ext>"
+in pick order (N order = zip order; ext from the media, pdf or docx).
+Names are furniture.ts `packageEntryNames` / `packageNamePart` (a colon
+becomes a hyphen, "27001:2022" -> "27001-2022" as the reference spells it;
+path and reserved characters become spaces; whitespace collapsed; capped;
+no trailing dot), so the route and the read-back test cannot disagree. The
+download is `<client-slug>-response-package.zip` (ASCII-safe header; the
+folder and entries carry the readable names). The gate still runs and
+stores first, and the `x-rfp-*` outstanding headers are exactly as for the
+plain formats. Activity `proposal.export` gains `attachments` (the pick
+count, on every format) and, for zip, `confidentialAttachments` (a count).
+The workspace's export row gains "Download the package (zip)" beside Word
+and PDF, shown only while `attachments.picks.length > 0`.
+
+**Workspace (screen).** `/rfp/knowledge/library` is the library manager
+(list, upload with kind, confidential, redacted-sample and as-of fields,
+retire; retired rows shown struck, never deleted; downloads through the
+staff-gated route). The workspace rail gains an "Attachments" pane: the
+library to pick from, pick order (up/down), a pick-count badge, the
+CONFIDENTIAL CONFIRMATION dialog (explicit per-proposal wording naming the
+cover's client when known, "shared with <client>'s package"; it says the
+confirmation is recorded with your EMAIL address and the time, which is
+what the pick stores; the footnote the sheet will print, composed by
+`supportingDocumentsOf` itself), and per requirement of kind "attachment"
+the fix-X1 mapping: a small multi-select of the picks ("Answered by"), an
+optional "Also or instead: answered in section" dropdown of the RFP's
+sections, and a "Not included" choice, sent in the frozen shapes (a lone
+pick bare, else `{ns, section?}`, 0, or null), all through the routes above
+with the house busy and CAS-conflict handling. Above Up/Down/Remove, when
+any stored text cites an attachment, a short line says reordering
+renumbers citations automatically and a removal leaves its citations out
+(true since fix T2). Fix F3: a section drafted before the picks was never
+offered them, and the first draft cannot cite attachments (picks need a
+proposal; the rail is hidden during the initial run). When any drafted
+questionnaire section's `updatedAt` predates `pickedAt`, the pane shows,
+above the library list, "Sections drafted before these picks do not cite
+them. Redraft a section to let it cite the attachments." with one button,
+"Redraft the questionnaire sections", which runs the existing per-section
+draft (`draftOne`) over every drafted questionnaire section in the
+client's order, one at a time, with the Fix-all redraft step's runbar,
+busy and failure handling (a busy 409 stops the loop); never the letter.
+page.tsx passes ONE `attachments` prop (picks joined with their library
+rows, each with its row's `retired` flag so the pane badges it, plus
+`pickedAt`); the workspace keeps it as live state that every pane write
+replaces, and the doc pane's Supporting Documents sheet, its token
+resolution and the zip entry all read that state.
+
+**Rule D10, "Supporting documents" (warn).** A MANDATORY requirement of
+kind "attachment" with no mapping and no explicit "Not included" (a map
+entry naming a number no pick carries counts as unmapped), one finding per
+request located on the requirement, the message naming its words and
+pointing at the Attachments pane (validators/attachments.ts
+`attachmentGapMessage`, the sentence the pane prints beside the selector);
+check-fixes recipe `{kind:"none"}`. Non-mandatory requests are never
+findings; coverage is untouched (no C3 on top). Fix X1: the object form
+clears it when it names a current pick OR a section; only stale numbers,
+or nothing, still warn.
+
+**Rule D11, "Citation token left on the page" (block, fix T1).** Any
+resolved span matching `/\{\{\s*att/i`, located on its section, block,
+field and offset. Belt over suspenders: after the resolver it is
+unreachable (the test sweep appends a token to every string leaf of every
+fixture section and asserts none prints and D11 stays silent); a hit means
+a lane skipped the resolver, a code fault, so the recipe is `{kind:"none"}`
+saying so.
+
+**Rule D12, "Attachment citation pointed at nothing" (warn, fix T3).** One
+finding per section (located `{sectionId}`) or for the cover letter
+(`{field: "body"}`) with a non-zero `citationStrips` count: "Section 1: an
+attachment citation pointed at nothing, so it was left out of the page.
+Read the sentence around it: pick the document in the Attachments pane, or
+edit the wording." Recipe `{kind:"none"}` with honest copy (attach the
+document the sentence meant and redraft, or reword); never Tron, never Fix
+all.
+
+**Tests.** test:rfpcoverletter pins the resolver (resolve, strip with the
+tidy, token-free text unchanged, near misses, every fix-R1 case including
+the strip-site-only tidy, the tally), `resolveBlockAtt` over every block
+string, the matrix lift's picks, `supportingDocumentsOf` (register order,
+every mapping shape, "Not included" for 0 and unmapped, both footnote
+forms, null with no picks), `attachmentsViewOf`, the roadmap clause and its
+second sentence beside pricing, `packageEntryNames` against the reference
+package's names, and source pins on the workspace (block and title
+resolution, the T2 warning and re-read, the F3 note and button, the S1
+copy, the X1 controls) and page.tsx (`retired`, `pickedAt`); over the
+round-35 fixture (scripts/rfp-render-fixture.ts `buildR35PackageInput`: the
+round-34 questionnaire, itself unchanged, with four picks, one confidential
+and confirmed, one a redacted sample, seven mandatory requested documents
+covering every mapping shape (a pick, two picks, a pick plus its section, a
+section alone, "Not included"), a valid `{{att:2}}` in AC-04's explanation
+and a section-1 callout citing `{{att:2}}` and `{{att:3}}`): the citations
+print, no span carries a brace pair, the gate is clean (D10 included) and
+fires D10 seven times when the map is dropped; `withR35StrippedCitation`
+adds an invented `{{att:9}}` in OC-03's explanation, which strips with its
+parentheses, counts on section 1 and warns D12 there; the T1 sweep (a token
+on every string leaf of every fixture section) prints nothing raw; both
+files carry the sheet (and its continuation page) after the Investment
+sheet and before the closing with no token anywhere; the zip read
+back (JSZip) holds the folder, the 00 pair (PDF then Word) and Attachment 1
+to 4 in order, the pair byte-equal to the buffers the renderers returned and
+reading exactly as an independent plain export (PDF page texts, Word XML).
+`npm run rfp:render-fixture` also writes `r35-package.pdf/.docx` and
+`r35-package.zip` (stand-in attachment bytes). The round-33 real-RFP byte
+pins and every round-34 assertion are unchanged.
+
+test:rfpoutline pins the T2 remap with the refuter's ISO/SOC 2 reorder and
+removal probes read back through the resolver, the X1 planners and reader,
+`pickedAt`, the U1/U2/U3 source pins; test:rfpvisualgate pins D10's object
+form and D11/D12; test:rfpchecks their recipes; test:rfpletter the rule
+line and the furniture screens' brace refusals.
+
+**Known limits.** A requested document's left cell is the client's whole
+requirement text (no shortening); a long request makes a tall row. The
+footnote says "for your evaluation only" rather than naming the client (no
+possessive guess on a name). A stripped token can still leave a clumsy
+sentence ("Our offboarding procedure is.") when the model built the
+sentence around it; the tidy fixes only the strip site, and rule D12 now
+surfaces every such section for a person to read. An unmapped request
+prints "Not included" as an explicit 0 does (nothing is attached for it;
+D10 warns when it is mandatory). The mapping shape is frozen as `n | 0 |
+{ns, section?}`; a section mapping is checked against the structure at
+write, and a later retitle or removal of that section leaves the stored
+label printing as written (the D10 check reads it as mapped). Part titles
+and deks, the brief headline and the thesis refuse curly braces at their
+screens rather than resolving tokens: the model is told to cite only in
+answers and paragraphs. Superseded-write parity: a draft or Tron revise in
+flight while the picks change lands text written against the numbering of
+its claim time (its prompt's "Attachment N:" lines); the T2 remap covers
+only what is stored when the attachments write lands, so such a section
+can cite the old numbers until it is redrafted, and the F3 note does not
+flag it (its updatedAt is newer than pickedAt). OPEN. D10 on legacy proposals: a proposal drafted
+before round 35 has no map, so every mandatory requested document warns
+on its next gate run until someone maps it. OPEN: picking attachments at
+intake (so the first draft can cite them) is deferred; the per-pick caveat
+note lane (a short note printed beside one attachment on the sheet) is
+deferred and recorded here as open. The package's PDF and Word raw bytes
+differ from a separate plain download only by embedded timestamps and ids.
 
 ### 5.18 Your AI Roadmap (`/roadmap` + `/api/roadmap/*` + `/admin/roadmap`) — host-owned, per-client-company
 

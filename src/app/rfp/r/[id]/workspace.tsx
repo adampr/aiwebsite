@@ -2,8 +2,8 @@
 
 // The RFP workspace client island (§5.17.1).
 //
-// Two columns at lg: the draft on the left, a four-pane rail on the right
-// (Questions / Coverage / Checks / Tron). Below lg both columns stay MOUNTED
+// Two columns at lg: the draft on the left, a five-pane rail on the right
+// (Questions / Coverage / Attachments / Checks / Tron). Below lg both columns stay MOUNTED
 // and are toggled with hidden/block, so a half-typed answer survives a tab
 // switch. The rail itself waits for the document: it is unmounted until a
 // section exists and for the whole of the first draft run (`railHidden`).
@@ -106,9 +106,17 @@ import {
   partNumeral,
   rateNoteFromTable,
   recipientAddressLines,
+  resolveAttTokens,
+  resolveBlockAtt,
+  roadmapAttached,
   sectionKicker,
   sheetKicker,
   submittedByLine,
+  SUPPORTING_KICKER,
+  SUPPORTING_TITLE,
+  supportingDocumentsOf,
+  supportingTables,
+  type SupportingDocuments,
 } from "@/lib/rfp/furniture";
 import {
   matrixVerdictLabel,
@@ -160,6 +168,30 @@ import {
 } from "@/lib/rfp/references-block";
 import { ReferencesPicker } from "./references-picker";
 import { ReadAgain } from "./read-again";
+// The attachments contract (§5.17.23): pure and client-safe by its own
+// contract (no imports, no Buffer, no lookbehind). Types only here.
+import type {
+  AttachmentMapValue,
+  AttachmentPick,
+  LibraryDocumentWire,
+  ProposalAttachmentsResponse,
+} from "@/lib/rfp/attachments";
+// Import-free and client-safe: THE questionnaire predicate (the Attachments
+// pane's "drafted before these picks" note and its redraft button).
+import { isQuestionnaireSection } from "@/lib/rfp/outline";
+// Pure and client-safe by contract (matrix.ts's discipline): the ONE reader
+// of the per-requirement mapping for rule D10 and the pane's inline state.
+import {
+  ATTACHMENT_GAP_RULE,
+  attachmentGapMessage,
+  attachmentMapping,
+  isAttachmentRequirement,
+} from "@/lib/rfp/validators/attachments";
+import {
+  asOfLabel,
+  KIND_LABEL,
+  sizeLabel,
+} from "@/app/rfp/knowledge/library/manager";
 
 type Section = {
   label: string;
@@ -214,7 +246,24 @@ type Requirement = {
   ordinal: number;
 };
 
-type Pane = "questions" | "coverage" | "checks" | "tron";
+type Pane = "questions" | "coverage" | "attachments" | "checks" | "tron";
+
+/** A picked attachment as the workspace holds it (§5.17.23): the stored
+ *  pick (attachments.ts AttachmentPick) joined with its library row's
+ *  flags. Structurally a furniture.ts ProposalAttachmentsView pick. */
+type PaneAttachmentPick = AttachmentPick & {
+  kind: string;
+  confidential: boolean;
+  redactedSample: boolean;
+  /** The library row has since retired (it still exports). */
+  retired?: boolean;
+};
+export type PaneAttachments = {
+  picks: PaneAttachmentPick[];
+  map: Record<string, AttachmentMapValue>;
+  /** The last picks-changing write's ISO time (attachments.ts pickedAt). */
+  pickedAt?: string;
+};
 
 /** The checks route's batch bound (its MAX_SIGS): a larger row posts in
  *  sequential chunks of this size. */
@@ -487,6 +536,7 @@ export function Workspace({
   clientAddress,
   proposalHeadline,
   partsJson,
+  attachments: initialAttachments,
   rfpTitle,
   rateNotes,
   archived,
@@ -538,6 +588,10 @@ export function Workspace({
   /** The proposal's stored part titles/deks (rfp_proposals.parts_json,
    *  §5.17.21), raw; null = the static part titles, no deks. */
   partsJson: string | null;
+  /** The proposal's attachment picks, each with its library flags, and the
+   *  per-requirement mapping (rfp_proposals.attachments_json joined
+   *  server-side in page.tsx, §5.17.23). Titles and flags only. */
+  attachments: PaneAttachments;
   /** The read's grounded subject line (rfp_documents.rfp_title, §5.17.22):
    *  a real RFP's cover lede says "in response to your <rfpTitle>". */
   rfpTitle: string | null;
@@ -601,6 +655,12 @@ export function Workspace({
   // prop, adopted by the poll so the dividers pick up the letter landing's
   // composed titles and deks without a reload.
   const [partsJsonLive, setPartsJsonLive] = useState<string | null>(partsJson);
+  // Live copy of the attachment picks and mapping (§5.17.23): seeded from
+  // the page prop, replaced by every Attachments pane write. The one source
+  // the tab count, the Supporting Documents sheet, the token resolve and
+  // the package export all read.
+  const [attachments, setAttachments] =
+    useState<PaneAttachments>(initialAttachments);
   const [inputs, setInputs] = useState<QuoteInputs>(
     initialInputs ??
       // Pre-proposal display seed only: the server writes the real seed at
@@ -1065,6 +1125,8 @@ export function Workspace({
       label: s.label,
       requirements,
       rateNote: (codes) => rateNoteFromTable(codes, rateNotes),
+      // Tokens resolve in the SAME lift both files take (§5.17.23).
+      picks: attachments.picks,
     });
     if (m) matrixByLabel.set(s.label, m.rows);
   }
@@ -1086,11 +1148,20 @@ export function Workspace({
   const matrixGaps = matrixRowGaps(requirements, (label) =>
     covered.has(label) ? (matrixByLabel.get(label) ?? []) : null
   );
+  // The Supporting Documents sheet (§5.17.23) from the live attachments
+  // state through the SAME furniture.ts builder resolve-draft hands both
+  // files; null (no sheet, the round-34 roadmap) when nothing is picked.
+  const supportingDocs = supportingDocumentsOf({
+    attachments,
+    requirements,
+    kicker: (l) => sheetKicker(l, docParts),
+  });
   const letterRoadmap = letterRoadmapSentence({
     matrixKickers: matrixInPrint.map((m) => sheetKicker(m.label, docParts)),
     partsCount: docParts?.parts.length ?? 0,
     pricing: pricing !== null,
     complete: matrixComplete(matrixInPrint, clientRefs),
+    attached: roadmapAttached(supportingDocs),
   });
   // The doc pane's sheets between the letter and the closing, in order.
   // Real RFP: divider 01, every structure node, divider 02, Investment
@@ -1107,6 +1178,7 @@ export function Workspace({
     | { kind: "part-divider"; n: number; num: number; title: string; dek: string | null; absent: boolean }
     | { kind: "section"; node: { label: string; title: string }; kicker: string }
     | { kind: "matrix-summary" }
+    | { kind: "supporting" }
     | { kind: "pricing"; kicker: string };
   const docSheetsRaw: DocSheet[] = [];
   if (docParts && partHomes) {
@@ -1152,6 +1224,8 @@ export function Workspace({
       ? [{ kind: "matrix-summary" }, sheet]
       : [sheet]
   );
+  // After the last content sheet, before the closing, as both files print it.
+  if (supportingDocs) docSheets.push({ kind: "supporting" });
   // The rail (Questions / Coverage / Checks / Tron) waits for the document
   // (owner directive 2026-09-30: while the response drafts initially, do
   // not show it; it appears once it can be used, after the draft exists).
@@ -1754,6 +1828,56 @@ export function Workspace({
     if (err) setNotice(err);
   }
 
+  /**
+   * Redraft every drafted questionnaire section, one at a time (§5.17.23,
+   * round 35 fix F3): a section drafted before the attachments were picked
+   * was never offered them, so it cites none. The Fix-all redraft step's
+   * mechanics: the same runbar per section, draftOne for each, a busy 409
+   * stops the loop, per-section failures collected for one notice. Never
+   * the letter (it is no questionnaire section).
+   */
+  const redraftQuestionnaire = useCallback(async () => {
+    const targets = orderDrafted(
+      structure,
+      sectionsRef.current.filter((s) => !s.label.startsWith("__"))
+    ).filter((s) => isQuestionnaireSection(requirements, s.label));
+    if (!targets.length) return;
+    stopRef.current = false;
+    setBusy(true);
+    setNotice("");
+    const failures: string[] = [];
+    let stoppedByBusy = false;
+    for (let i = 0; i < targets.length; i++) {
+      if (stopRef.current) break;
+      const sec = targets[i]!;
+      const title = structure.find((n) => n.label === sec.label)?.title ?? sec.title;
+      const display = `${sec.label} ${title}`.trim();
+      setRun({
+        active: true,
+        done: i,
+        total: targets.length,
+        current: display,
+        currentLabel: sec.label,
+        failures,
+        initial: false,
+      });
+      const { error: err, busy: wasBusy } = await draftOne(sec.label, title);
+      if (wasBusy) {
+        stoppedByBusy = true;
+        break;
+      }
+      if (err) failures.push(`${display}: ${err}`);
+    }
+    setRun((r) => (r ? { ...r, active: false, done: r.total, failures } : null));
+    setBusy(false);
+    if (stoppedByBusy) setNotice("Stopped: another draft is already running on this RFP.");
+    else if (failures.length)
+      setNotice(
+        `${failures.length} questionnaire section${failures.length === 1 ? "" : "s"} did not redraft. Use “Draft this” on them to retry.`
+      );
+    else setRun(null);
+  }, [structure, requirements, draftOne]);
+
   /** Answer the current pricing question: instant, no brain. */
   async function answerPricing(
     q: Extract<OpenQuestion, { kind: "pricing" }>,
@@ -2104,7 +2228,7 @@ export function Workspace({
     });
   }
 
-  async function exportAs(format: "docx" | "pdf") {
+  async function exportAs(format: "docx" | "pdf" | "zip") {
     if (!proposalId) return;
     setExporting(format);
     setNotice("");
@@ -3543,9 +3667,13 @@ export function Workspace({
         : "Questions"
       : k === "coverage"
         ? "Coverage"
-        : k === "checks"
-          ? "Checks"
-          : "Tron";
+        : k === "attachments"
+          ? attachments.picks.length > 0
+            ? `Attachments · ${attachments.picks.length}`
+            : "Attachments"
+          : k === "checks"
+            ? "Checks"
+            : "Tron";
 
   return (
     <>
@@ -3761,6 +3889,18 @@ export function Workspace({
             >
               {exporting === "pdf" ? "Building" : "PDF"}
             </button>
+            {attachments.picks.length > 0 && (
+              // The submission package (§5.17.23): both files plus every
+              // picked attachment, in pick order.
+              <button
+                type="button"
+                className="btn btn--text"
+                disabled={exporting !== null || sections.length === 0}
+                onClick={() => void exportAs("zip")}
+              >
+                {exporting === "zip" ? "Building" : "Download the package (zip)"}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -3772,7 +3912,7 @@ export function Workspace({
       <nav className="tabstrip tabstrip--mobile mb-4" aria-label="Workspace panes">
         {/* Questions is omitted, not disabled, until a section exists
             (owner directive 2026-10-09); a tab that renders always opens. */}
-        {(["draft", "questions", "coverage", "checks", "tron"] as const)
+        {(["draft", "questions", "coverage", "attachments", "checks", "tron"] as const)
           .filter((k) => k !== "questions" || questionsReady)
           .map((k) => (
             <button
@@ -3809,7 +3949,7 @@ export function Workspace({
           <nav className="tabstrip tabstrip--rail" aria-label="Rail">
             {/* Same omission as the mobile strip (owner directive
                 2026-10-09). */}
-            {(["questions", "coverage", "checks", "tron"] as const)
+            {(["questions", "coverage", "attachments", "checks", "tron"] as const)
               .filter((k) => k !== "questions" || questionsReady)
               .map((k) => (
                 <button
@@ -4249,6 +4389,48 @@ export function Workspace({
               </>
             )}
 
+            {/* Attachments (§5.17.23): pick and order library documents,
+                confirm a confidential one for this client, and map each
+                document request to the attachment that answers it. Its
+                own component; the live state stays here. */}
+            {pane === "attachments" && (
+              <AttachmentsPane
+                proposalId={proposalId}
+                requirements={requirements}
+                structure={structure}
+                attachments={attachments}
+                clientName={coverClientName}
+                citesAttachments={sections.some((x) =>
+                  /\{\{\s*att/i.test(JSON.stringify(x))
+                )}
+                draftedBeforePicks={
+                  !!attachments.pickedAt &&
+                  sections.some(
+                    (x) =>
+                      isQuestionnaireSection(requirements, x.label) &&
+                      Date.parse(x.updatedAt) < Date.parse(attachments.pickedAt!)
+                  )
+                }
+                busy={busy}
+                onRedraftQuestionnaire={() => void redraftQuestionnaire()}
+                onChange={(next, rev, wrote, retargeted) => {
+                  setAttachments(next);
+                  if (wrote) {
+                    // The same write renumbered the citations stored in the
+                    // sections (fix T2): re-read them (the rev-gated poll
+                    // fetches them because this tab's rev is now behind)
+                    // instead of adopting a rev whose sections it never saw.
+                    if (retargeted) void pollOnce();
+                    else adoptRev(rev);
+                    // D10 and the Supporting Documents sheet read the
+                    // picks: the stored verdict now describes an older
+                    // state.
+                    markGateStale();
+                  }
+                }}
+              />
+            )}
+
             {pane === "checks" && (
               <>
                 <span className="sys-label">Checks</span>
@@ -4511,6 +4693,20 @@ export function Workspace({
                                     onClick={() => showPane("questions")}
                                   >
                                     Open the Questions pane
+                                  </button>
+                                </>
+                              )}
+                              {/* D10's answer is a decision in the
+                                  Attachments pane (§5.17.23). */}
+                              {g.ruleId === ATTACHMENT_GAP_RULE && (
+                                <>
+                                  {" "}
+                                  <button
+                                    type="button"
+                                    className="linklike"
+                                    onClick={() => showPane("attachments")}
+                                  >
+                                    Open the Attachments pane
                                   </button>
                                 </>
                               )}
@@ -5393,7 +5589,9 @@ export function Workspace({
                         return (
                           <>
                             {letterParagraphsWithPricing(
-                              body,
+                              // Tokens resolve as resolve-draft resolves the
+                              // letter body (§5.17.23).
+                              body.map((p) => resolveAttTokens(p, attachments.picks)),
                               letterPricing,
                               letterRoadmap
                             ).map((p, i) => (
@@ -5559,6 +5757,21 @@ export function Workspace({
                           missingLine={matrixMissingLine(matrixSummary)}
                           costIndex={matrixSummary.costIndex}
                         />
+                      </div>
+                      <PageFoot who={coverClientName} />
+                    </section>
+                  ) : null;
+                if (sheet.kind === "supporting")
+                  return supportingDocs ? (
+                    <section className="rfpdoc-page" key="sheet-supporting">
+                      <div className="rfpdoc-sechead">
+                        <div className="min-w-0">
+                          <div className="rfpdoc-kicker">{SUPPORTING_KICKER}</div>
+                          <h3 className="rfpdoc-h mt-1">{SUPPORTING_TITLE}</h3>
+                        </div>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        <SupportingDocumentsSheet sd={supportingDocs} />
                       </div>
                       <PageFoot who={coverClientName} />
                     </section>
@@ -5837,7 +6050,7 @@ export function Workspace({
                           {matrixKicker(sheet.kicker, matrixRows)}
                         </div>
                         <h3 className="rfpdoc-h mt-1">
-                          {node.title}
+                          {resolveAttTokens(node.title, attachments.picks)}
                           {changed && <span className="doc-chip">Updated</span>}
                         </h3>
                       </div>
@@ -6004,10 +6217,12 @@ export function Workspace({
                             exporters read. Every string is a text node. */}
                         {interleave(sec.paragraphs, blocks).map((item) =>
                           item.type === "p" ? (
-                            <p key={`p-${item.index}`}>{item.text}</p>
+                            <p key={`p-${item.index}`}>{resolveAttTokens(item.text, attachments.picks)}</p>
                           ) : (
                             <div className="rfpdoc-block" key={item.block.id}>
-                              <DocBlock block={item.block} />
+                              {/* Every string of the block, as resolve-draft
+                                  hands both files (§5.17.23 fix T1). */}
+                              <DocBlock block={resolveBlockAtt(item.block, attachments.picks)} />
                               {/* Workspace only, never exported. */}
                               <div className="rfpdoc-actions rfpdoc-blockbar rfpdoc-tool rfpdoc-tool--row">
                                 {!headError &&
@@ -6674,6 +6889,27 @@ function MatrixSummarySheet({
         ))}
       </ul>
       {[noLine, missingLine].map((line, i) =>
+        line ? (
+          <p key={i} style={{ fontStyle: "italic", fontSize: "13px", lineHeight: 1.5, color: "#5b5d78" }}>
+            {line}
+          </p>
+        ) : null
+      )}
+    </div>
+  );
+}
+
+/** The Supporting Documents sheet (§5.17.23): the intro, the register and
+ *  the numbered list as furniture.ts supportingTables builds them for both
+ *  files, then the footnote lines in the summary sheet's note voice. */
+function SupportingDocumentsSheet({ sd }: { sd: SupportingDocuments }) {
+  const t = supportingTables(sd);
+  return (
+    <div className="space-y-3">
+      <p>{sd.intro}</p>
+      {t.register && renderTable(t.register)}
+      {renderTable(t.list)}
+      {[sd.confidentialLine, sd.redactedLine].map((line, i) =>
         line ? (
           <p key={i} style={{ fontStyle: "italic", fontSize: "13px", lineHeight: 1.5, color: "#5b5d78" }}>
             {line}
@@ -7430,5 +7666,624 @@ function PricingForm({
         Recompute
       </button>
     </div>
+  );
+}
+
+/* ---- The Attachments pane (§5.17.23, round 35) ---------------------------- */
+
+/** The pane's view of a write or read response: the stored picks joined with
+ *  the library flags the response carries (`docs`), falling back to what this
+ *  tab already knew of a pick and then to the library list. */
+function joinAttachments(
+  d: ProposalAttachmentsResponse,
+  prev: PaneAttachments,
+  library: LibraryDocumentWire[] | null
+): PaneAttachments {
+  const docs = d.docs && typeof d.docs === "object" ? d.docs : {};
+  const prevById = new Map(prev.picks.map((p) => [p.docId, p]));
+  const libById = new Map((library ?? []).map((l) => [l.id.toLowerCase(), l]));
+  const picks = (Array.isArray(d.picks) ? d.picks : []).map((p): PaneAttachmentPick => {
+    const row = docs[p.docId] ?? libById.get(p.docId);
+    const before = prevById.get(p.docId);
+    return {
+      ...p,
+      kind: row?.kind ?? before?.kind ?? "",
+      confidential: row?.confidential ?? before?.confidential ?? false,
+      redactedSample: row?.redactedSample ?? before?.redactedSample ?? false,
+      retired: row?.retired ?? before?.retired ?? false,
+    };
+  });
+  return {
+    picks,
+    map: d.map && typeof d.map === "object" && !Array.isArray(d.map) ? d.map : {},
+    ...(typeof d.pickedAt === "string" ? { pickedAt: d.pickedAt } : {}),
+  };
+}
+
+/** The badges a library document or a pick carries. */
+function AttachmentBadges({
+  kind,
+  confidential,
+  redactedSample,
+  retired,
+}: {
+  kind: string;
+  confidential: boolean;
+  redactedSample: boolean;
+  retired?: boolean;
+}) {
+  return (
+    <>
+      {kind && <span className="badge">{KIND_LABEL[kind] ?? kind}</span>}
+      {confidential && <span className="badge badge--warn">Confidential</span>}
+      {redactedSample && <span className="badge">Redacted sample</span>}
+      {retired && <span className="badge">Retired</span>}
+    </>
+  );
+}
+
+/**
+ * Picks, order, the confidential confirmation and the requirement mapping,
+ * all through POST /api/rfp/proposals/[id]/attachments (the server plans,
+ * renumbers and CASes on rev; a lost race is retried there and comes back
+ * here as a 409 "conflict", which reloads the state). The live state is the
+ * Workspace's; this component holds only the library list and the
+ * transient controls, so leaving the pane forgets a half-made decision and
+ * nothing else. Titles, flags and sizes only: no library byte or content is
+ * ever fetched here.
+ */
+function AttachmentsPane({
+  proposalId,
+  requirements,
+  structure,
+  attachments,
+  clientName,
+  citesAttachments,
+  draftedBeforePicks,
+  busy: workspaceBusy,
+  onRedraftQuestionnaire,
+  onChange,
+}: {
+  proposalId: string | null;
+  requirements: Requirement[];
+  /** The RFP's sections: a request may be answered in one of them. */
+  structure: { label: string; title: string }[];
+  attachments: PaneAttachments;
+  /** The cover's client name, when known (the confirmation names it). */
+  clientName: string | null;
+  /** Some stored text cites an attachment ({{att:N}}). */
+  citesAttachments: boolean;
+  /** A drafted questionnaire section predates the newest pick change. */
+  draftedBeforePicks: boolean;
+  /** A draft run (or any workspace write) holds the workspace. */
+  busy: boolean;
+  onRedraftQuestionnaire: () => void;
+  /** `wrote`: the response is a landed write (adopt its rev, mark the
+   *  checks stale); false for a plain re-read. `retargeted`: the same
+   *  write renumbered stored citations, so the sections changed too. */
+  onChange: (next: PaneAttachments, rev: unknown, wrote: boolean, retargeted?: boolean) => void;
+}) {
+  const [library, setLibrary] = useState<LibraryDocumentWire[] | null>(null);
+  const [libraryError, setLibraryError] = useState("");
+  // Which control is working (one write at a time: each is a CAS on rev).
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  // The confidential document waiting for its confirmation, or null.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  // Ref mirrors so the async writers join against the CURRENT state and
+  // library, not a closure's.
+  const stateRef = useRef(attachments);
+  const libraryRef = useRef(library);
+  useEffect(() => {
+    stateRef.current = attachments;
+    libraryRef.current = library;
+  }, [attachments, library]);
+
+  const loadLibrary = useCallback(async () => {
+    const res = await fetch("/api/rfp/library", { cache: "no-store" }).catch(() => null);
+    const d = res && res.ok ? await res.json().catch(() => null) : null;
+    if (!d || !Array.isArray(d.documents)) {
+      setLibraryError("The library could not be read. Reload to try again.");
+      return;
+    }
+    setLibraryError("");
+    setLibrary(d.documents as LibraryDocumentWire[]);
+  }, []);
+
+  /** Re-read the stored state (another tab's write, a lost race). */
+  const reload = useCallback(async (): Promise<boolean> => {
+    if (!proposalId) return false;
+    const res = await fetch(`/api/rfp/proposals/${proposalId}/attachments`, {
+      cache: "no-store",
+    }).catch(() => null);
+    const d = res && res.ok ? await res.json().catch(() => null) : null;
+    if (!d || !Array.isArray(d.picks)) return false;
+    onChange(joinAttachments(d, stateRef.current, libraryRef.current), d.rev, false);
+    return true;
+  }, [proposalId, onChange]);
+
+  // Opening the pane reads the library and the stored picks fresh, so a
+  // decision is never made against another tab's stale list.
+  // Every state write lands in a promise callback, never synchronously in
+  // the effect body.
+  useEffect(() => {
+    let live = true;
+    fetch("/api/rfp/library", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null)
+      .then((d) => {
+        if (!live) return;
+        if (!d || !Array.isArray(d.documents)) {
+          setLibraryError("The library could not be read. Reload to try again.");
+          return;
+        }
+        setLibrary(d.documents as LibraryDocumentWire[]);
+      });
+    if (proposalId)
+      fetch(`/api/rfp/proposals/${proposalId}/attachments`, { cache: "no-store" })
+        .then((res) => (res.ok ? res.json() : null))
+        .catch(() => null)
+        .then((d) => {
+          if (!live || !d || !Array.isArray(d.picks)) return;
+          onChange(joinAttachments(d, stateRef.current, libraryRef.current), d.rev, false);
+        });
+    return () => {
+      live = false;
+    };
+    // Mount only: one fresh read per opening of the pane.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function post(key: string, body: Record<string, unknown>) {
+    if (!proposalId || busy) return;
+    setBusy(key);
+    setError("");
+    const res = await fetch(`/api/rfp/proposals/${proposalId}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => null);
+    if (!res) {
+      // The write may still have landed: the re-read says what is stored.
+      const read = await reload();
+      setBusy(null);
+      setError(
+        read
+          ? "The connection dropped. The list above is what is saved now."
+          : "The server could not be reached. Reload if the list did not change."
+      );
+      return;
+    }
+    const d = await res.json().catch(() => null);
+    if (!res.ok) {
+      const code = typeof d?.error === "string" ? d.error : "";
+      const message = typeof d?.message === "string" ? d.message : "";
+      if (code === "conflict" || res.status === 404) {
+        // Another write landed first (or a picked document left the
+        // library): adopt what is stored, then say so beside it.
+        await reload();
+        if (res.status === 404) await loadLibrary();
+        setBusy(null);
+        setError(
+          res.status === 404
+            ? "A document is no longer in the library. The lists were reloaded."
+            : "The attachments changed in another tab, so the lists were reloaded. Make the change again."
+        );
+        return;
+      }
+      setBusy(null);
+      setError(message.replace(/\s*Reload\b[^.]*\.?\s*$/, "").trim() || "That change was not saved.");
+      return;
+    }
+    if (d && Array.isArray(d.picks))
+      onChange(
+        joinAttachments(d, stateRef.current, libraryRef.current),
+        d.rev,
+        true,
+        typeof d.retargeted === "number" && d.retargeted > 0
+      );
+    else await reload();
+    setBusy(null);
+  }
+
+  const ids = attachments.picks.map((p) => p.docId);
+  const setPicks = (key: string, next: string[], confirm?: string[]) =>
+    post(key, { op: "set", picks: next, ...(confirm ? { confirm } : {}) });
+  const move = (i: number, by: -1 | 1) => {
+    const next = [...ids];
+    const j = i + by;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j]!, next[i]!];
+    void setPicks(`move:${ids[i]}`, next);
+  };
+
+  const attachmentReqs = requirements
+    .filter((r) => isAttachmentRequirement(r))
+    .sort((a, b) => a.ordinal - b.ordinal);
+  const pickedIds = new Set(ids);
+  const liveDocs = (library ?? []).filter((l) => !l.retired);
+  const confirmDoc = confirming
+    ? liveDocs.find((l) => l.id.toLowerCase() === confirming.toLowerCase()) ?? null
+    : null;
+  // The footnote the Supporting Documents page will print once this pick
+  // lands: THE builder both files use, fed the picks as they would stand.
+  const confirmFootnote = confirmDoc
+    ? (supportingDocumentsOf({
+        attachments: {
+          picks: [
+            ...attachments.picks,
+            {
+              n: attachments.picks.length + 1,
+              title: confirmDoc.title,
+              confidential: true,
+              redactedSample: confirmDoc.redactedSample,
+            },
+          ],
+          map: attachments.map,
+        },
+        requirements,
+      })?.confidentialLine ?? null)
+    : null;
+  const frozen = busy !== null;
+
+  if (!proposalId)
+    return (
+      <>
+        <span className="sys-label">Attachments</span>
+        <p className="mt-3 text-sm">
+          Attachments are picked for a proposal, and this one starts with its
+          first drafted section. Draft a section, then come back here.
+        </p>
+      </>
+    );
+
+  return (
+    <>
+      <span className="sys-label">Attachments</span>
+      <p className="mt-3 text-sm text-faint">
+        Library documents sent with this response, numbered in the order
+        below. The package carries each as &quot;Attachment N&quot; and the
+        Supporting Documents page lists them.
+      </p>
+
+      {error && (
+        <p className="mt-3 text-sm" role="alert">
+          {error}
+        </p>
+      )}
+
+      {/* ---- attached, in order ---- */}
+      <div className="mt-5">
+        <span className="sys-label">
+          Attached{attachments.picks.length > 0 ? ` · ${attachments.picks.length}` : ""}
+        </span>
+        {/* True since fix T2: the attachments write renumbers every stored
+            citation in the same update. */}
+        {citesAttachments && attachments.picks.length > 0 && (
+          <p className="mt-2 text-xs text-faint">
+            The draft cites these attachments. Reordering renumbers citations
+            automatically, and removing one leaves its citations out of the
+            page; the Checks pane names those sections.
+          </p>
+        )}
+        {attachments.picks.length === 0 ? (
+          <p className="mt-2 text-sm text-faint">
+            Nothing yet. Pick documents from the library below.
+          </p>
+        ) : (
+          <div className="mt-2">
+            {attachments.picks.map((p, i) => (
+              <div className="rfp-row" key={p.docId}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="mono text-xs">Attachment {p.n}</span>
+                  <AttachmentBadges
+                    kind={p.kind}
+                    confidential={p.confidential}
+                    redactedSample={p.redactedSample}
+                    retired={p.retired}
+                  />
+                </div>
+                <p className="mt-1 text-sm">{p.title}</p>
+                {p.confidential && p.confidentialConfirmed && (
+                  <p className="mt-1 text-xs text-faint">
+                    Confirmed for this client by {p.confidentialConfirmed.by}
+                    {", "}
+                    <When iso={p.confidentialConfirmed.at} />
+                  </p>
+                )}
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    className="btn btn--text"
+                    disabled={frozen || i === 0}
+                    aria-label={`Move Attachment ${p.n} up`}
+                    onClick={() => move(i, -1)}
+                  >
+                    Up
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--text"
+                    disabled={frozen || i === attachments.picks.length - 1}
+                    aria-label={`Move Attachment ${p.n} down`}
+                    onClick={() => move(i, 1)}
+                  >
+                    Down
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--text"
+                    disabled={frozen}
+                    aria-busy={busy === `remove:${p.docId}` || undefined}
+                    onClick={() =>
+                      void setPicks(
+                        `remove:${p.docId}`,
+                        ids.filter((x) => x !== p.docId)
+                      )
+                    }
+                  >
+                    {busy === `remove:${p.docId}` ? "Removing" : "Remove"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ---- the client's document requests, mapped ---- */}
+      {attachmentReqs.length > 0 && (
+        <div className="mt-6">
+          <span className="sys-label">What the client asked for</span>
+          <p className="mt-2 text-sm text-faint">
+            Each request prints on the Supporting Documents page with the
+            attachment that answers it, or &quot;Not included&quot;.
+          </p>
+          <div className="mt-2">
+            {attachmentReqs.map((r) => {
+              const m = attachmentMapping(r.id, attachments);
+              const ns = m.state === "mapped" ? m.ns : [];
+              const section = m.state === "mapped" ? m.section : null;
+              const key = `map:${r.id}`;
+              // The route's frozen shape (fix X1): a lone pick as its bare
+              // n, several picks and/or a section as {ns, section}, nothing
+              // left as null (unmapped), 0 for Not included.
+              const send = (nextNs: number[], nextSection: string | null) =>
+                void post(key, {
+                  op: "map",
+                  map: {
+                    [r.id]:
+                      nextNs.length === 0 && !nextSection
+                        ? null
+                        : nextNs.length === 1 && !nextSection
+                          ? nextNs[0]
+                          : { ns: [...nextNs].sort((a, b) => a - b), ...(nextSection ? { section: nextSection } : {}) },
+                  },
+                });
+              return (
+                <div className="rfp-row" key={r.id}>
+                  <div className="mono text-xs text-faint">
+                    {r.clientRef ? `${r.structureLabel} · ${r.clientRef}` : r.structureLabel}
+                    {r.mandatory ? " · required" : ""}
+                  </div>
+                  <p className="text-sm">{r.text}</p>
+                  <fieldset
+                    className="mt-2 space-y-1 text-sm"
+                    disabled={frozen}
+                    aria-busy={busy === key || undefined}
+                  >
+                    <legend className="text-xs text-faint">Answered by</legend>
+                    {attachments.picks.map((p) => (
+                      <label className="flex items-start gap-2" key={p.docId}>
+                        <input
+                          type="checkbox"
+                          checked={ns.includes(p.n)}
+                          onChange={(e) =>
+                            send(
+                              e.target.checked ? [...ns, p.n] : ns.filter((x) => x !== p.n),
+                              section
+                            )
+                          }
+                        />
+                        <span>{`Attachment ${p.n} - ${p.title}`}</span>
+                      </label>
+                    ))}
+                    <label className="mt-1 block text-xs text-faint">
+                      Also or instead: answered in section
+                      <select
+                        className="input mt-1"
+                        value={section ?? ""}
+                        onChange={(e) => send(ns, e.target.value || null)}
+                      >
+                        <option value="">Not answered in a section</option>
+                        {structure.map((n) => (
+                          <option key={n.label} value={n.label}>
+                            {`${n.label} ${n.title}`.trim()}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={m.state === "excluded"}
+                        onChange={(e) =>
+                          void post(key, { op: "map", map: { [r.id]: e.target.checked ? 0 : null } })
+                        }
+                      />
+                      <span>Not included</span>
+                    </label>
+                  </fieldset>
+                  {/* The gate's own sentence (rule D10), not a paraphrase. */}
+                  {m.state === "unmapped" && r.mandatory ? (
+                    <p className="mt-2 text-sm" role="status">
+                      <span className="badge badge--warn">{ATTACHMENT_GAP_RULE}</span>{" "}
+                      {attachmentGapMessage(r)}
+                    </p>
+                  ) : m.state === "unmapped" ? (
+                    <p className="mt-2 text-xs text-faint">
+                      Optional. Until it is mapped, the Supporting Documents
+                      page prints &quot;Not included&quot; beside it.
+                    </p>
+                  ) : m.state === "excluded" ? (
+                    <p className="mt-2 text-xs text-faint">
+                      Decided: the page prints &quot;Not included&quot;.
+                    </p>
+                  ) : null}
+                  {attachments.picks.length === 0 && (
+                    <p className="mt-1 text-xs text-faint">
+                      Attach a document from the library below to map it
+                      here, or name the section that answers it.
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ---- the library ---- */}
+      <div className="mt-6">
+        {/* Fix F3: a section drafted before the picks was never offered
+            them. The standing note and the one way to act on it. */}
+        {draftedBeforePicks && attachments.picks.length > 0 && (
+          <div className="mb-4">
+            <p className="text-sm" role="status">
+              Sections drafted before these picks do not cite them. Redraft a
+              section to let it cite the attachments.
+            </p>
+            <button
+              type="button"
+              className="btn btn--text mt-2"
+              disabled={frozen || workspaceBusy}
+              onClick={onRedraftQuestionnaire}
+            >
+              Redraft the questionnaire sections
+            </button>
+          </div>
+        )}
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <span className="sys-label">From the library</span>
+          <a className="linklike text-xs" href="/rfp/knowledge/library">
+            Manage the library
+          </a>
+        </div>
+        {libraryError ? (
+          <p className="mt-2 text-sm" role="alert">
+            {libraryError}
+          </p>
+        ) : library === null ? (
+          <p className="mt-2 text-sm text-faint">Reading the library.</p>
+        ) : liveDocs.length === 0 ? (
+          <p className="mt-2 text-sm text-faint">
+            The library is empty. Add documents on the library page.
+          </p>
+        ) : (
+          <div className="mt-2">
+            {liveDocs.map((l) => {
+              const id = l.id.toLowerCase();
+              const picked = pickedIds.has(id);
+              const key = `pick:${id}`;
+              return (
+                <div className="rfp-row" key={l.id}>
+                  <label className="flex items-start gap-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={picked}
+                      disabled={frozen || (confirming !== null && confirming !== id)}
+                      aria-busy={busy === key || undefined}
+                      onChange={(e) => {
+                        setError("");
+                        if (!e.target.checked) {
+                          setConfirming(null);
+                          void setPicks(key, ids.filter((x) => x !== id));
+                          return;
+                        }
+                        // A confidential document waits for its explicit,
+                        // per-proposal confirmation; cancel leaves it unpicked.
+                        if (l.confidential) {
+                          setConfirming(id);
+                          return;
+                        }
+                        void setPicks(key, [...ids, id]);
+                      }}
+                    />
+                    <span className="min-w-0">
+                      <span className="block">{l.title}</span>
+                      <span className="mt-1 flex flex-wrap items-center gap-2">
+                        <AttachmentBadges
+                          kind={l.kind}
+                          confidential={l.confidential}
+                          redactedSample={l.redactedSample}
+                        />
+                        <span className="text-xs text-faint">
+                          {[
+                            l.ext ? l.ext.toUpperCase() : null,
+                            sizeLabel(l.sizeBytes),
+                            l.asOf ? `as of ${asOfLabel(l.asOf)}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </span>
+                    </span>
+                  </label>
+                  {confirming === id && confirmDoc && (
+                    <div
+                      className="mt-3 border p-4 text-sm"
+                      style={{ borderColor: "var(--xl-line-bright)" }}
+                      role="alertdialog"
+                      aria-label={`Confirm sharing ${l.title}`}
+                    >
+                      <p>
+                        This document is confidential. Attaching it includes
+                        the whole document in{" "}
+                        {clientName ? `${clientName}'s` : "this client's"}{" "}
+                        package, as Attachment {attachments.picks.length + 1}.
+                      </p>
+                      {confirmFootnote && (
+                        <p className="mt-2">
+                          The Supporting Documents page will print:{" "}
+                          <span style={{ fontStyle: "italic" }}>
+                            &quot;{confirmFootnote}&quot;
+                          </span>
+                        </p>
+                      )}
+                      <p className="mt-2 text-faint">
+                        Your confirmation is recorded on this proposal with
+                        your email address and the time. It applies to{" "}
+                        {clientName ?? "this client"} only.
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          className="btn btn--primary"
+                          disabled={frozen}
+                          onClick={() => {
+                            setConfirming(null);
+                            void setPicks(key, [...ids, id], [id]);
+                          }}
+                        >
+                          {busy === key ? "Attaching" : "Confirm and attach"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn--text"
+                          disabled={frozen}
+                          onClick={() => setConfirming(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
   );
 }

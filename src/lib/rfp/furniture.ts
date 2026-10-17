@@ -15,7 +15,7 @@ import {
   type PartGroundSection,
   type RefRequirementLike,
 } from "./outline";
-import type { ResponseMatrixRow, StatTile } from "./content-model/blocks";
+import type { BrandedTableBlock, ResponseMatrixRow, StatTile } from "./content-model/blocks";
 //
 // Every input is a STORED field (rfp_documents.contact_name / contact_title /
 // client_address / proposal_headline, the letter record's `thesis`), already
@@ -49,7 +49,9 @@ export function coverTitle(o: {
 }): string {
   if (o.intakeForm !== "brief") return RFP_COVER_TITLE;
   const headline = clean(o.proposalHeadline);
-  if (headline) return headline;
+  // A brace never reaches the cover: the store side refuses them, so a
+  // hand-stored {{att:N}} headline falls back rather than printing raw.
+  if (headline && !/[{}]/.test(headline)) return headline;
   const who = clean(o.who);
   return who ? `Proposal for ${who}` : "Proposal";
 }
@@ -295,12 +297,13 @@ export function hasStackedMarks(s: string): boolean {
 
 /**
  * What the closing sheet refuses to print as a thesis: a digit, a "$", an
- * en or em dash, an angle bracket, or stacked combining marks. ONE predicate
+ * en or em dash, an angle bracket, a curly brace, or stacked combining marks. ONE predicate
  * for both sides: brain.ts screenLetterThesis refuses the same at store, so a
  * thesis that stores always renders.
  */
 export function thesisRefused(t: string): boolean {
-  return /[0-9$\u2013\u2014<>]/.test(t) || hasStackedMarks(t);
+  // A curly brace too (round 35 fix T1): no citation token on the closing.
+  return /[0-9$\u2013\u2014<>{}]/.test(t) || hasStackedMarks(t);
 }
 
 /**
@@ -486,6 +489,13 @@ export function matrixFromAnswers(o: {
   label: string;
   requirements: readonly RefRequirementLike[];
   rateNote: (codes: string[]) => string | null;
+  /** The proposal's attachment picks (§5.17.23): each row's subject and
+   *  explanation go through resolveAttTokens HERE, the one lift every
+   *  surface reads, so the gate scans what prints. Absent = no picks, so a
+   *  stray token still strips. */
+  picks?: readonly AttPickLike[];
+  /** Counts the citations the rows' resolve stripped (rule D12). */
+  tally?: AttTally;
 }): { rows: ResponseMatrixRow[]; cites: string[] } | null {
   if (!Array.isArray(o.answers) || o.answers.length === 0) return null;
   if (!isQuestionnaireSection(o.requirements, o.label)) return null;
@@ -510,8 +520,8 @@ export function matrixFromAnswers(o: {
     rows.push({
       ref,
       verdict: ans.verdict,
-      subject: ans.subject,
-      explanation: ans.explanation,
+      subject: resolveAttTokens(ans.subject, o.picks ?? [], o.tally),
+      explanation: resolveAttTokens(ans.explanation, o.picks ?? [], o.tally),
       ...(note ? { rateNote: note } : {}),
     });
     if (Array.isArray(ans.cites))
@@ -722,8 +732,38 @@ export function letterRoadmapSentence(o: {
   /** Every client ref has a row (matrixComplete). Only then "every item";
    *  absent or false, "your questionnaire item by item". */
   complete?: boolean;
+  /** Round 35 (§5.17.23): the proposal ships attachments. "requested" when
+   *  the client's request names a document of its own (a requirement of
+   *  kind "attachment"), so "the supporting documents you requested" is
+   *  true; "provided" when it does not. Absent or null, the sentence is
+   *  exactly the round-34 one. */
+  attached?: "requested" | "provided" | null;
 }): string | null {
-  if (!o.matrixKickers.length) return null;
+  const attached = o.attached ?? null;
+  // With a pricing clause the sentence is already long: the attachments
+  // then take a second sentence of their own (round 35 fix L1).
+  const second = o.pricing && o.matrixKickers.length > 0;
+  const tail = second
+    ? ""
+    : attached === "requested"
+      ? ", with the supporting documents you requested attached"
+      : attached === "provided"
+        ? ", with our supporting documents attached"
+        : "";
+  const after =
+    second && attached
+      ? ` ${
+          attached === "requested" ? "The supporting documents you requested are" : "Our supporting documents are"
+        } attached and listed on the Supporting Documents page.`
+      : "";
+  if (!o.matrixKickers.length)
+    // No questionnaire to describe: the attachments alone earn the
+    // sentence, naming the sheet that lists them.
+    return attached
+      ? `${
+          attached === "requested" ? "The supporting documents you requested are" : "Our supporting documents are"
+        } attached, listed on the Supporting Documents page at the end of this response.`
+      : null;
   const clauses: string[] = [];
   if (o.partsCount >= 2 && o.partsCount <= 4)
     clauses.push(`the response runs in ${PART_WORDS[o.partsCount]} parts`);
@@ -737,5 +777,404 @@ export function letterRoadmapSentence(o: {
   if (o.pricing) clauses.push("the Investment page sets out the pricing");
   const body =
     clauses.length === 1 ? clauses[0]! : `${clauses.slice(0, -1).join(", ")}, and ${clauses[clauses.length - 1]}`;
-  return `In the pages that follow, ${body}.`;
+  return `In the pages that follow, ${body}${tail}.${after}`;
+}
+
+/* ---- Attachments and the Supporting Documents sheet (§5.17.23) --------- */
+
+/** What the token resolver needs of a pick: its number. */
+export type AttPickLike = { n: number };
+
+/** The one model-citable attachment form, tolerant of case and inner
+ *  spaces so a near-miss still resolves or strips rather than printing
+ *  braces. The literal the prompt teaches is {{att:N}}. The same source as
+ *  attachments.ts ATT_TOKEN_LOOSE_SOURCE (the citation remap the
+ *  attachments write applies); the cover-letter tests pin the two equal. */
+export const ATT_TOKEN_LOOSE_SOURCE = "\\{\\{\\s*att\\s*:\\s*(\\d{1,3})\\s*\\}\\}";
+
+/** One citation site: an optional "Attachment "/"Attachments " the model
+ *  wrote before the token (absorbed, so "Attachment {{att:2}}" prints
+ *  "Attachment 2" once), any extra braces hugging it (a hugged token is
+ *  refused: it strips), and the token. */
+const ATT_SITE = new RegExp(`(\\battachments?[ \\t]+)?(\\{*)${ATT_TOKEN_LOOSE_SOURCE}(\\}*)`, "gi");
+/** Whatever is left of a token the site pattern could not read ("{{att:2}",
+ *  "{{att:-2}}", a non-ASCII digit): stripped too, so no printed string can
+ *  ever hold "{{att" (rule D11 proves it). */
+const ATT_REMNANT = /\{\{+\s*att[^{}\n]{0,24}\}*/gi;
+/** The strip marker between the two passes (screened text never carries
+ *  a NUL). */
+const STRIP = "\u0000";
+
+/** "Attachment N" in every surface's words. */
+export const attachmentLabel = (n: number): string => `Attachment ${n}`;
+
+/** What the resolver tallies across calls: citations stripped (T3). */
+export type AttTally = { stripped: number };
+
+const wordChar = (c: string | undefined): boolean => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+
+/**
+ * Close the gap one stripped citation leaves, looking ONLY at the few
+ * characters on either side of it (never the rest of the string, so an
+ * unrelated "( )", an indented line or a spaced comma elsewhere stays
+ * byte for byte):
+ *   - an emptied parenthetical goes with its opener ("(see ", "(in ",
+ *     "(per ") and the one space before it;
+ *   - a conjunction left dangling goes: before the site when punctuation
+ *     or the end follows it, or when it joins a resolved "Attachment N";
+ *     after the site when it joins the site to a resolved "Attachment N";
+ *   - then the two sides meet with one space, none before punctuation or
+ *     a line break, and a line's own indentation kept.
+ */
+function closeStrip(left: string, right: string): string {
+  let L = left;
+  let R = right;
+  const po = /[ \t]*\([ \t]*(?:(?:see|in|per)[ \t]+)?$/i.exec(L);
+  const pc = /^[ \t]*\)/.exec(R);
+  if (po && pc) {
+    L = L.slice(0, po.index);
+    R = R.slice(pc[0].length);
+  } else {
+    const cl = /,?[ \t]+(?:and|or)[ \t]*$/i.exec(L);
+    const endsHere = /^[ \t]*(?:[.,;:!?)\n]|$)/.test(R);
+    const cr = /^[ \t]*(?:,[ \t]*(?:(?:and|or)[ \t]+)?|(?:and|or)[ \t]+)(?=Attachment \d)/i.exec(R);
+    if (cl && (endsHere || /Attachment \d{1,3}$/.test(L.slice(0, cl.index)))) L = L.slice(0, cl.index);
+    else if (cr && (L === "" || /[\s(]$/.test(L))) R = R.slice(cr[0].length);
+  }
+  const rt = R.replace(/^[ \t]+/, "");
+  // At a line's start (or the string's), its indentation is the line's own.
+  if (/(?:^|\n)[ \t]*$/.test(L)) return L + rt;
+  const lt = L.replace(/[ \t]+$/, "");
+  if (rt === "" || /^[\n.,;:!?)]/.test(rt)) {
+    // "ISO, , and" -> "ISO, and": one mark where the citation stood.
+    if (/[,;]$/.test(lt) && /^[,;.]/.test(rt)) return lt.slice(0, -1) + rt;
+    return lt + rt;
+  }
+  return `${lt} ${rt}`;
+}
+
+/**
+ * THE attachment-token resolver (§5.17.23), pure: every {{att:N}} whose N
+ * is one of the proposal's picks becomes "Attachment N" (a space added
+ * where a letter or digit touches it, an "Attachment " written before it
+ * absorbed); any other (an invented number, a pick since removed, no picks
+ * at all, a token hugged by extra braces, an unreadable remnant) is
+ * STRIPPED, and only the few characters around the strip are tidied
+ * (closeStrip). Text without a token is returned unchanged, byte for byte,
+ * so a document that never cites one renders exactly as before. `tally`
+ * counts the strips (rule D12). Applied at the one place each surface
+ * takes its strings (resolve-draft for the gate and both files, the
+ * workspace's sheet render for the screen), never per emitter.
+ */
+export function resolveAttTokens(text: string, picks: readonly AttPickLike[], tally?: AttTally): string {
+  if (typeof text !== "string" || !text.includes("{{")) return text;
+  const picked = new Set(picks.map((p) => p.n));
+  let stripped = 0;
+  let out = text.replace(
+    ATT_SITE,
+    (m: string, _word: string | undefined, open: string, digits: string, close: string, at: number, whole: string) => {
+      const n = Number(digits);
+      if (open || close || !picked.has(n)) {
+        stripped++;
+        return STRIP;
+      }
+      // A letter or digit touching the token, or a second token glued on,
+      // gets one space; nothing else around the site changes.
+      const end = at + m.length;
+      const padAfter = wordChar(whole[end]) || whole.startsWith("{{", end);
+      return `${wordChar(whole[at - 1]) ? " " : ""}${attachmentLabel(n)}${padAfter ? " " : ""}`;
+    }
+  );
+  out = out.replace(ATT_REMNANT, () => {
+    stripped++;
+    return STRIP;
+  });
+  if (tally) tally.stripped += stripped;
+  if (!stripped) return out;
+  for (let i = out.indexOf(STRIP); i >= 0; i = out.indexOf(STRIP)) out = closeStrip(out.slice(0, i), out.slice(i + 1));
+  return out;
+}
+
+/** Every string leaf of a stored or lifted block through `f`; the same
+ *  object back (by identity, at every level) where nothing changes. */
+function mapLeaves<T>(v: T, f: (s: string) => string): T {
+  if (typeof v === "string") return f(v) as unknown as T;
+  if (Array.isArray(v)) {
+    let changed = false;
+    const out = v.map((x) => {
+      const y = mapLeaves(x, f);
+      if (y !== x) changed = true;
+      return y;
+    });
+    return (changed ? out : v) as unknown as T;
+  }
+  if (v && typeof v === "object") {
+    let changed = false;
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      const y = mapLeaves(x, f);
+      if (y !== x) changed = true;
+      out[k] = y;
+    }
+    return (changed ? out : v) as T;
+  }
+  return v;
+}
+
+/**
+ * A visual block with EVERY string resolved (T1, §5.17.23): cards, callouts,
+ * tables, timelines, ledgers, stat tiles, an echo's titles, answers and
+ * willSee, references. The same object back when nothing carries a token,
+ * and every untouched part keeps its identity. Generic over the stored
+ * DraftBlock and the content-model Block. Ids and kinds never hold "{{",
+ * so they pass through unchanged.
+ */
+export function resolveBlockAtt<T>(block: T, picks: readonly AttPickLike[], tally?: AttTally): T {
+  return mapLeaves(block, (s) => resolveAttTokens(s, picks, tally));
+}
+
+/** One picked attachment as the sheet prints it: its number, its title as
+ *  denormalized at pick time, and the two library flags that add system
+ *  copy (the confidentiality footnote, the redacted-sample note). */
+export type AttachmentSheetPick = {
+  n: number;
+  title: string;
+  confidential: boolean;
+  redactedSample: boolean;
+};
+
+/** One requirement's mapping as every surface reads it (attachments.ts
+ *  AttachmentMapValue, round 35 fix X1): a pick's n, 0 (explicitly not
+ *  included), or several picks and/or the section of this response that
+ *  answers the request. */
+export type AttMapValueLike = number | { ns: number[]; section?: string };
+
+/** A proposal's attachments as every surface reads them: picks in N order
+ *  and the Attachments pane's per-requirement map (requirementId -> its
+ *  AttMapValueLike). */
+export type ProposalAttachmentsView = {
+  picks: AttachmentSheetPick[];
+  map: Record<string, AttMapValueLike>;
+};
+
+/**
+ * The stored picks (attachments.ts readProposalAttachments) joined with
+ * their library rows' flags: the one join gate-run.ts (so the gate and the
+ * export) and the workspace both run. A pick whose row is missing keeps
+ * printing under its denormalized title with neither flag. Null when
+ * nothing is picked or mapped.
+ */
+export function attachmentsViewOf(
+  state: { picks: readonly { docId: string; n: number; title: string }[]; map?: Readonly<Record<string, AttMapValueLike>> } | null | undefined,
+  library: readonly { id: string; confidential: boolean; redactedSample: boolean }[]
+): ProposalAttachmentsView | null {
+  // A map with no picks (every requested document marked "not included")
+  // still reaches the checks; the sheet itself needs a pick.
+  if (!state || (!state.picks.length && !Object.keys(state.map ?? {}).length)) return null;
+  const byId = new Map(library.map((d) => [d.id.toLowerCase(), d]));
+  return {
+    picks: state.picks.map((p) => {
+      const d = byId.get(p.docId.toLowerCase());
+      return { n: p.n, title: p.title, confidential: d?.confidential === true, redactedSample: d?.redactedSample === true };
+    }),
+    map: { ...(state.map ?? {}) },
+  };
+}
+
+/** What the register reads of a requirement. */
+export type AttachmentRequirementLike = { id: string; kind: string; text: string; ordinal?: number };
+
+/** The Supporting Documents sheet's fixed system copy (§5.17.23). */
+export const SUPPORTING_KICKER = "Attachments";
+export const SUPPORTING_TITLE = "Supporting Documents";
+export const SUPPORTING_REGISTER_HEAD = ["You requested", "Where it is"] as const;
+export const SUPPORTING_LIST_CAPTION = "Documents attached to this response";
+/** One column: each row is the "Attachment N - <title>" the register and
+ *  the zip entries name (a narrow "Attachment" column wrapped its own
+ *  word in the PDF). */
+export const SUPPORTING_LIST_HEAD = ["Document"] as const;
+export const SUPPORTING_NOT_INCLUDED = "Not included";
+const SUPPORTING_INTRO_MAPPED =
+  "Mapped to the supporting documents your request asks for. The attachments are provided separately with this response.";
+const SUPPORTING_INTRO_LIST = "The attachments listed below are provided separately with this response.";
+
+/** The sheet, resolved once: every string any surface prints on it. */
+export type SupportingDocuments = {
+  intro: string;
+  /** One row per requirement of kind "attachment", in the client's order;
+   *  [] when the request names none (the register is then omitted). */
+  register: { requested: string; whereItIs: string }[];
+  list: { n: number; title: string }[];
+  /** The "provided in confidence" footnote, only when a confidential
+   *  document is picked; else null. */
+  confidentialLine: string | null;
+  /** The note for samples with the client's details removed; else null. */
+  redactedLine: string | null;
+};
+
+/** "1", "1 and 3", "1, 3 and 6". */
+const numberList = (ns: readonly number[]): string => andList(ns.map(String));
+
+/** A client requirement as the register's left cell prints it: one line,
+ *  the dash tidy the cover lede applies (an em dash or a spaced en dash
+ *  becomes " · "), so system furniture never carries a dash the style
+ *  rules refuse. The words are the client's own. */
+function registerLine(raw: string): string {
+  return clean(raw)
+    .replace(/\s*[—―⸺⸻﹘︱︲]\s*/g, " · ")
+    .replace(/\s+–\s+/g, " · ")
+    .trim();
+}
+
+/** "Attachment N - <title>", the register's mapped cell. */
+export const attachmentRef = (p: { n: number; title: string }): string =>
+  `${attachmentLabel(p.n)} - ${clean(p.title)}`;
+
+/**
+ * The Supporting Documents sheet (§5.17.23, the reference's p40 register),
+ * or null when nothing is picked (every document without picks resolves
+ * exactly as before). The register's WHERE IT IS cell for each requirement
+ * of kind "attachment" prints, in order: every mapped pick as "Attachment
+ * N - <title>" (ascending, "; " between), then "In this response -
+ * Section <label>" when the mapping names the section that answers it
+ * (the label as that section's sheet kicker prints it, `kicker`); with
+ * neither, "Not included" (an explicit 0, or a request nobody mapped,
+ * which the checks warn on when it is mandatory: rule D10). The
+ * confidential footnote and the redacted-sample note are SYSTEM copy
+ * naming numbers only.
+ */
+export function supportingDocumentsOf(o: {
+  attachments: ProposalAttachmentsView | null | undefined;
+  requirements: readonly AttachmentRequirementLike[];
+  /** A section label as its sheet's kicker ("Section 4.2"); default
+   *  sectionKicker (a real RFP's). */
+  kicker?: (label: string) => string;
+}): SupportingDocuments | null {
+  const picks = [...(o.attachments?.picks ?? [])]
+    .filter((p) => Number.isInteger(p.n) && p.n > 0 && clean(p.title) !== "")
+    .sort((a, b) => a.n - b.n);
+  if (!picks.length) return null;
+  const byN = new Map(picks.map((p) => [p.n, p]));
+  const map = o.attachments?.map ?? {};
+  const reqs = (Array.isArray(o.requirements) ? o.requirements : [])
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => r && r.kind === "attachment" && registerLine(r.text) !== "")
+    .sort((a, b) => (a.r.ordinal ?? a.i) - (b.r.ordinal ?? b.i) || a.i - b.i)
+    .map(({ r }) => r);
+  const kicker = o.kicker ?? sectionKicker;
+  const register = reqs.map((r) => {
+    // attachments.ts stores the map's requirement ids lowercased.
+    const key = Object.prototype.hasOwnProperty.call(map, r.id) ? r.id : String(r.id).toLowerCase();
+    const v = Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+    const ns = typeof v === "number" ? [v] : v && typeof v === "object" && Array.isArray(v.ns) ? v.ns : [];
+    const refs = [...new Set(ns)]
+      .sort((a, b) => a - b)
+      .flatMap((n) => {
+        const pick = Number.isInteger(n) && n > 0 ? byN.get(n) : undefined;
+        return pick ? [attachmentRef(pick)] : [];
+      });
+    const section =
+      v && typeof v === "object" && typeof v.section === "string" ? clean(v.section).replace(/[{}]/g, "") : "";
+    const cell = [...refs, ...(section ? [`In this response - ${kicker(section)}`] : [])];
+    return { requested: registerLine(r.text), whereItIs: cell.length ? cell.join("; ") : SUPPORTING_NOT_INCLUDED };
+  });
+  const conf = picks.filter((p) => p.confidential).map((p) => p.n);
+  const red = picks.filter((p) => p.redactedSample).map((p) => p.n);
+  return {
+    intro: register.length ? SUPPORTING_INTRO_MAPPED : SUPPORTING_INTRO_LIST,
+    register,
+    list: picks.map((p) => ({ n: p.n, title: clean(p.title) })),
+    confidentialLine: conf.length
+      ? conf.length === 1
+        ? `${attachmentLabel(conf[0]!)} is provided in confidence, for your evaluation only.`
+        : `Attachments ${numberList(conf)} are provided in confidence, for your evaluation only.`
+      : null,
+    redactedLine: red.length
+      ? red.length === 1
+        ? `${attachmentLabel(red[0]!)} is a sample from another engagement, with that client's details removed.`
+        : `Attachments ${numberList(red)} are samples from other engagements, with those clients' details removed.`
+      : null,
+  };
+}
+
+/** The letter roadmap's attachment clause (letterRoadmapSentence `attached`). */
+export function roadmapAttached(sd: SupportingDocuments | null): "requested" | "provided" | null {
+  if (!sd) return null;
+  return sd.register.length ? "requested" : "provided";
+}
+
+type TableBody = Omit<BrandedTableBlock, "id" | "sectionId" | "ordinal" | "cites" | "generatedBy" | "editedByHuman">;
+
+/** The sheet's two tables as branded-table bodies, built ONCE for the
+ *  screen and both emitters (the summary sheet's cost-index precedent):
+ *  the register (null when the request names no document) and the
+ *  numbered list. */
+export function supportingTables(sd: SupportingDocuments): { register: TableBody | null; list: TableBody } {
+  return {
+    register: sd.register.length
+      ? {
+          kind: "table",
+          caption: null,
+          columns: SUPPORTING_REGISTER_HEAD.map((header) => ({ header, align: "left" as const })),
+          rows: sd.register.map((r) => [r.requested, r.whereItIs]),
+          emphasizeLastRow: false,
+        }
+      : null,
+    list: {
+      kind: "table",
+      caption: SUPPORTING_LIST_CAPTION,
+      columns: SUPPORTING_LIST_HEAD.map((header) => ({ header, align: "left" as const })),
+      rows: sd.list.map((p) => [attachmentRef(p)]),
+      emphasizeLastRow: false,
+    },
+  };
+}
+
+/* ---- The submission package (format=zip, §5.17.23) --------------------- */
+
+/** A name as a zip entry may carry it: no path or reserved characters, a
+ *  colon kept readable as a hyphen ("ISO 27001:2022" -> "27001-2022", the
+ *  reference package's own spelling), dashes plain, whitespace collapsed,
+ *  no trailing dot or space, capped. */
+export function packageNamePart(raw: string, max = 120): string {
+  const s = String(raw ?? "")
+    .normalize("NFC")
+    .replace(/:/g, "-")
+    .replace(/[–—―]/g, "-")
+    .replace(/[\\/*?"<>|\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const cut = s.length > max ? s.slice(0, max) : s;
+  return cut.replace(/[.\s]+$/, "").trim();
+}
+
+/** The file extension a library media type ships under. */
+export function packageExt(media: string): string {
+  const m = String(media ?? "").toLowerCase();
+  if (m.includes("wordprocessingml") || m.endsWith("/docx")) return "docx";
+  if (m.includes("pdf")) return "pdf";
+  return "bin";
+}
+
+/** The package's entry names, in zip order: the folder, the "00" pair
+ *  (PDF, then Word) and each pick in N order. One function, so the route
+ *  and the read-back test cannot disagree. */
+export function packageEntryNames(o: {
+  clientName: string | null | undefined;
+  attachments: readonly { n: number; title: string; media: string }[];
+}): { folder: string; pdf: string; docx: string; attachments: string[] } {
+  const who = packageNamePart(o.clientName ?? "", 80);
+  const base = who ? `00 - XL.net ${who} Proposal` : "00 - XL.net Proposal";
+  const folder = who ? `${who} - XL.net Proposal and Supporting Documents` : "XL.net Proposal and Supporting Documents";
+  return {
+    folder,
+    pdf: `${base}.pdf`,
+    docx: `${base}.docx`,
+    attachments: [...o.attachments]
+      .sort((a, b) => a.n - b.n)
+      .map((a) => {
+        const t = packageNamePart(a.title);
+        return `${attachmentLabel(a.n)}${t ? ` - ${t}` : ""}.${packageExt(a.media)}`;
+      }),
+  };
 }

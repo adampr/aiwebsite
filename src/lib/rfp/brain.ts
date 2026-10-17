@@ -77,6 +77,7 @@ import {
 import { LETTER_LABEL, stripReservedPrefix } from "./letter";
 import { normalizeGapQuestion } from "./gaps";
 import { referencesAsk } from "./references-ask";
+import { withoutAttTokens } from "./attachments";
 // Client-safe furniture predicates shared with the renderers, so what the
 // store side accepts is exactly what the sheets print (never the reverse
 // import: furniture.ts stays import-free).
@@ -409,6 +410,9 @@ export function screenProposalHeadline(
   if (intakeForm !== "brief") return null;
   const h = furnitureText(raw);
   if (h.length < 3 || h.length > PROPOSAL_HEADLINE_MAX) return null;
+  // Round 35 fix T1: no curly brace, so no headline can spell a citation
+  // token the page would have to resolve.
+  if (/[{}]/.test(h)) return null;
   if (!/\p{L}/u.test(h) || EM_DASH.test(h) || hasCurrency(h) || hasStackedMarks(h)) return null;
   if (FOREIGN_NUMERAL.test(h) || !digitsStated(h, docText)) return null;
   return tripsScreen(h) ? null : h;
@@ -473,6 +477,8 @@ export function screenLetterThesis(
 ): string | null {
   const t = furnitureText(raw);
   if (t.length < 8 || t.length > LETTER_THESIS_MAX) return null;
+  // Round 35 fix T1: no curly brace (no citation token on the closing sheet).
+  if (/[{}]/.test(t)) return null;
   if (!/\p{L}/u.test(t) || /\p{N}/u.test(t) || EM_DASH.test(t) || hasCurrency(t)) return null;
   // Exactly what the closing sheet refuses to print (furniture.ts
   // letterThesis): an en dash, an angle bracket, stacked marks. A thesis
@@ -555,10 +561,11 @@ function screenPartText(
   tripsScreen: (s: string) => boolean
 ): string | null {
   if (typeof raw !== "string") return null;
-  // Angle and square brackets refuse the value (never stripped to pass), as
-  // a control character does: none is divider furniture, and "[Client]" is
-  // the D3 placeholder shape, which would BLOCK the gate with no fix path.
-  if (/[<>[\]]/.test(raw) || /\p{Cc}/u.test(raw.replace(/[\t\n\r]/g, " "))) return null;
+  // Angle, square and curly brackets refuse the value (never stripped to
+  // pass), as a control character does: none is divider furniture, "[Client]"
+  // is the D3 placeholder shape, which would BLOCK the gate with no fix path,
+  // and a brace could spell a citation token (round 35 fix T1).
+  if (/[<>[\]{}]/.test(raw) || /\p{Cc}/u.test(raw.replace(/[\t\n\r]/g, " "))) return null;
   const t = furnitureText(raw);
   if (t.length < min || t.length > max) return null;
   if (!/\p{L}/u.test(t) || EM_DASH.test(t) || PART_DASH_LOOKALIKE.test(t)) return null;
@@ -1250,7 +1257,10 @@ export function screenQuestionnaireAnswers(
     const t = furnitureText(v);
     if (t.length < 2 || t.length > max) return null;
     if (!/\p{L}/u.test(t) || EM_DASH.test(t) || hasCurrency(t) || hasStackedMarks(t)) return null;
-    if (FOREIGN_NUMERAL.test(t) || !groundValue(t, corpus)) return null;
+    // Round 35: a {{att:N}} citation token passes through untouched (no
+    // step above alters braces); its N is a reference the renderer resolves,
+    // not a claim, so ONLY that exact token is left out of the grounding.
+    if (FOREIGN_NUMERAL.test(t) || !groundValue(withoutAttTokens(t), corpus)) return null;
     return trips(t) ? null : t;
   };
   for (const a of (Array.isArray(raw) ? raw : []).slice(0, 120)) {
@@ -1298,6 +1308,52 @@ export function screenQuestionnaireAnswers(
   const answers = refs.filter((r) => kept.has(r)).map((r) => kept.get(r)!);
   return { answers, refsMissing: refs.length - answers.length };
 }
+
+/* ---- Round 35: the attachments a section may cite (§5.17.23) ------------- */
+
+/** One picked attachment as the drafter sees it: its number and title,
+ *  never a byte of the file (attachments.ts attachmentLabels). */
+export type AttachmentCite = { n: number; title: string };
+
+/**
+ * The "ATTACHMENTS YOU MAY CITE" block (round 35), for the drafter (and so
+ * the questionnaire ask) and the revise turn. BYTE-ABSENT when the proposal
+ * has no picks, so every such prompt is exactly round 34's. Each line is
+ * "Attachment N: <title>", the title one line, fence-token runs and curly
+ * braces removed (a title can never spell a token), at most 120 characters;
+ * an entry without a usable number or title is skipped. Then ONE rule line
+ * (ATTACHMENTS_RULE_LINE, round 35 fix L2): cite only where the reader
+ * would open the document to check the answer, at most one per answer,
+ * the literal token {{att:N}} where the words go and only in answer
+ * explanations and paragraph text, never "Attachment" before it, and no
+ * number from a title repeated as a fact. The renderer resolves the token
+ * (and strips it when N is not picked).
+ */
+export function attachmentsAskLines(attachments: readonly AttachmentCite[] | undefined): string[] {
+  const lines = (Array.isArray(attachments) ? attachments : [])
+    .slice(0, 30)
+    .flatMap((a) => {
+      if (!a || !Number.isInteger(a.n) || a.n < 1 || a.n > 99 || typeof a.title !== "string") return [];
+      const title = a.title
+        .replace(/<{3,}|>{3,}|[{}]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 120);
+      return title ? [`Attachment ${a.n}: ${title}`] : [];
+    });
+  if (lines.length === 0) return [];
+  return [
+    "",
+    "ATTACHMENTS YOU MAY CITE: this proposal ships these supporting documents.",
+    ...lines,
+    ATTACHMENTS_RULE_LINE,
+  ];
+}
+
+/** The attachments block's one rule line (round 35 fix L2, the fidelity
+ *  register). */
+export const ATTACHMENTS_RULE_LINE =
+  'Cite an attachment only where the reader would open that document to check the answer: most answers cite none, and an answer cites at most one. Write the literal token {{att:N}}, with its number from this list, exactly where the words go ("Our offboarding procedure is {{att:5}}." or "(see {{att:3}})"), and use the token only in answer explanations and paragraph text. Never write the word Attachment before the token, never invent a number, and never repeat a number from an attachment\'s title: those numbers are not facts.';
 
 /** Kill switch: RFP_VISUALS=0 drafts prose only, on today's exact prompt. */
 function visualsEnabled(): boolean {
@@ -1398,7 +1454,10 @@ export async function draftSection(
   //   questionnaire  a questionnaire section (outline.ts
   //                  isQuestionnaireSection): asked for `answers` IN PLACE
   //                  of the visuals vocabulary, framing prose capped at 4.
-  r34?: { echoSource?: string; questionnaire?: QuestionnaireAsk }
+  //   attachments    round 35 (§5.17.23): the proposal's picks as
+  //                  number + title (attachmentsAskLines); absent or empty,
+  //                  the prompt is byte-identical to round 34.
+  r34?: { echoSource?: string; questionnaire?: QuestionnaireAsk; attachments?: AttachmentCite[] }
 ): Promise<DraftedSection | null> {
   // Open questions are model output derived from the client's fenced RFP
   // text, the same standing as a gap question in resolveGap, but they ride
@@ -1589,6 +1648,8 @@ export async function draftSection(
         ]
       : []),
     ...(ask ? questionnaireLines(ask) : []),
+    // Round 35: byte-absent without picks.
+    ...attachmentsAskLines(r34?.attachments),
     "",
     "Reply with JSON only:",
     '{"paragraphs": [string], "cites": [string],',
@@ -2870,7 +2931,10 @@ export async function reviseSection(
   directive?: string,
   // The letter's header and existence are furniture; its revise turn never
   // offers a structural change, so the two output fields stay unmentioned.
-  allowStructural = true
+  allowStructural = true,
+  // Round 35 (§5.17.23): the proposal's picks, number + title only. Absent
+  // or empty, the prompt is byte-identical to round 34.
+  attachments?: AttachmentCite[]
 ): Promise<{
   paragraphs: string[];
   note: string;
@@ -2922,6 +2986,8 @@ export async function reviseSection(
     "",
     "If the request needs one of those, do not do it. Return the text",
     "unchanged and explain why in `note`.",
+    // Round 35: byte-absent without picks.
+    ...attachmentsAskLines(attachments),
     "",
     "Reply with JSON only:",
     allowStructural

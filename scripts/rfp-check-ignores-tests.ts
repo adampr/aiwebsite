@@ -20,6 +20,9 @@ import {
   type CheckIgnore,
 } from "../src/lib/rfp/check-ignores";
 import {
+  ATTACHMENT_GAP_FIX_MESSAGE,
+  ATT_CITATION_STRIPPED_FIX_MESSAGE,
+  ATT_TOKEN_LEFT_FIX_MESSAGE,
   fixAllSteps,
   fixInstruction,
   fixInstructionFor,
@@ -920,6 +923,65 @@ check("fixAll: nothing visible, nothing to do", fixAllSteps([], ctx), []);
     [["none", "tron"], false, true, false]
   );
   check("M3: a quote-only group is not auto-fixable", isAutoFixableGroup(groupFindings([d2])[0]!, ectx), false);
+}
+
+// ---- supporting-document requests: rule D10 (§5.17.23, round 35) -----------
+// The finding sits on the requirement alone ({requirementId}); its signature
+// is the persisted format's existing fields, so an Ignore keys on the
+// requirement and the request's words. The recipe is the honest none (a
+// decision in the Attachments pane), never Tron, never a redraft, never part
+// of Fix all; one row per request.
+{
+  const REQ_A = "00000000-0000-4000-a000-000000000001";
+  const REQ_B = "00000000-0000-4000-a000-000000000002";
+  const msg = (text: string) =>
+    `The client requires a supporting document that nothing answers yet (section 6.): "${text}". Map it to an attachment in the Attachments pane, or mark it Not included.`;
+  const a = viol({ ruleId: "D10", severity: "warn", message: msg("Provide your SOC 2 report."), locator: { requirementId: REQ_A } });
+  const b = viol({ ruleId: "D10", severity: "warn", message: msg("Provide your contract terms."), locator: { requirementId: REQ_B } });
+  const ctx = {
+    sections: [{ label: "6." }],
+    requirements: [
+      { id: REQ_A, structureLabel: "6." },
+      { id: REQ_B, structureLabel: "6." },
+    ],
+  };
+  check("D10 findingSig: rule, the requirement id in its slot, the message as the text key",
+    findingSig(a),
+    ["D10", "", "", "", "", REQ_A, "", a.message].join("\u0000"));
+  check("D10 findingSig: two requests, two signatures", findingSig(a) === findingSig(b), false);
+  check("D10 recipe: none, the Attachments pane message", fixRecipe(a, ctx), { kind: "none", message: ATTACHMENT_GAP_FIX_MESSAGE });
+  check("D10 recipe: the same with no requirements in ctx (no Tron fallback)", fixRecipe(a, { sections: [], requirements: [] }), { kind: "none", message: ATTACHMENT_GAP_FIX_MESSAGE });
+  const groups = groupFindings([a, b, a]);
+  check("D10 grouping: one row per request; a repeat of one joins its row",
+    groups.map((g) => [g.ruleId, g.members.length]), [["D10", 2], ["D10", 1]]);
+  check("D10 group plan: the honest none, once", groupFixPlan(groups[0]!, ctx), [{ kind: "none", message: ATTACHMENT_GAP_FIX_MESSAGE }]);
+  check("D10: not auto-fixable, and Fix all plans nothing for it",
+    [isAutoFixableGroup(groups[0]!, ctx), fixAllSteps(groups, ctx)], [false, []]);
+  check("D10: an ignore re-applies by signature (warn dismissed, the run passes)",
+    [applyIgnores(result([a]), [ign(findingSig(a))]).passed, applyIgnores(result([a, b]), [ign(findingSig(a))]).passed],
+    [true, false]);
+  check("D10 message carries no em dash", ATTACHMENT_GAP_FIX_MESSAGE.includes("\u2014") || a.message.includes("\u2014"), false);
+}
+
+// ---- citation tokens: rules D11 and D12 (§5.17.23, round 35 fix T1/T3) ----
+// D11 (an unresolved token on the page) is a renderer fault: the honest none.
+// D12 (a citation stripped because it pointed at nothing) is the person's
+// decision, located on its section (or the letter body): the honest none
+// too, never Tron and never Fix all.
+{
+  const d11 = viol({ ruleId: "D11", severity: "block", message: "x", locator: { sectionId: "sec_2", blockId: "b_2_0", field: "text", charOffset: 4 } });
+  const d12 = viol({ ruleId: "D12", severity: "warn", message: "Section 2: an attachment citation pointed at nothing, so it was left out of the page.", locator: { sectionId: "sec_2" } });
+  const d12l = viol({ ruleId: "D12", severity: "warn", message: "The cover letter: an attachment citation pointed at nothing, so it was left out of the page.", locator: { field: "body" } });
+  const ctx = { sections: [{ label: "2" }], requirements: [] };
+  check("D11/D12 recipes: the honest none, each with its own message",
+    [fixRecipe(d11, ctx), fixRecipe(d12, ctx), fixRecipe(d12l, ctx)],
+    [{ kind: "none", message: ATT_TOKEN_LEFT_FIX_MESSAGE }, { kind: "none", message: ATT_CITATION_STRIPPED_FIX_MESSAGE }, { kind: "none", message: ATT_CITATION_STRIPPED_FIX_MESSAGE }]);
+  const groups = groupFindings([d11, d12, d12l]);
+  check("D11/D12: never auto-fixable, and Fix all plans nothing for them",
+    [groups.map((g) => isAutoFixableGroup(g, ctx)), fixAllSteps(groups, ctx)], [[false, false, false], []]);
+  check("D12: an ignore re-applies by signature (section and letter rows differ)",
+    [findingSig(d12) === findingSig(d12l), applyIgnores(result([d12]), [ign(findingSig(d12))]).passed], [false, true]);
+  check("D11/D12 messages carry no em dash", [ATT_TOKEN_LEFT_FIX_MESSAGE, ATT_CITATION_STRIPPED_FIX_MESSAGE].some((m) => /[\u2014\u2015]/.test(m)), false);
 }
 
 if (failures) {

@@ -44,6 +44,28 @@
  *     summary captions, the cost index, the roadmap and the rfpTitle lede;
  *     the PDF carries section 1's matrix onto a "(continued)" page with the
  *     head row again; the echo's quotes, attribution and callouts reach both
+ *
+ * Round 35 (§5.17.23), attachments and the submission package:
+ *   - furniture.ts resolveAttTokens (a picked N -> "Attachment N", any other
+ *     stripped with the tidy, token-free text returned unchanged; the fix
+ *     round's word boundaries, hugged braces, the absorbed "Attachment ",
+ *     the dangling conjunction and the strip-site-only tidy; the strip
+ *     tally), resolveBlockAtt (every string of a block), the matrix lift's
+ *     picks, supportingDocumentsOf (the register's every mapping shape,
+ *     "Not included", the confidential and redacted lines),
+ *     attachmentsViewOf, the roadmap's attachment clause and its second
+ *     sentence beside pricing, packageEntryNames
+ *   - resolve-draft over buildR35PackageInput: the valid citations resolve
+ *     (an answer and a callout), no "{{" reaches any span, the sheet and
+ *     its span fields, the gate clean; the stripped variant warns D12 on
+ *     its section; a token in ANY string leaf of ANY fixture section
+ *     never prints (D11 stays silent); prose, echo and letter tokens
+ *     resolve too
+ *   - one spec: both files carry the Supporting Documents sheet after the
+ *     Investment sheet and before the closing, with no token anywhere
+ *   - the zip read back: the folder, the "00" pair (PDF then Word) and each
+ *     attachment in N order, the pair byte-equal to the buffers the plain
+ *     renderers returned
  */
 
 import { createHash } from "node:crypto";
@@ -57,6 +79,12 @@ import {
   buildR33GateInput,
   buildR34EchoInput,
   buildR34QuestionnaireInput,
+  buildR35Package,
+  buildR35PackageInput,
+  r35AttachmentBytes,
+  withR35StrippedCitation,
+  R35_PICKS,
+  R35_REQUESTED,
   R34_CLIENT,
   R34_ECHO_BY,
   R34_ECHO_SAID,
@@ -74,6 +102,7 @@ import { buildExportView, renderRfpDocx, renderRfpPdf, type ExportVisual } from 
 import { FURNITURE_FOOT_RIGHT, loadRfpExportAssets, sectionKicker as assetsSectionKicker } from "../src/lib/rfp/export-assets";
 import { resolvedTextSpans } from "../src/lib/rfp/content-model";
 import { LETTER_LABEL } from "../src/lib/rfp/letter";
+import { ATT_TOKEN_LOOSE_SOURCE as ATT_LOOSE_FROM_ATTACHMENTS } from "../src/lib/rfp/attachments";
 import {
   CLOSING_HEADLINE,
   closingHeadline,
@@ -112,6 +141,16 @@ import {
   MATRIX_SUMMARY_CAPTION,
   MATRIX_SUMMARY_KICKER,
   MATRIX_SUMMARY_TITLE,
+  attachmentsViewOf,
+  packageEntryNames,
+  ATT_TOKEN_LOOSE_SOURCE,
+  resolveAttTokens,
+  resolveBlockAtt,
+  supportingDocumentsOf,
+  SUPPORTING_KICKER,
+  SUPPORTING_LIST_CAPTION,
+  SUPPORTING_REGISTER_HEAD,
+  SUPPORTING_TITLE,
 } from "../src/lib/rfp/furniture";
 import { composeDocTitle } from "../src/lib/rfp/doc-title";
 import { buildQuote, EMPTY_QUOTE_INPUTS, letterPricingParagraph, partPricingDek, rateNoteCodes, rateNoteFor } from "../src/lib/rfp/quote";
@@ -763,6 +802,453 @@ const r34EchoView = buildExportView(r34Echo, RATE_CARD);
   );
 }
 
+// ---- round 35: attachments (§5.17.23) ---------------------------------------------
+
+const PICKS_12 = [{ n: 1 }, { n: 2 }];
+{
+  const plain = "No token here, (see the appendix) and  two spaces.";
+  check(
+    "att: token-free text is returned unchanged (the same string), picks or not",
+    [resolveAttTokens(plain, PICKS_12) === plain, resolveAttTokens(plain, []) === plain],
+    [true, true]
+  );
+  check(
+    "att: a picked N becomes \"Attachment N\"; an invented or unpicked N strips with the tidy",
+    [
+      resolveAttTokens("The ISO certificate is {{att:2}}.", PICKS_12),
+      resolveAttTokens("The steps are in our offboarding procedure ({{att:9}}).", PICKS_12),
+      resolveAttTokens("See {{att:9}}, and our policy.", PICKS_12),
+      resolveAttTokens("Both {{att:1}} and {{att:2}} apply.", PICKS_12),
+      resolveAttTokens("Proof is attached {{att:1}}.", []),
+      resolveAttTokens("A near miss {{ ATT : 1 }} resolves.", PICKS_12),
+      resolveAttTokens("Leading zeros {{att:02}} resolve.", PICKS_12),
+    ],
+    [
+      "The ISO certificate is Attachment 2.",
+      "The steps are in our offboarding procedure.",
+      "See, and our policy.",
+      "Both Attachment 1 and Attachment 2 apply.",
+      "Proof is attached.",
+      "A near miss Attachment 1 resolves.",
+      "Leading zeros Attachment 2 resolve.",
+    ]
+  );
+  const P3 = [{ n: 1 }, { n: 2 }, { n: 3 }];
+  check(
+    "att (fix R1): a letter or digit touching a token gets a space; glued tokens part; a hugged token strips; near misses resolve or strip, never print",
+    [
+      "15{{att:2}}0 users", "SOC{{att:2}}report", "{{att:2}}{{att:3}}", "{{{att:2}}}", "{{ATT:02}}", "{{ att : 2 }}",
+      "{{att:2}", "{{att:-2}}", "{{att:\u0662}}", "{{attachment 2}} x",
+    ].map((t) => resolveAttTokens(t, P3)),
+    ["15 Attachment 2 0 users", "SOC Attachment 2 report", "Attachment 2 Attachment 3", "", "Attachment 2", "Attachment 2", "", "", "", "x"]
+  );
+  check(
+    "att (fix R1): a written \"Attachment \" before the token is absorbed (prints once); stripped with it when unpicked",
+    ["Attachment {{att:2}} is the certificate.", "see attachment {{att:2}}.", "Attachments {{att:1}} and {{att:2}} apply.", "Attachment {{att:9}} is gone."].map((t) => resolveAttTokens(t, P3)),
+    ["Attachment 2 is the certificate.", "see Attachment 2.", "Attachment 1 and Attachment 2 apply.", "is gone."]
+  );
+  check(
+    "att (fix R1): a dangling and/or goes with the strip; an emptied parenthetical goes with its opener",
+    [
+      "See {{att:1}} and {{att:9}}.", "See {{att:9}} and {{att:1}}.", "Attachments {{att:1}} and {{att:9}} are our reports.",
+      "Our procedure ({{att:7}}) covers this.", "Escalation follows our incident procedure (see {{att:9}}).", "We hold ISO, {{att:9}}, and SOC.",
+    ].map((t) => resolveAttTokens(t, P3)),
+    ["See Attachment 1.", "See Attachment 1.", "Attachment 1 are our reports.", "Our procedure covers this.", "Escalation follows our incident procedure.", "We hold ISO, and SOC."]
+  );
+  check(
+    "att (fix R1): the tidy works only at the strip site (indentation, an unrelated ( ) or (and), spaced punctuation elsewhere stay byte for byte)",
+    [
+      "We hold ISO (see {{att:9}}) and SOC (and) more ( ) text.",
+      "Line one\n  - indented {{att:9}}\n  - second",
+      "Ratio 1 , 2 ; 3 . done {{att:9}}",
+      "line\n    {{att:9}} item",
+      "The procedure {{att:9}} and the policy cover this.",
+    ].map((t) => resolveAttTokens(t, P3)),
+    [
+      "We hold ISO and SOC (and) more ( ) text.",
+      "Line one\n  - indented\n  - second",
+      "Ratio 1 , 2 ; 3 . done",
+      "line\n    item",
+      "The procedure and the policy cover this.",
+    ]
+  );
+  const tally = { stripped: 0 };
+  resolveAttTokens("A {{att:1}} b {{att:9}} c {{att:0}} d {{att:2}", P3, tally);
+  check("att (fix T3): the tally counts every strip (an invented n, {{att:0}}, a remnant), never a resolve", tally.stripped, 3);
+  check("att: the renderer's token source is attachments.ts's (the T2 remap rewrites exactly what resolves)", ATT_TOKEN_LOOSE_SOURCE, ATT_LOOSE_FROM_ATTACHMENTS);
+  const prose = { kind: "callout", title: "T", body: "plain" };
+  const echo = { kind: "client-echo", entries: [{ said: "x", answer: "See {{att:1}}.", willSee: "And {{att:7}} too." }, { said: "y", answer: "plain" }] };
+  const echoOut = resolveBlockAtt(echo, PICKS_12);
+  check(
+    "att (fix T1): resolveBlockAtt leaves a token-free block as the same object, resolves an echo's answer and willSee, keeps untouched parts by identity",
+    [resolveBlockAtt(prose, PICKS_12) === prose, resolveBlockAtt(echo, []) !== echo, echoOut.entries[0], echoOut.entries[1] === echo.entries[1]],
+    [true, true, { said: "x", answer: "See Attachment 1.", willSee: "And too." }, true]
+  );
+  const everyKind = {
+    kind: "cards",
+    title: "Cards {{att:1}}",
+    cards: [{ title: "A {{att:2}}", body: "B {{att:9}}." }],
+    rows: [["cell {{att:1}}", "x"]],
+    steps: [{ label: "Step 1", title: "T", body: "see {{att:2}}" }],
+    tiles: [{ value: "{{att:1}}", label: "L" }],
+    pairs: [{ label: "P", value: "{{att:2}}" }],
+    entries: [{ title: "Echo {{att:1}}", said: "s", answer: "a" }],
+  };
+  check(
+    "att (fix T1): resolveBlockAtt resolves EVERY string leaf (titles, cards, rows, steps, tiles, pairs, echo titles)",
+    resolveBlockAtt(everyKind, PICKS_12),
+    {
+      kind: "cards",
+      title: "Cards Attachment 1",
+      cards: [{ title: "A Attachment 2", body: "B." }],
+      rows: [["cell Attachment 1", "x"]],
+      steps: [{ label: "Step 1", title: "T", body: "see Attachment 2" }],
+      tiles: [{ value: "Attachment 1", label: "L" }],
+      pairs: [{ label: "P", value: "Attachment 2" }],
+      entries: [{ title: "Echo Attachment 1", said: "s", answer: "a" }],
+    }
+  );
+  const reqs = [{ structureLabel: "S", clientRef: "Q-01", ordinal: 0 }, { structureLabel: "S", clientRef: "Q-02", ordinal: 1 }, { structureLabel: "S", clientRef: "Q-03", ordinal: 2 }];
+  const answers = ["Q-01", "Q-02", "Q-03"].map((ref) => ({ ref, verdict: "yes", subject: `See {{att:${ref === "Q-01" ? 1 : 5}}}`, explanation: `Proof in {{att:2}}.` }));
+  check(
+    "att: the matrix lift resolves subject and explanation with the picks it is handed (no picks: stripped)",
+    [
+      matrixFromAnswers({ answers, label: "S", requirements: reqs, rateNote: () => null, picks: PICKS_12 })?.rows.map((r) => [r.subject, r.explanation])[0],
+      matrixFromAnswers({ answers, label: "S", requirements: reqs, rateNote: () => null, picks: PICKS_12 })?.rows[1]?.subject,
+      matrixFromAnswers({ answers, label: "S", requirements: reqs, rateNote: () => null })?.rows[0]?.explanation,
+    ],
+    [["See Attachment 1", "Proof in Attachment 2."], "See", "Proof in."]
+  );
+}
+{
+  const picks = [
+    { n: 1, title: "SOC 2 Type 2 Report", confidential: true, redactedSample: false },
+    { n: 2, title: "ISO  Certificate", confidential: false, redactedSample: false },
+    { n: 3, title: "Site Visit Sample", confidential: false, redactedSample: true },
+  ];
+  const reqs = [
+    { id: "r1", kind: "attachment", text: "Your SOC 2 report", ordinal: 3 },
+    { id: "r0", kind: "question", text: "Not a document", ordinal: 0 },
+    { id: "r2", kind: "attachment", text: "Insurance certificate \u2014 current", ordinal: 1 },
+    { id: "r3", kind: "attachment", text: "Org chart", ordinal: 2 },
+  ];
+  const sd = supportingDocumentsOf({ attachments: { picks, map: { r1: 1, r2: 0 } }, requirements: reqs });
+  const sdX = supportingDocumentsOf({
+    attachments: { picks, map: { r1: { ns: [2, 1] }, r2: { ns: [3], section: "4.2" }, r3: { ns: [], section: "IV" } } },
+    requirements: reqs,
+  });
+  check(
+    "sheet (fix X1): several picks in N order joined by \"; \", then \"In this response - <the section's kicker>\"; a section alone; legacy n and 0 unchanged",
+    sdX?.register.map((r) => r.whereItIs),
+    ["Attachment 3 - Site Visit Sample; In this response - Section 4.2", "In this response - Section IV", "Attachment 1 - SOC 2 Type 2 Report; Attachment 2 - ISO Certificate"]
+  );
+  check(
+    "sheet (fix X1): the kicker names the section as its sheet does (a brief's \"Section p.n\"), and unknown numbers print nothing of their own",
+    supportingDocumentsOf({
+      attachments: { picks, map: { r1: { ns: [9], section: "B" } } },
+      requirements: reqs,
+      kicker: (l) => `Section 2.${l === "B" ? 3 : 0}`,
+    })?.register[2]?.whereItIs,
+    "In this response - Section 2.3"
+  );
+  check(
+    "sheet: the register in the client's order (ordinal), \"Attachment N - <title>\" for a mapped one, Not included for 0 and for unmapped, dashes tidied",
+    sd?.register,
+    [
+      { requested: "Insurance certificate · current", whereItIs: "Not included" },
+      { requested: "Org chart", whereItIs: "Not included" },
+      { requested: "Your SOC 2 report", whereItIs: "Attachment 1 - SOC 2 Type 2 Report" },
+    ]
+  );
+  check(
+    "sheet: the numbered list, the intro, the confidential footnote and the redacted note (numbers only)",
+    [sd?.list, sd?.intro, sd?.confidentialLine, sd?.redactedLine],
+    [
+      [{ n: 1, title: "SOC 2 Type 2 Report" }, { n: 2, title: "ISO Certificate" }, { n: 3, title: "Site Visit Sample" }],
+      "Mapped to the supporting documents your request asks for. The attachments are provided separately with this response.",
+      "Attachment 1 is provided in confidence, for your evaluation only.",
+      "Attachment 3 is a sample from another engagement, with that client's details removed.",
+    ]
+  );
+  const plural = supportingDocumentsOf({ attachments: { picks: picks.map((p) => ({ ...p, confidential: true, redactedSample: p.n > 1 })), map: {} }, requirements: [] });
+  check(
+    "sheet: no attachment requirements: no register, the list intro; plural footnotes",
+    [plural?.register, plural?.intro, plural?.confidentialLine, plural?.redactedLine],
+    [[], "The attachments listed below are provided separately with this response.", "Attachments 1, 2 and 3 are provided in confidence, for your evaluation only.", "Attachments 2 and 3 are samples from other engagements, with those clients' details removed."]
+  );
+  check(
+    "sheet: nothing picked = no sheet (null), whatever the requirements and map",
+    [supportingDocumentsOf({ attachments: null, requirements: reqs }), supportingDocumentsOf({ attachments: { picks: [], map: { r1: 0 } }, requirements: reqs })],
+    [null, null]
+  );
+  check(
+    "attachmentsViewOf: picks joined with their library flags by id (case-insensitive), a missing row keeps its title with no flag, a map-only state survives for the checks, nothing at all is null",
+    [
+      attachmentsViewOf(
+        { picks: [{ docId: "AA", n: 1, title: "A" }, { docId: "bb", n: 2, title: "B" }], map: { r: 1 } },
+        [{ id: "aa", confidential: true, redactedSample: true }]
+      ),
+      attachmentsViewOf({ picks: [], map: { r: 0 } }, []),
+      attachmentsViewOf({ picks: [], map: {} }, []),
+    ],
+    [
+      { picks: [{ n: 1, title: "A", confidential: true, redactedSample: true }, { n: 2, title: "B", confidential: false, redactedSample: false }], map: { r: 1 } },
+      { picks: [], map: { r: 0 } },
+      null,
+    ]
+  );
+  check(
+    "roadmap: the attachment clause (requested / provided), the attachments-only sentence, and null is exactly round 34",
+    [
+      letterRoadmapSentence({ matrixKickers: ["Section 5"], partsCount: 0, pricing: false, complete: true, attached: "requested" }),
+      letterRoadmapSentence({ matrixKickers: ["Section 5"], partsCount: 0, pricing: true, attached: "provided" }),
+      letterRoadmapSentence({ matrixKickers: ["Section 5"], partsCount: 0, pricing: true, complete: true, attached: "requested" }),
+      letterRoadmapSentence({ matrixKickers: [], partsCount: 0, pricing: true, attached: "requested" }),
+      letterRoadmapSentence({ matrixKickers: [], partsCount: 0, pricing: true, attached: null }),
+      letterRoadmapSentence({ matrixKickers: ["Section 5"], partsCount: 0, pricing: false, complete: true, attached: null }) ===
+        letterRoadmapSentence({ matrixKickers: ["Section 5"], partsCount: 0, pricing: false, complete: true }),
+    ],
+    [
+      "In the pages that follow, Section 5 answers every item of your questionnaire by its own ID, with a summary of the answers first, with the supporting documents you requested attached.",
+      "In the pages that follow, Section 5 answers your questionnaire item by item, with a summary of the answers first, and the Investment page sets out the pricing. Our supporting documents are attached and listed on the Supporting Documents page.",
+      "In the pages that follow, Section 5 answers every item of your questionnaire by its own ID, with a summary of the answers first, and the Investment page sets out the pricing. The supporting documents you requested are attached and listed on the Supporting Documents page.",
+      "The supporting documents you requested are attached, listed on the Supporting Documents page at the end of this response.",
+      null,
+      true,
+    ]
+  );
+  check(
+    "package names: the reference package's shape (colon -> hyphen, reserved characters out, N order)",
+    packageEntryNames({
+      clientName: "Alive Telecom",
+      attachments: [
+        { n: 2, title: "XL.net ISO 27001:2022 Certificate", media: "application/pdf" },
+        { n: 1, title: "XL.net SOC 2 Type 2 Report (Nov 2024 - Apr 2025) - CONFIDENTIAL", media: "application/pdf" },
+        { n: 3, title: "XL.net Managed Services Agreement (template)", media: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+        { n: 4, title: 'A/B "quoted"? title.', media: "application/pdf" },
+      ],
+    }),
+    {
+      folder: "Alive Telecom - XL.net Proposal and Supporting Documents",
+      pdf: "00 - XL.net Alive Telecom Proposal.pdf",
+      docx: "00 - XL.net Alive Telecom Proposal.docx",
+      attachments: [
+        "Attachment 1 - XL.net SOC 2 Type 2 Report (Nov 2024 - Apr 2025) - CONFIDENTIAL.pdf",
+        "Attachment 2 - XL.net ISO 27001-2022 Certificate.pdf",
+        "Attachment 3 - XL.net Managed Services Agreement (template).docx",
+        "Attachment 4 - A B quoted title.pdf",
+      ],
+    }
+  );
+  check(
+    "package names: no client name",
+    [packageEntryNames({ clientName: null, attachments: [] }).pdf, packageEntryNames({ clientName: "  ", attachments: [] }).folder],
+    ["00 - XL.net Proposal.pdf", "XL.net Proposal and Supporting Documents"]
+  );
+}
+
+const r35Input = buildR35PackageInput();
+const r35 = resolveDraft(r35Input).resolved;
+const r35View = buildExportView(r35, RATE_CARD);
+{
+  const rows = r35.sections.flatMap((s) => s.blocks).flatMap((b) => (b.kind === "response-matrix" ? b.rows : []));
+  const ex = (ref: string) => rows.find((r) => r.ref === ref)?.explanation ?? "";
+  check(
+    "r35 resolve: AC-04's valid {{att:2}} prints \"Attachment 2\"; section 1's callout body resolves both its citations (fix T1)",
+    [
+      ex("AC-04").endsWith("The ISO certificate is Attachment 2."),
+      rows.length,
+      r35.sections.flatMap((x) => x.blocks).flatMap((b) => (b.kind === "callout" ? [b.body] : [])),
+      "citationStrips" in r35,
+    ],
+    [true, 11, ["The documents behind these answers are Attachment 2 and Attachment 3, listed on the Supporting Documents page."], false]
+  );
+  const strippedIn = withR35StrippedCitation(r35Input);
+  const stripped = resolveDraft(strippedIn).resolved;
+  const strippedRows = stripped.sections.flatMap((x) => x.blocks).flatMap((b) => (b.kind === "response-matrix" ? b.rows : []));
+  check(
+    "r35 strip (fix T3): OC-03's invented {{att:9}} strips with its parentheses; the resolved view counts it on section 1; D12 warns naming the section, nothing else changes",
+    [
+      strippedRows.find((r) => r.ref === "OC-03")?.explanation.endsWith("The full hand-over steps are in our offboarding procedure."),
+      stripped.citationStrips,
+      runDraftGate(strippedIn).violations.map((v) => [v.ruleId, v.severity, v.message, v.locator]),
+    ],
+    [
+      true,
+      [{ sectionId: "sec_1", label: "1", count: 1 }],
+      [["D12", "warn", "Section 1: an attachment citation pointed at nothing, so it was left out of the page. Read the sentence around it: attach the document it meant and redraft the section, or edit the wording.", { sectionId: "sec_1" }]],
+    ]
+  );
+  const spans = resolvedTextSpans(r35);
+  check("r35 resolve: no span anywhere carries a token or a brace pair", spans.filter((sp) => /\{\{|\}\}/.test(sp.text)).map((sp) => `${sp.location} ${sp.field}`), []);
+  check(
+    "r35 resolve: the sheet's register (five requested documents, the last Not included), the list, both footnote lines",
+    [
+      r35.supportingDocuments?.register.map((r) => r.whereItIs),
+      r35.supportingDocuments?.list.map((p) => p.n),
+      r35.supportingDocuments?.confidentialLine,
+      r35.supportingDocuments?.redactedLine,
+    ],
+    [
+      R35_REQUESTED.map((r) => r.cell),
+      [1, 2, 3, 4],
+      "Attachment 1 is provided in confidence, for your evaluation only.",
+      "Attachment 4 is a sample from another engagement, with that client's details removed.",
+    ]
+  );
+  check(
+    "r35 spans: the sheet scans under supporting-documents (no section, no block id)",
+    [
+      spans.filter((sp) => sp.location === "supporting-documents").map((sp) => sp.field).slice(0, 4),
+      spans.filter((sp) => sp.location === "supporting-documents").every((sp) => sp.sectionId === undefined && sp.blockId === undefined),
+    ],
+    [["intro", "register[0].requested", "register[0].whereItIs", "register[1].requested"], true]
+  );
+  check(
+    "r35 resolve: the roadmap carries the attachment clause; the round-34 questionnaire's is unchanged and has no sheet",
+    [r35.letter.roadmap, r34.letter.roadmap, "supportingDocuments" in r34],
+    [
+      "In the pages that follow, Section 1 and Section 2 answer every item of your questionnaire by its own ID, with a summary of the answers first, and the Investment page sets out the pricing. The supporting documents you requested are attached and listed on the Supporting Documents page.",
+      "In the pages that follow, Section 1 and Section 2 answer every item of your questionnaire by its own ID, with a summary of the answers first, and the Investment page sets out the pricing.",
+      false,
+    ]
+  );
+  check(
+    "r35 gate: the package fixture passes with no finding (D10 included: every mandatory requested document is mapped)",
+    runDraftGate(r35Input).violations.map((v) => `${v.ruleId} ${v.message}`),
+    []
+  );
+  check(
+    "r35 gate: dropping the map leaves the seven mandatory requested documents unmapped (D10 sees the same attachments the sheet does)",
+    runDraftGate({ ...r35Input, attachments: { ...r35Input.attachments!, map: {} } }).violations.filter((v) => v.ruleId === "D10").length,
+    7
+  );
+  // Fix T1's sweep (the security refuter's probe 2): a token appended to
+  // EVERY string leaf of EVERY section of every fixture, one at a time,
+  // never prints raw, and D11 never fires.
+  {
+    const SKIP = new Set(["id", "kind", "factId", "generatedBy", "updatedAt", "origin", "ref", "verdict", "align", "label", "after", "cites", "icon", "variant", "tone", "sectionId"]);
+    type Path = (string | number)[];
+    const leaves = (o: unknown, at: Path = [], acc: Path[] = []): Path[] => {
+      if (typeof o === "string") acc.push(at);
+      else if (Array.isArray(o)) o.forEach((v, i) => leaves(v, [...at, i], acc));
+      else if (o && typeof o === "object") for (const [k, v] of Object.entries(o)) if (!SKIP.has(k)) leaves(v, [...at, k], acc);
+      return acc;
+    };
+    const raw: string[] = [];
+    let d11 = 0;
+    let variants = 0;
+    for (const [name, base] of [
+      ["r32", { ...buildR32GateInput(), attachments: r35Input.attachments }],
+      ["r33", { ...buildR33GateInput(), attachments: r35Input.attachments }],
+      ["r34echo", { ...buildR34EchoInput(), attachments: r35Input.attachments }],
+      ["r35", r35Input],
+    ] as const) {
+      base.sections.forEach((sec, si) => {
+        for (const at of leaves(sec)) {
+          const sections = JSON.parse(JSON.stringify(base.sections)) as typeof base.sections;
+          let cur = sections[si] as unknown as Record<string | number, unknown>;
+          for (let i = 0; i < at.length - 1; i++) cur = cur[at[i]!] as Record<string | number, unknown>;
+          const last = at[at.length - 1]!;
+          cur[last] = `${cur[last] as string} {{att:2}}`;
+          const input = { ...base, sections, proposal: { ...base.proposal, sectionsJson: JSON.stringify(sections) } };
+          variants++;
+          const spans = resolvedTextSpans(resolveDraft(input).resolved).filter((sp) => sp.text.includes("{{"));
+          if (spans.length) raw.push(`${name} ${sec.label} ${at.join(".")} -> ${spans[0]!.location}/${spans[0]!.field}`);
+          if (si === 0 && at.length === 2) d11 += runDraftGate(input).violations.filter((v) => v.ruleId === "D11").length;
+        }
+      });
+    }
+    check(`r35 sweep (fix T1): a token in any of ${variants} string leaves never prints raw, and D11 stays silent`, [raw.slice(0, 5), d11, variants > 100], [[], 0, true]);
+  }
+  // The workspace (source pins, the house style for the client island).
+  {
+    const ws = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "src/app/rfp/r/[id]/workspace.tsx"), "utf8");
+    const pane = ws.slice(ws.indexOf("function AttachmentsPane("));
+    check(
+      "workspace (fix T1): the screen resolves every block string and the section title through the SAME resolver the files use",
+      [
+        ws.includes("<DocBlock block={resolveBlockAtt(item.block, attachments.picks)} />"),
+        ws.includes("{resolveAttTokens(node.title, attachments.picks)}"),
+        ws.includes("resolveEchoAtt"),
+        ws.includes("kicker: (l) => sheetKicker(l, docParts),"),
+      ],
+      [true, true, false, true]
+    );
+    check(
+      "workspace (fix T2): the pane warns above Up/Down/Remove when stored text cites an attachment; a write that renumbered citations re-reads the sections instead of adopting the rev",
+      [
+        pane.includes("Reordering renumbers citations") && pane.indexOf("Reordering renumbers citations") < pane.indexOf("Move Attachment"),
+        ws.includes("if (retargeted) void pollOnce();"),
+        ws.includes("/\\{\\{\\s*att/i.test(JSON.stringify(x))"),
+      ],
+      [true, true, true]
+    );
+    check(
+      "workspace (fix F3): the standing note and its button, shown when a drafted questionnaire section predates pickedAt; the redraft runs draftOne over questionnaire sections only, never the letter",
+      [
+        pane.replace(/\s+/g, " ").includes("Sections drafted before these picks do not cite them. Redraft a section to let it cite the attachments."),
+        pane.includes("Redraft the questionnaire sections"),
+        pane.indexOf("Sections drafted before these picks") < pane.indexOf("From the library"),
+        ws.includes("Date.parse(x.updatedAt) < Date.parse(attachments.pickedAt!)"),
+        /const redraftQuestionnaire = useCallback\(async \(\) => \{[\s\S]{0,260}?filter\(\(s\) => !s\.label\.startsWith\("__"\)\)[\s\S]{0,80}?isQuestionnaireSection\(requirements, s\.label\)/.test(ws),
+        /const redraftQuestionnaire[\s\S]{0,1600}?await draftOne\(sec\.label, title\);/.test(ws),
+      ],
+      [true, true, true, true, true, true]
+    );
+    check(
+      "workspace (fix S1): the confidential dialog says it records the EMAIL and names the client when known",
+      [pane.includes("your email address and the time"), pane.includes("{clientName ? `${clientName}'s` : \"this client's\"}"), pane.includes("with\n                        your name and the time")],
+      [true, true, false]
+    );
+    const pageSrc = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "src/app/rfp/r/[id]/page.tsx"), "utf8");
+    check("page (fix S2): each pick carries its library row's retired flag, and pickedAt reaches the pane", [pageSrc.includes("retired: d?.retired ?? false,"), pageSrc.includes("...(stored.pickedAt ? { pickedAt: stored.pickedAt } : {}),")], [true, true]);
+    check(
+      "workspace (fix X1): picks are a multi-select, the section an optional dropdown of the RFP's sections, Not included its own choice; the frozen shapes go to the route",
+      [
+        pane.includes('<legend className="text-xs text-faint">Answered by</legend>'),
+        pane.includes("Also or instead: answered in section"),
+        pane.includes("nextNs.length === 1 && !nextSection"),
+        pane.includes("{ ns: [...nextNs].sort((a, b) => a - b), ...(nextSection ? { section: nextSection } : {}) }"),
+        pane.includes("map: { [r.id]: e.target.checked ? 0 : null }"),
+      ],
+      [true, true, true, true, true]
+    );
+  }
+  // Prose, echo and the letter body resolve at the same choke point.
+  const withProse = buildR35PackageInput();
+  withProse.sections = withProse.sections.map((sec) =>
+    sec.label === "2"
+      ? { ...sec, paragraphs: [`${sec.paragraphs[0]} Our incident procedure is {{att:3}}, and the rest is {{att:8}}.`] }
+      : sec.label === LETTER_LABEL
+        ? { ...sec, paragraphs: [...sec.paragraphs.slice(0, -1), "Our certificate is {{att:2}}.", sec.paragraphs[sec.paragraphs.length - 1]!] }
+        : sec
+  );
+  const wp = resolveDraft(withProse).resolved;
+  const sec2 = wp.sections.find((s) => s.structureLabel === "2")!;
+  const p0 = sec2.blocks.find((b) => b.kind === "prose");
+  check(
+    "r35 resolve: a prose paragraph and the letter body resolve and strip too",
+    [p0 && p0.kind === "prose" ? p0.text.endsWith("Our incident procedure is Attachment 3, and the rest is.") : false, wp.letter.body.includes("Our certificate is Attachment 2.")],
+    [true, true]
+  );
+  const echoIn = buildR34EchoInput({ attachments: { picks: [R35_PICKS[0]!], map: {} } });
+  echoIn.sections = echoIn.sections.map((sec) => {
+    const blocks = (sec as { blocks?: unknown[] }).blocks;
+    if (!blocks) return sec;
+    const b = JSON.parse(JSON.stringify(blocks[0])) as { entries: { answer: string; willSee?: string }[] };
+    b.entries[0]!.willSee = `${b.entries[0]!.willSee} The proof is {{att:1}}.`;
+    b.entries[1]!.answer = `${b.entries[1]!.answer} See {{att:4}}.`;
+    return { ...sec, blocks: [b] } as typeof sec;
+  });
+  const ech = resolveDraft(echoIn).resolved.sections.flatMap((s) => s.blocks).find((b) => b.kind === "client-echo");
+  check(
+    "r35 resolve: an echo's willSee resolves and its answer's unpicked token strips",
+    ech && ech.kind === "client-echo" ? [ech.entries[0]!.willSee?.endsWith("The proof is Attachment 1."), ech.entries[1]!.answer.endsWith("defined escalation path, so nothing waits on one person. See.")] : null,
+    [true, true]
+  );
+}
+
 // ---- one spec: both files carry the furniture ------------------------------------
 
 async function docxText(view: typeof r32View): Promise<string> {
@@ -783,8 +1269,11 @@ async function docxText(view: typeof r32View): Promise<string> {
     .replace(/&apos;/g, "'");
 }
 async function pdfText(view: typeof r32View): Promise<{ pages: string[] }> {
+  return pdfBufferText(await renderRfpPdf(view));
+}
+async function pdfBufferText(buf: Buffer): Promise<{ pages: string[] }> {
   const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const doc = await getDocument({ data: new Uint8Array(await renderRfpPdf(view)), disableFontFace: true, useSystemFonts: false }).promise;
+  const doc = await getDocument({ data: new Uint8Array(buf), disableFontFace: true, useSystemFonts: false }).promise;
   const pages: string[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
     const content = await (await doc.getPage(i)).getTextContent();
@@ -1351,6 +1840,94 @@ async function main() {
     const echoMust = [...R34_ECHO_SAID.map(echoQuote), R34_ECHO_BY, ECHO_TOLD_LABEL, ECHO_SEE_TITLE, ...echoTitles];
     check("echo: both files carry every verbatim quote, the attribution, and the chrome", [echoMust.filter((m) => !edx.includes(bare(m))), echoMust.filter((m) => !ex.includes(bare(m)))], [[], []]);
     check("echo: no roadmap without a matrix", r34Echo.letter.roadmap ?? null, null);
+  }
+
+  // ---- round 35: the Supporting Documents sheet and the package (§5.17.23) --------
+  {
+    const bare = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+    const { pages } = await pdfText(r35View);
+    const bp = pages.map(bare);
+    const dx = bare(await docxText(r35View));
+    const sd = r35.supportingDocuments!;
+    const must = [
+      SUPPORTING_KICKER,
+      SUPPORTING_TITLE,
+      sd.intro,
+      ...SUPPORTING_REGISTER_HEAD,
+      SUPPORTING_LIST_CAPTION,
+      ...sd.register.flatMap((r) => [r.requested, r.whereItIs]),
+      ...sd.list.map((p) => p.title),
+      sd.confidentialLine!,
+      sd.redactedLine!,
+      "The ISO certificate is Attachment 2.",
+      // Fix T1: a lifted block's strings resolve in both files.
+      "The documents behind these answers are Attachment 2 and Attachment 3, listed on the Supporting Documents page.",
+      r35.letter.roadmap!,
+    ];
+    check("r35: docx carries the sheet, both footnotes, the resolved citations and the roadmap", must.filter((m) => !dx.includes(bare(m))), []);
+    check("r35: pdf carries them too", must.filter((m) => !bp.join("").includes(bare(m))), []);
+    check("r35: no token or brace pair in either file", [dx.includes("{{") || dx.includes("att:"), bp.some((p) => p.includes("{{") || p.includes("att:"))], [false, false]);
+    const sheet = bp.findIndex((p) => p.includes(bare(`${SUPPORTING_KICKER}${SUPPORTING_TITLE}`)));
+    const invest = bp.findIndex((p) => p.includes(bare("PricingInvestment")));
+    check(
+      "r35 pdf: the sheet follows the Investment sheet; it and its continuation (seven requests now, fix X1) are the last pages before the navy closing",
+      [sheet > invest && invest > 0, pages.length - 1 - sheet, bp.slice(sheet + 1, -1).every((p) => p.includes(bare(`${SUPPORTING_KICKER} · continued`)))],
+      [true, 2, true]
+    );
+    check(
+      "r35 docx: the sheet follows the Investment sheet and precedes the closing headline",
+      [dx.indexOf(bare(`${SUPPORTING_KICKER}${SUPPORTING_TITLE}`)) > dx.lastIndexOf(bare("Monthly total")), dx.indexOf(bare(`${SUPPORTING_KICKER}${SUPPORTING_TITLE}`)) < dx.lastIndexOf(bare(r35View.closing.headline))],
+      [true, true]
+    );
+
+    // The zip, read back.
+    const pkg = await buildR35Package(r35Input);
+    const zip = await JSZip.loadAsync(pkg.zip);
+    const names = packageEntryNames({ clientName: R34_CLIENT, attachments: R35_PICKS.map((p) => ({ ...p, media: "application/pdf" })) });
+    const entries = Object.keys(zip.files);
+    check(
+      "zip: the folder, the 00 pair (PDF, then Word), then Attachment 1..4 in pick order",
+      entries,
+      [
+        `${names.folder}/`,
+        `${names.folder}/00 - XL.net ${R34_CLIENT} Proposal.pdf`,
+        `${names.folder}/00 - XL.net ${R34_CLIENT} Proposal.docx`,
+        `${names.folder}/Attachment 1 - XL.net SOC 2 Type 2 Report (Nov 2024 - Apr 2025).pdf`,
+        `${names.folder}/Attachment 2 - XL.net ISO 27001-2022 Certificate.pdf`,
+        `${names.folder}/Attachment 3 - XLTO Client Security Incident Response Procedure.pdf`,
+        `${names.folder}/Attachment 4 - Sample System Analyst Site Visit Summary (client details removed).pdf`,
+      ]
+    );
+    const bytesOf = async (n: string) => Buffer.from(await zip.file(`${names.folder}/${n}`)!.async("uint8array"));
+    check(
+      "zip: the 00 pair is byte-equal to the buffers the plain renderers returned; each attachment is its own bytes",
+      [
+        (await bytesOf(names.pdf)).equals(pkg.pdf),
+        (await bytesOf(names.docx)).equals(pkg.docx),
+        ...(await Promise.all(names.attachments.map(async (n, i) => (await bytesOf(n)).equals(Buffer.from(r35AttachmentBytes(i + 1)))))),
+      ],
+      [true, true, true, true, true, true]
+    );
+    {
+      // The package's pair reads exactly as an independent plain export of
+      // the same state: the same PDF page texts, the same Word XML (ids that
+      // docx numbers from process-wide counters blanked, as the round-33 pin
+      // does). Raw bytes differ only by embedded timestamps and ids.
+      const wordXml = async (buf: Buffer) => {
+        const z = await JSZip.loadAsync(buf);
+        const xml = await z.file("word/document.xml")!.async("string");
+        return sha256(xml.replace(/\b(w:id|id|r:id|r:embed|name|w:rsid\w*)="[^"]*"/g, '$1=""'));
+      };
+      const v = buildExportView(resolveDraft(r35Input).resolved, RATE_CARD);
+      const [plainPdf, plainDocx] = [await renderRfpPdf(v), await renderRfpDocx(v)];
+      check(
+        "zip: the package's PDF page texts and Word XML equal a plain export of the same state",
+        [(await pdfBufferText(await bytesOf(names.pdf))).pages, await wordXml(await bytesOf(names.docx))],
+        [(await pdfBufferText(plainPdf)).pages, await wordXml(plainDocx)]
+      );
+    }
+    const plain = await pdfText(r34View);
+    check("r35: the round-34 questionnaire still prints no Supporting Documents sheet", plain.pages.some((p) => bare(p).includes(bare(SUPPORTING_TITLE))), false);
   }
 
   // ---- round 33: a REAL RFP is byte-identical -------------------------------------

@@ -42,6 +42,7 @@ import {
   stripReservedPrefix,
 } from "@/lib/rfp/letter";
 import { logRfpActivity } from "@/lib/rfp/activity";
+import { attachmentLabels, readProposalAttachments } from "@/lib/rfp/attachments";
 import { stripIntakeHeaders } from "@/lib/rfp/intake";
 import {
   getDocument,
@@ -911,7 +912,10 @@ export async function POST(
     directive || undefined,
     // The letter's header and existence are furniture; only real sections
     // may be offered a retitle or a removal.
-    section.label !== LETTER_LABEL
+    section.label !== LETTER_LABEL,
+    // Round 35 (§5.17.23): the picks as number + title only; none leaves
+    // the revise prompt exactly as round 34 sends it.
+    attachmentLabels(readProposalAttachments(proposal.attachmentsJson))
   );
   if (!result)
     return rfpError(

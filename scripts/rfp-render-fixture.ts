@@ -41,6 +41,21 @@
  * roadmap sentence. `buildR34EchoInput` is shaped like pp4-6: a client-echo
  * block of three entries, one with an attribution, quotes verbatim from the
  * stub document's text.
+ *
+ * Round 35 (§5.17.23): `buildR35PackageInput` is the round-34 questionnaire
+ * (left byte-identical itself) shipping four picked attachments, the
+ * reference package's shape: a confidential SOC 2 report confirmed on the
+ * proposal, an ISO certificate, an incident-response procedure and a
+ * redacted site-visit sample. Seven MANDATORY requirements of kind
+ * "attachment" covering every mapping shape (round 35 fix X1): a lone pick,
+ * two picks, a pick plus the section that answers it, a section only, and
+ * one explicitly "Not included". A valid {{att:2}} citation in AC-04's
+ * explanation, and a callout in section 1 whose body cites {{att:2}} and
+ * {{att:3}} (fix T1: every block string resolves), the Supporting
+ * Documents sheet, and the package zip (`r35-package.zip`, stand-in
+ * attachment bytes) written beside the files. Every citation is valid, so
+ * the gate passes with no finding; `withR35StrippedCitation` adds the
+ * invented {{att:9}} the strip tests (and rule D12) read.
  */
 
 import fs from "node:fs";
@@ -53,10 +68,12 @@ import { resolveDraft, runDraftGate, type DraftGateInput } from "../src/lib/rfp/
 import { formatGateResult } from "../src/lib/rfp/validators/gate";
 import {
   buildExportView,
+  buildSubmissionZip,
   exportFileName,
   renderRfpDocx,
   renderRfpPdf,
 } from "../src/lib/rfp/export";
+import type { ProposalAttachmentsView } from "../src/lib/rfp/furniture";
 import type { DocumentRow, FactRow, ProposalRow, RequirementRow } from "../src/lib/rfp/db";
 import type { DraftBlock } from "../src/lib/rfp/draft-blocks";
 import { serializePartsJson, STANDARD_OUTLINE } from "../src/lib/rfp/outline";
@@ -166,6 +183,7 @@ export function buildFixtureGateInput(
     genProgress: null,
     genError: null,
     partsJson: null,
+    attachmentsJson: null,
     createdAt: DRAFTED_AT,
     updatedAt: DRAFTED_AT,
   } as ProposalRow;
@@ -951,6 +969,146 @@ export function buildR34EchoInput(over: Partial<DraftGateInput> = {}): DraftGate
   };
 }
 
+/* ------------------------------------------------------------------------ */
+/* The round-35 fixture (§5.17.23): attachments and the submission package   */
+/* ------------------------------------------------------------------------ */
+
+const R35_PROPOSAL_ID = "00000000-0000-4000-8000-0000000000p6";
+
+/** The four picks, titled like the reference package's seed documents. */
+export const R35_PICKS: ProposalAttachmentsView["picks"] = [
+  { n: 1, title: "XL.net SOC 2 Type 2 Report (Nov 2024 - Apr 2025)", confidential: true, redactedSample: false },
+  { n: 2, title: "XL.net ISO 27001:2022 Certificate", confidential: false, redactedSample: false },
+  { n: 3, title: "XLTO Client Security Incident Response Procedure", confidential: false, redactedSample: false },
+  { n: 4, title: "Sample System Analyst Site Visit Summary (client details removed)", confidential: false, redactedSample: true },
+];
+
+/** The requested-documents list, in the client's order, the mapping each
+ *  stores (attachments.ts AttachmentMapValue: a pick's n, 0 = explicitly
+ *  not included, or {ns, section?}) and the WHERE IT IS cell it prints. */
+export const R35_REQUESTED: {
+  text: string;
+  map: number | { ns: number[]; section?: string };
+  cell: string;
+}[] = [
+  { text: "Most recent SOC 2 Type 2 report", map: 1, cell: "Attachment 1 - XL.net SOC 2 Type 2 Report (Nov 2024 - Apr 2025)" },
+  { text: "ISO 27001 certificate", map: 2, cell: "Attachment 2 - XL.net ISO 27001:2022 Certificate" },
+  {
+    text: "Security certifications and audit reports",
+    map: { ns: [1, 2] },
+    cell: "Attachment 1 - XL.net SOC 2 Type 2 Report (Nov 2024 - Apr 2025); Attachment 2 - XL.net ISO 27001:2022 Certificate",
+  },
+  {
+    text: "Incident-response and notification procedure",
+    map: { ns: [3], section: "2" },
+    cell: "Attachment 3 - XLTO Client Security Incident Response Procedure; In this response - Section 2",
+  },
+  { text: "Backup and recovery testing procedure", map: { ns: [], section: "1" }, cell: "In this response - Section 1" },
+  { text: "Sample of a site visit report", map: 4, cell: "Attachment 4 - Sample System Analyst Site Visit Summary (client details removed)" },
+  { text: "Certificate of cyber liability insurance", map: 0, cell: "Not included" },
+];
+
+/** Section 1's callout: every string of a lifted block resolves (fix T1). */
+export function r35EvidenceCallout(): DraftBlock {
+  return {
+    kind: "callout",
+    title: "Where the evidence is",
+    body: "The documents behind these answers are {{att:2}} and {{att:3}}, listed on the Supporting Documents page.",
+    tone: "emphasis",
+    id: "v_0000b351",
+    after: 1,
+    cites: [factId("service.flat-fee")],
+    generatedBy: "llm",
+  } as DraftBlock;
+}
+
+/** The stand-in bytes the fixture zip carries for each pick (the real
+ *  documents never enter the repository). */
+export function r35AttachmentBytes(n: number): Uint8Array {
+  return new TextEncoder().encode(`%PDF-1.4\n% round-35 fixture stand-in for attachment ${n}\n%%EOF\n`);
+}
+
+/** The round-35 package input: the questionnaire, AC-04's explanation and
+ *  section 1's callout citing attachments, the attachment requirements under
+ *  section 2 (no clientRef, so the matrix is unchanged) and the picks. */
+export function buildR35PackageInput(over: Partial<DraftGateInput> = {}): DraftGateInput {
+  const base = buildR34QuestionnaireInput();
+  const sections = base.sections.map((sec) => {
+    const answers = sec.answers;
+    if (!answers) return sec;
+    return {
+      ...sec,
+      ...(sec.label === "1" ? { blocks: [...(sec.blocks ?? []), r35EvidenceCallout()] } : {}),
+      answers: answers.map((a) =>
+        a.ref === "AC-04" ? { ...a, explanation: `${a.explanation} The ISO certificate is {{att:2}}.` } : a
+      ),
+    };
+  });
+  const last = base.requirements.length;
+  const requested = R35_REQUESTED.map((r, i) => ({
+    ...base.requirements[0]!,
+    id: `00000000-0000-4000-8000-${String(3500 + i).padStart(12, "0")}`,
+    structureLabel: "2",
+    text: r.text,
+    ordinal: last + i,
+    kind: "attachment",
+    mandatory: true,
+    clientRef: null,
+  }));
+  const map: Record<string, number | { ns: number[]; section?: string }> = {};
+  requested.forEach((r, i) => (map[r.id] = R35_REQUESTED[i]!.map));
+  return {
+    ...base,
+    proposal: { ...base.proposal, id: R35_PROPOSAL_ID, sectionsJson: JSON.stringify(sections) },
+    sections,
+    requirements: [...base.requirements, ...requested],
+    attachments: { picks: R35_PICKS.map((p) => ({ ...p })), map },
+    ...over,
+  };
+}
+
+/** The package input with OC-03 citing an invented {{att:9}}: it strips with
+ *  its parentheses, and rule D12 names section 1 (fix T3). */
+export function withR35StrippedCitation(input: DraftGateInput = buildR35PackageInput()): DraftGateInput {
+  const sections = input.sections.map((sec) =>
+    sec.answers
+      ? {
+          ...sec,
+          answers: sec.answers.map((a) =>
+            a.ref === "OC-03"
+              ? { ...a, explanation: `${a.explanation} The full hand-over steps are in our offboarding procedure ({{att:9}}).` }
+              : a
+          ),
+        }
+      : sec
+  );
+  return { ...input, sections, proposal: { ...input.proposal, sectionsJson: JSON.stringify(sections) } };
+}
+
+/** The fixture package, built by the route's own builder from the SAME two
+ *  buffers a plain download of this state returns. */
+export async function buildR35Package(input: DraftGateInput = buildR35PackageInput()): Promise<{
+  pdf: Buffer;
+  docx: Buffer;
+  zip: Buffer;
+}> {
+  const view = buildExportView(resolveDraft(input).resolved, input.rateCard);
+  const pdf = await renderRfpPdf(view);
+  const docx = await renderRfpDocx(view);
+  const zip = await buildSubmissionZip({
+    clientName: input.doc.clientName,
+    pdf,
+    docx,
+    attachments: (input.attachments?.picks ?? []).map((p) => ({
+      n: p.n,
+      title: p.title,
+      media: "application/pdf",
+      bytes: r35AttachmentBytes(p.n),
+    })),
+  });
+  return { pdf, docx, zip };
+}
+
 async function renderOne(
   outdir: string,
   input: DraftGateInput,
@@ -995,6 +1153,12 @@ async function main(): Promise<void> {
   // (Alive pp4-6), both real RFPs.
   await renderOne(outdir, buildR34QuestionnaireInput(), "resolved-r34-questionnaire.json", "r34-questionnaire");
   await renderOne(outdir, buildR34EchoInput(), "resolved-r34-echo.json", "r34-echo");
+  // Round 35: the questionnaire shipping four attachments (the Supporting
+  // Documents sheet, Alive p40) and its submission package.
+  await renderOne(outdir, buildR35PackageInput(), "resolved-r35-package.json", "r35-package");
+  const pkg = await buildR35Package();
+  fs.writeFileSync(path.join(outdir, "r35-package.zip"), pkg.zip);
+  console.log(`wrote ${path.join(outdir, "r35-package.zip")}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

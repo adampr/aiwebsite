@@ -19,6 +19,7 @@ import {
 } from "@/lib/rfp/brain";
 import { LETTER_LABEL, LETTER_TITLE, splitSections } from "@/lib/rfp/letter";
 import { logRfpActivity } from "@/lib/rfp/activity";
+import { attachmentLabels, readProposalAttachments } from "@/lib/rfp/attachments";
 import { stripIntakeHeaders } from "@/lib/rfp/intake";
 import {
   clearGenClaim,
@@ -228,6 +229,10 @@ export async function POST(
   const existing: DraftSectionRecord[] = JSON.parse(
     proposal.sectionsJson || "[]"
   );
+  // Round 35 (§5.17.23): the proposal's attachment picks as number + title
+  // only (never a byte), from the same claim-time snapshot. None leaves the
+  // drafter prompt exactly as round 34 sends it.
+  const attachmentCites = attachmentLabels(readProposalAttachments(proposal.attachmentsJson));
 
   // The letter is drafted LAST by design (owner directive 2026-08-02): it
   // summarizes the drafted sections, so with none drafted there is nothing
@@ -462,6 +467,7 @@ export async function POST(
           {
             echoSource: doc.rawText ?? "",
             ...(questionnaire ? { questionnaire } : {}),
+            ...(attachmentCites.length ? { attachments: attachmentCites } : {}),
           }
         );
         adoptTitle =

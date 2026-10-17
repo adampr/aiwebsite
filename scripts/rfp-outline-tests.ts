@@ -56,6 +56,33 @@ import {
 } from "../src/lib/rfp/brain";
 import { ALL_FACTS } from "../src/lib/rfp/seed/facts";
 import {
+  ATTACHMENTS_MAX,
+  ATT_TOKEN_SOURCE,
+  LIBRARY_KINDS,
+  LIBRARY_MAX_BYTES,
+  LIBRARY_TYPE_REFUSAL,
+  MEDIA_DOCX,
+  MEDIA_PDF,
+  PACKAGE_ATTACHMENTS_MAX_BYTES,
+  attachmentLabels,
+  extForMedia,
+  mapValueNs,
+  normalizeMapValue,
+  planSetMap,
+  planSetPicks,
+  readProposalAttachments,
+  remapSectionsAttTokens,
+  screenAsOf,
+  screenLibraryTitle,
+  serializeProposalAttachments,
+  sniffLibraryFile,
+  titleFromFilename,
+  unconfirmedConfidential,
+  validateLibraryUpload,
+  withoutAttTokens,
+  type ProposalAttachments,
+} from "../src/lib/rfp/attachments";
+import {
   CONTACT_NAME_MAX,
   TINY_STRUCTURE_MAX,
   applyBriefMode,
@@ -75,6 +102,7 @@ import {
   sectionKicker,
 } from "../src/lib/rfp/export-assets";
 import { buildExportView } from "../src/lib/rfp/export";
+import { resolveAttTokens } from "../src/lib/rfp/furniture";
 import { screenInjection } from "../src/lib/governance/research";
 import { resolveDraft } from "../src/lib/rfp/resolve-draft";
 import { buildFixtureGateInput } from "./rfp-render-fixture";
@@ -1346,6 +1374,513 @@ check(
     [false, false, false, false, false]
   );
   check("client-safety: outline.ts stays import-free with no lookbehind", [/^import /m.test(read("src/lib/rfp/outline.ts")), /\(\?<[=!]/.test(read("src/lib/rfp/outline.ts"))], [false, false]);
+}
+
+// ---- round 35: the supporting-documents library and the picks (§5.17.23) -------------------
+{
+  const D1 = "11111111-1111-4111-8111-111111111111";
+  const D2 = "22222222-2222-4222-8222-222222222222";
+  const D3 = "33333333-3333-4333-8333-333333333333";
+  const D4 = "44444444-4444-4444-8444-444444444444";
+  const R1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const R2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const R9 = "99999999-9999-4999-8999-999999999999";
+  const CONF = { by: "staff@xl.net", at: "2026-10-17T12:00:00.000Z" };
+
+  // The tolerant read: garbage, missing keys, sparse n.
+  const none = { picks: [], map: {} };
+  check(
+    "attachments read: null, undefined, non-JSON, a non-object, an array, no picks key, picks not an array all read as no picks",
+    [null, undefined, "", "not json", "42", "[]", "{}", '{"picks":7}', '{"picks":{"docId":"x"}}', 42].map((v) => readProposalAttachments(v)),
+    Array(10).fill(none)
+  );
+  check(
+    "attachments read: sparse and out-of-order n renumber densely in stored-n order; a pick without n goes last in array order",
+    readProposalAttachments(
+      JSON.stringify({
+        picks: [
+          { docId: D3, n: 9, title: "Third doc" },
+          { docId: D4, title: "No number" },
+          { docId: D1, n: 2, title: "First doc" },
+          { docId: D2, n: 5, title: "Second doc", confidentialConfirmed: CONF },
+        ],
+      })
+    ).picks,
+    [
+      { docId: D1, n: 1, title: "First doc" },
+      { docId: D2, n: 2, title: "Second doc", confidentialConfirmed: CONF },
+      { docId: D3, n: 3, title: "Third doc" },
+      { docId: D4, n: 4, title: "No number" },
+    ]
+  );
+  check(
+    "attachments read: bad docId, duplicate docId (first wins), a title the screen refuses, a junk pick and a malformed confirmation are dropped (the pick stays, unconfirmed)",
+    readProposalAttachments({
+      picks: [
+        { docId: "not-a-uuid", n: 1, title: "Bad id" },
+        { docId: D1, n: 1, title: "Kept" },
+        { docId: D1, n: 2, title: "Duplicate" },
+        { docId: D2, n: 3, title: "Em \u2014 dash" },
+        { docId: D2, n: 3, title: "{{att:1}} forged" },
+        null,
+        "x",
+        [D3],
+        { docId: D3, n: 4, title: "Half confirmed", confidentialConfirmed: { by: "a@b.c" } },
+        { docId: D4, n: 5, title: "Odd confirmed", confidentialConfirmed: "yes" },
+      ],
+    }).picks,
+    [
+      { docId: D1, n: 1, title: "Kept" },
+      { docId: D3, n: 2, title: "Half confirmed" },
+      { docId: D4, n: 3, title: "Odd confirmed" },
+    ]
+  );
+  check(
+    "attachments read: map entries follow their pick through renumbering; 0 stays; an unknown n, a non-uuid key or a non-integer drops",
+    readProposalAttachments({
+      picks: [{ docId: D1, n: 4, title: "Doc A" }, { docId: D2, n: 7, title: "Doc B" }],
+      map: { [R1]: 7, [R2]: 0, [R9]: 3, "not-an-id": 4, ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"]: 1.5 },
+    }).map,
+    { [R1]: 2, [R2]: 0 }
+  );
+  check("attachments read: never more than ATTACHMENTS_MAX picks", readProposalAttachments({ picks: Array.from({ length: 40 }, (_, i) => ({ docId: `${String(i).padStart(8, "0")}-0000-4000-8000-000000000000`, n: i + 1, title: `Doc ${i}` })) }).picks.length, ATTACHMENTS_MAX);
+  check(
+    "attachments serialize: no picks and no map is NULL (a pre-round row's value); map only when non-empty; n re-written dense",
+    [
+      serializeProposalAttachments({ picks: [], map: {} }),
+      serializeProposalAttachments({ picks: [{ docId: D1, n: 5, title: "Doc A" }], map: {} }),
+      serializeProposalAttachments({ picks: [], map: { [R1]: 0 } }),
+    ],
+    [null, JSON.stringify({ picks: [{ docId: D1, n: 1, title: "Doc A" }] }), JSON.stringify({ picks: [], map: { [R1]: 0 } })]
+  );
+  const once = { picks: [{ docId: D2, n: 1, title: "Doc B", confidentialConfirmed: CONF }, { docId: D1, n: 2, title: "Doc A" }], map: { [R1]: 2, [R2]: 0 } };
+  check("attachments: read(serialize(x)) is x", readProposalAttachments(serializeProposalAttachments(once)), once);
+
+  // POST {op:"set"}: dense renumbering, live ids, the confidential 409.
+  const lib = (id: string, title: string, extra: Partial<{ confidential: boolean; retired: boolean }> = {}) => ({
+    id,
+    title,
+    kind: "report",
+    media: "application/pdf",
+    confidential: false,
+    redactedSample: false,
+    asOf: null,
+    retired: false,
+    ...extra,
+  });
+  const LIB = [lib(D1, "ISO Certificate"), lib(D2, "SOC 2 Report", { confidential: true }), lib(D3, "Retired doc", { retired: true }), lib(D4, "IR Procedure")];
+  const set = (current: ProposalAttachments, docIds: unknown, confirm?: unknown) =>
+    planSetPicks({ current, docIds, confirm, library: LIB, actor: "staff@xl.net", now: CONF.at });
+  const p1 = set(none, [D4, D1]);
+  check("set: picks numbered 1..k in the given order, titles from the library", p1.ok ? p1.state.picks : p1, [{ docId: D4, n: 1, title: "IR Procedure" }, { docId: D1, n: 2, title: "ISO Certificate" }]);
+  const p409 = set(none, [D1, D2]);
+  check(
+    "set: a confidential document with no confirmation is a 409 naming its TITLE (never an id), and nothing is planned",
+    p409.ok ? "planned" : [p409.status, p409.code, p409.message],
+    [409, "confidential_unconfirmed", '"SOC 2 Report" is confidential. Confirm it may be shared with this client before attaching it.']
+  );
+  const pConf = set(none, [D2, D1], [D2]);
+  check("set: confirm records {by: actor, at: now} on the confidential pick only", pConf.ok ? [pConf.state.picks, pConf.confirmed] : pConf, [[{ docId: D2, n: 1, title: "SOC 2 Report", confidentialConfirmed: CONF }, { docId: D1, n: 2, title: "ISO Certificate" }], 1]);
+  const reorder = set(once, [D1, D4, D2]);
+  check(
+    "set: a reorder keeps the recorded confirmation and the denormalized title, renumbers densely, the map follows each DOCUMENT (0 stays), pickedAt stamped",
+    reorder.ok ? [reorder.state, reorder.added, reorder.removed, reorder.confirmed] : reorder,
+    [{ picks: [{ docId: D1, n: 1, title: "Doc A" }, { docId: D4, n: 2, title: "IR Procedure" }, { docId: D2, n: 3, title: "Doc B", confidentialConfirmed: CONF }], map: { [R1]: 1, [R2]: 0 }, pickedAt: CONF.at }, 1, 0, 0]
+  );
+  const drop = set(once, [D2]);
+  check("set: removing a pick unmaps the requirements mapped to it", drop.ok ? drop.state : drop, { picks: [{ docId: D2, n: 1, title: "Doc B", confidentialConfirmed: CONF }], map: { [R2]: 0 }, pickedAt: CONF.at });
+  const heldRetired = set({ picks: [{ docId: D3, n: 1, title: "Retired doc" }], map: {} }, [D3, D1]);
+  check("set: an id already picked stays even when its row has retired; a NEW retired or unknown id is a 404", [heldRetired.ok, set(none, [D3]).ok ? 0 : (set(none, [D3]) as { status: number }).status, set(none, ["55555555-5555-4555-8555-555555555555"]).ok], [true, 404, false]);
+  check(
+    "set: 400 for a duplicate, a non-uuid, a non-array, too many, and a confirmation naming an unpicked document",
+    [set(none, [D1, D1]), set(none, ["x"]), set(none, D1), set(none, Array.from({ length: 31 }, () => D1)), set(none, [D1], [D2]), set(none, [D1], "x")].map((r) => (r.ok ? "ok" : r.status)),
+    [400, 400, 400, 400, 400, 400]
+  );
+  check("set: an empty list clears every pick (and the map entries pointing at one)", (() => { const r = set(once, []); return r.ok ? r.state : r; })(), { picks: [], map: { [R2]: 0 }, pickedAt: CONF.at });
+
+  // Round 35 fix F3: pickedAt, stamped by a set that changes the picks.
+  const stamped = { ...once, pickedAt: "2026-10-01T09:00:00.000Z" };
+  const same = set(stamped, [D2, D1]);
+  const moved = set(stamped, [D1, D2]);
+  const grew = set(stamped, [D2, D1, D4]);
+  const shrank = set(stamped, [D2]);
+  check(
+    "pickedAt: an identical list keeps the stored stamp (changed=false, the route's no-op); an ADDITION stamps now; a reorder or REMOVAL keeps the stamp (the same write remaps citations, so no redraft note); a map op keeps it",
+    [
+      same.ok ? [same.changed, same.state.pickedAt] : same,
+      moved.ok ? [moved.changed, moved.state.pickedAt] : moved,
+      grew.ok ? [grew.changed, grew.state.pickedAt] : grew,
+      shrank.ok ? [shrank.changed, shrank.state.pickedAt] : shrank,
+      (() => { const r = planSetMap({ current: stamped, map: { [R9]: 0 }, requirementIds: [R9] }); return r.ok ? r.state.pickedAt : r; })(),
+    ],
+    [
+      [false, "2026-10-01T09:00:00.000Z"],
+      [true, "2026-10-01T09:00:00.000Z"],
+      [true, CONF.at],
+      [true, "2026-10-01T09:00:00.000Z"],
+      "2026-10-01T09:00:00.000Z",
+    ]
+  );
+  check(
+    "pickedAt: serialized after picks and map; the tolerant read keeps an ISO time only (absent, junk, a number, a bare date all read as no stamp)",
+    [
+      serializeProposalAttachments({ picks: [{ docId: D1, n: 1, title: "Doc A" }], map: {}, pickedAt: CONF.at }),
+      ...[CONF.at, "yesterday", 7, "2026-10-01", undefined].map(
+        (v) => readProposalAttachments({ picks: [{ docId: D1, n: 1, title: "Doc A" }], pickedAt: v }).pickedAt ?? null
+      ),
+    ],
+    [JSON.stringify({ picks: [{ docId: D1, n: 1, title: "Doc A" }], pickedAt: CONF.at }), CONF.at, null, null, null, null]
+  );
+
+  // Round 35 fix T2: citations follow their documents (the refuter's
+  // ISO/SOC2 reorder and removal probes), through the SAME remap the route
+  // writes in its fenced UPDATE, read back through the renderer's resolver.
+  {
+    const SOC = D2;
+    const ISO = D1;
+    const two = { picks: [{ docId: SOC, n: 1, title: "SOC 2 Report", confidentialConfirmed: CONF }, { docId: ISO, n: 2, title: "ISO Certificate" }], map: {} };
+    const stored = JSON.stringify([
+      { label: "4", title: "Security", paragraphs: ["The SOC report is {{att:1}}; the ISO certificate is {{att:2}}."], answers: [{ ref: "Q-1", explanation: "See {{ ATT:1 }} and {{att:2}}." }], blocks: [{ kind: "callout", title: "Proof {{att:2}}", body: "Invented {{att:7}}." }] },
+      { label: "__letter", title: "Cover Letter", paragraphs: ["Our certificate is {{att:2}}."] },
+    ]);
+    const shown = (json: string, picks: { n: number }[]) =>
+      (JSON.parse(json) as { paragraphs: string[]; answers?: { explanation: string }[]; blocks?: { title: string; body: string }[] }[]).flatMap((x) => [
+        ...x.paragraphs,
+        ...(x.answers ?? []).map((a) => a.explanation),
+        ...(x.blocks ?? []).flatMap((b) => [b.title, b.body]),
+      ]).map((t) => resolveAttTokens(t, picks));
+    const isoUp = set(two, [ISO, SOC]);
+    const isoUpJson = isoUp.ok ? remapSectionsAttTokens(stored, isoUp.renumber) : null;
+    check(
+      "T2 reorder: ISO moved above SOC 2: every citation follows its document (paragraphs, answers, every block string, the letter); an invented n becomes {{att:0}}",
+      [isoUp.ok && [...isoUp.renumber], isoUpJson?.changed, isoUpJson && shown(isoUpJson.json, [{ n: 1 }, { n: 2 }])],
+      [
+        [[1, 2], [2, 1]],
+        7,
+        ["The SOC report is Attachment 2; the ISO certificate is Attachment 1.", "See Attachment 2 and Attachment 1.", "Proof Attachment 1", "Invented.", "Our certificate is Attachment 1."],
+      ]
+    );
+    const socOut = set(two, [ISO]);
+    const socOutJson = socOut.ok ? remapSectionsAttTokens(stored, socOut.renumber) : null;
+    check(
+      "T2 removal: SOC 2 removed: its citations become {{att:0}} and strip, ISO's renumber to 1, nothing cites the wrong document",
+      [socOut.ok && [...socOut.renumber], socOutJson && shown(socOutJson.json, [{ n: 1 }]), socOutJson?.json.includes("{{att:0}}")],
+      [
+        [[1, 0], [2, 1]],
+        ["The SOC report is; the ISO certificate is Attachment 1.", "See Attachment 1.", "Proof Attachment 1", "Invented.", "Our certificate is Attachment 1."],
+        true,
+      ]
+    );
+    const added = set(two, [SOC, ISO, D4]);
+    check(
+      "T2 add: an invented {{att:7}} never starts citing a document added later; with no token, or unparsable JSON, nothing is rewritten (null)",
+      [
+        added.ok ? remapSectionsAttTokens('[{"paragraphs":["A {{att:3}} b {{att:1}}."]}]', added.renumber)?.json : null,
+        added.ok ? remapSectionsAttTokens('[{"paragraphs":["plain"]}]', added.renumber) : "x",
+        added.ok ? remapSectionsAttTokens("{not json {{att:1}}", added.renumber) : "x",
+        added.ok ? remapSectionsAttTokens(null, added.renumber) : "x",
+      ],
+      ['[{"paragraphs":["A {{att:0}} b {{att:1}}."]}]', null, null, null]
+    );
+  }
+
+  // POST {op:"map"}: requirement ids that exist, n values that are picked.
+  const map = (m: unknown) => planSetMap({ current: once, map: m, requirementIds: [R1, R2, R9], sectionLabels: ["1", "4.2"] });
+  const m1 = map({ [R9]: 1, [R1]: null });
+  check("map: merged; null clears an entry; counts", m1.ok ? [m1.state.map, m1.mapped, m1.notIncluded] : m1, [{ [R2]: 0, [R9]: 1 }, 1, 1]);
+  check(
+    "map: 400 for an unknown requirement, an unpicked n, a negative, a fraction, a string, an empty or non-object body",
+    [map({ "dddddddd-dddd-4ddd-8ddd-dddddddddddd": 1 }), map({ [R1]: 3 }), map({ [R1]: -1 }), map({ [R1]: 1.5 }), map({ [R1]: "1" }), map({}), map([1]), map(null)].map((r) => (r.ok ? "ok" : r.status)),
+    [400, 400, 400, 400, 400, 400, 400, 400]
+  );
+  // Round 35 fix X1: n | 0 | {ns, section?}, stored canonically.
+  const mx = map({ [R1]: { ns: [2, 1] }, [R2]: { ns: [1], section: "4.2" }, [R9]: { ns: [], section: "1" } });
+  check(
+    "map (X1): several picks (ascending), a pick plus its section, a section alone; counts every non-zero as mapped",
+    mx.ok ? [mx.state.map, mx.mapped, mx.notIncluded] : mx,
+    [{ [R1]: { ns: [1, 2] }, [R2]: { ns: [1], section: "4.2" }, [R9]: { ns: [], section: "1" } }, 3, 0]
+  );
+  check(
+    "map (X1): canonical form: a lone pick with no section stores as the bare n; {ns: []} with no section clears the entry",
+    [map({ [R1]: { ns: [2] } }), map({ [R1]: { ns: [] } })].map((r) => (r.ok ? r.state.map : r)),
+    [{ [R1]: 2, [R2]: 0 }, { [R2]: 0 }]
+  );
+  check(
+    "map (X1): 400 for an unpicked or junk n in ns, a section this RFP does not have, a non-string section, an extra key, ns not an array",
+    [
+      map({ [R1]: { ns: [3] } }),
+      map({ [R1]: { ns: [1.5] } }),
+      map({ [R1]: { ns: [1], section: "9.9" } }),
+      map({ [R1]: { ns: [1], section: 4 } }),
+      map({ [R1]: { ns: [1], note: "x" } }),
+      map({ [R1]: { ns: 1 } }),
+    ].map((r) => (r.ok ? "ok" : r.status)),
+    [400, 400, 400, 400, 400, 400]
+  );
+  check(
+    "map (X1) read: the object form reads tolerant and canonical: ns translated through renumbering, unknown and junk n dropped, a lone survivor bare, a long or braced section dropped",
+    readProposalAttachments({
+      picks: [{ docId: D1, n: 4, title: "Doc A" }, { docId: D2, n: 7, title: "Doc B" }],
+      map: {
+        [R1]: { ns: [7, 4, 9, "x"] },
+        [R2]: { ns: [7, 3], section: "2.1" },
+        [R9]: { ns: [3], section: "x".repeat(41) },
+        ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"]: { ns: [4], section: "{{att:1}}" },
+        ["dddddddd-dddd-4ddd-8ddd-dddddddddddd"]: { section: "5" },
+      },
+    }).map,
+    {
+      [R1]: { ns: [1, 2] },
+      [R2]: { ns: [2], section: "2.1" },
+      ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"]: 1,
+      ["dddddddd-dddd-4ddd-8ddd-dddddddddddd"]: { ns: [], section: "5" },
+    }
+  );
+  const withMulti = { picks: once.picks, map: { [R1]: { ns: [1, 2], section: "1" }, [R2]: 0 } };
+  const flipped = set(withMulti, [D1, D2]);
+  const dropped = set(withMulti, [D2]);
+  check(
+    "set (X1): a reorder carries every n of an object mapping to its document's new n; a removal keeps the rest and the section; legacy values unchanged",
+    [flipped.ok ? flipped.state.map : flipped, dropped.ok ? dropped.state.map : dropped],
+    [{ [R1]: { ns: [1, 2], section: "1" }, [R2]: 0 }, { [R1]: { ns: [1], section: "1" }, [R2]: 0 }]
+  );
+  check(
+    "normalizeMapValue / mapValueNs: the pure helpers the sheet, the pane and the gate agree on",
+    [normalizeMapValue(0, () => null), normalizeMapValue(3, () => null), normalizeMapValue({ ns: [1, 1, 2] }, (n) => n), normalizeMapValue([1], (n) => n), mapValueNs(2), mapValueNs(0), mapValueNs({ ns: [1, 3] }), mapValueNs(undefined)],
+    [0, null, { ns: [1, 2] }, null, [2], [], [1, 3], []]
+  );
+  check("unconfirmedConfidential: titles of confidential picks with no confirmation", unconfirmedConfidential([{ docId: D2, n: 1, title: "SOC" }, { docId: D1, n: 2, title: "ISO" }], LIB), ["SOC"]);
+  check("attachmentLabels: n and title only, in pick order", attachmentLabels(once), [{ n: 1, title: "Doc B" }, { n: 2, title: "Doc A" }]);
+
+  // Magic-first validation, on fixture bytes built here (never the real seed files).
+  const enc = (s: string) => Array.from(s, (c) => c.charCodeAt(0));
+  const le = (n: number, w: 2 | 4) => (w === 2 ? [n & 255, (n >> 8) & 255] : [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255]);
+  const zip = (names: string[], opts: { truncateTail?: boolean } = {}): Uint8Array => {
+    const local: number[] = [];
+    const central: number[] = [];
+    for (const name of names) {
+      const at = local.length;
+      const data = enc("x");
+      local.push(...[0x50, 0x4b, 0x03, 0x04], ...le(20, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 4), ...le(data.length, 4), ...le(data.length, 4), ...le(name.length, 2), ...le(0, 2), ...enc(name), ...data);
+      central.push(...[0x50, 0x4b, 0x01, 0x02], ...le(20, 2), ...le(20, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 4), ...le(data.length, 4), ...le(data.length, 4), ...le(name.length, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 2), ...le(0, 4), ...le(at, 4), ...enc(name));
+    }
+    const eocd = [0x50, 0x4b, 0x05, 0x06, ...le(0, 2), ...le(0, 2), ...le(names.length, 2), ...le(names.length, 2), ...le(central.length, 4), ...le(local.length, 4), ...le(0, 2)];
+    const all = [...local, ...central, ...eocd];
+    return new Uint8Array(opts.truncateTail ? all.slice(0, all.length - 10) : all);
+  };
+  const DOCX = zip(["[Content_Types].xml", "_rels/.rels", "word/document.xml"]);
+  const PDF = new Uint8Array(enc("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n"));
+  check(
+    "magic: a PDF by %PDF-; a docx by zip magic + [Content_Types].xml + a word/ part; media from the magic, never a name",
+    [sniffLibraryFile(PDF), sniffLibraryFile(DOCX)],
+    [{ media: MEDIA_PDF, ext: "pdf" }, { media: MEDIA_DOCX, ext: "docx" }]
+  );
+  check(
+    "magic: refused: an xlsx (OOXML, no word/ part), a zip without [Content_Types].xml, a truncated zip, a PK header with garbage, %PDF without the dash, a PNG, text claiming .pdf, empty",
+    [
+      zip(["[Content_Types].xml", "xl/workbook.xml"]),
+      zip(["word/document.xml", "readme.txt"]),
+      zip(["[Content_Types].xml", "word/document.xml"], { truncateTail: true }),
+      new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]),
+      new Uint8Array(enc("%PDF1.7 not quite")),
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      new Uint8Array(enc("hello.pdf: this is plain text")),
+      new Uint8Array(0),
+    ].map((b) => sniffLibraryFile(b)),
+    Array(8).fill(null)
+  );
+  check("magic: never throws on a non-buffer", [sniffLibraryFile(null as never), sniffLibraryFile("x" as never)], [null, null]);
+  const up = (o: Record<string, unknown>) => validateLibraryUpload({ bytes: PDF, title: "XL.net ISO 27001-2022 Certificate", kind: "certification", ...o });
+  const okUp = up({ confidential: "true", redactedSample: "on", asOf: "2025-04-30" });
+  check("upload: a valid PDF with flags and an as-of date", okUp.ok ? okUp.value : okUp, { title: "XL.net ISO 27001-2022 Certificate", kind: "certification", media: MEDIA_PDF, ext: "pdf", confidential: true, redactedSample: true, asOf: "2025-04-30" });
+  check(
+    "upload: refused, each with fixed copy: empty, over 32 MB (413, never sniffed), wrong type, bad title, unknown kind, bad flag, bad date",
+    [
+      up({ bytes: new Uint8Array(0) }),
+      up({ bytes: new Uint8Array(LIBRARY_MAX_BYTES + 1) }),
+      up({ bytes: new Uint8Array(enc("plain text")) }),
+      up({ title: "x" }),
+      up({ title: "A \u2014 B" }),
+      up({ title: "Line one\u0007" }),
+      up({ kind: "invoice" }),
+      up({ confidential: "maybe" }),
+      up({ asOf: "2025-02-30" }),
+    ].map((r) => (r.ok ? "ok" : [r.status, r.code])),
+    [[400, "invalid_request"], [413, "too_large"], [400, "invalid_request"], [400, "invalid_request"], [400, "invalid_request"], [400, "invalid_request"], [400, "invalid_request"], [400, "invalid_request"], [400, "invalid_request"]]
+  );
+  check("upload: the type refusal is the fixed copy", (() => { const r = up({ bytes: DOCX.slice(0, 40) }); return r.ok ? "ok" : r.message; })(), LIBRARY_TYPE_REFUSAL);
+  check(
+    "titles: collapsed to one line; refused for braces, angle runs, no letter, over 120",
+    [screenLibraryTitle("  SOC 2   Type 2\nReport "), screenLibraryTitle("A {b}"), screenLibraryTitle("A <<<b"), screenLibraryTitle("12-34"), screenLibraryTitle("x".repeat(121)), screenLibraryTitle("x".repeat(120))?.length],
+    ["SOC 2 Type 2 Report", null, null, null, null, 120]
+  );
+  check(
+    "titles (fix U2): an invisible format character (\\p{Cf}: bidi override, zero-width space or joiner, soft hyphen, BOM) refuses the title",
+    ["a\u202eb title", "a\u200bb title", "a\u200db title", "Soft\u00adhyphen", "\ufeffBOM title", "Plain title"].map(screenLibraryTitle),
+    [null, null, null, null, null, "Plain title"]
+  );
+  check(
+    "titleFromFilename (fix U2): the extension and a package prefix (\"Attachment N - \", \"00 - \") go; a title that merely starts with a number stays",
+    [
+      "Attachment 2 - XL.net ISO 27001-2022 Certificate.pdf",
+      "attachment 12 \u2013 Offboard Procedure.docx",
+      "00 - XL.net Alive Telecom Proposal.pdf",
+      "2025_SOC_2_Report.pdf",
+      "Attachment Policy.pdf",
+    ].map(titleFromFilename),
+    ["XL.net ISO 27001-2022 Certificate", "Offboard Procedure", "XL.net Alive Telecom Proposal", "2025 SOC 2 Report", "Attachment Policy"]
+  );
+  check("as-of: a real calendar date only", [screenAsOf("2024-02-29"), screenAsOf("2023-02-29"), screenAsOf("2025-4-30"), screenAsOf(20250430)], ["2024-02-29", null, null, null]);
+  check("kinds: the six, in the contract's order", [...LIBRARY_KINDS], ["certification", "report", "procedure", "template", "sample", "agreement"]);
+  check("ext: from media only", [extForMedia(MEDIA_PDF), extForMedia(MEDIA_DOCX), extForMedia("text/plain")], ["pdf", "docx", null]);
+  check("token: the one citation form, N 1 to 99", [new RegExp(`^${ATT_TOKEN_SOURCE}$`).test("{{att:1}}"), new RegExp(`^${ATT_TOKEN_SOURCE}$`).test("{{att:99}}"), new RegExp(`^${ATT_TOKEN_SOURCE}$`).test("{{att:0}}"), new RegExp(`^${ATT_TOKEN_SOURCE}$`).test("{{att:100}}"), withoutAttTokens("See {{att:3}} and {{att:12}}.")], [true, true, false, false, "See   and  ."]);
+
+  // Storage: migration 0065, the schema, the journal (source pins).
+  const mig = read("drizzle/migrations/0065_rfp_library_documents.sql");
+  check("0065: header comment first", mig.startsWith("-- "), true);
+  check(
+    "0065: exactly the table, the column and the index, IF NOT EXISTS throughout",
+    mig.split("\n").filter((l) => !l.startsWith("--") && l.trim()),
+    [
+      'CREATE TABLE IF NOT EXISTS "rfp_library_documents" (',
+      '\t"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,',
+      '\t"title" text NOT NULL,',
+      '\t"kind" text NOT NULL,',
+      '\t"bytes" "bytea" NOT NULL,',
+      '\t"media" text NOT NULL,',
+      '\t"confidential" boolean DEFAULT false NOT NULL,',
+      '\t"redacted_sample" boolean DEFAULT false NOT NULL,',
+      '\t"as_of" date,',
+      '\t"retired_at" timestamp with time zone,',
+      '\t"created_at" timestamp with time zone DEFAULT now() NOT NULL,',
+      '\t"created_by" text NOT NULL',
+      ");",
+      'ALTER TABLE "rfp_proposals" ADD COLUMN IF NOT EXISTS "attachments_json" text;--> statement-breakpoint',
+      'CREATE INDEX IF NOT EXISTS "rfp_library_documents_retired_idx" ON "rfp_library_documents" USING btree ("retired_at","created_at");',
+    ]
+  );
+  const journal = JSON.parse(read("drizzle/migrations/meta/_journal.json")) as { entries: { idx: number; tag: string; when: number }[] };
+  const e64 = journal.entries.find((e) => e.tag === "0064_rfp_client_ref_rfp_title");
+  const e65 = journal.entries.find((e) => e.tag === "0065_rfp_library_documents");
+  check("journal: 0065 is idx 65, the last entry, and its `when` is above 0064's", [e65?.idx, journal.entries[journal.entries.length - 1]?.tag, !!e64 && !!e65 && e65.when > e64.when], [65, "0065_rfp_library_documents", true]);
+  const s64 = JSON.parse(read("drizzle/migrations/meta/0064_snapshot.json")) as { id: string; tables: Record<string, { columns: Record<string, unknown> }> };
+  const s65 = JSON.parse(read("drizzle/migrations/meta/0065_snapshot.json")) as { id: string; prevId: string; tables: Record<string, { columns: Record<string, unknown> }> };
+  const without = (s: typeof s65) => {
+    const t = JSON.parse(JSON.stringify(s.tables)) as typeof s65.tables;
+    delete t["public.rfp_library_documents"];
+    delete t["public.rfp_proposals"]?.columns.attachments_json;
+    return JSON.stringify(t);
+  };
+  check(
+    "snapshot 0065: prevId is 0064's id; it adds the table and attachments_json only",
+    [s65.prevId === s64.id, without(s65) === JSON.stringify(s64.tables), s65.tables["public.rfp_proposals"]?.columns.attachments_json, Object.keys(s65.tables["public.rfp_library_documents"]?.columns ?? {})],
+    [true, true, { name: "attachments_json", type: "text", primaryKey: false, notNull: false }, ["id", "title", "kind", "bytes", "media", "confidential", "redacted_sample", "as_of", "retired_at", "created_at", "created_by"]]
+  );
+  const schema = read("src/lib/db/rfp-schema.ts");
+  check("schema: the table and the column declared", [schema.includes('"rfp_library_documents"'), schema.includes('attachmentsJson: text("attachments_json")'), schema.includes('bytes: bytea("bytes").notNull()')], [true, true, true]);
+
+  // db.ts: no list select ever carries bytes; the write is CAS on rev.
+  const dbSrc = read("src/lib/rfp/db.ts");
+  const libCols = dbSrc.slice(dbSrc.indexOf("const libraryColumns = {"), dbSrc.indexOf("};", dbSrc.indexOf("const libraryColumns = {")));
+  check("db: the library column list leaves bytes out (size is octet_length)", [libCols.includes("bytes:"), libCols.includes("octet_length(")], [false, true]);
+  check("db: only getLibraryDocumentFile selects bytes", (dbSrc.match(/bytes: rfpLibraryDocuments\.bytes/g) ?? []).length, 1);
+  check("db: writeProposalAttachments is CAS on rev and bumps it", /export async function writeProposalAttachments[\s\S]{0,400}?rev: expectedRev \+ 1[\s\S]{0,200}?eq\(rfpProposals\.rev, expectedRev\)/.test(dbSrc), true);
+  check("db: readProposalAttachments is the pure one, re-exported", dbSrc.includes('export { readProposalAttachments } from "./attachments";'), true);
+
+  // The routes (source pins): gated first, no bytes in logs, counts-only activity.
+  const routes = ["src/app/api/rfp/library/route.ts", "src/app/api/rfp/library/[id]/route.ts", "src/app/api/rfp/proposals/[id]/attachments/route.ts"].map(read);
+  check(
+    "routes: every handler's FIRST statement is the house gate",
+    routes.map((src) => [...src.matchAll(/export async function (GET|POST)\([\s\S]*?\{\n\s*const gate = await requireRfpApi\(/g)].length === (src.match(/export async function (GET|POST)\(/g) ?? []).length),
+    [true, true, true]
+  );
+  check(
+    "routes: every console.error logs a constructor name or fixed text, never an error message or a value",
+    routes.map((src) => [...src.matchAll(/console\.error\(([^;]*)\);/g)].every((m) => !/err\.message|bytes|title|file\b/.test(m[1]!) && /constructor\.name/.test(m[1]!))),
+    [true, true, true]
+  );
+  const [libRoute, libIdRoute, attRoute] = routes as [string, string, string];
+  check("library route: library.add meta is title, kind, ext and the two flags only", /action: "library\.add",[\s\S]*?meta: \{\s*title: row\.title,\s*kind: row\.kind,\s*ext: v\.ext,\s*confidential: row\.confidential,\s*redactedSample: row\.redactedSample,\s*\}/.test(libRoute), true);
+  check("library route: Content-Length checked before formData(), magic through the shared validator", [libRoute.indexOf("content-length") < libRoute.indexOf("req.formData()"), libRoute.includes("validateLibraryUpload({")], [true, true]);
+  check("download route: attachment disposition, no-store, nosniff; retire meta title + kind", [libIdRoute.includes('"content-disposition": disposition('), libIdRoute.includes('"cache-control": "no-store, private"'), libIdRoute.includes('"x-content-type-options": "nosniff"'), libIdRoute.includes("meta: { title: retired.title, kind: retired.kind }")], [true, true, true, true]);
+  const attMeta = attRoute.slice(attRoute.indexOf('action: "proposal.attachments"'), attRoute.indexOf("try {", attRoute.indexOf('action: "proposal.attachments"')));
+  check("attachments route: activity meta is counts only (no title anywhere in it)", [/meta,/.test(attMeta), /title/.test(attRoute.slice(attRoute.indexOf("meta = {"), attRoute.indexOf("const json = serializeProposalAttachments")))], [true, false]);
+  check("attachments route: a sent proposal is immutable; the write is CAS with a bounded re-plan", [attRoute.includes('if (fresh.status === "sent") return rfpError("immutable", IMMUTABLE, 409);'), attRoute.includes("for (let tries = 0; tries < 3; tries++)"), attRoute.includes("await writeProposalAttachments(fresh.id, fresh.rev, json, remapped?.json)")], [true, true, true]);
+  check(
+    "attachments route (fix T2): the citation remap runs on the FRESH row inside the CAS loop, only when the picks changed, and rides the same fenced write",
+    [
+      attRoute.includes("remapped = plan.changed ? remapSectionsAttTokens(fresh.sectionsJson, plan.renumber) : null;"),
+      attRoute.indexOf("remapSectionsAttTokens(fresh.sectionsJson") > attRoute.indexOf("for (let tries = 0; tries < 3; tries++)"),
+      /const noop = json === fresh\.attachmentsJson && remapped === null;/.test(attRoute),
+      /\.set\(\{ attachmentsJson, \.\.\.\(sectionsJson !== undefined \? \{ sectionsJson \} : \{\}\), rev: expectedRev \+ 1/.test(dbSrc),
+    ],
+    [true, true, true, true]
+  );
+  check(
+    "attachments route (fix X1): the map op validates sections against this RFP's structure",
+    [attRoute.includes("planSetMap({ current, map: body.map, requirementIds, sectionLabels })"), attRoute.includes("const doc = await getDocument(user, proposal.documentId);")],
+    [true, true]
+  );
+  const expRoute = read("src/app/api/rfp/proposals/[id]/export/route.ts");
+  check(
+    "export route (fix U3): the package refuses with 413 over 120 MB of attachments, from octet_length, before any byte is read or file renders",
+    [
+      PACKAGE_ATTACHMENTS_MAX_BYTES,
+      /if \(total > PACKAGE_ATTACHMENTS_MAX_BYTES\)\s*return rfpError\(\s*"too_large",[\s\S]{0,260}?413/.test(expRoute),
+      expRoute.indexOf("total > PACKAGE_ATTACHMENTS_MAX_BYTES") < expRoute.indexOf("getLibraryDocumentFile(pick.docId)"),
+      expRoute.indexOf("total > PACKAGE_ATTACHMENTS_MAX_BYTES") < expRoute.indexOf("buildGateInput(user, doc, proposal)"),
+    ],
+    [120_000_000, true, true, true]
+  );
+  const nextConfig = read("next.config.ts");
+  check(
+    "next.config (fix U1): the proxy's request-body clone is raised to 34mb (Next 16.3's experimental.proxyClientMaxBodySize), above the 32 MB file cap",
+    [/experimental: \{\s*proxyClientMaxBodySize: "34mb",\s*\}/.test(nextConfig), nextConfig.includes("POST /api/rfp/library")],
+    [true, true]
+  );
+
+  // The CLI (source pins): the shared validator, id + title only, a fixed-message catch.
+  const cli = read("scripts/rfp-library-add.ts");
+  check("cli: package.json runs it", (JSON.parse(read("package.json")) as { scripts: Record<string, string> }).scripts["rfp:library-add"], "tsx scripts/rfp-library-add.ts");
+  check("cli: the route's own validation, size checked before the read", [cli.includes("validateLibraryUpload({"), cli.indexOf("statSync(args.file)") < cli.indexOf("readFileSync(args.file)")], [true, true]);
+  check("cli: prints id and title only", [...cli.matchAll(/console\.log\(([^;]*)\);/g)].map((m) => m[1]), ["`added ${row.id} ${row.title}`"]);
+  check(
+    "cli (fix U2): a live row with the exact title refuses with fixed copy unless --force, checked after validation and before the insert",
+    [
+      cli.includes('else if (a === "--force") force = true;'),
+      cli.includes("if (!args.force && (await listLibraryDocuments()).some((d) => d.title === v.title)) {"),
+      cli.indexOf("listLibraryDocuments()") > cli.indexOf("validateLibraryUpload({") && cli.indexOf("listLibraryDocuments()") < cli.indexOf("insertLibraryDocument({"),
+      cli.includes('"refused: a live library document already has exactly this title. Retire it first, or pass --force to add a second one."'),
+    ],
+    [true, true, true, true]
+  );
+  check("cli: the catch prints a fixed message with the constructor name only", /\.catch\(\(err\) => \{[\s\S]*?console\.error\(\s*"rfp:library-add failed:",\s*err instanceof Error \? err\.constructor\.name : "unknown error"\s*\);/.test(cli), true);
+  check("cli: activity actor cli, title + kind + flags only", cli.includes('meta: { title: row.title, kind: row.kind, ext: v.ext, confidential: row.confidential, redactedSample: row.redactedSample, via: "cli" }'), true);
+
+  // The brain threading (source pins): labels only, from the stored picks.
+  const genRoute = read("src/app/api/rfp/documents/[id]/generate/route.ts");
+  const secRoute = read("src/app/api/rfp/proposals/[id]/section/route.ts");
+  check(
+    "threading: the drafter gets the claim-time picks as n + title, only when there are some; the revise turn gets them too",
+    [genRoute.includes("const attachmentCites = attachmentLabels(readProposalAttachments(proposal.attachmentsJson));"), genRoute.includes("...(attachmentCites.length ? { attachments: attachmentCites } : {}),"), secRoute.includes("attachmentLabels(readProposalAttachments(proposal.attachmentsJson))")],
+    [true, true, true]
+  );
+  const actSrc = read("src/lib/rfp/activity.ts");
+  check("activity: the three round-35 actions are in the closed vocabulary", ['"proposal.attachments"', '"library.add"', '"library.retire"'].map((a) => actSrc.includes(a)), [true, true, true]);
+  const attSrc = read("src/lib/rfp/attachments.ts");
+  check("client-safety: attachments.ts is import-free, no Buffer, no lookbehind", [/^import /m.test(attSrc), /\bBuffer\b/.test(attSrc.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "")), /\(\?<[=!]/.test(attSrc)], [false, false, false]);
+  check(
+    "no em dash in the round-35 sources",
+    [
+      "drizzle/migrations/0065_rfp_library_documents.sql",
+      "src/lib/rfp/attachments.ts",
+      "src/app/api/rfp/library/route.ts",
+      "src/app/api/rfp/library/[id]/route.ts",
+      "src/app/api/rfp/proposals/[id]/attachments/route.ts",
+      "scripts/rfp-library-add.ts",
+    ].map((f) => /[\u2014\u2015]/.test(read(f))),
+    [false, false, false, false, false, false]
+  );
 }
 
 if (failures) {

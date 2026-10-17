@@ -918,6 +918,18 @@ function parseTimeline(
   };
 }
 
+/**
+ * Round 35 (§5.17.23): the attachment citation token {{att:N}} (N 1 to 99), a local copy of
+ * attachments.ts ATT_TOKEN_SOURCE so this module keeps its two value imports (the draft-blocks
+ * tests pin the two sources equal). echoText leaves braces intact; only the number GROUNDING of
+ * an echo answer or willSee reads the text with the exact token blanked, because its N is a
+ * reference the renderer resolves (or strips), not a claim. Nothing else is loosened.
+ */
+export const ATT_TOKEN_SOURCE_LOCAL = "\\{\\{att:([1-9][0-9]?)\\}\\}";
+function withoutAttTokens(s: string): string {
+  return s.replace(new RegExp(ATT_TOKEN_SOURCE_LOCAL, "g"), " ");
+}
+
 /** Rule D1 for the echo lane: an em dash (or the horizontal bar) REFUSES the value; it is never
  *  replaced, because a replaced quote is no longer the client's words. */
 const ECHO_EM_DASH = /[\u2014\u2015]/;
@@ -1068,11 +1080,11 @@ function parseClientEcho(
     }
     const answer = echoText(e.answer, ECHO_LIMITS.answer);
     if (answer === null || !/\p{L}/u.test(answer) || hasCurrency(answer) || tripsScreen(answer)) continue;
-    if (!groundValue(answer, corpus)) continue;
+    if (!groundValue(withoutAttTokens(answer), corpus)) continue;
     let willSee: string | undefined;
     if (e.willSee != null && e.willSee !== "") {
       const w = echoText(e.willSee, ECHO_LIMITS.willSee);
-      if (w === null || !/\p{L}/u.test(w) || hasCurrency(w) || tripsScreen(w) || !groundValue(w, corpus)) continue;
+      if (w === null || !/\p{L}/u.test(w) || hasCurrency(w) || tripsScreen(w) || !groundValue(withoutAttTokens(w), corpus)) continue;
       willSee = w;
     }
     let saidBy: string | undefined;

@@ -2165,5 +2165,56 @@ const notPricing = (ids: string[]) => ids.filter((id) => !facts.find((f) => f.id
   check("no em dash in the round-34 draft-blocks additions", /[—―]/.test(src.slice(src.indexOf("const ECHO_EM_DASH"), src.indexOf("export function parseModelVisuals"))), false);
 }
 
+// ---- round 35: the {{att:N}} citation token survives the echo screens (§5.17.23) ------------
+{
+  const desk = fid("operations.service-desk-hours");
+  const SOURCE = "Our current provider closes tickets before anyone confirms the fix works.";
+  const ANSWER = "More than 99% of calls are answered live by a human.";
+  const echoItem = (entries: unknown) => ({ kind: "client-echo", after: 1, cites: [desk], entries });
+  const one = (e: Record<string, unknown>) => parseModelVisuals([echoItem([{ said: SOURCE, ...e }])], { ...ctx(3), echoCorpus: SOURCE });
+  const entriesOf = (r: ReturnType<typeof parseModelVisuals>) => r.blocks.map((b) => (b.kind === "client-echo" ? b.entries : null))[0] ?? null;
+  check(
+    "att token: an echo answer and willSee keep {{att:N}} byte for byte (its N is exempt from grounding, nothing else is)",
+    entriesOf(one({ answer: `${ANSWER} The process is in {{att:3}}.`, willSee: "The certificate, {{att:12}}." })),
+    [{ said: SOURCE, answer: `${ANSWER} The process is in {{att:3}}.`, willSee: "The certificate, {{att:12}}." }]
+  );
+  check(
+    "att token: an N the screens cannot judge is KEPT (the render-side resolve strips an unpicked N at its one choke point)",
+    entriesOf(one({ answer: `${ANSWER} See {{att:99}}.` }))?.[0]?.answer,
+    `${ANSWER} See {{att:99}}.`
+  );
+  check(
+    "att token: only the exact token is exempt: a spaced form, a zero, three digits, single braces or a plain 'Attachment 8' still grounds its number and drops",
+    [`See {{ att:8 }}.`, `See {{att:0}}.`, `See {{att:100}}.`, `See Attachment 8.`, `See {att:8}.`].map((tail) => one({ answer: `${ANSWER} ${tail}` }).blocks.length),
+    [0, 0, 0, 0, 0]
+  );
+  check(
+    "att token: the token exempts nothing else in the field (an ungrounded figure beside it still drops; currency still drops)",
+    [one({ answer: `We answer 97% of calls live, see {{att:1}}.` }).blocks.length, one({ answer: `${ANSWER} {{att:1}} costs $5.` }).blocks.length, one({ answer: ANSWER, willSee: "Answers in 5 minutes, {{att:2}}." }).blocks.length],
+    [0, 0, 0]
+  );
+  // clean() (table, ledger, callout text) leaves the braces intact; the grounding there is NOT
+  // exempt, so a token whose digits no cited fact states still drops that visual.
+  const ledger = (value: string) =>
+    parseModelVisuals([{ kind: "ledger", after: 1, cites: [desk], rows: [{ label: "Service desk", value: "24/7/365 live" }, { label: "Process", value }] }], ctx(3));
+  check(
+    "att token: clean() leaves {{att:N}} intact (a ledger value whose digits a fact states), and grants no exemption outside the echo and questionnaire screens",
+    [ledger("See {{att:24}}").blocks.map((b) => (b.kind === "fact-grid" ? b.pairs[1]?.value : null)), ledger("See {{att:23}}").blocks.length],
+    [["See {{att:24}}"], 0]
+  );
+  check("att token: the stored echo reads back with the token intact", sanitizeStoredBlocks(one({ answer: `${ANSWER} {{att:3}}` }).blocks, 3).map((b) => (b.kind === "client-echo" ? b.entries[0]?.answer : null)), [`${ANSWER} {{att:3}}`]);
+  const blocksSrc = readFileSync(new URL("../src/lib/rfp/draft-blocks.ts", import.meta.url), "utf8");
+  const attSrc = readFileSync(new URL("../src/lib/rfp/attachments.ts", import.meta.url), "utf8");
+  const sourceOf = (src: string, name: string) => /=\s*("(?:[^"\\]|\\.)*");/.exec(src.slice(src.indexOf(`export const ${name} =`)))?.[1] ?? "missing";
+  check("att token: draft-blocks' local token source equals attachments.ts ATT_TOKEN_SOURCE", sourceOf(blocksSrc, "ATT_TOKEN_SOURCE_LOCAL"), sourceOf(attSrc, "ATT_TOKEN_SOURCE"));
+  check(
+    "att token: the exemption sits at exactly the echo answer and willSee groundings (title and said untouched)",
+    [(blocksSrc.match(/groundValue\(withoutAttTokens\(/g) ?? []).length, blocksSrc.includes("if (!groundValue(t, corpus)) continue;"), blocksSrc.includes("if (!groundValue(withoutAttTokens(answer), corpus)) continue;")],
+    [2, true, true]
+  );
+  check("client-safety: draft-blocks keeps its two value imports (attachments.ts is not imported)", /from\s+["']\.\/attachments["']/.test(blocksSrc), false);
+  check("no em dash in the round-35 draft-blocks hunk", /[\u2014\u2015]/.test(blocksSrc.slice(blocksSrc.indexOf("Round 35 (§5.17.23): the attachment citation token"), blocksSrc.indexOf("const ECHO_EM_DASH"))), false);
+}
+
 console.log(failures === 0 ? "\nall draft-block tests passed" : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

@@ -1,6 +1,7 @@
 "use client";
 
-// Second-level strip inside the knowledge section. Shared / yours / review.
+// Second-level strip inside the knowledge section. Shared / yours / the
+// supporting-documents library (§5.17.23) / review.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -10,6 +11,7 @@ export function KnowledgeNav({ admin }: { admin: boolean }) {
   const items = [
     { href: "/rfp/knowledge", label: "Shared" },
     { href: "/rfp/knowledge/mine", label: "Yours" },
+    { href: "/rfp/knowledge/library", label: "Library" },
     ...(admin
       ? [{ href: "/rfp/knowledge/review", label: "Review queue" }]
       : []),
